@@ -23,18 +23,60 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 
 
 def _get_5min_bars(ts_code: str, date: str) -> list[dict[str, Any]]:
-    """获取5分钟K线 (placeholder: 从 tushare_cache 读)。"""
+    """获取5分钟K线 (从 MarketGraphRuntime staging CSV 读)。"""
     try:
+        import csv
         import json
-        bars_file = _ASHARE_DATA / "intraday" / f"{ts_code}_{date}_5min.json"
-        if bars_file.exists():
-            with open(bars_file, encoding="utf-8") as f:
-                bars = json.load(f)
-            if isinstance(bars, list):
-                return bars
-    except (OSError, ValueError, TypeError):
-        pass
-    return []
+
+        staging_root = Path("/opt/investment/MarketGraphRuntime/staging/tushare_rt_min_5m")
+        date_dir = staging_root / date
+
+        if date_dir.is_dir():
+            csv_files = sorted(date_dir.glob("rt_min_5min_*.csv"), key=lambda p: p.name)
+        else:
+            latest_file = staging_root / "latest.json"
+            if not latest_file.exists():
+                return []
+            with open(latest_file, encoding="utf-8") as f:
+                latest = json.load(f)
+            if not isinstance(latest, dict) or latest.get("trade_date") != date:
+                return []
+            latest_path = latest.get("path")
+            if not latest_path:
+                return []
+            csv_path = Path(str(latest_path))
+            if not csv_path.is_file():
+                return []
+            csv_files = [csv_path]
+
+        if not csv_files:
+            return []
+
+        bars_by_time: dict[str, dict[str, Any]] = {}
+        for csv_file in csv_files:
+            with open(csv_file, encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row.get("ts_code") != ts_code:
+                        continue
+                    bar_time = row.get("time", "")
+                    if not bar_time:
+                        continue
+                    bars_by_time[bar_time] = {
+                        "ts_code": row.get("ts_code", ts_code),
+                        "time": bar_time,
+                        "trade_time": bar_time,
+                        "open": _safe_float(row.get("open")),
+                        "high": _safe_float(row.get("high")),
+                        "low": _safe_float(row.get("low")),
+                        "close": _safe_float(row.get("close")),
+                        "vol": _safe_float(row.get("vol")),
+                        "amount": _safe_float(row.get("amount")),
+                    }
+
+        return [bars_by_time[k] for k in sorted(bars_by_time)]
+    except Exception:
+        return []
 
 
 def _check_breakout(condition: dict[str, Any], bars: list[dict[str, Any]]) -> dict[str, Any] | None:
