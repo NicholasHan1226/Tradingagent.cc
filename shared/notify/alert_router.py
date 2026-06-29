@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from email_templates import CHANNELS
+from .email_templates import CHANNELS
 
 ALERT_LOG = Path(__file__).resolve().parent / "logs" / "alerts.jsonl"
 ALERT_STATE = Path(__file__).resolve().parent / "logs" / "alert_state.json"

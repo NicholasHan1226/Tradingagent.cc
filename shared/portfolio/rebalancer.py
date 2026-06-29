@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from position_sizer import _regime_weight, _safe_float
+from .position_sizer import _regime_weight, _safe_float
 
 
 # regime 变化阈值: 不同 regime 权重差异超过此值则触发再平衡

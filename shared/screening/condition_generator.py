@@ -8,7 +8,7 @@ generate_conditions(pool, scores, date) → list[condition]
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -250,7 +250,7 @@ def _add_days(date_str: str, days: int) -> str:
     """日期加 N 天。"""
     try:
         d = datetime.strptime(date_str, "%Y%m%d")
-        return (d + datetime.timedelta(days=days)).strftime("%Y%m%d")
+        return (d + timedelta(days=days)).strftime("%Y%m%d")
     except ValueError:
         return date_str
 
@@ -289,7 +289,7 @@ def generate_conditions(
 
     if pool is None:
         try:
-            from candidate_pool import build_pool
+            from .candidate_pool import build_pool
             pool = build_pool(date)
         except ImportError:
             pool = {}
@@ -310,7 +310,7 @@ def generate_conditions(
         scores = scores_map.get(ts_code, {})
         if not scores:
             try:
-                from six_dimension_scorer import score_stock
+                from .six_dimension_scorer import score_stock
                 scores = score_stock(ts_code, date)
             except ImportError:
                 scores = {"combined": 0.5}

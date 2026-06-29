@@ -9,8 +9,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pre_trade_check import _load_limits, _safe_float
-from black_swan import compute_force_reduce
+from .pre_trade_check import _load_limits, _safe_float
+from .black_swan import compute_force_reduce
 
 
 def heal(

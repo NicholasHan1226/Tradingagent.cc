@@ -16,10 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-try:
-    from .slippage_model import estimate_slippage
-except ImportError:
-    from slippage_model import estimate_slippage
+from .slippage_model import estimate_slippage
 
 SIM_LEDGER = Path(__file__).resolve().parent.parent / "logs" / "sim_orders.jsonl"
 

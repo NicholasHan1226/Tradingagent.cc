@@ -10,9 +10,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from position_monitor import check_positions, filter_actions
-from pre_trade_check import _load_limits, _safe_float
-from black_swan import check_black_swan
+from .position_monitor import check_positions, filter_actions
+from .pre_trade_check import _load_limits, _safe_float
+from .black_swan import check_black_swan
 
 
 def patrol(

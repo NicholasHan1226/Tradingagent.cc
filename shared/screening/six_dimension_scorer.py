@@ -409,7 +409,7 @@ def score_universe(
 
     if universe is None:
         try:
-            from universe_filter import filter_universe
+            from .universe_filter import filter_universe
             universe = filter_universe(date)
         except ImportError:
             universe = []

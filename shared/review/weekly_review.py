@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from attribution import attribute_pct
+from .attribution import attribute_pct
 
 REVIEW_DIR = Path(__file__).resolve().parent
 WEEKLY_LOG = REVIEW_DIR / "data" / "weekly_reviews.jsonl"

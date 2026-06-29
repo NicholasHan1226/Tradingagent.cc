@@ -227,7 +227,7 @@ def patrol(
     # 获取打分数据
     if scores_list is None:
         try:
-            from six_dimension_scorer import score_universe
+            from .six_dimension_scorer import score_universe
             scores_list = score_universe(date)
         except ImportError:
             scores_list = []

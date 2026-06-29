@@ -81,6 +81,25 @@ def _read_all_entries_unlocked() -> list[dict[str, Any]]:
         return list(reader)
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value or 0.0)
+        return parsed if parsed == parsed else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value or 0))
+    except (TypeError, ValueError):
+        return default
+
+
+def _entry_date(timestamp: str) -> str:
+    return str(timestamp or "")[:10]
+
+
 def _total_fee(commission: float, stamp_duty: float, transfer_fee: float) -> float:
     total = 0.0
     for name, value in (
@@ -362,21 +381,45 @@ def get_positions() -> list[dict[str, Any]]:
     if not entries:
         return []
 
-    latest: dict[str, dict[str, Any]] = {}
+    states: dict[str, dict[str, Any]] = {}
     for entry in entries:
-        latest[entry["ts_code"]] = entry
+        ts_code = str(entry.get("ts_code", ""))
+        if not ts_code:
+            continue
 
-    positions = []
-    for ts_code, entry in latest.items():
-        qty = int(entry["running_quantity"])
-        if qty > 0:
-            positions.append({
-                "ts_code": ts_code,
-                "quantity": qty,
-                "cost_basis": float(entry["running_cost"]),
-                "avg_price": float(entry["running_avg_price"]),
-            })
-    return positions
+        qty = _safe_int(entry.get("running_quantity"))
+        avg_price = _safe_float(entry.get("running_avg_price"))
+        event_price = _safe_float(entry.get("price"))
+        note = str(entry.get("note", "") or "")
+        event_type = str(entry.get("event_type", ""))
+
+        if event_type == "open" or ts_code not in states:
+            states[ts_code] = {
+                "entry_date": _entry_date(str(entry.get("timestamp", ""))),
+                "high_price": max(avg_price, event_price),
+                "thesis": note,
+            }
+        else:
+            states[ts_code]["high_price"] = max(
+                _safe_float(states[ts_code].get("high_price")),
+                avg_price,
+                event_price,
+            )
+            if note:
+                states[ts_code]["thesis"] = note
+
+        states[ts_code].update({
+            "ts_code": ts_code,
+            "quantity": qty,
+            "cost_basis": _safe_float(entry.get("running_cost")),
+            "avg_price": avg_price,
+            "cost": avg_price,
+        })
+
+        if qty <= 0:
+            states.pop(ts_code, None)
+
+    return [state for state in states.values() if _safe_int(state.get("quantity")) > 0]
 
 
 if __name__ == "__main__":

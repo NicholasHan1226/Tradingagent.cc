@@ -18,8 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from attribution import attribute_pct
-from benchmark import compare_to_benchmark
+from .attribution import attribute_pct
+from .benchmark import compare_to_benchmark
 
 REVIEW_DIR = Path(__file__).resolve().parent
 GOALS_PATH = REVIEW_DIR / "goals.yaml"

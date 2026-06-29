@@ -107,7 +107,7 @@ def build_pool(
     # 2. Universe 层 (过滤后全市场)
     if universe is None:
         try:
-            from universe_filter import filter_universe
+            from .universe_filter import filter_universe
             universe = filter_universe(date)
         except ImportError:
             universe = []
@@ -119,7 +119,7 @@ def build_pool(
     # 4. Candidate 层 (六维打分通过)
     candidate: list[str] = []
     try:
-        from six_dimension_scorer import score_stock
+        from .six_dimension_scorer import score_stock
         for ts_code in universe:
             if ts_code in holdings:
                 continue
@@ -134,7 +134,7 @@ def build_pool(
     # 5. Watch 层 (打分稍低, 但有潜在条件)
     watch: list[str] = []
     try:
-        from six_dimension_scorer import score_stock
+        from .six_dimension_scorer import score_stock
         for ts_code in universe:
             if ts_code in holdings or ts_code in candidate:
                 continue

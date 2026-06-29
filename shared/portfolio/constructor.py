@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from position_sizer import size_position
+from .position_sizer import size_position
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
