@@ -14,6 +14,8 @@ score_universe(date) → list of (ts_code, scores)
 """
 from __future__ import annotations
 
+import csv
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -37,8 +39,17 @@ _DEFAULT_MISSING = 0.5
 
 _WEIGHTS_PATH = Path(__file__).resolve().parent / "weights.yaml"
 
-# Ashare 数据根目录 (placeholder, 用于定位 regime/moneyflow/scores/signals)
+# Ashare 数据根目录
 _ASHARE_DATA = Path("/opt/investment/Ashare/data")
+_MARKETGRAPH_DATA = Path("/opt/investment/MarketGraph/data")
+_MARKETDATA_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+_REGIME_FILE = _MARKETGRAPH_DATA / "all_weather_regime.csv"
+_EVENT_FILE = _MARKETGRAPH_DATA / "intake" / "event_candidates.csv"
+_SENTIMENT_FILE = _MARKETGRAPH_DATA / "intake" / "sentiment_signals.csv"
+_MONEYFLOW_DIR = _ASHARE_DATA / "tushare_cache" / "moneyflow"
+
+_MARKETDATA_CONN: sqlite3.Connection | None = None
+_MARKETDATA_CONN_FAILED = False
 
 
 def _load_weights() -> dict[str, Any]:
@@ -79,186 +90,245 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, v))
 
 
-# ── 六维打分函数 (placeholder 实现, 各维度从对应数据源读取) ──
+# ── 六维打分函数 (各维度从真实数据源读取) ──
+
+def _get_marketdata_conn() -> sqlite3.Connection | None:
+    """Open MarketGraphRuntime marketdata.sqlite once per process, read-only."""
+    global _MARKETDATA_CONN, _MARKETDATA_CONN_FAILED
+    if _MARKETDATA_CONN is not None:
+        return _MARKETDATA_CONN
+    if _MARKETDATA_CONN_FAILED:
+        return None
+    try:
+        if not _MARKETDATA_DB.exists():
+            _MARKETDATA_CONN_FAILED = True
+            return None
+        conn = sqlite3.connect(f"file:{_MARKETDATA_DB}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        _MARKETDATA_CONN = conn
+        return _MARKETDATA_CONN
+    except Exception:
+        _MARKETDATA_CONN_FAILED = True
+        return None
+
+
+def _strip_suffix(ts_code: str) -> str:
+    """Return code without exchange suffix, e.g. 600519.SH -> 600519."""
+    return ts_code.split(".", 1)[0] if "." in ts_code else ts_code
+
+
+def _direction_score(impact_hint: Any) -> float:
+    direction = str(impact_hint or "").split(":", 1)[0].strip().lower()
+    return {"positive": 1.0, "negative": 0.0, "mixed": 0.5, "neutral": 0.5}.get(direction, 0.5)
+
 
 def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """宏观维度 — 从 regime detection 获取当前经济季节。
-
-    regime: growth / inflation / recession / recovery
-    不同 regime 对应不同的宏观倾向分。
-    Placeholder: 读 regime 文件, 按 config 中 regime_scores 映射。
-    """
-    dim_cfg = config.get("dimensions", {}).get("macro", {})
-    regime_scores = dim_cfg.get("regime_scores", {})
-    regime_file = _ASHARE_DATA / "regime" / "current.json"
-    regime = "growth"  # 默认
+    """宏观维度 — 从 MarketGraph all_weather_regime.csv 获取当前 regime。"""
     try:
-        import json
-        if regime_file.exists():
-            with open(regime_file, encoding="utf-8") as f:
-                data = json.load(f)
-            regime = data.get("regime", regime)
-    except (OSError, ValueError, KeyError):
-        pass
-    return _clamp(_safe_float(regime_scores.get(regime, 0.5), 0.5))
+        dim_cfg = config.get("dimensions", {}).get("macro", {})
+        regime_scores = dim_cfg.get("regime_scores", {})
+        if not _REGIME_FILE.exists():
+            return 0.5
+        with open(_REGIME_FILE, encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        if not rows:
+            return 0.5
+        row = max(rows, key=lambda r: str(r.get("generated_at") or ""))
+        regime = str(row.get("regime") or "")
+        score_value = regime_scores.get(regime)
+        if score_value is None:
+            prefix = regime.split("_", 1)[0]
+            score_value = regime_scores.get(prefix, 0.5)
+        regime_score = _safe_float(score_value, 0.5)
+        confidence = _clamp(_safe_float(row.get("regime_confidence"), 0.0))
+        return _clamp(0.5 + (regime_score - 0.5) * confidence)
+    except Exception:
+        return 0.5
 
 
 def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """事件维度 — 从 raw_events 获取个股相关事件影响。
-
-    Placeholder: 查找该股票的近期事件, 按 direction × confidence 聚合。
-    """
-    dim_cfg = config.get("dimensions", {}).get("event", {})
-    min_conf = _safe_float(dim_cfg.get("min_confidence", 0.30), 0.30)
-    # Placeholder: 无事件数据时返回中性
-    events_dir = _ASHARE_DATA / "research_probability"
-    score = 0.5
+    """事件维度 — 从 MarketGraph event_candidates.csv 聚合个股事件方向。"""
     try:
-        import json
-        events_file = events_dir / "event_impacts.json"
-        if events_file.exists():
-            with open(events_file, encoding="utf-8") as f:
-                data = json.load(f)
-            impacts = data.get(ts_code, [])
-            if impacts:
-                total_weight = 0.0
-                weighted = 0.0
-                for ev in impacts:
-                    conf = _safe_float(ev.get("confidence", 0.0))
-                    if conf < min_conf:
-                        continue
-                    direction = ev.get("direction", "neutral")
-                    dir_score = {"positive": 1.0, "negative": 0.0, "neutral": 0.5}.get(direction, 0.5)
-                    weighted += dir_score * conf
-                    total_weight += conf
-                if total_weight > 1e-9:
-                    score = weighted / total_weight
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return _clamp(score)
+        dim_cfg = config.get("dimensions", {}).get("event", {})
+        min_conf = _safe_float(dim_cfg.get("min_confidence", 0.30), 0.30)
+        if not _EVENT_FILE.exists():
+            return 0.5
+        total_weight = 0.0
+        weighted = 0.0
+        allowed_status = {"needs_review", "promoted", "approved"}
+        with open(_EVENT_FILE, encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("subject_code") != ts_code:
+                    continue
+                if row.get("subject_type") != "stock":
+                    continue
+                if row.get("status") not in allowed_status:
+                    continue
+                conf = _safe_float(row.get("confidence"), 0.0)
+                if conf < min_conf:
+                    continue
+                weighted += _direction_score(row.get("proposed_impact_hint")) * conf
+                total_weight += conf
+        if total_weight <= 1e-9:
+            return 0.5
+        return _clamp(weighted / total_weight)
+    except Exception:
+        return 0.5
 
 
 def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """基本面维度 — 从 scores 获取因子打分。
-
-    因子: value / growth / quality / momentum
-    """
-    dim_cfg = config.get("dimensions", {}).get("fundamental", {})
-    factor_weights = dim_cfg.get("factors", {"value": 0.30, "growth": 0.30, "quality": 0.20, "momentum": 0.20})
-    scores_dir = _ASHARE_DATA / "forecasts"
-    score = 0.5
+    """基本面维度 — 从 market_factors 读取最新因子值。"""
     try:
-        import json
-        scores_file = scores_dir / "factor_scores.json"
-        if scores_file.exists():
-            with open(scores_file, encoding="utf-8") as f:
-                data = json.load(f)
-            stock_scores = data.get(ts_code, {})
-            if stock_scores:
-                total_w = 0.0
-                weighted = 0.0
-                for factor, w in factor_weights.items():
-                    raw = _safe_float(stock_scores.get(factor, 0.5), 0.5)
-                    # 原始分假设已在 [0, 1]
-                    weighted += _clamp(raw) * _safe_float(w, 0.0)
-                    total_w += _safe_float(w, 0.0)
-                if total_w > 1e-9:
-                    score = weighted / total_w
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return _clamp(score)
+        dim_cfg = config.get("dimensions", {}).get("fundamental", {})
+        factor_weights = dim_cfg.get("factors", {"value": 0.30, "growth": 0.30, "quality": 0.20, "momentum": 0.20})
+        conn = _get_marketdata_conn()
+        if conn is None:
+            return 0.5
+        symbols = [_strip_suffix(ts_code)]
+        if ts_code not in symbols:
+            symbols.append(ts_code)
+        rows: list[sqlite3.Row] = []
+        for symbol in symbols:
+            rows = conn.execute(
+                "SELECT factor_name, value FROM market_factors "
+                "WHERE market='Ashare' AND symbol=? ORDER BY event_time DESC",
+                (symbol,),
+            ).fetchall()
+            if rows:
+                break
+        if not rows:
+            return 0.5
+        latest_by_factor: dict[str, float] = {}
+        for row in rows:
+            factor = str(row["factor_name"] or "").strip().lower()
+            if factor and factor not in latest_by_factor:
+                raw = _safe_float(row["value"], 0.5)
+                if factor in ("pe", "pb"):
+                    raw = 1.0 - (raw / 100.0)
+                latest_by_factor[factor] = _clamp(raw)
+        total_w = 0.0
+        weighted = 0.0
+        for factor, weight in factor_weights.items():
+            name = str(factor).strip().lower()
+            if name not in latest_by_factor:
+                continue
+            w = _safe_float(weight, 0.0)
+            weighted += latest_by_factor[name] * w
+            total_w += w
+        if total_w <= 1e-9:
+            return 0.5
+        return _clamp(weighted / total_w)
+    except Exception:
+        return 0.5
 
 
 def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """资金维度 — 从 moneyflow 获取主力资金净流入。
-
-    Placeholder: 近 N 日主力净流入 > 0 则加分。
-    """
-    dim_cfg = config.get("dimensions", {}).get("capital", {})
-    window = int(dim_cfg.get("window_days", 5))
-    positive_threshold = _safe_float(dim_cfg.get("positive_threshold", 0.0), 0.0)
-    score = 0.5
+    """资金维度 — 从 Ashare moneyflow CSV 读取窗口内主力净流入。"""
     try:
-        import json
-        moneyflow_dir = _ASHARE_DATA / "tushare_cache"
-        # Placeholder: 假设有 moneyflow 缓存
-        moneyflow_file = moneyflow_dir / "moneyflow.json"
-        if moneyflow_file.exists():
-            with open(moneyflow_file, encoding="utf-8") as f:
-                data = json.load(f)
-            flows = data.get(ts_code, [])
-            recent = flows[:window] if isinstance(flows, list) else []
-            if recent:
-                total_net = sum(_safe_float(f.get("net_amount", 0.0)) for f in recent if isinstance(f, dict))
-                if total_net > positive_threshold:
-                    score = 0.6 + _clamp(total_net / 1e8 / 10.0, 0.0, 0.4)  # 1亿净流入 → 满分
-                else:
-                    score = 0.4 + _clamp(total_net / 1e8 / 10.0, -0.4, 0.2)
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return _clamp(score)
+        dim_cfg = config.get("dimensions", {}).get("capital", {})
+        window = max(1, int(dim_cfg.get("window_days", 5)))
+        if not _MONEYFLOW_DIR.exists():
+            return 0.5
+        end_date = datetime.strptime(date, "%Y%m%d")
+        total_net = 0.0
+        found_file = False
+        for i in range(window):
+            day = (end_date - timedelta(days=i)).strftime("%Y%m%d")
+            moneyflow_file = _MONEYFLOW_DIR / f"{day}.csv"
+            if not moneyflow_file.exists():
+                continue
+            found_file = True
+            with open(moneyflow_file, encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row.get("ts_code") == ts_code:
+                        total_net += _safe_float(row.get("net_mf_amount"), 0.0)
+        if not found_file:
+            return 0.5
+        if total_net > 0:
+            score = 0.6 + _clamp(total_net / 1e5, 0.0, 0.4)
+        else:
+            score = 0.4 + _clamp(total_net / 1e5, -0.4, 0.2)
+        return _clamp(score)
+    except Exception:
+        return 0.5
 
 
 def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """技术维度 — 从 momentum / price action 获取动量信号。
-
-    Placeholder: 近 N 日涨幅 + 均线趋势确认。
-    """
-    dim_cfg = config.get("dimensions", {}).get("technical", {})
-    window = int(dim_cfg.get("window_days", 20))
-    ma_short = int(dim_cfg.get("ma_short", 5))
-    ma_long = int(dim_cfg.get("ma_long", 20))
-    score = 0.5
+    """技术维度 — 从 market_bars_daily 读取日线并计算动量和均线趋势。"""
     try:
-        import json
-        # Placeholder: 假设有日线缓存
-        daily_file = _ASHARE_DATA / "tushare_cache" / f"{ts_code}_daily.json"
-        if daily_file.exists():
-            with open(daily_file, encoding="utf-8") as f:
-                bars = json.load(f)
-            if isinstance(bars, list) and len(bars) >= ma_long:
-                closes = [_safe_float(b.get("close", 0.0)) for b in bars if isinstance(b, dict)]
-                if len(closes) >= ma_long:
-                    # 动量: 近 window 日涨幅
-                    momentum = (closes[-1] - closes[-window]) / closes[-window] if closes[-window] > 1e-9 else 0.0
-                    # 均线趋势: MA_short > MA_long → 多头
-                    ma_s = sum(closes[-ma_short:]) / ma_short
-                    ma_l = sum(closes[-ma_long:]) / ma_long
-                    trend_bonus = 0.1 if ma_s > ma_l else -0.1
-                    # 动量 [-10%, +10%] → [0, 1]
-                    score = 0.5 + _clamp(momentum / 0.20, -0.5, 0.5) + trend_bonus
-    except (OSError, ValueError, KeyError, TypeError, ZeroDivisionError):
-        pass
-    return _clamp(score)
+        dim_cfg = config.get("dimensions", {}).get("technical", {})
+        window = max(1, int(dim_cfg.get("window_days", 20)))
+        ma_short = max(1, int(dim_cfg.get("ma_short", 5)))
+        ma_long = max(1, int(dim_cfg.get("ma_long", 20)))
+        needed = max(window, ma_short, ma_long)
+        conn = _get_marketdata_conn()
+        if conn is None:
+            return 0.5
+        symbols = [_strip_suffix(ts_code)]
+        if ts_code not in symbols:
+            symbols.append(ts_code)
+        rows: list[sqlite3.Row] = []
+        for symbol in symbols:
+            rows = conn.execute(
+                "SELECT trade_date, close FROM market_bars_daily "
+                "WHERE market='Ashare' AND symbol=? ORDER BY trade_date DESC LIMIT 60",
+                (symbol,),
+            ).fetchall()
+            if len(rows) >= ma_long:
+                break
+        if len(rows) < ma_long:
+            return 0.5
+        closes_desc = [_safe_float(row["close"], 0.0) for row in rows]
+        closes = list(reversed([c for c in closes_desc if c > 0]))
+        if len(closes) < needed:
+            return 0.5
+        base = closes[-window]
+        if base <= 1e-9:
+            return 0.5
+        momentum = (closes[-1] - base) / base
+        ma_s = sum(closes[-ma_short:]) / ma_short
+        ma_l = sum(closes[-ma_long:]) / ma_long
+        trend_bonus = 0.1 if ma_s > ma_l else -0.1
+        return _clamp(0.5 + _clamp(momentum / 0.20, -0.5, 0.5) + trend_bonus)
+    except Exception:
+        return 0.5
 
 
 def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """情绪维度 — 从 signals 获取市场情绪信号。
-
-    Placeholder: 涨跌停比 / 换手率 / 北向情绪。
-    极端情绪降权 (过热 → 谨慎)。
-    """
-    dim_cfg = config.get("dimensions", {}).get("sentiment", {})
-    extreme_threshold = _safe_float(dim_cfg.get("extreme_threshold", 0.85), 0.85)
-    score = 0.5
+    """情绪维度 — 从 MarketGraph sentiment_signals.csv 聚合个股情绪信号。"""
     try:
-        import json
-        signals_dir = _ASHARE_DATA / "sector"
-        signals_file = signals_dir / "sentiment.json"
-        if signals_file.exists():
-            with open(signals_file, encoding="utf-8") as f:
-                data = json.load(f)
-            stock_sentiment = data.get(ts_code, {})
-            if stock_sentiment:
-                raw = _safe_float(stock_sentiment.get("score", 0.5), 0.5)
-                # 极端情绪降权
-                if raw > extreme_threshold:
-                    score = 0.5 - (raw - extreme_threshold) * 2.0  # 过热 → 降分
-                else:
-                    score = raw
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return _clamp(score)
+        dim_cfg = config.get("dimensions", {}).get("sentiment", {})
+        extreme_threshold = _safe_float(dim_cfg.get("extreme_threshold", 0.85), 0.85)
+        if not _SENTIMENT_FILE.exists():
+            return 0.5
+        total_weight = 0.0
+        weighted = 0.0
+        allowed_status = {"sentiment_signal", "needs_review", "promoted"}
+        with open(_SENTIMENT_FILE, encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if not row.get("subject_code"):
+                    continue
+                if row.get("subject_code") != ts_code:
+                    continue
+                if row.get("status") not in allowed_status:
+                    continue
+                conf = _safe_float(row.get("confidence"), 0.0)
+                if conf < 0.20:
+                    continue
+                weighted += _direction_score(row.get("proposed_impact_hint")) * conf
+                total_weight += conf
+        if total_weight <= 1e-9:
+            return 0.5
+        raw = _clamp(weighted / total_weight)
+        if raw > extreme_threshold:
+            return _clamp(0.5 - (raw - extreme_threshold) * 2.0)
+        return raw
+    except Exception:
+        return 0.5
 
 
 _DIMENSION_FUNCS = {
