@@ -2,12 +2,12 @@
 """Daily reconciliation: system positions vs Hermes (broker) positions.
 
 Compares the position ledger's view of holdings against the broker's
-(Hermes/Tonghuashun) actual positions, flagging any discrepancies in
-quantity or value.
+(Hermes/Tonghuashun) actual positions, flagging discrepancies in
+quantity only.
 
 Reconciliation tolerance:
   - quantity: exact match required (shares are integers)
-  - value: within 0.01 CNY (one cent) per position
+  - market value: compared for information only, never a mismatch trigger
 
 Output is structured for both automated action and human review.
 """
@@ -22,10 +22,6 @@ from typing import Any
 LEDGER_DIR = Path(__file__).resolve().parent.parent / "logs"
 RECONCILE_LOG = LEDGER_DIR / "reconcile_results.jsonl"
 
-# Tolerance: any value difference > this is a mismatch (in CNY)
-VALUE_TOLERANCE = 0.01
-
-
 def _log_reconcile(result: dict[str, Any]) -> None:
     """Append reconciliation result to JSONL log."""
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
@@ -35,6 +31,26 @@ def _log_reconcile(result: dict[str, Any]) -> None:
     }
     with open(RECONCILE_LOG, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    """Safely coerce a position quantity to int."""
+    try:
+        if value in (None, ""):
+            return default
+        return int(float(str(value).replace(",", "")))
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Safely coerce a position value to float."""
+    try:
+        if value in (None, ""):
+            return default
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return default
 
 
 def _normalize_positions(
@@ -55,9 +71,9 @@ def _normalize_positions(
         ts_code = p.get("ts_code", "")
         if not ts_code:
             continue
-        qty = int(p.get("quantity", 0))
+        qty = _safe_int(p.get("quantity", 0))
         # Prefer market_value if available (Hermes), fall back to cost_basis
-        value = float(
+        value = _safe_float(
             p.get("market_value", p.get("cost_basis", p.get("value", 0.0)))
         )
         normalized[ts_code] = {"quantity": qty, "value": round(value, 2)}
@@ -82,8 +98,10 @@ def reconcile(
             "mismatches": list of dicts:
                 {"ts_code", "system_qty", "hermes_qty", "qty_diff",
                  "system_value", "hermes_value", "value_diff", "type"}
-                type is one of: "quantity_diff", "value_diff",
+                type is one of: "quantity_diff",
                                 "missing_in_system", "missing_in_hermes"
+            "market_value_comparisons": informational list of dicts:
+                {"ts_code", "system_value", "hermes_value", "value_diff"}
             "actions": list of recommended actions:
                 {"ts_code", "action", "detail"}
                 action is one of: "investigate", "adjust_system",
@@ -103,11 +121,22 @@ def reconcile(
 
     matched = []
     mismatches = []
+    market_value_comparisons = []
     actions = []
 
     for ts_code in sorted(all_codes):
         sys_pos = sys_norm.get(ts_code)
         herm_pos = herm_norm.get(ts_code)
+
+        system_value = sys_pos["value"] if sys_pos is not None else 0.0
+        hermes_value = herm_pos["value"] if herm_pos is not None else 0.0
+        value_diff = round(system_value - hermes_value, 2)
+        market_value_comparisons.append({
+            "ts_code": ts_code,
+            "system_value": system_value,
+            "hermes_value": hermes_value,
+            "value_diff": value_diff,
+        })
 
         if sys_pos is None and herm_pos is not None:
             # Position exists in Hermes but not in system
@@ -117,8 +146,8 @@ def reconcile(
                 "hermes_qty": herm_pos["quantity"],
                 "qty_diff": herm_pos["quantity"],
                 "system_value": 0.0,
-                "hermes_value": herm_pos["value"],
-                "value_diff": round(herm_pos["value"], 2),
+                "hermes_value": hermes_value,
+                "value_diff": value_diff,
                 "type": "missing_in_system",
             })
             actions.append({
@@ -136,9 +165,9 @@ def reconcile(
                 "system_qty": sys_pos["quantity"],
                 "hermes_qty": 0,
                 "qty_diff": -sys_pos["quantity"],
-                "system_value": sys_pos["value"],
+                "system_value": system_value,
                 "hermes_value": 0.0,
-                "value_diff": round(-sys_pos["value"], 2),
+                "value_diff": value_diff,
                 "type": "missing_in_hermes",
             })
             actions.append({
@@ -149,45 +178,37 @@ def reconcile(
             })
             continue
 
-        # Both exist — compare quantity and value
+        # Both exist: quantity is the only mismatch trigger. Market value is
+        # compared separately for human review because cost basis and broker
+        # market value are different accounting concepts.
         qty_diff = sys_pos["quantity"] - herm_pos["quantity"]
-        value_diff = round(sys_pos["value"] - herm_pos["value"], 2)
 
-        if qty_diff == 0 and abs(value_diff) <= VALUE_TOLERANCE:
+        if qty_diff == 0:
             matched.append(ts_code)
         else:
-            mismatch_type = "quantity_diff" if qty_diff != 0 else "value_diff"
             mismatches.append({
                 "ts_code": ts_code,
                 "system_qty": sys_pos["quantity"],
                 "hermes_qty": herm_pos["quantity"],
                 "qty_diff": qty_diff,
-                "system_value": sys_pos["value"],
-                "hermes_value": herm_pos["value"],
+                "system_value": system_value,
+                "hermes_value": hermes_value,
                 "value_diff": value_diff,
-                "type": mismatch_type,
+                "type": "quantity_diff",
             })
 
-            if qty_diff != 0:
-                actions.append({
-                    "ts_code": ts_code,
-                    "action": "force_sync",
-                    "detail": f"Quantity mismatch: system={sys_pos['quantity']}, "
-                              f"hermes={herm_pos['quantity']}, diff={qty_diff}. "
-                              f"Force-sync from Hermes as source of truth.",
-                })
-            else:
-                actions.append({
-                    "ts_code": ts_code,
-                    "action": "investigate",
-                    "detail": f"Value mismatch: system={sys_pos['value']}, "
-                              f"hermes={herm_pos['value']}, diff={value_diff}. "
-                              f"Check for price/cost basis calculation differences.",
-                })
+            actions.append({
+                "ts_code": ts_code,
+                "action": "force_sync",
+                "detail": f"Quantity mismatch: system={sys_pos['quantity']}, "
+                          f"hermes={herm_pos['quantity']}, diff={qty_diff}. "
+                          f"Force-sync from Hermes as source of truth.",
+            })
 
     result = {
         "matched": matched,
         "mismatches": mismatches,
+        "market_value_comparisons": market_value_comparisons,
         "actions": actions,
         "summary": {
             "total_system": len(sys_norm),

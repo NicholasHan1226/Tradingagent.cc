@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Capital flow ledger: track every cent of fund movement.
 
-Records all capital events: buy, sell, reverse_repo, interest, fee.
+Records all capital events: buy, sell, deposit, withdrawal, reverse_repo,
+repo_maturity, interest, fee.
 CSV storage, append-only. Each entry is timestamped and linked to its
 source order/audit event.
 
 Capital events:
   - buy:          cash out (negative cash delta), increases position cost
   - sell:         cash in (positive cash delta), decreases position cost
+  - deposit:      cash in from external funding
+  - withdrawal:   cash out to external account
   - reverse_repo: cash out (lend money via GC001 etc.), returns next day with interest
+  - repo_maturity: cash in from reverse repo principal + interest settlement
   - interest:     cash in from reverse repo or cash account interest
   - fee:          cash out (commission + stamp duty + transfer fee)
 
@@ -30,7 +34,7 @@ CAPITAL_CSV = LEDGER_DIR / "capital_ledger.csv"
 CSV_HEADERS = [
     "entry_id",
     "timestamp",
-    "event_type",       # buy | sell | reverse_repo | interest | fee
+    "event_type",       # buy | sell | deposit | withdrawal | reverse_repo | repo_maturity | interest | fee
     "ts_code",          # stock code or "CASH" for pure cash events
     "quantity",         # shares (0 for interest/fee/reverse_repo principal)
     "price",            # execution price (0 for interest/fee)
@@ -114,6 +118,102 @@ def _calc_sell_fee(amount: float) -> float:
 
 
 # ---- public API -------------------------------------------------------------
+
+def record_deposit(amount: float, date: str) -> dict[str, Any]:
+    """Record external cash funding.
+
+    Args:
+        amount: deposit amount (positive float).
+        date: accounting timestamp/date to store in the ledger.
+
+    Returns:
+        dict with: entry_id, amount, cash_delta, timestamp.
+    """
+    if amount <= 0:
+        raise ValueError(f"amount must be positive, got {amount}")
+
+    cash_delta = round(amount, 2)
+    entry = CapitalEntry(
+        event_type="deposit",
+        ts_code="CASH",
+        amount=cash_delta,
+        note="cash deposit",
+        timestamp=date,
+    )
+    eid = _append(entry)
+    return {
+        "entry_id": eid,
+        "amount": cash_delta,
+        "cash_delta": cash_delta,
+        "timestamp": entry.timestamp,
+    }
+
+
+def record_withdrawal(amount: float, date: str) -> dict[str, Any]:
+    """Record external cash withdrawal.
+
+    Args:
+        amount: withdrawal amount (positive float).
+        date: accounting timestamp/date to store in the ledger.
+
+    Returns:
+        dict with: entry_id, amount, cash_delta, timestamp.
+    """
+    if amount <= 0:
+        raise ValueError(f"amount must be positive, got {amount}")
+
+    cash_delta = round(-amount, 2)
+    entry = CapitalEntry(
+        event_type="withdrawal",
+        ts_code="CASH",
+        amount=cash_delta,
+        note="cash withdrawal",
+        timestamp=date,
+    )
+    eid = _append(entry)
+    return {
+        "entry_id": eid,
+        "amount": round(amount, 2),
+        "cash_delta": cash_delta,
+        "timestamp": entry.timestamp,
+    }
+
+
+def record_repo_maturity(principal: float, rate: float, date: str) -> dict[str, Any]:
+    """Record reverse repo settlement: principal plus one-day interest.
+
+    Args:
+        principal: settled principal (positive float).
+        rate: annualized repo rate (e.g. 0.025 = 2.5%).
+        date: accounting timestamp/date to store in the ledger.
+
+    Returns:
+        dict with: entry_id, principal, interest, cash_delta, timestamp.
+    """
+    if principal <= 0:
+        raise ValueError(f"principal must be positive, got {principal}")
+    if rate < 0:
+        raise ValueError(f"rate must be non-negative, got {rate}")
+
+    interest = round(principal * rate / 365.0, 2)
+    cash_delta = round(principal + interest, 2)
+    entry = CapitalEntry(
+        event_type="repo_maturity",
+        ts_code="CASH",
+        price=rate,
+        amount=cash_delta,
+        note=f"reverse_repo maturity principal={principal} interest={interest}",
+        timestamp=date,
+    )
+    eid = _append(entry)
+    return {
+        "entry_id": eid,
+        "principal": round(principal, 2),
+        "interest": interest,
+        "cash_delta": cash_delta,
+        "timestamp": entry.timestamp,
+    }
+
 
 def record_buy(
     ts_code: str,

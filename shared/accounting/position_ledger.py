@@ -86,6 +86,24 @@ def _read_all_entries() -> list[dict[str, Any]]:
         return list(reader)
 
 
+def _total_fee(commission: float, stamp_duty: float, transfer_fee: float) -> float:
+    """Validate and sum sell-side fees."""
+    total = 0.0
+    for name, value in (
+        ("commission", commission),
+        ("stamp_duty", stamp_duty),
+        ("transfer_fee", transfer_fee),
+    ):
+        try:
+            fee = float(value or 0.0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be numeric, got {value}") from exc
+        if fee < 0:
+            raise ValueError(f"{name} must be non-negative, got {value}")
+        total += fee
+    return round(total, 2)
+
+
 def _get_current_state(ts_code: str) -> dict[str, Any]:
     """Get current running state for a ts_code by replaying the ledger.
 
@@ -262,10 +280,13 @@ def reduce_position(
     order_id: str = "",
     audit_id: str = "",
     note: str = "",
+    commission: float = 0.0,
+    stamp_duty: float = 0.0,
+    transfer_fee: float = 0.0,
 ) -> dict[str, Any]:
     """Reduce (partially sell) a position. Fails if quantity exceeds holding.
 
-    Realized P&L = (sell_price - avg_cost) * quantity_sold.
+    Realized P&L = gross proceeds - released cost basis - sell-side fees.
 
     Args:
         ts_code: stock code.
@@ -274,6 +295,9 @@ def reduce_position(
         order_id: link to execution order.
         audit_id: link to audit trail event.
         note: free-text annotation.
+        commission: sell commission paid.
+        stamp_duty: sell stamp duty paid.
+        transfer_fee: sell transfer fee paid.
 
     Returns:
         dict with: entry_id, ts_code, quantity_reduced, remaining_quantity,
@@ -295,7 +319,8 @@ def reduce_position(
 
     avg_cost = current["avg_price"]
     sell_amount = round(quantity * price, 2)
-    realized_pnl = round((price - avg_cost) * quantity, 2)
+    fee_total = _total_fee(commission, stamp_duty, transfer_fee)
+    realized_pnl = round(sell_amount - (avg_cost * quantity) - fee_total, 2)
     new_qty = current["quantity"] - quantity
     # Cost basis reduces proportionally
     new_cost = round(avg_cost * new_qty, 2)
@@ -333,6 +358,7 @@ def reduce_position(
         "quantity_reduced": quantity,
         "remaining_quantity": new_qty,
         "realized_pnl": realized_pnl,
+        "fee": fee_total,
         "avg_price": avg_cost,
         "event_type": "reduce",
     }
@@ -344,10 +370,13 @@ def close_position(
     order_id: str = "",
     audit_id: str = "",
     note: str = "",
+    commission: float = 0.0,
+    stamp_duty: float = 0.0,
+    transfer_fee: float = 0.0,
 ) -> dict[str, Any]:
     """Close an entire position. Fails if no position exists.
 
-    Realized P&L = (sell_price - avg_cost) * total_quantity.
+    Realized P&L = gross proceeds - released cost basis - sell-side fees.
 
     Args:
         ts_code: stock code.
@@ -355,6 +384,9 @@ def close_position(
         order_id: link to execution order.
         audit_id: link to audit trail event.
         note: free-text annotation.
+        commission: sell commission paid.
+        stamp_duty: sell stamp duty paid.
+        transfer_fee: sell transfer fee paid.
 
     Returns:
         dict with: entry_id, ts_code, quantity_closed, realized_pnl,
@@ -370,7 +402,8 @@ def close_position(
     quantity = current["quantity"]
     avg_cost = current["avg_price"]
     sell_amount = round(quantity * price, 2)
-    realized_pnl = round((price - avg_cost) * quantity, 2)
+    fee_total = _total_fee(commission, stamp_duty, transfer_fee)
+    realized_pnl = round(sell_amount - (avg_cost * quantity) - fee_total, 2)
 
     entry = PositionEntry(
         event_type="close",
@@ -404,6 +437,7 @@ def close_position(
         "ts_code": ts_code,
         "quantity_closed": quantity,
         "realized_pnl": realized_pnl,
+        "fee": fee_total,
         "avg_price": avg_cost,
         "event_type": "close",
     }
