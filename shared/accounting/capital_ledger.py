@@ -22,35 +22,39 @@ All amounts in CNY, rounded to 0.01 (cent precision).
 from __future__ import annotations
 
 import csv
+import fcntl
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 LEDGER_DIR = Path(__file__).resolve().parent.parent / "logs"
 CAPITAL_CSV = LEDGER_DIR / "capital_ledger.csv"
+CAPITAL_LOCK = CAPITAL_CSV.with_suffix(".csv.lock")
+DEFAULT_CAPITAL_LAYER = "shadow"
 
 CSV_HEADERS = [
     "entry_id",
     "timestamp",
-    "event_type",       # buy | sell | deposit | withdrawal | reverse_repo | repo_maturity | interest | fee
-    "ts_code",          # stock code or "CASH" for pure cash events
-    "quantity",         # shares (0 for interest/fee/reverse_repo principal)
-    "price",            # execution price (0 for interest/fee)
-    "amount",           # total cash delta: negative=outflow, positive=inflow
-    "fee",              # commission + stamp duty + transfer fee (>=0)
-    "order_id",         # link to execution order
-    "audit_id",         # link to trade_audit_trail event
+    "event_type",
+    "capital_layer",   # shadow | sim | real
+    "ts_code",
+    "quantity",
+    "price",
+    "amount",
+    "fee",
+    "order_id",
+    "audit_id",
     "note",
 ]
 
-# A-share fee components (configurable, defaults are typical retail rates)
 FEE_CONFIG = {
-    "commission_rate": 0.00025,       # 0.025% per side
-    "commission_min": 5.0,            # minimum 5 CNY per trade
-    "stamp_duty_rate": 0.0005,        # 0.05% sell only
-    "transfer_fee_rate": 0.00002,     # 0.002% both sides (SSE only, but applied uniformly)
+    "commission_rate": 0.00025,
+    "commission_min": 5.0,
+    "stamp_duty_rate": 0.0005,
+    "transfer_fee_rate": 0.00002,
 }
 
 
@@ -59,10 +63,11 @@ class CapitalEntry:
     """Single capital flow record."""
 
     event_type: str
+    capital_layer: str = DEFAULT_CAPITAL_LAYER
     ts_code: str = "CASH"
     quantity: int = 0
     price: float = 0.0
-    amount: float = 0.0                 # net cash delta (signed)
+    amount: float = 0.0
     fee: float = 0.0
     order_id: str = ""
     audit_id: str = ""
@@ -71,22 +76,74 @@ class CapitalEntry:
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
-def _ensure_csv() -> None:
-    """Create CSV with headers if it does not exist."""
+@contextmanager
+def _ledger_lock() -> Iterator[None]:
+    """Serialize CSV readers/writers across processes."""
+    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CAPITAL_LOCK, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _normalize_capital_layer(value: str | None) -> str:
+    layer = str(value or DEFAULT_CAPITAL_LAYER).strip().lower()
+    if layer in {"shadow", "sim", "real"}:
+        return layer
+    raise ValueError(f"capital_layer must be one of shadow/sim/real, got {value}")
+
+
+def _read_all_entries_unlocked() -> list[dict[str, Any]]:
+    if not CAPITAL_CSV.exists():
+        return []
+    with open(CAPITAL_CSV, "r", newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        return [dict(row) for row in reader]
+
+
+def _rewrite_entries_unlocked(entries: list[dict[str, Any]]) -> None:
+    with open(CAPITAL_CSV, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
+        writer.writeheader()
+        for entry in entries:
+            normalized = {key: entry.get(key, "") for key in CSV_HEADERS}
+            normalized["capital_layer"] = _normalize_capital_layer(
+                entry.get("capital_layer", DEFAULT_CAPITAL_LAYER)
+            )
+            writer.writerow(normalized)
+
+
+def _ensure_csv_unlocked() -> None:
+    """Create CSV and migrate legacy rows to include capital_layer."""
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
     if not CAPITAL_CSV.exists():
         with open(CAPITAL_CSV, "w", newline="", encoding="utf-8") as fh:
             writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
             writer.writeheader()
+        return
+
+    with open(CAPITAL_CSV, "r", newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        fieldnames = reader.fieldnames or []
+        if fieldnames == CSV_HEADERS:
+            return
+        entries = [dict(row) for row in reader]
+
+    if "capital_layer" not in fieldnames:
+        for entry in entries:
+            entry["capital_layer"] = DEFAULT_CAPITAL_LAYER
+        _rewrite_entries_unlocked(entries)
 
 
 def _append(entry: CapitalEntry) -> str:
     """Append a capital entry to CSV. Returns entry_id."""
-    _ensure_csv()
     row = {
         "entry_id": entry.entry_id,
         "timestamp": entry.timestamp,
         "event_type": entry.event_type,
+        "capital_layer": _normalize_capital_layer(entry.capital_layer),
         "ts_code": entry.ts_code,
         "quantity": entry.quantity,
         "price": round(entry.price, 4),
@@ -96,45 +153,40 @@ def _append(entry: CapitalEntry) -> str:
         "audit_id": entry.audit_id,
         "note": entry.note,
     }
-    with open(CAPITAL_CSV, "a", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
-        writer.writerow(row)
+    with _ledger_lock():
+        _ensure_csv_unlocked()
+        with open(CAPITAL_CSV, "a", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
+            writer.writerow(row)
     return entry.entry_id
 
 
 def _calc_buy_fee(amount: float) -> float:
-    """Calculate fee for a buy: commission + transfer fee (no stamp duty)."""
     commission = max(amount * FEE_CONFIG["commission_rate"], FEE_CONFIG["commission_min"])
     transfer = amount * FEE_CONFIG["transfer_fee_rate"]
     return round(commission + transfer, 2)
 
 
 def _calc_sell_fee(amount: float) -> float:
-    """Calculate fee for a sell: commission + stamp duty + transfer fee."""
     commission = max(amount * FEE_CONFIG["commission_rate"], FEE_CONFIG["commission_min"])
     stamp = amount * FEE_CONFIG["stamp_duty_rate"]
     transfer = amount * FEE_CONFIG["transfer_fee_rate"]
     return round(commission + stamp + transfer, 2)
 
 
-# ---- public API -------------------------------------------------------------
-
-def record_deposit(amount: float, date: str) -> dict[str, Any]:
-    """Record external cash funding.
-
-    Args:
-        amount: deposit amount (positive float).
-        date: accounting timestamp/date to store in the ledger.
-
-    Returns:
-        dict with: entry_id, amount, cash_delta, timestamp.
-    """
+def record_deposit(
+    amount: float,
+    date: str,
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
+) -> dict[str, Any]:
     if amount <= 0:
         raise ValueError(f"amount must be positive, got {amount}")
 
+    layer = _normalize_capital_layer(capital_layer)
     cash_delta = round(amount, 2)
     entry = CapitalEntry(
         event_type="deposit",
+        capital_layer=layer,
         ts_code="CASH",
         amount=cash_delta,
         note="cash deposit",
@@ -145,26 +197,24 @@ def record_deposit(amount: float, date: str) -> dict[str, Any]:
         "entry_id": eid,
         "amount": cash_delta,
         "cash_delta": cash_delta,
+        "capital_layer": layer,
         "timestamp": entry.timestamp,
     }
 
 
-def record_withdrawal(amount: float, date: str) -> dict[str, Any]:
-    """Record external cash withdrawal.
-
-    Args:
-        amount: withdrawal amount (positive float).
-        date: accounting timestamp/date to store in the ledger.
-
-    Returns:
-        dict with: entry_id, amount, cash_delta, timestamp.
-    """
+def record_withdrawal(
+    amount: float,
+    date: str,
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
+) -> dict[str, Any]:
     if amount <= 0:
         raise ValueError(f"amount must be positive, got {amount}")
 
+    layer = _normalize_capital_layer(capital_layer)
     cash_delta = round(-amount, 2)
     entry = CapitalEntry(
         event_type="withdrawal",
+        capital_layer=layer,
         ts_code="CASH",
         amount=cash_delta,
         note="cash withdrawal",
@@ -175,30 +225,28 @@ def record_withdrawal(amount: float, date: str) -> dict[str, Any]:
         "entry_id": eid,
         "amount": round(amount, 2),
         "cash_delta": cash_delta,
+        "capital_layer": layer,
         "timestamp": entry.timestamp,
     }
 
 
-def record_repo_maturity(principal: float, rate: float, date: str) -> dict[str, Any]:
-    """Record reverse repo settlement: principal plus one-day interest.
-
-    Args:
-        principal: settled principal (positive float).
-        rate: annualized repo rate (e.g. 0.025 = 2.5%).
-        date: accounting timestamp/date to store in the ledger.
-
-    Returns:
-        dict with: entry_id, principal, interest, cash_delta, timestamp.
-    """
+def record_repo_maturity(
+    principal: float,
+    rate: float,
+    date: str,
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
+) -> dict[str, Any]:
     if principal <= 0:
         raise ValueError(f"principal must be positive, got {principal}")
     if rate < 0:
         raise ValueError(f"rate must be non-negative, got {rate}")
 
+    layer = _normalize_capital_layer(capital_layer)
     interest = round(principal * rate / 365.0, 2)
     cash_delta = round(principal + interest, 2)
     entry = CapitalEntry(
         event_type="repo_maturity",
+        capital_layer=layer,
         ts_code="CASH",
         price=rate,
         amount=cash_delta,
@@ -211,6 +259,7 @@ def record_repo_maturity(principal: float, rate: float, date: str) -> dict[str, 
         "principal": round(principal, 2),
         "interest": interest,
         "cash_delta": cash_delta,
+        "capital_layer": layer,
         "timestamp": entry.timestamp,
     }
 
@@ -222,31 +271,21 @@ def record_buy(
     order_id: str = "",
     audit_id: str = "",
     note: str = "",
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
 ) -> dict[str, Any]:
-    """Record a buy: cash out = trade amount + fees.
-
-    Args:
-        ts_code: stock code, e.g. "600519.SH".
-        quantity: shares bought (positive int).
-        price: execution price per share.
-        order_id: link to execution order.
-        audit_id: link to audit trail event.
-        note: free-text annotation.
-
-    Returns:
-        dict with: entry_id, trade_amount, fee, cash_delta, timestamp.
-    """
     if quantity <= 0:
         raise ValueError(f"quantity must be positive, got {quantity}")
     if price <= 0:
         raise ValueError(f"price must be positive, got {price}")
 
+    layer = _normalize_capital_layer(capital_layer)
     trade_amount = round(quantity * price, 2)
     fee = _calc_buy_fee(trade_amount)
-    cash_delta = round(-(trade_amount + fee), 2)  # outflow
+    cash_delta = round(-(trade_amount + fee), 2)
 
     entry = CapitalEntry(
         event_type="buy",
+        capital_layer=layer,
         ts_code=ts_code,
         quantity=quantity,
         price=price,
@@ -262,6 +301,7 @@ def record_buy(
         "trade_amount": trade_amount,
         "fee": fee,
         "cash_delta": cash_delta,
+        "capital_layer": layer,
         "timestamp": entry.timestamp,
     }
 
@@ -273,31 +313,21 @@ def record_sell(
     order_id: str = "",
     audit_id: str = "",
     note: str = "",
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
 ) -> dict[str, Any]:
-    """Record a sell: cash in = trade amount - fees.
-
-    Args:
-        ts_code: stock code.
-        quantity: shares sold (positive int).
-        price: execution price per share.
-        order_id: link to execution order.
-        audit_id: link to audit trail event.
-        note: free-text annotation.
-
-    Returns:
-        dict with: entry_id, trade_amount, fee, cash_delta, timestamp.
-    """
     if quantity <= 0:
         raise ValueError(f"quantity must be positive, got {quantity}")
     if price <= 0:
         raise ValueError(f"price must be positive, got {price}")
 
+    layer = _normalize_capital_layer(capital_layer)
     trade_amount = round(quantity * price, 2)
     fee = _calc_sell_fee(trade_amount)
-    cash_delta = round(trade_amount - fee, 2)  # inflow
+    cash_delta = round(trade_amount - fee, 2)
 
     entry = CapitalEntry(
         event_type="sell",
+        capital_layer=layer,
         ts_code=ts_code,
         quantity=quantity,
         price=price,
@@ -313,6 +343,7 @@ def record_sell(
         "trade_amount": trade_amount,
         "fee": fee,
         "cash_delta": cash_delta,
+        "capital_layer": layer,
         "timestamp": entry.timestamp,
     }
 
@@ -323,28 +354,18 @@ def record_reverse_repo(
     order_id: str = "",
     audit_id: str = "",
     note: str = "",
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
 ) -> dict[str, Any]:
-    """Record a reverse repo (e.g. GC001): lend cash, get it back + interest next day.
-
-    Args:
-        amount: principal lent (positive float).
-        rate: annualized repo rate (e.g. 0.025 = 2.5%).
-        order_id: link to execution order.
-        audit_id: link to audit trail event.
-        note: free-text annotation (e.g. "GC001").
-
-    Returns:
-        dict with: entry_id, principal, expected_interest, cash_delta, timestamp.
-    """
     if amount <= 0:
         raise ValueError(f"amount must be positive, got {amount}")
 
-    # T+1 settlement, 1-day repo: interest = principal * rate * 1/365
+    layer = _normalize_capital_layer(capital_layer)
     expected_interest = round(amount * rate / 365.0, 2)
-    cash_delta = round(-amount, 2)  # principal outflow today
+    cash_delta = round(-amount, 2)
 
     entry = CapitalEntry(
         event_type="reverse_repo",
+        capital_layer=layer,
         ts_code="CASH",
         quantity=0,
         price=rate,
@@ -360,6 +381,7 @@ def record_reverse_repo(
         "principal": amount,
         "expected_interest": expected_interest,
         "cash_delta": cash_delta,
+        "capital_layer": layer,
         "timestamp": entry.timestamp,
     }
 
@@ -369,27 +391,19 @@ def record_interest(
     source: str = "reverse_repo",
     audit_id: str = "",
     note: str = "",
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
 ) -> dict[str, Any]:
-    """Record interest received (from reverse repo settlement or cash account).
-
-    Args:
-        amount: interest received (positive float).
-        source: "reverse_repo" | "cash_account" | "dividend".
-        audit_id: link to audit trail event.
-        note: free-text annotation.
-
-    Returns:
-        dict with: entry_id, amount, cash_delta, timestamp.
-    """
     if amount <= 0:
         raise ValueError(f"amount must be positive, got {amount}")
 
+    layer = _normalize_capital_layer(capital_layer)
     entry = CapitalEntry(
         event_type="interest",
+        capital_layer=layer,
         ts_code="CASH",
         quantity=0,
         price=0.0,
-        amount=round(amount, 2),  # inflow
+        amount=round(amount, 2),
         fee=0.0,
         order_id="",
         audit_id=audit_id,
@@ -400,31 +414,30 @@ def record_interest(
         "entry_id": eid,
         "amount": round(amount, 2),
         "cash_delta": round(amount, 2),
+        "capital_layer": layer,
         "timestamp": entry.timestamp,
     }
 
 
 def _read_all_entries() -> list[dict[str, Any]]:
-    """Read all capital ledger entries."""
-    if not CAPITAL_CSV.exists():
-        return []
-    with open(CAPITAL_CSV, "r", newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        return list(reader)
+    with _ledger_lock():
+        _ensure_csv_unlocked()
+        return _read_all_entries_unlocked()
 
 
-def get_capital_balance(as_of: str | None = None) -> dict[str, Any]:
-    """Get total capital balance (sum of all cash deltas).
-
-    Args:
-        as_of: ISO timestamp cutoff (inclusive). None = all entries.
-
-    Returns:
-        dict with: balance, total_inflow, total_outflow, entry_count, as_of.
-    """
+def get_capital_balance(
+    as_of: str | None = None,
+    capital_layer: str | None = None,
+) -> dict[str, Any]:
     entries = _read_all_entries()
     if as_of:
         entries = [e for e in entries if e["timestamp"] <= as_of]
+    layer = None if capital_layer is None else _normalize_capital_layer(capital_layer)
+    if layer is not None:
+        entries = [
+            e for e in entries
+            if _normalize_capital_layer(e.get("capital_layer", DEFAULT_CAPITAL_LAYER)) == layer
+        ]
 
     total_inflow = sum(float(e["amount"]) for e in entries if float(e["amount"]) > 0)
     total_outflow = sum(abs(float(e["amount"])) for e in entries if float(e["amount"]) < 0)
@@ -435,29 +448,16 @@ def get_capital_balance(as_of: str | None = None) -> dict[str, Any]:
         "total_inflow": round(total_inflow, 2),
         "total_outflow": round(total_outflow, 2),
         "entry_count": len(entries),
+        "capital_layer": layer,
         "as_of": as_of,
     }
 
 
-def get_cash_position(as_of: str | None = None) -> float:
-    """Get current cash position (alias for capital balance).
+def get_cash_position(as_of: str | None = None, capital_layer: str | None = None) -> float:
+    return get_capital_balance(as_of=as_of, capital_layer=capital_layer)["balance"]
 
-    This is the liquid cash available for trading. It equals the sum of all
-    cash deltas (deposits - withdrawals + sells - buys - fees + interest).
-
-    Args:
-        as_of: ISO timestamp cutoff (inclusive). None = all entries.
-
-    Returns:
-        Cash position in CNY (float, rounded to cent).
-    """
-    return get_capital_balance(as_of=as_of)["balance"]
-
-
-# ---- self-test --------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Smoke test: buy 100 shares at 10.00, sell 100 shares at 11.00
     r1 = record_buy("600519.SH", 100, 10.00, order_id="TEST-001", note="smoke test buy")
     print("buy:", r1)
     r2 = record_sell("600519.SH", 100, 11.00, order_id="TEST-002", note="smoke test sell")

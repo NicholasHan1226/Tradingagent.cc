@@ -212,8 +212,9 @@ def check(order: dict[str, Any], portfolio: dict[str, Any] | None = None) -> dic
             if len(parts) == 2 and ts_code in parts:
                 corr = _safe_float(corr_val)
                 if abs(corr) > corr_threshold:
-                    # 高相关降权 20%
-                    new_w = adjusted_weight * 0.8
+                    # 高相关按 multiplicative 方式累计降权, 避免后一个覆盖前一个
+                    reduction = 0.20
+                    new_w = adjusted_weight * (1.0 - reduction)
                     adjustments.append(
                         f"相关性降权: {ts_code} 与 {parts} 相关性 {corr:.3f} > {corr_threshold:.3f}, "
                         f"权重 {adjusted_weight:.4f} → {new_w:.4f}"

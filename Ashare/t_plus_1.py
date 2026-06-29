@@ -1,59 +1,62 @@
-"""A-share T+1 settlement constraint helpers.
-
-A-share market enforces T+1 settlement: shares bought today cannot be sold
-until the next trading day. This module provides utilities to check whether
-a position is sellable on a given date and to filter a portfolio down to
-only T+1-compliant sellable positions.
-
-Usage:
-    from Ashare.t_plus_1 import can_sell, filter_sellable
-
-    if can_sell(position_open_date, current_date):
-        # safe to issue sell order
-"""
+"""A-share T+1 settlement constraint helpers."""
 
 from __future__ import annotations
 
+import sys
 from datetime import date, datetime, timedelta
-from typing import Iterable, Sequence
+from pathlib import Path
+from typing import Sequence
+
+SHAREDSIGNALS_REFERENCE = Path("/opt/investment/SharedSignals/reference")
+if SHAREDSIGNALS_REFERENCE.exists():
+    ref_path = str(SHAREDSIGNALS_REFERENCE)
+    if ref_path not in sys.path:
+        sys.path.insert(0, ref_path)
+
+try:
+    from market_calendar import get_next_trading_day as _calendar_next_trading_day
+except Exception:  # pragma: no cover - runtime fallback path
+    _calendar_next_trading_day = None
 
 
 def _to_date(d: date | datetime | str) -> date:
-    """Coerce a date / datetime / YYYYMMDD string into a date object."""
     if isinstance(d, datetime):
         return d.date()
     if isinstance(d, date):
         return d
     if isinstance(d, str):
-        # support both "20260629" and "2026-06-29"
         cleaned = d.replace("-", "").replace("/", "")
         return datetime.strptime(cleaned, "%Y%m%d").date()
     raise TypeError(f"Unsupported date type: {type(d)}")
 
 
-def can_sell(position_open_date: date | datetime | str,
-             current_date: date | datetime | str) -> bool:
-    """Return True if a position opened on *position_open_date* may be sold
-    on *current_date* under A-share T+1 rules.
+def _next_weekday(d: date) -> date:
+    candidate = d + timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate += timedelta(days=1)
+    return candidate
 
-    A position bought on day T can only be sold on day T+1 or later.
-    Same-day sell-back is not allowed.
 
-    Parameters
-    ----------
-    position_open_date
-        The date the position was acquired (buy fill date).
-    current_date
-        The date on which the sell would be attempted.
+def next_sellable_date(position_open_date: date | datetime | str) -> date:
+    """Return the earliest sellable date under T+1."""
+    open_d = _to_date(position_open_date)
+    if _calendar_next_trading_day is not None:
+        try:
+            next_day = _calendar_next_trading_day(open_d)
+            if next_day is not None:
+                return next_day
+        except Exception:
+            pass
+    return _next_weekday(open_d)
 
-    Returns
-    -------
-    bool
-        True if sellable (current_date strictly after open_date), False otherwise.
-    """
+
+def can_sell(
+    position_open_date: date | datetime | str,
+    current_date: date | datetime | str,
+) -> bool:
     open_d = _to_date(position_open_date)
     curr_d = _to_date(current_date)
-    return curr_d > open_d
+    return curr_d >= next_sellable_date(open_d)
 
 
 def filter_sellable(
@@ -61,35 +64,15 @@ def filter_sellable(
     current_date: date | datetime | str,
     date_field: str = "open_date",
 ) -> list[dict]:
-    """Filter *positions* to only those that satisfy T+1 (sellable today).
-
-    Parameters
-    ----------
-    positions
-        Iterable of position dicts. Each dict must contain a key matching
-        *date_field* (default ``"open_date"``) with the acquisition date.
-    current_date
-        The date on which sells would be attempted.
-    date_field
-        Key name in each position dict holding the open/acquisition date.
-
-    Returns
-    -------
-    list[dict]
-        Positions whose open_date is strictly before current_date.
-    """
     curr_d = _to_date(current_date)
     result = []
     for pos in positions:
         open_val = pos.get(date_field)
         if open_val is None:
-            # If we cannot determine the open date, treat as NOT sellable
-            # to be conservative (avoid T+0 violation).
             continue
         try:
-            open_d = _to_date(open_val)
+            if can_sell(open_val, curr_d):
+                result.append(pos)
         except (TypeError, ValueError):
             continue
-        if curr_d > open_d:
-            result.append(pos)
     return result
