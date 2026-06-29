@@ -1,0 +1,53 @@
+# 风控参数 — Tradings/shared/risk/
+# 降权不硬拒, 但有硬底线 (single_stock_max 为硬限)。
+
+# 单股最大仓位 (硬限, 超过即拒)
+single_stock_max: 0.15
+
+# 板块最大敞口 (软限, 超过降权)
+sector_max: 0.40
+
+# 总权益敞口上限 (软限, 超过按比例缩)
+total_exposure_max: 0.80
+
+# 单日亏损上限 (触发后暂停新增)
+daily_loss_limit: 0.03
+
+# 最大持仓数
+max_positions: 5
+
+# 相关性阈值 (两两相关性超过此值则降权)
+correlation_threshold: 0.70
+
+# 止损参数
+stop_loss:
+  # 个股止损线 (相对成本价)
+  pct: -0.08
+  # 移动止损 (相对最高价回撤)
+  trailing_pct: -0.12
+
+# 回撤参数
+drawdown:
+  # 组合最大回撤 (触发减仓)
+  portfolio_max: -0.10
+  # 个股最大回撤 (触发评估)
+  single_max: -0.15
+
+# 时间退出 (持仓天数上限, 超过触发评估)
+time_exit_days: 30
+
+# 黑天鹅触发阈值
+black_swan:
+  # 大盘单日跌幅
+  market_drop_pct: -0.03
+  # 触发后强制减仓至
+  force_reduce_to: 0.50
+  # 减仓时限 (分钟)
+  reduce_window_min: 30
+
+# 流动性参数
+liquidity:
+  # 最小日均成交额 (万元)
+  min_turnover_wan: 5000
+  # 最大单笔占比 (相对日成交额)
+  max_pct_of_volume: 0.05
