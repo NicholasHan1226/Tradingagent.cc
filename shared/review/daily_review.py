@@ -15,6 +15,7 @@ Attribution delegates to attribution.attribute().
 
 from __future__ import annotations
 
+import csv
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +27,12 @@ from benchmark import compare_to_benchmark, get_benchmark, record_last_period
 REVIEW_DIR = Path(__file__).resolve().parent
 GOALS_PATH = REVIEW_DIR / "goals.yaml"
 DAILY_LOG = REVIEW_DIR / "data" / "daily_reviews.jsonl"
+
+ASHARE_DATA = Path("/opt/investment/Ashare/data")
+RECOMMENDATIONS_DIR = ASHARE_DATA / "recommendations"
+SHADOW_SIM_DIR = ASHARE_DATA / "shadow_sim"
+PAPER_PORTFOLIO_DIR = ASHARE_DATA / "paper_portfolio"
+TRADEBOOK_DIR = ASHARE_DATA / "tradebook"
 
 
 def _now_iso() -> str:
@@ -126,6 +133,211 @@ def _compare_to_goals(metrics: dict[str, Any], stage_goals: dict[str, Any]) -> d
 
     all_met = all(c["met"] for c in checks) if checks else False
     return {"stage": metrics.get("stage", "stage_1_sim"), "checks": checks, "all_goals_met": all_met}
+
+
+# ---- Ashare data loaders ----------------------------------------------------
+
+def _compact_date(value: Any) -> str:
+    raw = str(value or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    return digits[:8] if len(digits) >= 8 else raw
+
+
+def _date_eq(value: Any, trade_date: str) -> bool:
+    return bool(value) and _compact_date(value) == _compact_date(trade_date)
+
+
+def _read_csv_dicts(path: Path) -> list[dict[str, Any]]:
+    try:
+        if not path.exists():
+            return []
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            return list(csv.DictReader(f))
+    except Exception:
+        return []
+
+
+def _read_jsonl_dicts(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        if not path.exists():
+            return rows
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(item, dict):
+                    rows.append(item)
+    except Exception:
+        return []
+    return rows
+
+
+def _first_present(row: dict[str, Any], *keys: str, default: Any = "") -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def _float_value(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, str):
+        value = value.strip().rstrip("%")
+    return _safe_float(value, default)
+
+
+def _created_at_matches(created_at: Any, trade_date: str) -> bool:
+    raw = str(created_at or "").strip()
+    if not raw:
+        return False
+    compact = _compact_date(trade_date)
+    return raw.startswith(compact) or _compact_date(raw) == compact
+
+
+def _normalize_trade(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ts_code": _first_present(row, "ts_code", "code", "symbol"),
+        "side": _first_present(row, "side", "action", "trade_side"),
+        "quantity": _float_value(_first_present(row, "quantity", "qty", "shares", default=0.0)),
+        "price": _float_value(_first_present(row, "price", "fill_price", "avg_price", default=0.0)),
+        "pnl": _float_value(row.get("pnl"), 0.0),
+        "strategy": _first_present(row, "strategy", "strategy_name"),
+        "signal_id": _first_present(row, "tradebook_id", "source_decision_id", "signal_id"),
+        "created_at": _first_present(row, "created_at", "timestamp", "time"),
+        "trade_date": _first_present(row, "trade_date", "date"),
+    }
+
+
+def _normalize_position(row: dict[str, Any]) -> dict[str, Any]:
+    weight_pct = _first_present(row, "weight_pct", default=None)
+    if weight_pct is not None:
+        weight = _float_value(weight_pct) / 100.0
+    else:
+        weight = _float_value(row.get("weight"), 0.0)
+    return {
+        "ts_code": _first_present(row, "ts_code", "code", "symbol"),
+        "weight": weight,
+        "pnl_pct": _float_value(_first_present(row, "pnl_pct", "unrealized_pnl_pct", default=0.0)),
+        "stop_loss_pct": _float_value(row.get("stop_loss_pct"), -0.03),
+        "take_profit_pct": _float_value(row.get("take_profit_pct"), 0.05),
+        "momentum": _float_value(row.get("momentum"), 0.0),
+    }
+
+
+def _is_morning_trade(row: dict[str, Any]) -> bool:
+    raw = str(row.get("created_at") or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) >= 12:
+        hhmm = digits[8:12]
+        return hhmm < "1135"
+    if "T" in raw:
+        time_part = raw.split("T", 1)[1][:5]
+        return time_part < "11:35"
+    if " " in raw:
+        time_part = raw.split(" ", 1)[1][:5]
+        return time_part < "11:35"
+    return False
+
+
+def load_recommendations(trade_date: str) -> list[dict[str, Any]]:
+    try:
+        path = RECOMMENDATIONS_DIR / "recommendations.csv"
+        rows = _read_csv_dicts(path)
+        return [
+            row for row in rows
+            if _date_eq(row.get("as_of_trade_date"), trade_date)
+            or _date_eq(row.get("recommendation_date"), trade_date)
+        ]
+    except Exception:
+        return []
+
+
+def load_review_outcomes(trade_date: str) -> list[dict[str, Any]]:
+    try:
+        path = RECOMMENDATIONS_DIR / "reviews.csv"
+        rows = _read_csv_dicts(path)
+        return [row for row in rows if _date_eq(row.get("recommendation_date"), trade_date)]
+    except Exception:
+        return []
+
+
+def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
+    try:
+        shadow_path = SHADOW_SIM_DIR / "shadow_sim_trades.csv"
+        rows = [
+            _normalize_trade(row)
+            for row in _read_csv_dicts(shadow_path)
+            if _date_eq(row.get("trade_date"), trade_date)
+        ]
+        if rows:
+            return rows
+
+        jsonl_path = TRADEBOOK_DIR / "simulated_execution_log.jsonl"
+        jsonl_rows = []
+        for row in _read_jsonl_dicts(jsonl_path):
+            if _date_eq(row.get("trade_date"), trade_date) or _created_at_matches(row.get("created_at"), trade_date):
+                jsonl_rows.append(_normalize_trade(row))
+        return jsonl_rows
+    except Exception:
+        return []
+
+
+def load_positions(as_of_date: str) -> list[dict[str, Any]]:
+    try:
+        shadow_path = SHADOW_SIM_DIR / "latest_shadow_positions.csv"
+        rows = [_normalize_position(row) for row in _read_csv_dicts(shadow_path)]
+        if rows:
+            return rows
+
+        paper_path = PAPER_PORTFOLIO_DIR / "positions.csv"
+        rows = [_normalize_position(row) for row in _read_csv_dicts(paper_path)]
+        return rows
+    except Exception:
+        return []
+
+
+def load_direction_hits(trade_date: str) -> list[dict[str, Any]]:
+    try:
+        path = RECOMMENDATIONS_DIR / "direction_hit_reviews.csv"
+        rows = _read_csv_dicts(path)
+        return [row for row in rows if _date_eq(row.get("source_trade_date"), trade_date)]
+    except Exception:
+        return []
+
+
+def run_daily_review(
+    trade_date: str,
+    benchmark_return: float = 0.0,
+    stage: str = "stage_1_sim",
+    session: str = "close",
+) -> dict[str, Any]:
+    try:
+        session_key = str(session or "").lower()
+        positions = load_positions(trade_date)
+        trades = load_shadow_trades(trade_date)
+
+        if session_key == "lunch":
+            morning_trades = [trade for trade in trades if _is_morning_trade(trade)]
+            result = review_lunch(positions, morning_trades)
+            result["trade_date"] = trade_date
+            return result
+
+        if session_key == "close":
+            review_outcomes = load_review_outcomes(trade_date)
+            result = review_close(trades, positions, benchmark_return, stage=stage)
+            result["trade_date"] = trade_date
+            result["review_outcome_count"] = len(review_outcomes)
+            return result
+
+        return {"session": session, "error": f"unsupported session: {session}", "trade_date": trade_date}
+    except Exception as e:
+        return {"session": session, "error": str(e), "trade_date": trade_date}
 
 
 # ---- lunch review -----------------------------------------------------------
