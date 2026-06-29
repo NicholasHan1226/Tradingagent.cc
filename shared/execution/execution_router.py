@@ -14,15 +14,14 @@ each stage before graduating to the next.
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# Import execution modules
-from hermes_bridge import send_order as hermes_send_order
-from shadow_broker import record_shadow
-from sim_broker import simulate_order
-
+ASHARE_TOOLS = Path("/opt/investment/Ashare/tools")
+SHADOW_EXECUTION_LOG = Path("/opt/investment/Ashare/data/tradebook/simulated_execution_log.jsonl")
+REAL_ORDER_SETUP_CARDS = Path("/opt/investment/Ashare/data/tradebook/real_order_setup_cards.jsonl")
 ROUTER_LOG = Path(__file__).resolve().parent.parent / "logs" / "router_decisions.jsonl"
 
 # Stage configuration
@@ -45,6 +44,18 @@ GRADUATION_THRESHOLDS = {
         "max_max_drawdown_pct": 10.0,
     },
 }
+
+
+def _ensure_ashare_tools_on_path() -> None:
+    ashare_tools = str(ASHARE_TOOLS)
+    if ashare_tools not in sys.path:
+        sys.path.insert(0, ashare_tools)
+
+
+def _write_jsonl(path: Path, entry: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def _log_route(order: dict[str, Any], channel: str, result: dict[str, Any]) -> None:
@@ -82,22 +93,126 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
     channel = STAGE_CHANNELS[stage]
 
     if channel == "sim_broker":
-        result = simulate_order(order)
-        executed = result.get("status") in ("filled", "partial")
-        message = f"Simulated: {result.get('status')} @ slippage {result.get('slippage')}%"
+        try:
+            _ensure_ashare_tools_on_path()
+            from a_share_simulated_trade_executor import TradeRequest, execute_trade
+
+            req = TradeRequest(
+                code=order["ts_code"],
+                name=order.get("name", ""),
+                side=order.get("side", "buy"),
+                quantity=int(order.get("quantity", 0)),
+                reason=order.get("reason", order.get("strategy_name", "")),
+                tradebook_id=order.get("order_id", ""),
+            )
+            tr = execute_trade(req, dry_run=order.get("dry_run", False))
+            executed = tr.status in ("ok", "warning", "dry_run_ok")
+            result = {
+                "status": tr.status,
+                "filled_qty": tr.filled_qty,
+                "avg_price": tr.avg_price,
+                "message": tr.message,
+                "slippage": 0.0,
+            }
+            message = f"Sim executed: {tr.status} @ {tr.avg_price} (qty {tr.filled_qty})"
+        except Exception as exc:
+            try:
+                from sim_broker import simulate_order
+
+                result = simulate_order(order)
+                result["ashare_executor_error"] = str(exc)
+                executed = result.get("status") in ("filled", "partial")
+                message = f"Sim fallback: {result.get('status')} @ slippage {result.get('slippage')}%"
+            except Exception as fallback_exc:
+                result = {
+                    "status": "error",
+                    "message": f"Ashare simulated executor failed: {exc}; fallback sim_broker failed: {fallback_exc}",
+                    "slippage": 0.0,
+                }
+                executed = False
+                message = result["message"]
 
     elif channel == "shadow_broker":
-        strategy_name = order.get("strategy_name", "default")
-        result = record_shadow(order, strategy_name)
-        executed = result.get("recorded", False)
-        message = result.get("message", "Shadow recorded")
+        try:
+            quantity = int(order.get("quantity", 0))
+            price = order.get("price", order.get("limit_price", order.get("execution_price", 0.0)))
+            price_float = float(price or 0.0)
+            amount = order.get("amount")
+            amount_float = float(amount) if amount is not None else quantity * price_float
+            entry = {
+                "tradebook_id": order.get("order_id", ""),
+                "code": order.get("ts_code", ""),
+                "name": order.get("name", ""),
+                "side": order.get("side", "buy"),
+                "quantity": quantity,
+                "price": price_float,
+                "amount": amount_float,
+                "strategy": order.get("strategy_name", ""),
+                "horizon": order.get("horizon", ""),
+                "capital_nature": order.get("capital_nature", order.get("capital_layer", "shadow")),
+                "source_decision_id": order.get("source_decision_id", ""),
+                "created_at": datetime.now().isoformat(),
+                "status": "shadow_recorded",
+            }
+            _write_jsonl(SHADOW_EXECUTION_LOG, entry)
+            result = {
+                "status": "shadow_recorded",
+                "recorded": True,
+                "message": "Shadow trade recorded to simulated_execution_log.jsonl",
+            }
+            executed = True
+            message = result["message"]
+        except Exception as exc:
+            result = {"status": "error", "recorded": False, "message": str(exc)}
+            executed = False
+            message = f"Shadow record failed: {exc}"
 
     elif channel == "hermes_bridge":
-        # Real orders go through Hermes with manual confirmation
-        order["strategy_stage"] = stage
-        result = hermes_send_order(order)
-        executed = result.get("status") in ("sent", "pending_manual_confirm")
-        message = result.get("message", "Hermes bridge")
+        try:
+            _ensure_ashare_tools_on_path()
+            from a_share_tonghuashun_execution import build_condition_order_setup, real_auto_order_forbidden
+
+            side = str(order.get("side", "buy")).lower()
+            action = {"buy": "buy", "sell": "sell", "reduce": "reduce"}.get(side, side)
+            item = {
+                "action": action,
+                "code": order.get("ts_code", ""),
+                "name": order.get("name", ""),
+                "quantity": order.get("quantity", ""),
+                "price": order.get("limit_price", order.get("price", "")),
+                "strategy_name": order.get("strategy_name", ""),
+                "condition": order.get("condition", ""),
+                "reason": order.get("reason", ""),
+            }
+            setup = build_condition_order_setup(item, route="real")
+            if not real_auto_order_forbidden(setup):
+                result = {
+                    "status": "aborted",
+                    "setup": setup,
+                    "message": "Real auto-order guard did not confirm the manual-only boundary",
+                }
+                executed = False
+                message = result["message"]
+            else:
+                _write_jsonl(
+                    REAL_ORDER_SETUP_CARDS,
+                    {
+                        "created_at": datetime.now().isoformat(),
+                        "order_id": order.get("order_id", ""),
+                        "setup": setup,
+                    },
+                )
+                result = {
+                    "status": "pending_manual_confirm",
+                    "setup": setup,
+                    "message": "Real order setup card generated - manual confirm required in Tonghuashun",
+                }
+                executed = False
+                message = result["message"]
+        except Exception as exc:
+            result = {"status": "error", "message": str(exc)}
+            executed = False
+            message = f"Real order setup failed: {exc}"
 
     else:
         result = {}
