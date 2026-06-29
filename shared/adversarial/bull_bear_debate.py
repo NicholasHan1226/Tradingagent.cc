@@ -25,7 +25,7 @@ _MAX_RETRIES = 3
 _RETRYABLE_HTTP = {429, 500, 502, 503, 504}
 
 # 六维名称 (与 screening 模块对齐)
-_DIMENSIONS = ["macro", "event", "fundamental", "moneyflow", "technical", "sentiment"]
+_DIMENSIONS = ["macro", "event", "fundamental", "capital", "technical", "sentiment"]
 
 
 def _get_key() -> str:
@@ -108,6 +108,9 @@ def _call_deepseek(messages: list[dict[str, str]], *, agent: str = "bull_bear_de
                 parsed = json.loads(content) if content else {}
             except json.JSONDecodeError:
                 parsed = {"_raw": content}
+            if not isinstance(parsed, dict):
+                parsed = {"_raw": parsed}
+            parsed["_dry_run"] = False
             return parsed
 
         except urllib.error.HTTPError as e:
@@ -144,7 +147,11 @@ def _build_prompt(ts_code: str, scores: dict[str, Any]) -> list[dict[str, str]]:
             dim_summary.append(f"  - {d}: {v}")
     dims_text = "\n".join(dim_summary) if dim_summary else "  (无六维数据)"
 
-    total = scores.get("total") or scores.get("composite") or "N/A"
+    combined = scores.get("combined")
+    if combined is None:
+        combined = scores.get("composite")
+    if combined is None:
+        combined = "N/A"
 
     system = (
         "你是资深A股多空对辩分析师。对给定标的构建 bull case 和 bear case, "
@@ -156,7 +163,7 @@ def _build_prompt(ts_code: str, scores: dict[str, Any]) -> list[dict[str, str]]:
     )
     user = (
         f"标的: {ts_code}\n"
-        f"六维综合得分: {total}\n"
+        f"六维综合得分: {combined}\n"
         f"六维明细:\n{dims_text}\n\n"
         "请输出 JSON, 包含字段:\n"
         '{"bull_case": "多头理由(2-4条)", '
@@ -183,8 +190,8 @@ def debate(ts_code: str, scores: dict[str, Any]) -> dict[str, Any]:
 
     Args:
         ts_code: 标的代码, 如 "600519.SH"
-        scores: 六维打分 dict, 可含 macro/event/fundamental/moneyflow/technical/sentiment
-                及 total/composite 综合分
+        scores: 六维打分 dict, 可含 macro/event/fundamental/capital/technical/sentiment
+                及 combined/composite 综合分
 
     Returns:
         {
@@ -211,6 +218,7 @@ def debate(ts_code: str, scores: dict[str, Any]) -> dict[str, Any]:
         "bear_case": str(result.get("bear_case", "")) or "N/A",
         "belief_score": belief,
         "key_risk": str(result.get("key_risk", "")) or "N/A",
+        "source": "dry_run" if result.get("_dry_run") else "live",
     }
 
 
@@ -220,10 +228,10 @@ if __name__ == "__main__":
         "macro": {"score": 0.7, "note": "regime=growth, 适合权益"},
         "event": {"score": 0.8, "note": "利好政策落地"},
         "fundamental": {"score": 0.6, "note": "ROE 15%"},
-        "moneyflow": {"score": 0.5, "note": "主力净流入中性"},
+        "capital": {"score": 0.5, "note": "主力净流入中性"},
         "technical": {"score": 0.7, "note": "突破前高"},
         "sentiment": {"score": 0.6, "note": "舆情偏多"},
-        "total": 0.68,
+        "combined": 0.68,
     }
     r = debate("600519.SH", test_scores)
     print(json.dumps(r, ensure_ascii=False, indent=2))

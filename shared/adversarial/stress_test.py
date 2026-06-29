@@ -76,11 +76,11 @@ def _estimate_drawdown(scenario_key: str, scores: dict[str, Any] | None = None) 
                 pass
 
         # 资金面弱 → 回撤更大
-        mf = scores.get("moneyflow")
-        if isinstance(mf, dict):
-            mf_score = mf.get("score", 0.5)
+        capital = scores.get("capital")
+        if isinstance(capital, dict):
+            capital_score = capital.get("score", 0.5)
             try:
-                if float(mf_score) < 0.4:
+                if float(capital_score) < 0.4:
                     drawdown = max(drawdown * 1.1, dd_lo * 1.05)
             except (TypeError, ValueError):
                 pass
@@ -165,7 +165,7 @@ if __name__ == "__main__":
     test_scores = {
         "fundamental": {"score": 0.6, "note": "估值偏高"},
         "technical": {"score": 0.3, "note": "趋势走弱"},
-        "moneyflow": {"score": 0.3, "note": "主力流出"},
+        "capital": {"score": 0.3, "note": "主力流出"},
     }
     r = stress_test("600519.SH", scores=test_scores)
     print(json.dumps(r, ensure_ascii=False, indent=2))

@@ -109,7 +109,7 @@ def find_analogies(
     condition: str = "",
     top_n: int = 10,
     min_score: float = 0.1,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """检索历史相似条件。
 
     Args:
@@ -119,22 +119,29 @@ def find_analogies(
         min_score: 最小匹配度阈值
 
     Returns:
-        list of {
-            "date": str,
-            "outcome": str,
-            "return": float,
-            "horizon_days": int,
-            "condition": str,
-            "ts_code": str,
-            "match_score": float,
+        {
+            "analogies": list of {
+                "date": str,
+                "outcome": str,
+                "return": float,
+                "horizon_days": int,
+                "condition": str,
+                "ts_code": str,
+                "match_score": float,
+            },
+            "degraded": bool,  # True when no analogy data source is available
         }
     """
     if not condition and not ts_code:
         raise ValueError("至少提供 condition 或 ts_code 之一")
 
-    records = _load_analogies()
+    filepath = _find_analogies_file()
+    if filepath is None:
+        return {"analogies": [], "degraded": True}
+
+    records = _load_analogies(filepath)
     if not records:
-        return []
+        return {"analogies": [], "degraded": False}
 
     # 计算匹配度并排序
     scored: list[dict[str, Any]] = []
@@ -154,10 +161,10 @@ def find_analogies(
 
     # 按匹配度降序, 取 top_n
     scored.sort(key=lambda x: x["match_score"], reverse=True)
-    return scored[:top_n]
+    return {"analogies": scored[:top_n], "degraded": False}
 
 
-def analogy_summary(analogies: list[dict[str, Any]]) -> dict[str, Any]:
+def analogy_summary(analogies: list[dict[str, Any]] | dict[str, Any]) -> dict[str, Any]:
     """对类比结果做统计摘要 (先验分布参考)。
 
     Returns:
@@ -169,6 +176,11 @@ def analogy_summary(analogies: list[dict[str, Any]]) -> dict[str, Any]:
             "sample_note": str,  # 样本量提示
         }
     """
+    degraded = False
+    if isinstance(analogies, dict):
+        degraded = bool(analogies.get("degraded", False))
+        analogies = analogies.get("analogies", [])
+
     if not analogies:
         return {
             "count": 0,
@@ -176,6 +188,7 @@ def analogy_summary(analogies: list[dict[str, Any]]) -> dict[str, Any]:
             "win_rate": 0.0,
             "median_return": 0.0,
             "sample_note": "无历史类比数据, 先验无参考",
+            "degraded": degraded,
         }
 
     returns = []
@@ -193,6 +206,7 @@ def analogy_summary(analogies: list[dict[str, Any]]) -> dict[str, Any]:
             "win_rate": 0.0,
             "median_return": 0.0,
             "sample_note": f"样本量 {len(analogies)}, 无有效收益数据",
+            "degraded": degraded,
         }
 
     returns.sort()
@@ -216,6 +230,7 @@ def analogy_summary(analogies: list[dict[str, Any]]) -> dict[str, Any]:
         "win_rate": round(win_rate, 4),
         "median_return": round(median, 4),
         "sample_note": note,
+        "degraded": degraded,
     }
 
 
