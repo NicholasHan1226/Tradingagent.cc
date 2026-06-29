@@ -21,6 +21,7 @@ CAPITAL_LAYERS = {"real", "simulated", "shadow"}
 CSV_HEADERS = [
     "entry_id",
     "timestamp",
+    "entry_date",
     "event_type",
     "capital_layer",
     "is_real_money",
@@ -48,6 +49,7 @@ class PositionEntry:
     order_id: str = ""
     audit_id: str = ""
     note: str = ""
+    entry_date: str = ""
     entry_id: str = field(default_factory=lambda: f"POS-{uuid.uuid4().hex[:12]}")
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -153,6 +155,13 @@ def _entry_date(timestamp: str) -> str:
     return str(timestamp or "")[:10]
 
 
+def _normalize_entry_date(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text[:10] if text else ""
+
+
 def _total_fee(commission: float, stamp_duty: float, transfer_fee: float) -> float:
     total = 0.0
     for name, value in (
@@ -202,6 +211,7 @@ def _write_position_event(
     order_id: str,
     audit_id: str,
     note: str,
+    entry_date: str = "",
     running_quantity: int,
     running_cost: float,
     running_avg_price: float,
@@ -217,10 +227,12 @@ def _write_position_event(
         order_id=order_id,
         audit_id=audit_id,
         note=note,
+        entry_date=_normalize_entry_date(entry_date),
     )
     row = {
         "entry_id": entry.entry_id,
         "timestamp": entry.timestamp,
+        "entry_date": entry.entry_date,
         "event_type": event_type,
         "capital_layer": layer,
         "is_real_money": _is_real_money(layer),
@@ -247,6 +259,7 @@ def open_position(
     audit_id: str = "",
     note: str = "",
     capital_layer: str = DEFAULT_CAPITAL_LAYER,
+    entry_date: str | None = None,
 ) -> dict[str, Any]:
     if quantity <= 0:
         raise ValueError(f"quantity must be positive, got {quantity}")
@@ -265,6 +278,7 @@ def open_position(
             )
 
         amount = round(quantity * price, 2)
+        normalized_entry_date = _normalize_entry_date(entry_date) or datetime.now().strftime("%Y-%m-%d")
         eid = _write_position_event(
             event_type="open",
             capital_layer=layer,
@@ -274,6 +288,7 @@ def open_position(
             order_id=order_id,
             audit_id=audit_id,
             note=note,
+            entry_date=normalized_entry_date,
             running_quantity=quantity,
             running_cost=amount,
             running_avg_price=price,
@@ -288,6 +303,7 @@ def open_position(
             "event_type": "open",
             "capital_layer": layer,
             "is_real_money": _is_real_money(layer),
+            "entry_date": normalized_entry_date,
         }
 
 
@@ -326,6 +342,7 @@ def add_position(
             order_id=order_id,
             audit_id=audit_id,
             note=note,
+            entry_date="",
             running_quantity=new_qty,
             running_cost=new_cost,
             running_avg_price=new_avg,
@@ -388,6 +405,7 @@ def reduce_position(
             order_id=order_id,
             audit_id=audit_id,
             note=note,
+            entry_date="",
             running_quantity=new_qty,
             running_cost=new_cost,
             running_avg_price=avg_cost if new_qty > 0 else 0.0,
@@ -442,6 +460,7 @@ def close_position(
             order_id=order_id,
             audit_id=audit_id,
             note=note,
+            entry_date="",
             running_quantity=0,
             running_cost=0.0,
             running_avg_price=0.0,
@@ -487,7 +506,7 @@ def get_positions(capital_layer: str | None = None) -> list[dict[str, Any]]:
 
         if event_type == "open" or state_key not in states:
             states[state_key] = {
-                "entry_date": _entry_date(str(entry.get("timestamp", ""))),
+                "entry_date": _normalize_entry_date(entry.get("entry_date")) or None,
                 "high_price": max(avg_price, event_price),
                 "thesis": note,
             }

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""持仓监控 — 止损/回撤/时间退出/regime 变化。
+"""持仓监控 — 基于统一 Position schema 检查止损/回撤/时间退出/regime。"""
 
-check_positions(positions, current_prices) → list of {ts_code, action, reason}
-"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+from shared.accounting.position_schema import Position, coerce_position
 
 try:
     import yaml
@@ -31,74 +31,82 @@ def _load_limits() -> dict[str, Any]:
             data = yaml.safe_load(f)
         if isinstance(data, dict):
             merged = dict(_DEFAULT_LIMITS)
-            for k, v in data.items():
-                if k in merged and isinstance(merged[k], dict) and isinstance(v, dict):
-                    merged[k] = {**merged[k], **v}
+            for key, value in data.items():
+                if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+                    merged[key] = {**merged[key], **value}
                 else:
-                    merged[k] = v
+                    merged[key] = value
             return merged
     except (OSError, yaml.YAMLError):
         pass
     return dict(_DEFAULT_LIMITS)
 
 
-def _safe_float(v: Any, default: float = 0.0) -> float:
+def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
-        f = float(v)
-        return f if f == f else default
+        parsed = float(value)
+        return parsed if parsed == parsed else default
     except (TypeError, ValueError):
         return default
 
 
-def _parse_date(s: Any) -> datetime | None:
-    """解析日期字符串, 支持 YYYY-MM-DD 或 YYYYMMDD。"""
-    if isinstance(s, datetime):
-        return s
-    if not s:
+def _parse_date(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not value:
         return None
-    s = str(s).strip()
+    raw_value = str(value).strip()
     for fmt in ("%Y-%m-%d", "%Y%m%d", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
         try:
-            return datetime.strptime(s, fmt)
+            return datetime.strptime(raw_value, fmt)
         except ValueError:
             continue
     return None
 
 
+def _position_signal(
+    position: Position,
+    action: str,
+    reason: str,
+    severity: str,
+) -> dict[str, Any]:
+    return {
+        "ts_code": position.ts_code,
+        "action": action,
+        "reason": reason,
+        "severity": severity,
+        "capital_layer": position.capital_layer,
+        "sellable_quantity": position.sellable_quantity,
+    }
+
+
+def _iter_positions(
+    positions: list[Position] | list[Mapping[str, Any]],
+) -> list[Position]:
+    normalized: list[Position] = []
+    for raw_position in positions or []:
+        try:
+            normalized.append(coerce_position(raw_position))
+        except ValueError:
+            continue
+    return normalized
+
+
 def check_positions(
-    positions: list[dict[str, Any]],
+    positions: list[Position] | list[Mapping[str, Any]],
     current_prices: dict[str, float] | None = None,
     regime: str | None = None,
     portfolio_high_water: float | None = None,
     portfolio_current_value: float | None = None,
 ) -> list[dict[str, Any]]:
-    """持仓监控主函数。
+    """基于统一 Position schema 扫描持仓风险。
 
-    Args:
-        positions: list of {
-            "ts_code": str,
-            "cost": float,           # 成本价
-            "weight": float,         # 当前权重
-            "entry_date": str,       # 入场日期
-            "high_price": float,     # 持仓期最高价 (移动止损用)
-            "sector": str,
-            "thesis": str,           # 买入逻辑 (逻辑证伪检查用)
-        }
-        current_prices: {ts_code: price}
-        regime: 当前 regime (如 "growth", "recession"), 变化时触发评估
-        portfolio_high_water: 组合历史最高净值
-        portfolio_current_value: 组合当前净值
-
-    Returns:
-        list of {
-            "ts_code": str,
-            "action": str,    # "stop_loss" | "trailing_stop" | "time_exit" | "drawdown" | "regime_change" | "hold"
-            "reason": str,
-            "severity": str,  # "high" | "medium" | "low"
-        }
+    缺少成本价、当前价、入场日期或 thesis 时, 对应规则保守不触发。
     """
-    if not positions:
+    normalized_positions = _iter_positions(positions)
+    if not normalized_positions:
         return []
+
     if current_prices is None:
         current_prices = {}
 
@@ -112,135 +120,144 @@ def check_positions(
     portfolio_dd_max = _safe_float(limits.get("drawdown", {}).get("portfolio_max", -0.10))
     time_exit_days = int(limits.get("time_exit_days", 30))
 
-    # 组合级回撤检查
     if portfolio_high_water and portfolio_current_value:
-        port_dd = (portfolio_current_value - portfolio_high_water) / portfolio_high_water if portfolio_high_water else 0.0
+        port_dd = (
+            (portfolio_current_value - portfolio_high_water) / portfolio_high_water
+            if portfolio_high_water
+            else 0.0
+        )
         if port_dd < portfolio_dd_max:
             signals.append({
                 "ts_code": "PORTFOLIO",
                 "action": "drawdown",
                 "reason": f"组合回撤 {port_dd:.4f} < {portfolio_dd_max:.4f}, 建议全面减仓评估",
                 "severity": "high",
+                "capital_layer": "all",
+                "sellable_quantity": 0,
             })
 
-    for pos in positions:
-        if not isinstance(pos, dict):
-            continue
-        ts_code = pos.get("ts_code", "")
-        if not ts_code:
+    for position in normalized_positions:
+        if not position.ts_code:
             continue
 
-        cost = _safe_float(pos.get("cost", 0.0))
-        current_price = _safe_float(current_prices.get(ts_code, 0.0))
-        high_price = _safe_float(pos.get("high_price", cost))
-        weight = _safe_float(pos.get("weight", 0.0))
-
-        entry_date = _parse_date(pos.get("entry_date"))
-        hold_days = (now - entry_date).days if entry_date else 0
+        cost = _safe_float(position.avg_price)
+        current_price = _safe_float(current_prices.get(position.ts_code))
+        high_price = _safe_float(position.high_price, cost)
+        entry_date = _parse_date(position.entry_date)
+        hold_days = (now - entry_date).days if entry_date else None
+        thesis = str(position.thesis or "").lower()
 
         pos_signals: list[dict[str, Any]] = []
 
-        # 1. 止损检查 (相对成本价)
         if cost > 0 and current_price > 0:
             pnl_pct = (current_price - cost) / cost
             if pnl_pct <= stop_pct:
-                pos_signals.append({
-                    "action": "stop_loss",
-                    "reason": f"止损: {ts_code} 亏损 {pnl_pct:.4f} ≤ {stop_pct:.4f}",
-                    "severity": "high",
-                })
+                pos_signals.append(_position_signal(
+                    position,
+                    "stop_loss",
+                    f"止损: {position.ts_code} 亏损 {pnl_pct:.4f} ≤ {stop_pct:.4f}",
+                    "high",
+                ))
 
-            # 2. 移动止损 (相对最高价回撤)
             if high_price > 0:
                 trailing_dd = (current_price - high_price) / high_price
                 if trailing_dd <= trailing_pct:
-                    pos_signals.append({
-                        "action": "trailing_stop",
-                        "reason": f"移动止损: {ts_code} 从高点回撤 {trailing_dd:.4f} ≤ {trailing_pct:.4f}",
-                        "severity": "high",
-                    })
+                    pos_signals.append(_position_signal(
+                        position,
+                        "trailing_stop",
+                        f"移动止损: {position.ts_code} 从高点回撤 {trailing_dd:.4f} ≤ {trailing_pct:.4f}",
+                        "high",
+                    ))
 
-            # 3. 个股回撤检查
             if pnl_pct < single_dd_max:
-                pos_signals.append({
-                    "action": "drawdown",
-                    "reason": f"个股回撤: {ts_code} 亏损 {pnl_pct:.4f} < {single_dd_max:.4f}",
-                    "severity": "medium",
-                })
+                pos_signals.append(_position_signal(
+                    position,
+                    "drawdown",
+                    f"个股回撤: {position.ts_code} 亏损 {pnl_pct:.4f} < {single_dd_max:.4f}",
+                    "medium",
+                ))
 
-        # 4. 时间退出
-        if hold_days >= time_exit_days:
-            pos_signals.append({
-                "action": "time_exit",
-                "reason": f"时间退出: {ts_code} 持仓 {hold_days} 天 ≥ {time_exit_days} 天, 需评估逻辑是否仍成立",
-                "severity": "medium",
-            })
+        if hold_days is not None and hold_days >= time_exit_days:
+            pos_signals.append(_position_signal(
+                position,
+                "time_exit",
+                f"时间退出: {position.ts_code} 持仓 {hold_days} 天 ≥ {time_exit_days} 天, 需评估逻辑是否仍成立",
+                "medium",
+            ))
 
-        # 5. Regime 变化 (简化: 如果 thesis 中包含 regime 关键词且与当前 regime 不符)
-        thesis = str(pos.get("thesis", "")).lower()
         if regime and thesis:
-            # 简单关键词匹配
             regime_keywords = {
                 "growth": ["growth", "增长", "扩张"],
                 "recession": ["recession", "衰退", "收缩"],
                 "inflation": ["inflation", "通胀"],
                 "deflation": ["deflation", "通缩"],
             }
-            current_kw = regime_keywords.get(regime.lower(), [])
-            opposite_regimes = {k: v for k, v in regime_keywords.items() if k != regime.lower()}
-            for opp_regime, opp_kw in opposite_regimes.items():
-                if any(kw in thesis for kw in opp_kw):
-                    pos_signals.append({
-                        "action": "regime_change",
-                        "reason": f"Regime 变化: 当前={regime}, 但 thesis 含 {opp_regime} 关键词, 逻辑可能失效",
-                        "severity": "medium",
-                    })
+            opposite_regimes = {
+                key: value
+                for key, value in regime_keywords.items()
+                if key != regime.lower()
+            }
+            for opposite_regime, keywords in opposite_regimes.items():
+                if any(keyword in thesis for keyword in keywords):
+                    pos_signals.append(_position_signal(
+                        position,
+                        "regime_change",
+                        f"Regime 变化: 当前={regime}, 但 thesis 含 {opposite_regime} 关键词, 逻辑可能失效",
+                        "medium",
+                    ))
                     break
 
         if pos_signals:
-            # 取最高 severity 的信号
             severity_order = {"high": 0, "medium": 1, "low": 2}
-            pos_signals.sort(key=lambda s: severity_order.get(s.get("severity", "low"), 2))
-            for s in pos_signals:
-                signals.append({"ts_code": ts_code, **s})
-        else:
-            signals.append({
-                "ts_code": ts_code,
-                "action": "hold",
-                "reason": f"持仓正常: {ts_code} 权重 {weight:.4f}, 持仓 {hold_days} 天",
-                "severity": "low",
-            })
+            pos_signals.sort(key=lambda signal: severity_order.get(signal.get("severity", "low"), 2))
+            signals.extend(pos_signals)
+            continue
+
+        hold_days_text = hold_days if hold_days is not None else "未知"
+        signals.append(_position_signal(
+            position,
+            "hold",
+            f"持仓正常: {position.ts_code} 可卖 {position.sellable_quantity}, 持仓 {hold_days_text} 天",
+            "low",
+        ))
 
     return signals
 
 
 def filter_actions(signals: list[dict[str, Any]], actions: list[str] | None = None) -> list[dict[str, Any]]:
-    """筛选特定 action 的信号。"""
+    """筛选需要动作的信号。"""
     if actions is None:
         actions = ["stop_loss", "trailing_stop", "drawdown", "time_exit", "regime_change"]
-    return [s for s in signals if s.get("action") in actions]
+    return [signal for signal in signals if signal.get("action") in actions]
 
 
 if __name__ == "__main__":
     import json
+
     test_positions = [
-        {
-            "ts_code": "600519.SH",
-            "cost": 1800.0,
-            "weight": 0.10,
-            "entry_date": "2026-05-01",
-            "high_price": 1900.0,
-            "thesis": "growth regime, 消费升级",
-        },
-        {
-            "ts_code": "000858.SZ",
-            "cost": 150.0,
-            "weight": 0.08,
-            "entry_date": "2026-06-20",
-            "high_price": 155.0,
-            "thesis": "growth",
-        },
+        Position(
+            ts_code="600519.SH",
+            quantity=100,
+            sellable_quantity=100,
+            avg_price=1800.0,
+            cost_basis=180000.0,
+            entry_date="2026-05-01",
+            high_price=1900.0,
+            thesis="growth regime, 消费升级",
+            capital_layer="shadow",
+        ),
+        Position(
+            ts_code="000858.SZ",
+            quantity=100,
+            sellable_quantity=100,
+            avg_price=150.0,
+            cost_basis=15000.0,
+            entry_date="2026-06-20",
+            high_price=155.0,
+            thesis="growth",
+            capital_layer="shadow",
+        ),
     ]
     test_prices = {"600519.SH": 1650.0, "000858.SZ": 148.0}
-    r = check_positions(test_positions, test_prices, regime="recession")
-    print(json.dumps(r, ensure_ascii=False, indent=2))
+    result = check_positions(test_positions, test_prices, regime="recession")
+    print(json.dumps(result, ensure_ascii=False, indent=2))

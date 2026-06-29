@@ -17,11 +17,18 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from .signal_state_machine import SignalStateConflict, SignalStateMachine
+
 TRADINGS_ROOT = Path("/opt/investment/Tradings")
 SIGNALS_DIR = TRADINGS_ROOT / "signals"
 PENDING_DIR = SIGNALS_DIR / "pending"
+CLAIMED_DIR = SIGNALS_DIR / "claimed"
+RUNNING_DIR = SIGNALS_DIR / "running"
 FILLED_DIR = SIGNALS_DIR / "filled"
+EXPIRED_DIR = SIGNALS_DIR / "expired"
 CANCELLED_DIR = SIGNALS_DIR / "cancelled"
+FAILED_DIR = SIGNALS_DIR / "failed"
+PARTIAL_DIR = SIGNALS_DIR / "partial"
 POSITIONS_DIR = SIGNALS_DIR / "positions"
 POSITIONS_FILE = SIGNALS_DIR / "positions.json"
 SIGNAL_CARD_SCHEMA_PATH = Path(__file__).resolve().with_name("signal_card_schema.json")
@@ -50,8 +57,12 @@ class HermesOrder:
 
 def ensure_signal_dirs() -> None:
     """Create the file-based bridge directories if they are missing."""
-    for directory in (PENDING_DIR, FILLED_DIR, CANCELLED_DIR, POSITIONS_DIR):
-        directory.mkdir(parents=True, exist_ok=True)
+    _state_machine().ensure_dirs()
+    POSITIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _state_machine() -> SignalStateMachine:
+    return SignalStateMachine(SIGNALS_DIR)
 
 
 def _normalize_order_id(order_id: str) -> str:
@@ -117,6 +128,14 @@ def _coerce_signal_card(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
         ):
             if field_name in order:
                 payload[field_name] = order[field_name]
+
+    trigger = payload.get("trigger")
+    if not payload.get("source_condition_id") and isinstance(trigger, dict):
+        condition_id = trigger.get("condition_id")
+        if condition_id:
+            payload["source_condition_id"] = str(condition_id)
+    if not payload.get("idempotency_key") and payload.get("order_id"):
+        payload["idempotency_key"] = str(payload["order_id"])
 
     payload["order_id"] = _normalize_order_id(str(payload.get("order_id", "")))
     payload["direction"] = str(payload.get("direction", "")).lower().strip()
@@ -268,27 +287,115 @@ def send_order(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
             "direct_execution": False,
         }
 
-    pending_path = _json_path(PENDING_DIR, card["order_id"])
-    if pending_path.exists():
+    try:
+        queued = _state_machine().write_pending(card)
+    except SignalStateConflict as exc:
+        existing_path, existing_card = _state_machine().find_by_order_id(card["order_id"])
+        status = str(existing_card.get("status", "duplicate")) if existing_card else "duplicate"
         return {
             "order_id": card["order_id"],
             "status": "duplicate",
-            "signal_path": str(pending_path),
-            "message": "Pending signal card already exists",
+            "signal_path": str(existing_path) if existing_path else "",
+            "existing_status": status,
+            "message": str(exc),
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+            "direct_execution": False,
+        }
+    except (OSError, ValueError) as exc:
+        return {
+            "order_id": card["order_id"],
+            "status": "rejected",
+            "message": f"Unable to queue signal card: {exc}",
             "real_auto_order_forbidden": real_auto_order_forbidden,
             "direct_execution": False,
         }
 
-    _write_json_atomic(pending_path, card)
     return {
         "order_id": card["order_id"],
         "status": "pending",
-        "signal_path": str(pending_path),
-        "signal_card": card,
+        "signal_path": queued["signal_path"],
+        "signal_card": queued["signal_card"],
         "message": "Signal card queued for Mac Mini cron; no direct execution performed",
         "real_auto_order_forbidden": real_auto_order_forbidden,
         "direct_execution": False,
     }
+
+
+def claim_signal(order_id: str, worker_id: str | None = None) -> dict[str, Any]:
+    """Atomically claim a pending signal for one Mac Mini worker."""
+    ensure_signal_dirs()
+    try:
+        result = _state_machine().claim(order_id, worker_id=worker_id)
+    except ValueError as exc:
+        return {"order_id": order_id, "status": "rejected", "message": str(exc)}
+    except SignalStateConflict as exc:
+        return {"order_id": order_id, "status": "conflict", "message": str(exc)}
+    except OSError as exc:
+        return {"order_id": order_id, "status": "error", "message": str(exc)}
+    result["direct_execution"] = False
+    result["real_auto_order_forbidden"] = real_auto_order_forbidden
+    return result
+
+
+def run_signal(order_id: str, worker_id: str | None = None) -> dict[str, Any]:
+    """Move a claimed signal into running."""
+    ensure_signal_dirs()
+    try:
+        result = _state_machine().mark_running(order_id, worker_id=worker_id)
+    except ValueError as exc:
+        return {"order_id": order_id, "status": "rejected", "message": str(exc)}
+    except FileNotFoundError as exc:
+        return {"order_id": order_id, "status": "not_found", "message": str(exc)}
+    except SignalStateConflict as exc:
+        return {"order_id": order_id, "status": "conflict", "message": str(exc)}
+    except OSError as exc:
+        return {"order_id": order_id, "status": "error", "message": str(exc)}
+    result["direct_execution"] = False
+    result["real_auto_order_forbidden"] = real_auto_order_forbidden
+    return result
+
+
+def fill_signal(order_id: str, fill_info: dict[str, Any] | None = None, partial: bool = False) -> dict[str, Any]:
+    """Mark a claimed/running signal filled. Filled wins over cancel_requested."""
+    ensure_signal_dirs()
+    try:
+        result = _state_machine().fill(order_id, fill_info=fill_info, partial=partial)
+    except ValueError as exc:
+        return {"order_id": order_id, "status": "rejected", "message": str(exc)}
+    except FileNotFoundError as exc:
+        return {"order_id": order_id, "status": "not_found", "message": str(exc)}
+    except SignalStateConflict as exc:
+        return {"order_id": order_id, "status": "conflict", "message": str(exc)}
+    except OSError as exc:
+        return {"order_id": order_id, "status": "error", "message": str(exc)}
+    result["direct_execution"] = False
+    result["real_auto_order_forbidden"] = real_auto_order_forbidden
+    return result
+
+
+def cancel_signal(order_id: str, reason: str = "") -> dict[str, Any]:
+    """Cancel pending or request cancellation for claimed/running signals."""
+    ensure_signal_dirs()
+    try:
+        result = _state_machine().cancel(order_id, reason=reason)
+    except ValueError as exc:
+        return {"order_id": order_id, "status": "rejected", "message": str(exc)}
+    except SignalStateConflict as exc:
+        return {"order_id": order_id, "status": "conflict", "message": str(exc)}
+    except OSError as exc:
+        return {"order_id": order_id, "status": "error", "message": str(exc)}
+    result["direct_execution"] = False
+    result["real_auto_order_forbidden"] = real_auto_order_forbidden
+    return result
+
+
+def sweep_expired_signals(now: datetime | None = None) -> dict[str, Any]:
+    """Move expired pending signals to signals/expired/."""
+    ensure_signal_dirs()
+    try:
+        return _state_machine().sweep_expired(now=now)
+    except OSError as exc:
+        return {"status": "error", "message": str(exc), "expired_count": 0, "expired": []}
 
 
 def check_fill(order_id: str) -> dict[str, Any]:
@@ -307,7 +414,8 @@ def check_fill(order_id: str) -> dict[str, Any]:
             "message": str(exc),
         }
 
-    if not fill_path.exists():
+    partial_path = _json_path(PARTIAL_DIR, order_id)
+    if not fill_path.exists() and not partial_path.exists():
         return {
             "order_id": order_id,
             "filled_price": None,
@@ -319,7 +427,7 @@ def check_fill(order_id: str) -> dict[str, Any]:
         }
 
     try:
-        fill_info = _read_json(fill_path)
+        fill_info = _read_json(fill_path if fill_path.exists() else partial_path)
     except (OSError, json.JSONDecodeError) as exc:
         return {
             "order_id": order_id,
@@ -389,16 +497,19 @@ def sync_positions() -> dict[str, Any]:
 
 
 def cancel_order(order_id: str, manual_confirm: bool = False) -> dict[str, Any]:
-    """Cancel a pending signal by moving it to signals/cancelled/."""
+    """Cancel a pending signal or request cancellation for claimed/running."""
     ensure_signal_dirs()
     try:
         pending_path = _json_path(PENDING_DIR, order_id)
+        claimed_path = _json_path(CLAIMED_DIR, order_id)
+        running_path = _json_path(RUNNING_DIR, order_id)
         cancelled_path = _json_path(CANCELLED_DIR, order_id)
         filled_path = _json_path(FILLED_DIR, order_id)
+        partial_path = _json_path(PARTIAL_DIR, order_id)
     except ValueError as exc:
         return {"order_id": order_id, "status": "rejected", "message": str(exc)}
 
-    if filled_path.exists():
+    if filled_path.exists() or partial_path.exists():
         return {
             "order_id": order_id,
             "status": "cannot_cancel_filled",
@@ -407,7 +518,12 @@ def cancel_order(order_id: str, manual_confirm: bool = False) -> dict[str, Any]:
             "real_auto_order_forbidden": real_auto_order_forbidden,
         }
 
-    if not pending_path.exists():
+    active_path = None
+    for candidate_path in (pending_path, claimed_path, running_path):
+        if candidate_path.exists():
+            active_path = candidate_path
+            break
+    if active_path is None:
         status = "already_cancelled" if cancelled_path.exists() else "not_found"
         return {
             "order_id": order_id,
@@ -418,7 +534,7 @@ def cancel_order(order_id: str, manual_confirm: bool = False) -> dict[str, Any]:
         }
 
     try:
-        card = _read_json(pending_path)
+        card = _read_json(active_path)
     except (OSError, json.JSONDecodeError):
         card = {"order_id": order_id}
 
@@ -432,15 +548,23 @@ def cancel_order(order_id: str, manual_confirm: bool = False) -> dict[str, Any]:
             "real_auto_order_forbidden": real_auto_order_forbidden,
         }
 
-    card["status"] = "cancelled"
-    card["cancelled_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
-    _write_json_atomic(cancelled_path, card)
-    pending_path.unlink()
+    result = cancel_signal(order_id, reason="manual_cancel")
+    if result.get("status") == "cancel_requested":
+        return {
+            "order_id": order_id,
+            "status": "cancel_requested",
+            "signal_path": result.get("signal_path", ""),
+            "message": result.get("message", "Cancellation requested for claimed/running signal"),
+            "direct_execution": False,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+        }
+    if result.get("status") != "cancelled":
+        return result
 
     return {
         "order_id": order_id,
         "status": "cancelled",
-        "signal_path": str(cancelled_path),
+        "signal_path": result.get("signal_path", str(cancelled_path)),
         "message": "Pending signal card moved to cancelled directory",
         "direct_execution": False,
         "real_auto_order_forbidden": real_auto_order_forbidden,

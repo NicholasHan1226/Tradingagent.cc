@@ -20,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from shared.accounting import position_ledger
+
 TRADINGS_ROOT = Path(__file__).resolve().parents[2]
 TRADINGS_ASHARE = TRADINGS_ROOT / "Ashare"
 ASHARE_TOOLS = Path("/opt/investment/Ashare/tools")
@@ -79,20 +81,43 @@ def _log_route(order: dict[str, Any], channel: str, result: dict[str, Any]) -> N
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def _extract_position_open_date(order: dict[str, Any]) -> str:
-    for field in ("position_open_date", "open_date", "buy_date", "acquired_date"):
+def _resolve_trade_date(order: dict[str, Any]) -> str:
+    for field in ("trade_date", "current_trade_date", "current_date", "order_date", "timestamp"):
         value = order.get(field)
         if value:
-            return str(value)
+            return _date_part(value, "")
+
+    context = order.get("context")
+    if isinstance(context, dict):
+        for field in ("trade_date", "current_trade_date", "current_date", "order_date", "timestamp"):
+            value = context.get(field)
+            if value:
+                return _date_part(value, "")
+
     return ""
 
 
-def _resolve_trade_date(order: dict[str, Any]) -> str:
-    for field in ("trade_date", "current_date", "order_date", "timestamp"):
-        value = order.get(field)
-        if value:
-            return str(value)
-    return datetime.now().strftime("%Y-%m-%d")
+def _resolve_position_entry_date(order: dict[str, Any]) -> str | None:
+    ts_code = str(order.get("ts_code", "")).strip()
+    if not ts_code:
+        return None
+
+    layer_value = order.get("capital_layer")
+    positions: list[dict[str, Any]]
+    if layer_value:
+        try:
+            positions = position_ledger.get_positions(capital_layer=str(layer_value))
+        except ValueError:
+            positions = position_ledger.get_positions(capital_layer="all")
+    else:
+        positions = position_ledger.get_positions(capital_layer="all")
+
+    matches = [position for position in positions if str(position.get("ts_code", "")).strip() == ts_code]
+    if len(matches) != 1:
+        return None
+
+    entry_date = matches[0].get("entry_date")
+    return str(entry_date).strip() if entry_date else None
 
 
 def _check_t_plus_1(order: dict[str, Any]) -> dict[str, Any] | None:
@@ -100,41 +125,49 @@ def _check_t_plus_1(order: dict[str, Any]) -> dict[str, Any] | None:
     if side not in {"sell", "reduce"}:
         return None
 
-    open_date = _extract_position_open_date(order)
-    if not open_date:
+    trade_date = _resolve_trade_date(order)
+    if not trade_date:
         return {
             "channel": "none",
             "executed": False,
             "result": {
                 "status": "blocked_t_plus_1",
-                "message": "Missing position_open_date/open_date for sell-side T+1 check",
+                "message": "Missing current_trade_date for sell-side T+1 check",
             },
             "order_id": order.get("order_id", ""),
-            "message": "Sell order blocked: missing acquisition date for T+1 verification",
+            "message": "T+1 not satisfied",
         }
 
-    trade_date = _resolve_trade_date(order)
-    _ensure_tradings_ashare_on_path()
-    from t_plus_1 import can_sell, next_sellable_date
+    entry_date = _resolve_position_entry_date(order)
+    if not entry_date:
+        return {
+            "channel": "none",
+            "executed": False,
+            "result": {
+                "status": "blocked_t_plus_1",
+                "message": "Missing entry_date in position ledger for sell-side T+1 check",
+                "trade_date": trade_date,
+            },
+            "order_id": order.get("order_id", ""),
+            "message": "T+1 not satisfied",
+        }
 
-    if can_sell(open_date, trade_date):
+    _ensure_tradings_ashare_on_path()
+    from t_plus_1 import can_sell
+
+    if can_sell(entry_date, trade_date):
         return None
 
-    sellable_date = next_sellable_date(open_date)
     return {
         "channel": "none",
         "executed": False,
         "result": {
             "status": "blocked_t_plus_1",
-            "open_date": open_date,
+            "entry_date": entry_date,
             "trade_date": trade_date,
-            "next_sellable_date": sellable_date.isoformat(),
         },
         "order_id": order.get("order_id", ""),
-        "message": (
-            f"Sell order blocked by A-share T+1: "
-            f"open_date={open_date}, next_sellable_date={sellable_date.isoformat()}"
-        ),
+        "message": "T+1 not satisfied",
     }
 
 
