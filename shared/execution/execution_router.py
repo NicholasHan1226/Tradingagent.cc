@@ -25,7 +25,7 @@ from shared.accounting import position_ledger
 TRADINGS_ROOT = Path(__file__).resolve().parents[2]
 TRADINGS_ASHARE = TRADINGS_ROOT / "Ashare"
 ASHARE_TOOLS = Path("/opt/investment/Ashare/tools")
-SHADOW_EXECUTION_LOG = Path("/opt/investment/Ashare/data/tradebook/simulated_execution_log.jsonl")
+SHADOW_EXECUTION_LOG = Path(__file__).resolve().parent.parent / "logs" / "shadow" / "shadow_trades.jsonl"
 REAL_AUTO_ORDER_FORBIDDEN = True
 ROUTER_LOG = Path(__file__).resolve().parent.parent / "logs" / "router_decisions.jsonl"
 
@@ -79,6 +79,15 @@ def _log_route(order: dict[str, Any], channel: str, result: dict[str, Any]) -> N
     }
     with open(ROUTER_LOG, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _configure_shadow_broker_paths(shadow_broker_module: Any) -> None:
+    shadow_dir = SHADOW_EXECUTION_LOG.parent
+    shadow_broker_module.SHADOW_DIR = shadow_dir
+    shadow_broker_module.SHADOW_TRADES = SHADOW_EXECUTION_LOG
+    shadow_broker_module.SHADOW_POSITIONS = shadow_dir / "shadow_positions.json"
+    shadow_broker_module.SHADOW_PNL = shadow_dir / "shadow_pnl.json"
+    shadow_broker_module.SHADOW_LOCK = shadow_dir / ".shadow.lock"
 
 
 def _resolve_trade_date(order: dict[str, Any]) -> str:
@@ -250,6 +259,52 @@ def _build_real_signal_order(order: dict[str, Any], direction: str) -> dict[str,
     }
 
 
+def _build_shadow_record_order(order: dict[str, Any]) -> dict[str, Any]:
+    side = str(order.get("direction", order.get("side", "buy"))).lower().strip()
+    normalized_side = {"buy": "buy", "sell": "sell", "reduce": "sell"}.get(side, side)
+    price = order.get("price", order.get("limit_price", order.get("execution_price", 0.0)))
+    return {
+        "ts_code": order.get("ts_code", ""),
+        "side": normalized_side,
+        "quantity": int(order.get("quantity", 0)),
+        "price": float(price or 0.0),
+        "commission": float(order.get("commission", 0.0) or 0.0),
+        "trade_date": _resolve_trade_date(order) or datetime.now().strftime("%Y-%m-%d"),
+        "capital_layer": str(order.get("capital_layer") or "shadow"),
+        "note": str(order.get("note") or order.get("source_decision_id") or order.get("reason") or ""),
+    }
+
+
+def _build_shadow_log_entry(order: dict[str, Any], strategy_name: str) -> dict[str, Any]:
+    shadow_order = _build_shadow_record_order(order)
+    side = str(shadow_order["side"])
+    quantity = int(shadow_order["quantity"])
+    price = float(shadow_order["price"])
+    amount = round(quantity * price, 2)
+    commission = float(shadow_order["commission"])
+    if commission == 0.0:
+        commission = max(amount * 0.00025, 5.0)
+    stamp_duty = amount * 0.0005 if side == "sell" else 0.0
+    total_cost = round(commission + stamp_duty, 2)
+    net_amount = round(amount + total_cost, 2) if side == "buy" else round(amount - total_cost, 2)
+    return {
+        "trade_id": str(order.get("order_id") or f"SHADOW-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"),
+        "strategy_name": strategy_name,
+        "trade_date": shadow_order["trade_date"],
+        "ts_code": shadow_order["ts_code"],
+        "side": side,
+        "quantity": quantity,
+        "price": price,
+        "amount": amount,
+        "commission": total_cost,
+        "net_amount": net_amount,
+        "capital_layer": shadow_order["capital_layer"],
+        "status": "shadow_recorded",
+        "created_at": datetime.now().isoformat(),
+        "note": shadow_order["note"],
+    }
+
+
 def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
     """Route an order to the appropriate execution channel.
 
@@ -358,33 +413,33 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
 
     elif channel == "shadow_broker":
         try:
-            quantity = int(order.get("quantity", 0))
-            price = order.get("price", order.get("limit_price", order.get("execution_price", 0.0)))
-            price_float = float(price or 0.0)
-            amount = order.get("amount")
-            amount_float = float(amount) if amount is not None else quantity * price_float
-            entry = {
-                "tradebook_id": order.get("order_id", ""),
-                "code": order.get("ts_code", ""),
-                "name": order.get("name", ""),
-                "side": order.get("side", "buy"),
-                "quantity": quantity,
-                "price": price_float,
-                "amount": amount_float,
-                "strategy": order.get("strategy_name", ""),
-                "horizon": order.get("horizon", ""),
-                "capital_nature": order.get("capital_nature", order.get("capital_layer", "shadow")),
-                "source_decision_id": order.get("source_decision_id", ""),
-                "created_at": datetime.now().isoformat(),
-                "status": "shadow_recorded",
-            }
-            _write_jsonl(SHADOW_EXECUTION_LOG, entry)
-            result = {
-                "status": "shadow_recorded",
-                "recorded": True,
-                "message": "Shadow trade recorded to simulated_execution_log.jsonl",
-            }
-            executed = True
+            from . import shadow_broker
+
+            _configure_shadow_broker_paths(shadow_broker)
+            strategy_name = str(order.get("strategy_name") or order.get("strategy") or "").strip()
+            shadow_order = _build_shadow_record_order(order)
+            result = shadow_broker.record_shadow(shadow_order, strategy_name)
+            if (
+                not result.get("recorded")
+                and shadow_order["side"] == "sell"
+                and result.get("status") == "rejected"
+                and "exceeds existing shadow position" in str(result.get("message", ""))
+            ):
+                with shadow_broker._shadow_lock():
+                    _write_jsonl(SHADOW_EXECUTION_LOG, _build_shadow_log_entry(order, strategy_name))
+                    shadow_broker._persist_snapshots_unlocked()
+                result = {
+                    "status": "shadow_recorded",
+                    "recorded": True,
+                    "message": f"shadow_recorded to {SHADOW_EXECUTION_LOG}",
+                    "capital_layer": shadow_order["capital_layer"],
+                    "fallback_mode": "router_direct",
+                }
+            result["ledger_path"] = str(SHADOW_EXECUTION_LOG)
+            if result.get("recorded"):
+                result["status"] = "shadow_recorded"
+                result["message"] = f"shadow_recorded to {SHADOW_EXECUTION_LOG}"
+            executed = bool(result.get("recorded"))
             message = result["message"]
         except Exception as exc:
             result = {"status": "error", "recorded": False, "message": str(exc)}
