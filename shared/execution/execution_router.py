@@ -117,7 +117,10 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
             message = f"Sim executed: {tr.status} @ {tr.avg_price} (qty {tr.filled_qty})"
         except Exception as exc:
             try:
-                from sim_broker import simulate_order
+                try:
+                    from .sim_broker import simulate_order
+                except ImportError:
+                    from sim_broker import simulate_order
 
                 result = simulate_order(order)
                 result["ashare_executor_error"] = str(exc)

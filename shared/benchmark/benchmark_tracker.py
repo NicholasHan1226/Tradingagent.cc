@@ -32,18 +32,17 @@ LEDGER_DIR = Path(__file__).resolve().parent.parent / "logs"
 BENCHMARK_CSV = LEDGER_DIR / "benchmark_daily.csv"
 
 CSV_HEADERS = [
-    "date",              # YYYYMMDD
-    "csi300_close",      # CSI300 closing index value
-    "chinext_close",     # ChiNext closing index value
-    "buyhold_value",     # buy-and-hold portfolio value (starting at 1.0)
-    "csi300_return",     # daily return (decimal)
-    "chinext_return",    # daily return (decimal)
-    "buyhold_return",    # daily return (decimal)
-    "source",            # data source annotation
-    "updated_at",        # ISO timestamp of this record
+    "date",
+    "csi300_close",
+    "chinext_close",
+    "buyhold_value",
+    "csi300_return",
+    "chinext_return",
+    "buyhold_return",
+    "source",
+    "updated_at",
 ]
 
-# Initial buy-hold portfolio value (normalized to 1.0 on first day)
 BUYHOLD_INITIAL = 1.0
 
 
@@ -65,9 +64,14 @@ def _read_all() -> list[dict[str, Any]]:
         return list(reader)
 
 
+def _sort_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return records sorted by trading date."""
+    return sorted(records, key=lambda r: r.get("date", ""))
+
+
 def _get_latest() -> dict[str, Any] | None:
     """Get the most recent benchmark record."""
-    records = _read_all()
+    records = _sort_records(_read_all())
     if not records:
         return None
     return records[-1]
@@ -82,11 +86,53 @@ def _get_by_date(date: str) -> dict[str, Any] | None:
     return None
 
 
+def _to_float(value: Any) -> float | None:
+    """Convert CSV values to float, preserving blanks as None."""
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
 def _calc_return(old: float, new: float) -> float:
     """Calculate return: (new - old) / old. Returns 0.0 if old is 0."""
     if old == 0:
         return 0.0
     return round((new - old) / old, 6)
+
+
+def _recalculate_returns(records: list[dict[str, Any]], start_idx: int = 0) -> None:
+    """Recalculate daily returns from start_idx through the end of the series."""
+    if not records:
+        return
+
+    start_idx = max(0, start_idx)
+    for idx in range(start_idx, len(records)):
+        current = records[idx]
+        previous = records[idx - 1] if idx > 0 else None
+
+        current_csi300 = _to_float(current.get("csi300_close"))
+        current_chinext = _to_float(current.get("chinext_close"))
+        current_buyhold = _to_float(current.get("buyhold_value"))
+
+        previous_csi300 = _to_float(previous.get("csi300_close")) if previous else None
+        previous_chinext = _to_float(previous.get("chinext_close")) if previous else None
+        previous_buyhold = _to_float(previous.get("buyhold_value")) if previous else None
+
+        current["csi300_return"] = (
+            _calc_return(previous_csi300, current_csi300)
+            if previous_csi300 is not None and current_csi300 is not None
+            else 0.0
+        )
+        current["chinext_return"] = (
+            _calc_return(previous_chinext, current_chinext)
+            if previous_chinext is not None and current_chinext is not None
+            else 0.0
+        )
+        current["buyhold_return"] = (
+            _calc_return(previous_buyhold, current_buyhold)
+            if previous_buyhold is not None and current_buyhold is not None
+            else 0.0
+        )
 
 
 def update_benchmark(
@@ -97,28 +143,7 @@ def update_benchmark(
     buyhold_holdings: list[dict[str, Any]] | None = None,
     source: str = "manual",
 ) -> dict[str, Any]:
-    """Update or insert benchmark data for a given date.
-
-    For buy-hold: either pass buyhold_value directly (pre-calculated), or
-    pass buyhold_holdings (list of {ts_code, quantity, price}) and the
-    value will be computed as sum(quantity * price).
-
-    If a record for this date already exists, it is updated (in-place by
-    rewriting the CSV). Daily returns are calculated relative to the
-    previous trading day's close.
-
-    Args:
-        date: trading date as YYYYMMDD string.
-        csi300_close: CSI300 closing index value.
-        chinext_close: ChiNext closing index value.
-        buyhold_value: pre-calculated buy-hold portfolio value.
-        buyhold_holdings: list of {ts_code, quantity, price} for buy-hold calc.
-        source: data source annotation (e.g. "tushare", "marketgraph").
-
-    Returns:
-        dict with: date, csi300_close, chinext_close, buyhold_value,
-        csi300_return, chinext_return, buyhold_return, updated.
-    """
+    """Update or insert benchmark data for a given date."""
     _ensure_csv()
 
     if csi300_close is not None:
@@ -126,7 +151,6 @@ def update_benchmark(
     if chinext_close is not None:
         chinext_close = float(chinext_close)
 
-    # Calculate buy-hold value if holdings provided
     if buyhold_value is None and buyhold_holdings is not None:
         buyhold_value = sum(
             float(h.get("quantity", 0)) * float(h.get("price", 0))
@@ -135,75 +159,48 @@ def update_benchmark(
     if buyhold_value is not None:
         buyhold_value = float(buyhold_value)
 
-    # Get previous day's values for return calculation
-    latest = _get_latest()
-    prev_csi300 = float(latest["csi300_close"]) if latest and latest.get("csi300_close") else None
-    prev_chinext = float(latest["chinext_close"]) if latest and latest.get("chinext_close") else None
-    prev_buyhold = float(latest["buyhold_value"]) if latest and latest.get("buyhold_value") else None
+    records = _sort_records(_read_all())
+    existing_idx = next((i for i, record in enumerate(records) if record["date"] == date), None)
+    updated = existing_idx is not None
 
-    # If no previous record, initialize buy-hold to initial value
-    if latest is None and buyhold_value is not None:
-        # First entry: normalize buy-hold to initial value
-        # (the actual value is stored, return is 0 for first day)
-        pass
+    if updated:
+        record = dict(records[existing_idx])
+    else:
+        record = {header: "" for header in CSV_HEADERS}
+        record["date"] = date
 
-    # Calculate daily returns
-    csi300_return = _calc_return(prev_csi300, csi300_close) if (prev_csi300 and csi300_close) else 0.0
-    chinext_return = _calc_return(prev_chinext, chinext_close) if (prev_chinext and chinext_close) else 0.0
-
+    if csi300_close is not None:
+        record["csi300_close"] = csi300_close
+    if chinext_close is not None:
+        record["chinext_close"] = chinext_close
     if buyhold_value is not None:
-        if prev_buyhold and prev_buyhold > 0:
-            buyhold_return = _calc_return(prev_buyhold, buyhold_value)
-        else:
-            # First day: no return
-            buyhold_return = 0.0
-    else:
-        buyhold_return = 0.0
+        record["buyhold_value"] = buyhold_value
+    record["source"] = source
+    record["updated_at"] = datetime.now().isoformat()
 
-    # Build the record
-    record = {
-        "date": date,
-        "csi300_close": csi300_close if csi300_close is not None else "",
-        "chinext_close": chinext_close if chinext_close is not None else "",
-        "buyhold_value": buyhold_value if buyhold_value is not None else "",
-        "csi300_return": csi300_return,
-        "chinext_return": chinext_return,
-        "buyhold_return": buyhold_return,
-        "source": source,
-        "updated_at": datetime.now().isoformat(),
-    }
-
-    # Check if record for this date already exists
-    records = _read_all()
-    existing_idx = None
-    for i, r in enumerate(records):
-        if r["date"] == date:
-            existing_idx = i
-            break
-
-    if existing_idx is not None:
-        # Update existing record
+    if updated:
         records[existing_idx] = record
-        with open(BENCHMARK_CSV, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
-            writer.writeheader()
-            writer.writerows(records)
-        updated = True
     else:
-        # Append new record
-        with open(BENCHMARK_CSV, "a", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
-            writer.writerow(record)
-        updated = False
+        records.append(record)
+        records = _sort_records(records)
+        existing_idx = next(i for i, item in enumerate(records) if item["date"] == date)
 
+    _recalculate_returns(records, start_idx=existing_idx or 0)
+
+    with open(BENCHMARK_CSV, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
+        writer.writeheader()
+        writer.writerows(records)
+
+    record = records[existing_idx or 0]
     return {
-        "date": date,
-        "csi300_close": csi300_close,
-        "chinext_close": chinext_close,
-        "buyhold_value": buyhold_value,
-        "csi300_return": csi300_return,
-        "chinext_return": chinext_return,
-        "buyhold_return": buyhold_return,
+        "date": record["date"],
+        "csi300_close": _to_float(record.get("csi300_close")),
+        "chinext_close": _to_float(record.get("chinext_close")),
+        "buyhold_value": _to_float(record.get("buyhold_value")),
+        "csi300_return": float(record.get("csi300_return", 0.0) or 0.0),
+        "chinext_return": float(record.get("chinext_return", 0.0) or 0.0),
+        "buyhold_return": float(record.get("buyhold_return", 0.0) or 0.0),
         "updated": updated,
     }
 
@@ -213,21 +210,7 @@ def get_benchmark_return(
     end: str,
     benchmark: str = "csi300",
 ) -> dict[str, Any]:
-    """Get benchmark return between two dates (inclusive).
-
-    Uses the "close" values on start and end dates to compute the
-    cumulative return for the period.
-
-    Args:
-        start: start date (YYYYMMDD).
-        end: end date (YYYYMMDD).
-        benchmark: "csi300" | "chinext" | "buyhold".
-
-    Returns:
-        dict with: benchmark, start, end, start_value, end_value,
-        cumulative_return, daily_returns (list of daily returns in range).
-        Returns start_value/end_value as None if data is missing.
-    """
+    """Get benchmark return between two dates (inclusive)."""
     if benchmark not in ("csi300", "chinext", "buyhold"):
         raise ValueError(f"benchmark must be 'csi300', 'chinext', or 'buyhold', got '{benchmark}'")
 
@@ -243,7 +226,6 @@ def get_benchmark_return(
     }[benchmark]
 
     records = _read_all()
-    # Filter to date range
     in_range = [r for r in records if start <= r["date"] <= end]
     in_range.sort(key=lambda r: r["date"])
 
@@ -292,32 +274,12 @@ def compare(
     benchmark_return: float,
     period: str = "daily",
 ) -> dict[str, Any]:
-    """Compare portfolio return against benchmark return for a period.
-
-    This is a lightweight comparison (excess return + beat flag).
-    For advanced statistics (alpha/beta/sharpe/max-drawdown), use
-    review/benchmark.py:compare_to_benchmark().
-
-    Args:
-        portfolio_return: portfolio return for the period (decimal, e.g. 0.012).
-        benchmark_return: benchmark return for the same period (decimal).
-        period: "daily" | "weekly" | "monthly" | "cumulative".
-
-    Returns:
-        dict with:
-            "portfolio_return": float,
-            "benchmark_return": float,
-            "excess_return": float,      # portfolio - benchmark
-            "beat_benchmark": bool,      # portfolio > benchmark
-            "period": str,
-            "annualized_excess": float,  # excess annualized (252/52/12 depending on period)
-    """
+    """Compare portfolio return against benchmark return for a period."""
     portfolio_return = float(portfolio_return)
     benchmark_return = float(benchmark_return)
     excess = round(portfolio_return - benchmark_return, 6)
     beat = portfolio_return > benchmark_return
 
-    # Annualization factor
     ann_factor = {
         "daily": 252,
         "weekly": 52,
@@ -340,10 +302,7 @@ def compare(
     }
 
 
-# ---- self-test --------------------------------------------------------------
-
 if __name__ == "__main__":
-    # Smoke test: update benchmarks for 3 days, then query and compare
     r1 = update_benchmark("20260601", csi300_close=3500.0, chinext_close=2100.0,
                           buyhold_value=100000.0, source="smoke_test")
     print("day1:", r1)
@@ -356,11 +315,9 @@ if __name__ == "__main__":
                           buyhold_value=99500.0, source="smoke_test")
     print("day3:", r3)
 
-    # Get benchmark return for CSI300 over the period
     ret = get_benchmark_return("20260601", "20260603", benchmark="csi300")
     print("\ncsi300 return:", json.dumps(ret, indent=2))
 
-    # Compare portfolio vs benchmark
-    portfolio_ret = ret["cumulative_return"] + 0.005  # pretend we beat by 0.5%
+    portfolio_ret = ret["cumulative_return"] + 0.005
     cmp = compare(portfolio_ret, ret["cumulative_return"], period="cumulative")
     print("\ncomparison:", json.dumps(cmp, indent=2))
