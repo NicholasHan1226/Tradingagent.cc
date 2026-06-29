@@ -14,11 +14,20 @@ score_universe(date) → list of (ts_code, scores)
 """
 from __future__ import annotations
 
-import csv
-import sqlite3
-from datetime import datetime, timedelta
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, '/opt/investment/SharedSignals')
+
+from reader import (
+    get_capital_flow,
+    get_events,
+    get_macro_factors,
+    get_market_data,
+    get_sentiment,
+)
 
 try:
     import yaml
@@ -39,17 +48,23 @@ _DEFAULT_MISSING = 0.5
 
 _WEIGHTS_PATH = Path(__file__).resolve().parent / "weights.yaml"
 
-# Ashare 数据根目录
-_ASHARE_DATA = Path("/opt/investment/Ashare/data")
-_MARKETGRAPH_DATA = Path("/opt/investment/MarketGraph/data")
-_MARKETDATA_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
-_REGIME_FILE = _MARKETGRAPH_DATA / "all_weather_regime.csv"
-_EVENT_FILE = _MARKETGRAPH_DATA / "intake" / "event_candidates.csv"
-_SENTIMENT_FILE = _MARKETGRAPH_DATA / "intake" / "sentiment_signals.csv"
-_MONEYFLOW_DIR = _ASHARE_DATA / "tushare_cache" / "moneyflow"
-
-_MARKETDATA_CONN: sqlite3.Connection | None = None
-_MARKETDATA_CONN_FAILED = False
+def _unwrap_reader_data(result: Any) -> list[dict[str, Any]]:
+    if isinstance(result, list):
+        rows: list[dict[str, Any]] = []
+        for item in result:
+            if not isinstance(item, dict) or item.get("degraded"):
+                continue
+            data = item.get("data")
+            if isinstance(data, dict) and data:
+                rows.append(data)
+            elif data is None:
+                rows.append(item)
+        return rows
+    if isinstance(result, dict):
+        data = result.get("data")
+        if isinstance(data, list):
+            return [row for row in data if isinstance(row, dict) and row]
+    return []
 
 
 def _load_weights() -> dict[str, Any]:
@@ -90,27 +105,7 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, v))
 
 
-# ── 六维打分函数 (各维度从真实数据源读取) ──
-
-def _get_marketdata_conn() -> sqlite3.Connection | None:
-    """Open MarketGraphRuntime marketdata.sqlite once per process, read-only."""
-    global _MARKETDATA_CONN, _MARKETDATA_CONN_FAILED
-    if _MARKETDATA_CONN is not None:
-        return _MARKETDATA_CONN
-    if _MARKETDATA_CONN_FAILED:
-        return None
-    try:
-        if not _MARKETDATA_DB.exists():
-            _MARKETDATA_CONN_FAILED = True
-            return None
-        conn = sqlite3.connect(f"file:{_MARKETDATA_DB}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        _MARKETDATA_CONN = conn
-        return _MARKETDATA_CONN
-    except Exception:
-        _MARKETDATA_CONN_FAILED = True
-        return None
-
+# ── 六维打分函数 (各维度从 SharedSignals reader 读取) ──
 
 def _strip_suffix(ts_code: str) -> str:
     """Return code without exchange suffix, e.g. 600519.SH -> 600519."""
@@ -123,15 +118,11 @@ def _direction_score(impact_hint: Any) -> float:
 
 
 def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """宏观维度 — 从 MarketGraph all_weather_regime.csv 获取当前 regime。"""
+    """宏观维度 — 从 SharedSignals 宏观因子读取当前 regime。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("macro", {})
         regime_scores = dim_cfg.get("regime_scores", {})
-        if not _REGIME_FILE.exists():
-            return 0.5
-        with open(_REGIME_FILE, encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
+        rows = _unwrap_reader_data(get_macro_factors(date=date))
         if not rows:
             return 0.5
         row = max(rows, key=lambda r: str(r.get("generated_at") or ""))
@@ -148,29 +139,24 @@ def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float:
 
 
 def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """事件维度 — 从 MarketGraph event_candidates.csv 聚合个股事件方向。"""
+    """事件维度 — 从 SharedSignals 事件流聚合个股事件方向。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("event", {})
         min_conf = _safe_float(dim_cfg.get("min_confidence", 0.30), 0.30)
-        if not _EVENT_FILE.exists():
+        rows = _unwrap_reader_data(get_events(date=date, subject_code=ts_code, subject_type="stock"))
+        if not rows:
             return 0.5
         total_weight = 0.0
         weighted = 0.0
         allowed_status = {"needs_review", "promoted", "approved"}
-        with open(_EVENT_FILE, encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row.get("subject_code") != ts_code:
-                    continue
-                if row.get("subject_type") != "stock":
-                    continue
-                if row.get("status") not in allowed_status:
-                    continue
-                conf = _safe_float(row.get("confidence"), 0.0)
-                if conf < min_conf:
-                    continue
-                weighted += _direction_score(row.get("proposed_impact_hint")) * conf
-                total_weight += conf
+        for row in rows:
+            if row.get("status") not in allowed_status:
+                continue
+            conf = _safe_float(row.get("confidence"), 0.0)
+            if conf < min_conf:
+                continue
+            weighted += _direction_score(row.get("proposed_impact_hint")) * conf
+            total_weight += conf
         if total_weight <= 1e-9:
             return 0.5
         return _clamp(weighted / total_weight)
@@ -179,32 +165,21 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float:
 
 
 def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """基本面维度 — 从 market_factors 读取最新因子值。"""
+    """基本面维度 — 从 SharedSignals market_factors 读取最新因子值。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("fundamental", {})
         factor_weights = dim_cfg.get("factors", {"value": 0.30, "growth": 0.30, "quality": 0.20, "momentum": 0.20})
-        conn = _get_marketdata_conn()
-        if conn is None:
-            return 0.5
         symbols = [_strip_suffix(ts_code)]
         if ts_code not in symbols:
             symbols.append(ts_code)
-        rows: list[sqlite3.Row] = []
-        for symbol in symbols:
-            rows = conn.execute(
-                "SELECT factor_name, value FROM market_factors "
-                "WHERE market='Ashare' AND symbol=? ORDER BY event_time DESC",
-                (symbol,),
-            ).fetchall()
-            if rows:
-                break
+        rows = _unwrap_reader_data(get_market_data("market_factors", market="Ashare", symbols=symbols, limit=200))
         if not rows:
             return 0.5
         latest_by_factor: dict[str, float] = {}
         for row in rows:
-            factor = str(row["factor_name"] or "").strip().lower()
+            factor = str(row.get("factor_name") or "").strip().lower()
             if factor and factor not in latest_by_factor:
-                raw = _safe_float(row["value"], 0.5)
+                raw = _safe_float(row.get("value"), 0.5)
                 if factor in ("pe", "pb"):
                     raw = 1.0 - (raw / 100.0)
                 latest_by_factor[factor] = _clamp(raw)
@@ -225,28 +200,14 @@ def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float
 
 
 def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """资金维度 — 从 Ashare moneyflow CSV 读取窗口内主力净流入。"""
+    """资金维度 — 从 SharedSignals 资金流读取窗口内主力净流入。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("capital", {})
         window = max(1, int(dim_cfg.get("window_days", 5)))
-        if not _MONEYFLOW_DIR.exists():
+        rows = _unwrap_reader_data(get_capital_flow(date=date, window=window, ts_code=ts_code))
+        if not rows:
             return 0.5
-        end_date = datetime.strptime(date, "%Y%m%d")
-        total_net = 0.0
-        found_file = False
-        for i in range(window):
-            day = (end_date - timedelta(days=i)).strftime("%Y%m%d")
-            moneyflow_file = _MONEYFLOW_DIR / f"{day}.csv"
-            if not moneyflow_file.exists():
-                continue
-            found_file = True
-            with open(moneyflow_file, encoding="utf-8-sig", newline="") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    if row.get("ts_code") == ts_code:
-                        total_net += _safe_float(row.get("net_mf_amount"), 0.0)
-        if not found_file:
-            return 0.5
+        total_net = sum(_safe_float(row.get("net_mf_amount"), 0.0) for row in rows)
         if total_net > 0:
             score = 0.6 + _clamp(total_net / 1e5, 0.0, 0.4)
         else:
@@ -257,31 +218,20 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float:
 
 
 def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """技术维度 — 从 market_bars_daily 读取日线并计算动量和均线趋势。"""
+    """技术维度 — 从 SharedSignals 日线读取动量和均线趋势。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("technical", {})
         window = max(1, int(dim_cfg.get("window_days", 20)))
         ma_short = max(1, int(dim_cfg.get("ma_short", 5)))
         ma_long = max(1, int(dim_cfg.get("ma_long", 20)))
         needed = max(window, ma_short, ma_long)
-        conn = _get_marketdata_conn()
-        if conn is None:
-            return 0.5
         symbols = [_strip_suffix(ts_code)]
         if ts_code not in symbols:
             symbols.append(ts_code)
-        rows: list[sqlite3.Row] = []
-        for symbol in symbols:
-            rows = conn.execute(
-                "SELECT trade_date, close FROM market_bars_daily "
-                "WHERE market='Ashare' AND symbol=? ORDER BY trade_date DESC LIMIT 60",
-                (symbol,),
-            ).fetchall()
-            if len(rows) >= ma_long:
-                break
+        rows = _unwrap_reader_data(get_market_data("market_bars_daily", market="Ashare", symbols=symbols, limit=60))
         if len(rows) < ma_long:
             return 0.5
-        closes_desc = [_safe_float(row["close"], 0.0) for row in rows]
+        closes_desc = [_safe_float(row.get("close"), 0.0) for row in rows]
         closes = list(reversed([c for c in closes_desc if c > 0]))
         if len(closes) < needed:
             return 0.5
@@ -298,29 +248,24 @@ def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float:
 
 
 def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """情绪维度 — 从 MarketGraph sentiment_signals.csv 聚合个股情绪信号。"""
+    """情绪维度 — 从 SharedSignals 情绪流聚合个股信号。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("sentiment", {})
         extreme_threshold = _safe_float(dim_cfg.get("extreme_threshold", 0.85), 0.85)
-        if not _SENTIMENT_FILE.exists():
+        rows = _unwrap_reader_data(get_sentiment(date=date, subject_code=ts_code))
+        if not rows:
             return 0.5
         total_weight = 0.0
         weighted = 0.0
         allowed_status = {"sentiment_signal", "needs_review", "promoted"}
-        with open(_SENTIMENT_FILE, encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if not row.get("subject_code"):
-                    continue
-                if row.get("subject_code") != ts_code:
-                    continue
-                if row.get("status") not in allowed_status:
-                    continue
-                conf = _safe_float(row.get("confidence"), 0.0)
-                if conf < 0.20:
-                    continue
-                weighted += _direction_score(row.get("proposed_impact_hint")) * conf
-                total_weight += conf
+        for row in rows:
+            if row.get("status") not in allowed_status:
+                continue
+            conf = _safe_float(row.get("confidence"), 0.0)
+            if conf < 0.20:
+                continue
+            weighted += _direction_score(row.get("proposed_impact_hint")) * conf
+            total_weight += conf
         if total_weight <= 1e-9:
             return 0.5
         raw = _clamp(weighted / total_weight)

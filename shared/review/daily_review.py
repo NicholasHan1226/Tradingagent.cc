@@ -17,10 +17,15 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, '/opt/investment/SharedSignals')
+
+from reader import get_market_data
 
 from .attribution import attribute, attribute_pct
 from .benchmark import compare_to_benchmark, get_benchmark, record_last_period
@@ -29,11 +34,19 @@ REVIEW_DIR = Path(__file__).resolve().parent
 GOALS_PATH = REVIEW_DIR / "goals.yaml"
 DAILY_LOG = REVIEW_DIR / "data" / "daily_reviews.jsonl"
 
-ASHARE_DATA = Path("/opt/investment/Ashare/data")
-RECOMMENDATIONS_DIR = ASHARE_DATA / "recommendations"
-SHADOW_SIM_DIR = ASHARE_DATA / "shadow_sim"
-PAPER_PORTFOLIO_DIR = ASHARE_DATA / "paper_portfolio"
-TRADEBOOK_DIR = ASHARE_DATA / "tradebook"
+def _shared_rows(dataset: str) -> list[dict[str, Any]]:
+    result = get_market_data(dataset)
+    if isinstance(result, list):
+        rows: list[dict[str, Any]] = []
+        for item in result:
+            if isinstance(item, dict) and not item.get("degraded") and isinstance(item.get("data"), dict) and item["data"]:
+                rows.append(item["data"])
+        return rows
+    if isinstance(result, dict):
+        data = result.get("data")
+        if isinstance(data, list):
+            return [row for row in data if isinstance(row, dict) and row]
+    return []
 
 
 def _now_iso() -> str:
@@ -290,8 +303,7 @@ def _is_morning_trade(row: dict[str, Any]) -> bool:
 
 def load_recommendations(trade_date: str) -> list[dict[str, Any]]:
     try:
-        path = RECOMMENDATIONS_DIR / "recommendations.csv"
-        rows = _read_csv_dicts(path)
+        rows = _shared_rows("recommendations")
         return [
             row for row in rows
             if _date_eq(row.get("as_of_trade_date"), trade_date)
@@ -303,8 +315,7 @@ def load_recommendations(trade_date: str) -> list[dict[str, Any]]:
 
 def load_review_outcomes(trade_date: str) -> list[dict[str, Any]]:
     try:
-        path = RECOMMENDATIONS_DIR / "reviews.csv"
-        rows = _read_csv_dicts(path)
+        rows = _shared_rows("reviews")
         return [row for row in rows if _date_eq(row.get("recommendation_date"), trade_date)]
     except Exception:
         return []
@@ -312,18 +323,16 @@ def load_review_outcomes(trade_date: str) -> list[dict[str, Any]]:
 
 def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
     try:
-        shadow_path = SHADOW_SIM_DIR / "shadow_sim_trades.csv"
         rows = [
             _normalize_trade(row, default_layer="shadow")
-            for row in _read_csv_dicts(shadow_path)
+            for row in _shared_rows("shadow_sim_trades")
             if _date_eq(row.get("trade_date"), trade_date)
         ]
         if rows:
             return rows
 
-        jsonl_path = TRADEBOOK_DIR / "simulated_execution_log.jsonl"
         jsonl_rows = []
-        for row in _read_jsonl_dicts(jsonl_path):
+        for row in _shared_rows("simulated_execution_log"):
             if _date_eq(row.get("trade_date"), trade_date) or _created_at_matches(row.get("created_at"), trade_date):
                 jsonl_rows.append(_normalize_trade(row, default_layer="simulated"))
         return jsonl_rows
@@ -333,13 +342,11 @@ def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
 
 def load_positions(as_of_date: str) -> list[dict[str, Any]]:
     try:
-        shadow_path = SHADOW_SIM_DIR / "latest_shadow_positions.csv"
-        rows = [_normalize_position(row, default_layer="shadow") for row in _read_csv_dicts(shadow_path)]
+        rows = [_normalize_position(row, default_layer="shadow") for row in _shared_rows("latest_shadow_positions")]
         if rows:
             return rows
 
-        paper_path = PAPER_PORTFOLIO_DIR / "positions.csv"
-        rows = [_normalize_position(row, default_layer="shadow") for row in _read_csv_dicts(paper_path)]
+        rows = [_normalize_position(row, default_layer="shadow") for row in _shared_rows("paper_positions")]
         return rows
     except Exception:
         return []
@@ -347,8 +354,7 @@ def load_positions(as_of_date: str) -> list[dict[str, Any]]:
 
 def load_direction_hits(trade_date: str) -> list[dict[str, Any]]:
     try:
-        path = RECOMMENDATIONS_DIR / "direction_hit_reviews.csv"
-        rows = _read_csv_dicts(path)
+        rows = _shared_rows("direction_hit_reviews")
         return [row for row in rows if _date_eq(row.get("source_trade_date"), trade_date)]
     except Exception:
         return []
