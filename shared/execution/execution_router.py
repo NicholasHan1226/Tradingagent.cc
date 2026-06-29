@@ -5,10 +5,11 @@ Routes orders to the appropriate execution channel based on the strategy's
 maturity stage:
   - "sim" -> sim_broker (slippage modeling, no capital)
   - "shadow" -> shadow_broker (record only, no execution)
-  - "real" -> hermes_bridge (real execution via Mac Mini, manual confirm)
+  - "real" -> hermes_bridge signal cards (file communication only)
 
 The progression is sim -> shadow -> real. A strategy must pass validation at
-each stage before graduating to the next.
+each stage before graduating to the next. The real channel never performs direct
+execution; it only writes pending signal cards for Mac Mini-side handling.
 """
 
 from __future__ import annotations
@@ -19,9 +20,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+TRADINGS_ROOT = Path(__file__).resolve().parents[2]
+TRADINGS_ASHARE = TRADINGS_ROOT / "Ashare"
 ASHARE_TOOLS = Path("/opt/investment/Ashare/tools")
 SHADOW_EXECUTION_LOG = Path("/opt/investment/Ashare/data/tradebook/simulated_execution_log.jsonl")
-REAL_ORDER_SETUP_CARDS = Path("/opt/investment/Ashare/data/tradebook/real_order_setup_cards.jsonl")
+REAL_AUTO_ORDER_FORBIDDEN = True
 ROUTER_LOG = Path(__file__).resolve().parent.parent / "logs" / "router_decisions.jsonl"
 
 # Stage configuration
@@ -52,6 +55,12 @@ def _ensure_ashare_tools_on_path() -> None:
         sys.path.insert(0, ashare_tools)
 
 
+def _ensure_tradings_ashare_on_path() -> None:
+    ashare_dir = str(TRADINGS_ASHARE)
+    if ashare_dir not in sys.path:
+        sys.path.insert(0, ashare_dir)
+
+
 def _write_jsonl(path: Path, entry: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
@@ -68,6 +77,65 @@ def _log_route(order: dict[str, Any], channel: str, result: dict[str, Any]) -> N
     }
     with open(ROUTER_LOG, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _extract_position_open_date(order: dict[str, Any]) -> str:
+    for field in ("position_open_date", "open_date", "buy_date", "acquired_date"):
+        value = order.get(field)
+        if value:
+            return str(value)
+    return ""
+
+
+def _resolve_trade_date(order: dict[str, Any]) -> str:
+    for field in ("trade_date", "current_date", "order_date", "timestamp"):
+        value = order.get(field)
+        if value:
+            return str(value)
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _check_t_plus_1(order: dict[str, Any]) -> dict[str, Any] | None:
+    side = str(order.get("direction", order.get("side", ""))).lower().strip()
+    if side not in {"sell", "reduce"}:
+        return None
+
+    open_date = _extract_position_open_date(order)
+    if not open_date:
+        return {
+            "channel": "none",
+            "executed": False,
+            "result": {
+                "status": "blocked_t_plus_1",
+                "message": "Missing position_open_date/open_date for sell-side T+1 check",
+            },
+            "order_id": order.get("order_id", ""),
+            "message": "Sell order blocked: missing acquisition date for T+1 verification",
+        }
+
+    trade_date = _resolve_trade_date(order)
+    _ensure_tradings_ashare_on_path()
+    from t_plus_1 import can_sell, next_sellable_date
+
+    if can_sell(open_date, trade_date):
+        return None
+
+    sellable_date = next_sellable_date(open_date)
+    return {
+        "channel": "none",
+        "executed": False,
+        "result": {
+            "status": "blocked_t_plus_1",
+            "open_date": open_date,
+            "trade_date": trade_date,
+            "next_sellable_date": sellable_date.isoformat(),
+        },
+        "order_id": order.get("order_id", ""),
+        "message": (
+            f"Sell order blocked by A-share T+1: "
+            f"open_date={open_date}, next_sellable_date={sellable_date.isoformat()}"
+        ),
+    }
 
 
 def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
@@ -91,6 +159,10 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
         }
 
     channel = STAGE_CHANNELS[stage]
+    t_plus_1_block = _check_t_plus_1(order)
+    if t_plus_1_block is not None:
+        _log_route(order, "none", t_plus_1_block["result"])
+        return t_plus_1_block
 
     if channel == "sim_broker":
         try:
@@ -172,50 +244,47 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
 
     elif channel == "hermes_bridge":
         try:
-            _ensure_ashare_tools_on_path()
-            from a_share_tonghuashun_execution import build_condition_order_setup, real_auto_order_forbidden
+            try:
+                from .hermes_bridge import real_auto_order_forbidden, send_order
+            except ImportError:
+                from hermes_bridge import real_auto_order_forbidden, send_order
 
-            side = str(order.get("side", "buy")).lower()
-            action = {"buy": "buy", "sell": "sell", "reduce": "reduce"}.get(side, side)
-            item = {
-                "action": action,
-                "code": order.get("ts_code", ""),
-                "name": order.get("name", ""),
-                "quantity": order.get("quantity", ""),
-                "price": order.get("limit_price", order.get("price", "")),
-                "strategy_name": order.get("strategy_name", ""),
-                "condition": order.get("condition", ""),
-                "reason": order.get("reason", ""),
-            }
-            setup = build_condition_order_setup(item, route="real")
-            if not real_auto_order_forbidden(setup):
+            if not (REAL_AUTO_ORDER_FORBIDDEN and real_auto_order_forbidden):
                 result = {
                     "status": "aborted",
-                    "setup": setup,
-                    "message": "Real auto-order guard did not confirm the manual-only boundary",
+                    "message": "Real auto-order safety flag is not locked to True",
+                    "real_auto_order_forbidden": False,
+                    "direct_execution": False,
                 }
                 executed = False
                 message = result["message"]
             else:
-                _write_jsonl(
-                    REAL_ORDER_SETUP_CARDS,
-                    {
-                        "created_at": datetime.now().isoformat(),
-                        "order_id": order.get("order_id", ""),
-                        "setup": setup,
-                    },
-                )
-                result = {
-                    "status": "pending_manual_confirm",
-                    "setup": setup,
-                    "message": "Real order setup card generated - manual confirm required in Tonghuashun",
+                side = str(order.get("direction", order.get("side", "buy"))).lower().strip()
+                direction = {"buy": "buy", "sell": "sell", "reduce": "sell"}.get(side, side)
+                signal_order = {
+                    "order_id": order.get("order_id", ""),
+                    "ts_code": order.get("ts_code", ""),
+                    "direction": direction,
+                    "quantity": int(order.get("quantity", 0)),
+                    "price": order.get("price", order.get("limit_price", order.get("execution_price"))),
+                    "stop_loss": order.get("stop_loss"),
+                    "strategy_name": order.get("strategy_name", ""),
+                    "timestamp": order.get("timestamp"),
                 }
+                result = send_order(signal_order)
                 executed = False
-                message = result["message"]
+                result["real_auto_order_forbidden"] = True
+                result["direct_execution"] = False
+                message = result.get("message", "Signal card queued")
         except Exception as exc:
-            result = {"status": "error", "message": str(exc)}
+            result = {
+                "status": "error",
+                "message": str(exc),
+                "real_auto_order_forbidden": True,
+                "direct_execution": False,
+            }
             executed = False
-            message = f"Real order setup failed: {exc}"
+            message = f"Signal card route failed: {exc}"
 
     else:
         result = {}

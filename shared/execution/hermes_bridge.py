@@ -1,256 +1,320 @@
 #!/usr/bin/env python3
-"""Hermes bridge: server-side command sender to Mac Mini Hermes desktop control.
+"""Signal-card execution bridge for Mac Mini trade handling.
 
-Hermes runs on the Mac Mini and controls the Tonghuashun (同花顺) client via
-desktop automation. This module is the server-side bridge: it sends commands
-to the Mac Mini over SSH and reads back fill/position status.
-
-Reference interface: /opt/investment/Ashare/tools/a_share_tonghuashun_execution.py
-
-Real-money boundary: this bridge sends *instructions* to Hermes on the Mac
-Mini. Hermes places real orders. Nicholas must confirm real-money orders
-manually — the bridge never auto-submits real orders without confirmation.
+The server never connects to the Mac Mini and never performs direct trade
+execution. It writes pending signal cards to disk. A separate Mac Mini cron job
+pulls those cards, runs the local simulated/desktop executor, and writes fill
+and position results back to the shared signals directory.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
+import re
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# Mac Mini SSH connection config (set via env or config file)
-MAC_MINI_HOST = "nicholas@nicholas-mac-mini.local"
-HERMES_REMOTE_PATH = "/opt/hermes/hermes_cli.py"
-HERMES_STATUS_PATH = "/opt/hermes/hermes_status.py"
+TRADINGS_ROOT = Path("/opt/investment/Tradings")
+SIGNALS_DIR = TRADINGS_ROOT / "signals"
+PENDING_DIR = SIGNALS_DIR / "pending"
+FILLED_DIR = SIGNALS_DIR / "filled"
+CANCELLED_DIR = SIGNALS_DIR / "cancelled"
+POSITIONS_DIR = SIGNALS_DIR / "positions"
+POSITIONS_FILE = SIGNALS_DIR / "positions.json"
 
-# Local ledger for orders sent to Hermes
-HERMES_LEDGER = Path(__file__).resolve().parent.parent / "logs" / "hermes_orders.jsonl"
+# Hard safety boundary: this bridge only creates signal cards. It must never
+# submit, cancel, or confirm real orders directly.
+real_auto_order_forbidden = True
+
+_ORDER_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 @dataclass
 class HermesOrder:
-    """Order representation for Hermes bridge."""
+    """Signal card representation consumed by the Mac Mini cron."""
 
-    order_id: str = field(default_factory=lambda: f"HERMES-{uuid.uuid4().hex[:12]}")
-    ts_code: str = ""               # e.g. "600519.SH"
-    side: str = ""                  # "buy" | "sell"
-    quantity: int = 0               # shares (must be round lot for A-share)
-    order_type: str = "limit"       # "limit" | "market"
-    limit_price: float | None = None
+    order_id: str = field(default_factory=lambda: f"SIGNAL-{uuid.uuid4().hex[:12]}")
+    ts_code: str = ""
+    direction: str = ""  # "buy" | "sell"
+    quantity: int = 0
+    price: float | None = None
+    stop_loss: float | None = None
     strategy_name: str = ""
-    strategy_stage: str = "real"    # "sim" | "shadow" | "real"
-    requires_manual_confirm: bool = True
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    status: str = "pending"         # pending | sent | filled | partial | cancelled | rejected
-    filled_price: float | None = None
-    filled_quantity: int = 0
-    error: str = ""
+    timestamp: str = field(default_factory=lambda: datetime.now().astimezone().isoformat(timespec="seconds"))
+    status: str = "pending"
 
 
-def _ssh_to_mac_mini(command: str, timeout: int = 30) -> dict[str, Any]:
-    """Execute a command on the Mac Mini via SSH.
+def ensure_signal_dirs() -> None:
+    """Create the file-based bridge directories if they are missing."""
+    for directory in (PENDING_DIR, FILLED_DIR, CANCELLED_DIR, POSITIONS_DIR):
+        directory.mkdir(parents=True, exist_ok=True)
 
-    Returns dict with: success, stdout, stderr, returncode.
-    """
-    ssh_cmd = [
-        "ssh",
-        "-o", "ConnectTimeout=10",
-        "-o", "StrictHostKeyChecking=accept-new",
-        MAC_MINI_HOST,
-        command,
-    ]
-    try:
-        result = subprocess.run(
-            ssh_cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+
+def _normalize_order_id(order_id: str) -> str:
+    if not order_id or not _ORDER_ID_RE.fullmatch(order_id):
+        raise ValueError(f"Invalid order_id: {order_id!r}")
+    return order_id
+
+
+def _json_path(directory: Path, order_id: str) -> Path:
+    return directory / f"{_normalize_order_id(order_id)}.json"
+
+
+def _read_json(path: Path) -> Any:
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+    tmp.replace(path)
+
+
+def _coerce_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def _coerce_signal_card(order: dict[str, Any] | HermesOrder) -> HermesOrder:
+    if isinstance(order, HermesOrder):
+        card = order
+    else:
+        direction = str(order.get("direction", order.get("side", ""))).lower().strip()
+        if direction == "reduce":
+            direction = "sell"
+        card = HermesOrder(
+            order_id=str(order.get("order_id") or f"SIGNAL-{uuid.uuid4().hex[:12]}"),
+            ts_code=str(order.get("ts_code", "")).strip(),
+            direction=direction,
+            quantity=int(order.get("quantity", 0)),
+            price=_coerce_float(order.get("price", order.get("limit_price", order.get("execution_price")))),
+            stop_loss=_coerce_float(order.get("stop_loss")),
+            strategy_name=str(order.get("strategy_name", "")).strip(),
+            timestamp=str(order.get("timestamp") or datetime.now().astimezone().isoformat(timespec="seconds")),
+            status="pending",
         )
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout.strip(),
-            "stderr": result.stderr.strip(),
-            "returncode": result.returncode,
-        }
-    except subprocess.TimeoutExpired:
-        return {"success": False, "stdout": "", "stderr": "SSH timeout", "returncode": -1}
-    except Exception as exc:
-        return {"success": False, "stdout": "", "stderr": str(exc), "returncode": -1}
+
+    card.order_id = _normalize_order_id(card.order_id)
+    card.direction = card.direction.lower().strip()
+    card.status = "pending"
+    return card
 
 
-def _log_order(order: HermesOrder) -> None:
-    """Append order to local Hermes ledger."""
-    HERMES_LEDGER.parent.mkdir(parents=True, exist_ok=True)
-    with open(HERMES_LEDGER, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(asdict(order), ensure_ascii=False) + "\n")
+def _validate_signal_card(card: HermesOrder) -> str | None:
+    if not card.ts_code:
+        return "Missing ts_code"
+    if card.direction not in ("buy", "sell"):
+        return f"Invalid direction: {card.direction}"
+    if card.quantity <= 0:
+        return f"Invalid quantity: {card.quantity}"
+    return None
 
 
 def send_order(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
-    """Send an order to Hermes on the Mac Mini.
+    """Write a pending signal card for the Mac Mini cron to consume.
 
     Args:
-        order: dict or HermesOrder with ts_code, side, quantity, order_type,
-               limit_price, strategy_name, strategy_stage.
+        order: dict or HermesOrder with ts_code, direction/side, quantity,
+               price/limit_price, stop_loss, strategy_name, and optional order_id.
 
     Returns:
-        dict with: order_id, status, message, hermes_response.
+        dict with order_id, status, signal_path, message, and hard safety flags.
     """
-    if isinstance(order, dict):
-        order = HermesOrder(
-            ts_code=order.get("ts_code", ""),
-            side=order.get("side", ""),
-            quantity=int(order.get("quantity", 0)),
-            order_type=order.get("order_type", "limit"),
-            limit_price=order.get("limit_price"),
-            strategy_name=order.get("strategy_name", ""),
-            strategy_stage=order.get("strategy_stage", "real"),
-            requires_manual_confirm=order.get("requires_manual_confirm", True),
-        )
+    ensure_signal_dirs()
 
-    # Validate
-    if not order.ts_code:
-        return {"order_id": order.order_id, "status": "rejected", "message": "Missing ts_code"}
-    if order.side not in ("buy", "sell"):
-        return {"order_id": order.order_id, "status": "rejected", "message": f"Invalid side: {order.side}"}
-    if order.quantity <= 0 or order.quantity % 100 != 0:
-        return {"order_id": order.order_id, "status": "rejected", "message": f"Invalid quantity: {order.quantity} (must be positive round lot)"}
-    if order.order_type == "limit" and order.limit_price is None:
-        return {"order_id": order.order_id, "status": "rejected", "message": "Limit order requires limit_price"}
-
-    # Real-money orders require manual confirmation
-    if order.strategy_stage == "real" and order.requires_manual_confirm:
-        order.status = "pending_manual_confirm"
-        _log_order(order)
+    try:
+        card = _coerce_signal_card(order)
+    except (TypeError, ValueError) as exc:
         return {
-            "order_id": order.order_id,
-            "status": "pending_manual_confirm",
-            "message": "Real-money order queued for manual confirmation by Nicholas. Hermes will not auto-submit.",
-            "hermes_response": None,
+            "order_id": "",
+            "status": "rejected",
+            "message": str(exc),
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+            "direct_execution": False,
         }
 
-    # Build Hermes CLI command
-    hermes_cmd = (
-        f"python3 {HERMES_REMOTE_PATH} "
-        f"--action send_order "
-        f"--order-id {order.order_id} "
-        f"--code {order.ts_code} "
-        f"--side {order.side} "
-        f"--qty {order.quantity} "
-        f"--order-type {order.order_type}"
-    )
-    if order.limit_price is not None:
-        hermes_cmd += f" --price {order.limit_price}"
+    validation_error = _validate_signal_card(card)
+    if validation_error:
+        return {
+            "order_id": card.order_id,
+            "status": "rejected",
+            "message": validation_error,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+            "direct_execution": False,
+        }
 
-    result = _ssh_to_mac_mini(hermes_cmd, timeout=30)
+    pending_path = _json_path(PENDING_DIR, card.order_id)
+    if pending_path.exists():
+        return {
+            "order_id": card.order_id,
+            "status": "duplicate",
+            "signal_path": str(pending_path),
+            "message": "Pending signal card already exists",
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+            "direct_execution": False,
+        }
 
-    if result["success"]:
-        order.status = "sent"
-        message = "Order sent to Hermes on Mac Mini"
-    else:
-        order.status = "send_failed"
-        message = f"Failed to send order to Hermes: {result[stderr]}"
-
-    _log_order(order)
-
+    _write_json_atomic(pending_path, asdict(card))
     return {
-        "order_id": order.order_id,
-        "status": order.status,
-        "message": message,
-        "hermes_response": result["stdout"] if result["success"] else result["stderr"],
+        "order_id": card.order_id,
+        "status": "pending",
+        "signal_path": str(pending_path),
+        "signal_card": asdict(card),
+        "message": "Signal card queued for Mac Mini cron; no direct execution performed",
+        "real_auto_order_forbidden": real_auto_order_forbidden,
+        "direct_execution": False,
     }
 
 
 def check_fill(order_id: str) -> dict[str, Any]:
-    """Check fill status of an order from Hermes.
-
-    Args:
-        order_id: The Hermes order ID to check.
-
-    Returns:
-        dict with: order_id, status, filled_price, filled_quantity, message.
-    """
-    hermes_cmd = f"python3 {HERMES_STATUS_PATH} --action check_fill --order-id {order_id}"
-    result = _ssh_to_mac_mini(hermes_cmd, timeout=15)
-
-    if not result["success"]:
-        return {
-            "order_id": order_id,
-            "status": "unknown",
-            "filled_price": None,
-            "filled_quantity": 0,
-            "message": f"SSH to Mac Mini failed: {result[stderr]}",
-        }
-
-    # Parse Hermes response (expects JSON on stdout)
+    """Read a fill result written by the Mac Mini cron."""
+    ensure_signal_dirs()
     try:
-        fill_info = json.loads(result["stdout"])
+        fill_path = _json_path(FILLED_DIR, order_id)
+    except ValueError as exc:
         return {
             "order_id": order_id,
-            "status": fill_info.get("status", "unknown"),
-            "filled_price": fill_info.get("filled_price"),
-            "filled_quantity": fill_info.get("filled_quantity", 0),
-            "message": fill_info.get("message", ""),
-        }
-    except (json.JSONDecodeError, ValueError):
-        return {
-            "order_id": order_id,
-            "status": "unknown",
             "filled_price": None,
             "filled_quantity": 0,
-            "message": f"Unparseable Hermes response: {result[stdout][:200]}",
+            "slippage": None,
+            "fill_time": None,
+            "status": "rejected",
+            "message": str(exc),
         }
+
+    if not fill_path.exists():
+        return {
+            "order_id": order_id,
+            "filled_price": None,
+            "filled_quantity": 0,
+            "slippage": None,
+            "fill_time": None,
+            "status": "pending",
+            "message": "Fill card not found yet",
+        }
+
+    try:
+        fill_info = _read_json(fill_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "order_id": order_id,
+            "filled_price": None,
+            "filled_quantity": 0,
+            "slippage": None,
+            "fill_time": None,
+            "status": "error",
+            "message": f"Unable to read fill card: {exc}",
+        }
+
+    return {
+        "order_id": order_id,
+        "filled_price": fill_info.get("filled_price"),
+        "filled_quantity": int(fill_info.get("filled_quantity", 0) or 0),
+        "slippage": fill_info.get("slippage"),
+        "fill_time": fill_info.get("fill_time"),
+        "status": fill_info.get("status", "filled"),
+    }
 
 
 def sync_positions() -> dict[str, Any]:
-    """Sync positions from Hermes/Tonghuashun on Mac Mini.
-
-    Returns:
-        dict with: success, positions (list), message.
-    """
-    hermes_cmd = f"python3 {HERMES_STATUS_PATH} --action sync_positions"
-    result = _ssh_to_mac_mini(hermes_cmd, timeout=30)
-
-    if not result["success"]:
+    """Read latest positions snapshot written by the Mac Mini cron."""
+    ensure_signal_dirs()
+    if not POSITIONS_FILE.exists():
         return {
             "success": False,
+            "status": "missing",
             "positions": [],
-            "message": f"SSH to Mac Mini failed: {result[stderr]}",
+            "message": f"Positions file not found: {POSITIONS_FILE}",
         }
 
     try:
-        data = json.loads(result["stdout"])
-        return {
-            "success": True,
-            "positions": data.get("positions", []),
-            "message": data.get("message", "Positions synced"),
-        }
-    except (json.JSONDecodeError, ValueError):
+        data = _read_json(POSITIONS_FILE)
+    except (OSError, json.JSONDecodeError) as exc:
         return {
             "success": False,
+            "status": "error",
             "positions": [],
-            "message": f"Unparseable positions response: {result[stdout][:200]}",
+            "message": f"Unable to read positions file: {exc}",
         }
+
+    if isinstance(data, list):
+        return {
+            "success": True,
+            "status": "ok",
+            "positions": data,
+            "message": "Positions synced from signal bridge file",
+            "source_path": str(POSITIONS_FILE),
+        }
+
+    if isinstance(data, dict):
+        result = dict(data)
+        result.setdefault("success", True)
+        result.setdefault("status", "ok")
+        result.setdefault("positions", data.get("positions", []))
+        result.setdefault("message", "Positions synced from signal bridge file")
+        result.setdefault("source_path", str(POSITIONS_FILE))
+        return result
+
+    return {
+        "success": False,
+        "status": "error",
+        "positions": [],
+        "message": "Positions file must contain a JSON object or list",
+    }
 
 
 def cancel_order(order_id: str) -> dict[str, Any]:
-    """Send cancel request to Hermes (real orders require manual confirmation).
+    """Cancel a pending signal by moving it to signals/cancelled/."""
+    ensure_signal_dirs()
+    try:
+        pending_path = _json_path(PENDING_DIR, order_id)
+        cancelled_path = _json_path(CANCELLED_DIR, order_id)
+        filled_path = _json_path(FILLED_DIR, order_id)
+    except ValueError as exc:
+        return {"order_id": order_id, "status": "rejected", "message": str(exc)}
 
-    Args:
-        order_id: The Hermes order ID to cancel.
+    if filled_path.exists():
+        return {
+            "order_id": order_id,
+            "status": "cannot_cancel_filled",
+            "message": "Fill card already exists; pending signal cannot be cancelled",
+            "direct_execution": False,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+        }
 
-    Returns:
-        dict with: order_id, status, message.
-    """
-    hermes_cmd = f"python3 {HERMES_REMOTE_PATH} --action cancel --order-id {order_id}"
-    result = _ssh_to_mac_mini(hermes_cmd, timeout=15)
+    if not pending_path.exists():
+        status = "already_cancelled" if cancelled_path.exists() else "not_found"
+        return {
+            "order_id": order_id,
+            "status": status,
+            "message": "Pending signal card not found",
+            "direct_execution": False,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+        }
 
-    status = "cancel_sent" if result["success"] else "cancel_failed"
+    try:
+        card = _read_json(pending_path)
+    except (OSError, json.JSONDecodeError):
+        card = {"order_id": order_id}
+
+    card["status"] = "cancelled"
+    card["cancelled_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    _write_json_atomic(cancelled_path, card)
+    pending_path.unlink()
+
     return {
         "order_id": order_id,
-        "status": status,
-        "message": result["stdout"] if result["success"] else result["stderr"],
+        "status": "cancelled",
+        "signal_path": str(cancelled_path),
+        "message": "Pending signal card moved to cancelled directory",
+        "direct_execution": False,
+        "real_auto_order_forbidden": real_auto_order_forbidden,
     }

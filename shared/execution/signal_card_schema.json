@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tradingagent.cc/schemas/signal_card_schema.json",
+  "title": "Tradings Signal Card",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "order_id",
+    "ts_code",
+    "direction",
+    "quantity",
+    "price",
+    "stop_loss",
+    "strategy_name",
+    "timestamp",
+    "status"
+  ],
+  "properties": {
+    "order_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "ts_code": {
+      "type": "string",
+      "minLength": 1
+    },
+    "direction": {
+      "type": "string",
+      "enum": ["buy", "sell"]
+    },
+    "quantity": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "price": {
+      "type": ["number", "null"]
+    },
+    "stop_loss": {
+      "type": ["number", "null"]
+    },
+    "strategy_name": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "const": "pending"
+    }
+  }
+}
