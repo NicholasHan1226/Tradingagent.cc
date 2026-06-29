@@ -138,6 +138,85 @@ def _check_t_plus_1(order: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _extract_strategy_stats(order: dict[str, Any]) -> dict[str, Any] | None:
+    for field in ("stats", "strategy_stats", "performance_stats", "graduation_stats"):
+        value = order.get(field)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _date_part(value: Any, fallback: str) -> str:
+    if not value:
+        return fallback
+    text = str(value)
+    if "T" in text:
+        return text.split("T", 1)[0]
+    return text[:10]
+
+
+def _as_string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _build_real_signal_order(order: dict[str, Any], direction: str) -> dict[str, Any]:
+    timestamp = str(order.get("timestamp") or datetime.now().astimezone().isoformat(timespec="seconds"))
+    trade_date = _date_part(order.get("trade_date") or order.get("current_date") or timestamp, datetime.now().strftime("%Y-%m-%d"))
+    price = order.get("price", order.get("limit_price", order.get("execution_price")))
+    source_condition_id = str(
+        order.get("source_condition_id")
+        or order.get("condition_id")
+        or order.get("order_id")
+        or ""
+    )
+
+    trigger = dict(order.get("trigger") or {})
+    trigger.setdefault("condition_id", source_condition_id)
+    trigger.setdefault("triggered_at", str(order.get("triggered_at") or timestamp))
+    trigger.setdefault("trigger_price", order.get("trigger_price", price))
+
+    risk_check = order.get("risk_check")
+    if isinstance(risk_check, dict):
+        risk_check = dict(risk_check)
+        risk_check["passed"] = bool(risk_check.get("passed", False))
+        risk_check["checks"] = _as_string_list(risk_check.get("checks"))
+    else:
+        risk_check = {
+            "passed": bool(order.get("risk_passed", False)),
+            "checks": _as_string_list(order.get("risk_checks", ["missing_risk_check"])),
+        }
+
+    t_plus_1 = dict(order.get("t_plus_1") or {})
+    t_plus_1.setdefault("sellable_from", _date_part(order.get("sellable_from") or order.get("position_open_date"), trade_date))
+    t_plus_1.setdefault("sellable_date", _date_part(order.get("sellable_date"), trade_date))
+
+    return {
+        "order_id": order.get("order_id", ""),
+        "ts_code": order.get("ts_code", ""),
+        "direction": direction,
+        "quantity": int(order.get("quantity", 0)),
+        "price": price,
+        "stop_loss": order.get("stop_loss"),
+        "strategy_name": order.get("strategy_name", ""),
+        "timestamp": timestamp,
+        "capital_layer": "real",
+        "account_type": "real",
+        "manual_confirm_required": True,
+        "direct_execution": False,
+        "trigger": trigger,
+        "evidence_refs": _as_string_list(order.get("evidence_refs")),
+        "valid_until": _date_part(order.get("valid_until"), trade_date),
+        "risk_check": risk_check,
+        "source_condition_id": source_condition_id,
+        "idempotency_key": str(order.get("idempotency_key") or order.get("order_id") or source_condition_id),
+        "t_plus_1": t_plus_1,
+    }
+
+
 def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
     """Route an order to the appropriate execution channel.
 
@@ -159,6 +238,46 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
         }
 
     channel = STAGE_CHANNELS[stage]
+    if stage == "real":
+        strategy_name = str(order.get("strategy_name") or order.get("strategy") or "").strip()
+        stats = _extract_strategy_stats(order)
+        if not strategy_name or stats is None:
+            result = {
+                "status": "rejected_graduation",
+                "ready": False,
+                "message": "graduation not met",
+                "reason": "missing strategy_name or stats",
+                "real_auto_order_forbidden": True,
+                "direct_execution": False,
+            }
+            _log_route(order, channel, result)
+            return {
+                "channel": channel,
+                "executed": False,
+                "result": result,
+                "order_id": order.get("order_id", ""),
+                "message": "graduation not met",
+            }
+
+        graduation = check_graduation(strategy_name, "shadow", stats)
+        if not graduation.get("ready", False):
+            result = {
+                "status": "rejected_graduation",
+                "ready": False,
+                "message": "graduation not met",
+                "graduation": graduation,
+                "real_auto_order_forbidden": True,
+                "direct_execution": False,
+            }
+            _log_route(order, channel, result)
+            return {
+                "channel": channel,
+                "executed": False,
+                "result": result,
+                "order_id": order.get("order_id", ""),
+                "message": "graduation not met",
+            }
+
     t_plus_1_block = _check_t_plus_1(order)
     if t_plus_1_block is not None:
         _log_route(order, "none", t_plus_1_block["result"])
@@ -255,16 +374,7 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
             else:
                 side = str(order.get("direction", order.get("side", "buy"))).lower().strip()
                 direction = {"buy": "buy", "sell": "sell", "reduce": "sell"}.get(side, side)
-                signal_order = {
-                    "order_id": order.get("order_id", ""),
-                    "ts_code": order.get("ts_code", ""),
-                    "direction": direction,
-                    "quantity": int(order.get("quantity", 0)),
-                    "price": order.get("price", order.get("limit_price", order.get("execution_price"))),
-                    "stop_loss": order.get("stop_loss"),
-                    "strategy_name": order.get("strategy_name", ""),
-                    "timestamp": order.get("timestamp"),
-                }
+                signal_order = _build_real_signal_order(order, direction)
                 result = send_order(signal_order)
                 executed = False
                 result["real_auto_order_forbidden"] = True

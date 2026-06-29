@@ -34,12 +34,13 @@ LEDGER_DIR = Path(__file__).resolve().parent.parent / "logs"
 CAPITAL_CSV = LEDGER_DIR / "capital_ledger.csv"
 CAPITAL_LOCK = CAPITAL_CSV.with_suffix(".csv.lock")
 DEFAULT_CAPITAL_LAYER = "shadow"
+CAPITAL_LAYERS = {"real", "simulated", "shadow"}
 
 CSV_HEADERS = [
     "entry_id",
     "timestamp",
     "event_type",
-    "capital_layer",   # shadow | sim | real
+    "capital_layer",   # shadow | simulated | real
     "ts_code",
     "quantity",
     "price",
@@ -90,9 +91,20 @@ def _ledger_lock() -> Iterator[None]:
 
 def _normalize_capital_layer(value: str | None) -> str:
     layer = str(value or DEFAULT_CAPITAL_LAYER).strip().lower()
-    if layer in {"shadow", "sim", "real"}:
+    if layer == "sim":
+        layer = "simulated"
+    if layer in CAPITAL_LAYERS:
         return layer
-    raise ValueError(f"capital_layer must be one of shadow/sim/real, got {value}")
+    raise ValueError(f"capital_layer must be one of real/simulated/shadow, got {value}")
+
+
+def _normalize_capital_filter(value: str | None) -> str | None:
+    if value is None:
+        return None
+    layer = str(value).strip().lower()
+    if layer == "all":
+        return None
+    return _normalize_capital_layer(layer)
 
 
 def _read_all_entries_unlocked() -> list[dict[str, Any]]:
@@ -134,7 +146,7 @@ def _ensure_csv_unlocked() -> None:
     if "capital_layer" not in fieldnames:
         for entry in entries:
             entry["capital_layer"] = DEFAULT_CAPITAL_LAYER
-        _rewrite_entries_unlocked(entries)
+    _rewrite_entries_unlocked(entries)
 
 
 def _append(entry: CapitalEntry) -> str:
@@ -432,7 +444,7 @@ def get_capital_balance(
     entries = _read_all_entries()
     if as_of:
         entries = [e for e in entries if e["timestamp"] <= as_of]
-    layer = None if capital_layer is None else _normalize_capital_layer(capital_layer)
+    layer = _normalize_capital_filter(capital_layer)
     if layer is not None:
         entries = [
             e for e in entries
@@ -454,7 +466,8 @@ def get_capital_balance(
 
 
 def get_cash_position(as_of: str | None = None, capital_layer: str | None = None) -> float:
-    return get_capital_balance(as_of=as_of, capital_layer=capital_layer)["balance"]
+    layer = "real" if capital_layer is None else capital_layer
+    return get_capital_balance(as_of=as_of, capital_layer=layer)["balance"]
 
 
 if __name__ == "__main__":

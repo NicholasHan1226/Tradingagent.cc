@@ -18,3 +18,16 @@
 - 权重式打分, 不设硬门禁
 - 条件驱动, 主动发现
 - 降权不硬拒, 但有底线(单股<15%)
+
+## 写入端单一事实源
+- Tradings 写入端必须遵守单一事实源, 详细契约见 `docs/write_end_contract.md`。
+- `signals/` 是执行队列唯一写入面:
+  - `signals/pending/` 待执行
+  - `signals/filled/` 已成交
+  - `signals/cancelled/` 已撤销
+  - `signals/positions/` 当前持仓快照
+- `shared/accounting/` 是资金与账本唯一写入面。
+- `shared/review/data/` 是复盘证据唯一写入面; `outputs/` 只放可再生产物, 不回写事实。
+- `shared/signals/` 若仍存在视为废弃兼容路径, 只能重定向或只读迁移, 不再新增事实写入。
+- `executions/` 相关事实应归并到 `signals/filled/` 与 `shared/accounting/`, 不再形成平行账本。
+- `/opt/investment/Ashare/data/` 属旧系统只读输入, Tradings 禁止向该目录写入。

@@ -54,9 +54,18 @@ def _ensure_dirs() -> None:
 
 def _normalize_capital_layer(value: str | None) -> str:
     layer = str(value or "shadow").strip().lower()
-    if layer in {"shadow", "sim", "real"}:
+    if layer == "sim":
+        layer = "simulated"
+    if layer in {"shadow", "simulated", "real"}:
         return layer
-    raise ValueError(f"capital_layer must be one of shadow/sim/real, got {value}")
+    raise ValueError(f"capital_layer must be one of real/simulated/shadow, got {value}")
+
+
+def _validate_shadow_capital_layer(value: str | None) -> str:
+    layer = _normalize_capital_layer(value)
+    if layer == "real":
+        raise ValueError("shadow_broker cannot record real capital_layer trades")
+    return layer
 
 
 def _parse_date(value: str | None) -> date:
@@ -209,7 +218,7 @@ def record_shadow(order: dict[str, Any], strategy_name: str) -> dict[str, Any]:
     price = float(order.get("price", 0.0))
     commission = float(order.get("commission", 0.0))
     trade_date = _parse_date(order.get("trade_date")).isoformat()
-    capital_layer = _normalize_capital_layer(order.get("capital_layer", "shadow"))
+    capital_layer = _validate_shadow_capital_layer(order.get("capital_layer", "shadow"))
 
     if not ts_code:
         return {"trade_id": "", "status": "rejected", "recorded": False, "message": "Missing ts_code"}

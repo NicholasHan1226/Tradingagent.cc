@@ -1,0 +1,1 @@
+{"job": "job_trading_signals", "state": "planned_only", "generated_at": "2026-06-29T17:52:19+00:00", "note": "待接入 SharedSignals.backtest_cache 与 MarketGraph.regime 后生成全市场信号卡。"}

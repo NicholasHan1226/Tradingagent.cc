@@ -15,11 +15,15 @@ from typing import Any, Iterator
 LEDGER_DIR = Path(__file__).resolve().parent.parent / "logs"
 POSITION_CSV = LEDGER_DIR / "position_ledger.csv"
 POSITION_LOCK = POSITION_CSV.with_suffix(".csv.lock")
+DEFAULT_CAPITAL_LAYER = "shadow"
+CAPITAL_LAYERS = {"real", "simulated", "shadow"}
 
 CSV_HEADERS = [
     "entry_id",
     "timestamp",
     "event_type",
+    "capital_layer",
+    "is_real_money",
     "ts_code",
     "quantity",
     "price",
@@ -40,6 +44,7 @@ class PositionEntry:
     ts_code: str
     quantity: int
     price: float
+    capital_layer: str = DEFAULT_CAPITAL_LAYER
     order_id: str = ""
     audit_id: str = ""
     note: str = ""
@@ -64,6 +69,24 @@ def _ensure_csv_unlocked() -> None:
         with open(POSITION_CSV, "w", newline="", encoding="utf-8") as fh:
             writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
             writer.writeheader()
+        return
+
+    with open(POSITION_CSV, "r", newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        fieldnames = reader.fieldnames or []
+        if fieldnames == CSV_HEADERS:
+            return
+        entries = [dict(row) for row in reader]
+
+    with open(POSITION_CSV, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
+        writer.writeheader()
+        for entry in entries:
+            normalized = {key: entry.get(key, "") for key in CSV_HEADERS}
+            layer = _normalize_capital_layer(entry.get("capital_layer", DEFAULT_CAPITAL_LAYER))
+            normalized["capital_layer"] = layer
+            normalized["is_real_money"] = _is_real_money(layer)
+            writer.writerow(normalized)
 
 
 def _append_unlocked(row: dict[str, Any]) -> str:
@@ -78,7 +101,37 @@ def _read_all_entries_unlocked() -> list[dict[str, Any]]:
         return []
     with open(POSITION_CSV, "r", newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
-        return list(reader)
+        entries = []
+        for row in reader:
+            entry = dict(row)
+            layer = _normalize_capital_layer(entry.get("capital_layer", DEFAULT_CAPITAL_LAYER))
+            entry["capital_layer"] = layer
+            entry["is_real_money"] = _is_real_money(layer)
+            entries.append(entry)
+        return entries
+
+
+def _normalize_capital_layer(value: str | None) -> str:
+    layer = str(value or DEFAULT_CAPITAL_LAYER).strip().lower()
+    if layer == "sim":
+        layer = "simulated"
+    if layer in CAPITAL_LAYERS:
+        return layer
+    raise ValueError(f"capital_layer must be one of real/simulated/shadow, got {value}")
+
+
+def _normalize_position_filter(value: str | None) -> str | None:
+    if value is None:
+        return "real"
+    layer = str(value).strip().lower()
+    if layer == "all":
+        return None
+    return _normalize_capital_layer(layer)
+
+
+def _is_real_money(capital_layer: str) -> str:
+    layer = _normalize_capital_layer(capital_layer)
+    return "Y" if layer == "real" else "N"
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -117,8 +170,17 @@ def _total_fee(commission: float, stamp_duty: float, transfer_fee: float) -> flo
     return round(total, 2)
 
 
-def _get_current_state_from_entries(entries: list[dict[str, Any]], ts_code: str) -> dict[str, Any]:
-    code_entries = [e for e in entries if e["ts_code"] == ts_code]
+def _get_current_state_from_entries(
+    entries: list[dict[str, Any]],
+    ts_code: str,
+    capital_layer: str,
+) -> dict[str, Any]:
+    layer = _normalize_capital_layer(capital_layer)
+    code_entries = [
+        e for e in entries
+        if e["ts_code"] == ts_code
+        and _normalize_capital_layer(e.get("capital_layer", DEFAULT_CAPITAL_LAYER)) == layer
+    ]
     if not code_entries:
         return {"quantity": 0, "cost_basis": 0.0, "avg_price": 0.0}
 
@@ -133,6 +195,7 @@ def _get_current_state_from_entries(entries: list[dict[str, Any]], ts_code: str)
 def _write_position_event(
     *,
     event_type: str,
+    capital_layer: str,
     ts_code: str,
     quantity: int,
     price: float,
@@ -144,11 +207,13 @@ def _write_position_event(
     running_avg_price: float,
     realized_pnl: float,
 ) -> str:
+    layer = _normalize_capital_layer(capital_layer)
     entry = PositionEntry(
         event_type=event_type,
         ts_code=ts_code,
         quantity=quantity,
         price=price,
+        capital_layer=layer,
         order_id=order_id,
         audit_id=audit_id,
         note=note,
@@ -157,6 +222,8 @@ def _write_position_event(
         "entry_id": entry.entry_id,
         "timestamp": entry.timestamp,
         "event_type": event_type,
+        "capital_layer": layer,
+        "is_real_money": _is_real_money(layer),
         "ts_code": ts_code,
         "quantity": quantity,
         "price": round(price, 4),
@@ -179,6 +246,7 @@ def open_position(
     order_id: str = "",
     audit_id: str = "",
     note: str = "",
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
 ) -> dict[str, Any]:
     if quantity <= 0:
         raise ValueError(f"quantity must be positive, got {quantity}")
@@ -187,17 +255,19 @@ def open_position(
 
     with _ledger_lock():
         _ensure_csv_unlocked()
+        layer = _normalize_capital_layer(capital_layer)
         entries = _read_all_entries_unlocked()
-        current = _get_current_state_from_entries(entries, ts_code)
+        current = _get_current_state_from_entries(entries, ts_code, layer)
         if current["quantity"] > 0:
             raise ValueError(
-                f"Position already exists for {ts_code} "
+                f"Position already exists for {ts_code} in {layer} layer "
                 f"({current['quantity']} shares). Use add_position instead."
             )
 
         amount = round(quantity * price, 2)
         eid = _write_position_event(
             event_type="open",
+            capital_layer=layer,
             ts_code=ts_code,
             quantity=quantity,
             price=price,
@@ -216,6 +286,8 @@ def open_position(
             "avg_price": round(price, 4),
             "cost_basis": amount,
             "event_type": "open",
+            "capital_layer": layer,
+            "is_real_money": _is_real_money(layer),
         }
 
 
@@ -226,6 +298,7 @@ def add_position(
     order_id: str = "",
     audit_id: str = "",
     note: str = "",
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
 ) -> dict[str, Any]:
     if quantity <= 0:
         raise ValueError(f"quantity must be positive, got {quantity}")
@@ -234,10 +307,11 @@ def add_position(
 
     with _ledger_lock():
         _ensure_csv_unlocked()
+        layer = _normalize_capital_layer(capital_layer)
         entries = _read_all_entries_unlocked()
-        current = _get_current_state_from_entries(entries, ts_code)
+        current = _get_current_state_from_entries(entries, ts_code, layer)
         if current["quantity"] == 0:
-            raise ValueError(f"No existing position for {ts_code}. Use open_position instead.")
+            raise ValueError(f"No existing position for {ts_code} in {layer} layer. Use open_position instead.")
 
         add_amount = round(quantity * price, 2)
         new_qty = current["quantity"] + quantity
@@ -245,6 +319,7 @@ def add_position(
         new_avg = round(new_cost / new_qty, 4) if new_qty > 0 else 0.0
         eid = _write_position_event(
             event_type="add",
+            capital_layer=layer,
             ts_code=ts_code,
             quantity=quantity,
             price=price,
@@ -264,6 +339,8 @@ def add_position(
             "new_avg_price": new_avg,
             "new_cost_basis": new_cost,
             "event_type": "add",
+            "capital_layer": layer,
+            "is_real_money": _is_real_money(layer),
         }
 
 
@@ -277,6 +354,7 @@ def reduce_position(
     commission: float = 0.0,
     stamp_duty: float = 0.0,
     transfer_fee: float = 0.0,
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
 ) -> dict[str, Any]:
     if quantity <= 0:
         raise ValueError(f"quantity must be positive, got {quantity}")
@@ -285,10 +363,11 @@ def reduce_position(
 
     with _ledger_lock():
         _ensure_csv_unlocked()
+        layer = _normalize_capital_layer(capital_layer)
         entries = _read_all_entries_unlocked()
-        current = _get_current_state_from_entries(entries, ts_code)
+        current = _get_current_state_from_entries(entries, ts_code, layer)
         if current["quantity"] == 0:
-            raise ValueError(f"No position to reduce for {ts_code}.")
+            raise ValueError(f"No position to reduce for {ts_code} in {layer} layer.")
         if quantity >= current["quantity"]:
             raise ValueError(
                 f"Reduce quantity {quantity} >= holding {current['quantity']}. "
@@ -302,6 +381,7 @@ def reduce_position(
         new_cost = round(avg_cost * new_qty, 2)
         eid = _write_position_event(
             event_type="reduce",
+            capital_layer=layer,
             ts_code=ts_code,
             quantity=quantity,
             price=price,
@@ -322,6 +402,8 @@ def reduce_position(
             "fee": fee_total,
             "avg_price": avg_cost,
             "event_type": "reduce",
+            "capital_layer": layer,
+            "is_real_money": _is_real_money(layer),
         }
 
 
@@ -334,16 +416,18 @@ def close_position(
     commission: float = 0.0,
     stamp_duty: float = 0.0,
     transfer_fee: float = 0.0,
+    capital_layer: str = DEFAULT_CAPITAL_LAYER,
 ) -> dict[str, Any]:
     if price <= 0:
         raise ValueError(f"price must be positive, got {price}")
 
     with _ledger_lock():
         _ensure_csv_unlocked()
+        layer = _normalize_capital_layer(capital_layer)
         entries = _read_all_entries_unlocked()
-        current = _get_current_state_from_entries(entries, ts_code)
+        current = _get_current_state_from_entries(entries, ts_code, layer)
         if current["quantity"] == 0:
-            raise ValueError(f"No position to close for {ts_code}.")
+            raise ValueError(f"No position to close for {ts_code} in {layer} layer.")
 
         quantity = current["quantity"]
         avg_cost = current["avg_price"]
@@ -351,6 +435,7 @@ def close_position(
         realized_pnl = round((quantity * price) - (avg_cost * quantity) - fee_total, 2)
         eid = _write_position_event(
             event_type="close",
+            capital_layer=layer,
             ts_code=ts_code,
             quantity=quantity,
             price=price,
@@ -370,10 +455,12 @@ def close_position(
             "fee": fee_total,
             "avg_price": avg_cost,
             "event_type": "close",
+            "capital_layer": layer,
+            "is_real_money": _is_real_money(layer),
         }
 
 
-def get_positions() -> list[dict[str, Any]]:
+def get_positions(capital_layer: str | None = None) -> list[dict[str, Any]]:
     with _ledger_lock():
         _ensure_csv_unlocked()
         entries = _read_all_entries_unlocked()
@@ -381,10 +468,14 @@ def get_positions() -> list[dict[str, Any]]:
     if not entries:
         return []
 
-    states: dict[str, dict[str, Any]] = {}
+    layer_filter = _normalize_position_filter(capital_layer)
+    states: dict[tuple[str, str], dict[str, Any]] = {}
     for entry in entries:
         ts_code = str(entry.get("ts_code", ""))
         if not ts_code:
+            continue
+        layer = _normalize_capital_layer(entry.get("capital_layer", DEFAULT_CAPITAL_LAYER))
+        if layer_filter is not None and layer != layer_filter:
             continue
 
         qty = _safe_int(entry.get("running_quantity"))
@@ -392,24 +483,27 @@ def get_positions() -> list[dict[str, Any]]:
         event_price = _safe_float(entry.get("price"))
         note = str(entry.get("note", "") or "")
         event_type = str(entry.get("event_type", ""))
+        state_key = (layer, ts_code)
 
-        if event_type == "open" or ts_code not in states:
-            states[ts_code] = {
+        if event_type == "open" or state_key not in states:
+            states[state_key] = {
                 "entry_date": _entry_date(str(entry.get("timestamp", ""))),
                 "high_price": max(avg_price, event_price),
                 "thesis": note,
             }
         else:
-            states[ts_code]["high_price"] = max(
-                _safe_float(states[ts_code].get("high_price")),
+            states[state_key]["high_price"] = max(
+                _safe_float(states[state_key].get("high_price")),
                 avg_price,
                 event_price,
             )
             if note:
-                states[ts_code]["thesis"] = note
+                states[state_key]["thesis"] = note
 
-        states[ts_code].update({
+        states[state_key].update({
             "ts_code": ts_code,
+            "capital_layer": layer,
+            "is_real_money": _is_real_money(layer),
             "quantity": qty,
             "cost_basis": _safe_float(entry.get("running_cost")),
             "avg_price": avg_price,
@@ -417,7 +511,7 @@ def get_positions() -> list[dict[str, Any]]:
         })
 
         if qty <= 0:
-            states.pop(ts_code, None)
+            states.pop(state_key, None)
 
     return [state for state in states.values() if _safe_int(state.get("quantity")) > 0]
 

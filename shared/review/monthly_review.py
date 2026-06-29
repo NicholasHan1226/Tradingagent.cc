@@ -14,6 +14,7 @@ Inputs (month_data) is a dict assembled by the monthly runner from daily/weekly 
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,27 @@ def _append_log(record: dict[str, Any]) -> None:
     _ensure_dirs()
     with open(MONTHLY_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _normalize_capital_layer(value: Any, default: str = "shadow") -> str:
+    raw = str(value or default).strip().lower()
+    if raw in {"real", "live"}:
+        return "real"
+    if raw in {"sim", "simulated", "simulation"}:
+        return "simulated"
+    if raw in {"shadow", "paper", "paper_portfolio", "paper_tracking"}:
+        return "shadow"
+    return default
+
+
+def _group_by_capital_layer(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows or []:
+        layer = _normalize_capital_layer(row.get("capital_layer"))
+        normalized = dict(row)
+        normalized["capital_layer"] = layer
+        grouped[layer].append(normalized)
+    return dict(grouped)
 
 
 def _assess_architecture_health(month_data: dict[str, Any]) -> dict[str, Any]:
@@ -188,36 +210,64 @@ def review_month(month_data: dict[str, Any], stage: str = "stage_1_sim") -> dict
           "next_month_focus": [str],
         }
     """
+    as_of = _now_iso()
     arch = _assess_architecture_health(month_data)
-    memory = _consolidate_memory(month_data)
-    goal_chk = _assess_goals(month_data, stage)
+    month = month_data.get("month", datetime.now(timezone.utc).strftime("%Y-%m"))
+    grouped = _group_by_capital_layer(month_data.get("trades", []))
+    capital_layer_reviews: dict[str, Any] = {}
 
-    # next month focus: prioritize broken pipeline > bleeding dimensions > goal gaps
-    focus: list[str] = []
-    if arch["broken"]:
-        focus.append(f"修复流水线断链: {', '.join(arch['broken'])}")
-    if arch["degraded"]:
-        focus.append(f"降级流水线阶段: {', '.join(arch['degraded'])}")
-    if memory["bleeding_dimensions"]:
-        focus.append(f"止血维度: {', '.join(d['dimension'] for d in memory['bleeding_dimensions'])}")
-    if memory["bleeding_strategies"]:
-        focus.append(f"降权策略: {', '.join(s['strategy'] for s in memory['bleeding_strategies'])}")
-    if not goal_chk["all_goals_met"]:
-        gaps = [c["metric"] for c in goal_chk["checks"] if not c["met"]]
-        focus.append(f"补齐目标缺口: {', '.join(gaps)}")
-    if not focus:
-        focus.append("维持当前轨道, 关注规模化容量.")
+    for layer in sorted(grouped or {"shadow": []}):
+        layer_trades = grouped.get(layer, [])
+        layer_data = dict(month_data)
+        layer_data["trades"] = layer_trades
+        layer_data["monthly_return"] = sum(_safe_float(t.get("pnl")) for t in layer_trades)
+        layer_data["win_rate"] = (
+            sum(1 for t in layer_trades if _safe_float(t.get("pnl")) > 0) / len(layer_trades)
+            if layer_trades else 0.0
+        )
+        memory = _consolidate_memory(layer_data)
+        goal_chk = _assess_goals(layer_data, stage)
+
+        focus: list[str] = []
+        if arch["broken"]:
+            focus.append(f"修复流水线断链: {', '.join(arch['broken'])}")
+        if arch["degraded"]:
+            focus.append(f"降级流水线阶段: {', '.join(arch['degraded'])}")
+        if memory["bleeding_dimensions"]:
+            focus.append(f"止血维度: {', '.join(d['dimension'] for d in memory['bleeding_dimensions'])}")
+        if memory["bleeding_strategies"]:
+            focus.append(f"降权策略: {', '.join(s['strategy'] for s in memory['bleeding_strategies'])}")
+        if not goal_chk["all_goals_met"]:
+            gaps = [c["metric"] for c in goal_chk["checks"] if not c["met"]]
+            focus.append(f"补齐目标缺口: {', '.join(gaps)}")
+        if not focus:
+            focus.append("维持当前轨道, 关注规模化容量.")
+
+        capital_layer_reviews[layer] = {
+            "capital_layer": layer,
+            "architecture_health": arch,
+            "memory_consolidation": memory,
+            "goal_achievement": goal_chk,
+            "next_month_focus": focus,
+            "month_trade_count": len(layer_trades),
+            "month_pnl": round(layer_data["monthly_return"], 6),
+        }
 
     result = {
         "session": "monthly",
-        "as_of": _now_iso(),
-        "month": month_data.get("month", datetime.now(timezone.utc).strftime("%Y-%m")),
-        "architecture_health": arch,
-        "memory_consolidation": memory,
-        "goal_achievement": goal_chk,
-        "next_month_focus": focus,
+        "as_of": as_of,
+        "month": month,
+        "capital_layer_reviews": capital_layer_reviews,
     }
-    _append_log(result)
+    for capital_layer, layer_record in capital_layer_reviews.items():
+        log_record = {
+            "session": "monthly",
+            "as_of": as_of,
+            "month": month,
+            "capital_layer": capital_layer,
+        }
+        log_record.update(layer_record)
+        _append_log(log_record)
     return result
 
 

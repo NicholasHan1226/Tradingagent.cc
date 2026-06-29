@@ -1,137 +1,158 @@
-# Cron Migration Plan
+# Tradings Cron Migration
 
-## Overview
+更新时间: 2026-06-30  
+适用目录: `Tradings/shared/`  
+状态: 本次仅生成迁移文件, 未安装 crontab, 未停远端旧任务
 
-Current state: **101 cron jobs** in a single crontab on `marketgraph@8.138.181.177`.
-All jobs currently reference scripts under `/opt/investment/MarketGraph/deploy/` but
-serve three distinct repos with different responsibilities.
+## 结论
 
-Target state: **3 separate crontabs** (one per repo) with a shared environment loader.
+- Tradings 归属: `36` 条。
+- MarketGraph 保留: `25` 条。
+- SharedSignals 归属: `40` 条。
+- 遗漏待补: `1` 条 `weight_adjuster.py`。
+- 迁移顺序: `SharedSignals -> MarketGraph -> Tradings`。
 
-## Phase 1: Document Current State (DONE)
+说明:
+- 本地 `shared/cron_inventory.csv` 与 `crontab_remote.txt` 可验证到大批 active job。
+- 上述 `36/25/40/1` 采用 `cron_gap.md` 指定归属口径。
+- `BASH_ENV`、`SHELL` 属环境行, 不计入可执行 cron 数。
 
-- Inventoried all 101 active cron jobs from `crontab -l`
-- Output: [`cron_inventory.csv`](cron_inventory.csv)
-- Each job tagged with: schedule, command, target_repo, target_module, current_frequency, suggested_frequency, migration_status
+## Tradings 36 条清单
 
-### Current State Summary
+1. `job_trading_signals`
+2. `job_premarket_signals`
+3. `job_ashare_sim_exec`
+4. `job_us_premarket`
+5. `job_us_hourly`
+6. `job_us_shadow_exec`
+7. `job_us_postclose`
+8. `job_crypto_shadow_exec`
+9. `job_crypto_daily`
+10. `job_crypto_weekly`
+11. `job_pm_shadow`
+12. `job_pm_forward`
+13. `job_pm_optimize`
+14. `job_pm_promote`
+15. `job_auto_position`
+16. `job_pm_risk`
+17. `job_stress_test`
+18. `job_gate_review_night`
+19. `job_daily_brief_day`
+20. `job_daily_brief_night`
+21. `job_gate_review_day`
+22. `job_weekly_review`
+23. `job_us_weekly`
+24. `job_us_signal_review`
+25. `job_cross_market_review`
+26. `job_strategy_attribution`
+27. `job_factor_attribution`
+28. `job_strategy_version`
+29. `job_backtest_report`
+30. `job_research_report`
+31. `job_self_heal`
+32. `job_self_heal_night`
+33. `job_daily_brief_morning`
+34. `job_email_notify`
+35. `job_alert`
+36. `job_pm_report`
 
-| Metric | Count |
-|--------|-------|
-| Total active jobs | 101 |
-| Env vars (BASH_ENV, SHELL) | 2 |
-| Comment lines | ~20 |
-| Jobs in `/opt/investment/MarketGraph/deploy/` | 101 |
-| Jobs already in Tradings repo | 0 |
-| Jobs already in SharedSignals repo | 0 |
+## 依赖与迁移顺序
 
-### Jobs by Target Repo (from inventory)
+### 1. SharedSignals 先迁
 
-| Target Repo | Jobs | Responsibility |
-|-------------|------|----------------|
-| SharedSignals | ~45 | Data collection, cache warming, Tushare, RSS, health monitors |
-| MarketGraph | ~30 | Analysis agents, regime detection, sentiment, API server, dashboard |
-| Tradings | ~26 | Trading signals, shadow/forward execution, risk, review, notify |
+原因:
+- Tradings 36 条中多数依赖 `quotes`、`events`、`klines`、`benchmark`、`health`。
+- 如果 SharedSignals 仍挂旧路径, Tradings 新 wrapper 会不断进入降级或 placeholder 输出。
 
-### Jobs by Module
+先迁内容:
+- 行情/事件采集。
+- RSS/Tushare/marketdata_db。
+- health monitor / maintenance / refresh。
 
-| Module | Count | Examples |
-|--------|-------|----------|
-| collection | ~42 | job_collect_*, job_cache_warm*, job_tushare_*, RSSCollector |
-| analysis | ~20 | mg_agent/agent_*, job_regime, promote_chain, signal_to_strategy |
-| trading | ~12 | job_trading_signals, job_premarket_signals, job_ashare_sim_exec, wrappers/job_*_exec |
-| review | ~14 | job_weekly_review, job_daily_brief, gate_review, postclose_review |
-| risk | ~3 | job_pm_risk, job_stress_test, job_auto_position |
-| health | ~5 | job_health_sweep, job_health_monitor, job_runtime_checkpoint, _dashboard, _api_server |
-| notify | ~2 | job_email_notify, job_alert |
+### 2. MarketGraph 再迁
 
-## Phase 2: Tag Each Job with Target Repo (DONE)
+原因:
+- Tradings 还依赖 `regime`、`event_impact`、`forward_calendar`。
+- gate / review / attribution 的部分旧逻辑仍在 MarketGraph 工具侧。
 
-Classification rules applied:
+先迁内容:
+- `mg_agent/*`
+- `job_regime.sh`
+- `postclose_review.sh`
+- `_dashboard.py`, `_api_server.py`, `_auto_tune.py`
 
-| Pattern | Target Repo | Target Module |
-|---------|-------------|---------------|
-| `job_collect_*`, `job_cache_warm*`, `job_tushare_*`, `job_marketdata_db_*`, `job_ashare_daily_backfill*` | SharedSignals | collection |
-| `RSSCollector/*`, `collector.py`, `start_rsshub.sh` | SharedSignals | collection |
-| `job_health_sweep`, `job_health_monitor`, `auto_maintain.sh` | SharedSignals | health |
-| `source_auto_graduate`, `signal_log_cleanup` | SharedSignals | collection |
-| `mg_agent/agent_*`, `promote_chain`, `repair_pack` | MarketGraph | analysis |
-| `job_regime`, `job_sentiment_fast_promote`, `signal_to_strategy` | MarketGraph | analysis |
-| `_dashboard.py`, `_api_server.py`, `_auto_tune.py`, `job_runtime_checkpoint` | MarketGraph | health |
-| `job_weekly_calibrate`, `job_seasonal_context` | MarketGraph | analysis |
-| `wrappers/job_*_exec`, `wrappers/job_*_shadow`, `wrappers/job_*_forward` | Tradings | trading |
-| `job_trading_signals`, `job_premarket_signals`, `job_ashare_sim_exec`, `job_pm_promote` | Tradings | trading |
-| `job_weekly_review`, `job_daily_brief`, `gate_review`, `postclose_review` | Tradings | review |
-| `job_pm_risk`, `job_stress_test` | Tradings | risk |
-| `job_email_notify`, `job_alert` | Tradings | notify |
-| `wrappers/job_*_review`, `wrappers/job_*_report`, `wrappers/job_*_attribution` | Tradings | review |
+### 3. Tradings 最后迁
 
-### Migration Status Tags
+原因:
+- 只有 SharedSignals 和 MarketGraph 上游稳定后, Tradings 独立 crontab 才不会变成空跑或噪声报警。
+- 本次生成的 `shared/crontab.txt`、`shared/wrappers/`、`shared/env_loader.sh` 即为最后一跳落地材料。
 
-| Status | Count | Meaning |
-|--------|-------|---------|
-| `move` | ~71 | Job belongs to a different repo; will be moved when crontab splits |
-| `keep` | ~30 | Job stays in MarketGraph (analysis/health jobs that are MarketGraph-native) |
-| `later` | 0 | Deferred — not needed in this pass |
+## 停删清单
 
-## Phase 3: Split Crontab into 3 (PLANNED — not executed)
+迁移完成并完成 smoke 后, 远端旧 crontab 里以下旧任务应停用, 避免 Tradings / MarketGraph 双跑:
 
-When ready, the single crontab will be split into three:
+- `0 20 * * 0 /opt/investment/MarketGraph/deploy/job_weekly_review.sh`
+- `0 22 * * 1-5 /opt/investment/MarketGraph/deploy/job_daily_brief.sh`
+- `32 16 * * 1-5 /opt/investment/MarketGraph/deploy/job_daily_brief.sh`
+- `*/30 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_pm_shadow.sh`
+- `*/30 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_pm_forward.sh`
+- `0 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_pm_optimize.sh`
+- `*/30 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_pm_risk.sh`
+- `*/30 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_pm_report.sh`
+- `15 9 * * 1-5 /opt/investment/MarketGraph/deploy/wrappers/job_us_premarket.sh`
+- `*/30 10-14,22-23,0-4 * * 1-5 /opt/investment/MarketGraph/deploy/wrappers/job_us_hourly.sh`
+- `35 16 * * 1-5 /opt/investment/MarketGraph/deploy/wrappers/job_us_postclose.sh`
+- `30 20 * * 0 /opt/investment/MarketGraph/deploy/wrappers/job_us_weekly.sh`
+- `0 */4 * * * /opt/investment/MarketGraph/deploy/wrappers/job_crypto_daily.sh`
+- `0 */12 * * * /opt/investment/MarketGraph/deploy/wrappers/job_crypto_weekly.sh`
+- `30 * * * 1-5 /opt/investment/MarketGraph/deploy/wrappers/job_us_signal_review.sh`
+- `0 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_cross_market_review.sh`
+- `30 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_strategy_attribution.sh`
+- `45 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_auto_position.sh`
+- `30 8 * * * /opt/investment/MarketGraph/deploy/job_email_notify.sh`
+- `*/30 * * * 1-5 /opt/investment/MarketGraph/deploy/job_trading_signals.sh`
+- `0 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_strategy_version.sh`
+- `0 2 * * * /opt/marketgraph/venv/bin/python3 /opt/investment/MarketGraph/tools/gate_review.py --apply --json`
+- `*/30 10-14,22-23,0-4 * * 1-5 /opt/investment/MarketGraph/deploy/wrappers/job_us_shadow_exec.sh`
+- `*/30 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_crypto_shadow_exec.sh`
+- `25 9 * * 1-5 /opt/investment/MarketGraph/deploy/job_premarket_signals.sh`
+- `*/15 * * * * /opt/investment/MarketGraph/deploy/job_self_heal.sh`
+- `30 7 * * * /opt/marketgraph/venv/bin/python3 /opt/investment/MarketGraph/tools/daily_brief.py --apply --json`
+- `30 * * * * /opt/investment/MarketGraph/deploy/wrappers/job_factor_attribution.sh`
+- `0 17 * * 1-5 /opt/investment/MarketGraph/deploy/wrappers/job_backtest_report.sh`
+- `0 3 * * 6 /opt/investment/MarketGraph/deploy/job_stress_test.sh`
+- `0 16 * * 1-5 /opt/investment/MarketGraph/deploy/job_research_report.sh`
+- `*/5 9-15 * * 1-5 /opt/investment/MarketGraph/deploy/wrappers/job_ashare_sim_exec.sh`
+- `*/30 * * * * /opt/investment/MarketGraph/deploy/job_pm_promote.sh`
+- `0 14 * * * /opt/marketgraph/venv/bin/python3 /opt/investment/MarketGraph/tools/gate_review.py --apply --json`
+- `30 2 * * * /opt/marketgraph/venv/bin/python3 /opt/investment/MarketGraph/tools/self_heal.py --apply --json`
+- `0 8,20 * * * bash /opt/investment/MarketGraph/deploy/job_alert.sh`
 
-### 3a. SharedSignals crontab (~45 jobs)
+## 回滚方案
 
-```
-# SharedSignals crontab — data collection, cache warming, health
-BASH_ENV=/opt/investment/Tradings/shared/env_loader.sh
-# All job_collect_*, job_cache_warm*, job_tushare_*, RSSCollector, health monitors
-```
+### 回滚触发条件
 
-### 3b. MarketGraph crontab (~30 jobs)
+- 新 Tradings crontab 安装后 1 个交易日内出现持续空输出。
+- wrapper 大面积进入 retry queue。
+- 上游 SharedSignals / MarketGraph 尚未完成迁移, 导致 Tradings 大量误报警。
 
-```
-# MarketGraph crontab — analysis agents, regime, API server, dashboard
-BASH_ENV=/opt/investment/Tradings/shared/env_loader.sh
-# All mg_agent/agent_*, job_regime, _dashboard.py, _api_server.py, etc.
-```
+### 回滚步骤
 
-### 3c. Tradings crontab (~26 jobs)
+1. 停用新的 Tradings crontab。
+2. 恢复远端旧 MarketGraph crontab 中已停的 36 条 Tradings 任务。
+3. 保留 `shared/env_loader.sh` 与 `shared/wrappers/` 文件, 仅回退调度切换。
+4. 检查 `BASH_ENV` 是否仍指向旧 `marketgraph_cron_loader.sh`。
+5. 记录是哪类依赖导致回滚:
+   - SharedSignals 数据未就绪
+   - MarketGraph 输出未就绪
+   - Tradings 本地入口未实现
 
-```
-# Tradings crontab — trading signals, execution, risk, review, notify
-BASH_ENV=/opt/investment/Tradings/shared/env_loader.sh
-# All wrappers/job_*_exec, job_trading_signals, job_*_review, job_*_risk, etc.
-```
+## 当前未验证项
 
-### Execution Steps (when ready)
-
-1. Copy scripts to target repo directories (or symlink from deploy/)
-2. Create per-repo crontab files:
-   - `/opt/investment/SharedSignals/deploy/crontab.txt`
-   - `/opt/investment/MarketGraph/deploy/crontab.txt`
-   - `/opt/investment/Tradings/shared/crontab.txt`
-3. Install each crontab to the `marketgraph` user (or separate users if desired)
-4. Verify all jobs still run via health monitors
-5. Remove old monolithic crontab entries
-
-**Important**: Do NOT move any cron jobs now. This document is the plan only.
-
-## Unified Environment Loader
-
-All three crontabs will source [`env_loader.sh`](env_loader.sh) to get a consistent
-environment:
-
-- `TRADINGS_ROOT` → `/opt/investment/Tradings`
-- `SHARED_SIGNALS_ROOT` → `/opt/investment/SharedSignals`
-- `MARKETGRAPH_ROOT` → `/opt/investment/MarketGraph`
-- `MARKETGRAPH_RUNTIME_ROOT` → `/opt/investment/MarketGraphRuntime`
-- Sources `marketgraph_cron.env` for API keys and Tushare tokens
-
-## Risks and Mitigations
-
-| Risk | Mitigation |
-|------|------------|
-| Script paths break after move | Keep symlinks from `/opt/investment/MarketGraph/deploy/` until all refs updated |
-| Tushare token missing in new env | env_loader.sh sources marketgraph_cron.env centrally |
-| Job collision/duplication | Inventory CSV tracks every job; verify count before/after split |
-| Cron user permissions | All jobs run as `marketgraph` user — no change needed |
-| BASH_ENV chain | env_loader.sh replaces marketgraph_cron_loader.sh as the single entry point |
+- 远端 `marketgraph_cron_loader.sh` 未能读取。
+  - 验证时间: 2026-06-30
+  - 失败原因: 当前环境禁止 SSH 出站, `Operation not permitted`
+- `shared/env_loader.sh` 已按“兼容上游 loader + 不写明文密钥 + 显式补齐关键变量”方式实现, 但仍属于待远端验证假设。
+- 本地 `shared/` 代码并未覆盖全部 36 个真实业务入口。
+  - 已在 `shared/wrappers/tradings_cron_entry.py` 中把缺口标为 `planned_only`。
+  - 这些 wrapper 可作为迁移骨架, 不能等同于已完成业务实现。

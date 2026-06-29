@@ -13,7 +13,7 @@ import json
 import re
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,7 @@ FILLED_DIR = SIGNALS_DIR / "filled"
 CANCELLED_DIR = SIGNALS_DIR / "cancelled"
 POSITIONS_DIR = SIGNALS_DIR / "positions"
 POSITIONS_FILE = SIGNALS_DIR / "positions.json"
+SIGNAL_CARD_SCHEMA_PATH = Path(__file__).resolve().with_name("signal_card_schema.json")
 
 # Hard safety boundary: this bridge only creates signal cards. It must never
 # submit, cancel, or confirm real orders directly.
@@ -83,38 +84,154 @@ def _coerce_float(value: Any) -> float | None:
     return float(value)
 
 
-def _coerce_signal_card(order: dict[str, Any] | HermesOrder) -> HermesOrder:
+def _coerce_signal_card(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
     if isinstance(order, HermesOrder):
-        card = order
+        payload = asdict(order)
     else:
         direction = str(order.get("direction", order.get("side", ""))).lower().strip()
         if direction == "reduce":
             direction = "sell"
-        card = HermesOrder(
-            order_id=str(order.get("order_id") or f"SIGNAL-{uuid.uuid4().hex[:12]}"),
-            ts_code=str(order.get("ts_code", "")).strip(),
-            direction=direction,
-            quantity=int(order.get("quantity", 0)),
-            price=_coerce_float(order.get("price", order.get("limit_price", order.get("execution_price")))),
-            stop_loss=_coerce_float(order.get("stop_loss")),
-            strategy_name=str(order.get("strategy_name", "")).strip(),
-            timestamp=str(order.get("timestamp") or datetime.now().astimezone().isoformat(timespec="seconds")),
-            status="pending",
-        )
+        payload = {
+            "order_id": str(order.get("order_id") or f"SIGNAL-{uuid.uuid4().hex[:12]}"),
+            "ts_code": str(order.get("ts_code", "")).strip(),
+            "direction": direction,
+            "quantity": int(order.get("quantity", 0)),
+            "price": _coerce_float(order.get("price", order.get("limit_price", order.get("execution_price")))),
+            "stop_loss": _coerce_float(order.get("stop_loss")),
+            "strategy_name": str(order.get("strategy_name", "")).strip(),
+            "timestamp": str(order.get("timestamp") or datetime.now().astimezone().isoformat(timespec="seconds")),
+            "status": "pending",
+        }
+        for field_name in (
+            "capital_layer",
+            "account_type",
+            "manual_confirm_required",
+            "direct_execution",
+            "trigger",
+            "evidence_refs",
+            "valid_until",
+            "risk_check",
+            "source_condition_id",
+            "idempotency_key",
+            "t_plus_1",
+        ):
+            if field_name in order:
+                payload[field_name] = order[field_name]
 
-    card.order_id = _normalize_order_id(card.order_id)
-    card.direction = card.direction.lower().strip()
-    card.status = "pending"
-    return card
+    payload["order_id"] = _normalize_order_id(str(payload.get("order_id", "")))
+    payload["direction"] = str(payload.get("direction", "")).lower().strip()
+    payload["status"] = "pending"
+    return payload
 
 
-def _validate_signal_card(card: HermesOrder) -> str | None:
-    if not card.ts_code:
+def _load_signal_card_schema() -> dict[str, Any]:
+    with open(SIGNAL_CARD_SCHEMA_PATH, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _type_matches(value: Any, expected_type: str) -> bool:
+    if expected_type == "string":
+        return isinstance(value, str)
+    if expected_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected_type == "boolean":
+        return isinstance(value, bool)
+    if expected_type == "array":
+        return isinstance(value, list)
+    if expected_type == "object":
+        return isinstance(value, dict)
+    if expected_type == "null":
+        return value is None
+    return True
+
+
+def _validate_format(value: Any, expected_format: str | None, path: str) -> str | None:
+    if expected_format == "date-time" and isinstance(value, str):
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return f"{path} must be date-time"
+    if expected_format == "date" and isinstance(value, str):
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            return f"{path} must be date"
+    return None
+
+
+def _validate_schema_node(value: Any, schema: dict[str, Any], path: str) -> str | None:
+    expected = schema.get("type")
+    if isinstance(expected, list):
+        if not any(_type_matches(value, expected_type) for expected_type in expected):
+            return f"{path} has invalid type"
+    elif isinstance(expected, str) and not _type_matches(value, expected):
+        return f"{path} has invalid type"
+
+    if "enum" in schema and value not in schema["enum"]:
+        return f"{path} must be one of {schema['enum']}"
+    if "const" in schema and value != schema["const"]:
+        return f"{path} must be {schema['const']!r}"
+    if isinstance(value, str) and value and "pattern" in schema and not re.fullmatch(schema["pattern"], value):
+        return f"{path} does not match required pattern"
+    if isinstance(value, str) and len(value) < schema.get("minLength", 0):
+        return f"{path} is too short"
+    if isinstance(value, int) and not isinstance(value, bool) and "minimum" in schema and value < schema["minimum"]:
+        return f"{path} must be >= {schema['minimum']}"
+
+    format_error = _validate_format(value, schema.get("format"), path)
+    if format_error:
+        return format_error
+
+    if isinstance(value, dict):
+        required = schema.get("required", [])
+        for field_name in required:
+            if field_name not in value:
+                return f"{path} missing required field {field_name}"
+        allowed = set(schema.get("properties", {}).keys())
+        if schema.get("additionalProperties") is False:
+            extra = sorted(set(value.keys()) - allowed)
+            if extra:
+                return f"{path} has unexpected field {extra[0]}"
+        for field_name, field_schema in schema.get("properties", {}).items():
+            if field_name in value:
+                error = _validate_schema_node(value[field_name], field_schema, f"{path}.{field_name}")
+                if error:
+                    return error
+
+    if isinstance(value, list) and "items" in schema:
+        for index, item in enumerate(value):
+            error = _validate_schema_node(item, schema["items"], f"{path}[{index}]")
+            if error:
+                return error
+
+    return None
+
+
+def _validate_signal_card_schema(payload: dict[str, Any]) -> str | None:
+    schema = _load_signal_card_schema()
+    error = _validate_schema_node(payload, schema, "signal_card")
+    if error:
+        return error
+    if payload.get("capital_layer") == "real":
+        if payload.get("manual_confirm_required") is not True:
+            return "signal_card.manual_confirm_required must be true for real capital_layer"
+        if payload.get("direct_execution") is not False:
+            return "signal_card.direct_execution must be false for real capital_layer"
+    return None
+
+
+def _validate_signal_card(card: dict[str, Any]) -> str | None:
+    if not card.get("ts_code"):
         return "Missing ts_code"
-    if card.direction not in ("buy", "sell"):
-        return f"Invalid direction: {card.direction}"
-    if card.quantity <= 0:
-        return f"Invalid quantity: {card.quantity}"
+    if card.get("direction") not in ("buy", "sell"):
+        return f"Invalid direction: {card.get('direction')}"
+    if int(card.get("quantity", 0) or 0) <= 0:
+        return f"Invalid quantity: {card.get('quantity')}"
+    schema_error = _validate_signal_card_schema(card)
+    if schema_error:
+        return f"Schema validation failed: {schema_error}"
     return None
 
 
@@ -144,17 +261,17 @@ def send_order(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
     validation_error = _validate_signal_card(card)
     if validation_error:
         return {
-            "order_id": card.order_id,
+            "order_id": card.get("order_id", ""),
             "status": "rejected",
             "message": validation_error,
             "real_auto_order_forbidden": real_auto_order_forbidden,
             "direct_execution": False,
         }
 
-    pending_path = _json_path(PENDING_DIR, card.order_id)
+    pending_path = _json_path(PENDING_DIR, card["order_id"])
     if pending_path.exists():
         return {
-            "order_id": card.order_id,
+            "order_id": card["order_id"],
             "status": "duplicate",
             "signal_path": str(pending_path),
             "message": "Pending signal card already exists",
@@ -162,12 +279,12 @@ def send_order(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
             "direct_execution": False,
         }
 
-    _write_json_atomic(pending_path, asdict(card))
+    _write_json_atomic(pending_path, card)
     return {
-        "order_id": card.order_id,
+        "order_id": card["order_id"],
         "status": "pending",
         "signal_path": str(pending_path),
-        "signal_card": asdict(card),
+        "signal_card": card,
         "message": "Signal card queued for Mac Mini cron; no direct execution performed",
         "real_auto_order_forbidden": real_auto_order_forbidden,
         "direct_execution": False,
@@ -271,7 +388,7 @@ def sync_positions() -> dict[str, Any]:
     }
 
 
-def cancel_order(order_id: str) -> dict[str, Any]:
+def cancel_order(order_id: str, manual_confirm: bool = False) -> dict[str, Any]:
     """Cancel a pending signal by moving it to signals/cancelled/."""
     ensure_signal_dirs()
     try:
@@ -304,6 +421,16 @@ def cancel_order(order_id: str) -> dict[str, Any]:
         card = _read_json(pending_path)
     except (OSError, json.JSONDecodeError):
         card = {"order_id": order_id}
+
+    capital_layer = str(card.get("capital_layer", "real")).lower().strip()
+    if capital_layer not in ("simulated", "shadow") and manual_confirm is not True:
+        return {
+            "order_id": order_id,
+            "status": "rejected",
+            "message": "Manual confirmation required to cancel real pending signal",
+            "direct_execution": False,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+        }
 
     card["status"] = "cancelled"
     card["cancelled_at"] = datetime.now().astimezone().isoformat(timespec="seconds")

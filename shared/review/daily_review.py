@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import json
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -91,6 +92,40 @@ def _append_log(record: dict[str, Any]) -> None:
     _ensure_dirs()
     with open(DAILY_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _normalize_capital_layer(value: Any, default: str = "shadow") -> str:
+    raw = str(value or default).strip().lower()
+    if raw in {"real", "live"}:
+        return "real"
+    if raw in {"sim", "simulated", "simulation"}:
+        return "simulated"
+    if raw in {"shadow", "paper", "paper_portfolio", "paper_tracking"}:
+        return "shadow"
+    return default
+
+
+def _group_by_capital_layer(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows or []:
+        layer = _normalize_capital_layer(row.get("capital_layer"))
+        normalized = dict(row)
+        normalized["capital_layer"] = layer
+        grouped[layer].append(normalized)
+    return dict(grouped)
+
+
+def _append_layer_logs(base_record: dict[str, Any], grouped_records: dict[str, dict[str, Any]]) -> None:
+    for capital_layer, layer_record in grouped_records.items():
+        log_record = dict(base_record)
+        log_record.update(layer_record)
+        log_record["capital_layer"] = capital_layer
+        _append_log(log_record)
+
+
+def _preferred_capital_layer(layers: list[str]) -> str:
+    priority = {"real": 0, "simulated": 1, "shadow": 2}
+    return sorted(layers, key=lambda layer: priority.get(layer, 99))[0] if layers else "shadow"
 
 
 def _hit_rate(trades: list[dict[str, Any]]) -> float:
@@ -200,7 +235,7 @@ def _created_at_matches(created_at: Any, trade_date: str) -> bool:
     return raw.startswith(compact) or _compact_date(raw) == compact
 
 
-def _normalize_trade(row: dict[str, Any]) -> dict[str, Any]:
+def _normalize_trade(row: dict[str, Any], default_layer: str = "shadow") -> dict[str, Any]:
     return {
         "ts_code": _first_present(row, "ts_code", "code", "symbol"),
         "side": _first_present(row, "side", "action", "trade_side"),
@@ -211,10 +246,14 @@ def _normalize_trade(row: dict[str, Any]) -> dict[str, Any]:
         "signal_id": _first_present(row, "tradebook_id", "source_decision_id", "signal_id"),
         "created_at": _first_present(row, "created_at", "timestamp", "time"),
         "trade_date": _first_present(row, "trade_date", "date"),
+        "capital_layer": _normalize_capital_layer(
+            _first_present(row, "capital_layer", "capital_nature", "account_type", default=default_layer),
+            default=default_layer,
+        ),
     }
 
 
-def _normalize_position(row: dict[str, Any]) -> dict[str, Any]:
+def _normalize_position(row: dict[str, Any], default_layer: str = "shadow") -> dict[str, Any]:
     weight_pct = _first_present(row, "weight_pct", default=None)
     if weight_pct is not None:
         weight = _float_value(weight_pct) / 100.0
@@ -227,6 +266,10 @@ def _normalize_position(row: dict[str, Any]) -> dict[str, Any]:
         "stop_loss_pct": _float_value(row.get("stop_loss_pct"), -0.03),
         "take_profit_pct": _float_value(row.get("take_profit_pct"), 0.05),
         "momentum": _float_value(row.get("momentum"), 0.0),
+        "capital_layer": _normalize_capital_layer(
+            _first_present(row, "capital_layer", "capital_nature", "account_type", default=default_layer),
+            default=default_layer,
+        ),
     }
 
 
@@ -271,7 +314,7 @@ def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
     try:
         shadow_path = SHADOW_SIM_DIR / "shadow_sim_trades.csv"
         rows = [
-            _normalize_trade(row)
+            _normalize_trade(row, default_layer="shadow")
             for row in _read_csv_dicts(shadow_path)
             if _date_eq(row.get("trade_date"), trade_date)
         ]
@@ -282,7 +325,7 @@ def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
         jsonl_rows = []
         for row in _read_jsonl_dicts(jsonl_path):
             if _date_eq(row.get("trade_date"), trade_date) or _created_at_matches(row.get("created_at"), trade_date):
-                jsonl_rows.append(_normalize_trade(row))
+                jsonl_rows.append(_normalize_trade(row, default_layer="simulated"))
         return jsonl_rows
     except Exception:
         return []
@@ -291,12 +334,12 @@ def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
 def load_positions(as_of_date: str) -> list[dict[str, Any]]:
     try:
         shadow_path = SHADOW_SIM_DIR / "latest_shadow_positions.csv"
-        rows = [_normalize_position(row) for row in _read_csv_dicts(shadow_path)]
+        rows = [_normalize_position(row, default_layer="shadow") for row in _read_csv_dicts(shadow_path)]
         if rows:
             return rows
 
         paper_path = PAPER_PORTFOLIO_DIR / "positions.csv"
-        rows = [_normalize_position(row) for row in _read_csv_dicts(paper_path)]
+        rows = [_normalize_position(row, default_layer="shadow") for row in _read_csv_dicts(paper_path)]
         return rows
     except Exception:
         return []
@@ -363,44 +406,55 @@ def review_lunch(positions: list[dict[str, Any]], morning_trades: list[dict[str,
           },
         }
     """
-    signal_count = sum(1 for t in morning_trades if t.get("signal_id"))
-    hit = _hit_rate(morning_trades)
-    realized_pnl = _sum_pnl(morning_trades)
-    floating_pnl = sum(_safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight")) for p in positions)
-    pnl = realized_pnl + floating_pnl
+    layer_positions = _group_by_capital_layer(positions)
+    layer_trades = _group_by_capital_layer(morning_trades)
+    layers = sorted(set(layer_positions) | set(layer_trades) or {"shadow"})
 
-    # afternoon plan heuristics
-    reduce_list = [
-        p.get("ts_code", "?")
-        for p in positions
-        if _safe_float(p.get("pnl_pct")) <= _safe_float(p.get("stop_loss_pct"), -0.03)
-    ]
-    add_list = [
-        p.get("ts_code", "?")
-        for p in positions
-        if 0 < _safe_float(p.get("pnl_pct")) < _safe_float(p.get("take_profit_pct"), 0.05)
-        and _safe_float(p.get("momentum", 0)) > 0
-    ]
-    watch_list = [p.get("ts_code", "?") for p in positions if p.get("ts_code") not in reduce_list + add_list]
+    capital_layer_reviews: dict[str, Any] = {}
+    for layer in layers:
+        layer_pos = layer_positions.get(layer, [])
+        layer_trade = layer_trades.get(layer, [])
+        signal_count = sum(1 for t in layer_trade if t.get("signal_id"))
+        hit = _hit_rate(layer_trade)
+        realized_pnl = _sum_pnl(layer_trade)
+        floating_pnl = sum(_safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight")) for p in layer_pos)
+        pnl = realized_pnl + floating_pnl
+
+        reduce_list = [
+            p.get("ts_code", "?")
+            for p in layer_pos
+            if _safe_float(p.get("pnl_pct")) <= _safe_float(p.get("stop_loss_pct"), -0.03)
+        ]
+        add_list = [
+            p.get("ts_code", "?")
+            for p in layer_pos
+            if 0 < _safe_float(p.get("pnl_pct")) < _safe_float(p.get("take_profit_pct"), 0.05)
+            and _safe_float(p.get("momentum", 0)) > 0
+        ]
+        watch_list = [p.get("ts_code", "?") for p in layer_pos if p.get("ts_code") not in reduce_list + add_list]
+        capital_layer_reviews[layer] = {
+            "capital_layer": layer,
+            "signal_count": signal_count,
+            "hit_rate": round(hit, 4),
+            "pnl": round(pnl, 6),
+            "realized_pnl": round(realized_pnl, 6),
+            "floating_pnl": round(floating_pnl, 6),
+            "position_count": len(layer_pos),
+            "morning_trade_count": len(layer_trade),
+            "afternoon_plan": {
+                "reduce": reduce_list,
+                "add": add_list,
+                "watch": watch_list,
+                "notes": "午盘复盘: 检查上午信号兑现度, 止损标的减仓, 未兑现信号加仓.",
+            },
+        }
 
     result = {
         "session": "lunch",
         "as_of": _now_iso(),
-        "signal_count": signal_count,
-        "hit_rate": round(hit, 4),
-        "pnl": round(pnl, 6),
-        "realized_pnl": round(realized_pnl, 6),
-        "floating_pnl": round(floating_pnl, 6),
-        "position_count": len(positions),
-        "morning_trade_count": len(morning_trades),
-        "afternoon_plan": {
-            "reduce": reduce_list,
-            "add": add_list,
-            "watch": watch_list,
-            "notes": "午盘复盘: 检查上午信号兑现度, 止损标的减仓, 未兑现信号加仓.",
-        },
+        "capital_layer_reviews": capital_layer_reviews,
     }
-    _append_log(result)
+    _append_layer_logs({"session": "lunch", "as_of": result["as_of"]}, capital_layer_reviews)
     return result
 
 
@@ -441,99 +495,95 @@ def review_close(
           "next_day_plan": {...},
         }
     """
-    # --- trades summary ---
-    wins = [t for t in all_trades if _safe_float(t.get("pnl")) > 0]
-    losses = [t for t in all_trades if _safe_float(t.get("pnl")) < 0]
-    pnl = _sum_pnl(all_trades)
-    floating = sum(_safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight")) for p in positions)
-    total_pnl = pnl + floating
-    win_rate = len(wins) / len(all_trades) if all_trades else 0.0
-    avg_win = (_sum_pnl(wins) / len(wins)) if wins else 0.0
-    avg_loss = (_sum_pnl(losses) / len(losses)) if losses else 0.0
-    profit_factor = (abs(_sum_pnl(wins)) / abs(_sum_pnl(losses))) if losses and _sum_pnl(losses) != 0 else float("inf") if wins else 0.0
-
-    trades_summary = {
-        "count": len(all_trades),
-        "wins": len(wins),
-        "losses": len(losses),
-        "win_rate": round(win_rate, 4),
-        "avg_win": round(avg_win, 6),
-        "avg_loss": round(avg_loss, 6),
-        "profit_factor": round(profit_factor, 6) if profit_factor != float("inf") else None,
-        "realized_pnl": round(pnl, 6),
-        "floating_pnl": round(floating, 6),
-    }
-
-    # --- attribution ---
-    attr = attribute_pct(all_trades)
-
-    # --- comparison #2: vs benchmark ---
-    bench_cmp = compare_to_benchmark(
-        total_pnl, benchmark_return, portfolio_returns_series, benchmark_returns_series
-    )
-
-    # --- comparison #3: vs last period ---
-    bench_info = get_benchmark(datetime.now(timezone.utc).strftime("%Y%m%d"))
-    last_period_return = _safe_float(bench_info.get("last_period_return"))
-    vs_last = {
-        "this_period_return": round(total_pnl, 6),
-        "last_period_return": round(last_period_return, 6),
-        "improved": total_pnl > last_period_return,
-        "delta": round(total_pnl - last_period_return, 6),
-    }
-
-    # --- comparison #1: vs goals ---
+    layer_positions = _group_by_capital_layer(positions)
+    layer_trades = _group_by_capital_layer(all_trades)
+    layers = sorted(set(layer_positions) | set(layer_trades) or {"shadow"})
     goals = _load_goals()
     stage_goals = _stage_goals(goals, stage)
-    metrics_for_goals = {
-        "win_rate": win_rate,
-        "sharpe": bench_cmp.get("sharpe"),
-        "max_drawdown": bench_cmp.get("max_drawdown"),
-        "stage": stage,
-    }
-    vs_goals = _compare_to_goals(metrics_for_goals, stage_goals)
 
-    # --- next day plan ---
-    # Heuristics: if win rate below stage goal → tighten; if beat benchmark → maintain;
-    # if attribution shows a dimension bleeding → reduce that dimension's weight.
-    bleeding_dims = [
-        d for d, pct in attr.get("by_dimension", {}).items()
-        if pct < -0.1 and d != "unattributed"
-    ]
-    bleeding_strats = [
-        s for s, pct in attr.get("by_strategy", {}).items()
-        if pct < -0.1 and s != "unattributed"
-    ]
-    next_day_plan = {
-        "tighten_stops": win_rate < stage_goals.get("win_rate", 0.55),
-        "reduce_dimensions": bleeding_dims,
-        "reduce_strategies": bleeding_strats,
-        "maintain_signal": bool(vs_goals.get("all_goals_met")),
-        "notes": (
-            f"收盘复盘: 胜率{win_rate:.1%}, "
-            f"{'达标' if vs_goals.get('all_goals_met') else '未达标'}. "
-            f"出血维度: {bleeding_dims or '无'}. "
-            f"下日重点: {'维持信号' if vs_goals.get('all_goals_met') else '收紧止损+降权出血维度'}."
-        ),
-    }
+    capital_layer_reviews: dict[str, Any] = {}
+    for layer in layers:
+        layer_pos = layer_positions.get(layer, [])
+        layer_trd = layer_trades.get(layer, [])
+        wins = [t for t in layer_trd if _safe_float(t.get("pnl")) > 0]
+        losses = [t for t in layer_trd if _safe_float(t.get("pnl")) < 0]
+        pnl = _sum_pnl(layer_trd)
+        floating = sum(_safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight")) for p in layer_pos)
+        total_pnl = pnl + floating
+        win_rate = len(wins) / len(layer_trd) if layer_trd else 0.0
+        avg_win = (_sum_pnl(wins) / len(wins)) if wins else 0.0
+        avg_loss = (_sum_pnl(losses) / len(losses)) if losses else 0.0
+        profit_factor = (abs(_sum_pnl(wins)) / abs(_sum_pnl(losses))) if losses and _sum_pnl(losses) != 0 else float("inf") if wins else 0.0
+        trades_summary = {
+            "count": len(layer_trd),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(win_rate, 4),
+            "avg_win": round(avg_win, 6),
+            "avg_loss": round(avg_loss, 6),
+            "profit_factor": round(profit_factor, 6) if profit_factor != float("inf") else None,
+            "realized_pnl": round(pnl, 6),
+            "floating_pnl": round(floating, 6),
+        }
+        attr = attribute_pct(layer_trd)
+        bench_cmp = compare_to_benchmark(
+            total_pnl, benchmark_return, portfolio_returns_series, benchmark_returns_series
+        )
+        bench_info = get_benchmark(datetime.now(timezone.utc).strftime("%Y%m%d"))
+        last_period_return = _safe_float(bench_info.get("last_period_return"))
+        vs_last = {
+            "this_period_return": round(total_pnl, 6),
+            "last_period_return": round(last_period_return, 6),
+            "improved": total_pnl > last_period_return,
+            "delta": round(total_pnl - last_period_return, 6),
+        }
+        metrics_for_goals = {
+            "win_rate": win_rate,
+            "sharpe": bench_cmp.get("sharpe"),
+            "max_drawdown": bench_cmp.get("max_drawdown"),
+            "stage": stage,
+        }
+        vs_goals = _compare_to_goals(metrics_for_goals, stage_goals)
+        bleeding_dims = [
+            d for d, pct in attr.get("by_dimension", {}).items()
+            if pct < -0.1 and d != "unattributed"
+        ]
+        bleeding_strats = [
+            s for s, pct in attr.get("by_strategy", {}).items()
+            if pct < -0.1 and s != "unattributed"
+        ]
+        capital_layer_reviews[layer] = {
+            "capital_layer": layer,
+            "trades_summary": trades_summary,
+            "pnl": round(total_pnl, 6),
+            "attribution": attr,
+            "comparisons": {
+                "vs_goals": vs_goals,
+                "vs_benchmark": bench_cmp,
+                "vs_last_period": vs_last,
+            },
+            "next_day_plan": {
+                "tighten_stops": win_rate < stage_goals.get("win_rate", 0.55),
+                "reduce_dimensions": bleeding_dims,
+                "reduce_strategies": bleeding_strats,
+                "maintain_signal": bool(vs_goals.get("all_goals_met")),
+                "notes": (
+                    f"收盘复盘: 胜率{win_rate:.1%}, "
+                    f"{'达标' if vs_goals.get('all_goals_met') else '未达标'}. "
+                    f"出血维度: {bleeding_dims or '无'}. "
+                    f"下日重点: {'维持信号' if vs_goals.get('all_goals_met') else '收紧止损+降权出血维度'}."
+                ),
+            },
+        }
 
     result = {
         "session": "close",
         "as_of": _now_iso(),
-        "trades_summary": trades_summary,
-        "pnl": round(total_pnl, 6),
-        "attribution": attr,
-        "comparisons": {
-            "vs_goals": vs_goals,
-            "vs_benchmark": bench_cmp,
-            "vs_last_period": vs_last,
-        },
-        "next_day_plan": next_day_plan,
+        "capital_layer_reviews": capital_layer_reviews,
     }
-
-    # record this period's return for the next review's "vs last period"
-    record_last_period(total_pnl, "daily")
-    _append_log(result)
+    baseline_layer = _preferred_capital_layer(list(capital_layer_reviews))
+    record_last_period(capital_layer_reviews[baseline_layer]["pnl"], "daily")
+    _append_layer_logs({"session": "close", "as_of": result["as_of"]}, capital_layer_reviews)
     return result
 
 

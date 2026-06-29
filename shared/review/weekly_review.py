@@ -61,6 +61,27 @@ def _append_log(record: dict[str, Any]) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _normalize_capital_layer(value: Any, default: str = "shadow") -> str:
+    raw = str(value or default).strip().lower()
+    if raw in {"real", "live"}:
+        return "real"
+    if raw in {"sim", "simulated", "simulation"}:
+        return "simulated"
+    if raw in {"shadow", "paper", "paper_portfolio", "paper_tracking"}:
+        return "shadow"
+    return default
+
+
+def _group_by_capital_layer(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows or []:
+        layer = _normalize_capital_layer(row.get("capital_layer"))
+        normalized = dict(row)
+        normalized["capital_layer"] = layer
+        grouped[layer].append(normalized)
+    return dict(grouped)
+
+
 def _strategy_stats(week_trades: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Per-strategy win rate + pnl for the week."""
     buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -125,52 +146,58 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
           "week_win_rate": float,
         }
     """
-    stats = _strategy_stats(week_trades)
-    # include strategies with no trades this week
-    for s in strategies or []:
-        stats.setdefault(s, {"trades": 0, "wins": 0, "win_rate": 0.0, "pnl": 0.0})
-
-    dim_eff = _dimension_effectiveness(week_trades)
-
-    # conditions that bled
-    attr_cond = attribute_pct(week_trades).get("by_condition", {})
-    conditions_to_adjust = [c for c, pct in attr_cond.items() if pct < -0.1 and c != "unattributed"]
-
-    # load state for consecutive-week tracking
+    grouped = _group_by_capital_layer(week_trades)
     state = _read_json(WEEKLY_STATE)
+    as_of = _now_iso()
+    capital_layer_reviews: dict[str, Any] = {}
 
-    strategies_to_eliminate: list[str] = []
-    strategies_to_promote: list[str] = []
+    for layer in sorted(grouped or {"shadow": []}):
+        layer_trades = grouped.get(layer, [])
+        stats = _strategy_stats(layer_trades)
+        for s in strategies or []:
+            stats.setdefault(s, {"trades": 0, "wins": 0, "win_rate": 0.0, "pnl": 0.0})
 
-    for s, st in stats.items():
-        wr = st["win_rate"]
-        week_positive = st["pnl"] > 0
-        week_below_50 = wr < 0.50
-        tracked = _update_consecutive(state, s, week_positive, week_below_50)
-        if tracked.get("consecutive_below50_weeks", 0) >= 2:
-            strategies_to_eliminate.append(s)
-        if tracked.get("consecutive_positive_weeks", 0) >= 2:
-            strategies_to_promote.append(s)
+        dim_eff = _dimension_effectiveness(layer_trades)
+        attr_cond = attribute_pct(layer_trades).get("by_condition", {})
+        conditions_to_adjust = [c for c, pct in attr_cond.items() if pct < -0.1 and c != "unattributed"]
+        strategies_to_eliminate: list[str] = []
+        strategies_to_promote: list[str] = []
+
+        for s, st in stats.items():
+            wr = st["win_rate"]
+            week_positive = st["pnl"] > 0
+            week_below_50 = wr < 0.50
+            tracked = _update_consecutive(state, f"{layer}:{s}", week_positive, week_below_50)
+            if tracked.get("consecutive_below50_weeks", 0) >= 2:
+                strategies_to_eliminate.append(s)
+            if tracked.get("consecutive_positive_weeks", 0) >= 2:
+                strategies_to_promote.append(s)
+
+        total_pnl = sum(_safe_float(t.get("pnl")) for t in layer_trades)
+        total_wins = sum(1 for t in layer_trades if _safe_float(t.get("pnl")) > 0)
+        week_wr = total_wins / len(layer_trades) if layer_trades else 0.0
+        capital_layer_reviews[layer] = {
+            "capital_layer": layer,
+            "week_pnl": round(total_pnl, 6),
+            "week_win_rate": round(week_wr, 4),
+            "week_trade_count": len(layer_trades),
+            "strategy_win_rates": stats,
+            "dimension_effectiveness": dim_eff,
+            "conditions_to_adjust": conditions_to_adjust,
+            "strategies_to_eliminate": strategies_to_eliminate,
+            "strategies_to_promote": strategies_to_promote,
+        }
 
     _write_json(WEEKLY_STATE, state)
-
-    total_pnl = sum(_safe_float(t.get("pnl")) for t in week_trades or [])
-    total_wins = sum(1 for t in week_trades or [] if _safe_float(t.get("pnl")) > 0)
-    week_wr = total_wins / len(week_trades) if week_trades else 0.0
-
     result = {
         "session": "weekly",
-        "as_of": _now_iso(),
-        "week_pnl": round(total_pnl, 6),
-        "week_win_rate": round(week_wr, 4),
-        "week_trade_count": len(week_trades or []),
-        "strategy_win_rates": stats,
-        "dimension_effectiveness": dim_eff,
-        "conditions_to_adjust": conditions_to_adjust,
-        "strategies_to_eliminate": strategies_to_eliminate,
-        "strategies_to_promote": strategies_to_promote,
+        "as_of": as_of,
+        "capital_layer_reviews": capital_layer_reviews,
     }
-    _append_log(result)
+    for capital_layer, layer_record in capital_layer_reviews.items():
+        log_record = {"session": "weekly", "as_of": as_of, "capital_layer": capital_layer}
+        log_record.update(layer_record)
+        _append_log(log_record)
     return result
 
 

@@ -13,7 +13,40 @@
     "stop_loss",
     "strategy_name",
     "timestamp",
-    "status"
+    "status",
+    "capital_layer",
+    "account_type",
+    "manual_confirm_required",
+    "direct_execution",
+    "trigger",
+    "evidence_refs",
+    "valid_until",
+    "risk_check",
+    "source_condition_id",
+    "idempotency_key",
+    "t_plus_1"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "capital_layer": {
+            "const": "real"
+          }
+        },
+        "required": ["capital_layer"]
+      },
+      "then": {
+        "properties": {
+          "manual_confirm_required": {
+            "const": true
+          },
+          "direct_execution": {
+            "const": false
+          }
+        }
+      }
+    }
   ],
   "properties": {
     "order_id": {
@@ -48,6 +81,85 @@
     "status": {
       "type": "string",
       "const": "pending"
+    },
+    "capital_layer": {
+      "type": "string",
+      "enum": ["real", "simulated", "shadow"]
+    },
+    "account_type": {
+      "type": "string",
+      "enum": ["real", "simulated", "none"]
+    },
+    "manual_confirm_required": {
+      "type": "boolean"
+    },
+    "direct_execution": {
+      "type": "boolean"
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["condition_id", "triggered_at", "trigger_price"],
+      "properties": {
+        "condition_id": {
+          "type": "string"
+        },
+        "triggered_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trigger_price": {
+          "type": ["number", "null"]
+        }
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date"
+    },
+    "risk_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "checks"],
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "source_condition_id": {
+      "type": "string"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "t_plus_1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sellable_from", "sellable_date"],
+      "properties": {
+        "sellable_from": {
+          "type": "string",
+          "format": "date"
+        },
+        "sellable_date": {
+          "type": "string",
+          "format": "date"
+        }
+      }
     }
   }
 }
