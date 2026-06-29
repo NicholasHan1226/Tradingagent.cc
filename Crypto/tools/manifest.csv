@@ -1,0 +1,22 @@
+filename,docstring
+crypto_common.py,Shared helpers for the Crypto training workflow.
+crypto_daily_report.py,Nicholas-facing daily report for Crypto simulated training.
+crypto_daily_report_notify.py,Send Crypto simulated-training daily report emails.
+crypto_forward_validation.py,Crypto forward validation dashboard — daily metrics report.
+crypto_historical_replay.py,Historical shadow replay for Crypto training rules.
+crypto_intraday_signal.py,Multi-timeframe signal enhancement for Crypto shadow layers.
+crypto_market_data.py,Public market data adapter for Crypto simulated/shadow training.
+crypto_marketgraph_bridge.py,Crypto ↔ MarketGraph cross-market signal bridge.
+crypto_missed_opp_analyzer.py,Missed opportunity pattern analyzer.
+crypto_opportunity_funnel.py,Opportunity funnel for Crypto simulated training.
+crypto_portfolio_optimizer.py,Portfolio optimizer — correlation matrix + volatility-adaptive sizing.
+crypto_risk_background.py,Public risk-background scoring for Crypto simulated training.
+crypto_sample_scorecard.py,Sample-quality scorecard for Crypto simulated training.
+crypto_shadow_runner.py,Shadow strategy layer — runs in parallel with the frozen baseline.
+crypto_shadow_scorecard.py,Crypto shadow portfolio scorecard — unified view across all shadow variants.
+crypto_shadow_styles.py,Multi-style shadow replay for Crypto training.
+crypto_simulator.py,Simulated execution for Crypto condition cards.
+crypto_strategy_promotion.py,Crypto strategy promotion scorecard — mirrors Ashare strategy_promotion pattern.
+crypto_training_run.py,Runnable Crypto simulated-training cycles for automations.
+crypto_trigger_notify.py,Triggered-condition email alerts for Crypto simulated training.
+crypto_workflow.py,Unified Crypto simulated-training workflow.

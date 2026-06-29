@@ -1,0 +1,21 @@
+filename,docstring
+pm_clob_sandbox.py,Polymarket CLOB trading sandbox — research-only framework for real trading.
+pm_common.py,Shared helpers for the PredictionMarkets training workflow.
+pm_dune_connector.py,Dune Analytics connector for PredictionMarkets historical data.
+pm_force_settle.py,Proxy-settle open simulated positions for review when true outcomes are unavailable.
+pm_forward_validation.py,PredictionMarkets forward validation — daily Brier + P&L + calibration report.
+pm_historical_loader.py,Load resolved Polymarket markets from HuggingFace parquet → calibration CSV.
+pm_historical_replay.py,PredictionMarkets historical replay — calibrate strategy on resolved markets.
+pm_kimiwork_sync.py,Sync PredictionMarkets cron tasks into KimiWork live jobs.json.
+pm_market_data.py,Read-only public market-data collection for PredictionMarkets training.
+pm_marketgraph_bridge.py,PredictionMarkets → MarketGraph causal impact bridge.
+pm_marketgraph_intake.py,Write resolved Polymarket outcomes as MarketGraph candidate calibration intake.
+pm_nlp_model.py,NLP prediction model v2 — improved text features + calibrated probability.
+pm_prediction_model.py,Prediction model for Polymarket — produces probability estimates with alpha.
+pm_price_index.py,Fast price history index for PredictionMarkets backtesting.
+pm_risk_control.py,Pre-trade risk control checks for PredictionMarkets portfolio.
+pm_self_optimizer.py,Self-optimization advisor for PredictionMarkets shadow training.
+pm_shadow_runner.py,Strategy variant comparison — test edge × kelly × hold combinations.
+pm_simulator.py,"Simulated execution for PredictionMarket condition cards — YES/NO bets, settlement, early exit."
+pm_trade_summary.py,Trade history summary index for PredictionMarkets.
+pm_workflow.py,Unified PredictionMarkets simulated-training workflow.
