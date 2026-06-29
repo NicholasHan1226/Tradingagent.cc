@@ -1,0 +1,70 @@
+# 六维打分权重 — Tradings/shared/screening/
+# 权重式打分, 不设硬门禁。六维互补, 降权不硬拒。
+
+# 六维权重 (总和 = 1.0)
+macro: 0.15
+event: 0.20
+fundamental: 0.25
+capital: 0.15
+technical: 0.15
+sentiment: 0.10
+
+# 各维度内部参数
+dimensions:
+  macro:
+    # 数据源: regime detection (Dalio 4-quadrant)
+    source: regime
+    # regime 对应的宏观倾向分 (0-1)
+    regime_scores:
+      growth: 0.70       # 增长上行 + 通胀温和
+      inflation: 0.45    # 通胀上行
+      recession: 0.20    # 衰退
+      recovery: 0.55     # 复苏
+
+  event:
+    # 数据源: raw_events / news_brief / query_event_impact
+    source: raw_events
+    # 事件影响方向: positive / negative / neutral
+    # 每个事件有 direction + confidence
+    min_confidence: 0.30
+
+  fundamental:
+    # 数据源: scores (factor scores)
+    source: scores
+    # 因子: value / growth / quality / momentum
+    factors:
+      value: 0.30
+      growth: 0.30
+      quality: 0.20
+      momentum: 0.20
+
+  capital:
+    # 数据源: moneyflow (主力资金净流入)
+    source: moneyflow
+    # 窗口: 近 N 日主力净流入
+    window_days: 5
+    # 净流入正负方向
+    positive_threshold: 0.0
+
+  technical:
+    # 数据源: momentum / price action
+    source: momentum
+    # 动量窗口
+    window_days: 20
+    # 均线趋势确认
+    ma_short: 5
+    ma_long: 20
+
+  sentiment:
+    # 数据源: signals (市场情绪信号)
+    source: signals
+    # 情绪指标: 涨跌停比 / 换手率 / 北向
+    # 极端情绪降权
+    extreme_threshold: 0.85
+
+# 组合打分参数
+combined:
+  # 归一化到 [0, 1]
+  normalize: true
+  # 缺失维度处理: 用 0.5 (中性)
+  missing_default: 0.5
