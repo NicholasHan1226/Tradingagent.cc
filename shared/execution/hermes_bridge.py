@@ -442,10 +442,94 @@ def check_fill(order_id: str) -> dict[str, Any]:
     return {
         "order_id": order_id,
         "filled_price": fill_info.get("filled_price"),
-        "filled_quantity": int(fill_info.get("filled_quantity", 0) or 0),
+        "filled_quantity": int(fill_info.get("filled_quantity", fill_info.get("filled_qty", 0)) or 0),
         "slippage": fill_info.get("slippage"),
-        "fill_time": fill_info.get("fill_time"),
+        "fill_time": fill_info.get("fill_time", fill_info.get("executed_at")),
         "status": fill_info.get("status", "filled"),
+    }
+
+
+def sync_positions_from_mini() -> dict[str, Any]:
+    """Read the latest readonly positions snapshot written by the Mac Mini.
+
+    This function is intentionally read-only. It does not submit, cancel, or
+    confirm orders and does not connect to the Mini.
+    """
+    ensure_signal_dirs()
+    if not POSITIONS_DIR.exists():
+        return {
+            "success": False,
+            "status": "missing",
+            "positions": [],
+            "message": f"Positions directory not found: {POSITIONS_DIR}",
+            "direct_execution": False,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+        }
+
+    snapshot_paths = sorted(
+        (path for path in POSITIONS_DIR.glob("*.json") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not snapshot_paths:
+        return {
+            "success": False,
+            "status": "missing",
+            "positions": [],
+            "message": f"No Mini positions snapshot found in {POSITIONS_DIR}",
+            "direct_execution": False,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+        }
+
+    snapshot_path = snapshot_paths[0]
+    try:
+        data = _read_json(snapshot_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "success": False,
+            "status": "error",
+            "positions": [],
+            "message": f"Unable to read Mini positions snapshot: {exc}",
+            "source_path": str(snapshot_path),
+            "direct_execution": False,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+        }
+
+    if isinstance(data, dict):
+        positions = data.get("positions")
+        if positions is None:
+            positions = [data] if data.get("ts_code") else []
+        return {
+            "success": True,
+            "status": "ok",
+            "positions": positions,
+            "snapshot": data,
+            "source_path": str(snapshot_path),
+            "message": "Positions synced from Mac Mini readonly snapshot",
+            "direct_execution": False,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+        }
+
+    if isinstance(data, list):
+        return {
+            "success": True,
+            "status": "ok",
+            "positions": data,
+            "snapshot": {"positions": data},
+            "source_path": str(snapshot_path),
+            "message": "Positions synced from Mac Mini readonly snapshot",
+            "direct_execution": False,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+        }
+
+    return {
+        "success": False,
+        "status": "error",
+        "positions": [],
+        "message": "Mini positions snapshot must contain a JSON object or list",
+        "source_path": str(snapshot_path),
+        "direct_execution": False,
+        "real_auto_order_forbidden": real_auto_order_forbidden,
     }
 
 

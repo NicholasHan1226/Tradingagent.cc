@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tradingagent.cc/schemas/positions_snapshot_schema.json",
+  "title": "Tradings Positions Snapshot",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "ts_code",
+    "quantity",
+    "sellable_quantity",
+    "avg_price",
+    "cash",
+    "account_type",
+    "synced_at",
+    "source"
+  ],
+  "properties": {
+    "ts_code": {
+      "type": "string"
+    },
+    "quantity": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sellable_quantity": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "avg_price": {
+      "type": "number",
+      "minimum": 0
+    },
+    "cash": {
+      "type": "number",
+      "minimum": 0
+    },
+    "account_type": {
+      "type": "string",
+      "enum": ["real", "simulated"]
+    },
+    "synced_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "type": "string",
+      "const": "tonghuashun_readonly"
+    }
+  }
+}

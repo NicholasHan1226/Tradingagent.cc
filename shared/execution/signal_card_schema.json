@@ -160,6 +160,54 @@
           "format": "date"
         }
       }
+    },
+    "fill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filled_price", "filled_qty", "filled_at"],
+      "properties": {
+        "filled_price": {
+          "type": "number"
+        },
+        "filled_qty": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "filled_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "filled_price": {
+      "type": "number"
+    },
+    "filled_qty": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "filled_quantity": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "filled_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "fill_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "executed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "slippage": {
+      "type": "number"
+    },
+    "fee": {
+      "type": "number",
+      "minimum": 0
     }
   }
 }
