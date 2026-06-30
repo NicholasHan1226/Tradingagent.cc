@@ -14,10 +14,11 @@ get_layer(pool, layer) → [ts_code]
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-_ASHARE_DATA = Path("/opt/investment/Ashare/data")
+from shared.data.reader import TradingsDataReader
+
+_DATA_READER: TradingsDataReader | None = None
 
 # 池大小限制
 _POOL_LIMITS: dict[str, int] = {
@@ -42,35 +43,70 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return default
 
 
+def _get_data_reader(reader: Any | None = None) -> Any:
+    if reader is not None:
+        return reader
+    global _DATA_READER
+    if _DATA_READER is None:
+        _DATA_READER = TradingsDataReader()
+    return _DATA_READER
+
+
 def _load_holdings() -> list[str]:
     """加载当前持仓列表。"""
     try:
-        import json
-        positions_file = _ASHARE_DATA / "positions" / "current.json"
-        if positions_file.exists():
-            with open(positions_file, encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                return [p.get("ts_code") for p in data
-                        if isinstance(p, dict) and p.get("ts_code")]
-            if isinstance(data, dict):
-                return [k for k in data.keys()]
-    except (OSError, ValueError, TypeError):
+        from shared.accounting.position_ledger import get_positions
+
+        positions = get_positions(capital_layer="all")
+        seen: set[str] = set()
+        holdings: list[str] = []
+        for position in positions:
+            if not isinstance(position, dict):
+                continue
+            ts_code = str(position.get("ts_code") or "").strip()
+            if not ts_code or ts_code in seen:
+                continue
+            seen.add(ts_code)
+            holdings.append(ts_code)
+        if holdings:
+            return holdings
+    except Exception:
         pass
     return []
 
 
-def _load_fundamental_pool() -> list[str]:
+def _load_fundamental_pool(
+    reader: Any | None = None,
+    market: str = "ashare",
+) -> list[str]:
     """加载基本面池 (长期跟踪的优质股)。"""
     try:
-        import json
-        fund_file = _ASHARE_DATA / "forecasts" / "fundamental_pool.json"
-        if fund_file.exists():
-            with open(fund_file, encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                return data
-    except (OSError, ValueError, TypeError):
+        data_reader = _get_data_reader(reader)
+        assets = data_reader.get_assets(market)
+        if not assets and market.lower() == "ashare":
+            assets = data_reader.get_assets("Ashare")
+
+        selected: list[str] = []
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            symbol = str(asset.get("symbol") or "").strip()
+            if not symbol:
+                continue
+            latest_scores: dict[str, float] = {}
+            for row in data_reader.get_factors(market, symbol):
+                if not isinstance(row, dict):
+                    continue
+                factor = str(row.get("factor_name") or "").strip().lower()
+                if factor not in {"value", "quality"} or factor in latest_scores:
+                    continue
+                latest_scores[factor] = _safe_float(row.get("value"), 0.0)
+            if latest_scores.get("value", 0.0) > 0.7 and latest_scores.get("quality", 0.0) > 0.6:
+                selected.append(symbol)
+                if len(selected) >= _POOL_LIMITS["fundamental"]:
+                    break
+        return selected
+    except Exception:
         pass
     return []
 
@@ -128,7 +164,7 @@ def build_pool(
     universe = universe[:_POOL_LIMITS["universe"]]
 
     # 3. Fundamental 层 (长期跟踪)
-    fundamental = _load_fundamental_pool()[:_POOL_LIMITS["fundamental"]]
+    fundamental = _load_fundamental_pool(reader=reader, market=market)[:_POOL_LIMITS["fundamental"]]
 
     # 4. Candidate 层 (六维打分通过)
     candidate: list[str] = []

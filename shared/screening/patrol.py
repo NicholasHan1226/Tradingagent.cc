@@ -11,10 +11,11 @@ patrol(date, scores_universe) → {alerts, summary, timestamp}
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-_ASHARE_DATA = Path("/opt/investment/Ashare/data")
+from shared.data.reader import TradingsDataReader
+
+_DATA_READER: TradingsDataReader | None = None
 
 # 巡检阈值
 _THRESHOLDS: dict[str, float] = {
@@ -41,6 +42,23 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return f if f == f else default
     except (TypeError, ValueError):
         return default
+
+
+def _get_data_reader(reader: Any | None = None) -> Any:
+    if reader is not None:
+        return reader
+    global _DATA_READER
+    if _DATA_READER is None:
+        _DATA_READER = TradingsDataReader()
+    return _DATA_READER
+
+
+def _symbol_variants(ts_code: str) -> list[str]:
+    symbol = str(ts_code or "").strip()
+    if "." in symbol:
+        stripped = symbol.split(".", 1)[0]
+        return [stripped, symbol]
+    return [symbol]
 
 
 def _mean(values: list[float]) -> float:
@@ -144,6 +162,8 @@ def _check_distribution(scores_list: list[tuple[str, dict[str, float]]]) -> list
 def _check_prediction_bias(
     scores_list: list[tuple[str, dict[str, float]]],
     date: str,
+    reader: Any | None = None,
+    market: str = "ashare",
 ) -> list[dict[str, Any]]:
     """偏差检查 — 打分方向与实际涨跌是否一致。
 
@@ -164,21 +184,22 @@ def _check_prediction_bias(
 
     # 获取次日涨跌幅 (placeholder)
     next_returns: list[float] = []
+    data_reader = _get_data_reader(reader)
     try:
-        import json
         for ts_code in top_codes:
-            daily_file = _ASHARE_DATA / "tushare_cache" / f"{ts_code}_daily.json"
-            if daily_file.exists():
-                with open(daily_file, encoding="utf-8") as f:
-                    bars = json.load(f)
-                if isinstance(bars, list) and len(bars) >= 2:
-                    # bars[0] = 最近一天, bars[1] = 前一天
-                    close_today = _safe_float(bars[0].get("close", 0.0))
-                    close_prev = _safe_float(bars[1].get("close", 0.0))
-                    if close_prev > 1e-9:
-                        ret = (close_today - close_prev) / close_prev
-                        next_returns.append(ret)
-    except (OSError, ValueError, TypeError):
+            bars: list[dict[str, Any]] = []
+            for symbol in _symbol_variants(ts_code):
+                bars = data_reader.get_bars_daily(market, symbol, None, date)
+                if len(bars) >= 2:
+                    break
+            if len(bars) < 2:
+                continue
+            close_today = _safe_float(bars[-1].get("close", 0.0))
+            close_prev = _safe_float(bars[-2].get("close", 0.0))
+            if close_prev > 1e-9:
+                ret = (close_today - close_prev) / close_prev
+                next_returns.append(ret)
+    except Exception:
         pass
 
     if next_returns:
@@ -199,6 +220,8 @@ def _check_prediction_bias(
 def patrol(
     date: str | None = None,
     scores_list: list[tuple[str, dict[str, float]]] | None = None,
+    reader: Any | None = None,
+    market: str = "ashare",
 ) -> dict[str, Any]:
     """巡检主函数 — 聚合因子衰减/分布偏斜/偏差检查。
 
@@ -228,7 +251,7 @@ def patrol(
     if scores_list is None:
         try:
             from .six_dimension_scorer import score_universe
-            scores_list = score_universe(date)
+            scores_list = score_universe(date, data_reader=reader, market=market)
         except ImportError:
             scores_list = []
 
@@ -242,7 +265,7 @@ def patrol(
     alerts.extend(_check_distribution(scores_list))
 
     # 3. 偏差检查
-    alerts.extend(_check_prediction_bias(scores_list, date))
+    alerts.extend(_check_prediction_bias(scores_list, date, reader, market))
 
     # 按 severity 排序
     severity_order = {"high": 0, "medium": 1, "low": 2}

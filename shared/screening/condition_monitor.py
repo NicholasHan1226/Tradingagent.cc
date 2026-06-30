@@ -8,10 +8,7 @@ check_conditions(conditions, bars_5min) → list[triggered]
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any
-
-_ASHARE_DATA = Path("/opt/investment/Ashare/data")
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:

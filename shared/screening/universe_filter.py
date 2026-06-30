@@ -7,11 +7,12 @@ filter_universe(date, stock_list) → list[ts_code]
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 from typing import Any
 
-_ASHARE_DATA = Path("/opt/investment/Ashare/data")
+from shared.data.reader import TradingsDataReader
+
+_DATA_READER: TradingsDataReader | None = None
 
 # 排除条件默认值
 _DEFAULTS: dict[str, Any] = {
@@ -38,6 +39,23 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return default
 
 
+def _get_data_reader(reader: Any | None = None) -> Any:
+    if reader is not None:
+        return reader
+    global _DATA_READER
+    if _DATA_READER is None:
+        _DATA_READER = TradingsDataReader()
+    return _DATA_READER
+
+
+def _symbol_variants(ts_code: str) -> list[str]:
+    symbol = str(ts_code or "").strip()
+    if "." in symbol:
+        stripped = symbol.split(".", 1)[0]
+        return [stripped, symbol]
+    return [symbol]
+
+
 def _is_st(name: str) -> bool:
     """判断是否 ST / *ST / 退市股。"""
     if not name:
@@ -46,61 +64,66 @@ def _is_st(name: str) -> bool:
     return "ST" in upper or "*ST" in upper or "退" in name
 
 
-def _is_suspended(ts_code: str, date: str) -> bool:
-    """判断是否停牌 (placeholder: 检查是否有当日行情数据)。"""
+def _is_suspended(ts_code: str, date: str, reader: Any | None = None, market: str = "ashare") -> bool:
+    """判断是否停牌。"""
+    data_reader = _get_data_reader(reader)
     try:
-        import json
-        daily_file = _ASHARE_DATA / "tushare_cache" / f"{ts_code}_daily.json"
-        if daily_file.exists():
-            with open(daily_file, encoding="utf-8") as f:
-                bars = json.load(f)
-            if isinstance(bars, list):
-                # 检查最近一条是否有成交量
-                for bar in bars:
-                    if isinstance(bar, dict) and bar.get("trade_date") == date:
-                        vol = _safe_float(bar.get("vol", 0.0))
-                        if vol < 1e-9:
-                            return True
-                        return False
-    except (OSError, ValueError, TypeError):
+        coverage_rows = data_reader.get_coverage(market, date)
+        for row in coverage_rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("symbol") or "").strip() not in _symbol_variants(ts_code):
+                continue
+            coverage_status = str(row.get("coverage_status") or "").strip().lower()
+            if coverage_status and coverage_status not in {"normal", "ok", "active", "trading", "covered"}:
+                return True
+    except Exception:
+        pass
+
+    try:
+        for symbol in _symbol_variants(ts_code):
+            bars = data_reader.get_bars_daily(market, symbol, None, date)
+            if not bars:
+                continue
+            for bar in reversed(bars):
+                trade_date = str(bar.get("trade_date") or "").replace("-", "")
+                if trade_date != date:
+                    continue
+                vol = _safe_float(bar.get("vol", bar.get("volume", 0.0)))
+                return vol < 1e-9
+    except Exception:
         pass
     return False
 
 
-def _list_days(ts_code: str, date: str) -> int:
-    """获取上市天数 (placeholder: 从缓存读 list_date)。"""
+def _list_days(ts_code: str, date: str, assets_by_symbol: dict[str, dict[str, Any]]) -> int:
+    """获取上市天数。"""
     try:
-        import json
-        basic_file = _ASHARE_DATA / "tushare_cache" / "stock_basic.json"
-        if basic_file.exists():
-            with open(basic_file, encoding="utf-8") as f:
-                data = json.load(f)
-            stock_info = data.get(ts_code, {})
-            list_date = stock_info.get("list_date", "")
-            if list_date:
-                d1 = datetime.strptime(date, "%Y%m%d")
-                d2 = datetime.strptime(str(list_date), "%Y%m%d")
-                return (d1 - d2).days
-    except (OSError, ValueError, TypeError):
+        asset = assets_by_symbol.get(ts_code) or assets_by_symbol.get(ts_code.split(".", 1)[0])
+        list_date = str((asset or {}).get("list_date") or "").strip()
+        if list_date:
+            d1 = datetime.strptime(date, "%Y%m%d")
+            d2 = datetime.strptime(list_date[:8].replace("-", "").replace("/", ""), "%Y%m%d")
+            return (d1 - d2).days
+    except Exception:
         pass
     return 999  # 未知时不过滤
 
 
-def _turnover_wan(ts_code: str, date: str) -> float:
+def _turnover_wan(ts_code: str, date: str, reader: Any | None = None, market: str = "ashare") -> float:
     """获取日均成交额 (万元) — 近 5 日平均。"""
+    data_reader = _get_data_reader(reader)
     try:
-        import json
-        daily_file = _ASHARE_DATA / "tushare_cache" / f"{ts_code}_daily.json"
-        if daily_file.exists():
-            with open(daily_file, encoding="utf-8") as f:
-                bars = json.load(f)
-            if isinstance(bars, list):
-                recent = [b for b in bars if isinstance(b, dict)][:5]
-                amounts = [_safe_float(b.get("amount", 0.0)) for b in recent]
-                if amounts:
-                    # amount 单位: 千元 → 转万元
-                    return sum(amounts) / len(amounts) / 10.0
-    except (OSError, ValueError, TypeError):
+        for symbol in _symbol_variants(ts_code):
+            bars = data_reader.get_bars_daily(market, symbol, None, date)
+            if not bars:
+                continue
+            recent = [b for b in reversed(bars) if isinstance(b, dict)][:5]
+            amounts = [_safe_float(b.get("amount", 0.0)) for b in recent]
+            amounts = [amount for amount in amounts if amount > 0.0]
+            if amounts:
+                return sum(amounts) / len(amounts) / 10.0
+    except Exception:
         pass
     return 99999.0  # 未知时不过滤
 
@@ -109,6 +132,8 @@ def filter_universe(
     date: str | None = None,
     stock_list: list[str] | None = None,
     config: dict[str, Any] | None = None,
+    reader: Any | None = None,
+    market: str = "ashare",
 ) -> list[str]:
     """过滤全市场股票 — 排除 ST/停牌/新股/流动性不足。
 
@@ -126,20 +151,28 @@ def filter_universe(
     cfg = dict(_DEFAULTS)
     if config:
         cfg.update(config)
+    data_reader = _get_data_reader(reader)
+
+    assets = data_reader.get_assets(market)
+    if not assets and market.lower() == "ashare":
+        assets = data_reader.get_assets("Ashare")
+    assets_by_symbol: dict[str, dict[str, Any]] = {}
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        symbol = str(asset.get("symbol") or "").strip()
+        if symbol:
+            assets_by_symbol[symbol] = asset
 
     # 获取候选列表
     if stock_list is None:
         try:
-            import json
-            basic_file = _ASHARE_DATA / "tushare_cache" / "stock_basic.json"
-            if basic_file.exists():
-                with open(basic_file, encoding="utf-8") as f:
-                    data = json.load(f)
-                stock_list = [k for k, v in data.items()
-                              if isinstance(v, dict) and v.get("list_status") != "D"]
-            else:
-                stock_list = []
-        except (OSError, ValueError, TypeError):
+            stock_list = [
+                symbol
+                for symbol, asset in assets_by_symbol.items()
+                if str(asset.get("status") or "").strip().lower() not in {"delisted", "退市", "d", "inactive"}
+            ]
+        except Exception:
             stock_list = []
 
     if not stock_list:
@@ -151,33 +184,26 @@ def filter_universe(
     for ts_code in stock_list:
         # 1. ST 排除
         if cfg["exclude_st"]:
-            try:
-                import json
-                basic_file = _ASHARE_DATA / "tushare_cache" / "stock_basic.json"
-                if basic_file.exists():
-                    with open(basic_file, encoding="utf-8") as f:
-                        data = json.load(f)
-                    name = data.get(ts_code, {}).get("name", "")
-                    if _is_st(name):
-                        excluded.append((ts_code, "ST"))
-                        continue
-            except (OSError, ValueError, TypeError):
-                pass
+            asset = assets_by_symbol.get(ts_code) or assets_by_symbol.get(ts_code.split(".", 1)[0], {})
+            name = str(asset.get("name") or "")
+            if _is_st(name):
+                excluded.append((ts_code, "ST"))
+                continue
 
         # 2. 停牌排除
-        if cfg["exclude_suspended"] and _is_suspended(ts_code, date):
+        if cfg["exclude_suspended"] and _is_suspended(ts_code, date, data_reader, market):
             excluded.append((ts_code, "suspended"))
             continue
 
         # 3. 新股排除
         min_days = int(cfg.get("min_list_days", 30))
-        if _list_days(ts_code, date) < min_days:
+        if _list_days(ts_code, date, assets_by_symbol) < min_days:
             excluded.append((ts_code, f"new_stock<{min_days}d"))
             continue
 
         # 4. 流动性排除
         min_turnover = _safe_float(cfg.get("min_turnover_wan", 5000), 5000)
-        if _turnover_wan(ts_code, date) < min_turnover:
+        if _turnover_wan(ts_code, date, data_reader, market) < min_turnover:
             excluded.append((ts_code, "illiquid"))
             continue
 

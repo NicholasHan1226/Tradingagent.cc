@@ -9,10 +9,11 @@ generate_conditions(pool, scores, date) → list[condition]
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any
 
-_ASHARE_DATA = Path("/opt/investment/Ashare/data")
+from shared.data.reader import TradingsDataReader
+
+_DATA_READER: TradingsDataReader | None = None
 
 # 条件类型
 CONDITION_TYPES = ["breakout", "pullback", "event", "value", "rotation"]
@@ -26,27 +27,51 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return default
 
 
-def _get_daily_data(ts_code: str) -> list[dict[str, Any]]:
-    """获取日线数据 (placeholder)。"""
-    try:
-        import json
-        daily_file = _ASHARE_DATA / "tushare_cache" / f"{ts_code}_daily.json"
-        if daily_file.exists():
-            with open(daily_file, encoding="utf-8") as f:
-                bars = json.load(f)
-            if isinstance(bars, list):
-                return bars
-    except (OSError, ValueError, TypeError):
-        pass
+def _get_data_reader(reader: Any | None = None) -> Any:
+    if reader is not None:
+        return reader
+    global _DATA_READER
+    if _DATA_READER is None:
+        _DATA_READER = TradingsDataReader()
+    return _DATA_READER
+
+
+def _symbol_variants(ts_code: str) -> list[str]:
+    symbol = str(ts_code or "").strip()
+    if "." in symbol:
+        stripped = symbol.split(".", 1)[0]
+        return [stripped, symbol]
+    return [symbol]
+
+
+def _get_daily_data(
+    market: str,
+    ts_code: str,
+    date: str,
+    reader: Any | None = None,
+) -> list[dict[str, Any]]:
+    """获取日线数据, 返回最近数据在前。"""
+    data_reader = _get_data_reader(reader)
+    start_date = _add_days(date, -120)
+    for symbol in _symbol_variants(ts_code):
+        bars = data_reader.get_bars_daily(market, symbol, start_date, date)
+        if bars:
+            return list(reversed(bars))
     return []
 
 
-def _gen_breakout(ts_code: str, scores: dict[str, float], date: str) -> dict[str, Any] | None:
+def _gen_breakout(
+    ts_code: str,
+    scores: dict[str, float],
+    date: str,
+    reader: Any | None = None,
+    market: str = "ashare",
+) -> dict[str, Any] | None:
     """突破条件 — 价格突破近 N 日高点。
 
     触发: 当日最高价 > 近 20 日最高价
     """
-    bars = _get_daily_data(ts_code)
+    bars = _get_daily_data(market, ts_code, date, reader)
     if len(bars) < 20:
         return None
 
@@ -74,12 +99,18 @@ def _gen_breakout(ts_code: str, scores: dict[str, float], date: str) -> dict[str
     }
 
 
-def _gen_pullback(ts_code: str, scores: dict[str, float], date: str) -> dict[str, Any] | None:
+def _gen_pullback(
+    ts_code: str,
+    scores: dict[str, float],
+    date: str,
+    reader: Any | None = None,
+    market: str = "ashare",
+) -> dict[str, Any] | None:
     """回踩条件 — 上升趋势中回踩均线。
 
     触发: MA5 回踩 MA20 附近 (±2%)
     """
-    bars = _get_daily_data(ts_code)
+    bars = _get_daily_data(market, ts_code, date, reader)
     if len(bars) < 20:
         return None
 
@@ -121,127 +152,173 @@ def _gen_pullback(ts_code: str, scores: dict[str, float], date: str) -> dict[str
     }
 
 
-def _gen_event(ts_code: str, scores: dict[str, float], date: str) -> dict[str, Any] | None:
+def _gen_event(
+    ts_code: str,
+    scores: dict[str, float],
+    date: str,
+    reader: Any | None = None,
+    market: str = "ashare",
+) -> dict[str, Any] | None:
     """事件条件 — 事件驱动 (政策/行业/公司事件)。
 
     触发: 有 positive 方向事件 + confidence > 0.5
     """
+    data_reader = _get_data_reader(reader)
     try:
-        import json
-        events_file = _ASHARE_DATA / "research_probability" / "event_impacts.json"
-        if not events_file.exists():
-            return None
-        with open(events_file, encoding="utf-8") as f:
-            data = json.load(f)
-        impacts = data.get(ts_code, [])
-        if not impacts:
-            return None
-
-        for ev in impacts:
+        for symbol in _symbol_variants(ts_code):
+            for ev in data_reader.get_events(market, symbol, None, date):
+                if not isinstance(ev, dict):
+                    continue
+                direction = str(ev.get("direction") or ev.get("proposed_impact_hint") or "neutral").lower()
+                confidence = _safe_float(ev.get("confidence", ev.get("score", 0.0)))
+                if "positive" in direction and confidence > 0.5:
+                    return {
+                        "type": "event",
+                        "ts_code": ts_code,
+                        "date": date,
+                        "trigger_price": None,
+                        "direction": "long",
+                        "description": f"事件: {ev.get('title') or ev.get('event_type') or '未知事件'} (conf={confidence:.2f})",
+                        "scores": scores,
+                        "params": {
+                            "event_id": ev.get("event_hash", ""),
+                            "confidence": confidence,
+                        },
+                        "valid_until": _add_days(date, 2),
+                    }
+        for ev in data_reader.get_event_candidates():
             if not isinstance(ev, dict):
                 continue
-            direction = ev.get("direction", "neutral")
-            confidence = _safe_float(ev.get("confidence", 0.0))
-            if direction == "positive" and confidence > 0.5:
+            if str(ev.get("subject_code") or "").strip() != ts_code:
+                continue
+            direction = str(ev.get("proposed_impact_hint") or ev.get("direction") or "neutral").lower()
+            confidence = _safe_float(ev.get("confidence", ev.get("score", 0.0)))
+            if "positive" in direction and confidence > 0.5:
                 return {
                     "type": "event",
                     "ts_code": ts_code,
                     "date": date,
-                    "trigger_price": None,  # 事件触发不限价
+                    "trigger_price": None,
                     "direction": "long",
-                    "description": f"事件: {ev.get('event', '未知事件')} (conf={confidence:.2f})",
+                    "description": f"事件: {ev.get('title') or ev.get('subject_code') or '未知事件'} (conf={confidence:.2f})",
                     "scores": scores,
                     "params": {
-                        "event_id": ev.get("event_id", ""),
+                        "event_id": ev.get("event_hash", ""),
                         "confidence": confidence,
                     },
                     "valid_until": _add_days(date, 2),
                 }
-    except (OSError, ValueError, TypeError):
+    except Exception:
         pass
     return None
 
 
-def _gen_value(ts_code: str, scores: dict[str, float], date: str) -> dict[str, Any] | None:
+def _gen_value(
+    ts_code: str,
+    scores: dict[str, float],
+    date: str,
+    reader: Any | None = None,
+    market: str = "ashare",
+) -> dict[str, Any] | None:
     """价值条件 — 低估值 + 高质量。
 
     触发: value 因子分 > 0.7 且 quality 因子分 > 0.6
     """
     try:
-        import json
-        scores_file = _ASHARE_DATA / "forecasts" / "factor_scores.json"
-        if not scores_file.exists():
-            return None
-        with open(scores_file, encoding="utf-8") as f:
-            data = json.load(f)
-        stock_scores = data.get(ts_code, {})
-        value_score = _safe_float(stock_scores.get("value", 0.0))
-        quality_score = _safe_float(stock_scores.get("quality", 0.0))
+        data_reader = _get_data_reader(reader)
+        for symbol in _symbol_variants(ts_code):
+            latest_scores: dict[str, float] = {}
+            for row in data_reader.get_factors(market, symbol):
+                if not isinstance(row, dict):
+                    continue
+                factor = str(row.get("factor_name") or "").strip().lower()
+                if factor not in {"value", "quality"} or factor in latest_scores:
+                    continue
+                latest_scores[factor] = _safe_float(row.get("value"), 0.0)
 
-        if value_score > 0.7 and quality_score > 0.6:
-            return {
-                "type": "value",
-                "ts_code": ts_code,
-                "date": date,
-                "trigger_price": None,
-                "direction": "long",
-                "description": f"价值机会: value={value_score:.2f} quality={quality_score:.2f}",
-                "scores": scores,
-                "params": {
-                    "value_score": value_score,
-                    "quality_score": quality_score,
-                },
-                "valid_until": _add_days(date, 10),  # 价值条件有效期长
-            }
-    except (OSError, ValueError, TypeError):
+            value_score = latest_scores.get("value", 0.0)
+            quality_score = latest_scores.get("quality", 0.0)
+            if value_score > 0.7 and quality_score > 0.6:
+                return {
+                    "type": "value",
+                    "ts_code": ts_code,
+                    "date": date,
+                    "trigger_price": None,
+                    "direction": "long",
+                    "description": f"价值机会: value={value_score:.2f} quality={quality_score:.2f}",
+                    "scores": scores,
+                    "params": {
+                        "value_score": value_score,
+                        "quality_score": quality_score,
+                    },
+                    "valid_until": _add_days(date, 10),
+                }
+    except Exception:
         pass
     return None
 
 
-def _gen_rotation(ts_code: str, scores: dict[str, float], date: str) -> dict[str, Any] | None:
+def _gen_rotation(
+    ts_code: str,
+    scores: dict[str, float],
+    date: str,
+    reader: Any | None = None,
+    market: str = "ashare",
+) -> dict[str, Any] | None:
     """轮动条件 — 板块轮动信号。
 
     触发: 该股所在板块资金净流入排名前 3
     """
     try:
-        import json
-        sector_file = _ASHARE_DATA / "sector" / "rotation.json"
-        if not sector_file.exists():
-            return None
-        with open(sector_file, encoding="utf-8") as f:
-            data = json.load(f)
+        data_reader = _get_data_reader(reader)
+        asset: dict[str, Any] | None = None
+        factor_rows: list[dict[str, Any]] = []
+        for symbol in _symbol_variants(ts_code):
+            asset = data_reader.get_asset(market, symbol)
+            factor_rows = data_reader.get_factors(market, symbol)
+            if asset or factor_rows:
+                break
 
-        # 找到该股所在板块
-        basic_file = _ASHARE_DATA / "tushare_cache" / "stock_basic.json"
-        if not basic_file.exists():
-            return None
-        with open(basic_file, encoding="utf-8") as f:
-            basic = json.load(f)
-        sector = basic.get(ts_code, {}).get("industry", "")
-        if not sector:
-            return None
+        sector = str((asset or {}).get("sector") or (asset or {}).get("industry") or "").strip()
+        latest_by_factor: dict[str, float] = {}
+        for row in factor_rows:
+            if not isinstance(row, dict):
+                continue
+            factor = str(row.get("factor_name") or "").strip().lower()
+            if factor and factor not in latest_by_factor:
+                latest_by_factor[factor] = _safe_float(row.get("value"), 0.0)
 
-        sector_ranking = data.get(sector, {})
-        rank = int(sector_ranking.get("rank", 999))
-        net_inflow = _safe_float(sector_ranking.get("net_inflow", 0.0))
+        rank = int(_safe_float(latest_by_factor.get("rotation_rank", latest_by_factor.get("sector_rank", 999.0)), 999.0))
+        rotation_score = _safe_float(
+            latest_by_factor.get("sector_rotation", latest_by_factor.get("rotation", latest_by_factor.get("rotation_score", 0.0))),
+            0.0,
+        )
+        net_inflow = _safe_float(
+            latest_by_factor.get("main_net_inflow", latest_by_factor.get("net_mf_amount", latest_by_factor.get("moneyflow", 0.0))),
+            0.0,
+        )
 
-        if rank <= 3 and net_inflow > 0:
+        rotation_hit = (rank <= 3 and net_inflow > 0) or (rotation_score >= 0.7 and net_inflow > 0)
+        if rotation_hit:
+            sector_label = sector or "unknown"
+            rank_text = f" 排名#{rank}" if rank < 999 else ""
             return {
                 "type": "rotation",
                 "ts_code": ts_code,
                 "date": date,
                 "trigger_price": None,
                 "direction": "long",
-                "description": f"板块轮动: {sector} 排名#{rank} 净流入{net_inflow/1e8:.2f}亿",
+                "description": f"板块轮动: {sector_label}{rank_text} 净流入{net_inflow/1e8:.2f}亿",
                 "scores": scores,
                 "params": {
-                    "sector": sector,
+                    "sector": sector_label,
                     "rank": rank,
                     "net_inflow": net_inflow,
+                    "rotation_score": rotation_score,
                 },
                 "valid_until": _add_days(date, 5),
             }
-    except (OSError, ValueError, TypeError):
+    except Exception:
         pass
     return None
 
@@ -269,6 +346,8 @@ def generate_conditions(
     scores_map: dict[str, dict[str, float]] | None = None,
     date: str | None = None,
     types: list[str] | None = None,
+    reader: Any | None = None,
+    market: str = "ashare",
 ) -> list[dict[str, Any]]:
     """为候选池中的股票生成条件。
 
@@ -290,7 +369,7 @@ def generate_conditions(
     if pool is None:
         try:
             from .candidate_pool import build_pool
-            pool = build_pool(date)
+            pool = build_pool(date, market=market, reader=reader)
         except ImportError:
             pool = {}
 
@@ -311,7 +390,7 @@ def generate_conditions(
         if not scores:
             try:
                 from .six_dimension_scorer import score_stock
-                scores = score_stock(ts_code, date)
+                scores = score_stock(market, ts_code, reader, date)
             except ImportError:
                 scores = {"combined": 0.5}
 
@@ -320,7 +399,7 @@ def generate_conditions(
             if gen_func is None:
                 continue
             try:
-                cond = gen_func(ts_code, scores, date)
+                cond = gen_func(ts_code, scores, date, reader, market)
                 if cond is not None:
                     conditions.append(cond)
             except Exception:
