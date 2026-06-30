@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.notify.email_sender import send_email
+from shared.notify.email_templates import wrap_html
+
 ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "shared"
 
@@ -50,6 +53,28 @@ def write_markdown(path: Path, title: str, payload: dict[str, Any]) -> None:
         "",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _read_last_jsonl(path: Path) -> dict[str, Any]:
+    try:
+        lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except FileNotFoundError:
+        return {}
+    for line in reversed(lines):
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return {}
 
 
 def placeholder(job: str, output_rel: str, note: str, fmt: str = "jsonl", extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -437,12 +462,91 @@ def run_alert() -> dict[str, Any]:
     return result
 
 
-def run_email_notify() -> dict[str, Any]:
-    return placeholder(
-        "job_email_notify",
-        "notify/logs/emails_sent.jsonl",
-        "邮件汇总 wrapper 已迁移；待接入 notify/email_templates 与真实发送通道。",
+def _format_pct(value: Any) -> str:
+    try:
+        return f"{float(value) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return "--"
+
+
+def _build_email_notify_payload() -> tuple[str, str, str]:
+    morning = _read_json(SHARED / "review/daily/morning_brief.json")
+    midday = _read_last_jsonl(SHARED / "review/daily/midday_review.jsonl")
+    nightly = _read_last_jsonl(SHARED / "review/daily/daily_brief.jsonl")
+
+    review_sources = [
+        ("晨间简报", morning),
+        ("午盘复盘", midday),
+        ("收盘复盘", nightly),
+    ]
+    available = [name for name, payload in review_sources if payload]
+    subject = f"Tradings 每日汇总 {trade_date()}"
+
+    lines = [
+        f"交易日: {trade_date()}",
+        f"可用复盘: {', '.join(available) if available else '无'}",
+        "",
+    ]
+    html_sections = []
+
+    for title, payload in review_sources:
+        if not payload:
+            lines.append(f"{title}: 暂无产物")
+            html_sections.append(
+                f"<div style=\"margin-bottom:16px;\"><h3>{title}</h3><p>暂无产物</p></div>"
+            )
+            continue
+
+        layer_reviews = payload.get("capital_layer_reviews") or {}
+        shadow = layer_reviews.get("shadow") or {}
+        summary_bits = [
+            f"state={payload.get('state', '--')}",
+            f"signals={shadow.get('signal_count', '--')}",
+            f"hit_rate={_format_pct(shadow.get('hit_rate'))}",
+            f"pnl={shadow.get('pnl', '--')}",
+            f"positions={shadow.get('position_count', '--')}",
+        ]
+        lines.append(f"{title}: " + ", ".join(summary_bits))
+        html_sections.append(
+            "".join([
+                "<div style=\"margin-bottom:16px;\">",
+                f"<h3>{title}</h3>",
+                "<ul>",
+                f"<li>状态: {payload.get('state', '--')}</li>",
+                f"<li>信号数: {shadow.get('signal_count', '--')}</li>",
+                f"<li>命中率: {_format_pct(shadow.get('hit_rate'))}</li>",
+                f"<li>盈亏: {shadow.get('pnl', '--')}</li>",
+                f"<li>持仓数: {shadow.get('position_count', '--')}</li>",
+                "</ul>",
+                "</div>",
+            ])
+        )
+
+    body = "\n".join(lines)
+    html_body = wrap_html(
+        f"每日汇总 | {trade_date()}",
+        "Daily Summary",
+        "".join(html_sections) or "<p>暂无可发送的复盘内容。</p>",
     )
+    return subject, body, html_body
+
+
+def run_email_notify() -> dict[str, Any]:
+    subject, body, html_body = _build_email_notify_payload()
+    result = send_email(
+        "Leocozy@coze.email",
+        subject,
+        body,
+        html_body,
+        channel="trading",
+    )
+    result.update({
+        "job": "job_email_notify",
+        "generated_at": now_iso(),
+        "trade_date": trade_date(),
+        "state": "sent" if result.get("status") == "sent" else "saved_local",
+    })
+    return result
 
 
 JOB_HANDLERS: dict[str, Any] = {

@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""Tradings email sender with multi-provider fallback."""
+
+from __future__ import annotations
+
+import json
+import os
+import smtplib
+import ssl
+import uuid
+from datetime import datetime, timezone
+from email.message import EmailMessage
+from html import escape
+from importlib import import_module
+from pathlib import Path
+from typing import Any
+from urllib import error, request
+
+from .email_templates import CHANNELS, get_channel
+
+DEFAULT_ENV_FILE = Path("/opt/marketgraph/.env")
+EMAIL_LOG = Path(__file__).resolve().parent / "logs" / "emails_sent.jsonl"
+LOCAL_FALLBACK_DIR = Path(__file__).resolve().parent / "logs" / "email_fallback"
+REQUEST_TIMEOUT = 20
+ALLOWED_ENV_KEYS = {
+    "CLOUDFLARE_EMAIL_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "DEADSIMPLE_API_KEY",
+    "DEADSIMPLE_INBOX_ID",
+    "MARKETGRAPH_SMTP_HOST",
+    "MARKETGRAPH_SMTP_USER",
+    "MARKETGRAPH_SMTP_PASS",
+    "MARKETGRAPH_SMTP_PORT",
+}
+DEFAULT_SUBJECTS = {
+    "pre_market_plan": "Tradings 盘前规划",
+    "trading_signal": "Tradings 交易信号",
+    "midday_review": "Tradings 午盘复盘",
+    "closing_plan": "Tradings 尾盘规划",
+    "daily_report": "Tradings 日报",
+    "weekly_report": "Tradings 周报",
+    "trade_receipt": "Tradings 交易回执",
+    "capital_plan": "Tradings 资金规划",
+    "strategy_invalidation": "Tradings 策略失效通知",
+    "emergency_alert": "Tradings 紧急告警",
+    "system_health": "Tradings 系统健康",
+}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _normalize_env_value(raw: str) -> str:
+    value = raw.strip()
+    if value and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _append_email_log(record: dict[str, Any]) -> None:
+    EMAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with EMAIL_LOG.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _resolve_from_address(channel: str, from_addr: str | None) -> str:
+    if from_addr:
+        return from_addr
+    return CHANNELS.get(channel, CHANNELS["trading"])["from"]
+
+
+def _html_from_text(body: str) -> str:
+    return (
+        "<!DOCTYPE html><html><body>"
+        f"<pre style=\"font-family: -apple-system, 'PingFang SC', sans-serif; white-space: pre-wrap;\">{escape(body)}</pre>"
+        "</body></html>"
+    )
+
+
+def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
+    req = request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={**headers, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            if not body:
+                return {"status_code": getattr(resp, "status", 200)}
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                return {"status_code": getattr(resp, "status", 200), "raw": body}
+            if isinstance(parsed, dict):
+                parsed.setdefault("status_code", getattr(resp, "status", 200))
+                return parsed
+            return {"status_code": getattr(resp, "status", 200), "raw": parsed}
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"http {exc.code}: {detail or exc.reason}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"url error: {exc.reason}") from exc
+
+
+def load_env_from_file(env_path: Path = DEFAULT_ENV_FILE) -> list[str]:
+    """Load known email env vars for cron environments that start with a thin env."""
+    if not env_path.exists():
+        return []
+
+    loaded: list[str] = []
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in ALLOWED_ENV_KEYS or key in os.environ:
+            continue
+        os.environ[key] = _normalize_env_value(value)
+        loaded.append(key)
+    return loaded
+
+
+def _send_via_cloudflare(
+    to: str,
+    subject: str,
+    body: str,
+    html_body: str,
+    from_addr: str,
+) -> dict[str, Any]:
+    token = os.getenv("CLOUDFLARE_EMAIL_API_TOKEN")
+    account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+    if not token or not account_id:
+        raise RuntimeError("missing Cloudflare credentials")
+
+    response = _post_json(
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/email/routing/messages",
+        {"Authorization": f"Bearer {token}"},
+        {
+            "from": from_addr,
+            "to": [to],
+            "subject": subject,
+            "text": body,
+            "html": html_body,
+        },
+    )
+    if response.get("success") is False:
+        raise RuntimeError(str(response.get("errors") or response))
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    return {
+        "provider": "cloudflare",
+        "message_id": result.get("id") or response.get("message_id") or f"cf-{uuid.uuid4().hex[:12]}",
+        "status_code": response.get("status_code", 200),
+    }
+
+
+def _send_via_deadsimple(
+    to: str,
+    subject: str,
+    body: str,
+    html_body: str,
+    from_addr: str,
+) -> dict[str, Any]:
+    api_key = os.getenv("DEADSIMPLE_API_KEY")
+    inbox_id = os.getenv("DEADSIMPLE_INBOX_ID")
+    if not api_key or not inbox_id:
+        raise RuntimeError("missing DeadSimple credentials")
+
+    response = _post_json(
+        "https://api.deadsimplechat.com/api/v1/email/send",
+        {
+            "Authorization": f"Bearer {api_key}",
+            "X-API-Key": api_key,
+        },
+        {
+            "inbox_id": inbox_id,
+            "from": from_addr,
+            "to": [to],
+            "subject": subject,
+            "text": body,
+            "html": html_body,
+        },
+    )
+    if response.get("success") is False:
+        raise RuntimeError(str(response.get("errors") or response))
+    return {
+        "provider": "deadsimple",
+        "message_id": response.get("message_id") or response.get("id") or f"ds-{uuid.uuid4().hex[:12]}",
+        "status_code": response.get("status_code", 200),
+    }
+
+
+def _smtp_port() -> int:
+    raw_port = os.getenv("MARKETGRAPH_SMTP_PORT", "587")
+    try:
+        return int(raw_port)
+    except ValueError:
+        return 587
+
+
+def _send_via_smtp(
+    to: str,
+    subject: str,
+    body: str,
+    html_body: str,
+    from_addr: str,
+) -> dict[str, Any]:
+    host = os.getenv("MARKETGRAPH_SMTP_HOST")
+    user = os.getenv("MARKETGRAPH_SMTP_USER")
+    password = os.getenv("MARKETGRAPH_SMTP_PASS")
+    if not host or not user or not password:
+        raise RuntimeError("missing SMTP credentials")
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_addr
+    msg["To"] = to
+    msg.set_content(body)
+    msg.add_alternative(html_body, subtype="html")
+
+    context = ssl.create_default_context()
+    port = _smtp_port()
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=REQUEST_TIMEOUT, context=context) as smtp:
+            smtp.login(user, password)
+            smtp.send_message(msg)
+    else:
+        with smtplib.SMTP(host, port, timeout=REQUEST_TIMEOUT) as smtp:
+            smtp.ehlo()
+            try:
+                smtp.starttls(context=context)
+                smtp.ehlo()
+            except smtplib.SMTPNotSupportedError:
+                pass
+            smtp.login(user, password)
+            smtp.send_message(msg)
+
+    return {
+        "provider": "smtp",
+        "message_id": msg["Message-ID"] or f"smtp-{uuid.uuid4().hex[:12]}",
+        "status_code": 250,
+    }
+
+
+def _save_local_email(
+    to: str,
+    subject: str,
+    body: str,
+    html_body: str,
+    from_addr: str,
+    errors: list[str],
+) -> dict[str, Any]:
+    LOCAL_FALLBACK_DIR.mkdir(parents=True, exist_ok=True)
+    path = LOCAL_FALLBACK_DIR / f"{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}.json"
+    payload = {
+        "saved_at": _now_iso(),
+        "to": to,
+        "from": from_addr,
+        "subject": subject,
+        "body": body,
+        "html_body": html_body,
+        "errors": errors,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {
+        "provider": "local_file",
+        "saved_to": str(path),
+    }
+
+
+def send_email(
+    to: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    *,
+    channel: str = "trading",
+    from_addr: str | None = None,
+) -> dict[str, Any]:
+    """Send email through Cloudflare -> DeadSimple -> SMTP -> local save."""
+    loaded_env = load_env_from_file()
+    resolved_from = _resolve_from_address(channel, from_addr)
+    rendered_html = html_body or _html_from_text(body)
+    providers = (
+        ("cloudflare", _send_via_cloudflare),
+        ("deadsimple", _send_via_deadsimple),
+        ("smtp", _send_via_smtp),
+    )
+    errors_seen: list[str] = []
+
+    for provider_name, sender in providers:
+        try:
+            dispatch = sender(to, subject, body, rendered_html, resolved_from)
+            result = {
+                "status": "sent",
+                "provider": dispatch.get("provider", provider_name),
+                "message_id": dispatch.get("message_id", ""),
+                "status_code": dispatch.get("status_code"),
+                "to": to,
+                "from": resolved_from,
+                "subject": subject,
+                "channel": channel,
+                "attempted_at": _now_iso(),
+                "loaded_env_keys": loaded_env,
+            }
+            _append_email_log(result)
+            return result
+        except Exception as exc:
+            errors_seen.append(f"{provider_name}: {exc}")
+
+    saved = _save_local_email(to, subject, body, rendered_html, resolved_from, errors_seen)
+    result = {
+        "status": "saved_local",
+        "provider": saved["provider"],
+        "saved_to": saved["saved_to"],
+        "to": to,
+        "from": resolved_from,
+        "subject": subject,
+        "channel": channel,
+        "attempted_at": _now_iso(),
+        "loaded_env_keys": loaded_env,
+        "errors": errors_seen,
+    }
+    _append_email_log(result)
+    return result
+
+
+def _channel_key_for_template(template_name: str) -> str:
+    template_channel = get_channel(template_name)
+    template_from = template_channel.get("from")
+    for key, config in CHANNELS.items():
+        if config.get("from") == template_from:
+            return key
+    return "trading"
+
+
+def _default_subject(template_name: str, data: dict[str, Any]) -> str:
+    suffix = str(data.get("date") or data.get("trade_date") or data.get("week_range") or "").strip()
+    base = DEFAULT_SUBJECTS.get(template_name, f"Tradings {template_name}")
+    return f"{base} {suffix}".strip()
+
+
+def render_template_html(template_name: str, data: dict[str, Any]) -> str:
+    module = import_module(f"{__package__}.email_templates.{template_name}")
+    render = getattr(module, "render")
+    return str(render(data))
+
+
+def send_template_email(
+    template_name: str,
+    data: dict[str, Any],
+    *,
+    to: str | None = None,
+    subject: str | None = None,
+) -> dict[str, Any]:
+    html_body = render_template_html(template_name, data)
+    channel = _channel_key_for_template(template_name)
+    recipient = to or get_channel(template_name)["to"]
+    resolved_subject = subject or _default_subject(template_name, data)
+    plain_body = str(data.get("summary") or f"{resolved_subject}\n请查看 HTML 邮件内容。")
+    return send_email(recipient, resolved_subject, plain_body, html_body, channel=channel)

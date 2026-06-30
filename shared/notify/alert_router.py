@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any
 
 from .email_templates import CHANNELS
+from .email_templates.emergency_alert import render as render_emergency_alert
+from .email_sender import send_email
 
 ALERT_LOG = Path(__file__).resolve().parent / "logs" / "alerts.jsonl"
 ALERT_STATE = Path(__file__).resolve().parent / "logs" / "alert_state.json"
@@ -61,6 +63,40 @@ SELF_HEAL_ACTIONS = {
     "execution_failure": "重试执行，切换到模拟/影子通道",
     "data_integrity": "重新校验数据，修复损坏记录",
 }
+
+
+def _dispatch_escalation_email(alert: Alert) -> dict[str, Any]:
+    channel = CHANNELS.get(alert.channel, CHANNELS["system"])
+    html_body = render_emergency_alert({
+        "alert_type": alert.alert_type,
+        "severity": alert.severity,
+        "description": alert.description,
+        "impact": alert.impact,
+        "self_heal": {
+            "action": alert.self_heal_action,
+            "started_at": alert.created_at,
+            "status": "failed",
+            "estimated_time": "已超时",
+        },
+        "need_human": True,
+    })
+    plain_body = "\n".join([
+        f"告警类型: {alert.alert_type}",
+        f"严重级别: {alert.severity}",
+        f"描述: {alert.description}",
+        f"自愈动作: {alert.self_heal_action}",
+        f"截止时间: {alert.self_heal_deadline}",
+        "状态: 自愈超时，需人工介入。",
+    ])
+    subject = f"[Tradings告警升级] {alert.alert_type} | {alert.severity}"
+    return send_email(
+        channel["to"],
+        subject,
+        plain_body,
+        html_body,
+        channel=alert.channel or "system",
+        from_addr=channel["from"],
+    )
 
 
 @dataclass
@@ -243,12 +279,14 @@ def check_self_heal_status() -> dict[str, Any]:
                     # Self-heal window expired — escalate to human
                     alert.notified_human = True
                     alert.self_heal_status = "failed"
+                    dispatch = _dispatch_escalation_email(alert)
                     escalated.append({
                         "alert_id": alert.alert_id,
                         "alert_type": alert.alert_type,
                         "severity": alert.severity,
                         "channel": alert.channel,
                         "message": f"Self-heal failed for {alert.alert_type}. Escalating to human notification.",
+                        "dispatch": dispatch,
                     })
                     _log_alert(alert)
                     # Don't keep in active if escalated
