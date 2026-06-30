@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-dfdf503403fb4bf1"
+  ],
+  "idempotency_key": "SHADOW-us-AAPL-20260630-6dfb53d6",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-AAPL-20260630-6dfb53d6",
+  "price": 283.78,
+  "quantity": 26,
+  "risk_check": {
+    "adjusted_weight": 0.036891,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-6d2fe4120b90",
+  "source_audit_id": "AUDIT-dfdf503403fb4bf1",
+  "status": "pending",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T07:12:16+00:00",
+  "ts_code": "AAPL",
+  "valid_until": "2026-06-30"
+}

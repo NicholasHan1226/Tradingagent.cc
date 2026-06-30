@@ -5,11 +5,8 @@ from __future__ import annotations
 
 import json
 import os
-import smtplib
-import ssl
 import uuid
 from datetime import datetime, timezone
-from email.message import EmailMessage
 from html import escape
 from importlib import import_module
 from pathlib import Path
@@ -25,12 +22,6 @@ REQUEST_TIMEOUT = 20
 ALLOWED_ENV_KEYS = {
     "CLOUDFLARE_EMAIL_API_TOKEN",
     "CLOUDFLARE_ACCOUNT_ID",
-    "DEADSIMPLE_API_KEY",
-    "DEADSIMPLE_INBOX_ID",
-    "MARKETGRAPH_SMTP_HOST",
-    "MARKETGRAPH_SMTP_USER",
-    "MARKETGRAPH_SMTP_PASS",
-    "MARKETGRAPH_SMTP_PORT",
 }
 DEFAULT_SUBJECTS = {
     "pre_market_plan": "Tradings 盘前规划",
@@ -161,92 +152,12 @@ def _send_via_cloudflare(
     }
 
 
-def _send_via_deadsimple(
-    to: str,
-    subject: str,
-    body: str,
-    html_body: str,
-    from_addr: str,
-) -> dict[str, Any]:
-    api_key = os.getenv("DEADSIMPLE_API_KEY")
-    inbox_id = os.getenv("DEADSIMPLE_INBOX_ID")
-    if not api_key or not inbox_id:
-        raise RuntimeError("missing DeadSimple credentials")
-
-    response = _post_json(
-        "https://api.deadsimplechat.com/api/v1/email/send",
-        {
-            "Authorization": f"Bearer {api_key}",
-            "X-API-Key": api_key,
-        },
-        {
-            "inbox_id": inbox_id,
-            "from": from_addr,
-            "to": [to],
-            "subject": subject,
-            "text": body,
-            "html": html_body,
-        },
-    )
-    if response.get("success") is False:
-        raise RuntimeError(str(response.get("errors") or response))
-    return {
-        "provider": "deadsimple",
-        "message_id": response.get("message_id") or response.get("id") or f"ds-{uuid.uuid4().hex[:12]}",
-        "status_code": response.get("status_code", 200),
-    }
+def _send_via_deadsimple(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    raise RuntimeError("DeadSimple fallback removed; Cloudflare email routing is the only API sender")
 
 
-def _smtp_port() -> int:
-    raw_port = os.getenv("MARKETGRAPH_SMTP_PORT", "587")
-    try:
-        return int(raw_port)
-    except ValueError:
-        return 587
-
-
-def _send_via_smtp(
-    to: str,
-    subject: str,
-    body: str,
-    html_body: str,
-    from_addr: str,
-) -> dict[str, Any]:
-    host = os.getenv("MARKETGRAPH_SMTP_HOST")
-    user = os.getenv("MARKETGRAPH_SMTP_USER")
-    password = os.getenv("MARKETGRAPH_SMTP_PASS")
-    if not host or not user or not password:
-        raise RuntimeError("missing SMTP credentials")
-
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = from_addr
-    msg["To"] = to
-    msg.set_content(body)
-    msg.add_alternative(html_body, subtype="html")
-
-    context = ssl.create_default_context()
-    port = _smtp_port()
-    if port == 465:
-        with smtplib.SMTP_SSL(host, port, timeout=REQUEST_TIMEOUT, context=context) as smtp:
-            smtp.login(user, password)
-            smtp.send_message(msg)
-    else:
-        with smtplib.SMTP(host, port, timeout=REQUEST_TIMEOUT) as smtp:
-            smtp.ehlo()
-            try:
-                smtp.starttls(context=context)
-                smtp.ehlo()
-            except smtplib.SMTPNotSupportedError:
-                pass
-            smtp.login(user, password)
-            smtp.send_message(msg)
-
-    return {
-        "provider": "smtp",
-        "message_id": msg["Message-ID"] or f"smtp-{uuid.uuid4().hex[:12]}",
-        "status_code": 250,
-    }
+def _send_via_smtp(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    raise RuntimeError("SMTP fallback removed; local file save is the only fallback")
 
 
 def _save_local_email(
@@ -284,36 +195,31 @@ def send_email(
     channel: str = "trading",
     from_addr: str | None = None,
 ) -> dict[str, Any]:
-    """Send email through Cloudflare -> DeadSimple -> SMTP -> local save."""
+    """Send email through Cloudflare, then save locally if Cloudflare is unavailable."""
     loaded_env = load_env_from_file()
     resolved_from = _resolve_from_address(channel, from_addr)
     rendered_html = html_body or _html_from_text(body)
-    providers = (
-        ("cloudflare", _send_via_cloudflare),
-        ("deadsimple", _send_via_deadsimple),
-        ("smtp", _send_via_smtp),
-    )
     errors_seen: list[str] = []
-
-    for provider_name, sender in providers:
-        try:
-            dispatch = sender(to, subject, body, rendered_html, resolved_from)
-            result = {
-                "status": "sent",
-                "provider": dispatch.get("provider", provider_name),
-                "message_id": dispatch.get("message_id", ""),
-                "status_code": dispatch.get("status_code"),
-                "to": to,
-                "from": resolved_from,
-                "subject": subject,
-                "channel": channel,
-                "attempted_at": _now_iso(),
-                "loaded_env_keys": loaded_env,
-            }
-            _append_email_log(result)
-            return result
-        except Exception as exc:
-            errors_seen.append(f"{provider_name}: {exc}")
+    try:
+        dispatch = _send_via_cloudflare(to, subject, body, rendered_html, resolved_from)
+        result = {
+            "status": "sent",
+            "provider": dispatch.get("provider", "cloudflare"),
+            "message_id": dispatch.get("message_id", ""),
+            "status_code": dispatch.get("status_code"),
+            "to": to,
+            "from": resolved_from,
+            "subject": subject,
+            "channel": channel,
+            "attempted_at": _now_iso(),
+            "loaded_env_keys": loaded_env,
+        }
+        _append_email_log(result)
+        return result
+    except Exception as exc:
+        errors_seen.append(f"cloudflare: {exc}")
+        errors_seen.append("deadsimple: removed from delivery chain")
+        errors_seen.append("smtp: removed from delivery chain")
 
     saved = _save_local_email(to, subject, body, rendered_html, resolved_from, errors_seen)
     result = {
