@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-104f2d6a87184bee"
+  ],
+  "idempotency_key": "SHADOW-us-JNJ-20260630-3ecdd656",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-JNJ-20260630-3ecdd656",
+  "price": 254.66,
+  "quantity": 29,
+  "risk_check": {
+    "adjusted_weight": 0.036926,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-52ba5725988c",
+  "source_audit_id": "AUDIT-104f2d6a87184bee",
+  "status": "pending",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T11:06:15+00:00",
+  "ts_code": "JNJ",
+  "valid_until": "2026-06-30"
+}

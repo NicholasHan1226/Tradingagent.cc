@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-0cff6df9a70c4b04"
+  ],
+  "idempotency_key": "SHADOW-us-BABA-20260630-bfbd224b",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-BABA-20260630-bfbd224b",
+  "price": 94.81,
+  "quantity": 78,
+  "risk_check": {
+    "adjusted_weight": 0.036976,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-ac1e54cb3806",
+  "source_audit_id": "AUDIT-0cff6df9a70c4b04",
+  "status": "pending",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T11:35:47+00:00",
+  "ts_code": "BABA",
+  "valid_until": "2026-06-30"
+}
