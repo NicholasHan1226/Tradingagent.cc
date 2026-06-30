@@ -29,3 +29,8 @@ class MarketAdapter(ABC):
     @abstractmethod
     def get_shadow_account(self) -> str:
         """Return the shadow account or strategy namespace."""
+
+    def get_sim_account(self) -> Any:
+        """Return simulated account state; defaults to the shadow namespace."""
+
+        return self.get_shadow_account()

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Simulated broker with slippage modeling.
+"""Simulated broker with API-backed dispatch and local slippage fallback.
 
-Simulates order execution using the slippage model. Used for strategy
-validation before shadow/real deployment.
+``execute_sim_order`` dispatches to market-specific simulated-account APIs and
+returns a receipt-shaped ``SimResult``. ``simulate_order`` is kept as the legacy
+local slippage model for callers that still need backtest-compatible estimates.
 
 Reference: Ashare/tools/a_share_simulated_trade_executor.py
 """
@@ -19,6 +20,31 @@ from typing import Any
 from .slippage_model import estimate_slippage
 
 SIM_LEDGER = Path(__file__).resolve().parent.parent / "logs" / "sim_orders.jsonl"
+SIM_STATUSES = {"filled", "partial", "rejected", "failed", "pending"}
+
+
+@dataclass
+class SimResult:
+    """Simulated-account execution receipt returned by market executors."""
+
+    status: str
+    filled_qty: int = 0
+    avg_price: float = 0.0
+    fee: float = 0.0
+    message: str = ""
+    capital_layer: str = "simulated"
+    account_type: str = "simulated"
+    order_id: str = ""
+    market: str = ""
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.status = _normalize_sim_status(self.status)
+        self.filled_qty = int(self.filled_qty or 0)
+        self.avg_price = float(self.avg_price or 0.0)
+        self.fee = float(self.fee or 0.0)
+        self.capital_layer = "simulated"
+        self.account_type = "simulated"
 
 
 @dataclass
@@ -39,6 +65,101 @@ class SimFill:
     filled_quantity: int = 0
     model: str = ""
     details: dict[str, Any] = field(default_factory=dict)
+
+
+def _normalize_sim_status(status: Any) -> str:
+    value = str(status or "").lower().strip()
+    aliases = {
+        "ok": "filled",
+        "dry_run_ok": "filled",
+        "warning": "partial",
+        "unfilled": "pending",
+        "error": "failed",
+    }
+    value = aliases.get(value, value)
+    return value if value in SIM_STATUSES else "failed"
+
+
+def _with_sim_markers(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    marked = dict(value)
+    marked["capital_layer"] = "simulated"
+    marked["account_type"] = "simulated"
+    return marked
+
+
+def _coerce_sim_result(result: Any, order: dict[str, Any], market: str) -> SimResult:
+    if isinstance(result, SimResult):
+        raw_response = result.raw_response
+        return SimResult(
+            status=result.status,
+            filled_qty=result.filled_qty,
+            avg_price=result.avg_price,
+            fee=result.fee,
+            message=result.message,
+            order_id=result.order_id or str(order.get("order_id", "")),
+            market=result.market or market,
+            raw_response=raw_response,
+        )
+
+    if isinstance(result, dict):
+        return SimResult(
+            status=result.get("status", "failed"),
+            filled_qty=int(result.get("filled_qty", result.get("filled_quantity", 0)) or 0),
+            avg_price=float(result.get("avg_price", result.get("filled_price", 0.0)) or 0.0),
+            fee=float(result.get("fee", 0.0) or 0.0),
+            message=str(result.get("message", "")),
+            order_id=str(result.get("order_id", order.get("order_id", ""))),
+            market=str(result.get("market", market)),
+            raw_response=dict(result),
+        )
+
+    return SimResult(
+        status="failed",
+        message=f"Invalid sim executor result type: {type(result).__name__}",
+        order_id=str(order.get("order_id", "")),
+        market=market,
+    )
+
+
+def execute_sim_order(
+    order: dict[str, Any],
+    market: str,
+    account: dict[str, Any] | None = None,
+    config: dict[str, Any] | None = None,
+) -> SimResult:
+    """Execute a simulated-account order via the registered market executor.
+
+    Market executors must accept ``execute(order, account, config)`` and return
+    ``SimResult``. The returned receipt is always marked as
+    ``capital_layer=simulated`` and ``account_type=simulated``.
+    """
+    from .sim_executor_registry import get_sim_executor
+
+    market_key = str(market or "").lower().strip()
+    sim_order = _with_sim_markers(order)
+    sim_account = _with_sim_markers(account or {})
+    sim_config = _with_sim_markers(config or {})
+    executor = get_sim_executor(market_key)
+    if executor is None:
+        return SimResult(
+            status="failed",
+            message=f"No simulated executor available for market={market_key or 'unknown'}",
+            order_id=str(order.get("order_id", "")),
+            market=market_key,
+        )
+
+    try:
+        result = executor(sim_order, sim_account, sim_config)
+    except Exception as exc:  # pragma: no cover - defensive receipt shaping
+        return SimResult(
+            status="failed",
+            message=f"Sim executor failed for market={market_key or 'unknown'}: {exc}",
+            order_id=str(order.get("order_id", "")),
+            market=market_key,
+        )
+    return _coerce_sim_result(result, sim_order, market_key)
 
 
 def _log_sim_fill(fill: SimFill) -> None:

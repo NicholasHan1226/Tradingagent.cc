@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Tests for API-backed simulated broker dispatch."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from shared.execution import sim_executor_registry
+from shared.execution.sim_broker import SimResult, execute_sim_order
+
+
+class SimBrokerV2Test(unittest.TestCase):
+    def setUp(self) -> None:
+        self._old_registry = dict(sim_executor_registry._SIM_EXECUTORS)
+        sim_executor_registry._SIM_EXECUTORS.clear()
+
+    def tearDown(self) -> None:
+        sim_executor_registry._SIM_EXECUTORS.clear()
+        sim_executor_registry._SIM_EXECUTORS.update(self._old_registry)
+
+    def test_registered_executor_returns_sim_result_with_simulated_layer(self) -> None:
+        captured: dict[str, dict[str, object]] = {}
+
+        def stub_executor(
+            order: dict[str, object],
+            account: dict[str, object],
+            config: dict[str, object],
+        ) -> SimResult:
+            captured["order"] = order
+            captured["account"] = account
+            captured["config"] = config
+            return SimResult(
+                status="filled",
+                filled_qty=2,
+                avg_price=101.25,
+                fee=0.35,
+                message="stub sim api receipt",
+                capital_layer="real",
+                account_type="real",
+                order_id=str(order["order_id"]),
+                market="crypto",
+                raw_response={"api_order_id": "stub-123"},
+            )
+
+        sim_executor_registry.register_sim_executor("crypto", stub_executor)
+
+        result = execute_sim_order(
+            order={
+                "order_id": "SIM-V2-1",
+                "ts_code": "BTCUSDT",
+                "side": "buy",
+                "quantity": 2,
+                "capital_layer": "real",
+                "account_type": "real",
+            },
+            market="Crypto",
+            account={"account_id": "sim-crypto", "account_type": "real"},
+            config={"venue": "unit", "capital_layer": "real"},
+        )
+
+        self.assertIsInstance(result, SimResult)
+        self.assertEqual(result.status, "filled")
+        self.assertEqual(result.filled_qty, 2)
+        self.assertEqual(result.avg_price, 101.25)
+        self.assertEqual(result.fee, 0.35)
+        self.assertEqual(result.message, "stub sim api receipt")
+        self.assertEqual(result.capital_layer, "simulated")
+        self.assertEqual(result.account_type, "simulated")
+        self.assertEqual(result.order_id, "SIM-V2-1")
+        self.assertEqual(result.market, "crypto")
+        self.assertEqual(captured["order"]["capital_layer"], "simulated")
+        self.assertEqual(captured["order"]["account_type"], "simulated")
+        self.assertEqual(captured["account"]["account_type"], "simulated")
+        self.assertEqual(captured["account"]["capital_layer"], "simulated")
+        self.assertEqual(captured["config"]["account_type"], "simulated")
+        self.assertEqual(captured["config"]["capital_layer"], "simulated")
+
+
+if __name__ == "__main__":
+    unittest.main()
