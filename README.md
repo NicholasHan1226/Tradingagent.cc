@@ -74,7 +74,7 @@ E: 基本面深度  — 周/季度财报更新
 ## 执行
 - 模拟盘: UI自动化 (新策略验证期)
 - 影子盘: 多策略并行记录 (已验证策略平行运行)
-- 实盘: Hermes桌面控制同花顺 (5-10min级别, Mac Mini)
+- 实盘: Webhook SSH隧道→mini receiver→sim-signal-executor (real仅邮件+只读同步)
 - US: Alpaca API (未来实盘)
 - 升级路径: 模拟→影子→小实盘→规模化
 
