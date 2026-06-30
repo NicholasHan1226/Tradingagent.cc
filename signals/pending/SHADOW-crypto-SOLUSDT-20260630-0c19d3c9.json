@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-ee4f943f6b214683"
+  ],
+  "idempotency_key": "SHADOW-crypto-SOLUSDT-20260630-0c19d3c9",
+  "manual_confirm_required": false,
+  "market": "crypto",
+  "order_id": "SHADOW-crypto-SOLUSDT-20260630-0c19d3c9",
+  "price": 73.62,
+  "quantity": 203,
+  "risk_check": {
+    "adjusted_weight": 0.149449,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-e634969172e4",
+  "source_audit_id": "AUDIT-ee4f943f6b214683",
+  "status": "pending",
+  "strategy_name": "crypto_shadow",
+  "timestamp": "2026-06-30T09:07:43+00:00",
+  "ts_code": "SOLUSDT",
+  "valid_until": "2026-06-30"
+}

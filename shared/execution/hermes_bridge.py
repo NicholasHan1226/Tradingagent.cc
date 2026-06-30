@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Signal-card execution bridge for Mac Mini trade handling.
+"""Execution bridge for Mac Mini trade handling.
 
-The server never connects to the Mac Mini and never performs direct trade
-execution. It writes pending signal cards to disk. A separate Mac Mini cron job
-pulls those cards, runs the local simulated/desktop executor, and writes fill
-and position results back to the shared signals directory.
+Real-money orders remain signal cards requiring Nicholas manual confirmation.
+Simulated orders are sent through the Mac Mini webhook receiver; the Mini-side
+sim-signal-receiver and sim-signal-executor own pending, execution, and receipt
+writing.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .signal_state_machine import SignalStateConflict, SignalStateMachine
+from .webhook_sender import send_sim_signal_to_mini
 
 TRADINGS_ROOT = Path("/opt/investment/Tradings")
 SIGNALS_DIR = TRADINGS_ROOT / "signals"
@@ -254,8 +255,21 @@ def _validate_signal_card(card: dict[str, Any]) -> str | None:
     return None
 
 
+def webhook_send_signal(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
+    """Send a simulated signal through the Mac Mini webhook channel."""
+    result = send_sim_signal_to_mini(order)
+    result["capital_layer"] = "simulated"
+    result["account_type"] = "simulated"
+    result["direct_execution"] = False
+    result["real_auto_order_forbidden"] = real_auto_order_forbidden
+    return result
+
+
 def send_order(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
-    """Write a pending signal card for the Mac Mini cron to consume.
+    """Queue an execution signal.
+
+    ``capital_layer=simulated`` goes to the Mini webhook channel. Real and
+    shadow signal cards keep the legacy file-backed state-machine behavior.
 
     Args:
         order: dict or HermesOrder with ts_code, direction/side, quantity,
@@ -264,8 +278,6 @@ def send_order(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
     Returns:
         dict with order_id, status, signal_path, message, and hard safety flags.
     """
-    ensure_signal_dirs()
-
     try:
         card = _coerce_signal_card(order)
     except (TypeError, ValueError) as exc:
@@ -286,6 +298,14 @@ def send_order(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
             "real_auto_order_forbidden": real_auto_order_forbidden,
             "direct_execution": False,
         }
+
+    if card.get("capital_layer") == "simulated":
+        result = webhook_send_signal(card)
+        result.setdefault("order_id", card["order_id"])
+        result.setdefault("message", "Simulated signal sent to Mac Mini webhook")
+        return result
+
+    ensure_signal_dirs()
 
     try:
         queued = _state_machine().write_pending(card)

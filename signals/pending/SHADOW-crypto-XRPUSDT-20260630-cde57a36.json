@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-351f602b120848d9"
+  ],
+  "idempotency_key": "SHADOW-crypto-XRPUSDT-20260630-cde57a36",
+  "manual_confirm_required": false,
+  "market": "crypto",
+  "order_id": "SHADOW-crypto-XRPUSDT-20260630-cde57a36",
+  "price": 1.0441,
+  "quantity": 14366,
+  "risk_check": {
+    "adjusted_weight": 0.149995,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-f17dfadd07fc",
+  "source_audit_id": "AUDIT-351f602b120848d9",
+  "status": "pending",
+  "strategy_name": "crypto_shadow",
+  "timestamp": "2026-06-30T10:01:31+00:00",
+  "ts_code": "XRPUSDT",
+  "valid_until": "2026-06-30"
+}

@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-e98e3b2262cf487f"
+  ],
+  "idempotency_key": "SHADOW-us-AMZN-20260630-d3695f8c",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-AMZN-20260630-d3695f8c",
+  "price": 232.69,
+  "quantity": 37,
+  "risk_check": {
+    "adjusted_weight": 0.043048,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-b669790205c7",
+  "source_audit_id": "AUDIT-e98e3b2262cf487f",
+  "status": "pending",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T09:13:32+00:00",
+  "ts_code": "AMZN",
+  "valid_until": "2026-06-30"
+}

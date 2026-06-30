@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-c612ec600c984b2c"
+  ],
+  "idempotency_key": "SHADOW-us-AVGO-20260630-e4cfd6ef",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-AVGO-20260630-e4cfd6ef",
+  "price": 365.02,
+  "quantity": 20,
+  "risk_check": {
+    "adjusted_weight": 0.036502,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-748e3311710f",
+  "source_audit_id": "AUDIT-c612ec600c984b2c",
+  "status": "pending",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T09:42:52+00:00",
+  "ts_code": "AVGO",
+  "valid_until": "2026-06-30"
+}

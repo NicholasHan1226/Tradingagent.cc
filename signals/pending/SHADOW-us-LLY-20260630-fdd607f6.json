@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-32582b20953a4626"
+  ],
+  "idempotency_key": "SHADOW-us-LLY-20260630-fdd607f6",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-LLY-20260630-fdd607f6",
+  "price": 1208.12,
+  "quantity": 6,
+  "risk_check": {
+    "adjusted_weight": 0.036244,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-df0637ce4ff9",
+  "source_audit_id": "AUDIT-32582b20953a4626",
+  "status": "pending",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T09:12:49+00:00",
+  "ts_code": "LLY",
+  "valid_until": "2026-06-30"
+}

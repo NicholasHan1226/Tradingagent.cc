@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Reference Mac Mini consumer for Tradings signal cards.
+"""Deprecated Mini consumer notes.
 
-This module is intentionally file-backed. The server writes pending cards; the
-Mac Mini cron claims one card, dispatches by capital layer, and writes results
-back to signals/filled and signals/positions. Real-money cards are never
-executed by this consumer.
+The active Mini-side path is now:
+
+    SSH tunnel 9865 -> mini:8654
+    sim-signal-receiver -> pending
+    sim-signal-executor -> execution receipts
+
+Tradings should send simulated signals through
+``shared.execution.webhook_sender.send_sim_signal_to_mini``. No extra
+``mini_consumer`` process is required on the Mini. The legacy classes below are
+kept only so older local tests and imports do not break during this migration.
 """
 
 from __future__ import annotations
@@ -277,13 +283,16 @@ def write_positions(snapshot: dict[str, Any], signals_dir: Path | str = SIGNALS_
 
 
 def main() -> int:
-    consumer = MiniConsumer()
-    claimed = consumer.claim_next_pending()
-    if claimed is None:
-        return 0
-    result = consumer.dispatch(claimed)
+    result = {
+        "status": "disabled",
+        "message": (
+            "mini_consumer is deprecated. Mini-side sim-signal-receiver and "
+            "sim-signal-executor already consume webhook signals."
+        ),
+        "replacement": "shared.execution.webhook_sender.send_sim_signal_to_mini",
+    }
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if result.get("status") not in ("rejected", "error") else 1
+    return 0
 
 
 if __name__ == "__main__":
