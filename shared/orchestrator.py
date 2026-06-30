@@ -476,7 +476,7 @@ def run_shadow_loop(
     method = str(config.get("portfolio_method", "conviction_weighted"))
     regime = str(config.get("regime", "unknown"))
     max_candidates = max(1, int(config.get("max_candidates", 20)))
-    default_price = _safe_float(config.get("default_price"), 0.0)
+    default_price = _safe_float(config.get("default_price"), 1.0)
     default_volatility = _safe_float(config.get("default_volatility"), 0.20)
 
     universe = _safe_stage("screening.universe", errors, lambda: market_adapter.get_universe(date), default=[])
@@ -629,7 +629,7 @@ def run_shadow_loop(
         if order["quantity"] <= 0 or order["price"] <= 0:
             errors.append({"stage": "execution.shadow_broker", "status": "skipped", "symbol": symbol, "reason": "non-positive quantity or price", "capital_layer": "shadow"})
             continue
-        trade = _safe_stage("execution.shadow_broker", errors, lambda order=order: deps.record_shadow(order, account, market=market), default={"recorded": False, "status": "degraded"})
+        trade = _safe_stage("execution.shadow_broker", errors, lambda order=order: deps.record_shadow(order, account), default={"recorded": False, "status": "degraded"})
         stage_calls.append("execution.shadow_broker")
         if not isinstance(trade, dict):
             trade = {"recorded": False, "status": "invalid"}
@@ -731,7 +731,7 @@ def run_sim_loop(
     method = str(config.get("portfolio_method", "conviction_weighted"))
     regime = str(config.get("regime", "unknown"))
     max_candidates = max(1, int(config.get("max_candidates", 20)))
-    default_price = _safe_float(config.get("default_price"), 0.0)
+    default_price = _safe_float(config.get("default_price"), 1.0)
     default_volatility = _safe_float(config.get("default_volatility"), 0.20)
 
     universe = _safe_stage("screening.universe", errors, lambda: market_adapter.get_universe(date), default=[], capital_layer=capital_layer)

@@ -13,7 +13,7 @@ from shared.markets.base import MarketAdapter
 from Ashare import sim_executor as _sim_executor  # noqa: F401
 
 
-MARKET = "Ashare"
+MARKET = "ashare"
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
 
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
@@ -111,7 +111,10 @@ class AshareAdapter(MarketAdapter):
         return result
 
     def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
-        return MARKET, str(symbol or "").strip()
+        raw = str(symbol or "").strip()
+        if "." in raw:
+            raw = raw.split(".", 1)[0]
+        return MARKET, raw
 
     def get_strategy_config(self) -> dict[str, Any]:
         strategies = self._load_strategies()
