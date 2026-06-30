@@ -19,6 +19,8 @@ DEFAULT_ENV_FILE = Path("/opt/marketgraph/.env")
 EMAIL_LOG = Path(__file__).resolve().parent / "logs" / "emails_sent.jsonl"
 LOCAL_FALLBACK_DIR = Path(__file__).resolve().parent / "logs" / "email_fallback"
 REQUEST_TIMEOUT = 20
+RATE_LIMIT_WINDOW_SECONDS = 5 * 60
+RATE_LIMIT_STATE: Path | None = None
 ALLOWED_ENV_KEYS = {
     "CLOUDFLARE_EMAIL_API_TOKEN",
     "CLOUDFLARE_ACCOUNT_ID",
@@ -53,6 +55,76 @@ def _append_email_log(record: dict[str, Any]) -> None:
     EMAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
     with EMAIL_LOG.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _rate_limit_state_path() -> Path:
+    return RATE_LIMIT_STATE or (EMAIL_LOG.parent / "email_rate_limit.json")
+
+
+def _load_rate_limit_state() -> dict[str, str]:
+    path = _rate_limit_state_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_rate_limit_state(state: dict[str, str]) -> None:
+    path = _rate_limit_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _parse_iso(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rate_limit_key(
+    *,
+    to: str,
+    subject: str,
+    channel: str,
+    rate_limit_type: str | None,
+) -> str:
+    email_type = str(rate_limit_type or subject or "unknown").strip() or "unknown"
+    return "|".join([channel or "trading", to.strip().lower(), email_type])
+
+
+def _check_and_mark_rate_limit(
+    *,
+    to: str,
+    subject: str,
+    channel: str,
+    rate_limit_type: str | None,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    now = now or datetime.now(timezone.utc)
+    key = _rate_limit_key(to=to, subject=subject, channel=channel, rate_limit_type=rate_limit_type)
+    state = _load_rate_limit_state()
+    last_at = _parse_iso(str(state.get(key, "")))
+    if last_at is not None:
+        elapsed = (now - last_at).total_seconds()
+        if 0 <= elapsed < RATE_LIMIT_WINDOW_SECONDS:
+            next_allowed = last_at.timestamp() + RATE_LIMIT_WINDOW_SECONDS
+            return {
+                "status": "rate_limited",
+                "provider": "rate_limit",
+                "to": to,
+                "subject": subject,
+                "channel": channel,
+                "rate_limit_type": rate_limit_type or subject,
+                "attempted_at": _now_iso(),
+                "next_allowed_at": datetime.fromtimestamp(next_allowed, tz=timezone.utc).isoformat(timespec="seconds"),
+            }
+    state[key] = now.isoformat(timespec="seconds")
+    _save_rate_limit_state(state)
+    return None
 
 
 def _resolve_from_address(channel: str, from_addr: str | None) -> str:
@@ -194,12 +266,24 @@ def send_email(
     *,
     channel: str = "trading",
     from_addr: str | None = None,
+    rate_limit_type: str | None = None,
 ) -> dict[str, Any]:
     """Send email through Cloudflare, then save locally if Cloudflare is unavailable."""
     loaded_env = load_env_from_file()
     resolved_from = _resolve_from_address(channel, from_addr)
     rendered_html = html_body or _html_from_text(body)
     errors_seen: list[str] = []
+    limited = _check_and_mark_rate_limit(
+        to=to,
+        subject=subject,
+        channel=channel,
+        rate_limit_type=rate_limit_type,
+    )
+    if limited is not None:
+        limited["from"] = resolved_from
+        limited["loaded_env_keys"] = loaded_env
+        _append_email_log(limited)
+        return limited
     try:
         dispatch = _send_via_cloudflare(to, subject, body, rendered_html, resolved_from)
         result = {
@@ -211,6 +295,7 @@ def send_email(
             "from": resolved_from,
             "subject": subject,
             "channel": channel,
+            "rate_limit_type": rate_limit_type or subject,
             "attempted_at": _now_iso(),
             "loaded_env_keys": loaded_env,
         }
@@ -230,6 +315,7 @@ def send_email(
         "from": resolved_from,
         "subject": subject,
         "channel": channel,
+        "rate_limit_type": rate_limit_type or subject,
         "attempted_at": _now_iso(),
         "loaded_env_keys": loaded_env,
         "errors": errors_seen,
@@ -271,4 +357,9 @@ def send_template_email(
     recipient = to or get_channel(template_name)["to"]
     resolved_subject = subject or _default_subject(template_name, data)
     plain_body = str(data.get("summary") or f"{resolved_subject}\n请查看 HTML 邮件内容。")
-    return send_email(recipient, resolved_subject, plain_body, html_body, channel=channel)
+    try:
+        return send_email(recipient, resolved_subject, plain_body, html_body, channel=channel, rate_limit_type=template_name)
+    except TypeError as exc:
+        if "rate_limit_type" not in str(exc):
+            raise
+        return send_email(recipient, resolved_subject, plain_body, html_body, channel=channel)

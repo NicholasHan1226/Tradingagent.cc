@@ -25,9 +25,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from . import email_sender
 from .email_templates import CHANNELS
 from .email_templates.emergency_alert import render as render_emergency_alert
-from .email_sender import send_email
 
 ALERT_LOG = Path(__file__).resolve().parent / "logs" / "alerts.jsonl"
 ALERT_STATE = Path(__file__).resolve().parent / "logs" / "alert_state.json"
@@ -89,13 +89,14 @@ def _dispatch_escalation_email(alert: Alert) -> dict[str, Any]:
         "状态: 自愈超时，需人工介入。",
     ])
     subject = f"[Tradings告警升级] {alert.alert_type} | {alert.severity}"
-    return send_email(
+    return email_sender.send_email(
         channel["to"],
         subject,
         plain_body,
         html_body,
         channel=alert.channel or "system",
         from_addr=channel["from"],
+        rate_limit_type="emergency_alert",
     )
 
 
@@ -179,6 +180,26 @@ def route_alert(alert_input: dict[str, Any]) -> dict[str, Any]:
         channel=channel_key,
         self_heal_action=self_heal_action,
     )
+
+    if severity == "escalated" or bool(alert_input.get("escalated")):
+        alert.self_heal_started = bool(alert_input.get("self_heal_started", False))
+        alert.self_heal_status = "failed"
+        alert.notified_human = True
+        alert.self_heal_deadline = str(alert_input.get("self_heal_deadline", ""))
+        dispatch = _dispatch_escalation_email(alert)
+        _log_alert(alert)
+        return {
+            "alert_id": alert.alert_id,
+            "channel": channel_key,
+            "priority": severity,
+            "self_heal_action": self_heal_action,
+            "self_heal_deadline": alert.self_heal_deadline,
+            "human_notification": True,
+            "message": "Escalated alert notified immediately.",
+            "from": channel["from"],
+            "to": channel["to"],
+            "dispatch": dispatch,
+        }
 
     if severity in ("critical", "high") and heal_window > 0:
         # Start self-heal period

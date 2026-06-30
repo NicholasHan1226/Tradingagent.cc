@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from shared.markets.base import MarketAdapter
+from shared.notify import email_sender
 
 ROOT = Path(__file__).resolve().parent.parent
 SIGNALS_DIR = ROOT / "signals"
@@ -65,6 +66,7 @@ class OrchestratorDeps:
     run_review: StageFn
     record_audit_event: StageFn
     execute_sim_order: StageFn | None = None
+    send_email: StageFn | None = None
 
 
 def _default_deps() -> OrchestratorDeps:
@@ -90,6 +92,7 @@ def _default_deps() -> OrchestratorDeps:
         run_review=review,
         record_audit_event=record_event,
         execute_sim_order=getattr(sim_broker, "execute_sim_order", sim_broker.simulate_order),
+        send_email=email_sender.send_email,
     )
 
 
@@ -277,6 +280,118 @@ def _build_signal_card(
         "valid_until": _date_iso(date),
         "idempotency_key": order_id,
         "evidence_refs": [audit_id],
+    }
+
+
+def _send_template_email_now(
+    sender: StageFn | None,
+    template_name: str,
+    data: dict[str, Any],
+    *,
+    subject: str,
+) -> dict[str, Any]:
+    if sender is None:
+        return {"status": "skipped", "reason": "email sender unavailable", "template": template_name}
+    html_body = email_sender.render_template_html(template_name, data)
+    channel = email_sender._channel_key_for_template(template_name)
+    recipient = email_sender.get_channel(template_name)["to"]
+    plain_body = str(data.get("summary") or f"{subject}\n请查看 HTML 邮件内容。")
+    result = sender(
+        recipient,
+        subject,
+        plain_body,
+        html_body,
+        channel=channel,
+        rate_limit_type=template_name,
+    )
+    if isinstance(result, dict):
+        return result
+    return {"status": "unknown", "template": template_name, "raw_result": result}
+
+
+def _trading_signal_email_data(
+    *,
+    market: str,
+    symbol: str,
+    date: str,
+    account: str,
+    order: dict[str, Any],
+    position: dict[str, Any],
+    score: dict[str, Any],
+    risk: dict[str, Any],
+    card: dict[str, Any],
+) -> dict[str, Any]:
+    quantity = _safe_int(order.get("quantity"), 0)
+    price = _safe_float(order.get("price"), 0.0)
+    weight = _safe_float(position.get("weight"), _safe_float(risk.get("adjusted_weight"), 0.0))
+    total_score = score.get("total", score.get("combined", score.get("belief_score", "--")))
+    reasons = risk.get("reasons") if isinstance(risk.get("reasons"), list) else []
+    condition = "; ".join(str(item) for item in reasons if item) or f"{market} shadow signal generated"
+    return {
+        "date": _date_iso(date),
+        "ts_code": symbol,
+        "name": str(score.get("name", "")),
+        "current_price": price,
+        "trigger_condition": condition,
+        "scores": {
+            "macro": score.get("macro", "--"),
+            "event": score.get("event", "--"),
+            "fundamental": score.get("fundamental", "--"),
+            "moneyflow": score.get("moneyflow", "--"),
+            "technical": score.get("technical", "--"),
+            "sentiment": score.get("sentiment", "--"),
+            "total": total_score,
+        },
+        "action": order.get("side", "buy"),
+        "position_size": {
+            "shares": quantity,
+            "amount": quantity * price,
+            "pct_of_capital": weight * 100 if 0 <= weight <= 1 else weight,
+        },
+        "capital_layer": "shadow",
+        "account_type": "shadow",
+        "account": account,
+        "order_id": card.get("order_id", ""),
+        "summary": f"影子盘新信号: {symbol} {order.get('side', 'buy')} {quantity} @ {price}",
+    }
+
+
+def _trade_receipt_email_data(
+    *,
+    market: str,
+    symbol: str,
+    date: str,
+    account: str,
+    order: dict[str, Any],
+    receipt: dict[str, Any],
+    card: dict[str, Any],
+) -> dict[str, Any]:
+    filled_price = _safe_float(receipt.get("filled_price"), _safe_float(order.get("price"), 0.0))
+    requested_price = _safe_float(order.get("price"), 0.0)
+    quantity = _safe_int(receipt.get("filled_quantity", receipt.get("filled_qty")), _safe_int(order.get("quantity"), 0))
+    slippage_pct = 0.0
+    if requested_price > 0:
+        slippage_pct = ((filled_price / requested_price) - 1.0) * 100
+    fill_time = str(receipt.get("fill_time") or receipt.get("filled_at") or _now_iso())
+    order_id = str(receipt.get("order_id") or card.get("order_id") or order.get("order_id") or "")
+    return {
+        "date": _date_iso(date),
+        "ts_code": symbol,
+        "name": "",
+        "direction": order.get("side", "buy"),
+        "quantity": quantity,
+        "filled_price": filled_price,
+        "requested_price": requested_price,
+        "slippage_pct": slippage_pct,
+        "fill_time": fill_time,
+        "order_id": order_id,
+        "commission": _safe_float(receipt.get("commission"), 0.0),
+        "channel": "sim",
+        "market": market,
+        "capital_layer": "simulated",
+        "account_type": "simulated",
+        "account": account,
+        "summary": f"模拟盘成交回执: {symbol} {order.get('side', 'buy')} {quantity} @ {filled_price}",
     }
 
 
@@ -683,16 +798,41 @@ def run_shadow_loop(
         )
         pending = _safe_stage("signals.pending", errors, lambda card=card: _write_pending_signal(card, signals_dir), default={"status": "degraded", "recorded": False})
         stage_calls.append("signals.pending")
+        email_notification = {"status": "skipped", "reason": "signal not newly pending", "template": "trading_signal"}
+        if pending.get("status") == "pending":
+            email_data = _trading_signal_email_data(
+                market=market,
+                symbol=symbol,
+                date=date,
+                account=account,
+                order=order,
+                position=position,
+                score=scores_by_symbol.get(symbol, {}),
+                risk=risk,
+                card=card,
+            )
+            email_notification = _safe_stage(
+                "notify.trading_signal",
+                errors,
+                lambda data=email_data: _send_template_email_now(
+                    deps.send_email,
+                    "trading_signal",
+                    data,
+                    subject=f"Tradings 影子盘新信号 {symbol} {_date_iso(date)}",
+                ),
+                default={"status": "degraded", "template": "trading_signal"},
+            )
+            stage_calls.append("notify.trading_signal")
         result_audit = _record_audit(
             deps,
             "result",
             symbol,
             parent_audit_id=execution_audit["audit_id"],
-            payload={"pending_signal": pending, "capital_layer": "shadow"},
+            payload={"pending_signal": pending, "email_notification": email_notification, "capital_layer": "shadow"},
             metadata={"date": date, "account": account},
         )
         audits.append(result_audit)
-        records.append({"symbol": symbol, "order": order, "trade": trade, "pending_signal": pending})
+        records.append({"symbol": symbol, "order": order, "trade": trade, "pending_signal": pending, "email_notification": email_notification})
 
     review = _safe_stage("review.daily_review", errors, lambda: deps.run_review(date, session="close"), default={"session": "close", "error": "degraded", "trade_date": date})
     stage_calls.append("review.daily_review")
@@ -1007,17 +1147,41 @@ def run_sim_loop(
             capital_layer=capital_layer,
         )
         stage_calls.append("signals.sim_execution")
+        email_notification = {"status": "skipped", "reason": "sim order not filled", "template": "trade_receipt"}
+        if signal_result.get("status") == "filled":
+            email_data = _trade_receipt_email_data(
+                market=market,
+                symbol=symbol,
+                date=date,
+                account=account,
+                order=order,
+                receipt=receipt,
+                card=card,
+            )
+            email_notification = _safe_stage(
+                "notify.trade_receipt",
+                errors,
+                lambda data=email_data: _send_template_email_now(
+                    deps.send_email,
+                    "trade_receipt",
+                    data,
+                    subject=f"Tradings 模拟盘成交回执 {symbol} {_date_iso(date)}",
+                ),
+                default={"status": "degraded", "template": "trade_receipt"},
+                capital_layer=capital_layer,
+            )
+            stage_calls.append("notify.trade_receipt")
         result_audit = _record_audit(
             deps,
             "result",
             symbol,
             parent_audit_id=execution_audit["audit_id"],
-            payload={"signal_result": signal_result, "capital_layer": capital_layer, "account_type": account_type},
+            payload={"signal_result": signal_result, "email_notification": email_notification, "capital_layer": capital_layer, "account_type": account_type},
             metadata={"date": date, "account": account, "account_type": account_type},
             capital_layer=capital_layer,
         )
         audits.append(result_audit)
-        records.append({"symbol": symbol, "order": order, "receipt": receipt, "signal_result": signal_result})
+        records.append({"symbol": symbol, "order": order, "receipt": receipt, "signal_result": signal_result, "email_notification": email_notification})
 
     review = _safe_stage(
         "review.daily_review",
