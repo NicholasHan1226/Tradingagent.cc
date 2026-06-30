@@ -8,6 +8,7 @@ check_conditions(conditions, bars_5min) → list[triggered]
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 
@@ -214,6 +215,76 @@ def _is_expired(condition: dict[str, Any], date: str) -> bool:
         return False
 
 
+def _bar_trade_time(bar: dict[str, Any]) -> str:
+    return str(bar.get("trade_time") or bar.get("time") or "")
+
+
+def _fill_price_from_bar(condition: dict[str, Any], trigger: dict[str, Any], bar: dict[str, Any]) -> tuple[bool, float, str]:
+    trigger_price = _safe_float(trigger.get("trigger_price", condition.get("trigger_price")), 0.0)
+    low = _safe_float(bar.get("low"), 0.0)
+    high = _safe_float(bar.get("high"), 0.0)
+    close = _safe_float(bar.get("close"), 0.0)
+    open_price = _safe_float(bar.get("open"), 0.0)
+    cond_type = str(condition.get("type") or "")
+
+    if cond_type in {"breakout", "pullback"} and trigger_price > 0:
+        if low <= trigger_price <= high:
+            return True, trigger_price, "trigger_price_inside_bar_range"
+        if close > 0:
+            return False, close, "triggered_but_trigger_price_not_reached_inside_bar"
+        return False, 0.0, "triggered_but_missing_positive_bar_close"
+
+    for candidate, reason in (
+        (trigger_price, "trigger_price_available"),
+        (open_price, "open_price_fallback"),
+        (close, "close_price_fallback"),
+    ):
+        if candidate > 0:
+            return True, candidate, reason
+    return False, 0.0, "missing_fill_price"
+
+
+def _replay_trigger(
+    condition: dict[str, Any],
+    trigger: dict[str, Any],
+    bars: list[dict[str, Any]],
+) -> dict[str, Any]:
+    triggered_at = str(trigger.get("triggered_at") or "")
+    matched_bar: dict[str, Any] | None = None
+    for bar in bars:
+        if not isinstance(bar, dict):
+            continue
+        if triggered_at and _bar_trade_time(bar) != triggered_at:
+            continue
+        matched_bar = bar
+        break
+    if matched_bar is None and bars:
+        matched_bar = bars[-1]
+
+    fillable = False
+    fill_price = 0.0
+    reason = "missing_replay_bar"
+    if matched_bar is not None:
+        fillable, fill_price, reason = _fill_price_from_bar(condition, trigger, matched_bar)
+
+    replay = dict(trigger)
+    replay.update(
+        {
+            "replay_status": "filled" if fillable else "missed",
+            "replay_fillable": fillable,
+            "replay_fill_price": round(fill_price, 4) if fill_price > 0 else 0.0,
+            "replay_reason": reason,
+            "replay_bar_time": _bar_trade_time(matched_bar or {}),
+            "replay_bar_open": _safe_float((matched_bar or {}).get("open"), 0.0),
+            "replay_bar_high": _safe_float((matched_bar or {}).get("high"), 0.0),
+            "replay_bar_low": _safe_float((matched_bar or {}).get("low"), 0.0),
+            "replay_bar_close": _safe_float((matched_bar or {}).get("close"), 0.0),
+            "replay_valid_until": condition.get("valid_until", ""),
+        }
+    )
+    return replay
+
+
 def check_conditions(
     conditions: list[dict[str, Any]],
     date: str | None = None,
@@ -269,6 +340,41 @@ def check_conditions(
             continue
 
     return triggered
+
+
+def trigger_replay(
+    conditions: list[dict[str, Any]],
+    date: str | None = None,
+    bars_map: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """回放历史触发条件, 验证触发时是否存在可成交价格。"""
+    if date is None:
+        date = datetime.now().strftime("%Y%m%d")
+
+    if not conditions:
+        return []
+
+    condition_map: dict[tuple[str, str], dict[str, Any]] = {}
+    for cond in conditions:
+        if not isinstance(cond, dict):
+            continue
+        key = (str(cond.get("ts_code") or ""), str(cond.get("type") or ""))
+        if key[0] and key[1]:
+            condition_map[key] = cond
+
+    triggered = check_conditions(conditions, date=date, bars_map=bars_map)
+    replayed: list[dict[str, Any]] = []
+    for trigger in triggered:
+        key = (str(trigger.get("ts_code") or ""), str(trigger.get("type") or ""))
+        condition = condition_map.get(key)
+        if condition is None:
+            continue
+        if bars_map is not None:
+            bars = bars_map.get(key[0], [])
+        else:
+            bars = _get_5min_bars(key[0], date)
+        replayed.append(_replay_trigger(condition, trigger, bars))
+    return replayed
 
 
 if __name__ == "__main__":

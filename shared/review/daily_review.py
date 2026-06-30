@@ -24,6 +24,11 @@ from typing import Any
 
 from shared.accounting import position_ledger
 
+try:
+    from shared.data.reader import SharedSignalsReader
+except Exception:  # pragma: no cover - optional upstream dependency
+    SharedSignalsReader = None  # type: ignore[assignment]
+
 from .attribution import attribute, attribute_pct
 from .benchmark import compare_to_benchmark, get_benchmark, record_last_period
 
@@ -32,6 +37,7 @@ TRADINGS_ROOT = REVIEW_DIR.parent.parent
 SHARED_DIR = REVIEW_DIR.parent
 GOALS_PATH = REVIEW_DIR / "goals.yaml"
 DAILY_LOG = REVIEW_DIR / "data" / "daily_reviews.jsonl"
+DIRECTION_HIT_LOG = REVIEW_DIR / "data" / "direction_hit_reviews.jsonl"
 SHADOW_TRADES_LOG = SHARED_DIR / "logs" / "shadow" / "shadow_trades.jsonl"
 FILLED_SIGNALS_DIR = TRADINGS_ROOT / "signals" / "filled"
 
@@ -94,6 +100,12 @@ def _append_log(record: dict[str, Any]) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _append_direction_hit_log(record: dict[str, Any]) -> None:
+    DIRECTION_HIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(DIRECTION_HIT_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def _normalize_capital_layer(value: Any, default: str = "shadow") -> str:
     raw = str(value or default).strip().lower()
     if raw in {"real", "live"}:
@@ -108,6 +120,15 @@ def _normalize_capital_layer(value: Any, default: str = "shadow") -> str:
 def _normalize_market(value: Any, default: str = "unknown") -> str:
     raw = str(value or default).strip().lower()
     return raw or default
+
+
+def _normalize_side(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"buy", "long", "open_long"}:
+        return "buy"
+    if raw in {"sell", "short", "reduce", "close_long"}:
+        return "sell"
+    return raw
 
 
 def _group_by_capital_layer(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -413,8 +434,125 @@ def load_positions(as_of_date: str) -> list[dict[str, Any]]:
         return []
 
 
+def _reader_symbol(symbol: Any) -> str:
+    raw = str(symbol or "").strip()
+    return raw.split(".", 1)[0] if "." in raw else raw
+
+
+def _close_from_rows(rows: list[dict[str, Any]], trade_date: str) -> float:
+    candidates = [row for row in rows if _date_eq(_first_present(row, "trade_date", "date", "bar_date"), trade_date)]
+    if not candidates:
+        candidates = rows
+    for row in reversed(candidates):
+        close = _float_value(_first_present(row, "close", "adj_close", "price", default=0.0), 0.0)
+        if close > 0:
+            return close
+    return 0.0
+
+
+def _load_close_price(market: str, symbol: str, trade_date: str, reader: Any = None) -> float:
+    if not symbol:
+        return 0.0
+    if reader is None:
+        if SharedSignalsReader is None:
+            return 0.0
+        try:
+            reader = SharedSignalsReader()
+        except Exception:
+            return 0.0
+    get_bars = getattr(reader, "get_bars_daily", None)
+    if not callable(get_bars):
+        return 0.0
+
+    symbols = [symbol]
+    stripped = _reader_symbol(symbol)
+    if stripped and stripped not in symbols:
+        symbols.append(stripped)
+    markets = [market, market.capitalize(), "Ashare"] if market and market != "unknown" else ["Ashare"]
+
+    for market_key in markets:
+        for symbol_key in symbols:
+            try:
+                rows = get_bars(market_key, symbol_key, trade_date, trade_date)
+            except Exception:
+                rows = []
+            close = _close_from_rows([row for row in rows if isinstance(row, dict)], trade_date)
+            if close > 0:
+                return close
+    return 0.0
+
+
+def _direction_hit_review(trade: dict[str, Any], close_price: float, trade_date: str) -> dict[str, Any] | None:
+    side = _normalize_side(trade.get("side"))
+    if side not in {"buy", "sell"}:
+        return None
+    entry_price = _float_value(trade.get("price"), 0.0)
+    if entry_price <= 0 or close_price <= 0:
+        return None
+    raw_return = (close_price - entry_price) / entry_price
+    hit = raw_return > 0 if side == "buy" else raw_return < 0
+    direction_return = raw_return if side == "buy" else -raw_return
+    return {
+        "trade_date": _compact_date(trade_date),
+        "ts_code": trade.get("ts_code", ""),
+        "side": side,
+        "entry_price": round(entry_price, 6),
+        "close_price": round(close_price, 6),
+        "raw_return": round(raw_return, 6),
+        "direction_return": round(direction_return, 6),
+        "hit": bool(hit),
+        "capital_layer": _normalize_capital_layer(trade.get("capital_layer")),
+        "market": _normalize_market(trade.get("market")),
+        "strategy": trade.get("strategy", ""),
+        "signal_id": trade.get("signal_id", ""),
+    }
+
+
 def load_direction_hits(trade_date: str) -> list[dict[str, Any]]:
-    return []
+    """Review shadow trade direction against same-day close.
+
+    Buy + close higher is a hit; sell/reduce + close lower is a hit. The
+    output is grouped by capital_layer and market, then written as review
+    evidence under shared/review/data/.
+    """
+    trades = load_shadow_trades(trade_date)
+    close_cache: dict[tuple[str, str], float] = {}
+    reviews: list[dict[str, Any]] = []
+
+    for trade in trades:
+        market = _normalize_market(trade.get("market"))
+        symbol = str(trade.get("ts_code") or "").strip()
+        cache_key = (market, symbol)
+        if cache_key not in close_cache:
+            close_cache[cache_key] = _load_close_price(market, symbol, trade_date)
+        review = _direction_hit_review(trade, close_cache[cache_key], trade_date)
+        if review is not None:
+            reviews.append(review)
+
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for review in reviews:
+        grouped[(review["capital_layer"], review["market"])].append(review)
+
+    records: list[dict[str, Any]] = []
+    as_of = _now_iso()
+    for (capital_layer, market), items in sorted(grouped.items()):
+        hits = sum(1 for item in items if item.get("hit"))
+        evaluated = len(items)
+        record = {
+            "review_type": "direction_hit_review",
+            "trade_date": _compact_date(trade_date),
+            "as_of": as_of,
+            "capital_layer": capital_layer,
+            "market": market,
+            "evaluated_count": evaluated,
+            "hits": hits,
+            "misses": evaluated - hits,
+            "direction_accuracy": round(hits / evaluated, 4) if evaluated else 0.0,
+            "reviews": items,
+        }
+        _append_direction_hit_log(record)
+        records.append(record)
+    return records
 
 
 def run_daily_review(
@@ -438,8 +576,10 @@ def run_daily_review(
 
         if session_key == "close":
             result = review_close(trades, positions, benchmark_return, stage=stage)
+            direction_hit_reviews = load_direction_hits(trade_date)
             result["trade_date"] = trade_date
-            result["review_outcome_count"] = 0
+            result["direction_hit_reviews"] = direction_hit_reviews
+            result["review_outcome_count"] = len(direction_hit_reviews)
             result["capital_layer"] = "shadow"
             result["stale"] = not trades
             return result

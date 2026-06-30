@@ -341,6 +341,40 @@ _GEN_FUNCS = {
 }
 
 
+def _is_expired(condition: dict[str, Any], date: str) -> bool:
+    valid_until = str(condition.get("valid_until") or "").strip()
+    if not valid_until:
+        return False
+    return valid_until < date
+
+
+def _sweep_expired(conditions: list[dict[str, Any]], date: str) -> list[dict[str, Any]]:
+    """清理已过期条件, 保持生成队列只含有效样本。"""
+    return [cond for cond in conditions if isinstance(cond, dict) and not _is_expired(cond, date)]
+
+
+def _dedup_queue(conditions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按 symbol+type 去重, 保留有效期更长/更新的一条。"""
+    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    for cond in conditions:
+        if not isinstance(cond, dict):
+            continue
+        key = (str(cond.get("ts_code") or "").strip(), str(cond.get("type") or "").strip())
+        if not key[0] or not key[1]:
+            continue
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = cond
+            continue
+        current_valid_until = str(cond.get("valid_until") or "")
+        existing_valid_until = str(existing.get("valid_until") or "")
+        current_date = str(cond.get("date") or "")
+        existing_date = str(existing.get("date") or "")
+        if (current_valid_until, current_date) >= (existing_valid_until, existing_date):
+            deduped[key] = cond
+    return list(deduped.values())
+
+
 def generate_conditions(
     pool: dict[str, list[str]] | None = None,
     scores_map: dict[str, dict[str, float]] | None = None,
@@ -405,7 +439,7 @@ def generate_conditions(
             except Exception:
                 continue
 
-    return conditions
+    return _dedup_queue(_sweep_expired(conditions, date))
 
 
 if __name__ == "__main__":

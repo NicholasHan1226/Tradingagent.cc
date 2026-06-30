@@ -1860,8 +1860,6 @@ def run_email_notify() -> dict[str, Any]:
 
 
 JOB_HANDLERS: dict[str, Any] = {
-    "job_pm_scan": lambda: run_shadow_orchestrator("job_pm_scan", "PM"),
-    "job_ashare_shadow": lambda: run_shadow_orchestrator("job_ashare_shadow", "Ashare"),
     "job_trading_signals": run_all_market_trading_signals,
     "job_premarket_signals": lambda: run_market_watch(
         "job_premarket_signals",

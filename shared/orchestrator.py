@@ -454,6 +454,27 @@ def _build_pool_for_market(
     return deps.build_pool(date=date, universe=universe)
 
 
+def _run_condition_lifecycle(
+    market: str,
+    pool: dict[str, Any],
+    scores_by_symbol: dict[str, dict[str, Any]],
+    date: str,
+    reader: Any,
+) -> dict[str, Any]:
+    from shared.screening.condition_generator import generate_conditions
+    from shared.screening.condition_monitor import trigger_replay
+
+    conditions = generate_conditions(pool=pool, scores_map=scores_by_symbol, date=date, reader=reader, market=market)
+    replay = trigger_replay(conditions, date=date)
+    return {
+        "condition_count": len(conditions),
+        "trigger_replay_count": len(replay),
+        "filled_replay_count": sum(1 for row in replay if row.get("replay_fillable")),
+        "conditions": conditions,
+        "trigger_replay": replay,
+    }
+
+
 def run_shadow_loop(
     market_adapter: MarketAdapter,
     date: str,
@@ -523,6 +544,13 @@ def run_shadow_loop(
     stage_calls.append("screening.candidate_pool")
     if not isinstance(pool, dict):
         pool = {"candidate": list(scores_by_symbol), "watch": [], "holdings": [], "universe": list(scores_by_symbol)}
+    condition_lifecycle = _safe_stage(
+        "screening.condition_lifecycle",
+        errors,
+        lambda: _run_condition_lifecycle(market, pool, scores_by_symbol, date, reader),
+        default={"condition_count": 0, "trigger_replay_count": 0, "filled_replay_count": 0, "conditions": [], "trigger_replay": []},
+    )
+    stage_calls.append("screening.condition_lifecycle")
 
     candidates = _candidate_symbols(pool, list(scores_by_symbol))[:max_candidates]
     orders_for_portfolio: list[dict[str, Any]] = []
@@ -629,7 +657,7 @@ def run_shadow_loop(
         if order["quantity"] <= 0 or order["price"] <= 0:
             errors.append({"stage": "execution.shadow_broker", "status": "skipped", "symbol": symbol, "reason": "non-positive quantity or price", "capital_layer": "shadow"})
             continue
-        trade = _safe_stage("execution.shadow_broker", errors, lambda order=order: deps.record_shadow(order, account, market=market), default={"recorded": False, "status": "degraded"})
+        trade = _safe_stage("execution.shadow_broker", errors, lambda order=order: deps.record_shadow(order, account), default={"recorded": False, "status": "degraded"})
         stage_calls.append("execution.shadow_broker")
         if not isinstance(trade, dict):
             trade = {"recorded": False, "status": "invalid"}
@@ -685,6 +713,7 @@ def run_shadow_loop(
         "audit_events": audits,
         "errors": errors,
         "review": review,
+        "condition_lifecycle": condition_lifecycle,
         "generated_at": _now_iso(),
     }
 
@@ -783,6 +812,14 @@ def run_sim_loop(
     stage_calls.append("screening.candidate_pool")
     if not isinstance(pool, dict):
         pool = {"candidate": list(scores_by_symbol), "watch": [], "holdings": [], "universe": list(scores_by_symbol)}
+    condition_lifecycle = _safe_stage(
+        "screening.condition_lifecycle",
+        errors,
+        lambda: _run_condition_lifecycle(market, pool, scores_by_symbol, date, reader),
+        default={"condition_count": 0, "trigger_replay_count": 0, "filled_replay_count": 0, "conditions": [], "trigger_replay": []},
+        capital_layer=capital_layer,
+    )
+    stage_calls.append("screening.condition_lifecycle")
 
     candidates = _candidate_symbols(pool, list(scores_by_symbol))[:max_candidates]
     orders_for_portfolio: list[dict[str, Any]] = []
@@ -1010,6 +1047,7 @@ def run_sim_loop(
         "audit_events": audits,
         "errors": errors,
         "review": review,
+        "condition_lifecycle": condition_lifecycle,
         "generated_at": _now_iso(),
     }
 
