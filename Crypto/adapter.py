@@ -11,7 +11,7 @@ from shared.data.reader import TradingsDataReader
 from shared.markets.base import MarketAdapter
 
 
-MARKET = "crypto"
+MARKET = "Crypto"
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
 
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {

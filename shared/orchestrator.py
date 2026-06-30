@@ -476,7 +476,7 @@ def run_shadow_loop(
     method = str(config.get("portfolio_method", "conviction_weighted"))
     regime = str(config.get("regime", "unknown"))
     max_candidates = max(1, int(config.get("max_candidates", 20)))
-    default_price = _safe_float(config.get("default_price"), 1.0)
+    default_price = _safe_float(config.get("default_price"), 0.0)
     default_volatility = _safe_float(config.get("default_volatility"), 0.20)
 
     universe = _safe_stage("screening.universe", errors, lambda: market_adapter.get_universe(date), default=[])
@@ -731,7 +731,7 @@ def run_sim_loop(
     method = str(config.get("portfolio_method", "conviction_weighted"))
     regime = str(config.get("regime", "unknown"))
     max_candidates = max(1, int(config.get("max_candidates", 20)))
-    default_price = _safe_float(config.get("default_price"), 1.0)
+    default_price = _safe_float(config.get("default_price"), 0.0)
     default_volatility = _safe_float(config.get("default_volatility"), 0.20)
 
     universe = _safe_stage("screening.universe", errors, lambda: market_adapter.get_universe(date), default=[], capital_layer=capital_layer)

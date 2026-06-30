@@ -12,7 +12,7 @@ from shared.markets.base import MarketAdapter
 from US import sim_executor as _sim_executor  # noqa: F401
 
 
-MARKET = "us"
+MARKET = "US"
 READER_MARKETS = (MARKET, "US")
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
 
