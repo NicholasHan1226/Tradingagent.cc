@@ -10,6 +10,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Sequence
 
+try:
+    from shared.data import reader as shared_data_reader
+except Exception:  # pragma: no cover - optional SharedSignals integration
+    shared_data_reader = None  # type: ignore[assignment]
+
 TRADE_CALENDAR_SEARCH_ROOTS = (
     Path("/opt/investment/SharedSignals"),
     Path("/opt/investment/MarketGraph/data"),
@@ -230,6 +235,54 @@ def _fallback_is_trading_day(trading_day: date) -> bool:
     )
 
 
+def _load_shared_calendar_module():
+    if shared_data_reader is None:
+        return None
+    try:
+        return shared_data_reader._import_shared_calendar()
+    except Exception:
+        return None
+
+
+def _shared_calendar_is_trading_day(trading_day: date) -> bool | None:
+    module = _load_shared_calendar_module()
+    if module is None or not hasattr(module, "is_trading_day"):
+        return None
+    try:
+        return bool(module.is_trading_day(trading_day))
+    except Exception:
+        return None
+
+
+def _shared_calendar_trading_days(start_d: date, end_d: date) -> list[date] | None:
+    module = _load_shared_calendar_module()
+    if module is None:
+        return None
+    try:
+        if hasattr(module, "get_trading_days"):
+            return [_to_date(day) for day in module.get_trading_days(start_d, end_d)]
+        if hasattr(module, "get_trading_calendar"):
+            return [_to_date(day) for day in module.get_trading_calendar(start_d, end_d)]
+    except Exception:
+        return None
+    return None
+
+
+def _shared_calendar_next_trading_day(trading_day: date) -> date | None:
+    module = _load_shared_calendar_module()
+    if module is None:
+        return None
+    try:
+        if hasattr(module, "get_next_trading_day"):
+            next_day = module.get_next_trading_day(trading_day)
+            return _to_date(next_day) if next_day is not None else None
+        if hasattr(module, "next_trading_day"):
+            return _to_date(module.next_trading_day(trading_day))
+    except Exception:
+        return None
+    return None
+
+
 def get_trading_calendar(
     start: date | datetime | str,
     end: date | datetime | str,
@@ -240,6 +293,10 @@ def get_trading_calendar(
         raise ValueError(
             f"Invalid calendar range: start {start_d.isoformat()} is after end {end_d.isoformat()}"
         )
+
+    shared_days = _shared_calendar_trading_days(start_d, end_d)
+    if shared_days is not None:
+        return shared_days
 
     trading_days: list[date] = []
     current = start_d
@@ -252,6 +309,9 @@ def get_trading_calendar(
 
 def is_trading_day(d: date | datetime | str) -> bool:
     trading_day = _to_date(d)
+    shared_result = _shared_calendar_is_trading_day(trading_day)
+    if shared_result is not None:
+        return shared_result
     calendar = _load_trade_calendar_data()
     if calendar.covers(trading_day):
         return trading_day in calendar.open_days
@@ -259,7 +319,11 @@ def is_trading_day(d: date | datetime | str) -> bool:
 
 
 def next_trading_day(d: date | datetime | str) -> date:
-    current = _to_date(d) + timedelta(days=1)
+    trading_day = _to_date(d)
+    shared_next = _shared_calendar_next_trading_day(trading_day)
+    if shared_next is not None:
+        return shared_next
+    current = trading_day + timedelta(days=1)
     while not is_trading_day(current):
         current += timedelta(days=1)
     return current

@@ -14,20 +14,9 @@ score_universe(date) → list of (ts_code, scores)
 """
 from __future__ import annotations
 
-import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-
-sys.path.insert(0, '/opt/investment/SharedSignals')
-
-from reader import (
-    get_capital_flow,
-    get_events,
-    get_macro_factors,
-    get_market_data,
-    get_sentiment,
-)
 
 try:
     import yaml
@@ -48,23 +37,9 @@ _DEFAULT_MISSING = 0.5
 
 _WEIGHTS_PATH = Path(__file__).resolve().parent / "weights.yaml"
 
-def _unwrap_reader_data(result: Any) -> list[dict[str, Any]]:
-    if isinstance(result, list):
-        rows: list[dict[str, Any]] = []
-        for item in result:
-            if not isinstance(item, dict) or item.get("degraded"):
-                continue
-            data = item.get("data")
-            if isinstance(data, dict) and data:
-                rows.append(data)
-            elif data is None:
-                rows.append(item)
-        return rows
-    if isinstance(result, dict):
-        data = result.get("data")
-        if isinstance(data, list):
-            return [row for row in data if isinstance(row, dict) and row]
-    return []
+from shared.data.reader import TradingsDataReader
+
+_DATA_READER: TradingsDataReader | None = None
 
 
 def _load_weights() -> dict[str, Any]:
@@ -105,11 +80,27 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, v))
 
 
-# ── 六维打分函数 (各维度从 SharedSignals reader 读取) ──
+# ── 六维打分函数 (各维度从真实数据源读取) ──
+
+def _get_data_reader(config: dict[str, Any] | None = None) -> TradingsDataReader:
+    """Return the configured fail-safe data reader."""
+    injected = (config or {}).get("_data_reader")
+    if injected is not None:
+        return injected
+    global _DATA_READER
+    if _DATA_READER is None:
+        _DATA_READER = TradingsDataReader()
+    return _DATA_READER
+
 
 def _strip_suffix(ts_code: str) -> str:
     """Return code without exchange suffix, e.g. 600519.SH -> 600519."""
     return ts_code.split(".", 1)[0] if "." in ts_code else ts_code
+
+
+def _symbol_variants(ts_code: str) -> list[str]:
+    stripped = _strip_suffix(ts_code)
+    return [stripped, ts_code] if stripped != ts_code else [ts_code]
 
 
 def _direction_score(impact_hint: Any) -> float:
@@ -118,14 +109,13 @@ def _direction_score(impact_hint: Any) -> float:
 
 
 def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """宏观维度 — 从 SharedSignals 宏观因子读取当前 regime。"""
+    """宏观维度 — 从 MarketGraph all_weather_regime.csv 获取当前 regime。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("macro", {})
         regime_scores = dim_cfg.get("regime_scores", {})
-        rows = _unwrap_reader_data(get_macro_factors(date=date))
-        if not rows:
+        row = _get_data_reader(config).get_regime()
+        if not row:
             return 0.5
-        row = max(rows, key=lambda r: str(r.get("generated_at") or ""))
         regime = str(row.get("regime") or "")
         score_value = regime_scores.get(regime)
         if score_value is None:
@@ -139,17 +129,18 @@ def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float:
 
 
 def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """事件维度 — 从 SharedSignals 事件流聚合个股事件方向。"""
+    """事件维度 — 从 MarketGraph event_candidates.csv 聚合个股事件方向。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("event", {})
         min_conf = _safe_float(dim_cfg.get("min_confidence", 0.30), 0.30)
-        rows = _unwrap_reader_data(get_events(date=date, subject_code=ts_code, subject_type="stock"))
-        if not rows:
-            return 0.5
         total_weight = 0.0
         weighted = 0.0
         allowed_status = {"needs_review", "promoted", "approved"}
-        for row in rows:
+        for row in _get_data_reader(config).get_event_candidates():
+            if row.get("subject_code") != ts_code:
+                continue
+            if row.get("subject_type") != "stock":
+                continue
             if row.get("status") not in allowed_status:
                 continue
             conf = _safe_float(row.get("confidence"), 0.0)
@@ -165,21 +156,23 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float:
 
 
 def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """基本面维度 — 从 SharedSignals market_factors 读取最新因子值。"""
+    """基本面维度 — 从 market_factors 读取最新因子值。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("fundamental", {})
         factor_weights = dim_cfg.get("factors", {"value": 0.30, "growth": 0.30, "quality": 0.20, "momentum": 0.20})
-        symbols = [_strip_suffix(ts_code)]
-        if ts_code not in symbols:
-            symbols.append(ts_code)
-        rows = _unwrap_reader_data(get_market_data("market_factors", market="Ashare", symbols=symbols, limit=200))
+        rows: list[dict[str, Any]] = []
+        data_reader = _get_data_reader(config)
+        for symbol in _symbol_variants(ts_code):
+            rows = data_reader.get_factors("Ashare", symbol)
+            if rows:
+                break
         if not rows:
             return 0.5
         latest_by_factor: dict[str, float] = {}
         for row in rows:
-            factor = str(row.get("factor_name") or "").strip().lower()
+            factor = str(row["factor_name"] or "").strip().lower()
             if factor and factor not in latest_by_factor:
-                raw = _safe_float(row.get("value"), 0.5)
+                raw = _safe_float(row["value"], 0.5)
                 if factor in ("pe", "pb"):
                     raw = 1.0 - (raw / 100.0)
                 latest_by_factor[factor] = _clamp(raw)
@@ -200,14 +193,39 @@ def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float
 
 
 def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """资金维度 — 从 SharedSignals 资金流读取窗口内主力净流入。"""
+    """资金维度 — 从 SharedSignals factor rows 读取窗口内主力净流入。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("capital", {})
         window = max(1, int(dim_cfg.get("window_days", 5)))
-        rows = _unwrap_reader_data(get_capital_flow(date=date, window=window, ts_code=ts_code))
-        if not rows:
+        end_date = datetime.strptime(date, "%Y%m%d")
+        start_date = end_date - timedelta(days=window - 1)
+        total_net = 0.0
+        found = False
+        data_reader = _get_data_reader(config)
+        moneyflow_names = {
+            "net_mf_amount",
+            "moneyflow",
+            "capital_flow",
+            "main_net_inflow",
+            "main_moneyflow",
+        }
+        for symbol in _symbol_variants(ts_code):
+            for row in data_reader.get_factors("Ashare", symbol):
+                factor_name = str(row.get("factor_name") or "").strip().lower()
+                if factor_name not in moneyflow_names:
+                    continue
+                raw_time = str(row.get("event_time") or "")[:10]
+                try:
+                    event_day = datetime.strptime(raw_time.replace("-", ""), "%Y%m%d")
+                except ValueError:
+                    continue
+                if start_date <= event_day <= end_date:
+                    total_net += _safe_float(row.get("value"), 0.0)
+                    found = True
+            if found:
+                break
+        if not found:
             return 0.5
-        total_net = sum(_safe_float(row.get("net_mf_amount"), 0.0) for row in rows)
         if total_net > 0:
             score = 0.6 + _clamp(total_net / 1e5, 0.0, 0.4)
         else:
@@ -218,21 +236,25 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float:
 
 
 def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """技术维度 — 从 SharedSignals 日线读取动量和均线趋势。"""
+    """技术维度 — 从 market_bars_daily 读取日线并计算动量和均线趋势。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("technical", {})
         window = max(1, int(dim_cfg.get("window_days", 20)))
         ma_short = max(1, int(dim_cfg.get("ma_short", 5)))
         ma_long = max(1, int(dim_cfg.get("ma_long", 20)))
         needed = max(window, ma_short, ma_long)
-        symbols = [_strip_suffix(ts_code)]
-        if ts_code not in symbols:
-            symbols.append(ts_code)
-        rows = _unwrap_reader_data(get_market_data("market_bars_daily", market="Ashare", symbols=symbols, limit=60))
+        end_date = datetime.strptime(date, "%Y%m%d")
+        start_date = (end_date - timedelta(days=90)).strftime("%Y%m%d")
+        rows: list[dict[str, Any]] = []
+        data_reader = _get_data_reader(config)
+        for symbol in _symbol_variants(ts_code):
+            rows = data_reader.get_bars_daily("Ashare", symbol, start_date, date)
+            if len(rows) >= ma_long:
+                break
         if len(rows) < ma_long:
             return 0.5
-        closes_desc = [_safe_float(row.get("close"), 0.0) for row in rows]
-        closes = list(reversed([c for c in closes_desc if c > 0]))
+        closes = [_safe_float(row.get("close"), 0.0) for row in rows]
+        closes = [c for c in closes if c > 0]
         if len(closes) < needed:
             return 0.5
         base = closes[-window]
@@ -248,17 +270,18 @@ def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float:
 
 
 def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float:
-    """情绪维度 — 从 SharedSignals 情绪流聚合个股信号。"""
+    """情绪维度 — 从 MarketGraph sentiment_signals.csv 聚合个股情绪信号。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("sentiment", {})
         extreme_threshold = _safe_float(dim_cfg.get("extreme_threshold", 0.85), 0.85)
-        rows = _unwrap_reader_data(get_sentiment(date=date, subject_code=ts_code))
-        if not rows:
-            return 0.5
         total_weight = 0.0
         weighted = 0.0
         allowed_status = {"sentiment_signal", "needs_review", "promoted"}
-        for row in rows:
+        for row in _get_data_reader(config).get_sentiment():
+            if not row.get("subject_code"):
+                continue
+            if row.get("subject_code") != ts_code:
+                continue
             if row.get("status") not in allowed_status:
                 continue
             conf = _safe_float(row.get("confidence"), 0.0)
@@ -286,12 +309,17 @@ _DIMENSION_FUNCS = {
 }
 
 
-def score_stock(ts_code: str, date: str | None = None) -> dict[str, float]:
+def score_stock(
+    ts_code: str,
+    date: str | None = None,
+    data_reader: TradingsDataReader | None = None,
+) -> dict[str, float]:
     """对单只股票进行六维打分。
 
     Args:
         ts_code: 股票代码 (如 "600519.SH")
         date: 日期 (YYYYMMDD), 默认今天
+        data_reader: 可选注入 reader, 便于测试或隔离数据源
 
     Returns:
         {
@@ -310,6 +338,8 @@ def score_stock(ts_code: str, date: str | None = None) -> dict[str, float]:
         date = datetime.now().strftime("%Y%m%d")
 
     config = _load_weights()
+    if data_reader is not None:
+        config["_data_reader"] = data_reader
     missing_default = config.get("combined", {}).get("missing_default", _DEFAULT_MISSING)
 
     scores: dict[str, float] = {}
@@ -339,6 +369,7 @@ def score_stock(ts_code: str, date: str | None = None) -> dict[str, float]:
 def score_universe(
     date: str | None = None,
     universe: list[str] | None = None,
+    data_reader: TradingsDataReader | None = None,
 ) -> list[tuple[str, dict[str, float]]]:
     """对整个 universe 进行六维打分。
 
@@ -364,7 +395,7 @@ def score_universe(
 
     results: list[tuple[str, dict[str, float]]] = []
     for ts_code in universe:
-        scores = score_stock(ts_code, date)
+        scores = score_stock(ts_code, date, data_reader=data_reader)
         results.append((ts_code, scores))
 
     # 按 combined 降序
