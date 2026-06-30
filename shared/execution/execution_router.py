@@ -63,12 +63,6 @@ def _ensure_tradings_ashare_on_path() -> None:
         sys.path.insert(0, ashare_dir)
 
 
-def _write_jsonl(path: Path, entry: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
 def _log_route(order: dict[str, Any], channel: str, result: dict[str, Any]) -> None:
     ROUTER_LOG.parent.mkdir(parents=True, exist_ok=True)
     entry = {
@@ -275,34 +269,49 @@ def _build_shadow_record_order(order: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_shadow_log_entry(order: dict[str, Any], strategy_name: str) -> dict[str, Any]:
-    shadow_order = _build_shadow_record_order(order)
-    side = str(shadow_order["side"])
-    quantity = int(shadow_order["quantity"])
-    price = float(shadow_order["price"])
-    amount = round(quantity * price, 2)
-    commission = float(shadow_order["commission"])
-    if commission == 0.0:
-        commission = max(amount * 0.00025, 5.0)
-    stamp_duty = amount * 0.0005 if side == "sell" else 0.0
-    total_cost = round(commission + stamp_duty, 2)
-    net_amount = round(amount + total_cost, 2) if side == "buy" else round(amount - total_cost, 2)
-    return {
-        "trade_id": str(order.get("order_id") or f"SHADOW-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"),
-        "strategy_name": strategy_name,
-        "trade_date": shadow_order["trade_date"],
-        "ts_code": shadow_order["ts_code"],
-        "side": side,
-        "quantity": quantity,
-        "price": price,
-        "amount": amount,
-        "commission": total_cost,
-        "net_amount": net_amount,
-        "capital_layer": shadow_order["capital_layer"],
-        "status": "shadow_recorded",
-        "created_at": datetime.now().isoformat(),
-        "note": shadow_order["note"],
+def _find_position_snapshot(ts_code: str, capital_layer: str) -> dict[str, Any] | None:
+    positions = position_ledger.get_positions(capital_layer=capital_layer)
+    for position in positions:
+        if str(position.get("ts_code", "")).strip() == ts_code:
+            return position
+    return None
+
+
+def _seed_shadow_position_from_ledger(
+    shadow_broker_module: Any,
+    order: dict[str, Any],
+    strategy_name: str,
+) -> dict[str, Any] | None:
+    capital_layer = str(order.get("capital_layer") or "shadow")
+    ts_code = str(order.get("ts_code", "")).strip()
+    if not ts_code or capital_layer == "real":
+        return None
+
+    ledger_position = _find_position_snapshot(ts_code, capital_layer)
+    if not ledger_position:
+        return None
+
+    trade_date = _resolve_trade_date(order) or datetime.now().strftime("%Y-%m-%d")
+    shadow_state = shadow_broker_module.get_shadow_pnl(strategy_name, trade_date)
+    existing_position = shadow_state.get("positions", {}).get(ts_code, {})
+    deficit = int(ledger_position.get("quantity", 0)) - int(existing_position.get("quantity", 0))
+    if deficit <= 0:
+        return None
+
+    seed_order = {
+        "ts_code": ts_code,
+        "side": "buy",
+        "quantity": deficit,
+        "price": float(ledger_position.get("avg_price") or order.get("price") or 0.0),
+        "commission": 0.0,
+        "trade_date": str(ledger_position.get("entry_date") or trade_date),
+        "capital_layer": capital_layer,
+        "note": "router_seed_from_position_ledger",
+        "market": order.get("market"),
     }
+    if seed_order["price"] <= 0:
+        return None
+    return shadow_broker_module.record_shadow(seed_order, strategy_name)
 
 
 def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
@@ -425,16 +434,9 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
                 and result.get("status") == "rejected"
                 and "exceeds existing shadow position" in str(result.get("message", ""))
             ):
-                with shadow_broker._shadow_lock():
-                    _write_jsonl(SHADOW_EXECUTION_LOG, _build_shadow_log_entry(order, strategy_name))
-                    shadow_broker._persist_snapshots_unlocked()
-                result = {
-                    "status": "shadow_recorded",
-                    "recorded": True,
-                    "message": f"shadow_recorded to {SHADOW_EXECUTION_LOG}",
-                    "capital_layer": shadow_order["capital_layer"],
-                    "fallback_mode": "router_direct",
-                }
+                seed_result = _seed_shadow_position_from_ledger(shadow_broker, order, strategy_name)
+                if seed_result and seed_result.get("recorded"):
+                    result = shadow_broker.record_shadow(shadow_order, strategy_name)
             result["ledger_path"] = str(SHADOW_EXECUTION_LOG)
             if result.get("recorded"):
                 result["status"] = "shadow_recorded"
