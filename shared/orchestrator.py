@@ -629,7 +629,7 @@ def run_shadow_loop(
         if order["quantity"] <= 0 or order["price"] <= 0:
             errors.append({"stage": "execution.shadow_broker", "status": "skipped", "symbol": symbol, "reason": "non-positive quantity or price", "capital_layer": "shadow"})
             continue
-        trade = _safe_stage("execution.shadow_broker", errors, lambda order=order: deps.record_shadow(order, account), default={"recorded": False, "status": "degraded"})
+        trade = _safe_stage("execution.shadow_broker", errors, lambda order=order: deps.record_shadow(order, account, market=market), default={"recorded": False, "status": "degraded"})
         stage_calls.append("execution.shadow_broker")
         if not isinstance(trade, dict):
             trade = {"recorded": False, "status": "invalid"}
