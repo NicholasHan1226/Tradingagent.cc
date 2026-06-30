@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -265,6 +266,56 @@ def _candidate_symbols(pool: dict[str, Any], fallback_universe: list[str]) -> li
     return ordered
 
 
+def _supports_market_aware_score(score_stock: StageFn) -> bool:
+    try:
+        signature = inspect.signature(score_stock)
+    except (TypeError, ValueError):
+        return True
+    positional = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    first_name = positional[0].name.lower() if positional else ""
+    second_name = positional[1].name.lower() if len(positional) > 1 else ""
+    if first_name in {"symbol", "ts_code", "ticker", "market_id"} and second_name in {"date", "trade_date"}:
+        return False
+    return (
+        any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in signature.parameters.values())
+        or len(positional) >= 4
+        or first_name.startswith("market")
+        or "market" in signature.parameters
+    )
+
+
+def _score_stock_for_market(
+    deps: OrchestratorDeps,
+    market: str,
+    symbol: str,
+    date: str,
+    reader: Any,
+) -> Any:
+    if _supports_market_aware_score(deps.score_stock):
+        return deps.score_stock(market, symbol, reader, date)
+    return deps.score_stock(symbol, date, data_reader=reader)
+
+
+def _build_pool_for_market(
+    deps: OrchestratorDeps,
+    market: str,
+    date: str,
+    universe: list[str],
+    reader: Any,
+) -> Any:
+    try:
+        signature = inspect.signature(deps.build_pool)
+    except (TypeError, ValueError):
+        return deps.build_pool(date=date, universe=universe, market=market, reader=reader)
+    if "market" in signature.parameters or "reader" in signature.parameters or "market_adapter" in signature.parameters:
+        return deps.build_pool(date=date, universe=universe, market=market, reader=reader)
+    return deps.build_pool(date=date, universe=universe)
+
+
 def run_shadow_loop(
     market_adapter: MarketAdapter,
     date: str,
@@ -307,20 +358,20 @@ def run_shadow_loop(
         score = _safe_stage(
             "screening.six_dim",
             errors,
-            lambda symbol=mapped_symbol: deps.score_stock(symbol, date, data_reader=reader),
+            lambda symbol=mapped_symbol: _score_stock_for_market(deps, market, symbol, date, reader),
             default={"combined": 0.5},
         )
         stage_calls.append("screening.six_dim")
         if not isinstance(score, dict):
             score = {"combined": 0.5}
         score["capital_layer"] = "shadow"
-        score["market"] = mapped_market
+        score["market"] = market
         scores_by_symbol[symbol] = score
         audit = _record_audit(
             deps,
             "signal",
             symbol,
-            payload={"scores": score, "market": mapped_market},
+            payload={"scores": score, "market": market},
             metadata={"date": date, "account": account},
         )
         audits.append(audit)
@@ -328,7 +379,7 @@ def run_shadow_loop(
     pool = _safe_stage(
         "screening.candidate_pool",
         errors,
-        lambda: deps.build_pool(date=date, universe=list(scores_by_symbol)),
+        lambda: _build_pool_for_market(deps, market, date, list(scores_by_symbol), reader),
         default={"candidate": list(scores_by_symbol), "watch": [], "holdings": [], "universe": list(scores_by_symbol)},
     )
     stage_calls.append("screening.candidate_pool")

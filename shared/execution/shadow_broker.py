@@ -23,6 +23,7 @@ SHADOW_LOCK = SHADOW_DIR / ".shadow.lock"
 class ShadowTrade:
     trade_id: str = field(default_factory=lambda: f"SHADOW-{uuid.uuid4().hex[:12]}")
     strategy_name: str = ""
+    market: str = "unknown"
     trade_date: str = field(default_factory=lambda: date.today().isoformat())
     ts_code: str = ""
     side: str = ""
@@ -68,6 +69,11 @@ def _validate_shadow_capital_layer(value: str | None) -> str:
     return layer
 
 
+def _normalize_market(value: Any) -> str:
+    market = str(value or "").strip().lower()
+    return market or "unknown"
+
+
 def _parse_date(value: str | None) -> date:
     if not value:
         return date.today()
@@ -80,9 +86,13 @@ def _parse_date(value: str | None) -> date:
     raise ValueError(f"Invalid trade_date: {value}")
 
 
-def _load_trades_unlocked(strategy_name: str | None = None) -> list[dict[str, Any]]:
+def _load_trades_unlocked(
+    strategy_name: str | None = None,
+    market: str | None = None,
+) -> list[dict[str, Any]]:
     if not SHADOW_TRADES.exists():
         return []
+    market_filter = _normalize_market(market) if market is not None else None
     trades = []
     with open(SHADOW_TRADES, "r", encoding="utf-8") as fh:
         for line in fh:
@@ -90,16 +100,23 @@ def _load_trades_unlocked(strategy_name: str | None = None) -> list[dict[str, An
                 trade = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if strategy_name is None or trade.get("strategy_name") == strategy_name:
-                trade["capital_layer"] = _normalize_capital_layer(trade.get("capital_layer", "shadow"))
-                trades.append(trade)
+            trade["capital_layer"] = _normalize_capital_layer(trade.get("capital_layer", "shadow"))
+            trade["market"] = _normalize_market(trade.get("market"))
+            if strategy_name is not None and trade.get("strategy_name") != strategy_name:
+                continue
+            if market_filter is not None and trade.get("market") != market_filter:
+                continue
+            trades.append(trade)
     trades.sort(key=lambda item: (item.get("trade_date", ""), item.get("created_at", ""), item.get("trade_id", "")))
     return trades
 
 
-def _load_trades(strategy_name: str | None = None) -> list[dict[str, Any]]:
+def _load_trades(
+    strategy_name: str | None = None,
+    market: str | None = None,
+) -> list[dict[str, Any]]:
     with _shadow_lock():
-        return _load_trades_unlocked(strategy_name)
+        return _load_trades_unlocked(strategy_name, market)
 
 
 def _append_trade_unlocked(trade: ShadowTrade) -> None:
@@ -117,9 +134,11 @@ def _replay_strategy_state(
     as_of_date: str | None = None,
     *,
     trades: list[dict[str, Any]] | None = None,
+    market: str | None = None,
 ) -> dict[str, Any]:
     cutoff = _parse_date(as_of_date) if as_of_date else None
-    selected = trades if trades is not None else _load_trades(strategy_name)
+    market_filter = _normalize_market(market) if market is not None else None
+    selected = trades if trades is not None else _load_trades(strategy_name, market=market)
     positions: dict[str, dict[str, Any]] = {}
     daily = {
         "total_trades": 0,
@@ -131,6 +150,9 @@ def _replay_strategy_state(
     }
 
     for trade in selected:
+        trade_market = _normalize_market(trade.get("market"))
+        if market_filter is not None and trade_market != market_filter:
+            continue
         trade_day = _parse_date(trade.get("trade_date"))
         if cutoff and trade_day > cutoff:
             continue
@@ -211,7 +233,11 @@ def _persist_snapshots_unlocked() -> None:
     _json_dump_unlocked(SHADOW_PNL, pnl_payload)
 
 
-def record_shadow(order: dict[str, Any], strategy_name: str) -> dict[str, Any]:
+def record_shadow(
+    order: dict[str, Any],
+    strategy_name: str,
+    market: str | None = None,
+) -> dict[str, Any]:
     ts_code = order.get("ts_code", "")
     side = str(order.get("side", "")).lower()
     quantity = int(order.get("quantity", 0))
@@ -219,6 +245,7 @@ def record_shadow(order: dict[str, Any], strategy_name: str) -> dict[str, Any]:
     commission = float(order.get("commission", 0.0))
     trade_date = _parse_date(order.get("trade_date")).isoformat()
     capital_layer = _validate_shadow_capital_layer(order.get("capital_layer", "shadow"))
+    market_value = _normalize_market(market if market is not None else order.get("market"))
 
     if not ts_code:
         return {"trade_id": "", "status": "rejected", "recorded": False, "message": "Missing ts_code"}
@@ -253,6 +280,7 @@ def record_shadow(order: dict[str, Any], strategy_name: str) -> dict[str, Any]:
 
         trade = ShadowTrade(
             strategy_name=strategy_name,
+            market=market_value,
             trade_date=trade_date,
             ts_code=ts_code,
             side=side,
@@ -274,6 +302,7 @@ def record_shadow(order: dict[str, Any], strategy_name: str) -> dict[str, Any]:
         "message": f"Shadow trade recorded for strategy {strategy_name}: {side} {quantity} {ts_code} @ {price}",
         "net_amount": trade.net_amount,
         "capital_layer": capital_layer,
+        "market": market_value,
     }
 
 
@@ -282,11 +311,14 @@ def get_shadow_pnl(
     date: str | None = None,
     *,
     trades: list[dict[str, Any]] | None = None,
+    market: str | None = None,
 ) -> dict[str, Any]:
     target_date = _parse_date(date).isoformat() if date else datetime.now().strftime("%Y-%m-%d")
-    state = _replay_strategy_state(strategy_name, target_date, trades=trades)
+    market_value = _normalize_market(market) if market is not None else None
+    state = _replay_strategy_state(strategy_name, target_date, trades=trades, market=market_value)
     return {
         "strategy": strategy_name,
+        "market": market_value or "all",
         "date": target_date,
         "total_trades": state["total_trades"],
         "buys": state["buys"],
@@ -303,6 +335,9 @@ def list_strategies() -> list[str]:
     return sorted(set(t.get("strategy_name", "") for t in trades if t.get("strategy_name")))
 
 
-def get_all_shadow_pnl(date: str | None = None) -> dict[str, dict[str, Any]]:
+def get_all_shadow_pnl(
+    date: str | None = None,
+    market: str | None = None,
+) -> dict[str, dict[str, Any]]:
     strategies = list_strategies()
-    return {strategy: get_shadow_pnl(strategy, date) for strategy in strategies}
+    return {strategy: get_shadow_pnl(strategy, date, market=market) for strategy in strategies}

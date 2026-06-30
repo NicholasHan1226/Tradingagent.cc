@@ -105,14 +105,34 @@ def _normalize_capital_layer(value: Any, default: str = "shadow") -> str:
     return default
 
 
+def _normalize_market(value: Any, default: str = "unknown") -> str:
+    raw = str(value or default).strip().lower()
+    return raw or default
+
+
 def _group_by_capital_layer(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows or []:
         layer = _normalize_capital_layer(row.get("capital_layer"))
         normalized = dict(row)
         normalized["capital_layer"] = layer
+        normalized["market"] = _normalize_market(row.get("market"))
         grouped[layer].append(normalized)
     return dict(grouped)
+
+
+def _group_by_capital_layer_market(
+    rows: list[dict[str, Any]],
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    grouped: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    for row in rows or []:
+        layer = _normalize_capital_layer(row.get("capital_layer"))
+        market = _normalize_market(row.get("market"))
+        normalized = dict(row)
+        normalized["capital_layer"] = layer
+        normalized["market"] = market
+        grouped[layer][market].append(normalized)
+    return {layer: dict(markets) for layer, markets in grouped.items()}
 
 
 def _append_layer_logs(base_record: dict[str, Any], grouped_records: dict[str, dict[str, Any]]) -> None:
@@ -120,7 +140,26 @@ def _append_layer_logs(base_record: dict[str, Any], grouped_records: dict[str, d
         log_record = dict(base_record)
         log_record.update(layer_record)
         log_record["capital_layer"] = capital_layer
+        log_record["market"] = layer_record.get("market", "unknown")
         _append_log(log_record)
+
+
+def _append_market_layer_logs(base_record: dict[str, Any], grouped_records: dict[str, dict[str, Any]]) -> None:
+    for capital_layer, layer_record in grouped_records.items():
+        market_reviews = layer_record.get("market_reviews") or {}
+        if not market_reviews:
+            log_record = dict(base_record)
+            log_record.update(layer_record)
+            log_record["capital_layer"] = capital_layer
+            log_record["market"] = layer_record.get("market", "unknown")
+            _append_log(log_record)
+            continue
+        for market, market_record in market_reviews.items():
+            log_record = dict(base_record)
+            log_record.update(market_record)
+            log_record["capital_layer"] = capital_layer
+            log_record["market"] = market
+            _append_log(log_record)
 
 
 def _preferred_capital_layer(layers: list[str]) -> str:
@@ -246,6 +285,7 @@ def _normalize_trade(row: dict[str, Any], default_layer: str = "shadow") -> dict
         "signal_id": _first_present(row, "tradebook_id", "source_decision_id", "signal_id"),
         "created_at": _first_present(row, "created_at", "timestamp", "time"),
         "trade_date": _first_present(row, "trade_date", "date"),
+        "market": _normalize_market(_first_present(row, "market", "asset_class", default="unknown")),
         "capital_layer": _normalize_capital_layer(
             _first_present(row, "capital_layer", "capital_nature", "account_type", default=default_layer),
             default=default_layer,
@@ -266,6 +306,7 @@ def _normalize_position(row: dict[str, Any], default_layer: str = "shadow") -> d
         "stop_loss_pct": _float_value(row.get("stop_loss_pct"), -0.03),
         "take_profit_pct": _float_value(row.get("take_profit_pct"), 0.05),
         "momentum": _float_value(row.get("momentum"), 0.0),
+        "market": _normalize_market(_first_present(row, "market", "asset_class", default="unknown")),
         "capital_layer": _normalize_capital_layer(
             _first_present(row, "capital_layer", "capital_nature", "account_type", default=default_layer),
             default=default_layer,
@@ -309,6 +350,7 @@ def _read_signal_fills(trade_date: str) -> list[dict[str, Any]]:
                     "signal_id": _first_present(row, "order_id", "idempotency_key", "signal_id"),
                     "created_at": _first_present(row, "filled_at", "fill_time", "timestamp"),
                     "trade_date": _first_present(row, "trade_date", "valid_until"),
+                    "market": _first_present(row, "market", "asset_class", default="unknown"),
                     "capital_layer": _first_present(row, "capital_layer", "account_type", default="shadow"),
                 },
                 default_layer="shadow",
@@ -317,6 +359,38 @@ def _read_signal_fills(trade_date: str) -> list[dict[str, Any]]:
     except Exception:
         return []
     return rows
+
+
+def _merge_market_review(
+    market_reviews: dict[str, dict[str, Any]],
+    market: str,
+    layer: str,
+    review: dict[str, Any],
+) -> None:
+    entry = market_reviews.setdefault(
+        market,
+        {
+            "market": market,
+            "capital_layers": [],
+            "capital_layer_reviews": {},
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "pnl": 0.0,
+        },
+    )
+    if layer not in entry["capital_layers"]:
+        entry["capital_layers"].append(layer)
+    entry["capital_layer_reviews"][layer] = review
+    trades = int(review.get("trades", review.get("morning_trade_count", 0)) or 0)
+    wins = int(review.get("wins", 0) or 0)
+    losses = int(review.get("losses", 0) or 0)
+    entry["trades"] += trades
+    entry["wins"] += wins
+    entry["losses"] += losses
+    entry["pnl"] = round(_safe_float(entry.get("pnl")) + _safe_float(review.get("pnl")), 6)
+    entry["win_rate"] = round(entry["wins"] / entry["trades"], 4) if entry["trades"] else 0.0
+    entry["stale"] = entry["trades"] == 0
 
 
 def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
@@ -407,15 +481,20 @@ def review_lunch(
     """
     layer_positions = _group_by_capital_layer(positions)
     layer_trades = _group_by_capital_layer(morning_trades)
+    layer_market_positions = _group_by_capital_layer_market(positions)
+    layer_market_trades = _group_by_capital_layer_market(morning_trades)
     layers = sorted(set(layer_positions) | set(layer_trades) or {"shadow"})
 
     goals = _load_goals()
     stage_goals = _stage_goals(goals, stage)
     benchmark_date = trade_date or datetime.now(timezone.utc).strftime("%Y%m%d")
-    capital_layer_reviews: dict[str, Any] = {}
-    for layer in layers:
-        layer_pos = layer_positions.get(layer, [])
-        layer_trade = layer_trades.get(layer, [])
+
+    def build_review(
+        layer: str,
+        market: str,
+        layer_pos: list[dict[str, Any]],
+        layer_trade: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         signal_count = sum(1 for t in layer_trade if t.get("signal_id"))
         hit = _hit_rate(layer_trade)
         realized_pnl = _sum_pnl(layer_trade)
@@ -453,10 +532,16 @@ def review_lunch(
             "watch": watch_list,
             "notes": "午盘复盘: 检查上午信号兑现度, 止损标的减仓, 未兑现信号加仓.",
         }
-        capital_layer_reviews[layer] = {
+        wins = sum(1 for t in layer_trade if _safe_float(t.get("pnl")) > 0)
+        losses = sum(1 for t in layer_trade if _safe_float(t.get("pnl")) < 0)
+        return {
             "capital_layer": layer,
+            "market": market,
+            "trades": len(layer_trade),
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(hit, 4),
             "signal_count": signal_count,
-            "hit_rate": round(hit, 4),
             "pnl": round(pnl, 6),
             "realized_pnl": round(realized_pnl, 6),
             "floating_pnl": round(floating_pnl, 6),
@@ -478,14 +563,39 @@ def review_lunch(
             "next_plan": next_plan,
         }
 
+    capital_layer_reviews: dict[str, Any] = {}
+    market_reviews: dict[str, dict[str, Any]] = {}
+    for layer in layers:
+        layer_pos = layer_positions.get(layer, [])
+        layer_trade = layer_trades.get(layer, [])
+        layer_review = build_review(layer, "all", layer_pos, layer_trade)
+        layer_review.pop("market", None)
+        layer_markets = sorted(
+            set(layer_market_positions.get(layer, {}))
+            | set(layer_market_trades.get(layer, {}))
+            or {"unknown"}
+        )
+        layer_review["market_reviews"] = {}
+        for market in layer_markets:
+            market_review = build_review(
+                layer,
+                market,
+                layer_market_positions.get(layer, {}).get(market, []),
+                layer_market_trades.get(layer, {}).get(market, []),
+            )
+            layer_review["market_reviews"][market] = market_review
+            _merge_market_review(market_reviews, market, layer, market_review)
+        capital_layer_reviews[layer] = layer_review
+
     result = {
         "session": "lunch",
         "as_of": _now_iso(),
         "capital_layer": "shadow",
         "stale": not morning_trades,
         "capital_layer_reviews": capital_layer_reviews,
+        "market_reviews": market_reviews,
     }
-    _append_layer_logs({"session": "lunch", "as_of": result["as_of"]}, capital_layer_reviews)
+    _append_market_layer_logs({"session": "lunch", "as_of": result["as_of"]}, capital_layer_reviews)
     return result
 
 
@@ -528,14 +638,18 @@ def review_close(
     """
     layer_positions = _group_by_capital_layer(positions)
     layer_trades = _group_by_capital_layer(all_trades)
+    layer_market_positions = _group_by_capital_layer_market(positions)
+    layer_market_trades = _group_by_capital_layer_market(all_trades)
     layers = sorted(set(layer_positions) | set(layer_trades) or {"shadow"})
     goals = _load_goals()
     stage_goals = _stage_goals(goals, stage)
 
-    capital_layer_reviews: dict[str, Any] = {}
-    for layer in layers:
-        layer_pos = layer_positions.get(layer, [])
-        layer_trd = layer_trades.get(layer, [])
+    def build_review(
+        layer: str,
+        market: str,
+        layer_pos: list[dict[str, Any]],
+        layer_trd: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         wins = [t for t in layer_trd if _safe_float(t.get("pnl")) > 0]
         losses = [t for t in layer_trd if _safe_float(t.get("pnl")) < 0]
         pnl = _sum_pnl(layer_trd)
@@ -583,8 +697,13 @@ def review_close(
             s for s, pct in attr.get("by_strategy", {}).items()
             if pct < -0.1 and s != "unattributed"
         ]
-        capital_layer_reviews[layer] = {
+        return {
             "capital_layer": layer,
+            "market": market,
+            "trades": len(layer_trd),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(win_rate, 4),
             "trades_summary": trades_summary,
             "pnl": round(total_pnl, 6),
             "stale": not layer_trd,
@@ -608,16 +727,41 @@ def review_close(
             },
         }
 
+    capital_layer_reviews: dict[str, Any] = {}
+    market_reviews: dict[str, dict[str, Any]] = {}
+    for layer in layers:
+        layer_pos = layer_positions.get(layer, [])
+        layer_trd = layer_trades.get(layer, [])
+        layer_review = build_review(layer, "all", layer_pos, layer_trd)
+        layer_review.pop("market", None)
+        layer_markets = sorted(
+            set(layer_market_positions.get(layer, {}))
+            | set(layer_market_trades.get(layer, {}))
+            or {"unknown"}
+        )
+        layer_review["market_reviews"] = {}
+        for market in layer_markets:
+            market_review = build_review(
+                layer,
+                market,
+                layer_market_positions.get(layer, {}).get(market, []),
+                layer_market_trades.get(layer, {}).get(market, []),
+            )
+            layer_review["market_reviews"][market] = market_review
+            _merge_market_review(market_reviews, market, layer, market_review)
+        capital_layer_reviews[layer] = layer_review
+
     result = {
         "session": "close",
         "as_of": _now_iso(),
         "capital_layer": "shadow",
         "stale": not all_trades,
         "capital_layer_reviews": capital_layer_reviews,
+        "market_reviews": market_reviews,
     }
     baseline_layer = _preferred_capital_layer(list(capital_layer_reviews))
     record_last_period(capital_layer_reviews[baseline_layer]["pnl"], "daily")
-    _append_layer_logs({"session": "close", "as_of": result["as_of"]}, capital_layer_reviews)
+    _append_market_layer_logs({"session": "close", "as_of": result["as_of"]}, capital_layer_reviews)
     return result
 
 

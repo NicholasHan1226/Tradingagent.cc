@@ -8,7 +8,7 @@
 - universe: 全市场 (已过滤, 用于打分)
 - fundamental: 基本面池 (长期跟踪, 低频更新)
 
-build_pool(date, holdings) → {layer: [ts_code]}
+build_pool(date, holdings, market="ashare") → {layer: [ts_code]}
 get_layer(pool, layer) → [ts_code]
 """
 from __future__ import annotations
@@ -79,6 +79,9 @@ def build_pool(
     date: str | None = None,
     holdings: list[str] | None = None,
     universe: list[str] | None = None,
+    market: str | None = None,
+    reader: Any | None = None,
+    market_adapter: Any | None = None,
 ) -> dict[str, list[str]]:
     """构建5层候选池。
 
@@ -86,6 +89,9 @@ def build_pool(
         date: 日期 (YYYYMMDD), 默认今天
         holdings: 当前持仓列表, 默认从 positions 加载
         universe: 已过滤的全市场列表, 默认从 universe_filter 获取
+        market: 市场名称, 默认 "ashare"
+        reader: 可选数据读取器, 透传给六维打分
+        market_adapter: 可选 market adapter, 用于推断 market
 
     Returns:
         {
@@ -98,6 +104,14 @@ def build_pool(
     """
     if date is None:
         date = datetime.now().strftime("%Y%m%d")
+    if market_adapter is not None and market is None:
+        get_market = getattr(market_adapter, "get_market", None)
+        if callable(get_market):
+            try:
+                market = str(get_market()).strip() or None
+            except Exception:
+                market = None
+    market = str(market or "ashare")
 
     # 1. Holdings 层
     if holdings is None:
@@ -123,7 +137,7 @@ def build_pool(
         for ts_code in universe:
             if ts_code in holdings:
                 continue
-            scores = score_stock(ts_code, date)
+            scores = score_stock(market, ts_code, reader, date)
             if scores.get("combined", 0.0) >= _CANDIDATE_THRESHOLD:
                 candidate.append(ts_code)
                 if len(candidate) >= _POOL_LIMITS["candidate"]:
@@ -138,7 +152,7 @@ def build_pool(
         for ts_code in universe:
             if ts_code in holdings or ts_code in candidate:
                 continue
-            scores = score_stock(ts_code, date)
+            scores = score_stock(market, ts_code, reader, date)
             combined = scores.get("combined", 0.0)
             if _WATCH_THRESHOLD <= combined < _CANDIDATE_THRESHOLD:
                 watch.append(ts_code)

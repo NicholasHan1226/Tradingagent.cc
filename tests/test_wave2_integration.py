@@ -293,13 +293,13 @@ class Wave2IntegrationTest(unittest.TestCase):
         self.assertTrue((self.tmp_path / "signals" / "pending").exists())
         self.assertGreaterEqual(len(list((self.tmp_path / "signals" / "pending").glob("*.json"))), 2)
 
-    def test_crypto_pm_reach_scoring_but_current_portfolio_methods_are_not_supported(self) -> None:
+    def test_crypto_pm_complete_shadow_loop_with_market_aware_scoring(self) -> None:
         cases = [
-            ("crypto", CryptoAdapter, "volatility_targeted", ("bars", "crypto", "BTCUSDT")),
-            ("pm", PMAdapter, "pm_probability_weighted", ("bars", "pm", "will-btc-hit-100k")),
+            ("crypto", CryptoAdapter, ("bars", "crypto", "BTCUSDT")),
+            ("pm", PMAdapter, ("bars", "pm", "will-btc-hit-100k")),
         ]
 
-        for market, adapter_cls, method_name, expected_call in cases:
+        for market, adapter_cls, expected_call in cases:
             with self.subTest(market=market):
                 reader = Wave2MockReader()
                 result = run_shadow_loop(
@@ -312,18 +312,13 @@ class Wave2IntegrationTest(unittest.TestCase):
 
                 self.assertEqual(result["market"], market)
                 self.assertEqual(result["capital_layer"], "shadow")
-                self.assertEqual(result["state"], "degraded")
-                self.assertEqual(result["recorded_count"], 0)
+                self.assertEqual(result["state"], "ok")
+                self.assertEqual(result["recorded_count"], 1)
                 self.assertIn(expected_call, reader.calls)
-                self.assertTrue(
-                    any(
-                        error.get("stage") == "portfolio.constructor"
-                        and method_name in str(error.get("error"))
-                        for error in result["errors"]
-                    )
-                )
+                self.assertEqual(result["records"][0]["symbol"], expected_call[2])
+                self.assertEqual(result["review"]["capital_layer"], "shadow")
 
-    def test_daily_review_reads_four_market_shadow_trades_but_only_groups_by_layer(self) -> None:
+    def test_daily_review_reads_four_market_shadow_trades_and_keeps_market_breakdown(self) -> None:
         shadow_broker.SHADOW_DIR.mkdir(parents=True, exist_ok=True)
         for market, strategy, symbol in (
             ("ashare", "ashare_shadow", "600519"),
@@ -357,7 +352,8 @@ class Wave2IntegrationTest(unittest.TestCase):
         self.assertEqual(review["capital_layer"], "shadow")
         self.assertFalse(review["stale"])
         self.assertEqual(review["capital_layer_reviews"]["shadow"]["trades_summary"]["count"], 4)
-        self.assertNotIn("market_reviews", review)
+        self.assertIn("market_reviews", review)
+        self.assertEqual(set(review["market_reviews"]), {"ashare", "crypto", "pm", "us"})
 
 
 if __name__ == "__main__":

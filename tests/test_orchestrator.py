@@ -13,14 +13,17 @@ from shared.orchestrator import OrchestratorDeps, run_shadow_loop
 
 
 class StubMarketAdapter(MarketAdapter):
+    def __init__(self, market: str = "unit") -> None:
+        self.market = market
+
     def get_universe(self, date: str) -> list[str]:
         return ["AAA", "BBB"]
 
     def get_market(self) -> str:
-        return "Unit"
+        return self.market
 
     def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
-        return "Unit", symbol
+        return self.market, symbol
 
     def get_strategy_config(self) -> dict[str, object]:
         return {
@@ -33,7 +36,7 @@ class StubMarketAdapter(MarketAdapter):
         }
 
     def get_shadow_account(self) -> str:
-        return "unit_shadow"
+        return f"{self.market}_shadow"
 
 
 class StubReader:
@@ -76,14 +79,33 @@ class OrchestratorTest(unittest.TestCase):
         _patch_shadow_paths(self, self.tmp_path)
         _patch_audit_paths(self, self.tmp_path)
         self.calls: list[str] = []
+        self.score_requests: list[dict[str, object]] = []
+        self.pool_requests: list[dict[str, object]] = []
 
     def _deps(self, *, fail_debate: bool = False) -> OrchestratorDeps:
-        def score_stock(symbol: str, date: str, data_reader: object = None) -> dict[str, object]:
+        def score_stock(market: str, symbol: str, data_reader: object = None, date: str | None = None) -> dict[str, object]:
             self.calls.append("screening")
+            self.score_requests.append({
+                "market": market,
+                "symbol": symbol,
+                "date": date,
+                "reader": data_reader,
+            })
             return {"combined": 0.72, "sector": "unit", "capital_layer": "shadow"}
 
-        def build_pool(date: str, universe: list[str]) -> dict[str, list[str]]:
+        def build_pool(
+            date: str,
+            universe: list[str],
+            market: str | None = None,
+            reader: object | None = None,
+        ) -> dict[str, list[str]]:
             self.calls.append("candidate_pool")
+            self.pool_requests.append({
+                "market": market,
+                "date": date,
+                "universe": list(universe),
+                "reader": reader,
+            })
             return {"candidate": list(universe), "watch": [], "holdings": [], "universe": list(universe)}
 
         def debate(symbol: str, scores: dict[str, object]) -> dict[str, object]:
@@ -151,6 +173,8 @@ class OrchestratorTest(unittest.TestCase):
             self.assertIn(expected, self.calls)
         self.assertEqual(result["recorded_count"], 2)
         self.assertEqual(len(list((self.tmp_path / "signals" / "pending").glob("*.json"))), 2)
+        self.assertEqual({request["market"] for request in self.score_requests}, {"unit"})
+        self.assertEqual({request["market"] for request in self.pool_requests}, {"unit"})
 
         trade_rows = [
             json.loads(line)
@@ -182,6 +206,26 @@ class OrchestratorTest(unittest.TestCase):
         self.assertTrue(result["errors"])
         self.assertIn("review", self.calls)
         self.assertGreaterEqual(result["recorded_count"], 1)
+
+    def test_run_shadow_loop_uses_adapter_market_for_non_ashare_scoring(self) -> None:
+        for market in ("crypto", "us"):
+            with self.subTest(market=market):
+                self.calls.clear()
+                self.score_requests.clear()
+                self.pool_requests.clear()
+
+                result = run_shadow_loop(
+                    StubMarketAdapter(market),
+                    "20260630",
+                    StubReader(),
+                    deps=self._deps(),
+                    signals_dir=self.tmp_path / f"signals_{market}",
+                )
+
+                self.assertEqual(result["state"], "ok")
+                self.assertEqual(result["market"], market)
+                self.assertEqual({request["market"] for request in self.score_requests}, {market})
+                self.assertEqual({request["market"] for request in self.pool_requests}, {market})
 
 
 if __name__ == "__main__":
