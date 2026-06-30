@@ -115,7 +115,7 @@ class EmailSenderTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "sent")
         self.assertEqual(result["provider"], "cloudflare")
-        self.assertEqual(captured["to"], "Leocozy@coze.email")
+        self.assertEqual(captured["to"], "tradingadviser@coze.email")
         self.assertEqual(captured["from_addr"], "notice@agentspaces.cc")
         self.assertEqual(captured["subject"], "Tradings 日报 2026-06-30")
         self.assertIn("日报 | 2026-06-30", captured["html_body"])
