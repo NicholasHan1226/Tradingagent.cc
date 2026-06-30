@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -190,6 +191,74 @@ def _load_shadow_trades_for_date(target_date: str) -> list[dict[str, Any]]:
         entry["market"] = _normalize_market(entry.get("market")) if entry.get("market") else _market_from_symbol(entry.get("ts_code"))
         rows.append(entry)
     return rows
+
+
+def _market_matches(row: dict[str, Any], market: str) -> bool:
+    target = _normalize_market(market)
+    row_market = _normalize_market(row.get("market")) if row.get("market") else _market_from_symbol(row.get("ts_code"))
+    return row_market == target
+
+
+def _position_notional(row: dict[str, Any]) -> float:
+    cost_basis = _safe_float(row.get("cost_basis"))
+    if cost_basis:
+        return abs(cost_basis)
+    quantity = _safe_float(row.get("quantity"))
+    price = _safe_float(row.get("avg_price") or row.get("cost") or row.get("price"))
+    return abs(quantity * price)
+
+
+def _position_current_price(row: dict[str, Any]) -> float:
+    for key in ("current_price", "last_close", "close", "price", "avg_price", "cost"):
+        price = _safe_float(row.get(key))
+        if price > 0:
+            return price
+    return 0.0
+
+
+def _positions_for_market(positions: list[dict[str, Any]], market: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in positions:
+        entry = dict(row)
+        if not entry.get("market"):
+            entry["market"] = _market_from_symbol(entry.get("ts_code"))
+        if _market_matches(entry, market):
+            rows.append(entry)
+    return rows
+
+
+def _latest_strategy_configs(markets: tuple[str, ...] = DAILY_BRIEF_MARKETS) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    snapshots: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for market in markets:
+        try:
+            adapter = get_market_adapter(market)
+            config = adapter.get_strategy_config()
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"market": market, "error": f"{exc.__class__.__name__}: {exc}"})
+            continue
+        if not isinstance(config, dict):
+            errors.append({"market": market, "error": "strategy config is not a dict"})
+            continue
+        encoded = json.dumps(config, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        strategies = config.get("strategies") if isinstance(config.get("strategies"), dict) else {}
+        snapshots.append({
+            "market": _normalize_market(config.get("market") or market),
+            "adapter": adapter.__class__.__name__,
+            "version_hash": hashlib.sha256(encoded).hexdigest()[:16],
+            "strategy_count": len(strategies),
+            "strategies": sorted(strategies),
+            "portfolio_method": config.get("portfolio_method", "unknown"),
+            "regime": config.get("regime", "unknown"),
+            "max_candidates": config.get("max_candidates"),
+            "shadow_capital": config.get("shadow_capital"),
+            "market_rules": config.get("market_rules", {}),
+        })
+    return snapshots, errors
+
+
+def _state_from_errors(errors: list[Any], *, no_input: bool = False) -> str:
+    return "degraded" if errors or no_input else "ok"
 
 
 def _count_signals(trades: list[dict[str, Any]]) -> int:
@@ -893,25 +962,6 @@ def _compose_nightly_email_data(
     }
 
 
-def placeholder(job: str, output_rel: str, note: str, fmt: str = "jsonl", extra: dict[str, Any] | None = None) -> dict[str, Any]:
-    payload = {
-        "job": job,
-        "state": "planned_only",
-        "generated_at": now_iso(),
-        "note": note,
-    }
-    if extra:
-        payload.update(extra)
-    output = SHARED / output_rel
-    if fmt == "json":
-        write_json(output, payload)
-    elif fmt == "md":
-        write_markdown(output, job, payload)
-    else:
-        append_jsonl(output, payload)
-    return payload
-
-
 class StubMarketAdapter:
     """Default no-op adapter until market-specific adapters land."""
 
@@ -1227,12 +1277,22 @@ def run_self_heal() -> dict[str, Any]:
 def run_self_heal_night() -> dict[str, Any]:
     from shared.review.self_heal_loop import run_heal_cycle
 
-    result = run_heal_cycle({})
+    context = _self_heal_context()
+    thresholds = {
+        "data_stale_minutes": 180,
+        "error_rate_pct": 5,
+        "pnl_drawdown_pct": 4,
+        "signal_starvation_periods": 2,
+        "position_cap_pct": 12,
+    }
+    result = run_heal_cycle(context, thresholds=thresholds)
     result.update({
         "job": "job_self_heal_night",
-        "state": "scaffolded",
+        "state": "degraded" if int(result.get("issues_escalated", 0) or 0) else "ok",
         "generated_at": now_iso(),
         "mode": "deep_night",
+        "context": context,
+        "thresholds": thresholds,
     })
     write_json(SHARED / "review/heal/heal_report.json", result)
     return result
@@ -1265,60 +1325,220 @@ def run_weekly_review(job_name: str, output_rel: str) -> dict[str, Any]:
 
 
 def run_attribution(job_name: str, output_rel: str) -> dict[str, Any]:
-    from shared.review.attribution import attribute_pct
+    from shared.review.attribution import attribute, attribute_pct
 
-    result = attribute_pct([])
+    current_trade_date = trade_date()
+    trades = _load_shadow_trades_for_date(current_trade_date)
+    attribution = attribute(trades)
+    attribution_pct = attribute_pct(trades)
     payload = {
         "job": job_name,
-        "state": "scaffolded",
+        "state": "ok",
         "generated_at": now_iso(),
-        "attribution": result,
+        "trade_date": current_trade_date,
+        "capital_layer": "shadow",
+        "shadow_trade_count": len(trades),
+        "attribution": attribution,
+        "attribution_pct": attribution_pct,
     }
     append_jsonl(SHARED / output_rel, payload)
     return payload
 
 
 def run_strategy_version() -> dict[str, Any]:
-    return placeholder(
-        "job_strategy_version",
-        "review/strategies/strategy_version.jsonl",
-        "策略版本快照 wrapper 已迁移；待对接真实 strategy_params 源。",
-    )
+    snapshots, errors = _latest_strategy_configs()
+    payload = {
+        "job": "job_strategy_version",
+        "state": _state_from_errors(errors),
+        "generated_at": now_iso(),
+        "trade_date": trade_date(),
+        "capital_layer": "shadow",
+        "market_count": len(snapshots),
+        "strategy_count": sum(int(item.get("strategy_count", 0) or 0) for item in snapshots),
+        "versions": snapshots,
+        "errors": errors,
+    }
+    append_jsonl(SHARED / "review/strategies/strategy_version.jsonl", payload)
+    return payload
 
 
 def run_pm_risk() -> dict[str, Any]:
-    from shared.risk.patrol import patrol
+    from shared.accounting import position_ledger
+    from shared.risk.black_swan import check_black_swan
+    from shared.risk.position_monitor import check_positions, filter_actions
 
-    result = patrol({})
-    result.update({"job": "job_pm_risk", "state": "scaffolded", "generated_at": now_iso()})
-    append_jsonl(SHARED / "risk/pm/pm_risk_report.jsonl", result)
-    return result
+    errors: list[dict[str, str]] = []
+    try:
+        positions = position_ledger.get_positions(capital_layer="all")
+    except Exception as exc:  # noqa: BLE001
+        positions = []
+        errors.append({"source": "position_ledger.get_positions", "error": f"{exc.__class__.__name__}: {exc}"})
+    pm_positions = _positions_for_market(positions, "PM")
+    current_prices = {
+        str(row.get("ts_code")): _position_current_price(row)
+        for row in pm_positions
+        if row.get("ts_code") and _position_current_price(row) > 0
+    }
+    total_notional = sum(_position_notional(row) for row in pm_positions)
+    total_exposure = min(1.0, total_notional / DAILY_BRIEF_CAPITAL_BASE) if DAILY_BRIEF_CAPITAL_BASE else 0.0
+    portfolio = {
+        "positions": pm_positions,
+        "current_prices": current_prices,
+        "total_exposure": total_exposure,
+        "high_water": max(total_notional, 1.0),
+        "current_value": total_notional,
+        "daily_pnl_pct": 0.0,
+        "regime": "pm_probability_market",
+    }
+    try:
+        position_signals = check_positions(pm_positions, current_prices, regime="pm_probability_market")
+        action_signals = filter_actions(position_signals)
+    except Exception as exc:  # noqa: BLE001
+        position_signals = []
+        action_signals = []
+        errors.append({"source": "position_monitor", "error": f"{exc.__class__.__name__}: {exc}"})
+    market_data = {
+        "market_change_pct": 0.0,
+        "policy_shock": None,
+        "liquidity_stress": False,
+    }
+    try:
+        black_swan = check_black_swan(market_data)
+    except Exception as exc:  # noqa: BLE001
+        black_swan = {}
+        errors.append({"source": "black_swan", "error": f"{exc.__class__.__name__}: {exc}"})
+    payload = {
+        "job": "job_pm_risk",
+        "state": _state_from_errors(errors),
+        "generated_at": now_iso(),
+        "trade_date": trade_date(),
+        "capital_layer": "shadow",
+        "market": "PM",
+        "position_count": len(pm_positions),
+        "portfolio": portfolio,
+        "position_signals": position_signals,
+        "action_signals": action_signals,
+        "black_swan": black_swan,
+        "errors": errors,
+    }
+    append_jsonl(SHARED / "risk/pm/pm_risk_report.jsonl", payload)
+    return payload
 
 
 def run_stress_test() -> dict[str, Any]:
     from shared.adversarial.stress_test import stress_test, worst_case
 
-    results = stress_test("PLACEHOLDER")
+    positions = _load_position_snapshot(trade_date())
+    shadow_positions = [
+        row for row in positions
+        if str(row.get("capital_layer") or "shadow").strip().lower() == "shadow"
+    ]
+    results: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for row in shadow_positions:
+        ts_code = str(row.get("ts_code") or "").strip()
+        if not ts_code:
+            continue
+        try:
+            per_symbol = stress_test(ts_code)
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"ts_code": ts_code, "error": f"{exc.__class__.__name__}: {exc}"})
+            continue
+        for item in per_symbol:
+            enriched = dict(item)
+            enriched["capital_layer"] = "shadow"
+            enriched["quantity"] = row.get("quantity")
+            enriched["cost_basis"] = row.get("cost_basis")
+            results.append(enriched)
     payload = {
         "job": "job_stress_test",
-        "state": "scaffolded",
+        "state": _state_from_errors(errors, no_input=not shadow_positions),
         "generated_at": now_iso(),
+        "trade_date": trade_date(),
+        "capital_layer": "shadow",
+        "position_count": len(shadow_positions),
         "results": results,
         "worst_case": worst_case(results),
+        "errors": errors,
     }
     write_json(SHARED / "risk/reports/stress_test_report.json", payload)
     return payload
 
 
 def run_auto_position() -> dict[str, Any]:
+    from shared.accounting import capital_ledger, position_ledger
     from shared.portfolio.position_sizer import size_positions_batch
 
+    errors: list[dict[str, str]] = []
+    try:
+        capital_balances = {
+            layer: capital_ledger.get_capital_balance(capital_layer=layer)
+            for layer in ("real", "simulated", "shadow")
+        }
+    except Exception as exc:  # noqa: BLE001
+        capital_balances = {}
+        errors.append({"source": "capital_ledger.get_capital_balance", "error": f"{exc.__class__.__name__}: {exc}"})
+    try:
+        positions = position_ledger.get_positions(capital_layer="all")
+    except Exception as exc:  # noqa: BLE001
+        positions = []
+        errors.append({"source": "position_ledger.get_positions", "error": f"{exc.__class__.__name__}: {exc}"})
+
+    shadow_balance = capital_balances.get("shadow", {}) if isinstance(capital_balances, dict) else {}
+    capital_base = max(
+        _safe_float(shadow_balance.get("total_inflow")),
+        _safe_float(shadow_balance.get("balance")),
+        DAILY_BRIEF_CAPITAL_BASE,
+    )
+    candidates: list[dict[str, Any]] = []
+    for row in positions:
+        ts_code = str(row.get("ts_code") or "").strip()
+        if not ts_code:
+            continue
+        notional = _position_notional(row)
+        current_weight = notional / capital_base if capital_base else 0.0
+        candidates.append({
+            "ts_code": ts_code,
+            "belief_score": max(0.10, min(0.90, 0.70 - current_weight)),
+            "volatility": _safe_float(row.get("volatility"), 0.20),
+            "capital_layer": row.get("capital_layer", "shadow"),
+            "current_weight": round(current_weight, 6),
+            "current_notional": round(notional, 2),
+        })
+    target_positions = size_positions_batch(candidates, regime="unknown")
+    by_code = {item["ts_code"]: item for item in candidates}
+    plan_rows: list[dict[str, Any]] = []
+    for target in target_positions:
+        source = by_code.get(str(target.get("ts_code")), {})
+        current_weight = _safe_float(source.get("current_weight"))
+        target_weight = _safe_float(target.get("position_size_pct"))
+        delta = round(target_weight - current_weight, 6)
+        if delta > 0.01:
+            action = "consider_add_shadow"
+        elif delta < -0.01:
+            action = "consider_reduce_shadow"
+        else:
+            action = "hold"
+        plan_rows.append({
+            **target,
+            "capital_layer": source.get("capital_layer", "shadow"),
+            "current_weight": current_weight,
+            "target_weight": target_weight,
+            "delta_weight": delta,
+            "target_notional": round(target_weight * capital_base, 2),
+            "action": action,
+        })
     payload = {
         "job": "job_auto_position",
-        "state": "scaffolded",
+        "state": _state_from_errors(errors),
         "generated_at": now_iso(),
-        "positions": size_positions_batch([], regime="unknown"),
-        "note": "仓位规划 wrapper 已迁移；待接入 capital_ledger 与 positions 实盘输入。",
+        "trade_date": trade_date(),
+        "capital_layer": "shadow",
+        "capital_base": round(capital_base, 2),
+        "capital_balances": capital_balances,
+        "source_position_count": len(positions),
+        "positions": plan_rows,
+        "errors": errors,
     }
     append_jsonl(SHARED / "accounting/position_plan.jsonl", payload)
     return payload
@@ -1341,6 +1561,215 @@ def run_alert() -> dict[str, Any]:
     }
     append_jsonl(SHARED / "notify/logs/alert_log.jsonl", result)
     return result
+
+
+def _market_review_snapshot(job_name: str, market: str, output_rel: str) -> dict[str, Any]:
+    from shared.review.attribution import attribute
+
+    current_trade_date = trade_date()
+    trades = [
+        row for row in _load_shadow_trades_for_date(current_trade_date)
+        if _market_matches(row, market)
+    ]
+    payload = {
+        "job": job_name,
+        "state": "ok",
+        "generated_at": now_iso(),
+        "trade_date": current_trade_date,
+        "capital_layer": "shadow",
+        "market": _normalize_market(market),
+        "shadow_trade_count": len(trades),
+        "attribution": attribute(trades),
+    }
+    append_jsonl(SHARED / output_rel, payload)
+    return payload
+
+
+def run_pm_optimize() -> dict[str, Any]:
+    snapshots, errors = _latest_strategy_configs(("PM",))
+    config = snapshots[0] if snapshots else {}
+    strategy_count = int(config.get("strategy_count", 0) or 0)
+    payload = {
+        "job": "job_pm_optimize",
+        "state": _state_from_errors(errors),
+        "generated_at": now_iso(),
+        "trade_date": trade_date(),
+        "capital_layer": "shadow",
+        "market": "PM",
+        "strategy_version": config.get("version_hash", ""),
+        "strategy_count": strategy_count,
+        "params": {
+            "portfolio_method": config.get("portfolio_method", "pm_probability_weighted"),
+            "max_positions": (config.get("market_rules") or {}).get("max_positions", 20),
+            "max_candidates": config.get("max_candidates", 20),
+            "shadow_capital": config.get("shadow_capital", 50000.0),
+        },
+        "errors": errors,
+    }
+    write_json(SHARED / "strategies/pm/pm_optimize_params.json", payload)
+    return payload
+
+
+def run_pm_promote() -> dict[str, Any]:
+    from shared.review.weekly_review import review_week
+
+    week_trades, week_start, week_end = _load_week_shadow_trades(trade_date(), market="PM")
+    result = review_week(week_trades)
+    shadow = (result.get("capital_layer_reviews") or {}).get("shadow") or {}
+    payload = {
+        "job": "job_pm_promote",
+        "state": "ok",
+        "generated_at": now_iso(),
+        "capital_layer": "shadow",
+        "market": "PM",
+        "week_start": week_start,
+        "week_end": week_end,
+        "shadow_trade_count": len(week_trades),
+        "strategies_to_promote": shadow.get("strategies_to_promote", []),
+        "strategies_to_eliminate": shadow.get("strategies_to_eliminate", []),
+        "review": result,
+    }
+    append_jsonl(SHARED / "review/pm/pm_promotion.jsonl", payload)
+    return payload
+
+
+def _pending_signal_orders() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    pending_dir = ROOT / "signals" / "pending"
+    for path in sorted(pending_dir.glob("*.json")):
+        data = _read_json(path)
+        if data:
+            data.setdefault("source_path", str(path.relative_to(ROOT)))
+            rows.append(data)
+    return rows
+
+
+def run_gate_review(job_name: str, output_rel: str, phase: str) -> dict[str, Any]:
+    from shared.risk.pre_trade_check import check
+
+    orders = _pending_signal_orders()
+    positions = _load_position_snapshot(trade_date())
+    total_notional = sum(_position_notional(row) for row in positions)
+    portfolio = {
+        "positions": positions,
+        "total_exposure": min(1.0, total_notional / DAILY_BRIEF_CAPITAL_BASE) if DAILY_BRIEF_CAPITAL_BASE else 0.0,
+        "daily_pnl_pct": 0.0,
+    }
+    decisions: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for order in orders:
+        try:
+            decision = check(order, portfolio)
+        except Exception as exc:  # noqa: BLE001
+            decision = {"approved": False, "error": f"{exc.__class__.__name__}: {exc}"}
+            errors.append({"order_id": str(order.get("order_id", "")), "error": decision["error"]})
+        decisions.append({
+            "order_id": order.get("order_id", ""),
+            "ts_code": order.get("ts_code", ""),
+            "decision": decision,
+        })
+    payload = {
+        "job": job_name,
+        "state": _state_from_errors(errors),
+        "generated_at": now_iso(),
+        "trade_date": trade_date(),
+        "phase": phase,
+        "capital_layer": "shadow",
+        "pending_order_count": len(orders),
+        "decisions": decisions,
+        "errors": errors,
+    }
+    append_jsonl(SHARED / output_rel, payload)
+    return payload
+
+
+def run_cross_market_review() -> dict[str, Any]:
+    from shared.review.attribution import attribute
+
+    current_trade_date = trade_date()
+    trades = _load_shadow_trades_for_date(current_trade_date)
+    market_reviews = {}
+    for market in DAILY_BRIEF_MARKETS:
+        scoped = [row for row in trades if _market_matches(row, market)]
+        market_reviews[market] = {
+            "trade_count": len(scoped),
+            "pnl": round(sum(_safe_float(row.get("pnl")) for row in scoped), 6),
+            "attribution": attribute(scoped),
+        }
+    payload = {
+        "job": "job_cross_market_review",
+        "state": "ok",
+        "generated_at": now_iso(),
+        "trade_date": current_trade_date,
+        "capital_layer": "shadow",
+        "market_reviews": market_reviews,
+    }
+    append_jsonl(SHARED / "review/cross/cross_market_review.jsonl", payload)
+    return payload
+
+
+def run_backtest_report() -> dict[str, Any]:
+    daily_rows = _read_jsonl_dicts(SHARED / "review/data/daily_reviews.jsonl")
+    shadow_rows = [
+        row for row in daily_rows
+        if str(row.get("capital_layer") or "shadow").strip().lower() == "shadow"
+    ]
+    recent_rows = shadow_rows[-20:]
+    payload = {
+        "job": "job_backtest_report",
+        "state": "ok",
+        "generated_at": now_iso(),
+        "capital_layer": "shadow",
+        "sample_count": len(recent_rows),
+        "total_pnl": round(sum(_safe_float(row.get("pnl")) for row in recent_rows), 6),
+        "avg_hit_rate": round(
+            sum(_safe_float(row.get("hit_rate")) for row in recent_rows) / len(recent_rows),
+            6,
+        ) if recent_rows else 0.0,
+        "recent_reviews": recent_rows,
+    }
+    write_json(SHARED / "review/backtest/backtest_report.json", payload)
+    return payload
+
+
+def run_research_report() -> dict[str, Any]:
+    versions = _read_jsonl_dicts(SHARED / "review/strategies/strategy_version.jsonl")
+    attribution = _read_last_jsonl(SHARED / "review/attribution/strategy_attribution.jsonl")
+    payload = {
+        "job": "job_research_report",
+        "state": "ok",
+        "generated_at": now_iso(),
+        "capital_layer": "shadow",
+        "note": "research report assembled from current strategy version and attribution evidence",
+        "latest_strategy_version": versions[-1] if versions else {},
+        "latest_attribution": attribution,
+    }
+    write_markdown(SHARED / "review/research/research_report.md", "job_research_report", payload)
+    return payload
+
+
+def run_pm_report() -> dict[str, Any]:
+    positions = _positions_for_market(_load_position_snapshot(trade_date()), "PM")
+    trades = [
+        row for row in _load_shadow_trades_for_date(trade_date())
+        if _market_matches(row, "PM")
+    ]
+    risk = run_pm_risk()
+    payload = {
+        "job": "job_pm_report",
+        "state": "ok" if risk.get("state") == "ok" else "degraded",
+        "generated_at": now_iso(),
+        "trade_date": trade_date(),
+        "capital_layer": "shadow",
+        "market": "PM",
+        "position_count": len(positions),
+        "shadow_trade_count": len(trades),
+        "positions": positions,
+        "trades": trades,
+        "risk": risk,
+    }
+    append_jsonl(SHARED / "notify/pm/pm_report.jsonl", payload)
+    return payload
 
 
 def _format_pct(value: Any) -> str:
@@ -1432,6 +1861,12 @@ def run_email_notify() -> dict[str, Any]:
 
 JOB_HANDLERS: dict[str, Any] = {
     "job_trading_signals": run_all_market_trading_signals,
+    "job_premarket_signals": lambda: run_market_watch(
+        "job_premarket_signals",
+        "Ashare",
+        "signals/premarket_signals.jsonl",
+        "premarket",
+    ),
     "job_ashare_sim_exec": lambda: run_shadow_orchestrator("job_ashare_sim_exec", "Ashare"),
     "job_us_shadow_exec": lambda: run_shadow_orchestrator("job_us_shadow_exec", "US"),
     "job_us_shadow": lambda: run_shadow_orchestrator("job_us_shadow", "US"),
@@ -1447,10 +1882,29 @@ JOB_HANDLERS: dict[str, Any] = {
         "signals/us/us_intraday_signals.jsonl",
         "hourly",
     ),
+    "job_us_postclose": lambda: _market_review_snapshot(
+        "job_us_postclose",
+        "US",
+        "review/us/us_postclose.jsonl",
+    ),
+    "job_us_signal_review": lambda: _market_review_snapshot(
+        "job_us_signal_review",
+        "US",
+        "review/us/us_signal_review.jsonl",
+    ),
     "job_crypto_shadow_exec": lambda: run_shadow_orchestrator("job_crypto_shadow_exec", "Crypto"),
     "job_crypto_shadow": lambda: run_shadow_orchestrator("job_crypto_shadow", "Crypto"),
     "job_crypto_daily": lambda: run_shadow_orchestrator("job_crypto_daily", "Crypto"),
+    "job_crypto_weekly": lambda: run_weekly_review("job_crypto_weekly", "review/crypto/crypto_weekly_review.json"),
     "job_pm_shadow": lambda: run_shadow_orchestrator("job_pm_shadow", "PM"),
+    "job_pm_forward": lambda: run_market_watch(
+        "job_pm_forward",
+        "PM",
+        "signals/pm/pm_forward_signals.jsonl",
+        "forward",
+    ),
+    "job_pm_optimize": run_pm_optimize,
+    "job_pm_promote": run_pm_promote,
     "job_daily_brief_morning": run_daily_brief_morning,
     "job_daily_brief_day": run_daily_brief_day,
     "job_daily_brief_night": run_daily_brief_night,
@@ -1464,25 +1918,14 @@ JOB_HANDLERS: dict[str, Any] = {
     "job_pm_risk": run_pm_risk,
     "job_stress_test": run_stress_test,
     "job_auto_position": run_auto_position,
+    "job_gate_review_night": lambda: run_gate_review("job_gate_review_night", "risk/gate/gate_decisions.jsonl", "night"),
+    "job_gate_review_day": lambda: run_gate_review("job_gate_review_day", "risk/gate/gate_intraday.jsonl", "day"),
+    "job_cross_market_review": run_cross_market_review,
+    "job_backtest_report": run_backtest_report,
+    "job_research_report": run_research_report,
+    "job_pm_report": run_pm_report,
     "job_alert": run_alert,
     "job_email_notify": run_email_notify,
-}
-
-
-PLACEHOLDER_SPECS: dict[str, tuple[str, str, str]] = {
-    "job_premarket_signals": ("signals/premarket_signals.jsonl", "jsonl", "待接入隔夜事件与评分后生成 A 股盘前信号。"),
-    "job_us_postclose": ("review/us/us_postclose.jsonl", "jsonl", "待接入 US close data 与当日信号聚合。"),
-    "job_crypto_weekly": ("signals/crypto/crypto_weekly_signals.jsonl", "jsonl", "待接入中期 crypto 事件与参数。"),
-    "job_pm_forward": ("signals/pm/pm_forward_signals.jsonl", "jsonl", "待接入 pm_shadow 与 pm_prices。"),
-    "job_pm_optimize": ("strategies/pm/pm_optimize_params.json", "json", "待接入 PM bayesian/weight adjustment 参数优化。"),
-    "job_pm_promote": ("review/pm/pm_promotion.jsonl", "jsonl", "待接入 PM 晋级评估输入。"),
-    "job_gate_review_night": ("risk/gate/gate_decisions.jsonl", "jsonl", "夜间 gate_review wrapper 已拆出；待迁移原 MarketGraph/tools/gate_review.py 逻辑。"),
-    "job_gate_review_day": ("risk/gate/gate_intraday.jsonl", "jsonl", "日间 gate_review wrapper 已拆出；待迁移盘中门禁裁决逻辑。"),
-    "job_us_signal_review": ("review/us/us_signal_review.jsonl", "jsonl", "待接入美股信号命中率统计。"),
-    "job_cross_market_review": ("review/cross/cross_market_review.jsonl", "jsonl", "待接入跨市场联动兑现数据。"),
-    "job_backtest_report": ("review/backtest/backtest_report.json", "json", "待接入反事实回测结果。"),
-    "job_research_report": ("review/research/research_report.md", "md", "待接入 research_findings 汇总。"),
-    "job_pm_report": ("notify/pm/pm_report.jsonl", "jsonl", "待接入 Polymarket 持仓与成交报告。"),
 }
 
 
@@ -1493,9 +1936,6 @@ def main() -> int:
 
     if args.job in JOB_HANDLERS:
         payload = JOB_HANDLERS[args.job]()
-    elif args.job in PLACEHOLDER_SPECS:
-        output_rel, fmt, note = PLACEHOLDER_SPECS[args.job]
-        payload = placeholder(args.job, output_rel, note, fmt=fmt)
     else:
         raise SystemExit(f"unknown job: {args.job}")
 
