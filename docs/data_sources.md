@@ -1,7 +1,7 @@
 # Tradings 数据源文档
 
 > **用途**: Tradings 交易系统的数据依赖和接入指南  
-> **版本**: 1.0.0 | **状态**: active
+> **版本**: 1.1.0 | **状态**: active
 
 ---
 
@@ -169,6 +169,47 @@ crypto_daily = pd.read_csv(BACKTEST_CACHE / "crypto_daily" / "BTCUSDT.csv")
 
 ---
 
+---
+
+## SharedSignals 原生 Tushare Collector (NEW)
+
+SharedSignals 现已内置原生 Tushare collector，可通过 `reader.get_tushare()` 直接读取 60+ 个 Tushare API，无需经过 SQLite bridge。
+
+### 可用 Tushare API
+
+常用 API 包括：`daily`、`moneyflow`、`fina_indicator`、`income`、`balancesheet`、`adj_factor`、`margin`、`margin_detail`、`limit_list`、`hk_hold`、`stock_minutes`、`news_list`、`index_daily`、`index_global`、`stk_limit`、`suspend_d`、`namechange`、`top10_holders`、`forecast`、`express`、`dividend`、`fina_audit`、`pledge_stat`、`repurchase`、`share_float`、`block_trade`、`stk_holdernumber`、`fund_basic`、`fund_daily`、`fund_nav`、`fut_basic`、`fut_daily`、`cb_basic`、`cb_daily` 等。
+
+**完整列表见** `GET /capabilities` → `tushare_apis`。
+
+### 使用方式
+
+```python
+from reader import get_tushare
+
+# 读取日线
+rows = get_tushare("daily", ts_code="600519.SH", start_date="20260601", end_date="20260630")
+
+# 读取资金流向
+rows = get_tushare("moneyflow", ts_code="000001.SZ", start_date="20260629", end_date="20260629")
+
+# 读取财务指标
+rows = get_tushare("fina_indicator", ts_code="600519.SH", start_date="20250101")
+
+# 读取利润表（透传额外参数）
+rows = get_tushare("income", ts_code="600519.SH", period="20251231")
+
+# 读取复权因子
+rows = get_tushare("adj_factor", ts_code="600519.SH")
+```
+
+### 注意事项
+
+- 返回格式与其他 `reader.*` 函数一致：每条含 `data` / `provenance` / `freshness` / `quality` / `degraded` / `lineage`
+- 结果 LRU-cached（maxsize=512）
+- Tushare API 不可用时返回 degraded 空包装，不抛异常
+- `ts_code`、`start_date`、`end_date` 自动注入到 params，无需在 `**params` 中重复传递
+- 也可通过 `GET /tushare?api_name=daily&ts_code=600519.SH&start_date=20260601&end_date=20260630` HTTP API 调用
+
 ## 迁移指南：Ashare → SharedSignals
 
 ### 背景
@@ -257,4 +298,5 @@ def get_daily_prices(ts_code, start, end):
 
 | 日期 | 版本 | 变更 |
 |------|------|------|
+| 2026-06-30 | 1.1.0 | 新增 SharedSignals 原生 Tushare collector (`reader.get_tushare()`) |
 | 2026-06-30 | 1.0.0 | 初始版本 |
