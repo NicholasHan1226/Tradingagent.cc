@@ -71,6 +71,77 @@ def placeholder(job: str, output_rel: str, note: str, fmt: str = "jsonl", extra:
     return payload
 
 
+class StubMarketAdapter:
+    """Default no-op adapter until market-specific adapters land."""
+
+    def __init__(self, market: str) -> None:
+        self.market = market
+
+    def get_universe(self, date: str) -> list[str]:
+        return []
+
+    def get_market(self) -> str:
+        return self.market
+
+    def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
+        return self.market, symbol
+
+    def get_strategy_config(self) -> dict[str, Any]:
+        return {
+            "shadow_capital": 100000.0,
+            "portfolio_method": "conviction_weighted",
+            "regime": "unknown",
+            "max_candidates": 20,
+            "default_price": 1.0,
+            "default_volatility": 0.20,
+        }
+
+    def get_shadow_account(self) -> str:
+        return f"{self.market.lower()}_shadow_stub"
+
+
+MARKET_ADAPTERS: dict[str, Any] = {
+    "Ashare": StubMarketAdapter("Ashare"),
+    "Crypto": StubMarketAdapter("Crypto"),
+    "US": StubMarketAdapter("US"),
+    "PM": StubMarketAdapter("PM"),
+}
+
+
+def register_market_adapter(market: str, adapter: Any) -> None:
+    MARKET_ADAPTERS[market] = adapter
+
+
+def get_market_adapter(market: str) -> Any:
+    return MARKET_ADAPTERS.get(market) or StubMarketAdapter(market)
+
+
+def run_shadow_orchestrator(job_name: str, market: str) -> dict[str, Any]:
+    from shared.data.reader import TradingsDataReader
+    from shared.orchestrator import run_shadow_loop
+
+    result = run_shadow_loop(get_market_adapter(market), trade_date(), TradingsDataReader())
+    result.update({"job": job_name, "state": result.get("state", "ok"), "generated_at": now_iso()})
+    append_jsonl(SHARED / "logs/orchestrator_shadow_runs.jsonl", result)
+    return result
+
+
+def run_all_market_trading_signals() -> dict[str, Any]:
+    results = [
+        run_shadow_orchestrator(f"job_trading_signals_{market.lower()}", market)
+        for market in ("Ashare", "Crypto", "US", "PM")
+    ]
+    payload = {
+        "job": "job_trading_signals",
+        "state": "degraded" if any(item.get("state") == "degraded" for item in results) else "ok",
+        "generated_at": now_iso(),
+        "capital_layer": "shadow",
+        "results": results,
+    }
+    append_jsonl(SHARED / "logs/orchestrator_shadow_runs.jsonl", payload)
+    return payload
+
+
 def run_daily_brief_morning() -> dict[str, Any]:
     return placeholder(
         "job_daily_brief_morning",
@@ -82,19 +153,19 @@ def run_daily_brief_morning() -> dict[str, Any]:
 
 
 def run_daily_brief_day() -> dict[str, Any]:
-    from shared.review.daily_review import run_daily_review
+    from shared.orchestrator import run_daily_review
 
-    result = run_daily_review(trade_date(), session="lunch")
-    result.update({"job": "job_daily_brief_day", "state": "scaffolded", "generated_at": now_iso()})
+    result = run_daily_review("all", trade_date(), "lunch")
+    result.update({"job": "job_daily_brief_day", "state": "orchestrated", "generated_at": now_iso()})
     append_jsonl(SHARED / "review/daily/midday_review.jsonl", result)
     return result
 
 
 def run_daily_brief_night() -> dict[str, Any]:
-    from shared.review.daily_review import run_daily_review
+    from shared.orchestrator import run_daily_review
 
-    result = run_daily_review(trade_date(), session="close")
-    result.update({"job": "job_daily_brief_night", "state": "scaffolded", "generated_at": now_iso()})
+    result = run_daily_review("all", trade_date(), "close")
+    result.update({"job": "job_daily_brief_night", "state": "orchestrated", "generated_at": now_iso()})
     append_jsonl(SHARED / "review/daily/daily_brief.jsonl", result)
     return result
 
@@ -209,6 +280,12 @@ def run_email_notify() -> dict[str, Any]:
 
 
 JOB_HANDLERS: dict[str, Any] = {
+    "job_trading_signals": run_all_market_trading_signals,
+    "job_us_shadow_exec": lambda: run_shadow_orchestrator("job_us_shadow_exec", "US"),
+    "job_us_shadow": lambda: run_shadow_orchestrator("job_us_shadow", "US"),
+    "job_crypto_shadow_exec": lambda: run_shadow_orchestrator("job_crypto_shadow_exec", "Crypto"),
+    "job_crypto_shadow": lambda: run_shadow_orchestrator("job_crypto_shadow", "Crypto"),
+    "job_pm_shadow": lambda: run_shadow_orchestrator("job_pm_shadow", "PM"),
     "job_daily_brief_morning": run_daily_brief_morning,
     "job_daily_brief_day": run_daily_brief_day,
     "job_daily_brief_night": run_daily_brief_night,
@@ -228,17 +305,13 @@ JOB_HANDLERS: dict[str, Any] = {
 
 
 PLACEHOLDER_SPECS: dict[str, tuple[str, str, str]] = {
-    "job_trading_signals": ("signals/signal_cards.jsonl", "jsonl", "待接入 SharedSignals.backtest_cache 与 MarketGraph.regime 后生成全市场信号卡。"),
     "job_premarket_signals": ("signals/premarket_signals.jsonl", "jsonl", "待接入隔夜事件与评分后生成 A 股盘前信号。"),
     "job_ashare_sim_exec": ("executions/sim/sim_exec_log.jsonl", "jsonl", "待接入 active_conditions 与 quotes 后执行 A 股模拟单。"),
     "job_us_premarket": ("signals/us/us_premarket_signals.jsonl", "jsonl", "待接入美股日线与事件流。"),
     "job_us_hourly": ("signals/us/us_intraday_signals.jsonl", "jsonl", "待接入美股盘中行情。"),
-    "job_us_shadow_exec": ("executions/shadow/us/us_shadow_trades.jsonl", "jsonl", "待接入 us_shadow_signals。"),
     "job_us_postclose": ("review/us/us_postclose.jsonl", "jsonl", "待接入 US close data 与当日信号聚合。"),
-    "job_crypto_shadow_exec": ("executions/shadow/crypto/crypto_shadow_trades.jsonl", "jsonl", "待接入 crypto_signals 与 klines。"),
     "job_crypto_daily": ("signals/crypto/crypto_daily_signals.jsonl", "jsonl", "待接入 crypto_klines 与 regime。"),
     "job_crypto_weekly": ("signals/crypto/crypto_weekly_signals.jsonl", "jsonl", "待接入中期 crypto 事件与参数。"),
-    "job_pm_shadow": ("executions/shadow/pm/pm_shadow_trades.jsonl", "jsonl", "待接入 pm_prices 与 pm_markets。"),
     "job_pm_forward": ("signals/pm/pm_forward_signals.jsonl", "jsonl", "待接入 pm_shadow 与 pm_prices。"),
     "job_pm_optimize": ("strategies/pm/pm_optimize_params.json", "json", "待接入 PM bayesian/weight adjustment 参数优化。"),
     "job_pm_promote": ("review/pm/pm_promotion.jsonl", "jsonl", "待接入 PM 晋级评估输入。"),
