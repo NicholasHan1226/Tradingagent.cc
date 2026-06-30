@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-0d387ec8f8654fca"
+  ],
+  "expired_at": "2026-06-30T22:30:02+08:00",
+  "idempotency_key": "SHADOW-us-INTC-20260630-1de0fbb7",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-INTC-20260630-1de0fbb7",
+  "price": 128.32,
+  "quantity": 58,
+  "risk_check": {
+    "adjusted_weight": 0.037213,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-19b8199b0c20",
+  "source_audit_id": "AUDIT-0d387ec8f8654fca",
+  "status": "expired",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T09:42:53+00:00",
+  "ts_code": "INTC",
+  "valid_until": "2026-06-30"
+}

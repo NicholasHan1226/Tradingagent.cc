@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-2c823f9ece814d3d"
+  ],
+  "expired_at": "2026-06-30T22:30:02+08:00",
+  "idempotency_key": "SHADOW-pm-558958-20260630-43d47b5f",
+  "manual_confirm_required": false,
+  "market": "pm",
+  "order_id": "SHADOW-pm-558958-20260630-43d47b5f",
+  "price": 0.5,
+  "quantity": 3685,
+  "risk_check": {
+    "adjusted_weight": 0.03685,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-c624380b1fea",
+  "source_audit_id": "AUDIT-2c823f9ece814d3d",
+  "status": "expired",
+  "strategy_name": "pm_shadow",
+  "timestamp": "2026-06-30T11:05:16+00:00",
+  "ts_code": "558958",
+  "valid_until": "2026-06-30"
+}

@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-be8fe0848de3454e"
+  ],
+  "expired_at": "2026-06-30T22:30:02+08:00",
+  "idempotency_key": "SHADOW-ashare-200028.SZ-20260630-8db8afeb",
+  "manual_confirm_required": false,
+  "market": "ashare",
+  "order_id": "SHADOW-ashare-200028.SZ-20260630-8db8afeb",
+  "price": 1.0,
+  "quantity": 8160,
+  "risk_check": {
+    "adjusted_weight": 0.0408,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-e637702e4649",
+  "source_audit_id": "AUDIT-be8fe0848de3454e",
+  "status": "expired",
+  "strategy_name": "ashare_shadow",
+  "timestamp": "2026-06-30T10:06:25+00:00",
+  "ts_code": "200028.SZ",
+  "valid_until": "2026-06-30"
+}

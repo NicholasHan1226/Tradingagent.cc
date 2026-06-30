@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-4379283a3e8f447c"
+  ],
+  "expired_at": "2026-06-30T22:30:02+08:00",
+  "idempotency_key": "SHADOW-us-IWM-20260630-aac6d0ea",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-IWM-20260630-aac6d0ea",
+  "price": 299.83,
+  "quantity": 25,
+  "risk_check": {
+    "adjusted_weight": 0.037479,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-23333ab1867f",
+  "source_audit_id": "AUDIT-4379283a3e8f447c",
+  "status": "expired",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T11:06:15+00:00",
+  "ts_code": "IWM",
+  "valid_until": "2026-06-30"
+}

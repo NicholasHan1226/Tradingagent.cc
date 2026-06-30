@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-55eef2ee4faf4d42"
+  ],
+  "expired_at": "2026-06-30T22:45:02+08:00",
+  "idempotency_key": "SHADOW-us-CVX-20260630-5ad2db15",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-CVX-20260630-5ad2db15",
+  "price": 171.06,
+  "quantity": 43,
+  "risk_check": {
+    "adjusted_weight": 0.036778,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-937f744e9b4a",
+  "source_audit_id": "AUDIT-55eef2ee4faf4d42",
+  "status": "expired",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T14:44:36+00:00",
+  "ts_code": "CVX",
+  "valid_until": "2026-06-30"
+}

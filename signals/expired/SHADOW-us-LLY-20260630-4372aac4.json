@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-0b44cf45a299459c"
+  ],
+  "expired_at": "2026-06-30T22:45:02+08:00",
+  "idempotency_key": "SHADOW-us-LLY-20260630-4372aac4",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-LLY-20260630-4372aac4",
+  "price": 1208.12,
+  "quantity": 6,
+  "risk_check": {
+    "adjusted_weight": 0.036244,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-798a4d0d0e1f",
+  "source_audit_id": "AUDIT-0b44cf45a299459c",
+  "status": "expired",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T14:44:37+00:00",
+  "ts_code": "LLY",
+  "valid_until": "2026-06-30"
+}

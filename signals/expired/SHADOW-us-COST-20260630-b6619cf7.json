@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-219f989dbec34f51"
+  ],
+  "expired_at": "2026-06-30T22:30:02+08:00",
+  "idempotency_key": "SHADOW-us-COST-20260630-b6619cf7",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-COST-20260630-b6619cf7",
+  "price": 952.54,
+  "quantity": 8,
+  "risk_check": {
+    "adjusted_weight": 0.038102,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-a20ff864313b",
+  "source_audit_id": "AUDIT-219f989dbec34f51",
+  "status": "expired",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T10:36:28+00:00",
+  "ts_code": "COST",
+  "valid_until": "2026-06-30"
+}

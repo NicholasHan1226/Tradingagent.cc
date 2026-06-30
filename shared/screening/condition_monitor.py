@@ -8,7 +8,6 @@ check_conditions(conditions, bars_5min) → list[triggered]
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 
@@ -20,61 +19,97 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return default
 
 
+def _normalize_symbol(ts_code: Any) -> str:
+    raw = str(ts_code or "").strip()
+    return raw.split(".", 1)[0] if "." in raw else raw
+
+
+def _condition_market(condition: dict[str, Any]) -> str:
+    market = str(condition.get("market") or "").strip()
+    if market:
+        return market
+    ts_code = str(condition.get("ts_code") or "").strip().upper()
+    if ts_code.endswith((".SH", ".SZ", ".BJ")):
+        return "Ashare"
+    if ts_code.endswith(("USDT", "USD", "PERP")):
+        return "Crypto"
+    return "Ashare"
+
+
+def _normalize_intraday_bar(row: dict[str, Any], ts_code: str) -> dict[str, Any]:
+    bar_time = str(row.get("bar_time") or row.get("trade_time") or row.get("time") or "")
+    open_price = _safe_float(row.get("open"))
+    high = _safe_float(row.get("high"))
+    low = _safe_float(row.get("low"))
+    close = _safe_float(row.get("close"))
+    prev_close = _safe_float(
+        row.get("pre_close", row.get("prev_close", row.get("previous_close"))),
+        0.0,
+    )
+    pct_chg = _safe_float(row.get("pct_chg"), 0.0)
+    if abs(pct_chg) < 1e-9 and prev_close > 0 and close > 0:
+        pct_chg = ((close - prev_close) / prev_close) * 100.0
+    return {
+        "ts_code": row.get("ts_code") or row.get("symbol") or ts_code,
+        "time": bar_time,
+        "bar_time": bar_time,
+        "trade_time": bar_time,
+        "trade_date": row.get("trade_date", ""),
+        "open": open_price,
+        "high": high,
+        "low": low,
+        "close": close,
+        "vol": _safe_float(row.get("vol", row.get("volume"))),
+        "volume": _safe_float(row.get("volume", row.get("vol"))),
+        "amount": _safe_float(row.get("amount")),
+        "pct_chg": pct_chg,
+        "pre_close": prev_close,
+    }
+
+
 def _get_5min_bars(ts_code: str, date: str) -> list[dict[str, Any]]:
-    """获取5分钟K线 (从 MarketGraphRuntime staging CSV 读)。"""
+    """获取5分钟K线 (从 SharedSignals marketdata.sqlite 读)。"""
     try:
-        import csv
-        import json
+        from shared.data.reader import SharedSignalsReader
 
-        staging_root = Path("/opt/investment/MarketGraphRuntime/staging/tushare_rt_min_5m")
-        date_dir = staging_root / date
-
-        if date_dir.is_dir():
-            csv_files = sorted(date_dir.glob("rt_min_5min_*.csv"), key=lambda p: p.name)
-        else:
-            latest_file = staging_root / "latest.json"
-            if not latest_file.exists():
-                return []
-            with open(latest_file, encoding="utf-8") as f:
-                latest = json.load(f)
-            if not isinstance(latest, dict) or latest.get("trade_date") != date:
-                return []
-            latest_path = latest.get("path")
-            if not latest_path:
-                return []
-            csv_path = Path(str(latest_path))
-            if not csv_path.is_file():
-                return []
-            csv_files = [csv_path]
-
-        if not csv_files:
+        reader = SharedSignalsReader()
+        symbol = _normalize_symbol(ts_code)
+        if not symbol:
             return []
-
-        bars_by_time: dict[str, dict[str, Any]] = {}
-        for csv_file in csv_files:
-            with open(csv_file, encoding="utf-8-sig", newline="") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    if row.get("ts_code") != ts_code:
-                        continue
-                    bar_time = row.get("time", "")
-                    if not bar_time:
-                        continue
-                    bars_by_time[bar_time] = {
-                        "ts_code": row.get("ts_code", ts_code),
-                        "time": bar_time,
-                        "trade_time": bar_time,
-                        "open": _safe_float(row.get("open")),
-                        "high": _safe_float(row.get("high")),
-                        "low": _safe_float(row.get("low")),
-                        "close": _safe_float(row.get("close")),
-                        "vol": _safe_float(row.get("vol")),
-                        "amount": _safe_float(row.get("amount")),
-                    }
-
-        return [bars_by_time[k] for k in sorted(bars_by_time)]
+        rows = reader.get_bars_intraday("Ashare", symbol, "5min", date, date)
+        if not rows:
+            rows = reader.get_bars_intraday("Ashare", symbol, "5m", date, date)
+        bars = [
+            _normalize_intraday_bar(row, ts_code)
+            for row in rows
+            if isinstance(row, dict)
+        ]
+        return [bar for bar in bars if bar.get("trade_time")]
     except Exception:
         return []
+
+
+def _get_condition_bars(condition: dict[str, Any], date: str) -> list[dict[str, Any]]:
+    try:
+        from shared.data.reader import SharedSignalsReader
+
+        reader = SharedSignalsReader()
+        market = _condition_market(condition)
+        ts_code = str(condition.get("ts_code") or "").strip()
+        symbol = _normalize_symbol(ts_code)
+        if not symbol:
+            return []
+        rows = reader.get_bars_intraday(market, symbol, "5min", date, date)
+        if not rows:
+            rows = reader.get_bars_intraday(market, symbol, "5m", date, date)
+        bars = [
+            _normalize_intraday_bar(row, ts_code)
+            for row in rows
+            if isinstance(row, dict)
+        ]
+        return [bar for bar in bars if bar.get("trade_time")]
+    except Exception:
+        return _get_5min_bars(str(condition.get("ts_code") or ""), date)
 
 
 def _check_breakout(condition: dict[str, Any], bars: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -323,7 +358,7 @@ def check_conditions(
         if bars_map is not None:
             bars = bars_map.get(ts_code, [])
         else:
-            bars = _get_5min_bars(ts_code, date)
+            bars = _get_condition_bars(cond, date)
 
         if not bars:
             continue
@@ -372,7 +407,7 @@ def trigger_replay(
         if bars_map is not None:
             bars = bars_map.get(key[0], [])
         else:
-            bars = _get_5min_bars(key[0], date)
+            bars = _get_condition_bars(condition, date)
         replayed.append(_replay_trigger(condition, trigger, bars))
     return replayed
 

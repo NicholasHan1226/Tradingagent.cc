@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-1c0c38f6553a4c70"
+  ],
+  "expired_at": "2026-06-30T22:45:02+08:00",
+  "idempotency_key": "SHADOW-us-KO-20260630-ab254b57",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-KO-20260630-ab254b57",
+  "price": 82.63,
+  "quantity": 90,
+  "risk_check": {
+    "adjusted_weight": 0.037184,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-b925a462e579",
+  "source_audit_id": "AUDIT-1c0c38f6553a4c70",
+  "status": "expired",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T14:44:37+00:00",
+  "ts_code": "KO",
+  "valid_until": "2026-06-30"
+}

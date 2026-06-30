@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-6a311039f3b4448c"
+  ],
+  "expired_at": "2026-06-30T22:30:02+08:00",
+  "idempotency_key": "SHADOW-us-GOOGL-20260630-c75d5f33",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-GOOGL-20260630-c75d5f33",
+  "price": 337.39,
+  "quantity": 22,
+  "risk_check": {
+    "adjusted_weight": 0.037113,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-feba27d574b4",
+  "source_audit_id": "AUDIT-6a311039f3b4448c",
+  "status": "expired",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T06:12:28+00:00",
+  "ts_code": "GOOGL",
+  "valid_until": "2026-06-30"
+}

@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-4a2e538c7f814e37"
+  ],
+  "expired_at": "2026-06-30T23:00:02+08:00",
+  "idempotency_key": "SHADOW-us-JPM-20260630-8a6a8e13",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-JPM-20260630-8a6a8e13",
+  "price": 329.05,
+  "quantity": 23,
+  "risk_check": {
+    "adjusted_weight": 0.037841,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-cb658e2b53ab",
+  "source_audit_id": "AUDIT-4a2e538c7f814e37",
+  "status": "expired",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T14:54:25+00:00",
+  "ts_code": "JPM",
+  "valid_until": "2026-06-30"
+}

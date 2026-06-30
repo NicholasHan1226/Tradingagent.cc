@@ -1,0 +1,29 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-79c2c63f5e56488e"
+  ],
+  "expired_at": "2026-06-30T22:30:02+08:00",
+  "idempotency_key": "SHADOW-us-ABBV-20260630-2f13c202",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-ABBV-20260630-2f13c202",
+  "price": 253.35,
+  "quantity": 29,
+  "risk_check": {
+    "adjusted_weight": 0.036736,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-0a7e3b5b1a3d",
+  "source_audit_id": "AUDIT-79c2c63f5e56488e",
+  "status": "expired",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T11:06:26+00:00",
+  "ts_code": "ABBV",
+  "valid_until": "2026-06-30"
+}
