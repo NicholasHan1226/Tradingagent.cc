@@ -176,3 +176,12 @@ if __name__ == "__main__":
     print(json.dumps(r, ensure_ascii=False, indent=2))
     print("--- force reduce ---")
     print(json.dumps(compute_force_reduce(0.75, r["force_reduce_to"]), ensure_ascii=False, indent=2))
+
+def auto_detect(market_data=None, vix=None, recent_events=None):
+    alerts = []
+    if market_data and market_data.get("pct_change", 0) < -3.0: alerts.append({"type": "market_drop"})
+    if vix and vix > 30: alerts.append({"type": "vix_spike"})
+    if recent_events:
+        for e in recent_events:
+            if "policy" in str(e.get("event_type", "")).lower(): alerts.append({"type": "policy_shock"})
+    return {"triggered": len(alerts) > 0, "alerts": alerts}

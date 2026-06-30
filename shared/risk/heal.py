@@ -158,3 +158,10 @@ if __name__ == "__main__":
     test_patrol = {"black_swan": {"triggered": True, "force_reduce_to": 0.50}}
     r = heal(test_portfolio, test_patrol)
     print(json.dumps(r, ensure_ascii=False, indent=2))
+
+def heal_real(issues):
+    actions = []
+    for issue in issues:
+        at = "Reduced" if "over_limit" in issue.get("type", "") else "Closed" if "stop_loss" in issue.get("type", "") else "Escalated"
+        actions.append({"issue": issue.get("type", ""), "action": at, "healed": at != "Escalated"})
+    return actions
