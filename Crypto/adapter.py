@@ -121,6 +121,9 @@ class CryptoAdapter(MarketAdapter):
     def get_shadow_account(self) -> str:
         return "crypto_shadow"
 
+    def get_sim_account(self) -> str:
+        return "crypto_sim"
+
     def _get_assets(self) -> list[dict[str, Any]]:
         get_assets = getattr(self.reader, "get_assets", None)
         if callable(get_assets):

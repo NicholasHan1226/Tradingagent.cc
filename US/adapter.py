@@ -9,6 +9,7 @@ from typing import Any
 
 from shared.data.reader import TradingsDataReader
 from shared.markets.base import MarketAdapter
+from US import sim_executor as _sim_executor  # noqa: F401
 
 
 MARKET = "us"
@@ -191,6 +192,9 @@ class USAdapter(MarketAdapter):
 
     def get_shadow_account(self) -> str:
         return "us_shadow"
+
+    def get_sim_account(self) -> str:
+        return "us_sim"
 
     def _get_assets(self) -> list[dict[str, Any]]:
         get_assets = getattr(self.reader, "get_assets", None)

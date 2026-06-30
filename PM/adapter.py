@@ -8,6 +8,7 @@ from typing import Any
 from shared.data.reader import TradingsDataReader
 from shared.markets.base import MarketAdapter
 
+from PM import sim_executor as _pm_sim_executor
 from PM.strategies import STRATEGY_CONFIGS
 
 
@@ -44,3 +45,5 @@ class PMAdapter(MarketAdapter):
     def get_shadow_account(self) -> str:
         return "pm_shadow"
 
+    def get_sim_account(self) -> str:
+        return "pm_sim"
