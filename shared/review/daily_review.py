@@ -22,18 +22,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.accounting import position_ledger
+
 from .attribution import attribute, attribute_pct
 from .benchmark import compare_to_benchmark, get_benchmark, record_last_period
 
 REVIEW_DIR = Path(__file__).resolve().parent
+TRADINGS_ROOT = REVIEW_DIR.parent.parent
+SHARED_DIR = REVIEW_DIR.parent
 GOALS_PATH = REVIEW_DIR / "goals.yaml"
 DAILY_LOG = REVIEW_DIR / "data" / "daily_reviews.jsonl"
-
-ASHARE_DATA = Path("/opt/investment/Ashare/data")
-RECOMMENDATIONS_DIR = ASHARE_DATA / "recommendations"
-SHADOW_SIM_DIR = ASHARE_DATA / "shadow_sim"
-PAPER_PORTFOLIO_DIR = ASHARE_DATA / "paper_portfolio"
-TRADEBOOK_DIR = ASHARE_DATA / "tradebook"
+SHADOW_TRADES_LOG = SHARED_DIR / "logs" / "shadow" / "shadow_trades.jsonl"
+FILLED_SIGNALS_DIR = TRADINGS_ROOT / "signals" / "filled"
 
 
 def _now_iso() -> str:
@@ -170,7 +170,7 @@ def _compare_to_goals(metrics: dict[str, Any], stage_goals: dict[str, Any]) -> d
     return {"stage": metrics.get("stage", "stage_1_sim"), "checks": checks, "all_goals_met": all_met}
 
 
-# ---- Ashare data loaders ----------------------------------------------------
+# ---- Tradings data loaders --------------------------------------------------
 
 def _compact_date(value: Any) -> str:
     raw = str(value or "").strip()
@@ -288,70 +288,59 @@ def _is_morning_trade(row: dict[str, Any]) -> bool:
     return False
 
 
-def load_recommendations(trade_date: str) -> list[dict[str, Any]]:
+def _read_signal_fills(trade_date: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     try:
-        path = RECOMMENDATIONS_DIR / "recommendations.csv"
-        rows = _read_csv_dicts(path)
-        return [
-            row for row in rows
-            if _date_eq(row.get("as_of_trade_date"), trade_date)
-            or _date_eq(row.get("recommendation_date"), trade_date)
-        ]
+        for path in sorted(FILLED_SIGNALS_DIR.glob("*.json")):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if not isinstance(row, dict):
+                continue
+            if not (_date_eq(row.get("trade_date"), trade_date) or _created_at_matches(row.get("filled_at"), trade_date)):
+                continue
+            normalized = _normalize_trade(
+                {
+                    "ts_code": _first_present(row, "ts_code", "symbol"),
+                    "side": _first_present(row, "direction", "side", "action"),
+                    "quantity": _first_present(row, "filled_quantity", "filled_qty", "quantity", default=0),
+                    "price": _first_present(row, "filled_price", "price", default=0),
+                    "signal_id": _first_present(row, "order_id", "idempotency_key", "signal_id"),
+                    "created_at": _first_present(row, "filled_at", "fill_time", "timestamp"),
+                    "trade_date": _first_present(row, "trade_date", "valid_until"),
+                    "capital_layer": _first_present(row, "capital_layer", "account_type", default="shadow"),
+                },
+                default_layer="shadow",
+            )
+            rows.append(normalized)
     except Exception:
         return []
-
-
-def load_review_outcomes(trade_date: str) -> list[dict[str, Any]]:
-    try:
-        path = RECOMMENDATIONS_DIR / "reviews.csv"
-        rows = _read_csv_dicts(path)
-        return [row for row in rows if _date_eq(row.get("recommendation_date"), trade_date)]
-    except Exception:
-        return []
+    return rows
 
 
 def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
-    try:
-        shadow_path = SHADOW_SIM_DIR / "shadow_sim_trades.csv"
-        rows = [
-            _normalize_trade(row, default_layer="shadow")
-            for row in _read_csv_dicts(shadow_path)
-            if _date_eq(row.get("trade_date"), trade_date)
-        ]
-        if rows:
-            return rows
-
-        jsonl_path = TRADEBOOK_DIR / "simulated_execution_log.jsonl"
-        jsonl_rows = []
-        for row in _read_jsonl_dicts(jsonl_path):
-            if _date_eq(row.get("trade_date"), trade_date) or _created_at_matches(row.get("created_at"), trade_date):
-                jsonl_rows.append(_normalize_trade(row, default_layer="simulated"))
-        return jsonl_rows
-    except Exception:
-        return []
+    rows = [
+        _normalize_trade(row, default_layer="shadow")
+        for row in _read_jsonl_dicts(SHADOW_TRADES_LOG)
+        if _date_eq(row.get("trade_date"), trade_date) or _created_at_matches(row.get("created_at"), trade_date)
+    ]
+    return rows or _read_signal_fills(trade_date)
 
 
 def load_positions(as_of_date: str) -> list[dict[str, Any]]:
     try:
-        shadow_path = SHADOW_SIM_DIR / "latest_shadow_positions.csv"
-        rows = [_normalize_position(row, default_layer="shadow") for row in _read_csv_dicts(shadow_path)]
-        if rows:
-            return rows
-
-        paper_path = PAPER_PORTFOLIO_DIR / "positions.csv"
-        rows = [_normalize_position(row, default_layer="shadow") for row in _read_csv_dicts(paper_path)]
-        return rows
+        return [
+            _normalize_position(row, default_layer="shadow")
+            for row in position_ledger.get_positions(capital_layer="all")
+            if not row.get("entry_date") or _compact_date(row.get("entry_date")) <= _compact_date(as_of_date)
+        ]
     except Exception:
         return []
 
 
 def load_direction_hits(trade_date: str) -> list[dict[str, Any]]:
-    try:
-        path = RECOMMENDATIONS_DIR / "direction_hit_reviews.csv"
-        rows = _read_csv_dicts(path)
-        return [row for row in rows if _date_eq(row.get("source_trade_date"), trade_date)]
-    except Exception:
-        return []
+    return []
 
 
 def run_daily_review(
@@ -367,15 +356,18 @@ def run_daily_review(
 
         if session_key == "lunch":
             morning_trades = [trade for trade in trades if _is_morning_trade(trade)]
-            result = review_lunch(positions, morning_trades)
+            result = review_lunch(positions, morning_trades, benchmark_return=benchmark_return, stage=stage, trade_date=trade_date)
             result["trade_date"] = trade_date
+            result["capital_layer"] = "shadow"
+            result["stale"] = not morning_trades
             return result
 
         if session_key == "close":
-            review_outcomes = load_review_outcomes(trade_date)
             result = review_close(trades, positions, benchmark_return, stage=stage)
             result["trade_date"] = trade_date
-            result["review_outcome_count"] = len(review_outcomes)
+            result["review_outcome_count"] = 0
+            result["capital_layer"] = "shadow"
+            result["stale"] = not trades
             return result
 
         return {"session": session, "error": f"unsupported session: {session}", "trade_date": trade_date}
@@ -385,7 +377,14 @@ def run_daily_review(
 
 # ---- lunch review -----------------------------------------------------------
 
-def review_lunch(positions: list[dict[str, Any]], morning_trades: list[dict[str, Any]]) -> dict[str, Any]:
+def review_lunch(
+    positions: list[dict[str, Any]],
+    morning_trades: list[dict[str, Any]],
+    *,
+    benchmark_return: float = 0.0,
+    stage: str = "stage_1_sim",
+    trade_date: str | None = None,
+) -> dict[str, Any]:
     """Lunch review @ 11:35.
 
     Args:
@@ -410,6 +409,9 @@ def review_lunch(positions: list[dict[str, Any]], morning_trades: list[dict[str,
     layer_trades = _group_by_capital_layer(morning_trades)
     layers = sorted(set(layer_positions) | set(layer_trades) or {"shadow"})
 
+    goals = _load_goals()
+    stage_goals = _stage_goals(goals, stage)
+    benchmark_date = trade_date or datetime.now(timezone.utc).strftime("%Y%m%d")
     capital_layer_reviews: dict[str, Any] = {}
     for layer in layers:
         layer_pos = layer_positions.get(layer, [])
@@ -432,6 +434,25 @@ def review_lunch(positions: list[dict[str, Any]], morning_trades: list[dict[str,
             and _safe_float(p.get("momentum", 0)) > 0
         ]
         watch_list = [p.get("ts_code", "?") for p in layer_pos if p.get("ts_code") not in reduce_list + add_list]
+        attr = attribute_pct(layer_trade)
+        bench_cmp = compare_to_benchmark(pnl, benchmark_return)
+        bench_info = get_benchmark(benchmark_date)
+        last_period_return = _safe_float(bench_info.get("last_period_return"))
+        vs_goals = _compare_to_goals(
+            {
+                "win_rate": hit,
+                "sharpe": bench_cmp.get("sharpe"),
+                "max_drawdown": bench_cmp.get("max_drawdown"),
+                "stage": stage,
+            },
+            stage_goals,
+        )
+        next_plan = {
+            "reduce": reduce_list,
+            "add": add_list,
+            "watch": watch_list,
+            "notes": "午盘复盘: 检查上午信号兑现度, 止损标的减仓, 未兑现信号加仓.",
+        }
         capital_layer_reviews[layer] = {
             "capital_layer": layer,
             "signal_count": signal_count,
@@ -441,17 +462,27 @@ def review_lunch(positions: list[dict[str, Any]], morning_trades: list[dict[str,
             "floating_pnl": round(floating_pnl, 6),
             "position_count": len(layer_pos),
             "morning_trade_count": len(layer_trade),
-            "afternoon_plan": {
-                "reduce": reduce_list,
-                "add": add_list,
-                "watch": watch_list,
-                "notes": "午盘复盘: 检查上午信号兑现度, 止损标的减仓, 未兑现信号加仓.",
+            "stale": not layer_trade,
+            "attribution": attr,
+            "comparisons": {
+                "vs_goals": vs_goals,
+                "vs_benchmark": bench_cmp,
+                "vs_last_period": {
+                    "this_period_return": round(pnl, 6),
+                    "last_period_return": round(last_period_return, 6),
+                    "improved": pnl > last_period_return,
+                    "delta": round(pnl - last_period_return, 6),
+                },
             },
+            "afternoon_plan": next_plan,
+            "next_plan": next_plan,
         }
 
     result = {
         "session": "lunch",
         "as_of": _now_iso(),
+        "capital_layer": "shadow",
+        "stale": not morning_trades,
         "capital_layer_reviews": capital_layer_reviews,
     }
     _append_layer_logs({"session": "lunch", "as_of": result["as_of"]}, capital_layer_reviews)
@@ -556,6 +587,7 @@ def review_close(
             "capital_layer": layer,
             "trades_summary": trades_summary,
             "pnl": round(total_pnl, 6),
+            "stale": not layer_trd,
             "attribution": attr,
             "comparisons": {
                 "vs_goals": vs_goals,
@@ -579,6 +611,8 @@ def review_close(
     result = {
         "session": "close",
         "as_of": _now_iso(),
+        "capital_layer": "shadow",
+        "stale": not all_trades,
         "capital_layer_reviews": capital_layer_reviews,
     }
     baseline_layer = _preferred_capital_layer(list(capital_layer_reviews))

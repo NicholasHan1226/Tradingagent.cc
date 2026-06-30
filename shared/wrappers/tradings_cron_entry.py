@@ -100,12 +100,28 @@ class StubMarketAdapter:
         return f"{self.market.lower()}_shadow_stub"
 
 
+def _build_ashare_adapter() -> Any:
+    try:
+        from Ashare.adapter import AshareAdapter
+        return AshareAdapter()
+    except Exception:
+        return StubMarketAdapter("Ashare")
+
+
 MARKET_ADAPTERS: dict[str, Any] = {
-    "Ashare": StubMarketAdapter("Ashare"),
+    "Ashare": _build_ashare_adapter(),
     "Crypto": StubMarketAdapter("Crypto"),
     "US": StubMarketAdapter("US"),
     "PM": StubMarketAdapter("PM"),
 }
+
+
+def _register_default_adapters() -> None:
+    try:
+        from PM.adapter import PMAdapter
+    except Exception:
+        return
+    register_market_adapter("PM", PMAdapter())
 
 
 def register_market_adapter(market: str, adapter: Any) -> None:
@@ -116,14 +132,74 @@ def get_market_adapter(market: str) -> Any:
     return MARKET_ADAPTERS.get(market) or StubMarketAdapter(market)
 
 
+def _pm_price_to_close(row: dict[str, Any]) -> float:
+    for key in ("yes_price", "last_price", "price", "implied_probability", "probability"):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            price = float(value)
+        except (TypeError, ValueError):
+            continue
+        if price == price:
+            return max(0.0, min(1.0, price))
+    return 0.5
+
+
+class PMReaderBridge:
+    """Expose PM probability prices through the orchestrator's bar interface."""
+
+    def __init__(self, reader: Any) -> None:
+        self.reader = reader
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.reader, name)
+
+    def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, Any]]:
+        if str(market).lower() != "pm":
+            return self.reader.get_bars_daily(market, symbol, start, end)
+        rows = self.reader.get_pm_prices(symbol, start, end)
+        bars: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            bar = dict(row)
+            bar["close"] = _pm_price_to_close(row)
+            bars.append(bar)
+        return bars
+
+
+def _pm_score_stock(symbol: str, date: str, data_reader: Any = None) -> dict[str, Any]:
+    from PM.scoring import score_market
+
+    return score_market(symbol, date, data_reader=data_reader)
+
+
+def _pm_orchestrator_deps() -> Any:
+    from shared.orchestrator import _default_deps
+
+    deps = _default_deps()
+    deps.score_stock = _pm_score_stock
+    return deps
+
+
 def run_shadow_orchestrator(job_name: str, market: str) -> dict[str, Any]:
     from shared.data.reader import TradingsDataReader
     from shared.orchestrator import run_shadow_loop
 
-    result = run_shadow_loop(get_market_adapter(market), trade_date(), TradingsDataReader())
+    adapter = get_market_adapter(market)
+    reader: Any = TradingsDataReader()
+    deps = None
+    if str(market).upper() == "PM" or str(adapter.get_market()).lower() == "pm":
+        reader = PMReaderBridge(reader)
+        deps = _pm_orchestrator_deps()
+    result = run_shadow_loop(adapter, trade_date(), reader, deps=deps)
     result.update({"job": job_name, "state": result.get("state", "ok"), "generated_at": now_iso()})
     append_jsonl(SHARED / "logs/orchestrator_shadow_runs.jsonl", result)
     return result
+
+
+_register_default_adapters()
 
 
 def run_all_market_trading_signals() -> dict[str, Any]:
@@ -156,7 +232,12 @@ def run_daily_brief_day() -> dict[str, Any]:
     from shared.orchestrator import run_daily_review
 
     result = run_daily_review("all", trade_date(), "lunch")
-    result.update({"job": "job_daily_brief_day", "state": "orchestrated", "generated_at": now_iso()})
+    result.update({
+        "job": "job_daily_brief_day",
+        "state": "orchestrated",
+        "phase": "lunch",
+        "generated_at": now_iso(),
+    })
     append_jsonl(SHARED / "review/daily/midday_review.jsonl", result)
     return result
 
@@ -165,7 +246,12 @@ def run_daily_brief_night() -> dict[str, Any]:
     from shared.orchestrator import run_daily_review
 
     result = run_daily_review("all", trade_date(), "close")
-    result.update({"job": "job_daily_brief_night", "state": "orchestrated", "generated_at": now_iso()})
+    result.update({
+        "job": "job_daily_brief_night",
+        "state": "orchestrated",
+        "phase": "close",
+        "generated_at": now_iso(),
+    })
     append_jsonl(SHARED / "review/daily/daily_brief.jsonl", result)
     return result
 
@@ -281,6 +367,7 @@ def run_email_notify() -> dict[str, Any]:
 
 JOB_HANDLERS: dict[str, Any] = {
     "job_trading_signals": run_all_market_trading_signals,
+    "job_ashare_sim_exec": lambda: run_shadow_orchestrator("job_ashare_sim_exec", "Ashare"),
     "job_us_shadow_exec": lambda: run_shadow_orchestrator("job_us_shadow_exec", "US"),
     "job_us_shadow": lambda: run_shadow_orchestrator("job_us_shadow", "US"),
     "job_crypto_shadow_exec": lambda: run_shadow_orchestrator("job_crypto_shadow_exec", "Crypto"),
@@ -306,7 +393,6 @@ JOB_HANDLERS: dict[str, Any] = {
 
 PLACEHOLDER_SPECS: dict[str, tuple[str, str, str]] = {
     "job_premarket_signals": ("signals/premarket_signals.jsonl", "jsonl", "待接入隔夜事件与评分后生成 A 股盘前信号。"),
-    "job_ashare_sim_exec": ("executions/sim/sim_exec_log.jsonl", "jsonl", "待接入 active_conditions 与 quotes 后执行 A 股模拟单。"),
     "job_us_premarket": ("signals/us/us_premarket_signals.jsonl", "jsonl", "待接入美股日线与事件流。"),
     "job_us_hourly": ("signals/us/us_intraday_signals.jsonl", "jsonl", "待接入美股盘中行情。"),
     "job_us_postclose": ("review/us/us_postclose.jsonl", "jsonl", "待接入 US close data 与当日信号聚合。"),

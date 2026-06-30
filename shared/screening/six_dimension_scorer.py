@@ -10,6 +10,7 @@
 - sentiment: 情绪防雷 (signals)
 
 score_stock(ts_code, date) → {macro, event, fundamental, capital, technical, sentiment, combined}
+score_stock(market, ts_code, reader, date, config) → same result with market-aware reader queries
 score_universe(date) → list of (ts_code, scores)
 """
 from __future__ import annotations
@@ -103,6 +104,19 @@ def _symbol_variants(ts_code: str) -> list[str]:
     return [stripped, ts_code] if stripped != ts_code else [ts_code]
 
 
+def _looks_like_date(value: Any) -> bool:
+    raw = str(value or "").strip()
+    if len(raw) == 8 and raw.isdigit():
+        return True
+    if len(raw) == 10 and raw[4] in {"-", "/"} and raw[7] in {"-", "/"}:
+        return True
+    return False
+
+
+def _reader_market(config: dict[str, Any]) -> str:
+    return str(config.get("_market") or "ashare")
+
+
 def _direction_score(impact_hint: Any) -> float:
     direction = str(impact_hint or "").split(":", 1)[0].strip().lower()
     return {"positive": 1.0, "negative": 0.0, "mixed": 0.5, "neutral": 0.5}.get(direction, 0.5)
@@ -136,6 +150,31 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float:
         total_weight = 0.0
         weighted = 0.0
         allowed_status = {"needs_review", "promoted", "approved"}
+        data_reader = _get_data_reader(config)
+        market = _reader_market(config)
+        for symbol in _symbol_variants(ts_code):
+            get_events = getattr(data_reader, "get_events", None)
+            rows = get_events(market, symbol, None, date) if callable(get_events) else []
+            for row in rows:
+                impact = (
+                    row.get("proposed_impact_hint")
+                    or row.get("impact_hint")
+                    or row.get("direction")
+                    or row.get("sentiment")
+                )
+                if impact is None:
+                    continue
+                conf = _safe_float(row.get("confidence"), 0.0)
+                if conf <= 0.0:
+                    conf = _safe_float(row.get("score"), 0.0)
+                if conf <= 0.0:
+                    conf = 0.5
+                if conf < min_conf:
+                    continue
+                weighted += _direction_score(impact) * conf
+                total_weight += conf
+            if total_weight > 1e-9:
+                return _clamp(weighted / total_weight)
         for row in _get_data_reader(config).get_event_candidates():
             if row.get("subject_code") != ts_code:
                 continue
@@ -162,8 +201,9 @@ def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float
         factor_weights = dim_cfg.get("factors", {"value": 0.30, "growth": 0.30, "quality": 0.20, "momentum": 0.20})
         rows: list[dict[str, Any]] = []
         data_reader = _get_data_reader(config)
+        market = _reader_market(config)
         for symbol in _symbol_variants(ts_code):
-            rows = data_reader.get_factors("Ashare", symbol)
+            rows = data_reader.get_factors(market, symbol)
             if rows:
                 break
         if not rows:
@@ -202,6 +242,7 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float:
         total_net = 0.0
         found = False
         data_reader = _get_data_reader(config)
+        market = _reader_market(config)
         moneyflow_names = {
             "net_mf_amount",
             "moneyflow",
@@ -210,7 +251,7 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float:
             "main_moneyflow",
         }
         for symbol in _symbol_variants(ts_code):
-            for row in data_reader.get_factors("Ashare", symbol):
+            for row in data_reader.get_factors(market, symbol):
                 factor_name = str(row.get("factor_name") or "").strip().lower()
                 if factor_name not in moneyflow_names:
                     continue
@@ -247,8 +288,9 @@ def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float:
         start_date = (end_date - timedelta(days=90)).strftime("%Y%m%d")
         rows: list[dict[str, Any]] = []
         data_reader = _get_data_reader(config)
+        market = _reader_market(config)
         for symbol in _symbol_variants(ts_code):
-            rows = data_reader.get_bars_daily("Ashare", symbol, start_date, date)
+            rows = data_reader.get_bars_daily(market, symbol, start_date, date)
             if len(rows) >= ma_long:
                 break
         if len(rows) < ma_long:
@@ -310,16 +352,25 @@ _DIMENSION_FUNCS = {
 
 
 def score_stock(
-    ts_code: str,
+    market_or_ts_code: str,
+    symbol_or_date: str | None = None,
+    reader: TradingsDataReader | None = None,
     date: str | None = None,
+    config: dict[str, Any] | None = None,
+    *,
     data_reader: TradingsDataReader | None = None,
+    market: str | None = None,
 ) -> dict[str, float]:
     """对单只股票进行六维打分。
 
     Args:
-        ts_code: 股票代码 (如 "600519.SH")
+        market_or_ts_code: 旧式调用中为股票代码；新式调用中为 market
+        symbol_or_date: 旧式调用中为日期；新式调用中为股票代码
+        reader: 新式调用中的 reader 注入
         date: 日期 (YYYYMMDD), 默认今天
-        data_reader: 可选注入 reader, 便于测试或隔离数据源
+        config: 可选权重配置覆盖
+        data_reader: 旧式调用中的 reader 注入，便于测试或隔离数据源
+        market: 旧式调用的可选 market 覆盖，默认 "ashare"
 
     Returns:
         {
@@ -332,12 +383,44 @@ def score_stock(
             "combined": float,      # 加权综合分 [0, 1]
         }
     """
+    if (
+        symbol_or_date is not None
+        and not _looks_like_date(symbol_or_date)
+        and (reader is not None or date is not None or config is not None)
+        and market is None
+    ):
+        market_name = str(market_or_ts_code or "ashare")
+        ts_code = str(symbol_or_date)
+        if data_reader is None:
+            data_reader = reader
+    else:
+        market_name = str(market or "ashare")
+        ts_code = str(market_or_ts_code)
+        if date is None:
+            date = symbol_or_date
+        if data_reader is None:
+            data_reader = reader
+
     if not ts_code:
         return {k: 0.0 for k in (*_DEFAULT_WEIGHTS, "combined")}
     if date is None:
         date = datetime.now().strftime("%Y%m%d")
 
-    config = _load_weights()
+    loaded_config = _load_weights()
+    if config:
+        for key, value in config.items():
+            if key == "dimensions" and isinstance(value, dict):
+                merged_dimensions = dict(loaded_config.get("dimensions", {}))
+                merged_dimensions.update(value)
+                loaded_config["dimensions"] = merged_dimensions
+            elif key == "combined" and isinstance(value, dict):
+                merged_combined = dict(loaded_config.get("combined", {}))
+                merged_combined.update(value)
+                loaded_config["combined"] = merged_combined
+            else:
+                loaded_config[key] = value
+    config = loaded_config
+    config["_market"] = market_name
     if data_reader is not None:
         config["_data_reader"] = data_reader
     missing_default = config.get("combined", {}).get("missing_default", _DEFAULT_MISSING)
@@ -370,6 +453,7 @@ def score_universe(
     date: str | None = None,
     universe: list[str] | None = None,
     data_reader: TradingsDataReader | None = None,
+    market: str = "ashare",
 ) -> list[tuple[str, dict[str, float]]]:
     """对整个 universe 进行六维打分。
 
@@ -395,7 +479,7 @@ def score_universe(
 
     results: list[tuple[str, dict[str, float]]] = []
     for ts_code in universe:
-        scores = score_stock(ts_code, date, data_reader=data_reader)
+        scores = score_stock(ts_code, date, data_reader=data_reader, market=market)
         results.append((ts_code, scores))
 
     # 按 combined 降序

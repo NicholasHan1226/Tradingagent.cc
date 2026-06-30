@@ -1,0 +1,32 @@
+{
+  "name": "high_elasticity",
+  "display_name": "high elasticity",
+  "type": "elasticity",
+  "capital_layer": "shadow",
+  "maturity": "exploratory",
+  "enabled": true,
+  "params": {
+    "atr_window_days": 14,
+    "atr_pct_min": 0.035,
+    "beta_min": 1.2,
+    "volume_ratio_min": 1.4,
+    "take_profit_pct": 0.12,
+    "stop_loss_pct": 0.05,
+    "max_hold_days": 4
+  },
+  "risk_rules": {
+    "settlement": "T+1",
+    "limit_up_buy_block": true,
+    "limit_down_sell_block": true,
+    "session": "continuous_auction",
+    "position_weight_cap": 0.08
+  },
+  "weight_overrides": {
+    "technical": 0.3,
+    "capital": 0.25,
+    "sentiment": 0.15,
+    "event": 0.15,
+    "macro": 0.1,
+    "fundamental": 0.05
+  }
+}

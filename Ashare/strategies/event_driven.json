@@ -1,0 +1,30 @@
+{
+  "name": "event_driven",
+  "display_name": "event driven",
+  "type": "event",
+  "capital_layer": "shadow",
+  "maturity": "training",
+  "enabled": true,
+  "params": {
+    "min_event_confidence": 0.55,
+    "event_valid_days": 3,
+    "confirmation_volume_ratio_min": 1.2,
+    "take_profit_pct": 0.1,
+    "stop_loss_pct": 0.045,
+    "max_hold_days": 5
+  },
+  "risk_rules": {
+    "settlement": "T+1",
+    "limit_up_buy_block": true,
+    "limit_down_sell_block": true,
+    "session": "continuous_auction"
+  },
+  "weight_overrides": {
+    "event": 0.35,
+    "capital": 0.2,
+    "sentiment": 0.15,
+    "technical": 0.15,
+    "fundamental": 0.1,
+    "macro": 0.05
+  }
+}

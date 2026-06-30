@@ -1,0 +1,31 @@
+{
+  "name": "etf_rotation",
+  "display_name": "ETF rotation",
+  "type": "rotation",
+  "capital_layer": "shadow",
+  "maturity": "training",
+  "enabled": true,
+  "params": {
+    "rank_window_days": 20,
+    "rebalance_days": 5,
+    "relative_strength_min": 0.6,
+    "volume_ratio_min": 1.0,
+    "take_profit_pct": 0.06,
+    "stop_loss_pct": 0.03,
+    "max_hold_days": 10
+  },
+  "risk_rules": {
+    "settlement": "T+1",
+    "limit_up_buy_block": true,
+    "limit_down_sell_block": true,
+    "session": "continuous_auction"
+  },
+  "weight_overrides": {
+    "macro": 0.25,
+    "technical": 0.25,
+    "capital": 0.2,
+    "event": 0.1,
+    "fundamental": 0.1,
+    "sentiment": 0.1
+  }
+}

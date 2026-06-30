@@ -1,0 +1,31 @@
+{
+  "name": "value",
+  "display_name": "value",
+  "type": "value",
+  "capital_layer": "shadow",
+  "maturity": "training",
+  "enabled": true,
+  "params": {
+    "pe_ttm_max": 25,
+    "pb_max": 3,
+    "quality_score_min": 0.6,
+    "volume_ratio_min": 0.8,
+    "take_profit_pct": 0.08,
+    "stop_loss_pct": 0.04,
+    "max_hold_days": 15
+  },
+  "risk_rules": {
+    "settlement": "T+1",
+    "limit_up_buy_block": true,
+    "limit_down_sell_block": true,
+    "session": "continuous_auction"
+  },
+  "weight_overrides": {
+    "fundamental": 0.35,
+    "macro": 0.2,
+    "capital": 0.15,
+    "technical": 0.15,
+    "event": 0.1,
+    "sentiment": 0.05
+  }
+}
