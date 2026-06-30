@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import csv
 import fcntl
+import sqlite3
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -14,9 +14,15 @@ from typing import Any, Iterator
 
 LEDGER_DIR = Path(__file__).resolve().parent.parent / "logs"
 POSITION_CSV = LEDGER_DIR / "position_ledger.csv"
-POSITION_LOCK = POSITION_CSV.with_suffix(".csv.lock")
+POSITION_DB = LEDGER_DIR / "position_ledger.sqlite3"
+POSITION_LOCK = POSITION_DB.with_suffix(".sqlite3.lock")
 DEFAULT_CAPITAL_LAYER = "shadow"
 CAPITAL_LAYERS = {"real", "simulated", "shadow"}
+POSITION_TABLES = {
+    "real": "position_ledger_real",
+    "simulated": "position_ledger_simulated",
+    "shadow": "position_ledger_shadow",
+}
 
 CSV_HEADERS = [
     "entry_id",
@@ -57,7 +63,7 @@ class PositionEntry:
 @contextmanager
 def _ledger_lock() -> Iterator[None]:
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    with open(POSITION_LOCK, "a+", encoding="utf-8") as fh:
+    with open(LEDGER_DIR / POSITION_LOCK.name, "a+", encoding="utf-8") as fh:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         try:
             yield
@@ -65,92 +71,99 @@ def _ledger_lock() -> Iterator[None]:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
-def _position_csv_for_layer(capital_layer: str) -> Path:
-    layer = _normalize_capital_layer(capital_layer)
-    return POSITION_CSV.with_name(f"{POSITION_CSV.stem}_{layer}{POSITION_CSV.suffix}")
+def _table_for_layer(capital_layer: str) -> str:
+    return POSITION_TABLES[_normalize_capital_layer(capital_layer)]
 
 
-def _write_entries_to_path_unlocked(path: Path, entries: list[dict[str, Any]]) -> None:
-    with open(path, "w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
-        writer.writeheader()
-        for entry in entries:
-            normalized = {key: entry.get(key, "") for key in CSV_HEADERS}
-            layer = _normalize_capital_layer(entry.get("capital_layer", DEFAULT_CAPITAL_LAYER))
-            normalized["capital_layer"] = layer
-            normalized["is_real_money"] = _is_real_money(layer)
-            writer.writerow(normalized)
-
-
-def _ensure_layer_csv_unlocked(capital_layer: str) -> Path:
+@contextmanager
+def _connect() -> Iterator[sqlite3.Connection]:
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    path = _position_csv_for_layer(capital_layer)
-    if not path.exists():
-        _write_entries_to_path_unlocked(path, [])
-    return path
+    conn = sqlite3.connect(LEDGER_DIR / POSITION_DB.name)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
-def _read_entries_from_path_unlocked(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    with open(path, "r", newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        entries = []
-        for row in reader:
-            entry = dict(row)
-            layer = _normalize_capital_layer(entry.get("capital_layer", DEFAULT_CAPITAL_LAYER))
-            entry["capital_layer"] = layer
-            entry["is_real_money"] = _is_real_money(layer)
-            entries.append(entry)
-        return entries
+def _create_tables_unlocked(conn: sqlite3.Connection) -> None:
+    columns = ", ".join(f"{name} TEXT NOT NULL DEFAULT ''" for name in CSV_HEADERS)
+    for table in POSITION_TABLES.values():
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {table} (
+                {columns},
+                PRIMARY KEY(entry_id)
+            )
+            """
+        )
+    conn.commit()
 
 
-def _migrate_legacy_csv_unlocked() -> None:
+def _normalize_legacy_row(row: dict[str, Any], row_number: int) -> dict[str, str]:
+    normalized = {key: str(row.get(key, "") or "") for key in CSV_HEADERS}
+    layer = _normalize_capital_layer(row.get("capital_layer", DEFAULT_CAPITAL_LAYER))
+    normalized["capital_layer"] = layer
+    normalized["is_real_money"] = _is_real_money(layer)
+    if not normalized["entry_id"]:
+        normalized["entry_id"] = f"POS-LEGACY-{row_number:08d}"
+    return normalized
+
+
+def _migrate_legacy_csv_unlocked(conn: sqlite3.Connection) -> None:
     if not POSITION_CSV.exists():
         return
-    legacy_entries = _read_entries_from_path_unlocked(POSITION_CSV)
-    if not legacy_entries:
-        return
+    import csv
 
-    by_layer: dict[str, list[dict[str, Any]]] = {layer: [] for layer in CAPITAL_LAYERS}
-    for entry in legacy_entries:
-        layer = _normalize_capital_layer(entry.get("capital_layer", DEFAULT_CAPITAL_LAYER))
-        normalized = {key: entry.get(key, "") for key in CSV_HEADERS}
-        normalized["capital_layer"] = layer
-        normalized["is_real_money"] = _is_real_money(layer)
-        by_layer[layer].append(normalized)
-
-    for layer, entries in by_layer.items():
-        path = _ensure_layer_csv_unlocked(layer)
-        existing = _read_entries_from_path_unlocked(path)
-        existing_ids = {str(row.get("entry_id", "")) for row in existing if row.get("entry_id")}
-        additions = [row for row in entries if str(row.get("entry_id", "")) not in existing_ids]
-        if additions:
-            _write_entries_to_path_unlocked(path, existing + additions)
+    with open(POSITION_CSV, "r", newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        for row_number, row in enumerate(reader, start=1):
+            normalized = _normalize_legacy_row(dict(row), row_number)
+            _insert_entry_unlocked(conn, normalized)
+    conn.commit()
 
 
-def _ensure_csv_unlocked() -> None:
-    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    for layer in CAPITAL_LAYERS:
-        _ensure_layer_csv_unlocked(layer)
-    _migrate_legacy_csv_unlocked()
+def _ensure_db_unlocked(conn: sqlite3.Connection) -> None:
+    _create_tables_unlocked(conn)
+    _migrate_legacy_csv_unlocked(conn)
 
 
-def _append_unlocked(row: dict[str, Any]) -> str:
-    path = _position_csv_for_layer(row["capital_layer"])
-    with open(path, "a", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
-        writer.writerow(row)
-    return row["entry_id"]
+def _insert_entry_unlocked(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    normalized = {key: str(row.get(key, "") or "") for key in CSV_HEADERS}
+    layer = _normalize_capital_layer(normalized.get("capital_layer"))
+    normalized["capital_layer"] = layer
+    normalized["is_real_money"] = _is_real_money(layer)
+    table = _table_for_layer(layer)
+    placeholders = ", ".join("?" for _ in CSV_HEADERS)
+    columns = ", ".join(CSV_HEADERS)
+    conn.execute(
+        f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ({placeholders})",
+        [normalized[key] for key in CSV_HEADERS],
+    )
 
 
-def _read_all_entries_unlocked(capital_layer: str | None = None) -> list[dict[str, Any]]:
+def _append_unlocked(conn: sqlite3.Connection, row: dict[str, Any]) -> str:
+    _insert_entry_unlocked(conn, row)
+    return str(row["entry_id"])
+
+
+def _read_all_entries_unlocked(
+    conn: sqlite3.Connection,
+    capital_layer: str | None = None,
+) -> list[dict[str, Any]]:
     layer_filter = _normalize_position_filter(capital_layer)
-    if layer_filter is not None:
-        return _read_entries_from_path_unlocked(_position_csv_for_layer(layer_filter))
+    layers = sorted(CAPITAL_LAYERS) if layer_filter is None else [layer_filter]
     entries: list[dict[str, Any]] = []
-    for layer in sorted(CAPITAL_LAYERS):
-        entries.extend(_read_entries_from_path_unlocked(_position_csv_for_layer(layer)))
+    for layer in layers:
+        table = _table_for_layer(layer)
+        rows = conn.execute(
+            f"SELECT {', '.join(CSV_HEADERS)} FROM {table} ORDER BY timestamp, rowid"
+        ).fetchall()
+        for row in rows:
+            entry = dict(row)
+            entry["capital_layer"] = _normalize_capital_layer(entry.get("capital_layer"))
+            entry["is_real_money"] = _is_real_money(entry["capital_layer"])
+            entries.append(entry)
     return entries
 
 
@@ -281,6 +294,7 @@ def _assert_a_share_t_plus_1(
 
 def _write_position_event(
     *,
+    conn: sqlite3.Connection,
     event_type: str,
     capital_layer: str,
     ts_code: str,
@@ -326,7 +340,7 @@ def _write_position_event(
         "audit_id": audit_id,
         "note": note,
     }
-    return _append_unlocked(row)
+    return _append_unlocked(conn, row)
 
 
 def open_position(
@@ -345,33 +359,36 @@ def open_position(
         raise ValueError(f"price must be positive, got {price}")
 
     with _ledger_lock():
-        _ensure_csv_unlocked()
-        layer = _normalize_capital_layer(capital_layer)
-        entries = _read_all_entries_unlocked(capital_layer=layer)
-        current = _get_current_state_from_entries(entries, ts_code, layer)
-        if current["quantity"] > 0:
-            raise ValueError(
-                f"Position already exists for {ts_code} in {layer} layer "
-                f"({current['quantity']} shares). Use add_position instead."
-            )
+        with _connect() as conn:
+            _ensure_db_unlocked(conn)
+            layer = _normalize_capital_layer(capital_layer)
+            entries = _read_all_entries_unlocked(conn, capital_layer=layer)
+            current = _get_current_state_from_entries(entries, ts_code, layer)
+            if current["quantity"] > 0:
+                raise ValueError(
+                    f"Position already exists for {ts_code} in {layer} layer "
+                    f"({current['quantity']} shares). Use add_position instead."
+                )
 
-        amount = round(quantity * price, 2)
-        normalized_entry_date = _normalize_entry_date(entry_date) or datetime.now().strftime("%Y-%m-%d")
-        eid = _write_position_event(
-            event_type="open",
-            capital_layer=layer,
-            ts_code=ts_code,
-            quantity=quantity,
-            price=price,
-            order_id=order_id,
-            audit_id=audit_id,
-            note=note,
-            entry_date=normalized_entry_date,
-            running_quantity=quantity,
-            running_cost=amount,
-            running_avg_price=price,
-            realized_pnl=0.0,
-        )
+            amount = round(quantity * price, 2)
+            normalized_entry_date = _normalize_entry_date(entry_date) or datetime.now().strftime("%Y-%m-%d")
+            eid = _write_position_event(
+                conn=conn,
+                event_type="open",
+                capital_layer=layer,
+                ts_code=ts_code,
+                quantity=quantity,
+                price=price,
+                order_id=order_id,
+                audit_id=audit_id,
+                note=note,
+                entry_date=normalized_entry_date,
+                running_quantity=quantity,
+                running_cost=amount,
+                running_avg_price=price,
+                realized_pnl=0.0,
+            )
+            conn.commit()
         return {
             "entry_id": eid,
             "ts_code": ts_code,
@@ -400,32 +417,35 @@ def add_position(
         raise ValueError(f"price must be positive, got {price}")
 
     with _ledger_lock():
-        _ensure_csv_unlocked()
-        layer = _normalize_capital_layer(capital_layer)
-        entries = _read_all_entries_unlocked(capital_layer=layer)
-        current = _get_current_state_from_entries(entries, ts_code, layer)
-        if current["quantity"] == 0:
-            raise ValueError(f"No existing position for {ts_code} in {layer} layer. Use open_position instead.")
+        with _connect() as conn:
+            _ensure_db_unlocked(conn)
+            layer = _normalize_capital_layer(capital_layer)
+            entries = _read_all_entries_unlocked(conn, capital_layer=layer)
+            current = _get_current_state_from_entries(entries, ts_code, layer)
+            if current["quantity"] == 0:
+                raise ValueError(f"No existing position for {ts_code} in {layer} layer. Use open_position instead.")
 
-        add_amount = round(quantity * price, 2)
-        new_qty = current["quantity"] + quantity
-        new_cost = round(current["cost_basis"] + add_amount, 2)
-        new_avg = round(new_cost / new_qty, 4) if new_qty > 0 else 0.0
-        eid = _write_position_event(
-            event_type="add",
-            capital_layer=layer,
-            ts_code=ts_code,
-            quantity=quantity,
-            price=price,
-            order_id=order_id,
-            audit_id=audit_id,
-            note=note,
-            entry_date="",
-            running_quantity=new_qty,
-            running_cost=new_cost,
-            running_avg_price=new_avg,
-            realized_pnl=0.0,
-        )
+            add_amount = round(quantity * price, 2)
+            new_qty = current["quantity"] + quantity
+            new_cost = round(current["cost_basis"] + add_amount, 2)
+            new_avg = round(new_cost / new_qty, 4) if new_qty > 0 else 0.0
+            eid = _write_position_event(
+                conn=conn,
+                event_type="add",
+                capital_layer=layer,
+                ts_code=ts_code,
+                quantity=quantity,
+                price=price,
+                order_id=order_id,
+                audit_id=audit_id,
+                note=note,
+                entry_date="",
+                running_quantity=new_qty,
+                running_cost=new_cost,
+                running_avg_price=new_avg,
+                realized_pnl=0.0,
+            )
+            conn.commit()
         return {
             "entry_id": eid,
             "ts_code": ts_code,
@@ -459,43 +479,46 @@ def reduce_position(
         raise ValueError(f"price must be positive, got {price}")
 
     with _ledger_lock():
-        _ensure_csv_unlocked()
-        layer = _normalize_capital_layer(capital_layer)
-        entries = _read_all_entries_unlocked(capital_layer=layer)
-        current = _get_current_state_from_entries(entries, ts_code, layer)
-        if current["quantity"] == 0:
-            raise ValueError(f"No position to reduce for {ts_code} in {layer} layer.")
-        if quantity >= current["quantity"]:
-            raise ValueError(
-                f"Reduce quantity {quantity} >= holding {current['quantity']}. "
-                f"Use close_position instead."
+        with _connect() as conn:
+            _ensure_db_unlocked(conn)
+            layer = _normalize_capital_layer(capital_layer)
+            entries = _read_all_entries_unlocked(conn, capital_layer=layer)
+            current = _get_current_state_from_entries(entries, ts_code, layer)
+            if current["quantity"] == 0:
+                raise ValueError(f"No position to reduce for {ts_code} in {layer} layer.")
+            if quantity >= current["quantity"]:
+                raise ValueError(
+                    f"Reduce quantity {quantity} >= holding {current['quantity']}. "
+                    f"Use close_position instead."
+                )
+            sellable_date = _assert_a_share_t_plus_1(
+                ts_code=ts_code,
+                entry_date=current.get("entry_date"),
+                trade_date=current_trade_date or trade_date,
             )
-        sellable_date = _assert_a_share_t_plus_1(
-            ts_code=ts_code,
-            entry_date=current.get("entry_date"),
-            trade_date=current_trade_date or trade_date,
-        )
 
-        avg_cost = current["avg_price"]
-        fee_total = _total_fee(commission, stamp_duty, transfer_fee)
-        realized_pnl = round((quantity * price) - (avg_cost * quantity) - fee_total, 2)
-        new_qty = current["quantity"] - quantity
-        new_cost = round(avg_cost * new_qty, 2)
-        eid = _write_position_event(
-            event_type="reduce",
-            capital_layer=layer,
-            ts_code=ts_code,
-            quantity=quantity,
-            price=price,
-            order_id=order_id,
-            audit_id=audit_id,
-            note=note,
-            entry_date="",
-            running_quantity=new_qty,
-            running_cost=new_cost,
-            running_avg_price=avg_cost if new_qty > 0 else 0.0,
-            realized_pnl=realized_pnl,
-        )
+            avg_cost = current["avg_price"]
+            fee_total = _total_fee(commission, stamp_duty, transfer_fee)
+            realized_pnl = round((quantity * price) - (avg_cost * quantity) - fee_total, 2)
+            new_qty = current["quantity"] - quantity
+            new_cost = round(avg_cost * new_qty, 2)
+            eid = _write_position_event(
+                conn=conn,
+                event_type="reduce",
+                capital_layer=layer,
+                ts_code=ts_code,
+                quantity=quantity,
+                price=price,
+                order_id=order_id,
+                audit_id=audit_id,
+                note=note,
+                entry_date="",
+                running_quantity=new_qty,
+                running_cost=new_cost,
+                running_avg_price=avg_cost if new_qty > 0 else 0.0,
+                realized_pnl=realized_pnl,
+            )
+            conn.commit()
         return {
             "entry_id": eid,
             "ts_code": ts_code,
@@ -528,37 +551,40 @@ def close_position(
         raise ValueError(f"price must be positive, got {price}")
 
     with _ledger_lock():
-        _ensure_csv_unlocked()
-        layer = _normalize_capital_layer(capital_layer)
-        entries = _read_all_entries_unlocked(capital_layer=layer)
-        current = _get_current_state_from_entries(entries, ts_code, layer)
-        if current["quantity"] == 0:
-            raise ValueError(f"No position to close for {ts_code} in {layer} layer.")
-        sellable_date = _assert_a_share_t_plus_1(
-            ts_code=ts_code,
-            entry_date=current.get("entry_date"),
-            trade_date=current_trade_date or trade_date,
-        )
+        with _connect() as conn:
+            _ensure_db_unlocked(conn)
+            layer = _normalize_capital_layer(capital_layer)
+            entries = _read_all_entries_unlocked(conn, capital_layer=layer)
+            current = _get_current_state_from_entries(entries, ts_code, layer)
+            if current["quantity"] == 0:
+                raise ValueError(f"No position to close for {ts_code} in {layer} layer.")
+            sellable_date = _assert_a_share_t_plus_1(
+                ts_code=ts_code,
+                entry_date=current.get("entry_date"),
+                trade_date=current_trade_date or trade_date,
+            )
 
-        quantity = current["quantity"]
-        avg_cost = current["avg_price"]
-        fee_total = _total_fee(commission, stamp_duty, transfer_fee)
-        realized_pnl = round((quantity * price) - (avg_cost * quantity) - fee_total, 2)
-        eid = _write_position_event(
-            event_type="close",
-            capital_layer=layer,
-            ts_code=ts_code,
-            quantity=quantity,
-            price=price,
-            order_id=order_id,
-            audit_id=audit_id,
-            note=note,
-            entry_date="",
-            running_quantity=0,
-            running_cost=0.0,
-            running_avg_price=0.0,
-            realized_pnl=realized_pnl,
-        )
+            quantity = current["quantity"]
+            avg_cost = current["avg_price"]
+            fee_total = _total_fee(commission, stamp_duty, transfer_fee)
+            realized_pnl = round((quantity * price) - (avg_cost * quantity) - fee_total, 2)
+            eid = _write_position_event(
+                conn=conn,
+                event_type="close",
+                capital_layer=layer,
+                ts_code=ts_code,
+                quantity=quantity,
+                price=price,
+                order_id=order_id,
+                audit_id=audit_id,
+                note=note,
+                entry_date="",
+                running_quantity=0,
+                running_cost=0.0,
+                running_avg_price=0.0,
+                realized_pnl=realized_pnl,
+            )
+            conn.commit()
         return {
             "entry_id": eid,
             "ts_code": ts_code,
@@ -575,8 +601,9 @@ def close_position(
 
 def get_positions(capital_layer: str | None = None) -> list[dict[str, Any]]:
     with _ledger_lock():
-        _ensure_csv_unlocked()
-        entries = _read_all_entries_unlocked(capital_layer=capital_layer)
+        with _connect() as conn:
+            _ensure_db_unlocked(conn)
+            entries = _read_all_entries_unlocked(conn, capital_layer=capital_layer)
 
     if not entries:
         return []

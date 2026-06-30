@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from shared.accounting import capital_ledger, position_ledger
 from shared.execution import shadow_broker
+
+
+def _sqlite_count(db_path: Path, table_name: str) -> int:
+    conn = sqlite3.connect(db_path)
+    try:
+        return int(conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0])
+    finally:
+        conn.close()
 
 
 def _patch_position_paths(testcase: unittest.TestCase, tmp_path: Path) -> None:
@@ -66,9 +75,11 @@ class CapitalLayerIsolationTest(unittest.TestCase):
 
         all_positions = position_ledger.get_positions(capital_layer="all")
         self.assertEqual({p["capital_layer"] for p in all_positions}, {"real", "shadow", "simulated"})
-        self.assertTrue((self.tmp_path / "position_logs" / "position_ledger_real.csv").exists())
-        self.assertTrue((self.tmp_path / "position_logs" / "position_ledger_shadow.csv").exists())
-        self.assertTrue((self.tmp_path / "position_logs" / "position_ledger_simulated.csv").exists())
+        db_path = self.tmp_path / "position_logs" / "position_ledger.sqlite3"
+        self.assertTrue(db_path.exists())
+        self.assertEqual(_sqlite_count(db_path, "position_ledger_real"), 1)
+        self.assertEqual(_sqlite_count(db_path, "position_ledger_shadow"), 1)
+        self.assertEqual(_sqlite_count(db_path, "position_ledger_simulated"), 1)
         self.assertFalse((self.tmp_path / "position_logs" / "position_ledger.csv").exists())
 
     def test_capital_cash_default_query_returns_only_real_layer(self) -> None:
@@ -84,9 +95,11 @@ class CapitalLayerIsolationTest(unittest.TestCase):
         self.assertEqual(capital_ledger.get_cash_position(capital_layer="shadow"), 2000.0)
         self.assertEqual(capital_ledger.get_cash_position(capital_layer="simulated"), 3000.0)
         self.assertEqual(capital_ledger.get_cash_position(capital_layer="all"), 6000.0)
-        self.assertTrue((self.tmp_path / "capital_logs" / "capital_ledger_real.csv").exists())
-        self.assertTrue((self.tmp_path / "capital_logs" / "capital_ledger_shadow.csv").exists())
-        self.assertTrue((self.tmp_path / "capital_logs" / "capital_ledger_simulated.csv").exists())
+        db_path = self.tmp_path / "capital_logs" / "capital_ledger.sqlite3"
+        self.assertTrue(db_path.exists())
+        self.assertEqual(_sqlite_count(db_path, "capital_ledger_real"), 1)
+        self.assertEqual(_sqlite_count(db_path, "capital_ledger_shadow"), 1)
+        self.assertEqual(_sqlite_count(db_path, "capital_ledger_simulated"), 1)
         self.assertFalse((self.tmp_path / "capital_logs" / "capital_ledger.csv").exists())
 
     def test_legacy_position_rows_default_to_shadow(self) -> None:

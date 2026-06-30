@@ -3,8 +3,9 @@
 
 Records all capital events: buy, sell, deposit, withdrawal, reverse_repo,
 repo_maturity, interest, fee.
-CSV storage, append-only. Each entry is timestamped and linked to its
-source order/audit event.
+SQLite storage, append-only. Each capital layer writes to a physically
+separate table. Each entry is timestamped and linked to its source
+order/audit event.
 
 Capital events:
   - buy:          cash out (negative cash delta), increases position cost
@@ -21,8 +22,8 @@ All amounts in CNY, rounded to 0.01 (cent precision).
 
 from __future__ import annotations
 
-import csv
 import fcntl
+import sqlite3
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -32,9 +33,15 @@ from typing import Any, Iterator
 
 LEDGER_DIR = Path(__file__).resolve().parent.parent / "logs"
 CAPITAL_CSV = LEDGER_DIR / "capital_ledger.csv"
-CAPITAL_LOCK = CAPITAL_CSV.with_suffix(".csv.lock")
+CAPITAL_DB = LEDGER_DIR / "capital_ledger.sqlite3"
+CAPITAL_LOCK = CAPITAL_DB.with_suffix(".sqlite3.lock")
 DEFAULT_CAPITAL_LAYER = "shadow"
 CAPITAL_LAYERS = {"real", "simulated", "shadow"}
+CAPITAL_TABLES = {
+    "real": "capital_ledger_real",
+    "simulated": "capital_ledger_simulated",
+    "shadow": "capital_ledger_shadow",
+}
 
 CSV_HEADERS = [
     "entry_id",
@@ -79,9 +86,9 @@ class CapitalEntry:
 
 @contextmanager
 def _ledger_lock() -> Iterator[None]:
-    """Serialize CSV readers/writers across processes."""
+    """Serialize ledger readers/writers and one-time migrations across processes."""
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CAPITAL_LOCK, "a+", encoding="utf-8") as fh:
+    with open(LEDGER_DIR / CAPITAL_LOCK.name, "a+", encoding="utf-8") as fh:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         try:
             yield
@@ -107,74 +114,94 @@ def _normalize_capital_filter(value: str | None) -> str | None:
     return _normalize_capital_layer(layer)
 
 
-def _capital_csv_for_layer(capital_layer: str) -> Path:
-    layer = _normalize_capital_layer(capital_layer)
-    return CAPITAL_CSV.with_name(f"{CAPITAL_CSV.stem}_{layer}{CAPITAL_CSV.suffix}")
+def _table_for_layer(capital_layer: str) -> str:
+    return CAPITAL_TABLES[_normalize_capital_layer(capital_layer)]
 
 
-def _read_entries_from_path_unlocked(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    with open(path, "r", newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        return [dict(row) for row in reader]
-
-
-def _write_entries_to_path_unlocked(path: Path, entries: list[dict[str, Any]]) -> None:
-    with open(path, "w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
-        writer.writeheader()
-        for entry in entries:
-            normalized = {key: entry.get(key, "") for key in CSV_HEADERS}
-            normalized["capital_layer"] = _normalize_capital_layer(
-                entry.get("capital_layer", DEFAULT_CAPITAL_LAYER)
-            )
-            writer.writerow(normalized)
-
-
-def _ensure_layer_csv_unlocked(capital_layer: str) -> Path:
-    """Create the per-layer CSV if missing and return its path."""
+@contextmanager
+def _connect() -> Iterator[sqlite3.Connection]:
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    path = _capital_csv_for_layer(capital_layer)
-    if not path.exists():
-        _write_entries_to_path_unlocked(path, [])
-    return path
+    conn = sqlite3.connect(LEDGER_DIR / CAPITAL_DB.name)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
-def _migrate_legacy_csv_unlocked() -> None:
-    """Copy legacy single-file rows into physical layer files once."""
+def _create_tables_unlocked(conn: sqlite3.Connection) -> None:
+    columns = ", ".join(f"{name} TEXT NOT NULL DEFAULT ''" for name in CSV_HEADERS)
+    for table in CAPITAL_TABLES.values():
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {table} (
+                {columns},
+                PRIMARY KEY(entry_id)
+            )
+            """
+        )
+    conn.commit()
+
+
+def _normalize_legacy_row(row: dict[str, Any], row_number: int) -> dict[str, str]:
+    normalized = {key: str(row.get(key, "") or "") for key in CSV_HEADERS}
+    layer = _normalize_capital_layer(row.get("capital_layer", DEFAULT_CAPITAL_LAYER))
+    normalized["capital_layer"] = layer
+    if not normalized["entry_id"]:
+        normalized["entry_id"] = f"CAP-LEGACY-{row_number:08d}"
+    return normalized
+
+
+def _migrate_legacy_csv_unlocked(conn: sqlite3.Connection) -> None:
+    """Import legacy single-CSV rows into the matching physical SQLite table."""
     if not CAPITAL_CSV.exists():
         return
-    legacy_entries = _read_entries_from_path_unlocked(CAPITAL_CSV)
-    if not legacy_entries:
-        return
+    import csv
 
-    by_layer: dict[str, list[dict[str, Any]]] = {layer: [] for layer in CAPITAL_LAYERS}
-    for entry in legacy_entries:
-        layer = _normalize_capital_layer(entry.get("capital_layer", DEFAULT_CAPITAL_LAYER))
-        normalized = {key: entry.get(key, "") for key in CSV_HEADERS}
-        normalized["capital_layer"] = layer
-        by_layer[layer].append(normalized)
-
-    for layer, entries in by_layer.items():
-        path = _ensure_layer_csv_unlocked(layer)
-        existing = _read_entries_from_path_unlocked(path)
-        existing_ids = {str(row.get("entry_id", "")) for row in existing if row.get("entry_id")}
-        additions = [row for row in entries if str(row.get("entry_id", "")) not in existing_ids]
-        if additions:
-            _write_entries_to_path_unlocked(path, existing + additions)
+    with open(CAPITAL_CSV, "r", newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        for row_number, row in enumerate(reader, start=1):
+            normalized = _normalize_legacy_row(dict(row), row_number)
+            _insert_entry_unlocked(conn, normalized)
+    conn.commit()
 
 
-def _ensure_csv_unlocked() -> None:
-    """Create physical per-layer CSVs and migrate legacy single-file rows."""
-    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    for layer in CAPITAL_LAYERS:
-        _ensure_layer_csv_unlocked(layer)
-    _migrate_legacy_csv_unlocked()
+def _ensure_db_unlocked(conn: sqlite3.Connection) -> None:
+    """Create physical per-layer SQLite tables and migrate legacy CSV rows."""
+    _create_tables_unlocked(conn)
+    _migrate_legacy_csv_unlocked(conn)
+
+
+def _insert_entry_unlocked(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    normalized = {key: str(row.get(key, "") or "") for key in CSV_HEADERS}
+    normalized["capital_layer"] = _normalize_capital_layer(normalized.get("capital_layer"))
+    table = _table_for_layer(normalized["capital_layer"])
+    placeholders = ", ".join("?" for _ in CSV_HEADERS)
+    columns = ", ".join(CSV_HEADERS)
+    conn.execute(
+        f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ({placeholders})",
+        [normalized[key] for key in CSV_HEADERS],
+    )
+
+
+def _read_entries_unlocked(
+    conn: sqlite3.Connection,
+    capital_layer: str | None = None,
+) -> list[dict[str, Any]]:
+    layer_filter = _normalize_capital_filter(capital_layer)
+    layers = sorted(CAPITAL_LAYERS) if layer_filter is None else [layer_filter]
+    entries: list[dict[str, Any]] = []
+    for layer in layers:
+        table = _table_for_layer(layer)
+        rows = conn.execute(
+            f"SELECT {', '.join(CSV_HEADERS)} FROM {table} ORDER BY timestamp, rowid"
+        ).fetchall()
+        entries.extend(dict(row) for row in rows)
+    return entries
 
 
 def _append(entry: CapitalEntry) -> str:
-    """Append a capital entry to CSV. Returns entry_id."""
+    """Append a capital entry to the physically isolated SQLite layer table."""
     row = {
         "entry_id": entry.entry_id,
         "timestamp": entry.timestamp,
@@ -190,11 +217,10 @@ def _append(entry: CapitalEntry) -> str:
         "note": entry.note,
     }
     with _ledger_lock():
-        _ensure_csv_unlocked()
-        layer_path = _capital_csv_for_layer(row["capital_layer"])
-        with open(layer_path, "a", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
-            writer.writerow(row)
+        with _connect() as conn:
+            _ensure_db_unlocked(conn)
+            _insert_entry_unlocked(conn, row)
+            conn.commit()
     return entry.entry_id
 
 
@@ -458,14 +484,9 @@ def record_interest(
 
 def _read_all_entries(capital_layer: str | None = None) -> list[dict[str, Any]]:
     with _ledger_lock():
-        _ensure_csv_unlocked()
-        layer = _normalize_capital_filter(capital_layer)
-        if layer is not None:
-            return _read_entries_from_path_unlocked(_capital_csv_for_layer(layer))
-        entries: list[dict[str, Any]] = []
-        for physical_layer in sorted(CAPITAL_LAYERS):
-            entries.extend(_read_entries_from_path_unlocked(_capital_csv_for_layer(physical_layer)))
-        return entries
+        with _connect() as conn:
+            _ensure_db_unlocked(conn)
+            return _read_entries_unlocked(conn, capital_layer=capital_layer)
 
 
 def get_capital_balance(

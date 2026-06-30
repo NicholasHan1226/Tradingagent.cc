@@ -4,8 +4,8 @@
 Capital flow tracking to the cent. Position ledger. Daily reconciliation. Append-only audit trail.
 
 ## 文件
-- `capital_ledger.py` — 资金流水: 买入/卖出/逆回购/利息/手续费。CSV 存储, 精确到分。
-- `position_ledger.py` — 持仓流水: 开仓/加仓/减仓/平仓。CSV 存储。
+- `capital_ledger.py` — 资金流水: 买入/卖出/逆回购/利息/手续费。SQLite 存储, 按 real/simulated/shadow 三张表物理隔离, 精确到分。
+- `position_ledger.py` — 持仓流水: 开仓/加仓/减仓/平仓。SQLite 存储, 按 real/simulated/shadow 三张表物理隔离。
 - `daily_reconcile.py` — 每日对账: 系统持仓 vs Hermes 实盘持仓, 输出 matched/mismatches/actions。
 - `trade_audit_trail.py` — 审计追踪: signal→decision→risk→execution→result 全链路, JSONL 追加只写, 永不修改。
 
@@ -26,4 +26,4 @@ from trade_audit_trail import record_event
 
 ## 依赖
 - Hermes bridge (execution 模块) — 对账时读取实盘持仓
-- 共享 logs/ 目录 — CSV 和 JSONL 存储位置
+- 共享 logs/ 目录 — SQLite 账本、旧 CSV 迁移输入和 JSONL 存储位置
