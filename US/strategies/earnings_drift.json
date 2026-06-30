@@ -1,0 +1,30 @@
+{
+  "name": "earnings_drift",
+  "display_name": "earnings drift",
+  "type": "event",
+  "capital_layer": "shadow",
+  "maturity": "training",
+  "enabled": true,
+  "params": {
+    "post_earnings_window_days": 3,
+    "surprise_pct_min": 0.05,
+    "gap_confirmation_pct": 0.02,
+    "take_profit_pct": 0.09,
+    "stop_loss_pct": 0.045,
+    "max_hold_days": 7
+  },
+  "risk_rules": {
+    "settlement": "T+2",
+    "session": "extended_hours",
+    "extended_hours_allowed": true,
+    "position_weight_cap": 0.08
+  },
+  "weight_overrides": {
+    "event": 0.35,
+    "fundamental": 0.2,
+    "technical": 0.2,
+    "sentiment": 0.15,
+    "capital": 0.05,
+    "macro": 0.05
+  }
+}

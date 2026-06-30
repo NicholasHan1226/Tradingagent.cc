@@ -1,0 +1,30 @@
+{
+  "name": "momentum",
+  "display_name": "momentum",
+  "type": "momentum",
+  "capital_layer": "shadow",
+  "maturity": "training",
+  "enabled": true,
+  "params": {
+    "lookback_days": 126,
+    "relative_strength_min": 0.12,
+    "volume_ratio_min": 1.1,
+    "take_profit_pct": 0.12,
+    "stop_loss_pct": 0.06,
+    "max_hold_days": 20
+  },
+  "risk_rules": {
+    "settlement": "T+2",
+    "session": "regular",
+    "extended_hours_allowed": false,
+    "position_weight_cap": 0.1
+  },
+  "weight_overrides": {
+    "technical": 0.3,
+    "fundamental": 0.2,
+    "capital": 0.2,
+    "event": 0.15,
+    "sentiment": 0.1,
+    "macro": 0.05
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "sector_rotation",
+  "display_name": "sector rotation",
+  "type": "rotation",
+  "capital_layer": "shadow",
+  "maturity": "training",
+  "enabled": true,
+  "params": {
+    "rank_window_days": 20,
+    "rebalance_days": 5,
+    "sector_relative_strength_min": 0.58,
+    "breadth_confirmation_min": 0.52,
+    "take_profit_pct": 0.08,
+    "stop_loss_pct": 0.04,
+    "max_hold_days": 15
+  },
+  "risk_rules": {
+    "settlement": "T+2",
+    "session": "regular",
+    "extended_hours_allowed": false,
+    "position_weight_cap": 0.09
+  },
+  "weight_overrides": {
+    "macro": 0.3,
+    "technical": 0.2,
+    "capital": 0.2,
+    "fundamental": 0.15,
+    "event": 0.1,
+    "sentiment": 0.05
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "volatility",
+  "display_name": "volatility adaptive",
+  "type": "volatility_targeting",
+  "capital_layer": "shadow",
+  "maturity": "training",
+  "enabled": true,
+  "params": {
+    "volatility_floor": 0.35,
+    "volatility_ceiling": 1.2,
+    "target_volatility": 0.6,
+    "rebalance_hours": 12,
+    "take_profit_pct": 0.2,
+    "stop_loss_pct": 0.12,
+    "max_hold_days": 10
+  },
+  "risk_rules": {
+    "settlement": "T+0",
+    "same_day_sell": true,
+    "price_limit": null,
+    "session": "continuous_24_7"
+  },
+  "weight_overrides": {
+    "technical": 0.32,
+    "capital": 0.22,
+    "macro": 0.16,
+    "sentiment": 0.14,
+    "event": 0.16,
+    "fundamental": 0.0
+  }
+}

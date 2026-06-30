@@ -1,0 +1,34 @@
+{
+  "name": "intraday",
+  "display_name": "intraday multi-timeframe",
+  "type": "intraday",
+  "capital_layer": "shadow",
+  "maturity": "training",
+  "enabled": true,
+  "params": {
+    "entry_timeframes": [
+      "15m",
+      "1h"
+    ],
+    "confirm_timeframe": "4h",
+    "volume_ratio_min": 1.8,
+    "breakout_pct": 0.012,
+    "take_profit_pct": 0.09,
+    "stop_loss_pct": 0.055,
+    "max_hold_hours": 36
+  },
+  "risk_rules": {
+    "settlement": "T+0",
+    "same_day_sell": true,
+    "price_limit": null,
+    "session": "continuous_24_7"
+  },
+  "weight_overrides": {
+    "technical": 0.4,
+    "capital": 0.2,
+    "sentiment": 0.18,
+    "event": 0.12,
+    "macro": 0.1,
+    "fundamental": 0.0
+  }
+}

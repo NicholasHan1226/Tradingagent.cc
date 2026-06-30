@@ -108,10 +108,26 @@ def _build_ashare_adapter() -> Any:
         return StubMarketAdapter("Ashare")
 
 
+def _build_crypto_adapter() -> Any:
+    try:
+        from Crypto.adapter import CryptoAdapter
+        return CryptoAdapter()
+    except Exception:
+        return StubMarketAdapter("Crypto")
+
+
+def _build_us_adapter() -> Any:
+    try:
+        from US.adapter import USAdapter
+        return USAdapter()
+    except Exception:
+        return StubMarketAdapter("US")
+
+
 MARKET_ADAPTERS: dict[str, Any] = {
     "Ashare": _build_ashare_adapter(),
-    "Crypto": StubMarketAdapter("Crypto"),
-    "US": StubMarketAdapter("US"),
+    "Crypto": _build_crypto_adapter(),
+    "US": _build_us_adapter(),
     "PM": StubMarketAdapter("PM"),
 }
 
@@ -126,6 +142,14 @@ def _register_default_adapters() -> None:
 
 def register_market_adapter(market: str, adapter: Any) -> None:
     MARKET_ADAPTERS[market] = adapter
+    get_market = getattr(adapter, "get_market", None)
+    if callable(get_market):
+        try:
+            canonical = str(get_market()).strip()
+        except Exception:
+            canonical = ""
+        if canonical and canonical != market:
+            MARKET_ADAPTERS[canonical] = adapter
 
 
 def get_market_adapter(market: str) -> Any:
@@ -175,12 +199,63 @@ def _pm_score_stock(symbol: str, date: str, data_reader: Any = None) -> dict[str
     return score_market(symbol, date, data_reader=data_reader)
 
 
+def _crypto_score_stock(symbol: str, date: str, data_reader: Any = None) -> dict[str, Any]:
+    from shared.screening.six_dimension_scorer import score_stock
+
+    return score_stock("crypto", symbol, data_reader, date)
+
+
+def _us_score_stock(symbol: str, date: str, data_reader: Any = None) -> dict[str, Any]:
+    from shared.screening.six_dimension_scorer import score_stock
+
+    return score_stock("us", symbol, data_reader, date)
+
+
 def _pm_orchestrator_deps() -> Any:
     from shared.orchestrator import _default_deps
 
     deps = _default_deps()
     deps.score_stock = _pm_score_stock
     return deps
+
+
+def _crypto_orchestrator_deps() -> Any:
+    from shared.orchestrator import _default_deps
+
+    deps = _default_deps()
+    deps.score_stock = _crypto_score_stock
+    return deps
+
+
+def _us_orchestrator_deps() -> Any:
+    from shared.orchestrator import _default_deps
+
+    deps = _default_deps()
+    deps.score_stock = _us_score_stock
+    return deps
+
+
+def run_market_watch(job_name: str, market: str, output_rel: str, phase: str) -> dict[str, Any]:
+    adapter = get_market_adapter(market)
+    config = adapter.get_strategy_config()
+    current_trade_date = trade_date()
+    universe = adapter.get_universe(current_trade_date)
+    payload = {
+        "job": job_name,
+        "state": "orchestrated",
+        "generated_at": now_iso(),
+        "capital_layer": "shadow",
+        "market": adapter.get_market(),
+        "account": adapter.get_shadow_account(),
+        "phase": phase,
+        "trade_date": current_trade_date,
+        "universe_count": len(universe),
+        "sample_universe": universe[:10],
+        "strategies": sorted(config.get("strategies", {})),
+        "market_rules": config.get("market_rules", {}),
+    }
+    append_jsonl(SHARED / output_rel, payload)
+    return payload
 
 
 def run_shadow_orchestrator(job_name: str, market: str) -> dict[str, Any]:
@@ -190,9 +265,14 @@ def run_shadow_orchestrator(job_name: str, market: str) -> dict[str, Any]:
     adapter = get_market_adapter(market)
     reader: Any = TradingsDataReader()
     deps = None
-    if str(market).upper() == "PM" or str(adapter.get_market()).lower() == "pm":
+    adapter_market = str(adapter.get_market()).lower()
+    if str(market).upper() == "PM" or adapter_market == "pm":
         reader = PMReaderBridge(reader)
         deps = _pm_orchestrator_deps()
+    elif str(market).upper() == "CRYPTO" or adapter_market == "crypto":
+        deps = _crypto_orchestrator_deps()
+    elif str(market).upper() == "US" or adapter_market == "us":
+        deps = _us_orchestrator_deps()
     result = run_shadow_loop(adapter, trade_date(), reader, deps=deps)
     result.update({"job": job_name, "state": result.get("state", "ok"), "generated_at": now_iso()})
     append_jsonl(SHARED / "logs/orchestrator_shadow_runs.jsonl", result)
@@ -370,8 +450,21 @@ JOB_HANDLERS: dict[str, Any] = {
     "job_ashare_sim_exec": lambda: run_shadow_orchestrator("job_ashare_sim_exec", "Ashare"),
     "job_us_shadow_exec": lambda: run_shadow_orchestrator("job_us_shadow_exec", "US"),
     "job_us_shadow": lambda: run_shadow_orchestrator("job_us_shadow", "US"),
+    "job_us_premarket": lambda: run_market_watch(
+        "job_us_premarket",
+        "US",
+        "signals/us/us_premarket_signals.jsonl",
+        "premarket",
+    ),
+    "job_us_hourly": lambda: run_market_watch(
+        "job_us_hourly",
+        "US",
+        "signals/us/us_intraday_signals.jsonl",
+        "hourly",
+    ),
     "job_crypto_shadow_exec": lambda: run_shadow_orchestrator("job_crypto_shadow_exec", "Crypto"),
     "job_crypto_shadow": lambda: run_shadow_orchestrator("job_crypto_shadow", "Crypto"),
+    "job_crypto_daily": lambda: run_shadow_orchestrator("job_crypto_daily", "Crypto"),
     "job_pm_shadow": lambda: run_shadow_orchestrator("job_pm_shadow", "PM"),
     "job_daily_brief_morning": run_daily_brief_morning,
     "job_daily_brief_day": run_daily_brief_day,
@@ -393,10 +486,7 @@ JOB_HANDLERS: dict[str, Any] = {
 
 PLACEHOLDER_SPECS: dict[str, tuple[str, str, str]] = {
     "job_premarket_signals": ("signals/premarket_signals.jsonl", "jsonl", "待接入隔夜事件与评分后生成 A 股盘前信号。"),
-    "job_us_premarket": ("signals/us/us_premarket_signals.jsonl", "jsonl", "待接入美股日线与事件流。"),
-    "job_us_hourly": ("signals/us/us_intraday_signals.jsonl", "jsonl", "待接入美股盘中行情。"),
     "job_us_postclose": ("review/us/us_postclose.jsonl", "jsonl", "待接入 US close data 与当日信号聚合。"),
-    "job_crypto_daily": ("signals/crypto/crypto_daily_signals.jsonl", "jsonl", "待接入 crypto_klines 与 regime。"),
     "job_crypto_weekly": ("signals/crypto/crypto_weekly_signals.jsonl", "jsonl", "待接入中期 crypto 事件与参数。"),
     "job_pm_forward": ("signals/pm/pm_forward_signals.jsonl", "jsonl", "待接入 pm_shadow 与 pm_prices。"),
     "job_pm_optimize": ("strategies/pm/pm_optimize_params.json", "json", "待接入 PM bayesian/weight adjustment 参数优化。"),

@@ -1,0 +1,32 @@
+{
+  "name": "trend",
+  "display_name": "trend following",
+  "type": "trend",
+  "capital_layer": "shadow",
+  "maturity": "training",
+  "enabled": true,
+  "params": {
+    "ema_short": 10,
+    "ema_mid": 30,
+    "ema_long": 90,
+    "trend_score_min": 0.62,
+    "volume_ratio_min": 1.1,
+    "take_profit_pct": 0.22,
+    "stop_loss_pct": 0.1,
+    "max_hold_days": 21
+  },
+  "risk_rules": {
+    "settlement": "T+0",
+    "same_day_sell": true,
+    "price_limit": null,
+    "session": "continuous_24_7"
+  },
+  "weight_overrides": {
+    "technical": 0.35,
+    "capital": 0.2,
+    "macro": 0.16,
+    "sentiment": 0.14,
+    "event": 0.15,
+    "fundamental": 0.0
+  }
+}
