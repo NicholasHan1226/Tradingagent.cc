@@ -16,6 +16,32 @@ daily_loss_limit: 0.03
 # 最大持仓数
 max_positions: 5
 
+# 分市场交易规则。adapter config 只声明市场规则; 风控和退出链路必须硬消费这里的规则。
+market_rules:
+  ashare:
+    t_plus_1: true
+    daily_loss_limit: 0.03
+    limit_up_down: true
+    pre_market_auction: true
+    max_positions: 5
+  crypto:
+    t_plus_1: false
+    daily_loss_limit: 0.10
+    "24/7": true
+    no_limit_up_down: true
+    max_positions: 10
+  us:
+    t_plus_2: true
+    daily_loss_limit: 0.05
+    PDT: true
+    extended_hours: true
+    max_positions: 10
+  pm:
+    t_plus_N: none
+    daily_loss_limit: 0.05
+    single_market_max: 0.20
+    max_positions: 20
+
 # 相关性阈值 (两两相关性超过此值则降权)
 correlation_threshold: 0.70
 

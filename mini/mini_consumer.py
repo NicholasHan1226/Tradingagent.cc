@@ -89,6 +89,7 @@ class MiniConsumer:
     def execute_simulated(self, signal: dict[str, Any]) -> dict[str, Any]:
         """Execute a simulated signal through the local A-share simulated executor."""
         self._require_account(signal, capital_layer="simulated", account_type="simulated")
+        self._require_market(signal, market="ashare")
         if str(signal.get("capital_layer")) == "real":
             raise MiniConsumerRejected("real signal must never enter execute_simulated")
 
@@ -234,6 +235,11 @@ class MiniConsumer:
             raise MiniConsumerRejected(f"capital_layer must be {capital_layer}, got {actual_layer!r}")
         if actual_account != account_type:
             raise MiniConsumerRejected(f"{capital_layer} signal must use account_type={account_type}, got {actual_account!r}")
+
+    def _require_market(self, signal: dict[str, Any], market: str) -> None:
+        actual_market = str(signal.get("market", market)).lower().strip()
+        if actual_market != market:
+            raise MiniConsumerRejected(f"Mini simulated bridge only supports market={market}, got {actual_market!r}")
 
     def _parse_executor_stdout(self, stdout: str) -> dict[str, Any]:
         text = (stdout or "").strip()

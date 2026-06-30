@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -14,12 +14,41 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
+try:
+    from Ashare import t_plus_1 as _t_plus_1
+except ImportError:  # pragma: no cover
+    _t_plus_1 = None  # type: ignore[assignment]
+
 _DEFAULT_LIMITS: dict[str, Any] = {
     "stop_loss": {"pct": -0.08, "trailing_pct": -0.12},
     "time_exit_days": 30,
+    "market_rules": {
+        "ashare": {"t_plus_1": True, "max_positions": 5},
+        "crypto": {"t_plus_1": False, "24/7": True, "max_positions": 10},
+        "us": {"t_plus_2": True, "PDT": True, "max_positions": 10},
+        "pm": {"t_plus_N": "none", "single_market_max": 0.20, "max_positions": 20},
+    },
 }
 
 _LIMITS_PATH = Path(__file__).resolve().parent.parent / "risk" / "risk_limits.yaml"
+_MARKET_ALIASES = {
+    "a": "ashare",
+    "a-share": "ashare",
+    "a_share": "ashare",
+    "ashare": "ashare",
+    "cn": "ashare",
+    "china": "ashare",
+    "crypto": "crypto",
+    "cryptocurrency": "crypto",
+    "digital_asset": "crypto",
+    "us": "us",
+    "usa": "us",
+    "u.s.": "us",
+    "equity_us": "us",
+    "pm": "pm",
+    "prediction": "pm",
+    "prediction_market": "pm",
+}
 
 
 def _load_limits() -> dict[str, Any]:
@@ -61,6 +90,116 @@ def _parse_date(value: Any) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def _normalize_market(value: Any, ts_code: str = "") -> str:
+    raw = str(value or "").strip().lower()
+    if raw:
+        return _MARKET_ALIASES.get(raw, raw if raw in _DEFAULT_LIMITS["market_rules"] else "ashare")
+
+    code = ts_code.upper()
+    if code.endswith((".SH", ".SZ", ".BJ")):
+        return "ashare"
+    if code.endswith(("USDT", "USDC")) or code in {"BTC", "ETH"}:
+        return "crypto"
+    if code.startswith("PM-"):
+        return "pm"
+    return "ashare"
+
+
+def _market_rule(limits: dict[str, Any], market: str) -> dict[str, Any]:
+    all_rules = limits.get("market_rules", {})
+    defaults = _DEFAULT_LIMITS.get("market_rules", {})
+    rule: dict[str, Any] = {}
+    if isinstance(defaults, dict) and isinstance(defaults.get(market), dict):
+        rule.update(defaults[market])
+    if isinstance(all_rules, dict) and isinstance(all_rules.get(market), dict):
+        rule.update(all_rules[market])
+    if not rule and isinstance(defaults, dict):
+        rule.update(defaults.get("ashare", {}))
+    return rule
+
+
+def _date_part(value: Any) -> date | None:
+    parsed = _parse_date(value)
+    return parsed.date() if parsed is not None else None
+
+
+def _position_value(raw_position: Position | Mapping[str, Any], key: str) -> Any:
+    if isinstance(raw_position, Mapping):
+        return raw_position.get(key)
+    return getattr(raw_position, key, None)
+
+
+def _position_market(raw_position: Position | Mapping[str, Any], normalized: Position) -> str:
+    return _normalize_market(_position_value(raw_position, "market"), normalized.ts_code)
+
+
+def _as_of_date(raw_position: Position | Mapping[str, Any]) -> date:
+    for key in ("as_of", "as_of_date", "current_date", "trade_date", "date"):
+        parsed = _date_part(_position_value(raw_position, key))
+        if parsed is not None:
+            return parsed
+    return date.today()
+
+
+def _fallback_next_trading_day(open_day: date) -> date:
+    current = open_day + timedelta(days=1)
+    while current.weekday() >= 5:
+        current += timedelta(days=1)
+    return current
+
+
+def _exit_window_block_reason(
+    raw_position: Position | Mapping[str, Any],
+    normalized: Position,
+    market: str,
+) -> str:
+    limits = _load_limits()
+    rule = _market_rule(limits, market)
+    if rule.get("24/7") or str(rule.get("t_plus_N", "")).lower() == "none":
+        return ""
+
+    entry_day = _date_part(normalized.entry_date)
+    as_of_day = _as_of_date(raw_position)
+    if entry_day is None:
+        return ""
+
+    if rule.get("t_plus_1"):
+        can_sell = (
+            bool(_t_plus_1.can_sell(entry_day.isoformat(), as_of_day.isoformat()))
+            if _t_plus_1 is not None
+            else as_of_day >= _fallback_next_trading_day(entry_day)
+        )
+        return "" if can_sell else "T+1"
+
+    if rule.get("t_plus_2"):
+        return "" if as_of_day >= entry_day + timedelta(days=2) else "T+2"
+
+    return ""
+
+
+def _apply_market_exit_window(
+    signal: dict[str, Any],
+    raw_position: Position | Mapping[str, Any],
+    normalized: Position,
+) -> dict[str, Any]:
+    market = _position_market(raw_position, normalized)
+    signal["market"] = market
+    if not signal.get("should_exit"):
+        return signal
+
+    block_reason = _exit_window_block_reason(raw_position, normalized, market)
+    if not block_reason:
+        return signal
+
+    previous_reason = str(signal.get("blocked_reason") or "")
+    signal["executable"] = False
+    signal["blocked_reason"] = (
+        block_reason if not previous_reason else f"{previous_reason}; {block_reason}"
+    )
+    signal["suggested_action"] = "记录退出信号, 待可卖后执行"
+    return signal
 
 
 def _exit_signal(
@@ -105,7 +244,8 @@ def check_stop_loss(position: Position | Mapping[str, Any], current_price: float
     high_price = _safe_float(normalized.high_price, cost)
     price = _safe_float(current_price)
     if cost <= 0 or price <= 0:
-        return _exit_signal(normalized, False, "none", "无成本价或当前价数据", "low")
+        signal = _exit_signal(normalized, False, "none", "无成本价或当前价数据", "low")
+        return _apply_market_exit_window(signal, position, normalized)
 
     limits = _load_limits()
     stop_pct = _safe_float(limits.get("stop_loss", {}).get("pct", -0.08))
@@ -113,7 +253,7 @@ def check_stop_loss(position: Position | Mapping[str, Any], current_price: float
     pnl_pct = (price - cost) / cost
 
     if pnl_pct <= stop_pct:
-        return _exit_signal(
+        signal = _exit_signal(
             normalized,
             True,
             "stop_loss",
@@ -121,11 +261,12 @@ def check_stop_loss(position: Position | Mapping[str, Any], current_price: float
             "high",
             "立即卖出",
         )
+        return _apply_market_exit_window(signal, position, normalized)
 
     if high_price > 0:
         trailing_dd = (price - high_price) / high_price
         if trailing_dd <= trailing_pct:
-            return _exit_signal(
+            signal = _exit_signal(
                 normalized,
                 True,
                 "trailing_stop",
@@ -133,15 +274,17 @@ def check_stop_loss(position: Position | Mapping[str, Any], current_price: float
                 "high",
                 "立即卖出",
             )
+            return _apply_market_exit_window(signal, position, normalized)
 
     trailing_dd = (price - high_price) / high_price if high_price > 0 else 0.0
-    return _exit_signal(
+    signal = _exit_signal(
         normalized,
         False,
         "none",
         f"未触发止损: 亏损 {pnl_pct:.4f}, 回撤 {trailing_dd:.4f}",
         "low",
     )
+    return _apply_market_exit_window(signal, position, normalized)
 
 
 def check_take_profit(
@@ -158,11 +301,12 @@ def check_take_profit(
     price = _safe_float(current_price)
     tp_pct = _safe_float(take_profit_pct, 0.20)
     if cost <= 0 or price <= 0:
-        return _exit_signal(normalized, False, "none", "无成本价或当前价数据", "low")
+        signal = _exit_signal(normalized, False, "none", "无成本价或当前价数据", "low")
+        return _apply_market_exit_window(signal, position, normalized)
 
     pnl_pct = (price - cost) / cost
     if pnl_pct >= tp_pct:
-        return _exit_signal(
+        signal = _exit_signal(
             normalized,
             True,
             "take_profit",
@@ -170,23 +314,26 @@ def check_take_profit(
             "medium",
             "考虑卖出或移动止损",
         )
+        return _apply_market_exit_window(signal, position, normalized)
 
     if pnl_pct >= tp_pct * 0.8:
-        return _exit_signal(
+        signal = _exit_signal(
             normalized,
             False,
             "none",
             f"接近止盈: 盈利 {pnl_pct:.4f} (目标 {tp_pct:.4f})",
             "low",
         )
+        return _apply_market_exit_window(signal, position, normalized)
 
-    return _exit_signal(
+    signal = _exit_signal(
         normalized,
         False,
         "none",
         f"未触发止盈: 盈利 {pnl_pct:.4f}",
         "low",
     )
+    return _apply_market_exit_window(signal, position, normalized)
 
 
 def check_time_exit(
@@ -200,7 +347,8 @@ def check_time_exit(
 
     entry_date = _parse_date(normalized.entry_date)
     if entry_date is None:
-        return _exit_signal(normalized, False, "none", "无入场日期数据", "low")
+        signal = _exit_signal(normalized, False, "none", "无入场日期数据", "low")
+        return _apply_market_exit_window(signal, position, normalized)
 
     if time_exit_days is None:
         limits = _load_limits()
@@ -208,7 +356,7 @@ def check_time_exit(
 
     hold_days = (datetime.now() - entry_date).days
     if hold_days >= time_exit_days:
-        return _exit_signal(
+        signal = _exit_signal(
             normalized,
             True,
             "time_exit",
@@ -216,23 +364,26 @@ def check_time_exit(
             "medium",
             "评估逻辑是否仍成立, 不成立则卖出",
         )
+        return _apply_market_exit_window(signal, position, normalized)
 
     if hold_days >= time_exit_days * 0.8:
-        return _exit_signal(
+        signal = _exit_signal(
             normalized,
             False,
             "none",
             f"接近时间退出: 持仓 {hold_days} 天 (上限 {time_exit_days} 天)",
             "low",
         )
+        return _apply_market_exit_window(signal, position, normalized)
 
-    return _exit_signal(
+    signal = _exit_signal(
         normalized,
         False,
         "none",
         f"未触发时间退出: 持仓 {hold_days} 天",
         "low",
     )
+    return _apply_market_exit_window(signal, position, normalized)
 
 
 def check_logic_invalidation(
@@ -246,7 +397,8 @@ def check_logic_invalidation(
 
     thesis = str(normalized.thesis or "").lower()
     if not thesis:
-        return _exit_signal(normalized, False, "none", "无 thesis 数据, 无法检查逻辑证伪", "low")
+        signal = _exit_signal(normalized, False, "none", "无 thesis 数据, 无法检查逻辑证伪", "low")
+        return _apply_market_exit_window(signal, position, normalized)
 
     if current_signals is None:
         current_signals = {}
@@ -270,7 +422,7 @@ def check_logic_invalidation(
         invalidation_reasons.append("基本面恶化")
 
     if invalidation_reasons:
-        return _exit_signal(
+        signal = _exit_signal(
             normalized,
             True,
             "logic_invalidation",
@@ -278,8 +430,10 @@ def check_logic_invalidation(
             "high",
             "卖出 (逻辑已失效)",
         )
+        return _apply_market_exit_window(signal, position, normalized)
 
-    return _exit_signal(normalized, False, "none", "买入逻辑未证伪", "low")
+    signal = _exit_signal(normalized, False, "none", "买入逻辑未证伪", "low")
+    return _apply_market_exit_window(signal, position, normalized)
 
 
 def _signals_for_position(ts_code: str, current_signals: dict[str, Any] | None) -> dict[str, Any]:
@@ -331,10 +485,10 @@ def check_all_exits(
         price = _safe_float(current_prices.get(position.ts_code))
         scoped_signals = _signals_for_position(position.ts_code, current_signals)
         per_position_signals = [
-            check_stop_loss(position, price),
-            check_logic_invalidation(position, scoped_signals),
-            check_time_exit(position),
-            check_take_profit(position, price),
+            check_stop_loss(raw_position, price),
+            check_logic_invalidation(raw_position, scoped_signals),
+            check_time_exit(raw_position),
+            check_take_profit(raw_position, price),
         ]
         exit_signals = [signal for signal in per_position_signals if signal.get("should_exit")]
         if exit_signals:
