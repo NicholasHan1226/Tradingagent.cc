@@ -70,6 +70,18 @@ class MiniConsumerTest(unittest.TestCase):
                 "sellable_date": today,
             },
         }
+        if overrides.get("capital_layer") == "real":
+            card["graduation_receipt"] = {
+                "issued_by": "execution_router",
+                "checked_at": now.isoformat(timespec="seconds"),
+                "strategy_name": str(overrides.get("strategy_name") or "mini_consumer_unit_test"),
+                "current_stage": "shadow",
+                "next_stage": "real",
+                "ready": True,
+                "thresholds": {},
+                "met": {},
+                "message": "unit test receipt",
+            }
         card.update(overrides)
         return card
 

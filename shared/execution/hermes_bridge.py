@@ -126,6 +126,7 @@ def _coerce_signal_card(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
             "source_condition_id",
             "idempotency_key",
             "t_plus_1",
+            "graduation_receipt",
         ):
             if field_name in order:
                 payload[field_name] = order[field_name]
@@ -239,6 +240,15 @@ def _validate_signal_card_schema(payload: dict[str, Any]) -> str | None:
             return "signal_card.manual_confirm_required must be true for real capital_layer"
         if payload.get("direct_execution") is not False:
             return "signal_card.direct_execution must be false for real capital_layer"
+        receipt = payload.get("graduation_receipt")
+        if not isinstance(receipt, dict):
+            return "signal_card.graduation_receipt is required for real capital_layer"
+        if receipt.get("issued_by") != "execution_router":
+            return "signal_card.graduation_receipt must be issued_by execution_router"
+        if receipt.get("ready") is not True:
+            return "signal_card.graduation_receipt.ready must be true"
+        if receipt.get("current_stage") != "shadow" or receipt.get("next_stage") != "real":
+            return "signal_card.graduation_receipt must prove shadow_to_real graduation"
     return None
 
 
@@ -265,7 +275,7 @@ def webhook_send_signal(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
     return result
 
 
-def send_order(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
+def send_order(order: dict[str, Any] | HermesOrder, *, router_authorized: bool = False) -> dict[str, Any]:
     """Queue an execution signal.
 
     ``capital_layer=simulated`` goes to the Mini webhook channel. Real and
@@ -295,6 +305,15 @@ def send_order(order: dict[str, Any] | HermesOrder) -> dict[str, Any]:
             "order_id": card.get("order_id", ""),
             "status": "rejected",
             "message": validation_error,
+            "real_auto_order_forbidden": real_auto_order_forbidden,
+            "direct_execution": False,
+        }
+
+    if card.get("capital_layer") == "real" and not router_authorized:
+        return {
+            "order_id": card.get("order_id", ""),
+            "status": "rejected",
+            "message": "real capital_layer writes must be routed through execution_router with graduation_receipt",
             "real_auto_order_forbidden": real_auto_order_forbidden,
             "direct_execution": False,
         }

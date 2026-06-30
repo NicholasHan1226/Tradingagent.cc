@@ -65,22 +65,13 @@ def _ledger_lock() -> Iterator[None]:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
-def _ensure_csv_unlocked() -> None:
-    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    if not POSITION_CSV.exists():
-        with open(POSITION_CSV, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
-            writer.writeheader()
-        return
+def _position_csv_for_layer(capital_layer: str) -> Path:
+    layer = _normalize_capital_layer(capital_layer)
+    return POSITION_CSV.with_name(f"{POSITION_CSV.stem}_{layer}{POSITION_CSV.suffix}")
 
-    with open(POSITION_CSV, "r", newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        fieldnames = reader.fieldnames or []
-        if fieldnames == CSV_HEADERS:
-            return
-        entries = [dict(row) for row in reader]
 
-    with open(POSITION_CSV, "w", newline="", encoding="utf-8") as fh:
+def _write_entries_to_path_unlocked(path: Path, entries: list[dict[str, Any]]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
         writer.writeheader()
         for entry in entries:
@@ -91,17 +82,18 @@ def _ensure_csv_unlocked() -> None:
             writer.writerow(normalized)
 
 
-def _append_unlocked(row: dict[str, Any]) -> str:
-    with open(POSITION_CSV, "a", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
-        writer.writerow(row)
-    return row["entry_id"]
+def _ensure_layer_csv_unlocked(capital_layer: str) -> Path:
+    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+    path = _position_csv_for_layer(capital_layer)
+    if not path.exists():
+        _write_entries_to_path_unlocked(path, [])
+    return path
 
 
-def _read_all_entries_unlocked() -> list[dict[str, Any]]:
-    if not POSITION_CSV.exists():
+def _read_entries_from_path_unlocked(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
         return []
-    with open(POSITION_CSV, "r", newline="", encoding="utf-8") as fh:
+    with open(path, "r", newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         entries = []
         for row in reader:
@@ -111,6 +103,55 @@ def _read_all_entries_unlocked() -> list[dict[str, Any]]:
             entry["is_real_money"] = _is_real_money(layer)
             entries.append(entry)
         return entries
+
+
+def _migrate_legacy_csv_unlocked() -> None:
+    if not POSITION_CSV.exists():
+        return
+    legacy_entries = _read_entries_from_path_unlocked(POSITION_CSV)
+    if not legacy_entries:
+        return
+
+    by_layer: dict[str, list[dict[str, Any]]] = {layer: [] for layer in CAPITAL_LAYERS}
+    for entry in legacy_entries:
+        layer = _normalize_capital_layer(entry.get("capital_layer", DEFAULT_CAPITAL_LAYER))
+        normalized = {key: entry.get(key, "") for key in CSV_HEADERS}
+        normalized["capital_layer"] = layer
+        normalized["is_real_money"] = _is_real_money(layer)
+        by_layer[layer].append(normalized)
+
+    for layer, entries in by_layer.items():
+        path = _ensure_layer_csv_unlocked(layer)
+        existing = _read_entries_from_path_unlocked(path)
+        existing_ids = {str(row.get("entry_id", "")) for row in existing if row.get("entry_id")}
+        additions = [row for row in entries if str(row.get("entry_id", "")) not in existing_ids]
+        if additions:
+            _write_entries_to_path_unlocked(path, existing + additions)
+
+
+def _ensure_csv_unlocked() -> None:
+    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+    for layer in CAPITAL_LAYERS:
+        _ensure_layer_csv_unlocked(layer)
+    _migrate_legacy_csv_unlocked()
+
+
+def _append_unlocked(row: dict[str, Any]) -> str:
+    path = _position_csv_for_layer(row["capital_layer"])
+    with open(path, "a", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
+        writer.writerow(row)
+    return row["entry_id"]
+
+
+def _read_all_entries_unlocked(capital_layer: str | None = None) -> list[dict[str, Any]]:
+    layer_filter = _normalize_position_filter(capital_layer)
+    if layer_filter is not None:
+        return _read_entries_from_path_unlocked(_position_csv_for_layer(layer_filter))
+    entries: list[dict[str, Any]] = []
+    for layer in sorted(CAPITAL_LAYERS):
+        entries.extend(_read_entries_from_path_unlocked(_position_csv_for_layer(layer)))
+    return entries
 
 
 def _normalize_capital_layer(value: str | None) -> str:
@@ -190,15 +231,52 @@ def _get_current_state_from_entries(
         if e["ts_code"] == ts_code
         and _normalize_capital_layer(e.get("capital_layer", DEFAULT_CAPITAL_LAYER)) == layer
     ]
-    if not code_entries:
-        return {"quantity": 0, "cost_basis": 0.0, "avg_price": 0.0}
+    state = {"quantity": 0, "cost_basis": 0.0, "avg_price": 0.0, "entry_date": None}
+    for entry in code_entries:
+        event_type = str(entry.get("event_type", ""))
+        qty = _safe_int(entry.get("running_quantity"))
+        if event_type == "open":
+            state["entry_date"] = _normalize_entry_date(entry.get("entry_date")) or None
+        state.update({
+            "quantity": qty,
+            "cost_basis": _safe_float(entry.get("running_cost")),
+            "avg_price": _safe_float(entry.get("running_avg_price")),
+        })
+        if qty <= 0:
+            state["entry_date"] = None
+    return state
 
-    last = code_entries[-1]
-    return {
-        "quantity": int(last["running_quantity"]),
-        "cost_basis": float(last["running_cost"]),
-        "avg_price": float(last["running_avg_price"]),
-    }
+
+def _is_ashare_symbol(ts_code: str) -> bool:
+    code = str(ts_code or "").strip().upper()
+    return code.endswith((".SH", ".SZ", ".BJ"))
+
+
+def _assert_a_share_t_plus_1(
+    *,
+    ts_code: str,
+    entry_date: Any,
+    trade_date: Any,
+) -> str | None:
+    if not _is_ashare_symbol(ts_code):
+        return None
+    normalized_trade_date = _normalize_entry_date(trade_date)
+    normalized_entry_date = _normalize_entry_date(entry_date)
+    if not normalized_trade_date:
+        raise ValueError("A-share sell ledger write requires trade_date for T+1 check")
+    if not normalized_entry_date:
+        raise ValueError("A-share sell ledger write requires entry_date for T+1 check")
+
+    from Ashare.t_plus_1 import can_sell, next_trading_day
+
+    sellable_date = next_trading_day(normalized_entry_date).isoformat()
+    if not can_sell(normalized_entry_date, normalized_trade_date):
+        raise ValueError(
+            "A-share T+1 not satisfied: "
+            f"entry_date={normalized_entry_date}, "
+            f"sellable_date={sellable_date}, trade_date={normalized_trade_date}"
+        )
+    return sellable_date
 
 
 def _write_position_event(
@@ -269,7 +347,7 @@ def open_position(
     with _ledger_lock():
         _ensure_csv_unlocked()
         layer = _normalize_capital_layer(capital_layer)
-        entries = _read_all_entries_unlocked()
+        entries = _read_all_entries_unlocked(capital_layer=layer)
         current = _get_current_state_from_entries(entries, ts_code, layer)
         if current["quantity"] > 0:
             raise ValueError(
@@ -324,7 +402,7 @@ def add_position(
     with _ledger_lock():
         _ensure_csv_unlocked()
         layer = _normalize_capital_layer(capital_layer)
-        entries = _read_all_entries_unlocked()
+        entries = _read_all_entries_unlocked(capital_layer=layer)
         current = _get_current_state_from_entries(entries, ts_code, layer)
         if current["quantity"] == 0:
             raise ValueError(f"No existing position for {ts_code} in {layer} layer. Use open_position instead.")
@@ -372,6 +450,8 @@ def reduce_position(
     stamp_duty: float = 0.0,
     transfer_fee: float = 0.0,
     capital_layer: str = DEFAULT_CAPITAL_LAYER,
+    trade_date: str | None = None,
+    current_trade_date: str | None = None,
 ) -> dict[str, Any]:
     if quantity <= 0:
         raise ValueError(f"quantity must be positive, got {quantity}")
@@ -381,7 +461,7 @@ def reduce_position(
     with _ledger_lock():
         _ensure_csv_unlocked()
         layer = _normalize_capital_layer(capital_layer)
-        entries = _read_all_entries_unlocked()
+        entries = _read_all_entries_unlocked(capital_layer=layer)
         current = _get_current_state_from_entries(entries, ts_code, layer)
         if current["quantity"] == 0:
             raise ValueError(f"No position to reduce for {ts_code} in {layer} layer.")
@@ -390,6 +470,11 @@ def reduce_position(
                 f"Reduce quantity {quantity} >= holding {current['quantity']}. "
                 f"Use close_position instead."
             )
+        sellable_date = _assert_a_share_t_plus_1(
+            ts_code=ts_code,
+            entry_date=current.get("entry_date"),
+            trade_date=current_trade_date or trade_date,
+        )
 
         avg_cost = current["avg_price"]
         fee_total = _total_fee(commission, stamp_duty, transfer_fee)
@@ -422,6 +507,7 @@ def reduce_position(
             "event_type": "reduce",
             "capital_layer": layer,
             "is_real_money": _is_real_money(layer),
+            "sellable_date": sellable_date,
         }
 
 
@@ -435,6 +521,8 @@ def close_position(
     stamp_duty: float = 0.0,
     transfer_fee: float = 0.0,
     capital_layer: str = DEFAULT_CAPITAL_LAYER,
+    trade_date: str | None = None,
+    current_trade_date: str | None = None,
 ) -> dict[str, Any]:
     if price <= 0:
         raise ValueError(f"price must be positive, got {price}")
@@ -442,10 +530,15 @@ def close_position(
     with _ledger_lock():
         _ensure_csv_unlocked()
         layer = _normalize_capital_layer(capital_layer)
-        entries = _read_all_entries_unlocked()
+        entries = _read_all_entries_unlocked(capital_layer=layer)
         current = _get_current_state_from_entries(entries, ts_code, layer)
         if current["quantity"] == 0:
             raise ValueError(f"No position to close for {ts_code} in {layer} layer.")
+        sellable_date = _assert_a_share_t_plus_1(
+            ts_code=ts_code,
+            entry_date=current.get("entry_date"),
+            trade_date=current_trade_date or trade_date,
+        )
 
         quantity = current["quantity"]
         avg_cost = current["avg_price"]
@@ -476,13 +569,14 @@ def close_position(
             "event_type": "close",
             "capital_layer": layer,
             "is_real_money": _is_real_money(layer),
+            "sellable_date": sellable_date,
         }
 
 
 def get_positions(capital_layer: str | None = None) -> list[dict[str, Any]]:
     with _ledger_lock():
         _ensure_csv_unlocked()
-        entries = _read_all_entries_unlocked()
+        entries = _read_all_entries_unlocked(capital_layer=capital_layer)
 
     if not entries:
         return []

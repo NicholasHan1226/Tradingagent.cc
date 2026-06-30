@@ -21,7 +21,7 @@ CHANNELS = {
     },
     "system": {
         "from": "notice@tradingagent.cc",
-        "to": "tradingadviser@coze.email",
+        "to": "soc@coze.email",
         "label": "系统类",
     },
 }

@@ -100,23 +100,28 @@ def _normalize_capital_layer(value: str | None) -> str:
 
 def _normalize_capital_filter(value: str | None) -> str | None:
     if value is None:
-        return None
+        return "real"
     layer = str(value).strip().lower()
     if layer == "all":
         return None
     return _normalize_capital_layer(layer)
 
 
-def _read_all_entries_unlocked() -> list[dict[str, Any]]:
-    if not CAPITAL_CSV.exists():
+def _capital_csv_for_layer(capital_layer: str) -> Path:
+    layer = _normalize_capital_layer(capital_layer)
+    return CAPITAL_CSV.with_name(f"{CAPITAL_CSV.stem}_{layer}{CAPITAL_CSV.suffix}")
+
+
+def _read_entries_from_path_unlocked(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
         return []
-    with open(CAPITAL_CSV, "r", newline="", encoding="utf-8") as fh:
+    with open(path, "r", newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         return [dict(row) for row in reader]
 
 
-def _rewrite_entries_unlocked(entries: list[dict[str, Any]]) -> None:
-    with open(CAPITAL_CSV, "w", newline="", encoding="utf-8") as fh:
+def _write_entries_to_path_unlocked(path: Path, entries: list[dict[str, Any]]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
         writer.writeheader()
         for entry in entries:
@@ -127,26 +132,45 @@ def _rewrite_entries_unlocked(entries: list[dict[str, Any]]) -> None:
             writer.writerow(normalized)
 
 
-def _ensure_csv_unlocked() -> None:
-    """Create CSV and migrate legacy rows to include capital_layer."""
+def _ensure_layer_csv_unlocked(capital_layer: str) -> Path:
+    """Create the per-layer CSV if missing and return its path."""
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+    path = _capital_csv_for_layer(capital_layer)
+    if not path.exists():
+        _write_entries_to_path_unlocked(path, [])
+    return path
+
+
+def _migrate_legacy_csv_unlocked() -> None:
+    """Copy legacy single-file rows into physical layer files once."""
     if not CAPITAL_CSV.exists():
-        with open(CAPITAL_CSV, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
-            writer.writeheader()
+        return
+    legacy_entries = _read_entries_from_path_unlocked(CAPITAL_CSV)
+    if not legacy_entries:
         return
 
-    with open(CAPITAL_CSV, "r", newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        fieldnames = reader.fieldnames or []
-        if fieldnames == CSV_HEADERS:
-            return
-        entries = [dict(row) for row in reader]
+    by_layer: dict[str, list[dict[str, Any]]] = {layer: [] for layer in CAPITAL_LAYERS}
+    for entry in legacy_entries:
+        layer = _normalize_capital_layer(entry.get("capital_layer", DEFAULT_CAPITAL_LAYER))
+        normalized = {key: entry.get(key, "") for key in CSV_HEADERS}
+        normalized["capital_layer"] = layer
+        by_layer[layer].append(normalized)
 
-    if "capital_layer" not in fieldnames:
-        for entry in entries:
-            entry["capital_layer"] = DEFAULT_CAPITAL_LAYER
-    _rewrite_entries_unlocked(entries)
+    for layer, entries in by_layer.items():
+        path = _ensure_layer_csv_unlocked(layer)
+        existing = _read_entries_from_path_unlocked(path)
+        existing_ids = {str(row.get("entry_id", "")) for row in existing if row.get("entry_id")}
+        additions = [row for row in entries if str(row.get("entry_id", "")) not in existing_ids]
+        if additions:
+            _write_entries_to_path_unlocked(path, existing + additions)
+
+
+def _ensure_csv_unlocked() -> None:
+    """Create physical per-layer CSVs and migrate legacy single-file rows."""
+    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+    for layer in CAPITAL_LAYERS:
+        _ensure_layer_csv_unlocked(layer)
+    _migrate_legacy_csv_unlocked()
 
 
 def _append(entry: CapitalEntry) -> str:
@@ -167,7 +191,8 @@ def _append(entry: CapitalEntry) -> str:
     }
     with _ledger_lock():
         _ensure_csv_unlocked()
-        with open(CAPITAL_CSV, "a", newline="", encoding="utf-8") as fh:
+        layer_path = _capital_csv_for_layer(row["capital_layer"])
+        with open(layer_path, "a", newline="", encoding="utf-8") as fh:
             writer = csv.DictWriter(fh, fieldnames=CSV_HEADERS)
             writer.writerow(row)
     return entry.entry_id
@@ -431,25 +456,26 @@ def record_interest(
     }
 
 
-def _read_all_entries() -> list[dict[str, Any]]:
+def _read_all_entries(capital_layer: str | None = None) -> list[dict[str, Any]]:
     with _ledger_lock():
         _ensure_csv_unlocked()
-        return _read_all_entries_unlocked()
+        layer = _normalize_capital_filter(capital_layer)
+        if layer is not None:
+            return _read_entries_from_path_unlocked(_capital_csv_for_layer(layer))
+        entries: list[dict[str, Any]] = []
+        for physical_layer in sorted(CAPITAL_LAYERS):
+            entries.extend(_read_entries_from_path_unlocked(_capital_csv_for_layer(physical_layer)))
+        return entries
 
 
 def get_capital_balance(
     as_of: str | None = None,
     capital_layer: str | None = None,
 ) -> dict[str, Any]:
-    entries = _read_all_entries()
+    layer = _normalize_capital_filter(capital_layer)
+    entries = _read_all_entries(capital_layer=capital_layer)
     if as_of:
         entries = [e for e in entries if e["timestamp"] <= as_of]
-    layer = _normalize_capital_filter(capital_layer)
-    if layer is not None:
-        entries = [
-            e for e in entries
-            if _normalize_capital_layer(e.get("capital_layer", DEFAULT_CAPITAL_LAYER)) == layer
-        ]
 
     total_inflow = sum(float(e["amount"]) for e in entries if float(e["amount"]) > 0)
     total_outflow = sum(abs(float(e["amount"])) for e in entries if float(e["amount"]) < 0)

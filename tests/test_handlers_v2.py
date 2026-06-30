@@ -25,6 +25,7 @@ class CronHandlersV2Test(unittest.TestCase):
         self.filled_dir = self.tmp_path / "signals" / "filled"
         self.ledger_dir = self.shared_dir / "logs"
 
+        self._patch(cron, "ROOT", self.tmp_path)
         self._patch(cron, "SHARED", self.shared_dir)
         self._patch(cron, "trade_date", lambda: "20260703")
         self._patch(cron, "now_iso", lambda: "2026-07-03T08:00:00+00:00")
@@ -222,6 +223,16 @@ class CronHandlersV2Test(unittest.TestCase):
         self.assertTrue((self.shared_dir / "notify" / "logs" / "alert_log.jsonl").exists())
 
     def test_run_self_heal_executes_real_cycle_and_logs_result(self) -> None:
+        pending_dir = self.tmp_path / "signals" / "pending"
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        self._write_json(
+            pending_dir / "EXPIRED-SELF-HEAL.json",
+            {
+                "order_id": "EXPIRED-SELF-HEAL",
+                "status": "pending",
+                "valid_until": "2020-01-01",
+            },
+        )
         position_ledger.open_position(
             "600000.SH",
             2000,
@@ -244,9 +255,15 @@ class CronHandlersV2Test(unittest.TestCase):
         self.assertNotEqual(result["state"], "scaffolded")
         self.assertGreaterEqual(int(result.get("issues_found", 0) or 0), 1)
         self.assertGreaterEqual(int(result.get("issues_fixed", 0) or 0), 1)
+        self.assertEqual(result["signal_sweep_expired"]["expired_count"], 1)
+        self.assertTrue((self.tmp_path / "signals" / "expired" / "EXPIRED-SELF-HEAL.json").exists())
         self.assertTrue((self.shared_dir / "review" / "heal" / "self_heal_actions.jsonl").exists())
+        self.assertTrue((self.shared_dir / "logs" / "cron" / "signal_sweep_expired.jsonl").exists())
         self.assertTrue(self_heal_loop.MEMORY_STORE.exists())
         self.assertTrue(self_heal_loop.RULES_STORE.exists())
+
+    def test_signal_sweep_expired_is_registered_cron_handler(self) -> None:
+        self.assertIn("job_signal_sweep_expired", cron.JOB_HANDLERS)
 
 
 if __name__ == "__main__":

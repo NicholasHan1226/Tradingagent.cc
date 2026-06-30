@@ -1264,12 +1264,38 @@ def run_daily_brief_night() -> dict[str, Any]:
     return result
 
 
+def run_signal_sweep_expired() -> dict[str, Any]:
+    from shared.execution.signal_state_machine import SignalStateMachine
+
+    try:
+        sweep = SignalStateMachine(ROOT / "signals").sweep_expired()
+        state = "ok"
+    except Exception as exc:  # noqa: BLE001
+        sweep = {"status": "error", "expired_count": 0, "expired": [], "message": f"{exc.__class__.__name__}: {exc}"}
+        state = "degraded"
+    result = {
+        "job": "job_signal_sweep_expired",
+        "state": state,
+        "generated_at": now_iso(),
+        "trade_date": trade_date(),
+        **sweep,
+    }
+    append_jsonl(SHARED / "logs/cron/signal_sweep_expired.jsonl", result)
+    return result
+
+
 def run_self_heal() -> dict[str, Any]:
     from shared.review.self_heal_loop import run_heal_cycle
 
+    signal_sweep = run_signal_sweep_expired()
     result = run_heal_cycle(_self_heal_context())
     state = "critical" if int(result.get("issues_escalated", 0) or 0) else "healed" if int(result.get("issues_found", 0) or 0) else "healthy"
-    result.update({"job": "job_self_heal", "state": state, "generated_at": now_iso()})
+    result.update({
+        "job": "job_self_heal",
+        "state": state,
+        "generated_at": now_iso(),
+        "signal_sweep_expired": signal_sweep,
+    })
     append_jsonl(SHARED / "review/heal/self_heal_actions.jsonl", result)
     return result
 
@@ -1277,6 +1303,7 @@ def run_self_heal() -> dict[str, Any]:
 def run_self_heal_night() -> dict[str, Any]:
     from shared.review.self_heal_loop import run_heal_cycle
 
+    signal_sweep = run_signal_sweep_expired()
     context = _self_heal_context()
     thresholds = {
         "data_stale_minutes": 180,
@@ -1293,6 +1320,7 @@ def run_self_heal_night() -> dict[str, Any]:
         "mode": "deep_night",
         "context": context,
         "thresholds": thresholds,
+        "signal_sweep_expired": signal_sweep,
     })
     write_json(SHARED / "review/heal/heal_report.json", result)
     return result
@@ -1860,6 +1888,7 @@ def run_email_notify() -> dict[str, Any]:
 
 
 JOB_HANDLERS: dict[str, Any] = {
+    "job_ashare_shadow": lambda: run_shadow_orchestrator("job_ashare_shadow", "Ashare"),
     "job_trading_signals": run_all_market_trading_signals,
     "job_premarket_signals": lambda: run_market_watch(
         "job_premarket_signals",
@@ -1910,6 +1939,7 @@ JOB_HANDLERS: dict[str, Any] = {
     "job_daily_brief_night": run_daily_brief_night,
     "job_self_heal": run_self_heal,
     "job_self_heal_night": run_self_heal_night,
+    "job_signal_sweep_expired": run_signal_sweep_expired,
     "job_weekly_review": lambda: run_weekly_review("job_weekly_review", "review/weekly/weekly_review.json"),
     "job_us_weekly": lambda: run_weekly_review("job_us_weekly", "review/us/us_weekly_review.json"),
     "job_strategy_attribution": lambda: run_attribution("job_strategy_attribution", "review/attribution/strategy_attribution.jsonl"),

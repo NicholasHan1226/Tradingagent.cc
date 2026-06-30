@@ -65,6 +65,17 @@ class RealMoneyBoundaryTest(unittest.TestCase):
                 "sellable_from": now[:10],
                 "sellable_date": now[:10],
             },
+            "graduation_receipt": {
+                "issued_by": "execution_router",
+                "checked_at": now,
+                "strategy_name": "graduated_strategy",
+                "current_stage": "shadow",
+                "next_stage": "real",
+                "ready": True,
+                "thresholds": {},
+                "met": {},
+                "message": "unit test receipt",
+            },
         }
         card.update(overrides)
         return card
@@ -101,6 +112,42 @@ class RealMoneyBoundaryTest(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertIn("manual_confirm_required", result["message"])
         self.assertFalse((hermes_bridge.PENDING_DIR / "REAL-BOUNDARY-1.json").exists())
+
+    def test_direct_real_send_order_is_rejected_even_with_receipt(self) -> None:
+        result = hermes_bridge.send_order(self._valid_card())
+
+        self.assertEqual(result["status"], "rejected")
+        self.assertIn("execution_router", result["message"])
+        self.assertFalse((hermes_bridge.PENDING_DIR / "REAL-BOUNDARY-1.json").exists())
+
+    def test_real_route_with_graduation_receipt_queues_manual_signal(self) -> None:
+        result = execution_router.route(
+            {
+                "order_id": "REAL-GRADUATED",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "price": 10.0,
+                "stop_loss": 9.2,
+                "strategy_name": "graduated_strategy",
+                "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "evidence_refs": ["report://test"],
+                "risk_passed": True,
+                "risk_checks": ["unit_test"],
+                "stats": {
+                    "total_trades": 120,
+                    "positive_days_pct": 0.70,
+                    "max_drawdown_pct": 4.0,
+                },
+            },
+            "real",
+        )
+
+        self.assertFalse(result["executed"])
+        self.assertEqual(result["result"]["status"], "pending")
+        card = result["result"]["signal_card"]
+        self.assertEqual(card["graduation_receipt"]["issued_by"], "execution_router")
+        self.assertTrue((hermes_bridge.PENDING_DIR / "REAL-GRADUATED.json").exists())
 
     def test_cancel_real_order_without_manual_confirm_is_rejected(self) -> None:
         hermes_bridge.ensure_signal_dirs()

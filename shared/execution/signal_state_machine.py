@@ -79,6 +79,7 @@ class SignalStateMachine:
         card = dict(card)
         card["order_id"] = order_id
         card["status"] = PENDING
+        _assert_real_graduation_receipt(card)
 
         with self._locked():
             existing_path, existing_card = self.find_by_order_id(order_id)
@@ -154,6 +155,8 @@ class SignalStateMachine:
                     "message": "Signal already filled",
                 }
             if current_status in (EXPIRED, FAILED):
+                raise SignalStateConflict(f"Signal cannot be filled from status {current_status}")
+            if current_status not in (CLAIMED, RUNNING):
                 raise SignalStateConflict(f"Signal cannot be filled from status {current_status}")
             if current_status == CANCELLED and not existing_card.get("cancel_requested"):
                 raise SignalStateConflict("Signal cannot be filled after final cancellation")
@@ -332,6 +335,29 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
         json.dump(payload, fh, ensure_ascii=False, indent=2, sort_keys=True)
         fh.write("\n")
     tmp.replace(path)
+
+
+def _assert_real_graduation_receipt(card: dict[str, Any]) -> None:
+    if str(card.get("capital_layer", "")).strip().lower() != "real":
+        return
+    receipt = card.get("graduation_receipt")
+    if not isinstance(receipt, dict):
+        raise ValueError("real capital_layer pending write requires graduation_receipt from execution_router")
+    if receipt.get("issued_by") != "execution_router":
+        raise ValueError("real capital_layer pending write must come through execution_router")
+    if receipt.get("ready") is not True:
+        raise ValueError("real capital_layer graduation_receipt.ready must be true")
+    if receipt.get("current_stage") != "shadow" or receipt.get("next_stage") != "real":
+        raise ValueError("real capital_layer graduation_receipt must prove shadow_to_real graduation")
+    if not str(receipt.get("strategy_name", "")).strip():
+        raise ValueError("real capital_layer graduation_receipt.strategy_name is required")
+    checked_at = str(receipt.get("checked_at", "")).strip()
+    if not checked_at:
+        raise ValueError("real capital_layer graduation_receipt.checked_at is required")
+    try:
+        datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("real capital_layer graduation_receipt.checked_at must be date-time") from exc
 
 
 def now_iso(value: datetime | None = None) -> str:

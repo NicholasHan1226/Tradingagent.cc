@@ -141,6 +141,68 @@ class TPlusOneIntegrationTest(unittest.TestCase):
         self.assertEqual(sell_result["message"], "T+1 not satisfied")
         self.assertEqual(sell_result["result"]["status"], "blocked_t_plus_1")
 
+    def test_position_ledger_reduce_requires_trade_date_for_a_share(self) -> None:
+        position_ledger.open_position(
+            "600002.SH",
+            200,
+            10.0,
+            order_id="LEDGER-BUY",
+            capital_layer="shadow",
+            entry_date="2026-06-30",
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires trade_date"):
+            position_ledger.reduce_position(
+                "600002.SH",
+                100,
+                10.5,
+                order_id="LEDGER-SELL",
+                capital_layer="shadow",
+            )
+
+    def test_position_ledger_reduce_blocks_same_day_a_share(self) -> None:
+        position_ledger.open_position(
+            "600003.SH",
+            200,
+            10.0,
+            order_id="LEDGER-BUY",
+            capital_layer="shadow",
+            entry_date="2026-06-30",
+        )
+
+        with self.assertRaisesRegex(ValueError, "T\\+1 not satisfied"):
+            position_ledger.reduce_position(
+                "600003.SH",
+                100,
+                10.5,
+                order_id="LEDGER-SELL",
+                capital_layer="shadow",
+                trade_date="2026-06-30",
+            )
+
+    def test_position_ledger_close_passes_on_next_trading_day(self) -> None:
+        entry_date = "2026-06-26"
+        trade_date = next_trading_day(entry_date).isoformat()
+        position_ledger.open_position(
+            "600004.SH",
+            100,
+            10.0,
+            order_id="LEDGER-BUY",
+            capital_layer="shadow",
+            entry_date=entry_date,
+        )
+
+        result = position_ledger.close_position(
+            "600004.SH",
+            10.5,
+            order_id="LEDGER-CLOSE",
+            capital_layer="shadow",
+            trade_date=trade_date,
+        )
+
+        self.assertEqual(result["event_type"], "close")
+        self.assertEqual(result["sellable_date"], trade_date)
+
 
 if __name__ == "__main__":
     unittest.main()

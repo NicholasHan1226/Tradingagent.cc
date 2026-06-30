@@ -161,6 +161,45 @@
         }
       }
     },
+    "graduation_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issued_by", "checked_at", "strategy_name", "current_stage", "next_stage", "ready"],
+      "properties": {
+        "issued_by": {
+          "type": "string",
+          "enum": ["execution_router"]
+        },
+        "checked_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "strategy_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "current_stage": {
+          "type": "string",
+          "enum": ["shadow"]
+        },
+        "next_stage": {
+          "type": "string",
+          "enum": ["real"]
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "thresholds": {
+          "type": "object"
+        },
+        "met": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
     "fill": {
       "type": "object",
       "additionalProperties": false,

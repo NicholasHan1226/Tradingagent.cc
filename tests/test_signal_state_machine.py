@@ -134,6 +134,15 @@ class SignalStateMachineTest(unittest.TestCase):
         expired_card = read_json(self.signals_dir / "expired" / "SIG-OLD.json")
         self.assertEqual(expired_card["status"], EXPIRED)
 
+    def test_fill_rejects_pending_without_claim_or_running_state(self) -> None:
+        self.machine.write_pending(self._card("SIG-PENDING-FILL"))
+
+        with self.assertRaisesRegex(SignalStateConflict, "cannot be filled from status pending"):
+            self.machine.fill("SIG-PENDING-FILL", {"filled_price": 10.1, "filled_quantity": 100})
+
+        self.assertTrue((self.signals_dir / "pending" / "SIG-PENDING-FILL.json").exists())
+        self.assertFalse((self.signals_dir / "filled" / "SIG-PENDING-FILL.json").exists())
+
     def test_claim_competition_allows_only_one_winner(self) -> None:
         self.machine.write_pending(self._card("SIG-RACE"))
         results: list[str] = []

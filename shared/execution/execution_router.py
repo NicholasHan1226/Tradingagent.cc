@@ -199,7 +199,25 @@ def _as_string_list(value: Any) -> list[str]:
     return [str(value)]
 
 
-def _build_real_signal_order(order: dict[str, Any], direction: str) -> dict[str, Any]:
+def _build_graduation_receipt(strategy_name: str, graduation: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "issued_by": "execution_router",
+        "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "strategy_name": strategy_name,
+        "current_stage": "shadow",
+        "next_stage": "real",
+        "ready": bool(graduation.get("ready", False)),
+        "thresholds": dict(graduation.get("thresholds") or {}),
+        "met": dict(graduation.get("met") or {}),
+        "message": str(graduation.get("message") or ""),
+    }
+
+
+def _build_real_signal_order(
+    order: dict[str, Any],
+    direction: str,
+    graduation_receipt: dict[str, Any],
+) -> dict[str, Any]:
     timestamp = str(order.get("timestamp") or datetime.now().astimezone().isoformat(timespec="seconds"))
     trade_date = _date_part(order.get("trade_date") or order.get("current_date") or timestamp, datetime.now().strftime("%Y-%m-%d"))
     price = order.get("price", order.get("limit_price", order.get("execution_price")))
@@ -250,6 +268,7 @@ def _build_real_signal_order(order: dict[str, Any], direction: str) -> dict[str,
         "source_condition_id": source_condition_id,
         "idempotency_key": str(order.get("idempotency_key") or order.get("order_id") or source_condition_id),
         "t_plus_1": t_plus_1,
+        "graduation_receipt": graduation_receipt,
     }
 
 
@@ -335,6 +354,7 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
         }
 
     channel = STAGE_CHANNELS[stage]
+    graduation_receipt: dict[str, Any] | None = None
     if stage == "real":
         strategy_name = str(order.get("strategy_name") or order.get("strategy") or "").strip()
         stats = _extract_strategy_stats(order)
@@ -374,6 +394,7 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
                 "order_id": order.get("order_id", ""),
                 "message": "graduation not met",
             }
+        graduation_receipt = _build_graduation_receipt(strategy_name, graduation)
 
     t_plus_1_block = _check_t_plus_1(order)
     if t_plus_1_block is not None:
@@ -464,8 +485,10 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
             else:
                 side = str(order.get("direction", order.get("side", "buy"))).lower().strip()
                 direction = {"buy": "buy", "sell": "sell", "reduce": "sell"}.get(side, side)
-                signal_order = _build_real_signal_order(order, direction)
-                result = send_order(signal_order)
+                if graduation_receipt is None:
+                    raise ValueError("missing graduation receipt for real route")
+                signal_order = _build_real_signal_order(order, direction, graduation_receipt)
+                result = send_order(signal_order, router_authorized=True)
                 executed = False
                 result["real_auto_order_forbidden"] = True
                 result["direct_execution"] = False

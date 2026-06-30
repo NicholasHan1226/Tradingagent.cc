@@ -230,8 +230,17 @@ def _write_execution_signal(
     fill_info.setdefault("filled_price", card.get("price", 0.0))
     fill_info.setdefault("filled_quantity", card.get("quantity", 0))
     fill_info.setdefault("filled_qty", fill_info.get("filled_quantity", card.get("quantity", 0)))
+    claimed = machine.claim(str(card.get("order_id", "")), worker_id="sim_loop")
+    running = machine.mark_running(str(card.get("order_id", "")), worker_id="sim_loop")
     filled = machine.fill(str(card.get("order_id", "")), fill_info)
-    return {"order_id": card.get("order_id", ""), "status": "filled", "pending_signal": pending, "filled_signal": filled}
+    return {
+        "order_id": card.get("order_id", ""),
+        "status": "filled",
+        "pending_signal": pending,
+        "claimed_signal": claimed,
+        "running_signal": running,
+        "filled_signal": filled,
+    }
 
 
 def _make_order_id(prefix: str, market: str, symbol: str, date: str) -> str:

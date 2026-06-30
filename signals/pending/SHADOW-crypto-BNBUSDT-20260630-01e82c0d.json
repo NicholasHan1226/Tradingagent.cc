@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-4c86a12d4e0c4d58"
+  ],
+  "idempotency_key": "SHADOW-crypto-BNBUSDT-20260630-01e82c0d",
+  "manual_confirm_required": false,
+  "market": "crypto",
+  "order_id": "SHADOW-crypto-BNBUSDT-20260630-01e82c0d",
+  "price": 547.33,
+  "quantity": 27,
+  "risk_check": {
+    "adjusted_weight": 0.147779,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-aaa5223fd418",
+  "source_audit_id": "AUDIT-4c86a12d4e0c4d58",
+  "status": "pending",
+  "strategy_name": "crypto_shadow",
+  "timestamp": "2026-06-30T14:01:35+00:00",
+  "ts_code": "BNBUSDT",
+  "valid_until": "2026-06-30"
+}

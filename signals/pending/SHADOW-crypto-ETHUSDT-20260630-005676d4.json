@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-bcb50c7d2abd455e"
+  ],
+  "idempotency_key": "SHADOW-crypto-ETHUSDT-20260630-005676d4",
+  "manual_confirm_required": false,
+  "market": "crypto",
+  "order_id": "SHADOW-crypto-ETHUSDT-20260630-005676d4",
+  "price": 1565.8,
+  "quantity": 9,
+  "risk_check": {
+    "adjusted_weight": 0.140922,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-8c424b4b0d6b",
+  "source_audit_id": "AUDIT-bcb50c7d2abd455e",
+  "status": "pending",
+  "strategy_name": "crypto_shadow",
+  "timestamp": "2026-06-30T12:30:58+00:00",
+  "ts_code": "ETHUSDT",
+  "valid_until": "2026-06-30"
+}

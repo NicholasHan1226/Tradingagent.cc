@@ -66,6 +66,10 @@ class CapitalLayerIsolationTest(unittest.TestCase):
 
         all_positions = position_ledger.get_positions(capital_layer="all")
         self.assertEqual({p["capital_layer"] for p in all_positions}, {"real", "shadow", "simulated"})
+        self.assertTrue((self.tmp_path / "position_logs" / "position_ledger_real.csv").exists())
+        self.assertTrue((self.tmp_path / "position_logs" / "position_ledger_shadow.csv").exists())
+        self.assertTrue((self.tmp_path / "position_logs" / "position_ledger_simulated.csv").exists())
+        self.assertFalse((self.tmp_path / "position_logs" / "position_ledger.csv").exists())
 
     def test_capital_cash_default_query_returns_only_real_layer(self) -> None:
         _patch_capital_paths(self, self.tmp_path)
@@ -74,11 +78,16 @@ class CapitalLayerIsolationTest(unittest.TestCase):
         capital_ledger.record_deposit(2000.0, "2026-06-30T09:31:00", capital_layer="shadow")
         capital_ledger.record_deposit(3000.0, "2026-06-30T09:32:00", capital_layer="simulated")
 
+        self.assertEqual(capital_ledger.get_capital_balance()["balance"], 1000.0)
         self.assertEqual(capital_ledger.get_cash_position(), 1000.0)
         self.assertEqual(capital_ledger.get_cash_position(capital_layer="real"), 1000.0)
         self.assertEqual(capital_ledger.get_cash_position(capital_layer="shadow"), 2000.0)
         self.assertEqual(capital_ledger.get_cash_position(capital_layer="simulated"), 3000.0)
         self.assertEqual(capital_ledger.get_cash_position(capital_layer="all"), 6000.0)
+        self.assertTrue((self.tmp_path / "capital_logs" / "capital_ledger_real.csv").exists())
+        self.assertTrue((self.tmp_path / "capital_logs" / "capital_ledger_shadow.csv").exists())
+        self.assertTrue((self.tmp_path / "capital_logs" / "capital_ledger_simulated.csv").exists())
+        self.assertFalse((self.tmp_path / "capital_logs" / "capital_ledger.csv").exists())
 
     def test_legacy_position_rows_default_to_shadow(self) -> None:
         _patch_position_paths(self, self.tmp_path)
