@@ -57,7 +57,9 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return default
 
 
-def check(order: dict[str, Any], portfolio: dict[str, Any] | None = None) -> dict[str, Any]:
+def check(order: dict[str, Any], portfolio: dict[str, Any] | None = None, belief_score: float | None = None) -> dict[str, Any]:
+    max_pos = 0.15 if belief_score and belief_score > 0.7 else 0.10 if belief_score and belief_score > 0.4 else 0.05
+    MIN_WEIGHT = 0.01
     """事前风控检查。
 
     Args:
