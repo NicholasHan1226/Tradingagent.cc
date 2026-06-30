@@ -1,0 +1,17 @@
+{
+  "job": "job_pm_optimize",
+  "state": "ok",
+  "generated_at": "2026-06-30T09:00:03+00:00",
+  "trade_date": "20260630",
+  "capital_layer": "shadow",
+  "market": "PM",
+  "strategy_version": "d8535abfa66658f0",
+  "strategy_count": 6,
+  "params": {
+    "portfolio_method": "pm_probability_weighted",
+    "max_positions": 20,
+    "max_candidates": 20,
+    "shadow_capital": 50000.0
+  },
+  "errors": []
+}

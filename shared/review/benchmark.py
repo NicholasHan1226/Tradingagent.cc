@@ -14,13 +14,25 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+import os
+import sqlite3
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, SharedSignalsReader
+except Exception:  # pragma: no cover - benchmark falls back to direct sqlite reads
+    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+    SharedSignalsReader = None  # type: ignore[assignment]
 
 REVIEW_DIR = Path(__file__).resolve().parent
 BENCHMARK_STORE = REVIEW_DIR / "data" / "benchmark_history.json"
 LAST_PERIOD_STORE = REVIEW_DIR / "data" / "last_period_return.json"
+
+CSI300_SYMBOLS = ("000300.SH", "399300.SZ", "000300", "399300")
+CHINEXT_SYMBOLS = ("399006.SZ", "399006")
+BENCHMARK_LOOKBACK_DAYS = 40
 
 
 # ---- helpers ----------------------------------------------------------------
@@ -54,6 +66,125 @@ def _safe_len(seq: Any) -> int:
         return 0
 
 
+def _safe_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_trade_date(value: str) -> date:
+    raw = str(value).strip()
+    for fmt in ("%Y%m%d", "%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+
+
+def _date_key(value: str | date) -> str:
+    return value.strftime("%Y%m%d") if isinstance(value, date) else _to_trade_date(value).strftime("%Y%m%d")
+
+
+def _shared_signals_db_path() -> Path:
+    env_value = os.environ.get("SHARED_SIGNALS_DB")
+    return Path(env_value).expanduser() if env_value else Path(DEFAULT_SHARED_SIGNALS_DB)
+
+
+def _sqlite_uri(path: Path) -> str:
+    return "file:" + str(path) + "?mode=ro"
+
+
+def _calc_return(previous_close: float | None, current_close: float | None) -> float:
+    if previous_close in (None, 0) or current_close is None:
+        return 0.0
+    return (float(current_close) - float(previous_close)) / float(previous_close)
+
+
+def _history_buy_hold_return(date_key: str) -> float:
+    history = _read_json(BENCHMARK_STORE)
+    if not history:
+        return 0.0
+    if isinstance(history.get(date_key), dict):
+        return float(history[date_key].get("buy_hold_return") or 0.0)
+    records = history.get("records")
+    if isinstance(records, list):
+        for record in records:
+            if str(record.get("date")) == date_key:
+                return float(record.get("buy_hold_return") or 0.0)
+    if str(history.get("date")) == date_key:
+        return float(history.get("buy_hold_return") or 0.0)
+    return 0.0
+
+
+def _rows_from_reader(symbol: str, target_date: str) -> list[dict[str, Any]]:
+    if SharedSignalsReader is None:
+        return []
+    start = (_to_trade_date(target_date) - timedelta(days=BENCHMARK_LOOKBACK_DAYS)).strftime("%Y%m%d")
+    reader = SharedSignalsReader(_shared_signals_db_path())
+    try:
+        return reader.get_bars_daily("Ashare", symbol, start=start, end=target_date)
+    finally:
+        reader.close()
+
+
+def _rows_from_sqlite(symbol: str, target_date: str) -> list[dict[str, Any]]:
+    db_path = _shared_signals_db_path()
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(_sqlite_uri(db_path), uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT trade_date, close FROM market_bars_daily "
+            "WHERE LOWER(market)=LOWER(?) AND symbol=? "
+            "AND REPLACE(REPLACE(trade_date, '-', ''), '/', '')<=? "
+            "AND close IS NOT NULL "
+            "ORDER BY REPLACE(REPLACE(trade_date, '-', ''), '/', '') ASC",
+            ("Ashare", symbol, target_date),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def _select_latest_two(rows: list[dict[str, Any]], target_date: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    deduped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        trade_date = _date_key(str(row.get("trade_date") or ""))
+        close_value = _safe_float(row.get("close"))
+        if not trade_date or close_value is None or trade_date > target_date:
+            continue
+        deduped[trade_date] = {"trade_date": trade_date, "close": close_value}
+    ordered = sorted(deduped.values(), key=lambda item: str(item["trade_date"]))
+    if not ordered:
+        return None, None
+    current = ordered[-1]
+    previous = ordered[-2] if len(ordered) >= 2 else None
+    return current, previous
+
+
+def _read_index_return(target_date: str, symbols: tuple[str, ...], label: str) -> tuple[float, str]:
+    for symbol in symbols:
+        try:
+            current, previous = _select_latest_two(_rows_from_reader(symbol, target_date), target_date)
+        except Exception:
+            current, previous = None, None
+        if current is not None:
+            return _calc_return(_safe_float(previous.get("close")) if previous else None, _safe_float(current.get("close"))), f"sharedsignals_reader:{label}:{symbol}:{current['trade_date']}"
+    for symbol in symbols:
+        try:
+            current, previous = _select_latest_two(_rows_from_sqlite(symbol, target_date), target_date)
+        except Exception:
+            current, previous = None, None
+        if current is not None:
+            return _calc_return(_safe_float(previous.get("close")) if previous else None, _safe_float(current.get("close"))), f"sharedsignals_sqlite:{label}:{symbol}:{current['trade_date']}"
+    return 0.0, f"sharedsignals_unavailable:{label}"
+
+
 # ---- public API -------------------------------------------------------------
 
 def get_benchmark(date: str) -> dict[str, Any]:
@@ -74,19 +205,22 @@ def get_benchmark(date: str) -> dict[str, Any]:
         }
 
     Notes:
-        - 实际生产中 csi300/chinext 应从 MarketGraph / Tushare 拉取; 此处先给
-          结构与回退值(0.0), 由 daily_runner 在调用前注入真实行情.
+        - 优先通过 SharedSignalsReader 读取 SharedSignals 日线, 若 reader 不可用则
+          直接只读打开 marketdata.sqlite 计算最近两个交易日收益.
         - last_period_return 从本地 store 读取, 由本模块在每次复盘后写入.
     """
+    date_key = _date_key(date)
     last = _read_json(LAST_PERIOD_STORE)
+    csi300_return, csi300_source = _read_index_return(date_key, CSI300_SYMBOLS, "csi300")
+    chinext_return, chinext_source = _read_index_return(date_key, CHINEXT_SYMBOLS, "chinext")
     return {
-        "date": date,
-        "csi300_return": 0.0,
-        "chinext_return": 0.0,
-        "buy_hold_return": 0.0,
+        "date": date_key,
+        "csi300_return": float(csi300_return),
+        "chinext_return": float(chinext_return),
+        "buy_hold_return": _history_buy_hold_return(date_key),
         "last_period_return": float(last.get("return", 0.0)),
         "last_period_kind": last.get("kind", "unknown"),
-        "source": "placeholder_inject_real_via_daily_runner",
+        "source": f"{csi300_source}|{chinext_source}",
         "as_of": _now_iso(),
     }
 
