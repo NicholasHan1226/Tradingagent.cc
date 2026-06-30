@@ -7,11 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from shared.notify.email_sender import send_email
+from shared.notify.email_sender import send_email, send_template_email
 from shared.notify.email_templates import wrap_html
 
 ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "shared"
+DAILY_BRIEF_MARKETS = ("Ashare", "Crypto", "US", "PM")
+DAILY_BRIEF_CAPITAL_BASE = 100000.0
 
 
 def now_iso() -> str:
@@ -75,6 +77,437 @@ def _read_last_jsonl(path: Path) -> dict[str, Any]:
         if isinstance(data, dict):
             return data
     return {}
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if isinstance(value, str):
+            value = value.strip().rstrip("%")
+        result = float(value)
+        if result != result:
+            return default
+        return result
+    except (TypeError, ValueError):
+        return default
+
+
+def _compact_date(value: Any) -> str:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    return digits[:8]
+
+
+def _normalize_market(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    mapping = {
+        "ashare": "Ashare",
+        "a_share": "Ashare",
+        "a-share": "Ashare",
+        "cn": "Ashare",
+        "china": "Ashare",
+        "crypto": "Crypto",
+        "digital_asset": "Crypto",
+        "us": "US",
+        "usa": "US",
+        "pm": "PM",
+        "polymarket": "PM",
+        "prediction_market": "PM",
+    }
+    return mapping.get(raw, str(value or "unknown") or "unknown")
+
+
+def _market_from_symbol(symbol: Any) -> str:
+    raw = str(symbol or "").strip().upper()
+    if raw.endswith((".SH", ".SZ", ".BJ")):
+        return "Ashare"
+    if raw.startswith("PM-"):
+        return "PM"
+    if "-" in raw or raw.endswith("USDT"):
+        return "Crypto"
+    return "unknown"
+
+
+def _trade_time_hhmm(row: dict[str, Any]) -> str:
+    raw = str(row.get("created_at") or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) >= 12:
+        return digits[8:12]
+    if "T" in raw:
+        return raw.split("T", 1)[1][:5].replace(":", "")
+    if " " in raw:
+        return raw.split(" ", 1)[1][:5].replace(":", "")
+    return ""
+
+
+def _is_morning_trade(row: dict[str, Any]) -> bool:
+    hhmm = _trade_time_hhmm(row)
+    return bool(hhmm) and hhmm < "1135"
+
+
+def _load_position_snapshot(as_of_date: str) -> list[dict[str, Any]]:
+    try:
+        from shared.accounting import position_ledger
+
+        rows = position_ledger.get_positions(capital_layer="all")
+    except Exception:
+        return []
+
+    snapshot: list[dict[str, Any]] = []
+    as_of = _compact_date(as_of_date)
+    for row in rows:
+        entry_date = _compact_date(row.get("entry_date"))
+        if entry_date and entry_date > as_of:
+            continue
+        entry = dict(row)
+        entry["market"] = _normalize_market(entry.get("market")) if entry.get("market") else _market_from_symbol(entry.get("ts_code"))
+        snapshot.append(entry)
+    return snapshot
+
+
+def _load_shadow_trades_for_date(target_date: str) -> list[dict[str, Any]]:
+    from shared.review import daily_review as review_driver
+
+    rows = []
+    for row in review_driver.load_shadow_trades(target_date):
+        entry = dict(row)
+        entry["market"] = _normalize_market(entry.get("market")) if entry.get("market") else _market_from_symbol(entry.get("ts_code"))
+        rows.append(entry)
+    return rows
+
+
+def _count_signals(trades: list[dict[str, Any]]) -> int:
+    signal_ids = {
+        str(row.get("signal_id", "")).strip()
+        for row in trades
+        if str(row.get("signal_id", "")).strip()
+    }
+    return len(signal_ids) if signal_ids else len(trades)
+
+
+def _trade_notional(trades: list[dict[str, Any]]) -> float:
+    return sum(abs(_safe_float(row.get("quantity")) * _safe_float(row.get("price"))) for row in trades)
+
+
+def _pnl_pct_from_trades(pnl_value: Any, trades: list[dict[str, Any]]) -> float:
+    notional = _trade_notional(trades)
+    pnl = _safe_float(pnl_value)
+    return round(pnl / notional, 6) if notional else 0.0
+
+
+def _market_trade_summary(trades: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for market in DAILY_BRIEF_MARKETS:
+        grouped[market] = {
+            "market": market,
+            "trade_count": 0,
+            "signal_count": 0,
+            "pnl": 0.0,
+            "state": "idle",
+        }
+    for row in trades:
+        market = _normalize_market(row.get("market")) if row.get("market") else _market_from_symbol(row.get("ts_code"))
+        if market not in grouped:
+            grouped[market] = {
+                "market": market,
+                "trade_count": 0,
+                "signal_count": 0,
+                "pnl": 0.0,
+                "state": "idle",
+            }
+        grouped[market]["trade_count"] += 1
+        grouped[market]["pnl"] = round(grouped[market]["pnl"] + _safe_float(row.get("pnl")), 6)
+        grouped[market]["state"] = "active"
+    for market, summary in grouped.items():
+        market_trades = [row for row in trades if _normalize_market(row.get("market")) == market]
+        summary["signal_count"] = _count_signals(market_trades)
+    return grouped
+
+
+def _position_market_summary(positions: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in positions:
+        market = _normalize_market(row.get("market")) if row.get("market") else _market_from_symbol(row.get("ts_code"))
+        counts[market] = counts.get(market, 0) + 1
+    return counts
+
+
+def _shadow_layer_review(review_payload: dict[str, Any]) -> dict[str, Any]:
+    layer_reviews = review_payload.get("capital_layer_reviews")
+    if isinstance(layer_reviews, dict):
+        shadow = layer_reviews.get("shadow")
+        if isinstance(shadow, dict):
+            return shadow
+    if review_payload.get("capital_layer") == "shadow":
+        return review_payload
+    return {}
+
+
+def _positions_for_template(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rendered: list[dict[str, Any]] = []
+    for row in positions[:12]:
+        quantity = int(_safe_float(row.get("quantity")))
+        avg_price = _safe_float(row.get("avg_price") or row.get("cost"))
+        rendered.append({
+            "ts_code": row.get("ts_code", ""),
+            "name": row.get("market", ""),
+            "quantity": quantity or "",
+            "cost": avg_price,
+            "last_close": avg_price,
+            "current_price": avg_price,
+            "pnl_pct": _safe_float(row.get("pnl_pct")),
+        })
+    return rendered
+
+
+def _capital_summary(positions: list[dict[str, Any]]) -> dict[str, Any]:
+    allocated = sum(_safe_float(row.get("cost_basis")) for row in positions)
+    available = max(0.0, DAILY_BRIEF_CAPITAL_BASE - allocated)
+    return {
+        "available": round(available, 2),
+        "allocated": round(allocated, 2),
+        "reserve": round(available, 2),
+        "reverse_repo": 0.0,
+    }
+
+
+def _market_focus_rows(
+    trades: list[dict[str, Any]],
+    positions: list[dict[str, Any]],
+    layer_review: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    review_market_map = {}
+    if isinstance(layer_review, dict):
+        review_market_map = layer_review.get("market_reviews") or {}
+    trade_summary = _market_trade_summary(trades)
+    position_counts = _position_market_summary(positions)
+    rows: list[dict[str, str]] = []
+    for market in DAILY_BRIEF_MARKETS:
+        summary = trade_summary.get(market, {"trade_count": 0, "signal_count": 0, "pnl": 0.0, "state": "idle"})
+        market_review = review_market_map.get(market) if isinstance(review_market_map, dict) else {}
+        pnl_value = _safe_float((market_review or {}).get("pnl"), summary.get("pnl", 0.0))
+        signal_count = int((market_review or {}).get("signal_count", summary.get("signal_count", 0)) or 0)
+        trade_count = int((market_review or {}).get("trades", summary.get("trade_count", 0)) or 0)
+        position_count = int(position_counts.get(market, 0))
+        direction = "活跃" if trade_count or position_count else "待观察"
+        reason = (
+            f"signals={signal_count}, trades={trade_count}, positions={position_count}, "
+            f"pnl={pnl_value:.4f}"
+        )
+        rows.append({"sector": market, "direction": direction, "reason": reason})
+    return rows
+
+
+def _build_system_health(
+    trades: list[dict[str, Any]],
+    midday_review: dict[str, Any],
+    nightly_review: dict[str, Any],
+) -> dict[str, Any]:
+    checks = {
+        "shadow_trades": bool(trades),
+        "midday_review": bool(midday_review),
+        "nightly_review": bool(nightly_review),
+        "daily_log": bool(_read_last_jsonl(SHARED / "review/data/daily_reviews.jsonl")),
+    }
+    ok_count = sum(1 for value in checks.values() if value)
+    label = "healthy" if ok_count >= 3 else "degraded" if ok_count >= 2 else "cold_start"
+    latest_review = nightly_review or midday_review
+    latest_session = str(latest_review.get("session") or "--")
+    detail = ", ".join(f"{name}={'ok' if ok else 'missing'}" for name, ok in checks.items())
+    return {
+        "status": label,
+        "ok_count": ok_count,
+        "checks": checks,
+        "latest_review_session": latest_session,
+        "detail": detail,
+    }
+
+
+def _summary_text(title: str, trade_date_value: str, extra_lines: list[str]) -> str:
+    lines = [f"{title} {trade_date_value}"] + [line for line in extra_lines if line]
+    return "\n".join(lines)
+
+
+def _afternoon_plan_rows(plan: dict[str, Any]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for target in plan.get("reduce", []) or []:
+        rows.append({"action": "减仓", "target": str(target), "condition": "触及止损或动量衰减"})
+    for target in plan.get("add", []) or []:
+        rows.append({"action": "加仓", "target": str(target), "condition": "信号未充分兑现"})
+    for target in plan.get("watch", []) or []:
+        rows.append({"action": "观察", "target": str(target), "condition": "等待下午确认"})
+    notes = str(plan.get("notes", "") or "").strip()
+    if notes:
+        rows.append({"action": "备注", "target": "全市场", "condition": notes})
+    return rows
+
+
+def _trade_rows(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in trades:
+        rows.append({
+            "ts_code": row.get("ts_code", ""),
+            "side": row.get("side", ""),
+            "quantity": _safe_float(row.get("quantity")),
+            "price": _safe_float(row.get("price")),
+            "pnl": _safe_float(row.get("pnl")),
+        })
+    return rows
+
+
+def _attribution_rows(layer_review: dict[str, Any]) -> list[dict[str, Any]]:
+    attribution = layer_review.get("attribution") or {}
+    by_dimension = attribution.get("by_dimension") or {}
+    rows = [
+        {"factor": str(name), "contribution": _safe_float(value)}
+        for name, value in by_dimension.items()
+        if name != "unattributed"
+    ]
+    rows.sort(key=lambda item: abs(_safe_float(item.get("contribution"))), reverse=True)
+    return rows[:6]
+
+
+def _comparison_rows(layer_review: dict[str, Any]) -> list[dict[str, str]]:
+    comparisons = layer_review.get("comparisons") or {}
+    vs_goals = comparisons.get("vs_goals") or {}
+    vs_benchmark = comparisons.get("vs_benchmark") or {}
+    vs_last = comparisons.get("vs_last_period") or {}
+    return [
+        {
+            "action": "对比目标",
+            "target": "达标" if vs_goals.get("all_goals_met") else "未达标",
+            "reason": f"stage={vs_goals.get('stage', '--')}",
+        },
+        {
+            "action": "对比基准",
+            "target": "跑赢" if vs_benchmark.get("beat_benchmark") else "未跑赢",
+            "reason": f"excess={_safe_float(vs_benchmark.get('excess_return')):.4f}",
+        },
+        {
+            "action": "对比上一周期",
+            "target": "改善" if vs_last.get("improved") else "未改善",
+            "reason": f"delta={_safe_float(vs_last.get('delta')):.4f}",
+        },
+    ]
+
+
+def _tomorrow_plan_rows(layer_review: dict[str, Any]) -> list[dict[str, str]]:
+    next_day = layer_review.get("next_day_plan") or {}
+    rows = _comparison_rows(layer_review)
+    if next_day.get("tighten_stops"):
+        rows.append({"action": "收紧止损", "target": "组合", "reason": "胜率未达阶段目标"})
+    for name in next_day.get("reduce_dimensions", []) or []:
+        rows.append({"action": "降权维度", "target": str(name), "reason": "当日归因为负"})
+    for name in next_day.get("reduce_strategies", []) or []:
+        rows.append({"action": "降权策略", "target": str(name), "reason": "当日归因为负"})
+    notes = str(next_day.get("notes", "") or "").strip()
+    if notes:
+        rows.append({"action": "备注", "target": "下日", "reason": notes})
+    return rows
+
+
+def _compose_morning_email_data(
+    trade_date_value: str,
+    trades: list[dict[str, Any]],
+    positions: list[dict[str, Any]],
+    midday_review: dict[str, Any],
+    nightly_review: dict[str, Any],
+) -> dict[str, Any]:
+    latest_review = nightly_review or midday_review
+    latest_layer_review = _shadow_layer_review(latest_review)
+    health = _build_system_health(trades, midday_review, nightly_review)
+    signal_count = _count_signals(trades)
+    market_rows = _market_focus_rows(trades, positions, latest_layer_review)
+    return {
+        "trade_date": trade_date_value,
+        "date": trade_date_value,
+        "holdings": _positions_for_template(positions),
+        "capital": _capital_summary(positions),
+        "market_outlook": {
+            "regime": f"shadow {sum(1 for row in market_rows if row['direction'] == '活跃')}/{len(DAILY_BRIEF_MARKETS)} 市场活跃",
+            "trend": health["status"],
+            "key_levels": f"signals={signal_count}; trades={len(trades)}; latest_review={health['latest_review_session']}",
+        },
+        "sector_focus": market_rows,
+        "strategy": [
+            {"name": "系统健康", "action": health["status"], "target": health["detail"]},
+            {"name": "今日信号", "action": str(signal_count), "target": f"shadow trades={len(trades)}"},
+            {
+                "name": "最近复盘",
+                "action": health["latest_review_session"],
+                "target": str((latest_layer_review.get("next_day_plan") or {}).get("notes") or "--"),
+            },
+        ],
+        "summary": _summary_text(
+            "盘前规划",
+            trade_date_value,
+            [
+                f"4市场 shadow 状态已汇总，今日 signal count={signal_count}",
+                f"系统健康={health['status']}",
+            ],
+        ),
+    }
+
+
+def _compose_midday_email_data(
+    trade_date_value: str,
+    trades: list[dict[str, Any]],
+    positions: list[dict[str, Any]],
+    review_payload: dict[str, Any],
+) -> dict[str, Any]:
+    morning_trades = [row for row in trades if _is_morning_trade(row)]
+    layer_review = _shadow_layer_review(review_payload)
+    morning_pnl = _safe_float(layer_review.get("realized_pnl"), _safe_float(layer_review.get("pnl")))
+    win_rate = _safe_float(layer_review.get("win_rate"))
+    return {
+        "trade_date": trade_date_value,
+        "date": trade_date_value,
+        "morning_pnl": morning_pnl,
+        "morning_pnl_pct": _pnl_pct_from_trades(morning_pnl, morning_trades),
+        "morning_trades": _trade_rows(morning_trades),
+        "holdings": _positions_for_template(positions),
+        "afternoon_plan": _afternoon_plan_rows(layer_review.get("afternoon_plan") or {}),
+        "summary": _summary_text(
+            "午盘复盘",
+            trade_date_value,
+            [
+                f"上午胜率={win_rate:.2%}",
+                f"上午PnL={morning_pnl:.4f}",
+                f"signal_count={int(layer_review.get('signal_count', 0) or 0)}",
+            ],
+        ),
+    }
+
+
+def _compose_nightly_email_data(
+    trade_date_value: str,
+    trades: list[dict[str, Any]],
+    positions: list[dict[str, Any]],
+    review_payload: dict[str, Any],
+) -> dict[str, Any]:
+    layer_review = _shadow_layer_review(review_payload)
+    total_pnl = _safe_float(layer_review.get("pnl"))
+    comparisons = layer_review.get("comparisons") or {}
+    vs_benchmark = comparisons.get("vs_benchmark") or {}
+    return {
+        "trade_date": trade_date_value,
+        "date": trade_date_value,
+        "total_pnl": total_pnl,
+        "total_pnl_pct": _pnl_pct_from_trades(total_pnl, trades),
+        "benchmark_pnl_pct": 0.0,
+        "trades": _trade_rows(trades),
+        "attribution": _attribution_rows(layer_review),
+        "holdings": _positions_for_template(positions),
+        "tomorrow_plan": _tomorrow_plan_rows(layer_review),
+        "summary": _summary_text(
+            "收盘日报",
+            trade_date_value,
+            [
+                f"今日PnL={total_pnl:.4f}",
+                f"vs goals={'met' if (comparisons.get('vs_goals') or {}).get('all_goals_met') else 'miss'}",
+                f"vs benchmark={'beat' if vs_benchmark.get('beat_benchmark') else 'lag'}",
+                f"vs last={'improved' if (comparisons.get('vs_last_period') or {}).get('improved') else 'down'}",
+            ],
+        ),
+    }
 
 
 def placeholder(job: str, output_rel: str, note: str, fmt: str = "jsonl", extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -324,38 +757,75 @@ def run_all_market_trading_signals() -> dict[str, Any]:
 
 
 def run_daily_brief_morning() -> dict[str, Any]:
-    return placeholder(
-        "job_daily_brief_morning",
-        "review/daily/morning_brief.json",
-        "晨间简报骨架已迁入 Tradings；待接入 overnight_state 实数与邮件模板。",
-        fmt="json",
-        extra={"capital_layer": "shadow"},
-    )
+    current_trade_date = trade_date()
+    trades = _load_shadow_trades_for_date(current_trade_date)
+    positions = _load_position_snapshot(current_trade_date)
+    midday_review = _read_last_jsonl(SHARED / "review/daily/midday_review.jsonl")
+    nightly_review = _read_last_jsonl(SHARED / "review/daily/daily_brief.jsonl")
+    email_data = _compose_morning_email_data(current_trade_date, trades, positions, midday_review, nightly_review)
+    email_result = send_template_email("pre_market_plan", email_data)
+    health = _build_system_health(trades, midday_review, nightly_review)
+    payload = {
+        "job": "job_daily_brief_morning",
+        "phase": "morning",
+        "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
+        "generated_at": now_iso(),
+        "trade_date": current_trade_date,
+        "capital_layer": "shadow",
+        "signal_count": _count_signals(trades),
+        "shadow_trade_count": len(trades),
+        "system_health": health,
+        "market_statuses": _market_focus_rows(trades, positions, _shadow_layer_review(nightly_review or midday_review)),
+        "email_notification": email_result,
+        "email_data": email_data,
+    }
+    write_json(SHARED / "review/daily/morning_brief.json", payload)
+    return payload
 
 
 def run_daily_brief_day() -> dict[str, Any]:
-    from shared.orchestrator import run_daily_review
+    from shared.review import daily_review as review_driver
 
-    result = run_daily_review("all", trade_date(), "lunch")
+    current_trade_date = trade_date()
+    trades = _load_shadow_trades_for_date(current_trade_date)
+    positions = _load_position_snapshot(current_trade_date)
+    result = review_driver.run_daily_review(current_trade_date, session="lunch")
+    email_data = _compose_midday_email_data(current_trade_date, trades, positions, result)
+    email_result = send_template_email("midday_review", email_data)
     result.update({
         "job": "job_daily_brief_day",
-        "state": "orchestrated",
+        "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
         "phase": "lunch",
         "generated_at": now_iso(),
+        "trade_date": current_trade_date,
+        "capital_layer": "shadow",
+        "shadow_trade_count": len(trades),
+        "email_notification": email_result,
+        "email_data": email_data,
     })
     append_jsonl(SHARED / "review/daily/midday_review.jsonl", result)
     return result
 
 
 def run_daily_brief_night() -> dict[str, Any]:
-    from shared.orchestrator import run_daily_review
+    from shared.review import daily_review as review_driver
 
-    result = run_daily_review("all", trade_date(), "close")
+    current_trade_date = trade_date()
+    trades = _load_shadow_trades_for_date(current_trade_date)
+    positions = _load_position_snapshot(current_trade_date)
+    result = review_driver.run_daily_review(current_trade_date, session="close")
+    email_data = _compose_nightly_email_data(current_trade_date, trades, positions, result)
+    email_result = send_template_email("daily_report", email_data)
     result.update({
         "job": "job_daily_brief_night",
-        "state": "orchestrated",
+        "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
         "phase": "close",
         "generated_at": now_iso(),
+        "trade_date": current_trade_date,
+        "capital_layer": "shadow",
+        "shadow_trade_count": len(trades),
+        "email_notification": email_result,
+        "email_data": email_data,
     })
     append_jsonl(SHARED / "review/daily/daily_brief.jsonl", result)
     return result
