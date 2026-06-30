@@ -1,0 +1,28 @@
+{
+  "account_type": "shadow",
+  "capital_layer": "shadow",
+  "direct_execution": false,
+  "direction": "buy",
+  "evidence_refs": [
+    "AUDIT-83bc864325a1400f"
+  ],
+  "idempotency_key": "SHADOW-us-AMD-20260630-49fc54be",
+  "manual_confirm_required": false,
+  "market": "us",
+  "order_id": "SHADOW-us-AMD-20260630-49fc54be",
+  "price": 521.58,
+  "quantity": 14,
+  "risk_check": {
+    "adjusted_weight": 0.036511,
+    "adjustments": [],
+    "passed": true,
+    "reasons": []
+  },
+  "shadow_trade_id": "SHADOW-003b5b5e4101",
+  "source_audit_id": "AUDIT-83bc864325a1400f",
+  "status": "pending",
+  "strategy_name": "us_shadow",
+  "timestamp": "2026-06-30T08:42:58+00:00",
+  "ts_code": "AMD",
+  "valid_until": "2026-06-30"
+}

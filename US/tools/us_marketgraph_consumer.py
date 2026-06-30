@@ -1,1 +1,0 @@
-../../../US/tools/us_marketgraph_consumer.py
