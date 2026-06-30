@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +77,24 @@ def _read_last_jsonl(path: Path) -> dict[str, Any]:
         if isinstance(data, dict):
             return data
     return {}
+
+
+def _read_jsonl_dicts(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                rows.append(data)
+    except FileNotFoundError:
+        return []
+    return rows
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -351,6 +369,371 @@ def _trade_rows(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "pnl": _safe_float(row.get("pnl")),
         })
     return rows
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    cleaned = raw.strip("[]")
+    candidates = [
+        cleaned,
+        cleaned.replace("Z", "+00:00"),
+    ]
+    for candidate in candidates:
+        try:
+            parsed = datetime.fromisoformat(candidate)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S%z", "%Y%m%dT%H%M%S%z"):
+        try:
+            return datetime.strptime(cleaned, fmt).astimezone(timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _format_trade_day(value: str) -> str:
+    compact = _compact_date(value)
+    if len(compact) == 8:
+        return f"{compact[:4]}-{compact[4:6]}-{compact[6:8]}"
+    return str(value or "")
+
+
+def _week_window(anchor_trade_date: str) -> tuple[str, str]:
+    anchor = datetime.strptime(_compact_date(anchor_trade_date), "%Y%m%d")
+    week_start = anchor - timedelta(days=anchor.weekday())
+    return week_start.strftime("%Y%m%d"), anchor.strftime("%Y%m%d")
+
+
+def _iter_trade_dates(start_trade_date: str, end_trade_date: str) -> list[str]:
+    start = datetime.strptime(_compact_date(start_trade_date), "%Y%m%d")
+    end = datetime.strptime(_compact_date(end_trade_date), "%Y%m%d")
+    dates: list[str] = []
+    current = start
+    while current <= end:
+        dates.append(current.strftime("%Y%m%d"))
+        current += timedelta(days=1)
+    return dates
+
+
+def _market_scope_for_job(job_name: str) -> str | None:
+    lowered = str(job_name or "").lower()
+    mapping = {
+        "job_us_weekly": "US",
+        "job_crypto_weekly": "Crypto",
+        "job_pm_weekly": "PM",
+        "job_ashare_weekly": "Ashare",
+    }
+    return mapping.get(lowered)
+
+
+def _load_week_shadow_trades(anchor_trade_date: str, market: str | None = None) -> tuple[list[dict[str, Any]], str, str]:
+    from shared.review import daily_review as review_driver
+
+    week_start, week_end = _week_window(anchor_trade_date)
+    rows: list[dict[str, Any]] = []
+    for one_day in _iter_trade_dates(week_start, week_end):
+        for row in review_driver.load_shadow_trades(one_day):
+            entry = dict(row)
+            entry["market"] = _normalize_market(entry.get("market")) if entry.get("market") else _market_from_symbol(entry.get("ts_code"))
+            if market and entry["market"] != market:
+                continue
+            rows.append(entry)
+    return rows, week_start, week_end
+
+
+def _weekly_strategy_rows(
+    strategy_stats: dict[str, dict[str, Any]],
+    week_trades: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    grouped_notional: dict[str, float] = {}
+    for trade in week_trades:
+        strategy = str(trade.get("strategy") or "unattributed")
+        grouped_notional[strategy] = grouped_notional.get(strategy, 0.0) + abs(
+            _safe_float(trade.get("quantity")) * _safe_float(trade.get("price"))
+        )
+    for name, stats in strategy_stats.items():
+        notional = grouped_notional.get(name, 0.0)
+        pnl = _safe_float(stats.get("pnl"))
+        rows.append({
+            "name": name,
+            "trades": int(stats.get("trades", 0) or 0),
+            "win_rate": _safe_float(stats.get("win_rate")),
+            "pnl": pnl,
+            "pnl_pct": round(pnl / notional, 6) if notional else 0.0,
+        })
+    rows.sort(key=lambda item: (_safe_float(item.get("pnl")), _safe_float(item.get("win_rate"))), reverse=True)
+    return rows
+
+
+def _weekly_daily_rows(week_trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for trade in week_trades:
+        trade_day = _compact_date(trade.get("trade_date") or trade.get("created_at") or "")
+        grouped.setdefault(trade_day, []).append(trade)
+    rows: list[dict[str, Any]] = []
+    for trade_day in sorted(grouped):
+        trades = grouped[trade_day]
+        pnl = sum(_safe_float(item.get("pnl")) for item in trades)
+        rows.append({
+            "date": _format_trade_day(trade_day),
+            "pnl": round(pnl, 6),
+            "pnl_pct": _pnl_pct_from_trades(pnl, trades),
+        })
+    return rows
+
+
+def _weekly_trends(layer_review: dict[str, Any]) -> dict[str, str]:
+    dimensions = layer_review.get("dimension_effectiveness") or {}
+    ranked = sorted(
+        ((str(name), _safe_float(value)) for name, value in dimensions.items() if str(name) != "unattributed"),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    leaders = ", ".join(f"{name}({_safe_float(value):+.2f})" for name, value in ranked[:2]) or "暂无显著强势维度"
+    laggards = ", ".join(f"{name}({_safe_float(value):+.2f})" for name, value in ranked[-2:] if _safe_float(value) < 0) or "暂无显著弱势维度"
+    promotes = len(layer_review.get("strategies_to_promote") or [])
+    eliminates = len(layer_review.get("strategies_to_eliminate") or [])
+    adjustments = len(layer_review.get("conditions_to_adjust") or [])
+    return {
+        "market": (
+            f"shadow 周胜率 {_safe_float(layer_review.get('week_win_rate')):.0%}, "
+            f"周交易 {int(layer_review.get('week_trade_count', 0) or 0)} 笔"
+        ),
+        "sectors": f"强势维度: {leaders}; 弱势维度: {laggards}",
+        "capital_flow": f"升级候选 {promotes} 个, 降级候选 {eliminates} 个, 条件调参 {adjustments} 项",
+    }
+
+
+def _weekly_next_week_rows(layer_review: dict[str, Any], strategy_rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for name in layer_review.get("strategies_to_promote") or []:
+        rows.append({"focus": f"策略 {name}", "action": "保持正反馈，准备升级到更高权重或模拟盘验证"})
+    for name in layer_review.get("strategies_to_eliminate") or []:
+        rows.append({"focus": f"策略 {name}", "action": "连续两周偏弱，下周降权或临时下线观察"})
+    for name in layer_review.get("conditions_to_adjust") or []:
+        rows.append({"focus": f"条件 {name}", "action": "条件贡献转负，下周收紧触发或延后执行"})
+    if not rows and strategy_rows:
+        leader = strategy_rows[0]
+        rows.append({
+            "focus": f"策略 {leader['name']}",
+            "action": "延续本周最强策略，同时观察是否还能维持正胜率",
+        })
+    if not rows:
+        rows.append({"focus": "全市场", "action": "本周样本不足，继续积累 shadow 交易并等待下周复盘"})
+    return rows[:8]
+
+
+def _compose_weekly_email_data(
+    week_start: str,
+    week_end: str,
+    week_trades: list[dict[str, Any]],
+    layer_review: dict[str, Any],
+) -> dict[str, Any]:
+    total_pnl = _safe_float(layer_review.get("week_pnl"))
+    strategy_rows = _weekly_strategy_rows(layer_review.get("strategy_win_rates") or {}, week_trades)
+    next_week = _weekly_next_week_rows(layer_review, strategy_rows)
+    promote_names = ", ".join(layer_review.get("strategies_to_promote") or []) or "无"
+    eliminate_names = ", ".join(layer_review.get("strategies_to_eliminate") or []) or "无"
+    return {
+        "week_range": f"{_format_trade_day(week_start)} ~ {_format_trade_day(week_end)}",
+        "date": _format_trade_day(week_end),
+        "weekly_pnl": total_pnl,
+        "weekly_pnl_pct": _pnl_pct_from_trades(total_pnl, week_trades),
+        "benchmark_pnl_pct": 0.0,
+        "strategy_stats": strategy_rows,
+        "daily_pnl": _weekly_daily_rows(week_trades),
+        "trends": _weekly_trends(layer_review),
+        "next_week": next_week,
+        "summary": _summary_text(
+            "周度复盘",
+            _format_trade_day(week_end),
+            [
+                f"周胜率={_safe_float(layer_review.get('week_win_rate')):.2%}",
+                f"周PnL={total_pnl:.4f}",
+                f"升级候选={promote_names}",
+                f"降级候选={eliminate_names}",
+            ],
+        ),
+    }
+
+
+def _cron_log_snapshot() -> dict[str, Any]:
+    log_dir = SHARED / "logs" / "cron"
+    records: list[dict[str, Any]] = []
+    latest_dt: datetime | None = None
+    failed_jobs: list[str] = []
+    failure_keywords = (" traceback", "traceback", " exception", " failed", " error")
+    for path in sorted(log_dir.glob("*.log")):
+        try:
+            lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+        except FileNotFoundError:
+            continue
+        if not lines:
+            continue
+        failed = False
+        reasons: list[str] = []
+        for line in lines:
+            lowered = line.lower()
+            if any(keyword in lowered for keyword in failure_keywords) and "0 error" not in lowered:
+                failed = True
+                reasons.append(line[:160])
+        first_token = lines[-1].split("]", 1)[0].lstrip("[")
+        line_dt = _parse_datetime(first_token)
+        if line_dt and (latest_dt is None or line_dt > latest_dt):
+            latest_dt = line_dt
+        if failed:
+            failed_jobs.append(path.stem)
+        records.append({
+            "job": path.stem,
+            "failed": failed,
+            "line_count": len(lines),
+            "sample": reasons[:2] or [lines[-1][:160]],
+        })
+    return {
+        "jobs_checked": len(records),
+        "records": records,
+        "failed_jobs": sorted(set(failed_jobs)),
+        "latest_run": latest_dt.isoformat(timespec="seconds") if latest_dt else "",
+    }
+
+
+def _latest_self_heal_snapshot() -> dict[str, Any]:
+    actions = _read_jsonl_dicts(SHARED / "review/heal/self_heal_actions.jsonl")
+    report = _read_json(SHARED / "review/heal/heal_report.json")
+    latest = report or (actions[-1] if actions else {})
+    return {
+        "latest": latest,
+        "actions_count": len(actions),
+        "latest_cycle_at": str(latest.get("cycle_at") or latest.get("generated_at") or ""),
+        "issues_found": int(latest.get("issues_found", 0) or 0),
+        "issues_fixed": int(latest.get("issues_fixed", 0) or 0),
+        "issues_escalated": int(latest.get("issues_escalated", 0) or 0),
+        "rule_updates": latest.get("rule_updates") or [],
+    }
+
+
+def _consecutive_zero_signal_periods(rows: list[dict[str, Any]]) -> int:
+    streak = 0
+    for row in reversed(rows):
+        if row.get("capital_layer") not in ("", None, "shadow"):
+            continue
+        signal_count = row.get("signal_count")
+        if signal_count is None:
+            signal_count = ((row.get("capital_layer_reviews") or {}).get("shadow") or {}).get("signal_count")
+        if int(signal_count or 0) > 0:
+            break
+        streak += 1
+    return streak
+
+
+def _self_heal_context() -> dict[str, Any]:
+    current_trade_date = trade_date()
+    trades = _load_shadow_trades_for_date(current_trade_date)
+    positions = _load_position_snapshot(current_trade_date)
+    cron_snapshot = _cron_log_snapshot()
+    daily_rows = _read_jsonl_dicts(SHARED / "review/data/daily_reviews.jsonl")
+
+    latest_activity = [
+        dt
+        for dt in (
+            [_parse_datetime(item.get("created_at")) for item in trades]
+            + [_parse_datetime(cron_snapshot.get("latest_run"))]
+        )
+        if dt is not None
+    ]
+    if latest_activity:
+        age_minutes = max(0.0, (datetime.now(timezone.utc) - max(latest_activity)).total_seconds() / 60.0)
+    else:
+        age_minutes = 999.0
+
+    total_pnl = sum(_safe_float(row.get("pnl")) for row in trades)
+    pipeline_errors = {
+        record["job"]: {"runs": 1, "errors": 1 if record.get("failed") else 0}
+        for record in cron_snapshot.get("records", [])
+    }
+    position_rows = []
+    for row in positions:
+        weight_pct = _safe_float(row.get("weight_pct"))
+        if not weight_pct:
+            cost_basis = _safe_float(row.get("cost_basis"))
+            if not cost_basis:
+                cost_basis = abs(_safe_float(row.get("quantity")) * _safe_float(row.get("avg_price") or row.get("cost")))
+            weight_pct = round(cost_basis / DAILY_BRIEF_CAPITAL_BASE * 100, 4) if cost_basis else 0.0
+        position_rows.append({
+            "ts_code": row.get("ts_code"),
+            "weight_pct": weight_pct,
+        })
+    return {
+        "data_age_minutes": round(age_minutes, 2),
+        "pipeline_errors": pipeline_errors,
+        "intraday_pnl_pct": _pnl_pct_from_trades(total_pnl, trades),
+        "periods_without_signal": _consecutive_zero_signal_periods(daily_rows),
+        "positions": position_rows,
+        "freeze_active": False,
+        "in_sample_tuning_detected": False,
+    }
+
+
+def _system_health_email_data(self_heal_snapshot: dict[str, Any], cron_snapshot: dict[str, Any]) -> dict[str, Any]:
+    failed_jobs = cron_snapshot.get("failed_jobs") or []
+    issues_found = int(self_heal_snapshot.get("issues_found", 0) or 0)
+    issues_escalated = int(self_heal_snapshot.get("issues_escalated", 0) or 0)
+    actions_count = int(self_heal_snapshot.get("actions_count", 0) or 0)
+    if issues_escalated or failed_jobs:
+        overall_status = "critical"
+    elif issues_found or not actions_count:
+        overall_status = "degraded"
+    else:
+        overall_status = "healthy"
+    collection_status = "ok" if actions_count else "degraded"
+    pipeline_status = "critical" if failed_jobs else "ok"
+    integrity_status = "passed" if not issues_escalated else "failed"
+    gaps = []
+    if not actions_count:
+        gaps.append("self_heal log missing")
+    if failed_jobs:
+        gaps.append("cron failures detected")
+    return {
+        "overall_status": overall_status,
+        "date": trade_date(),
+        "collection": {
+            "status": collection_status,
+            "sources": f"self_heal_actions={actions_count}, cron_logs={int(cron_snapshot.get('jobs_checked', 0) or 0)}",
+            "last_update": self_heal_snapshot.get("latest_cycle_at") or cron_snapshot.get("latest_run") or "--",
+            "gaps": ", ".join(gaps) if gaps else "无",
+        },
+        "pipeline": {
+            "status": pipeline_status,
+            "stages": int(cron_snapshot.get("jobs_checked", 0) or 0),
+            "failed_stages": ", ".join(failed_jobs) if failed_jobs else "无",
+            "last_run": cron_snapshot.get("latest_run") or "--",
+        },
+        "integrity": {
+            "status": integrity_status,
+            "checks_passed": max(0, 3 - len(failed_jobs) - issues_escalated),
+            "checks_failed": len(failed_jobs) + issues_escalated,
+            "details": (
+                f"issues_found={issues_found}, issues_fixed={int(self_heal_snapshot.get('issues_fixed', 0) or 0)}, "
+                f"rule_updates={len(self_heal_snapshot.get('rule_updates') or [])}"
+            ),
+        },
+        "summary": _summary_text(
+            "系统健康",
+            trade_date(),
+            [
+                f"overall={overall_status}",
+                f"cron_failed={len(failed_jobs)}",
+                f"self_heal_escalated={issues_escalated}",
+            ],
+        ),
+    }
 
 
 def _attribution_rows(layer_review: dict[str, Any]) -> list[dict[str, Any]]:
@@ -834,8 +1217,9 @@ def run_daily_brief_night() -> dict[str, Any]:
 def run_self_heal() -> dict[str, Any]:
     from shared.review.self_heal_loop import run_heal_cycle
 
-    result = run_heal_cycle({})
-    result.update({"job": "job_self_heal", "state": "scaffolded", "generated_at": now_iso()})
+    result = run_heal_cycle(_self_heal_context())
+    state = "critical" if int(result.get("issues_escalated", 0) or 0) else "healed" if int(result.get("issues_found", 0) or 0) else "healthy"
+    result.update({"job": "job_self_heal", "state": state, "generated_at": now_iso()})
     append_jsonl(SHARED / "review/heal/self_heal_actions.jsonl", result)
     return result
 
@@ -857,8 +1241,25 @@ def run_self_heal_night() -> dict[str, Any]:
 def run_weekly_review(job_name: str, output_rel: str) -> dict[str, Any]:
     from shared.review.weekly_review import review_week
 
-    result = review_week([])
-    result.update({"job": job_name, "state": "scaffolded", "generated_at": now_iso()})
+    market_scope = _market_scope_for_job(job_name)
+    week_trades, week_start, week_end = _load_week_shadow_trades(trade_date(), market=market_scope)
+    result = review_week(week_trades)
+    layer_key = market_scope and "shadow" or "shadow"
+    layer_review = (result.get("capital_layer_reviews") or {}).get(layer_key) or {}
+    email_data = _compose_weekly_email_data(week_start, week_end, week_trades, layer_review)
+    email_result = send_template_email("weekly_report", email_data)
+    result.update({
+        "job": job_name,
+        "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
+        "generated_at": now_iso(),
+        "capital_layer": "shadow",
+        "market": market_scope or "all",
+        "week_start": week_start,
+        "week_end": week_end,
+        "shadow_trade_count": len(week_trades),
+        "email_notification": email_result,
+        "email_data": email_data,
+    })
     write_json(SHARED / output_rel, result)
     return result
 
@@ -924,10 +1325,20 @@ def run_auto_position() -> dict[str, Any]:
 
 
 def run_alert() -> dict[str, Any]:
-    from shared.notify.alert_router import check_self_heal_status
-
-    result = check_self_heal_status()
-    result.update({"job": "job_alert", "state": "scaffolded", "generated_at": now_iso()})
+    self_heal_snapshot = _latest_self_heal_snapshot()
+    cron_snapshot = _cron_log_snapshot()
+    email_data = _system_health_email_data(self_heal_snapshot, cron_snapshot)
+    email_result = send_template_email("system_health", email_data)
+    result = {
+        "job": "job_alert",
+        "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
+        "generated_at": now_iso(),
+        "trade_date": trade_date(),
+        "self_heal": self_heal_snapshot,
+        "cron_health": cron_snapshot,
+        "email_notification": email_result,
+        "email_data": email_data,
+    }
     append_jsonl(SHARED / "notify/logs/alert_log.jsonl", result)
     return result
 
