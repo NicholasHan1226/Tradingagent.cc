@@ -1,1 +1,0 @@
-../../../PredictionMarkets/tools/pm_kimiwork_sync.py

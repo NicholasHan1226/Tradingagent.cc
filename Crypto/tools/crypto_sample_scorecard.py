@@ -1,1 +1,0 @@
-../../../Crypto/tools/crypto_sample_scorecard.py
