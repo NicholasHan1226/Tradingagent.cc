@@ -118,12 +118,13 @@ class FinalCronHandlersTest(unittest.TestCase):
             morning = cron.run_daily_brief_morning()
         auto_position = cron.run_auto_position()
         pm_risk = cron.run_pm_risk()
+        pm_optimize = cron.run_pm_optimize()
         stress = cron.run_stress_test()
         strategy_version = cron.run_strategy_version()
         attribution = cron.run_attribution("job_strategy_attribution", "review/attribution/strategy_attribution.jsonl")
         self_heal_night = cron.run_self_heal_night()
 
-        results = [morning, auto_position, pm_risk, stress, strategy_version, attribution, self_heal_night]
+        results = [morning, auto_position, pm_risk, pm_optimize, stress, strategy_version, attribution, self_heal_night]
         forbidden_states = {"planned" + "_only", "scaff" + "olded"}
         for result in results:
             self.assertNotIn(result["state"], forbidden_states)
@@ -133,6 +134,7 @@ class FinalCronHandlersTest(unittest.TestCase):
         self.assertGreaterEqual(len(auto_position["positions"]), 2)
         self.assertEqual(pm_risk["market"], "PM")
         self.assertEqual(pm_risk["position_count"], 1)
+        self.assertEqual(pm_optimize["market"], "PM")
         self.assertGreaterEqual(stress["position_count"], 2)
         self.assertGreaterEqual(len(stress["results"]), 3)
         self.assertGreaterEqual(strategy_version["market_count"], 4)
@@ -142,6 +144,8 @@ class FinalCronHandlersTest(unittest.TestCase):
         self.assertTrue((self.shared / "review" / "daily" / "morning_brief.json").exists())
         self.assertTrue((self.shared / "accounting" / "position_plan.jsonl").exists())
         self.assertTrue((self.shared / "risk" / "pm" / "pm_risk_report.jsonl").exists())
+        self.assertTrue((self.shared / "review" / "pm" / "pm_optimize_params.json").exists())
+        self.assertFalse((self.shared / "strategies" / "pm" / "pm_optimize_params.json").exists())
         self.assertTrue((self.shared / "risk" / "reports" / "stress_test_report.json").exists())
         self.assertTrue((self.shared / "review" / "strategies" / "strategy_version.jsonl").exists())
         self.assertTrue((self.shared / "review" / "attribution" / "strategy_attribution.jsonl").exists())

@@ -109,3 +109,6 @@
 - 服务器 `ops_report.receipt_integrity` 只用 `receipt_sha256`/`checksum`/`sha256` 判断 signed/invalid，同时单独统计 `payload_linked`；不能把 `payload_sha256` 当作回执 signed。
 - 2026-07-01 23:04 CST 已在 Mac mini `~/.hermes/scripts/sim-signal-receiver.py` 写入 payload hash，在 `~/.hermes/scripts/sim-signal-executor.py` 写入 receipt hash，并重启 `com.nicholashan.sim-signal-receiver` 与 `com.nicholashan.sim-signal-executor`。备份文件后缀为 `20260701_230427_*_hash`。
 - 同日 23:08 CST 继续增强 Mini executor：`push_remote_receipt` 的服务器内联脚本在写入 `sim_execution_receipts.jsonl` 前会验证 `receipt_sha256`/`checksum`，不匹配则拒写；无签名的历史 sync receipt 仍兼容接收并由 ops_report 标记 `unsigned`。
+
+## 2026-07-01 PM optimize 运行产物边界
+- `job_pm_optimize` 是运行快照，不得写入 Git 跟踪的 `shared/strategies/pm/pm_optimize_params.json`；运行输出统一写到 `shared/review/pm/pm_optimize_params.json` 和 `shared/review/pm/pm_optimize_params_history.jsonl`。

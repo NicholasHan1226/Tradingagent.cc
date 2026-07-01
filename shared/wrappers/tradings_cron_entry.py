@@ -1718,7 +1718,8 @@ def run_pm_optimize() -> dict[str, Any]:
         },
         "errors": errors,
     }
-    write_json(SHARED / "strategies/pm/pm_optimize_params.json", payload)
+    write_json(SHARED / "review/pm/pm_optimize_params.json", payload)
+    append_jsonl(SHARED / "review/pm/pm_optimize_params_history.jsonl", payload)
     return payload
 
 
