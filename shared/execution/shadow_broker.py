@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import fcntl
 import json
+import re
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterator
+
+from shared.data.reader import SharedSignalsReader
 
 SHADOW_DIR = Path(__file__).resolve().parent.parent / "logs" / "shadow"
 SHADOW_TRADES = SHADOW_DIR / "shadow_trades.jsonl"
@@ -27,7 +30,7 @@ class ShadowTrade:
     trade_date: str = field(default_factory=lambda: date.today().isoformat())
     ts_code: str = ""
     side: str = ""
-    quantity: int = 0
+    quantity: float = 0.0
     price: float = 0.0
     amount: float = 0.0
     commission: float = 0.0
@@ -74,6 +77,49 @@ def _normalize_market(value: Any) -> str:
     return market or "unknown"
 
 
+def _infer_market(value: Any, strategy_name: Any = "", note: Any = "") -> str:
+    market = _normalize_market(value)
+    if market != "unknown":
+        return market
+    hint = f"{strategy_name} {note}".lower()
+    if "ashare" in hint or "a-share" in hint or "a股" in hint:
+        return "ashare"
+    if "crypto" in hint:
+        return "crypto"
+    if "pm" in hint or "polymarket" in hint:
+        return "pm"
+    if "us" in hint or "美股" in hint:
+        return "us"
+    return market
+
+
+def _is_regular_ashare_symbol(symbol: Any) -> bool:
+    raw = str(symbol or "").strip().upper()
+    if "." in raw:
+        digits, exchange = raw.split(".", 1)
+    else:
+        digits, exchange = raw, ""
+    if not re.fullmatch(r"\d{6}", digits):
+        return False
+    if exchange == "SZ":
+        return digits.startswith(("000", "001", "002", "003", "300", "301"))
+    if exchange == "SH":
+        return digits.startswith(("600", "601", "603", "605", "688", "689"))
+    return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
+
+
+def _normalize_quantity(value: Any) -> int | float:
+    try:
+        qty = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if qty != qty:
+        return 0
+    if abs(qty - round(qty)) < 1e-12:
+        return int(round(qty))
+    return round(qty, 12)
+
+
 def _parse_date(value: str | None) -> date:
     if not value:
         return date.today()
@@ -92,7 +138,7 @@ def _load_trades_unlocked(
 ) -> list[dict[str, Any]]:
     if not SHADOW_TRADES.exists():
         return []
-    market_filter = _normalize_market(market) if market is not None else None
+    market_filter = _infer_market(market) if market is not None else None
     trades = []
     with open(SHADOW_TRADES, "r", encoding="utf-8") as fh:
         for line in fh:
@@ -137,7 +183,7 @@ def _replay_strategy_state(
     market: str | None = None,
 ) -> dict[str, Any]:
     cutoff = _parse_date(as_of_date) if as_of_date else None
-    market_filter = _normalize_market(market) if market is not None else None
+    market_filter = _infer_market(market) if market is not None else None
     selected = trades if trades is not None else _load_trades(strategy_name, market=market)
     positions: dict[str, dict[str, Any]] = {}
     daily = {
@@ -150,7 +196,7 @@ def _replay_strategy_state(
     }
 
     for trade in selected:
-        trade_market = _normalize_market(trade.get("market"))
+        trade_market = _infer_market(trade.get("market"), trade.get("strategy_name"), trade.get("note"))
         if market_filter is not None and trade_market != market_filter:
             continue
         trade_day = _parse_date(trade.get("trade_date"))
@@ -160,8 +206,10 @@ def _replay_strategy_state(
         code = str(trade.get("ts_code", ""))
         if not code:
             continue
-        position = positions.setdefault(code, {"quantity": 0, "cost_basis": 0.0, "trades": 0})
-        qty = int(trade.get("quantity", 0) or 0)
+        if trade_market == "ashare" and not _is_regular_ashare_symbol(code):
+            continue
+        position = positions.setdefault(code, {"quantity": 0.0, "cost_basis": 0.0, "trades": 0})
+        qty = float(trade.get("quantity", 0) or 0)
         net_amount = float(trade.get("net_amount", 0.0) or 0.0)
         side = str(trade.get("side", "")).lower()
 
@@ -200,12 +248,13 @@ def _replay_strategy_state(
 
     clean_positions = {}
     for code, position in positions.items():
-        qty = int(position["quantity"])
+        qty = float(position["quantity"])
         if qty <= 0:
             continue
+        clean_qty = _normalize_quantity(qty)
         avg_cost = round(position["cost_basis"] / qty, 4) if qty > 0 else 0.0
         clean_positions[code] = {
-            "quantity": qty,
+            "quantity": clean_qty,
             "cost_basis": round(position["cost_basis"], 2),
             "avg_cost": avg_cost,
             "trades": position["trades"],
@@ -240,15 +289,24 @@ def record_shadow(
 ) -> dict[str, Any]:
     ts_code = order.get("ts_code", "")
     side = str(order.get("side", "")).lower()
-    quantity = int(order.get("quantity", 0))
+    quantity = _normalize_quantity(order.get("quantity", 0))
     price = float(order.get("price", 0.0))
     commission = float(order.get("commission", 0.0))
     trade_date = _parse_date(order.get("trade_date")).isoformat()
     capital_layer = _validate_shadow_capital_layer(order.get("capital_layer", "shadow"))
-    market_value = _normalize_market(market if market is not None else order.get("market"))
+    market_value = _infer_market(market if market is not None else order.get("market"), strategy_name, order.get("note", ""))
 
     if not ts_code:
         return {"trade_id": "", "status": "rejected", "recorded": False, "message": "Missing ts_code"}
+    if market_value == "ashare" and not _is_regular_ashare_symbol(ts_code):
+        return {
+            "trade_id": "",
+            "status": "rejected",
+            "recorded": False,
+            "message": f"Invalid A-share symbol for shadow broker: {ts_code}",
+            "capital_layer": capital_layer,
+            "market": market_value,
+        }
     if side not in ("buy", "sell"):
         return {"trade_id": "", "status": "rejected", "recorded": False, "message": f"Invalid side: {side}"}
     if quantity <= 0:
@@ -306,6 +364,90 @@ def record_shadow(
     }
 
 
+def _latest_prices_from_trades(trades: list[dict[str, Any]], market: str | None = None) -> dict[str, float]:
+    market_filter = _infer_market(market) if market is not None else None
+    prices: dict[str, float] = {}
+    for trade in trades:
+        if market_filter is not None and _normalize_market(trade.get("market")) != market_filter:
+            continue
+        code = str(trade.get("ts_code") or "")
+        if not code:
+            continue
+        try:
+            price = float(trade.get("price") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if price > 0:
+            prices[code] = price
+    return prices
+
+
+def _strategy_market_hint(trades: list[dict[str, Any]]) -> str | None:
+    markets = sorted({
+        _infer_market(trade.get("market"), trade.get("strategy_name"), trade.get("note"))
+        for trade in trades
+        if _infer_market(trade.get("market"), trade.get("strategy_name"), trade.get("note")) != "unknown"
+    })
+    return markets[0] if len(markets) == 1 else None
+
+
+def _latest_ashare_prices_from_reader(codes: list[str], target_date: str) -> tuple[dict[str, float], str]:
+    if not codes:
+        return {}, ""
+    reader = SharedSignalsReader()
+    prices: dict[str, float] = {}
+    try:
+        for code in codes:
+            for market in ("Ashare", "ashare"):
+                rows = reader.get_bars_daily(market, code, None, target_date)
+                if not rows:
+                    continue
+                for row in reversed(rows):
+                    try:
+                        close = float(row.get("close") or 0.0)
+                    except (TypeError, ValueError):
+                        close = 0.0
+                    if close > 0:
+                        prices[code] = close
+                        break
+                if code in prices:
+                    break
+    except Exception:
+        return {}, ""
+    finally:
+        try:
+            reader.close()
+        except Exception:
+            pass
+    return prices, "sharedsignals_market_bars_daily_close" if prices else ""
+
+
+def _enrich_positions_with_unrealized(
+    positions: dict[str, dict[str, Any]],
+    prices: dict[str, float],
+) -> tuple[dict[str, dict[str, Any]], dict[str, float]]:
+    enriched: dict[str, dict[str, Any]] = {}
+    totals = {"market_value": 0.0, "unrealized_pnl": 0.0}
+    for code, position in positions.items():
+        row = dict(position)
+        qty = float(row.get("quantity") or 0.0)
+        cost_basis = float(row.get("cost_basis") or 0.0)
+        last_price = float(prices.get(code) or row.get("avg_cost") or 0.0)
+        market_value = round(qty * last_price, 2)
+        unrealized = round(market_value - cost_basis, 2)
+        row.update({
+            "last_price": round(last_price, 6),
+            "market_value": market_value,
+            "unrealized_pnl": unrealized,
+        })
+        enriched[code] = row
+        totals["market_value"] += market_value
+        totals["unrealized_pnl"] += unrealized
+    totals["market_value"] = round(totals["market_value"], 2)
+    totals["unrealized_pnl"] = round(totals["unrealized_pnl"], 2)
+    return enriched, totals
+
+
 def get_shadow_pnl(
     strategy_name: str,
     date: str | None = None,
@@ -315,18 +457,36 @@ def get_shadow_pnl(
 ) -> dict[str, Any]:
     target_date = _parse_date(date).isoformat() if date else datetime.now().strftime("%Y-%m-%d")
     market_value = _normalize_market(market) if market is not None else None
-    state = _replay_strategy_state(strategy_name, target_date, trades=trades, market=market_value)
+    selected_trades = trades if trades is not None else _load_trades(strategy_name, market=market_value)
+    effective_market = market_value or _strategy_market_hint(selected_trades)
+    state = _replay_strategy_state(strategy_name, target_date, trades=selected_trades, market=effective_market)
+    prices = _latest_prices_from_trades(selected_trades, market=effective_market)
+    valuation_source = "latest_shadow_trade_price"
+    if effective_market == "ashare":
+        reader_prices, reader_source = _latest_ashare_prices_from_reader(list(state["positions"].keys()), target_date)
+        if reader_prices:
+            prices = {**prices, **reader_prices}
+            valuation_source = reader_source
+            if set(reader_prices) != set(state["positions"]):
+                valuation_source = f"{reader_source}+latest_shadow_trade_price_fallback"
+    positions, floating = _enrich_positions_with_unrealized(state["positions"], prices)
+    realized = float(state["realized_pnl"] or 0.0)
+    unrealized = float(floating["unrealized_pnl"] or 0.0)
     return {
         "strategy": strategy_name,
-        "market": market_value or "all",
+        "market": effective_market or "all",
         "date": target_date,
         "total_trades": state["total_trades"],
         "buys": state["buys"],
         "sells": state["sells"],
         "total_cost": state["total_cost"],
         "total_proceeds": state["total_proceeds"],
-        "realized_pnl": state["realized_pnl"],
-        "positions": state["positions"],
+        "realized_pnl": round(realized, 2),
+        "unrealized_pnl": round(unrealized, 2),
+        "market_value": floating["market_value"],
+        "total_pnl": round(realized + unrealized, 2),
+        "valuation_source": valuation_source,
+        "positions": positions,
     }
 
 

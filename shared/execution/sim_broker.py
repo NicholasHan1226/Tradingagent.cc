@@ -11,6 +11,7 @@ Reference: Ashare/tools/a_share_simulated_trade_executor.py
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -159,7 +160,17 @@ def execute_sim_order(
             order_id=str(order.get("order_id", "")),
             market=market_key,
         )
-    return _coerce_sim_result(result, sim_order, market_key)
+
+    sim_result = _coerce_sim_result(result, sim_order, market_key)
+    if market_key == "ashare" and os.environ.get("TRADINGS_LOCAL_SIM_BACKUP_ENABLED", "1") != "0":
+        try:
+            from .local_sim_ledger import record_local_sim_order
+
+            backup = record_local_sim_order(sim_order, market_key, sim_account, sim_config, sim_result)
+        except Exception as exc:  # pragma: no cover - backup must not block Hermes dispatch
+            backup = {"status": "failed", "recorded": False, "error": f"{exc.__class__.__name__}: {exc}"}
+        sim_result.raw_response = {**dict(sim_result.raw_response or {}), "local_sim_backup": backup}
+    return sim_result
 
 
 def _log_sim_fill(fill: SimFill) -> None:

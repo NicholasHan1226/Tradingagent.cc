@@ -372,6 +372,9 @@ def is_expired(valid_until: Any, now: datetime) -> bool:
     if isinstance(valid_until, date):
         return valid_until < now.date()
     value = str(valid_until)
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        parsed_date = date.fromisoformat(value)
+        return datetime.combine(parsed_date, time.max, tzinfo=now.tzinfo) < now
     try:
         parsed_datetime = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed_datetime.tzinfo is None:

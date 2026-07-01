@@ -223,5 +223,110 @@ class SimLoopTest(unittest.TestCase):
         self.assertFalse(shadow_broker.SHADOW_TRADES.exists())
 
 
+    def test_write_execution_signal_does_not_duplicate_successful_mini_webhook(self) -> None:
+        from shared.orchestrator import _write_execution_signal
+
+        signals_dir = self.tmp_path / "signals"
+        card = {
+            "order_id": "SIM-ASHARE-WEBHOOK-NODUP",
+            "ts_code": "600000.SH",
+            "market": "ashare",
+            "direction": "buy",
+            "quantity": 100,
+            "price": 10.0,
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+        }
+        receipt = {
+            "status": "pending",
+            "raw_response": {
+                "mode": "mini_webhook_sent",
+                "webhook": {"success": True, "http_status": 200},
+                "signal_card": card,
+            },
+        }
+
+        result = _write_execution_signal(card, receipt, signals_dir=signals_dir)
+
+        self.assertEqual(result["status"], "pending")
+        self.assertEqual(result["pending_signal"]["source"], "mini_webhook")
+        self.assertEqual(list((signals_dir / "pending").glob("*.json")), [])
+
+    def test_run_sim_loop_skips_existing_same_day_sim_signal(self) -> None:
+        signals_dir = self.tmp_path / "signals"
+        filled_dir = signals_dir / "filled"
+        filled_dir.mkdir(parents=True, exist_ok=True)
+        existing = {
+            "order_id": "SIM-unit-AAA-20260630-existing",
+            "ts_code": "AAA",
+            "market": "unit",
+            "direction": "buy",
+            "quantity": 10,
+            "price": 10.0,
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "valid_until": "2026-06-30",
+            "status": "filled",
+        }
+        (filled_dir / "SIM-unit-AAA-20260630-existing.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        result = run_sim_loop(
+            StubSimAdapter(),
+            "20260630",
+            StubReader(),
+            deps=self._deps(),
+            signals_dir=signals_dir,
+        )
+
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["filled_count"], 0)
+        self.assertEqual(result["failed_count"], 0)
+        self.assertEqual(result["pending_count"], 0)
+        self.assertEqual(self.executed_orders, [])
+        self.assertEqual(result["records"][0]["signal_result"]["status"], "duplicate")
+        self.assertIn("signals.sim_dedup", result["stage_calls"])
+        self.assertEqual(len(list(filled_dir.glob("SIM-*.json"))), 1)
+
+    def test_run_sim_loop_with_real_ashare_sim_broker_queues_pending(self) -> None:
+        from Ashare.sim_executor import ashare_sim_execute
+        from shared.execution import sim_executor_registry
+
+        sim_executor_registry.register_sim_executor("unit", ashare_sim_execute)
+
+        received_markets: list[str] = []
+
+        def execute_sim_order(order: dict[str, object], market: str, account: object = None) -> object:
+            received_markets.append(market)
+            ashare_order = dict(order)
+            ashare_order["ts_code"] = "600000.SH"
+            return ashare_sim_execute(
+                ashare_order,
+                account=account,
+                config={"signals_dir": self.tmp_path / "signals"},
+            )
+
+        deps = self._deps()
+        deps.execute_sim_order = execute_sim_order
+        result = run_sim_loop(
+            StubSimAdapter(),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals",
+        )
+
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["pending_count"], 1)
+        self.assertEqual(result["failed_count"], 0)
+        pending_files = list((self.tmp_path / "signals" / "pending").glob("SIM-*.json"))
+        self.assertEqual(len(pending_files), 1)
+        pending = read_json(pending_files[0])
+        self.assertEqual(pending["capital_layer"], "simulated")
+        self.assertEqual(pending["account_type"], "simulated")
+        self.assertEqual(received_markets, ["unit"])
+        self.assertEqual(pending["market"], "ashare")
+        self.assertEqual(pending["quantity"], 10)
+
+
 if __name__ == "__main__":
     unittest.main()

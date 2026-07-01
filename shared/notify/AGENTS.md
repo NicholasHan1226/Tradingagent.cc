@@ -6,8 +6,8 @@
 ## 通道
 | 类型 | 发件 | 收件 | 用途 |
 |------|------|------|------|
-| 交易类 | notice@agentspaces.cc | Leocozy@coze.email | 信号/规划/复盘/日报/回执 |
-| 系统类 | notice@tradingagent.cc | tradingadviser@coze.email | 健康/告警/自愈/对账 |
+| 交易类 | notice@tradingagent.cc | tradingadviser@coze.email | 信号/规划/复盘/日报/回执 |
+| 系统类 | notice@tradingagent.cc | soc@coze.email | 健康/告警/自愈/对账 |
 
 ## 模版 (11类)
 1. pre_market_plan.py (8:30) — 持仓+资金+行情+板块+策略
@@ -26,3 +26,8 @@
 - 固定模版, 图表>文字, 总结性语言
 - 减少系统术语, 不出agent名字
 - 紧急告警10分钟自愈期, 不行人工
+
+## 2026-07-01 邮件链路修复
+- Cloudflare 发送接口使用 Email Service endpoint `/email/sending/send`，旧的 `/email/routing/messages` 会导致 404/鉴权失败。
+- 交易邮件固定：`notice@tradingagent.cc -> tradingadviser@coze.email`；系统邮件固定：`notice@tradingagent.cc -> soc@coze.email`。
+- 发送失败时仍保存到 `shared/notify/logs/email_fallback/`，但修复后必须用真实模板邮件验证 `status=sent`，不能只看 fallback 文件存在。

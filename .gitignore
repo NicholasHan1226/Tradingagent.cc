@@ -31,3 +31,16 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Trading runtime state
+signals/
+shared/logs/
+shared/accounting/position_plan.jsonl
+shared/runtime_test/*_history.jsonl
+shared/runtime_test/*_latest.json
+shared/runtime_test/ashare_health_*.json
+shared/review/**/*.json
+shared/review/**/*.jsonl
+*.bak.*
+shared/review/**/*.md
+shared/risk/**/*.jsonl

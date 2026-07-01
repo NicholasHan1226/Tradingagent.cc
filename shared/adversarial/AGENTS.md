@@ -12,6 +12,8 @@
 ## 原则
 - belief_score ∈ [0, 1], 默认 0.5 (中性)
 - 不排除标的, belief_score 仅影响 position_sizer 的权重
+- 盘中/5分钟级交易调度不得同步等待 LLM；A股模拟执行 wrapper 默认 `TRADINGS_DEBATE_MODE=fast`，用六维得分生成确定性多空摘要。
+- DeepSeek live 模式用于研究、慢速复盘、日报/周报和人工复核；当前代码模型名为 `deepseek-v4-pro`，密钥来自 `DEEPSEEK_API_KEY`/`TRADINGS_DEEPSEEK_API_KEY`。
 - bear case 必须覆盖: 估值陷阱 / 逻辑证伪 / 流动性风险 / 政策反转
 - 压力测试用 worst-case, 不用 expected-case
 - 历史类比不预测, 只提供先验分布参考

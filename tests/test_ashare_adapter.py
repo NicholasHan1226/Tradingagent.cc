@@ -45,6 +45,20 @@ class FakeAshareReader:
                 "status": "active",
             },
             {
+                "symbol": "200521.SZ",
+                "name": "B Share Unit",
+                "exchange": "SZSE",
+                "list_date": "20000101",
+                "status": "active",
+            },
+            {
+                "symbol": "900901.SH",
+                "name": "Shanghai B Share Unit",
+                "exchange": "SSE",
+                "list_date": "20000101",
+                "status": "active",
+            },
+            {
                 "symbol": "600000",
                 "name": "Suspended Unit",
                 "exchange": "SSE",
@@ -58,6 +72,20 @@ class FakeAshareReader:
                 "list_date": "19991110",
                 "status": "active",
             },
+            {
+                "symbol": "600002",
+                "name": "Tushare Amount Unit",
+                "exchange": "SSE",
+                "list_date": "19991110",
+                "status": "active",
+            },
+            {
+                "symbol": "600003",
+                "name": "Missing Daily Bar Unit",
+                "exchange": "SSE",
+                "list_date": "19991110",
+                "status": "active",
+            },
         ]
         self.coverage = {
             "600519": "normal",
@@ -65,17 +93,25 @@ class FakeAshareReader:
             "000002": "normal",
             "688001": "normal",
             "430001": "normal",
+            "200521.SZ": "normal",
+            "900901.SH": "normal",
             "600000": "suspended",
             "600001": "normal",
+            "600002": "normal",
+            "600003": "normal",
         }
+        # Tushare daily amount is stored in thousand CNY in the read model.
         self.amounts = {
-            "600519": 90_000_000,
-            "000001": 70_000_000,
-            "000002": 80_000_000,
-            "688001": 80_000_000,
-            "430001": 80_000_000,
-            "600000": 80_000_000,
-            "600001": 10_000_000,
+            "600519": 90_000,
+            "000001": 70_000,
+            "000002": 80_000,
+            "688001": 80_000,
+            "430001": 80_000,
+            "200521.SZ": 80_000,
+            "900901.SH": 80_000,
+            "600000": 80_000,
+            "600001": 10_000,
+            "600002": 60_000,
         }
 
     def get_assets(self, market: str) -> list[dict[str, object]]:
@@ -133,13 +169,13 @@ class AshareAdapterTest(unittest.TestCase):
 
         universe = adapter.get_universe("20260630")
 
-        self.assertEqual(universe, ["600519", "000001"])
+        self.assertEqual(universe, ["600519", "000001", "600002"])
 
     def test_symbol_mapping_uses_reader_symbol_without_exchange_suffix(self) -> None:
         adapter = AshareAdapter(reader=FakeAshareReader())
 
         self.assertEqual(adapter.get_market(), "ashare")
-        self.assertEqual(adapter.map_symbol_to_reader("600519.SH"), ("ashare", "600519"))
+        self.assertEqual(adapter.map_symbol_to_reader("600519.SH"), ("ashare", "600519.SH"))
         self.assertEqual(adapter.map_symbol_to_reader("000001"), ("ashare", "000001"))
         self.assertEqual(adapter.get_shadow_account(), "ashare_shadow")
 
@@ -154,6 +190,8 @@ class AshareAdapterTest(unittest.TestCase):
         self.assertIn("trend_follow", config["strategies"])
         self.assertEqual(config["market_rules"]["settlement"], "T+1")
         self.assertIn("opening_auction", config["market_rules"]["sessions"])
+        self.assertEqual(config["default_price"], 0.0)
+        self.assertTrue(config["universe_filter"]["exclude_non_a_share"])
 
     def test_six_dimension_score_uses_injected_market_for_reader_queries(self) -> None:
         reader = FakeScoringReader()

@@ -62,6 +62,27 @@ class PortfolioMethodsTest(unittest.TestCase):
         self.assertTrue(all(position["weight"] <= 0.15 for position in portfolio["positions"]))
         self.assertTrue(all(position["capital_layer"] == "shadow" for position in portfolio["positions"]))
 
+    def test_crypto_lot_size_allows_fractional_high_price_positions(self) -> None:
+        orders = [
+            {
+                "ts_code": "BTCUSDT",
+                "volatility": 0.80,
+                "volatility_baseline": 0.80,
+                "sector": "crypto",
+                "price": 100000.0,
+                "lot_size": 0.0001,
+                "capital_layer": "shadow",
+            }
+        ]
+
+        portfolio = construct(orders, 10000.0, method="volatility_targeted", regime="crypto_24_7")
+
+        self.assertEqual(len(portfolio["positions"]), 1)
+        position = portfolio["positions"][0]
+        self.assertGreater(position["shares"], 0)
+        self.assertLess(position["shares"], 1)
+        self.assertAlmostEqual(position["amount"], 1500.0, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()

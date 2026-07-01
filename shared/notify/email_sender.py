@@ -204,7 +204,7 @@ def _send_via_cloudflare(
         raise RuntimeError("missing Cloudflare credentials")
 
     response = _post_json(
-        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/email/routing/messages",
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/email/sending/send",
         {"Authorization": f"Bearer {token}"},
         {
             "from": from_addr,

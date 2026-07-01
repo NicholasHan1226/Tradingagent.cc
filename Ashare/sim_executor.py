@@ -9,6 +9,8 @@ mock mode to return an immediate filled receipt without any UI dependency.
 
 from __future__ import annotations
 
+import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,7 @@ from typing import Any
 from shared.execution.signal_state_machine import SignalStateMachine
 from shared.execution.sim_broker import SimResult
 from shared.execution.sim_executor_registry import register_sim_executor
+from shared.execution.webhook_sender import send_sim_signal_to_mini
 
 
 DEFAULT_SIGNALS_DIR = Path("/opt/investment/Tradings/signals")
@@ -45,6 +48,38 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _is_supported_ashare_code(code: Any) -> bool:
+    raw = str(code or "").strip().upper()
+    if "." in raw:
+        digits, exchange = raw.split(".", 1)
+    else:
+        digits, exchange = raw, ""
+    if not re.fullmatch(r"\d{6}", digits):
+        return False
+    if exchange == "SZ":
+        return digits.startswith(("000", "001", "002", "003", "300", "301"))
+    if exchange == "SH":
+        return digits.startswith(("600", "601", "603", "605", "688", "689"))
+    return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
+
+
+def _reject(order_id: str, code: str, message: str) -> SimResult:
+    return SimResult(
+        status="rejected",
+        filled_qty=0,
+        avg_price=0.0,
+        fee=0.0,
+        message=message,
+        order_id=order_id,
+        market=MARKET,
+        raw_response={
+            "mode": "pre_bridge_validation",
+            "code": code,
+            "reason": message,
+        },
+    )
 
 
 def _signal_card(
@@ -98,6 +133,11 @@ def ashare_sim_execute(
     config = dict(config or {})
     card = _signal_card(order, account, config)
     order_id = str(card["order_id"])
+    code = str(card.get("ts_code") or "").strip().upper()
+    if not _is_supported_ashare_code(code):
+        return _reject(order_id, code, f"unsupported or non-A-share code: {code}")
+    if int(card.get("quantity") or 0) <= 0 or float(card.get("price") or 0.0) <= 0:
+        return _reject(order_id, code, "non-positive quantity or price")
     mock_mode = bool(
         config.get("mock")
         or config.get("mock_filled")
@@ -120,8 +160,47 @@ def ashare_sim_execute(
         )
 
     signals_dir = Path(config.get("signals_dir") or DEFAULT_SIGNALS_DIR)
+    env_webhook = os.environ.get("ASHARE_SIM_WEBHOOK_ENABLED")
+    if "webhook" in config:
+        webhook_enabled = bool(config.get("webhook"))
+    elif signals_dir == DEFAULT_SIGNALS_DIR:
+        # Production A-share simulated orders must actively enter the Mini bridge.
+        # Set ASHARE_SIM_WEBHOOK_ENABLED=0 only for emergency rollback.
+        webhook_enabled = env_webhook != "0"
+    else:
+        webhook_enabled = env_webhook == "1"
+    webhook_result: dict[str, Any] | None = None
+
+    if webhook_enabled:
+        webhook_kwargs: dict[str, Any] = {}
+        for config_key, arg_name in (
+            ("webhook_url", "url"),
+            ("webhook_secret", "secret"),
+            ("webhook_timeout", "timeout"),
+            ("webhook_retries", "retries"),
+        ):
+            if config.get(config_key) not in (None, ""):
+                webhook_kwargs[arg_name] = config[config_key]
+        webhook_result = send_sim_signal_to_mini(card, **webhook_kwargs)
+        if webhook_result.get("success"):
+            return SimResult(
+                status="pending",
+                filled_qty=0,
+                avg_price=0.0,
+                fee=0.0,
+                message="Sent to Mac Mini Hermes webhook for simulated execution",
+                order_id=order_id,
+                market=MARKET,
+                raw_response={
+                    "mode": "mini_webhook_sent",
+                    "webhook": webhook_result,
+                    "signal_card": card,
+                },
+            )
+
     machine = SignalStateMachine(signals_dir)
     queued = machine.write_pending(card)
+    mode = "file_bridge_pending_after_webhook_failed" if webhook_result else "file_bridge_pending"
     return SimResult(
         status="pending",
         filled_qty=0,
@@ -131,7 +210,8 @@ def ashare_sim_execute(
         order_id=order_id,
         market=MARKET,
         raw_response={
-            "mode": "file_bridge_pending",
+            "mode": mode,
+            "webhook": webhook_result or {},
             "signals_dir": str(signals_dir),
             "signal_path": queued.get("signal_path", ""),
             "signal_card": queued.get("signal_card", card),

@@ -38,6 +38,30 @@ def _first_float(order: dict[str, Any], keys: tuple[str, ...], default: float) -
     return default
 
 
+def _quantity_decimals(lot_size: float) -> int:
+    text = f"{lot_size:.12f}".rstrip("0")
+    if "." not in text:
+        return 0
+    return min(12, max(0, len(text.split(".", 1)[1])))
+
+
+def _clean_quantity(value: float, lot_size: float) -> int | float:
+    if abs(value - round(value)) < 1e-12 and lot_size >= 1:
+        return int(round(value))
+    return round(value, _quantity_decimals(lot_size))
+
+
+def _position_quantity(amount: float, price: float, lot_size: float) -> int | float:
+    if price <= 0 or amount <= 0:
+        return 0
+    lot = lot_size if lot_size > 0 else 1.0
+    raw = amount / price
+    steps = int(raw / lot)
+    if steps <= 0:
+        return 0
+    return _clean_quantity(steps * lot, lot)
+
+
 def _valid_order_count(orders: list[dict[str, Any]]) -> int:
     return len([o for o in orders if isinstance(o, dict) and o.get("ts_code")])
 
@@ -251,8 +275,9 @@ def construct(
             continue
         price = _safe_float(order.get("price"), 0.0)
         amount = capital * w
-        shares = int(amount / price) if price > 0 else 0
-        actual_amount = shares * price if price > 0 else amount
+        lot_size = _first_float(order, ("lot_size", "quantity_step"), 1.0)
+        shares = _position_quantity(amount, price, lot_size)
+        actual_amount = float(shares) * price if price > 0 else amount
         actual_weight = actual_amount / capital if capital > 0 else 0.0
 
         position = {

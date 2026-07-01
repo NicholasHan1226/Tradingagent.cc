@@ -14,6 +14,7 @@ get_layer(pool, layer) → [ts_code]
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any
 
 from shared.data.reader import TradingsDataReader
@@ -50,6 +51,27 @@ def _get_data_reader(reader: Any | None = None) -> Any:
     if _DATA_READER is None:
         _DATA_READER = TradingsDataReader()
     return _DATA_READER
+
+
+def _is_regular_a_share_symbol(ts_code: Any) -> bool:
+    raw = str(ts_code or "").strip().upper()
+    if "." in raw:
+        digits, exchange = raw.split(".", 1)
+    else:
+        digits, exchange = raw, ""
+    if not re.fullmatch(r"\d{6}", digits):
+        return False
+    if exchange == "SZ":
+        return digits.startswith(("000", "001", "002", "003", "300", "301"))
+    if exchange == "SH":
+        return digits.startswith(("600", "601", "603", "605", "688", "689"))
+    return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
+
+
+def _filter_market_symbols(symbols: list[str], market: str) -> list[str]:
+    if str(market or "").lower() != "ashare":
+        return symbols
+    return [symbol for symbol in symbols if _is_regular_a_share_symbol(symbol)]
 
 
 def _load_holdings() -> list[str]:
@@ -152,7 +174,7 @@ def build_pool(
     # 1. Holdings 层
     if holdings is None:
         holdings = _load_holdings()
-    holdings = holdings[:_POOL_LIMITS["holdings"]]
+    holdings = _filter_market_symbols(holdings, market)[:_POOL_LIMITS["holdings"]]
 
     # 2. Universe 层 (过滤后全市场)
     if universe is None:
@@ -161,10 +183,10 @@ def build_pool(
             universe = filter_universe(date)
         except ImportError:
             universe = []
-    universe = universe[:_POOL_LIMITS["universe"]]
+    universe = _filter_market_symbols(universe, market)[:_POOL_LIMITS["universe"]]
 
     # 3. Fundamental 层 (长期跟踪)
-    fundamental = _load_fundamental_pool(reader=reader, market=market)[:_POOL_LIMITS["fundamental"]]
+    fundamental = _filter_market_symbols(_load_fundamental_pool(reader=reader, market=market), market)[:_POOL_LIMITS["fundamental"]]
 
     # 4. Candidate 层 (六维打分通过)
     candidate: list[str] = []

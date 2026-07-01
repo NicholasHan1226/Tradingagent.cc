@@ -20,8 +20,8 @@ from typing import Any
 # DeepSeek API 配置 (与 MarketGraph/deploy/mg_agent/deepseek_client.py 一致)
 _DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 _MODEL = "deepseek-v4-pro"  # 推理用 pro
-_TIMEOUT = 90
-_MAX_RETRIES = 3
+_TIMEOUT = int(os.environ.get("TRADINGS_DEEPSEEK_TIMEOUT", "90"))
+_MAX_RETRIES = int(os.environ.get("TRADINGS_DEEPSEEK_RETRIES", "3"))
 _RETRYABLE_HTTP = {429, 500, 502, 503, 504}
 
 # 六维名称 (与 screening 模块对齐)
@@ -185,6 +185,34 @@ def _clamp_belief(v: Any) -> float:
     return max(0.0, min(1.0, f))
 
 
+def _score_value(scores: dict[str, Any], key: str) -> float:
+    value = scores.get(key)
+    if isinstance(value, dict):
+        value = value.get("score", value.get("value"))
+    return _clamp_belief(value if value is not None else 0.5)
+
+
+def _fast_debate(ts_code: str, scores: dict[str, Any], source: str) -> dict[str, Any]:
+    combined = scores.get("combined", scores.get("composite", 0.5))
+    belief = _clamp_belief(combined)
+    positives = [dim for dim in _DIMENSIONS if _score_value(scores, dim) >= 0.6]
+    risks = [dim for dim in _DIMENSIONS if _score_value(scores, dim) <= 0.4]
+    bull = "正向维度: " + (", ".join(positives) if positives else "暂无明显优势")
+    bear = "风险维度: " + (", ".join(risks) if risks else "暂无明显短板")
+    return {
+        "ts_code": ts_code,
+        "bull_case": bull,
+        "bear_case": bear,
+        "belief_score": belief,
+        "key_risk": bear,
+        "source": source,
+    }
+
+
+def _debate_mode() -> str:
+    return os.environ.get("TRADINGS_DEBATE_MODE", "live").strip().lower()
+
+
 def debate(ts_code: str, scores: dict[str, Any]) -> dict[str, Any]:
     """多空对辩主函数。
 
@@ -206,6 +234,10 @@ def debate(ts_code: str, scores: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("ts_code is required")
     if not isinstance(scores, dict):
         scores = {}
+
+    mode = _debate_mode()
+    if mode in {"fast", "heuristic", "deterministic", "off", "disabled"}:
+        return _fast_debate(ts_code, scores, source=f"{mode}_debate")
 
     messages = _build_prompt(ts_code, scores)
     result = _call_deepseek(messages)

@@ -10,6 +10,7 @@ from shared.accounting import trade_audit_trail
 from shared.execution import shadow_broker
 from shared.markets.base import MarketAdapter
 from shared.orchestrator import OrchestratorDeps, run_shadow_loop
+from shared.portfolio.constructor import construct as construct_portfolio
 
 
 class StubMarketAdapter(MarketAdapter):
@@ -172,7 +173,8 @@ class OrchestratorTest(unittest.TestCase):
         for expected in ("screening", "candidate_pool", "adversarial", "risk", "position_sizer", "portfolio", "review"):
             self.assertIn(expected, self.calls)
         self.assertEqual(result["recorded_count"], 2)
-        self.assertEqual(len(list((self.tmp_path / "signals" / "pending").glob("*.json"))), 2)
+        self.assertEqual(len(list((self.tmp_path / "signals" / "pending").glob("*.json"))), 0)
+        self.assertEqual(len(list((self.tmp_path / "signals" / "shadow" / "pending").glob("*.json"))), 2)
         self.assertEqual({request["market"] for request in self.score_requests}, {"unit"})
         self.assertEqual({request["market"] for request in self.pool_requests}, {"unit"})
 
@@ -226,6 +228,51 @@ class OrchestratorTest(unittest.TestCase):
                 self.assertEqual(result["market"], market)
                 self.assertEqual({request["market"] for request in self.score_requests}, {market})
                 self.assertEqual({request["market"] for request in self.pool_requests}, {market})
+
+    def test_run_shadow_loop_records_fractional_crypto_quantity(self) -> None:
+        class CryptoLikeAdapter(StubMarketAdapter):
+            def __init__(self) -> None:
+                super().__init__("crypto")
+
+            def get_universe(self, date: str) -> list[str]:
+                return ["BTCUSDT"]
+
+            def get_strategy_config(self) -> dict[str, object]:
+                return {
+                    "shadow_capital": 10000.0,
+                    "portfolio_method": "volatility_targeted",
+                    "regime": "crypto_24_7",
+                    "max_candidates": 1,
+                    "default_price": 100000.0,
+                    "default_volatility": 0.80,
+                    "market_rules": {"lot_size": 0.0001},
+                }
+
+        class HighPriceReader:
+            def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, float]]:
+                return [{"close": 100000.0}, {"close": 100000.0}]
+
+        deps = self._deps()
+        deps.construct = construct_portfolio
+
+        result = run_shadow_loop(
+            CryptoLikeAdapter(),
+            "20260630",
+            HighPriceReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_crypto_fractional",
+        )
+
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["recorded_count"], 1)
+        trade_rows = [
+            json.loads(line)
+            for line in shadow_broker.SHADOW_TRADES.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(len(trade_rows), 1)
+        self.assertEqual(trade_rows[0]["market"], "crypto")
+        self.assertGreater(trade_rows[0]["quantity"], 0)
+        self.assertLess(trade_rows[0]["quantity"], 1)
 
 
 if __name__ == "__main__":

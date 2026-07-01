@@ -8,6 +8,7 @@ filter_universe(date, stock_list) → list[ts_code]
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any
 
 from shared.data.reader import TradingsDataReader
@@ -28,6 +29,8 @@ _DEFAULTS: dict[str, Any] = {
     "min_float_mktcap_yi": 20,
     # 排除退市
     "exclude_delisted": True,
+    # A股只保留普通 A 股代码段，排除 B 股/北交所等非本链路标的
+    "exclude_non_a_share": True,
 }
 
 
@@ -54,6 +57,21 @@ def _symbol_variants(ts_code: str) -> list[str]:
         stripped = symbol.split(".", 1)[0]
         return [stripped, symbol]
     return [symbol]
+
+
+def _is_regular_a_share_symbol(ts_code: Any) -> bool:
+    raw = str(ts_code or "").strip().upper()
+    if "." in raw:
+        digits, exchange = raw.split(".", 1)
+    else:
+        digits, exchange = raw, ""
+    if not re.fullmatch(r"\d{6}", digits):
+        return False
+    if exchange == "SZ":
+        return digits.startswith(("000", "001", "002", "003", "300", "301"))
+    if exchange == "SH":
+        return digits.startswith(("600", "601", "603", "605", "688", "689"))
+    return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
 
 
 def _is_st(name: str) -> bool:
@@ -125,7 +143,7 @@ def _turnover_wan(ts_code: str, date: str, reader: Any | None = None, market: st
                 return sum(amounts) / len(amounts) / 10.0
     except Exception:
         pass
-    return 99999.0  # 未知时不过滤
+    return 0.0  # 无近期日线时不能进入可执行 A股候选
 
 
 def filter_universe(
@@ -182,6 +200,11 @@ def filter_universe(
     result: list[str] = []
 
     for ts_code in stock_list:
+        # 0. A股代码段硬过滤
+        if market.lower() == "ashare" and cfg.get("exclude_non_a_share", True) and not _is_regular_a_share_symbol(ts_code):
+            excluded.append((ts_code, "non_a_share_symbol"))
+            continue
+
         # 1. ST 排除
         if cfg["exclude_st"]:
             asset = assets_by_symbol.get(ts_code) or assets_by_symbol.get(ts_code.split(".", 1)[0], {})

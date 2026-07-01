@@ -62,6 +62,44 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(card["quantity"], 100)
         self.assertEqual(card["price"], 10.5)
 
+    def test_ashare_sim_execute_rejects_non_a_share_before_bridge(self) -> None:
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-BSHARE",
+                "ts_code": "200521.SZ",
+                "quantity": 100,
+                "price": 10.5,
+                "side": "buy",
+            },
+            account={"account_id": "ashare_sim"},
+            config={"signals_dir": self.signals_dir},
+        )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertFalse((self.signals_dir / "pending" / "SIM-ASHARE-BSHARE.json").exists())
+
+    def test_ashare_sim_execute_sends_webhook_on_default_production_path(self) -> None:
+        with patch(
+            "Ashare.sim_executor.send_sim_signal_to_mini",
+            return_value={"status": "sent", "success": True, "order_id": "SIM-ASHARE-WEBHOOK"},
+        ) as send_mock:
+            result = ashare_sim_execute(
+                order={
+                    "order_id": "SIM-ASHARE-WEBHOOK",
+                    "ts_code": "600000.SH",
+                    "quantity": 100,
+                    "price": 10.5,
+                    "side": "buy",
+                },
+                account={"account_id": "ashare_sim"},
+            )
+
+        self.assertEqual(result.status, "pending")
+        self.assertEqual(result.capital_layer, "simulated")
+        self.assertEqual(result.account_type, "simulated")
+        self.assertEqual(result.raw_response["mode"], "mini_webhook_sent")
+        send_mock.assert_called_once()
+
     def test_ashare_sim_execute_supports_local_mock_fill(self) -> None:
         result = ashare_sim_execute(
             order={

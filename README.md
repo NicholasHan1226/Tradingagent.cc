@@ -63,8 +63,8 @@ E: 基本面深度  — 周/季度财报更新
 ```
 
 ## 邮件通道
-- 交易类: notice@agentspaces.cc → Leocozy@coze.email (11类模版)
-- 系统类: notice@tradingagent.cc → tradingadviser@coze.email
+- 交易类: notice@tradingagent.cc → tradingadviser@coze.email (11类模版)
+- 系统类: notice@tradingagent.cc → soc@coze.email
 
 ## 资金
 - 初始20,000元, 集中2-3只, 闲置买逆回购(204001)

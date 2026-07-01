@@ -17,6 +17,8 @@ Six-dimension weighted scoring. No hard gates. Dimensions: macro/event/fundament
 - 降权不硬拒, 主动发现机会
 - 条件驱动, 而非实时全量扫描
 - 六维互补: 宏观定方向, 事件找催化, 基本面定底, 资金确认, 技术择时, 情绪防雷
+- 当前 candidate_pool 是动态重建池，不是持久化状态机；没有落地 demote/退出、层内停留时间、复盘驱动迁移前，不得声称每层独立升降级闭环已完成。
+- A股可执行 universe 必须同时满足普通 A股代码段、非 ST/非停牌/非新股、近期日线 close > 0 和流动性要求；无日线覆盖不得用默认价格补位。
 
 ## 接口
 ```python

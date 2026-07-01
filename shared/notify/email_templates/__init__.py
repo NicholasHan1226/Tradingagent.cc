@@ -15,7 +15,7 @@ from typing import Any
 
 CHANNELS = {
     "trading": {
-        "from": "notice@agentspaces.cc",
+        "from": "notice@tradingagent.cc",
         "to": "tradingadviser@coze.email",
         "label": "交易类",
     },

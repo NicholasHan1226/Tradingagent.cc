@@ -3,8 +3,8 @@
 ## 通道
 | 类型 | 发件 | 收件 | 用途 |
 |------|------|------|------|
-| 交易类 | notice@agentspaces.cc | Leocozy@coze.email | 信号/规划/复盘/日报/回执 |
-| 系统类 | notice@tradingagent.cc | tradingadviser@coze.email | 健康/告警/自愈/对账 |
+| 交易类 | notice@tradingagent.cc | tradingadviser@coze.email | 信号/规划/复盘/日报/回执 |
+| 系统类 | notice@tradingagent.cc | soc@coze.email | 健康/告警/自愈/对账 |
 
 ## 模版 (11类)
 1. 盘前规划 (8:30) — 持仓+资金+行情+板块+策略

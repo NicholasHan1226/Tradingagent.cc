@@ -122,14 +122,17 @@ class SignalStateMachineTest(unittest.TestCase):
     def test_sweep_expired_moves_only_expired_pending(self) -> None:
         now = datetime.now().astimezone()
         yesterday = (now - timedelta(days=1)).date().isoformat()
+        today = now.date().isoformat()
         tomorrow = (now + timedelta(days=1)).date().isoformat()
         self.machine.write_pending(self._card("SIG-OLD", valid_until=yesterday))
+        self.machine.write_pending(self._card("SIG-TODAY", valid_until=today))
         self.machine.write_pending(self._card("SIG-NEW", valid_until=tomorrow))
 
         result = self.machine.sweep_expired(now=now)
 
         self.assertEqual(result["expired_count"], 1)
         self.assertTrue((self.signals_dir / "expired" / "SIG-OLD.json").exists())
+        self.assertTrue((self.signals_dir / "pending" / "SIG-TODAY.json").exists())
         self.assertTrue((self.signals_dir / "pending" / "SIG-NEW.json").exists())
         expired_card = read_json(self.signals_dir / "expired" / "SIG-OLD.json")
         self.assertEqual(expired_card["status"], EXPIRED)

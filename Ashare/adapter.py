@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "exclude_suspended": True,
     "exclude_delisted": True,
     "exclude_bse": True,
+    "exclude_non_a_share": True,
     "min_list_days": 30,
     "min_liquidity_amount": 50_000_000.0,
 }
@@ -32,6 +34,14 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return result if result == result else default
     except (TypeError, ValueError):
         return default
+
+
+def _daily_amount_to_yuan(value: Any) -> float:
+    raw = _safe_float(value, -1.0)
+    if raw < 0.0:
+        return -1.0
+    # Tushare daily ``amount`` is stored in thousand CNY in the read model.
+    return raw * 1000.0
 
 
 def _parse_date(value: Any) -> datetime | None:
@@ -76,6 +86,21 @@ def _is_bse(asset: dict[str, Any]) -> bool:
     return exchange in {"BSE", "BJ", "NORTH"} or symbol.startswith(("8", "4"))
 
 
+def _is_regular_a_share_symbol(symbol: Any) -> bool:
+    raw = str(symbol or "").strip().upper()
+    if "." in raw:
+        digits, exchange = raw.split(".", 1)
+    else:
+        digits, exchange = raw, ""
+    if not re.fullmatch(r"\d{6}", digits):
+        return False
+    if exchange == "SZ":
+        return digits.startswith(("000", "001", "002", "003", "300", "301"))
+    if exchange == "SH":
+        return digits.startswith(("600", "601", "603", "605", "688", "689"))
+    return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
+
+
 class AshareAdapter(MarketAdapter):
     """Market-specific adapter for A-share shadow screening and execution."""
 
@@ -111,9 +136,7 @@ class AshareAdapter(MarketAdapter):
         return result
 
     def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
-        raw = str(symbol or "").strip()
-        if "." in raw:
-            raw = raw.split(".", 1)[0]
+        raw = str(symbol or "").strip().upper()
         return MARKET, raw
 
     def get_strategy_config(self) -> dict[str, Any]:
@@ -124,7 +147,7 @@ class AshareAdapter(MarketAdapter):
             "portfolio_method": "conviction_weighted",
             "regime": "ashare_default",
             "max_candidates": 20,
-            "default_price": 1.0,
+            "default_price": 0.0,
             "default_volatility": 0.28,
             "strategies": strategies,
             "market_rules": {
@@ -205,9 +228,11 @@ class AshareAdapter(MarketAdapter):
             if not rows:
                 continue
             for row in reversed(rows):
-                amount = _safe_float(row.get("amount"), -1.0)
-                if amount >= 0:
-                    return amount
+                if _safe_float(row.get("close"), 0.0) <= 0.0:
+                    continue
+                amount_yuan = _daily_amount_to_yuan(row.get("amount"))
+                if amount_yuan >= 0:
+                    return amount_yuan
         return None
 
     def _exclude_asset(self, asset: dict[str, Any], coverage_status: str | None, date: str) -> bool:
@@ -220,6 +245,8 @@ class AshareAdapter(MarketAdapter):
             return True
         if cfg.get("exclude_bse", True) and _is_bse(asset):
             return True
+        if cfg.get("exclude_non_a_share", True) and not _is_regular_a_share_symbol(asset.get("symbol")):
+            return True
 
         list_date = _parse_date(asset.get("list_date"))
         target_date = _parse_date(date)
@@ -230,7 +257,9 @@ class AshareAdapter(MarketAdapter):
 
         min_amount = _safe_float(cfg.get("min_liquidity_amount"), 50_000_000.0)
         amount = self._latest_amount(str(asset.get("symbol") or ""), date)
-        if amount is not None and amount < min_amount:
+        if amount is None:
+            return True
+        if amount < min_amount:
             return True
         return False
 

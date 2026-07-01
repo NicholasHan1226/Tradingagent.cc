@@ -21,6 +21,7 @@
 
 ## 写入端单一事实源
 - Tradings 写入端必须遵守单一事实源, 详细契约见 `docs/write_end_contract.md`。
+- A 股模拟执行必须由 `job_ashare_sim_exec` 调用 simulated loop 写入 `signals/pending/`，再由 Mac Mini Hermes 执行桥领取、执行、回写；MarketGraph 只能提供研究/信号输入，不能直连执行端。
 - `signals/` 是执行队列唯一写入面:
   - `signals/pending/` 待执行
   - `signals/filled/` 已成交

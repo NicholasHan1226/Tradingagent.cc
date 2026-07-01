@@ -36,19 +36,32 @@ run_job() {
     ensure_cron_paths
 
     local log_file="${TRADINGS_CRON_LOG_ROOT}/${job_name}.log"
+    local lock_file="${TRADINGS_STATE_ROOT}/${job_name}.lock"
     local -a backoff=(1 5 25)
     local attempts="${LEVEL1_RETRIES:-3}"
     local attempt=1
     local exit_code=0
 
+    exec {lock_fd}>"${lock_file}"
+    if command -v flock >/dev/null 2>&1; then
+        if ! flock -n "${lock_fd}"; then
+            printf '[%s] %s skipped=already_running phase=%s
+' "$(timestamp)" "${job_name}" "${phase}" >> "${log_file}"
+            return 0
+        fi
+    fi
+
     while (( attempt <= attempts )); do
         printf '[%s] %s attempt=%s phase=%s\n' "$(timestamp)" "${job_name}" "${attempt}" "${phase}" >> "${log_file}"
-        if "$@" >> "${log_file}" 2>&1; then
+        set +e
+        "$@" >> "${log_file}" 2>&1
+        exit_code=$?
+        set -e
+        if (( exit_code == 0 )); then
             printf '[%s] %s success attempt=%s\n' "$(timestamp)" "${job_name}" "${attempt}" >> "${log_file}"
             return 0
         fi
 
-        exit_code=$?
         printf '[%s] %s failure attempt=%s exit_code=%s\n' \
             "$(timestamp)" "${job_name}" "${attempt}" "${exit_code}" >> "${log_file}"
 

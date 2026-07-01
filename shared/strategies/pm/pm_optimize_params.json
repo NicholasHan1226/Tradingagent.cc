@@ -1,8 +1,8 @@
 {
   "job": "job_pm_optimize",
   "state": "ok",
-  "generated_at": "2026-06-30T13:00:03+00:00",
-  "trade_date": "20260630",
+  "generated_at": "2026-07-01T14:00:02+00:00",
+  "trade_date": "20260701",
   "capital_layer": "shadow",
   "market": "PM",
   "strategy_version": "d8535abfa66658f0",

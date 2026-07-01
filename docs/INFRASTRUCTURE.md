@@ -13,8 +13,8 @@
 - api.tradingagent.cc — API反代 (未来)
 
 ## 邮件
-- 交易类: notice@agentspaces.cc → Leocozy@coze.email
-- 系统类: notice@tradingagent.cc → tradingadviser@coze.email
+- 交易类: notice@tradingagent.cc → tradingadviser@coze.email
+- 系统类: notice@tradingagent.cc → soc@coze.email
 
 ## 环境
 - Python: 3.12.3 (venv /opt/marketgraph/venv)
