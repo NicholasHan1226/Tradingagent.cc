@@ -130,3 +130,5 @@ PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/ops_report.py --
 - `signed`: 已带有效回执自身指纹的回执数量。
 
 旧回执没有这些字段时会显示为 `unsigned`，但不等于执行失败或回执被篡改。
+
+Mini executor 推送服务器时也会在写入前验证 `receipt_sha256`；校验失败会拒写。历史无签名回执仍兼容读取，并在运维报告中归类为 `unsigned`。
