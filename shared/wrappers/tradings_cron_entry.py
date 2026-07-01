@@ -639,6 +639,15 @@ def _cron_log_snapshot() -> dict[str, Any]:
     latest_dt: datetime | None = None
     failed_jobs: list[str] = []
     failure_keywords = (" traceback", "traceback", " exception", " failed", " error")
+    benign_markers = (
+        " success ",
+        "skipped=already_running",
+        '"state": "ok"',
+        "'state': 'ok'",
+        '"errors": []',
+        "'errors': []",
+    )
+    scan_tail_lines = 80
     for path in sorted(log_dir.glob("*.log")):
         try:
             lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
@@ -648,8 +657,12 @@ def _cron_log_snapshot() -> dict[str, Any]:
             continue
         failed = False
         reasons: list[str] = []
-        for line in lines:
+        for line in lines[-scan_tail_lines:]:
             lowered = line.lower()
+            if any(marker in lowered for marker in benign_markers):
+                failed = False
+                reasons = []
+                continue
             if any(keyword in lowered for keyword in failure_keywords) and "0 error" not in lowered:
                 failed = True
                 reasons.append(line[:160])
@@ -663,6 +676,7 @@ def _cron_log_snapshot() -> dict[str, Any]:
             "job": path.stem,
             "failed": failed,
             "line_count": len(lines),
+            "scan_tail_lines": min(len(lines), scan_tail_lines),
             "sample": reasons[:2] or [lines[-1][:160]],
         })
     return {
@@ -696,6 +710,8 @@ def _consecutive_zero_signal_periods(rows: list[dict[str, Any]]) -> int:
         signal_count = row.get("signal_count")
         if signal_count is None:
             signal_count = ((row.get("capital_layer_reviews") or {}).get("shadow") or {}).get("signal_count")
+        if signal_count is None:
+            continue
         if int(signal_count or 0) > 0:
             break
         streak += 1
@@ -1170,6 +1186,27 @@ def run_shadow_orchestrator(job_name: str, market: str) -> dict[str, Any]:
     return result
 
 
+def run_sim_orchestrator(job_name: str, market: str) -> dict[str, Any]:
+    from shared.data.reader import TradingsDataReader
+    from shared.orchestrator import run_sim_loop
+
+    adapter = get_market_adapter(market)
+    reader: Any = TradingsDataReader()
+    deps = None
+    adapter_market = str(adapter.get_market()).lower()
+    if str(market).upper() == "PM" or adapter_market == "pm":
+        reader = PMReaderBridge(reader)
+        deps = _pm_orchestrator_deps()
+    elif str(market).upper() == "CRYPTO" or adapter_market == "crypto":
+        deps = _crypto_orchestrator_deps()
+    elif str(market).upper() == "US" or adapter_market == "us":
+        deps = _us_orchestrator_deps()
+    result = run_sim_loop(adapter, trade_date(), reader, deps=deps)
+    result.update({"job": job_name, "state": result.get("state", "ok"), "generated_at": now_iso()})
+    append_jsonl(SHARED / "logs/orchestrator_sim_runs.jsonl", result)
+    return result
+
+
 _register_default_adapters()
 
 
@@ -1267,18 +1304,32 @@ def run_daily_brief_night() -> dict[str, Any]:
 def run_signal_sweep_expired() -> dict[str, Any]:
     from shared.execution.signal_state_machine import SignalStateMachine
 
-    try:
-        sweep = SignalStateMachine(ROOT / "signals").sweep_expired()
-        state = "ok"
-    except Exception as exc:  # noqa: BLE001
-        sweep = {"status": "error", "expired_count": 0, "expired": [], "message": f"{exc.__class__.__name__}: {exc}"}
-        state = "degraded"
+    sweeps: dict[str, Any] = {}
+    state = "ok"
+    for label, signals_dir in (
+        ("execution", ROOT / "signals"),
+        ("shadow", ROOT / "signals" / "shadow"),
+    ):
+        try:
+            sweeps[label] = SignalStateMachine(signals_dir).sweep_expired()
+        except Exception as exc:  # noqa: BLE001
+            sweeps[label] = {
+                "status": "error",
+                "expired_count": 0,
+                "expired": [],
+                "message": f"{exc.__class__.__name__}: {exc}",
+            }
+            state = "degraded"
     result = {
         "job": "job_signal_sweep_expired",
         "state": state,
         "generated_at": now_iso(),
         "trade_date": trade_date(),
-        **sweep,
+        "execution": sweeps.get("execution", {}),
+        "shadow": sweeps.get("shadow", {}),
+        "status": "error" if state == "degraded" else "ok",
+        "expired_count": int((sweeps.get("execution") or {}).get("expired_count", 0) or 0)
+        + int((sweeps.get("shadow") or {}).get("expired_count", 0) or 0),
     }
     append_jsonl(SHARED / "logs/cron/signal_sweep_expired.jsonl", result)
     return result
@@ -1869,10 +1920,45 @@ def _build_email_notify_payload() -> tuple[str, str, str]:
     return subject, body, html_body
 
 
+def run_ashare_night_calibration() -> dict[str, Any]:
+    """Nightly A-share calibration after research/backtest/data backfill.
+
+    This is not a second trading review: no new A-share trades arrive after close.
+    It refreshes evidence files and records the next-day calibration package without
+    sending a duplicate daily report email.
+    """
+    current_trade_date = trade_date()
+    attribution = run_attribution("job_ashare_night_attribution", "review/attribution/ashare_night_attribution.jsonl")
+    strategy_version = run_strategy_version()
+    research = run_research_report()
+    backtest = run_backtest_report()
+    latest_daily = _read_last_jsonl(SHARED / "review/daily/daily_brief.jsonl")
+    closing_scan = _read_json(Path("/opt/investment/MarketGraph/outputs/ashare_closing_buy_candidates.json"))
+    payload = {
+        "job": "job_ashare_night_calibration",
+        "state": "ok",
+        "phase": "night_calibration",
+        "generated_at": now_iso(),
+        "trade_date": current_trade_date,
+        "capital_layer": "shadow",
+        "note": "No new A-share trades after 15:00; this package refreshes attribution/backtest/research evidence and next-day plan inputs without sending a duplicate trading review email.",
+        "latest_close_review": latest_daily,
+        "closing_scan": closing_scan,
+        "attribution": attribution,
+        "strategy_version": strategy_version,
+        "research_report": research,
+        "backtest_report": backtest,
+    }
+    append_jsonl(SHARED / "review/daily/night_calibration.jsonl", payload)
+    write_json(SHARED / "review/daily/night_calibration_latest.json", payload)
+    write_markdown(SHARED / "review/daily/night_calibration.md", "job_ashare_night_calibration", payload)
+    return payload
+
+
 def run_email_notify() -> dict[str, Any]:
     subject, body, html_body = _build_email_notify_payload()
     result = send_email(
-        "Leocozy@coze.email",
+        "tradingadviser@coze.email",
         subject,
         body,
         html_body,
@@ -1896,7 +1982,7 @@ JOB_HANDLERS: dict[str, Any] = {
         "signals/premarket_signals.jsonl",
         "premarket",
     ),
-    "job_ashare_sim_exec": lambda: run_shadow_orchestrator("job_ashare_sim_exec", "Ashare"),
+    "job_ashare_sim_exec": lambda: run_sim_orchestrator("job_ashare_sim_exec", "Ashare"),
     "job_us_shadow_exec": lambda: run_shadow_orchestrator("job_us_shadow_exec", "US"),
     "job_us_shadow": lambda: run_shadow_orchestrator("job_us_shadow", "US"),
     "job_us_premarket": lambda: run_market_watch(
@@ -1926,6 +2012,7 @@ JOB_HANDLERS: dict[str, Any] = {
     "job_crypto_daily": lambda: run_shadow_orchestrator("job_crypto_daily", "Crypto"),
     "job_crypto_weekly": lambda: run_weekly_review("job_crypto_weekly", "review/crypto/crypto_weekly_review.json"),
     "job_pm_shadow": lambda: run_shadow_orchestrator("job_pm_shadow", "PM"),
+    "job_pm_shadow_exec": lambda: run_shadow_orchestrator("job_pm_shadow_exec", "PM"),
     "job_pm_forward": lambda: run_market_watch(
         "job_pm_forward",
         "PM",
@@ -1937,6 +2024,7 @@ JOB_HANDLERS: dict[str, Any] = {
     "job_daily_brief_morning": run_daily_brief_morning,
     "job_daily_brief_day": run_daily_brief_day,
     "job_daily_brief_night": run_daily_brief_night,
+    "job_ashare_night_calibration": run_ashare_night_calibration,
     "job_self_heal": run_self_heal,
     "job_self_heal_night": run_self_heal_night,
     "job_signal_sweep_expired": run_signal_sweep_expired,

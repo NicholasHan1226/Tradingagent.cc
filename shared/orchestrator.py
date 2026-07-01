@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import inspect
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -44,6 +44,18 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return default
+
+
+def _safe_quantity(value: Any, default: int | float = 0) -> int | float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    if result != result:
+        return default
+    if abs(result - round(result)) < 1e-12:
+        return int(round(result))
+    return result
 
 
 def _strategy_config(adapter: MarketAdapter) -> dict[str, Any]:
@@ -180,9 +192,17 @@ def _latest_volatility(reader: Any, market: str, symbol: str, date: str, default
 def _write_pending_signal(card: dict[str, Any], signals_dir: Path = SIGNALS_DIR) -> dict[str, Any]:
     from shared.execution.signal_state_machine import SignalStateConflict, SignalStateMachine
 
-    machine = SignalStateMachine(signals_dir)
+    # Shadow records are research/paper-tracking signals. Keep their pending lifecycle
+    # for review and email de-duplication, but isolate them from executable queues.
+    layer = str(card.get("capital_layer") or "").strip().lower()
+    direct_execution = bool(card.get("direct_execution"))
+    state_root = signals_dir / "shadow" if layer == "shadow" and not direct_execution else signals_dir
+    machine = SignalStateMachine(state_root)
     try:
-        return machine.write_pending(card)
+        result = machine.write_pending(card)
+        if state_root != signals_dir:
+            result["queue_scope"] = "shadow"
+        return result
     except SignalStateConflict as exc:
         return {
             "order_id": card.get("order_id", ""),
@@ -190,6 +210,7 @@ def _write_pending_signal(card: dict[str, Any], signals_dir: Path = SIGNALS_DIR)
             "recorded": False,
             "message": str(exc),
             "signal_card": card,
+            "queue_scope": "shadow" if state_root != signals_dir else "execution",
         }
 
 
@@ -201,9 +222,52 @@ def _write_execution_signal(
     from shared.execution.signal_state_machine import SignalStateConflict, SignalStateMachine
 
     machine = SignalStateMachine(signals_dir)
+    status = str(receipt.get("status", "")).strip().lower()
+    retryable = bool(receipt.get("retryable")) or status in {"pending", "queued", "retryable", "unfilled"}
+    rejected = status in {"rejected", "reject", "failed", "failure", "error", "cancelled", "canceled"}
+    raw_response = receipt.get("raw_response") if isinstance(receipt.get("raw_response"), dict) else {}
+    existing_signal_path = str(receipt.get("signal_path") or raw_response.get("signal_path") or "")
+
+    if retryable and existing_signal_path:
+        return {
+            "order_id": card.get("order_id", ""),
+            "status": "pending",
+            "pending_signal": {
+                "status": "pending",
+                "signal_path": existing_signal_path,
+                "signal_card": raw_response.get("signal_card", card),
+                "source": "sim_executor",
+            },
+        }
+
+    webhook_payload = raw_response.get("webhook") if isinstance(raw_response.get("webhook"), dict) else {}
+    mini_webhook_sent = raw_response.get("mode") == "mini_webhook_sent" or bool(webhook_payload.get("success"))
+    if retryable and mini_webhook_sent:
+        return {
+            "order_id": card.get("order_id", ""),
+            "status": "pending",
+            "pending_signal": {
+                "status": "pending",
+                "signal_card": raw_response.get("signal_card", card),
+                "source": "mini_webhook",
+                "webhook": webhook_payload,
+            },
+        }
+
     try:
         pending = machine.write_pending(card)
     except SignalStateConflict as exc:
+        if retryable:
+            return {
+                "order_id": card.get("order_id", ""),
+                "status": "pending",
+                "pending_signal": {
+                    "status": "pending",
+                    "signal_card": card,
+                    "source": "existing_state_machine_card",
+                },
+                "message": str(exc),
+            }
         return {
             "order_id": card.get("order_id", ""),
             "status": "duplicate",
@@ -212,9 +276,6 @@ def _write_execution_signal(
             "signal_card": card,
         }
 
-    status = str(receipt.get("status", "")).strip().lower()
-    retryable = bool(receipt.get("retryable")) or status in {"pending", "queued", "retryable", "unfilled"}
-    rejected = status in {"rejected", "reject", "failed", "failure", "error", "cancelled", "canceled"}
     if retryable:
         return {"order_id": card.get("order_id", ""), "status": "pending", "pending_signal": pending}
     if rejected:
@@ -247,6 +308,87 @@ def _make_order_id(prefix: str, market: str, symbol: str, date: str) -> str:
     return f"{prefix}{market}-{symbol}-{date}-{uuid.uuid4().hex[:8]}".replace("/", "-")
 
 
+def _compact_date_key(value: Any) -> str:
+    raw = str(value or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) >= 8:
+        return digits[:8]
+    return raw.replace("-", "")[:8]
+
+
+def _sim_idempotency_key(market: str, account: str, symbol: str, date: str, side: str) -> str:
+    date_key = _compact_date_key(date)
+    parts = ("SIM", market.lower(), account, date_key, symbol.upper(), side.lower())
+    return ":".join(str(part).replace("/", "-").replace(" ", "_") for part in parts)
+
+
+def _signal_card_date_key(card: dict[str, Any], fallback_name: str = "") -> str:
+    for key in ("trade_date", "date", "valid_until", "timestamp", "filled_at", "received_at", "created_at"):
+        value = card.get(key)
+        date_key = _compact_date_key(value)
+        if len(date_key) == 8 and date_key.isdigit():
+            return date_key
+    return _compact_date_key(fallback_name)
+
+
+def _find_existing_sim_signal(
+    signals_dir: Path,
+    *,
+    market: str,
+    account: str,
+    symbol: str,
+    date: str,
+    side: str,
+    capital_layer: str,
+    account_type: str,
+    idempotency_key: str,
+) -> dict[str, Any] | None:
+    target_market = market.lower()
+    target_symbol = symbol.upper()
+    target_date = _compact_date_key(date)
+    target_side = side.lower()
+    states = ("pending", "claimed", "running", "filled", "failed", "partial", "expired", "cancelled")
+    for state in states:
+        state_dir = signals_dir / state
+        if not state_dir.exists():
+            continue
+        for path in sorted(state_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+            try:
+                card = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if str(card.get("idempotency_key") or "") == idempotency_key:
+                return {"state": state, "path": str(path), "order_id": card.get("order_id"), "idempotency_key": idempotency_key}
+            card_symbol = str(card.get("ts_code") or card.get("symbol") or card.get("code") or "").upper()
+            if card_symbol != target_symbol:
+                continue
+            card_market = str(card.get("market") or "").lower()
+            if card_market and card_market != target_market:
+                continue
+            if not card_market and f"{target_market}-" not in path.name.lower():
+                continue
+            card_layer = str(card.get("capital_layer") or "").lower()
+            if card_layer and card_layer != capital_layer.lower():
+                continue
+            card_account_type = str(card.get("account_type") or "").lower()
+            if card_account_type and card_account_type != account_type.lower():
+                continue
+            card_side = str(card.get("direction") or card.get("side") or "buy").lower()
+            if card_side != target_side:
+                continue
+            if _signal_card_date_key(card, path.name) != target_date:
+                continue
+            return {
+                "state": state,
+                "path": str(path),
+                "order_id": card.get("order_id"),
+                "idempotency_key": card.get("idempotency_key"),
+                "matched_by": "same_day_symbol_side",
+                "account": account,
+            }
+    return None
+
+
 def _build_signal_card(
     *,
     market: str,
@@ -269,7 +411,7 @@ def _build_signal_card(
         "ts_code": symbol,
         "market": market,
         "direction": order.get("side", "buy"),
-        "quantity": _safe_int(order.get("quantity"), 0),
+        "quantity": _safe_quantity(order.get("quantity"), 0),
         "price": _safe_float(order.get("price"), 0.0),
         "strategy_name": account,
         "timestamp": _now_iso(),
@@ -287,7 +429,7 @@ def _build_signal_card(
         "shadow_trade_id": trade.get("trade_id", ""),
         "source_audit_id": audit_id,
         "valid_until": _date_iso(date),
-        "idempotency_key": order_id,
+        "idempotency_key": order.get("idempotency_key") or order_id,
         "evidence_refs": [audit_id],
     }
 
@@ -330,7 +472,7 @@ def _trading_signal_email_data(
     risk: dict[str, Any],
     card: dict[str, Any],
 ) -> dict[str, Any]:
-    quantity = _safe_int(order.get("quantity"), 0)
+    quantity = _safe_quantity(order.get("quantity"), 0)
     price = _safe_float(order.get("price"), 0.0)
     weight = _safe_float(position.get("weight"), _safe_float(risk.get("adjusted_weight"), 0.0))
     total_score = score.get("total", score.get("combined", score.get("belief_score", "--")))
@@ -508,6 +650,45 @@ def _run_review_for_layer(
     return {"session": session, "trade_date": date, "capital_layer": capital_layer, "raw_result": result}
 
 
+def _coerce_sim_receipt(receipt: Any, order: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(receipt, dict):
+        payload = dict(receipt)
+    elif is_dataclass(receipt):
+        payload = asdict(receipt)
+    elif hasattr(receipt, "__dict__"):
+        payload = {
+            key: getattr(receipt, key)
+            for key in (
+                "status",
+                "filled_qty",
+                "filled_quantity",
+                "avg_price",
+                "filled_price",
+                "fee",
+                "message",
+                "capital_layer",
+                "account_type",
+                "order_id",
+                "market",
+                "raw_response",
+            )
+            if hasattr(receipt, key)
+        }
+    else:
+        return {"status": "failed", "message": "invalid sim broker receipt"}
+
+    payload.setdefault("order_id", order.get("order_id", ""))
+    if "filled_qty" in payload and "filled_quantity" not in payload:
+        payload["filled_quantity"] = payload["filled_qty"]
+    if "filled_quantity" in payload and "filled_qty" not in payload:
+        payload["filled_qty"] = payload["filled_quantity"]
+    if "avg_price" in payload and "filled_price" not in payload:
+        payload["filled_price"] = payload["avg_price"]
+    payload.setdefault("capital_layer", "simulated")
+    payload.setdefault("account_type", "simulated")
+    return payload
+
+
 def _execute_sim_order(deps: OrchestratorDeps, order: dict[str, Any], account: Any) -> dict[str, Any]:
     if deps.execute_sim_order is None:
         raise RuntimeError("sim_broker.execute_sim_order is unavailable")
@@ -517,15 +698,20 @@ def _execute_sim_order(deps: OrchestratorDeps, order: dict[str, Any], account: A
         receipt = deps.execute_sim_order(order)
     else:
         params = signature.parameters
+        kwargs: dict[str, Any] = {}
+        if "market" in params:
+            kwargs["market"] = str(order.get("market") or "").lower().strip()
         if "account" in params:
-            receipt = deps.execute_sim_order(order, account=account)
+            kwargs["account"] = account
         elif "sim_account" in params:
-            receipt = deps.execute_sim_order(order, sim_account=account)
+            kwargs["sim_account"] = account
+        if kwargs:
+            receipt = deps.execute_sim_order(order, **kwargs)
         elif len(params) >= 2 and not any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in params.values()):
             receipt = deps.execute_sim_order(order, account)
         else:
             receipt = deps.execute_sim_order(order)
-    return receipt if isinstance(receipt, dict) else {"status": "failed", "message": "invalid sim broker receipt"}
+    return _coerce_sim_receipt(receipt, order)
 
 
 def _supports_market_aware_score(score_stock: StageFn) -> bool:
@@ -623,6 +809,8 @@ def run_shadow_loop(
     max_candidates = max(1, int(config.get("max_candidates", 20)))
     default_price = _safe_float(config.get("default_price"), 1.0)
     default_volatility = _safe_float(config.get("default_volatility"), 0.20)
+    market_rules = config.get("market_rules") if isinstance(config.get("market_rules"), dict) else {}
+    lot_size = _safe_float(market_rules.get("lot_size"), 1.0) if isinstance(market_rules, dict) else 1.0
 
     universe = _safe_stage("screening.universe", errors, lambda: market_adapter.get_universe(date), default=[])
     stage_calls.append("screening.universe")
@@ -678,6 +866,7 @@ def run_shadow_loop(
 
     candidates = _candidate_symbols(pool, list(scores_by_symbol))[:max_candidates]
     orders_for_portfolio: list[dict[str, Any]] = []
+    skipped_candidates: list[dict[str, Any]] = []
     signal_audit_by_symbol = {audit["ts_code"]: audit for audit in audits if audit.get("stage") == "signal"}
 
     for symbol in candidates:
@@ -710,6 +899,9 @@ def run_shadow_loop(
 
         price = _latest_price(reader, mapped_market, mapped_symbol, date, default_price)
         volatility = _latest_volatility(reader, mapped_market, mapped_symbol, date, default_volatility)
+        if price <= 0:
+            skipped_candidates.append({"symbol": symbol, "reason": "missing_or_non_positive_price", "price": price, "capital_layer": "shadow"})
+            continue
         proposed_weight = _safe_stage(
             "portfolio.position_sizer",
             errors,
@@ -748,6 +940,7 @@ def run_shadow_loop(
             "sector": str(score.get("sector", "unknown")),
             "price": price,
             "weight": _safe_float(risk.get("adjusted_weight"), proposed_weight),
+            "lot_size": lot_size,
             "risk_audit_id": risk_audit["audit_id"],
             "mapped_market": mapped_market,
             "mapped_symbol": mapped_symbol,
@@ -772,9 +965,10 @@ def run_shadow_loop(
         order = {
             "ts_code": symbol,
             "side": "buy",
-            "quantity": _safe_int(position.get("shares"), 0),
+            "quantity": _safe_quantity(position.get("shares"), 0),
             "price": _safe_float(position.get("price"), 0.0),
             "trade_date": date,
+            "market": market,
             "capital_layer": "shadow",
             "note": f"orchestrator shadow loop {market} {date}",
         }
@@ -856,6 +1050,8 @@ def run_shadow_loop(
         "universe_count": len(universe),
         "candidate_count": len(candidates),
         "order_count": len(orders_for_portfolio),
+        "skipped_candidate_count": len(skipped_candidates),
+        "skipped_candidates": skipped_candidates[:20],
         "recorded_count": sum(1 for record in records if record["trade"].get("recorded")),
         "portfolio": portfolio,
         "records": records,
@@ -972,6 +1168,7 @@ def run_sim_loop(
 
     candidates = _candidate_symbols(pool, list(scores_by_symbol))[:max_candidates]
     orders_for_portfolio: list[dict[str, Any]] = []
+    skipped_candidates: list[dict[str, Any]] = []
     signal_audit_by_symbol = {audit["ts_code"]: audit for audit in audits if audit.get("stage") == "signal"}
     risk_portfolio = {
         "positions": existing_positions,
@@ -1015,6 +1212,9 @@ def run_sim_loop(
 
         price = _latest_price(reader, mapped_market, mapped_symbol, date, default_price)
         volatility = _latest_volatility(reader, mapped_market, mapped_symbol, date, default_volatility)
+        if price <= 0:
+            skipped_candidates.append({"symbol": symbol, "reason": "missing_or_non_positive_price", "price": price, "capital_layer": capital_layer})
+            continue
         proposed_weight = _safe_stage(
             "portfolio.position_sizer",
             errors,
@@ -1089,11 +1289,14 @@ def run_sim_loop(
             continue
         symbol = str(position["ts_code"])
         meta = order_meta.get(symbol, {})
+        side = "buy"
         order_id = _make_order_id("SIM-", market, symbol, date)
+        idempotency_key = _sim_idempotency_key(market, account, symbol, date, side)
         order = {
             "order_id": order_id,
+            "idempotency_key": idempotency_key,
             "ts_code": symbol,
-            "side": "buy",
+            "side": side,
             "quantity": _safe_int(position.get("shares"), 0),
             "price": _safe_float(position.get("price"), 0.0),
             "mid_price": _safe_float(position.get("price"), 0.0),
@@ -1108,6 +1311,36 @@ def run_sim_loop(
         }
         if order["quantity"] <= 0 or order["price"] <= 0:
             errors.append({"stage": "execution.sim_broker", "status": "skipped", "symbol": symbol, "reason": "non-positive quantity or price", "capital_layer": capital_layer})
+            continue
+        existing_signal = _find_existing_sim_signal(
+            signals_dir,
+            market=market,
+            account=account,
+            symbol=symbol,
+            date=date,
+            side=side,
+            capital_layer=capital_layer,
+            account_type=account_type,
+            idempotency_key=idempotency_key,
+        )
+        if existing_signal:
+            stage_calls.append("signals.sim_dedup")
+            signal_result = {
+                "order_id": order_id,
+                "status": "duplicate",
+                "recorded": False,
+                "existing_signal": existing_signal,
+            }
+            receipt = {
+                "order_id": order_id,
+                "status": "duplicate",
+                "message": "same-day simulated signal already exists",
+                "existing_signal": existing_signal,
+                "capital_layer": capital_layer,
+                "account_type": account_type,
+            }
+            email_notification = {"status": "skipped", "reason": "duplicate same-day sim signal", "template": "trade_receipt"}
+            records.append({"symbol": symbol, "order": order, "receipt": receipt, "signal_result": signal_result, "email_notification": email_notification})
             continue
         receipt = _safe_stage(
             "execution.sim_broker",
@@ -1212,6 +1445,8 @@ def run_sim_loop(
         "universe_count": len(universe),
         "candidate_count": len(candidates),
         "order_count": len(orders_for_portfolio),
+        "skipped_candidate_count": len(skipped_candidates),
+        "skipped_candidates": skipped_candidates[:20],
         "filled_count": sum(1 for record in records if record["signal_result"].get("status") == "filled"),
         "failed_count": sum(1 for record in records if record["signal_result"].get("status") == "failed"),
         "pending_count": sum(1 for record in records if record["signal_result"].get("status") == "pending"),
