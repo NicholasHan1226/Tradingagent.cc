@@ -1,4 +1,4 @@
-# 六维打分权重 — Tradings/shared/screening/
+# 六维打分权重 — tradingagent/shared/screening/
 # 权重式打分, 不设硬门禁。六维互补, 降权不硬拒。
 
 # 六维权重 (总和 = 1.0)

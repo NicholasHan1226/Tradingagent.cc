@@ -1200,11 +1200,11 @@ def run_market_watch(job_name: str, market: str, output_rel: str, phase: str) ->
 
 
 def run_shadow_orchestrator(job_name: str, market: str) -> dict[str, Any]:
-    from shared.data.reader import TradingsDataReader
+    from shared.data.reader import TradingagentDataReader
     from shared.orchestrator import run_shadow_loop
 
     adapter = get_market_adapter(market)
-    reader: Any = TradingsDataReader()
+    reader: Any = TradingagentDataReader()
     deps = None
     adapter_market = str(adapter.get_market()).lower()
     if str(market).upper() == "PM" or adapter_market == "pm":
@@ -1221,11 +1221,11 @@ def run_shadow_orchestrator(job_name: str, market: str) -> dict[str, Any]:
 
 
 def run_sim_orchestrator(job_name: str, market: str) -> dict[str, Any]:
-    from shared.data.reader import TradingsDataReader
+    from shared.data.reader import TradingagentDataReader
     from shared.orchestrator import run_sim_loop
 
     adapter = get_market_adapter(market)
-    reader: Any = TradingsDataReader()
+    reader: Any = TradingagentDataReader()
     deps = None
     adapter_market = str(adapter.get_market()).lower()
     if str(market).upper() == "PM" or adapter_market == "pm":
@@ -1904,7 +1904,7 @@ def _build_email_notify_payload() -> tuple[str, str, str]:
         ("收盘复盘", nightly),
     ]
     available = [name for name, payload in review_sources if payload]
-    subject = f"Tradings 每日汇总 {trade_date()}"
+    subject = f"tradingagent 每日汇总 {trade_date()}"
 
     lines = [
         f"交易日: {trade_date()}",

@@ -18,8 +18,8 @@ from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Iterator
 
-TRADINGS_ROOT = Path("/opt/investment/Tradings")
-SIGNALS_DIR = TRADINGS_ROOT / "signals"
+TRADINGAGENT_ROOT = Path("/opt/investment/tradingagent")
+SIGNALS_DIR = TRADINGAGENT_ROOT / "signals"
 
 PENDING = "pending"
 CLAIMED = "claimed"

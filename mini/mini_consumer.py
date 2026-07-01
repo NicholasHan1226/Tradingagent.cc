@@ -7,7 +7,7 @@ The active Mini-side path is now:
     sim-signal-receiver -> pending
     sim-signal-executor -> execution receipts
 
-Tradings should send simulated signals through
+tradingagent should send simulated signals through
 ``shared.execution.webhook_sender.send_sim_signal_to_mini``. No extra
 ``mini_consumer`` process is required on the Mini. The legacy classes below are
 kept only so older local tests and imports do not break during this migration.
@@ -32,8 +32,8 @@ from shared.execution.signal_state_machine import (
     write_json,
 )
 
-TRADINGS_ROOT = Path("/opt/investment/Tradings")
-SIGNALS_DIR = TRADINGS_ROOT / "signals"
+TRADINGAGENT_ROOT = Path("/opt/investment/tradingagent")
+SIGNALS_DIR = TRADINGAGENT_ROOT / "signals"
 ASHARE_TOOLS_DIR = Path("/Users/nicholashan/Desktop/Investment/Ashare/tools")
 SIMULATED_EXECUTOR = ASHARE_TOOLS_DIR / "a_share_simulated_trade_executor.py"
 

@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_LOADER="${ROOT_DIR}/shared/env_loader.sh"
 
-export TRADINGS_ROOT="${ROOT_DIR}"
-export TRADINGS_SHARED_ROOT="${ROOT_DIR}/shared"
+export TRADINGAGENT_ROOT="${ROOT_DIR}"
+export TRADINGAGENT_SHARED_ROOT="${ROOT_DIR}/shared"
 export TRADINGS_WRAPPERS_ROOT="${ROOT_DIR}/shared/wrappers"
 export SHARED_SIGNALS_ROOT="${ROOT_DIR}/signals"
 export MARKETGRAPH_ROOT="${ROOT_DIR}/mini"
@@ -15,8 +15,8 @@ export MARKETGRAPH_RUNTIME_ROOT="${ROOT_DIR}/shared/runtime_test"
 source "${ENV_LOADER}"
 
 required_vars=(
-    TRADINGS_ROOT
-    TRADINGS_SHARED_ROOT
+    TRADINGAGENT_ROOT
+    TRADINGAGENT_SHARED_ROOT
     TRADINGS_WRAPPERS_ROOT
     SHARED_SIGNALS_ROOT
     MARKETGRAPH_ROOT

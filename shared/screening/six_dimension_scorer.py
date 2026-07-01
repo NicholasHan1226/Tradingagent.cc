@@ -38,9 +38,9 @@ _DEFAULT_MISSING = 0.5
 
 _WEIGHTS_PATH = Path(__file__).resolve().parent / "weights.yaml"
 
-from shared.data.reader import TradingsDataReader
+from shared.data.reader import TradingagentDataReader
 
-_DATA_READER: TradingsDataReader | None = None
+_DATA_READER: TradingagentDataReader | None = None
 
 
 def _load_weights() -> dict[str, Any]:
@@ -83,14 +83,14 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
 
 # ── 六维打分函数 (各维度从真实数据源读取) ──
 
-def _get_data_reader(config: dict[str, Any] | None = None) -> TradingsDataReader:
+def _get_data_reader(config: dict[str, Any] | None = None) -> TradingagentDataReader:
     """Return the configured fail-safe data reader."""
     injected = (config or {}).get("_data_reader")
     if injected is not None:
         return injected
     global _DATA_READER
     if _DATA_READER is None:
-        _DATA_READER = TradingsDataReader()
+        _DATA_READER = TradingagentDataReader()
     return _DATA_READER
 
 
@@ -354,11 +354,11 @@ _DIMENSION_FUNCS = {
 def score_stock(
     market_or_ts_code: str,
     symbol_or_date: str | None = None,
-    reader: TradingsDataReader | None = None,
+    reader: TradingagentDataReader | None = None,
     date: str | None = None,
     config: dict[str, Any] | None = None,
     *,
-    data_reader: TradingsDataReader | None = None,
+    data_reader: TradingagentDataReader | None = None,
     market: str | None = None,
 ) -> dict[str, float]:
     """对单只股票进行六维打分。
@@ -452,7 +452,7 @@ def score_stock(
 def score_universe(
     date: str | None = None,
     universe: list[str] | None = None,
-    data_reader: TradingsDataReader | None = None,
+    data_reader: TradingagentDataReader | None = None,
     market: str = "ashare",
 ) -> list[tuple[str, dict[str, float]]]:
     """对整个 universe 进行六维打分。

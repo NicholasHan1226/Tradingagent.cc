@@ -293,7 +293,7 @@ def run_ashare_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Tradings market health checks")
+    parser = argparse.ArgumentParser(description="tradingagent market health checks")
     parser.add_argument("--market", default="ashare", choices=["ashare"], help="market to check")
     parser.add_argument("--mini-health-url", default=DEFAULT_MINI_HEALTH_URL)
     parser.add_argument("--pretty", action="store_true")

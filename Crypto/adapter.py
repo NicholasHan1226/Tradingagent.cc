@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Crypto market adapter for the Tradings shadow orchestrator."""
+"""Crypto market adapter for the tradingagent shadow orchestrator."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from shared.data.reader import TradingsDataReader
+from shared.data.reader import TradingagentDataReader
 from shared.markets.base import MarketAdapter
 
 
@@ -59,7 +59,7 @@ class CryptoAdapter(MarketAdapter):
         universe_filter: dict[str, Any] | None = None,
         strategy_dir: Path | None = None,
     ) -> None:
-        self.reader = reader if reader is not None else TradingsDataReader()
+        self.reader = reader if reader is not None else TradingagentDataReader()
         self.universe_filter = {**DEFAULT_UNIVERSE_FILTER, **dict(universe_filter or {})}
         self.strategy_dir = strategy_dir or STRATEGY_DIR
 

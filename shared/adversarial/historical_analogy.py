@@ -20,7 +20,7 @@ _CANDIDATE_PATHS = [
     Path(__file__).resolve().parent.parent.parent / "memory" / "global" / "event_analogies.jsonl",
     Path(__file__).resolve().parent.parent.parent.parent / "memory" / "global" / "event_analogies.jsonl",
     Path("/opt/investment/memory/global/event_analogies.jsonl"),
-    Path("/opt/investment/Tradings/memory/global/event_analogies.jsonl"),
+    Path("/opt/investment/tradingagent/memory/global/event_analogies.jsonl"),
 ]
 
 

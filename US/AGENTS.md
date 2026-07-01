@@ -1,4 +1,4 @@
-# TradingAgent/US
+# tradingagent/US
 
 > **阅读顺序：** [AGENTS.md](../AGENTS.md) → [STATUS.md](../STATUS.md) → 本文件
 
@@ -17,7 +17,7 @@
 ## 工具清单 (TradingAgent tool references)
 
 - 源目录: `/opt/investment/US/tools/` (20 个 .py 工具)
-- TradingAgent 引用: `TradingAgent/US/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
+- TradingAgent 引用: `tradingagent/US/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
 - 关键工具:
   - us_workflow.py — Daily workflow: collect → plan → scan → review
   - us_market_data.py — US stock data via Tushare

@@ -17,8 +17,8 @@
 
 ## 代码位置
 
-- 生产路径：`/opt/investment/TradingAgent/`
-- 开发路径：`/Users/nicholashan/Projects/Finance/TradingAgent/`
+- 生产路径：`/opt/investment/tradingagent/`
+- 开发路径：`/Users/nicholashan/Projects/Finance/tradingagent/`
 - 工具集：`/opt/investment/tools/`（约 20 个工具）
 
 ## 架构边界（永久规则）
@@ -96,7 +96,7 @@ A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending �
 ## 服务器
 
 - 主服务器：`8.138.181.177`（杭州）
-- 生产路径：`/opt/investment/TradingAgent/`
+- 生产路径：`/opt/investment/tradingagent/`
 - Mini 远程访问：Tailscale `100.125.4.113` / SSH alias `macmini-tailscale`
 - `192.168.5.2` 是 RSS 服务器，不是 MarketGraph 主服务器，也不是 Hermes mini 执行桥。
 
@@ -109,9 +109,9 @@ A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending �
 
 ## 关键命令入口
 
-- A股市场健康检查：`PYTHONPATH=/opt/investment/TradingAgent python3 shared/runtime_test/market_health.py --market ashare --pretty`
-- 运维报告：`PYTHONPATH=/opt/investment/TradingAgent python3 shared/runtime_test/ops_report.py --send-on never --pretty`
-- 失败归档：`PYTHONPATH=/opt/investment/TradingAgent python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>`
+- A股市场健康检查：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/market_health.py --market ashare --pretty`
+- 运维报告：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/ops_report.py --send-on never --pretty`
+- 失败归档：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>`
 
 ## 工作区同步规则
 

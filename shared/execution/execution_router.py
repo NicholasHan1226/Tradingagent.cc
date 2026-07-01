@@ -22,8 +22,8 @@ from typing import Any
 
 from shared.accounting import position_ledger
 
-TRADINGS_ROOT = Path(__file__).resolve().parents[2]
-TRADINGS_ASHARE = TRADINGS_ROOT / "Ashare"
+TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
+TRADINGAGENT_ASHARE = TRADINGAGENT_ROOT / "Ashare"
 ASHARE_TOOLS = Path("/opt/investment/Ashare/tools")
 SHADOW_EXECUTION_LOG = Path(__file__).resolve().parent.parent / "logs" / "shadow" / "shadow_trades.jsonl"
 REAL_AUTO_ORDER_FORBIDDEN = True
@@ -58,7 +58,7 @@ def _ensure_ashare_tools_on_path() -> None:
 
 
 def _ensure_tradings_ashare_on_path() -> None:
-    ashare_dir = str(TRADINGS_ASHARE)
+    ashare_dir = str(TRADINGAGENT_ASHARE)
     if ashare_dir not in sys.path:
         sys.path.insert(0, ashare_dir)
 

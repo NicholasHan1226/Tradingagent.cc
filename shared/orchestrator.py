@@ -1061,7 +1061,7 @@ def run_shadow_loop(
                     deps.send_email,
                     "trading_signal",
                     data,
-                    subject=f"Tradings 影子盘新信号 {symbol} {_date_iso(date)}",
+                    subject=f"tradingagent 影子盘新信号 {symbol} {_date_iso(date)}",
                 ),
                 default={"status": "degraded", "template": "trading_signal"},
             )
@@ -1447,7 +1447,7 @@ def run_sim_loop(
                     deps.send_email,
                     "trade_receipt",
                     data,
-                    subject=f"Tradings 模拟盘成交回执 {symbol} {_date_iso(date)}",
+                    subject=f"tradingagent 模拟盘成交回执 {symbol} {_date_iso(date)}",
                 ),
                 default={"status": "degraded", "template": "trade_receipt"},
                 capital_layer=capital_layer,

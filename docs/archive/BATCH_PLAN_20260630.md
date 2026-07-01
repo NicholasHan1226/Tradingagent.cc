@@ -16,7 +16,7 @@
 | C | 执行桥 | TradingAgent(服务器)生成信号卡/任务 → mini 上**独立 cron 拉取执行**(模拟盘用 a_share_simulated_trade_executor,实盘只发邮件+mini 只读同步账户);**废弃 hermes_bridge SSH 直发** | note+item 11 |
 | D | 多市场代码 | **vendor 实体代码进 TradingAgent 子目录**(不保留 symlink),兄弟仓库归档 | item 9/10 |
 | E | Archive | 建 `/opt/investment/_archive/`,旧系统逐项验证后归档 | item 10 |
-| F | cron | 103 条按三仓库归属拆分,TradingAgent 的迁入 `TradingAgent/deploy/`,旧的停删 | item 7/8 |
+| F | cron | 103 条按三仓库归属拆分,TradingAgent 的迁入 `tradingagent/deploy/`,旧的停删 | item 7/8 |
 | G | 多空 agent 化 | **是**:bull/bear 双 agent+独立记忆/日志+agents.md+固定 JSON+多轮(≥2)+规则护栏(六维均<0.4 时 belief 上限 0.4) | item 1 |
 | H | 2层结构 | **影子层+模拟层**(+实盘层手动);多风格=影子层并行多策略独立 P&L 对比复盘 | item 4/11 |
 
@@ -40,7 +40,7 @@
 
 ## 2. Wave 0 — 确定性 bug 修复 + 盘点(立即可启,全并行)
 
-### 实现类(codex,改远端 /opt/investment/Tradings/)
+### 实现类(codex,改远端 /opt/investment/tradingagent/)
 
 **W0-1 [codex-5.4 medium]** 修 condition_generator + 条件持久化骨架
 - 修 `shared/screening/condition_generator.py:11` `from datetime import datetime` → `from datetime import datetime, timedelta`,line 253 `datetime.timedelta` → `timedelta`
@@ -73,8 +73,8 @@
 - 交付:5 份盘点报告 → 汇总成 `docs/migration_inventory.md`
 
 **W0-6 [kimi]** cron 103 条逐条映射
-- 读 crontab + `TradingAgent/shared/cron_inventory.csv`
-- 每条 cron 标注:归属(TradingAgent/MarketGraph/SharedSignals)+ 对应 TradingAgent 功能 + 频率是否需调整 + 迁移/停删建议
+- 读 crontab + `tradingagent/shared/cron_inventory.csv`
+- 每条 cron 标注:归属(tradingagent/MarketGraph/SharedSignals)+ 对应 TradingAgent 功能 + 频率是否需调整 + 迁移/停删建议
 - 交付:`docs/cron_migration_map.md`
 
 **W0-7 [kimi]** 各市场 strategies/ 现状盘点
@@ -169,7 +169,7 @@
 - 条件监控接 orchestrator(5min);shadow 通道接通
 - 交付:A股影子盘可跑
 
-**W4-2 [codex-5.4]** Crypto 影子盘闭环(vendor 工具进 TradingAgent/Crypto/,接 orchestrator)
+**W4-2 [codex-5.4]** Crypto 影子盘闭环(vendor 工具进 tradingagent/Crypto/,接 orchestrator)
 **W4-3 [codex-5.4]** US 影子盘闭环(同上)
 **W4-4 [codex-5.4]** PM 影子盘闭环(同上)
 **W4-5 [codex-5.5]** 日2次复盘闭环(lunch 11:35 + close 15:30,真数据驱动,3 对比+归因+写回补丁队列)

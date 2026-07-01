@@ -173,14 +173,14 @@ class EmailTriggerTest(unittest.TestCase):
         ):
             first = email_sender.send_email(
                 "user@example.com",
-                "Tradings 交易信号",
+                "tradingagent 交易信号",
                 "first",
                 "<p>first</p>",
                 rate_limit_type="trading_signal",
             )
             second = email_sender.send_email(
                 "user@example.com",
-                "Tradings 交易信号",
+                "tradingagent 交易信号",
                 "second",
                 "<p>second</p>",
                 rate_limit_type="trading_signal",

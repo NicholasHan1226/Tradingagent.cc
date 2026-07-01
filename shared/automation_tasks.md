@@ -312,7 +312,7 @@
 ## 调度方式
 
 当前所有任务通过单一 `marketgraph` 用户 crontab 调度 (位于 `/opt/investment/MarketGraph/deploy/`)。
-拆分后 Tradings 任务将迁移至独立 crontab (`/opt/investment/Tradings/shared/crontab.txt`),
+拆分后 tradingagent 任务将迁移至独立 crontab (`/opt/investment/tradingagent/shared/crontab.txt`),
 统一通过 `env_loader.sh` 获取环境变量。
 
 ## 上游依赖

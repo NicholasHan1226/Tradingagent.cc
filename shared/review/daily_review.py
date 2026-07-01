@@ -33,13 +33,13 @@ from .attribution import attribute, attribute_pct
 from .benchmark import compare_to_benchmark, get_benchmark, record_last_period
 
 REVIEW_DIR = Path(__file__).resolve().parent
-TRADINGS_ROOT = REVIEW_DIR.parent.parent
+TRADINGAGENT_ROOT = REVIEW_DIR.parent.parent
 SHARED_DIR = REVIEW_DIR.parent
 GOALS_PATH = REVIEW_DIR / "goals.yaml"
 DAILY_LOG = REVIEW_DIR / "data" / "daily_reviews.jsonl"
 DIRECTION_HIT_LOG = REVIEW_DIR / "data" / "direction_hit_reviews.jsonl"
 SHADOW_TRADES_LOG = SHARED_DIR / "logs" / "shadow" / "shadow_trades.jsonl"
-FILLED_SIGNALS_DIR = TRADINGS_ROOT / "signals" / "filled"
+FILLED_SIGNALS_DIR = TRADINGAGENT_ROOT / "signals" / "filled"
 
 
 def _now_iso() -> str:
@@ -230,7 +230,7 @@ def _compare_to_goals(metrics: dict[str, Any], stage_goals: dict[str, Any]) -> d
     return {"stage": metrics.get("stage", "stage_1_sim"), "checks": checks, "all_goals_met": all_met}
 
 
-# ---- Tradings data loaders --------------------------------------------------
+# ---- tradingagent data loaders --------------------------------------------------
 
 def _compact_date(value: Any) -> str:
     raw = str(value or "").strip()

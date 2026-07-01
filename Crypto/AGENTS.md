@@ -1,4 +1,4 @@
-# TradingAgent/Crypto
+# tradingagent/Crypto
 
 > **阅读顺序：** [AGENTS.md](../AGENTS.md) → [STATUS.md](../STATUS.md) → 本文件
 
@@ -17,7 +17,7 @@
 ## 工具清单 (TradingAgent tool references)
 
 - 源目录: `/opt/investment/Crypto/tools/` (21 个 .py 工具)
-- TradingAgent 引用: `TradingAgent/Crypto/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
+- TradingAgent 引用: `tradingagent/Crypto/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
 - 关键工具:
   - crypto_workflow.py — Unified Crypto simulated-training workflow
   - crypto_market_data.py — Public market data adapter (Binance API)

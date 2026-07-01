@@ -97,7 +97,7 @@ regime 检测、因果影响引擎、风险平价分配、前向验证。
 
 ## 3. TradingAgent — 交易线
 **地址**: https://github.com/NicholasHan1226/Tradingagent.cc.git
-**本地路径**: /opt/investment/Tradings/
+**本地路径**: /opt/investment/tradingagent/
 
 ### 职责
 交易全闭环。覆盖多个市场, 共享通用模块 + 市场特定逻辑。

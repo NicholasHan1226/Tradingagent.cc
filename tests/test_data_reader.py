@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from shared.data.reader import (  # noqa: E402
     MarketGraphCSVReader,
     SharedSignalsReader,
-    TradingsDataReader,
+    TradingagentDataReader,
 )
 from shared.screening import six_dimension_scorer  # noqa: E402
 
@@ -260,7 +260,7 @@ class TestSharedSignalsReader(unittest.TestCase):
         )
 
     def test_tradings_reader_fail_safe_missing_data(self) -> None:
-        missing_reader = TradingsDataReader(
+        missing_reader = TradingagentDataReader(
             shared=SharedSignalsReader(Path(self.tmp.name) / "missing.sqlite"),
             marketgraph=MarketGraphCSVReader(Path(self.tmp.name) / "missing_marketgraph"),
         )

@@ -1,4 +1,4 @@
-# 风控参数 — Tradings/shared/risk/
+# 风控参数 — tradingagent/shared/risk/
 # 降权不硬拒, 但有硬底线 (single_stock_max 为硬限)。
 
 # 单股最大仓位 (硬限, 超过即拒)

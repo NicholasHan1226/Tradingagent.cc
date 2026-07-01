@@ -2,7 +2,7 @@
 """A-share simulated executor backed by the Mac Mini file bridge.
 
 Production simulated orders must not talk to Tonghuashun UI directly from the
-server-side Tradings process. Instead, this executor writes a pending signal
+server-side tradingagent process. Instead, this executor writes a pending signal
 card for the Mini cron bridge and returns ``pending``. Local tests may enable
 mock mode to return an immediate filled receipt without any UI dependency.
 """
@@ -21,7 +21,7 @@ from shared.execution.sim_executor_registry import register_sim_executor
 from shared.execution.webhook_sender import send_sim_signal_to_mini
 
 
-DEFAULT_SIGNALS_DIR = Path("/opt/investment/Tradings/signals")
+DEFAULT_SIGNALS_DIR = Path("/opt/investment/tradingagent/signals")
 MARKET = "ashare"
 SIM_ACCOUNT = "ashare_sim"
 

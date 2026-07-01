@@ -88,7 +88,7 @@ def _dispatch_escalation_email(alert: Alert) -> dict[str, Any]:
         f"截止时间: {alert.self_heal_deadline}",
         "状态: 自愈超时，需人工介入。",
     ])
-    subject = f"[Tradings告警升级] {alert.alert_type} | {alert.severity}"
+    subject = f"[tradingagent告警升级] {alert.alert_type} | {alert.severity}"
     return email_sender.send_email(
         channel["to"],
         subject,

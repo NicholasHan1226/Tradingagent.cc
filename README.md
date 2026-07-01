@@ -114,7 +114,7 @@ https://github.com/NicholasHan1226/Tradingagent.cc.git
 TradingAgent 每小时生成一次统一运维报告：
 
 ```bash
-PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/ops_report.py --send-on never --pretty
+PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/ops_report.py --send-on never --pretty
 ```
 
 报告文件：
@@ -140,7 +140,7 @@ Mini executor 推送服务器时也会在写入前验证 `receipt_sha256`；校�
 历史失败复盘完成后，可用以下命令从 active 队列归档到 reviewed 区：
 
 ```bash
-PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>
+PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>
 ```
 
 归档会保留 manifest，支持按 `target_path -> source_path` 回滚。active `pending/claimed/running` 非空时工具会拒绝执行。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tradings email sender with multi-provider fallback."""
+"""tradingagent email sender with multi-provider fallback."""
 
 from __future__ import annotations
 
@@ -26,17 +26,17 @@ ALLOWED_ENV_KEYS = {
     "CLOUDFLARE_ACCOUNT_ID",
 }
 DEFAULT_SUBJECTS = {
-    "pre_market_plan": "Tradings 盘前规划",
-    "trading_signal": "Tradings 交易信号",
-    "midday_review": "Tradings 午盘复盘",
-    "closing_plan": "Tradings 尾盘规划",
-    "daily_report": "Tradings 日报",
-    "weekly_report": "Tradings 周报",
-    "trade_receipt": "Tradings 交易回执",
-    "capital_plan": "Tradings 资金规划",
-    "strategy_invalidation": "Tradings 策略失效通知",
-    "emergency_alert": "Tradings 紧急告警",
-    "system_health": "Tradings 系统健康",
+    "pre_market_plan": "tradingagent 盘前规划",
+    "trading_signal": "tradingagent 交易信号",
+    "midday_review": "tradingagent 午盘复盘",
+    "closing_plan": "tradingagent 尾盘规划",
+    "daily_report": "tradingagent 日报",
+    "weekly_report": "tradingagent 周报",
+    "trade_receipt": "tradingagent 交易回执",
+    "capital_plan": "tradingagent 资金规划",
+    "strategy_invalidation": "tradingagent 策略失效通知",
+    "emergency_alert": "tradingagent 紧急告警",
+    "system_health": "tradingagent 系统健康",
 }
 
 

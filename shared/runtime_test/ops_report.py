@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tradings operations report: queues, failures, receipts and PnL."""
+"""tradingagent operations report: queues, failures, receipts and PnL."""
 
 from __future__ import annotations
 
@@ -324,7 +324,7 @@ def _email_text(report: dict[str, Any]) -> tuple[str, str, str]:
     shadow_totals = (report.get("shadow_queue_summary") or {}).get("totals") or {}
     failures = report.get("failure_summary") or {}
     receipts = report.get("receipt_integrity") or {}
-    subject = f"Tradings 系统异常复盘 {status} {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    subject = f"tradingagent 系统异常复盘 {status} {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     lines = [
         f"状态: {status}",
         f"生成时间: {report.get('generated_at')}",

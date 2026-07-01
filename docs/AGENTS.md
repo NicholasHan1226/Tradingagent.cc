@@ -18,7 +18,7 @@
 | [repo_structure.md](repo_structure.md) | 仓库结构说明 |
 | [shadow_market_configs.md](shadow_market_configs.md) | 影子盘市场配置 |
 | [../shared/automation_tasks.md](../shared/automation_tasks.md) | Cron 自动化任务计划（36 任务） |
-| [../shared/cron_migration.md](../shared/cron_migration.md) | Cron 迁移记录（含 TradingAgent/MarketGraph 任务归属） |
+| [../shared/cron_migration.md](../shared/cron_migration.md) | Cron 迁移记录（含 tradingagent/MarketGraph 任务归属） |
 | [../shared/orchestrator_design.md](../shared/orchestrator_design.md) | 调度编排器设计 |
 
 ### 已归档（历史，仅供参考）

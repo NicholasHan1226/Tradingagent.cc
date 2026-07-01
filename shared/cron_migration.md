@@ -3,7 +3,7 @@
 > **⚠️ 本文件是迁移记录。** 状态（"未安装 crontab, 未停远端旧任务"）可能已过时。当前权威状态以 [../STATUS.md](../STATUS.md) 和服务器 crontab 为准。
 
 更新时间: 2026-06-30  
-适用目录: `TradingAgent/shared/`  
+适用目录: `tradingagent/shared/`  
 状态: 本次仅生成迁移文件, 未安装 crontab, 未停远端旧任务
 
 ## 结论

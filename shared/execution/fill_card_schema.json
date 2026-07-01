@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tradingagent.cc/schemas/fill_card_schema.json",
-  "title": "Tradings Fill Card",
+  "title": "tradingagent Fill Card",
   "type": "object",
   "additionalProperties": true,
   "required": [

@@ -4,7 +4,7 @@ set -euo pipefail
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARED_DIR="$(cd "${WRAPPER_DIR}/.." && pwd)"
 
-if [[ -z "${TRADINGS_ENV_LOADER_READY:-}" ]]; then
+if [[ -z "${TRADINGAGENT_ENV_LOADER_READY:-}" ]]; then
     # shellcheck disable=SC1091
     source "${SHARED_DIR}/env_loader.sh"
 fi

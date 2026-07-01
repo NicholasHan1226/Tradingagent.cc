@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Prediction Markets adapter for the Tradings shadow loop."""
+"""Prediction Markets adapter for the tradingagent shadow loop."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from shared.data.reader import TradingsDataReader
+from shared.data.reader import TradingagentDataReader
 from shared.markets.base import MarketAdapter
 
 from PM import sim_executor as _pm_sim_executor
@@ -16,7 +16,7 @@ class PMAdapter(MarketAdapter):
     """MarketAdapter implementation for probability-market shadow training."""
 
     def __init__(self, reader: Any | None = None) -> None:
-        self.reader = reader or TradingsDataReader()
+        self.reader = reader or TradingagentDataReader()
 
     def get_market(self) -> str:
         return "pm"

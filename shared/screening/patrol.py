@@ -13,9 +13,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from shared.data.reader import TradingsDataReader
+from shared.data.reader import TradingagentDataReader
 
-_DATA_READER: TradingsDataReader | None = None
+_DATA_READER: TradingagentDataReader | None = None
 
 # 巡检阈值
 _THRESHOLDS: dict[str, float] = {
@@ -49,7 +49,7 @@ def _get_data_reader(reader: Any | None = None) -> Any:
         return reader
     global _DATA_READER
     if _DATA_READER is None:
-        _DATA_READER = TradingsDataReader()
+        _DATA_READER = TradingagentDataReader()
     return _DATA_READER
 
 

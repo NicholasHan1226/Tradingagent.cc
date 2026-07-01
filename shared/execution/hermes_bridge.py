@@ -20,8 +20,8 @@ from typing import Any
 from .signal_state_machine import SignalStateConflict, SignalStateMachine
 from .webhook_sender import send_sim_signal_to_mini
 
-TRADINGS_ROOT = Path("/opt/investment/Tradings")
-SIGNALS_DIR = TRADINGS_ROOT / "signals"
+TRADINGAGENT_ROOT = Path("/opt/investment/tradingagent")
+SIGNALS_DIR = TRADINGAGENT_ROOT / "signals"
 PENDING_DIR = SIGNALS_DIR / "pending"
 CLAIMED_DIR = SIGNALS_DIR / "claimed"
 RUNNING_DIR = SIGNALS_DIR / "running"

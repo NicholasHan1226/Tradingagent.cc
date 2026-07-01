@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Iterable
 
-from shared.data.reader import TradingsDataReader
+from shared.data.reader import TradingagentDataReader
 
 
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -189,7 +189,7 @@ def score_market(
 ) -> dict[str, Any]:
     """Return PM-specific 0-1 scores without using six-dimension scoring."""
 
-    reader = data_reader or TradingsDataReader()
+    reader = data_reader or TradingagentDataReader()
     market = _market_row(reader, market_id)
     price = _latest_price_row(reader, market_id, date)
     dimensions = {

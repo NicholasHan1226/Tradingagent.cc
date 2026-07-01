@@ -68,7 +68,7 @@
 | `venv/bin/python3 .../tools/{script}.py --apply --json` (直接 Python) | 2 | 18/21(gate_review), 32(self_heal 夜), 33(daily_brief) |
 | `bash job_alert.sh` | 1 | 35 |
 
-**重要发现**: 任务 #18(gate_review 夜)、#21(gate_review 日)、#32(self_heal 夜)、#33(daily_brief 晨) 4 个任务当前使用**直接 Python 调用**而非 wrapper 脚本。迁移到 Tradings 后需要为这些任务创建对应的 wrapper 脚本。
+**重要发现**: 任务 #18(gate_review 夜)、#21(gate_review 日)、#32(self_heal 夜)、#33(daily_brief 晨) 4 个任务当前使用**直接 Python 调用**而非 wrapper 脚本。迁移到 tradingagent 后需要为这些任务创建对应的 wrapper 脚本。
 
 ---
 
@@ -77,7 +77,7 @@
 ### 2.1 实际 crontab 总览
 
 实际 crontab 共 **102 条可执行 cron** (排除注释行和 `BASH_ENV=`/`SHELL=` 环境变量行):
-- **36 条** → 映射到 Tradings 36 任务计划
+- **36 条** → 映射到 tradingagent 36 任务计划
 - **66 条** → 36 任务计划外, 需归属到 MarketGraph / SharedSignals / 停删
 
 ### 2.2 归属 MarketGraph (保留) — 25 条
@@ -162,7 +162,7 @@
 |-----------|------|------|------|
 | 124 | `30 21 * * 0` | `weight_adjuster.py --backtest-ok` | 权重调整器, 未在 101 旧清单中 |
 
-**归属建议**: MarketGraph (分析层, 权重/策略相关, 非 Tradings 复盘范围)
+**归属建议**: MarketGraph (分析层, 权重/策略相关, 非 tradingagent 复盘范围)
 
 ---
 
@@ -213,16 +213,16 @@
 
 #### 3.2.4 与旧 MarketGraph 代理的频率比较
 
-| MarketGraph agent | 频率 | 对比 Tradings |
+| MarketGraph agent | 频率 | 对比 tradingagent |
 |-------------------|------|-------------|
 | agent_repair | */15 | = self_heal (*/15) |
 | agent_radar | */15 | 无直接对应 |
-| agent_technical | */2 | A股执行 (*/5) — Tradings 更稀 |
+| agent_technical | */2 | A股执行 (*/5) — tradingagent 更稀 |
 | agent_market_depth | */30 (仅盘中) | trading_signals */30 (仅交易日) — 一致 |
 | agent_reaction | hourly | PM optimize / cross_market_review — 一致 |
 | marketgraph_signal_to_strategy | */5 | 无直接对应 |
 
-总体: Tradings 频率设计**合理**, 没有明显过频/过稀的问题。`*/30` PM 集群是唯一需要关注的优化点。
+总体: tradingagent 频率设计**合理**, 没有明显过频/过稀的问题。`*/30` PM 集群是唯一需要关注的优化点。
 
 ---
 
@@ -232,7 +232,7 @@
 
 | 仓库 | 实际 crontab 条目 | 占比 |
 |------|------------------|------|
-| Tradings (迁移) | 36 | 35% |
+| tradingagent (迁移) | 36 | 35% |
 | MarketGraph (保留) | 25 | 25% |
 | SharedSignals (移动) | 40 | 39% |
 | 未定 (weight_adjuster) | 1 | 1% |
@@ -242,17 +242,17 @@
 
 | 仓库 | 职责 | 脚本路径前缀 | 独立 crontab |
 |------|------|-------------|-------------|
-| **Tradings** | 信号生成、模拟执行、风控、复盘、通知 | `/opt/investment/Tradings/` | `marketgraph` 用户新增独立 crontab |
+| **tradingagent** | 信号生成、模拟执行、风控、复盘、通知 | `/opt/investment/tradingagent/` | `marketgraph` 用户新增独立 crontab |
 | **MarketGraph** | 跨市场图谱、agent 代理、regime/calendar、dashboard/API | `/opt/investment/MarketGraph/deploy/` | `marketgraph` 用户 crontab (精简后) |
 | **SharedSignals** | 数据采集 (tushare/RSS/crypto/PM)、缓存预热、DB 同步/维护、健康监控 | `/opt/investment/SharedSignals/` | `marketgraph` 用户 crontab (共享层) 或独立用户 |
 
 ### 4.3 归属边界案例
 
-- `job_weekly_review.sh` (#22): Cron inventory 标 `move`, 属于 Tradings 复盘层 → **Tradings**
-- `job_daily_brief.sh` (#19/#20): Cron inventory 标 `move`, 同一脚本双 cron → **Tradings** (需拆为两个独立脚本或 wrapper 参数化)
-- `gate_review.py` (#18/#21): 当前跑在 MarketGraph 工具目录, 但逻辑是 Tradings 门禁审查 → **Tradings** (需创建 wrapper)
-- `self_heal.py` (#32): 同上 → **Tradings**
-- `daily_brief.py` (#33): 同上 → **Tradings**
+- `job_weekly_review.sh` (#22): Cron inventory 标 `move`, 属于 tradingagent 复盘层 → **tradingagent**
+- `job_daily_brief.sh` (#19/#20): Cron inventory 标 `move`, 同一脚本双 cron → **tradingagent** (需拆为两个独立脚本或 wrapper 参数化)
+- `gate_review.py` (#18/#21): 当前跑在 MarketGraph 工具目录, 但逻辑是 tradingagent 门禁审查 → **tradingagent** (需创建 wrapper)
+- `self_heal.py` (#32): 同上 → **tradingagent**
+- `daily_brief.py` (#33): 同上 → **tradingagent**
 - `weight_adjuster.py` (行 124): 未在旧清单, 权重策略相关 → **MarketGraph**
 - `marketgraph_signal_to_strategy.py` (行 120): Signal→Strategy 桥 → **MarketGraph**
 - `_dashboard.py`, `_api_server.py`, `_auto_tune.py`: 基础设施 → **MarketGraph**
@@ -261,9 +261,9 @@
 
 ## 5. 迁移与停删清单
 
-### 5.1 迁移到 Tradings 的 cron (36 条)
+### 5.1 迁移到 tradingagent 的 cron (36 条)
 
-迁移到独立 crontab, 路径从 `/opt/investment/MarketGraph/deploy/` → `/opt/investment/Tradings/shared/` (wrapper 目录) 或 `/opt/investment/Tradings/{module}/`.
+迁移到独立 crontab, 路径从 `/opt/investment/MarketGraph/deploy/` → `/opt/investment/tradingagent/shared/` (wrapper 目录) 或 `/opt/investment/tradingagent/{module}/`.
 
 需要通过 `env_loader.sh` 获取环境变量, 不再依赖 `BASH_ENV=/opt/investment/MarketGraph/deploy/marketgraph_cron_loader.sh`.
 
@@ -271,39 +271,39 @@
 
 当前直接用 `python3` 调用, 迁移后需 wrapper:
 
-| # | 任务 | 当前实际调用 | 建议 Tradings wrapper |
+| # | 任务 | 当前实际调用 | 建议 tradingagent wrapper |
 |---|------|------------|---------------------|
-| 18/21 | gate_review (夜/日) | `venv/bin/python3 /opt/.../tools/gate_review.py --apply --json` | `Tradings/shared/wrappers/gate_review_night.sh` / `gate_review_intraday.sh` |
-| 32 | self_heal (夜) | `venv/bin/python3 /opt/.../tools/self_heal.py --apply --json` | `Tradings/shared/wrappers/job_self_heal_deep.sh` |
-| 33 | daily_brief (晨) | `venv/bin/python3 /opt/.../tools/daily_brief.py --apply --json` | `Tradings/shared/wrappers/job_daily_brief_morning.sh` |
+| 18/21 | gate_review (夜/日) | `venv/bin/python3 /opt/.../tools/gate_review.py --apply --json` | `tradingagent/shared/wrappers/gate_review_night.sh` / `gate_review_intraday.sh` |
+| 32 | self_heal (夜) | `venv/bin/python3 /opt/.../tools/self_heal.py --apply --json` | `tradingagent/shared/wrappers/job_self_heal_deep.sh` |
+| 33 | daily_brief (晨) | `venv/bin/python3 /opt/.../tools/daily_brief.py --apply --json` | `tradingagent/shared/wrappers/job_daily_brief_morning.sh` |
 
 Wrapper 模板结构:
 ```bash
 #!/bin/bash
-source /opt/investment/Tradings/shared/env_loader.sh
-cd /opt/investment/Tradings
-python3 -m Tradings.{module} --apply --json >> /opt/investment/TradingsRuntime/logs/{task}.log 2>&1
+source /opt/investment/tradingagent/shared/env_loader.sh
+cd /opt/investment/tradingagent
+python3 -m tradingagent.{module} --apply --json >> /opt/investment/tradingagentRuntime/logs/{task}.log 2>&1
 ```
 
 #### 5.1.2 需拆分为独立脚本的任务 (1 个)
 
 `job_daily_brief.sh` (#19 午 + #20 晚) 同一脚本两次调用, 迁移后建议:
-- `Tradings/shared/wrappers/job_daily_brief_midday.sh` — #19 午间简报 (32 16 * * 1-5)
-- `Tradings/shared/wrappers/job_daily_brief_evening.sh` — #20 晚间简报 (0 22 * * 1-5)
+- `tradingagent/shared/wrappers/job_daily_brief_midday.sh` — #19 午间简报 (32 16 * * 1-5)
+- `tradingagent/shared/wrappers/job_daily_brief_evening.sh` — #20 晚间简报 (0 22 * * 1-5)
 
-#### 5.1.3 迁移后 Tradings 独立 crontab 示例
+#### 5.1.3 迁移后 tradingagent 独立 crontab 示例
 
 ```cron
-# Tradings crontab — 独立于 MarketGraph
+# tradingagent crontab — 独立于 MarketGraph
 # 环境加载
-TRADINGS_ENV=/opt/investment/Tradings/shared/env_loader.sh
+TRADINGAGENT_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
 # Trading Signals & Execution (15)
-*/30 * * * 1-5              source $TRADINGS_ENV && /opt/investment/Tradings/shared/wrappers/job_trading_signals.sh
-25 9 * * 1-5                source $TRADINGS_ENV && /opt/investment/Tradings/shared/wrappers/job_premarket_signals.sh
-*/5 9-15 * * 1-5            source $TRADINGS_ENV && /opt/investment/Tradings/Ashare/wrappers/job_ashare_sim_exec.sh
-15 9 * * 1-5                source $TRADINGS_ENV && /opt/investment/Tradings/US/wrappers/job_us_premarket.sh
-*/30 10-14,22-23,0-4 * * 1-5 source $TRADINGS_ENV && /opt/investment/Tradings/US/wrappers/job_us_hourly.sh
+*/30 * * * 1-5              source $TRADINGAGENT_ENV && /opt/investment/tradingagent/shared/wrappers/job_trading_signals.sh
+25 9 * * 1-5                source $TRADINGAGENT_ENV && /opt/investment/tradingagent/shared/wrappers/job_premarket_signals.sh
+*/5 9-15 * * 1-5            source $TRADINGAGENT_ENV && /opt/investment/tradingagent/Ashare/wrappers/job_ashare_sim_exec.sh
+15 9 * * 1-5                source $TRADINGAGENT_ENV && /opt/investment/tradingagent/US/wrappers/job_us_premarket.sh
+*/30 10-14,22-23,0-4 * * 1-5 source $TRADINGAGENT_ENV && /opt/investment/tradingagent/US/wrappers/job_us_hourly.sh
 # ... (其余 30 条)
 ```
 
@@ -356,7 +356,7 @@ TRADINGS_ENV=/opt/investment/Tradings/shared/env_loader.sh
 
 ### 5.4 迁移后应停删的旧 cron
 
-在 Tradings 独立 crontab 激活后, 应从 MarketGraph crontab 中**删除**以下 36 条:
+在 tradingagent 独立 crontab 激活后, 应从 MarketGraph crontab 中**删除**以下 36 条:
 
 ```
 #19 (午)  32 16 * * 1-5    /opt/.../deploy/job_daily_brief.sh
@@ -405,18 +405,18 @@ TRADINGS_ENV=/opt/investment/Tradings/shared/env_loader.sh
 
 **问题**: 所有 103 条实际 cron 依赖 `BASH_ENV=/opt/investment/MarketGraph/deploy/marketgraph_cron_loader.sh` (crontab 第 1 行)。
 
-**影响**: Tradings 独立 crontab 后不再共享此 loader。36 个任务需要各自通过 `env_loader.sh` 或 wrapper 内 `source` 自行加载环境变量。**缺失任何 PATH/PYTHONPATH/API_KEY 都会导致静默失败**。
+**影响**: tradingagent 独立 crontab 后不再共享此 loader。36 个任务需要各自通过 `env_loader.sh` 或 wrapper 内 `source` 自行加载环境变量。**缺失任何 PATH/PYTHONPATH/API_KEY 都会导致静默失败**。
 
 **缓解**:
-- 每个 wrapper 脚本统一 `source /opt/investment/Tradings/shared/env_loader.sh`
+- 每个 wrapper 脚本统一 `source /opt/investment/tradingagent/shared/env_loader.sh`
 - 迁移前在 staging 环境逐条 dry-run 验证
-- 对比 `marketgraph_cron_loader.sh` 和 Tradings `env_loader.sh` 差异
+- 对比 `marketgraph_cron_loader.sh` 和 tradingagent `env_loader.sh` 差异
 
 ### 6.2 4 个直接 Python 调用需 wrapper 化 (中)
 
 任务 #18, #21, #32, #33 当前直接调用 Python 脚本。迁移需要创建 wrapper 脚本并确保:
 - Python 路径正确 (`/opt/marketgraph/venv/bin/python3` → 是否需要独立 virtualenv?)
-- 日志路径从 MarketGraphRuntime 改为 TradingsRuntime
+- 日志路径从 MarketGraphRuntime 改为 tradingagentRuntime
 - 与 MarketGraph 工具目录的代码引用关系 (gate_review.py 内可能 import MarketGraph 模块)
 
 ### 6.3 job_daily_brief.sh 双 cron 拆分风险 (中)
@@ -447,14 +447,14 @@ TRADINGS_ENV=/opt/investment/Tradings/shared/env_loader.sh
 
 ### 6.7 迁移顺序依赖 (高)
 
-Tradings 的 36 个任务依赖 SharedSignals 的数据采集 (Tushare, RSS, Crypto, PM) 和 MarketGraph 的 regime/event_impact。迁移时必须确保:
-1. SharedSignals 的数据采集 cron 先于 Tradings cron 运行
-2. MarketGraph 的 regime 刷新 (job_regime.sh, 15 9) 先于 Tradings 的盘前信号 (job_premarket_signals, 25 9)
+tradingagent 的 36 个任务依赖 SharedSignals 的数据采集 (Tushare, RSS, Crypto, PM) 和 MarketGraph 的 regime/event_impact。迁移时必须确保:
+1. SharedSignals 的数据采集 cron 先于 tradingagent cron 运行
+2. MarketGraph 的 regime 刷新 (job_regime.sh, 15 9) 先于 tradingagent 的盘前信号 (job_premarket_signals, 25 9)
 3. 迁移窗口选在周末, 确保无盘中中断
 
 ### 6.8 回滚风险 (中)
 
-旧 MarketGraph crontab 被精简后, 如果 Tradings 独立 crontab 出现问题:
+旧 MarketGraph crontab 被精简后, 如果 tradingagent 独立 crontab 出现问题:
 - 已删除的 36 条旧 cron 需要恢复
 - 或临时回退到 MarketGraph crontab 的旧条目
 

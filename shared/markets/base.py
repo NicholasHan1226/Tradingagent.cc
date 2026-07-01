@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Market adapter contract for Tradings orchestrator."""
+"""Market adapter contract for tradingagent orchestrator."""
 
 from __future__ import annotations
 
