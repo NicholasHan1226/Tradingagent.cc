@@ -121,3 +121,12 @@ PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/ops_report.py --
 - `shared/review/ops/tradings_ops_history.jsonl`
 
 覆盖范围：执行队列、影子队列、失败原因聚合、Mini/Hermes 回执完整性、服务器本地模拟账本和影子盘 PnL 摘要。系统邮件只在 `overall_status=fail` 时发送到 `soc@coze.email`；`warn` 仅记录在报告里。
+
+### 回执指纹口径
+
+- `payload_sha256`: Mini receiver 收到的原始任务包指纹。
+- `receipt_sha256` / `checksum`: Mini executor 生成的回执自身指纹。
+- `payload_linked`: 已带任务包指纹的回执数量。
+- `signed`: 已带有效回执自身指纹的回执数量。
+
+旧回执没有这些字段时会显示为 `unsigned`，但不等于执行失败或回执被篡改。

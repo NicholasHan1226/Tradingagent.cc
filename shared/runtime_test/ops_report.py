@@ -19,6 +19,7 @@ LATEST = OUT_DIR / "tradings_ops_latest.json"
 HISTORY = OUT_DIR / "tradings_ops_history.jsonl"
 MARKETS = ("ashare", "pm", "us", "crypto")
 CHECKSUM_KEYS = {"payload_sha256", "receipt_sha256", "checksum", "sha256"}
+RECEIPT_CHECKSUM_KEYS = ("receipt_sha256", "checksum", "sha256")
 
 
 def now_iso() -> str:
@@ -187,14 +188,17 @@ def receipt_integrity(paths: list[Path] | None = None) -> dict[str, Any]:
         ROOT.parent / "MarketGraph" / "outputs" / "sim_execution_receipts.jsonl",
         SIGNALS / "sim_execution_receipts.jsonl",
     ]
-    total = signed = unsigned = invalid = 0
+    total = signed = unsigned = invalid = payload_linked = 0
     by_path: list[dict[str, Any]] = []
     for path in paths:
         rows = read_jsonl(path)
-        path_invalid = path_signed = path_unsigned = 0
+        path_invalid = path_signed = path_unsigned = path_payload_linked = 0
         for row in rows:
             total += 1
-            embedded = next((str(row.get(k) or "") for k in CHECKSUM_KEYS if row.get(k)), "")
+            if row.get("payload_sha256"):
+                payload_linked += 1
+                path_payload_linked += 1
+            embedded = next((str(row.get(k) or "") for k in RECEIPT_CHECKSUM_KEYS if row.get(k)), "")
             if not embedded:
                 unsigned += 1
                 path_unsigned += 1
@@ -211,8 +215,9 @@ def receipt_integrity(paths: list[Path] | None = None) -> dict[str, Any]:
             "signed": path_signed,
             "unsigned": path_unsigned,
             "invalid": path_invalid,
+            "payload_linked": path_payload_linked,
         })
-    return {"total": total, "signed": signed, "unsigned": unsigned, "invalid": invalid, "by_path": by_path}
+    return {"total": total, "signed": signed, "unsigned": unsigned, "invalid": invalid, "payload_linked": payload_linked, "by_path": by_path}
 
 
 def pnl_summary() -> dict[str, Any]:

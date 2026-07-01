@@ -102,3 +102,9 @@
 - Webhook 发送结果新增 `payload_sha256`，用于后续和 Mini/Hermes 回执指纹对账；旧回执没有签名时只能标记为 `unsigned`，不能当作篡改或失败。
 - 日报/周报模板新增可选“运行状态”段，展示执行队列、影子队列、回执校验和失败分类；模板缺少运维字段时保持兼容。
 - 当前已知缺陷边界：服务器侧已经能识别 unsigned/invalid receipt，但 Mini/Hermes 回执本身尚未写入 `payload_sha256`/`receipt_sha256`，所以完整端到端指纹闭环需要在 mini 执行器中继续补齐。
+
+## 2026-07-01 Mini/Hermes 回执指纹闭环
+- `payload_sha256` 表示 Mini receiver 收到的原始 POST body 指纹，用于对齐服务器下发任务与 mini 本地信号；它不是回执自身签名。
+- `receipt_sha256` / `checksum` 表示回执自身完整性签名，计算时必须排除 `payload_sha256`、`receipt_sha256`、`checksum`、`sha256` 等 checksum 字段。
+- 服务器 `ops_report.receipt_integrity` 只用 `receipt_sha256`/`checksum`/`sha256` 判断 signed/invalid，同时单独统计 `payload_linked`；不能把 `payload_sha256` 当作回执 signed。
+- 2026-07-01 23:04 CST 已在 Mac mini `~/.hermes/scripts/sim-signal-receiver.py` 写入 payload hash，在 `~/.hermes/scripts/sim-signal-executor.py` 写入 receipt hash，并重启 `com.nicholashan.sim-signal-receiver` 与 `com.nicholashan.sim-signal-executor`。备份文件后缀为 `20260701_230427_*_hash`。

@@ -87,9 +87,9 @@ class OpsReportTest(unittest.TestCase):
     def test_receipt_integrity_counts_signed_unsigned_and_invalid(self) -> None:
         path = self.root / "receipts.jsonl"
         signed = {"order_id": "1", "status": "filled"}
-        signed["payload_sha256"] = ops_report.payload_sha256(signed, drop_checksums=True)
-        invalid = {"order_id": "2", "status": "filled", "payload_sha256": "bad"}
-        unsigned = {"order_id": "3", "status": "failed"}
+        signed["receipt_sha256"] = ops_report.payload_sha256(signed, drop_checksums=True)
+        invalid = {"order_id": "2", "status": "filled", "receipt_sha256": "bad"}
+        unsigned = {"order_id": "3", "status": "failed", "payload_sha256": "source-payload"}
         path.write_text("\n".join(json.dumps(x) for x in [signed, invalid, unsigned]) + "\n", encoding="utf-8")
 
         report = ops_report.receipt_integrity([path])
@@ -98,6 +98,7 @@ class OpsReportTest(unittest.TestCase):
         self.assertEqual(report["signed"], 1)
         self.assertEqual(report["invalid"], 1)
         self.assertEqual(report["unsigned"], 1)
+        self.assertEqual(report["payload_linked"], 1)
 
     def test_email_templates_render_optional_ops_section(self) -> None:
         ops = {
