@@ -220,6 +220,27 @@ def receipt_integrity(paths: list[Path] | None = None) -> dict[str, Any]:
     return {"total": total, "signed": signed, "unsigned": unsigned, "invalid": invalid, "payload_linked": payload_linked, "by_path": by_path}
 
 
+
+def reviewed_summary() -> dict[str, Any]:
+    root = SIGNALS / "reviewed"
+    batches: list[dict[str, Any]] = []
+    totals = {"failed": 0, "expired": 0}
+    if not root.exists():
+        return {"batch_count": 0, "totals": totals, "latest_batches": []}
+    for batch in sorted([p for p in root.iterdir() if p.is_dir()], reverse=True):
+        counts = {"failed": len(list((batch / "failed").glob("*.json"))), "expired": len(list((batch / "expired").glob("*.json")))}
+        for key, value in counts.items():
+            totals[key] = totals.get(key, 0) + value
+        manifest = read_json(batch / "manifest.json")
+        batches.append({
+            "batch_id": batch.name,
+            "record_count": manifest.get("record_count", sum(counts.values())),
+            "reason": manifest.get("reason", ""),
+            "counts": counts,
+            "generated_at": manifest.get("generated_at", ""),
+        })
+    return {"batch_count": len(batches), "totals": totals, "latest_batches": batches[:5]}
+
 def pnl_summary() -> dict[str, Any]:
     local: dict[str, Any] = {}
     try:
@@ -254,6 +275,7 @@ def build_ops_report() -> dict[str, Any]:
     failures = failure_review()
     receipts = receipt_integrity()
     pnl = pnl_summary()
+    reviewed = reviewed_summary()
     status = overall_status(queue, failures, receipts)
     return {
         "generated_at": now_iso(),
@@ -264,6 +286,7 @@ def build_ops_report() -> dict[str, Any]:
         "failure_summary": failures,
         "receipt_integrity": receipts,
         "pnl_summary": pnl,
+        "reviewed_summary": reviewed,
         "recommendations": recommendations(status, queue, failures, receipts),
     }
 

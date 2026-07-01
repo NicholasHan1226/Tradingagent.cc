@@ -132,3 +132,13 @@ PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/ops_report.py --
 旧回执没有这些字段时会显示为 `unsigned`，但不等于执行失败或回执被篡改。
 
 Mini executor 推送服务器时也会在写入前验证 `receipt_sha256`；校验失败会拒写。历史无签名回执仍兼容读取，并在运维报告中归类为 `unsigned`。
+
+### 已复盘失败归档
+
+历史失败复盘完成后，可用以下命令从 active 队列归档到 reviewed 区：
+
+```bash
+PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>
+```
+
+归档会保留 manifest，支持按 `target_path -> source_path` 回滚。active `pending/claimed/running` 非空时工具会拒绝执行。

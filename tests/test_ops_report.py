@@ -84,6 +84,20 @@ class OpsReportTest(unittest.TestCase):
         self.assertEqual(review["by_category"]["expired"], 1)
         self.assertEqual(review["by_market"]["ashare"]["code_unsupported"], 1)
 
+    def test_reviewed_summary_counts_archived_batches(self) -> None:
+        batch = self.signals / "reviewed" / "BATCH1"
+        (batch / "failed").mkdir(parents=True)
+        (batch / "expired").mkdir(parents=True)
+        (batch / "failed" / "f.json").write_text("{}", encoding="utf-8")
+        (batch / "expired" / "e.json").write_text("{}", encoding="utf-8")
+        (batch / "manifest.json").write_text(json.dumps({"record_count": 2, "reason": "unit"}), encoding="utf-8")
+
+        summary = ops_report.reviewed_summary()
+
+        self.assertEqual(summary["batch_count"], 1)
+        self.assertEqual(summary["totals"], {"failed": 1, "expired": 1})
+        self.assertEqual(summary["latest_batches"][0]["reason"], "unit")
+
     def test_receipt_integrity_counts_signed_unsigned_and_invalid(self) -> None:
         path = self.root / "receipts.jsonl"
         signed = {"order_id": "1", "status": "filled"}
