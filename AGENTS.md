@@ -8,7 +8,7 @@
 
 ## Projects 工作区同步补充
 
-本仓库位于 `/Users/nicholashan/Projects/TradingAgent` 时，按 Projects 工作区统一同步规则执行：
+本仓库位于 `/Users/nicholashan/Projects/Finance/TradingAgent` 时，按 Projects 工作区统一同步规则执行：
 
 - 仓库地址、remote 名称和默认分支以本仓库内 `git remote -v`、`git branch --show-current` 和项目文档为准，不从其它项目继承。
 - 开发前检查 `git status -sb`、`git remote -v`、当前分支和是否落后远端；工作树不干净时先判断改动来源，不得覆盖并发 agent、cron、桌面自动化或 Nicholas 的改动。
