@@ -85,7 +85,7 @@ class OpsReportTest(unittest.TestCase):
         self.assertEqual(review["by_market"]["ashare"]["code_unsupported"], 1)
 
     def test_reviewed_summary_counts_archived_batches(self) -> None:
-        batch = self.signals / "reviewed" / "BATCH1"
+        batch = self.root / "signals_archive" / "reviewed" / "BATCH1"
         (batch / "failed").mkdir(parents=True)
         (batch / "expired").mkdir(parents=True)
         (batch / "failed" / "f.json").write_text("{}", encoding="utf-8")

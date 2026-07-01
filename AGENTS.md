@@ -116,5 +116,5 @@
 ## 2026-07-01 已复盘失败归档
 - 已复盘的历史 `signals/failed` / `signals/expired` 不能长期留在 active 队列，否则 `ops_report` 会持续 warn 并掩盖新问题。
 - 归档入口：`PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>`；执行前会拒绝 active `pending/claimed/running` 非空的情况。
-- 归档会把文件移动到 `signals/reviewed/<batch_id>/{failed,expired}/`，并写 `signals/reviewed/<batch_id>/manifest.json` 与 `shared/review/ops/reviewed_signal_archive_<batch_id>.json`；回退按 manifest 的 `target_path -> source_path` 移回。
+- 归档会把文件移动到 `signals_archive/reviewed/<batch_id>/{failed,expired}/`，并写 `signals_archive/reviewed/<batch_id>/manifest.json` 与 `shared/review/ops/reviewed_signal_archive_<batch_id>.json`；回退按 manifest 的 `target_path -> source_path` 移回。
 - 2026-07-01 23:52 CST 已归档 A股模拟盘假阳性确认 / halt 期间过期事故链路：22 failed + 6 expired，批次 `reviewed_ashare_sim_20260701_20260701T155230Z`；归档后 `job_ops_report` 验证 `overall_status=pass`。

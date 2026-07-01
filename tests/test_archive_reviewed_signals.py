@@ -44,9 +44,9 @@ class ArchiveReviewedSignalsTest(unittest.TestCase):
         self.assertEqual(result["record_count"], 2)
         self.assertFalse((self.signals / "failed" / "f.json").exists())
         self.assertFalse((self.signals / "expired" / "e.json").exists())
-        self.assertTrue((self.signals / "reviewed" / "BATCH" / "failed" / "f.json").exists())
-        self.assertTrue((self.signals / "reviewed" / "BATCH" / "expired" / "e.json").exists())
-        self.assertTrue((self.signals / "reviewed" / "BATCH" / "manifest.json").exists())
+        self.assertTrue((self.root / "signals_archive" / "reviewed" / "BATCH" / "failed" / "f.json").exists())
+        self.assertTrue((self.root / "signals_archive" / "reviewed" / "BATCH" / "expired" / "e.json").exists())
+        self.assertTrue((self.root / "signals_archive" / "reviewed" / "BATCH" / "manifest.json").exists())
 
     def test_archive_refuses_when_active_queue_exists(self) -> None:
         (self.signals / "pending" / "p.json").write_text("{}", encoding="utf-8")

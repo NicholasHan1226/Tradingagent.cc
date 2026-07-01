@@ -51,7 +51,7 @@ def build_manifest(batch_id: str, reason: str, files: list[tuple[str, Path]]) ->
         records.append({
             "source_state": state,
             "source_path": str(path.relative_to(ROOT)),
-            "target_path": str((SIGNALS / "reviewed" / batch_id / state / path.name).relative_to(ROOT)),
+            "target_path": str((ROOT / "signals_archive" / "reviewed" / batch_id / state / path.name).relative_to(ROOT)),
             "order_id": card.get("order_id") or card.get("execution_id") or receipt.get("execution_id") or path.stem,
             "code": card.get("ts_code") or card.get("code") or card.get("symbol") or receipt.get("code"),
             "category": ops_report.classify_failure({**card, "_path": str(path.relative_to(ROOT))}),
@@ -90,7 +90,7 @@ def archive_reviewed(batch_id: str, reason: str, apply: bool) -> dict[str, Any]:
     review_path = OPS_REVIEW / f"reviewed_signal_archive_{batch_id}.json"
     review_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if apply:
-        reviewed_manifest = SIGNALS / "reviewed" / batch_id / "manifest.json"
+        reviewed_manifest = ROOT / "signals_archive" / "reviewed" / batch_id / "manifest.json"
         reviewed_manifest.parent.mkdir(parents=True, exist_ok=True)
         reviewed_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     manifest["manifest_path"] = str(review_path)

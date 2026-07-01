@@ -222,7 +222,7 @@ def receipt_integrity(paths: list[Path] | None = None) -> dict[str, Any]:
 
 
 def reviewed_summary() -> dict[str, Any]:
-    root = SIGNALS / "reviewed"
+    root = ROOT / "signals_archive" / "reviewed"
     batches: list[dict[str, Any]] = []
     totals = {"failed": 0, "expired": 0}
     if not root.exists():
