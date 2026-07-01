@@ -12,7 +12,7 @@ Severity levels:
   - low: log only, self-heal if possible, no human notification
 
 Channels:
-  - trading: notice@tradingagent.cc -> tradingadviser@coze.email
+  - trading: notice@agentspaces.cc -> tradingadviser@coze.email
   - system: notice@tradingagent.cc -> soc@coze.email
 """
 

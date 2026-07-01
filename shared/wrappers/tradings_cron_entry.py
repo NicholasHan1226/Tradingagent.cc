@@ -4,12 +4,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from shared.notify.email_sender import send_email, send_template_email
-from shared.notify.email_templates import wrap_html
+from shared.notify.email_templates import CHANNELS, wrap_html
 
 ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "shared"
@@ -2033,10 +2034,21 @@ def run_ops_report() -> dict[str, Any]:
         "email": email,
     }
 
+
+def _resolve_daily_summary_recipient() -> str:
+    return os.environ.get(
+        "TRADINGS_EMAIL_RECIPIENT",
+        os.environ.get(
+            "TRADINGS_DAILY_RECIPIENT",
+            CHANNELS["trading"]["to"],
+        ),
+    )
+
+
 def run_email_notify() -> dict[str, Any]:
     subject, body, html_body = _build_email_notify_payload()
     result = send_email(
-        "tradingadviser@coze.email",
+        _resolve_daily_summary_recipient(),
         subject,
         body,
         html_body,

@@ -30,7 +30,7 @@ _DIMENSIONS = ["macro", "event", "fundamental", "capital", "technical", "sentime
 
 def _get_key() -> str:
     """读取 DeepSeek API key。优先 env, 其次 cron env 文件。"""
-    key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    key = (os.environ.get("TRADINGS_DEEPSEEK_API_KEY", "") or os.environ.get("DEEPSEEK_API_KEY", "")).strip()
     if key:
         return key
     # 回退: 从 marketgraph_cron.env 读取
