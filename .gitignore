@@ -44,3 +44,4 @@ shared/review/**/*.jsonl
 *.bak.*
 shared/review/**/*.md
 shared/risk/**/*.jsonl
+signals_archive/
