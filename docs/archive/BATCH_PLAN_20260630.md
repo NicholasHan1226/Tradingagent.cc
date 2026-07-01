@@ -1,4 +1,6 @@
-# Tradings Batch 开发计划 v1
+# TradingAgent Batch 开发计划 v1
+
+> **⚠️ 本文件是 2026-06-30 的一次性开发计划草案。** 内容已过时，仅供历史参考。当前权威状态以 [../../AGENTS.md](../../AGENTS.md) 和 [../../STATUS.md](../../STATUS.md) 为准。
 
 > 2026-06-30 | 基于 handoff + 用户 12 项答复 | 待用户确认后启动
 > 执行原则:Claude 只做架构+审核;kimi 蜂群做研究/信息收集/中小任务;codex(5.4/5.5+推理强度)做重型实现/review/diff;同 wave 内多线程并行。
@@ -9,12 +11,12 @@
 
 | # | 议题 | 取定 | 依据 |
 |---|---|---|---|
-| A | 数据入口 | Tradings 从 **SharedSignals** 单一入口读数据;MarketGraph 研究结论(regime/event_impact)经 SharedSignals 或文件读;六维打分去掉硬编码 3 仓库路径 | item 3/8 |
+| A | 数据入口 | TradingAgent 从 **SharedSignals** 单一入口读数据;MarketGraph 研究结论(regime/event_impact)经 SharedSignals 或文件读;六维打分去掉硬编码 3 仓库路径 | item 3/8 |
 | B | MCP | **暂不做**,文件/SQLite 通信(已验证可用);MCP 列入未来 | item 3 管道通畅 |
-| C | 执行桥 | Tradings(服务器)生成信号卡/任务 → mini 上**独立 cron 拉取执行**(模拟盘用 a_share_simulated_trade_executor,实盘只发邮件+mini 只读同步账户);**废弃 hermes_bridge SSH 直发** | note+item 11 |
-| D | 多市场代码 | **vendor 实体代码进 Tradings 子目录**(不保留 symlink),兄弟仓库归档 | item 9/10 |
+| C | 执行桥 | TradingAgent(服务器)生成信号卡/任务 → mini 上**独立 cron 拉取执行**(模拟盘用 a_share_simulated_trade_executor,实盘只发邮件+mini 只读同步账户);**废弃 hermes_bridge SSH 直发** | note+item 11 |
+| D | 多市场代码 | **vendor 实体代码进 TradingAgent 子目录**(不保留 symlink),兄弟仓库归档 | item 9/10 |
 | E | Archive | 建 `/opt/investment/_archive/`,旧系统逐项验证后归档 | item 10 |
-| F | cron | 103 条按三仓库归属拆分,Tradings 的迁入 `Tradings/deploy/`,旧的停删 | item 7/8 |
+| F | cron | 103 条按三仓库归属拆分,TradingAgent 的迁入 `TradingAgent/deploy/`,旧的停删 | item 7/8 |
 | G | 多空 agent 化 | **是**:bull/bear 双 agent+独立记忆/日志+agents.md+固定 JSON+多轮(≥2)+规则护栏(六维均<0.4 时 belief 上限 0.4) | item 1 |
 | H | 2层结构 | **影子层+模拟层**(+实盘层手动);多风格=影子层并行多策略独立 P&L 对比复盘 | item 4/11 |
 
@@ -71,12 +73,12 @@
 - 交付:5 份盘点报告 → 汇总成 `docs/migration_inventory.md`
 
 **W0-6 [kimi]** cron 103 条逐条映射
-- 读 crontab + `Tradings/shared/cron_inventory.csv`
-- 每条 cron 标注:归属(Tradings/MarketGraph/SharedSignals)+ 对应 Tradings 功能 + 频率是否需调整 + 迁移/停删建议
+- 读 crontab + `TradingAgent/shared/cron_inventory.csv`
+- 每条 cron 标注:归属(TradingAgent/MarketGraph/SharedSignals)+ 对应 TradingAgent 功能 + 频率是否需调整 + 迁移/停删建议
 - 交付:`docs/cron_migration_map.md`
 
 **W0-7 [kimi]** 各市场 strategies/ 现状盘点
-- 查 Tradings 各市场 strategies/ 为何空;旧系统各市场策略定义在哪(`/opt/investment/{Crypto,US,PredictionMarkets}/` 内)
+- 查 TradingAgent 各市场 strategies/ 为何空;旧系统各市场策略定义在哪(`/opt/investment/{Crypto,US,PredictionMarkets}/` 内)
 - 交付:`docs/strategies_inventory.md`
 
 ---
@@ -84,12 +86,12 @@
 ## 3. Wave 1 — 架构基线设计文档(依赖 W0 盘点)
 
 **W1-1 [codex-5.5 high]** 数据流基线 + 数据合同文档
-- 定义 SharedSignals→Tradings 数据出口 schema(regime/events/factors/moneyflow/bars/sentiment 的字段/新鲜度/覆盖率/异常回退)
+- 定义 SharedSignals→TradingAgent 数据出口 schema(regime/events/factors/moneyflow/bars/sentiment 的字段/新鲜度/覆盖率/异常回退)
 - 六维打分改造方案:去硬编码路径,读 SharedSignals
 - 交付:`docs/data_contract.md`
 
 **W1-2 [codex-5.5 high]** 执行桥重设计文档(取定 C)
-- 设计:Tradings 生成信号卡 → SharedSignals storage(或 SSH 推)→ mini cron 拉取 → a_share_simulated_trade_executor(模拟)/邮件+只读同步(实盘)
+- 设计:TradingAgent 生成信号卡 → SharedSignals storage(或 SSH 推)→ mini cron 拉取 → a_share_simulated_trade_executor(模拟)/邮件+只读同步(实盘)
 - mini 端需要的脚本/cron 定义;账户类型校验;T+1 在哪强制
 - 废弃 hermes_bridge 的迁移路径
 - 交付:`docs/execution_bridge_design.md`
@@ -100,7 +102,7 @@
 - 交付:`docs/orchestrator_design.md` + `docs/automation_tasks.md`
 
 **W1-4 [kimi]** Archive 方案
-- 归档清单(哪些旧仓库/模块)+ 归档时机(Tradings 对应功能验证后)+ `_archive/` 结构
+- 归档清单(哪些旧仓库/模块)+ 归档时机(TradingAgent 对应功能验证后)+ `_archive/` 结构
 - 交付:`docs/archive_plan.md`
 
 ---
@@ -167,7 +169,7 @@
 - 条件监控接 orchestrator(5min);shadow 通道接通
 - 交付:A股影子盘可跑
 
-**W4-2 [codex-5.4]** Crypto 影子盘闭环(vendor 工具进 Tradings/Crypto/,接 orchestrator)
+**W4-2 [codex-5.4]** Crypto 影子盘闭环(vendor 工具进 TradingAgent/Crypto/,接 orchestrator)
 **W4-3 [codex-5.4]** US 影子盘闭环(同上)
 **W4-4 [codex-5.4]** PM 影子盘闭环(同上)
 **W4-5 [codex-5.5]** 日2次复盘闭环(lunch 11:35 + close 15:30,真数据驱动,3 对比+归因+写回补丁队列)

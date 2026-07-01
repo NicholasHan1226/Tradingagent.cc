@@ -1,8 +1,8 @@
-# SharedSignals -> Tradings Data Contract
+# SharedSignals -> TradingAgent Data Contract
 
 ## Scope
 
-Tradings consumes SharedSignals and MarketGraph as read-only upstream data.
+TradingAgent consumes SharedSignals and MarketGraph as read-only upstream data.
 This contract covers the data access layer used by screening and A-share T+1
 calendar logic. It does not change execution, accounting, risk, or portfolio
 write paths.
@@ -20,7 +20,7 @@ write paths.
 - Trading calendar:
   `SharedSignals/reference/market_calendar.py`.
 
-Tradings opens SQLite with `mode=ro`. It must not write to SharedSignals,
+TradingAgent opens SQLite with `mode=ro`. It must not write to SharedSignals,
 MarketGraph, or legacy Ashare data directories.
 
 ## Reader API
@@ -35,7 +35,7 @@ MarketGraph, or legacy Ashare data directories.
 - `get_coverage(market, date)`
 
 Rows are returned as dictionaries. Missing rows return `[]` or `None` through
-`TradingsDataReader`.
+`TradingAgentDataReader`.
 
 ## MarketGraph CSV Inputs
 
@@ -45,7 +45,7 @@ Rows are returned as dictionaries. Missing rows return `[]` or `None` through
 - `intake/event_candidates.csv`
 - `intake/sentiment_signals.csv`
 
-These remain MarketGraph-derived context, not Tradings facts. Tradings uses
+These remain MarketGraph-derived context, not TradingAgent facts. TradingAgent uses
 them only for scoring and confidence weighting.
 
 ## Environment Variables
@@ -60,7 +60,7 @@ them only for scoring and confidence weighting.
 
 ## Fail-Safe Behavior
 
-`TradingsDataReader` is the consumer-facing facade. It catches missing files,
+`TradingAgentDataReader` is the consumer-facing facade. It catches missing files,
 SQLite errors, absent tables, import failures, and upstream exceptions.
 
 - List-style reads return `[]`.

@@ -1,120 +1,129 @@
-# Tradings/
+# TradingAgent
 
+> **阅读顺序：** 进入 TradingAgent 后，按以下顺序阅读：
+> 1. 本文件 — 理解 TradingAgent 的规则、边界和运行时护栏
+> 2. **[STATUS.md](STATUS.md)** — 理解当前状态、已知问题、下一步任务
+> 3. 跨系统协作前，读 [根目录 AGENTS.md](../AGENTS.md) 和 [根 STATUS.md](../STATUS.md) 了解三系统架构和全局状态
 
 ## 三系统定位
 
-- Tradings 是交易判断和任务队列系统：读取 SharedSignals 的市场/事件数据与 MarketGraph 的研究证据，生成影子盘、模拟盘、实盘复核信号、日报和周报。
-- 三系统当前不是 MCP 互调，也不是强耦合单体；SharedSignals 供数，MarketGraph 供研究图谱，Tradings 做交易判断、队列、回执汇总和通知。
-- A 股模拟盘执行闭环必须走 `job_ashare_sim_exec -> signals/pending -> Mac Mini Hermes -> signals/filled/failed/positions`；Hermes/mini 只执行和回写，不做买卖判断。
-- 未来系统间调用优先通过公开服务接口、只读 API/MCP read model 或明确数据契约完成；Tradings 不应直接依赖 MarketGraph 的内部实现细节，也不应把 MarketGraph 当执行入口。
+- TradingAgent 是交易判断和任务队列系统：读取 SharedSignals 的市场/事件数据与 MarketGraph 的研究证据，生成影子盘、模拟盘、实盘复核信号、日报和周报。
+- 三系统当前不是 MCP 互调，也不是强耦合单体；SharedSignals 供数，MarketGraph 供研究图谱，TradingAgent 做交易判断、队列、回执汇总和通知。
+- 未来系统间调用优先通过公开服务接口、只读 API/MCP read model 或明确数据契约完成；TradingAgent 不应直接依赖 MarketGraph 的内部实现细节，也不应把 MarketGraph 当执行入口。
+
 ## 目标
- 交易模拟盘/影子盘, 高频训练策略, 每日2次复盘。
 
-## 现有代码
-- /opt/investment//tools/ (约20个工具)
+交易模拟盘/影子盘，高频训练策略，每日 2 次复盘。
 
-## Projects 工作区同步补充
+## 代码位置
 
-本仓库位于 `/Users/nicholashan/Projects/Finance/TradingAgent` 时，按 Projects 工作区统一同步规则执行：
+- 生产路径：`/opt/investment/TradingAgent/`
+- 开发路径：`/Users/nicholashan/Projects/Finance/TradingAgent/`
+- 工具集：`/opt/investment/tools/`（约 20 个工具）
 
-- 仓库地址、remote 名称和默认分支以本仓库内 `git remote -v`、`git branch --show-current` 和项目文档为准，不从其它项目继承。
-- 开发前检查 `git status -sb`、`git remote -v`、当前分支和是否落后远端；工作树不干净时先判断改动来源，不得覆盖并发 agent、cron、桌面自动化或 Nicholas 的改动。
-- 涉及交易 agent 行为、邮件/API、部署、配置、数据契约、风控边界、服务器路径、定时任务或协作流程的变更，必须同步更新核心文档，例如 `README.md`、`docs/data_contract.md`、`docs/email_setup.md`、`docs/INFRASTRUCTURE.md`、`docs/repo_structure.md` 或对应市场/模块文档。
-- 涉及真实资金、实盘执行、账号凭据、2FA、私钥、邮件发送通道或生产服务器的操作，必须先说明授权边界、回退方式和验证方式；研究、模拟盘和影子盘不得被汇报成实盘结果。
-- 提交时只暂存本次审计过的文件；数据库、缓存、日志、staging、密钥、本机运行产物和交易临时输出默认不提交，除非项目文档明确要求并已审计。
-- 从旧 `Desktop/Investment` 或其它 iCloud 管理目录迁移时，优先使用当前 Projects 下真实 clone；旧目录只作为对照和补漏来源，不直接搬运 `.git`。
+## 架构边界（永久规则）
 
-## 2026-07-01 Runtime Guardrails
+### 执行桥
 
-- A股实盘复核信号不是自动实盘执行。当前盘中复核/观察摘要由 MarketGraph `deploy/job_trading_signals.sh` 在 `marketgraph` 用户 crontab 中每 30 分钟刷新 `outputs/trading_signals.json`，输出固定 `capital_layer=shadow`、`real_money_allowed=N`；真正的模拟/执行队列仍归 Tradings 与 mini/Hermes。
-- PM shadow wrappers must rely on `shared/wrappers/_common.sh::run_job` for job locking. Do not take the same `${TRADINGS_STATE_ROOT}/${JOB_NAME}.lock` before calling `run_job`; that self-deadlocks the wrapper and causes repeated `skipped=already_running`.
-- A-share simulated execution must not enqueue a new batch while the Mac mini Hermes receiver reports unfinished work. `job_ashare_sim_exec.sh` checks mini health and skips when `pending + in_progress > ASHARE_SIM_MINI_BUSY_LIMIT` (default 0).
-- A-share simulated orders are same-day idempotent by `market + account + trade_date + symbol + side`. `shared/orchestrator.py` must check existing `pending|claimed|running|filled|failed|partial|expired|cancelled` signal cards before calling the mini webhook; duplicate same-day symbols should record `status=duplicate` and must not enqueue a new mini order.
-- On 2026-07-01, stale server-only A-share simulated pending cards from the pre-webhook bridge were moved to `signals/expired`; cleanup manifest: `/opt/investment/agent_backups/ashare_sim_pending_cleanup_20260701113617.jsonl`. Do not move these back to pending unless intentionally replaying that historical batch.
-- A股候选池是动态 5 层结构（holdings/watch/candidate/universe/fundamental），但所有 A股入口必须只保留普通 A股代码段；`200xxx.SZ`、`900xxx.SH`、北交所等非本模拟执行链路标的必须在 `Ashare.adapter`、`shared/screening/universe_filter.py`、`shared/screening/candidate_pool.py` 三层被过滤，不能进入 `signals/pending`。
-- A股候选池当前是“每次调度动态重建”的 5 层池，不是已完成持久化升降级状态机。`promote()` 只是本地工具函数；在持久化层级状态、demote/退出规则、层内停留时间和复盘驱动迁移落地前，不得对外声称每层已有完整晋升/降级/退出闭环。
-- A股可执行候选必须有近期日线 close > 0；无日线覆盖的股票必须在 universe/candidate 阶段排除。Tushare daily `amount` 在 read model 中按千元口径存储，流动性比较前必须换算为元，避免把正常流动性股票误判为 illiquid。
-- A股 5 分钟级模拟执行调度默认使用 `TRADINGS_DEBATE_MODE=fast`，用六维分数生成确定性 belief_score，不能同步阻塞等待 DeepSeek。DeepSeek/LLM 只用于研究层、多空复核、日报/周报和慢速校准；Hermes/mini 不做交易判断，只做 GUI 执行、截图、回执和账户同步。
-- mini health gate 会被 `pending + in_progress` 队列阻塞；迁移测试、拒绝测试和生产模拟交易任务应隔离，避免测试 pending 导致 `job_ashare_sim_exec` 长时间 skipped=mini_busy。
-- 2026-07-01 13:39-15:29 CST 已修复 mini/Hermes 同花顺模式识别：优先用 AX 标签确认 `模拟`，不再让 Vision 把资金/账户区域误判成 `实盘=是`；`A股` 标签本身不是实盘标识，显式真实风险标识是 `实盘`、`资金账号`、`普通交易`、`融资融券`。
-- 2026-07-01 后验复核推翻了 `000002.SZ`、`000006.SZ` 的早期“成交确认”：裁剪后的同花顺持仓表只显示旧持仓 `600029`，不包含 `000002`/`000006`/`000007`。这些 false-positive filled/position 记录已从 server `signals/filled`、`positions`、legacy receipt/ledger 中撤回并改为 posthoc unconfirmed failed；备份目录 `/opt/investment/agent_backups/ashare_sim_false_confirm_reconcile_20260701T152920`。
-- mini/Hermes 点击提交但没有严格持仓表/委托/成交确认时不得继续消费队列。此场景必须写 unconfirmed failed receipt，创建 mini 本地 `signals/executor_halt.json`，等待账户/持仓同步或人工复核后再清理 halt 恢复。当前 `000007.SZ` 属于此状态，剩余 pending 不得自动重试到重复点击。未来截图确认只能看裁剪后的持仓表区域，不能看整窗、买入输入框或右侧自选列表。
-- 2026-07-01 15:35 CST 起，Mac mini Hermes 当前不应走同局域网地址；远程维护和健康检查使用 Tailscale mini `100.125.4.113` / SSH alias `macmini-tailscale`。`192.168.5.2` 是 RSS 服务器线索，不是 MarketGraph 主服务器，也不是 Hermes mini 执行桥。
-- 2026-07-01 15:40 CST 已更新 `job_ashare_sim_exec.sh`：mini `/health` 返回 `halted=true` 时服务器日志必须写 `skipped=mini_halted`，不能再把它当普通 `mini_busy`。当前主服务器经 `127.0.0.1:9865/health` 可见 `000007.SZ` 点击未确认暂停。
-- 2026-07-01 15:43 CST，mini 上 16 条 13:32 批次 A股模拟 pending 已全部过期且未执行，已在保留 `executor_halt.json` 的前提下归档为 failed_final 并同步失败回执到主服务器；mini 备份目录 `~/.hermes/ashare-runtime/signals/backup_expired_pending_20260701_154334`。
-- 2026-07-01 16:03-16:07 CST，mini 只读模拟账户同步确认当前同花顺为 `模拟练习`，持仓表只有 `600029.SH 南方航空`，`000007.SZ`/`000002.SZ`/`000006.SZ` 均不在持仓；server `signals/positions/simulated_ashare_positions.json` 已按 mini read-only snapshot 对齐为 `600029.SH` 100 股。`000007.SZ` halt 已归档到 mini `signals/halt_archive/executor_halt_20260701_160658_000007.SZ.json`，mini health 当前 `execution_status=ready`。
-- 2026-07-01 16:00 CST 起，`job_ashare_sim_exec.sh` 增加 A股交易时段保护；非工作日或非 `09:30-11:30` / `13:00-14:57` 直接 `skipped=market_closed`，防止收盘后清理 halt 时重新下发模拟单。
+A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending → Mac Mini Hermes → signals/filled/failed/positions`
 
-## 2026-07-01 修复记录：通知、影子队列、A股影子账本
-- 邮件发送：`shared/notify/email_sender.py` 使用 Cloudflare Email Service REST endpoint `/client/v4/accounts/{account_id}/email/sending/send`；交易通道 `notice@tradingagent.cc -> tradingadviser@coze.email`，系统通道 `notice@tradingagent.cc -> soc@coze.email`。
-- 影子信号：影子盘研究信号不再写入可执行队列 `signals/pending`，统一写入 `signals/shadow/pending`；执行队列只保留真实/模拟待执行信号。
-- A股影子账本：`shared/execution/shadow_broker.py` 会拒绝 A股链路中的非普通 A股代码，例如 `200xxx.SZ`；历史污染流水已隔离到 `shared/logs/maintenance/` 下的 cleanup 目录。
-- 影子收益口径：`shadow_pnl.json` 同时保留 `realized_pnl`、`unrealized_pnl`、`market_value`、`total_pnl`；历史记录曾使用 `valuation_source=latest_shadow_trade_price`；当前 A股影子盘估值已升级为优先 SharedSignals 日线收盘价，缺失时才回退最近影子成交价。
+- Hermes/mini 只执行和回写，不做买卖判断。
+- MarketGraph 不得直接触发 Hermes/Mac Mini/同花顺或任何执行 webhook。
+- 执行桥归 TradingAgent。
 
-## 2026-07-01 A股健康检查入口
-- A股市场健康检查入口：`PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/market_health.py --market ashare --pretty`。
-- 输出文件可保存到 `shared/runtime_test/ashare_health_latest.json`；默认只读，不发邮件、不点击同花顺、不改变交易状态。
-- 当前检查覆盖：A股 universe 合规性、影子账本污染和收益口径、执行/影子队列隔离、mini/Hermes 健康、模拟持仓快照、邮件模板/发送记录、失败回执可复盘性。
-- 通过标准：`overall_status=pass` 且 `signals/pending|claimed|running` 为 0、`signals/shadow/*` 可有影子研究记录、`200xxx.SZ/900xxx.SH` 不出现在 A股影子账本。
+### 数据流
 
-## 2026-07-01 A股健康告警与双模拟盘补充
-- A股健康检查已接入包装器 `shared/wrappers/job_ashare_health_check.sh`，调用 `shared/runtime_test/ashare_health_alert.py`；健康通过只写 `shared/runtime_test/ashare_health_latest.json` 和 history，不发邮件；warn/fail 才走 `system_health` 模板发系统通道 `soc@coze.email`。
-- A股 simulated 现在分成两套账：同花顺模拟盘仍由 mini/Hermes GUI 执行和回写；服务器本地模拟盘由 `shared/execution/local_sim_ledger.py` 记录 paper fill 备份，按 `idempotency_key` 去重，不能替代同花顺成交确认。
-- A股影子盘估值优先读取 SharedSignals `market_bars_daily.close`；缺失时才回退最近影子成交价，并在 `valuation_source` 标明来源。
+- SharedSignals 是独立供数层：定时采集/维护先沉淀数据，TradingAgent 通过 reader/read model 按需读取。
+- TradingAgent 不应在每次交易判断时重新现场采集 Tushare。
+- 跨系统写入必须走明确数据契约，不把一个系统目录当作另一个系统的内部模块直接改写。
 
-## 2026-07-01 A股 10 分钟级调度调整
-- A股 simulated 同花顺执行保持 5 分钟级 job_ashare_sim_exec，因为它已快于 10 分钟且受 mini/Hermes busy/halt 保护。
-- A股影子盘 job_ashare_shadow 从每 30 分钟调整为交易时段每 10 分钟；run_job 锁会防止上一轮未结束时重叠执行。
-- A股观察/实盘复核摘要 job_trading_signals.sh 从每 30 分钟调整为交易时段每 10 分钟。
-- A股健康检查 job_ashare_health_check.sh 曾短暂调整为交易时段每 10 分钟；该节奏已被下方 2 小时健康告警节奏取代，健康通过不发邮件，warn/fail 才发系统通道。
+## 关键运行时护栏（永久规则）
 
-## 2026-07-01 A-share cadence update
+### 订单幂等与队列隔离
 
-- A股健康检查用于系统异常邮件，不是交易信号循环；`job_ashare_health_check.sh` 在 `marketgraph` crontab 中调整为交易时段约 2 小时一次（09:10/11:10/13:10/15:10）并保留 08:10 盘前、16:10 盘后检查，只在 warn/fail 时发系统邮件到 `soc@coze.email`。
-- A股复盘迭代保持每天两次主复盘：15:30 盘后复盘和 22:00 夜间复盘；07:30 是晨报，不计为复盘迭代次数。
-- A股观察信号摘要仍每 10 分钟运行；若没有 5% 突破/跌破，会输出最多 10 条价格异动观察 `top_mover_observation`，仅用于复盘和候选池校准，不触发模拟或实盘执行。
-- 尾盘集合竞价前增加 14:57 的观察信号刷新；该刷新只写观察摘要和邮件，不扩大 Hermes/同花顺执行窗口。
-- A股观察信号摘要必须优先读取最新非空 `intraday_snapshot`；盘后或异常采集产生的空快照只能作为质量线索记录，不能覆盖当天已采到的市场状态。
+- A股模拟订单同日幂等：`market + account + trade_date + symbol + side`。
+- 发单前检查所有状态的 signal cards（`pending|claimed|running|filled|failed|partial|expired|cancelled`），重复同日同标的记 `status=duplicate`，不入新订单。
+- 迁移测试、拒绝测试和生产模拟交易任务必须隔离，避免测试 pending 导致生产调度 `skipped=mini_busy`。
 
-## 2026-07-01 A股复盘与尾盘扫描修正
+### 候选池过滤
 
-- A股主交易复盘改为两次有增量交易数据的复盘：11:45 午盘复盘、15:30 收盘复盘；22:00 不再发送重复交易日报，改为 `job_ashare_night_calibration` 夜间校准，汇总研究、归因、回测、尾盘候选和次日计划输入。
-- 尾盘新增 `job_ashare_closing_scan.sh`，在 14:40/14:50/14:56 生成 `MarketGraph/outputs/ashare_closing_buy_candidates.json`；该文件仅是影子/模拟候选观察，不入实盘、不直接下单。
-- SharedSignals 是独立供数层：定时采集/维护先沉淀数据，Tradings 通过 reader/read model 按需读取；Tradings 不应在每次交易判断时重新现场采集 Tushare。
+- A股候选池动态 5 层结构（holdings/watch/candidate/universe/fundamental），每次调度动态重建。
+- 所有 A股入口必须只保留普通 A股代码段；`200xxx.SZ`、`900xxx.SH`、北交所等非本模拟执行链路标的必须在三层被过滤：`Ashare.adapter`、`shared/screening/universe_filter.py`、`shared/screening/candidate_pool.py`。
+- 可执行候选必须有近期日线 close > 0；无日线覆盖的股票在 universe/candidate 阶段排除。
+- 组合构建前过滤 `price <= 0`，记录到 `skipped_candidates`。
+- Tushare daily `amount` 按千元口径存储，流动性比较前必须换算为元。
 
-## 2026-07-01 shadow signal state fix
+### Mini/Hermes 健康门
 
-- `signals/shadow` 必须和执行队列一样具备 `pending/claimed/running/filled/expired/cancelled/failed/partial` 状态目录，并由 `marketgraph:marketgraph` 写入；否则 Crypto/PM/US/A股影子盘会出现 `PermissionError: signals/shadow/claimed`，导致 shadow run `state=degraded`。
-- `job_self_heal` 的 `job_signal_sweep_expired` 同时清理执行队列和影子队列的过期 pending 卡；影子卡只在 `signals/shadow/*` 内流转，不进入 Hermes/实盘执行队列。
+- `job_ashare_sim_exec` 发单前检查 mini health：`pending + in_progress > ASHARE_SIM_MINI_BUSY_LIMIT`（默认 0）时跳过。
+- mini `/health` 返回 `halted=true` 时记 `skipped=mini_halted`，不能当普通 `mini_busy`。
+- Hermes/mini 点击提交但没有严格持仓表/委托/成交确认时，写 unconfirmed failed receipt，创建 `executor_halt.json`，停止消费队列。截图确认只看裁剪后的持仓表区域。
+- 同花顺模式识别：用 AX 标签确认"模拟"，不依赖 Vision 判断资金/账户区域。显式真实风险标识是"实盘"、"资金账号"、"普通交易"、"融资融券"。
 
-## 2026-07-01 PM/A股运行闭环修复
+### 交易时段保护
 
-- PM shadow scan 已从每 5 分钟调整为每 10 分钟；原因是单次 PM shadow 约 4-5 分钟，5 分钟频率没有足够缓冲。`job_pm_scan.sh` 继续通过 `_common.sh::run_job` 使用 `job_pm_shadow.lock`，上一轮未结束时必须跳过，不得并发。
-- `job_self_heal` 的 cron 日志判断只扫描每个日志最近 80 行，且后续 `success`/`state=ok` 会清除旧失败；缺少 `signal_count` 字段的历史日报不再计入 `signal_starvation`。2026-07-01 21:31 CST 验证 `issues_found=0`。
-- A股 shadow/sim 候选在组合构建前必须过滤 `price <= 0`，记录到 `skipped_candidates`，不能让零价候选污染 `execution.shadow_broker` 或 `execution.sim_broker` 健康状态。
-- A股健康检查 `ashare_health_alert.py --send-on never --pretty` 于 2026-07-01 21:31 CST 验证 `overall_status=pass`；健康通过不发邮件，warn/fail 才发系统通道。
-- 邮件模板渲染验证覆盖 `trading_signal/daily_report/weekly_report/system_health`；交易邮件通道为 `notice@tradingagent.cc -> tradingadviser@coze.email`，系统邮件通道为 `notice@tradingagent.cc -> soc@coze.email`。Cloudflare 最新发送记录为 `status=sent`、`status_code=200`。
+- A股模拟执行受交易时段保护：非工作日或非 `09:30-11:30` / `13:00-14:57` 直接 `skipped=market_closed`。
 
-## 2026-07-01 Tradings 运维报告与缺陷复盘
-- 新增统一运维报告入口：`PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/ops_report.py --send-on never --pretty`；定时任务入口为 `shared/wrappers/job_ops_report.sh` / `tradings_cron_entry.py --job job_ops_report`。
-- `job_ops_report` 每小时 17 分运行，写出 `shared/review/ops/tradings_ops_latest.json` 和 `shared/review/ops/tradings_ops_history.jsonl`；`overall_status=fail` 才向系统通道 `notice@tradingagent.cc -> soc@coze.email` 发邮件，历史失败导致的 `warn` 只入报告，不重复打扰。
-- 运维报告同时覆盖执行队列 `signals/{pending,claimed,running,filled,failed,expired,cancelled}` 与影子队列 `signals/shadow/{pending,claimed,running,filled,failed,expired,cancelled}`，并输出按市场分布、失败原因聚合、Mini/Hermes 回执完整性、服务器本地模拟账本和影子盘 PnL 摘要。
-- Webhook 发送结果新增 `payload_sha256`，用于后续和 Mini/Hermes 回执指纹对账；旧回执没有签名时只能标记为 `unsigned`，不能当作篡改或失败。
-- 日报/周报模板新增可选“运行状态”段，展示执行队列、影子队列、回执校验和失败分类；模板缺少运维字段时保持兼容。
-- 当前已知缺陷边界：服务器侧已经能识别 unsigned/invalid receipt，但 Mini/Hermes 回执本身尚未写入 `payload_sha256`/`receipt_sha256`，所以完整端到端指纹闭环需要在 mini 执行器中继续补齐。
+### 影子盘隔离
 
-## 2026-07-01 Mini/Hermes 回执指纹闭环
-- `payload_sha256` 表示 Mini receiver 收到的原始 POST body 指纹，用于对齐服务器下发任务与 mini 本地信号；它不是回执自身签名。
-- `receipt_sha256` / `checksum` 表示回执自身完整性签名，计算时必须排除 `payload_sha256`、`receipt_sha256`、`checksum`、`sha256` 等 checksum 字段。
-- 服务器 `ops_report.receipt_integrity` 只用 `receipt_sha256`/`checksum`/`sha256` 判断 signed/invalid，同时单独统计 `payload_linked`；不能把 `payload_sha256` 当作回执 signed。
-- 2026-07-01 23:04 CST 已在 Mac mini `~/.hermes/scripts/sim-signal-receiver.py` 写入 payload hash，在 `~/.hermes/scripts/sim-signal-executor.py` 写入 receipt hash，并重启 `com.nicholashan.sim-signal-receiver` 与 `com.nicholashan.sim-signal-executor`。备份文件后缀为 `20260701_230427_*_hash`。
-- 同日 23:08 CST 继续增强 Mini executor：`push_remote_receipt` 的服务器内联脚本在写入 `sim_execution_receipts.jsonl` 前会验证 `receipt_sha256`/`checksum`，不匹配则拒写；无签名的历史 sync receipt 仍兼容接收并由 ops_report 标记 `unsigned`。
+- 影子信号只写入 `signals/shadow/pending`，不进入可执行队列。
+- `signals/shadow` 具备完整状态目录：`pending/claimed/running/filled/expired/cancelled/failed/partial`。
+- A股影子账本拒绝非普通 A股代码（200xxx.SZ 等）。
+- 影子盘估值优先 SharedSignals 日线收盘价，缺失时回退最近影子成交价。
 
-## 2026-07-01 PM optimize 运行产物边界
-- `job_pm_optimize` 是运行快照，不得写入 Git 跟踪的 `shared/strategies/pm/pm_optimize_params.json`；运行输出统一写到 `shared/review/pm/pm_optimize_params.json` 和 `shared/review/pm/pm_optimize_params_history.jsonl`。
+### LLM/DeepSeek 使用边界
 
-## 2026-07-01 已复盘失败归档
-- 已复盘的历史 `signals/failed` / `signals/expired` 不能长期留在 active 队列，否则 `ops_report` 会持续 warn 并掩盖新问题。
-- 归档入口：`PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>`；执行前会拒绝 active `pending/claimed/running` 非空的情况。
-- 归档会把文件移动到 `signals_archive/reviewed/<batch_id>/{failed,expired}/`，并写 `signals_archive/reviewed/<batch_id>/manifest.json` 与 `shared/review/ops/reviewed_signal_archive_<batch_id>.json`；回退按 manifest 的 `target_path -> source_path` 移回。
-- 2026-07-01 23:52 CST 已归档 A股模拟盘假阳性确认 / halt 期间过期事故链路：22 failed + 6 expired，批次 `reviewed_ashare_sim_20260701_20260701T155230Z`；归档后 `job_ops_report` 验证 `overall_status=pass`。
+- A股 5 分钟级模拟执行调度默认 `TRADINGS_DEBATE_MODE=fast`，用六维分数生成确定性 belief_score，不阻塞等待 DeepSeek。
+- DeepSeek/LLM 只用于研究层、多空复核、日报/周报和慢速校准。
+
+### PM 调度
+
+- PM shadow scan 每 10 分钟运行；`run_job` 锁防止并发。
+- `job_pm_optimize` 运行产物写入 `shared/review/pm/`，不写入 Git 跟踪路径。
+
+### 回执完整性
+
+- 服务器写入 receipt 前验证 `receipt_sha256`/`checksum`，不匹配拒写。
+- 无签名的历史 receipt 标记 `unsigned`，不当作篡改或失败。
+- `payload_sha256` 是下发指纹，不是回执签名；只有 `receipt_sha256`/`checksum`/`sha256` 用于判断 signed。
+
+### 邮件通道
+
+- 交易通道：`notice@tradingagent.cc → tradingadviser@coze.email`
+- 系统通道：`notice@tradingagent.cc → soc@coze.email`
+- 发送方式：Cloudflare Email Service REST endpoint
+
+## 服务器
+
+- 主服务器：`8.138.181.177`（杭州）
+- 生产路径：`/opt/investment/TradingAgent/`
+- Mini 远程访问：Tailscale `100.125.4.113` / SSH alias `macmini-tailscale`
+- `192.168.5.2` 是 RSS 服务器，不是 MarketGraph 主服务器，也不是 Hermes mini 执行桥。
+
+## 复盘节奏
+
+- 两次主复盘：11:45 午盘复盘、15:30 收盘复盘
+- 22:00 夜间校准（汇总研究、归因、回测、尾盘候选和次日计划）
+- 07:30 晨报（不计为复盘迭代）
+- 尾盘候选扫描：14:40/14:50/14:56 生成 `MarketGraph/outputs/ashare_closing_buy_candidates.json`（仅观察，不入实盘）
+
+## 关键命令入口
+
+- A股市场健康检查：`PYTHONPATH=/opt/investment/TradingAgent python3 shared/runtime_test/market_health.py --market ashare --pretty`
+- 运维报告：`PYTHONPATH=/opt/investment/TradingAgent python3 shared/runtime_test/ops_report.py --send-on never --pretty`
+- 失败归档：`PYTHONPATH=/opt/investment/TradingAgent python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>`
+
+## 工作区同步规则
+
+- 仓库地址、remote 名称和默认分支以本仓库内 `git remote -v`、`git branch --show-current` 为准。
+- 开发前检查 `git status -sb`、`git remote -v`、当前分支和是否落后远端。
+- 工作树不干净时先判断改动来源，不得覆盖并发 agent、cron、桌面自动化或 Nicholas 的改动。
+- 涉及交易 agent 行为、邮件/API、部署、配置、数据契约、风控边界、服务器路径、定时任务或协作流程的变更，必须同步更新核心文档。
+- 涉及真实资金、实盘执行、账号凭据、2FA、私钥、邮件发送通道或生产服务器的操作，必须先说明授权边界、回退方式和验证方式。
+- 提交时只暂存本次审计过的文件；数据库、缓存、日志、staging、密钥、本机运行产物和交易临时输出默认不提交。
+
+## 历史事件日志
+
+2026-07-01 发生了一系列运行时事件（虚假成交确认、过期 pending 清理、回执指纹闭环等），详细的**事件时间线、修复动作和事后复盘**记录在：[docs/runtime_incidents_20260701.md](docs/runtime_incidents_20260701.md)。
+
+上述"关键运行时护栏"中的永久规则大部分是从这些事件中提取的。如果需要理解某条规则的背景或复盘某个事故链，查阅该事件日志。

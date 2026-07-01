@@ -13,7 +13,7 @@
         │ SQLite/CSV                     研究结论 (CSV)
         ▼                                     ▼
 ┌─────────────────┐    共享模块调用     ┌─────────────────┐
-│     Tradings    │ ◀────────────────  │   (消费研究结论)  │
+│     TradingAgent    │ ◀────────────────  │   (消费研究结论)  │
 │  交易全闭环      │                    │                 │
 └─────────────────┘                    └─────────────────┘
 ```
@@ -23,7 +23,7 @@
 |------|------|------|
 | SharedSignals | https://github.com/NicholasHan1226/SharedSignals.git | 数据采集 + 存储 |
 | MarketGraph | https://github.com/NicholasHan1226/MarketGraph.git | 战略研究 |
-| Tradings | https://github.com/NicholasHan1226/Tradingagent.cc.git | 交易线 |
+| TradingAgent | https://github.com/NicholasHan1226/Tradingagent.cc.git | 交易线 |
 
 ---
 
@@ -54,7 +54,7 @@
 
 ### 输出
 - SQLite (主) + CSV (缓存) + NDJSON (staging)
-- 消费方: MarketGraph (只读), Tradings (直接读)
+- 消费方: MarketGraph (只读), TradingAgent (直接读)
 
 ---
 
@@ -90,12 +90,12 @@ regime 检测、因果影响引擎、风险平价分配、前向验证。
 - SharedSignals 的 SQLite + CSV (只读)
 
 ### 输出
-- 研究结论 (CSV) → Tradings 消费
+- 研究结论 (CSV) → TradingAgent 消费
 - 不回传交易结果 (保持研究独立)
 
 ---
 
-## 3. Tradings — 交易线
+## 3. TradingAgent — 交易线
 **地址**: https://github.com/NicholasHan1226/Tradingagent.cc.git
 **本地路径**: /opt/investment/Tradings/
 
@@ -131,7 +131,7 @@ regime 检测、因果影响引擎、风险平价分配、前向验证。
 | 主数据库 | SQLite (marketdata.sqlite) | SharedSignals → 所有 |
 | 缓存 | CSV | SharedSignals → 所有 |
 | 事件staging | NDJSON → CSV (bridge) | SharedSignals → 所有 |
-| 研究结论 | CSV | MarketGraph → Tradings |
+| 研究结论 | CSV | MarketGraph → TradingAgent |
 
 **关键约束**: 仓库间不做直接代码 import。所有数据交换通过文件。
 
@@ -147,7 +147,7 @@ regime 检测、因果影响引擎、风险平价分配、前向验证。
 ## 边界原则
 1. **采集一次, 两线共享** — SharedSignals 是唯一采集入口, 不重复
 2. **MarketGraph 不做交易** — 只做战略研究, 输出结论
-3. **Tradings 不回传** — 交易结果不回研究层, 保持 OOS 纯度
+3. **TradingAgent 不回传** — 交易结果不回研究层, 保持 OOS 纯度
 4. **文件通信** — 仓库间无代码依赖, 通过 SQLite/CSV 交换
 5. **独立部署** — 三个仓库独立 git, 独立版本, 独立 CI
 
@@ -158,4 +158,4 @@ regime 检测、因果影响引擎、风险平价分配、前向验证。
 |------|:---:|:---:|:---:|
 | SharedSignals | ✓ (主) | ✓ (RSS节点) | — |
 | MarketGraph | ✓ | — | — |
-| Tradings | ✓ (模拟/影子) | — | ✓ (A股实盘) |
+| TradingAgent | ✓ (模拟/影子) | — | ✓ (A股实盘) |

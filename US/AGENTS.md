@@ -1,4 +1,6 @@
-# Tradings/US
+# TradingAgent/US
+
+> **阅读顺序：** [AGENTS.md](../AGENTS.md) → [STATUS.md](../STATUS.md) → 本文件
 
 ## 目标
 美股交易模拟盘/影子盘, 高频训练策略, 每日2次复盘。
@@ -12,10 +14,10 @@
 - 交易时段: 21:30-04:00 (北京时间)
 - Alpaca API 可直接执行 (未来实盘)
 
-## 工具清单 (Tradings tool references)
+## 工具清单 (TradingAgent tool references)
 
 - 源目录: `/opt/investment/US/tools/` (20 个 .py 工具)
-- Tradings 引用: `Tradings/US/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
+- TradingAgent 引用: `TradingAgent/US/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
 - 关键工具:
   - us_workflow.py — Daily workflow: collect → plan → scan → review
   - us_market_data.py — US stock data via Tushare

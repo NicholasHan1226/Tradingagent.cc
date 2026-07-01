@@ -1,6 +1,8 @@
-# Tradings
+# TradingAgent
 
 交易执行全闭环。从筛选到执行到复盘，以稳定胜率和回报率为方向持续进化。
+
+> **阅读顺序：** 进入 TradingAgent 后，先读 [AGENTS.md](AGENTS.md) → [STATUS.md](STATUS.md) 了解规则和当前状态。本文件提供系统概述和架构总览。
 
 ## 目标
 构建自动化交易系统：主动发现机会 → 条件驱动捕捉 → 风控保护 → 复盘进化。
@@ -109,7 +111,7 @@ https://github.com/NicholasHan1226/Tradingagent.cc.git
 
 ## 运维报告
 
-Tradings 每小时生成一次统一运维报告：
+TradingAgent 每小时生成一次统一运维报告：
 
 ```bash
 PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/ops_report.py --send-on never --pretty

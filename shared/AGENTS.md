@@ -1,4 +1,6 @@
-# Tradings/shared
+# TradingAgent/shared
+
+> **阅读顺序：** [../AGENTS.md](../AGENTS.md) → [../STATUS.md](../STATUS.md) → 本文件
 
 ## 目标
 跨市场共享的交易逻辑: 筛选→对抗→风控→组合→执行→复盘→通知→记账。
@@ -20,7 +22,7 @@
 - 降权不硬拒, 但有底线(单股<15%)
 
 ## 写入端单一事实源
-- Tradings 写入端必须遵守单一事实源, 详细契约见 `docs/write_end_contract.md`。
+- TradingAgent 写入端必须遵守单一事实源, 详细契约见 `docs/write_end_contract.md`。
 - A 股模拟执行必须由 `job_ashare_sim_exec` 调用 simulated loop 写入 `signals/pending/`，再由 Mac Mini Hermes 执行桥领取、执行、回写；MarketGraph 只能提供研究/信号输入，不能直连执行端。
 - `signals/` 是执行队列唯一写入面:
   - `signals/pending/` 待执行
@@ -31,4 +33,4 @@
 - `shared/review/data/` 是复盘证据唯一写入面; `outputs/` 只放可再生产物, 不回写事实。
 - `shared/signals/` 若仍存在视为废弃兼容路径, 只能重定向或只读迁移, 不再新增事实写入。
 - `executions/` 相关事实应归并到 `signals/filled/` 与 `shared/accounting/`, 不再形成平行账本。
-- `/opt/investment/Ashare/data/` 属旧系统只读输入, Tradings 禁止向该目录写入。
+- `/opt/investment/Ashare/data/` 属旧系统只读输入, TradingAgent 禁止向该目录写入。

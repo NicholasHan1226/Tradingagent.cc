@@ -1,10 +1,10 @@
-# Tradings Orchestrator Design
+# TradingAgent Orchestrator Design
 
 ## 1. 统一调度接口设计
 
 ### 1a. 调度阶段 (Phases)
 
-Tradings 交易流程按时间轴分为 5 个阶段，每个阶段有独立触发条件和失败策略：
+TradingAgent 交易流程按时间轴分为 5 个阶段，每个阶段有独立触发条件和失败策略：
 
 | 阶段 | 触发 | 窗口 | 失败策略 |
 |------|------|------|----------|
@@ -39,8 +39,8 @@ Tradings 交易流程按时间轴分为 5 个阶段，每个阶段有独立触�
 # @depends: MarketGraph.regime               (经济象限)
 # @depends: MarketGraph.event_impact         (事件→标的映射)
 # @depends: MarketGraph.forward_calendar     (前瞻日历)
-# @produces: Tradings.signals                (交易信号)
-# @produces: Tradings.executions             (执行记录)
+# @produces: TradingAgent.signals                (交易信号)
+# @produces: TradingAgent.executions             (执行记录)
 ```
 
 ### 1d. 失败重试策略
@@ -65,7 +65,7 @@ Level 4: 人工介入 (escalate)
 
 ---
 
-## 2. Tradings Cron 任务清单 (36 条)
+## 2. TradingAgent Cron 任务清单 (36 条)
 
 ### 2a. Trading Signals & Execution (15 条)
 
@@ -153,7 +153,7 @@ Level 4: 人工介入 (escalate)
                              | read-only
                              v
         +--------------------------------------------+
-        |              Tradings                      |
+        |              TradingAgent                      |
         |         (交易决策+执行+复盘)                |
         |                                            |
         |  +- screening -- 消费 scores + events      |
@@ -173,7 +173,7 @@ Level 4: 人工介入 (escalate)
 
 ### 3a. 依赖矩阵
 
-| Tradings 模块 | SharedSignals 依赖 | MarketGraph 依赖 |
+| TradingAgent 模块 | SharedSignals 依赖 | MarketGraph 依赖 |
 |---------------|-------------------|-----------------|
 | screening | backtest_cache, tushare daily/finance, events | regime, event_impact |
 | adversarial | events (raw) | scenario, causal_truth |

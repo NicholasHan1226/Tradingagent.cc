@@ -1,23 +1,25 @@
-# Tradings Cron Migration
+# TradingAgent Cron Migration
+
+> **⚠️ 本文件是迁移记录。** 状态（"未安装 crontab, 未停远端旧任务"）可能已过时。当前权威状态以 [../STATUS.md](../STATUS.md) 和服务器 crontab 为准。
 
 更新时间: 2026-06-30  
-适用目录: `Tradings/shared/`  
+适用目录: `TradingAgent/shared/`  
 状态: 本次仅生成迁移文件, 未安装 crontab, 未停远端旧任务
 
 ## 结论
 
-- Tradings 归属: `36` 条。
+- TradingAgent 归属: `36` 条。
 - MarketGraph 保留: `25` 条。
 - SharedSignals 归属: `40` 条。
 - 遗漏待补: `1` 条 `weight_adjuster.py`。
-- 迁移顺序: `SharedSignals -> MarketGraph -> Tradings`。
+- 迁移顺序: `SharedSignals -> MarketGraph -> TradingAgent`。
 
 说明:
 - 本地 `shared/cron_inventory.csv` 与 `crontab_remote.txt` 可验证到大批 active job。
 - 上述 `36/25/40/1` 采用 `cron_gap.md` 指定归属口径。
 - `BASH_ENV`、`SHELL` 属环境行, 不计入可执行 cron 数。
 
-## Tradings 36 条清单
+## TradingAgent 36 条清单
 
 1. `job_trading_signals`
 2. `job_premarket_signals`
@@ -61,8 +63,8 @@
 ### 1. SharedSignals 先迁
 
 原因:
-- Tradings 36 条中多数依赖 `quotes`、`events`、`klines`、`benchmark`、`health`。
-- 如果 SharedSignals 仍挂旧路径, Tradings 新 wrapper 会不断进入降级或 placeholder 输出。
+- TradingAgent 36 条中多数依赖 `quotes`、`events`、`klines`、`benchmark`、`health`。
+- 如果 SharedSignals 仍挂旧路径, TradingAgent 新 wrapper 会不断进入降级或 placeholder 输出。
 
 先迁内容:
 - 行情/事件采集。
@@ -72,7 +74,7 @@
 ### 2. MarketGraph 再迁
 
 原因:
-- Tradings 还依赖 `regime`、`event_impact`、`forward_calendar`。
+- TradingAgent 还依赖 `regime`、`event_impact`、`forward_calendar`。
 - gate / review / attribution 的部分旧逻辑仍在 MarketGraph 工具侧。
 
 先迁内容:
@@ -81,15 +83,15 @@
 - `postclose_review.sh`
 - `_dashboard.py`, `_api_server.py`, `_auto_tune.py`
 
-### 3. Tradings 最后迁
+### 3. TradingAgent 最后迁
 
 原因:
-- 只有 SharedSignals 和 MarketGraph 上游稳定后, Tradings 独立 crontab 才不会变成空跑或噪声报警。
+- 只有 SharedSignals 和 MarketGraph 上游稳定后, TradingAgent 独立 crontab 才不会变成空跑或噪声报警。
 - 本次生成的 `shared/crontab.txt`、`shared/wrappers/`、`shared/env_loader.sh` 即为最后一跳落地材料。
 
 ## 停删清单
 
-迁移完成并完成 smoke 后, 远端旧 crontab 里以下旧任务应停用, 避免 Tradings / MarketGraph 双跑:
+迁移完成并完成 smoke 后, 远端旧 crontab 里以下旧任务应停用, 避免 TradingAgent / MarketGraph 双跑:
 
 - `0 20 * * 0 /opt/investment/MarketGraph/deploy/job_weekly_review.sh`
 - `0 22 * * 1-5 /opt/investment/MarketGraph/deploy/job_daily_brief.sh`
@@ -132,20 +134,20 @@
 
 ### 回滚触发条件
 
-- 新 Tradings crontab 安装后 1 个交易日内出现持续空输出。
+- 新 TradingAgent crontab 安装后 1 个交易日内出现持续空输出。
 - wrapper 大面积进入 retry queue。
-- 上游 SharedSignals / MarketGraph 尚未完成迁移, 导致 Tradings 大量误报警。
+- 上游 SharedSignals / MarketGraph 尚未完成迁移, 导致 TradingAgent 大量误报警。
 
 ### 回滚步骤
 
-1. 停用新的 Tradings crontab。
-2. 恢复远端旧 MarketGraph crontab 中已停的 36 条 Tradings 任务。
+1. 停用新的 TradingAgent crontab。
+2. 恢复远端旧 MarketGraph crontab 中已停的 36 条 TradingAgent 任务。
 3. 保留 `shared/env_loader.sh` 与 `shared/wrappers/` 文件, 仅回退调度切换。
 4. 检查 `BASH_ENV` 是否仍指向旧 `marketgraph_cron_loader.sh`。
 5. 记录是哪类依赖导致回滚:
    - SharedSignals 数据未就绪
    - MarketGraph 输出未就绪
-   - Tradings 本地入口未实现
+   - TradingAgent 本地入口未实现
 
 ## 当前未验证项
 

@@ -1,7 +1,9 @@
 # screening/
 
+> **阅读顺序：** [../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件
+
 ## 目标
-Six-dimension weighted scoring. No hard gates. Dimensions: macro/event/fundamental/capital/technical/sentiment. Proactive discovery.
+六维加权打分，不设硬门禁。维度：宏观/事件/基本面/资金/技术/情绪。主动发现机会。
 
 ## 文件
 - `six_dimension_scorer.py` — 六维打分: macro/event/fundamental/capital/technical/sentiment → combined score。

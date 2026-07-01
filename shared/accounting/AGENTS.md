@@ -1,7 +1,9 @@
 # accounting/
 
+> **阅读顺序：** [../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件
+
 ## 目标
-Capital flow tracking to the cent. Position ledger. Daily reconciliation. Append-only audit trail.
+资金流水精确到分。持仓台账。每日对账。只追加审计追踪。
 
 ## 文件
 - `capital_ledger.py` — 资金流水: 买入/卖出/逆回购/利息/手续费。SQLite 存储, 按 real/simulated/shadow 三张表物理隔离, 精确到分。

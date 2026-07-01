@@ -35,4 +35,4 @@
 ## Git Repositories
 - SharedSignals: https://github.com/NicholasHan1226/SharedSignals.git
 - MarketGraph: https://github.com/NicholasHan1226/MarketGraph.git
-- Tradings: https://github.com/NicholasHan1226/Tradingagent.cc.git
+- TradingAgent: https://github.com/NicholasHan1226/Tradingagent.cc.git

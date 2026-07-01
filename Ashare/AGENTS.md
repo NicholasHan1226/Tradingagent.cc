@@ -1,4 +1,6 @@
-# Tradings/Ashare
+# TradingAgent/Ashare
+
+> **阅读顺序：** [AGENTS.md](../AGENTS.md) → [STATUS.md](../STATUS.md) → 本文件
 
 ## 目标
 A股交易全闭环 (T+1, Hermes同花顺执行)。

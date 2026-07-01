@@ -1,7 +1,9 @@
 # benchmark/
 
+> **阅读顺序：** [../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件
+
 ## 目标
-Benchmark tracking for performance comparison.
+基准跟踪与业绩比较。
 
 ## 文件
 - `benchmark_tracker.py` — 追踪沪深300/创业板指/买入持有基准, 计算区间收益, 对比组合表现。

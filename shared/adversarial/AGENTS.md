@@ -1,5 +1,7 @@
 # adversarial/
 
+> **阅读顺序：** [../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件
+
 ## 目标
 多空对辩 + 压力测试 + 历史类比。对每只候选股做对抗式质疑, 输出 belief_score (0-1)。
 不排除标的, 仅调整仓位权重。

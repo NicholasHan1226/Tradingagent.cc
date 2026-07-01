@@ -1,12 +1,14 @@
 # Mac Mini execution bridge contract
 
-本文定义 Tradings 服务器与 Mac Mini 执行桥之间的文件合同。服务器端只生产
+> **阅读顺序：** [../AGENTS.md](../AGENTS.md) → [../STATUS.md](../STATUS.md) → 本文件
+
+本文定义 TradingAgent 服务器与 Mac Mini 执行桥之间的文件合同。服务器端只生产
 `signals/pending/*.json` 信号卡；Mac Mini 通过独立 cron 拉取、领取、执行或通知，并把结果写回
 `signals/filled/` 与 `signals/positions/`。服务器端不得 SSH 到 Mini，不得直接点击、确认或撤销真实账户委托。
 
 ## 数据流
 
-1. Tradings 服务器写入 `signals/pending/{order_id}.json`。
+1. TradingAgent 服务器写入 `signals/pending/{order_id}.json`。
 2. Mac Mini cron 通过 `rsync`、`git pull` 或 shared volume 拉取 `signals/`。当前合同只约定目录与 JSON 字段，不绑定同步实现。
 3. Mini 原子领取一个 pending 信号：`signals/pending/{order_id}.json` rename 到 `signals/claimed/{order_id}.json`。
 4. Mini 按 `capital_layer` 分发：
@@ -106,7 +108,7 @@ Mini cron 的失败策略参考 `shared/orchestrator_design.md` 的 Level 1-3：
 
 ## 安全边界
 
-- Tradings 服务器只写 pending 信号卡。
+- TradingAgent 服务器只写 pending 信号卡。
 - Mini 模拟盘只调用模拟执行器。
 - Mini 实盘只发邮件和只读同步账户。
 - `direct_execution=true` 的 real 信号必须拒绝。

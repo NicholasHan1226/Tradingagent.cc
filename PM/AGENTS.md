@@ -1,4 +1,6 @@
-# Tradings/PM
+# TradingAgent/PM
+
+> **阅读顺序：** [AGENTS.md](../AGENTS.md) → [STATUS.md](../STATUS.md) → 本文件
 
 ## 目标
 预测市场交易模拟盘/影子盘, 高频训练策略, 每日2次复盘。
@@ -12,10 +14,10 @@
 - 24/7, Polymarket
 - 概率交易, 非方向性
 
-## 工具清单 (Tradings tool references)
+## 工具清单 (TradingAgent tool references)
 
 - 源目录: `/opt/investment/PredictionMarkets/tools/` (20 个 .py 工具)
-- Tradings 引用: `Tradings/PM/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
+- TradingAgent 引用: `TradingAgent/PM/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
 - 关键工具:
   - pm_workflow.py — Unified PredictionMarkets simulated-training workflow
   - pm_market_data.py — Read-only Polymarket market-data collection

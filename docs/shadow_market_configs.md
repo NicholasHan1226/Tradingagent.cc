@@ -1,15 +1,15 @@
-# Tradings 影子盘市场配置设计
+# TradingAgent 影子盘市场配置设计
 
 > **日期**: 2026-06-30
 > **作者**: Claude (只读分析, 不修改文件)
-> **目标**: 为 4 市场 (A股/加密/美股/预测市场) 设计影子盘配置, 供 W4 阶段 codex 实现各市场 MarketAdapter。
+> **目标**: 为 4 市场 (A股/加密/美股/预测市场) 设计影子盘配置, 供 W4 阶段实现各市场 MarketAdapter。
 > **依赖**: SharedSignals (数据源), shared/ 通用层, W2-1 调度+MarketAdapter 接口设计
 
 ---
 
 ## 0. 共通: MarketAdapter 接口契约
 
-所有市场 adapter 必须实现以下接口 (接口定义将在 W2-1 由 codex 定型, 以下为设计契约):
+所有市场 adapter 必须实现以下接口 (接口定义将在 W2-1 定型, 以下为设计契约):
 
 ```python
 class MarketAdapter(Protocol):
@@ -65,7 +65,7 @@ class MarketAdapter(Protocol):
 |------|------|
 | **capital_layer** | 全程 `"shadow"`, 不得写 `"real"` 或 `"simulated"` |
 | **数据缺失** | fail-safe 降级 0.5 (中性), 标记 `stale=True` |
-| **reader 对接** | 统一通过 `SharedSignalsReader(market="xxx")` 查询; `TradingsDataReader` 做 facade |
+| **reader 对接** | 统一通过 `SharedSignalsReader(market="xxx")` 查询; `TradingAgentDataReader` 做 facade |
 | **shadow_broker** | 共享 `shared/execution/shadow_broker.py`, 只记录不执行; `ShadowTrade` schema: `trade_id / strategy_name / trade_date / ts_code / side / quantity / price / amount / commission / net_amount / capital_layer / status / created_at / note` |
 | **信号状态机** | 共享 `pending → claimed → running → filled \| expired \| cancelled \| failed \| partial` |
 | **信号文件路径** | `signals/pending/` `signals/filled/` `signals/positions/` `signals/cancelled/` |
@@ -183,13 +183,13 @@ class MarketAdapter(Protocol):
 
 ```python
 # Adapter 初始化
-from shared.data.reader import TradingsDataReader
+from shared.data.reader import TradingAgentDataReader
 
 class AshareAdapter:
     market = "ashare"
 
     def __init__(self):
-        self.reader = TradingsDataReader()  # 内部自动 market="Ashare"
+        self.reader = TradingAgentDataReader()  # 内部自动 market="Ashare"
 
     def get_bars(self, symbol: str, start: str, end: str):
         return self.reader.reader.get_bars_daily("Ashare", symbol, start, end)
@@ -212,7 +212,7 @@ class AshareAdapter:
         ...
 ```
 
-**注意**: `TradingsDataReader` 当前交易日历方法 (`is_trading_day`/`next_trading_day`) 仅支持 A股, 需在 W1-1/W2-2 阶段扩展为多市场。
+**注意**: `TradingAgentDataReader` 当前交易日历方法 (`is_trading_day`/`next_trading_day`) 仅支持 A股, 需在 W1-1/W2-2 阶段扩展为多市场。
 
 ---
 
@@ -303,7 +303,7 @@ class CryptoAdapter:
     market = "crypto"
 
     def __init__(self):
-        self.reader = TradingsDataReader()
+        self.reader = TradingAgentDataReader()
 
     def get_bars(self, symbol: str, start: str, end: str):
         return self.reader.reader.get_bars_daily("Crypto", symbol, start, end)
@@ -400,7 +400,7 @@ class USAdapter:
     market = "us"
 
     def __init__(self):
-        self.reader = TradingsDataReader()
+        self.reader = TradingAgentDataReader()
 
     def get_bars(self, symbol: str, start: str, end: str):
         return self.reader.reader.get_bars_daily("US", symbol, start, end)
@@ -515,7 +515,7 @@ class PMAdapter:
     market = "pm"
 
     def __init__(self):
-        self.reader = TradingsDataReader()
+        self.reader = TradingAgentDataReader()
         # PM 需要额外的 reader 方法
         # self.reader.reader.get_pm_market(market_id)
         # self.reader.reader.get_pm_prices(market_id, start, end)

@@ -1,5 +1,7 @@
 # notify/
 
+> **阅读顺序：** [../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件
+
 ## 目标
 11类邮件模版 + 双通道告警路由。
 

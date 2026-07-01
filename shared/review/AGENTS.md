@@ -1,4 +1,6 @@
-# Tradings/shared/review
+# TradingAgent/shared/review
+
+> **阅读顺序：** [../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件
 
 ## 目标
 复盘系统: 3组对比(实际vs预期目标 / 实际vs基准沪深300 / 实际vs上一周期) + 归因 + 行动。

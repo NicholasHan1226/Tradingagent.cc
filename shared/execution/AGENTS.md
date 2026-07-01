@@ -1,5 +1,7 @@
 # execution/
 
+> **阅读顺序：** [../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件
+
 ## 目标
 订单执行层: Hermes(A股实盘) + 影子盘(多策略并行) + 模拟盘(滑点建模)。
 
@@ -17,7 +19,7 @@
 - 真实资金只给Nicholas手工确认, 不自动下单/撤单/点击
 - 影子盘和模拟盘可全自动记录
 - Hermes/Mac Mini 是执行桥：只负责同花顺 GUI 执行、截图/视觉定位、有限重试、回执和账户同步；不做买卖判断，不拒绝服务器已生成的 simulated 信号。
-- A 股模拟盘权威闭环是服务器 Tradings `signals/pending` → mini 接收/执行 → 服务器 Tradings `signals/filled|failed|positions`；兼容旧 MarketGraph receipt/ledger 输出只作历史留痕，不作为新的权威状态。
+- A 股模拟盘权威闭环是服务器 TradingAgent `signals/pending` → mini 接收/执行 → 服务器 TradingAgent `signals/filled|failed|positions`；兼容旧 MarketGraph receipt/ledger 输出只作历史留痕，不作为新的权威状态。
 - 成功点击后即使本地回执保存或远端同步异常，也必须进入待同步/人工排查，不能把同一信号重新放回待执行造成重复点击。
 
 

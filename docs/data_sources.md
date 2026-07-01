@@ -1,6 +1,6 @@
-# Tradings 数据源文档
+# TradingAgent 数据源文档
 
-> **用途**: Tradings 交易系统的数据依赖和接入指南  
+> **用途**: TradingAgent 交易系统的数据依赖和接入指南  
 > **版本**: 1.0.0 | **状态**: active
 
 ---
@@ -8,7 +8,7 @@
 ## 目录
 
 1. [概述](#概述)
-2. [Tradings 使用的 SharedSignals 函数](#tradings-使用的-sharedsignals-函数)
+2. [TradingAgent 使用的 SharedSignals 函数](#tradings-使用的-sharedsignals-函数)
 3. [Import 方式](#import-方式)
 4. [迁移指南：Ashare → SharedSignals](#迁移指南ashare--sharedsignals)
 5. [数据流总览](#数据流总览)
@@ -17,11 +17,11 @@
 
 ## 概述
 
-Tradings 是交易执行全闭环系统，负责从筛选到执行到复盘的全流程。按照架构边界：
+TradingAgent 是交易执行全闭环系统，负责从筛选到执行到复盘的全流程。按照架构边界：
 
-- **SharedSignals** (→ Tradings): 只读行情 + 事件 + 基本面 + 资金数据
-- **MarketGraph** (→ Tradings): 只读 regime + event_impact + forward_calendar + scenario
-- Tradings 不回传交易决策给 SharedSignals 或 MarketGraph（保持研究独立）
+- **SharedSignals** (→ TradingAgent): 只读行情 + 事件 + 基本面 + 资金数据
+- **MarketGraph** (→ TradingAgent): 只读 regime + event_impact + forward_calendar + scenario
+- TradingAgent 不回传交易决策给 SharedSignals 或 MarketGraph（保持研究独立）
 
 ### 消费者身份
 
@@ -38,13 +38,13 @@ Tradings 是交易执行全闭环系统，负责从筛选到执行到复盘的�
 
 ---
 
-## Tradings 使用的 SharedSignals 函数
+## TradingAgent 使用的 SharedSignals 函数
 
 ### 核心数据读取 (marketgraph_marketdata_db.py)
 
 所有行情和事件读取通过 `read_daily`、`read_events` 等统一入口：
 
-| 函数 | 用途 | Tradings 使用场景 |
+| 函数 | 用途 | TradingAgent 使用场景 |
 |------|------|-----------------|
 | `read_daily(market, symbol, ...)` | 日线 OHLCV | 六维打分技术面、持仓估值、回测 |
 | `read_events(provider, event_type, ...)` | 新闻/事件流 | 事件面评分，信号检测 |
@@ -58,7 +58,7 @@ Tradings 是交易执行全闭环系统，负责从筛选到执行到复盘的�
 
 ### 交易日历 (market_calendar.py)
 
-| 函数 | 用途 | Tradings 使用场景 |
+| 函数 | 用途 | TradingAgent 使用场景 |
 |------|------|-----------------|
 | `is_trading_day(date)` | 判断交易日 | 盘前/盘中/盘后任务调度 |
 | `get_trading_days(start, end)` | 交易日区间 | 周复盘时间范围计算 |
@@ -78,7 +78,7 @@ Tradings 是交易执行全闭环系统，负责从筛选到执行到复盘的�
 
 ### 通过 MarketGraph MCP 消费的数据
 
-| MCP 工具 | Tradings 使用场景 |
+| MCP 工具 | TradingAgent 使用场景 |
 |---------|-----------------|
 | `get_regime` | 宏观面评分、All Weather 倾斜 |
 | `get_all_weather_allocation` | 多市场组合分配 |
@@ -173,7 +173,7 @@ crypto_daily = pd.read_csv(BACKTEST_CACHE / "crypto_daily" / "BTCUSDT.csv")
 
 ### 背景
 
-Tradings 的 A 股模块（`Ashare/`）历史上直接调用 Tushare API 和本地 CSV 缓存。按照架构分层，数据读取应统一迁移到 SharedSignals。
+TradingAgent 的 A 股模块（`Ashare/`）历史上直接调用 Tushare API 和本地 CSV 缓存。按照架构分层，数据读取应统一迁移到 SharedSignals。
 
 ### 迁移对照表
 
@@ -188,7 +188,7 @@ Tradings 的 A 股模块（`Ashare/`）历史上直接调用 Tushare API 和本�
 
 ### 迁移步骤
 
-1. **识别**: 找到 Tradings 中所有直接调用 Tushare / 本地 CSV 的位置
+1. **识别**: 找到 TradingAgent 中所有直接调用 Tushare / 本地 CSV 的位置
 2. **替换**: 将 `_call("daily", ...)` 替换为 `read_daily("Ashare", ...)`
 3. **验证**: 对比新旧输出，确认数据一致性
 4. **清理**: 移除旧的 Tushare 直接 import
@@ -242,7 +242,7 @@ def get_daily_prices(ts_code, start, end):
          ┌──────────────┼──────────────┐
          ▼              ▼              ▼
    ┌──────────┐  ┌──────────┐  ┌──────────────┐
-   │ Tradings │  │MarketGraph│  │ 研究工具     │
+   │ TradingAgent │  │MarketGraph│  │ 研究工具     │
    │          │  │          │  │              │
    │ • 六维   │  │ • 因果图 │  │ • 回测      │
    │   打分   │  │ • regime │  │ • 因子研究  │
