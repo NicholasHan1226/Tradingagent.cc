@@ -195,6 +195,29 @@ class OrchestratorTest(unittest.TestCase):
         )
         self.assertTrue(all(row.get("metadata", {}).get("capital_layer") == "shadow" for row in audit_rows))
 
+
+    def test_run_shadow_loop_deduplicates_same_day_shadow_pending(self) -> None:
+        signals_dir = self.tmp_path / "signals_dedup"
+        first = run_shadow_loop(
+            StubMarketAdapter(),
+            "20260630",
+            StubReader(),
+            deps=self._deps(),
+            signals_dir=signals_dir,
+        )
+        second = run_shadow_loop(
+            StubMarketAdapter(),
+            "20260630",
+            StubReader(),
+            deps=self._deps(),
+            signals_dir=signals_dir,
+        )
+
+        self.assertEqual(first["recorded_count"], 2)
+        self.assertEqual(second["recorded_count"], 2)
+        self.assertEqual(len(list((signals_dir / "shadow" / "pending").glob("*.json"))), 2)
+        self.assertTrue(all(record["pending_signal"]["status"] == "duplicate" for record in second["records"]))
+
     def test_run_shadow_loop_fail_safe_records_degraded_without_crashing(self) -> None:
         result = run_shadow_loop(
             StubMarketAdapter(),

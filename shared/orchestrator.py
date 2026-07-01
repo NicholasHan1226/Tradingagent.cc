@@ -197,6 +197,35 @@ def _write_pending_signal(card: dict[str, Any], signals_dir: Path = SIGNALS_DIR)
     layer = str(card.get("capital_layer") or "").strip().lower()
     direct_execution = bool(card.get("direct_execution"))
     state_root = signals_dir / "shadow" if layer == "shadow" and not direct_execution else signals_dir
+    symbol = str(card.get("ts_code") or card.get("symbol") or card.get("code") or "").strip()
+    market = str(card.get("market") or "").strip()
+    side = str(card.get("direction") or card.get("side") or "buy").strip()
+    date_key = _signal_card_date_key(card, str(card.get("order_id") or ""))
+    account = str(card.get("strategy_name") or card.get("account") or "").strip()
+    account_type = str(card.get("account_type") or layer or "shadow").strip()
+    if layer == "shadow" and symbol and market and date_key:
+        existing = _find_existing_sim_signal(
+            state_root,
+            market=market,
+            account=account,
+            symbol=symbol,
+            date=date_key,
+            side=side,
+            capital_layer=layer,
+            account_type=account_type,
+            idempotency_key=str(card.get("idempotency_key") or ""),
+        )
+        if existing is not None:
+            return {
+                "order_id": card.get("order_id", ""),
+                "status": "duplicate",
+                "recorded": False,
+                "message": "same-day shadow signal already exists",
+                "existing_signal": existing,
+                "signal_card": card,
+                "queue_scope": "shadow",
+            }
+
     machine = SignalStateMachine(state_root)
     try:
         result = machine.write_pending(card)
@@ -322,6 +351,12 @@ def _sim_idempotency_key(market: str, account: str, symbol: str, date: str, side
     return ":".join(str(part).replace("/", "-").replace(" ", "_") for part in parts)
 
 
+def _shadow_idempotency_key(market: str, account: str, symbol: str, date: str, side: str) -> str:
+    date_key = _compact_date_key(date)
+    parts = ("SHADOW", market.lower(), account, date_key, symbol.upper(), side.lower())
+    return ":".join(str(part).replace("/", "-").replace(" ", "_") for part in parts)
+
+
 def _signal_card_date_key(card: dict[str, Any], fallback_name: str = "") -> str:
     for key in ("trade_date", "date", "valid_until", "timestamp", "filled_at", "received_at", "created_at"):
         value = card.get(key)
@@ -406,6 +441,11 @@ def _build_signal_card(
     direct_execution: bool = False,
 ) -> dict[str, Any]:
     order_id = order_id or _make_order_id(order_id_prefix, market, symbol, date)
+    side = str(order.get("side", "buy"))
+    if capital_layer == "shadow":
+        idempotency_key = order.get("idempotency_key") or _shadow_idempotency_key(market, account, symbol, date, side)
+    else:
+        idempotency_key = order.get("idempotency_key") or order_id
     return {
         "order_id": order_id,
         "ts_code": symbol,
@@ -429,7 +469,7 @@ def _build_signal_card(
         "shadow_trade_id": trade.get("trade_id", ""),
         "source_audit_id": audit_id,
         "valid_until": _date_iso(date),
-        "idempotency_key": order.get("idempotency_key") or order_id,
+        "idempotency_key": idempotency_key,
         "evidence_refs": [audit_id],
     }
 
