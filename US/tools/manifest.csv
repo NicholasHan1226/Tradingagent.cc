@@ -4,7 +4,7 @@ us_alpaca_executor.py,executor,US Alpaca Paper Trading Executor.
 us_alpaca_market_data.py,data,Alpaca Market Data — real-time quotes & historical bars.
 us_common.py,common,"US Market Common — shared utilities, paths, config, and safety gates."
 us_daily_report.py,report,Nicholas-facing daily Markdown report for US simulated training.
-us_daily_runner.py,orchestration,US Daily Runner — single entry point for KimiWork scheduled tasks.
+us_daily_runner.py,orchestration,US Daily Runner — single entry point for automated scheduled tasks.
 us_forward_validation.py,validation,US Stock Forward Validation — out-of-sample performance tracking.
 us_historical_replay.py,replay,US Historical Replay — backtest strategy variants against historical data.
 us_market_data.py,data,US Market Data Collector — fetch US stock data via Tushare.

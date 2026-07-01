@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for Tradings operations report."""
+"""Tests for tradingagent operations report."""
 
 from __future__ import annotations
 

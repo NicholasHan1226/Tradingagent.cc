@@ -1,1 +1,0 @@
-../../../US/tools/us_shadow_scorecard.py

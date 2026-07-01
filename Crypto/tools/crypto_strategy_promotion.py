@@ -1,1 +1,0 @@
-../../../Crypto/tools/crypto_strategy_promotion.py

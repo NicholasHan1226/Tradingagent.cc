@@ -41,7 +41,7 @@ def _coerce_direction(value: Any) -> str:
 
 
 def build_sim_signal(order: dict[str, Any] | Any) -> dict[str, Any]:
-    """Build the Mini receiver payload from a Tradings order."""
+    """Build the Mini receiver payload from a tradingagent order."""
     now = datetime.now().astimezone().strftime("%Y%m%d%H%M%S")
     side = _order_get(order, "direction", _order_get(order, "side", ""))
     price = _order_get(order, "price", _order_get(order, "limit_price", _order_get(order, "execution_price")))

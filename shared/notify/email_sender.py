@@ -335,7 +335,7 @@ def _channel_key_for_template(template_name: str) -> str:
 
 def _default_subject(template_name: str, data: dict[str, Any]) -> str:
     suffix = str(data.get("date") or data.get("trade_date") or data.get("week_range") or "").strip()
-    base = DEFAULT_SUBJECTS.get(template_name, f"Tradings {template_name}")
+    base = DEFAULT_SUBJECTS.get(template_name, f"tradingagent {template_name}")
     return f"{base} {suffix}".strip()
 
 

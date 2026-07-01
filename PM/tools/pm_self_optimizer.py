@@ -1,1 +1,0 @@
-../../../PredictionMarkets/tools/pm_self_optimizer.py
