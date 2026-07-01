@@ -290,8 +290,9 @@ class Wave2IntegrationTest(unittest.TestCase):
         self.assertTrue(
             all(row.get("metadata", {}).get("capital_layer") == "shadow" for row in audit_rows)
         )
-        self.assertTrue((self.tmp_path / "signals" / "pending").exists())
-        self.assertGreaterEqual(len(list((self.tmp_path / "signals" / "pending").glob("*.json"))), 2)
+        shadow_pending = self.tmp_path / "signals" / "shadow" / "pending"
+        self.assertTrue(shadow_pending.exists())
+        self.assertGreaterEqual(len(list(shadow_pending.glob("*.json"))), 2)
 
     def test_crypto_pm_complete_shadow_loop_with_market_aware_scoring(self) -> None:
         cases = [

@@ -92,6 +92,7 @@ class WebhookSenderTest(unittest.TestCase):
         self.assertEqual(headers["X-signature"], expected_signature)
         self.assertEqual(headers["X-hub-signature-256"], f"sha256={expected_signature}")
         self.assertEqual(result["signature"], expected_signature)
+        self.assertEqual(result["payload_sha256"], hashlib.sha256(body).hexdigest())
 
     def test_hermes_bridge_simulated_order_uses_webhook_sender(self) -> None:
         order = {

@@ -81,12 +81,29 @@ def render(data: dict[str, Any]) -> str:
     next_rows = [[n.get("focus", ""), n.get("action", "")] for n in next_week]
     next_html = _table(["关注点", "动作"], next_rows) if next_rows else "<p>下周按计划执行</p>"
 
+
+    ops = data.get("ops_queue_summary") or {}
+    ops_receipts = data.get("ops_receipt_integrity") or {}
+    ops_shadow = data.get("ops_shadow_queue_summary") or {}
+    ops_failures = data.get("ops_failure_summary") or {}
+    ops_html = ""
+    if data.get("ops_status") and data.get("ops_status") != "missing":
+        ops_rows = [
+            ["状态", data.get("ops_status", "--")],
+            ["执行队列", f"pending={ops.get('pending', 0)}, running={ops.get('running', 0)}, failed={ops.get('failed', 0)}, expired={ops.get('expired', 0)}"],
+            ["影子队列", f"pending={ops_shadow.get('pending', 0)}, running={ops_shadow.get('running', 0)}, failed={ops_shadow.get('failed', 0)}, expired={ops_shadow.get('expired', 0)}"],
+            ["回执", f"total={ops_receipts.get('total', 0)}, unsigned={ops_receipts.get('unsigned', 0)}, invalid={ops_receipts.get('invalid', 0)}"],
+            ["失败分类", ", ".join(f"{k}:{v}" for k, v in ops_failures.items()) or "无"],
+        ]
+        ops_html = _table(["项目", "结果"], ops_rows)
+
     body = (
         _section("本周总结", summary_html) +
         _section("策略统计", strat_html) +
         _section("每日盈亏", daily_html) +
         (_section("趋势观察", trend_html) if trend_html else "") +
-        _section("下周计划", next_html)
+        _section("下周计划", next_html) +
+        (_section("运行状态", ops_html) if ops_html else "")
     )
 
     return wrap_html(f"周报 | {week_range}", "Weekly Report", body)

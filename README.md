@@ -106,3 +106,18 @@ https://github.com/NicholasHan1226/Tradingagent.cc.git
 - Ashare: 144个工具 (因子28/复盘27/组合18/执行16/筛选11/风控10/通知14)
 - Crypto: 21个 / US: 20个 / PM: 20个 / HK: 预留
 - shared/: 50个.py文件 (筛选/对抗/风控/组合/执行/通知/复盘/记账)
+
+## 运维报告
+
+Tradings 每小时生成一次统一运维报告：
+
+```bash
+PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/ops_report.py --send-on never --pretty
+```
+
+报告文件：
+
+- `shared/review/ops/tradings_ops_latest.json`
+- `shared/review/ops/tradings_ops_history.jsonl`
+
+覆盖范围：执行队列、影子队列、失败原因聚合、Mini/Hermes 回执完整性、服务器本地模拟账本和影子盘 PnL 摘要。系统邮件只在 `overall_status=fail` 时发送到 `soc@coze.email`；`warn` 仅记录在报告里。

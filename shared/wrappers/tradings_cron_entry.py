@@ -610,7 +610,7 @@ def _compose_weekly_email_data(
     next_week = _weekly_next_week_rows(layer_review, strategy_rows)
     promote_names = ", ".join(layer_review.get("strategies_to_promote") or []) or "无"
     eliminate_names = ", ".join(layer_review.get("strategies_to_eliminate") or []) or "无"
-    return {
+    data = {
         "week_range": f"{_format_trade_day(week_start)} ~ {_format_trade_day(week_end)}",
         "date": _format_trade_day(week_end),
         "weekly_pnl": total_pnl,
@@ -631,7 +631,38 @@ def _compose_weekly_email_data(
             ],
         ),
     }
+    data.update(_ops_template_fields())
+    return data
 
+
+def _latest_ops_report() -> dict[str, Any]:
+    return _read_json(SHARED / "review/ops/tradings_ops_latest.json")
+
+
+def _ops_template_fields() -> dict[str, Any]:
+    report = _latest_ops_report()
+    if not report:
+        return {"ops_status": "missing", "ops_summary": "暂无运维报告"}
+    totals = (report.get("queue_summary") or {}).get("totals") or {}
+    receipts = report.get("receipt_integrity") or {}
+    shadow_totals = (report.get("shadow_queue_summary") or {}).get("totals") or {}
+    failures = report.get("failure_summary") or {}
+    return {
+        "ops_status": report.get("overall_status", "unknown"),
+        "ops_generated_at": report.get("generated_at", ""),
+        "ops_queue_summary": totals,
+        "ops_shadow_queue_summary": shadow_totals,
+        "ops_receipt_integrity": receipts,
+        "ops_failure_summary": failures.get("by_category") or {},
+        "ops_recommendations": report.get("recommendations") or [],
+        "ops_summary": (
+            f"status={report.get('overall_status', 'unknown')}, "
+            f"pending={totals.get('pending', 0)}, running={totals.get('running', 0)}, "
+            f"failed={totals.get('failed', 0)}, expired={totals.get('expired', 0)}, "
+            f"shadow_pending={shadow_totals.get('pending', 0)}, "
+            f"receipt_invalid={receipts.get('invalid', 0)}"
+        ),
+    }
 
 def _cron_log_snapshot() -> dict[str, Any]:
     log_dir = SHARED / "logs" / "cron"
@@ -955,7 +986,7 @@ def _compose_nightly_email_data(
     total_pnl = _safe_float(layer_review.get("pnl"))
     comparisons = layer_review.get("comparisons") or {}
     vs_benchmark = comparisons.get("vs_benchmark") or {}
-    return {
+    data = {
         "trade_date": trade_date_value,
         "date": trade_date_value,
         "total_pnl": total_pnl,
@@ -976,6 +1007,8 @@ def _compose_nightly_email_data(
             ],
         ),
     }
+    data.update(_ops_template_fields())
+    return data
 
 
 class StubMarketAdapter:
@@ -1627,7 +1660,7 @@ def run_alert() -> dict[str, Any]:
     self_heal_snapshot = _latest_self_heal_snapshot()
     cron_snapshot = _cron_log_snapshot()
     email_data = _system_health_email_data(self_heal_snapshot, cron_snapshot)
-    email_result = send_template_email("system_health", email_data)
+    email_result = send_template_email("system_health", email_data, channel="system")
     result = {
         "job": "job_alert",
         "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
@@ -1911,6 +1944,36 @@ def _build_email_notify_payload() -> tuple[str, str, str]:
             ])
         )
 
+
+    ops = _latest_ops_report()
+    if ops:
+        ops_totals = (ops.get("queue_summary") or {}).get("totals") or {}
+        ops_receipts = ops.get("receipt_integrity") or {}
+        ops_shadow = ((ops.get("shadow_queue_summary") or {}).get("totals") or {})
+        ops_failures = ((ops.get("failure_summary") or {}).get("by_category") or {})
+        ops_line = (
+            f"运维报告: status={ops.get('overall_status', '--')}, "
+            f"pending={ops_totals.get('pending', 0)}, running={ops_totals.get('running', 0)}, "
+            f"failed={ops_totals.get('failed', 0)}, expired={ops_totals.get('expired', 0)}, "
+            f"shadow_pending={ops_shadow.get('pending', 0)}, "
+            f"receipt_invalid={ops_receipts.get('invalid', 0)}"
+        )
+        lines.append(ops_line)
+        html_sections.append(
+            "".join([
+                "<div style=\"margin-bottom:16px;\">",
+                "<h3>运维报告</h3>",
+                "<ul>",
+                f"<li>状态: {ops.get('overall_status', '--')}</li>",
+                f"<li>执行队列: pending={ops_totals.get('pending', 0)}, running={ops_totals.get('running', 0)}, filled={ops_totals.get('filled', 0)}, failed={ops_totals.get('failed', 0)}, expired={ops_totals.get('expired', 0)}</li>",
+                f"<li>影子队列: pending={ops_shadow.get('pending', 0)}, running={ops_shadow.get('running', 0)}, filled={ops_shadow.get('filled', 0)}, failed={ops_shadow.get('failed', 0)}, expired={ops_shadow.get('expired', 0)}</li>",
+                f"<li>回执: total={ops_receipts.get('total', 0)}, signed={ops_receipts.get('signed', 0)}, unsigned={ops_receipts.get('unsigned', 0)}, invalid={ops_receipts.get('invalid', 0)}</li>",
+                f"<li>失败分类: {json.dumps(ops_failures, ensure_ascii=False)}</li>",
+                "</ul>",
+                "</div>",
+            ])
+        )
+
     body = "\n".join(lines)
     html_body = wrap_html(
         f"每日汇总 | {trade_date()}",
@@ -1954,6 +2017,20 @@ def run_ashare_night_calibration() -> dict[str, Any]:
     write_markdown(SHARED / "review/daily/night_calibration.md", "job_ashare_night_calibration", payload)
     return payload
 
+
+
+def run_ops_report() -> dict[str, Any]:
+    from shared.runtime_test.ops_report import build_ops_report, send_alert_if_needed, write_report
+    report = build_ops_report()
+    paths = write_report(report)
+    email = send_alert_if_needed(report, "fail")
+    return {
+        "job": "job_ops_report",
+        "generated_at": now_iso(),
+        "state": report.get("overall_status", "unknown"),
+        "written_paths": paths,
+        "email": email,
+    }
 
 def run_email_notify() -> dict[str, Any]:
     subject, body, html_body = _build_email_notify_payload()
@@ -2044,6 +2121,7 @@ JOB_HANDLERS: dict[str, Any] = {
     "job_pm_report": run_pm_report,
     "job_alert": run_alert,
     "job_email_notify": run_email_notify,
+    "job_ops_report": run_ops_report,
 }
 
 

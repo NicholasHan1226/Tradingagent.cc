@@ -94,3 +94,11 @@
 - A股 shadow/sim 候选在组合构建前必须过滤 `price <= 0`，记录到 `skipped_candidates`，不能让零价候选污染 `execution.shadow_broker` 或 `execution.sim_broker` 健康状态。
 - A股健康检查 `ashare_health_alert.py --send-on never --pretty` 于 2026-07-01 21:31 CST 验证 `overall_status=pass`；健康通过不发邮件，warn/fail 才发系统通道。
 - 邮件模板渲染验证覆盖 `trading_signal/daily_report/weekly_report/system_health`；交易邮件通道为 `notice@tradingagent.cc -> tradingadviser@coze.email`，系统邮件通道为 `notice@tradingagent.cc -> soc@coze.email`。Cloudflare 最新发送记录为 `status=sent`、`status_code=200`。
+
+## 2026-07-01 Tradings 运维报告与缺陷复盘
+- 新增统一运维报告入口：`PYTHONPATH=/opt/investment/Tradings python3 shared/runtime_test/ops_report.py --send-on never --pretty`；定时任务入口为 `shared/wrappers/job_ops_report.sh` / `tradings_cron_entry.py --job job_ops_report`。
+- `job_ops_report` 每小时 17 分运行，写出 `shared/review/ops/tradings_ops_latest.json` 和 `shared/review/ops/tradings_ops_history.jsonl`；`overall_status=fail` 才向系统通道 `notice@tradingagent.cc -> soc@coze.email` 发邮件，历史失败导致的 `warn` 只入报告，不重复打扰。
+- 运维报告同时覆盖执行队列 `signals/{pending,claimed,running,filled,failed,expired,cancelled}` 与影子队列 `signals/shadow/{pending,claimed,running,filled,failed,expired,cancelled}`，并输出按市场分布、失败原因聚合、Mini/Hermes 回执完整性、服务器本地模拟账本和影子盘 PnL 摘要。
+- Webhook 发送结果新增 `payload_sha256`，用于后续和 Mini/Hermes 回执指纹对账；旧回执没有签名时只能标记为 `unsigned`，不能当作篡改或失败。
+- 日报/周报模板新增可选“运行状态”段，展示执行队列、影子队列、回执校验和失败分类；模板缺少运维字段时保持兼容。
+- 当前已知缺陷边界：服务器侧已经能识别 unsigned/invalid receipt，但 Mini/Hermes 回执本身尚未写入 `payload_sha256`/`receipt_sha256`，所以完整端到端指纹闭环需要在 mini 执行器中继续补齐。

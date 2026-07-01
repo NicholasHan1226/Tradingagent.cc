@@ -107,6 +107,7 @@ def send_sim_signal_to_mini(
     signal = build_sim_signal(order)
     body = encode_signal(signal)
     signature = sign_body(body, secret)
+    body_sha256 = hashlib.sha256(body).hexdigest()
     attempts = retries + 1
     last_error = ""
 
@@ -119,6 +120,7 @@ def send_sim_signal_to_mini(
                     "order_id": signal["order_id"],
                     "signal": signal,
                     "signature": signature,
+                    "payload_sha256": body_sha256,
                     "webhook_url": url,
                 }
             )
@@ -135,6 +137,7 @@ def send_sim_signal_to_mini(
         "order_id": signal["order_id"],
         "signal": signal,
         "signature": signature,
+        "payload_sha256": body_sha256,
         "webhook_url": url,
         "message": f"Mini webhook send failed after {attempts} attempts: {last_error}",
     }
