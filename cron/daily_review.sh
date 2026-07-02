@@ -1,5 +1,6 @@
 #!/bin/bash
 # Run TradingAgent daily review across all markets represented in shadow logs.
+TIMEOUT="${TRADINGAGENT_CRON_TIMEOUT:-1800}"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,6 +32,6 @@ fi
 
 {
   echo "[$(date -Iseconds)] START daily_review trade_date=${TRADE_DATE} session=${SESSION}"
-  TRADINGAGENT_REVIEW_DATE="${TRADE_DATE}" TRADINGAGENT_REVIEW_SESSION="${SESSION}" PYTHONPATH="${ROOT}" "${PYTHON_BIN}" -c 'import json, os; from shared.review.daily_review import run_daily_review; print(json.dumps(run_daily_review(os.environ["TRADINGAGENT_REVIEW_DATE"], session=os.environ["TRADINGAGENT_REVIEW_SESSION"]), ensure_ascii=False))'
+  TRADINGAGENT_REVIEW_DATE="${TRADE_DATE}" TRADINGAGENT_REVIEW_SESSION="${SESSION}" PYTHONPATH="${ROOT}" timeout "${TIMEOUT}" "${PYTHON_BIN}" -c 'import json, os; from shared.review.daily_review import run_daily_review; print(json.dumps(run_daily_review(os.environ["TRADINGAGENT_REVIEW_DATE"], session=os.environ["TRADINGAGENT_REVIEW_SESSION"]), ensure_ascii=False))'
   echo "[$(date -Iseconds)] OK daily_review"
 } >> "${LOG_FILE}" 2>&1

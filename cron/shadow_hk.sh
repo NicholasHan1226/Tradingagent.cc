@@ -1,5 +1,6 @@
 #!/bin/bash
 # Run HK shadow scan without touching execution queues.
+TIMEOUT="${TRADINGAGENT_CRON_TIMEOUT:-1800}"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,6 +31,6 @@ fi
 
 {
   echo "[$(date -Iseconds)] START shadow_hk as_of=${AS_OF}"
-  TRADINGAGENT_AS_OF_DATE="${AS_OF}" PYTHONPATH="${ROOT}" "${PYTHON_BIN}" -c 'import json, os; from HK.workflow import run_hk_shadow_cycle; print(json.dumps(run_hk_shadow_cycle(os.environ["TRADINGAGENT_AS_OF_DATE"]), ensure_ascii=False))'
+  TRADINGAGENT_AS_OF_DATE="${AS_OF}" PYTHONPATH="${ROOT}" timeout "${TIMEOUT}" "${PYTHON_BIN}" -c 'import json, os; from HK.workflow import run_hk_shadow_cycle; print(json.dumps(run_hk_shadow_cycle(os.environ["TRADINGAGENT_AS_OF_DATE"]), ensure_ascii=False))'
   echo "[$(date -Iseconds)] OK shadow_hk"
 } >> "${LOG_FILE}" 2>&1

@@ -1,5 +1,6 @@
 #!/bin/bash
 # Run Crypto shadow scan through the existing TradingAgent wrapper.
+TIMEOUT="${TRADINGAGENT_CRON_TIMEOUT:-1800}"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
