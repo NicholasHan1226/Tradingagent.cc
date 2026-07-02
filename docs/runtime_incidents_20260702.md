@@ -87,6 +87,46 @@
 - `launchctl list | grep ai.hermes.condition-cleanup` 无加载结果。
 - `~/Desktop/Investment` 当前不存在。
 
+## 事件5: `execution_router.py` 迁移改动悬空
+
+**现象：**
+- 服务器工作树长期残留未提交改动 `shared/execution/execution_router.py`。
+- 该改动将 A 股 `sim_broker` 从旧 `/opt/investment/Ashare/tools/a_share_simulated_trade_executor.py` 切到仓库内 `Ashare/sim_executor.py`。
+- 悬空状态会导致运行代码与 GitHub main 不一致，后续 agent 容易误回退或覆盖。
+
+**验证：**
+- `tests/test_ashare_sim.py tests/test_sim_loop.py tests/test_t_plus_1_integration.py tests/test_real_money_boundary.py`：`21 passed`。
+- 手动 mock route 返回 `channel=sim_broker`、`executed=True`、`status=filled`，证明 router 可以通过内部 A-share sim executor 工作。
+
+**修复：**
+- 已单独提交并推送到 GitHub main：
+  - `fbc1776 fix: route ashare sim broker through internal executor`
+
+## 事件6: Mini live 脚本默认值仍可回退旧路径
+
+**现象：**
+- `com.nicholashan.sim-signal-executor` 的 LaunchAgent 已设置正确环境变量，但 live 脚本自身默认值仍指向旧路径：
+  - `ASHARE_ROOT` 默认 `~/Desktop/Investment/Ashare`
+  - `SIM_REMOTE_TRADINGS_SIGNAL_DIR` 默认 `/opt/investment/Tradings/signals`
+- `~/.hermes/scripts/health-check.sh` 的 pending 统计仍扫描 `/opt/investment/Tradings/signals/pending`。
+- 这些默认值在正常 LaunchAgent 环境下被覆盖，但手动运行或环境变量丢失时会回退旧路径。
+
+**修复：**
+- Mac Mini `~/.hermes/scripts/sim-signal-executor.py` 默认 runtime 改为 `~/.hermes/ashare-runtime`。
+- Mac Mini `~/.hermes/scripts/sim-signal-executor.py` 默认服务器 signals 改为 `/opt/investment/tradingagent/signals`。
+- Mac Mini `~/.hermes/scripts/health-check.sh` pending 统计改为 `/opt/investment/tradingagent/signals/pending`。
+- 已备份：
+  - `sim-signal-executor.py.bak.20260702-215150.path_defaults`
+  - `health-check.sh.bak.20260702-215150.path_defaults`
+
+**验证：**
+- `python3 -m py_compile ~/.hermes/scripts/sim-signal-executor.py` 通过。
+- `bash -n ~/.hermes/scripts/health-check.sh` 通过。
+- `com.nicholashan.sim-signal-executor` 已重启。
+- `~/.hermes/health/status.json` 显示 `healthy=true`。
+- `~/Desktop/Investment` 当前不存在。
+
+
 ## 当前正确边界
 
 - 代码主线：GitHub `NicholasHan1226/Tradingagent.cc`，服务器路径 `/opt/investment/tradingagent`。
@@ -97,7 +137,6 @@
 
 ## 残余风险
 
-- 服务器工作树仍有一个本次未接管的未提交改动：`shared/execution/execution_router.py`。该改动看起来是把 sim broker 从旧 `/opt/investment/Ashare/tools` 迁到 `TradingAgent/Ashare/sim_executor.py`，但未由本次修复提交；后续 agent 不得覆盖或回退，需单独审查、测试、提交。
 - `mini/mini_consumer.py` 与 `mini/README.md` 仍包含旧 `~/Desktop/Investment` 参考路径。`mini/AGENTS.md` 已声明 mini 目录是参考副本，真实 live 路径在 Mac Mini `~/.hermes/`；后续如整理文档，应更新这些参考说明，避免误导。
 - Mac Mini `~/.hermes/scripts/` 中仍有若干历史脚本含 `~/Desktop/Investment`，但当前未由 LaunchAgent 或 crontab 激活。不要批量改写，除非先确认每个脚本的事实源和新 runtime 对应关系。
 - 本次未发送测试交易信号；A 股模拟执行链路的下一次完整端到端验证需要在交易时段、且遵守 mini health gate 与模拟账户确认规则。
