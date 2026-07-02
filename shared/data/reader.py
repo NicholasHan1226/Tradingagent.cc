@@ -239,6 +239,7 @@ class TradingagentDataReader:
         self.stale = False
         self.degraded = False
         self._error_count_at_last_log = 0
+        self._last_api_used = False
 
     def _maybe_alert(self) -> None:
         """Log a warning when errors accumulate beyond threshold — dead-man switch."""
@@ -270,9 +271,11 @@ class TradingagentDataReader:
             return fallback()
 
         before_error_count = len(getattr(self._api_client, "errors", []))
+        self._last_api_used = False
         try:
             method = getattr(self._api_client, op)
             result = method(*args, **kwargs)
+            self._last_api_used = True
         except Exception as exc:  # pragma: no cover - defensive API boundary
             self._record_api_fallback(op, str(exc))
             return fallback()
@@ -284,6 +287,10 @@ class TradingagentDataReader:
         return result
 
     def _record_shared_error(self, op: str) -> None:
+        if self._last_api_used:
+            self._last_api_used = False
+            return  # API succeeded; stale shared error is from a different operation
+        self._last_api_used = False
         error = getattr(self._shared, "last_error", None)
         if error:
             self.stale = True
