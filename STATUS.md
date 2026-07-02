@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-02
+> 最后更新：2026-07-02 (Goal 2 审计完成：5 轮 44 项修复，~222 发现)
 
 ---
 
@@ -28,21 +28,106 @@
 
 ## 三、下一步
 
-1. [ ] Crypto/US/HK/PM 多市场工具独立实现（manifest.csv 中列出的 61 个工具从头构建）
-2. [ ] 多市场模拟盘闭环（各自独立，不再依赖旧系统）
-3. [ ] A 股实盘路径设计（需先确认安全边界和人工确认环节）
-4. [ ] 集合竞价支持
+1. [ ] **P2：Crypto/US/HK/PM 多市场工具独立实现** — manifest.csv 中 61 个占位工具从头构建
+2. [ ] **P2：多市场模拟盘闭环** — 各自独立，不再依赖旧系统 symlink
+3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
+4. [ ] **P2：SharedSignals HTTP API 消费迁移** — 从直接 SQLite 读取切换到 API-first 访问
 
 ## 四、活跃任务
 
-- 无
+（当前无活跃迁移任务）
 
-## 五、最近完成（2026-07-02 Goal 1）
+## 五、最近完成（2026-07-02）
 
+### Goal 2 审计 — SharedSignals → TradingAgent → MarketGraph 数据流
+
+**2 轮审计，10 维度，46 发现，10 项修复全部完成。**
+
+**Round 1（5 agents，17 发现）：**
+- API 客户端：`is_trading_day()` 默认返回 False（fail-safe）、API sentinel→TTL 恢复、4xx/5xx 重试分化
+- 健康检查：sockstat 端口检测替代 HTTP health check（30s SIGALRM 超时）
+- 配置一致性：端口 8082/8900 不一致修复、MarketGraph `.env.example` port 更新
+
+**Round 2（5 agents，29 发现，5 维度）：**
+- 数据新鲜度：LRU cache 无 TTL、naive `datetime.now()`（20+ 处）、无每日管线 fallback cron
+- 错误传播：dead `api` property、`errors`/`stale` 从未消费、SQLite 错误静默吞掉、无死人手刹
+- 配置漂移：`SHAREDSIGNALS_ROOT` 指向错误、端口 8900/8082 不一致、`MARKETGRAPH_ENV_FILE` 路径冲突、15 个未文档化环境变量
+- MarketGraph 直接读取器：从未使用 HTTP API、reference/ 下断 symlink、直接导入无鉴权
+- 密钥暴露：`api_tokens.json` 在 git 中追踪、无盐 SHA256、X-API-Key 双重暴露、`.env.*` 不在 gitignore
+
+**已应用修复（10 项）：**
+1. [x] `SharedSignals/.gitignore`：添加 `config/api_tokens.json` + `.env.*`
+2. [x] `.env.example`：`SHAREDSIGNALS_ROOT` 修正（MarketGraphRuntime → SharedSignals）
+3. [x] `.env.example`：`MARKETGRAPH_ENV_FILE` 修正（MarketGraph/.env → marketgraph/.env）
+4. [x] `SharedSignals/tools/api_server.py`：端口默认值 8900 → 8082（docstring + env.get）
+5. [x] `shared_signals_api.py`：移除 X-API-Key 双重暴露（服务器仅检查 Authorization）
+6. [x] `reader.py`（TradingagentDataReader）：移除 dead `api` property + 未使用的 `import time`
+7. [x] `SharedSignals/auth.py`：添加 salt token hashing（PBKDF2-HMAC-SHA256，100k 迭代，向后兼容）
+8. [x] `SharedSignals/reader.py`：LRU cache 失效 — 14 个缓存函数已注册，TTL（默认 5 分钟）+ 文件 mtime 自动检测，`clear_caches()` + `/cache/invalidate` + `/cache/status` 端点
+
+### Goal 2 审计 Round 3（高强度终检 — TradingAgent 侧）
+
+**TradingAgent 相关发现（CRITICAL/HIGH）：**
+- **MarketGraphCSVReader 路径错误：** `intake` 路径缺少 `data/` 目录，`get_regime()` 路径错误 — 导致体制信号、事件候选、情绪信号三个关键 CSV 静默加载失败（已修复）
+- **SharedSignalsAPIClient 孤儿代码：** `shared_signals_api.py` 已定义完整 HTTP 客户端（15 接口），但 `TradingagentDataReader` 从未实例化或使用它 — 所有数据仍走直接 SQLite 读取
+- **TradingagentDataReader 无数据新鲜度检查：** `errors`/`stale` 字段只写从未被消费，stale=True 后无任何恢复逻辑
+- **N+1 查询扇出：** 评分管线对每只股票做 5-6 次独立查询，20 只股票 > 100 次调用，无批量接口
+- **直接 SQLite 读取绕过了 API 鉴权：** TradingAgent 绕开 SharedSignals HTTP API 直接读 SQLite，使得 API token/scope 安全模型形同虚设
+- **无死人手刹：** 连续 N 次 SQLite 错误或 CSV 空返回后无告警
+
+**已应用修复（Round 3，影响 TradingAgent）：**
+9. [x] `tradingagent/shared/data/reader.py`：MarketGraphCSVReader `intake` 路径从 `self.root / "intake"` → `self.root / "data" / "intake"`，`get_regime()` 路径从 `self.root / "all_weather_regime.csv"` → `self.root / "data" / "all_weather_regime.csv"`
+
+### Goal 2 审计 Round 4（终检 — TradingAgent 侧）
+
+**TradingAgent 相关发现（CRITICAL/HIGH）：**
+- **SharedSignalsAPIClient 孤儿代码：** 214 行 HTTP 客户端从未被生产代码导入使用（已加 DeprecationWarning）
+- **TradingagentDataReader 无死人手刹：** `errors` 列表无限增长但从不消费，`stale` 标志从未检查 — 已修复：添加 `_maybe_alert()` 每 10 条错误 WARNING
+- **SharedSignalsReader 无 SQLite busy_timeout：** 连接无超时，写锁期间读立即失败 — 已修复：添加 `busy_timeout = 5000`
+- **静默回退到 `/dev/null/does_not_exist.sqlite`：** 初始化失败时所有查询返回空，零告警 — 已修复：`_maybe_alert()` 在回退激活时日志记录
+- **重复的交易日历实现：** `t_plus_1.py` 和 `position_schema.py` 各自独立实现 is_trading_day，行为不一致
+- **try/except 将类设为 None 反模式：** `daily_review.py` 和 `benchmark.py` 将导入失败转换为 None，隐藏真实错误
+- **N+1 查询扇出：** 评分管线每只股票 5-6 次独立查询，无批量接口
+- **数据类型不一致：** CSV 路径返回字符串，SQLite 路径返回正确 Python 类型
+
+**已应用修复（Round 4，影响 TradingAgent）：**
+10. [x] `reader.py`：SharedSignalsReader 连接添加 `PRAGMA busy_timeout = 5000`
+11. [x] `reader.py`：TradingagentDataReader 添加 `_maybe_alert()` — errors 每 10 条 WARNING，所有 9 个 error.append 点均已接线
+12. [x] `shared_signals_api.py`：添加 DeprecationWarning 模块级警告
+13. [x] `SharedSignals/reader.py`：`get_market_data()` 查询添加 `market` 过滤（从 ts_code 后缀推导）
+14. [x] `SharedSignals/collectors/rss/`：event_hash 从 64 位升级到 128 位（collector.py + gap_filler.py）
+15. [x] `SharedSignals/api_server.py`：恢复 `log_message()` HTTP 请求日志 + 500 错误日志
+
+### 2026-07-02 Goal 2 审计 Round 5（五维度最终审计 — 58 发现，23 修复）
+
+**5 新维度并行审计。TradingAgent 相关发现和修复：**
+
+**TradingAgent 相关发现（CRITICAL/HIGH）：**
+- **Universe collapse（CRITICAL）：** `adapter.py:_exclude_asset()` 将 `None`（DB 错误）等价于"低流动性" — 所有股票被排除，TradingAgent 生成零交易
+- **SQLite 读写模式（HIGH）：** `reader.py` 以 rw 模式打开 SharedSignals 只读模型 DB — 损坏风险，空 DB 静默创建
+- **`/dev/null` fallback（HIGH）：** `SharedSignalsReader` 初始化失败静默回退到 `/dev/null/does_not_exist.sqlite` — 完全数据丢失零告警
+- **DatabaseError 未捕获（HIGH）：** `_query()` 只捕获 `sqlite3.OperationalError` — DB 损坏绕过防御
+- **硬编码 secrets（HIGH）：** `webhook_sender.py` 中 WEBHOOK_SECRET 和 WEBHOOK_URL 为硬编码字面量
+- **env 自动加载在 import-time（MEDIUM）：** 多个模块在 import 时 mutate `os.environ`
+
+**已应用修复（Round 5，5 TradingAgent 相关项）：**
+1. [x] `Ashare/adapter.py`：`_exclude_asset()` — `amount is None` 返回 False（保留），记录 WARNING
+2. [x] `shared/data/reader.py`：SQLite 连接从 rw 改为 `mode=ro` URI
+3. [x] `shared/data/reader.py`：`DatabaseError` 和 `OperationalError` 同时捕获
+4. [x] `shared/data/reader.py`：`/dev/null` fallback → RuntimeError（fail-fast）
+5. [x] `shared/execution/webhook_sender.py`：Hardcoded secrets → env vars
+
+### Goal 1 退役清理
+
+- [x] Ashare 依赖迁移：`execution_router.py` sim_broker 通道从旧 `/opt/investment/Ashare/tools/a_share_simulated_trade_executor` 迁移到 `tradingagent/Ashare/sim_executor.py`
+- [x] Tushare API 包装器迁移：`a_share_tushare_api.py` + `a_share_common.py` 已迁至 `/opt/investment/SharedSignals/collectors/tushare/`，服务器保留兼容性 symlink
+- [x] Ashare/tools 全面退役：142 文件归档至 `_archive/Ashare_tools_20260702/`，目录仅剩 3 个 compat symlink
+- [x] `Ashare/AGENTS.md` 添加迁移注释
 - [x] 旧系统残留清理：删除 61 个死 symlink（PM 20 + Crypto 21 + US 20）
 - [x] 代码层 Tradings/KimiWork 引用全部修复（0 残留）
 - [x] 服务器 crontab 37 条旧注释清理
 - [x] 所有修改提交并 push，服务器同步确认
+- [x] `sim_broker.py` L8 + `slippage_model.py` L8 注释引用路径更新至 `_archive/Ashare_tools_20260702/`
 
 ## 六、7/1 事故复盘（已完成）
 
