@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-02 (R8/R9 多市场安全修复完成)
+> 最后更新：2026-07-02 (US/HK P1 工具完成)
 
 ---
 
@@ -14,7 +14,7 @@
 - **A 股模拟盘**：通过 Mac Mini Hermes 执行，收/发/回执链路已修复
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`；mini live 脚本默认值也已改到新路径
 - **PM（预测市场）**：影子盘每 10 分钟扫描运行；checked-in config 使用 USDC；PM shadow 写入 `signals/shadow/pending`
-- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；Crypto/US/HK Phase D P0 工具已独立实现，PM 部分安全补齐
+- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、影子队列、回执完整性、PnL 摘要
@@ -28,7 +28,7 @@
 
 ## 三、下一步
 
-1. [ ] **P2：Crypto/US/HK/PM 多市场工具独立实现** — manifest.csv 中 61 个占位工具从头构建
+1. [ ] **P2：Crypto/PM 多市场工具独立实现** — 继续从 manifest.csv 占位工具中补齐 report/validation/promotion 等 P1/P2 能力
 2. [ ] **P2：多市场模拟盘闭环** — 各自独立，不再依赖旧系统 symlink
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
 4. [ ] **P2：SharedSignals HTTP API 消费迁移** — 从直接 SQLite 读取切换到 API-first 访问
@@ -38,6 +38,14 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成（2026-07-02）
+
+### US/HK P1 工具（2026-07-02）
+
+- [x] `US/report.py` / `HK/report.py`：新增 Markdown 日度 shadow 报告；HK 报告包含 lot size；默认只渲染不发送。
+- [x] `US/validation.py` / `HK/validation.py`：新增 OOS 前向验证；US 覆盖 earnings/momentum funnel，HK 使用 HKD 口径。
+- [x] `US/promotion.py` / `HK/promotion.py`：新增 5-tier `research -> shadow_candidate -> shadow -> sim_candidate -> sim` 策略晋级分类。
+- [x] 所有 P1 工具维持 shadow/sim 边界，拒绝 real/live/direct execution 配置或负载。
+- [x] 新增 `tests/test_us_hk_p1_tools.py`，US/HK 各 3 项测试；`py_compile`、US/HK P0 回归和 diff 检查通过。
 
 ### R8/R9 多市场安全修复（2026-07-02）
 
