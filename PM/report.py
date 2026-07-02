@@ -29,11 +29,11 @@ def _outcome(row: dict[str, Any]) -> int | None:
     if value in (None, ""):
         return None
     raw = str(value).strip().lower()
-    if raw in {"1", "true", "yes", "y", "win", "resolved_yes"}:
+    if raw in {"1", "true", "yes", "win", "resolved_yes"}:
         return 1
-    if raw in {"0", "false", "no", "n", "loss", "resolved_no"}:
+    if raw in {"0", "false", "no", "loss", "resolved_no"}:
         return 0
-    return 1 if bool(value) else 0
+    return None
 
 
 class PMDailyReport(BaseReport):

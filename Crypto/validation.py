@@ -10,6 +10,19 @@ from Crypto.common import CryptoConfig, load_crypto_config
 from shared.markets.safety import assert_no_real_execution, reject_real_execution_payload
 
 
+def _date_key(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    date_part = raw.split("T", 1)[0].split(" ", 1)[0]
+    if "-" in date_part:
+        parts = date_part.split("-")
+        if len(parts) >= 3:
+            return f"{parts[0].zfill(4)}{parts[1].zfill(2)}{parts[2].zfill(2)}"
+    compact = "".join(ch for ch in date_part if ch.isdigit())
+    return compact.zfill(8) if compact else ""
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         result = float(value)
@@ -61,11 +74,13 @@ class CryptoForwardValidation:
 
     def oos_records(self, as_of: str | None = None) -> list[dict[str, Any]]:
         rows = []
+        train_end_key = _date_key(self.train_end)
+        as_of_key = _date_key(as_of)
         for row in self.records:
-            date = str(row.get("trade_date") or row.get("date") or "")
-            if self.train_end and date <= self.train_end:
+            date = _date_key(row.get("trade_date") or row.get("date") or "")
+            if train_end_key and (not date or date <= train_end_key):
                 continue
-            if as_of and date and date > as_of:
+            if as_of_key and date and date > as_of_key:
                 continue
             rows.append(row)
         return rows

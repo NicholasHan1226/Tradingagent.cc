@@ -37,12 +37,14 @@ class P1ToolsTest(unittest.TestCase):
         from US.common import USConfig
         from US.validation import USForwardValidation
 
-        validator = USForwardValidation(config=USConfig())
+        validator = USForwardValidation(config=USConfig(), train_end="20260701")
         result = validator.validate(
             [
-                {"strategy_name": "earnings_drift", "signal_date": "2026-06-01", "as_of": "2026-07-02", "return_pct": 0.08},
-                {"strategy_name": "momentum", "signal_date": "2026-06-02", "as_of": "2026-07-02", "return_pct": -0.01},
-                {"strategy_name": "value", "signal_date": "2026-06-03", "as_of": "2026-07-02", "return_pct": 0.02},
+                {"strategy_name": "old_train", "signal_date": "2026-07-01", "as_of": "2026-07-02", "return_pct": 0.99},
+                {"strategy_name": "earnings_drift", "signal_date": "2026-7-2", "as_of": "2026-07-02", "return_pct": 0.08},
+                {"strategy_name": "momentum", "signal_date": "20260702", "as_of": "2026-07-02", "return_pct": -0.01},
+                {"strategy_name": "value", "signal_date": "2026-07-02", "as_of": "2026-07-02", "return_pct": float("nan")},
+                {"strategy_name": "future", "signal_date": "2026-07-03", "as_of": "2026-07-03", "return_pct": 0.99},
             ],
             as_of="2026-07-02",
         )
@@ -52,7 +54,8 @@ class P1ToolsTest(unittest.TestCase):
         self.assertEqual(result["funnel"]["earnings"], 1)
         self.assertEqual(result["funnel"]["momentum"], 1)
         self.assertEqual(result["total"], 3)
-        self.assertAlmostEqual(result["positive_rate"], 2 / 3)
+        self.assertAlmostEqual(result["positive_rate"], 1 / 3)
+        self.assertAlmostEqual(result["avg_return_pct"], round((0.08 - 0.01) / 3, 6))
         with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
             validator.validate(
                 [{"strategy_name": "momentum", "return_pct": 0.1, "capital_layer": "real"}],
@@ -110,11 +113,14 @@ class P1ToolsTest(unittest.TestCase):
         from HK.common import HKConfig
         from HK.validation import HKForwardValidation
 
-        validator = HKForwardValidation(config=HKConfig())
+        validator = HKForwardValidation(config=HKConfig(), train_end="2026-07-01")
         result = validator.validate(
             [
-                {"strategy_name": "hk_momentum", "signal_date": "2026-06-01", "as_of": "2026-07-02", "return_pct": 0.05, "pnl": 1200},
-                {"strategy_name": "hk_value", "signal_date": "2026-06-05", "as_of": "2026-07-02", "return_pct": -0.03, "pnl": -500},
+                {"strategy_name": "old_train", "signal_date": "20260701", "as_of": "2026-07-02", "return_pct": 0.9, "pnl": 9999},
+                {"strategy_name": "hk_momentum", "signal_date": "2026-7-2", "as_of": "2026-07-02", "return_pct": 0.05, "pnl": 1200},
+                {"strategy_name": "hk_value", "signal_date": "20260702", "as_of": "2026-07-02", "return_pct": -0.03, "pnl": -500},
+                {"strategy_name": "hk_nan", "signal_date": "2026-07-02", "as_of": "2026-07-02", "return_pct": float("nan"), "pnl": float("nan")},
+                {"strategy_name": "future", "signal_date": "2026-07-03", "as_of": "2026-07-03", "return_pct": 0.8, "pnl": 8888},
             ],
             as_of="2026-07-02",
         )
@@ -123,7 +129,9 @@ class P1ToolsTest(unittest.TestCase):
         self.assertEqual(result["currency"], "HKD")
         self.assertEqual(result["validation_type"], "out_of_sample")
         self.assertEqual(result["total_pnl"], 700)
-        self.assertAlmostEqual(result["positive_rate"], 0.5)
+        self.assertEqual(result["total"], 3)
+        self.assertAlmostEqual(result["positive_rate"], 1 / 3)
+        self.assertAlmostEqual(result["avg_return_pct"], round((0.05 - 0.03) / 3, 6))
         with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
             validator.validate(
                 [{"strategy_name": "hk_value", "return_pct": 0.1, "live_broker_enabled": True}],

@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-02 (Crypto/PM P1 工具完成)
+> 最后更新：2026-07-02 (多市场 P1 Codex review 修复)
 
 ---
 
@@ -38,6 +38,13 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成（2026-07-02）
+
+### 多市场 P1 Codex review 修复（2026-07-02）
+
+- [x] `PM/report.py`：`_outcome()` 改为显式 outcome 白名单，`cancelled`、`void`、`pending`、`unresolved` 等未知/未决状态不再计为 resolved YES。
+- [x] `Crypto/validation.py`、`PM/validation.py`：OOS 日期比较前统一规整为 `YYYYMMDD`，兼容 `2026-07-02`、`20260702`、`2026-7-2`。
+- [x] `US/validation.py`、`HK/validation.py`：补齐 `train_end` OOS 过滤，排除训练期及晚于 `as_of` 的记录；`_to_float()` 增加 NaN 防护。
+- [x] 测试覆盖 PM 未决 outcome、Crypto/PM 日期格式规整、US/HK OOS 过滤和 NaN 防护；指定 P1 pytest 与变更文件 `py_compile` 通过。
 
 ### Crypto/PM P1 工具（2026-07-02）
 

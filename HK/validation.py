@@ -13,17 +13,26 @@ from HK.common import HKConfig
 class HKForwardValidation:
     """Out-of-sample validation using HKD-denominated results."""
 
-    def __init__(self, config: MarketToolConfig | None = None) -> None:
+    def __init__(self, config: MarketToolConfig | None = None, *, train_end: str | None = None) -> None:
         self.config = config or HKConfig()
         assert_no_real_execution(self.config)
         assert_no_live_broker(self.config)
+        self.train_end = train_end
         self.market = "hk"
         self.currency = "HKD"
 
     def validate(self, records: list[dict[str, Any]], *, as_of: str) -> dict[str, Any]:
-        checked = list(records or [])
-        for record in checked:
+        checked = []
+        train_end_key = _date_key(self.train_end)
+        as_of_key = _date_key(as_of)
+        for record in list(records or []):
             reject_real_execution_payload(record, context="HKForwardValidation.record")
+            date = _date_key(record.get("trade_date") or record.get("signal_date") or record.get("date") or record.get("as_of"))
+            if train_end_key and (not date or date <= train_end_key):
+                continue
+            if as_of_key and date and date > as_of_key:
+                continue
+            checked.append(record)
 
         returns = [_to_float(record.get("return_pct")) for record in checked]
         pnl_values = [_to_float(record.get("pnl")) for record in checked]
@@ -31,6 +40,7 @@ class HKForwardValidation:
         return {
             "market": "hk",
             "as_of": as_of,
+            "train_end": self.train_end,
             "status": "ok",
             "validation_type": "out_of_sample",
             "currency": "HKD",
@@ -47,6 +57,20 @@ class HKForwardValidation:
 
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return float(default)
+    return result if result == result else float(default)
+
+
+def _date_key(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    date_part = raw.split("T", 1)[0].split(" ", 1)[0]
+    if "-" in date_part:
+        parts = date_part.split("-")
+        if len(parts) >= 3:
+            return f"{parts[0].zfill(4)}{parts[1].zfill(2)}{parts[2].zfill(2)}"
+    compact = "".join(ch for ch in date_part if ch.isdigit())
+    return compact.zfill(8) if compact else ""

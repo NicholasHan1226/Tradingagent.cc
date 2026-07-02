@@ -4,7 +4,7 @@ import unittest
 
 from PM.common import PMConfig
 from PM.promotion import PMStrategyPromotion
-from PM.report import PMDailyReport
+from PM.report import PMDailyReport, _outcome
 from PM.validation import PMForwardValidation
 from shared.markets.config_schema import PromotionConfig
 
@@ -45,6 +45,26 @@ class PMP1ToolsTest(unittest.TestCase):
         self.assertEqual(result["resolved_count"], 3)
         self.assertAlmostEqual(result["brier_score"], 0.04)
         self.assertEqual(result["calibration"][4]["count"], 3)
+
+    def test_forward_validation_normalizes_date_formats_for_oos_filter(self) -> None:
+        validator = PMForwardValidation(
+            records=[
+                {"trade_date": "2026-07-01", "prediction": 0.7, "actual": "resolved_yes"},
+                {"trade_date": "2026-7-2", "prediction": 0.7, "actual": "resolved_yes"},
+                {"trade_date": "20260702", "prediction": 0.7, "actual": "resolved_no"},
+                {"trade_date": "2026-07-03", "prediction": 0.7, "actual": "resolved_yes"},
+            ],
+            train_end="20260701",
+        )
+
+        result = validator.evaluate(as_of="2026-07-02")
+
+        self.assertEqual(result["oos_count"], 2)
+        self.assertEqual(result["resolved_count"], 2)
+
+    def test_unresolved_pm_outcomes_return_none(self) -> None:
+        for status in ("cancelled", "void", "pending", "unresolved"):
+            self.assertIsNone(_outcome({"actual": status}))
 
     def test_strategy_promotion_research_shadow_sim_tiers(self) -> None:
         config = PMConfig(

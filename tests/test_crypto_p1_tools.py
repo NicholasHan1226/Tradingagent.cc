@@ -60,6 +60,22 @@ class CryptoP1ToolsTest(unittest.TestCase):
         self.assertEqual(result["sample_quality"]["grade"], "thin")
         self.assertEqual(result["account_type"], "shadow")
 
+    def test_forward_validation_normalizes_date_formats_for_oos_filter(self) -> None:
+        validator = CryptoForwardValidation(
+            records=[
+                {"trade_date": "2026-07-01", "symbol": "BTCUSDT", "pnl": 5.0},
+                {"trade_date": "2026-7-2", "symbol": "ETHUSDT", "pnl": 6.0},
+                {"trade_date": "20260702", "symbol": "SOLUSDT", "pnl": -1.0},
+                {"trade_date": "2026-07-03", "symbol": "BNBUSDT", "pnl": 8.0},
+            ],
+            train_end="20260701",
+        )
+
+        result = validator.evaluate(as_of="2026-07-02")
+
+        self.assertEqual(result["oos_count"], 2)
+        self.assertEqual(result["total_pnl"], 5.0)
+
     def test_strategy_promotion_has_five_tier_sim_ready_gate(self) -> None:
         config = CryptoConfig(
             promotion={"min_shadow_trades": 3, "min_positive_days_pct": 0.6},
