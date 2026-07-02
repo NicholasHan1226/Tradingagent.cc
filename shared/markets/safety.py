@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 
@@ -60,12 +61,15 @@ def reject_real_execution_payload(payload: dict[str, Any] | None, *, context: st
         "live_broker",
         "live_broker_enabled",
         "real_money_enabled",
+        "real_execution",
+        "direct_execution",
         "direct_execution_enabled",
+        "live",
     }
     present = sorted(
-        key
-        for key in unsafe_keys
-        if key in payload and payload.get(key) not in (None, "", False)
+        path
+        for path, key, value in _iter_payload_items(payload)
+        if key in unsafe_keys and _is_truthy_payload_value(value)
     )
     if present:
         raise RuntimeError(
@@ -73,9 +77,32 @@ def reject_real_execution_payload(payload: dict[str, Any] | None, *, context: st
             f"unsafe fields={present}"
         )
 
-    for key in ("capital_layer", "account_type", "execution_mode", "mode", "broker_mode"):
-        value = str(payload.get(key) or "").strip().lower()
+    for path, key, raw_value in _iter_payload_items(payload):
+        if key not in {"capital_layer", "account_type", "execution_mode", "mode", "broker_mode"}:
+            continue
+        value = str(raw_value or "").strip().lower()
         if value in {"real", "live", "broker", "exchange"}:
             raise RuntimeError(
-                f"{context}: real/live execution is rejected in simulated market tools"
+                f"{context}: real/live execution is rejected in simulated market tools; "
+                f"unsafe fields={[path]}"
             )
+
+
+def _iter_payload_items(value: Any, prefix: str = "") -> Iterable[tuple[str, str, Any]]:
+    if isinstance(value, dict):
+        for raw_key, raw_value in value.items():
+            key = str(raw_key)
+            path = f"{prefix}.{key}" if prefix else key
+            yield path, key, raw_value
+            yield from _iter_payload_items(raw_value, path)
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            yield from _iter_payload_items(item, f"{prefix}[{index}]")
+
+
+def _is_truthy_payload_value(value: Any) -> bool:
+    if value in (None, "", False):
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off", "none", "null"}
+    return bool(value)

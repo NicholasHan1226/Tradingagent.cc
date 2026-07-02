@@ -83,6 +83,8 @@ class USHKPhaseDP0Test(unittest.TestCase):
         self.assertEqual(fill["status"], "filled")
         self.assertEqual(fill["broker"], "local_mock")
         self.assertEqual(fill["capital_layer"], "simulated")
+        self.assertEqual(fill["account_type"], "simulated")
+        self.assertNotIn("account", fill)
 
         with tempfile.TemporaryDirectory() as tmp:
             runner = USShadowRunner(
@@ -134,6 +136,9 @@ class USHKPhaseDP0Test(unittest.TestCase):
         self.assertEqual(fill["status"], "filled")
         self.assertEqual(fill["broker"], "local_mock")
         self.assertEqual(fill["currency"], "HKD")
+        self.assertEqual(fill["capital_layer"], "simulated")
+        self.assertEqual(fill["account_type"], "simulated")
+        self.assertNotIn("account", fill)
 
         with tempfile.TemporaryDirectory() as tmp:
             runner = HKShadowRunner(
@@ -180,6 +185,28 @@ class USHKPhaseDP0Test(unittest.TestCase):
         hk_live_broker = MarketToolConfig(market="hk", safety={"live_broker_enabled": True})
         with self.assertRaises(SafetyViolation):
             HKSimulator(config=hk_live_broker, market_data=hk_safe_data)
+
+    def test_us_hk_simulators_reject_real_order_and_account_payloads(self) -> None:
+        from HK.common import HKConfig
+        from HK.market_data import HKMarketData
+        from HK.simulator import HKSimulator
+        from US.common import USConfig
+        from US.market_data import USMarketData
+        from US.simulator import USSimulator
+
+        us = USSimulator(config=USConfig(), market_data=USMarketData(config=USConfig(), reader=FakeReader()))
+        hk = HKSimulator(config=HKConfig(), market_data=HKMarketData(config=HKConfig(), reader=FakeReader()))
+
+        with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
+            us.simulate(
+                {"symbol": "AAPL", "quantity": 1, "trade_date": "2026-07-02", "direct_execution": True},
+                {"cash": 1000},
+            )
+        with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
+            hk.simulate(
+                {"symbol": "700", "quantity": 100, "trade_date": "2026-07-02"},
+                {"cash": 100000, "broker": {"live": True}},
+            )
 
 
 if __name__ == "__main__":

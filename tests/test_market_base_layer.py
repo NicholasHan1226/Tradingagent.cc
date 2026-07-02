@@ -77,6 +77,7 @@ promotion:
             assert_no_real_execution,
             assert_public_data_only,
             assert_shadow_or_sim_only,
+            reject_real_execution_payload,
         )
 
         real_config = MarketToolConfig(
@@ -100,6 +101,17 @@ promotion:
             assert_public_data_only(broker_config)
         with self.assertRaisesRegex(SafetyViolation, "direct execution"):
             assert_no_real_execution(direct_config)
+
+        unsafe_payloads = [
+            {"direct_execution": True},
+            {"risk": {"real_execution": True}},
+            {"nested": [{"live": True}]},
+            {"account": {"capital_layer": "real"}},
+        ]
+        for payload in unsafe_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
+                    reject_real_execution_payload(payload, context="test.payload")
 
     def test_validate_market_config_rejects_safety_flags(self) -> None:
         from shared.markets.config_schema import MarketToolConfig, validate_market_config

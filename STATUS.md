@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-02 (多市场 promotion tier 命名统一)
+> 最后更新：2026-07-03 (final Codex review HIGH/MEDIUM 安全修复)
 
 ---
 
@@ -14,7 +14,7 @@
 - **A 股模拟盘**：通过 Mac Mini Hermes 执行，收/发/回执链路已修复
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`；mini live 脚本默认值也已改到新路径
 - **PM（预测市场）**：影子盘每 10 分钟扫描运行；checked-in config 使用 USDC；PM shadow 写入 `signals/shadow/pending`
-- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐
+- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、影子队列、回执完整性、PnL 摘要
@@ -37,7 +37,14 @@
 
 （当前无活跃迁移任务）
 
-## 五、最近完成（2026-07-02）
+## 五、最近完成
+
+### final Codex review HIGH/MEDIUM 安全修复（2026-07-03）
+
+- [x] `shared/markets/safety.py`：`reject_real_execution_payload()` 改为递归扫描嵌套 dict/list，并拒绝 `direct_execution=True`、`real_execution=True`、`live=True` 等真实执行别名。
+- [x] `US/simulator.py`、`HK/simulator.py`：`simulate()` 对 order 和 account 同时执行真实执行拒绝；fill 结果固定 `capital_layer=simulated`、`account_type=simulated`，不再回显 account payload。
+- [x] 新增回归测试覆盖嵌套真实执行负载、US/HK simulator order/account 拒绝和 account 不回显。
+- [x] 验证：`python3 -m pytest tests/ -q --tb=line` 通过（188 passed，17 subtests passed）。
 
 ### 多市场 promotion tier 命名统一（2026-07-02）
 

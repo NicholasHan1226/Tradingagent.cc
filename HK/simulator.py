@@ -9,6 +9,7 @@ from typing import Any
 
 from shared.markets.base_tools import BaseSimulator
 from shared.markets.config_schema import MarketToolConfig
+from shared.markets.safety import reject_real_execution_payload
 from HK.common import HKConfig
 from HK.market_data import HKMarketData
 
@@ -24,6 +25,8 @@ class HKSimulator(BaseSimulator):
         return self.market_data.get_latest_price(symbol, date)
 
     def simulate(self, order: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
+        reject_real_execution_payload(order, context="HKSimulator.simulate.order")
+        reject_real_execution_payload(account, context="HKSimulator.simulate.account")
         symbol = str(order.get("symbol") or order.get("ts_code") or "")
         trade_date = str(order.get("trade_date") or order.get("date") or "")
         quantity = max(_to_float(order.get("quantity", order.get("qty")), 0.0), 0.0)
@@ -52,7 +55,7 @@ class HKSimulator(BaseSimulator):
             "broker": "local_mock",
             "broker_mode": "no_broker",
             "capital_layer": "simulated",
-            "account": dict(account or {}),
+            "account_type": "simulated",
             "order_id": str(order.get("order_id") or f"HK-SIM-{uuid.uuid4().hex[:12]}"),
             "filled_at": datetime.now(timezone.utc).isoformat(),
             "real_execution": False,
