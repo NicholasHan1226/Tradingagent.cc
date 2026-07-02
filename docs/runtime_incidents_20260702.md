@@ -154,6 +154,28 @@
 - Mac Mini `~/.hermes/health/status.json` 显示 `healthy=true`。
 
 
+## 事件8: Mini 非活跃旧脚本/备份归档
+
+**现象：**
+- Mac Mini `~/.hermes/scripts` 中仍有一批非活跃历史脚本、备份文件和已禁用任务残留旧 runtime 字符串。
+- 它们未被当前 LaunchAgent 加载，也不在 crontab active job 中，但会让后续依赖审计误判旧桌面/旧 Tradings 仍是当前依赖。
+
+**修复：**
+- 已将 42 个非活跃旧脚本、备份和禁用 LaunchAgent 文件移动到：
+  - `~/.hermes/archive/legacy_desktop_investment_20260702/`
+- 归档清单：
+  - `~/.hermes/archive/legacy_desktop_investment_20260702/manifest.json`
+- 已保留 crontab 归档前副本：
+  - `~/.hermes/archive/legacy_desktop_investment_20260702/crontab.before_legacy_archive_20260702.txt`
+- 已把 crontab 中对应 disabled 旧命令注释改成不含旧路径的归档说明，避免误报。
+
+**验证：**
+- Mac Mini 当前 active scripts 旧路径审计无命中。
+- Mac Mini `~/Library/LaunchAgents` 旧路径审计无命中。
+- Mac Mini crontab 旧路径审计无命中。
+- 当前加载服务仍为 `sim-signal-executor`、`sim-signal-receiver`、`health-check`。
+
+
 ## 当前正确边界
 
 - 代码主线：GitHub `NicholasHan1226/Tradingagent.cc`，服务器路径 `/opt/investment/tradingagent`。
@@ -164,5 +186,4 @@
 
 ## 残余风险
 
-- Mac Mini `~/.hermes/scripts/` 中仍有若干历史脚本含 `~/Desktop/Investment`，但当前未由 LaunchAgent 或 crontab 激活。不要批量改写，除非先确认每个脚本的事实源和新 runtime 对应关系。
 - 本次未发送测试交易信号；A 股模拟执行链路的下一次完整端到端验证需要在交易时段、且遵守 mini health gate 与模拟账户确认规则。
