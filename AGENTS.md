@@ -28,6 +28,8 @@
 A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending → Mac Mini Hermes → signals/filled/failed/positions`
 
 - Hermes/mini 只执行和回写，不做买卖判断。
+- `~/Desktop/Investment` 不再是 active dev root 或 live runtime root；Mac Mini live runtime 使用 `~/.hermes/ashare-runtime`，服务器写回使用 `/opt/investment/tradingagent/signals`。
+- 旧桌面路径任务 `ai.hermes.sim-remote-sync` 与 `ai.hermes.condition-cleanup` 已于 2026-07-02 禁用；不得重新启用，除非先确认新的事实源、回滚方式和验证方式。
 - MarketGraph 不得直接触发 Hermes/Mac Mini/同花顺或任何执行 webhook。
 - 执行桥归 TradingAgent。
 
@@ -125,5 +127,7 @@ A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending �
 ## 历史事件日志
 
 2026-07-01 发生了一系列运行时事件（虚假成交确认、过期 pending 清理、回执指纹闭环等），详细的**事件时间线、修复动作和事后复盘**记录在：[docs/runtime_incidents_20260701.md](docs/runtime_incidents_20260701.md)。
+
+2026-07-02 发生了 Mini/服务器执行桥路径漂移与 `TradingagentDataReader` 导入回归，已记录在：[docs/runtime_incidents_20260702.md](docs/runtime_incidents_20260702.md)。该日志同时记录 `~/Desktop/Investment` 退役、旧 LaunchAgent 禁用、服务器修复提交和残余风险。
 
 上述"关键运行时护栏"中的永久规则大部分是从这些事件中提取的。如果需要理解某条规则的背景或复盘某个事故链，查阅该事件日志。

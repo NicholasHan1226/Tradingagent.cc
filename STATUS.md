@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-02 (Goal 2 审计完成：5 轮 44 项修复，~222 发现)
+> 最后更新：2026-07-02 (Mini/服务器执行桥路径修复；Goal 2 审计完成)
 
 ---
 
@@ -12,7 +12,7 @@
 
 - **A 股影子盘**：完整闭环运行（信号生成 → 影子账簿 → 复盘）
 - **A 股模拟盘**：通过 Mac Mini Hermes 执行，收/发/回执链路已修复
-- **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断
+- **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`
 - **PM（预测市场）**：影子盘每 10 分钟扫描运行
 - **多市场**：PM/Crypto/US 共 61 个死 symlink 已清除，各市场 tools/ 目录仅保留 manifest.csv 索引，待独立实现
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
@@ -38,6 +38,19 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成（2026-07-02）
+
+### Mini/服务器执行桥路径修复（2026-07-02）
+
+- [x] 禁用旧 `ai.hermes.sim-remote-sync`，停止 `~/Desktop/Investment/Ashare/outputs/account` 被周期性重建。
+- [x] 禁用旧 `ai.hermes.condition-cleanup`，停止访问已退役的 `~/Desktop/Investment` tradebook 清理路径。
+- [x] Mac Mini executor 明确设置 `SIM_REMOTE_TRADINGS_SIGNAL_DIR=/opt/investment/tradingagent/signals`。
+- [x] 服务器合并 GitHub 最新 main，修复 `TradingagentDataReader` 导入/导出和 reader 回归；`tests/test_data_reader.py` 通过。
+- [x] 记录事件日志：[docs/runtime_incidents_20260702.md](docs/runtime_incidents_20260702.md)。
+
+**残余风险：**
+- `shared/execution/execution_router.py` 仍有本次未接管的未提交改动，后续不得覆盖，需单独审查后提交。
+- `mini/README.md` 和 `mini/mini_consumer.py` 仍有旧桌面路径参考；live 路径以 `mini/AGENTS.md` 和本状态页为准。
+- 未在交易时段发送测试交易信号；完整端到端验证需等交易时段。
 
 ### Goal 2 审计 — SharedSignals → TradingAgent → MarketGraph 数据流
 

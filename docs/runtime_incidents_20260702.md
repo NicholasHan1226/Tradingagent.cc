@@ -1,0 +1,103 @@
+# 2026-07-02 运行时事件日志
+
+本文记录 2026-07-02 发生的 Mac Mini / TradingAgent 执行桥路径漂移、服务器数据 reader 回归，以及本次修复后的残余风险。当前权威规则见 [AGENTS.md](../AGENTS.md)，当前状态见 [STATUS.md](../STATUS.md)。
+
+## 事件1: `~/Desktop/Investment` 被旧任务反复创建
+
+**现象：**
+- Nicholas 删除 `~/Desktop/Investment` 后，该目录仍会重新出现。
+- 复查时目录只剩 `Ashare/outputs/account` 空目录，不是完整开发工作区。
+
+**根因：**
+- Mac Mini 上旧 LaunchAgent `ai.hermes.sim-remote-sync` 仍在加载。
+- 它调用 `~/.hermes/scripts/sim-remote-sync.sh`，脚本默认 `ASHARE=$HOME/Desktop/Investment/Ashare`，会在没有真实交易 CSV 时仍创建 `outputs/account/remote_sync_state.json` 所在目录。
+
+**修复：**
+- 已停止并禁用 `ai.hermes.sim-remote-sync`。
+- 原 plist 已改名为 `~/Library/LaunchAgents/ai.hermes.sim-remote-sync.plist.disabled`，备份保留为 `ai.hermes.sim-remote-sync.plist.bak.20260702-210140`。
+- 只删除空目录 `~/Desktop/Investment/Ashare/outputs/account` 及其空父目录，未删除任何业务文件。
+
+**验证：**
+- `launchctl list | grep ai.hermes.sim-remote-sync` 无加载结果。
+- `~/Desktop/Investment` 当前不存在。
+- Mac Mini receiver `/health` 返回 `status=ok`、`pending=0`、`halted=false`、`execution_status=ready`。
+
+## 事件2: Mini 执行器回写目录仍默认指向旧 `Tradings`
+
+**现象：**
+- Mac Mini live executor 通过 LaunchAgent 设置了 `ASHARE_ROOT=/Users/nicholashan/.hermes/ashare-runtime`，但没有设置服务器回写目录。
+- `~/.hermes/scripts/sim-signal-executor.py` 的默认回写路径仍是 `/opt/investment/Tradings/signals`。
+
+**修复：**
+- 在 `~/Library/LaunchAgents/com.nicholashan.sim-signal-executor.plist` 中新增：
+  - `SIM_REMOTE_TRADINGS_SIGNAL_DIR=/opt/investment/tradingagent/signals`
+- 重启 `com.nicholashan.sim-signal-executor`。
+
+**验证：**
+- plist 中 `SIM_REMOTE_TRADINGS_SIGNAL_DIR` 已为 `/opt/investment/tradingagent/signals`。
+- executor 正常加载。
+- receiver `/health` 正常。
+
+## 事件3: 服务器 `TradingagentDataReader` 导入回归
+
+**现象：**
+- 服务器 cron 入口 `job_ashare_sim_exec` 在交易时段报错：
+  - `ImportError: cannot import name 'TradingagentDataReader' from 'shared.data.reader'`
+- 这会导致 A 股模拟执行调度在发单前失败。
+
+**根因：**
+- 远端主线与服务器本地版本同时改动 `shared/data/reader.py`。
+- 服务器热修先加了兼容 alias，但 GitHub main 上随后已有更完整的 `TradingagentDataReader` 实现。
+- 合并后 `shared/data/__init__.py` 仍导出旧名字和不存在的交易日历函数，引发包初始化失败。
+
+**修复：**
+- 合并 GitHub main 到服务器 `/opt/investment/tradingagent`。
+- 以 GitHub 主线的新版 `TradingagentDataReader` 为准，修复 `shared/data/__init__.py` 只导出当前真实存在的 reader 类。
+- 修复 `shared/data/reader.py` 回归：
+  - `MarketGraphCSVReader` 兼容 `data/intake` 与历史测试根目录下的 `intake`。
+  - `get_regime()` 兼容 `data/all_weather_regime.csv` 与历史测试根目录下的 `all_weather_regime.csv`。
+  - intraday 查询的日期型 `end_time` 自动扩展到当天 `T23:59:59`。
+  - SQLite 查询失败记录 `last_error`，TradingagentDataReader 读取后设置 `stale=True` 并记录 errors。
+
+**提交：**
+- `ea65e11 fix: restore shared data reader exports`
+- `3cc087e Merge remote-tracking branch 'origin/main'`
+- `bd4a60c fix: align shared data reader package exports`
+
+**验证：**
+- 已推送到 GitHub `main`。
+- 服务器 `/opt/investment/tradingagent` 与 `origin/main` 同步。
+- `PYTHONPATH=. /opt/marketgraph/venv/bin/python3 -m pytest tests/test_data_reader.py -q`：`5 passed`。
+- `from shared.wrappers import tradings_cron_entry` 与 `from shared.data.reader import TradingagentDataReader` 均可导入。
+- `bash -n shared/wrappers/job_ashare_sim_exec.sh` 通过。
+
+## 事件4: 旧 `condition-cleanup` 仍访问桌面根目录
+
+**现象：**
+- 深挖残余风险时发现 `ai.hermes.condition-cleanup` 仍处于加载状态。
+- 它调用 `~/.hermes/scripts/condition-cleanup.sh`，脚本 `cd "$HOME/Desktop/Investment"` 后清理旧 `Ashare/data/tradebook/condition_lifecycle_log.jsonl`。
+- 新 runtime `~/.hermes/ashare-runtime` 下没有该 lifecycle log。
+
+**处置：**
+- 该任务属于旧桌面 A-share tradebook 清理任务，当前没有对应新 runtime 事实源。
+- 已停止并禁用 `ai.hermes.condition-cleanup`，避免继续访问已退役桌面路径。
+- 原 plist 改名为 `~/Library/LaunchAgents/ai.hermes.condition-cleanup.plist.disabled`，备份为 `ai.hermes.condition-cleanup.plist.bak.20260702-213437`。
+
+**验证：**
+- `launchctl list | grep ai.hermes.condition-cleanup` 无加载结果。
+- `~/Desktop/Investment` 当前不存在。
+
+## 当前正确边界
+
+- 代码主线：GitHub `NicholasHan1226/Tradingagent.cc`，服务器路径 `/opt/investment/tradingagent`。
+- Mac Mini live runtime：`~/.hermes/ashare-runtime`。
+- Mac Mini live executor / receiver：`~/.hermes/scripts/sim-signal-executor.py`、`~/.hermes/scripts/sim-signal-receiver.py`。
+- 服务器执行事实写入：`/opt/investment/tradingagent/signals/{pending,filled,failed,positions,...}`。
+- `~/Desktop/Investment` 不再是 active dev root，也不再是 live runtime root；除非复盘历史文件，不得新增自动任务依赖它。
+
+## 残余风险
+
+- 服务器工作树仍有一个本次未接管的未提交改动：`shared/execution/execution_router.py`。该改动看起来是把 sim broker 从旧 `/opt/investment/Ashare/tools` 迁到 `TradingAgent/Ashare/sim_executor.py`，但未由本次修复提交；后续 agent 不得覆盖或回退，需单独审查、测试、提交。
+- `mini/mini_consumer.py` 与 `mini/README.md` 仍包含旧 `~/Desktop/Investment` 参考路径。`mini/AGENTS.md` 已声明 mini 目录是参考副本，真实 live 路径在 Mac Mini `~/.hermes/`；后续如整理文档，应更新这些参考说明，避免误导。
+- Mac Mini `~/.hermes/scripts/` 中仍有若干历史脚本含 `~/Desktop/Investment`，但当前未由 LaunchAgent 或 crontab 激活。不要批量改写，除非先确认每个脚本的事实源和新 runtime 对应关系。
+- 本次未发送测试交易信号；A 股模拟执行链路的下一次完整端到端验证需要在交易时段、且遵守 mini health gate 与模拟账户确认规则。
