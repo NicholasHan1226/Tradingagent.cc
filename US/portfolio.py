@@ -42,6 +42,9 @@ class USPortfolioOptimizer:
         selected = list(held)
         for candidate in sorted(candidates, key=lambda row: safe_float(row.get("score"), 0.0), reverse=True):
             symbol = str(candidate.get("symbol") or "").upper()
+            if symbol and symbol not in matrix:
+                rejected.append({"symbol": symbol, "reason": "missing_bars"})
+                continue
             corr = max_abs_correlation(symbol, selected, matrix)
             if corr > self.correlation_cap:
                 rejected.append({"symbol": symbol, "reason": "correlation_gate", "max_correlation": round(corr, 6)})

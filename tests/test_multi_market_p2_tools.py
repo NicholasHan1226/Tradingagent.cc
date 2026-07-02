@@ -170,7 +170,7 @@ class MultiMarketP2ToolsTest(unittest.TestCase):
     def test_hk_portfolio_sizes_hkd_lots_and_sector_caps(self) -> None:
         from HK.portfolio import HKPortfolioOptimizer
 
-        result = HKPortfolioOptimizer(sector_cap=0.20).optimize(
+        result = HKPortfolioOptimizer(sector_cap=0.12).optimize(
             [
                 {"symbol": "700", "sector": "internet", "price_hkd": 380, "lot_size": 100, "target_weight": 0.12, "score": 0.9},
                 {"symbol": "9988", "sector": "internet", "price_hkd": 80, "lot_size": 100, "target_weight": 0.12, "score": 0.8},

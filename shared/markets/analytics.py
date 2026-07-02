@@ -15,24 +15,32 @@ def safe_float(value: Any, default: float = 0.0) -> float:
     return result if result == result else float(default)
 
 
-def date_key(value: Any) -> str:
+def date_key(value: Any, *, keep_time: bool = False) -> str:
     raw = str(value or "").strip()
     if not raw:
         return ""
-    date_part = raw.split("T", 1)[0].split(" ", 1)[0]
+    if "T" in raw or " " in raw:
+        date_part, time_part = (raw.split("T", 1)[0], raw.split("T", 1)[1] if "T" in raw else raw.split(" ", 1)[1])
+    else:
+        date_part, time_part = raw, ""
     if "-" in date_part:
         parts = date_part.split("-")
-        if len(parts) >= 3:
-            return f"{parts[0].zfill(4)}{parts[1].zfill(2)}{parts[2].zfill(2)}"
-    compact = "".join(ch for ch in date_part if ch.isdigit())
-    return compact.zfill(8) if compact else ""
+        date_part = f"{parts[0].zfill(4)}{parts[1].zfill(2)}{parts[2].zfill(2)}" if len(parts) >= 3 else date_part
+    else:
+        compact = "".join(ch for ch in date_part if ch.isdigit())
+        date_part = compact.zfill(8) if compact else date_part
+    if keep_time and time_part:
+        time_key = "".join(ch for ch in time_part.split(".")[0] if ch.isdigit())
+        return f"{date_part}T{time_key}"
+    return date_part
 
 
 def close_series(rows: list[dict[str, Any]]) -> list[tuple[str, float]]:
     series: list[tuple[str, float]] = []
+    has_intraday = any("T" in str(row.get("trade_date") or row.get("date") or row.get("timestamp") or "") for row in rows)
     for row in rows:
         close = safe_float(row.get("adjusted_close", row.get("close")))
-        key = date_key(row.get("trade_date") or row.get("date") or row.get("timestamp"))
+        key = date_key(row.get("trade_date") or row.get("date") or row.get("timestamp"), keep_time=has_intraday)
         if key and close > 0:
             series.append((key, close))
     return sorted(series, key=lambda item: item[0])

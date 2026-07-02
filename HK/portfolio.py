@@ -51,7 +51,8 @@ class HKPortfolioOptimizer:
             if price <= 0:
                 skipped.append({"symbol": symbol, "reason": "missing_price"})
                 continue
-            if projected_sector > self.sector_cap:
+            sector_already_has = sector_used.get(sector, 0.0) > 0
+            if sector_already_has and projected_sector > self.sector_cap:
                 skipped.append({"symbol": symbol, "reason": "sector_cap", "sector": sector, "projected_weight": round(projected_sector, 6)})
                 continue
             raw_shares = int((capital * target_weight) // (price * lot_size)) * lot_size
@@ -60,7 +61,7 @@ class HKPortfolioOptimizer:
                 continue
             notional = raw_shares * price
             realized_weight = notional / capital if capital > 0 else 0.0
-            sector_used[sector] = sector_used.get(sector, 0.0) + target_weight
+            sector_used[sector] = sector_used.get(sector, 0.0) + realized_weight
             positions.append({
                 "symbol": symbol,
                 "sector": sector,
