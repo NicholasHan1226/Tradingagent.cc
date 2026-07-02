@@ -1,0 +1,34 @@
+market: crypto
+capital:
+  default_layer: shadow
+  allowed_layers: [shadow, simulated]
+  initial_capital: 100000
+  currency: USDT
+safety:
+  real_money_enabled: false
+  live_broker_enabled: false
+  direct_execution_enabled: false
+data:
+  reader: shared.data.reader.TradingagentDataReader
+  daily_table: market_bars_daily
+  intraday_table: market_bars_intraday
+  events_table: market_events
+universe:
+  max_symbols: 50
+  min_close: 0.00000001
+  active_only: true
+session:
+  timezone: UTC
+  type: 24x7
+risk:
+  max_positions: 10
+  max_single_position_pct: 0.15
+fees:
+  taker_bps: 10
+  maker_bps: 8
+reporting:
+  daily_report_path: shared/review/crypto/daily
+  notify_on_trigger_only: true
+promotion:
+  min_shadow_trades: 50
+  min_positive_days_pct: 0.55

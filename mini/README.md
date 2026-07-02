@@ -31,7 +31,7 @@
 通过校验后，Mini 调用本机路径：
 
 ```bash
-/Users/nicholashan/Desktop/Investment/Ashare/tools/a_share_simulated_trade_executor.py
+/Users/nicholashan/Projects/Finance/tradingagent/Ashare/sim_executor.py
 ```
 
 参考消费者使用 `subprocess` 调用该脚本，并把执行器返回值归一化为 fill card：

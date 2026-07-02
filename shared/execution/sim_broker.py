@@ -5,7 +5,7 @@
 returns a receipt-shaped ``SimResult``. ``simulate_order`` is kept as the legacy
 local slippage model for callers that still need backtest-compatible estimates.
 
-Reference: Ashare/tools/a_share_simulated_trade_executor.py
+Reference (archived): _archive/Ashare_tools_20260702/a_share_simulated_trade_executor.py
 """
 
 from __future__ import annotations

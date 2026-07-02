@@ -1,0 +1,34 @@
+market: us
+capital:
+  default_layer: shadow
+  allowed_layers: [shadow, simulated]
+  initial_capital: 100000
+  currency: USD
+safety:
+  real_money_enabled: false
+  live_broker_enabled: false
+  direct_execution_enabled: false
+data:
+  reader: shared.data.reader.TradingagentDataReader
+  daily_table: market_bars_daily
+  intraday_table: market_bars_intraday
+  events_table: market_events
+universe:
+  max_symbols: 100
+  min_close: 1.0
+  active_only: true
+session:
+  timezone: America/New_York
+  type: regular
+risk:
+  max_positions: 12
+  max_single_position_pct: 0.15
+fees:
+  taker_bps: 2
+  maker_bps: 1
+reporting:
+  daily_report_path: shared/review/us/daily
+  notify_on_trigger_only: true
+promotion:
+  min_shadow_trades: 40
+  min_positive_days_pct: 0.55

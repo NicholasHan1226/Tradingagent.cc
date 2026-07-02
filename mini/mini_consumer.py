@@ -32,10 +32,9 @@ from shared.execution.signal_state_machine import (
     write_json,
 )
 
-TRADINGAGENT_ROOT = Path("/opt/investment/tradingagent")
+TRADINGAGENT_ROOT = Path(__file__).resolve().parents[1]
 SIGNALS_DIR = TRADINGAGENT_ROOT / "signals"
-ASHARE_TOOLS_DIR = Path("/Users/nicholashan/Desktop/Investment/Ashare/tools")
-SIMULATED_EXECUTOR = ASHARE_TOOLS_DIR / "a_share_simulated_trade_executor.py"
+SIMULATED_EXECUTOR = TRADINGAGENT_ROOT / "Ashare" / "sim_executor.py"
 
 
 class MiniConsumerRejected(RuntimeError):

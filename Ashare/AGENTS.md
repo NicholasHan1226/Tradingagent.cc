@@ -25,3 +25,4 @@ A股交易全闭环 (T+1, Hermes同花顺执行)。
 ## 现有代码
 - 144个工具待整理迁移 (因子28/复盘27/组合18/执行16/筛选11/风控10/通知14)
 - 路径: /opt/investment/Ashare/tools/a_share_*.py
+- 注意: Tushare API 包装器 (a_share_tushare_api.py, a_share_common.py) 已迁移至 /opt/investment/SharedSignals/collectors/tushare/

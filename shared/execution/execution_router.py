@@ -24,7 +24,6 @@ from shared.accounting import position_ledger
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
 TRADINGAGENT_ASHARE = TRADINGAGENT_ROOT / "Ashare"
-ASHARE_TOOLS = Path("/opt/investment/Ashare/tools")
 SHADOW_EXECUTION_LOG = Path(__file__).resolve().parent.parent / "logs" / "shadow" / "shadow_trades.jsonl"
 REAL_AUTO_ORDER_FORBIDDEN = True
 ROUTER_LOG = Path(__file__).resolve().parent.parent / "logs" / "router_decisions.jsonl"
@@ -49,12 +48,6 @@ GRADUATION_THRESHOLDS = {
         "max_max_drawdown_pct": 10.0,
     },
 }
-
-
-def _ensure_ashare_tools_on_path() -> None:
-    ashare_tools = str(ASHARE_TOOLS)
-    if ashare_tools not in sys.path:
-        sys.path.insert(0, ashare_tools)
 
 
 def _ensure_tradings_ashare_on_path() -> None:
@@ -403,25 +396,20 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
 
     if channel == "sim_broker":
         try:
-            _ensure_ashare_tools_on_path()
-            from a_share_simulated_trade_executor import TradeRequest, execute_trade
+            from Ashare.sim_executor import ashare_sim_execute
 
-            req = TradeRequest(
-                code=order["ts_code"],
-                name=order.get("name", ""),
-                side=order.get("side", "buy"),
-                quantity=int(order.get("quantity", 0)),
-                reason=order.get("reason", order.get("strategy_name", "")),
-                tradebook_id=order.get("order_id", ""),
-            )
-            tr = execute_trade(req, dry_run=order.get("dry_run", False))
-            executed = tr.status in ("ok", "warning", "dry_run_ok")
+            tr = ashare_sim_execute(order, account=order.get("account"), config={
+                "dry_run": order.get("dry_run", False),
+                "mock": order.get("mock", order.get("dry_run", False)),
+            })
+            executed = tr.status in ("filled", "pending", "ok", "warning", "dry_run_ok")
             result = {
                 "status": tr.status,
                 "filled_qty": tr.filled_qty,
                 "avg_price": tr.avg_price,
                 "message": tr.message,
                 "slippage": 0.0,
+                "order_id": tr.order_id,
             }
             message = f"Sim executed: {tr.status} @ {tr.avg_price} (qty {tr.filled_qty})"
         except Exception as exc:

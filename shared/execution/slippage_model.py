@@ -5,7 +5,7 @@ Estimates slippage as a function of order size relative to average daily
 volume. Market orders pay full impact; limit orders have a fill probability
 that depends on distance from mid.
 
-Reference: Ashare/tools/a_share_shadow_sim_broker.py uses a similar approach
+Reference (archived): _archive/Ashare_tools_20260702/a_share_shadow_sim_broker.py uses a similar approach
 for sim_broker fills.
 """
 
