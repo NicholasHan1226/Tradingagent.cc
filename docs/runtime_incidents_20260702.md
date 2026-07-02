@@ -127,6 +127,33 @@
 - `~/Desktop/Investment` 当前不存在。
 
 
+## 事件7: 依赖项与参考副本旧路径清理
+
+**排查范围：**
+- 服务器 Git 跟踪源码中的旧路径引用。
+- Mac Mini 当前加载 LaunchAgent 与 active scripts。
+- TradingAgent Python 源码 compileall。
+- Mini 参考消费者与 A-share simulated execution 相关测试。
+
+**发现：**
+- `mini/README.md` 与 `mini/mini_consumer.py` 仍把旧桌面执行器路径写成默认参考。
+- `Ashare/AGENTS.md`、`docs/shadow_market_configs.md`、`shared/execution/sim_broker.py` 仍可能让后续 agent 误以为当前执行入口是旧 `a_share_simulated_trade_executor.py`。
+- Mac Mini `health-check.sh` 只剩一行注释提到旧 `/opt/investment/Tradings`。
+
+**修复：**
+- `Ashare/AGENTS.md` 改为当前边界：服务器 `Ashare/sim_executor.py` 生成/发送 simulated signal，Mac Mini live executor 负责 UI 执行与回写。
+- `mini/README.md` 改为当前 live path：`~/.hermes/scripts/sim-signal-executor.py`；明确 `mini/mini_consumer.py` 只是历史参考/测试兼容。
+- `mini/mini_consumer.py` 移除旧桌面默认 executor path，避免误运行时指向 `~/Desktop/Investment`。
+- `docs/shadow_market_configs.md` 与 `shared/execution/sim_broker.py` 更新为 `Ashare/sim_executor.py` / Mini receiver-executor 链路。
+- Mac Mini `health-check.sh` 注释清理，不再出现旧 `/opt/investment/Tradings`。
+
+**验证：**
+- `tests/test_mini_consumer.py tests/test_ashare_sim.py tests/test_sim_loop.py tests/test_t_plus_1_integration.py tests/test_real_money_boundary.py tests/test_data_reader.py`：`30 passed`。
+- `python -m compileall -q shared Ashare PM Crypto US HK mini tests` 通过。
+- Mac Mini active scripts 旧路径审计无命中。
+- Mac Mini `~/.hermes/health/status.json` 显示 `healthy=true`。
+
+
 ## 当前正确边界
 
 - 代码主线：GitHub `NicholasHan1226/Tradingagent.cc`，服务器路径 `/opt/investment/tradingagent`。
@@ -137,6 +164,5 @@
 
 ## 残余风险
 
-- `mini/mini_consumer.py` 与 `mini/README.md` 仍包含旧 `~/Desktop/Investment` 参考路径。`mini/AGENTS.md` 已声明 mini 目录是参考副本，真实 live 路径在 Mac Mini `~/.hermes/`；后续如整理文档，应更新这些参考说明，避免误导。
 - Mac Mini `~/.hermes/scripts/` 中仍有若干历史脚本含 `~/Desktop/Investment`，但当前未由 LaunchAgent 或 crontab 激活。不要批量改写，除非先确认每个脚本的事实源和新 runtime 对应关系。
 - 本次未发送测试交易信号；A 股模拟执行链路的下一次完整端到端验证需要在交易时段、且遵守 mini health gate 与模拟账户确认规则。

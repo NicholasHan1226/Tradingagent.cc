@@ -46,11 +46,11 @@
 - [x] Mac Mini executor 明确设置 `SIM_REMOTE_TRADINGS_SIGNAL_DIR=/opt/investment/tradingagent/signals`。
 - [x] 服务器合并 GitHub 最新 main，修复 `TradingagentDataReader` 导入/导出和 reader 回归；`tests/test_data_reader.py` 通过。
 - [x] `shared/execution/execution_router.py` 已提交：A 股 sim broker 正式通过仓库内 `Ashare/sim_executor.py`，不再依赖旧 `/opt/investment/Ashare/tools`。
-- [x] Mac Mini live executor / health-check 默认路径已改到 `~/.hermes/ashare-runtime` 与 `/opt/investment/tradingagent/signals`。
+- [x] Mac Mini live executor / receiver / health-check 默认路径已改到 `~/.hermes/ashare-runtime` 与 `/opt/investment/tradingagent/signals`。
+- [x] 清理 `mini/README.md`、`mini/mini_consumer.py`、`Ashare/AGENTS.md` 等参考副本里的误导性旧执行器路径。
 - [x] 记录事件日志：[docs/runtime_incidents_20260702.md](docs/runtime_incidents_20260702.md)。
 
 **残余风险：**
-- `mini/README.md` 和 `mini/mini_consumer.py` 仍有旧桌面路径参考；live 路径以 `mini/AGENTS.md` 和本状态页为准。
 - 未在交易时段发送测试交易信号；完整端到端验证需等交易时段。
 
 ### Goal 2 审计 — SharedSignals → TradingAgent → MarketGraph 数据流

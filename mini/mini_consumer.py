@@ -34,8 +34,8 @@ from shared.execution.signal_state_machine import (
 
 TRADINGAGENT_ROOT = Path("/opt/investment/tradingagent")
 SIGNALS_DIR = TRADINGAGENT_ROOT / "signals"
-ASHARE_TOOLS_DIR = Path("/Users/nicholashan/Desktop/Investment/Ashare/tools")
-SIMULATED_EXECUTOR = ASHARE_TOOLS_DIR / "a_share_simulated_trade_executor.py"
+DEPRECATED_EXECUTOR = TRADINGAGENT_ROOT / "mini" / "DEPRECATED_NO_LIVE_EXECUTOR.py"
+SIMULATED_EXECUTOR = DEPRECATED_EXECUTOR
 
 
 class MiniConsumerRejected(RuntimeError):
