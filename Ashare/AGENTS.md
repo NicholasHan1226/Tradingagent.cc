@@ -18,11 +18,10 @@ A股交易全闭环 (T+1, Hermes同花顺执行)。
 - 闲置资金尾盘买逆回购(204001)
 
 ## 执行
-- 模拟盘: UI自动化 (a_share_simulated_trade_executor)
-- 实盘: Hermes桌面控制同花顺 (a_share_tonghuashun_execution)
+- 模拟盘: 服务器通过 `Ashare/sim_executor.py` 生成/发送信号卡，Mac Mini live executor `~/.hermes/scripts/sim-signal-executor.py` 负责同花顺模拟盘执行和回写
+- 实盘: 仅人工确认与只读同步；不得自动点击真实账户委托
 - 5-10分钟级别自动化
 
 ## 现有代码
-- 144个工具待整理迁移 (因子28/复盘27/组合18/执行16/筛选11/风控10/通知14)
-- 路径: /opt/investment/Ashare/tools/a_share_*.py
-- 注意: Tushare API 包装器 (a_share_tushare_api.py, a_share_common.py) 已迁移至 /opt/investment/SharedSignals/collectors/tushare/
+- 当前 A-share 代码位于本目录：`adapter.py`、`capital_plan.py`、`sim_executor.py`、`t_plus_1.py` 和 `market_phases/`。
+- 旧 `/opt/investment/Ashare/tools/a_share_*.py` 已退役/归档，不得作为新的执行或依赖入口。

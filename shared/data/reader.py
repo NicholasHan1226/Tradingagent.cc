@@ -43,6 +43,7 @@ class SharedSignalsReader:
     def __init__(self, db_path: Path | str | None = None):
         self._db_path = Path(db_path or DEFAULT_SHARED_SIGNALS_DB)
         self._conn: sqlite3.Connection | None = None
+        self.last_error: str | None = None
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -59,9 +60,11 @@ class SharedSignalsReader:
 
     def _query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         try:
+            self.last_error = None
             cur = self.conn.execute(sql, params)
             return [dict(row) for row in cur.fetchall()]
-        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+        except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
+            self.last_error = str(e)
             return []
 
     # --- Accessors ---
@@ -111,7 +114,7 @@ class SharedSignalsReader:
             params.append(start_time)
         if end_time:
             sql += " AND bar_time <= ?"
-            params.append(end_time)
+            params.append(end_time + "T23:59:59" if len(end_time) == 10 else end_time)
         sql += " ORDER BY bar_time"
         return self._query(sql, tuple(params))
 
@@ -173,7 +176,8 @@ class MarketGraphCSVReader:
 
     def __init__(self, root: Path | str):
         self.root = Path(root)
-        self.intake = self.root / "data" / "intake"
+        data_intake = self.root / "data" / "intake"
+        self.intake = data_intake if data_intake.exists() else self.root / "intake"
 
     def _read_csv(self, path: Path) -> list[dict[str, str]]:
         if not path.exists():
@@ -182,14 +186,24 @@ class MarketGraphCSVReader:
             return list(csv.DictReader(f))
 
     def get_regime(self) -> dict[str, Any] | None:
-        rows = self._read_csv(self.root / "data" / "all_weather_regime.csv")
-        return dict(rows[-1]) if rows else None
+        candidates = [
+            self.root / "data" / "all_weather_regime.csv",
+            self.root / "all_weather_regime.csv",
+        ]
+        for path in candidates:
+            rows = self._read_csv(path)
+            if rows:
+                return dict(rows[-1])
+        return None
 
     def get_event_candidates(self) -> list[dict[str, str]]:
         return self._read_csv(self.intake / "event_candidates.csv")
 
     def get_sentiment_signals(self) -> list[dict[str, str]]:
         return self._read_csv(self.intake / "sentiment_signals.csv")
+
+    def get_sentiment(self) -> list[dict[str, str]]:
+        return self.get_sentiment_signals()
 
 
 # -- Unified TradingagentDataReader ----------------------------------------------
@@ -228,6 +242,16 @@ class TradingagentDataReader:
             )
             self._error_count_at_last_log = len(self.errors)
 
+
+    def _record_shared_error(self, op: str) -> None:
+        error = getattr(self._shared, "last_error", None)
+        if error:
+            self.stale = True
+            message = f"{op}: {error}"
+            if not self.errors or self.errors[-1] != message:
+                self.errors.append(message)
+            self._maybe_alert()
+
     @property
     def shared(self) -> SharedSignalsReader:
         if self._shared is None:
@@ -261,9 +285,12 @@ class TradingagentDataReader:
 
     def get_asset(self, market: str, symbol: str) -> dict[str, Any] | None:
         try:
-            return self.shared.get_asset(market, symbol)
+            result = self.shared.get_asset(market, symbol)
+            self._record_shared_error("get_asset")
+            return result
         except Exception as e:
             self.errors.append(f"get_asset: {e}")
+            self.stale = True
             self._maybe_alert()
             return None
 
@@ -271,9 +298,12 @@ class TradingagentDataReader:
         self, market: str, symbol: str, start: str = "", end: str = ""
     ) -> list[dict[str, Any]]:
         try:
-            return self.shared.get_bars_daily(market, symbol, start, end)
+            result = self.shared.get_bars_daily(market, symbol, start, end)
+            self._record_shared_error("get_bars_daily")
+            return result
         except Exception as e:
             self.errors.append(f"get_bars_daily: {e}")
+            self.stale = True
             self._maybe_alert()
             return []
 
@@ -283,6 +313,7 @@ class TradingagentDataReader:
             return [dict(r) for r in raw]
         except Exception as e:
             self.errors.append(f"get_event_candidates: {e}")
+            self.stale = True
             self._maybe_alert()
             return []
 
@@ -291,6 +322,7 @@ class TradingagentDataReader:
             return self.marketgraph.get_regime()
         except Exception as e:
             self.errors.append(f"get_regime: {e}")
+            self.stale = True
             self._maybe_alert()
             return None
 
@@ -299,10 +331,13 @@ class TradingagentDataReader:
         start: str = "", end: str = "",
     ) -> list[dict[str, Any]]:
         try:
-            return self.shared.get_events(market=market or "", symbol=symbol,
-                                          start_date=start, end_date=end)
+            result = self.shared.get_events(market=market or "", symbol=symbol,
+                                            start_date=start, end_date=end)
+            self._record_shared_error("get_events")
+            return result
         except Exception as e:
             self.errors.append(f"get_events: {e}")
+            self.stale = True
             self._maybe_alert()
             return []
 
@@ -310,9 +345,12 @@ class TradingagentDataReader:
         self, market: str | None = None, symbol: str = "",
     ) -> list[dict[str, Any]]:
         try:
-            return self.shared.get_factors(market=market or "", symbol=symbol)
+            result = self.shared.get_factors(market=market or "", symbol=symbol)
+            self._record_shared_error("get_factors")
+            return result
         except Exception as e:
             self.errors.append(f"get_factors: {e}")
+            self.stale = True
             self._maybe_alert()
             return []
 
@@ -322,6 +360,7 @@ class TradingagentDataReader:
             return [dict(r) for r in raw]
         except Exception as e:
             self.errors.append(f"get_sentiment: {e}")
+            self.stale = True
             self._maybe_alert()
             return []
 
@@ -330,8 +369,11 @@ class TradingagentDataReader:
         start: str = "", end: str = "",
     ) -> list[dict[str, Any]]:
         try:
-            return self.shared.get_bars_intraday(market, symbol, interval, start, end)
+            result = self.shared.get_bars_intraday(market, symbol, interval, start, end)
+            self._record_shared_error("get_bars_intraday")
+            return result
         except Exception as e:
             self.errors.append(f"get_bars_intraday: {e}")
+            self.stale = True
             self._maybe_alert()
             return []

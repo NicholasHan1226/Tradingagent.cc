@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-02 (Phase D US/HK P0 工具已建立)
+> 最后更新：2026-07-02 (Mini/服务器执行桥路径修复；Goal 2 审计完成)
 
 ---
 
@@ -12,23 +12,23 @@
 
 - **A 股影子盘**：完整闭环运行（信号生成 → 影子账簿 → 复盘）
 - **A 股模拟盘**：通过 Mac Mini Hermes 执行，收/发/回执链路已修复
-- **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断
+- **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`；mini live 脚本默认值也已改到新路径
 - **PM（预测市场）**：影子盘每 10 分钟扫描运行
-- **多市场**：PM/Crypto/US 共 61 个死 symlink 已清除；Crypto/US/HK Phase D P0 已有独立 public-data shadow/simulated 工具，PM 待补齐
+- **多市场**：PM/Crypto/US 共 61 个死 symlink 已清除，各市场 tools/ 目录仅保留 manifest.csv 索引，待独立实现
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、影子队列、回执完整性、PnL 摘要
 
 ## 二、已知问题
 
-- Crypto/US/HK/PM 模拟盘链路未闭环（仅 A 股链路完整；Crypto/US/HK 已有 P0 本地模拟/影子工具）
+- Crypto/US/HK/PM 模拟盘链路未闭环（仅 A 股链路完整）
 - 多市场代码依赖旧系统 symlink，已全部清除（61 个死 symlink），待独立实现
 - 集合竞价支持标记为 STUB，未实现
 - A 股实盘路径仍是人工（模拟盘信号 → 邮件发用户 → 手动执行）
 
 ## 三、下一步
 
-1. [ ] **P2：PM 多市场工具独立实现 + Crypto/US/HK P1/P2 补齐** — manifest.csv 中占位工具按市场从头构建
+1. [ ] **P2：Crypto/US/HK/PM 多市场工具独立实现** — manifest.csv 中 61 个占位工具从头构建
 2. [ ] **P2：多市场模拟盘闭环** — 各自独立，不再依赖旧系统 symlink
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
 4. [ ] **P2：SharedSignals HTTP API 消费迁移** — 从直接 SQLite 读取切换到 API-first 访问
@@ -39,29 +39,20 @@
 
 ## 五、最近完成（2026-07-02）
 
-### Phase D US/HK P0 工具
+### Mini/服务器执行桥路径修复（2026-07-02）
 
-- [x] 新增 `US/common.py`、`US/market_data.py`、`US/simulator.py`、`US/shadow_runner.py`、`US/workflow.py`：US public-data reader、本地 mock paper simulator、shadow queue runner 和 `run_us_shadow_cycle(as_of)`，不接 Alpaca live/API 执行
-- [x] 新增 `HK/common.py`、`HK/market_data.py`、`HK/adapter.py`、`HK/simulator.py`、`HK/shadow_runner.py`：HKEX 配置、SharedSignals `market=HK/hk` + `hk_stock_master.csv` 读取、港股代码映射、本地模拟和 shadow queue runner
-- [x] 所有新增 US/HK P0 工具统一通过 shared market safety/base layer 拒绝 `real_money_enabled`、`direct_execution_enabled` 和 live broker 配置
-- [x] 验证：`python3 -m py_compile US/common.py US/market_data.py US/simulator.py US/shadow_runner.py US/workflow.py HK/common.py HK/market_data.py HK/adapter.py HK/simulator.py HK/shadow_runner.py`；`python3 -m unittest tests.test_market_base_layer tests.test_us_adapter tests.test_us_sim tests.test_us_hk_phase_d_p0`
+- [x] 禁用旧 `ai.hermes.sim-remote-sync`，停止 `~/Desktop/Investment/Ashare/outputs/account` 被周期性重建。
+- [x] 禁用旧 `ai.hermes.condition-cleanup`，停止访问已退役的 `~/Desktop/Investment` tradebook 清理路径。
+- [x] Mac Mini executor 明确设置 `SIM_REMOTE_TRADINGS_SIGNAL_DIR=/opt/investment/tradingagent/signals`。
+- [x] 服务器合并 GitHub 最新 main，修复 `TradingagentDataReader` 导入/导出和 reader 回归；`tests/test_data_reader.py` 通过。
+- [x] `shared/execution/execution_router.py` 已提交：A 股 sim broker 正式通过仓库内 `Ashare/sim_executor.py`，不再依赖旧 `/opt/investment/Ashare/tools`。
+- [x] Mac Mini live executor / receiver / health-check 默认路径已改到 `~/.hermes/ashare-runtime` 与 `/opt/investment/tradingagent/signals`。
+- [x] 清理 `mini/README.md`、`mini/mini_consumer.py`、`Ashare/AGENTS.md` 等参考副本里的误导性旧执行器路径。
+- [x] 归档 Mac Mini 非活跃旧脚本/备份/禁用 LaunchAgent；active scripts、LaunchAgents、crontab 旧路径审计为 0 命中。
+- [x] 记录事件日志：[docs/runtime_incidents_20260702.md](docs/runtime_incidents_20260702.md)。
 
-### Phase D Crypto P0 工具
-
-- [x] 新增 `Crypto/common.py`：`CryptoConfig` 继承 `MarketToolConfig`，固定 `market=crypto`、`currency=USDT`、`session=24x7`，并提供真实/签名执行 payload 拒绝入口
-- [x] 新增 `Crypto/market_data.py`：`CryptoMarketData(BaseMarketData)` 只读 SharedSignals `market_bars_daily` 中 `market=Crypto` 的公开行情
-- [x] 新增 `Crypto/simulator.py`：`CryptoSimulator(BaseSimulator)` 本地 public-bar mock 成交，不接 signed Binance、不读账户、不下单
-- [x] 新增 `Crypto/shadow_runner.py`：`CryptoShadowRunner(BaseShadowRunner)` 只写 `signals/shadow/*`，隔离执行队列
-- [x] 新增 `Crypto/workflow.py`：`CryptoWorkflow.run_crypto_shadow_cycle(as_of)` 串联 public data → local mock → shadow queue
-- [x] 验证：`python3 -m py_compile Crypto/common.py Crypto/market_data.py Crypto/simulator.py Crypto/shadow_runner.py Crypto/workflow.py tests/test_crypto_phase_d_tools.py`；`python3 -m unittest tests.test_crypto_phase_d_tools tests.test_market_base_layer tests.test_crypto_adapter tests.test_crypto_sim`
-
-### Phase D 多市场 shared base layer
-
-- [x] 新增 `shared/markets/config_schema.py`：多市场工具统一配置 dataclass、YAML 加载和基础校验
-- [x] 新增 `shared/markets/safety.py`：影子盘/模拟盘、无实盘、无直接执行、无 live broker 数据边界断言
-- [x] 新增 `shared/markets/base_tools.py`：MarketData、Simulator、ShadowRunner、Report 抽象基类，初始化时统一拒绝真实/直接执行
-- [x] 新增 `Crypto/config.yaml`、`US/config.yaml`、`PM/config.yaml`、`HK/config.yaml` 模板，默认仅开启 shadow/simulated 层
-- [x] 验证：`python3 -m unittest tests.test_market_base_layer`、`python3 -m py_compile shared/markets/__init__.py shared/markets/config_schema.py shared/markets/safety.py shared/markets/base_tools.py`
+**残余风险：**
+- 未在交易时段发送测试交易信号；完整端到端验证需等交易时段。
 
 ### Goal 2 审计 — SharedSignals → TradingAgent → MarketGraph 数据流
 

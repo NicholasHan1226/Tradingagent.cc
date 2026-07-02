@@ -176,7 +176,7 @@ class MarketAdapter(Protocol):
 | **逆回购** | 收盘闲置现金自动 GC-001 (204001); 现有 `capital_plan.py` 已实现 `suggest_reverse_repo()` |
 | **shadow_broker** | 使用共享 `shadow_broker.record_shadow()`, `capital_layer="shadow"`; 写入 `shared/data/shadow/` 目录下 |
 | **信号文件** | `signals/pending/` 生成信号卡 → condition_monitor 检测触发 → `signals/filled/` |
-| **模拟盘 vs 影子盘** | A股模拟盘必须在 mini 上跑 (同花顺 UI 自动化 `a_share_simulated_trade_executor.py`); 影子盘纯服务器端记录 |
+| **模拟盘 vs 影子盘** | A股模拟盘必须经 TradingAgent `Ashare/sim_executor.py` → Mini receiver/executor → `signals/filled|positions` 回写；影子盘纯服务器端记录 |
 | **资金规划** | 初始 shadow 资金 200,000 (10x 实盘, 便于精度); 2–3 只持仓, 每只 5–7 万 |
 
 ### 1.7 Reader 对接方式

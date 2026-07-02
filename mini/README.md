@@ -28,13 +28,13 @@
 - `account_type=simulated`
 - `direct_execution` 可为 `false` 或缺省；Mini 不把它解释为真实账户权限。
 
-通过校验后，Mini 调用本机路径：
+通过校验后，当前 live Mini 链路调用：
 
 ```bash
-/Users/nicholashan/Projects/Finance/tradingagent/Ashare/sim_executor.py
+~/.hermes/scripts/sim-signal-executor.py
 ```
 
-参考消费者使用 `subprocess` 调用该脚本，并把执行器返回值归一化为 fill card：
+服务器侧通过 `Ashare/sim_executor.py` / `shared.execution.webhook_sender` 把 simulated signal 送到 Mini receiver；`mini/mini_consumer.py` 仅保留为历史参考和测试兼容，不是 live 进程。Mini live executor 把执行器返回值归一化为 fill card：
 
 - `order_id`
 - `status=filled`
@@ -63,7 +63,7 @@ Mini 对实盘信号只做两件事：
 1. 发送邮件 stub 给 Nicholas，内容为信号摘要、风险字段、手工确认提示。
 2. 使用只读链路同步账户持仓快照，并写入 `signals/positions/`。
 
-Mini 永远不得对实盘调用 `a_share_simulated_trade_executor`、真实同花顺执行脚本、点击交易按钮、提交委托、撤单或确认委托。
+Mini 永远不得对实盘调用模拟执行器、真实同花顺执行脚本、点击交易按钮、提交委托、撤单或确认委托。
 
 若收到 `capital_layer=real` 且 `direct_execution=true` 的信号，Mini 必须拒绝，并把领取后的信号转为 `failed`。这是安全红线，不允许降级执行。
 

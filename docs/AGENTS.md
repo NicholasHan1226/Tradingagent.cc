@@ -10,6 +10,7 @@
 |------|------|
 | [HANDOFF_架构对齐_20260630.md](HANDOFF_架构对齐_20260630.md) | 6/30 架构审查快照（已标"部分过时"，读前先看 warning banner） |
 | [runtime_incidents_20260701.md](runtime_incidents_20260701.md) | 7/1 运行时事件时间线和修复复盘 |
+| [runtime_incidents_20260702.md](runtime_incidents_20260702.md) | 7/2 Mini/服务器执行桥路径漂移、reader 导入回归和桌面 Investment 退役记录 |
 | [data_contract.md](data_contract.md) | 数据契约定义 |
 | [data_sources.md](data_sources.md) | 数据源接入说明 |
 | [email_setup.md](email_setup.md) | 邮件通道配置 |
