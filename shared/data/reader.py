@@ -495,10 +495,22 @@ class TradingagentDataReader:
             self._maybe_alert()
             return []
 
-    def get_sentiment(self) -> list[dict[str, Any]]:
+    def get_sentiment(
+        self, start: str | None = None, end: str | None = None,
+    ) -> list[dict[str, Any]]:
         try:
-            raw = self.marketgraph.get_sentiment_signals()
-            return [dict(r) for r in raw]
+            def fallback() -> list[dict[str, Any]]:
+                raw = self.marketgraph.get_sentiment_signals()
+                return [dict(r) for r in raw]
+
+            result = self._api_call(
+                "get_sentiment",
+                fallback,
+                start=start,
+                end=end,
+            )
+            self._record_shared_error("get_sentiment")
+            return result
         except Exception as e:
             self.errors.append(f"get_sentiment: {e}")
             self.stale = True
@@ -544,3 +556,218 @@ class TradingagentDataReader:
             self.stale = True
             self._maybe_alert()
             return False
+
+    def get_fundamentals(
+        self, ts_code: str, end_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call(
+                "get_fundamentals",
+                fallback,
+                ts_code=ts_code,
+                end_date=end_date,
+            )
+            self._record_shared_error("get_fundamentals")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_fundamentals: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_reference(self, table: str) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call("get_reference", fallback, table=table)
+            self._record_shared_error("get_reference")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_reference: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_macro_factors(
+        self, start: str | None = None, end: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call(
+                "get_macro_factors",
+                fallback,
+                start=start,
+                end=end,
+            )
+            self._record_shared_error("get_macro_factors")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_macro_factors: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_capital_flow(
+        self, ts_code: str | None = None,
+        start: str | None = None, end: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call(
+                "get_capital_flow",
+                fallback,
+                ts_code=ts_code,
+                start=start,
+                end=end,
+            )
+            self._record_shared_error("get_capital_flow")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_capital_flow: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_crypto_klines(
+        self, symbol: str, limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call(
+                "get_crypto_klines",
+                fallback,
+                symbol=symbol,
+                limit=limit,
+            )
+            self._record_shared_error("get_crypto_klines")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_crypto_klines: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_pm_markets(self, limit: int = 100) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call("get_pm_markets", fallback, limit=limit)
+            self._record_shared_error("get_pm_markets")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_pm_markets: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_associations(
+        self, ts_code: str | None = None, event_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call(
+                "get_associations",
+                fallback,
+                ts_code=ts_code,
+                event_id=event_id,
+            )
+            self._record_shared_error("get_associations")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_associations: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_impacts(
+        self, event_type: str | None = None, target: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call(
+                "get_impacts",
+                fallback,
+                event_type=event_type,
+                target=target,
+            )
+            self._record_shared_error("get_impacts")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_impacts: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_industry(self, ts_code: str) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call("get_industry", fallback, ts_code=ts_code)
+            self._record_shared_error("get_industry")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_industry: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_realtime_5min(
+        self, ts_code: str, date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call(
+                "get_realtime_5min",
+                fallback,
+                ts_code=ts_code,
+                date=date,
+            )
+            self._record_shared_error("get_realtime_5min")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_realtime_5min: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_tushare(
+        self, api_name: str, ts_code: str | None = None,
+        start_date: str | None = None, end_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            result = self._api_call(
+                "get_tushare",
+                fallback,
+                api_name=api_name,
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            self._record_shared_error("get_tushare")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_tushare: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []

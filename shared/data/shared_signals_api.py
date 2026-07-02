@@ -156,8 +156,11 @@ class SharedSignalsAPIClient:
             "ts_code": ts_code, "start": start or "", "end": end or "", "freq": freq,
         })
 
-    def get_fundamentals(self, ts_code: str) -> list[dict[str, Any]]:
-        return self._get("/fundamentals", {"ts_code": ts_code})
+    def get_fundamentals(self, ts_code: str, end_date: str | None = None) -> list[dict[str, Any]]:
+        params: dict[str, str] = {"ts_code": ts_code}
+        if end_date:
+            params["end_date"] = end_date
+        return self._get("/fundamentals", params)
 
     def get_reference(self, table: str) -> list[dict[str, Any]]:
         return self._get("/reference", {"table": table})
@@ -167,8 +170,12 @@ class SharedSignalsAPIClient:
     ) -> list[dict[str, Any]]:
         return self._get("/macro", {"start": start or "", "end": end or ""})
 
-    def get_capital_flow(self, date: str) -> list[dict[str, Any]]:
-        return self._get("/capital_flow", {"date": date})
+    def get_capital_flow(
+        self, ts_code: str | None = None, start: str | None = None, end: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._get("/capital_flow", {
+            "ts_code": ts_code or "", "start": start or "", "end": end or "",
+        })
 
     def get_events(
         self, start: str | None = None, end: str | None = None,
@@ -180,8 +187,11 @@ class SharedSignalsAPIClient:
     ) -> list[dict[str, Any]]:
         return self._get("/sentiment", {"start": start or "", "end": end or ""})
 
-    def get_crypto_klines(self, symbol: str) -> list[dict[str, Any]]:
-        return self._get("/crypto", {"symbol": symbol})
+    def get_crypto_klines(self, symbol: str, limit: int | None = None) -> list[dict[str, Any]]:
+        params: dict[str, str] = {"symbol": symbol}
+        if limit is not None:
+            params["limit"] = str(limit)
+        return self._get("/crypto", params)
 
     def get_pm_markets(self, limit: int = 100) -> list[dict[str, Any]]:
         return self._get("/pm_markets", {"limit": str(limit)})
