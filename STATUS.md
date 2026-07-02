@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-03 (多市场 P2 工具完成与 API 迁移状态对齐)
+> 最后更新：2026-07-03 (多市场 P2 工具完成与 cron 解耦入口)
 
 ---
 
@@ -15,6 +15,7 @@
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`；mini live 脚本默认值也已改到新路径
 - **PM（预测市场）**：影子盘每 10 分钟扫描运行；checked-in config 使用 USDC；PM shadow 写入 `signals/shadow/pending`
 - **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；下一步是生产闭环验证
+- **cron 解耦入口**：`cron/shadow_crypto.sh`、`cron/shadow_us.sh`、`cron/shadow_pm.sh`、`cron/shadow_hk.sh`、`cron/daily_review.sh` 已新增，均只走 shadow/review 边界并带 flock 与独立日志
 - **SharedSignals API 消费**：`SharedSignalsAPIClient` 已校准 15/15 数据端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
@@ -30,7 +31,7 @@
 ## 三、下一步
 
 1. [x] **P2：Crypto/US/PM/HK 多市场工具独立实现** — Crypto risk/portfolio/replay、US portfolio/replay、PM risk、HK portfolio 已补齐
-2. [ ] **P2：多市场模拟盘生产闭环** — 工具已独立，仍需验证调度、账本、报告、promotion 和失败回退闭环
+2. [ ] **P2：多市场模拟盘生产闭环** — 工具已独立，cron 解耦入口已补齐；仍需验证调度、账本、报告、promotion 和失败回退闭环
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
 4. [x] **P2：SharedSignals HTTP API 消费迁移** — 15/15 端点客户端已完成；`TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` 接入 API-first 访问；SQLite 只读回退保留
 
@@ -39,6 +40,14 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-03 cron 解耦入口补齐
+
+- [x] 新增 `cron/shadow_crypto.sh`、`cron/shadow_us.sh`、`cron/shadow_pm.sh`：复用现有 `shared/wrappers/job_*_shadow.sh`。
+- [x] 新增 `cron/shadow_hk.sh`：调用 `HK.workflow.run_hk_shadow_cycle()`，只写 shadow 队列。
+- [x] 新增 `cron/daily_review.sh`：调用 `shared.review.daily_review.run_daily_review()`，按 shadow 日志汇总多市场 review。
+- [x] 新增 `cron/AGENTS.md`：约束 cron wrapper 不内嵌 broker 凭据、实盘 payload 或审批捷径。
+- [ ] 待服务器部署验证：脚本尚未写入生产 crontab；多市场生产闭环仍需实跑确认。
 
 ### SharedSignals API 15/15 端点迁移对齐（2026-07-03）
 
