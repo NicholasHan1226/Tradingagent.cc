@@ -258,7 +258,13 @@ class AshareAdapter(MarketAdapter):
         min_amount = _safe_float(cfg.get("min_liquidity_amount"), 50_000_000.0)
         amount = self._latest_amount(str(asset.get("symbol") or ""), date)
         if amount is None:
-            return True
+            # DB error / missing data: keep asset to avoid universe collapse.
+            # Only exclude when we have explicit evidence of low liquidity.
+            logger.warning(
+                "_exclude_asset: no liquidity data for %s on %s — keeping in universe",
+                asset.get("symbol"), date,
+            )
+            return False
         if amount < min_amount:
             return True
         return False
