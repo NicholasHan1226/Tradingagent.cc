@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-03 (final Codex review HIGH/MEDIUM 安全修复)
+> 最后更新：2026-07-03 (多市场 P2 工具本地实现)
 
 ---
 
@@ -14,21 +14,21 @@
 - **A 股模拟盘**：通过 Mac Mini Hermes 执行，收/发/回执链路已修复
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`；mini live 脚本默认值也已改到新路径
 - **PM（预测市场）**：影子盘每 10 分钟扫描运行；checked-in config 使用 USDC；PM shadow 写入 `signals/shadow/pending`
-- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐
+- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、影子队列、回执完整性、PnL 摘要
 
 ## 二、已知问题
 
-- Crypto/US/HK/PM 模拟盘完整生产闭环未验证（仅 A 股链路完整；多市场 P1 工具为本地模块级验证）
+- Crypto/US/HK/PM 模拟盘完整生产闭环未验证（仅 A 股链路完整；多市场 P1/P2 工具为本地模块级验证）
 - 多市场代码依赖旧系统 symlink，已全部清除（61 个死 symlink），待独立实现
 - 集合竞价支持标记为 STUB，未实现
 - A 股实盘路径仍是人工（模拟盘信号 → 邮件发用户 → 手动执行）
 
 ## 三、下一步
 
-1. [ ] **P2：Crypto/PM 多市场工具独立实现** — 继续从 manifest.csv 占位工具中补齐剩余 P2 能力
+1. [x] **P2：Crypto/US/PM/HK 多市场工具独立实现** — Crypto risk/portfolio/replay、US portfolio/replay、PM risk、HK portfolio 已补齐
 2. [ ] **P2：多市场模拟盘闭环** — 各自独立，不再依赖旧系统 symlink
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
 4. [x] **P2：SharedSignals HTTP API 消费迁移** — `TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` 接入 API-first 访问；SQLite 只读回退保留
@@ -38,6 +38,17 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 多市场 P2 工具本地实现（2026-07-03）
+
+- [x] `Crypto/risk.py`：新增 `CryptoRiskBackground`，基于 funding/news/volatility 的公开数据风险评分。
+- [x] `Crypto/portfolio.py`：新增 `CryptoPortfolioOptimizer`，输出相关矩阵与波动率自适应 shadow 权重。
+- [x] `Crypto/replay.py`：新增 `CryptoHistoricalReplay`，用公开历史 bars 回放 shadow 规则。
+- [x] `US/portfolio.py` / `US/replay.py`：新增美股相关性持仓门与历史 bars 回放。
+- [x] `PM/risk.py`：新增 `PMRiskControl`，执行单市场 5% 上限与相关 topic 上限。
+- [x] `HK/portfolio.py`：新增 HKD lot sizing 与 sector cap 组合工具。
+- [x] 所有 P2 工具保持 shadow/sim only，拒绝 real/live/direct execution 负载或配置。
+- [x] 验证：新增 `tests/test_multi_market_p2_tools.py` 14 项通过；P0/P1/P2 关联测试 39 项通过；新增文件 `py_compile` 通过。
 
 ### final Codex review HIGH/MEDIUM 安全修复（2026-07-03）
 
