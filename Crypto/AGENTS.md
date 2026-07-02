@@ -23,7 +23,8 @@
   - crypto_market_data.py — Public market data adapter (Binance API)
   - crypto_simulator.py — Simulated execution for condition cards
   - crypto_shadow_runner.py — Shadow strategy layer (parallel to frozen baseline)
-  - crypto_forward_validation.py — Forward validation dashboard
-  - crypto_strategy_promotion.py — Strategy promotion scorecard (5-tier)
+  - report.py — Daily shadow recap and no-empty-trigger delivery policy
+  - validation.py — Forward validation dashboard and sample-quality scorecard
+  - promotion.py — Strategy promotion scorecard (5-tier shadow→sim)
   - crypto_marketgraph_bridge.py — Crypto ↔ MarketGraph cross-market signal bridge
   - crypto_portfolio_optimizer.py — Correlation + volatility-adaptive sizing

@@ -24,7 +24,9 @@
   - pm_clob_sandbox.py — Polymarket CLOB trading sandbox (research only)
   - pm_simulator.py — YES/NO bets, settlement, early exit
   - pm_shadow_runner.py — Edge × kelly × hold variant comparison
-  - pm_forward_validation.py — Daily Brier + P&L + calibration report
+  - report.py — Daily Brier + P&L shadow report
+  - validation.py — Forward validation with calibration and Brier tracking
+  - promotion.py — Strategy promotion scorecard (research→shadow→sim)
   - pm_prediction_model.py — Probability estimates with alpha
   - pm_marketgraph_bridge.py — PredictionMarkets → MarketGraph causal impact bridge
   - pm_historical_replay.py — Calibrate strategy on resolved markets
