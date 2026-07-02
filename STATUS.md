@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-02 (多市场 P1 Codex review 修复)
+> 最后更新：2026-07-02 (多市场 promotion tier 命名统一)
 
 ---
 
@@ -31,13 +31,28 @@
 1. [ ] **P2：Crypto/PM 多市场工具独立实现** — 继续从 manifest.csv 占位工具中补齐剩余 P2 能力
 2. [ ] **P2：多市场模拟盘闭环** — 各自独立，不再依赖旧系统 symlink
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
-4. [ ] **P2：SharedSignals HTTP API 消费迁移** — 从直接 SQLite 读取切换到 API-first 访问
+4. [x] **P2：SharedSignals HTTP API 消费迁移** — `TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` 接入 API-first 访问；SQLite 只读回退保留
 
 ## 四、活跃任务
 
 （当前无活跃迁移任务）
 
 ## 五、最近完成（2026-07-02）
+
+### 多市场 promotion tier 命名统一（2026-07-02）
+
+- [x] `Crypto/promotion.py`、`PM/promotion.py` 统一为 `research -> shadow_candidate -> shadow -> sim_candidate -> sim`，与 US/HK 命名一致。
+- [x] Crypto/PM `eligible_for_sim` 与 `target_layer=simulated` 改为只在 `tier=sim` 时成立。
+- [x] 更新 Crypto/PM P1 测试断言，覆盖统一五档 tier 名。
+- [x] 验证：`tests/test_crypto_p1_tools.py`、`tests/test_pm_p1_tools.py`、`tests/test_us_hk_p1_tools.py` 共 17 项通过；完整 `python3 -m pytest tests/ -q --tb=line` 187 项通过。
+
+### SharedSignals HTTP API 消费迁移（2026-07-02）
+
+- [x] `TradingagentDataReader` 新增 `api_client` 参数；配置 `SHAREDSIGNALS_API_URL` 时自动创建 `SharedSignalsAPIClient`。
+- [x] `get_market_data` / `get_events` / `is_trading_day` 优先走 SharedSignals HTTP API；API 不可用时回退 SQLite 只读路径并设置 `degraded=True`。
+- [x] `SharedSignalsAPIClient` 移除 deprecated 状态，校准 15 个当前 API server 端点，补充 timeout / retry / backoff 配置，去除 `X-API-Key` 双重暴露。
+- [x] `.env.example` 新增 `SHAREDSIGNALS_API_URL`（默认空，直接走 SQLite）、`SHAREDSIGNALS_API_KEY`、timeout/retry 配置。
+- [x] 验证：`py_compile`、导入 smoke、`tests/test_data_reader.py` 通过。
 
 ### 多市场 P1 Codex review 修复（2026-07-02）
 

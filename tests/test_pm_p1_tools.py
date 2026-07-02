@@ -78,7 +78,8 @@ class PMP1ToolsTest(unittest.TestCase):
 
         result = promotion.score("calibration_shadow", as_of="2026-07-02")
 
-        self.assertEqual(result["tier"], "tier_4_sim_ready")
+        self.assertEqual(promotion.TIERS, ("research", "shadow_candidate", "shadow", "sim_candidate", "sim"))
+        self.assertEqual(result["tier"], "sim")
         self.assertTrue(result["eligible_for_sim"])
         self.assertEqual(result["target_layer"], "simulated")
         self.assertFalse(result["real_execution"])

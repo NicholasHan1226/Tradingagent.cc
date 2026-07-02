@@ -15,11 +15,11 @@ class PMStrategyPromotion:
     """Five-tier research-to-shadow-to-sim gate for PM strategies."""
 
     TIERS = (
-        "tier_0_research_hold",
-        "tier_1_research_watch",
-        "tier_2_shadow_candidate",
-        "tier_3_shadow_qualified",
-        "tier_4_sim_ready",
+        "research",
+        "shadow_candidate",
+        "shadow",
+        "sim_candidate",
+        "sim",
     )
 
     def __init__(
@@ -52,9 +52,9 @@ class PMStrategyPromotion:
             "market": "pm",
             "strategy_name": strategy_name,
             "capital_layer": "shadow",
-            "target_layer": "simulated" if tier == "tier_4_sim_ready" else "shadow",
+            "target_layer": "simulated" if tier == "sim" else "shadow",
             "tier": tier,
-            "eligible_for_sim": tier == "tier_4_sim_ready",
+            "eligible_for_sim": tier == "sim",
             "real_execution": False,
             "validation": validation,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

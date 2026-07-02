@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP client for SharedSignals API (port 8082).
+"""HTTP client for SharedSignals API.
 
 Mirrors the 15 canonical reader functions via HTTP instead of direct SQLite reads.
 Provides fail-safe access: network errors return empty data rather than raising.
@@ -16,16 +16,35 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 
-DEFAULT_API_URL = os.environ.get("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082")
+DEFAULT_API_URL = os.environ.get("SHAREDSIGNALS_API_URL", "")
 DEFAULT_API_KEY = os.environ.get("SHAREDSIGNALS_API_KEY", "")
 DEFAULT_TIMEOUT = float(os.environ.get("SHAREDSIGNALS_API_TIMEOUT", "10"))
-DEFAULT_RETRIES = int(os.environ.get("SHAREDSIGNALS_API_RETRIES", "1"))
+DEFAULT_RETRIES = int(os.environ.get("SHAREDSIGNALS_API_RETRIES", os.environ.get("SHAREDSIGNALS_API_MAX_RETRIES", "1")))
+DEFAULT_RETRY_BACKOFF = float(os.environ.get("SHAREDSIGNALS_API_RETRY_BACKOFF", "0.5"))
+
+CANONICAL_ENDPOINTS: dict[str, str] = {
+    "is_trading_day": "/is_trading_day",
+    "get_market_data": "/market_data",
+    "get_fundamentals": "/fundamentals",
+    "get_reference": "/reference",
+    "get_macro_factors": "/macro",
+    "get_capital_flow": "/capital_flow",
+    "get_events": "/events",
+    "get_sentiment": "/sentiment",
+    "get_crypto_klines": "/crypto",
+    "get_pm_markets": "/pm_markets",
+    "get_associations": "/associations",
+    "get_impacts": "/impacts",
+    "get_industry": "/industry",
+    "get_realtime_5min": "/realtime_5min",
+    "get_tushare": "/tushare",
+}
 
 
 class SharedSignalsAPIClient:
@@ -44,11 +63,13 @@ class SharedSignalsAPIClient:
         api_key: str | None = None,
         timeout: float | None = None,
         max_retries: int | None = None,
+        retry_backoff: float | None = None,
     ):
         self.base_url = (base_url or DEFAULT_API_URL).rstrip("/")
         self.api_key = api_key or DEFAULT_API_KEY
         self.timeout = timeout if timeout is not None else DEFAULT_TIMEOUT
         self.max_retries = max_retries if max_retries is not None else DEFAULT_RETRIES
+        self.retry_backoff = retry_backoff if retry_backoff is not None else DEFAULT_RETRY_BACKOFF
         self.errors: list[str] = []
 
     @classmethod
@@ -70,6 +91,10 @@ class SharedSignalsAPIClient:
 
     def _get(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
         """Execute GET request with retry. Returns decoded data list on success."""
+        if not self.base_url:
+            self.errors.append(f"{path}: SHAREDSIGNALS_API_URL is not configured")
+            return []
+
         clean_params = {k: str(v) for k, v in (params or {}).items() if v}
 
         cache_key = self._cache_key(path, clean_params)
@@ -77,7 +102,7 @@ class SharedSignalsAPIClient:
         if cached is not None:
             return cached
 
-        query = "&".join(f"{k}={urllib.request.quote(v)}" for k, v in sorted(clean_params.items()))
+        query = urllib.parse.urlencode(sorted(clean_params.items()))
         url = f"{self.base_url}{path}"
         if query:
             url = f"{url}?{query}"
@@ -85,7 +110,6 @@ class SharedSignalsAPIClient:
         headers = {"Accept": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-            headers["X-API-Key"] = self.api_key
 
         last_error = ""
         for attempt in range(self.max_retries + 1):
@@ -99,10 +123,16 @@ class SharedSignalsAPIClient:
                     data = []
                 self._cache_set(cache_key, data)
                 return data
-            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            except urllib.error.HTTPError as exc:
+                last_error = f"HTTP {exc.code}: {exc.reason}"
+                if exc.code < 500 and exc.code != 429:
+                    break
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff * (attempt + 1))
+            except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
                 last_error = str(exc)
                 if attempt < self.max_retries:
-                    time.sleep(0.5)
+                    time.sleep(self.retry_backoff * (attempt + 1))
 
         self.errors.append(f"{path}: {last_error}")
         return []
@@ -110,13 +140,13 @@ class SharedSignalsAPIClient:
     # ── 15 canonical functions ───────────────────────────────────────────────
 
     def is_trading_day(self, date: str | None = None) -> bool:
-        """Check if date is a trading day. Returns True/False (defaults True)."""
+        """Check if date is a trading day. Returns False on API failure."""
         if date is None:
             date = datetime.now().strftime("%Y%m%d")
         rows = self._get("/is_trading_day", {"date": date})
         if rows:
-            return bool(rows[0].get("is_trading_day", True))
-        return True
+            return bool(rows[0].get("is_trading_day", False))
+        return False
 
     def get_market_data(
         self, ts_code: str, start: str | None = None, end: str | None = None,

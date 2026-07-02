@@ -9,11 +9,14 @@ TradingagentDataReader composes both into a fail-safe unified interface.
 from __future__ import annotations
 
 import csv
+import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+from .shared_signals_api import SharedSignalsAPIClient
 
 
 # -- Default paths -----------------------------------------------------------
@@ -224,17 +227,22 @@ class TradingagentDataReader:
         self,
         shared: SharedSignalsReader | None = None,
         marketgraph: MarketGraphCSVReader | None = None,
+        api_client: SharedSignalsAPIClient | None = None,
     ):
         self._shared = shared
         self._marketgraph = marketgraph
+        api_url = os.environ.get("SHAREDSIGNALS_API_URL", "").strip()
+        self._api_client = api_client
+        if self._api_client is None and api_url:
+            self._api_client = SharedSignalsAPIClient(base_url=api_url)
         self.errors: list[str] = []
         self.stale = False
+        self.degraded = False
         self._error_count_at_last_log = 0
 
     def _maybe_alert(self) -> None:
         """Log a warning when errors accumulate beyond threshold — dead-man switch."""
         if len(self.errors) > self._error_count_at_last_log and len(self.errors) % 10 == 0:
-            import logging
             logger = logging.getLogger("tradingagent.data")
             logger.warning(
                 "TradingagentDataReader: %d errors accumulated (stale=%s) — last: %s",
@@ -242,6 +250,38 @@ class TradingagentDataReader:
             )
             self._error_count_at_last_log = len(self.errors)
 
+    def _record_api_fallback(self, op: str, reason: str) -> None:
+        self.degraded = True
+        self.stale = True
+        message = f"{op}: API unavailable, using SQLite fallback ({reason})"
+        if not self.errors or self.errors[-1] != message:
+            self.errors.append(message)
+        self._maybe_alert()
+
+    def _api_call(
+        self,
+        op: str,
+        fallback: Callable[[], Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Prefer SharedSignals API and fall back to direct SQLite on API failure."""
+        if self._api_client is None:
+            return fallback()
+
+        before_error_count = len(getattr(self._api_client, "errors", []))
+        try:
+            method = getattr(self._api_client, op)
+            result = method(*args, **kwargs)
+        except Exception as exc:  # pragma: no cover - defensive API boundary
+            self._record_api_fallback(op, str(exc))
+            return fallback()
+
+        api_errors = getattr(self._api_client, "errors", [])
+        if len(api_errors) > before_error_count:
+            self._record_api_fallback(op, api_errors[-1])
+            return fallback()
+        return result
 
     def _record_shared_error(self, op: str) -> None:
         error = getattr(self._shared, "last_error", None)
@@ -264,6 +304,7 @@ class TradingagentDataReader:
                 # Don't silently mask data loss with /dev/null.
                 # Keep _shared as None so callers see AttributeError
                 # instead of operating on empty data.
+                logger = logging.getLogger("tradingagent.data")
                 logger.critical(
                     "TradingagentDataReader: SharedSignalsReader init failed — "
                     "ALL data reads will fail. Fix DB path or connectivity. Error: %s", e
@@ -283,6 +324,40 @@ class TradingagentDataReader:
             )
         return self._marketgraph
 
+    @staticmethod
+    def _to_ts_code(market: str, symbol: str) -> str:
+        if "." in symbol:
+            return symbol
+        if market == "Ashare" and symbol.isdigit() and len(symbol) == 6:
+            suffix = "SH" if symbol.startswith(("5", "6", "9")) else "SZ"
+            return f"{symbol}.{suffix}"
+        return symbol
+
+    @staticmethod
+    def _market_symbol_from_ts_code(ts_code: str, market: str | None = None) -> tuple[str, str]:
+        code = ts_code.strip()
+        if "." not in code:
+            return market or "Ashare", code
+        symbol, suffix = code.rsplit(".", 1)
+        suffix = suffix.upper()
+        if suffix in {"SH", "SZ", "BJ"}:
+            return market or "Ashare", symbol
+        return market or suffix, symbol
+
+    @staticmethod
+    def _normalize_market_rows(
+        rows: list[dict[str, Any]], market: str, symbol: str
+    ) -> list[dict[str, Any]]:
+        normalized = []
+        for row in rows:
+            item = dict(row)
+            item.setdefault("market", market)
+            item.setdefault("symbol", symbol)
+            if "volume" not in item and "vol" in item:
+                item["volume"] = item["vol"]
+            normalized.append(item)
+        return normalized
+
     def get_asset(self, market: str, symbol: str) -> dict[str, Any] | None:
         try:
             result = self.shared.get_asset(market, symbol)
@@ -298,11 +373,59 @@ class TradingagentDataReader:
         self, market: str, symbol: str, start: str = "", end: str = ""
     ) -> list[dict[str, Any]]:
         try:
-            result = self.shared.get_bars_daily(market, symbol, start, end)
+            ts_code = self._to_ts_code(market, symbol)
+
+            def fallback() -> list[dict[str, Any]]:
+                return self.shared.get_bars_daily(market, symbol, start, end)
+
+            result = self._api_call(
+                "get_market_data",
+                fallback,
+                ts_code=ts_code,
+                start=start or None,
+                end=end or None,
+                freq="daily",
+            )
             self._record_shared_error("get_bars_daily")
-            return result
+            return self._normalize_market_rows(result, market, symbol)
         except Exception as e:
             self.errors.append(f"get_bars_daily: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
+    def get_market_data(
+        self,
+        ts_code: str,
+        start: str | None = None,
+        end: str | None = None,
+        freq: str = "daily",
+        market: str | None = None,
+    ) -> list[dict[str, Any]]:
+        market_name, symbol = self._market_symbol_from_ts_code(ts_code, market)
+
+        def fallback() -> list[dict[str, Any]]:
+            if freq in {"5m", "5min", "intraday"}:
+                return self.shared.get_bars_intraday(
+                    market_name, symbol, "5m", start or "", end or ""
+                )
+            return self.shared.get_bars_daily(
+                market_name, symbol, start or "", end or ""
+            )
+
+        try:
+            result = self._api_call(
+                "get_market_data",
+                fallback,
+                ts_code=ts_code,
+                start=start,
+                end=end,
+                freq=freq,
+            )
+            self._record_shared_error("get_market_data")
+            return self._normalize_market_rows(result, market_name, symbol)
+        except Exception as e:
+            self.errors.append(f"get_market_data: {e}")
             self.stale = True
             self._maybe_alert()
             return []
@@ -331,8 +454,26 @@ class TradingagentDataReader:
         start: str = "", end: str = "",
     ) -> list[dict[str, Any]]:
         try:
-            result = self.shared.get_events(market=market or "", symbol=symbol,
-                                            start_date=start, end_date=end)
+            def fallback() -> list[dict[str, Any]]:
+                return self.shared.get_events(
+                    market=market or "", symbol=symbol,
+                    start_date=start, end_date=end,
+                )
+
+            result = self._api_call(
+                "get_events",
+                fallback,
+                start=start or None,
+                end=end or None,
+            )
+            if market:
+                result = [r for r in result if not r.get("market") or r.get("market") == market]
+            if symbol:
+                result = [
+                    r for r in result
+                    if not r.get("symbol") or r.get("symbol") == symbol
+                    or r.get("subject_code") in {symbol, self._to_ts_code(market or "", symbol)}
+                ]
             self._record_shared_error("get_events")
             return result
         except Exception as e:
@@ -377,3 +518,29 @@ class TradingagentDataReader:
             self.stale = True
             self._maybe_alert()
             return []
+
+    def is_trading_day(self, date: str | None = None) -> bool:
+        date_value = date or datetime.now(timezone.utc).strftime("%Y%m%d")
+
+        def fallback() -> bool:
+            normalized = date_value.replace("-", "")
+            try:
+                rows = self.shared._query(
+                    "SELECT 1 FROM market_bars_daily WHERE trade_date=? LIMIT 1",
+                    (normalized,),
+                )
+                self._record_shared_error("is_trading_day")
+                return bool(rows)
+            except Exception as exc:
+                self.errors.append(f"is_trading_day: {exc}")
+                self.stale = True
+                self._maybe_alert()
+                return False
+
+        try:
+            return bool(self._api_call("is_trading_day", fallback, date=date_value))
+        except Exception as e:
+            self.errors.append(f"is_trading_day: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return False
