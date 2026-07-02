@@ -12,6 +12,8 @@ build/
 *.sqlite3
 *.db
 data/
+!/shared/data/
+!/shared/data/**
 logs/
 
 # Environment
@@ -45,3 +47,7 @@ shared/review/**/*.jsonl
 shared/review/**/*.md
 shared/risk/**/*.jsonl
 signals_archive/
+/shared/data/__pycache__/
+/shared/data/**/*.pyc
+/shared/data/*.bak_*
+/shared/data/*.bak.*
