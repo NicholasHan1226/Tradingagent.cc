@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-02 (Mini/服务器执行桥路径修复；Goal 2 审计完成)
+> 最后更新：2026-07-02 (R8/R9 多市场安全修复完成)
 
 ---
 
@@ -13,15 +13,15 @@
 - **A 股影子盘**：完整闭环运行（信号生成 → 影子账簿 → 复盘）
 - **A 股模拟盘**：通过 Mac Mini Hermes 执行，收/发/回执链路已修复
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`；mini live 脚本默认值也已改到新路径
-- **PM（预测市场）**：影子盘每 10 分钟扫描运行
-- **多市场**：PM/Crypto/US 共 61 个死 symlink 已清除，各市场 tools/ 目录仅保留 manifest.csv 索引，待独立实现
+- **PM（预测市场）**：影子盘每 10 分钟扫描运行；checked-in config 使用 USDC；PM shadow 写入 `signals/shadow/pending`
+- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；Crypto/US/HK Phase D P0 工具已独立实现，PM 部分安全补齐
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、影子队列、回执完整性、PnL 摘要
 
 ## 二、已知问题
 
-- Crypto/US/HK/PM 模拟盘链路未闭环（仅 A 股链路完整）
+- Crypto/US/HK/PM 模拟盘完整生产闭环未验证（仅 A 股链路完整）
 - 多市场代码依赖旧系统 symlink，已全部清除（61 个死 symlink），待独立实现
 - 集合竞价支持标记为 STUB，未实现
 - A 股实盘路径仍是人工（模拟盘信号 → 邮件发用户 → 手动执行）
@@ -38,6 +38,16 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成（2026-07-02）
+
+### R8/R9 多市场安全修复（2026-07-02）
+
+- [x] `PM/config.yaml` currency 从 USD 修正为 USDC，并补充 `PMWorkflow()` 读取 checked-in config 的回归测试。
+- [x] `PM/shadow_runner.py` 改为通过 `SignalStateMachine(signals_root / "shadow").write_pending()` 写入 `signals/shadow/pending`。
+- [x] `shared/markets/safety.py`、`base_tools.py`、`config_schema.py` 增加真实执行/live broker/direct execution 拒绝；`execute_sim_order()` 不再把真实负载静默改写成 simulated 后派发。
+- [x] `PM/simulator.py` 拒绝 real order，fill 结果固定返回 `capital_layer=simulated`、`account_type=simulated`。
+- [x] `PM/Crypto/US` sim executor 入口新增真实执行负载拒绝；修复 `US/sim_executor.py` 删除 account 后再访问的 `UnboundLocalError`。
+- [x] `HK/workflow.py` 补齐 `HKWorkflow` / `run_hk_shadow_cycle()`，对齐 US workflow 模式。
+- [x] 新增/更新测试覆盖 PM config load、HK workflow smoke、US/HK live broker rejection、sim executor safety。
 
 ### Mini/服务器执行桥路径修复（2026-07-02）
 

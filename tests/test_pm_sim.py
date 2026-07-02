@@ -70,7 +70,22 @@ class PMSimExecutorTest(unittest.TestCase):
         self.assertEqual(result.raw_response["mode"], "research_only")
         self.assertEqual(result.raw_response["opponent_order_id"], "opp-001")
 
-    def test_execute_sim_order_dispatches_registered_pm_executor(self) -> None:
+    def test_pm_sim_executor_rejects_real_execution_payload(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
+            pm_sim_execute(
+                order={
+                    "order_id": "PM-SIM-REAL",
+                    "market_id": "btc-100k",
+                    "side": "sell",
+                    "outcome": "NO",
+                    "price": 0.42,
+                    "capital_layer": "real",
+                },
+                account={"account_id": "pm_sim"},
+                config={"sandbox_spread": 0.02},
+            )
+
+    def test_execute_sim_order_rejects_real_pm_payload_before_dispatch(self) -> None:
         result = execute_sim_order(
             order={
                 "order_id": "PM-SIM-2",
@@ -85,14 +100,10 @@ class PMSimExecutorTest(unittest.TestCase):
             config={"sandbox_spread": 0.02, "capital_layer": "real"},
         )
 
-        self.assertEqual(result.status, "filled")
-        self.assertEqual(result.filled_qty, 1)
-        self.assertAlmostEqual(result.avg_price, 0.41, places=6)
-        self.assertEqual(result.fee, 0.0)
-        self.assertEqual(result.capital_layer, "simulated")
-        self.assertEqual(result.account_type, "simulated")
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.filled_qty, 0)
         self.assertEqual(result.market, "pm")
-        self.assertEqual(result.raw_response["mode"], "research_only")
+        self.assertIn("real/live execution is rejected", result.message)
 
 
 if __name__ == "__main__":

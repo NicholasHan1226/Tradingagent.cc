@@ -161,7 +161,7 @@ def load_pm_config(root: Path | str | None = None) -> PMConfig:
     """
     import os
 
-    base = Path(root) if root is not None else Path(__file__).resolve().parents[2]
+    base = Path(root) if root is not None else Path(__file__).resolve().parents[1]
     config_path = base / "PM" / "config.yaml"
 
     if config_path.exists():

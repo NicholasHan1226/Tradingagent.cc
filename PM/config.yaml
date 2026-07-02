@@ -3,7 +3,7 @@ capital:
   default_layer: shadow
   allowed_layers: [shadow, simulated]
   initial_capital: 50000
-  currency: USD
+  currency: USDC
 safety:
   real_money_enabled: false
   live_broker_enabled: false

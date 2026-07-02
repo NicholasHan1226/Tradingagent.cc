@@ -72,6 +72,34 @@ class USSimExecutorTest(unittest.TestCase):
 
         self.assertIs(executor, sim_executor.us_sim_execute)
 
+    def test_us_sim_execute_does_not_drop_account_before_mock_response(self) -> None:
+        result = sim_executor.us_sim_execute(
+            order={
+                "order_id": "SIM-US-ACCOUNT",
+                "symbol": "MSFT",
+                "quantity": 1,
+                "price": 300.0,
+            },
+            account={"account_id": "us_sim"},
+            config={},
+        )
+
+        self.assertEqual(result.status, "filled")
+        self.assertEqual(result.raw_response["api_order"]["account_id"], "us_sim")
+
+    def test_us_sim_executor_rejects_real_execution_payload(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
+            sim_executor.us_sim_execute(
+                order={
+                    "order_id": "SIM-US-REAL",
+                    "symbol": "AAPL",
+                    "quantity": 1,
+                    "capital_layer": "real",
+                },
+                account={"account_id": "us_sim"},
+                config={},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,7 @@ from typing import Any
 
 from shared.data.reader import TradingagentDataReader
 from shared.markets.config_schema import MarketToolConfig
-from shared.markets.safety import assert_no_real_execution, assert_public_data_only
+from shared.markets.safety import assert_no_live_broker, assert_no_real_execution, assert_public_data_only
 
 
 class BaseMarketData(ABC):
@@ -50,6 +50,7 @@ class BaseSimulator(ABC):
         self.validate_config()
 
     def validate_config(self) -> None:
+        assert_no_live_broker(self.config)
         assert_no_real_execution(self.config)
 
     @abstractmethod

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ from Ashare import sim_executor as _sim_executor  # noqa: F401
 
 MARKET = "ashare"
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
+logger = logging.getLogger(__name__)
 
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "exclude_st": True,
@@ -220,9 +222,15 @@ class AshareAdapter(MarketAdapter):
         return {}
 
     def _latest_amount(self, symbol: str, date: str) -> float | None:
+        has_close, amount = self._latest_liquidity(symbol, date)
+        del has_close
+        return amount
+
+    def _latest_liquidity(self, symbol: str, date: str) -> tuple[bool, float | None]:
         get_bars = getattr(self.reader, "get_bars_daily", None)
         if not callable(get_bars):
-            return None
+            return False, None
+        has_positive_close = False
         for market in (MARKET, "Ashare"):
             rows = get_bars(market, symbol, None, date)
             if not rows:
@@ -230,10 +238,11 @@ class AshareAdapter(MarketAdapter):
             for row in reversed(rows):
                 if _safe_float(row.get("close"), 0.0) <= 0.0:
                     continue
+                has_positive_close = True
                 amount_yuan = _daily_amount_to_yuan(row.get("amount"))
                 if amount_yuan >= 0:
-                    return amount_yuan
-        return None
+                    return True, amount_yuan
+        return has_positive_close, None
 
     def _exclude_asset(self, asset: dict[str, Any], coverage_status: str | None, date: str) -> bool:
         cfg = self.universe_filter
@@ -256,7 +265,9 @@ class AshareAdapter(MarketAdapter):
                 return True
 
         min_amount = _safe_float(cfg.get("min_liquidity_amount"), 50_000_000.0)
-        amount = self._latest_amount(str(asset.get("symbol") or ""), date)
+        has_close, amount = self._latest_liquidity(str(asset.get("symbol") or ""), date)
+        if not has_close:
+            return True
         if amount is None:
             # DB error / missing data: keep asset to avoid universe collapse.
             # Only exclude when we have explicit evidence of low liquidity.

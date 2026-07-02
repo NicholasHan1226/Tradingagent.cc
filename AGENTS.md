@@ -70,6 +70,7 @@ A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending �
 
 - 影子信号只写入 `signals/shadow/pending`，不进入可执行队列。
 - `signals/shadow` 具备完整状态目录：`pending/claimed/running/filled/expired/cancelled/failed/partial`。
+- PM/Crypto/US/HK 的影子和模拟工具必须拒绝 `real_money_enabled`、`live_broker_enabled`、`direct_execution_enabled` 以及订单/账户/配置中的 `capital_layer=real`、`account_type=real`、签名密钥或 live broker 标记；不得把真实执行负载静默改写成 simulated 后继续执行。
 - A股影子账本拒绝非普通 A股代码（200xxx.SZ 等）。
 - 影子盘估值优先 SharedSignals 日线收盘价，缺失时回退最近影子成交价。
 

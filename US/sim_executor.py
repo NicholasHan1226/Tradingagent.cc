@@ -8,6 +8,7 @@ from typing import Any
 
 from shared.execution.sim_broker import SimResult
 from shared.execution.sim_executor_registry import register_sim_executor
+from shared.markets.safety import reject_real_execution_payload
 
 
 DEFAULT_SETTLEMENT = "T+2"
@@ -33,7 +34,6 @@ def _mock_alpaca_submit_order(
     account: dict[str, Any],
     config: dict[str, Any],
 ) -> dict[str, Any]:
-    del account
     order_id = str(order.get("order_id") or f"ALPACA-PAPER-{uuid.uuid4().hex[:12]}")
     quantity = _coerce_int(order.get("quantity", order.get("qty")), 0)
     requested_price = _coerce_float(
@@ -63,6 +63,10 @@ def us_sim_execute(
     config: dict[str, Any] | None,
 ) -> SimResult:
     """Execute a US simulated order against a local Alpaca paper mock."""
+    reject_real_execution_payload(order, context="us_sim_execute.order")
+    reject_real_execution_payload(account or {}, context="us_sim_execute.account")
+    reject_real_execution_payload(config or {}, context="us_sim_execute.config")
+    order = dict(order or {})
     account_payload = dict(account or {})
     config_payload = dict(config or {})
     alpaca_order = _mock_alpaca_submit_order(order, account_payload, config_payload)

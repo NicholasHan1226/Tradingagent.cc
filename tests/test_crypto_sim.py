@@ -63,13 +63,27 @@ class CryptoSimExecutorTest(unittest.TestCase):
             config={"market_data_client": client, "capital_layer": "real"},
         )
 
-        self.assertEqual(result.status, "filled")
-        self.assertEqual(result.filled_qty, 3)
-        self.assertEqual(result.avg_price, 42000.0)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.filled_qty, 0)
+        self.assertEqual(result.avg_price, 0.0)
         self.assertEqual(result.capital_layer, "simulated")
         self.assertEqual(result.account_type, "simulated")
         self.assertEqual(result.order_id, "SIM-2")
-        self.assertEqual(client.calls, ["ETHUSDT"])
+        self.assertIn("real/live execution is rejected", result.message)
+        self.assertEqual(client.calls, [])
+
+    def test_crypto_sim_executor_rejects_real_execution_payload_directly(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
+            crypto_sim_execute(
+                order={
+                    "order_id": "SIM-REAL",
+                    "symbol": "BTCUSDT",
+                    "quantity": 1,
+                    "capital_layer": "real",
+                },
+                account={"account_id": "crypto_sim"},
+                config={"market_data_client": FakeBinanceClient()},
+            )
 
 
 if __name__ == "__main__":

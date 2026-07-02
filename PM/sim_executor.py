@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from shared.execution.sim_broker import SimResult
 from shared.execution.sim_executor_registry import register_sim_executor
+from shared.markets.safety import reject_real_execution_payload
 
 _VALID_SIDES = {"buy", "sell"}
 _VALID_OUTCOMES = {"yes", "no"}
@@ -71,6 +72,9 @@ def pm_sim_execute(
     order = dict(order or {})
     account = dict(account or {})
     config = dict(config or {})
+    reject_real_execution_payload(order, context="pm_sim_execute.order")
+    reject_real_execution_payload(account, context="pm_sim_execute.account")
+    reject_real_execution_payload(config, context="pm_sim_execute.config")
 
     side = str(order.get("side", "buy")).lower().strip()
     outcome = str(order.get("outcome", "yes")).lower().strip()

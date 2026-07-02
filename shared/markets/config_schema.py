@@ -146,6 +146,12 @@ def validate_market_config(config: MarketToolConfig) -> None:
 
     if not str(config.market).strip():
         raise ValueError("market is required")
+    if config.safety.real_money_enabled:
+        raise ValueError("safety.real_money_enabled must be false for market tools")
+    if config.safety.live_broker_enabled:
+        raise ValueError("safety.live_broker_enabled must be false for market tools")
+    if config.safety.direct_execution_enabled:
+        raise ValueError("safety.direct_execution_enabled must be false for market tools")
     if config.capital.default_layer not in config.capital.allowed_layers:
         raise ValueError("capital.default_layer must be listed in capital.allowed_layers")
     if not set(config.capital.allowed_layers).issubset({"shadow", "simulated"}):

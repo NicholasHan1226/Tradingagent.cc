@@ -73,6 +73,7 @@ promotion:
         from shared.markets.config_schema import MarketToolConfig
         from shared.markets.safety import (
             SafetyViolation,
+            assert_no_live_broker,
             assert_no_real_execution,
             assert_public_data_only,
             assert_shadow_or_sim_only,
@@ -94,9 +95,20 @@ promotion:
         with self.assertRaisesRegex(SafetyViolation, "shadow/simulated"):
             assert_shadow_or_sim_only(real_config)
         with self.assertRaisesRegex(SafetyViolation, "live broker"):
+            assert_no_live_broker(broker_config)
+        with self.assertRaisesRegex(SafetyViolation, "live broker"):
             assert_public_data_only(broker_config)
         with self.assertRaisesRegex(SafetyViolation, "direct execution"):
             assert_no_real_execution(direct_config)
+
+    def test_validate_market_config_rejects_safety_flags(self) -> None:
+        from shared.markets.config_schema import MarketToolConfig, validate_market_config
+
+        for flag in ("real_money_enabled", "live_broker_enabled", "direct_execution_enabled"):
+            with self.subTest(flag=flag):
+                config = MarketToolConfig(market="unsafe", safety={flag: True})
+                with self.assertRaisesRegex(ValueError, flag):
+                    validate_market_config(config)
 
     def test_base_classes_create_reader_and_reject_real_execution(self) -> None:
         from shared.markets.base_tools import (
@@ -165,6 +177,13 @@ promotion:
         )
         with self.assertRaises(SafetyViolation):
             DemoMarketData("demo", unsafe_config)
+
+        live_broker_config = MarketToolConfig(
+            market="demo",
+            safety={"live_broker_enabled": True},
+        )
+        with self.assertRaises(SafetyViolation):
+            DemoSimulator("demo", live_broker_config, market_data)
 
 
 if __name__ == "__main__":

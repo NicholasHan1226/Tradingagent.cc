@@ -13,7 +13,7 @@ from typing import Any
 
 from shared.markets.base_tools import BaseSimulator
 from shared.markets.config_schema import MarketToolConfig
-from shared.markets.safety import assert_no_real_execution
+from shared.markets.safety import assert_no_real_execution, reject_real_execution_payload
 
 from PM.common import assert_probability, clamp_probability
 from PM.market_data import PMMarketData
@@ -75,6 +75,11 @@ class PMSimulator(BaseSimulator):
         """
         order = dict(order or {})
         account = dict(account or {})
+        reject_real_execution_payload(order, context="PMSimulator.order")
+        for key in ("account_type", "execution_mode", "mode", "broker_mode"):
+            value = str(account.get(key) or "").strip().lower()
+            if value in {"real", "live", "broker", "exchange"}:
+                raise RuntimeError("PMSimulator.account: real/live execution is rejected in simulated market tools")
 
         # Validate and extract order fields
         side = str(order.get("side", "buy")).lower().strip()
@@ -118,7 +123,8 @@ class PMSimulator(BaseSimulator):
             "fill_price": round(fill_price, 4),
             "status": "filled",
             "account_id": account_id,
-            "capital_layer": str(account.get("capital_layer", "shadow")),
+            "capital_layer": "simulated",
+            "account_type": "simulated",
             "fee": 0.0,
             "settlement": settlement,
             "timestamp": datetime.now(timezone.utc).isoformat(),

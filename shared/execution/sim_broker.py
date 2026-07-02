@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .slippage_model import estimate_slippage
+from shared.markets.safety import reject_real_execution_payload
 
 SIM_LEDGER = Path(__file__).resolve().parent.parent / "logs" / "sim_orders.jsonl"
 SIM_STATUSES = {"filled", "partial", "rejected", "failed", "pending"}
@@ -139,15 +140,29 @@ def execute_sim_order(
     from .sim_executor_registry import get_sim_executor
 
     market_key = str(market or "").lower().strip()
-    sim_order = _with_sim_markers(order)
-    sim_account = _with_sim_markers(account or {})
-    sim_config = _with_sim_markers(config or {})
+    order_payload = dict(order or {})
+    account_payload = dict(account or {})
+    config_payload = dict(config or {})
+    try:
+        reject_real_execution_payload(order_payload, context=f"execute_sim_order.{market_key or 'unknown'}.order")
+        reject_real_execution_payload(account_payload, context=f"execute_sim_order.{market_key or 'unknown'}.account")
+        reject_real_execution_payload(config_payload, context=f"execute_sim_order.{market_key or 'unknown'}.config")
+    except Exception as exc:
+        return SimResult(
+            status="failed",
+            message=str(exc),
+            order_id=str(order_payload.get("order_id", "")),
+            market=market_key,
+        )
+    sim_order = _with_sim_markers(order_payload)
+    sim_account = _with_sim_markers(account_payload)
+    sim_config = _with_sim_markers(config_payload)
     executor = get_sim_executor(market_key)
     if executor is None:
         return SimResult(
             status="failed",
             message=f"No simulated executor available for market={market_key or 'unknown'}",
-            order_id=str(order.get("order_id", "")),
+            order_id=str(order_payload.get("order_id", "")),
             market=market_key,
         )
 
@@ -157,7 +172,7 @@ def execute_sim_order(
         return SimResult(
             status="failed",
             message=f"Sim executor failed for market={market_key or 'unknown'}: {exc}",
-            order_id=str(order.get("order_id", "")),
+            order_id=str(order_payload.get("order_id", "")),
             market=market_key,
         )
 

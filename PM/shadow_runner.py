@@ -10,16 +10,22 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from shared.data.reader import TradingagentDataReader
+from shared.execution.signal_state_machine import SignalStateConflict, SignalStateMachine
 from shared.markets.base_tools import BaseShadowRunner
 from shared.markets.config_schema import MarketToolConfig
+from shared.markets.safety import reject_real_execution_payload
 
 from PM.common import clamp_probability
 from PM.market_data import PMMarketData
 from PM.scoring import score_market
 from PM.simulator import PMSimulator
+
+TRADINGAGENT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_SIGNALS_ROOT = TRADINGAGENT_ROOT / "signals"
 
 
 class PMShadowRunner(BaseShadowRunner):
@@ -40,14 +46,15 @@ class PMShadowRunner(BaseShadowRunner):
         config: MarketToolConfig | None = None,
         market_data: PMMarketData | None = None,
         simulator: PMSimulator | None = None,
+        signals_root: Path | str | None = None,
     ) -> None:
+        if config is None:
+            from PM.common import load_pm_config
+            config = load_pm_config().to_market_tool_config()
         if market_data is None:
             market_data = PMMarketData(config)
         if simulator is None:
             simulator = PMSimulator(config, market_data)
-        if config is None:
-            from PM.common import load_pm_config
-            config = load_pm_config().to_market_tool_config()
 
         super().__init__(
             market="pm",
@@ -55,6 +62,7 @@ class PMShadowRunner(BaseShadowRunner):
             market_data=market_data,
             simulator=simulator,
         )
+        self.signals_root = Path(signals_root) if signals_root is not None else DEFAULT_SIGNALS_ROOT
 
     # --- Abstract method implementations --------------------------------------
 
@@ -162,21 +170,38 @@ class PMShadowRunner(BaseShadowRunner):
         return signals
 
     def write_shadow_record(self, record: dict[str, Any]) -> dict[str, Any]:
-        """Persist a shadow cycle record and confirm write.
+        """Persist PM shadow records under ``signals/shadow/pending``."""
+        record = dict(record or {})
+        reject_real_execution_payload(record, context="PMShadowRunner.record")
+        positions = [dict(pos) for pos in record.get("positions", []) if isinstance(pos, dict)]
+        cards = [self._build_shadow_card(record, pos) for pos in positions] or [
+            self._build_shadow_card(record, {})
+        ]
 
-        Currently returns the record for integration with the review pipeline.
-        Persistent storage can be added here (CSV, SQLite, etc.) without
-        changing the interface.
-        """
-        # Ensure required fields
-        record.setdefault("written_at", datetime.now(timezone.utc).isoformat())
-        record.setdefault("mode", "shadow")
-        record.setdefault("live_clob", False)
+        machine = SignalStateMachine(self.signals_root / "shadow")
+        results: list[dict[str, Any]] = []
+        for card in cards:
+            try:
+                result = machine.write_pending(card)
+                result["queue_scope"] = "shadow"
+            except SignalStateConflict as exc:
+                result = {
+                    "order_id": card["order_id"],
+                    "status": "duplicate",
+                    "recorded": False,
+                    "message": str(exc),
+                    "signal_card": card,
+                    "queue_scope": "shadow",
+                }
+            results.append(result)
 
+        if len(results) == 1:
+            return results[0]
         return {
-            "path": f"shared/review/pm/shadow/{record.get('date', 'unknown')}_{record.get('cycle_id', 'unknown')}.json",
-            "record": record,
             "status": "written",
+            "queue_scope": "shadow",
+            "written": sum(1 for result in results if result.get("status") == "pending"),
+            "records": results,
         }
 
     # --- Internal methods -----------------------------------------------------
@@ -242,6 +267,43 @@ class PMShadowRunner(BaseShadowRunner):
             "price": round(price, 4),
             "date": date,
             "score": round(combined, 4),
+        }
+
+    @staticmethod
+    def _build_shadow_card(record: dict[str, Any], position: dict[str, Any]) -> dict[str, Any]:
+        date = str(record.get("date") or position.get("trade_date") or position.get("date") or "")
+        market_id = str(position.get("market_id") or position.get("symbol") or record.get("cycle_id") or "unknown")
+        side = str(position.get("side") or "buy").strip().lower()
+        order_id = str(
+            position.get("order_id")
+            or f"PM-SHADOW-{date}-{market_id}-{side}-{uuid.uuid4().hex[:8]}"
+        ).replace("/", "-")
+        now = datetime.now(timezone.utc).isoformat()
+        return {
+            "order_id": order_id,
+            "market_id": market_id,
+            "symbol": market_id,
+            "market": "pm",
+            "direction": side,
+            "side": side,
+            "quantity": float(position.get("quantity", 1) or 1),
+            "price": float(position.get("fill_price", position.get("price", 0.5)) or 0.5),
+            "strategy_name": "pm_shadow",
+            "timestamp": now,
+            "created_at": now,
+            "status": "pending",
+            "capital_layer": "shadow",
+            "account_type": "shadow",
+            "manual_confirm_required": False,
+            "direct_execution": False,
+            "real_execution": False,
+            "valid_until": date,
+            "idempotency_key": f"SHADOW:pm:pm_shadow:{date}:{market_id}:{side}",
+            "source": "PMShadowRunner",
+            "reason": "probability-market shadow record",
+            "belief_score": position.get("score"),
+            "evidence_refs": [f"pm_shadow_cycle:{record.get('cycle_id', '')}"],
+            "cycle_id": record.get("cycle_id", ""),
         }
 
 

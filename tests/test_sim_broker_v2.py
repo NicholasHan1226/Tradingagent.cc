@@ -56,12 +56,10 @@ class SimBrokerV2Test(unittest.TestCase):
                 "ts_code": "BTCUSDT",
                 "side": "buy",
                 "quantity": 2,
-                "capital_layer": "real",
-                "account_type": "real",
             },
             market="Crypto",
-            account={"account_id": "sim-crypto", "account_type": "real"},
-            config={"venue": "unit", "capital_layer": "real"},
+            account={"account_id": "sim-crypto"},
+            config={"venue": "unit"},
         )
 
         self.assertIsInstance(result, SimResult)
@@ -80,6 +78,26 @@ class SimBrokerV2Test(unittest.TestCase):
         self.assertEqual(captured["account"]["capital_layer"], "simulated")
         self.assertEqual(captured["config"]["account_type"], "simulated")
         self.assertEqual(captured["config"]["capital_layer"], "simulated")
+
+    def test_execute_sim_order_rejects_real_payload_before_sanitizing(self) -> None:
+        calls: list[object] = []
+
+        def stub_executor(order, account, config) -> SimResult:
+            calls.append((order, account, config))
+            return SimResult(status="filled", filled_qty=1, avg_price=1.0)
+
+        sim_executor_registry.register_sim_executor("crypto", stub_executor)
+
+        result = execute_sim_order(
+            order={"order_id": "SIM-V2-REAL", "ts_code": "BTCUSDT", "quantity": 1},
+            market="Crypto",
+            account={"account_id": "sim-crypto", "account_type": "real"},
+            config={},
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("real/live execution is rejected", result.message)
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

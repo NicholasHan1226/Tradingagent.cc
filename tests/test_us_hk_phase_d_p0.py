@@ -109,6 +109,7 @@ class USHKPhaseDP0Test(unittest.TestCase):
         from HK.market_data import HKMarketData
         from HK.shadow_runner import HKShadowRunner
         from HK.simulator import HKSimulator
+        from HK.workflow import HKWorkflow, run_hk_shadow_cycle
 
         config = HKConfig()
         reader = FakeReader()
@@ -146,7 +147,15 @@ class USHKPhaseDP0Test(unittest.TestCase):
             self.assertEqual(result["status"], "ok")
             self.assertTrue(list((Path(tmp) / "shadow" / "pending").glob("*.json")))
 
+        workflow = HKWorkflow(config=config, reader=reader)
+        cycle = workflow.run_hk_shadow_cycle("2026-07-02")
+        self.assertEqual(cycle["market"], "hk")
+        self.assertEqual(cycle["status"], "ok")
+        self.assertEqual(run_hk_shadow_cycle("2026-07-02", reader=reader)["market"], "hk")
+
     def test_market_simulators_reject_real_execution_config(self) -> None:
+        from HK.market_data import HKMarketData
+        from HK.simulator import HKSimulator
         from US.market_data import USMarketData
         from US.simulator import USSimulator
 
@@ -162,6 +171,15 @@ class USHKPhaseDP0Test(unittest.TestCase):
         direct = MarketToolConfig(market="us", safety={"direct_execution_enabled": True})
         with self.assertRaises(SafetyViolation):
             USSimulator(config=direct, market_data=safe_data)
+
+        us_live_broker = MarketToolConfig(market="us", safety={"live_broker_enabled": True})
+        with self.assertRaises(SafetyViolation):
+            USSimulator(config=us_live_broker, market_data=safe_data)
+
+        hk_safe_data = HKMarketData(config=MarketToolConfig(market="hk"), reader=FakeReader())
+        hk_live_broker = MarketToolConfig(market="hk", safety={"live_broker_enabled": True})
+        with self.assertRaises(SafetyViolation):
+            HKSimulator(config=hk_live_broker, market_data=hk_safe_data)
 
 
 if __name__ == "__main__":

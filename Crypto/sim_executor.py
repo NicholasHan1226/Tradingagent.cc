@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from shared.execution.sim_broker import SimResult
 from shared.execution.sim_executor_registry import register_sim_executor
+from shared.markets.safety import reject_real_execution_payload
 
 
 class _TickerClient(Protocol):
@@ -71,7 +72,10 @@ def crypto_sim_execute(
 ) -> SimResult:
     """Simulate a Binance fill using public market data only."""
 
-    del account
+    reject_real_execution_payload(order, context="crypto_sim_execute.order")
+    reject_real_execution_payload(account or {}, context="crypto_sim_execute.account")
+    reject_real_execution_payload(config or {}, context="crypto_sim_execute.config")
+    order = dict(order or {})
     config = dict(config or {})
     symbol = _extract_symbol(order)
     quantity = _extract_quantity(order)
