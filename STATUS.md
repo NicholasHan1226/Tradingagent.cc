@@ -15,6 +15,7 @@
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`；mini live 脚本默认值也已改到新路径
 - **PM（预测市场）**：影子盘每 10 分钟扫描运行；checked-in config 使用 USDC；PM shadow 写入 `signals/shadow/pending`
 - **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；下一步是生产闭环验证
+- **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；`signals/real/*` 为隔离队列，不代表自动下单或已成交
 - **cron 解耦入口**：`cron/shadow_crypto.sh`、`cron/shadow_us.sh`、`cron/shadow_pm.sh`、`cron/shadow_hk.sh`、`cron/daily_review.sh` 已新增，均只走 shadow/review 边界并带 flock 与独立日志
 - **SharedSignals API 消费**：`SharedSignalsAPIClient` 已校准 15/15 数据端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
@@ -26,7 +27,7 @@
 - Crypto/US/HK/PM 模拟盘完整生产闭环未验证（仅 A 股链路完整；多市场 P0/P1/P2 工具为本地模块级验证）
 - 多市场旧系统 symlink 依赖已全部清除（61 个死 symlink）；工具独立实现已完成，剩余风险在生产调度、账本和日报闭环
 - 集合竞价支持标记为 STUB，未实现
-- A 股实盘路径仍是人工（模拟盘信号 → 邮件发用户 → 手动执行）
+- A 股实盘路径仍是人工；当前只补齐本地 fail-closed 安全门和 `signals/real/*` 隔离队列，未部署为自动下单路径
 
 ## 三、下一步
 
@@ -40,6 +41,14 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-03 实盘安全基础设施（Phase B）
+
+- [x] 新增 `shared/execution/real_trading_gate.py`：`REAL_TRADING_ENABLED` 默认拒绝，显式人工 token、单笔/单日资金上限、A股交易时段、T+1 与 emergency halt 任一失败均抛 `SafetyViolation`。
+- [x] 新增 `shared/execution/signals_real.py`：`RealSignalQueue` 使用 `signals/real/*` 隔离队列，promotion、manual confirm、pending submit、签名回执和持仓对账均不触碰 shadow/sim 队列。
+- [x] 更新 `shared/execution/__init__.py` 导出实盘安全门和真实队列入口。
+- [x] 更新 `AGENTS.md` 固化实盘安全门边界：`signals/real/pending` 不代表自动下单或已成交，回执必须带 checksum。
+- [x] 验证：新增 `tests/test_real_trading_gate.py` 11 项；执行层相关回归 30 项通过；全量 `python3 -m pytest tests/ -q --tb=line` 通过（213 passed，17 subtests passed）；新增/修改 Python 文件 `py_compile` 通过。
 
 ### 2026-07-03 cron 解耦入口补齐
 

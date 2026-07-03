@@ -74,6 +74,13 @@ A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending �
 - A股影子账本拒绝非普通 A股代码（200xxx.SZ 等）。
 - 影子盘估值优先 SharedSignals 日线收盘价，缺失时回退最近影子成交价。
 
+### 实盘安全门
+
+- 实盘队列只能使用 `signals/real/*`，不得写入 shadow/sim 队列，也不得直接写入当前 A股模拟执行队列。
+- `REAL_TRADING_ENABLED` 默认关闭；任何实盘订单、实盘队列提交或人工确认流程在开关未显式启用时必须拒绝。
+- 实盘订单必须先通过手工确认 token、单笔/单日资金硬上限、A股交易时段、T+1、emergency halt 文件检查；任一失败必须抛 `SafetyViolation`，不能降级为 simulated/shadow。
+- `signals/real/pending` 仍是人工确认后的隔离队列；不得被视为自动下单、自动点击或已成交证明。成交状态只接受带 `receipt_sha256`/`checksum`/`sha256` 校验的回执。
+
 ### LLM/DeepSeek 使用边界
 
 - A股 5 分钟级模拟执行调度默认 `TRADINGS_DEBATE_MODE=fast`，用六维分数生成确定性 belief_score，不阻塞等待 DeepSeek。
