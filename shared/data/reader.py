@@ -177,10 +177,18 @@ class SharedSignalsReader:
 class MarketGraphCSVReader:
     """Read from MarketGraph CSV outputs (regime, event_candidates, sentiment)."""
 
-    def __init__(self, root: Path | str):
+    def __init__(
+        self,
+        root: Path | str,
+        api_client: SharedSignalsAPIClient | None = None,
+        api_enabled: bool | None = None,
+    ):
         self.root = Path(root)
         data_intake = self.root / "data" / "intake"
         self.intake = data_intake if data_intake.exists() else self.root / "intake"
+        self._api_client = api_client
+        self._api_enabled = bool(api_client) if api_enabled is None else bool(api_enabled)
+        self._logger = logging.getLogger("tradingagent.data")
 
     def _read_csv(self, path: Path) -> list[dict[str, str]]:
         if not path.exists():
@@ -188,25 +196,153 @@ class MarketGraphCSVReader:
         with path.open(encoding="utf-8-sig") as f:
             return list(csv.DictReader(f))
 
+    @staticmethod
+    def _unwrap_api_rows(rows: Any) -> list[dict[str, Any]]:
+        if rows is None:
+            return []
+        if isinstance(rows, dict):
+            data = rows.get("data")
+            if isinstance(data, list):
+                rows = data
+            else:
+                return [dict(rows)]
+        if not isinstance(rows, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            data = row.get("data")
+            if isinstance(data, dict):
+                normalized.append(dict(data))
+            else:
+                normalized.append(dict(row))
+        return normalized
+
+    @staticmethod
+    def _has_meaningful_rows(rows: list[dict[str, Any]]) -> bool:
+        return any(any(value not in ("", None, [], {}) for value in row.values()) for row in rows)
+
+    def _api_rows(
+        self,
+        csv_name: str,
+        operations: list[tuple[str, tuple[Any, ...], dict[str, Any]]],
+    ) -> list[dict[str, Any]] | None:
+        if not self._api_enabled or self._api_client is None:
+            return None
+
+        before_error_count = len(getattr(self._api_client, "errors", []))
+        for method_name, args, kwargs in operations:
+            method = getattr(self._api_client, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                rows = self._unwrap_api_rows(method(*args, **kwargs))
+            except Exception as exc:  # pragma: no cover - defensive API boundary
+                self._logger.warning(
+                    "MarketGraphCSVReader %s API call %s failed; using CSV fallback: %s",
+                    csv_name,
+                    method_name,
+                    exc,
+                )
+                return None
+
+            api_errors = getattr(self._api_client, "errors", [])
+            if len(api_errors) > before_error_count:
+                self._logger.warning(
+                    "MarketGraphCSVReader %s API call %s reported error; using CSV fallback: %s",
+                    csv_name,
+                    method_name,
+                    api_errors[-1],
+                )
+                return None
+            if self._has_meaningful_rows(rows):
+                self._logger.info(
+                    "MarketGraphCSVReader %s loaded via SharedSignals API (%s)",
+                    csv_name,
+                    method_name,
+                )
+                return rows
+
+        self._logger.info(
+            "MarketGraphCSVReader %s unavailable from SharedSignals API; using CSV fallback",
+            csv_name,
+        )
+        return None
+
+    def _read_csv_with_log(self, csv_name: str, path: Path) -> list[dict[str, str]]:
+        rows = self._read_csv(path)
+        if self._api_client is not None:
+            self._logger.info(
+                "MarketGraphCSVReader %s loaded via CSV fallback (%s)",
+                csv_name,
+                path,
+            )
+        return rows
+
     def get_regime(self) -> dict[str, Any] | None:
+        api_rows = self._api_rows(
+            "all_weather_regime.csv",
+            [
+                ("get_regime", (), {}),
+                ("get_macro_factors", (), {}),
+            ],
+        )
+        if api_rows is not None:
+            regime_rows = [row for row in api_rows if row.get("regime")]
+            if regime_rows:
+                return dict(regime_rows[-1])
+            self._logger.info(
+                "MarketGraphCSVReader all_weather_regime.csv API rows did not include regime; using CSV fallback",
+            )
+
         candidates = [
             self.root / "data" / "all_weather_regime.csv",
             self.root / "all_weather_regime.csv",
         ]
         for path in candidates:
-            rows = self._read_csv(path)
+            rows = self._read_csv_with_log("all_weather_regime.csv", path)
             if rows:
                 return dict(rows[-1])
         return None
 
     def get_event_candidates(self) -> list[dict[str, str]]:
-        return self._read_csv(self.intake / "event_candidates.csv")
+        api_rows = self._api_rows(
+            "event_candidates.csv",
+            [
+                ("get_event_candidates", (), {}),
+                ("get_events", (), {}),
+            ],
+        )
+        if api_rows is not None:
+            return api_rows
+        return self._read_csv_with_log("event_candidates.csv", self.intake / "event_candidates.csv")
 
     def get_sentiment_signals(self) -> list[dict[str, str]]:
-        return self._read_csv(self.intake / "sentiment_signals.csv")
+        api_rows = self._api_rows(
+            "sentiment_signals.csv",
+            [
+                ("get_sentiment_signals", (), {}),
+                ("get_sentiment", (), {}),
+            ],
+        )
+        if api_rows is not None:
+            return api_rows
+        return self._read_csv_with_log("sentiment_signals.csv", self.intake / "sentiment_signals.csv")
 
     def get_sentiment(self) -> list[dict[str, str]]:
         return self.get_sentiment_signals()
+
+    def health_check(self) -> dict[str, Any]:
+        if not self._api_enabled or self._api_client is None:
+            return {"api_enabled": False, "status": "disabled", "source": "csv"}
+        try:
+            health = self._api_client.get_health()
+        except Exception as exc:  # pragma: no cover - defensive API boundary
+            return {"api_enabled": True, "status": "unreachable", "error": str(exc)}
+        if not isinstance(health, dict):
+            return {"api_enabled": True, "status": "unknown", "raw": health}
+        return {"api_enabled": True, **health}
 
 
 # -- Unified TradingagentDataReader ----------------------------------------------
@@ -325,9 +461,8 @@ class TradingagentDataReader:
     def marketgraph(self) -> MarketGraphCSVReader:
         if self._marketgraph is None:
             self._marketgraph = MarketGraphCSVReader(
-                Path(
-                    os.environ.get("MARKETGRAPH_ROOT", "/opt/investment/MarketGraph")
-                )
+                Path(os.environ.get("MARKETGRAPH_ROOT", "/opt/investment/MarketGraph")),
+                api_client=self._api_client,
             )
         return self._marketgraph
 
