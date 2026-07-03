@@ -1,0 +1,44 @@
+{
+  "enabled": true,
+  "name": "swing",
+  "position_pct": 0.08,
+  "stop_loss_pct": -0.09,
+  "take_profit_pct": 0.18,
+  "max_hold_days": 30,
+  "pyramid": false,
+  "scale_in_steps": 2,
+  "conviction_min": 0.58,
+  "description": "US equity multi-week swing simulation for sustained trend signals.",
+  "status": "active",
+  "weight": 0.166667,
+  "created_at": "2026-07-03T16:56:35+00:00",
+  "last_modified": "2026-07-03T16:56:35+00:00",
+  "generation": 1,
+  "auto_generate": {
+    "position_pct": {
+      "min": 0.02,
+      "max": 0.15,
+      "step": 0.01
+    },
+    "stop_loss_pct": {
+      "min": -0.15,
+      "max": -0.05,
+      "step": 0.01
+    },
+    "take_profit_pct": {
+      "min": 0.05,
+      "max": 0.3,
+      "step": 0.02
+    },
+    "conviction_min": {
+      "min": 0.3,
+      "max": 0.8,
+      "step": 0.03
+    },
+    "max_hold_days": {
+      "min": 1,
+      "max": 30,
+      "step": 2
+    }
+  }
+}

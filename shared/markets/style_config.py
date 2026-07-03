@@ -20,10 +20,22 @@ class TradeStyle:
     scale_in_steps: int
     conviction_min: float
     description: str
+    status: str = "active"
+    weight: float = 1.0
+    created_at: str = ""
+    last_modified: str = ""
+    generation: int = 1
+    auto_generate: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("TradeStyle.name is required")
+        if self.status not in {"active", "paused", "deprecated"}:
+            raise ValueError(f"{self.name}: status must be active, paused, or deprecated")
+        if not 0.0 <= float(self.weight) <= 1.0:
+            raise ValueError(f"{self.name}: weight must be within [0.0, 1.0]")
+        if int(self.generation) < 1:
+            raise ValueError(f"{self.name}: generation must be >= 1")
         if not 0.02 <= float(self.position_pct) <= 0.15:
             raise ValueError(f"{self.name}: position_pct must be within [0.02, 0.15]")
         if not -0.15 <= float(self.stop_loss_pct) <= -0.05:
@@ -39,22 +51,50 @@ class TradeStyle:
 
 
 STYLE_FIELDS = set(TradeStyle.__dataclass_fields__)
+REQUIRED_STYLE_FIELDS = {
+    "name",
+    "position_pct",
+    "stop_loss_pct",
+    "take_profit_pct",
+    "max_hold_days",
+    "pyramid",
+    "scale_in_steps",
+    "conviction_min",
+    "description",
+}
 
 
 def style_from_mapping(payload: dict[str, Any]) -> TradeStyle:
     """Build a validated ``TradeStyle`` from one JSON mapping."""
 
-    missing = sorted(field for field in STYLE_FIELDS if field not in payload)
+    missing = sorted(field for field in REQUIRED_STYLE_FIELDS if field not in payload)
     if missing:
         raise ValueError(f"style config missing fields: {missing}")
-    values = {field: payload[field] for field in STYLE_FIELDS}
+    values = {field: payload[field] for field in STYLE_FIELDS if field in payload}
+    values.setdefault("status", style_status(payload))
+    values.setdefault("weight", float(payload.get("weight", 1.0)))
+    values.setdefault("created_at", str(payload.get("created_at", "")))
+    values.setdefault("last_modified", str(payload.get("last_modified", "")))
+    values.setdefault("generation", int(payload.get("generation", 1) or 1))
+    values.setdefault("auto_generate", payload.get("auto_generate"))
     return TradeStyle(**values)
 
 
-def is_style_enabled(payload: dict[str, Any]) -> bool:
-    """Return the optional JSON-level enabled flag, defaulting to true."""
+def style_status(payload: dict[str, Any]) -> str:
+    """Return active/paused/deprecated while preserving legacy enabled flags."""
 
-    return bool(payload.get("enabled", True))
+    status = str(payload.get("status") or "").strip().lower()
+    if status in {"active", "paused", "deprecated"}:
+        return status
+    if bool(payload.get("paused", False)) or not bool(payload.get("enabled", True)):
+        return "paused"
+    return "active"
+
+
+def is_style_enabled(payload: dict[str, Any]) -> bool:
+    """Return whether a style can participate in simulated execution."""
+
+    return bool(payload.get("enabled", True)) and style_status(payload) == "active"
 
 
 def _market_dir(market: str, root: Path) -> Path:
@@ -109,4 +149,11 @@ def load_trade_styles(
     return styles
 
 
-__all__ = ["TradeStyle", "load_trade_styles", "style_from_mapping", "styles_dir_for_market"]
+__all__ = [
+    "TradeStyle",
+    "is_style_enabled",
+    "load_trade_styles",
+    "style_from_mapping",
+    "style_status",
+    "styles_dir_for_market",
+]

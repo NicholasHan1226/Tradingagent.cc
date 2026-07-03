@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.markets.performance_tracker import load_style_weights, save_run
 from shared.markets.safety import reject_real_execution_payload
 from shared.markets.style_config import TradeStyle, load_trade_styles
 
@@ -47,7 +48,8 @@ class StyleRunner:
 
         safe_account = self._sim_account(account, date)
         reject_real_execution_payload(safe_account, context=f"StyleRunner.{self.market}.account")
-        styles = load_trade_styles(self.market, styles_dir=self.styles_dir)
+        all_styles = self._load_weighted_styles(include_disabled=True)
+        styles = [style for style in all_styles if style.status == "active"]
         normalized_signals = [dict(signal or {}) for signal in signals]
         for signal in normalized_signals:
             reject_real_execution_payload(signal, context=f"StyleRunner.{self.market}.signal")
@@ -60,7 +62,9 @@ class StyleRunner:
             ]
             runs.extend(style_runs)
 
-        matrix = [self._style_metrics(style.name, runs) for style in styles]
+        matrix = [self._style_metrics(style, runs) for style in styles]
+        for metric in matrix:
+            save_run(str(metric.get("style_name", "")), self.market, {**metric, "date": date}, review_root=self.review_root)
         payload = {
             "market": self.market,
             "date": date,
@@ -68,6 +72,8 @@ class StyleRunner:
             "account_type": "simulated",
             "real_execution": False,
             "styles_loaded": len(styles),
+            "styles_total": len(all_styles),
+            "style_states": self._style_states(all_styles),
             "signal_count": len(normalized_signals),
             "style_comparison": matrix,
             "runs": runs,
@@ -86,10 +92,13 @@ class StyleRunner:
         account: dict[str, Any],
     ) -> dict[str, Any]:
         conviction = self._conviction(signal)
-        order = self._style_order(style, signal, date=date, conviction=conviction, account=account)
+        style_account = self._weighted_account(account, style)
+        order = self._style_order(style, signal, date=date, conviction=conviction, account=style_account)
         if conviction < style.conviction_min:
             return {
                 "style_name": style.name,
+                "style_status": style.status,
+                "style_weight": round(style.weight, 6),
                 "market": self.market,
                 "symbol": order.get("symbol") or order.get("market_id") or order.get("ts_code"),
                 "status": "skipped_low_conviction",
@@ -102,7 +111,7 @@ class StyleRunner:
             }
 
         try:
-            fill = self.simulator.simulate(order, account)
+            fill = self.simulator.simulate(order, style_account)
             fill = dict(fill or {})
             status = str(fill.get("status", "failed"))
             error = ""
@@ -113,6 +122,8 @@ class StyleRunner:
         pnl = self._estimate_pnl(style, order, fill, conviction)
         return {
             "style_name": style.name,
+            "style_status": style.status,
+            "style_weight": round(style.weight, 6),
             "style": asdict(style),
             "market": self.market,
             "symbol": order.get("symbol") or order.get("market_id") or order.get("ts_code"),
@@ -175,6 +186,8 @@ class StyleRunner:
                 "date": date,
                 "style_name": style.name,
                 "strategy_name": f"{signal.get('strategy_name', self.market)}:{style.name}",
+                "style_status": style.status,
+                "style_weight": round(style.weight, 6),
                 "stop_loss_pct": style.stop_loss_pct,
                 "take_profit_pct": style.take_profit_pct,
                 "max_hold_days": style.max_hold_days,
@@ -190,22 +203,68 @@ class StyleRunner:
         )
         return order
 
-    def _style_metrics(self, style_name: str, runs: list[dict[str, Any]]) -> dict[str, Any]:
-        rows = [row for row in runs if row.get("style_name") == style_name]
+    def _style_metrics(self, style: TradeStyle, runs: list[dict[str, Any]]) -> dict[str, Any]:
+        rows = [row for row in runs if row.get("style_name") == style.name]
         executed = [row for row in rows if row.get("status") not in {"skipped_low_conviction"}]
         pnls = [float(row.get("pnl", 0.0) or 0.0) for row in executed]
         wins = [row for row in executed if row.get("win")]
         return {
-            "style_name": style_name,
+            "style_name": style.name,
+            "status": style.status,
+            "weight": round(style.weight, 6),
+            "generation": style.generation,
             "trades": len(executed),
             "skipped": len(rows) - len(executed),
             "pnl": round(sum(pnls), 6),
             "win_rate": round(len(wins) / len(executed), 6) if executed else 0.0,
             "max_dd": round(self._max_drawdown(pnls), 6),
             "sharpe": round(self._sharpe(pnls), 6),
+            "avg_hold_hours": round(float(style.max_hold_days) * 24.0, 6),
             "capital_layer": "simulated",
             "real_execution": False,
         }
+
+    def _load_weighted_styles(self, *, include_disabled: bool = False) -> list[TradeStyle]:
+        styles = load_trade_styles(self.market, styles_dir=self.styles_dir, include_disabled=include_disabled)
+        weights = load_style_weights(self.market, review_root=self.review_root)
+        weighted: list[TradeStyle] = []
+        active_weight_total = 0.0
+        for style in styles:
+            override = weights.get(style.name, {})
+            if isinstance(override, dict):
+                status = str(override.get("status") or style.status)
+                weight = float(override.get("weight", style.weight) or 0.0)
+                weighted.append(replace(style, status=status, weight=weight))
+            else:
+                weighted.append(style)
+            if weighted[-1].status == "active":
+                active_weight_total += max(0.0, float(weighted[-1].weight))
+        if active_weight_total <= 0:
+            active = [style for style in weighted if style.status == "active"]
+            if not active:
+                return weighted
+            equal = round(1.0 / len(active), 6)
+            return [replace(style, weight=equal) if style.status == "active" else style for style in weighted]
+        return [
+            replace(style, weight=round(max(0.0, float(style.weight)) / active_weight_total, 6))
+            if style.status == "active"
+            else style
+            for style in weighted
+        ]
+
+    @staticmethod
+    def _style_states(styles: list[TradeStyle]) -> list[dict[str, Any]]:
+        return [
+            {
+                "style_name": style.name,
+                "status": style.status,
+                "weight": round(style.weight, 6),
+                "generation": style.generation,
+                "created_at": style.created_at,
+                "last_modified": style.last_modified,
+            }
+            for style in styles
+        ]
 
     def _write_report(self, payload: dict[str, Any]) -> None:
         output_dir = self.review_root / self.market
@@ -221,6 +280,18 @@ class StyleRunner:
         payload.setdefault("capital_layer", "simulated")
         payload.setdefault("account_type", "simulated")
         payload.setdefault("date", date)
+        payload["real_execution"] = False
+        payload["direct_execution"] = False
+        return payload
+
+    def _weighted_account(self, account: dict[str, Any], style: TradeStyle) -> dict[str, Any]:
+        payload = dict(account)
+        capital = self._initial_capital(account)
+        payload["initial_capital"] = round(capital * max(0.0, float(style.weight)), 6)
+        payload["style_name"] = style.name
+        payload["style_weight"] = round(style.weight, 6)
+        payload["capital_layer"] = "simulated"
+        payload["account_type"] = "simulated"
         payload["real_execution"] = False
         payload["direct_execution"] = False
         return payload
