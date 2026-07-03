@@ -37,6 +37,7 @@ REAL_STATES = ("review", "confirmed", "pending", "claimed", "running", "filled",
 RECEIPT_CHECKSUM_KEYS = ("receipt_sha256", "checksum", "sha256")
 CHECKSUM_KEYS = {"payload_sha256", "receipt_sha256", "checksum", "sha256"}
 _SIGNAL_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+SOURCE_PATH_KEYS = ("source_path", "signal_path", "_path", "shadow_signal_path")
 
 
 def _now_iso() -> str:
@@ -83,6 +84,22 @@ def _extract_approval_token(payload: dict[str, Any], explicit: str | None = None
     return explicit or payload.get("manual_confirmation_token") or payload.get("approval_token")
 
 
+def _extract_source_path(payload: dict[str, Any]) -> str:
+    for key in SOURCE_PATH_KEYS:
+        raw = payload.get(key)
+        if raw:
+            return str(raw)
+    return ""
+
+
+def _require_shadow_source_path(payload: dict[str, Any]) -> str:
+    source_path = _extract_source_path(payload)
+    normalized = source_path.replace("\\", "/")
+    if "/signals/shadow/" not in normalized and not normalized.startswith("signals/shadow/"):
+        raise SafetyViolation("real_signal_queue: promotion source must be signals/shadow")
+    return source_path
+
+
 def _as_float(value: Any, default: float = 0.0) -> float:
     try:
         parsed = float(value or default)
@@ -125,7 +142,9 @@ class RealSignalQueue:
 
         if not isinstance(shadow_signal, dict):
             raise SafetyViolation("real_signal_queue: shadow_signal must be a dict")
+        source_path = _require_shadow_source_path(shadow_signal)
         signal = self._build_real_signal(shadow_signal)
+        signal["source_shadow_path"] = source_path
         gate_result = run_real_order_gates(
             signal,
             approval_token=_extract_approval_token(shadow_signal, approval_token),

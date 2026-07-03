@@ -138,19 +138,47 @@ class RealTradingGateTest(unittest.TestCase):
         queue = RealSignalQueue(self.root / "signals", max_per_order=20000, max_daily=50000)
 
         with self.assertRaises(SafetyViolation):
-            queue.promote_from_shadow(self._buy_order(capital_layer="shadow", account_type="none"))
+            queue.promote_from_shadow(
+                self._buy_order(
+                    capital_layer="shadow",
+                    account_type="none",
+                    source_path=str(self.root / "signals" / "shadow" / "pending" / "REAL-UNIT-1.json"),
+                )
+            )
 
         self.assertFalse((self.root / "signals" / "real" / "pending").exists())
+
+    def test_real_signal_queue_rejects_non_shadow_promotion_source(self) -> None:
+        self._enable_env()
+        tz = ZoneInfo("Asia/Shanghai")
+        queue = RealSignalQueue(self.root / "signals", max_per_order=20000, max_daily=50000)
+        signal = self._buy_order(
+            capital_layer="shadow",
+            account_type="none",
+            approval_token="unit-token",
+            source_path=str(self.root / "signals" / "pending" / "REAL-UNIT-1.json"),
+        )
+
+        with self.assertRaisesRegex(SafetyViolation, "signals/shadow"):
+            queue.promote_from_shadow(signal, now=datetime(2026, 7, 3, 10, 0, tzinfo=tz))
+
+        self.assertFalse((self.root / "signals" / "real" / "review").exists())
 
     def test_real_signal_queue_requires_manual_confirm_before_pending(self) -> None:
         self._enable_env()
         tz = ZoneInfo("Asia/Shanghai")
         queue = RealSignalQueue(self.root / "signals", max_per_order=20000, max_daily=50000)
         promoted = queue.promote_from_shadow(
-            self._buy_order(capital_layer="shadow", account_type="none", approval_token="unit-token"),
+            self._buy_order(
+                capital_layer="shadow",
+                account_type="none",
+                approval_token="unit-token",
+                source_path=str(self.root / "signals" / "shadow" / "pending" / "REAL-UNIT-1.json"),
+            ),
             now=datetime(2026, 7, 3, 10, 0, tzinfo=tz),
         )
 
+        self.assertIn("/signals/shadow/", promoted["signal_card"]["source_shadow_path"])
         with self.assertRaisesRegex(SafetyViolation, "manual confirmation"):
             queue.submit_to_hermes(promoted["order_id"], now=datetime(2026, 7, 3, 10, 0, tzinfo=tz))
 
