@@ -8,7 +8,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import wrap_html, _section, _table, _summary_box, _format_amount
+from . import (
+    wrap_html,
+    _decision_strip,
+    _execution_boundary,
+    _section,
+    _summary_cards,
+    _table,
+    _summary_box,
+    _format_amount,
+)
 
 
 def render(data: dict[str, Any]) -> str:
@@ -30,6 +39,7 @@ def render(data: dict[str, Any]) -> str:
     repo = data.get("reverse_repo", {})
     reserved = data.get("reserved", 0)
     available = data.get("available", 0)
+    primary_allocation = allocation[0] if allocation else {}
 
     # Summary
     summary_html = (
@@ -66,9 +76,30 @@ def render(data: dict[str, Any]) -> str:
         repo_html = _table(["项目", "详情"], repo_rows)
 
     body = (
+        _summary_cards(
+            {
+                "title": primary_allocation.get("strategy", data.get("action_summary", "按资金上限分配")),
+                "detail": f"优先金额 ¥{_format_amount(primary_allocation.get('amount', 0))}；执行窗口 {data.get('deadline', '--')}",
+            },
+            {
+                "title": data.get("max_loss", f"预留 ¥{_format_amount(reserved)}"),
+                "detail": f"最坏情形 {data.get('worst_case', '--')}；置信度 {data.get('confidence', '--')}",
+            },
+            {
+                "title": f"可用 ¥{_format_amount(available)}",
+                "detail": f"总资金 ¥{_format_amount(total)}；逆回购 ¥{_format_amount(repo.get('amount', 0))}",
+            },
+        ) +
         _section("资金概览", summary_html) +
         _section("分配明细", alloc_html) +
         (_section("逆回购", repo_html) if repo_html else "")
     )
 
-    return wrap_html("资金规划", "Capital Plan", body)
+    priority = _decision_strip(
+        data,
+        default_action=data.get("decision_action", "WAIT"),
+        default_reason=data.get("decision_reason", "资金计划待市场窗口确认"),
+        default_deadline=data.get("deadline", "09:25"),
+        default_needs="Nicholas: 确认可用资金和单笔预算上限",
+    ) + _execution_boundary(data)
+    return wrap_html("资金规划", "Capital Plan", body, priority_content=priority)

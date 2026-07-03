@@ -8,7 +8,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import wrap_html, _section, _table, _summary_box, _format_pct, _format_amount
+from . import (
+    wrap_html,
+    _decision_strip,
+    _execution_boundary,
+    _section,
+    _summary_cards,
+    _table,
+    _summary_box,
+    _format_pct,
+    _format_amount,
+)
 
 
 def render(data: dict[str, Any]) -> str:
@@ -80,10 +90,32 @@ def render(data: dict[str, Any]) -> str:
         risk_html = _table(["项目", "价格"], risk_rows)
 
     body = (
+        _summary_cards(
+            {
+                "title": f"{action_label} {ts_code} {name}".strip(),
+                "detail": f"{condition or '触发条件未提供'}；有效期到 {data.get('expires_at', '--')}",
+            },
+            {
+                "title": data.get("max_loss", f"止损 {stop_loss if stop_loss else '--'}"),
+                "detail": f"最坏情形 {data.get('worst_case', '--')}；置信度 {data.get('confidence', scores.get('total', '--'))}",
+            },
+            {
+                "title": f"¥{_format_amount(position.get('amount', data.get('position_amount', 0)))}",
+                "detail": f"股数 {position.get('shares', '--')}；仓位 {_format_pct(position.get('pct_of_capital'))}",
+            },
+        ) +
         _section("信号概要", signal_html) +
         _section("六维评分", scores_html) +
         (_section("仓位建议", pos_html) if pos_html else "") +
         (_section("风控位", risk_html) if risk_html else "")
     )
 
-    return wrap_html("交易信号", "Trading Signal", body)
+    default_decision = "ACT" if action in ("buy", "sell") else "WAIT"
+    priority = _decision_strip(
+        data,
+        default_action=default_decision,
+        default_reason=data.get("decision_reason", "高优先级信号，需按风险预算复核"),
+        default_deadline=data.get("expires_at", "--"),
+        default_needs="Nicholas: 下单前确认市场、资金层和回执状态",
+    ) + _execution_boundary(data)
+    return wrap_html("交易信号", "Trading Signal", body, priority_content=priority)

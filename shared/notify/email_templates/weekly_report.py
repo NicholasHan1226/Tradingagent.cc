@@ -8,7 +8,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import wrap_html, _section, _table, _summary_box, _pnl_color, _format_pct, _format_amount
+from . import (
+    wrap_html,
+    _bar_chart,
+    _decision_strip,
+    _execution_boundary,
+    _heatmap,
+    _section,
+    _sparkline_chart,
+    _summary_cards,
+    _table,
+    _summary_box,
+    _pnl_color,
+    _format_pct,
+    _format_amount,
+)
 
 
 def render(data: dict[str, Any]) -> str:
@@ -34,6 +48,7 @@ def render(data: dict[str, Any]) -> str:
     daily = data.get("daily_pnl", [])
     trends = data.get("trends", {})
     next_week = data.get("next_week", [])
+    primary_next = next_week[0] if next_week else {}
 
     color = _pnl_color(weekly_pnl)
     excess = weekly_pnl_pct - benchmark_pct if benchmark_pct else 0
@@ -98,6 +113,26 @@ def render(data: dict[str, Any]) -> str:
         ops_html = _table(["项目", "结果"], ops_rows)
 
     body = (
+        _summary_cards(
+            {
+                "title": primary_next.get("action", data.get("action_summary", "下周按计划执行")),
+                "detail": primary_next.get("focus", data.get("action_reason", "只把复盘结论转成下周观察清单")),
+            },
+            {
+                "title": data.get("max_loss", f"周超额 {_format_pct(excess)}"),
+                "detail": f"最坏情形 {data.get('worst_case', '--')}；置信度 {data.get('confidence', '--')}",
+            },
+            {
+                "title": data.get("capital_summary", f"周盈亏 ¥{_format_amount(weekly_pnl)}"),
+                "detail": f"策略 {len(strategies)} 个；交易日 {len(daily)} 天；剩余预算 {data.get('remaining_budget', '--')}",
+            },
+        ) +
+        _section(
+            "图表快读",
+            _sparkline_chart(data.get("pnl_trend") or daily or [weekly_pnl], "PnL trend sparkline") +
+            _bar_chart(data.get("strategy_contribution") or strategies, "Strategy contribution") +
+            _heatmap(data.get("position_heatmap") or data.get("holdings", []), "Position heatmap"),
+        ) +
         _section("本周总结", summary_html) +
         _section("策略统计", strat_html) +
         _section("每日盈亏", daily_html) +
@@ -106,4 +141,11 @@ def render(data: dict[str, Any]) -> str:
         (_section("运行状态", ops_html) if ops_html else "")
     )
 
-    return wrap_html(f"周报 | {week_range}", "Weekly Report", body)
+    priority = _decision_strip(
+        data,
+        default_action=data.get("decision_action", "WAIT"),
+        default_reason=data.get("decision_reason", "周复盘完成，等待下周首个确认窗口"),
+        default_deadline=data.get("deadline", "下周一 09:25"),
+        default_needs="Nicholas: 周末确认下周资金和策略优先级",
+    ) + _execution_boundary(data)
+    return wrap_html(f"周报 | {week_range}", "Weekly Report", body, priority_content=priority)

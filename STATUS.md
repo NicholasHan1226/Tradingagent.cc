@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-03 (R24 real signal promotion source guard)
+> 最后更新：2026-07-03 (TradingAgent 邮件模板移动端决策版)
 
 ---
 
@@ -21,6 +21,7 @@
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、影子队列、回执完整性、PnL 摘要
+- **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
 
 ## 二、已知问题
 
@@ -41,6 +42,14 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-03 TradingAgent 邮件模板移动端决策版
+
+- [x] 11 个邮件模板全部改为移动优先决策结构：顶部 `ACT/WAIT/IGNORE` 决策条、三张摘要卡、暗色 header、白色卡片和 HTML5 section/article/figure 语义结构。
+- [x] 交易类模板补齐执行边界字段：market、capital_layer、route、signal_time、expires_at、data_fresh_at、broker_status、receipt_status；系统类模板不展示交易执行边界，避免误读为下单指令。
+- [x] 日报和周报新增 3 类纯 inline SVG 图表：PnL sparkline、策略贡献横条、持仓热力图。
+- [x] `system_health` / `emergency_alert` 将技术状态转为面向交易判断的自然语言，例如“交易信号管道异常，当前信号不可信”和“数据校验通过，信号质量正常”。
+- [x] 验证：11 个模板 `py_compile` 通过，最小 render smoke 确认每个模板 1 个决策条和 3 张摘要卡，日报/周报各 3 个 SVG；TradingAgent 全量测试通过（214 passed，17 subtests passed）。
 
 ### 2026-07-03 R24 real signal promotion source guard
 

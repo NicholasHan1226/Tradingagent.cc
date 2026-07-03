@@ -8,7 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import wrap_html, _section, _table, _summary_box
+from . import (
+    wrap_html,
+    _decision_strip,
+    _execution_boundary,
+    _section,
+    _summary_cards,
+    _table,
+    _summary_box,
+)
 
 
 def render(data: dict[str, Any]) -> str:
@@ -28,6 +36,7 @@ def render(data: dict[str, Any]) -> str:
     invalidated = data.get("invalidated_strategies", [])
     impact = data.get("impact", {})
     adjustment = data.get("adjustment", {})
+    primary_invalidated = invalidated[0] if invalidated else {}
 
     # Regime change summary
     from_regime = regime.get("from", "--")
@@ -65,10 +74,31 @@ def render(data: dict[str, Any]) -> str:
         adjust_html = _table(["项目", "调整"], adjust_rows)
 
     body = (
+        _summary_cards(
+            {
+                "title": primary_invalidated.get("action", adjustment.get("action_plan", "暂停新增相关策略")),
+                "detail": primary_invalidated.get("reason", regime.get("trigger", "环境变化触发策略复核")),
+            },
+            {
+                "title": data.get("max_loss", impact.get("estimated_loss", "--")),
+                "detail": f"最坏情形 {data.get('worst_case', '--')}；风险等级 {impact.get('risk_level', '--')}",
+            },
+            {
+                "title": data.get("capital_summary", adjustment.get("new_allocation", "--")),
+                "detail": f"影响持仓 {impact.get('affected_positions', '--')}；新重点 {adjustment.get('new_focus', '--')}",
+            },
+        ) +
         _section("环境变化", summary_html) +
         _section("失效策略", inv_html) +
         _section("影响评估", impact_html) +
         (_section("调整方案", adjust_html) if adjust_html else "")
     )
 
-    return wrap_html("策略失效通知", "Strategy Invalidation", body)
+    priority = _decision_strip(
+        data,
+        default_action="ACT" if invalidated else "WAIT",
+        default_reason=data.get("decision_reason", "市场环境变化，策略需要复核"),
+        default_deadline=data.get("deadline", data.get("expires_at", "--")),
+        default_needs="Nicholas: 确认是否暂停、减仓或调整策略",
+    ) + _execution_boundary(data)
+    return wrap_html("策略失效通知", "Strategy Invalidation", body, priority_content=priority)

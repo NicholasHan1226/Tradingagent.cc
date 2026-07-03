@@ -8,7 +8,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import wrap_html, _section, _table, _summary_box, _pnl_color, _format_pct, _format_amount
+from . import (
+    wrap_html,
+    _decision_strip,
+    _execution_boundary,
+    _section,
+    _summary_cards,
+    _table,
+    _summary_box,
+    _pnl_color,
+    _format_pct,
+    _format_amount,
+)
 
 
 def render(data: dict[str, Any]) -> str:
@@ -30,6 +41,7 @@ def render(data: dict[str, Any]) -> str:
     trades = data.get("morning_trades", [])
     holdings = data.get("holdings", [])
     afternoon = data.get("afternoon_plan", [])
+    primary_plan = afternoon[0] if afternoon else {}
 
     color = _pnl_color(pnl)
 
@@ -70,10 +82,31 @@ def render(data: dict[str, Any]) -> str:
     plan_html = _table(["动作", "标的", "条件"], plan_rows) if plan_rows else "<p>下午按计划观察</p>"
 
     body = (
+        _summary_cards(
+            {
+                "title": primary_plan.get("action", data.get("action_summary", "下午按计划观察")),
+                "detail": primary_plan.get("condition", data.get("action_reason", "午盘后只处理明确触发的计划")),
+            },
+            {
+                "title": data.get("max_loss", f"上午盈亏 {_format_pct(pnl_pct)}"),
+                "detail": f"最坏情形 {data.get('worst_case', '--')}；置信度 {data.get('confidence', '--')}",
+            },
+            {
+                "title": data.get("capital_summary", f"持仓 {len(holdings)} 个"),
+                "detail": f"上午成交 {len(trades)} 笔；剩余预算 {data.get('remaining_budget', '--')}",
+            },
+        ) +
         _section("上午表现", summary_html) +
         _section("上午成交", trades_html) +
         _section("当前持仓", holdings_html) +
         _section("下午计划", plan_html)
     )
 
-    return wrap_html("午盘复盘", "Midday Review", body)
+    priority = _decision_strip(
+        data,
+        default_action="WAIT",
+        default_reason=data.get("decision_reason", "午盘复核后等待下午确认条件"),
+        default_deadline=data.get("deadline", "14:25"),
+        default_needs="Nicholas: 下午开盘后确认是否执行计划",
+    ) + _execution_boundary(data)
+    return wrap_html("午盘复盘", "Midday Review", body, priority_content=priority)

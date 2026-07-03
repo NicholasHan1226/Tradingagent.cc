@@ -8,7 +8,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import wrap_html, _section, _table, _summary_box, _pnl_color, _format_pct, _format_amount
+from . import (
+    wrap_html,
+    _bar_chart,
+    _decision_strip,
+    _execution_boundary,
+    _heatmap,
+    _section,
+    _sparkline_chart,
+    _summary_cards,
+    _table,
+    _summary_box,
+    _pnl_color,
+    _format_pct,
+    _format_amount,
+)
 
 
 def render(data: dict[str, Any]) -> str:
@@ -34,6 +48,7 @@ def render(data: dict[str, Any]) -> str:
     attribution = data.get("attribution", [])
     holdings = data.get("holdings", [])
     tomorrow = data.get("tomorrow_plan", [])
+    primary_plan = tomorrow[0] if tomorrow else {}
 
     color = _pnl_color(total_pnl)
     excess = total_pnl_pct - benchmark_pct if benchmark_pct else 0
@@ -93,6 +108,26 @@ def render(data: dict[str, Any]) -> str:
         ops_html = _table(["项目", "结果"], ops_rows)
 
     body = (
+        _summary_cards(
+            {
+                "title": primary_plan.get("action", data.get("action_summary", "收盘后复盘，不立即交易")),
+                "detail": primary_plan.get("reason", data.get("action_reason", "明日计划只在新交易日确认后执行")),
+            },
+            {
+                "title": data.get("max_loss", f"超额 {_format_pct(excess)}"),
+                "detail": f"最坏情形 {data.get('worst_case', '--')}；置信度 {data.get('confidence', '--')}",
+            },
+            {
+                "title": data.get("capital_summary", f"今日盈亏 ¥{_format_amount(total_pnl)}"),
+                "detail": f"持仓 {len(holdings)} 个；成交 {len(trades)} 笔；剩余预算 {data.get('remaining_budget', '--')}",
+            },
+        ) +
+        _section(
+            "图表快读",
+            _sparkline_chart(data.get("pnl_trend") or data.get("daily_pnl") or [total_pnl], "PnL trend sparkline") +
+            _bar_chart(data.get("strategy_contribution") or attribution, "Strategy contribution") +
+            _heatmap(data.get("position_heatmap") or holdings, "Position heatmap"),
+        ) +
         _section("今日总结", summary_html) +
         _section("成交明细", trades_html) +
         _section("盈亏归因", attr_html) +
@@ -101,4 +136,11 @@ def render(data: dict[str, Any]) -> str:
         (_section("运行状态", ops_html) if ops_html else "")
     )
 
-    return wrap_html(f"日报 | {date_str}", "Daily Report", body)
+    priority = _decision_strip(
+        data,
+        default_action=data.get("decision_action", "WAIT"),
+        default_reason=data.get("decision_reason", "收盘复盘完成，等待下一交易窗口"),
+        default_deadline=data.get("deadline", "次日 09:25"),
+        default_needs="Nicholas: 复核明日计划和隔夜风险",
+    ) + _execution_boundary(data)
+    return wrap_html(f"日报 | {date_str}", "Daily Report", body, priority_content=priority)

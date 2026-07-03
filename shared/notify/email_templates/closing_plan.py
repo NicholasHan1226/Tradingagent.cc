@@ -8,7 +8,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import wrap_html, _section, _table, _summary_box, _pnl_color, _format_pct, _format_amount
+from . import (
+    wrap_html,
+    _decision_strip,
+    _execution_boundary,
+    _section,
+    _summary_cards,
+    _table,
+    _summary_box,
+    _pnl_color,
+    _format_pct,
+    _format_amount,
+)
 
 
 def render(data: dict[str, Any]) -> str:
@@ -29,6 +40,7 @@ def render(data: dict[str, Any]) -> str:
     risk = data.get("overnight_risk", {})
     total_pnl = data.get("total_pnl", 0)
     total_pnl_pct = data.get("total_pnl_pct", 0)
+    primary_action = actions[0] if actions else {}
 
     color = _pnl_color(total_pnl)
 
@@ -71,10 +83,31 @@ def render(data: dict[str, Any]) -> str:
         )
 
     body = (
+        _summary_cards(
+            {
+                "title": primary_action.get("action", data.get("action_summary", "尾盘无操作" if not actions else "执行尾盘计划")),
+                "detail": primary_action.get("reason", data.get("action_reason", "只处理收盘前仍有效的动作")),
+            },
+            {
+                "title": data.get("max_loss", risk.get("level", "隔夜风险未定")),
+                "detail": f"最坏情形 {data.get('worst_case', risk.get('factors', '--'))}；建议 {risk.get('recommendation', '--')}",
+            },
+            {
+                "title": data.get("capital_summary", f"持仓 {len(holdings)} 个"),
+                "detail": f"日内盈亏 ¥{_format_amount(total_pnl)}；剩余预算 {data.get('remaining_budget', '--')}",
+            },
+        ) +
         _section("持仓概览", summary_html) +
         _section("尾盘操作", actions_html) +
         _section("隔夜持仓", holdings_html) +
         (_section("隔夜风险评估", risk_html) if risk_html else "")
     )
 
-    return wrap_html("尾盘规划", "Closing Plan", body)
+    priority = _decision_strip(
+        data,
+        default_action="ACT" if actions else "WAIT",
+        default_reason=data.get("decision_reason", "尾盘窗口短，优先处理隔夜风险"),
+        default_deadline=data.get("deadline", "14:57"),
+        default_needs="Nicholas: 收盘前确认是否保留隔夜仓位",
+    ) + _execution_boundary(data)
+    return wrap_html("尾盘规划", "Closing Plan", body, priority_content=priority)

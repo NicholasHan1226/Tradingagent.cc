@@ -8,7 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import wrap_html, _section, _table, _summary_box
+from . import (
+    wrap_html,
+    _decision_strip,
+    _plain_system_text,
+    _section,
+    _summary_cards,
+    _table,
+    _summary_box,
+)
 
 
 def render(data: dict[str, Any]) -> str:
@@ -38,23 +46,24 @@ def render(data: dict[str, Any]) -> str:
 
     type_label = {
         "data_gap": "数据缺失",
-        "pipeline_failure": "管线故障",
+        "pipeline_failure": "交易信号管道异常，当前信号不可信",
         "position_breach": "持仓越界",
-        "system_crash": "系统崩溃",
+        "system_crash": "核心服务中断",
         "connectivity": "连接异常",
     }.get(alert_type, alert_type)
+    plain_description = _plain_system_text(description)
 
     # Alert summary
     summary_html = (
         _summary_box("告警类型", f'<span class="badge {severity_badge}">{severity_label}</span>', type_label) +
-        _summary_box("描述", description[:80] + "..." if len(description) > 80 else description)
+        _summary_box("描述", plain_description[:80] + "..." if len(plain_description) > 80 else plain_description)
     )
 
     # Impact assessment
     impact_rows = [
-        ["影响系统", impact.get("affected_systems", "--")],
-        ["潜在损失", impact.get("potential_loss", "--")],
-        ["影响策略", impact.get("affected_strategies", "--")],
+        ["影响范围", _plain_system_text(impact.get("affected_systems", "--"))],
+        ["可能损失", _plain_system_text(impact.get("potential_loss", "--"))],
+        ["受影响策略", _plain_system_text(impact.get("affected_strategies", "--"))],
     ]
     impact_html = _table(["维度", "评估"], impact_rows)
 
@@ -65,7 +74,7 @@ def render(data: dict[str, Any]) -> str:
         heal_label = {"started": "自愈已启动", "in_progress": "自愈进行中", "succeeded": "自愈成功", "failed": "自愈失败"}.get(heal_status, heal_status)
         heal_badge = "badge-hold" if heal_status in ("started", "in_progress") else "badge-buy" if heal_status == "succeeded" else "badge-critical"
         heal_rows = [
-            ["自愈动作", self_heal.get("action", "--")],
+            ["自动处理", _plain_system_text(self_heal.get("action", "--"))],
             ["启动时间", self_heal.get("started_at", "--")],
             ["状态", f'<span class="badge {heal_badge}">{heal_label}</span>'],
             ["预计耗时", self_heal.get("estimated_time", "10分钟内")],
@@ -90,10 +99,31 @@ def render(data: dict[str, Any]) -> str:
         """
 
     body = (
+        _summary_cards(
+            {
+                "title": "立即检查" if need_human or severity == "critical" else "等待自愈",
+                "detail": f"{type_label}；{plain_description}",
+            },
+            {
+                "title": data.get("max_loss", impact.get("potential_loss", "--")),
+                "detail": f"最坏情形 {data.get('worst_case', impact.get('affected_strategies', '--'))}；级别 {severity_label}",
+            },
+            {
+                "title": data.get("capital_summary", "暂停新增风险"),
+                "detail": f"影响范围 {impact.get('affected_systems', '--')}；当前不把异常信号当交易依据",
+            },
+        ) +
         _section("告警概要", summary_html) +
         _section("影响评估", impact_html) +
         (_section("自愈状态", heal_html) if heal_html else "") +
         _section("处理指引", human_html)
     )
 
-    return wrap_html("紧急告警", "Emergency Alert", body)
+    priority = _decision_strip(
+        data,
+        default_action="ACT" if need_human or severity == "critical" else "WAIT",
+        default_reason=data.get("decision_reason", type_label),
+        default_deadline=data.get("deadline", "10分钟自愈窗口"),
+        default_needs="Nicholas: 自愈失败或严重异常时人工介入",
+    )
+    return wrap_html("紧急告警", "Emergency Alert", body, priority_content=priority)

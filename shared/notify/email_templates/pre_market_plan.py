@@ -8,7 +8,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import wrap_html, _section, _table, _summary_box, _pnl_color, _format_pct, _format_amount
+from . import (
+    wrap_html,
+    _decision_strip,
+    _execution_boundary,
+    _section,
+    _summary_cards,
+    _table,
+    _summary_box,
+    _pnl_color,
+    _format_pct,
+    _format_amount,
+)
 
 
 def render(data: dict[str, Any]) -> str:
@@ -30,6 +41,7 @@ def render(data: dict[str, Any]) -> str:
     outlook = data.get("market_outlook", {})
     sectors = data.get("sector_focus", [])
     strategies = data.get("strategy", [])
+    primary_strategy = strategies[0] if strategies else {}
 
     # Holdings table
     holding_rows = []
@@ -78,6 +90,20 @@ def render(data: dict[str, Any]) -> str:
     strat_html = _table(["策略", "今日动作", "目标"], strat_rows) if strat_rows else "<p>按既定策略执行</p>"
 
     body = (
+        _summary_cards(
+            {
+                "title": primary_strategy.get("action", data.get("action_summary", "按盘前计划执行")),
+                "detail": primary_strategy.get("target", data.get("action_reason", "先看持仓、资金和板块信号，再决定是否出手")),
+            },
+            {
+                "title": data.get("risk_summary", outlook.get("regime", "--")),
+                "detail": data.get("worst_case", outlook.get("key_levels", "关键风险位未提供")),
+            },
+            {
+                "title": f"可用 ¥{_format_amount(capital.get('available', data.get('available_capital', 0)))}",
+                "detail": f"已用 ¥{_format_amount(capital.get('allocated', 0))}，逆回购 ¥{_format_amount(capital.get('reverse_repo', 0))}",
+            },
+        ) +
         _section("持仓概览", holdings_html) +
         _section("资金规划", cap_html) +
         _section("市场展望", outlook_html) +
@@ -85,4 +111,11 @@ def render(data: dict[str, Any]) -> str:
         _section("今日策略", strat_html)
     )
 
-    return wrap_html("盘前规划", "Pre-Market Plan", body)
+    priority = _decision_strip(
+        data,
+        default_action="WAIT",
+        default_reason=data.get("decision_reason", "开盘前先确认市场方向和风险预算"),
+        default_deadline=data.get("deadline", "09:25"),
+        default_needs="Nicholas: 开盘前确认是否调整今日计划",
+    ) + _execution_boundary(data)
+    return wrap_html("盘前规划", "Pre-Market Plan", body, priority_content=priority)
