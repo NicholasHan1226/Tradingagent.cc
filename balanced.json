@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "paused": true,
+  "name": "balanced",
+  "position_pct": 0.05,
+  "stop_loss_pct": -0.07,
+  "take_profit_pct": 0.12,
+  "max_hold_days": 15,
+  "pyramid": false,
+  "scale_in_steps": 2,
+  "conviction_min": 0.55,
+  "description": "Paused HK equity balanced simulation style."
+}

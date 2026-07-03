@@ -1,3 +1,4 @@
+# DEPRECATED: shadow retired in favor of multi-style simulated trading. See style_runner.py
 #!/usr/bin/env python3
 """Abstract base classes for Phase D multi-market shadow/simulated tools."""
 

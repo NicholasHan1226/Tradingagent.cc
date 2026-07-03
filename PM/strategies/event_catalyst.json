@@ -1,0 +1,10 @@
+{
+  "name": "event_catalyst",
+  "market": "pm",
+  "capital_layer": "shadow",
+  "description": "Event catalyst: enter on news/event spike, exit after resolution window",
+  "catalyst_window_hours": 4,
+  "min_volume_spike": 2.0,
+  "max_position_pct": 0.10,
+  "resolution_days": 7
+}

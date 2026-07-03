@@ -2064,7 +2064,7 @@ def run_email_notify() -> dict[str, Any]:
 
 
 JOB_HANDLERS: dict[str, Any] = {
-    "job_ashare_shadow": lambda: run_shadow_orchestrator("job_ashare_shadow", "Ashare"),
+    "job_ashare_shadow_DEPRECATED": lambda: run_shadow_orchestrator("job_ashare_shadow_DEPRECATED", "Ashare"),
     "job_trading_signals": run_all_market_trading_signals,
     "job_premarket_signals": lambda: run_market_watch(
         "job_premarket_signals",
@@ -2073,8 +2073,8 @@ JOB_HANDLERS: dict[str, Any] = {
         "premarket",
     ),
     "job_ashare_sim_exec": lambda: run_sim_orchestrator("job_ashare_sim_exec", "Ashare"),
-    "job_us_shadow_exec": lambda: run_shadow_orchestrator("job_us_shadow_exec", "US"),
-    "job_us_shadow": lambda: run_shadow_orchestrator("job_us_shadow", "US"),
+    "job_us_shadow_exec_DEPRECATED": lambda: run_shadow_orchestrator("job_us_shadow_exec_DEPRECATED", "US"),
+    "job_us_shadow_DEPRECATED": lambda: run_shadow_orchestrator("job_us_shadow_DEPRECATED", "US"),
     "job_us_premarket": lambda: run_market_watch(
         "job_us_premarket",
         "US",
@@ -2097,12 +2097,12 @@ JOB_HANDLERS: dict[str, Any] = {
         "US",
         "review/us/us_signal_review.jsonl",
     ),
-    "job_crypto_shadow_exec": lambda: run_shadow_orchestrator("job_crypto_shadow_exec", "Crypto"),
-    "job_crypto_shadow": lambda: run_shadow_orchestrator("job_crypto_shadow", "Crypto"),
+    "job_crypto_shadow_exec_DEPRECATED": lambda: run_shadow_orchestrator("job_crypto_shadow_exec_DEPRECATED", "Crypto"),
+    "job_crypto_shadow_DEPRECATED": lambda: run_shadow_orchestrator("job_crypto_shadow_DEPRECATED", "Crypto"),
     "job_crypto_daily": lambda: run_shadow_orchestrator("job_crypto_daily", "Crypto"),
     "job_crypto_weekly": lambda: run_weekly_review("job_crypto_weekly", "review/crypto/crypto_weekly_review.json"),
-    "job_pm_shadow": lambda: run_shadow_orchestrator("job_pm_shadow", "PM"),
-    "job_pm_shadow_exec": lambda: run_shadow_orchestrator("job_pm_shadow_exec", "PM"),
+    "job_pm_shadow_DEPRECATED": lambda: run_shadow_orchestrator("job_pm_shadow_DEPRECATED", "PM"),
+    "job_pm_shadow_exec_DEPRECATED": lambda: run_shadow_orchestrator("job_pm_shadow_exec_DEPRECATED", "PM"),
     "job_pm_forward": lambda: run_market_watch(
         "job_pm_forward",
         "PM",

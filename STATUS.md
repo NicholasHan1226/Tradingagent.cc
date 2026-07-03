@@ -10,10 +10,10 @@
 
 ## 一、当前状态
 
-- **A 股影子盘**：完整闭环运行（信号生成 → 影子账簿 → 复盘）
+- **A 股多风格模拟盘**：完整闭环运行（信号生成 → 影子账簿 → 复盘）
 - **A 股模拟盘**：通过 Mac Mini Hermes 执行，收/发/回执链路已修复
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`；mini live 脚本默认值也已改到新路径
-- **PM（预测市场）**：影子盘每 10 分钟扫描运行；checked-in config 使用 USDC；PM shadow 写入 `signals/shadow/pending`
+- **PM（预测市场）**：模拟盘每 5 分钟扫描运行；checked-in config 使用 USDC；PM sim 输出到 `signals/sim/pending`
 - **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；下一步是生产闭环验证
 - **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；`promote_from_shadow()` 只接受来源路径位于 `signals/shadow` 的信号；`signals/real/*` 为隔离队列，不代表自动下单或已成交
 - **cron 解耦入口**：`cron/shadow_crypto.sh`、`cron/shadow_us.sh`、`cron/shadow_pm.sh`、`cron/shadow_hk.sh`、`cron/daily_review.sh` 已新增，均只走 shadow/review 边界并带 flock 与独立日志
@@ -142,7 +142,7 @@
 ### R8/R9 多市场安全修复（2026-07-02）
 
 - [x] `PM/config.yaml` currency 从 USD 修正为 USDC，并补充 `PMWorkflow()` 读取 checked-in config 的回归测试。
-- [x] `PM/shadow_runner.py` 改为通过 `SignalStateMachine(signals_root / "shadow").write_pending()` 写入 `signals/shadow/pending`。
+- [x] `PM/shadow_runner.py` 改为通过 `SignalStateMachine(signals_root / "shadow").write_pending()` 写入 `signals/sim/pending`。
 - [x] `shared/markets/safety.py`、`base_tools.py`、`config_schema.py` 增加真实执行/live broker/direct execution 拒绝；`execute_sim_order()` 不再把真实负载静默改写成 simulated 后派发。
 - [x] `PM/simulator.py` 拒绝 real order，fill 结果固定返回 `capital_layer=simulated`、`account_type=simulated`。
 - [x] `PM/Crypto/US` sim executor 入口新增真实执行负载拒绝；修复 `US/sim_executor.py` 删除 account 后再访问的 `UnboundLocalError`。

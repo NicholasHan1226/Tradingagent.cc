@@ -1,0 +1,9 @@
+{
+  "name": "arbitrage_spread",
+  "market": "pm",
+  "capital_layer": "shadow",
+  "description": "Spread arbitrage: exploit YES/NO price discrepancies",
+  "min_spread": 0.03,
+  "max_position_pct": 0.05,
+  "auto_close_spread": 0.01
+}
