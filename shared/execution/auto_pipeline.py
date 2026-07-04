@@ -170,7 +170,7 @@ class AutoPipeline:
         initial_capital: float = 100_000.0,
     ) -> None:
         self.reader = reader or TradingagentDataReader()
-        self.decision_engine = decision_engine or DecisionEngine(default_capital=initial_capital)
+        self.decision_engine = decision_engine or DecisionEngine(market="crypto")
         self.fundamental_analyzer = fundamental_analyzer or FundamentalAnalyzer(reader=self.reader)
         self.perspective_analyzer = perspective_analyzer or MultiPerspectiveAnalyzer(reader=self.reader)
         self.simulator_factory = simulator_factory or default_simulator_factory
