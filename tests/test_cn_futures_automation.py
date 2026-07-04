@@ -107,6 +107,10 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(review_rows[0]["filled_count"], 2)
             self.assertEqual(review_rows[0]["styles"]["trend"]["filled_count"], 1)
             self.assertEqual(review_rows[0]["styles"]["breakout"]["filled_count"], 1)
+            self.assertEqual(
+                review_rows[0]["score_summary"]["style_scores"]["trend"]["status"],
+                "sample_insufficient",
+            )
 
     def test_adapter_falls_back_to_sharedsignals_sqlite_for_futures_assets(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -194,6 +198,67 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     os.environ.pop("SHARED_SIGNALS_DB", None)
                 else:
                     os.environ["SHARED_SIGNALS_DB"] = old_db
+
+    def test_review_scoring_marks_small_open_only_samples_insufficient(self) -> None:
+        from CNFutures.review import score_records
+
+        records = [
+            {
+                "style": "trend",
+                "receipt": {
+                    "status": "filled",
+                    "fee": 10.0,
+                    "raw_response": {"margin_required": 5000.0, "notional": 50000.0},
+                },
+            }
+        ]
+
+        scores = score_records(records, min_sample_trades=5)
+        trend = scores["style_scores"]["trend"]
+
+        self.assertEqual(trend["trade_count"], 1)
+        self.assertEqual(trend["filled_count"], 1)
+        self.assertEqual(trend["status"], "sample_insufficient")
+        self.assertEqual(trend["score"], 0.0)
+        self.assertIn("pnl_samples=0", trend["sample_warning"])
+
+    def test_review_scoring_uses_realized_pnl_when_sample_is_sufficient(self) -> None:
+        from CNFutures.review import score_records
+
+        records = []
+        for index, pnl in enumerate([10, -2, 8, 4], start=1):
+            records.append(
+                {
+                    "style": "trend",
+                    "order": {"order_id": f"SIM-CNF-{index}"},
+                    "receipt": {
+                        "status": "filled",
+                        "fee": 1.0,
+                        "raw_response": {"margin_required": 1000.0, "notional": 10000.0},
+                    },
+                    "performance": {"realized_pnl": pnl},
+                }
+            )
+
+        scores = score_records(records, min_sample_trades=4)
+        trend = scores["style_scores"]["trend"]
+
+        self.assertEqual(trend["status"], "eligible_for_candidate_pool")
+        self.assertEqual(trend["pnl_sample_count"], 4)
+        self.assertEqual(trend["wins"], 3)
+        self.assertEqual(trend["losses"], 1)
+        self.assertGreater(trend["score"], 0)
+
+    def test_cn_futures_live_gateway_rejects_real_orders_fail_closed(self) -> None:
+        from CNFutures.live_gateway import get_live_gateway_status, submit_real_order
+        from shared.markets.safety import SafetyViolation
+
+        status = get_live_gateway_status()
+
+        self.assertFalse(status["real_trading_enabled"])
+        self.assertFalse(status["broker_adapter_ready"])
+        with self.assertRaisesRegex(SafetyViolation, "fail-closed"):
+            submit_real_order({"symbol": "RB2609.SHF", "side": "buy", "quantity": 1}, approval_token="token")
 
 
 if __name__ == "__main__":

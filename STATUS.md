@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (review reports consume simulated ledgers)
+> 最后更新：2026-07-04 (CNFutures review scoring + review reports consume simulated ledgers)
 
 ---
 
@@ -16,6 +16,7 @@
 - **PM（预测市场）**：多风格 simulated 扫描每 10 分钟运行；checked-in config 使用 USDC；PM sim/style 输出写入 `shared/review/pm/style_comparison.json`
 - **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；6 styles × 4 markets × 5min 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环，并新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline；当前生产模拟盘范围为 A股/Crypto/PM/US，HK 暂不接入生产调度
 - **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；sim → real promotion 只接受经 sim 审计的来源；`signals/real/*` 为隔离队列，不代表自动下单或已成交
+- **CNFutures 模拟盘**：国内期货只跑模拟盘，无单独影子盘；多风格模拟会写 `shared/review/data/cn_futures_sim_reviews.jsonl`，新增 `score_summary` 标记样本不足、手续费、保证金占用、名义金额、可用 PnL 样本和风格状态；`CNFutures/live_gateway.py` 为未来 CTP/期货公司接入预留 fail-closed 占位，当前拒绝全部真实期货订单
 - **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US 模拟闭环；`job_style_evolution` 模板每 4 小时跑 simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；均带 flock 与独立日志
 - **SharedSignals API 消费**：`SharedSignalsAPIClient` 已校准 15/15 数据端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；A股 `get_assets()` 走 SharedSignals `stock_basic` read model，单日 `get_bars_daily()` 会补齐 start=end；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号；HK 数据与模拟入口保留但暂不进入生产调度
 - **研究/筛选增强**：新增 `shared/screening/fundamental_analyzer.py` 和 `shared/research/multi_perspective.py`，只读消费 SharedSignals API/DB，输出基本面质量分、同业比较、red flags 和 bull/bear/macro/technical 多视角共识报告；`auto_pipeline` 消费这些研究结果生成 simulated 决策，不触碰实盘队列
@@ -40,12 +41,20 @@
 2. [ ] **P2：多市场模拟盘生产闭环** — 服务器侧 A股/Crypto/PM/US simulated cron、SharedSignals reader/API-first、统一账本、日报/周报复盘读取和健康检查已完成首轮验证；剩余为 A股下一个交易日生产样本、promotion/权重演化/guard halt-thaw 的持续运行验证
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
 4. [x] **P2：SharedSignals HTTP API 消费迁移** — 15/15 端点客户端已完成；`TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` 接入 API-first 访问；SQLite 只读回退保留
+5. [ ] **CNFutures：历史样本评分校准** — 当前评分已能显式区分样本不足；需要在 6-12 个月期货日线回补后，用真实多日/平仓样本校准收益、回撤和风格候选阈值
 
 ## 四、活跃任务
 
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-04 CNFutures review scoring + fail-closed live reserve
+
+- [x] `CNFutures/review.py` 新增 `score_records()`，复盘 JSONL 每轮追加 `score_summary`；open-only 或样本不足默认 `sample_insufficient`，不伪造收益能力。
+- [x] 评分字段覆盖 `trade_count`、`filled_count`、`fee`、`margin_required`、`notional`、`realized_pnl`、`win_rate`、`max_drawdown`、`score` 和 `status`。
+- [x] 新增 `CNFutures/live_gateway.py` 作为未来 CTP/SimNow/期货公司接入占位；当前 `real_trading_enabled=false`、`broker_adapter_ready=false`，所有真实期货订单请求抛 `SafetyViolation`，不得降级为 simulated。
+- [x] `CNFutures/README.md` 已同步评分用途与实盘预留边界。
 
 ### 2026-07-04 server-side simulated trading closure
 
