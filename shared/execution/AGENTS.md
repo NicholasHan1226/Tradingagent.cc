@@ -3,7 +3,7 @@
 > **阅读顺序：** [../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件
 
 ## 目标
-订单执行层: Hermes(A股实盘) + 影子盘(多策略并行) + 模拟盘(滑点建模)。
+订单执行层: Hermes(A股实盘) + 影子盘(多策略并行) + 模拟盘(滑点建模) + 国内期货模拟/CTP 预留。
 
 ## 自动化级别
 5-10分钟级自动化: 信号触发→路由→模拟/影子记录→(实盘待人工确认)。
@@ -14,6 +14,8 @@
 - sim_broker.py — 模拟执行, 含滑点建模
 - execution_router.py — 按策略阶段路由 (sim→shadow→real)
 - slippage_model.py — 滑点模型 (市价/限价)
+- CTP 实盘网关如未来新增, 默认必须关闭, 且必须先通过授权、穿透式监管确认、风控和人工确认门禁。
+- CNFutures 当前只允许 `capital_layer=simulated`; 多风格并行用模拟账户隔离, 不走 `shadow_broker.py`。
 
 ## 边界
 - 真实资金只给Nicholas手工确认, 不自动下单/撤单/点击

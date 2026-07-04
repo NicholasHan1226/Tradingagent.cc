@@ -84,6 +84,29 @@ Downstream reports should surface stale status when it affects candidate scores
 or real-money eligibility. Stale screening data is suitable for shadow or
 simulation training only unless separately confirmed by current data.
 
+## CNFutures Inputs
+
+CNFutures uses SharedSignals as the only market-data ingestion layer. It must
+not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
+
+- Asset universe: `market_assets` with `market="Futures"`.
+- Daily bars: `market_bars_daily` with `market="Futures"`.
+- Reader mapping: `CNFutures` internal market is `cn_futures`; upstream reader
+  market remains `Futures`.
+- Current cadence assumption: `fut_daily` is daily data. It is valid for daily
+  simulation and review, not for 5-minute futures execution unless a separate
+  intraday source is verified.
+- API health is not trading eligibility. A degraded SharedSignals API response
+  may still leave a usable SQLite read model, and a healthy API response does
+  not prove real-time, tradable, or account-authorized data.
+- Review records are appended under `shared/review/data/`; signal-state writes
+  go through `signals/` only. CNFutures does not write back into SharedSignals
+  or MarketGraph.
+
+CNFutures has no separate shadow layer. Multi-style testing is represented by
+isolated simulated accounts and strategy styles with `capital_layer=simulated`
+and `real_trading_enabled=false`.
+
 ## Calendar Priority
 
 A-share trading-day checks use this order:

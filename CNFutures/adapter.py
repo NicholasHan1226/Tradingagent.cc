@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""China futures adapter for SharedSignals-backed simulation."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from shared.markets.base import MarketAdapter
+
+from . import MARKET
+from .contract_rules import normalize_product
+
+try:  # Optional in partial local checkouts.
+    from shared.data.reader import TradingsDataReader
+except Exception:  # pragma: no cover
+    TradingsDataReader = None  # type: ignore[assignment]
+
+
+READER_MARKET = "Futures"
+STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
+
+DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
+    "active_only": True,
+    "max_symbols": 30,
+    "products": ("rb", "cu", "i", "m"),
+}
+
+DEFAULT_STYLES: dict[str, dict[str, Any]] = {
+    "trend": {
+        "name": "trend",
+        "description": "Daily trend-following futures simulation lane",
+        "signal_threshold": 0.01,
+        "risk_per_trade": 0.03,
+        "max_margin_usage": 0.30,
+    },
+    "breakout": {
+        "name": "breakout",
+        "description": "Volume-confirmed breakout futures simulation lane",
+        "signal_threshold": 0.015,
+        "risk_per_trade": 0.02,
+        "max_margin_usage": 0.20,
+    },
+    "mean_reversion": {
+        "name": "mean_reversion",
+        "description": "Small counter-trend futures simulation lane",
+        "signal_threshold": 0.012,
+        "risk_per_trade": 0.01,
+        "max_margin_usage": 0.10,
+        "contrarian": True,
+    },
+}
+
+_ACTIVE_STATUSES = {"", "1", "active", "enabled", "listed", "open", "trading", "normal", "true", "yes"}
+
+
+def _is_active(asset: dict[str, Any]) -> bool:
+    for key in ("active", "is_active", "enabled"):
+        if key in asset and asset.get(key) not in (None, ""):
+            value = asset.get(key)
+            if isinstance(value, str):
+                return value.strip().lower() in _ACTIVE_STATUSES
+            return bool(value)
+    status = str(asset.get("status") or asset.get("market_status") or "").strip().lower()
+    return status in _ACTIVE_STATUSES
+
+
+class CNFuturesAdapter(MarketAdapter):
+    """Market boundary for CN futures automated simulation."""
+
+    def __init__(
+        self,
+        reader: Any | None = None,
+        *,
+        universe_filter: dict[str, Any] | None = None,
+        strategy_dir: Path | None = None,
+        styles: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        if reader is not None:
+            self.reader = reader
+        elif TradingsDataReader is not None:
+            self.reader = TradingsDataReader()
+        else:
+            self.reader = None
+        self.universe_filter = {**DEFAULT_UNIVERSE_FILTER, **dict(universe_filter or {})}
+        self.strategy_dir = strategy_dir or STRATEGY_DIR
+        self._styles_override = styles
+
+    def get_market(self) -> str:
+        return MARKET
+
+    def get_universe(self, date: str) -> list[str]:
+        del date
+        assets = self._get_assets()
+        max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
+        allowed_products = {
+            str(item).strip().lower()
+            for item in self.universe_filter.get("products", ())
+            if str(item).strip()
+        }
+        symbols: list[str] = []
+        seen: set[str] = set()
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            symbol = str(asset.get("symbol") or asset.get("ts_code") or "").strip().lower()
+            if not symbol or symbol in seen:
+                continue
+            try:
+                product = normalize_product(symbol)
+            except ValueError:
+                continue
+            if allowed_products and product not in allowed_products:
+                continue
+            if self.universe_filter.get("active_only", True) and not _is_active(asset):
+                continue
+            seen.add(symbol)
+            symbols.append(symbol)
+            if len(symbols) >= max_symbols:
+                break
+        return symbols
+
+    def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
+        return READER_MARKET, str(symbol or "").strip().lower()
+
+    def get_strategy_config(self) -> dict[str, Any]:
+        styles = self._load_styles()
+        return {
+            "market": MARKET,
+            "reader_market": READER_MARKET,
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "sim_capital": 100_000.0,
+            "portfolio_method": "cn_futures_margin_weighted",
+            "regime": "cn_futures_daily_simulation",
+            "max_candidates": int(self.universe_filter.get("max_symbols", 30)),
+            "default_price": 3500.0,
+            "default_volatility": 0.35,
+            "styles": styles,
+            "market_rules": {
+                "settlement": "T+0",
+                "can_short": True,
+                "uses_margin": True,
+                "night_session": "by_contract",
+                "real_trading_enabled": False,
+                "data_owner": "SharedSignals",
+                "reader_market": READER_MARKET,
+            },
+            "universe_filter": dict(self.universe_filter),
+        }
+
+    def get_shadow_account(self) -> str:
+        """Compatibility namespace for the shared MarketAdapter contract.
+
+        CNFutures does not use the shared shadow broker; execution lanes are
+        simulated through get_sim_account().
+        """
+
+        return "cn_futures_sim"
+
+    def get_sim_account(self) -> dict[str, Any]:
+        return {
+            "account": "cn_futures_sim",
+            "sim_capital": 100_000.0,
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "positions": [],
+        }
+
+    def _get_assets(self) -> list[dict[str, Any]]:
+        if self.reader is None:
+            return []
+        get_assets = getattr(self.reader, "get_assets", None)
+        if callable(get_assets):
+            rows = get_assets(market=READER_MARKET)
+            if rows:
+                return [dict(row) for row in rows]
+        shared = getattr(self.reader, "shared", None)
+        connect = getattr(shared, "_connect", None)
+        if callable(connect):
+            try:
+                rows = connect().execute(
+                    "SELECT * FROM market_assets WHERE market=? ORDER BY symbol ASC",
+                    (READER_MARKET,),
+                ).fetchall()
+            except Exception:
+                return []
+            return [dict(row) for row in rows]
+        return []
+
+    def _load_styles(self) -> dict[str, dict[str, Any]]:
+        if self._styles_override is not None:
+            return {str(name): dict(config) for name, config in self._styles_override.items()}
+        styles = {name: dict(config) for name, config in DEFAULT_STYLES.items()}
+        if not self.strategy_dir.exists():
+            return styles
+        for path in sorted(self.strategy_dir.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            name = str(payload.get("name") or path.stem)
+            styles[name] = payload
+        return styles
+
+
+__all__ = ["CNFuturesAdapter", "READER_MARKET"]
