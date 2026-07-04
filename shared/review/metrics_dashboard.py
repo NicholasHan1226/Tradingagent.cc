@@ -7,8 +7,8 @@ from pathlib import Path
 
 OUT = Path(__file__).resolve().parent / 'metrics_dashboard.json'
 
-def compute():
-    perf_dir = Path(__file__).resolve().parent
+def compute(review_root: Path | str | None = None):
+    perf_dir = Path(review_root) if review_root is not None else Path(__file__).resolve().parent
     metrics = {
         'generated_at': datetime.now(timezone.utc).isoformat(),
         'coverage': {'candidates_scanned': 0, 'signals_generated': 0, 'coverage_pct': 0},
@@ -18,14 +18,20 @@ def compute():
         'markets': {}
     }
     # Load style performance
-    for m in ['Ashare','Crypto','PM','US']:
-        perf_file = perf_dir / m / 'style_performance.jsonl'
+    for display_name, dir_name in [
+        ('Ashare', 'Ashare'),
+        ('Crypto', 'Crypto'),
+        ('PM', 'PM'),
+        ('US', 'US'),
+        ('CNFutures', 'cn_futures'),
+    ]:
+        perf_file = perf_dir / dir_name / 'style_performance.jsonl'
         if perf_file.exists():
             raw = perf_file.read_text().strip()
             lines = raw.split('\n') if raw else []
-            metrics['markets'][m] = {'total_runs': len(lines), 'latest': None}
+            metrics['markets'][display_name] = {'total_runs': len(lines), 'latest': None}
             if lines and lines[-1].strip():
-                metrics['markets'][m]['latest'] = json.loads(lines[-1])
+                metrics['markets'][display_name]['latest'] = json.loads(lines[-1])
     return metrics
 
 if __name__ == '__main__':

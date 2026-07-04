@@ -17,7 +17,7 @@ SIGNALS = ROOT / "signals"
 OUT_DIR = SHARED / "review" / "ops"
 LATEST = OUT_DIR / "tradings_ops_latest.json"
 HISTORY = OUT_DIR / "tradings_ops_history.jsonl"
-MARKETS = ("ashare", "pm", "us", "crypto")
+MARKETS = ("ashare", "pm", "us", "crypto", "cn_futures")
 CHECKSUM_KEYS = {"payload_sha256", "receipt_sha256", "checksum", "sha256"}
 RECEIPT_CHECKSUM_KEYS = ("receipt_sha256", "checksum", "sha256")
 
@@ -71,6 +71,8 @@ def market_of(card: dict[str, Any]) -> str:
         return "ashare"
     if raw in {"predictionmarkets", "polymarket", "pm"}:
         return "pm"
+    if raw in {"cn_futures", "futures", "cnfutures"} or code.startswith("SIM-CNF-"):
+        return "cn_futures"
     if raw in {"us", "usa"}:
         return "us"
     if raw in {"crypto", "cryptocurrency"} or "USDT" in code:
@@ -255,6 +257,44 @@ def pnl_summary() -> dict[str, Any]:
     return {"server_local_sim": local, "shadow": shadow, "strategy_attribution": attribution}
 
 
+def cn_futures_review_summary(path: Path | None = None) -> dict[str, Any]:
+    """Summarize CNFutures append-only simulated reviews for ops/dashboard consumers."""
+
+    review_path = path or (SHARED / "review" / "data" / "cn_futures_sim_reviews.jsonl")
+    rows = read_jsonl(review_path)
+    latest = rows[-1] if rows else {}
+    style_totals: dict[str, dict[str, Any]] = defaultdict(lambda: {"filled_count": 0, "error_count": 0})
+    error_counter: Counter[str] = Counter()
+    for row in rows:
+        styles = row.get("styles") if isinstance(row.get("styles"), dict) else {}
+        for style, values in styles.items():
+            if isinstance(values, dict):
+                style_totals[str(style)]["filled_count"] += int(values.get("filled_count") or 0)
+        error_summary = row.get("error_summary") if isinstance(row.get("error_summary"), dict) else {}
+        by_error = error_summary.get("by_error") if isinstance(error_summary.get("by_error"), dict) else {}
+        for name, count in by_error.items():
+            error_counter[str(name)] += int(count or 0)
+        by_style = error_summary.get("by_style") if isinstance(error_summary.get("by_style"), dict) else {}
+        for style, values in by_style.items():
+            if isinstance(values, dict):
+                style_totals[str(style)]["error_count"] += int(values.get("error_count") or 0)
+    return {
+        "path": str(review_path),
+        "exists": review_path.exists(),
+        "review_rows": len(rows),
+        "latest_generated_at": latest.get("generated_at", ""),
+        "latest_state": latest.get("state", ""),
+        "latest_date": latest.get("date", ""),
+        "latest_record_count": int(latest.get("record_count") or 0) if latest else 0,
+        "latest_filled_count": int(latest.get("filled_count") or 0) if latest else 0,
+        "latest_error_count": int(latest.get("error_count") or 0) if latest else 0,
+        "latest_error_summary": latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {},
+        "latest_style_health": latest.get("style_health") if isinstance(latest.get("style_health"), dict) else {},
+        "style_totals": {style: dict(values) for style, values in style_totals.items()},
+        "top_errors": dict(error_counter.most_common(10)),
+    }
+
+
 def overall_status(queue: dict[str, Any], failures: dict[str, Any], receipts: dict[str, Any]) -> str:
     totals = queue.get("totals") or {}
     shadow_totals = (queue.get("shadow_totals") or {})
@@ -275,6 +315,7 @@ def build_ops_report() -> dict[str, Any]:
     failures = failure_review()
     receipts = receipt_integrity()
     pnl = pnl_summary()
+    cn_futures = cn_futures_review_summary()
     reviewed = reviewed_summary()
     status = overall_status(queue, failures, receipts)
     return {
@@ -286,6 +327,7 @@ def build_ops_report() -> dict[str, Any]:
         "failure_summary": failures,
         "receipt_integrity": receipts,
         "pnl_summary": pnl,
+        "cn_futures_review_summary": cn_futures,
         "reviewed_summary": reviewed,
         "recommendations": recommendations(status, queue, failures, receipts),
     }

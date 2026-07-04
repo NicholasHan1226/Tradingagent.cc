@@ -17,6 +17,7 @@ DEFAULT_REVIEW_PATH = (
     / "data"
     / "cn_futures_sim_reviews.jsonl"
 )
+STYLE_REVIEW_MARKET = "cn_futures"
 
 
 def _now_iso() -> str:
@@ -147,6 +148,201 @@ def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def summarize_errors(errors: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize run errors for health reports and dashboard consumers."""
+
+    by_error: dict[str, int] = defaultdict(int)
+    by_stage: dict[str, int] = defaultdict(int)
+    by_style: dict[str, dict[str, Any]] = defaultdict(lambda: {"error_count": 0, "by_error": defaultdict(int)})
+    examples: list[dict[str, Any]] = []
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        error_name = str(error.get("error") or "unknown")
+        stage = str(error.get("stage") or "unknown")
+        style = str(error.get("style") or "unknown")
+        by_error[error_name] += 1
+        by_stage[stage] += 1
+        by_style[style]["error_count"] += 1
+        by_style[style]["by_error"][error_name] += 1
+        if len(examples) < 12:
+            examples.append({
+                key: error.get(key)
+                for key in ("stage", "style", "symbol", "error", "bar_time", "bar_age_minutes", "side")
+                if key in error
+            })
+    return {
+        "total": sum(by_error.values()),
+        "by_error": dict(by_error),
+        "by_stage": dict(by_stage),
+        "by_style": {
+            style: {
+                "error_count": int(values["error_count"]),
+                "by_error": dict(values["by_error"]),
+            }
+            for style, values in by_style.items()
+        },
+        "examples": examples,
+    }
+
+
+def style_health(records: list[dict[str, Any]], errors: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return per-style action hints without mutating strategy configs."""
+
+    health: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {
+            "filled_count": 0,
+            "error_count": 0,
+            "status": "observe",
+            "suggested_action": "collect_more_samples",
+        }
+    )
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        style = str(record.get("style") or "unknown")
+        receipt = record.get("receipt") if isinstance(record.get("receipt"), dict) else {}
+        if str(receipt.get("status") or "").lower() == "filled":
+            health[style]["filled_count"] += 1
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        style = str(error.get("style") or "unknown")
+        health[style]["error_count"] += 1
+        health[style].setdefault("errors", defaultdict(int))
+        health[style]["errors"][str(error.get("error") or "unknown")] += 1
+
+    for values in health.values():
+        filled_count = int(values["filled_count"])
+        error_count = int(values["error_count"])
+        if error_count and not filled_count:
+            values["status"] = "blocked"
+            values["suggested_action"] = "inspect_data_or_risk_gate"
+        elif error_count >= filled_count and error_count:
+            values["status"] = "degraded"
+            values["suggested_action"] = "reduce_weight_until_errors_clear"
+        elif filled_count:
+            values["status"] = "active_sample"
+            values["suggested_action"] = "continue_simulated_collection"
+        if isinstance(values.get("errors"), defaultdict):
+            values["errors"] = dict(values["errors"])
+    return {style: dict(values) for style, values in health.items()}
+
+
+def _review_root_for(path: Path) -> Path:
+    if path.parent.name == "data":
+        return path.parent.parent
+    return path.parent
+
+
+def _style_metric(
+    *,
+    date: str,
+    style_name: str,
+    style_score: dict[str, Any],
+    style_state: dict[str, Any],
+) -> dict[str, Any]:
+    filled_count = int(style_state.get("filled_count") or style_score.get("filled_count") or 0)
+    trade_count = int(style_score.get("trade_count") or filled_count)
+    realized_pnl = _safe_float(style_score.get("realized_pnl"))
+    drawdown = _safe_float(style_score.get("max_drawdown"))
+    fee = _safe_float(style_score.get("fee"))
+    sharpe = realized_pnl / max(1.0, drawdown + fee) if trade_count else 0.0
+    return {
+        "style_name": style_name,
+        "market": STYLE_REVIEW_MARKET,
+        "date": date,
+        "pnl": round(realized_pnl, 6),
+        "win_rate": _safe_float(style_score.get("win_rate")),
+        "max_dd": round(drawdown, 6),
+        "sharpe": round(sharpe, 6),
+        "trades": trade_count,
+        "avg_hold_hours": 0.0,
+        "status": style_state.get("status") or style_score.get("status") or "observe",
+        "sample_warning": style_score.get("sample_warning", ""),
+        "suggested_action": style_state.get("suggested_action", ""),
+        "filled_count": filled_count,
+        "error_count": int(style_state.get("error_count") or 0),
+        "fee": round(fee, 6),
+        "margin_required": round(_safe_float(style_score.get("margin_required")), 6),
+        "notional": round(_safe_float(style_score.get("notional")), 6),
+        "capital_layer": "simulated",
+        "account_type": "simulated",
+        "real_execution": False,
+    }
+
+
+def write_style_outputs(payload: dict[str, Any], *, review_path: Path | None = None) -> dict[str, str]:
+    """Write dashboard-compatible style comparison outputs for CNFutures."""
+
+    from shared.markets.performance_tracker import compare_styles, save_run
+
+    target = review_path or DEFAULT_REVIEW_PATH
+    review_root = _review_root_for(target)
+    output_dir = review_root / STYLE_REVIEW_MARKET
+    output_dir.mkdir(parents=True, exist_ok=True)
+    score_summary = payload.get("score_summary") if isinstance(payload.get("score_summary"), dict) else {}
+    style_scores = score_summary.get("style_scores") if isinstance(score_summary.get("style_scores"), dict) else {}
+    health = payload.get("style_health") if isinstance(payload.get("style_health"), dict) else {}
+    styles = payload.get("styles") if isinstance(payload.get("styles"), dict) else {}
+    style_names = sorted(set(style_scores) | set(health) | set(styles))
+    metrics = [
+        _style_metric(
+            date=str(payload.get("date") or ""),
+            style_name=style_name,
+            style_score=style_scores.get(style_name) if isinstance(style_scores.get(style_name), dict) else {},
+            style_state=health.get(style_name) if isinstance(health.get(style_name), dict) else {},
+        )
+        for style_name in style_names
+    ]
+    for metric in metrics:
+        save_run(str(metric["style_name"]), STYLE_REVIEW_MARKET, metric, review_root=review_root)
+    comparison = compare_styles(STYLE_REVIEW_MARKET, review_root=review_root) if metrics else []
+    comparison_by_style = {str(row.get("style_name")): dict(row) for row in comparison if isinstance(row, dict)}
+    style_comparison = [
+        {
+            **metric,
+            **comparison_by_style.get(str(metric["style_name"]), {}),
+            "status": metric["status"],
+            "sample_warning": metric["sample_warning"],
+            "suggested_action": metric["suggested_action"],
+        }
+        for metric in metrics
+    ]
+    output = {
+        "market": STYLE_REVIEW_MARKET,
+        "date": payload.get("date", ""),
+        "capital_layer": "simulated",
+        "account_type": "simulated",
+        "real_execution": False,
+        "state": payload.get("state", ""),
+        "record_count": int(payload.get("record_count") or 0),
+        "filled_count": int(payload.get("filled_count") or 0),
+        "error_count": int(payload.get("error_count") or 0),
+        "styles_loaded": len(style_names),
+        "styles_total": len(style_names),
+        "style_states": [
+            {
+                "style_name": style_name,
+                "status": (health.get(style_name) or {}).get("status", "observe") if isinstance(health.get(style_name), dict) else "observe",
+                "suggested_action": (health.get(style_name) or {}).get("suggested_action", "") if isinstance(health.get(style_name), dict) else "",
+            }
+            for style_name in style_names
+        ],
+        "style_comparison": style_comparison,
+        "score_summary": score_summary,
+        "error_summary": payload.get("error_summary") if isinstance(payload.get("error_summary"), dict) else {},
+        "source_review_path": str(target),
+        "generated_at": payload.get("generated_at", _now_iso()),
+    }
+    style_path = output_dir / "style_comparison.json"
+    style_path.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {
+        "style_comparison": str(style_path),
+        "style_performance": str(output_dir / "style_performance.jsonl"),
+    }
+
+
 def append_review(
     *,
     date: str,
@@ -159,6 +355,8 @@ def append_review(
 
     summary = summarize_records(records)
     score_summary = score_records(records)
+    error_summary = summarize_errors(errors)
+    health = style_health(records, errors)
     payload: dict[str, Any] = {
         "date": date,
         "market": market,
@@ -171,12 +369,23 @@ def append_review(
         "generated_at": _now_iso(),
         **summary,
         "score_summary": score_summary,
+        "error_summary": error_summary,
+        "style_health": health,
     }
     target = path or DEFAULT_REVIEW_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
+    payload["style_output_paths"] = write_style_outputs(payload, review_path=target)
     with target.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     return payload
 
 
-__all__ = ["DEFAULT_REVIEW_PATH", "append_review", "score_records", "summarize_records"]
+__all__ = [
+    "DEFAULT_REVIEW_PATH",
+    "append_review",
+    "score_records",
+    "summarize_errors",
+    "summarize_records",
+    "style_health",
+    "write_style_outputs",
+]

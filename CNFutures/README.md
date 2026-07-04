@@ -58,6 +58,8 @@ Simulation records are append-only:
 
 - Signal state: `signals/filled/SIM-CNF-*.json`
 - Review evidence: `shared/review/data/cn_futures_sim_reviews.jsonl`
+- Dashboard-compatible style comparison: `shared/review/cn_futures/style_comparison.json`
+- Style performance history: `shared/review/cn_futures/style_performance.jsonl`
 
 The review payload includes `score_summary` by style:
 
@@ -68,8 +70,13 @@ The review payload includes `score_summary` by style:
 - `realized_pnl` and `win_rate` only when realized PnL samples are available
 - `max_drawdown` only when a realized PnL curve exists
 - `status`, where small or open-only samples are marked `sample_insufficient`
+- `error_summary` and `style_health`, so stale data, repeated same-side exposure,
+  and other simulated gates can be reviewed by style without opening logs
 
-These scores rank simulated styles for further research. They do not grant live trading permission and do not automatically promote a style into real trading.
+These scores rank simulated styles for further research and feed existing
+health/metrics surfaces. They do not create a standalone dashboard, do not grant
+live trading permission, and do not automatically promote a style into real
+trading.
 
 ## Real Trading Reserve
 

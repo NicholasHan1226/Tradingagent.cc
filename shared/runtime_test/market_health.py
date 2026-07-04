@@ -34,7 +34,7 @@ REQUIRED_TEMPLATES = [
 ]
 SIM_MARKETS = tuple(
     item.strip().lower()
-    for item in os.environ.get("TRADINGAGENT_SIM_MARKETS", "ashare,crypto,pm,us").split(",")
+    for item in os.environ.get("TRADINGAGENT_SIM_MARKETS", "ashare,crypto,pm,us,cn_futures").split(",")
     if item.strip()
 )
 SIM_LOG_NAMES = {
@@ -43,6 +43,7 @@ SIM_LOG_NAMES = {
     "pm": "pm_sim.log",
     "us": "us_sim.log",
     "hk": "hk_sim.log",
+    "cn_futures": "cn_futures_sim.log",
 }
 SIM_WRAPPERS = {
     "ashare": "job_ashare_sim_exec.sh",
@@ -50,6 +51,7 @@ SIM_WRAPPERS = {
     "pm": "job_pm_sim.sh",
     "us": "job_us_sim.sh",
     "hk": "job_hk_sim.sh",
+    "cn_futures": "job_cn_futures_sim.sh",
 }
 DEFAULT_SIM_SYMBOLS = {
     "crypto": ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"),
@@ -416,6 +418,33 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
             "latest_file": str(path.relative_to(ROOT)),
             "latest_age_minutes": _file_age_minutes(path),
         }
+    if market == "cn_futures":
+        review_path = ROOT / "shared/review/data/cn_futures_sim_reviews.jsonl"
+        rows = []
+        if review_path.exists():
+            for line in review_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    rows.append(payload)
+        latest = rows[-1] if rows else {}
+        return {
+            "type": "cn_futures_append_only_review",
+            "trade_rows": sum(int(row.get("filled_count") or 0) for row in rows),
+            "ledger_count": 1 if review_path.exists() else 0,
+            "review_rows": len(rows),
+            "latest_file": str(review_path.relative_to(ROOT)),
+            "latest_age_minutes": _file_age_minutes(review_path),
+            "latest_state": latest.get("state", ""),
+            "latest_filled_count": int(latest.get("filled_count") or 0) if latest else 0,
+            "latest_error_count": int(latest.get("error_count") or 0) if latest else 0,
+            "latest_error_summary": latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {},
+            "latest_style_health": latest.get("style_health") if isinstance(latest.get("style_health"), dict) else {},
+        }
 
     files = sorted((ROOT / "shared/logs/sim_ledger" / market).glob("*/trade_journal.jsonl"))
     latest = max(files, key=lambda item: item.stat().st_mtime) if files else None
@@ -511,6 +540,34 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                         "reader_degraded": reader.degraded,
                         "reader_errors": reader.errors[-5:],
                     }
+        elif market == "cn_futures":
+            from CNFutures.adapter import CNFuturesAdapter, READER_MARKET
+
+            adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 5})
+            symbols = adapter.get_intraday_universe(datetime.now(timezone.utc).strftime("%Y%m%d"))
+            priced_rows = []
+            latest_bar_time = ""
+            for symbol in symbols[:5]:
+                rows = adapter.get_bars_intraday(READER_MARKET, symbol, interval="5min")
+                priced = [row for row in rows if _price(row) > 0]
+                if priced:
+                    priced_rows.append(priced[-1])
+                    latest_bar_time = max(latest_bar_time, str(priced[-1].get("bar_time") or ""))
+            status = "ok" if priced_rows else ("warn" if symbols else "fail")
+            reason = "" if priced_rows else ("futures_intraday_bars_missing" if symbols else "futures_universe_missing")
+            return {
+                "status": status,
+                "asset_count": len(symbols),
+                "priced_signal_count": len(priced_rows),
+                "latest_bar_time": latest_bar_time,
+                "reason": reason,
+                "sample": [
+                    {key: row.get(key) for key in ("symbol", "ts_code", "market", "trade_date", "bar_time", "close", "price")}
+                    for row in priced_rows[:5]
+                ],
+                "reader_degraded": False,
+                "reader_errors": [],
+            }
         ok = bool(priced_rows) and not reader.degraded
         return {
             "status": "ok" if ok else ("warn" if priced_rows else "fail"),
@@ -539,13 +596,18 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     if not cron_installed:
         hard_fail_reasons.append("cron_missing")
     if data.get("status") == "fail":
-        hard_fail_reasons.append("market_data_missing")
+        if market == "cn_futures":
+            warn_reasons.append("futures_market_data_not_ready")
+        else:
+            hard_fail_reasons.append("market_data_missing")
     elif data.get("status") == "warn":
         warn_reasons.append("market_data_degraded")
-    if market != "ashare" and int(ledger.get("trade_rows") or 0) <= 0:
+    if market not in {"ashare", "cn_futures"} and int(ledger.get("trade_rows") or 0) <= 0:
         hard_fail_reasons.append("sim_trade_ledger_empty")
     if market == "ashare" and int(ledger.get("trade_rows") or 0) <= 0:
         warn_reasons.append("server_local_sim_has_no_production_trades_yet")
+    if market == "cn_futures" and int(ledger.get("review_rows") or 0) <= 0:
+        warn_reasons.append("cn_futures_review_has_no_samples_yet")
     payload = cron_result.get("payload") or {}
     if payload and payload.get("status") not in {"ok", "market_closed"}:
         if market == "hk" and payload.get("status") == "no_data":

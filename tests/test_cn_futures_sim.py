@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -65,6 +67,75 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(result.raw_response["contract_multiplier"], 10)
         self.assertEqual(result.raw_response["margin_required"], 9100.0)
         self.assertFalse(result.raw_response["real_trading_enabled"])
+
+    def test_review_summarizes_errors_and_style_health(self) -> None:
+        from CNFutures.review import summarize_errors, style_health
+
+        errors = [
+            {
+                "stage": "data",
+                "style": "trend",
+                "symbol": "RB2601.SHF",
+                "error": "stale_intraday_bar",
+            },
+            {
+                "stage": "risk",
+                "style": "breakout",
+                "symbol": "RB2601.SHF",
+                "error": "repeated_same_side_exposure",
+            },
+        ]
+        records = [
+            {
+                "style": "breakout",
+                "receipt": {"status": "filled"},
+            }
+        ]
+
+        summary = summarize_errors(errors)
+        health = style_health(records, errors)
+
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["by_error"]["stale_intraday_bar"], 1)
+        self.assertEqual(summary["by_stage"]["risk"], 1)
+        self.assertEqual(health["trend"]["status"], "blocked")
+        self.assertEqual(health["breakout"]["status"], "degraded")
+        self.assertEqual(health["trend"]["suggested_action"], "inspect_data_or_risk_gate")
+
+    def test_append_review_writes_dashboard_style_outputs(self) -> None:
+        from CNFutures.review import append_review
+
+        with tempfile.TemporaryDirectory() as tmp:
+            review_path = Path(tmp) / "shared" / "review" / "data" / "cn_futures_sim_reviews.jsonl"
+            record = {
+                "style": "trend",
+                "receipt": {
+                    "status": "filled",
+                    "fee": 2.0,
+                    "raw_response": {"margin_required": 100.0, "notional": 1000.0},
+                },
+                "performance": {"realized_pnl": 5.0},
+            }
+
+            payload = append_review(
+                date="20260706",
+                market="cn_futures",
+                records=[record],
+                errors=[],
+                path=review_path,
+            )
+
+            style_path = Path(payload["style_output_paths"]["style_comparison"])
+            perf_path = Path(payload["style_output_paths"]["style_performance"])
+            style_payload = json.loads(style_path.read_text(encoding="utf-8"))
+            perf_rows = [json.loads(line) for line in perf_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+            self.assertTrue(style_path.exists())
+            self.assertTrue(perf_path.exists())
+            self.assertEqual(style_payload["market"], "cn_futures")
+            self.assertEqual(style_payload["style_comparison"][0]["style_name"], "trend")
+            self.assertEqual(perf_rows[0]["market"], "cn_futures")
+            self.assertFalse(perf_rows[0]["real_execution"])
 
 
 if __name__ == "__main__":

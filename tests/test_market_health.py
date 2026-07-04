@@ -129,8 +129,40 @@ class MarketHealthTest(unittest.TestCase):
                 result = market_health.run_sim_market_health()
 
         names = [check["name"] for check in result["checks"]]
-        self.assertEqual(names, ["ashare_sim_loop", "crypto_sim_loop", "pm_sim_loop", "us_sim_loop"])
+        self.assertEqual(names, ["ashare_sim_loop", "crypto_sim_loop", "pm_sim_loop", "us_sim_loop", "cn_futures_sim_loop"])
         self.assertNotIn("hk_sim_loop", names)
+
+    def test_cn_futures_sim_loop_warns_without_live_samples(self) -> None:
+        with patch.object(market_health, "_probe_market_data", return_value={"status": "fail", "reason": "futures_universe_missing"}):
+            check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh")
+
+        self.assertEqual(check.status, "warn")
+        self.assertIn("futures_market_data_not_ready", check.details["warn_reasons"])
+        self.assertIn("cn_futures_review_has_no_samples_yet", check.details["warn_reasons"])
+
+    def test_cn_futures_sim_loop_reads_append_only_review_as_ledger(self) -> None:
+        review = self.root / "shared/review/data/cn_futures_sim_reviews.jsonl"
+        review.parent.mkdir(parents=True)
+        review.write_text(
+            json.dumps(
+                {
+                    "state": "ok",
+                    "filled_count": 2,
+                    "error_count": 0,
+                    "error_summary": {"total": 0},
+                    "style_health": {"trend": {"status": "active_sample"}},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with patch.object(market_health, "_probe_market_data", return_value={"status": "warn", "priced_signal_count": 0}):
+            check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh")
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["ledger"]["trade_rows"], 2)
+        self.assertEqual(check.details["ledger"]["latest_style_health"]["trend"]["status"], "active_sample")
 
 
 if __name__ == "__main__":
