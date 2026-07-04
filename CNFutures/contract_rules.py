@@ -21,6 +21,7 @@ class ContractRule:
     margin_rate: float
     open_fee_rate: float
     close_fee_rate: float
+    price_limit_rate: float
     night_session: bool = False
 
 
@@ -33,6 +34,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         margin_rate=0.13,
         open_fee_rate=0.0001,
         close_fee_rate=0.0001,
+        price_limit_rate=0.07,
         night_session=True,
     ),
     "cu": ContractRule(
@@ -43,6 +45,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         margin_rate=0.12,
         open_fee_rate=0.00005,
         close_fee_rate=0.00005,
+        price_limit_rate=0.06,
         night_session=True,
     ),
     "i": ContractRule(
@@ -53,6 +56,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         margin_rate=0.15,
         open_fee_rate=0.0001,
         close_fee_rate=0.0001,
+        price_limit_rate=0.11,
         night_session=True,
     ),
     "m": ContractRule(
@@ -63,6 +67,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         margin_rate=0.10,
         open_fee_rate=1.5,
         close_fee_rate=1.5,
+        price_limit_rate=0.07,
         night_session=True,
     ),
     "if": ContractRule(
@@ -73,6 +78,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         margin_rate=0.12,
         open_fee_rate=0.000023,
         close_fee_rate=0.000023,
+        price_limit_rate=0.10,
         night_session=False,
     ),
     "ih": ContractRule(
@@ -83,6 +89,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         margin_rate=0.12,
         open_fee_rate=0.000023,
         close_fee_rate=0.000023,
+        price_limit_rate=0.10,
         night_session=False,
     ),
     "ic": ContractRule(
@@ -93,6 +100,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         margin_rate=0.14,
         open_fee_rate=0.000023,
         close_fee_rate=0.000023,
+        price_limit_rate=0.10,
         night_session=False,
     ),
     "im": ContractRule(
@@ -103,6 +111,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         margin_rate=0.14,
         open_fee_rate=0.000023,
         close_fee_rate=0.000023,
+        price_limit_rate=0.10,
         night_session=False,
     ),
 }

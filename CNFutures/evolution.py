@@ -232,6 +232,8 @@ def _tweak_style(base: dict[str, Any], name: str, *, experiment: str = "balanced
         base_volume = max(1.0, _safe_float(base.get("min_volume_ratio"), 1.05))
         volume_delta = {"precision": 0.05, "fast": -0.02, "smooth": 0.02}.get(experiment, 0.0)
         variant["min_volume_ratio"] = round(min(1.30, max(1.00, base_volume + volume_delta)), 4)
+        variant["slippage_bps"] = max(0.0, _safe_float(base.get("slippage_bps"), 2.0))
+        variant["volume_participation"] = round(min(0.20, max(0.01, _safe_float(base.get("volume_participation"), 0.05))), 4)
         variant["flatten_before_session_close_minutes"] = max(5, _safe_int(base.get("flatten_before_session_close_minutes"), 10))
     return variant
 

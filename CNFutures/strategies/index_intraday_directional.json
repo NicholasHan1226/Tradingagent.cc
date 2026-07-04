@@ -13,5 +13,7 @@
   "day_session_only": true,
   "trend_alignment_required": true,
   "min_volume_ratio": 1.05,
+  "slippage_bps": 2.0,
+  "volume_participation": 0.05,
   "flatten_before_session_close_minutes": 10
 }

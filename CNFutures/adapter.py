@@ -72,6 +72,8 @@ DEFAULT_STYLES: dict[str, dict[str, Any]] = {
         "day_session_only": True,
         "trend_alignment_required": True,
         "min_volume_ratio": 1.05,
+        "slippage_bps": 2.0,
+        "volume_participation": 0.05,
         "flatten_before_session_close_minutes": 10,
     },
 }

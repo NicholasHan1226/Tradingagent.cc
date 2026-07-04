@@ -178,12 +178,53 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(result.capital_layer, "simulated")
         self.assertEqual(result.account_type, "simulated")
         self.assertEqual(result.filled_qty, 2)
-        self.assertEqual(result.avg_price, 3500.0)
+        self.assertEqual(result.avg_price, 3501.0)
         self.assertEqual(result.fee, 14.0)
         self.assertEqual(result.raw_response["symbol"], "rb2601")
+        self.assertEqual(result.raw_response["requested_price"], 3500.0)
+        self.assertEqual(result.raw_response["slippage_bps"], 2.0)
         self.assertEqual(result.raw_response["contract_multiplier"], 10)
-        self.assertEqual(result.raw_response["margin_required"], 9100.0)
+        self.assertEqual(result.raw_response["margin_required"], 9102.6)
         self.assertFalse(result.raw_response["real_trading_enabled"])
+
+    def test_sim_executor_models_partial_fill_and_price_limits(self) -> None:
+        import CNFutures.sim_executor  # noqa: F401
+        from shared.execution.sim_broker import execute_sim_order
+
+        partial = execute_sim_order(
+            order={
+                "order_id": "SIM-CNF-PARTIAL",
+                "symbol": "IF2601.CFFEX",
+                "side": "buy",
+                "quantity": 10,
+                "price": 3500.0,
+                "bar_volume": 20,
+                "previous_close": 3500.0,
+            },
+            market="cn_futures",
+            account={"account": "simnow"},
+            config={"fee_mode": "round_trip_estimate", "volume_participation": 0.10, "slippage_bps": 1.0},
+        )
+        rejected = execute_sim_order(
+            order={
+                "order_id": "SIM-CNF-LIMIT",
+                "symbol": "IF2601.CFFEX",
+                "side": "buy",
+                "quantity": 1,
+                "price": 4000.0,
+                "previous_close": 3500.0,
+            },
+            market="cn_futures",
+            account={"account": "simnow"},
+            config={},
+        )
+
+        self.assertEqual(partial.status, "partial")
+        self.assertEqual(partial.filled_qty, 2)
+        self.assertEqual(partial.raw_response["requested_quantity"], 10)
+        self.assertEqual(partial.raw_response["fill_status"], "partial")
+        self.assertEqual(rejected.status, "rejected")
+        self.assertEqual(rejected.raw_response["limit_up"], 3850.0)
 
     def test_review_summarizes_errors_and_style_health(self) -> None:
         from CNFutures.review import summarize_errors, style_health

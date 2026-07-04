@@ -233,6 +233,59 @@ def _has_repeated_same_side_exposure(
     return bool(latest_side and latest_side == str(side or "").lower().strip())
 
 
+def _latest_opposite_fill(
+    signals_dir: Path,
+    *,
+    date: str,
+    style_name: str,
+    symbol: str,
+    side: str,
+) -> dict[str, Any] | None:
+    rows = _same_day_filled_signals(signals_dir, date=date, style_name=style_name, symbol=symbol)
+    for row in reversed(rows):
+        previous_side = str(row.get("side") or row.get("direction") or "").lower().strip()
+        if previous_side and previous_side != str(side or "").lower().strip():
+            return row
+    return None
+
+
+def _realized_pnl_from_reversal(
+    *,
+    previous: dict[str, Any] | None,
+    side: str,
+    receipt: dict[str, Any],
+    rule_multiplier: int,
+) -> dict[str, Any]:
+    if not previous:
+        return {}
+    previous_price = _safe_float(previous.get("filled_price") or previous.get("price"), 0.0)
+    exit_price = _safe_float(receipt.get("avg_price"), 0.0)
+    qty = min(_safe_int(previous.get("filled_qty") or previous.get("filled_quantity") or previous.get("quantity"), 0), _safe_int(receipt.get("filled_qty"), 0))
+    if previous_price <= 0 or exit_price <= 0 or qty <= 0:
+        return {}
+    previous_side = str(previous.get("side") or previous.get("direction") or "").lower().strip()
+    current_side = str(side or "").lower().strip()
+    gross = 0.0
+    if previous_side in {"buy", "long"} and current_side in {"sell", "short"}:
+        gross = (exit_price - previous_price) * qty * rule_multiplier
+    elif previous_side in {"sell", "short"} and current_side in {"buy", "long"}:
+        gross = (previous_price - exit_price) * qty * rule_multiplier
+    else:
+        return {}
+    fee = _safe_float(previous.get("fee"), 0.0) + _safe_float(receipt.get("fee"), 0.0)
+    return {
+        "realized_pnl": round(gross - fee, 6),
+        "gross_pnl": round(gross, 6),
+        "round_trip_fee": round(fee, 6),
+        "closed_quantity": qty,
+        "entry_price": previous_price,
+        "exit_price": exit_price,
+        "entry_side": previous_side,
+        "exit_side": current_side,
+        "method": "same_day_reversal_estimate",
+    }
+
+
 def _quantity_for_style(
     *,
     symbol: str,
@@ -309,8 +362,9 @@ def _write_filled_signal(signals_dir: Path, card: dict[str, Any], receipt: dict[
         "fill_time": _now_iso(),
         "raw_response": receipt.get("raw_response", {}),
     }
-    filled = machine.fill(str(card["order_id"]), fill_info)
-    return {"status": "filled", "order_id": card.get("order_id", ""), "filled_signal": filled}
+    partial = str(receipt.get("status") or "").lower().strip() == "partial"
+    filled = machine.fill(str(card["order_id"]), fill_info, partial=partial)
+    return {"status": "partial" if partial else "filled", "order_id": card.get("order_id", ""), "filled_signal": filled}
 
 
 def run_multi_style_simulation(
@@ -412,6 +466,8 @@ def run_multi_style_simulation(
                 "contract_multiplier": rule.contract_multiplier,
                 "cadence": bar_cadence,
                 "bar_time": latest_bar_time,
+                "bar_volume": _safe_float((bars[-1] if bars else {}).get("volume"), 0.0),
+                "previous_close": _safe_float((bars[-2] if len(bars) >= 2 else {}).get("close"), price),
             }
             if _has_repeated_same_side_exposure(
                 signals_dir,
@@ -430,11 +486,23 @@ def run_multi_style_simulation(
                     "error": "repeated_same_side_exposure",
                 })
                 continue
+            previous_opposite = _latest_opposite_fill(
+                signals_dir,
+                date=date,
+                style_name=style_name,
+                symbol=symbol,
+                side=str(order["side"]),
+            )
             receipt_obj = execute_sim_order(
                 order=order,
                 market=MARKET,
                 account={"account": f"cn_futures_sim_{style_name}", "capital_layer": "simulated", "account_type": "simulated"},
-                config={"fee_mode": "round_trip_estimate", "style": style_name},
+                config={
+                    "fee_mode": "round_trip_estimate",
+                    "style": style_name,
+                    "slippage_bps": _safe_float(style.get("slippage_bps"), 2.0),
+                    "volume_participation": _safe_float(style.get("volume_participation"), 0.05),
+                },
             )
             receipt = {
                 "status": receipt_obj.status,
@@ -448,6 +516,12 @@ def run_multi_style_simulation(
                 "market": receipt_obj.market,
                 "raw_response": receipt_obj.raw_response,
             }
+            performance = _realized_pnl_from_reversal(
+                previous=previous_opposite,
+                side=str(order["side"]),
+                receipt=receipt,
+                rule_multiplier=rule.contract_multiplier,
+            )
             card = _signal_card(
                 date=date,
                 cadence=bar_cadence,
@@ -470,6 +544,7 @@ def run_multi_style_simulation(
                     "signal": signal,
                     "order": order,
                     "receipt": receipt,
+                    "performance": performance,
                     "signal_card": card,
                     "signal_result": signal_result,
                     "capital_layer": "simulated",

@@ -358,6 +358,112 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(second["filled_count"], 0)
             self.assertEqual(second["errors"][0]["error"], "repeated_same_side_exposure")
 
+    def test_multi_style_runner_estimates_realized_pnl_on_reversal(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class ReversalReader(FakeFuturesReader):
+            bars: list[dict[str, object]] = []
+
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return [{"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"}] if market == "Futures" else []
+
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
+                return list(self.bars) if market == "Futures" and symbol == "rb2601" and interval == "5min" else []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = ReversalReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 1, "products": ("rb",)},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.001, "risk_per_trade": 0.03, "slippage_bps": 0.0}},
+            )
+            common = {
+                "adapter": adapter,
+                "date": "20260703",
+                "reader": reader,
+                "signals_dir": tmp_path / "signals",
+                "review_path": tmp_path / "cn_futures_reviews.jsonl",
+            }
+            reader.bars = [
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:10:00", "close": 3400, "volume": 1000},
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:15:00", "close": 3450, "volume": 1000},
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:20:00", "close": 3500, "volume": 1000},
+            ]
+            first = run_multi_style_simulation(**common, now=datetime.fromisoformat("2026-07-03 14:21:00"))
+            reader.bars = [
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:25:00", "close": 3500, "volume": 1000},
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:30:00", "close": 3450, "volume": 1000},
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:35:00", "close": 3400, "volume": 1000},
+            ]
+            second = run_multi_style_simulation(**common, now=datetime.fromisoformat("2026-07-03 14:36:00"))
+
+            self.assertEqual(first["filled_count"], 1)
+            self.assertEqual(second["filled_count"], 1)
+            performance = second["records"][0]["performance"]
+            self.assertEqual(performance["method"], "same_day_reversal_estimate")
+            self.assertIn("realized_pnl", performance)
+
+    def test_multi_style_runner_writes_partial_signal_state_for_low_volume_fill(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class LowVolumeReader(FakeFuturesReader):
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
+                if market != "Futures" or symbol != "rb2601" or interval != "5min":
+                    return []
+                return [
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3400, "volume": 10},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3450, "volume": 10},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 3500, "volume": 10},
+                ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = LowVolumeReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 1},
+                styles={
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.001,
+                        "risk_per_trade": 0.50,
+                        "max_margin_usage": 0.80,
+                        "volume_participation": 0.10,
+                    },
+                },
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-03 14:56:00"),
+            )
+
+            self.assertEqual(result["record_count"], 1)
+            self.assertEqual(result["records"][0]["receipt"]["status"], "partial")
+            self.assertEqual(result["records"][0]["signal_result"]["status"], "partial")
+            self.assertEqual(len(list((tmp_path / "signals" / "partial").glob("SIM-CNF-*.json"))), 1)
+
     def test_adapter_falls_back_to_sharedsignals_sqlite_for_futures_assets(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 

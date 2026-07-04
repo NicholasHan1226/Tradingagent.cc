@@ -76,6 +76,26 @@ It also blocks repeated same-side exposure for the same style and contract on
 the same trade date; an opposite-side signal can still create a new simulated
 trade.
 
+## Execution Realism
+
+The simulated executor is still paper-only, but it no longer assumes ideal
+fills:
+
+- execution price is adjusted by configurable slippage bps and rounded to the
+  contract tick size
+- static daily price-limit bounds reject clearly invalid simulated prices
+- 5-minute bar volume limits maximum fill quantity through
+  `volume_participation`; oversized orders become `partial`
+- partial receipts are stored in `signals/partial`
+- margin, notional, and fees are recomputed from actual simulated fill price
+  and filled quantity
+- opposite-side fills for the same style and contract estimate round-trip
+  realized PnL, so review scoring can start accumulating win-rate samples
+
+This is closer to real trading than ideal fills, but it still does not model
+live order book queue priority, bid/ask depth, exact exchange limit-state
+matching, forced liquidation, or precise rollover calendars.
+
 ## Review
 
 Simulation records are append-only:
