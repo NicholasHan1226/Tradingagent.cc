@@ -45,6 +45,13 @@ collection, so simulation reads the latest `market_bars_intraday` bar with
 only the trade date, so separate 5-minute bars can create separate simulated
 orders while duplicate reruns of the same bar remain idempotent.
 
+The 5-minute runner rejects stale intraday input by default when the latest bar
+is more than 10 minutes old. Configure the threshold with
+`--max-intraday-bar-age-minutes` or `CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES`.
+It also blocks repeated same-side exposure for the same style and contract on
+the same trade date; an opposite-side signal can still create a new simulated
+trade.
+
 ## Review
 
 Simulation records are append-only:

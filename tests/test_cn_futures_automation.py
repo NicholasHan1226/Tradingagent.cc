@@ -9,6 +9,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +111,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 FakeFuturesReader(),
                 signals_dir=tmp_path / "signals",
                 review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-03 14:56:00"),
             )
 
             self.assertEqual(result["state"], "ok")
@@ -141,6 +143,59 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 review_rows[0]["score_summary"]["style_scores"]["trend"]["status"],
                 "sample_insufficient",
             )
+
+    def test_multi_style_runner_rejects_stale_intraday_bars(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            adapter = CNFuturesAdapter(
+                reader=FakeFuturesReader(),
+                universe_filter={"max_symbols": 1},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.01}},
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                FakeFuturesReader(),
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-03 15:20:00"),
+                max_intraday_bar_age_minutes=10,
+            )
+
+            self.assertEqual(result["state"], "degraded")
+            self.assertEqual(result["filled_count"], 0)
+            self.assertEqual(result["errors"][0]["error"], "stale_intraday_bar")
+
+    def test_multi_style_runner_blocks_repeated_same_side_exposure(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            adapter = CNFuturesAdapter(
+                reader=FakeFuturesReader(),
+                universe_filter={"max_symbols": 1},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.01}},
+            )
+            common = {
+                "adapter": adapter,
+                "date": "20260703",
+                "reader": FakeFuturesReader(),
+                "signals_dir": tmp_path / "signals",
+                "review_path": tmp_path / "cn_futures_reviews.jsonl",
+                "now": datetime.fromisoformat("2026-07-03 14:56:00"),
+            }
+
+            first = run_multi_style_simulation(**common)
+            second = run_multi_style_simulation(**common)
+
+            self.assertEqual(first["filled_count"], 1)
+            self.assertEqual(second["filled_count"], 0)
+            self.assertEqual(second["errors"][0]["error"], "repeated_same_side_exposure")
 
     def test_adapter_falls_back_to_sharedsignals_sqlite_for_futures_assets(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter

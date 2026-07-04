@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import CNFuturesAdapter
-from .sim_runner import run_multi_style_simulation
+from .sim_runner import DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES, run_multi_style_simulation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +26,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--review-path", type=Path, default=DEFAULT_REVIEW_PATH, help="Append-only review JSONL path.")
     parser.add_argument("--max-symbols", type=int, default=None, help="Optional cap for futures universe size.")
     parser.add_argument("--cadence", default=os.environ.get("CN_FUTURES_SIM_CADENCE", "5min"), choices=("5min", "daily"), help="Simulation cadence, default: 5min.")
+    parser.add_argument(
+        "--max-intraday-bar-age-minutes",
+        type=float,
+        default=float(os.environ.get("CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES", DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES)),
+        help="Reject 5-minute simulation if latest bar is older than this threshold.",
+    )
     parser.add_argument("--json", action="store_true", help="Print compact JSON output.")
     return parser.parse_args()
 
@@ -46,6 +52,7 @@ def _summary(result: dict[str, Any]) -> dict[str, Any]:
         "error_count": len(result.get("errors") or []),
         "review_path": str(DEFAULT_REVIEW_PATH),
         "real_trading_enabled": False,
+        "max_intraday_bar_age_minutes": result.get("max_intraday_bar_age_minutes"),
     }
 
 
@@ -62,6 +69,7 @@ def main() -> int:
         signals_dir=args.signals_dir,
         review_path=args.review_path,
         cadence=args.cadence,
+        max_intraday_bar_age_minutes=args.max_intraday_bar_age_minutes,
     )
     output = _summary(result)
     output["review_path"] = str(args.review_path)

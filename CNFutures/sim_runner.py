@@ -20,6 +20,7 @@ from . import sim_executor as _sim_executor  # noqa: F401  # Ensure registry sid
 
 
 INTRADAY_INTERVAL = "5min"
+DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES = 10.0
 
 
 def _now_iso() -> str:
@@ -39,6 +40,37 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return default
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = raw.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _bar_age_minutes(latest_bar_time: str, now: datetime | None) -> float | None:
+    if now is None:
+        return None
+    bar_dt = _parse_dt(latest_bar_time)
+    if bar_dt is None:
+        return None
+    now_dt = now.astimezone(timezone.utc).replace(tzinfo=None) if now.tzinfo is not None else now
+    return (now_dt - bar_dt).total_seconds() / 60.0
+
+
+def _is_intraday_bar_fresh(latest_bar_time: str, *, now: datetime | None, max_age_minutes: float) -> tuple[bool, float | None]:
+    age = _bar_age_minutes(latest_bar_time, now)
+    if age is None:
+        return False, None
+    return age <= max_age_minutes, age
 
 
 def _read_daily_bars(reader: Any, symbol: str, date: str) -> list[dict[str, Any]]:
@@ -113,6 +145,47 @@ def _order_period_key(date: str, cadence: str, latest_bar_time: str) -> str:
     if len(digits) >= 8:
         return digits[:8]
     return str(date)
+
+
+def _same_day_filled_signals(signals_dir: Path, *, date: str, style_name: str, symbol: str) -> list[dict[str, Any]]:
+    filled_dir = signals_dir / "filled"
+    if not filled_dir.exists():
+        return []
+    trade_date = _normalize_trade_date(date)
+    rows: list[dict[str, Any]] = []
+    for path in sorted(filled_dir.glob("SIM-CNF-*.json")):
+        try:
+            import json
+
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if str(payload.get("strategy_name") or "") != style_name:
+            continue
+        if str(payload.get("symbol") or payload.get("ts_code") or "") != symbol:
+            continue
+        payload_date = _normalize_trade_date(payload.get("trade_date") or payload.get("valid_until") or payload.get("bar_time"))
+        if trade_date and payload_date != trade_date:
+            continue
+        rows.append(payload)
+    rows.sort(key=lambda item: str(item.get("bar_time") or item.get("timestamp") or item.get("order_id") or ""))
+    return rows
+
+
+def _has_repeated_same_side_exposure(
+    signals_dir: Path,
+    *,
+    date: str,
+    style_name: str,
+    symbol: str,
+    side: str,
+) -> bool:
+    rows = _same_day_filled_signals(signals_dir, date=date, style_name=style_name, symbol=symbol)
+    if not rows:
+        return False
+    latest = rows[-1]
+    latest_side = str(latest.get("side") or latest.get("direction") or "").lower().strip()
+    return bool(latest_side and latest_side == str(side or "").lower().strip())
 
 
 def _quantity_for_style(
@@ -202,10 +275,14 @@ def run_multi_style_simulation(
     signals_dir: Path,
     review_path: Path | None = None,
     cadence: str = INTRADAY_INTERVAL,
+    now: datetime | None = None,
+    max_intraday_bar_age_minutes: float = DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES,
 ) -> dict[str, Any]:
     """Run all configured futures styles through simulated execution."""
 
     cadence_value = "daily" if str(cadence or "").lower() in {"daily", "1d", "day"} else INTRADAY_INTERVAL
+    if now is None:
+        now = datetime.now()
     config = adapter.get_strategy_config()
     styles = config.get("styles") if isinstance(config.get("styles"), dict) else {}
     account = adapter.get_sim_account()
@@ -236,6 +313,24 @@ def run_multi_style_simulation(
                     "error": "missing_intraday_bars" if cadence_value != "daily" else "missing_daily_bars",
                 })
                 continue
+            if cadence_value != "daily":
+                fresh, age_minutes = _is_intraday_bar_fresh(
+                    latest_bar_time,
+                    now=now,
+                    max_age_minutes=max_intraday_bar_age_minutes,
+                )
+                if not fresh:
+                    errors.append({
+                        "stage": "data",
+                        "symbol": symbol,
+                        "style": style_name,
+                        "cadence": cadence_value,
+                        "bar_time": latest_bar_time,
+                        "bar_age_minutes": age_minutes,
+                        "max_age_minutes": max_intraday_bar_age_minutes,
+                        "error": "stale_intraday_bar",
+                    })
+                    continue
             signal = generate_style_signal(symbol, bars, style)
             if signal.get("action") == "hold":
                 continue
@@ -266,6 +361,23 @@ def run_multi_style_simulation(
                 "cadence": bar_cadence,
                 "bar_time": latest_bar_time,
             }
+            if _has_repeated_same_side_exposure(
+                signals_dir,
+                date=date,
+                style_name=style_name,
+                symbol=symbol,
+                side=str(order["side"]),
+            ):
+                errors.append({
+                    "stage": "risk",
+                    "symbol": symbol,
+                    "style": style_name,
+                    "cadence": bar_cadence,
+                    "bar_time": latest_bar_time,
+                    "side": order["side"],
+                    "error": "repeated_same_side_exposure",
+                })
+                continue
             receipt_obj = execute_sim_order(
                 order=order,
                 market=MARKET,
@@ -331,6 +443,7 @@ def run_multi_style_simulation(
         "review": review,
         "real_trading_enabled": False,
         "generated_at": _now_iso(),
+        "max_intraday_bar_age_minutes": max_intraday_bar_age_minutes,
     }
 
 
