@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (P0 resilience fixes)
+> 最后更新：2026-07-04 (P1 runtime hardening fixes)
 
 ---
 
@@ -43,6 +43,13 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-04 P1 runtime hardening fixes
+
+- [x] `shared/execution/execution_router.py` 路由历史读取已从整文件 `.readlines()` 改为 tail 读取最近固定行数，避免 JSONL 日志增长后一次性占用过多内存。
+- [x] `shared/risk/pre_trade_check.py` 与 `shared/portfolio/exit_manager.py` 的 A 股 T+1 fallback 已补 2026 已知休市日；当 `Ashare.t_plus_1` 不可用时不再只跳周末。
+- [x] 新增 `.github/workflows/test.yml` 与最小 `requirements.txt`，CI 覆盖 `compileall` 与 pytest。
+- [x] 验证：本地目标 `py_compile` 与 pytest 结果见本轮回执。
 
 ### 2026-07-04 P0 resilience fixes
 

@@ -4,13 +4,16 @@ import sys
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from shared.portfolio.exit_manager import check_all_exits
+from shared.portfolio import exit_manager
 from shared.risk.pre_trade_check import pre_trade_check
+from shared.risk import pre_trade_check as pre_trade_check_module
 
 
 class MarketRulesTest(unittest.TestCase):
@@ -37,6 +40,58 @@ class MarketRulesTest(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0]["should_exit"])
         self.assertEqual(results[0]["market"], "ashare")
+        self.assertFalse(results[0]["executable"])
+        self.assertEqual(results[0]["blocked_reason"], "T+1")
+
+    def test_ashare_t_plus_1_fallback_skips_known_2026_holidays(self) -> None:
+        with patch.object(pre_trade_check_module, "_t_plus_1", None):
+            result = pre_trade_check(
+                {
+                    "ts_code": "600519.SH",
+                    "market": "ashare",
+                    "side": "sell",
+                    "weight": 0.02,
+                    "entry_date": "2026-09-24",
+                    "trade_date": "2026-09-25",
+                },
+                {
+                    "positions": [
+                        {
+                            "ts_code": "600519.SH",
+                            "market": "ashare",
+                            "weight": 0.02,
+                            "entry_date": "2026-09-24",
+                        }
+                    ],
+                    "total_exposure": 0.02,
+                },
+            )
+
+        self.assertFalse(result["approved"])
+        self.assertTrue(any("T+1" in reason for reason in result["reasons"]))
+
+    def test_exit_manager_fallback_skips_known_2026_holidays(self) -> None:
+        positions = [
+            {
+                "ts_code": "600519.SH",
+                "market": "ashare",
+                "quantity": 100,
+                "sellable_quantity": 100,
+                "avg_price": 10.0,
+                "cost_basis": 1000.0,
+                "entry_date": "2026-09-24",
+                "as_of": "2026-09-25",
+                "high_price": 10.0,
+                "thesis": "event",
+                "capital_layer": "shadow",
+            }
+        ]
+
+        with patch.object(exit_manager, "_t_plus_1", None):
+            results = check_all_exits(positions, {"600519.SH": 9.0})
+
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0]["should_exit"])
         self.assertFalse(results[0]["executable"])
         self.assertEqual(results[0]["blocked_reason"], "T+1")
 

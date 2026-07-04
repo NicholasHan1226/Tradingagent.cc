@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import random
 import time
 import uuid
 import urllib.error
@@ -107,7 +108,7 @@ def _post_once(url: str, body: bytes, signature: str, timeout: int | float) -> d
 
 def _retry_backoff_seconds(attempt: int) -> float:
     delay = RETRY_BACKOFF_BASE_SECONDS * (2 ** max(0, attempt - 1))
-    return min(delay, RETRY_BACKOFF_MAX_SECONDS)
+    return min(delay, RETRY_BACKOFF_MAX_SECONDS) + random.uniform(0, 0.3)
 
 
 def send_sim_signal_to_mini(

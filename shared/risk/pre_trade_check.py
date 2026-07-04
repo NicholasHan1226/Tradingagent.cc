@@ -83,6 +83,32 @@ _MARKET_ALIASES = {
     "prediction": "pm",
     "prediction_market": "pm",
 }
+_DEFAULT_A_SHARE_HOLIDAYS_2026 = frozenset(
+    {
+        date(2026, 1, 1),
+        date(2026, 1, 2),
+        date(2026, 2, 16),
+        date(2026, 2, 17),
+        date(2026, 2, 18),
+        date(2026, 2, 19),
+        date(2026, 2, 20),
+        date(2026, 2, 23),
+        date(2026, 4, 6),
+        date(2026, 5, 1),
+        date(2026, 5, 4),
+        date(2026, 5, 5),
+        date(2026, 6, 19),
+        date(2026, 9, 25),
+        date(2026, 10, 1),
+        date(2026, 10, 2),
+        date(2026, 10, 5),
+        date(2026, 10, 6),
+        date(2026, 10, 7),
+    }
+)
+KNOWN_A_SHARE_HOLIDAYS_2026 = frozenset(
+    getattr(_t_plus_1, "KNOWN_A_SHARE_HOLIDAYS_2026", _DEFAULT_A_SHARE_HOLIDAYS_2026)
+)
 
 
 def _load_limits() -> dict[str, Any]:
@@ -194,7 +220,7 @@ def _entry_date_from_order(
 
 def _fallback_next_trading_day(open_day: date) -> date:
     current = open_day + timedelta(days=1)
-    while current.weekday() >= 5:
+    while current.weekday() >= 5 or current in KNOWN_A_SHARE_HOLIDAYS_2026:
         current += timedelta(days=1)
     return current
 

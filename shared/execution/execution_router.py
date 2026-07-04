@@ -15,6 +15,7 @@ execution; it only writes pending signal cards for Mac Mini-side handling.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,7 @@ TRADINGAGENT_ASHARE = TRADINGAGENT_ROOT / "Ashare"
 SHADOW_EXECUTION_LOG = Path(__file__).resolve().parent.parent / "logs" / "shadow" / "shadow_trades.jsonl"
 REAL_AUTO_ORDER_FORBIDDEN = True
 ROUTER_LOG = Path(__file__).resolve().parent.parent / "logs" / "router_decisions.jsonl"
+ROUTER_HISTORY_TAIL_LINES = max(1, int(os.environ.get("TRADINGS_ROUTER_HISTORY_TAIL_LINES", "1000")))
 
 # Stage configuration
 STAGE_CHANNELS = {
@@ -66,6 +68,29 @@ def _log_route(order: dict[str, Any], channel: str, result: dict[str, Any]) -> N
     }
     with open(ROUTER_LOG, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _tail_lines(path: Path, max_lines: int) -> list[bytes]:
+    line_count = max(1, int(max_lines))
+    block_size = 8192
+    chunks: list[bytes] = []
+    lines_seen = 0
+
+    with path.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        position = fh.tell()
+        while position > 0 and lines_seen <= line_count:
+            read_size = min(block_size, position)
+            position -= read_size
+            fh.seek(position)
+            chunk = fh.read(read_size)
+            chunks.append(chunk)
+            lines_seen += chunk.count(b"\n")
+
+    if not chunks:
+        return []
+    data = b"".join(reversed(chunks))
+    return data.splitlines()[-line_count:]
 
 
 def _configure_shadow_broker_paths(shadow_broker_module: Any) -> None:
@@ -585,12 +610,12 @@ def get_route_history(strategy_name: str | None = None, limit: int = 100) -> lis
         return []
 
     entries = []
-    with open(ROUTER_LOG, "r", encoding="utf-8") as fh:
-        lines = fh.readlines()
+    lines = _tail_lines(ROUTER_LOG, max(ROUTER_HISTORY_TAIL_LINES, limit))
 
     for line in reversed(lines):
         try:
-            entry = json.loads(line)
+            raw_line = line.decode("utf-8")
+            entry = json.loads(raw_line)
             if strategy_name is None or entry.get("order", {}).get("strategy_name") == strategy_name:
                 entries.append(entry)
                 if len(entries) >= limit:
