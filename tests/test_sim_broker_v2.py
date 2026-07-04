@@ -92,6 +92,7 @@ class SimBrokerV2Test(unittest.TestCase):
                 patch.object(local_sim_ledger, "LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
                 patch.object(local_sim_ledger, "LOCAL_SIM_LOCK", base / ".local_sim.lock"),
                 patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", base / "simulated_ashare_positions.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_RECEIPTS", base / "sim_execution_receipts.jsonl"),
             ]
             for p in patches:
                 p.start()
@@ -133,6 +134,7 @@ class SimBrokerV2Test(unittest.TestCase):
             self.assertEqual(pnl["total_trades"], 1)
             self.assertEqual(pnl["positions"]["600000.SH"]["quantity"], 100)
             self.assertEqual(pnl["market_value"], 1000.0)
+            self.assertTrue((base / "sim_execution_receipts.jsonl").exists())
 
 
     def test_ashare_builtin_executor_loads_without_prior_import_and_records_backup(self) -> None:
@@ -145,6 +147,7 @@ class SimBrokerV2Test(unittest.TestCase):
                 patch.object(local_sim_ledger, "LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
                 patch.object(local_sim_ledger, "LOCAL_SIM_LOCK", base / ".local_sim.lock"),
                 patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", base / "simulated_ashare_positions.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_RECEIPTS", base / "sim_execution_receipts.jsonl"),
             ]
             for p in patches:
                 p.start()
@@ -168,6 +171,7 @@ class SimBrokerV2Test(unittest.TestCase):
             self.assertTrue(result.raw_response.get("local_sim_backup", {}).get("recorded"))
             self.assertTrue((base / "local_sim_trades.jsonl").exists())
             self.assertTrue((base / "simulated_ashare_positions.json").exists())
+            self.assertTrue((base / "sim_execution_receipts.jsonl").exists())
 
     def test_ashare_builtin_executor_accepts_string_account(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -179,6 +183,7 @@ class SimBrokerV2Test(unittest.TestCase):
                 patch.object(local_sim_ledger, "LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
                 patch.object(local_sim_ledger, "LOCAL_SIM_LOCK", base / ".local_sim.lock"),
                 patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", base / "simulated_ashare_positions.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_RECEIPTS", base / "sim_execution_receipts.jsonl"),
             ]
             for p in patches:
                 p.start()

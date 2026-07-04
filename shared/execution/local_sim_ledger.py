@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import fcntl
 import errno
+import hashlib
 import json
 import os
 import re
@@ -22,9 +23,11 @@ LOCAL_SIM_POSITIONS = LOCAL_SIM_DIR / "local_sim_positions.json"
 LOCAL_SIM_PNL = LOCAL_SIM_DIR / "local_sim_pnl.json"
 LOCAL_SIM_LOCK = LOCAL_SIM_DIR / ".local_sim.lock"
 LOCAL_SIM_POSITIONS_SNAPSHOT = Path(__file__).resolve().parents[2] / "signals" / "positions" / "simulated_ashare_positions.json"
+LOCAL_SIM_RECEIPTS = Path(__file__).resolve().parents[2] / "signals" / "sim_execution_receipts.jsonl"
 DEFAULT_ACCOUNT = "ashare_server_sim"
 LOCK_RETRY_ATTEMPTS = 3
 LOCK_RETRY_DELAY_SECONDS = 0.1
+CHECKSUM_KEYS = {"payload_sha256", "receipt_sha256", "checksum", "sha256"}
 
 
 def _bj_today() -> date:
@@ -128,6 +131,66 @@ def _is_regular_ashare_symbol(symbol: Any) -> bool:
     if exchange == "SH":
         return digits.startswith(("600", "601", "603", "605", "688", "689"))
     return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
+
+
+def _canonical_json(payload: dict[str, Any], *, drop_checksums: bool = False) -> bytes:
+    data = {key: value for key, value in payload.items() if not (drop_checksums and key in CHECKSUM_KEYS)}
+    return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _payload_sha256(payload: dict[str, Any], *, drop_checksums: bool = False) -> str:
+    return hashlib.sha256(_canonical_json(payload, drop_checksums=drop_checksums)).hexdigest()
+
+
+def _append_receipt_unlocked(receipt: dict[str, Any]) -> None:
+    LOCAL_SIM_RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
+    with LOCAL_SIM_RECEIPTS.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _build_signed_receipt(
+    *,
+    order: dict[str, Any],
+    trade: LocalSimTrade | None,
+    market: str,
+    account: str,
+    status: str,
+    message: str = "",
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "receipt_type": "server_local_sim",
+        "source": "server_local_sim_backup",
+        "market": market,
+        "account": account,
+        "capital_layer": "simulated",
+        "account_type": "simulated",
+        "order_id": str(order.get("order_id") or (trade.order_id if trade else "")),
+        "idempotency_key": str(order.get("idempotency_key") or (trade.idempotency_key if trade else "")),
+        "symbol": str(order.get("ts_code") or order.get("symbol") or (trade.ts_code if trade else "")),
+        "side": str(order.get("side") or order.get("direction") or (trade.side if trade else "")),
+        "status": status,
+        "success": status in {"filled", "partial"},
+        "message": message,
+        "receipt_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "payload_sha256": _payload_sha256(order),
+    }
+    if trade is not None:
+        payload.update(
+            {
+                "trade_id": trade.trade_id,
+                "trade_date": trade.trade_date,
+                "filled_qty": trade.quantity,
+                "avg_price": trade.filled_price,
+                "commission": trade.commission,
+                "stamp_duty": trade.stamp_duty,
+                "net_amount": trade.net_amount,
+            }
+        )
+    if extra:
+        payload.update(extra)
+    payload["receipt_sha256"] = _payload_sha256(payload, drop_checksums=True)
+    return payload
 
 
 def _trade_date(value: Any) -> str:
@@ -342,6 +405,9 @@ def record_local_sim_order(
         _append_trade_unlocked(trade)
         trades.append(asdict(trade))
         _persist_unlocked(trades)
+        _append_receipt_unlocked(
+            _build_signed_receipt(order=order, trade=trade, market=market_key, account=account_name, status="filled")
+        )
     return {
         "status": "filled",
         "recorded": True,
@@ -353,6 +419,7 @@ def record_local_sim_order(
         "avg_price": filled_price,
         "net_amount": net_amount,
         "ledger": "server_local_sim_backup",
+        "receipt_path": str(LOCAL_SIM_RECEIPTS),
     }
 
 

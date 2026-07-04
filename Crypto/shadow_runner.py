@@ -12,7 +12,7 @@ from typing import Any
 from Crypto.common import CryptoConfig, load_crypto_config, reject_real_execution_payload
 from Crypto.market_data import CryptoMarketData
 from Crypto.simulator import CryptoSimulator
-from shared.execution.signal_state_machine import SignalStateConflict, SignalStateMachine
+from shared.execution.shadow_signal import write_shadow_signal
 from shared.markets.base_tools import BaseShadowRunner
 
 
@@ -58,7 +58,7 @@ class CryptoShadowRunner(BaseShadowRunner):
             )
             fill["shadow_write"] = write_result
             fills.append(fill)
-            if write_result.get("status") == "pending":
+            if write_result.get("status") in {"pending", "filled", "partial"}:
                 written += 1
 
         return {
@@ -72,7 +72,8 @@ class CryptoShadowRunner(BaseShadowRunner):
             "signals_count": len(signals),
             "positions": fills,
             "written": written,
-            "pending_count": written,
+            "pending_count": sum(1 for item in fills if item.get("shadow_write", {}).get("status") == "pending"),
+            "filled_count": sum(1 for item in fills if item.get("shadow_write", {}).get("status") in {"filled", "partial"}),
         }
 
     def get_signals(self, date: str) -> list[dict[str, Any]]:
@@ -142,19 +143,7 @@ class CryptoShadowRunner(BaseShadowRunner):
             "simulated_fill": fill,
             "created_at": _now_iso(),
         }
-        state = SignalStateMachine(Path(self.signals_root) / "shadow")
-        try:
-            result = state.write_pending(card)
-        except SignalStateConflict as exc:
-            return {
-                "order_id": order_id,
-                "status": "duplicate",
-                "queue_scope": "shadow",
-                "message": str(exc),
-            }
-        result["queue_scope"] = "shadow"
-        result["capital_layer"] = "shadow"
-        return result
+        return write_shadow_signal(card, self.signals_root)
 
 
 def _last_positive_close(rows: list[dict[str, Any]]) -> float | None:

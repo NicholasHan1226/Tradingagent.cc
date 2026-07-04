@@ -20,7 +20,7 @@ class PMWorkflowConfigTest(unittest.TestCase):
         self.assertFalse(workflow.config.safety.live_broker_enabled)
         self.assertFalse(workflow.config.safety.direct_execution_enabled)
 
-    def test_pm_shadow_runner_writes_signal_state_machine_shadow_pending(self) -> None:
+    def test_pm_shadow_runner_writes_signal_state_machine_shadow_filled_for_local_fill(self) -> None:
         from PM.common import PMConfig
         from PM.shadow_runner import PMShadowRunner
         from shared.execution.signal_state_machine import read_json
@@ -40,17 +40,20 @@ class PMWorkflowConfigTest(unittest.TestCase):
                             "side": "buy",
                             "quantity": 1,
                             "fill_price": 0.52,
+                            "status": "filled",
                         }
                     ],
                 }
             )
 
             pending_files = list((Path(tmp) / "signals" / "shadow" / "pending").glob("*.json"))
-            card = read_json(pending_files[0]) if pending_files else {}
+            filled_files = list((Path(tmp) / "signals" / "shadow" / "filled").glob("*.json"))
+            card = read_json(filled_files[0]) if filled_files else {}
 
-        self.assertEqual(result["status"], "pending")
+        self.assertEqual(result["status"], "filled")
         self.assertEqual(result["queue_scope"], "shadow")
-        self.assertEqual(len(pending_files), 1)
+        self.assertEqual(len(pending_files), 0)
+        self.assertEqual(len(filled_files), 1)
         self.assertEqual(card["market"], "pm")
         self.assertEqual(card["capital_layer"], "shadow")
         self.assertEqual(card["account_type"], "shadow")

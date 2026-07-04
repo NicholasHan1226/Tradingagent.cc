@@ -83,13 +83,16 @@ class CryptoPhaseDToolsTest(unittest.TestCase):
 
             result = workflow.run_crypto_shadow_cycle("20260702")
             pending = list((Path(tmp) / "signals" / "shadow" / "pending").glob("*.json"))
+            filled = list((Path(tmp) / "signals" / "shadow" / "filled").glob("*.json"))
             root_pending = Path(tmp) / "signals" / "pending"
 
         self.assertEqual(result["market"], "crypto")
         self.assertEqual(result["capital_layer"], "shadow")
         self.assertEqual(result["real_execution"], False)
-        self.assertEqual(result["pending_count"], 1)
-        self.assertEqual(len(pending), 1)
+        self.assertEqual(result["pending_count"], 0)
+        self.assertEqual(result["filled_count"], 1)
+        self.assertEqual(len(pending), 0)
+        self.assertEqual(len(filled), 1)
         self.assertFalse(root_pending.exists())
 
 

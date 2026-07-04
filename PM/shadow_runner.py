@@ -12,7 +12,7 @@ from typing import Any
 from PM.common import clamp_probability, load_pm_config
 from PM.market_data import PMMarketData
 from PM.simulator import PMSimulator
-from shared.execution.signal_state_machine import SignalStateConflict, SignalStateMachine
+from shared.execution.shadow_signal import write_shadow_signal
 from shared.markets.base_tools import BaseShadowRunner
 from shared.markets.config_schema import MarketToolConfig
 from shared.markets.safety import reject_real_execution_payload
@@ -53,7 +53,7 @@ class PMShadowRunner(BaseShadowRunner):
             )
             fill["shadow_write"] = write_result
             positions.append(fill)
-            if write_result.get("status") == "pending":
+            if write_result.get("status") in {"pending", "filled", "partial"}:
                 written += 1
 
         return {
@@ -68,7 +68,8 @@ class PMShadowRunner(BaseShadowRunner):
             "candidates_count": len(signals),
             "positions": positions,
             "written": written,
-            "pending_count": written,
+            "pending_count": sum(1 for item in positions if item.get("shadow_write", {}).get("status") == "pending"),
+            "filled_count": sum(1 for item in positions if item.get("shadow_write", {}).get("status") in {"filled", "partial"}),
         }
 
     def get_signals(self, date: str) -> list[dict[str, Any]]:
@@ -145,19 +146,7 @@ class PMShadowRunner(BaseShadowRunner):
             "simulated_fill": position,
             "created_at": _now_iso(),
         }
-        state = SignalStateMachine(Path(self.signals_root) / "shadow")
-        try:
-            result = state.write_pending(card)
-        except SignalStateConflict as exc:
-            return {
-                "order_id": order_id,
-                "status": "duplicate",
-                "queue_scope": "shadow",
-                "message": str(exc),
-            }
-        result["queue_scope"] = "shadow"
-        result["capital_layer"] = "shadow"
-        return result
+        return write_shadow_signal(card, self.signals_root)
 
 
 def _resolve_config(config: Any | None) -> MarketToolConfig:

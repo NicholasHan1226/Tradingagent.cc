@@ -97,7 +97,9 @@ class USHKPhaseDP0Test(unittest.TestCase):
             self.assertEqual(result["market"], "us")
             self.assertEqual(result["status"], "ok")
             self.assertGreaterEqual(result["written"], 1)
-            self.assertTrue(list((Path(tmp) / "shadow" / "pending").glob("*.json")))
+            self.assertEqual(result["pending_count"], 0)
+            self.assertGreaterEqual(result["filled_count"], 1)
+            self.assertTrue(list((Path(tmp) / "shadow" / "filled").glob("*.json")))
 
         workflow = USWorkflow(config=config, reader=reader)
         cycle = workflow.run_us_shadow_cycle("2026-07-02")
@@ -151,7 +153,9 @@ class USHKPhaseDP0Test(unittest.TestCase):
             result = runner.run_shadow("2026-07-02")
             self.assertEqual(result["market"], "hk")
             self.assertEqual(result["status"], "ok")
-            self.assertTrue(list((Path(tmp) / "shadow" / "pending").glob("*.json")))
+            self.assertEqual(result["pending_count"], 0)
+            self.assertGreaterEqual(result["filled_count"], 1)
+            self.assertTrue(list((Path(tmp) / "shadow" / "filled").glob("*.json")))
 
         workflow = HKWorkflow(config=config, reader=reader)
         cycle = workflow.run_hk_shadow_cycle("2026-07-02")

@@ -342,22 +342,29 @@ def _check_local_sim_ledger() -> Check:
 
 def _check_failure_receipts() -> Check:
     failed = _iter_json_files(ROOT / "signals/failed")
-    receipts = ROOT.parent / "MarketGraph/outputs/sim_execution_receipts.jsonl"
+    receipt_paths = [
+        ROOT / "signals/sim_execution_receipts.jsonl",
+        ROOT.parent / "MarketGraph/outputs/sim_execution_receipts.jsonl",
+    ]
     latest_receipts = []
-    if receipts.exists():
+    existing_paths = []
+    for receipts in receipt_paths:
+        if not receipts.exists():
+            continue
+        existing_paths.append(str(receipts))
         rows = [line for line in receipts.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
         for line in rows[-20:]:
             try:
                 item = json.loads(line)
             except Exception:
                 continue
-            latest_receipts.append({key: item.get(key) for key in ["id", "signal_id", "code", "status", "success", "filled_qty", "message"]})
-    ok = receipts.exists() and bool(latest_receipts)
+            latest_receipts.append({key: item.get(key) for key in ["id", "signal_id", "order_id", "code", "symbol", "status", "success", "filled_qty", "message", "receipt_sha256"]})
+    ok = bool(existing_paths) and bool(latest_receipts)
     return Check(
         "failure_receipts",
         _status(ok, warn=True),
         "失败/回执记录可复盘" if ok else "失败/回执记录不足",
-        {"failed_count": len(failed), "receipt_path_exists": receipts.exists(), "latest_receipts": latest_receipts[-5:]},
+        {"failed_count": len(failed), "receipt_path_exists": bool(existing_paths), "receipt_paths": existing_paths, "latest_receipts": latest_receipts[-5:]},
         severity="warn",
     )
 

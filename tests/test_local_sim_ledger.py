@@ -21,6 +21,7 @@ class LocalSimLedgerTest(unittest.TestCase):
             ("LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
             ("LOCAL_SIM_LOCK", base / ".local_sim.lock"),
             ("LOCAL_SIM_POSITIONS_SNAPSHOT", base / "simulated_ashare_positions.json"),
+            ("LOCAL_SIM_RECEIPTS", base / "sim_execution_receipts.jsonl"),
         ):
             patcher = patch.object(local_sim_ledger, name, value)
             patcher.start()
@@ -47,6 +48,17 @@ class LocalSimLedgerTest(unittest.TestCase):
         snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
         self.assertEqual(snapshot["positions"][0]["ts_code"], "600000.SH")
         self.assertEqual(snapshot["positions"][0]["account"], "acct")
+        receipts = [
+            json.loads(line)
+            for line in local_sim_ledger.LOCAL_SIM_RECEIPTS.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]["status"], "filled")
+        self.assertEqual(
+            receipts[0]["receipt_sha256"],
+            local_sim_ledger._payload_sha256(receipts[0], drop_checksums=True),
+        )
 
     def test_rejects_non_regular_ashare_code(self) -> None:
         result = local_sim_ledger.record_local_sim_order({"ts_code": "200011.SZ", "side": "buy", "quantity": 100, "price": 1}, "ashare")
