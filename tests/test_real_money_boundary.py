@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -22,16 +23,21 @@ class RealMoneyBoundaryTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.signals_dir = self.root / "signals"
-        hermes_bridge.SIGNALS_DIR = self.signals_dir
-        hermes_bridge.PENDING_DIR = self.signals_dir / "pending"
-        hermes_bridge.FILLED_DIR = self.signals_dir / "filled"
-        hermes_bridge.CANCELLED_DIR = self.signals_dir / "cancelled"
-        hermes_bridge.POSITIONS_DIR = self.signals_dir / "positions"
-        hermes_bridge.POSITIONS_FILE = self.signals_dir / "positions.json"
-        execution_router.ROUTER_LOG = self.root / "router_decisions.jsonl"
+        self._patch_module_attr(hermes_bridge, "SIGNALS_DIR", self.signals_dir)
+        self._patch_module_attr(hermes_bridge, "PENDING_DIR", self.signals_dir / "pending")
+        self._patch_module_attr(hermes_bridge, "FILLED_DIR", self.signals_dir / "filled")
+        self._patch_module_attr(hermes_bridge, "CANCELLED_DIR", self.signals_dir / "cancelled")
+        self._patch_module_attr(hermes_bridge, "POSITIONS_DIR", self.signals_dir / "positions")
+        self._patch_module_attr(hermes_bridge, "POSITIONS_FILE", self.signals_dir / "positions.json")
+        self._patch_module_attr(execution_router, "ROUTER_LOG", self.root / "router_decisions.jsonl")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def _patch_module_attr(self, module: object, name: str, value: Path) -> None:
+        patcher = patch.object(module, name, value)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _valid_card(self, **overrides: object) -> dict[str, object]:
         now = datetime.now().astimezone().isoformat(timespec="seconds")

@@ -9,6 +9,7 @@ import threading
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -35,20 +36,25 @@ class SignalStateMachineTest(unittest.TestCase):
         self.signals_dir = self.root / "signals"
         self.machine = SignalStateMachine(self.signals_dir)
 
-        hermes_bridge.SIGNALS_DIR = self.signals_dir
-        hermes_bridge.PENDING_DIR = self.signals_dir / "pending"
-        hermes_bridge.CLAIMED_DIR = self.signals_dir / "claimed"
-        hermes_bridge.RUNNING_DIR = self.signals_dir / "running"
-        hermes_bridge.FILLED_DIR = self.signals_dir / "filled"
-        hermes_bridge.EXPIRED_DIR = self.signals_dir / "expired"
-        hermes_bridge.CANCELLED_DIR = self.signals_dir / "cancelled"
-        hermes_bridge.FAILED_DIR = self.signals_dir / "failed"
-        hermes_bridge.PARTIAL_DIR = self.signals_dir / "partial"
-        hermes_bridge.POSITIONS_DIR = self.signals_dir / "positions"
-        hermes_bridge.POSITIONS_FILE = self.signals_dir / "positions.json"
+        self._patch_hermes_path("SIGNALS_DIR", self.signals_dir)
+        self._patch_hermes_path("PENDING_DIR", self.signals_dir / "pending")
+        self._patch_hermes_path("CLAIMED_DIR", self.signals_dir / "claimed")
+        self._patch_hermes_path("RUNNING_DIR", self.signals_dir / "running")
+        self._patch_hermes_path("FILLED_DIR", self.signals_dir / "filled")
+        self._patch_hermes_path("EXPIRED_DIR", self.signals_dir / "expired")
+        self._patch_hermes_path("CANCELLED_DIR", self.signals_dir / "cancelled")
+        self._patch_hermes_path("FAILED_DIR", self.signals_dir / "failed")
+        self._patch_hermes_path("PARTIAL_DIR", self.signals_dir / "partial")
+        self._patch_hermes_path("POSITIONS_DIR", self.signals_dir / "positions")
+        self._patch_hermes_path("POSITIONS_FILE", self.signals_dir / "positions.json")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def _patch_hermes_path(self, name: str, value: Path) -> None:
+        patcher = patch.object(hermes_bridge, name, value)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _card(self, order_id: str = "SIG-1", **overrides: object) -> dict[str, object]:
         now = datetime.now().astimezone()

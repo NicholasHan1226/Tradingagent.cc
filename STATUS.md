@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (六维打分异常处理修复)
+> 最后更新：2026-07-04 (测试状态泄漏修复)
 
 ---
 
@@ -43,6 +43,12 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-04 测试状态泄漏修复
+
+- [x] `tests/test_signal_state_machine.py`、`test_real_money_boundary.py`、`test_t_plus_1_integration.py` 中直接改写的模块级路径已改为 `patch.object` + cleanup，测试结束后自动恢复原值。
+- [x] `tests/test_sim_loop.py` 已保存并恢复 `sim_executor_registry` 注册表，避免测试注册的 market executor 泄漏到后续用例。
+- [x] 验证：`python3 -m pytest tests/test_signal_state_machine.py tests/test_real_money_boundary.py tests/test_t_plus_1_integration.py tests/test_sim_loop.py -q` 通过（23 passed，1 个既有 `WEBHOOK_SECRET` 空值 warning）。
 
 ### 2026-07-04 六维打分异常处理修复
 

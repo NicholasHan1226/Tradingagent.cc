@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from shared.accounting import trade_audit_trail
-from shared.execution import shadow_broker
+from shared.execution import shadow_broker, sim_executor_registry
 from shared.execution.signal_state_machine import read_json
 from shared.markets.base import MarketAdapter
 from shared.orchestrator import OrchestratorDeps, run_sim_loop
@@ -82,10 +82,16 @@ class SimLoopTest(unittest.TestCase):
         self.tmp_path = Path(self.tmpdir.name)
         _patch_shadow_paths(self, self.tmp_path)
         _patch_audit_paths(self, self.tmp_path)
+        self._sim_executor_snapshot = dict(sim_executor_registry._SIM_EXECUTORS)
+        self.addCleanup(self._restore_sim_executors)
         self.calls: list[str] = []
         self.risk_portfolios: list[dict[str, object]] = []
         self.review_requests: list[dict[str, object]] = []
         self.executed_orders: list[dict[str, object]] = []
+
+    def _restore_sim_executors(self) -> None:
+        sim_executor_registry._SIM_EXECUTORS.clear()
+        sim_executor_registry._SIM_EXECUTORS.update(self._sim_executor_snapshot)
 
     def _deps(self) -> OrchestratorDeps:
         def score_stock(market: str, symbol: str, data_reader: object = None, date: str | None = None) -> dict[str, object]:
@@ -289,7 +295,6 @@ class SimLoopTest(unittest.TestCase):
 
     def test_run_sim_loop_with_real_ashare_sim_broker_queues_pending(self) -> None:
         from Ashare.sim_executor import ashare_sim_execute
-        from shared.execution import sim_executor_registry
 
         sim_executor_registry.register_sim_executor("unit", ashare_sim_execute)
 

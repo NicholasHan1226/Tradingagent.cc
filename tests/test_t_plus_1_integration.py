@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -26,15 +27,20 @@ class TPlusOneIntegrationTest(unittest.TestCase):
 
         ledger_dir = self.root / "logs"
         position_csv = ledger_dir / "position_ledger.csv"
-        position_ledger.LEDGER_DIR = ledger_dir
-        position_ledger.POSITION_CSV = position_csv
-        position_ledger.POSITION_LOCK = position_csv.with_suffix(".csv.lock")
+        self._patch_module_attr(position_ledger, "LEDGER_DIR", ledger_dir)
+        self._patch_module_attr(position_ledger, "POSITION_CSV", position_csv)
+        self._patch_module_attr(position_ledger, "POSITION_LOCK", position_csv.with_suffix(".csv.lock"))
 
-        execution_router.ROUTER_LOG = self.root / "router_decisions.jsonl"
-        execution_router.SHADOW_EXECUTION_LOG = self.root / "simulated_execution_log.jsonl"
+        self._patch_module_attr(execution_router, "ROUTER_LOG", self.root / "router_decisions.jsonl")
+        self._patch_module_attr(execution_router, "SHADOW_EXECUTION_LOG", self.root / "simulated_execution_log.jsonl")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def _patch_module_attr(self, module: object, name: str, value: Path) -> None:
+        patcher = patch.object(module, name, value)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _route_shadow(self, **overrides: object) -> dict[str, object]:
         order = {
