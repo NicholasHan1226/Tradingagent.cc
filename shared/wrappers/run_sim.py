@@ -38,6 +38,7 @@ config = getattr(cfg_mod, cfg["cfg_cls"])()
 simulator = getattr(sim_mod, cfg["sim_cls"])(config=config)
 
 from shared.markets.style_runner import StyleRunner
+from shared.markets.market_rules import commission, is_trading_session, max_position_pct
 from datetime import date
 
 runner = StyleRunner(market, simulator)
