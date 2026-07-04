@@ -17,6 +17,8 @@ build/
 data/
 !/shared/data/
 !/shared/data/**
+!/front/src/data/
+!/front/src/data/**
 logs/
 
 # Environment
