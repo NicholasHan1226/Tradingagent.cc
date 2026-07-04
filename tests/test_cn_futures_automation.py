@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sqlite3
 import sys
 import tempfile
@@ -228,6 +229,22 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     os.environ.pop("SHARED_SIGNALS_DB", None)
                 else:
                     os.environ["SHARED_SIGNALS_DB"] = old_db
+
+    def test_run_simulation_script_can_be_executed_directly(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "CNFutures" / "run_simulation.py"),
+                "--help",
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--max-intraday-bar-age-minutes", result.stdout)
 
     def test_adapter_prefers_contracts_with_available_daily_bars(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter

@@ -10,8 +10,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .adapter import CNFuturesAdapter
-from .sim_runner import DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES, run_multi_style_simulation
+if __package__ in (None, ""):
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from CNFutures.adapter import CNFuturesAdapter
+    from CNFutures.sim_runner import DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES, run_multi_style_simulation
+else:
+    from .adapter import CNFuturesAdapter
+    from .sim_runner import DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES, run_multi_style_simulation
 
 
 ROOT = Path(__file__).resolve().parents[1]
