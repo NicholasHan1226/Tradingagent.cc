@@ -3,5 +3,6 @@
   "description": "Daily trend-following futures simulation lane",
   "signal_threshold": 0.01,
   "risk_per_trade": 0.03,
-  "max_margin_usage": 0.30
+  "max_margin_usage": 0.30,
+  "products": ["rb", "cu", "i", "m"]
 }

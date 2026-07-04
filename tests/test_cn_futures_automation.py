@@ -77,6 +77,44 @@ class FakeFuturesReader:
         return rows.get(symbol, [])
 
 
+class FakeMixedFuturesReader(FakeFuturesReader):
+    def get_assets(self, market: str) -> list[dict[str, object]]:
+        if market != "Futures":
+            return []
+        return [
+            {"symbol": "IF2601.CFFEX", "name": "沪深300股指2601", "exchange": "CFFEX", "status": "listed"},
+            {"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"},
+        ]
+
+    def get_bars_intraday(
+        self,
+        market: str,
+        symbol: str,
+        interval: str = "5min",
+        start: object = None,
+        end: object = None,
+    ) -> list[dict[str, object]]:
+        if market != "Futures" or interval != "5min":
+            return []
+        rows = {
+            "IF2601.CFFEX": [
+                {"trade_date": "20260706", "bar_time": "2026-07-06 14:10:00", "close": 3500, "volume": 1000},
+                {"trade_date": "20260706", "bar_time": "2026-07-06 14:15:00", "close": 3502, "volume": 1000},
+                {"trade_date": "20260706", "bar_time": "2026-07-06 14:20:00", "close": 3505, "volume": 1100},
+                {"trade_date": "20260706", "bar_time": "2026-07-06 14:25:00", "close": 3512, "volume": 1400},
+                {"trade_date": "20260706", "bar_time": "2026-07-06 14:30:00", "close": 3520, "volume": 1600},
+            ],
+            "rb2601": [
+                {"trade_date": "20260706", "bar_time": "2026-07-06 14:10:00", "close": 3450, "volume": 1000},
+                {"trade_date": "20260706", "bar_time": "2026-07-06 14:15:00", "close": 3460, "volume": 1100},
+                {"trade_date": "20260706", "bar_time": "2026-07-06 14:20:00", "close": 3470, "volume": 1200},
+                {"trade_date": "20260706", "bar_time": "2026-07-06 14:25:00", "close": 3485, "volume": 1300},
+                {"trade_date": "20260706", "bar_time": "2026-07-06 14:30:00", "close": 3500, "volume": 1500},
+            ],
+        }
+        return rows.get(symbol, [])
+
+
 class CNFuturesAutomationTest(unittest.TestCase):
     def test_adapter_default_reader_uses_tradingagent_data_reader(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -208,6 +246,52 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["filled_count"], 1)
             self.assertEqual({row["style"] for row in result["records"]}, {"trend"})
             self.assertEqual(result["errors"], [])
+
+    def test_index_intraday_directional_style_only_trades_index_products(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = FakeMixedFuturesReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 2, "products": ("if", "rb")},
+                styles={
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.001,
+                        "risk_per_trade": 0.03,
+                        "products": ["rb"],
+                    },
+                    "index_intraday_directional": {
+                        "name": "index_intraday_directional",
+                        "style_family": "index_intraday_directional",
+                        "signal_threshold": 0.001,
+                        "risk_per_trade": 0.01,
+                        "products": ["if", "ih", "ic", "im"],
+                        "momentum_lookback_bars": 3,
+                        "moving_average_bars": 4,
+                        "no_overnight": True,
+                        "flatten_before_session_close_minutes": 10,
+                    },
+                },
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260706",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-06 14:31:00"),
+            )
+
+            pairs = {(row["style"], row["symbol"]) for row in result["records"]}
+            self.assertIn(("index_intraday_directional", "IF2601.CFFEX"), pairs)
+            self.assertIn(("trend", "rb2601"), pairs)
+            self.assertNotIn(("index_intraday_directional", "rb2601"), pairs)
+            self.assertNotIn(("trend", "IF2601.CFFEX"), pairs)
 
     def test_multi_style_runner_blocks_repeated_same_side_exposure(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter

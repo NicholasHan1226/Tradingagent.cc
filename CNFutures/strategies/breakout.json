@@ -3,5 +3,6 @@
   "description": "Volume-confirmed breakout futures simulation lane",
   "signal_threshold": 0.015,
   "risk_per_trade": 0.02,
-  "max_margin_usage": 0.20
+  "max_margin_usage": 0.20,
+  "products": ["rb", "cu", "i", "m"]
 }

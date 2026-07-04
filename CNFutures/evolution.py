@@ -183,6 +183,7 @@ def _tweak_style(base: dict[str, Any], name: str) -> dict[str, Any]:
     signal_threshold = _safe_float(base.get("signal_threshold"), 0.01)
     risk_per_trade = _safe_float(base.get("risk_per_trade"), 0.02)
     max_margin_usage = _safe_float(base.get("max_margin_usage"), 0.20)
+    family = str(base.get("style_family") or "").strip().lower()
     variant.update({
         "name": name,
         "description": f"Auto-generated simulated CNFutures variant from {base.get('name')}.",
@@ -200,6 +201,18 @@ def _tweak_style(base: dict[str, Any], name: str) -> dict[str, Any]:
         "risk_per_trade": round(min(0.05, max(0.003, risk_per_trade * 0.85)), 6),
         "max_margin_usage": round(min(0.50, max(0.05, max_margin_usage * 0.90)), 6),
     })
+    if family == "index_intraday_directional":
+        variant["signal_threshold"] = round(min(0.02, max(0.001, signal_threshold * 0.90)), 6)
+        variant["risk_per_trade"] = round(min(0.03, max(0.002, risk_per_trade * 0.85)), 6)
+        variant["max_margin_usage"] = round(min(0.20, max(0.03, max_margin_usage * 0.90)), 6)
+        variant["momentum_lookback_bars"] = max(2, _safe_int(base.get("momentum_lookback_bars"), 3) + 1)
+        variant["moving_average_bars"] = max(
+            variant["momentum_lookback_bars"] + 1,
+            _safe_int(base.get("moving_average_bars"), 6) + 1,
+        )
+        variant["prediction_horizon_bars"] = max(1, _safe_int(base.get("prediction_horizon_bars"), 3))
+        variant["no_overnight"] = True
+        variant["flatten_before_session_close_minutes"] = max(5, _safe_int(base.get("flatten_before_session_close_minutes"), 10))
     return variant
 
 

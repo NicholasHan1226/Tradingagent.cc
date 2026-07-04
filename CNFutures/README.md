@@ -22,6 +22,20 @@ MarketGraph 可以读取同一份 SharedSignals 数据做商品、宏观和跨�
 - Each style runs as an isolated simulated lane, for example trend, breakout, and mean reversion.
 - CTP/SimNow real trading is documentation and interface reserve only. Runtime defaults must stay fail-closed with `real_trading_enabled=false`.
 
+## Styles
+
+Checked-in styles live under `CNFutures/strategies/`:
+
+- `trend`, `breakout`, and `mean_reversion` are commodity-futures simulation lanes for `rb/cu/i/m`.
+- `index_intraday_directional` is an intraday long/short direction lane for stock-index futures `IF/IH/IC/IM`.
+
+`index_intraday_directional` uses 5-minute bars to estimate short-horizon
+direction from multi-bar momentum, moving-average distance, and volume
+confirmation. It can emit simulated `buy`, `sell`, or `hold`, and it stops
+opening new signals near the day-session close so the lane remains flat-only
+overnight. This style is for simulated validation of index-direction timing; it
+does not enable real CFFEX trading.
+
 ## Automation Entry
 
 Run one simulation cycle:
@@ -107,6 +121,11 @@ or blocked styles can be paused and improving styles can receive more simulated
 risk. This remains a simulation lane: outputs include
 `real_trading_enabled=false`, do not touch CTP/SimNow, and do not promote any
 style to real trading.
+
+When `index_intraday_directional` performs well, generated variants keep the
+same style family, `IF/IH/IC/IM` product scope, and `no_overnight=true`. The
+evolution layer can tune thresholds, lookback windows, and simulated risk
+weights, but it cannot turn this lane into a real-trading strategy.
 
 Production cron runs the governor every 30 minutes during CN futures day and
 night sessions. This slower cadence is intentional: 5-minute simulation keeps

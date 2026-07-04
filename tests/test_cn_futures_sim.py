@@ -32,12 +32,56 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(rule.exchange, "SHFE")
         self.assertEqual(suffixed_rule.product, "rb")
         self.assertEqual(normalize_product("I2509.DCE"), "i")
+        self.assertEqual(normalize_product("IF2601.CFFEX"), "if")
         self.assertEqual(rule.contract_multiplier, 10)
         self.assertEqual(cost.notional, 70000.0)
         self.assertEqual(cost.margin_required, 9100.0)
         self.assertEqual(cost.open_fee, 7.0)
         self.assertEqual(cost.estimated_close_fee, 7.0)
         self.assertEqual(cost.total_estimated_fee, 14.0)
+        index_rule = get_contract_rule("IF2601.CFFEX")
+        self.assertEqual(index_rule.exchange, "CFFEX")
+        self.assertEqual(index_rule.contract_multiplier, 300)
+        self.assertFalse(index_rule.night_session)
+
+    def test_index_intraday_directional_signal_buys_sells_and_respects_close_guard(self) -> None:
+        from CNFutures.signal_engine import generate_style_signal
+
+        style = {
+            "name": "index_intraday_directional",
+            "style_family": "index_intraday_directional",
+            "signal_threshold": 0.001,
+            "momentum_lookback_bars": 3,
+            "moving_average_bars": 4,
+            "prediction_horizon_bars": 3,
+            "no_overnight": True,
+            "flatten_before_session_close_minutes": 10,
+        }
+        up_bars = [
+            {"bar_time": "2026-07-06 14:10:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3502, "volume": 1000},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3505, "volume": 1100},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3512, "volume": 1400},
+            {"bar_time": "2026-07-06 14:30:00", "close": 3520, "volume": 1600},
+        ]
+        down_bars = [
+            {"bar_time": "2026-07-06 14:10:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3498, "volume": 1000},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3490, "volume": 1100},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3482, "volume": 1400},
+            {"bar_time": "2026-07-06 14:30:00", "close": 3475, "volume": 1600},
+        ]
+        close_guard_bars = [*up_bars[:-1], {"bar_time": "2026-07-06 14:55:00", "close": 3520, "volume": 1600}]
+
+        buy = generate_style_signal("IF2601.CFFEX", up_bars, style)
+        sell = generate_style_signal("IF2601.CFFEX", down_bars, style)
+        guarded = generate_style_signal("IF2601.CFFEX", close_guard_bars, style)
+
+        self.assertEqual(buy["action"], "buy")
+        self.assertEqual(buy["style_family"], "index_intraday_directional")
+        self.assertEqual(sell["action"], "sell")
+        self.assertEqual(guarded["action"], "hold")
+        self.assertEqual(guarded["reason"], "session_close_guard")
 
     def test_sim_executor_registers_cn_futures_as_simulated_only(self) -> None:
         import CNFutures.sim_executor  # noqa: F401

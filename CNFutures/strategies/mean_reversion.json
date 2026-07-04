@@ -4,5 +4,6 @@
   "signal_threshold": 0.012,
   "risk_per_trade": 0.01,
   "max_margin_usage": 0.10,
-  "contrarian": true
+  "contrarian": true,
+  "products": ["rb", "cu", "i", "m"]
 }

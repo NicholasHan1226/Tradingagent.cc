@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, time
 from typing import Any
 
 
@@ -33,12 +34,117 @@ def _volume_ratio(rows: list[dict[str, Any]]) -> float:
     return latest / (sum(history) / len(history))
 
 
+def _moving_average(rows: list[dict[str, Any]], window: int) -> float:
+    closes = [_safe_float(row.get("close"), 0.0) for row in rows[-max(1, window):]]
+    closes = [close for close in closes if close > 0]
+    return sum(closes) / len(closes) if closes else 0.0
+
+
+def _bar_time(row: dict[str, Any]) -> datetime | None:
+    raw = str(row.get("bar_time") or row.get("time") or row.get("trade_time") or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace(" ", "T", 1))
+    except ValueError:
+        return None
+
+
+def _minutes_to_day_close(row: dict[str, Any]) -> int | None:
+    parsed = _bar_time(row)
+    if parsed is None:
+        return None
+    close_dt = datetime.combine(parsed.date(), time(15, 0))
+    return int((close_dt - parsed).total_seconds() // 60)
+
+
+def _index_intraday_directional_signal(
+    symbol: str,
+    bars: list[dict[str, Any]],
+    style: dict[str, Any],
+) -> dict[str, Any]:
+    style_name = str(style.get("name") or "index_intraday_directional")
+    lookback = max(2, int(_safe_float(style.get("momentum_lookback_bars"), 3)))
+    ma_window = max(lookback + 1, int(_safe_float(style.get("moving_average_bars"), 6)))
+    threshold = abs(_safe_float(style.get("signal_threshold"), 0.0025))
+    close_guard = int(_safe_float(style.get("flatten_before_session_close_minutes"), 10))
+    if len(bars) <= max(lookback, ma_window):
+        return {"symbol": symbol, "style": style_name, "action": "hold", "reason": "insufficient_intraday_bars", "confidence": 0.0}
+
+    if bool(style.get("no_overnight", True)):
+        minutes_left = _minutes_to_day_close(bars[-1])
+        if minutes_left is not None and minutes_left <= close_guard:
+            return {
+                "symbol": symbol,
+                "style": style_name,
+                "action": "hold",
+                "reason": "session_close_guard",
+                "minutes_to_close": minutes_left,
+                "confidence": 0.0,
+            }
+
+    latest = _latest_close(bars)
+    previous = _safe_float(bars[-1 - lookback].get("close"), 0.0)
+    average = _moving_average(bars, ma_window)
+    if latest <= 0 or previous <= 0 or average <= 0:
+        return {"symbol": symbol, "style": style_name, "action": "hold", "reason": "invalid_price", "confidence": 0.0}
+
+    momentum = (latest / previous) - 1.0
+    ma_distance = (latest / average) - 1.0
+    volume_ratio = _volume_ratio(bars)
+    directional_score = (momentum * 0.70) + (ma_distance * 0.30)
+    action = "hold"
+    if directional_score >= threshold and momentum > 0:
+        action = "buy"
+    elif directional_score <= -threshold and momentum < 0:
+        action = "sell"
+
+    if action == "hold":
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "momentum": momentum,
+            "ma_distance": ma_distance,
+            "directional_score": directional_score,
+            "volume_ratio": volume_ratio,
+            "confidence": 0.0,
+            "reason": "direction_score_below_threshold",
+        }
+
+    confidence = min(0.95, max(0.10, abs(directional_score) / max(threshold, 0.0001) * 0.30))
+    if volume_ratio >= 1.15:
+        confidence = min(0.98, confidence + 0.08)
+    return {
+        "symbol": symbol,
+        "style": style_name,
+        "style_family": "index_intraday_directional",
+        "action": action,
+        "side": action,
+        "price": latest,
+        "momentum": momentum,
+        "ma_distance": ma_distance,
+        "directional_score": directional_score,
+        "volume_ratio": volume_ratio,
+        "confidence": confidence,
+        "reason": "index_intraday_direction_confirmed",
+        "prediction_horizon_bars": int(_safe_float(style.get("prediction_horizon_bars"), 3)),
+        "no_overnight": bool(style.get("no_overnight", True)),
+        "capital_layer": "simulated",
+        "account_type": "simulated",
+    }
+
+
 def generate_style_signal(
     symbol: str,
     bars: list[dict[str, Any]],
     style: dict[str, Any],
 ) -> dict[str, Any]:
     """Generate one simulation signal for a style, or return hold."""
+
+    if str(style.get("style_family") or "").strip().lower() == "index_intraday_directional":
+        return _index_intraday_directional_signal(symbol, bars, style)
 
     if len(bars) < 2:
         return {"symbol": symbol, "action": "hold", "reason": "insufficient_bars", "confidence": 0.0}

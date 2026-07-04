@@ -12,7 +12,7 @@ from shared.execution.sim_broker import execute_sim_order
 
 from . import MARKET
 from .adapter import CNFuturesAdapter, READER_MARKET
-from .contract_rules import get_contract_rule
+from .contract_rules import get_contract_rule, normalize_product
 from .margin_model import estimate_order_cost
 from .review import append_review
 from .signal_engine import generate_style_signal
@@ -47,6 +47,23 @@ def _style_is_active(style: dict[str, Any]) -> bool:
     if status in {"paused", "deprecated"}:
         return False
     return bool(style.get("enabled", True))
+
+
+def _style_allows_symbol(style: dict[str, Any], symbol: str) -> bool:
+    raw_products = style.get("products") or style.get("target_products")
+    if not raw_products:
+        return True
+    allowed = {
+        str(item).strip().lower()
+        for item in raw_products
+        if str(item).strip()
+    }
+    if not allowed:
+        return True
+    try:
+        return normalize_product(symbol) in allowed
+    except ValueError:
+        return False
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -313,6 +330,8 @@ def run_multi_style_simulation(
         if not _style_is_active(style):
             continue
         for symbol in universe:
+            if not _style_allows_symbol(style, symbol):
+                continue
             bars, bar_cadence, latest_bar_time = _bars_for_cadence(reader, symbol, date, cadence_value)
             if not bars:
                 errors.append({

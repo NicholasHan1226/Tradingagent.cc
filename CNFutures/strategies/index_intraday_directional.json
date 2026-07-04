@@ -1,0 +1,14 @@
+{
+  "name": "index_intraday_directional",
+  "description": "Intraday long/short direction model for China stock index futures; flat-only overnight.",
+  "style_family": "index_intraday_directional",
+  "signal_threshold": 0.0025,
+  "risk_per_trade": 0.01,
+  "max_margin_usage": 0.08,
+  "products": ["if", "ih", "ic", "im"],
+  "momentum_lookback_bars": 3,
+  "moving_average_bars": 6,
+  "prediction_horizon_bars": 3,
+  "no_overnight": true,
+  "flatten_before_session_close_minutes": 10
+}

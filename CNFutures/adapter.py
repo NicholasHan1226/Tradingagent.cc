@@ -28,7 +28,7 @@ DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "active_only": True,
     "max_symbols": 30,
-    "products": ("rb", "cu", "i", "m"),
+    "products": ("rb", "cu", "i", "m", "if", "ih", "ic", "im"),
 }
 
 DEFAULT_STYLES: dict[str, dict[str, Any]] = {
@@ -38,6 +38,7 @@ DEFAULT_STYLES: dict[str, dict[str, Any]] = {
         "signal_threshold": 0.01,
         "risk_per_trade": 0.03,
         "max_margin_usage": 0.30,
+        "products": ("rb", "cu", "i", "m"),
     },
     "breakout": {
         "name": "breakout",
@@ -45,6 +46,7 @@ DEFAULT_STYLES: dict[str, dict[str, Any]] = {
         "signal_threshold": 0.015,
         "risk_per_trade": 0.02,
         "max_margin_usage": 0.20,
+        "products": ("rb", "cu", "i", "m"),
     },
     "mean_reversion": {
         "name": "mean_reversion",
@@ -53,6 +55,21 @@ DEFAULT_STYLES: dict[str, dict[str, Any]] = {
         "risk_per_trade": 0.01,
         "max_margin_usage": 0.10,
         "contrarian": True,
+        "products": ("rb", "cu", "i", "m"),
+    },
+    "index_intraday_directional": {
+        "name": "index_intraday_directional",
+        "description": "Intraday long/short direction model for China stock index futures; flat-only overnight.",
+        "style_family": "index_intraday_directional",
+        "signal_threshold": 0.0025,
+        "risk_per_trade": 0.01,
+        "max_margin_usage": 0.08,
+        "products": ("if", "ih", "ic", "im"),
+        "momentum_lookback_bars": 3,
+        "moving_average_bars": 6,
+        "prediction_horizon_bars": 3,
+        "no_overnight": True,
+        "flatten_before_session_close_minutes": 10,
     },
 }
 

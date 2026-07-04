@@ -106,6 +106,41 @@ class CNFuturesEvolutionTest(unittest.TestCase):
             self.assertFalse(result["weights"]["trend"]["enabled"])
             self.assertEqual(result["weights"]["trend"]["evolution_action"], "pause")
 
+    def test_index_intraday_directional_variant_preserves_style_framework(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            styles_dir = root / "strategies"
+            review_root = root / "review"
+            self._write_style(
+                styles_dir,
+                "index_intraday_directional",
+                {
+                    "style_family": "index_intraday_directional",
+                    "products": ["if", "ih", "ic", "im"],
+                    "signal_threshold": 0.0025,
+                    "risk_per_trade": 0.01,
+                    "max_margin_usage": 0.08,
+                    "momentum_lookback_bars": 3,
+                    "moving_average_bars": 6,
+                    "prediction_horizon_bars": 3,
+                    "no_overnight": True,
+                    "flatten_before_session_close_minutes": 10,
+                },
+            )
+            save_run("index_intraday_directional", "cn_futures", {"date": "20260703", "pnl": 2.0, "win_rate": 0.7, "max_dd": 0.01, "sharpe": 1.5, "trades": 2}, review_root=review_root)
+            save_run("index_intraday_directional", "cn_futures", {"date": "20260704", "pnl": 3.0, "win_rate": 0.8, "max_dd": 0.01, "sharpe": 2.0, "trades": 3}, review_root=review_root)
+
+            result = evaluate_styles(strategy_dir=styles_dir, review_root=review_root, min_trades=1)
+
+            self.assertEqual(result["state"], "adjusted")
+            generated = sorted((review_root / "cn_futures/generated_styles").glob("index_intraday_directional_g2_*.json"))
+            self.assertEqual(len(generated), 1)
+            variant = json.loads(generated[0].read_text(encoding="utf-8"))
+            self.assertEqual(variant["style_family"], "index_intraday_directional")
+            self.assertEqual(variant["products"], ["if", "ih", "ic", "im"])
+            self.assertTrue(variant["no_overnight"])
+            self.assertFalse(variant["real_trading_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()
