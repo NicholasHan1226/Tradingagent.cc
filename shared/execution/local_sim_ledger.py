@@ -22,6 +22,17 @@ LOCAL_SIM_LOCK = LOCAL_SIM_DIR / ".local_sim.lock"
 DEFAULT_ACCOUNT = "ashare_server_sim"
 
 
+def _bj_today() -> date:
+    """Return today's date in Beijing time (UTC+8)."""
+    from datetime import timedelta as _td
+    try:
+        import zoneinfo
+        tz = zoneinfo.ZoneInfo("Asia/Shanghai")
+    except Exception:
+        tz = timezone(_td(hours=8))
+    return datetime.now(tz).date()
+
+
 @dataclass
 class LocalSimTrade:
     trade_id: str = field(default_factory=lambda: f"LSIM-{uuid.uuid4().hex[:12]}")
@@ -29,7 +40,7 @@ class LocalSimTrade:
     idempotency_key: str = ""
     market: str = "ashare"
     account: str = DEFAULT_ACCOUNT
-    trade_date: str = field(default_factory=lambda: date.today().isoformat())
+    trade_date: str = field(default_factory=lambda: _bj_today().isoformat())
     ts_code: str = ""
     side: str = ""
     quantity: int = 0

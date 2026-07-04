@@ -23,7 +23,21 @@ def now_iso() -> str:
 
 
 def trade_date() -> str:
-    return datetime.now().strftime("%Y%m%d")
+    """Return current trading date in Beijing time (UTC+8).
+
+    At early morning hours (00:00-08:00 BJT), the trading date is still the
+    previous calendar day because markets have not opened yet.
+    """
+    import zoneinfo
+    try:
+        bj_tz = zoneinfo.ZoneInfo("Asia/Shanghai")
+    except Exception:
+        bj_tz = timezone(timedelta(hours=8))
+    now_bj = datetime.now(bj_tz)
+    # Before 08:00 BJT, use previous day as trade_date
+    if now_bj.hour < 8:
+        now_bj = now_bj - timedelta(days=1)
+    return now_bj.strftime("%Y%m%d")
 
 
 def ensure_parent(path: Path) -> None:

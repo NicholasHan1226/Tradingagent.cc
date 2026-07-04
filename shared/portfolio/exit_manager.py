@@ -140,7 +140,12 @@ def _as_of_date(raw_position: Position | Mapping[str, Any]) -> date:
         parsed = _date_part(_position_value(raw_position, key))
         if parsed is not None:
             return parsed
-    return date.today()
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    try:
+        import zoneinfo; tz = zoneinfo.ZoneInfo("Asia/Shanghai")
+    except Exception:
+        tz = _tz(_td(hours=8))
+    return _dt.now(tz).date()
 
 
 def _fallback_next_trading_day(open_day: date) -> date:

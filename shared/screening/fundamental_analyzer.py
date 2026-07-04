@@ -58,7 +58,7 @@ def _years_ago(as_of: str, years: int) -> str:
         dt = datetime.strptime(_date_key(as_of), "%Y%m%d")
     except ValueError:
         dt = datetime.now()
-    return (dt - timedelta(days=365 * years + 7)).strftime("%Y%m%d")
+    return (dt - timedelta(days=365 * years + 14)).strftime("%Y%m%d")
 
 
 def _unwrap_rows(rows: Any) -> list[dict[str, Any]]:

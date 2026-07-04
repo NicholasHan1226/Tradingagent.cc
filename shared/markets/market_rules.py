@@ -48,13 +48,35 @@ def slippage_estimate(market: str, volatility_pct: float) -> float:
     return base.get(market, 3.0) * (1 + volatility_pct / 100)
 
 def is_trading_session(market: str) -> bool:
-    """Check if market is currently open."""
+    """Check if market is currently open (Beijing-time aware)."""
     r = RULES.get(market)
-    if not r: return False
-    if "24x7" in r.trading_hours: return True
-    now = datetime.now()
+    if not r:
+        return False
+    if "24x7" in r.trading_hours:
+        return True
+    import zoneinfo
+    try:
+        bj_tz = zoneinfo.ZoneInfo("Asia/Shanghai")
+    except Exception:
+        from datetime import timezone as _tz, timedelta as _td
+        bj_tz = _tz(_td(hours=8))
+    now = datetime.now(bj_tz)
     hour = now.hour
-    return 9 <= hour <= 15 and now.weekday() < 5
+    wday = now.weekday()
+    # Market-specific session windows (Beijing time)
+    _MARKET_HOURS = {
+        "ashare": (9, 15),     # 09:00-15:00
+        "hk": (9, 16),          # 09:00-16:00
+        "us": None,             # 21:30-04:00 next day (complex, approximate)
+        "crypto": None,         # 24x7
+        "pm": None,             # 24x7
+    }
+    window = _MARKET_HOURS.get(market)
+    if window is None:
+        # For markets with complex hours, assume always potentially active
+        return wday < 5 if market == "us" else True
+    start_h, end_h = window
+    return start_h <= hour <= end_h and wday < 5
 
 def max_position_pct(market: str) -> float:
     """Single position max as percentage of portfolio."""

@@ -123,9 +123,15 @@ def _compute_sellable_quantity(
     if entry_day is None:
         return 0
 
-    current_day = _parse_date(as_of) if as_of is not None else date.today()
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    try:
+        import zoneinfo; _bj = zoneinfo.ZoneInfo("Asia/Shanghai")
+    except Exception:
+        _bj = _tz(_td(hours=8))
+    _today = _dt.now(_bj).date()
+    current_day = _parse_date(as_of) if as_of is not None else _today
     if current_day is None:
-        current_day = date.today()
+        current_day = _today
 
     return quantity if _can_sell(entry_day, current_day) else 0
 

@@ -156,7 +156,12 @@ def _order_trade_date(order: dict[str, Any]) -> date:
         parsed = _parse_date(order.get(key))
         if parsed is not None:
             return parsed
-    return date.today()
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    try:
+        import zoneinfo; bj = zoneinfo.ZoneInfo("Asia/Shanghai")
+    except Exception:
+        bj = _tz(_td(hours=8))
+    return _dt.now(bj).date()
 
 
 def _is_sell_order(order: dict[str, Any]) -> bool:
