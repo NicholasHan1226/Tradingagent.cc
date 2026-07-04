@@ -15,6 +15,7 @@ score_universe(date) → list of (ts_code, scores)
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ _WEIGHTS_PATH = Path(__file__).resolve().parent / "weights.yaml"
 from shared.data.reader import TradingagentDataReader
 
 _DATA_READER: TradingagentDataReader | None = None
+logger = logging.getLogger(__name__)
 
 
 def _load_weights() -> dict[str, Any]:
@@ -122,7 +124,7 @@ def _direction_score(impact_hint: Any) -> float:
     return {"positive": 1.0, "negative": 0.0, "mixed": 0.5, "neutral": 0.5}.get(direction, 0.5)
 
 
-def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float:
+def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
     """宏观维度 — 从 MarketGraph all_weather_regime.csv 获取当前 regime。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("macro", {})
@@ -138,11 +140,12 @@ def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float:
         regime_score = _safe_float(score_value, 0.5)
         confidence = _clamp(_safe_float(row.get("regime_confidence"), 0.0))
         return _clamp(0.5 + (regime_score - 0.5) * confidence)
-    except Exception:
-        return 0.5
+    except Exception as exc:
+        logger.error("macro scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        return None
 
 
-def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float:
+def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
     """事件维度 — 从 MarketGraph event_candidates.csv 聚合个股事件方向。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("event", {})
@@ -190,11 +193,12 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float:
         if total_weight <= 1e-9:
             return 0.5
         return _clamp(weighted / total_weight)
-    except Exception:
-        return 0.5
+    except Exception as exc:
+        logger.error("event scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        return None
 
 
-def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float:
+def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
     """基本面维度 — 从 market_factors 读取最新因子值。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("fundamental", {})
@@ -228,11 +232,12 @@ def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float
         if total_w <= 1e-9:
             return 0.5
         return _clamp(weighted / total_w)
-    except Exception:
-        return 0.5
+    except Exception as exc:
+        logger.error("fundamental scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        return None
 
 
-def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float:
+def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
     """资金维度 — 从 SharedSignals factor rows 读取窗口内主力净流入。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("capital", {})
@@ -272,11 +277,12 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float:
         else:
             score = 0.4 + _clamp(total_net / 1e5, -0.4, 0.2)
         return _clamp(score)
-    except Exception:
-        return 0.5
+    except Exception as exc:
+        logger.error("capital scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        return None
 
 
-def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float:
+def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
     """技术维度 — 从 market_bars_daily 读取日线并计算动量和均线趋势。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("technical", {})
@@ -307,11 +313,12 @@ def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float:
         ma_l = sum(closes[-ma_long:]) / ma_long
         trend_bonus = 0.1 if ma_s > ma_l else -0.1
         return _clamp(0.5 + _clamp(momentum / 0.20, -0.5, 0.5) + trend_bonus)
-    except Exception:
-        return 0.5
+    except Exception as exc:
+        logger.error("technical scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        return None
 
 
-def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float:
+def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
     """情绪维度 — 从 MarketGraph sentiment_signals.csv 聚合个股情绪信号。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("sentiment", {})
@@ -337,8 +344,9 @@ def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float:
         if raw > extreme_threshold:
             return _clamp(0.5 - (raw - extreme_threshold) * 2.0)
         return raw
-    except Exception:
-        return 0.5
+    except Exception as exc:
+        logger.error("sentiment scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        return None
 
 
 _DIMENSION_FUNCS = {
@@ -428,8 +436,10 @@ def score_stock(
     scores: dict[str, float] = {}
     for dim, func in _DIMENSION_FUNCS.items():
         try:
-            scores[dim] = _clamp(func(ts_code, date, config))
-        except Exception:
+            score = func(ts_code, date, config)
+            scores[dim] = missing_default if score is None else _clamp(score)
+        except Exception as exc:
+            logger.error("%s scoring raised unexpectedly for %s on %s: %s", dim, ts_code, date, exc, exc_info=True)
             scores[dim] = missing_default
 
     # 加权综合

@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (旧层退役，多风格 sim 接管)
+> 最后更新：2026-07-04 (六维打分异常处理修复)
 
 ---
 
@@ -43,6 +43,12 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-04 六维打分异常处理修复
+
+- [x] `shared/screening/six_dimension_scorer.py` 的 6 个 `_score_*` 维度函数已改为：数据缺失仍返回中性缺省，真实异常记录 `logger.error(..., exc_info=True)` 并返回 `None`。
+- [x] `score_stock()` 统一处理 `None` 为 `combined.missing_default`，避免维度函数把异常静默伪装成有效 0.5 分。
+- [x] 验证：`py_compile shared/screening/six_dimension_scorer.py` 通过；本地 smoke 确认异常维度返回 `None`，外层按缺失数据回退。
 
 ### 2026-07-04 shadow broker + evolution guard/cron 修复
 
