@@ -19,7 +19,7 @@ describe('TradingAgent capability map', () => {
     expect(execution).toMatchObject({
       display: '实盘接入准备',
       status: 'gated',
-      dashboardSurface: '实盘预留入口',
+      dashboardSurface: '实盘入口',
     })
   })
 })

@@ -18,7 +18,7 @@
 
 ## 生产路径建议
 
-- 源码目录：`/opt/investment/TradingAgent/front`
+- 源码目录：`/opt/investment/tradingagent/front`
 - 前端构建输出：`front/dist`
 - 只读 API 构建输出：`front/dist-server`
 - API 内部监听：`127.0.0.1:8787`

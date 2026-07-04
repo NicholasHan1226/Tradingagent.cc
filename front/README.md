@@ -54,7 +54,7 @@ TradingAgent signals / positions / review / risk
 
 可以读取：
 
-- `../signals/{pending,filled,cancelled,expired,failed,partial}/*.json`
+- `../signals/{pending,claimed,running,filled,cancelled,expired,failed,partial}/*.json`
 - `../signals/positions/*.json`
 - `../shared/accounting/position_plan.jsonl`
 - `../shared/review/daily/daily_brief.jsonl`
@@ -67,7 +67,7 @@ TradingAgent signals / positions / review / risk
 - claim / cancel / expire / fill 任何 signal。
 - 调用执行器、下单路由、邮件发送、webhook、账户回调。
 - 读取或暴露账号凭据、2FA、私钥、资金权限。
-- 把模拟盘、影子盘、实盘混成一个收益数字。
+- 把不同账户层的收益混成一个数字。
 
 ## 生产形态
 
@@ -81,13 +81,13 @@ TradingAgent signals / positions / review / risk
 
   Node snapshot API
     bind 127.0.0.1:8787
-    read /opt/investment/TradingAgent
+    read /opt/investment/tradingagent
 ```
 
 推荐生产源码路径：
 
 ```text
-/opt/investment/TradingAgent/front
+/opt/investment/tradingagent/front
 ```
 
 前端默认使用同源接口：
@@ -127,5 +127,5 @@ npm run build:api
 - 持仓真实读模型还不完整，当前可能显示为空或 fallback。
 - 收益曲线仍需要后端输出更稳定的日内/日级收益序列。
 - 机会漏斗需要后端补充每个机会的阶段变化时间线，才能做到更真实的动态流动。
+- 逐笔成交、午盘复盘、策略归因和风险限额文件已列为可用来源，但仍需补充到 snapshot 构建。
 - 实盘只保留未来接入口；未验证账户授权前，前端不得展示为已接入。
-

@@ -1,17 +1,13 @@
 import { Bell, Settings } from 'lucide-react'
 import { pages } from '../data/dashboard'
-import type { AccountMode, Page } from '../types/dashboard'
+import type { Page } from '../types/dashboard'
 
 export function TopNav({
   activePage,
   setActivePage,
 }: {
-  accountMode: AccountMode
   activePage: Page
-  onDismissLiveGate: () => void
-  selectAccountMode: (mode: AccountMode) => void
   setActivePage: (page: Page) => void
-  showLiveGate: boolean
 }) {
   return (
     <header className="top-nav">
@@ -28,7 +24,7 @@ export function TopNav({
         ))}
       </nav>
       <div className="top-actions">
-        <span className="top-status"><i />模拟盘在线</span>
+        <span className="top-status"><i />模拟盘运行中</span>
         <button className="icon-button" type="button" aria-label="提醒"><Bell size={16} /></button>
         <button className="icon-button" type="button" aria-label="设置"><Settings size={16} /></button>
       </div>

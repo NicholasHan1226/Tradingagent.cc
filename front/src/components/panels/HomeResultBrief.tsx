@@ -1,42 +1,54 @@
-import type { Page } from '../../types/dashboard'
+import { getActionableSignals, getClosedSignals } from '../../lib/dashboard'
+import type { Page, SignalRow } from '../../types/dashboard'
 import { PanelTitle } from '../PanelTitle'
 import { SummaryRow } from '../SummaryRow'
 
-export function HomeResultBrief({ setActivePage }: { setActivePage: (page: Page) => void }) {
+export function HomeResultBrief({ setActivePage, signals }: { setActivePage: (page: Page) => void; signals: SignalRow[] }) {
+  const actionable = getActionableSignals(signals)
+  const closed = getClosedSignals(signals)
+  const lead = actionable[0]
+  const review = closed.find((signal) => signal.status === 'missed') ?? closed[0]
+  const protectedSignal = signals.find((signal) => signal.status === 'blocked') ?? actionable[1]
+
   return (
     <section className="panel rail-panel home-result-brief">
-      <PanelTitle action="查看来源" kicker="今日重点" onAction={() => setActivePage('决策')} title="今日操作" />
+      <PanelTitle action="全部机会" kicker="今日重点" onAction={() => setActivePage('机会')} title="现在关注" />
       <div className="home-brief-section brief-result-section">
-        <span className="section-label">现在该看什么</span>
+        <span className="section-label">结果</span>
         <div className="summary-list">
-          <SummaryRow label="主要贡献" value="A股、美股趋势" tone="cyan" />
-          <SummaryRow label="需要复盘" value="入场条件偏严" tone="red" />
-          <SummaryRow label="风险节省" value="$1.24M" tone="cyan" />
-          <SummaryRow label="实盘状态" value="等待接入" />
+          <SummaryRow label="主要来源" value="A股、美股趋势" tone="cyan" />
+          <SummaryRow label="需要回看" value={review?.symbol ?? '暂无'} tone={review?.status === 'missed' ? 'red' : undefined} />
+          <SummaryRow label="已避开风险" value={protectedSignal?.symbol ?? '暂无'} />
         </div>
       </div>
       <div className="home-brief-section brief-action-section">
-        <span className="section-label">优先级</span>
+        <span className="section-label">机会</span>
         <div className="decision-list compact">
-          <button onClick={() => setActivePage('机会')} type="button">
-            <span>优先跟进</span>
-            <strong>腾讯 0700.HK</strong>
-            <em>价格和成交量接近走强</em>
-          </button>
-          <button onClick={() => setActivePage('风险')} type="button">
-            <span>先别追</span>
-            <strong>BTC-USD</strong>
-            <em>波动太大，等风险降下来</em>
-          </button>
-          <button onClick={() => setActivePage('复盘')} type="button">
-            <span>复盘对象</span>
-            <strong>HYPE-PERP</strong>
-            <em>入场条件过严，窗口已过</em>
-          </button>
+          {lead && (
+            <button onClick={() => setActivePage('机会')} type="button">
+              <span>优先跟进</span>
+              <strong>{lead.symbol}</strong>
+              <em>{lead.reason}</em>
+            </button>
+          )}
+          {protectedSignal && (
+            <button onClick={() => setActivePage('风险')} type="button">
+              <span>暂缓跟进</span>
+              <strong>{protectedSignal.symbol}</strong>
+              <em>{protectedSignal.reason}</em>
+            </button>
+          )}
+          {review && (
+            <button onClick={() => setActivePage('复盘')} type="button">
+              <span>复盘信号</span>
+              <strong>{review.symbol}</strong>
+              <em>{review.reason}</em>
+            </button>
+          )}
         </div>
       </div>
       <div className="home-brief-section brief-risk-section">
-        <span className="section-label">风险边界</span>
+        <span className="section-label">边界</span>
         <div className="risk-cards compact">
           <button className="risk-card red" onClick={() => setActivePage('风险')} type="button">
             <span>最大回撤</span>
@@ -44,14 +56,14 @@ export function HomeResultBrief({ setActivePage }: { setActivePage: (page: Page)
             <em>接近 -7% 限制</em>
           </button>
           <button className="risk-card cyan" onClick={() => setActivePage('风险')} type="button">
-            <span>风险保护</span>
+            <span>保护收益</span>
             <strong>$1.24M</strong>
-            <em>避免过度暴露</em>
+            <em>控制敞口</em>
           </button>
         </div>
       </div>
       <button className="primary-action" onClick={() => setActivePage('收益')} type="button">
-        查看收益原因
+        收益归因
       </button>
     </section>
   )

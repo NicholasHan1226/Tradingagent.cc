@@ -53,11 +53,12 @@ export function HomeDashboard({
               pendingCount={signalFunnel.pending.length}
               selectAccountMode={selectAccountMode}
               setActivePage={setActivePage}
+              targetReturn={latestPoint.target}
             />
           </div>
           <div className="chart-section-title">
             <span>收益曲线</span>
-            <strong>金额看结果，曲线看持续性和风险距离</strong>
+            <strong>持续性与风险距离</strong>
           </div>
           <StatusBoundary loading={<ChartSkeleton height={316} />} onRetry={onRetry} status={domainStatus('performance')}>
             <PerformanceChart data={data} events={events} height={316} latestPoint={latestPoint} onSelectEvent={setActivePage} />
@@ -65,14 +66,14 @@ export function HomeDashboard({
           <div className="chart-meta">
             <span>{formatTime(now)} (UTC+8)</span>
             <b>实时</b>
-            <em>机会缺口 {latestPoint.opportunity.toFixed(2)}%</em>
+            <em>机会偏差 {latestPoint.opportunity.toFixed(2)}%</em>
           </div>
         </section>
 
-        <section className="home-drilldown" aria-label="结果下钻">
+        <section className="home-drilldown" aria-label="收益来源">
           <div className="drilldown-header">
-            <span>结果下钻</span>
-            <strong>把收益变化拆到机会、持仓和风险</strong>
+            <span>收益来源</span>
+            <strong>机会 · 持仓 · 风险</strong>
           </div>
           <div className="home-support-grid">
             <OpportunityFocus setActivePage={setActivePage} signals={signals} />
@@ -82,7 +83,7 @@ export function HomeDashboard({
       </section>
 
       <aside className="home-rail">
-        <HomeResultBrief setActivePage={setActivePage} />
+        <HomeResultBrief setActivePage={setActivePage} signals={signals} />
       </aside>
     </div>
   )

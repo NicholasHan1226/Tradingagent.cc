@@ -1,5 +1,5 @@
 import { access, readFile, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
@@ -66,22 +66,24 @@ type PerformanceReviewRow = {
   missed_alpha_pct?: number
 }
 
-const SIGNAL_BUCKETS = ['pending', 'filled', 'expired', 'cancelled', 'failed', 'partial']
+const SIGNAL_BUCKETS = ['pending', 'claimed', 'running', 'filled', 'expired', 'cancelled', 'failed', 'partial']
 const MAX_SIGNALS_PER_BUCKET = 80
 
 export async function readTradingAgentSnapshot({
   workspaceRoot,
-  signalQueueDir = join(workspaceRoot, 'TradingAgent/signals'),
+  signalQueueDir,
   now = new Date(),
 }: SnapshotOptions): Promise<TradingAgentReadModelSnapshot> {
+  const projectRoot = resolveTradingAgentRoot(workspaceRoot)
+  const queueRoot = signalQueueDir ?? join(projectRoot, 'signals')
   const generatedAt = now.toISOString()
-  const positionsPath = join(workspaceRoot, 'TradingAgent/signals/positions')
-  const positionPlanPath = join(workspaceRoot, tradingAgentReadModelSources.capitalPlan)
-  const filledSignalsPath = join(workspaceRoot, 'TradingAgent/signals/filled')
-  const reviewPath = join(workspaceRoot, tradingAgentReadModelSources.review)
+  const positionsPath = join(projectRoot, 'signals/positions')
+  const positionPlanPath = toProjectPath(projectRoot, tradingAgentReadModelSources.capitalPlan)
+  const filledSignalsPath = join(projectRoot, 'signals/filled')
+  const reviewPath = toProjectPath(projectRoot, tradingAgentReadModelSources.review)
   const holdings = await readPositionSnapshots(positionsPath)
   const fallbackHoldings = holdings.length > 0 ? holdings : await readPositionPlan(positionPlanPath)
-  const signals = await readSignalQueue(signalQueueDir)
+  const signals = await readSignalQueue(queueRoot)
   const performance = await readPerformanceSeries(reviewPath)
   const hasOrders = await directoryHasJson(filledSignalsPath)
   const hasPlan = await fileExists(positionPlanPath)
@@ -102,6 +104,14 @@ export async function readTradingAgentSnapshot({
     signals,
     sourceRefs: tradingAgentReadModelSources,
   }
+}
+
+function resolveTradingAgentRoot(workspaceRoot: string) {
+  return basename(workspaceRoot).toLowerCase() === 'tradingagent' ? workspaceRoot : join(workspaceRoot, 'TradingAgent')
+}
+
+function toProjectPath(projectRoot: string, sourceRef: string) {
+  return join(projectRoot, sourceRef.replace(/^TradingAgent\//, ''))
 }
 
 async function readPerformanceSeries(path: string): Promise<PerformancePoint[]> {
@@ -218,7 +228,7 @@ async function readSignalFile(path: string, bucket: string): Promise<SignalRow |
       confidence: raw.confidence ? String(raw.confidence) : '--',
       age: formatAge(raw.discovered_at ?? raw.created_at, new Date()),
       reason: raw.reason ?? '等待下一次确认',
-      next: bucket === 'pending' ? '等待触发条件' : '进入复盘',
+      next: mapSignalNext(bucket),
       steps: bucket === 'filled' ? 6 : 5,
       stage: inferSignalStage(raw, bucket),
       stageTimes: formatStageTimes(raw),
@@ -280,6 +290,14 @@ function mapSignalStatus(status: string): SignalStatus {
   if (status === 'expired' || status === 'failed') return 'missed'
   if (status === 'partial') return 'blocked'
   return 'pending'
+}
+
+function mapSignalNext(bucket: string) {
+  if (bucket === 'pending') return '等待触发条件'
+  if (bucket === 'claimed') return '等待执行确认'
+  if (bucket === 'running') return '执行中，等待回执'
+  if (bucket === 'filled') return '已进入收益记录'
+  return '进入复盘'
 }
 
 function inferSignalStage(signal: SignalFile, bucket: string): SignalRow['stage'] {

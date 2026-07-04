@@ -14,11 +14,11 @@ gated and must not trigger execution from the front layer.
 
 | Front result | Preferred source | Fallback / supporting source | Status |
 | --- | --- | --- | --- |
-| Current opportunities | `TradingAgent/signals/pending/*.json` | other `signals/*/*.json` buckets | Ready |
-| Positions | `TradingAgent/signals/positions/*.json` | `TradingAgent/shared/accounting/position_plan.jsonl` | Partial |
-| Performance | `TradingAgent/shared/review/daily/daily_brief.jsonl` | `TradingAgent/signals/filled/*.json` | Ready for read model |
+| Current opportunities | `signals/pending/*.json` | `signals/{claimed,running,filled,cancelled,expired,failed,partial}/*.json` | Ready |
+| Positions | `signals/positions/*.json` | `shared/accounting/position_plan.jsonl` | Partial |
+| Performance | `shared/review/daily/daily_brief.jsonl` | `signals/filled/*.json` | Ready for read model |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
-| Risk | `TradingAgent/shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
+| Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
 | Live readiness | execution schemas and filled signal writeback | manual authorization state | Gated |
 
 ## Read-Only Contract
@@ -76,7 +76,7 @@ snapshot route:
 
 ```bash
 npm run build:api
-FINANCE_WORKSPACE_ROOT=/opt/investment/TradingAgent \
+FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent \
 TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1 \
 TRADING_AGENT_SNAPSHOT_PORT=8787 \
 TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://dashboard.tradingagent.cc \
@@ -122,7 +122,7 @@ server {
   listen 443 ssl;
   server_name dashboard.tradingagent.cc;
 
-  root /opt/investment/TradingAgent/front/dist;
+  root /opt/investment/tradingagent/front/dist;
   index index.html;
 
   location / {
@@ -140,12 +140,12 @@ server {
 
 The route may read:
 
-- `TradingAgent/signals/{pending,filled,cancelled,expired,failed,partial}/*.json`
-- `TradingAgent/signals/positions/*.json`
-- `TradingAgent/shared/accounting/position_plan.jsonl`
-- `TradingAgent/shared/review/daily/daily_brief.jsonl`
-- `TradingAgent/shared/review/attribution/*.jsonl`
-- `TradingAgent/shared/risk/risk_limits.yaml`
+- `signals/{pending,claimed,running,filled,cancelled,expired,failed,partial}/*.json`
+- `signals/positions/*.json`
+- `shared/accounting/position_plan.jsonl`
+- `shared/review/daily/daily_brief.jsonl`
+- `shared/review/attribution/*.jsonl`
+- `shared/risk/risk_limits.yaml`
 
 The route must not:
 
@@ -153,7 +153,7 @@ The route must not:
 - claim, cancel, expire, fill, or mutate signal cards
 - import execution routers as action surfaces
 - send orders, emails, webhooks, or account callbacks
-- merge simulated, shadow, and live results into one number
+- merge different account layers into one result number
 
 ## Current Gap
 
@@ -167,3 +167,8 @@ runtime still needs to mount the same endpoint and point it at the verified
 TradingAgent workspace root. That production mount must keep the same
 read-only rule and must not expose execution, callback, or order mutation
 routes to the dashboard.
+
+The next data gaps are narrower: `midday_review.jsonl`, strategy/factor
+attribution JSONL, `risk_limits.yaml`, and filled signal details are declared as
+readable sources but still need snapshot parsing before the UI should present
+them as complete panels.
