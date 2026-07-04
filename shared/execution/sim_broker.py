@@ -112,6 +112,14 @@ def _with_sim_markers(value: Any) -> Any:
     return marked
 
 
+def _coerce_payload_mapping(value: Any, *, scalar_key: str = "value") -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if value in (None, ""):
+        return {}
+    return {scalar_key: value}
+
+
 def _coerce_sim_result(result: Any, order: dict[str, Any], market: str) -> SimResult:
     if isinstance(result, SimResult):
         raw_response = result.raw_response
@@ -161,9 +169,9 @@ def execute_sim_order(
     from .sim_executor_registry import get_sim_executor, local_sim_executor
 
     market_key = str(market or "").lower().strip()
-    order_payload = dict(order or {})
-    account_payload = dict(account or {})
-    config_payload = dict(config or {})
+    order_payload = _coerce_payload_mapping(order, scalar_key="order")
+    account_payload = _coerce_payload_mapping(account, scalar_key="account")
+    config_payload = _coerce_payload_mapping(config, scalar_key="config")
     try:
         reject_real_execution_payload(order_payload, context=f"execute_sim_order.{market_key or 'unknown'}.order")
         reject_real_execution_payload(account_payload, context=f"execute_sim_order.{market_key or 'unknown'}.account")

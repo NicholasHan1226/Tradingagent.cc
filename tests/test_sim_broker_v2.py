@@ -91,6 +91,7 @@ class SimBrokerV2Test(unittest.TestCase):
                 patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", base / "local_sim_positions.json"),
                 patch.object(local_sim_ledger, "LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
                 patch.object(local_sim_ledger, "LOCAL_SIM_LOCK", base / ".local_sim.lock"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", base / "simulated_ashare_positions.json"),
             ]
             for p in patches:
                 p.start()
@@ -143,6 +144,7 @@ class SimBrokerV2Test(unittest.TestCase):
                 patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", base / "local_sim_positions.json"),
                 patch.object(local_sim_ledger, "LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
                 patch.object(local_sim_ledger, "LOCAL_SIM_LOCK", base / ".local_sim.lock"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", base / "simulated_ashare_positions.json"),
             ]
             for p in patches:
                 p.start()
@@ -165,6 +167,42 @@ class SimBrokerV2Test(unittest.TestCase):
             self.assertEqual(result.raw_response.get("mode"), "server_local_sim_only")
             self.assertTrue(result.raw_response.get("local_sim_backup", {}).get("recorded"))
             self.assertTrue((base / "local_sim_trades.jsonl").exists())
+            self.assertTrue((base / "simulated_ashare_positions.json").exists())
+
+    def test_ashare_builtin_executor_accepts_string_account(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            patches = [
+                patch.object(local_sim_ledger, "LOCAL_SIM_DIR", base),
+                patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", base / "local_sim_trades.jsonl"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", base / "local_sim_positions.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_LOCK", base / ".local_sim.lock"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", base / "simulated_ashare_positions.json"),
+            ]
+            for p in patches:
+                p.start()
+                self.addCleanup(p.stop)
+
+            result = execute_sim_order(
+                order={
+                    "order_id": "SIM-ASHARE-STRING-ACCOUNT",
+                    "ts_code": "600000.SH",
+                    "side": "buy",
+                    "quantity": 100,
+                    "price": 10.0,
+                },
+                market="ashare",
+                account="ashare_sim",
+                config={"local_sim_slippage_bps": 0},
+            )
+
+            self.assertEqual(result.status, "filled")
+            backup = result.raw_response.get("local_sim_backup", {})
+            self.assertTrue(backup.get("recorded"), backup)
+            self.assertEqual(backup.get("account"), "ashare_sim")
+            snapshot = local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8")
+            self.assertIn("600000.SH", snapshot)
 
     def test_execute_sim_order_rejects_real_payload_before_sanitizing(self) -> None:
         calls: list[object] = []

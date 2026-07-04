@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,7 @@ class LocalSimLedgerTest(unittest.TestCase):
             ("LOCAL_SIM_POSITIONS", base / "local_sim_positions.json"),
             ("LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
             ("LOCAL_SIM_LOCK", base / ".local_sim.lock"),
+            ("LOCAL_SIM_POSITIONS_SNAPSHOT", base / "simulated_ashare_positions.json"),
         ):
             patcher = patch.object(local_sim_ledger, name, value)
             patcher.start()
@@ -42,6 +44,9 @@ class LocalSimLedgerTest(unittest.TestCase):
         pnl = local_sim_ledger.get_local_sim_pnl("acct")
         self.assertEqual(pnl["positions"]["600000.SH"]["quantity"], 100)
         self.assertEqual(pnl["market_value"], 1000.0)
+        snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
+        self.assertEqual(snapshot["positions"][0]["ts_code"], "600000.SH")
+        self.assertEqual(snapshot["positions"][0]["account"], "acct")
 
     def test_rejects_non_regular_ashare_code(self) -> None:
         result = local_sim_ledger.record_local_sim_order({"ts_code": "200011.SZ", "side": "buy", "quantity": 100, "price": 1}, "ashare")

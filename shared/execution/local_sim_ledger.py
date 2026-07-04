@@ -21,6 +21,7 @@ LOCAL_SIM_TRADES = LOCAL_SIM_DIR / "local_sim_trades.jsonl"
 LOCAL_SIM_POSITIONS = LOCAL_SIM_DIR / "local_sim_positions.json"
 LOCAL_SIM_PNL = LOCAL_SIM_DIR / "local_sim_pnl.json"
 LOCAL_SIM_LOCK = LOCAL_SIM_DIR / ".local_sim.lock"
+LOCAL_SIM_POSITIONS_SNAPSHOT = Path(__file__).resolve().parents[2] / "signals" / "positions" / "simulated_ashare_positions.json"
 DEFAULT_ACCOUNT = "ashare_server_sim"
 LOCK_RETRY_ATTEMPTS = 3
 LOCK_RETRY_DELAY_SECONDS = 0.1
@@ -241,6 +242,38 @@ def _persist_unlocked(trades: list[dict[str, Any]]) -> None:
     pnl = {account: _replay_account(trades, account) for account in accounts}
     LOCAL_SIM_POSITIONS.write_text(json.dumps(positions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     LOCAL_SIM_PNL.write_text(json.dumps(pnl, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _write_positions_snapshot(positions, pnl)
+
+
+def _write_positions_snapshot(positions: dict[str, dict[str, Any]], pnl: dict[str, dict[str, Any]]) -> None:
+    flat_positions: list[dict[str, Any]] = []
+    for account, account_positions in positions.items():
+        for ts_code, position in account_positions.items():
+            flat_positions.append({
+                "account": account,
+                "ts_code": ts_code,
+                "quantity": position.get("quantity", 0),
+                "avg_price": position.get("avg_cost", 0.0),
+                "last_price": position.get("last_price", 0.0),
+                "market_value": position.get("market_value", 0.0),
+                "unrealized_pnl": position.get("unrealized_pnl", 0.0),
+                "capital_layer": "simulated",
+                "account_type": "simulated",
+                "source": "server_local_sim_backup",
+            })
+    payload = {
+        "snapshot_id": "simulated_ashare_positions",
+        "market": "ashare",
+        "account_type": "simulated",
+        "capital_layer": "simulated",
+        "source": "server_local_sim_backup",
+        "synced_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "positions": flat_positions,
+        "positions_by_account": positions,
+        "pnl": pnl,
+    }
+    LOCAL_SIM_POSITIONS_SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
+    LOCAL_SIM_POSITIONS_SNAPSHOT.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def record_local_sim_order(
