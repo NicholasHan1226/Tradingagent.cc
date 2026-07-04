@@ -37,6 +37,9 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Accidentally copied absolute local paths
+Users/
+
 # Trading runtime state
 signals/
 shared/logs/
