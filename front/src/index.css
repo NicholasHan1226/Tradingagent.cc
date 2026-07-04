@@ -1,0 +1,110 @@
+:root {
+  --bg-deep: #000;
+  --bg-base: #020504;
+  --bg-panel: #07100f;
+  --surface-base: #07100f;
+  --surface-raised: #0b1516;
+  --surface-workbench: rgba(3, 8, 8, 0.68);
+  --surface-workbench-weak: rgba(5, 12, 12, 0.42);
+  --surface-inset: #010202;
+  --surface-hover: rgba(240, 246, 244, 0.044);
+  --surface-selected: rgba(82, 224, 211, 0.07);
+  --surface-panel: #0a1415;
+  --surface-tint-blue: rgba(82, 224, 211, 0.028);
+  --surface-tile: #091414;
+  --surface-chip: rgba(240, 246, 244, 0.035);
+  --border-muted: rgba(210, 225, 220, 0.18);
+  --border-soft: rgba(210, 225, 220, 0.082);
+  --border-hairline: rgba(240, 246, 244, 0.055);
+  --border-workbench: rgba(229, 242, 239, 0.07);
+  --text-primary: #f4f7f6;
+  --text-secondary: #c8d3d0;
+  --text-muted: #8f9a97;
+  --text-faint: #5e6764;
+  --accent-cyan: #6de0d5;
+  --state-red: #ee636b;
+  --state-amber: #d3a84f;
+  --accent-blue: #52e0d3;
+  --accent-blue-strong: #8ae8df;
+  --accent-blue-soft: rgba(82, 224, 211, 0.08);
+  --accent-blue-glow: rgba(82, 224, 211, 0.12);
+  --accent-blue-border: rgba(82, 224, 211, 0.24);
+  --accent-violet: #9a9180;
+  --accent-violet-soft: rgba(154, 145, 128, 0.052);
+  --accent-violet-border: rgba(154, 145, 128, 0.14);
+  --state-positive: #52e0d3;
+  --state-positive-soft: rgba(82, 224, 211, 0.075);
+  --state-positive-border: rgba(82, 224, 211, 0.22);
+  --state-target: #d6ad57;
+  --state-target-soft: rgba(214, 173, 87, 0.07);
+  --state-target-border: rgba(214, 173, 87, 0.2);
+  --state-danger: #f25f67;
+  --state-danger-soft: rgba(242, 95, 103, 0.075);
+  --state-danger-border: rgba(242, 95, 103, 0.2);
+  --state-neutral-soft: rgba(218, 242, 237, 0.04);
+  --state-neutral-border: rgba(218, 242, 237, 0.09);
+  --metric-green: #52e0d3;
+  --metric-rose: #f25f67;
+  --metric-blue: #a0b7b1;
+  --chart-benchmark: #8b9a96;
+  --radius-sm: 5px;
+  --radius-md: 6px;
+  --radius-lg: 7px;
+  --shadow-panel: none;
+  --shadow-float: 0 20px 48px rgba(0, 0, 0, 0.5);
+  --font-display:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: var(--font-display);
+  --font-number:
+    "SF Mono", "Cascadia Code", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-mono: var(--font-number);
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background: var(--bg-base);
+  font-synthesis: none;
+  font-variant-numeric: tabular-nums;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg-base);
+}
+
+body {
+  min-width: 0;
+  margin: 0;
+  background: var(--bg-base);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent-blue) 56%, transparent);
+  outline-offset: 2px;
+}
+
+::selection {
+  color: var(--text-primary);
+  background: var(--accent-blue-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}

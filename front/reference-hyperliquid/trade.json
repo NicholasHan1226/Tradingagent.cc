@@ -1,0 +1,326 @@
+{
+  "buttons": [
+    "Connect",
+    "Cross",
+    "10x",
+    "Unified",
+    "Connect",
+    "Deposit",
+    "PerpsSpot",
+    "Withdraw"
+  ],
+  "headings": [],
+  "links": [
+    {
+      "href": "/trade",
+      "text": ""
+    },
+    {
+      "href": "/trade",
+      "text": "Trade"
+    },
+    {
+      "href": "/portfolio",
+      "text": "Portfolio"
+    },
+    {
+      "href": "/earn",
+      "text": "Earn"
+    },
+    {
+      "href": "/vaults",
+      "text": "Vaults"
+    },
+    {
+      "href": "/staking",
+      "text": "Staking"
+    },
+    {
+      "href": "/referrals",
+      "text": "Referrals"
+    },
+    {
+      "href": "/leaderboard",
+      "text": "Leaderboard"
+    },
+    {
+      "href": null,
+      "text": "More"
+    },
+    {
+      "href": "https://www.tradingview.com/",
+      "text": "Chart"
+    },
+    {
+      "href": "/explorer/tx/0xdf221d538f08d59fe09b043f217e880201a000392a0bf47182eac8a64e0caf8a",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x7ade8546b47805d67c58043f217e84020223002c4f7b24a81ea73099737bdfc1",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x7ade8546b47805d67c58043f217e84020223002c4f7b24a81ea73099737bdfc1",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x38d9a38d6ba5ad723a53043f217e8102045d007306a8cc44dca24ee02aa9875c",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xb1d11ae6359d7b74b34a043f217e7e0204a300cbd0909a465599c638f491555f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xb1d11ae6359d7b74b34a043f217e7e0204a300cbd0909a465599c638f491555f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xb1d11ae6359d7b74b34a043f217e7e0204a300cbd0909a465599c638f491555f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xb1d11ae6359d7b74b34a043f217e7e0204a300cbd0909a465599c638f491555f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x1fdc9b05af0382082156043f217e6902027b00eb4a06a0dac3a546586e075bf2",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x360441a25a7a05d0377d043f217e610201720087f57d24a2d9ccecf5197ddfba",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xa45d17c34a3044f4a5d6043f217e1502044a00a8e53363c64825c31609341edf",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x7fdbf498ab46e81e8155043f217e0f020221007e464a06f023a49feb6a4ac209",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    }
+  ],
+  "mediaRects": [
+    {
+      "h": 20,
+      "tag": "svg",
+      "w": 20,
+      "x": 1231,
+      "y": 539
+    },
+    {
+      "h": 32,
+      "tag": "svg",
+      "w": 115,
+      "x": 16,
+      "y": 12
+    },
+    {
+      "h": 9,
+      "tag": "svg",
+      "w": 14,
+      "x": 776,
+      "y": 23
+    },
+    {
+      "h": 16,
+      "tag": "svg",
+      "w": 16,
+      "x": 1206,
+      "y": 20
+    },
+    {
+      "h": 20,
+      "tag": "svg",
+      "w": 16,
+      "x": 1246,
+      "y": 18
+    },
+    {
+      "h": 12,
+      "tag": "svg",
+      "w": 12,
+      "x": 15,
+      "y": 73
+    },
+    {
+      "h": 9,
+      "tag": "svg",
+      "w": 14,
+      "x": 173,
+      "y": 129
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 968,
+      "y": 794
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 1258,
+      "y": 794
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "h": 0,
+      "tag": "svg",
+      "w": 0,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "pageName": "trade",
+  "text": "Announcements\nHyperliquid and Trade[XYZ] data live on TradingView\nNew listing: GRAM-USDC perps\nDreamcash HIP-3 DEX sunset\nAll Dreamcash (cash) markets will wind down starting from 13:45 UTC on 30 June\nTrade\nPortfolio\nEarn\nVaults\nStaking\nReferrals\nLeaderboard\nMore\nConnect\nHYPE-USDC\n10x\nMark\n70.180\nOracle\n70.156\n24h Change\n+4.621 / +7.05%\n24h Volume\n$419,590,779.48\nOpen Interest\n$1,512,029,392.72\nFunding / Countdown\n0.0013%   00:12:43\nChart by TradingView\nOrder Book\nTrades\n \n0.001\nHYPE\nPrice\nSize (HYPE)\nTotal (HYPE)\n70.194\n44.16\n510.48\n70.192\n12.33\n466.32\n70.191\n325.72\n453.99\n70.190\n49.94\n128.27\n70.189\n9.51\n78.33\n70.188\n7.12\n68.82\n70.186\n7.33\n61.70\n70.184\n7.58\n54.37\n70.183\n34.06\n46.79\n70.181\n7.46\n12.73\n70.180\n5.27\n5.27\nSpread\n0.005\n0.007%\n70.175\n7.59\n7.59\n70.174\n300.21\n307.80\n70.171\n8.99\n316.79\n70.170\n89.21\n406.00\n70.166\n4.14\n410.14\n70.165\n2.98\n413.12\n70.164\n60.15\n473.27\n70.163\n44.68\n517.95\n70.162\n33.23\n551.18\n70.160\n2.71\n553.89\n70.159\n62.07\n615.96\nCross\n10x\nUnified\nMarket\nLimit\nPro\nBuy / Long\nSell / Short\nAvailable to Trade\n0.00 USDC\nCurrent Position\n0.00 HYPE\nSize\nHYPE\n%\nReduce Only\nTake Profit / Stop Loss\nConnect\nLiquidation Price\nOrder Value\nN/A\nMargin Required\nN/A\nSlippage\nEst: 0% / Max: 8.00%\nFees\n0.0450% / 0.0150%\nBalances\nPositions\nOpen Orders\nTWAP\nTrade History\nFunding History\nOrder History\nSide\nMarket\nMarket\n\t\nSize\n\t\nPosition Value\n\t\nEntry Price\n\t\nMark Price\n\t\nPNL (ROE %)\n\t\nLiq. Price\n\t\nMargin\n\t\nFunding\n\nNo open positions yet\nDeposit\nPerps\nSpot\nWithdraw\nAccount Equity\nSpot\n$0.00\nPerps\n$0.00\nPerps Overview\nBalance\n$0.00\nUnrealized PNL\n$0.00\nCross Margin Ratio\n0.00%\nMaintenance Margin\n$0.00\nCross Account Leverage\n0.00x\nOnline\nDocs\nSupport\nTerms\nPrivacy Policy",
+  "textLength": 1693,
+  "title": "70.176 | HYPE | Hyperliquid",
+  "url": "https://app.hyperliquid.xyz/trade",
+  "viewport": {
+    "height": 720,
+    "width": 1280
+  }
+}

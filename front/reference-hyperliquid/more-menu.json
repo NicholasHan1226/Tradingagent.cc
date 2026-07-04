@@ -1,0 +1,274 @@
+{
+  "links": [
+    {
+      "href": "/trade",
+      "text": ""
+    },
+    {
+      "href": "/trade",
+      "text": "Trade"
+    },
+    {
+      "href": "/portfolio",
+      "text": "Portfolio"
+    },
+    {
+      "href": "/earn",
+      "text": "Earn"
+    },
+    {
+      "href": "/vaults",
+      "text": "Vaults"
+    },
+    {
+      "href": "/staking",
+      "text": "Staking"
+    },
+    {
+      "href": "/referrals",
+      "text": "Referrals"
+    },
+    {
+      "href": "/leaderboard",
+      "text": "Leaderboard"
+    },
+    {
+      "href": null,
+      "text": "More"
+    },
+    {
+      "href": "https://www.tradingview.com/",
+      "text": "Chart"
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x889f6d30f7747a678a19043f2186f30201680016927799392c681883b6785452",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x3c8dabec12c98ad73e07043f2186e702012100d1adcca9a9e056573ed1cd64c1",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0b490bad1c0fa6650cc2043f2186e30201e90092b702c537af11b6ffdb03804f",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0x0000000000000000000000000000000000000000000000000000000000000000",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": "/explorer/tx/0xc1c5b80f25bc9830c33f043f2186ca02027900f4c0bfb702658e6361e4b0721b",
+      "text": ""
+    },
+    {
+      "href": null,
+      "text": "Est: 0% / Max: 8.00%"
+    },
+    {
+      "href": null,
+      "text": "0.0450% / 0.0150%"
+    },
+    {
+      "href": "https://hyperliquid.statuspage.io/",
+      "text": "Online"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs",
+      "text": "Docs"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs/support",
+      "text": "Support"
+    },
+    {
+      "href": "/terms",
+      "text": "Terms"
+    },
+    {
+      "href": "/privacyPolicy",
+      "text": "Privacy Policy"
+    }
+  ],
+  "text": "Announcements\nHyperliquid and Trade[XYZ] data live on TradingView\nNew listing: GRAM-USDC perps\nDreamcash HIP-3 DEX sunset\nAll Dreamcash (cash) markets will wind down starting from 13:45 UTC on 30 June\nTrade\nPortfolio\nEarn\nVaults\nStaking\nReferrals\nLeaderboard\nMore\nConnect\nHYPE-USDC\n10x\nMark\n70.127\nOracle\n70.115\n24h Change\n+4.568 / +6.97%\n24h Volume\n$420,549,831.07\nOpen Interest\n$1,510,394,296.54\nFunding / Countdown\n0.0013%   00:10:14\nChart by TradingView\nOrder Book\nTrades\n \n0.001\nHYPE\nPrice\nSize (HYPE)\nTotal (HYPE)\n70.132\n100.90\n228.35\n70.131\n7.13\n127.45\n70.130\n0.40\n120.32\n70.128\n46.15\n119.92\n70.127\n7.13\n73.77\n70.124\n7.80\n66.64\n70.123\n17.11\n58.84\n70.122\n12.71\n41.73\n70.120\n4.28\n29.02\n70.119\n0.25\n24.74\n70.114\n24.49\n24.49\nSpread\n0.001\n0.001%\n70.113\n149.23\n149.23\n70.112\n75.02\n224.25\n70.111\n483.96\n708.21\n70.107\n21.80\n730.01\n70.105\n8.43\n738.44\n70.103\n0.78\n739.22\n70.101\n57.09\n796.31\n70.100\n10.00\n806.31\n70.098\n5.22\n811.53\n70.097\n78.10\n889.63\n70.096\n9.81\n899.44\nCross\n10x\nUnified\nMarket\nLimit\nPro\nBuy / Long\nSell / Short\nAvailable to Trade\n0.00 USDC\nCurrent Position\n0.00 HYPE\nSize\nHYPE\n%\nReduce Only\nTake Profit / Stop Loss\nConnect\nLiquidation Price\nOrder Value\nN/A\nMargin Required\nN/A\nSlippage\nEst: 0% / Max: 8.00%\nFees\n0.0450% / 0.0150%\nBalances\nPositions\nOpen Orders\nTWAP\nTrade History\nFunding History\nOrder History\nSide\nMarket\nMarket\n\t\nSize\n\t\nPosition Value\n\t\nEntry Price\n\t\nMark Price\n\t\nPNL (ROE %)\n\t\nLiq. Price\n\t\nMargin\n\t\nFunding\n\nNo open positions yet\nDeposit\nPerps\nSpot\nWithdraw\nAccount Equity\nSpot\n$0.00\nPerps\n$0.00\nPerps Overview\nBalance\n$0.00\nUnrealized PNL\n$0.00\nCross Margin Ratio\n0.00%\nMaintenance Margin\n$0.00\nCross Account Leverage\n0.00x\nOnline\nDocs\nSupport\nTerms\nPrivacy Policy",
+  "url": "https://app.hyperliquid.xyz/trade"
+}

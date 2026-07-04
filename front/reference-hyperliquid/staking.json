@@ -1,0 +1,199 @@
+{
+  "buttons": [
+    "Connect",
+    "Connect"
+  ],
+  "headings": [],
+  "links": [
+    {
+      "href": "/trade",
+      "text": ""
+    },
+    {
+      "href": "/trade",
+      "text": "Trade"
+    },
+    {
+      "href": "/portfolio",
+      "text": "Portfolio"
+    },
+    {
+      "href": "/earn",
+      "text": "Earn"
+    },
+    {
+      "href": "/vaults",
+      "text": "Vaults"
+    },
+    {
+      "href": "/staking",
+      "text": "Staking"
+    },
+    {
+      "href": "/referrals",
+      "text": "Referrals"
+    },
+    {
+      "href": "/leaderboard",
+      "text": "Leaderboard"
+    },
+    {
+      "href": null,
+      "text": "More"
+    },
+    {
+      "href": "/staking/validatorPerformance",
+      "text": "View All"
+    },
+    {
+      "href": "https://hyperliquid.statuspage.io/",
+      "text": "Offline"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs",
+      "text": "Docs"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs/support",
+      "text": "Support"
+    },
+    {
+      "href": "/terms",
+      "text": "Terms"
+    },
+    {
+      "href": "/privacyPolicy",
+      "text": "Privacy Policy"
+    }
+  ],
+  "mediaRects": [
+    {
+      "h": 20,
+      "tag": "svg",
+      "w": 20,
+      "x": 1231,
+      "y": 539
+    },
+    {
+      "h": 32,
+      "tag": "svg",
+      "w": 115,
+      "x": 16,
+      "y": 12
+    },
+    {
+      "h": 9,
+      "tag": "svg",
+      "w": 14,
+      "x": 776,
+      "y": 23
+    },
+    {
+      "h": 16,
+      "tag": "svg",
+      "w": 16,
+      "x": 1206,
+      "y": 20
+    },
+    {
+      "h": 20,
+      "tag": "svg",
+      "w": 16,
+      "x": 1246,
+      "y": 18
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 1243,
+      "y": 380
+    },
+    {
+      "h": 624,
+      "tag": "TABLE",
+      "w": 1224,
+      "x": 28,
+      "y": 404
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 66,
+      "y": 411
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 343,
+      "y": 411
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 525,
+      "y": 411
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 682,
+      "y": 411
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 794,
+      "y": 411
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 927,
+      "y": 411
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 1043,
+      "y": 410
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 1200,
+      "y": 411
+    },
+    {
+      "h": 18,
+      "tag": "svg",
+      "w": 18,
+      "x": 1200,
+      "y": 1032
+    },
+    {
+      "h": 18,
+      "tag": "svg",
+      "w": 18,
+      "x": 1234,
+      "y": 1032
+    }
+  ],
+  "pageName": "staking",
+  "text": "Announcements\nHyperliquid and Trade[XYZ] data live on TradingView\nNew listing: GRAM-USDC perps\nDreamcash HIP-3 DEX sunset\nAll Dreamcash (cash) markets will wind down starting from 13:45 UTC on 30 June\nTrade\nPortfolio\nEarn\nVaults\nStaking\nReferrals\nLeaderboard\nMore\nConnect\nStaking\nThe Hyperliquid L1 is a proof-of-stake blockchain where stakers delegate the native token HYPE to validators to earn staking rewards. Stakers only receive rewards when the validator successfully participates in consensus, so stakers should only delegate to reputable and trusted validators.\nConnect\nTotal Staked\n438,419,950\nYour Stake\n0\nStaking Balance\nAvailable to Transfer to Staking Balance\n0.00000000 HYPE\nAvailable to Stake\n0.00000000 HYPE\nTotal Staked\n0.00000000 HYPE\nPending Transfers to Spot Balance\n0.00000000 HYPE\nValidator Performance\nStaking Reward History\nStaking Action History\n7D\nName\n\t\nDescription\n\t\nStake\n\t\nYour Stake\n\t\nUptime\n\t\nEst. APR\n\t\nStatus\n\t\nCommission\n\nGalaxyDigital\tGalaxy is a digital asset and ...\t838,043\t-\t100.00%\t2.13%\t\nActive\n\t5.00%\nEnigma - Hypedexer.com X Meria\tHypedexer.com: Real-time Hyper...\t3,247,841\t-\t100.00%\t2.17%\t\nActive\n\t3.00%\nHyperbeat x P2P x Hypio\tHyperbeat x P2P.org x Hypio is...\t4,277,419\t-\t100.00%\t2.19%\t\nActive\n\t2.00%\nLiquid Spirit x Hydromancer x Rekt Gang\tCulture meets infrastructure i...\t4,547,142\t-\t100.00%\t2.17%\t\nActive\n\t3.00%\nB-Harvest\tProvides secure validation ser...\t5,178,848\t-\t100.00%\t2.13%\t\nActive\n\t5.00%\nFlowdex\tFlowdesk is a leading global l...\t5,483,134\t-\t100.00%\t2.24%\t\nActive\n\t0.00%\nAlphaticks\tAlphaticks\t5,497,271\t-\t100.00%\t2.22%\t\nActive\n\t1.00%\nValiDAO\tThe People’s Validator. Zero s...\t6,591,966\t-\t100.00%\t2.15%\t\nActive\n\t4.00%\nUSDT0 x Luganodes\tUSDT0 has partnered with Lugan...\t6,965,049\t-\t100.00%\t2.17%\t\nActive\n\t3.00%\nKinetiq x Hyperion\tKinetiq x Hyperion is run by P...\t7,009,410\t-\t100.00%\t2.15%\t\nActive\n\t4.00%\nPurrposeful x HyBridge x PiP\tSecuring the network, bridging...\t7,186,588\t-\t100.00%\t2.20%\t\nActive\n\t1.75%\nBitwise Onchain Solutions x FalconX\tTrusted infrastructure for ins...\t8,208,514\t-\t100.00%\t2.17%\t\nActive\n\t3.00%\nHypurrCorea - Spacebar x DeSpread\tBringing the most experimental...\t8,252,842\t-\t100.00%\t2.17%\t\nActive\n\t3.00%\nASXN\tBoutique Digital Assets Resear...\t8,835,039\t-\t100.00%\t2.13%\t\nActive\n\t4.90%\nCMI\tYour APR Maximizer HyperMaker....\t9,297,455\t-\t100.00%\t2.24%\t\nActive\n\t0.00%\nImperator.co - HypeRPC.app\tHypeRPC.app is the dedicated R...\t9,516,244\t-\t100.00%\t2.17%\t\nActive\n\t3.00%\nHyperStake\tSecure Hyperliquid with the mo...\t9,800,152\t-\t100.00%\t2.24%\t\nActive\n\t0.00%\nHyper Foundation 5\tHyper Foundation 5\t15,293,396\t-\t99.66%\t2.17%\t\nActive\n\t3.00%\ninfinitefield.xyz\tHFT market making infrastructu...\t18,061,050\t-\t100.00%\t2.24%\t\nActive\n\t0.00%\nNansen x HypurrCollective\tHypurrCollective x Nansen is t...\t22,057,360\t-\t100.00%\t2.19%\t\nActive\n\t2.00%\nHyperliquid Strategies x Unit\tThe Hyperliquid Strategies x U...\t22,482,562\t-\t100.00%\t2.19%\t\nActive\n\t2.00%\nHypurrscanning\tL1 Explorer\t23,207,688\t-\t100.00%\t2.22%\t\nActive\n\t1.00%\nAnchorage By Figment\tAnchorage and Figment have par...\t29,029,460\t-\t100.00%\t2.02%\t\nActive\n\t10.00%\nHyper Foundation 4\tHyper Foundation 4\t34,673,732\t-\t100.00%\t2.17%\t\nActive\n\t3.00%\nHyper Foundation 1\tHyper Foundation 1\t52,169,113\t-\t100.00%\t2.17%\t\nActive\n\t3.00%\nView All\n1-25 of 33\nOffline\nDocs\nSupport\nTerms\nPrivacy Policy",
+  "textLength": 3306,
+  "title": "Hyperliquid",
+  "url": "https://app.hyperliquid.xyz/staking",
+  "viewport": {
+    "height": 720,
+    "width": 1280
+  }
+}

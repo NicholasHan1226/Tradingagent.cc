@@ -1,0 +1,231 @@
+{
+  "buttons": [
+    "Connect",
+    "Link Staking",
+    "Swap Stablecoins",
+    "PerpsSpot",
+    "EVMCore",
+    "Account Type",
+    "Send",
+    "Withdraw",
+    "Deposit"
+  ],
+  "headings": [],
+  "links": [
+    {
+      "href": "/trade",
+      "text": ""
+    },
+    {
+      "href": "/trade",
+      "text": "Trade"
+    },
+    {
+      "href": "/portfolio",
+      "text": "Portfolio"
+    },
+    {
+      "href": "/earn",
+      "text": "Earn"
+    },
+    {
+      "href": "/vaults",
+      "text": "Vaults"
+    },
+    {
+      "href": "/staking",
+      "text": "Staking"
+    },
+    {
+      "href": "/referrals",
+      "text": "Referrals"
+    },
+    {
+      "href": "/leaderboard",
+      "text": "Leaderboard"
+    },
+    {
+      "href": null,
+      "text": "More"
+    },
+    {
+      "href": null,
+      "text": "View Volume"
+    },
+    {
+      "href": null,
+      "text": "View Fee Schedule"
+    },
+    {
+      "href": "https://hyperliquid.statuspage.io/",
+      "text": "Online"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs",
+      "text": "Docs"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs/support",
+      "text": "Support"
+    },
+    {
+      "href": "/terms",
+      "text": "Terms"
+    },
+    {
+      "href": "/privacyPolicy",
+      "text": "Privacy Policy"
+    }
+  ],
+  "mediaRects": [
+    {
+      "h": 20,
+      "tag": "svg",
+      "w": 20,
+      "x": 1231,
+      "y": 539
+    },
+    {
+      "h": 32,
+      "tag": "svg",
+      "w": 115,
+      "x": 16,
+      "y": 12
+    },
+    {
+      "h": 9,
+      "tag": "svg",
+      "w": 14,
+      "x": 776,
+      "y": 23
+    },
+    {
+      "h": 16,
+      "tag": "svg",
+      "w": 16,
+      "x": 1206,
+      "y": 20
+    },
+    {
+      "h": 20,
+      "tag": "svg",
+      "w": 16,
+      "x": 1246,
+      "y": 18
+    },
+    {
+      "h": 16,
+      "tag": "svg",
+      "w": 16,
+      "x": 708,
+      "y": 100
+    },
+    {
+      "h": 16,
+      "tag": "svg",
+      "w": 16,
+      "x": 827,
+      "y": 100
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 303,
+      "y": 297
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 479,
+      "y": 166
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 619,
+      "y": 166
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 1243,
+      "y": 166
+    },
+    {
+      "h": 180,
+      "tag": "svg",
+      "w": 570,
+      "x": 668,
+      "y": 207
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 1170,
+      "y": 423
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 1243,
+      "y": 423
+    },
+    {
+      "h": 48,
+      "tag": "TABLE",
+      "w": 1224,
+      "x": 28,
+      "y": 448
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 73,
+      "y": 455
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 204,
+      "y": 455
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 399,
+      "y": 455
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 522,
+      "y": 455
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 660,
+      "y": 455
+    }
+  ],
+  "pageName": "portfolio",
+  "text": "Announcements\nHyperliquid and Trade[XYZ] data live on TradingView\nNew listing: GRAM-USDC perps\nDreamcash HIP-3 DEX sunset\nAll Dreamcash (cash) markets will wind down starting from 13:45 UTC on 30 June\nTrade\nPortfolio\nEarn\nVaults\nStaking\nReferrals\nLeaderboard\nMore\nConnect\nPortfolio\nLink Staking\nSwap Stablecoins\nPerps\nSpot\nEVM\nCore\nAccount Type\nSend\nWithdraw\nDeposit\n14 Day Volume\n$0\nView Volume\nFees (Taker / Maker)\nPerps\n0.0450% / 0.0150%\nView Fee Schedule\nPerps + Spot + Vaults\n30D\nPNL\n$0.00\nVolume\n$0.00\nMax Drawdown\n0.00%\nTotal Equity\n$0.00\nPerps Account Equity\n$0.00\nSpot Account Equity\n$0.00\nEarn Balance\n$0.00\nAccount Value\nPNL\nPerps PNL\n30D\n0\n1\n2\n3\nBalances\nPositions\nOpen Orders\nTWAP\nTrade History\nFunding History\nOrder History\nInterest\nDeposits and Withdrawals\nSide\nMarket\nMarket\n\t\nSize\n\t\nPosition Value\n\t\nEntry Price\n\t\nMark Price\n\t\nPNL (ROE %)\n\t\nLiq. Price\n\t\nMargin\n\t\nFunding\n\nNo open positions yet\nOnline\nDocs\nSupport\nTerms\nPrivacy Policy\n0",
+  "textLength": 953,
+  "title": "Hyperliquid",
+  "url": "https://app.hyperliquid.xyz/portfolio",
+  "viewport": {
+    "height": 720,
+    "width": 1280
+  }
+}

@@ -1,0 +1,180 @@
+{
+  "buttons": [
+    "Connect"
+  ],
+  "headings": [],
+  "links": [
+    {
+      "href": "/trade",
+      "text": ""
+    },
+    {
+      "href": "/trade",
+      "text": "Trade"
+    },
+    {
+      "href": "/portfolio",
+      "text": "Portfolio"
+    },
+    {
+      "href": "/earn",
+      "text": "Earn"
+    },
+    {
+      "href": "/vaults",
+      "text": "Vaults"
+    },
+    {
+      "href": "/staking",
+      "text": "Staking"
+    },
+    {
+      "href": "/referrals",
+      "text": "Referrals"
+    },
+    {
+      "href": "/leaderboard",
+      "text": "Leaderboard"
+    },
+    {
+      "href": null,
+      "text": "More"
+    },
+    {
+      "href": "https://hyperliquid.statuspage.io/",
+      "text": "Online"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs",
+      "text": "Docs"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs/support",
+      "text": "Support"
+    },
+    {
+      "href": "/terms",
+      "text": "Terms"
+    },
+    {
+      "href": "/privacyPolicy",
+      "text": "Privacy Policy"
+    }
+  ],
+  "mediaRects": [
+    {
+      "h": 20,
+      "tag": "svg",
+      "w": 20,
+      "x": 1231,
+      "y": 539
+    },
+    {
+      "h": 32,
+      "tag": "svg",
+      "w": 115,
+      "x": 16,
+      "y": 12
+    },
+    {
+      "h": 9,
+      "tag": "svg",
+      "w": 14,
+      "x": 776,
+      "y": 23
+    },
+    {
+      "h": 16,
+      "tag": "svg",
+      "w": 16,
+      "x": 1206,
+      "y": 20
+    },
+    {
+      "h": 20,
+      "tag": "svg",
+      "w": 16,
+      "x": 1246,
+      "y": 18
+    },
+    {
+      "h": 13,
+      "tag": "svg",
+      "w": 13,
+      "x": 39,
+      "y": 170
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 1230,
+      "y": 175
+    },
+    {
+      "h": 63,
+      "tag": "TABLE",
+      "w": 1224,
+      "x": 28,
+      "y": 214
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 465,
+      "y": 221
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 663,
+      "y": 221
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 880,
+      "y": 221
+    },
+    {
+      "h": 11,
+      "tag": "svg",
+      "w": 11,
+      "x": 1122,
+      "y": 221
+    },
+    {
+      "h": 6,
+      "tag": "svg",
+      "w": 9,
+      "x": 1115,
+      "y": 294
+    },
+    {
+      "h": 18,
+      "tag": "svg",
+      "w": 18,
+      "x": 1200,
+      "y": 287
+    },
+    {
+      "h": 18,
+      "tag": "svg",
+      "w": 18,
+      "x": 1234,
+      "y": 287
+    }
+  ],
+  "pageName": "leaderboard",
+  "text": "Announcements\nHyperliquid and Trade[XYZ] data live on TradingView\nNew listing: GRAM-USDC perps\nDreamcash HIP-3 DEX sunset\nAll Dreamcash (cash) markets will wind down starting from 13:45 UTC on 30 June\nTrade\nPortfolio\nEarn\nVaults\nStaking\nReferrals\nLeaderboard\nMore\nConnect\nLeaderboard\n30D\nRank\n\t\nTrader\n\t\nAccount Value\n\t\nPNL (30D)\n\t\nROI (30D)\n\t\nVolume (30D)\n\n\n\t\n\t\n\t\n\t\n\t\nRows per page:\n10\n1-0 of 0\nExcludes accounts with less than 100k USDC account value and less than 10M USDC trading volume. ROI = PNL / max(100, starting account value + maximum net deposits) for the time window.\nOnline\nDocs\nSupport\nTerms\nPrivacy Policy",
+  "textLength": 621,
+  "title": "Hyperliquid",
+  "url": "https://app.hyperliquid.xyz/leaderboard",
+  "viewport": {
+    "height": 720,
+    "width": 1280
+  }
+}

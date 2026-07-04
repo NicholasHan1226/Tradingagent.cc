@@ -1,0 +1,117 @@
+{
+  "buttons": [
+    "Connect",
+    "Enter Code",
+    "Create Code",
+    "Claim Rewards"
+  ],
+  "headings": [],
+  "links": [
+    {
+      "href": "/trade",
+      "text": ""
+    },
+    {
+      "href": "/trade",
+      "text": "Trade"
+    },
+    {
+      "href": "/portfolio",
+      "text": "Portfolio"
+    },
+    {
+      "href": "/earn",
+      "text": "Earn"
+    },
+    {
+      "href": "/vaults",
+      "text": "Vaults"
+    },
+    {
+      "href": "/staking",
+      "text": "Staking"
+    },
+    {
+      "href": "/referrals",
+      "text": "Referrals"
+    },
+    {
+      "href": "/leaderboard",
+      "text": "Leaderboard"
+    },
+    {
+      "href": null,
+      "text": "More"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs/referrals",
+      "text": "Learn more"
+    },
+    {
+      "href": "https://hyperliquid.statuspage.io/",
+      "text": "Online"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs",
+      "text": "Docs"
+    },
+    {
+      "href": "https://hyperliquid.gitbook.io/hyperliquid-docs/support",
+      "text": "Support"
+    },
+    {
+      "href": "/terms",
+      "text": "Terms"
+    },
+    {
+      "href": "/privacyPolicy",
+      "text": "Privacy Policy"
+    }
+  ],
+  "mediaRects": [
+    {
+      "h": 20,
+      "tag": "svg",
+      "w": 20,
+      "x": 1231,
+      "y": 539
+    },
+    {
+      "h": 32,
+      "tag": "svg",
+      "w": 115,
+      "x": 16,
+      "y": 12
+    },
+    {
+      "h": 9,
+      "tag": "svg",
+      "w": 14,
+      "x": 776,
+      "y": 23
+    },
+    {
+      "h": 16,
+      "tag": "svg",
+      "w": 16,
+      "x": 1206,
+      "y": 20
+    },
+    {
+      "h": 20,
+      "tag": "svg",
+      "w": 16,
+      "x": 1246,
+      "y": 18
+    }
+  ],
+  "pageName": "referrals",
+  "text": "Announcements\nHyperliquid and Trade[XYZ] data live on TradingView\nNew listing: GRAM-USDC perps\nDreamcash HIP-3 DEX sunset\nAll Dreamcash (cash) markets will wind down starting from 13:45 UTC on 30 June\nTrade\nPortfolio\nEarn\nVaults\nStaking\nReferrals\nLeaderboard\nMore\nConnect\nReferrals\nRefer users to earn rewards. Learn more\nEnter Code\nCreate Code\nClaim Rewards\nTraders Referred\nRewards Earned\nClaimable Rewards\nReferrals\nLegacy Reward History\nOnline\nDocs\nSupport\nTerms\nPrivacy Policy",
+  "textLength": 481,
+  "title": "Hyperliquid",
+  "url": "https://app.hyperliquid.xyz/referrals",
+  "viewport": {
+    "height": 720,
+    "width": 1280
+  }
+}
