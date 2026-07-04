@@ -120,6 +120,13 @@ def styles_dir_for_market(market: str, root: Path | str | None = None) -> Path:
     return _market_dir(market, base) / "styles"
 
 
+def generated_styles_dir_for_market(market: str, review_root: Path | str | None = None) -> Path:
+    """Resolve runtime-generated style configs outside the checked-in style dir."""
+
+    root = Path(review_root) if review_root is not None else Path(__file__).resolve().parents[2] / "shared" / "review"
+    return root / market.lower() / "generated_styles"
+
+
 def load_trade_styles(
     market: str,
     *,
@@ -149,9 +156,37 @@ def load_trade_styles(
     return styles
 
 
+def load_generated_trade_styles(
+    market: str,
+    *,
+    review_root: Path | str | None = None,
+    include_disabled: bool = False,
+) -> list[TradeStyle]:
+    """Load runtime-generated style configs from ``shared/review``.
+
+    These files are produced by simulated evolution and must not be written
+    back into the checked-in ``<market>/styles`` directories.
+    """
+
+    directory = generated_styles_dir_for_market(market, review_root=review_root)
+    if not directory.exists():
+        return []
+    styles: list[TradeStyle] = []
+    for path in sorted(directory.glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"generated style config must be a JSON object: {path}")
+        if not include_disabled and not is_style_enabled(payload):
+            continue
+        styles.append(style_from_mapping(payload))
+    return styles
+
+
 __all__ = [
     "TradeStyle",
+    "generated_styles_dir_for_market",
     "is_style_enabled",
+    "load_generated_trade_styles",
     "load_trade_styles",
     "style_from_mapping",
     "style_status",

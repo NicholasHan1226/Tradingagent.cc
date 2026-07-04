@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (CNFutures health/ops/dashboard data outlet)
+> 最后更新：2026-07-05 (style evolution runtime state isolation)
 
 ---
 
@@ -14,7 +14,7 @@
 - **A 股模拟盘**：默认走服务器本地闭环，不依赖 Mac Mini Hermes；Hermes/同花顺 GUI 路径已降级为第二选择，只在 `ASHARE_SIM_HERMES_ENABLED=1` 时启用并投递 `signals/pending`
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 仍保留为 GUI 执行桥，只执行和回写，不做买卖判断；当前 A 股服务器本地模拟闭环不要求 mini 在线
 - **PM（预测市场）**：多风格 simulated 扫描每 10 分钟运行；checked-in config 使用 USDC；PM sim/style 输出写入 `shared/review/pm/style_comparison.json`
-- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；6 styles × 4 markets × 5min 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环，并新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline；当前生产模拟盘范围为 A股/Crypto/PM/US，HK 暂不接入生产调度
+- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；6 styles × 4 markets × 5min 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环；基础 `styles/*.json` 已恢复为只读配置，运行态权重/状态写入 `shared/review/<market>/style_weights.json`，自动生成风格写入 `shared/review/<market>/generated_styles/`；新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline；当前生产模拟盘范围为 A股/Crypto/PM/US，HK 暂不接入生产调度
 - **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；sim → real promotion 只接受经 sim 审计的来源；`signals/real/*` 为隔离队列，不代表自动下单或已成交
 - **CNFutures 模拟盘**：国内期货只跑模拟盘，无单独影子盘；多风格模拟会写 `shared/review/data/cn_futures_sim_reviews.jsonl`，并同步输出 `shared/review/cn_futures/style_comparison.json` 与 `style_performance.jsonl` 供现有看板/巡检接入；`score_summary`、`error_summary` 和 `style_health` 标记样本不足、手续费、保证金占用、名义金额、可用 PnL 样本、风格状态和风控拒绝原因；`CNFutures/live_gateway.py` 为未来 CTP/期货公司接入预留 fail-closed 占位，当前拒绝全部真实期货订单；生产 crontab 已改为期货日盘/夜盘 5 分钟级运行 `job_cn_futures_sim.sh`，并读取 SharedSignals `market_bars_intraday` 的 Futures 5 分钟数据；5 分钟 runner 已加入 10 分钟默认数据新鲜度闸门和同风格/同合约连续同方向重复暴露限制
 - **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行；CNFutures 5 分钟模拟 cron 已安装并相对 SharedSignals 采集错后 1 分钟；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US 模拟闭环；`job_style_evolution` 模板每 4 小时跑 simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；均带 flock 与独立日志
@@ -49,6 +49,13 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-05 style evolution runtime state isolation
+
+- [x] `shared/markets/evolution_engine.py` 不再把演化后的 weight/status/paused/deprecated 写回 `Crypto/PM/US/HK/styles/*.json`。
+- [x] 自动生成 variant 已迁到 `shared/review/<market>/generated_styles/`；`StyleRunner` 会合并读取基础 styles 与 runtime generated styles。
+- [x] `shared/markets/performance_tracker.py` 移除 Python 版本不兼容的 `zip(..., strict=True)`，恢复本机/服务器兼容。
+- [x] 新增 `tests/test_evolution_runtime_styles.py`，覆盖基础 styles 文件不变和 runtime variant 可被 StyleRunner 加载。
 
 ### 2026-07-04 CNFutures health/ops/dashboard data outlet
 

@@ -167,7 +167,7 @@ def _linear_slope(points: list[tuple[int, float]]) -> float:
     denom = sum((x - mean_x) ** 2 for x in xs)
     if denom == 0:
         return 0.0
-    return sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True)) / denom
+    return sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / denom
 
 
 def detect_trend(

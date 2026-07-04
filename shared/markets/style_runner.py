@@ -14,7 +14,7 @@ from typing import Any
 
 from shared.markets.performance_tracker import load_style_weights, save_run
 from shared.markets.safety import reject_real_execution_payload
-from shared.markets.style_config import TradeStyle, load_trade_styles
+from shared.markets.style_config import TradeStyle, load_generated_trade_styles, load_trade_styles
 
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
@@ -239,6 +239,16 @@ class StyleRunner:
 
     def _load_weighted_styles(self, *, include_disabled: bool = False) -> list[TradeStyle]:
         styles = load_trade_styles(self.market, styles_dir=self.styles_dir, include_disabled=include_disabled)
+        generated = load_generated_trade_styles(
+            self.market,
+            review_root=self.review_root,
+            include_disabled=include_disabled,
+        )
+        if generated:
+            by_name = {style.name: style for style in styles}
+            for style in generated:
+                by_name[style.name] = style
+            styles = list(by_name.values())
         weights = load_style_weights(self.market, review_root=self.review_root)
         weighted: list[TradeStyle] = []
         active_weight_total = 0.0

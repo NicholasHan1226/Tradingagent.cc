@@ -11,7 +11,7 @@ from typing import Any
 
 from shared.markets.evolution_guard import evaluate_guard
 from shared.markets.performance_tracker import compare_styles, load_history
-from shared.markets.style_config import styles_dir_for_market
+from shared.markets.style_config import generated_styles_dir_for_market, styles_dir_for_market
 
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
@@ -73,9 +73,16 @@ def _write_style_file(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _load_styles(market: str, styles_dir: Path | str | None = None) -> dict[str, dict[str, Any]]:
+def _load_styles(
+    market: str,
+    styles_dir: Path | str | None = None,
+    *,
+    review_root: Path | str | None = None,
+) -> dict[str, dict[str, Any]]:
     styles: dict[str, dict[str, Any]] = {}
-    for path in _style_files(market, styles_dir):
+    paths = _style_files(market, styles_dir)
+    paths.extend(sorted(generated_styles_dir_for_market(market, review_root=review_root).glob("*.json")))
+    for path in paths:
         payload = _read_style_file(path)
         name = str(payload.get("name") or path.stem).strip()
         if not name:
@@ -124,15 +131,6 @@ def _normalize_weights(styles: dict[str, dict[str, Any]]) -> None:
     inactive = [style for style in styles.values() if _style_status(style) != "active"]
     for style in inactive:
         style["weight"] = round(min(_style_weight(style), MIN_ACTIVE_WEIGHT), 6)
-
-
-def _persist_styles(styles: dict[str, dict[str, Any]]) -> None:
-    for style in styles.values():
-        path = Path(str(style.get("_path", "")))
-        if not path:
-            continue
-        payload = {key: value for key, value in style.items() if key != "_path"}
-        _write_style_file(path, payload)
 
 
 def _append_evolution_log(
@@ -240,12 +238,21 @@ def _tweak_numeric(style: dict[str, Any], field: str, direction: int) -> float |
     return round(value, 4)
 
 
-def generate_variant(base_style: dict[str, Any], *, styles_dir: Path | str | None = None) -> dict[str, Any]:
+def generate_variant(
+    base_style: dict[str, Any],
+    *,
+    market: str | None = None,
+    review_root: Path | str | None = None,
+    styles_dir: Path | str | None = None,
+) -> dict[str, Any]:
     base_name = str(base_style.get("name") or "style").strip()
     base_generation = int(base_style.get("generation", 1) or 1)
     today = _today_compact()
     name = f"{base_name}_g{base_generation + 1}_{today}"
-    directory = Path(styles_dir) if styles_dir is not None else Path(str(base_style.get("_path", "."))).parent
+    if market:
+        directory = generated_styles_dir_for_market(market, review_root=review_root)
+    else:
+        directory = Path(styles_dir) if styles_dir is not None else Path(str(base_style.get("_path", "."))).parent
     path = directory / f"{name}.json"
     if path.exists():
         return {"action": "variant_exists", "style_name": name, "path": str(path)}
@@ -282,7 +289,7 @@ def evaluate_and_adjust(
     """Compare style performance, adjust weights, and log all changes."""
 
     market_key = _normalize_market(market)
-    styles = _load_styles(market_key, styles_dir)
+    styles = _load_styles(market_key, styles_dir, review_root=review_root)
     rankings = compare_styles(market_key, review_root=review_root)
     by_rank = {row["style_name"]: row for row in rankings}
     actions: list[dict[str, Any]] = []
@@ -347,7 +354,7 @@ def evaluate_and_adjust(
         top = rankings[0]
         top_style = styles.get(str(top.get("style_name")))
         if top_style and top.get("composite_score", 0.0) > 0 and top.get("trend") == "improving":
-            variant_action = generate_variant(top_style, styles_dir=styles_dir)
+            variant_action = generate_variant(top_style, market=market_key, review_root=review_root, styles_dir=styles_dir)
             if variant_action["action"] == "variant_generated":
                 actions.append({"market": market_key, **variant_action, "reason": "top style improving"})
                 variant_path = Path(str(variant_action.get("path", "")))
@@ -357,7 +364,6 @@ def evaluate_and_adjust(
                     styles[str(variant_payload.get("name"))] = variant_payload
 
     _normalize_weights(styles)
-    _persist_styles(styles)
     weights = _write_weights_snapshot(market_key, styles, rankings, review_root=review_root)
     result = {
         "market": market_key,

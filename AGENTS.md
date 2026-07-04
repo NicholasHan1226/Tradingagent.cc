@@ -95,6 +95,13 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - PM shadow scan 每 10 分钟运行；`run_job` 锁防止并发。
 - `job_pm_optimize` 运行产物写入 `shared/review/pm/`，不写入 Git 跟踪路径。
 
+### 风格演化状态
+
+- `Crypto/`、`PM/`、`US/`、`HK/` 下的 `styles/*.json` 是只读基础配置，不作为运行时状态存储。
+- 自动演化只能把权重、暂停/降级状态、performance、comparison 和自动生成 variant 写到 `shared/review/<market>/` 或生产运行层对应 review root。
+- `shared/review/<market>/style_weights.json` 是运行时风格权重/状态来源；自动生成风格放在 `shared/review/<market>/generated_styles/`。
+- 不得让 cron 或 pipeline 回写基础 `styles/*.json`，否则会污染 Git 工作树并混淆配置与运行结果。
+
 ### 回执完整性
 
 - 服务器写入 receipt 前验证 `receipt_sha256`/`checksum`，不匹配拒写。
