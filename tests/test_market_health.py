@@ -120,6 +120,18 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "warn")
         self.assertIn("server_local_sim_has_no_production_trades_yet", check.details["warn_reasons"])
 
+    def test_default_sim_market_health_excludes_deferred_hk(self) -> None:
+        def fake_check(market: str, crontab_text: str = "", crontab_error: str = "") -> market_health.Check:
+            return market_health.Check(f"{market}_sim_loop", "pass", f"{market} ok")
+
+        with patch.object(market_health, "_installed_crontab_text", return_value=("", "")):
+            with patch.object(market_health, "_check_sim_market_loop", side_effect=fake_check):
+                result = market_health.run_sim_market_health()
+
+        names = [check["name"] for check in result["checks"]]
+        self.assertEqual(names, ["ashare_sim_loop", "crypto_sim_loop", "pm_sim_loop", "us_sim_loop"])
+        self.assertNotIn("hk_sim_loop", names)
+
 
 if __name__ == "__main__":
     unittest.main()

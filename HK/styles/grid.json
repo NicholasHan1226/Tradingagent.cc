@@ -9,6 +9,6 @@
   "conviction_min": 0.5,
   "capital_layer": "simulated",
   "weight": 1.0,
-  "status": "active",
-  "description": "HK grid simulated via SharedSignals HSI proxy while HK stock daily data is unavailable"
+  "status": "paused",
+  "description": "HK simulated trading is deferred; keep config for future explicit reconnect"
 }
