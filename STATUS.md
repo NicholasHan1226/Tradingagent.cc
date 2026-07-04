@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (HK deferred from production simulated loop)
+> 最后更新：2026-07-04 (review reports consume simulated ledgers)
 
 ---
 
@@ -20,6 +20,7 @@
 - **SharedSignals API 消费**：`SharedSignalsAPIClient` 已校准 15/15 数据端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；A股 `get_assets()` 走 SharedSignals `stock_basic` read model，单日 `get_bars_daily()` 会补齐 start=end；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号；HK 数据与模拟入口保留但暂不进入生产调度
 - **研究/筛选增强**：新增 `shared/screening/fundamental_analyzer.py` 和 `shared/research/multi_perspective.py`，只读消费 SharedSignals API/DB，输出基本面质量分、同业比较、red flags 和 bull/bear/macro/technical 多视角共识报告；`auto_pipeline` 消费这些研究结果生成 simulated 决策，不触碰实盘队列
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
+- **复盘/报告输入**：日报、周报、归因和汇总邮件默认通过 `load_review_trades()` 读取 legacy shadow fills + `shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl` + A股 `shared/logs/local_sim/local_sim_trades.jsonl`；报告保留 `review_trade_count`、`shadow_trade_count`、`simulated_trade_count` 三个计数，避免服务器本地模拟成交被误判为无样本
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
@@ -29,14 +30,14 @@
 - HK 按 Nicholas 最新决策暂不接入生产模拟盘；`hk_basic` 正常但 `hk_daily` 当前仍返回 0 行。HK 代码、wrapper 和数据诊断保留，默认不跑 cron、不纳入多市场健康结论。
 - A股当前日期为周末，服务器侧真实生产时段尚无当天生产成交样本；隔离执行测试已确认不启用 Hermes 时仍能完成本地 `server_local_sim_only` fill，并写入服务器本地模拟账本。
 - Hermes/Mini GUI 路径已按 Nicholas 最新要求搁置为第二选择；只有未来显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时才需要重新验证 mini health、同花顺按钮识别、截图回执和账户同步。
-- 多市场旧系统 symlink 依赖已全部清除（61 个死 symlink）；工具独立实现已完成，剩余风险在生产调度、账本和日报闭环
+- 多市场旧系统 symlink 依赖已全部清除（61 个死 symlink）；工具独立实现已完成，剩余风险在 A股下一个交易日生产样本与晋降级/guard 的持续运行验证
 - 集合竞价支持标记为 STUB，未实现
 - A 股实盘路径仍是人工；当前只补齐本地 fail-closed 安全门和 `signals/real/*` 隔离队列，未部署为自动下单路径
 
 ## 三、下一步
 
 1. [x] **P2：Crypto/US/PM/HK 多市场工具独立实现** — Crypto risk/portfolio/replay、US portfolio/replay、PM risk、HK portfolio 已补齐；HK 工具保留但暂不接入生产模拟调度
-2. [ ] **P2：多市场模拟盘生产闭环** — 服务器侧 A股/Crypto/PM/US simulated cron、SharedSignals reader/API-first、统一账本和健康检查已完成首轮验证；剩余为 A股下一个交易日生产样本、报告/promotion/权重演化/guard halt-thaw 的持续运行验证
+2. [ ] **P2：多市场模拟盘生产闭环** — 服务器侧 A股/Crypto/PM/US simulated cron、SharedSignals reader/API-first、统一账本、日报/周报复盘读取和健康检查已完成首轮验证；剩余为 A股下一个交易日生产样本、promotion/权重演化/guard halt-thaw 的持续运行验证
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
 4. [x] **P2：SharedSignals HTTP API 消费迁移** — 15/15 端点客户端已完成；`TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` 接入 API-first 访问；SQLite 只读回退保留
 
@@ -54,10 +55,11 @@
 - [x] `job_ashare_sim_exec` 默认关闭 Hermes/webhook，只运行服务器本地模拟闭环；Hermes 启用后仍保留 mini health/backpressure 和回执保护。
 - [x] `sim_broker` 支持在新进程中自动加载 A股/Crypto 内建 executor，并只对 `filled|partial|pending` 结果写本地模拟备份，避免 failed/rejected 污染账本。
 - [x] 多市场 `StyleRunner` 已接统一 `shared/accounting/sim_ledger.py`，Crypto/PM/US/HK 的 filled/partial simulated 结果写入 `shared/logs/sim_ledger/<market>/<style>/`，重复订单按 `order_id` 幂等跳过。
+- [x] 新增 `shared/review/sim_ledger_reader.py`，日报/周报/归因/汇总邮件已从旧 shadow-only 输入升级为 review 输入：legacy shadow fills + 统一 simulated ledger + A股 server-local simulated ledger；邮件和 JSON 结果新增 review/shadow/simulated/real 分层计数。
 - [x] Crypto 模拟器在 SharedSignals 行情缺少可用价格时使用信号自带价格兜底，避免仅因行情接口空值丢失可训练样本。
 - [x] HK 新增 `job_hk_sim.sh`，`run_sim.py` 已支持 HK；因 SharedSignals `hk_daily` 当前 0 行，临时使用 `Global/HSI` 价格作为 HK 市场级代理信号，并在健康检查中标记 warn。
 - [x] `market_health.py --market sim` 新增多市场模拟健康检查，覆盖 cron、SharedSignals 数据、最新运行 JSON 和统一模拟账本；`job_sim_market_health.sh` 已加入 marketgraph crontab，每 10 分钟只读巡检；当前结果为 Crypto/PM/US pass，A股/HK warn，0 fail。
-- [x] 验证：A股隔离执行确认不启用 Hermes 时可本地成交且不写 pending；手动运行 crypto/pm/us/hk `run_sim.py` 均返回 ok；HK ledger 已写入 HSI 代理成交；目标测试 40 passed、目标 `py_compile` 通过、wrapper `bash -n` 通过。
+- [x] 验证：A股隔离执行确认不启用 Hermes 时可本地成交且不写 pending；手动运行 crypto/pm/us/hk `run_sim.py` 均返回 ok；HK ledger 已写入 HSI 代理成交；日报/周报新增模拟账本读取回归；目标测试与 `py_compile` 通过记录见本轮回执。
 
 ### 2026-07-04 A股 SharedSignals API universe + health fix
 

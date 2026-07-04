@@ -293,7 +293,7 @@ class SimLoopTest(unittest.TestCase):
         self.assertIn("signals.sim_dedup", result["stage_calls"])
         self.assertEqual(len(list(filled_dir.glob("SIM-*.json"))), 1)
 
-    def test_run_sim_loop_with_real_ashare_sim_broker_queues_pending(self) -> None:
+    def test_run_sim_loop_with_real_ashare_sim_broker_fills_locally_by_default(self) -> None:
         from Ashare.sim_executor import ashare_sim_execute
 
         sim_executor_registry.register_sim_executor("unit", ashare_sim_execute)
@@ -321,16 +321,19 @@ class SimLoopTest(unittest.TestCase):
         )
 
         self.assertEqual(result["state"], "ok")
-        self.assertEqual(result["pending_count"], 1)
+        self.assertEqual(result["filled_count"], 1)
+        self.assertEqual(result["pending_count"], 0)
         self.assertEqual(result["failed_count"], 0)
         pending_files = list((self.tmp_path / "signals" / "pending").glob("SIM-*.json"))
-        self.assertEqual(len(pending_files), 1)
-        pending = read_json(pending_files[0])
-        self.assertEqual(pending["capital_layer"], "simulated")
-        self.assertEqual(pending["account_type"], "simulated")
+        filled_files = list((self.tmp_path / "signals" / "filled").glob("SIM-*.json"))
+        self.assertEqual(len(pending_files), 0)
+        self.assertEqual(len(filled_files), 1)
+        filled = read_json(filled_files[0])
+        self.assertEqual(filled["capital_layer"], "simulated")
+        self.assertEqual(filled["account_type"], "simulated")
         self.assertEqual(received_markets, ["unit"])
-        self.assertEqual(pending["market"], "ashare")
-        self.assertEqual(pending["quantity"], 10)
+        self.assertEqual(result["records"][0]["receipt"]["raw_response"]["mode"], "server_local_sim_only")
+        self.assertEqual(filled["quantity"], 10)
 
 
 if __name__ == "__main__":
