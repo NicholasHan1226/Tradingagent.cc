@@ -15,6 +15,7 @@ execution; it only writes pending signal cards for Mac Mini-side handling.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -215,6 +216,18 @@ def _as_string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     return [str(value)]
+
+
+def _build_block(reason: str, detail: str) -> dict[str, Any]:
+    """Build a safe block receipt when a precondition check fails or is unavailable."""
+    return {
+        "issued_by": "execution_router",
+        "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "result": "blocked",
+        "reason": reason,
+        "detail": detail,
+        "channel": "none",
+    }
 
 
 def _build_graduation_receipt(strategy_name: str, graduation: dict[str, Any]) -> dict[str, Any]:
