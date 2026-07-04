@@ -79,6 +79,7 @@ class OrchestratorDeps:
     record_audit_event: StageFn
     execute_sim_order: StageFn | None = None
     send_email: StageFn | None = None
+    score_universe: StageFn | None = None
 
 
 def _default_deps() -> OrchestratorDeps:
@@ -91,7 +92,7 @@ def _default_deps() -> OrchestratorDeps:
     from shared.review.daily_review import run_daily_review as review
     from shared.risk.pre_trade_check import check
     from shared.screening.candidate_pool import build_pool
-    from shared.screening.six_dimension_scorer import score_stock
+    from shared.screening.six_dimension_scorer import score_stock, score_universe
 
     return OrchestratorDeps(
         score_stock=score_stock,
@@ -105,6 +106,7 @@ def _default_deps() -> OrchestratorDeps:
         record_audit_event=record_event,
         execute_sim_order=getattr(sim_broker, "execute_sim_order", sim_broker.simulate_order),
         send_email=email_sender.send_email,
+        score_universe=score_universe,
     )
 
 
@@ -788,6 +790,139 @@ def _score_stock_for_market(
     return deps.score_stock(symbol, date, data_reader=reader)
 
 
+def _normalize_batch_scores(raw: Any) -> dict[str, dict[str, Any]]:
+    if isinstance(raw, dict):
+        if "data" in raw:
+            return _normalize_batch_scores(raw.get("data"))
+        return {str(symbol): dict(score) for symbol, score in raw.items() if isinstance(score, dict)}
+    if not isinstance(raw, list):
+        return {}
+    normalized: dict[str, dict[str, Any]] = {}
+    for item in raw:
+        if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], dict):
+            normalized[str(item[0])] = dict(item[1])
+        elif isinstance(item, dict):
+            symbol = str(item.get("symbol") or item.get("ts_code") or item.get("market_id") or "").strip()
+            scores = item.get("scores") if isinstance(item.get("scores"), dict) else item
+            if symbol and isinstance(scores, dict):
+                normalized[symbol] = dict(scores)
+    return normalized
+
+
+def _score_universe_for_market(
+    deps: OrchestratorDeps,
+    market: str,
+    symbols: list[str],
+    date: str,
+    reader: Any,
+) -> dict[str, dict[str, Any]]:
+    if deps.score_universe is None or not symbols:
+        return {}
+    try:
+        raw = deps.score_universe(date=date, universe=symbols, data_reader=reader, market=market)
+    except TypeError:
+        try:
+            raw = deps.score_universe(date, symbols, data_reader=reader, market=market)
+        except TypeError:
+            raw = deps.score_universe(date, symbols)
+    return _normalize_batch_scores(raw)
+
+
+def _score_symbols_with_batch(
+    deps: OrchestratorDeps,
+    market_adapter: MarketAdapter,
+    market: str,
+    universe: list[Any],
+    date: str,
+    reader: Any,
+    *,
+    max_candidates: int,
+    errors: list[dict[str, Any]],
+    stage_calls: list[str],
+    audits: list[dict[str, Any]],
+    account: str,
+    capital_layer: str,
+    account_type: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    score_plan: list[tuple[str, str, str]] = []
+    for symbol_value in universe[:max_candidates]:
+        symbol = str(symbol_value)
+        mapped_market, mapped_symbol = _safe_stage(
+            "adapter.map_symbol_to_reader",
+            errors,
+            lambda symbol=symbol: market_adapter.map_symbol_to_reader(symbol),
+            default=(market, symbol),
+            capital_layer=capital_layer,
+        )
+        score_plan.append((symbol, str(mapped_market), str(mapped_symbol)))
+
+    batch_scores: dict[tuple[str, str], dict[str, Any]] = {}
+    if deps.score_universe is not None:
+        grouped: dict[str, list[str]] = {}
+        for _, mapped_market, mapped_symbol in score_plan:
+            grouped.setdefault(mapped_market, []).append(mapped_symbol)
+        for mapped_market, mapped_symbols in grouped.items():
+            result = _safe_stage(
+                "screening.six_dim_batch",
+                errors,
+                lambda mapped_market=mapped_market, mapped_symbols=mapped_symbols: _score_universe_for_market(
+                    deps,
+                    mapped_market,
+                    mapped_symbols,
+                    date,
+                    reader,
+                ),
+                default={},
+                capital_layer=capital_layer,
+            )
+            stage_calls.append("screening.six_dim_batch")
+            if isinstance(result, dict):
+                for mapped_symbol, score in result.items():
+                    if isinstance(score, dict):
+                        batch_scores[(mapped_market, str(mapped_symbol))] = dict(score)
+
+    scores_by_symbol: dict[str, dict[str, Any]] = {}
+    for symbol, mapped_market, mapped_symbol in score_plan:
+        score = batch_scores.get((mapped_market, mapped_symbol))
+        if score is None:
+            score = _safe_stage(
+                "screening.six_dim",
+                errors,
+                lambda mapped_market=mapped_market, mapped_symbol=mapped_symbol: _score_stock_for_market(
+                    deps,
+                    mapped_market,
+                    mapped_symbol,
+                    date,
+                    reader,
+                ),
+                default={"combined": 0.5},
+                capital_layer=capital_layer,
+            )
+            stage_calls.append("screening.six_dim")
+        if not isinstance(score, dict):
+            score = {"combined": 0.5}
+        score["capital_layer"] = capital_layer
+        if account_type:
+            score["account_type"] = account_type
+        score["market"] = market
+        scores_by_symbol[symbol] = score
+        payload = {"scores": score, "market": market, "capital_layer": capital_layer}
+        metadata = {"date": date, "account": account}
+        if account_type:
+            metadata["account_type"] = account_type
+        audits.append(
+            _record_audit(
+                deps,
+                "signal",
+                symbol,
+                payload=payload,
+                metadata=metadata,
+                capital_layer=capital_layer,
+            )
+        )
+    return scores_by_symbol
+
+
 def _build_pool_for_market(
     deps: OrchestratorDeps,
     market: str,
@@ -858,34 +993,20 @@ def run_shadow_loop(
         errors.append({"stage": "screening.universe", "status": "degraded", "error": "adapter returned non-list", "capital_layer": "shadow"})
         universe = []
 
-    scores_by_symbol: dict[str, dict[str, Any]] = {}
-    for symbol in universe[:max_candidates]:
-        mapped_market, mapped_symbol = _safe_stage(
-            "adapter.map_symbol_to_reader",
-            errors,
-            lambda symbol=symbol: market_adapter.map_symbol_to_reader(symbol),
-            default=(market, symbol),
-        )
-        score = _safe_stage(
-            "screening.six_dim",
-            errors,
-            lambda symbol=mapped_symbol: _score_stock_for_market(deps, market, symbol, date, reader),
-            default={"combined": 0.5},
-        )
-        stage_calls.append("screening.six_dim")
-        if not isinstance(score, dict):
-            score = {"combined": 0.5}
-        score["capital_layer"] = "shadow"
-        score["market"] = market
-        scores_by_symbol[symbol] = score
-        audit = _record_audit(
-            deps,
-            "signal",
-            symbol,
-            payload={"scores": score, "market": market},
-            metadata={"date": date, "account": account},
-        )
-        audits.append(audit)
+    scores_by_symbol = _score_symbols_with_batch(
+        deps,
+        market_adapter,
+        market,
+        universe,
+        date,
+        reader,
+        max_candidates=max_candidates,
+        errors=errors,
+        stage_calls=stage_calls,
+        audits=audits,
+        account=account,
+        capital_layer="shadow",
+    )
 
     pool = _safe_stage(
         "screening.candidate_pool",
@@ -1154,38 +1275,21 @@ def run_sim_loop(
         errors.append({"stage": "screening.universe", "status": "degraded", "error": "adapter returned non-list", "capital_layer": capital_layer})
         universe = []
 
-    scores_by_symbol: dict[str, dict[str, Any]] = {}
-    for symbol in universe[:max_candidates]:
-        mapped_market, mapped_symbol = _safe_stage(
-            "adapter.map_symbol_to_reader",
-            errors,
-            lambda symbol=symbol: market_adapter.map_symbol_to_reader(symbol),
-            default=(market, symbol),
-            capital_layer=capital_layer,
-        )
-        score = _safe_stage(
-            "screening.six_dim",
-            errors,
-            lambda symbol=mapped_symbol: _score_stock_for_market(deps, market, symbol, date, reader),
-            default={"combined": 0.5},
-            capital_layer=capital_layer,
-        )
-        stage_calls.append("screening.six_dim")
-        if not isinstance(score, dict):
-            score = {"combined": 0.5}
-        score["capital_layer"] = capital_layer
-        score["account_type"] = account_type
-        score["market"] = market
-        scores_by_symbol[symbol] = score
-        audit = _record_audit(
-            deps,
-            "signal",
-            symbol,
-            payload={"scores": score, "market": market, "capital_layer": capital_layer},
-            metadata={"date": date, "account": account, "account_type": account_type},
-            capital_layer=capital_layer,
-        )
-        audits.append(audit)
+    scores_by_symbol = _score_symbols_with_batch(
+        deps,
+        market_adapter,
+        market,
+        universe,
+        date,
+        reader,
+        max_candidates=max_candidates,
+        errors=errors,
+        stage_calls=stage_calls,
+        audits=audits,
+        account=account,
+        capital_layer=capital_layer,
+        account_type=account_type,
+    )
 
     pool = _safe_stage(
         "screening.candidate_pool",

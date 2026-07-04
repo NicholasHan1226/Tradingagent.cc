@@ -83,7 +83,7 @@ class OrchestratorTest(unittest.TestCase):
         self.score_requests: list[dict[str, object]] = []
         self.pool_requests: list[dict[str, object]] = []
 
-    def _deps(self, *, fail_debate: bool = False) -> OrchestratorDeps:
+    def _deps(self, *, fail_debate: bool = False, use_batch_score: bool = False) -> OrchestratorDeps:
         def score_stock(market: str, symbol: str, data_reader: object = None, date: str | None = None) -> dict[str, object]:
             self.calls.append("screening")
             self.score_requests.append({
@@ -93,6 +93,25 @@ class OrchestratorTest(unittest.TestCase):
                 "reader": data_reader,
             })
             return {"combined": 0.72, "sector": "unit", "capital_layer": "shadow"}
+
+        def score_universe(
+            date: str,
+            universe: list[str],
+            data_reader: object = None,
+            market: str = "unit",
+        ) -> list[tuple[str, dict[str, object]]]:
+            self.calls.append("screening_batch")
+            self.score_requests.append({
+                "market": market,
+                "symbol": ",".join(universe),
+                "date": date,
+                "reader": data_reader,
+                "batch": True,
+            })
+            return [
+                (symbol, {"combined": 0.73, "sector": "unit", "capital_layer": "shadow"})
+                for symbol in universe
+            ]
 
         def build_pool(
             date: str,
@@ -157,6 +176,7 @@ class OrchestratorTest(unittest.TestCase):
             record_shadow=shadow_broker.record_shadow,
             run_review=review,
             record_audit_event=trade_audit_trail.record_event,
+            score_universe=score_universe if use_batch_score else None,
         )
 
     def test_run_shadow_loop_records_full_shadow_chain(self) -> None:
@@ -194,6 +214,22 @@ class OrchestratorTest(unittest.TestCase):
             {"signal", "decision", "risk", "execution", "result"},
         )
         self.assertTrue(all(row.get("metadata", {}).get("capital_layer") == "shadow" for row in audit_rows))
+
+
+    def test_run_shadow_loop_uses_batch_scoring_when_available(self) -> None:
+        result = run_shadow_loop(
+            StubMarketAdapter(),
+            "20260630",
+            StubReader(),
+            deps=self._deps(use_batch_score=True),
+            signals_dir=self.tmp_path / "signals_batch",
+        )
+
+        self.assertEqual(result["state"], "ok")
+        self.assertIn("screening.six_dim_batch", result["stage_calls"])
+        self.assertIn("screening_batch", self.calls)
+        self.assertNotIn("screening", self.calls)
+        self.assertEqual(self.score_requests[0]["symbol"], "AAA,BBB")
 
 
     def test_run_shadow_loop_deduplicates_same_day_shadow_pending(self) -> None:

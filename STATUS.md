@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (P1 runtime hardening fixes)
+> 最后更新：2026-07-04 (P2 cleanup smoke coverage)
 
 ---
 
@@ -43,6 +43,13 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-04 P2 cleanup smoke coverage
+
+- [x] `shared/orchestrator.py` 新增可选批量打分路径：默认依赖使用 `score_universe`，不可用时回退逐标的 `score_stock`。
+- [x] `shared/wrappers/tradings_cron_entry.py` 移除 `_DEPRECATED` shadow job handler 注册，保留当前 `job_trading_signals`、sim 和日度入口。
+- [x] 新增最小 smoke 测试覆盖 `shared/execution/sim_engine.py` 与 `shared/execution/auto_pipeline.py` 的 import/init/no-crash；新增 orchestrator 批量打分回归。
+- [x] 验证：本地目标 `py_compile` 与 pytest 结果见本轮回执。
 
 ### 2026-07-04 P1 runtime hardening fixes
 
