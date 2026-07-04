@@ -109,10 +109,10 @@ Cloudflare 迁移准备说明见 [docs/cloudflare.md](docs/cloudflare.md)。目�
 
 当前域名说明：
 
-- Nginx 已配置 `dashboard.tradingagent.cc`、`tradingagent.cc` 和 `www.tradingagent.cc`。
-- DNS 仍需指向 `8.138.181.177` 后，普通浏览器才能直接访问云端页面。
-- 在 DNS 修正前，可用 `curl --resolve dashboard.tradingagent.cc:80:8.138.181.177` 验证生产站点。
-- 如果域名迁到 Cloudflare Pages，以上杭州 Nginx 入口应作为回滚路径保留，不再作为默认公网入口。
+- `dashboard.tradingagent.cc` 已切到 Cloudflare Pages 项目 `tradingagent-front`。
+- `tradingagent.cc` 和 `www.tradingagent.cc` 暂时仍保留杭州 Nginx A 记录，作为旧入口和回滚路径。
+- Pages Function 已预留 `/api/trading-agent/snapshot` 代理入口；Cloudflare Tunnel 接好前会返回明确 JSON 缺口，不应被解读为实时数据已接入。
+- 杭州 Nginx 入口继续保留，便于在 Cloudflare 路由异常时回退。
 
 ## 本地运行
 

@@ -3,7 +3,28 @@
 This document records the Cloudflare migration shape for the TradingAgent front
 layer. It is a deployment preparation note, not a trading runtime change.
 
-## Result
+## Current Result
+
+As of 2026-07-05, the static dashboard has been deployed to Cloudflare Pages:
+
+| Item | Value |
+| --- | --- |
+| Pages project | `tradingagent-front` |
+| Production URL | `https://tradingagent-front.pages.dev` |
+| First deployment URL | `https://d29e260e.tradingagent-front.pages.dev` |
+| Custom dashboard domain | `https://dashboard.tradingagent.cc` |
+| DNS status | `dashboard.tradingagent.cc` is a proxied CNAME to `tradingagent-front.pages.dev` |
+
+The dashboard page is public on Cloudflare. The live snapshot API is not yet
+connected through Cloudflare Tunnel because server SSH access was not available
+from the current local machine during this setup.
+
+The Pages Function at `/api/trading-agent/snapshot` is already present as the
+future read-only proxy. Until `TRADING_AGENT_SNAPSHOT_UPSTREAM_URL` is set in
+Cloudflare Pages, it returns a clear JSON `503` instead of accidentally serving
+the frontend HTML shell.
+
+## Target Result
 
 Move the browser-facing dashboard away from the mainland Alibaba Cloud Nginx
 public entry and onto Cloudflare:
@@ -45,19 +66,28 @@ The included `wrangler.jsonc` only records the static output directory and
 project name. It intentionally does not include account IDs, API tokens, zone
 IDs, tunnel credentials, or secrets.
 
-For the browser build, use one of these public API URL shapes:
+For the browser build, use the same-origin API path:
 
 ```bash
-# Preferred when the API is exposed on a separate tunnel hostname.
-VITE_TRADING_AGENT_SNAPSHOT_URL=https://api.tradingagent.cc/api/trading-agent/snapshot
-
-# Alternative when a Worker or Pages Function proxies the route on the same host.
 VITE_TRADING_AGENT_SNAPSHOT_URL=/api/trading-agent/snapshot
 ```
 
 `VITE_*` values are public browser configuration. Do not place API tokens,
 server-only bearer tokens, local filesystem paths, account IDs, or credentials
 in Vite variables.
+
+Configure the upstream URL as a Cloudflare Pages environment variable, not a
+browser variable:
+
+```bash
+TRADING_AGENT_SNAPSHOT_UPSTREAM_URL=https://api.tradingagent.cc/api/trading-agent/snapshot
+```
+
+If the origin API later requires a bearer token, set it only as a Pages secret:
+
+```bash
+TRADING_AGENT_SNAPSHOT_API_TOKEN=<server-only token>
+```
 
 ## Snapshot API Through Tunnel
 
@@ -128,10 +158,10 @@ Recommended target split:
 | `www.tradingagent.cc` | Redirect or Pages custom domain | Convenience alias |
 | `api.tradingagent.cc` | Cloudflare Tunnel public hostname or Worker route | Read-only snapshot API |
 
-When the Cloudflare Pages domain is live, the mainland Alibaba Cloud A-record
-entry should no longer be the browser-facing entry for these dashboard hosts.
-Keep the old Nginx server available during the migration window so rollback is
-fast.
+`dashboard.tradingagent.cc` has already been moved away from the mainland
+Alibaba Cloud A-record entry. Keep the old Nginx server available during the
+migration window so rollback is fast. The apex and `www` records are still left
+on the previous Alibaba Cloud A-record route until they are intentionally moved.
 
 ## CORS
 
@@ -166,15 +196,16 @@ Keep these boundaries explicit:
 2. Confirm the origin API health on the host:
    `curl http://127.0.0.1:8787/healthz`.
 3. Confirm the origin snapshot returns JSON and no mutation surface.
-4. Create the Pages project with output directory `dist`.
-5. Set `VITE_TRADING_AGENT_SNAPSHOT_URL` in Cloudflare Pages environment
-   variables.
-6. Create the Tunnel public hostname for `api.tradingagent.cc`, or deploy the
-   Worker proxy.
-7. Set DNS/custom domains in Cloudflare.
-8. Verify the public dashboard loads from Pages.
-9. Verify the browser snapshot call returns JSON through Cloudflare.
-10. Keep the Alibaba Cloud Nginx route available until the Cloudflare route has
+4. Create the Pages project with output directory `dist`. Done:
+   `tradingagent-front`.
+5. Set `VITE_TRADING_AGENT_SNAPSHOT_URL=/api/trading-agent/snapshot`.
+6. Deploy the Pages Function proxy. Done.
+7. Set DNS/custom domains in Cloudflare. Done for `dashboard.tradingagent.cc`.
+8. Verify the public dashboard loads from Pages. Done.
+9. Create the Tunnel public hostname for `api.tradingagent.cc`.
+10. Set `TRADING_AGENT_SNAPSHOT_UPSTREAM_URL` in Cloudflare Pages.
+11. Verify the browser snapshot call returns JSON through Cloudflare.
+12. Keep the Alibaba Cloud Nginx route available until the Cloudflare route has
     been checked from normal browsers.
 
 ## Rollback
@@ -199,8 +230,8 @@ Backend rollback:
 
 ## Not Covered Yet
 
-- Real Cloudflare account, zone, Pages project, and Tunnel IDs are not written
-  here.
-- No production Cloudflare deployment has been performed from this document.
-- No Worker proxy implementation is included yet.
+- Cloudflare Tunnel is not installed or configured on the TradingAgent server
+  from this local session because SSH login was unavailable.
 - No Cloudflare Access policy is configured yet.
+- `tradingagent.cc` and `www.tradingagent.cc` still point to the previous
+  Alibaba Cloud A-record route.
