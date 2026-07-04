@@ -80,6 +80,7 @@ class CNFuturesAdapter(MarketAdapter):
         strategy_dir: Path | None = None,
         styles: dict[str, dict[str, Any]] | None = None,
     ) -> None:
+        self._explicit_reader = reader is not None
         if reader is not None:
             self.reader = reader
         elif TradingsDataReader is not None:
@@ -107,7 +108,7 @@ class CNFuturesAdapter(MarketAdapter):
             if str(item).strip()
         }
 
-        symbols_with_bars = self._get_symbols_with_bars(date)
+        symbols_with_bars = [] if self._explicit_reader else self._get_symbols_with_bars(date)
         if symbols_with_bars:
             selected = self._select_symbols(
                 symbols_with_bars,
