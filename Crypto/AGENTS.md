@@ -6,9 +6,9 @@
 加密货币交易模拟盘/影子盘, 7x24高频训练策略, 每日2次复盘。
 
 ## 现有代码
-- /opt/investment/Crypto/tools/ (21个工具)
-- shadow/sim/strategy/validation 完整
-- 数据源: Binance API (4端点)
+- `tradingagent/Crypto/` 内为现役实体代码，不再依赖 `/opt/investment/Crypto/tools/` 旧目录。
+- shadow/sim/strategy/validation 完整。
+- 数据源只读 SharedSignals API/read model；Crypto 上游 Binance 采集归 SharedSignals。
 
 ## 特点
 - 24/7交易, 无休市
@@ -16,8 +16,8 @@
 
 ## 工具清单 (TradingAgent tool references)
 
-- 源目录: `/opt/investment/Crypto/tools/` (21 个 .py 工具)
-- TradingAgent 引用: `tradingagent/Crypto/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
+- 源目录: `tradingagent/Crypto/` 实体模块。
+- TradingAgent 引用: `tradingagent/Crypto/tools/manifest.csv` 仅作历史工具清单/审计索引，不是运行时代码入口。
 - 关键工具:
   - crypto_workflow.py — Unified Crypto simulated-training workflow
   - crypto_market_data.py — Public market data adapter (Binance API)
