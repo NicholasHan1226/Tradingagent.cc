@@ -7,8 +7,11 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
+LOCAL_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(LOCAL_ROOT))
 sys.path.insert(0, "/opt/investment/tradingagent")
 sys.path.insert(0, "/opt/investment/SharedSignals")
 
@@ -23,6 +26,26 @@ from shared.markets.style_runner import StyleRunner
 
 market = os.environ.get("SIM_MARKET", "crypto")
 market = str(market or "crypto").strip().lower()
+
+
+def _env_enabled(name: str) -> bool:
+    return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+if market == "hk" and not _env_enabled("TRADINGAGENT_HK_SIM_ENABLED"):
+    print(
+        json.dumps(
+            {
+                "market": market,
+                "status": "disabled",
+                "signals": 0,
+                "reason": "hk_sim_paused",
+                "enable_with": "TRADINGAGENT_HK_SIM_ENABLED=1",
+            },
+            ensure_ascii=False,
+        )
+    )
+    sys.exit(0)
 
 configs = {
     "crypto": {
@@ -167,7 +190,7 @@ def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) ->
             if latest:
                 latest.setdefault("symbol", symbol)
                 source_rows.append(latest)
-        if name == "hk" and not source_rows:
+        if name == "hk" and not source_rows and _env_enabled("SIM_HK_PROXY_ENABLED"):
             for symbol in _hk_proxy_symbols():
                 latest = _latest(
                     _unwrap_rows(

@@ -16,7 +16,7 @@ from shared.markets.style_config import generated_styles_dir_for_market, styles_
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REVIEW_ROOT = TRADINGAGENT_ROOT / "shared" / "review"
-MARKETS = ("crypto", "pm", "us", "hk")
+MARKETS = ("crypto", "pm", "us")
 MIN_ACTIVE_WEIGHT = 0.02
 MAX_ACTIVE_WEIGHT = 0.50
 LOSER_DAYS = 3

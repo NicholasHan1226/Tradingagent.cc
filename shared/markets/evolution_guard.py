@@ -20,7 +20,7 @@ from shared.markets.performance_tracker import StylePerformance, load_history
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REVIEW_ROOT = TRADINGAGENT_ROOT / "shared" / "review"
-MARKETS = ("crypto", "pm", "us", "hk")
+MARKETS = ("crypto", "pm", "us")
 PORTFOLIO_INITIAL_CAPITAL = float(os.environ.get("EVOLUTION_GUARD_INITIAL_CAPITAL", "100.0"))
 MAX_DRAWDOWN_LIMIT = float(os.environ.get("EVOLUTION_GUARD_MAX_DRAWDOWN", "-0.20"))
 RECOVERY_DRAWDOWN_LEVEL = float(os.environ.get("EVOLUTION_GUARD_RECOVERY_DRAWDOWN", "-0.10"))

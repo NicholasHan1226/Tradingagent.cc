@@ -6,7 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${TRADINGAGENT_PYTHON:-python3}"
-MARKETS="${TRADINGAGENT_EVOLUTION_MARKETS:-crypto,pm,us,hk}"
+MARKETS="${TRADINGAGENT_EVOLUTION_MARKETS:-crypto,pm,us}"
 ENV_LOADER="${ROOT}/shared/env_loader.sh"
 if [ -f "${ENV_LOADER}" ]; then
   source "${ENV_LOADER}"
@@ -47,7 +47,7 @@ from shared.markets.evolution_engine import evaluate_all_markets
 
 markets = tuple(
     item.strip().lower()
-    for item in os.environ.get("TRADINGAGENT_EVOLUTION_MARKETS", "crypto,pm,us,hk").split(",")
+    for item in os.environ.get("TRADINGAGENT_EVOLUTION_MARKETS", "crypto,pm,us").split(",")
     if item.strip()
 )
 review_root = os.environ.get("TRADINGAGENT_REVIEW_ROOT") or None

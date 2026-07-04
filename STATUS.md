@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (Ashare health bootstrap receipts)
+> 最后更新：2026-07-05 (HK fail-closed pause + Ashare health bootstrap receipts)
 
 ---
 
@@ -14,10 +14,10 @@
 - **A 股模拟盘**：默认走服务器本地闭环，不依赖 Mac Mini Hermes；Hermes/同花顺 GUI 路径已降级为第二选择，只在 `ASHARE_SIM_HERMES_ENABLED=1` 时启用并投递 `signals/pending`；2026-07-05 已修复 A股 sim account 字符串阻断 server-local fill 的问题，隔离真实数据 smoke 验证 9/9 本地成交、local_sim 账本与 `signals/positions/simulated_ashare_positions.json` 持仓快照均可生成
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 仍保留为 GUI 执行桥，只执行和回写，不做买卖判断；当前 A 股服务器本地模拟闭环不要求 mini 在线
 - **PM（预测市场）**：多风格 simulated 扫描每 10 分钟运行；checked-in config 使用 USDC；PM sim/style 输出写入 `shared/review/pm/style_comparison.json`
-- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；6 styles × 4 markets × 5min 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环；基础 `styles/*.json` 已恢复为只读配置，运行态权重/状态写入 `shared/review/<market>/style_weights.json`，自动生成风格写入 `shared/review/<market>/generated_styles/`；新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline；当前生产模拟盘范围为 A股/Crypto/PM/US，HK 暂不接入生产调度
+- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；Crypto/PM/US 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环；HK 工具与 styles 仅保留为预留能力，默认 fail-closed，不纳入 production sim / health / evolution；基础 `styles/*.json` 已恢复为只读配置，运行态权重/状态写入 `shared/review/<market>/style_weights.json`，自动生成风格写入 `shared/review/<market>/generated_styles/`；新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline；当前生产模拟盘范围为 A股/Crypto/PM/US/CNFutures，HK 暂不接入生产调度
 - **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；sim → real promotion 只接受经 sim 审计的来源；`signals/real/*` 为隔离队列，不代表自动下单或已成交
 - **CNFutures 模拟盘**：国内期货只跑模拟盘，无单独影子盘；多风格模拟会写 `shared/review/data/cn_futures_sim_reviews.jsonl`，并同步输出 `shared/review/cn_futures/style_comparison.json` 与 `style_performance.jsonl` 供现有看板/巡检接入；`score_summary`、`error_summary` 和 `style_health` 标记样本不足、手续费、保证金占用、名义金额、可用 PnL 样本、风格状态和风控拒绝原因；`CNFutures/live_gateway.py` 为未来 CTP/期货公司接入预留 fail-closed 占位，当前拒绝全部真实期货订单；生产 crontab 已改为期货日盘/夜盘 5 分钟级运行 `job_cn_futures_sim.sh`，并读取 SharedSignals `market_bars_intraday` 的 Futures 5 分钟数据；5 分钟 runner 已加入 10 分钟默认数据新鲜度闸门、同风格/同合约连续同方向重复暴露限制、tick/slippage 成交价、静态涨跌幅边界、bar volume 部分成交、模拟持仓快照、风格保证金 cap、不过夜强制平仓、换月保护和反向平仓 PnL 估算；`index_intraday_directional` 已加日盘-only、趋势一致和成交量确认过滤，演化器按 `win_rate_first_risk_adjusted` 目标生成小型候选族群
-- **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行；CNFutures 5 分钟模拟 cron 已安装并相对 SharedSignals 采集错后 1 分钟；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US 模拟闭环；`job_style_evolution` 模板每 4 小时跑 simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；均带 flock 与独立日志
+- **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行；CNFutures 5 分钟模拟 cron 已安装并相对 SharedSignals 采集错后 1 分钟；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用且 wrapper 默认需要 `TRADINGAGENT_HK_SIM_ENABLED=1` 才能运行；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US/CNFutures 模拟闭环；`job_style_evolution` 模板每 4 小时只跑 Crypto/PM/US simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；均带 flock 与独立日志
 - **SharedSignals API 消费**：`SharedSignalsAPIClient` 已覆盖核心 15 个数据消费端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；A股 `get_assets()` 走 SharedSignals `stock_basic` read model，单日 `get_bars_daily()` 会补齐 start=end；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号；HK 数据与模拟入口保留但暂不进入生产调度
 - **数据源边界复核**：2026-07-04 主服务器生产路径审计未发现 TradingAgent 活动代码直接调用 Tushare/Binance/Polymarket/Alpaca/Yahoo 等行情源；HTTP 调用保留在 SharedSignals API 客户端、健康检查、邮件/webhook 和研究 LLM 路径。误拷贝的 untracked `Users/` 旧目录已从服务器删除，`.gitignore` 已防止再次出现。
 - **研究/筛选增强**：新增 `shared/screening/fundamental_analyzer.py` 和 `shared/research/multi_perspective.py`，只读消费 SharedSignals API/DB，输出基本面质量分、同业比较、red flags 和 bull/bear/macro/technical 多视角共识报告；`auto_pipeline` 消费这些研究结果生成 simulated 决策，不触碰实盘队列
@@ -31,7 +31,7 @@
 
 ## 二、已知问题
 
-- HK 按 Nicholas 最新决策暂不接入生产模拟盘；`hk_basic` 正常但 `hk_daily` 当前仍返回 0 行。HK 代码、wrapper 和数据诊断保留，默认不跑 cron、不纳入多市场健康结论。
+- HK 按 Nicholas 最新决策暂不接入生产模拟盘；`hk_basic` 正常但 `hk_daily` 当前不作为生产模拟输入。HK 代码、wrapper 和数据诊断保留，默认不跑 cron、不纳入多市场健康/evolution 结论；手动运行也需要显式 `TRADINGAGENT_HK_SIM_ENABLED=1`，HSI 代理回退需要额外 `SIM_HK_PROXY_ENABLED=1`。
 - A股当前日期为周末，服务器侧真实生产时段尚无当天生产成交样本；2026-07-05 隔离执行测试已确认不启用 Hermes 时，真实 SharedSignals 数据可生成 9 个 A股模拟订单并完成 9/9 本地 `server_local_sim_only` fill，同时写入临时 local_sim 账本、持仓快照和 filled signals。生产账本不写周末假单，等待下一个真实交易时段由 cron 写入样本。
 - A股本地模拟回执链路已具备签名回执文件；生产环境仍需等待下一次真实交易时段产生真实生产样本，用于验证真实 cron 样本写入和收益复盘质量。健康检查已能区分“无首笔成交样本”和“有失败/有成交但缺回执”，后者才会告警。
 - Hermes/Mini GUI 路径已按 Nicholas 最新要求搁置为第二选择；只有未来显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时才需要重新验证 mini health、同花顺按钮识别、截图回执和账户同步。
@@ -139,9 +139,9 @@
 - [x] 多市场 `StyleRunner` 已接统一 `shared/accounting/sim_ledger.py`，Crypto/PM/US/HK 的 filled/partial simulated 结果写入 `shared/logs/sim_ledger/<market>/<style>/`，重复订单按 `order_id` 幂等跳过。
 - [x] 新增 `shared/review/sim_ledger_reader.py`，日报/周报/归因/汇总邮件已从旧 shadow-only 输入升级为 review 输入：legacy shadow fills + 统一 simulated ledger + A股 server-local simulated ledger；邮件和 JSON 结果新增 review/shadow/simulated/real 分层计数。
 - [x] Crypto 模拟器在 SharedSignals 行情缺少可用价格时使用信号自带价格兜底，避免仅因行情接口空值丢失可训练样本。
-- [x] HK 新增 `job_hk_sim.sh`，`run_sim.py` 已支持 HK；因 SharedSignals `hk_daily` 当前 0 行，临时使用 `Global/HSI` 价格作为 HK 市场级代理信号，并在健康检查中标记 warn。
+- [x] HK 新增 `job_hk_sim.sh`，`run_sim.py` 已支持 HK；2026-07-05 按 Nicholas 最新决策改为默认 fail-closed，只有显式 `TRADINGAGENT_HK_SIM_ENABLED=1` 才能手动运行，`Global/HSI` 代理回退需额外 `SIM_HK_PROXY_ENABLED=1`。
 - [x] `market_health.py --market sim` 新增多市场模拟健康检查，覆盖 cron、SharedSignals 数据、最新运行 JSON 和统一模拟账本；`job_sim_market_health.sh` 已加入 marketgraph crontab，每 10 分钟只读巡检；当前结果为 Crypto/PM/US pass，A股/HK warn，0 fail。
-- [x] 验证：A股隔离执行确认不启用 Hermes 时可本地成交且不写 pending；手动运行 crypto/pm/us/hk `run_sim.py` 均返回 ok；HK ledger 已写入 HSI 代理成交；日报/周报新增模拟账本读取回归；目标测试与 `py_compile` 通过记录见本轮回执。
+- [x] 验证：A股隔离执行确认不启用 Hermes 时可本地成交且不写 pending；手动运行 crypto/pm/us `run_sim.py` 返回 ok；HK 旧 HSI 代理成交仅作历史样本，当前默认 disabled；日报/周报新增模拟账本读取回归；目标测试与 `py_compile` 通过记录见本轮回执。
 
 ### 2026-07-04 A股 SharedSignals API universe + health fix
 
