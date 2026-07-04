@@ -1,35 +1,199 @@
 #!/usr/bin/env python3
-"""Sim runner with real market data from SharedSignals DB."""
-import sys, json, os, sqlite3
+"""Run five-minute simulated trading from SharedSignals reader/API data."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
 sys.path.insert(0, "/opt/investment/tradingagent")
 sys.path.insert(0, "/opt/investment/SharedSignals")
 
+os.environ.setdefault("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082")
+os.environ.setdefault(
+    "SHARED_SIGNALS_DB",
+    "/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite",
+)
+
+from shared.data.reader import TradingagentDataReader
+from shared.markets.style_runner import StyleRunner
+
 market = os.environ.get("SIM_MARKET", "crypto")
-DB = "/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite"
+market = str(market or "crypto").strip().lower()
+
 configs = {
-    "crypto": {"market_key": "Crypto", "table": "market_bars_daily", "sim_mod": "Crypto.simulator", "sim_cls": "CryptoSimulator", "cfg_mod": "Crypto.common", "cfg_cls": "CryptoConfig"},
-    "pm": {"market_key": "PM", "table": "market_pm_prices", "sim_mod": "PM.simulator", "sim_cls": "PMSimulator", "cfg_mod": "PM.common", "cfg_cls": "PMConfig"},
-    "us": {"market_key": "US", "table": "market_bars_daily", "sim_mod": "US.simulator", "sim_cls": "USSimulator", "cfg_mod": "US.common", "cfg_cls": "USConfig"},
+    "crypto": {
+        "sim_mod": "Crypto.simulator",
+        "sim_cls": "CryptoSimulator",
+        "cfg_mod": "Crypto.common",
+        "cfg_cls": "CryptoConfig",
+    },
+    "pm": {
+        "sim_mod": "PM.simulator",
+        "sim_cls": "PMSimulator",
+        "cfg_mod": "PM.common",
+        "cfg_cls": "PMConfig",
+    },
+    "us": {
+        "sim_mod": "US.simulator",
+        "sim_cls": "USSimulator",
+        "cfg_mod": "US.common",
+        "cfg_cls": "USConfig",
+    },
 }
 cfg = configs.get(market, configs["crypto"])
-tbl = cfg["table"]
-mk = cfg["market_key"]
 
-conn = sqlite3.connect(DB)
-if market == "pm":
-    sql = "SELECT market_id as symbol, price, price_time as trade_date FROM {} ORDER BY price_time DESC LIMIT 10".format(tbl)
-    rows = conn.execute(sql).fetchall()
-else:
-    sql = "SELECT symbol, close as price, trade_date FROM {} WHERE market=? ORDER BY trade_date DESC LIMIT 10".format(tbl)
-    rows = conn.execute(sql, [mk]).fetchall()
-conn.close()
+DEFAULT_SYMBOLS = {
+    "crypto": ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"),
+    "us": ("TSLA", "NVDA", "META", "AMZN", "GOOGL", "AMD", "NFLX", "AVGO", "COIN", "PLTR"),
+}
 
-signals = []
-for r in rows:
-    signals.append({"symbol": str(r[0]), "price": float(r[1] or 0), "trade_date": str(r[2]), "side": "buy", "quantity": 1, "market": market, "capital_layer": "simulated"})
+
+def _symbols_for_market(name: str) -> tuple[str, ...]:
+    raw = os.environ.get(f"SIM_{name.upper()}_SYMBOLS") or os.environ.get("SIM_SYMBOLS")
+    if raw:
+        return tuple(item.strip().upper() for item in raw.split(",") if item.strip())
+    return DEFAULT_SYMBOLS.get(name, ())
+
+
+def _unwrap_rows(rows: Any) -> list[dict[str, Any]]:
+    if rows is None:
+        return []
+    if isinstance(rows, dict):
+        rows = rows.get("data", [rows])
+    if not isinstance(rows, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        data = row.get("data")
+        result.append(dict(data) if isinstance(data, dict) else dict(row))
+    return result
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if number == number and number > 0 else 0.0
+
+
+def _price(row: dict[str, Any]) -> float:
+    for key in (
+        "latest_price",
+        "price",
+        "close",
+        "last_price",
+        "market_price",
+        "yes_price",
+        "probability",
+    ):
+        value = _safe_float(row.get(key))
+        if value > 0:
+            return value
+    return 0.0
+
+
+def _row_time(row: dict[str, Any]) -> str:
+    return str(
+        row.get("trade_date")
+        or row.get("price_time")
+        or row.get("latest_price_time")
+        or row.get("collected_at")
+        or row.get("open_time")
+        or ""
+    )
+
+
+def _latest(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    priced = [row for row in rows if _price(row) > 0]
+    if not priced:
+        return None
+    return sorted(priced, key=_row_time)[-1]
+
+
+def _lookback_window(days: int = 10) -> tuple[str, str]:
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=days)
+    return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
+
+
+def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) -> list[dict[str, Any]]:
+    signals: list[dict[str, Any]] = []
+    if name == "pm":
+        source_rows = _unwrap_rows(reader.get_pm_markets(limit=limit))
+    elif name == "crypto":
+        source_rows = []
+        for symbol in _symbols_for_market(name):
+            latest = _latest(_unwrap_rows(reader.get_crypto_klines(symbol=symbol, limit=50)))
+            if latest:
+                source_rows.append(latest)
+    elif name == "us":
+        source_rows = []
+        start, end = _lookback_window()
+        for symbol in _symbols_for_market(name):
+            latest = _latest(
+                _unwrap_rows(
+                    reader.get_market_data(
+                        ts_code=symbol,
+                        market="US",
+                        start=start,
+                        end=end,
+                        freq="daily",
+                    )
+                )
+            )
+            if latest:
+                source_rows.append(latest)
+    else:
+        source_rows = []
+
+    for row in source_rows:
+        symbol = str(row.get("symbol") or row.get("market_id") or row.get("ts_code") or "").strip()
+        price = _price(row)
+        if not symbol or price <= 0:
+            continue
+        signals.append(
+            {
+                "symbol": symbol,
+                "price": price,
+                "trade_date": _row_time(row),
+                "side": "buy",
+                "quantity": 1,
+                "market": name,
+                "capital_layer": "simulated",
+                "account_type": "simulated",
+                "real_execution": False,
+                "data_source": "SharedSignals reader/API",
+            }
+        )
+        if len(signals) >= limit:
+            break
+    return signals
+
+
+reader = TradingagentDataReader()
+signals = _load_signals(reader, market)
 
 if not signals:
-    print(json.dumps({"market": market, "status": "no_data", "signals": 0}))
+    print(
+        json.dumps(
+            {
+                "market": market,
+                "status": "no_data",
+                "signals": 0,
+                "data_source": "SharedSignals reader/API",
+                "reader_degraded": bool(reader.degraded or reader.stale),
+                "reader_errors": reader.errors[-5:],
+            },
+            ensure_ascii=False,
+        )
+    )
     sys.exit(0)
 
 sim_mod = __import__(cfg["sim_mod"], fromlist=[cfg["sim_cls"]])
@@ -37,11 +201,24 @@ cfg_mod = __import__(cfg["cfg_mod"], fromlist=[cfg["cfg_cls"]])
 config = getattr(cfg_mod, cfg["cfg_cls"])()
 simulator = getattr(sim_mod, cfg["sim_cls"])(config=config)
 
-from shared.markets.style_runner import StyleRunner
-from shared.markets.market_rules import commission, is_trading_session, max_position_pct
 from datetime import date
 
 runner = StyleRunner(market, simulator)
 result = runner.run(signals, date=str(date.today()))
 
-print(json.dumps({"market": market, "status": "ok", "signals": len(signals), "data_rows": len(rows), "timestamp": str(date.today())}, default=str))
+print(
+    json.dumps(
+        {
+            "market": market,
+            "status": "ok",
+            "signals": len(signals),
+            "data_rows": len(signals),
+            "timestamp": str(date.today()),
+            "data_source": "SharedSignals reader/API",
+            "reader_degraded": bool(reader.degraded or reader.stale),
+            "reader_errors": reader.errors[-5:],
+        },
+        ensure_ascii=False,
+        default=str,
+    )
+)
