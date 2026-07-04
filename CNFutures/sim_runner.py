@@ -153,6 +153,9 @@ def run_multi_style_simulation(
         style.setdefault("name", style_name)
         for symbol in universe:
             bars = _read_daily_bars(reader, symbol, date)
+            if not bars:
+                errors.append({"stage": "data", "symbol": symbol, "style": style_name, "error": "missing_daily_bars"})
+                continue
             signal = generate_style_signal(symbol, bars, style)
             if signal.get("action") == "hold":
                 continue

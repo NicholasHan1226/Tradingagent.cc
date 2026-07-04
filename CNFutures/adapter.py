@@ -104,8 +104,9 @@ class CNFuturesAdapter(MarketAdapter):
         for asset in assets:
             if not isinstance(asset, dict):
                 continue
-            symbol = str(asset.get("symbol") or asset.get("ts_code") or "").strip().lower()
-            if not symbol or symbol in seen:
+            symbol = str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+            symbol_key = symbol.lower()
+            if not symbol or symbol_key in seen:
                 continue
             try:
                 product = normalize_product(symbol)
@@ -115,14 +116,14 @@ class CNFuturesAdapter(MarketAdapter):
                 continue
             if self.universe_filter.get("active_only", True) and not _is_active(asset):
                 continue
-            seen.add(symbol)
+            seen.add(symbol_key)
             symbols.append(symbol)
             if len(symbols) >= max_symbols:
                 break
         return symbols
 
     def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
-        return READER_MARKET, str(symbol or "").strip().lower()
+        return READER_MARKET, str(symbol or "").strip()
 
     def get_strategy_config(self) -> dict[str, Any]:
         styles = self._load_styles()

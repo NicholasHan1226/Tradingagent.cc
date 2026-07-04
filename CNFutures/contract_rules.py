@@ -72,7 +72,12 @@ def normalize_product(symbol: str) -> str:
     """Return the alpha product prefix for a futures symbol."""
 
     value = str(symbol or "").strip().lower()
-    product = "".join(ch for ch in value if ch.isalpha())
+    base = value.split(".", 1)[0]
+    product = ""
+    for ch in base:
+        if not ch.isalpha():
+            break
+        product += ch
     if not product:
         raise ValueError("futures symbol is required")
     return product

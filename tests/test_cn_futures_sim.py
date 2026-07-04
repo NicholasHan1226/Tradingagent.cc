@@ -16,8 +16,10 @@ class CNFuturesSimTest(unittest.TestCase):
     def test_contract_rules_calculate_margin_and_round_trip_fee(self) -> None:
         from CNFutures.contract_rules import get_contract_rule
         from CNFutures.margin_model import estimate_order_cost
+        from CNFutures.contract_rules import normalize_product
 
         rule = get_contract_rule("rb2601")
+        suffixed_rule = get_contract_rule("RB2601.SHF")
         cost = estimate_order_cost(
             symbol="rb2601",
             side="buy",
@@ -26,6 +28,8 @@ class CNFuturesSimTest(unittest.TestCase):
         )
 
         self.assertEqual(rule.exchange, "SHFE")
+        self.assertEqual(suffixed_rule.product, "rb")
+        self.assertEqual(normalize_product("I2509.DCE"), "i")
         self.assertEqual(rule.contract_multiplier, 10)
         self.assertEqual(cost.notional, 70000.0)
         self.assertEqual(cost.margin_required, 9100.0)

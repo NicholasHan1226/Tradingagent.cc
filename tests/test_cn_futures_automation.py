@@ -55,6 +55,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
         self.assertEqual(adapter.get_market(), "cn_futures")
         self.assertEqual(adapter.map_symbol_to_reader("rb2601"), ("Futures", "rb2601"))
+        self.assertEqual(adapter.map_symbol_to_reader("RB2601.SHF"), ("Futures", "RB2601.SHF"))
         self.assertEqual(adapter.get_universe("20260703"), ["rb2601"])
         self.assertEqual(adapter.get_sim_account()["account"], "cn_futures_sim")
         self.assertEqual(adapter.get_strategy_config()["capital_layer"], "simulated")
