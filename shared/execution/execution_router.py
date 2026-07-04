@@ -414,7 +414,12 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
             }
         graduation_receipt = _build_graduation_receipt(strategy_name, graduation)
 
-    t_plus_1_block = _check_t_plus_1(order)
+    try:
+        t_plus_1_block = _check_t_plus_1(order)
+    except TimeoutError:
+        logger = logging.getLogger("tradingagent.execution")
+        logger.warning("T+1 check skipped — position_ledger lock timeout. Blocking sell to be safe.")
+        t_plus_1_block = _build_block("t_plus_1_lock_timeout", "position_ledger unavailable")
     if t_plus_1_block is not None:
         _log_route(order, "none", t_plus_1_block["result"])
         return t_plus_1_block

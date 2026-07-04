@@ -286,7 +286,14 @@ class RealSignalQueue:
         """Cross-check real position ledger against latest real positions snapshot."""
 
         self.ensure_dirs()
-        system_positions = position_ledger.get_positions(capital_layer="real")
+        try:
+            system_positions = position_ledger.get_positions(capital_layer="real")
+        except TimeoutError:
+            logging.getLogger("tradingagent.real").warning(
+                "reconcile_ledger skipped — position_ledger lock timeout"
+            )
+            return {"date": date, "queue_scope": "real", "status": "degraded",
+                    "reason": "position_ledger_lock_timeout"}
         hermes_positions, source_path = self._load_positions_snapshot(date)
         result = daily_reconcile.reconcile(system_positions, hermes_positions, log=False)
         result["date"] = date

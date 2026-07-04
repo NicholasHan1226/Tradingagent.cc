@@ -187,7 +187,13 @@ def _position_entry_date(order: dict[str, Any], positions: list[dict[str, Any]] 
         return ""
     source_positions = positions
     if source_positions is None:
-        source_positions = position_ledger.get_positions(capital_layer="real")
+        try:
+            source_positions = position_ledger.get_positions(capital_layer="real")
+        except TimeoutError:
+            logging.getLogger("tradingagent.gate").warning(
+                "T+1 validation skipped — position_ledger lock timeout"
+            )
+            return ""
     matches = [row for row in source_positions if str(row.get("ts_code") or row.get("symbol") or "").strip() == symbol]
     if len(matches) != 1:
         return ""
