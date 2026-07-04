@@ -235,6 +235,7 @@ def _tweak_style(base: dict[str, Any], name: str, *, experiment: str = "balanced
         variant["slippage_bps"] = max(0.0, _safe_float(base.get("slippage_bps"), 2.0))
         variant["volume_participation"] = round(min(0.20, max(0.01, _safe_float(base.get("volume_participation"), 0.05))), 4)
         variant["flatten_before_session_close_minutes"] = max(5, _safe_int(base.get("flatten_before_session_close_minutes"), 10))
+        variant["rollover_min_days_to_contract_month_start"] = max(0, _safe_int(base.get("rollover_min_days_to_contract_month_start"), 5))
     return variant
 
 

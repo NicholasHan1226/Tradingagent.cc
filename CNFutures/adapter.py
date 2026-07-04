@@ -24,6 +24,7 @@ READER_MARKET = "Futures"
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
 DEFAULT_REVIEW_ROOT = Path(__file__).resolve().parents[1] / "shared" / "review"
 DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+DEFAULT_SIM_CAPITAL = 2_000_000.0
 
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "active_only": True,
@@ -75,6 +76,7 @@ DEFAULT_STYLES: dict[str, dict[str, Any]] = {
         "slippage_bps": 2.0,
         "volume_participation": 0.05,
         "flatten_before_session_close_minutes": 10,
+        "rollover_min_days_to_contract_month_start": 5,
     },
 }
 
@@ -294,7 +296,7 @@ class CNFuturesAdapter(MarketAdapter):
             "reader_market": READER_MARKET,
             "capital_layer": "simulated",
             "account_type": "simulated",
-            "sim_capital": 100_000.0,
+            "sim_capital": DEFAULT_SIM_CAPITAL,
             "portfolio_method": "cn_futures_margin_weighted",
             "regime": "cn_futures_daily_simulation",
             "max_candidates": int(self.universe_filter.get("max_symbols", 30)),
@@ -325,7 +327,7 @@ class CNFuturesAdapter(MarketAdapter):
     def get_sim_account(self) -> dict[str, Any]:
         return {
             "account": "cn_futures_sim",
-            "sim_capital": 100_000.0,
+            "sim_capital": DEFAULT_SIM_CAPITAL,
             "capital_layer": "simulated",
             "account_type": "simulated",
             "positions": [],

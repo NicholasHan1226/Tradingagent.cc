@@ -91,10 +91,19 @@ fills:
   and filled quantity
 - opposite-side fills for the same style and contract estimate round-trip
   realized PnL, so review scoring can start accumulating win-rate samples
+- simulated positions are snapshotted under
+  `signals/positions/cn_futures_sim_positions.json`
+- new opening orders are blocked when a style would exceed its configured
+  margin-usage cap
+- `no_overnight` styles create a simulated flatten order near the configured
+  day-session close window
+- styles can block new orders inside a configurable contract-month rollover
+  guard window
 
 This is closer to real trading than ideal fills, but it still does not model
 live order book queue priority, bid/ask depth, exact exchange limit-state
-matching, forced liquidation, or precise rollover calendars.
+matching, exchange-grade forced liquidation, or precise exchange delivery
+calendars.
 
 ## Review
 

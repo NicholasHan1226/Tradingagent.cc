@@ -15,5 +15,6 @@
   "min_volume_ratio": 1.05,
   "slippage_bps": 2.0,
   "volume_participation": 0.05,
+  "rollover_min_days_to_contract_month_start": 5,
   "flatten_before_session_close_minutes": 10
 }

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from . import sim_executor as _sim_executor  # noqa: F401  # Ensure registry sid
 INTRADAY_INTERVAL = "5min"
 DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES = 10.0
 CN_TZ = timezone(timedelta(hours=8))
+POSITIONS_FILENAME = "cn_futures_sim_positions.json"
 
 
 def _now_iso() -> str:
@@ -87,6 +89,33 @@ def _style_allows_session(style: dict[str, Any], now: datetime | None) -> bool:
     return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(15, 0))
 
 
+def _minutes_until_day_session_close(now: datetime | None) -> float | None:
+    current_time = _cn_local_time(now)
+    if current_time is None:
+        return None
+    close_time: time | None = None
+    if time(9, 30) <= current_time <= time(11, 30):
+        close_time = time(11, 30)
+    elif time(13, 0) <= current_time <= time(15, 0):
+        close_time = time(15, 0)
+    if close_time is None:
+        return None
+    today = datetime(2000, 1, 1)
+    current_dt = datetime.combine(today, current_time)
+    close_dt = datetime.combine(today, close_time)
+    return (close_dt - current_dt).total_seconds() / 60.0
+
+
+def _should_flatten_no_overnight(style: dict[str, Any], now: datetime | None) -> bool:
+    if not bool(style.get("no_overnight", False)):
+        return False
+    minutes_left = _minutes_until_day_session_close(now)
+    if minutes_left is None:
+        return False
+    threshold = max(1, _safe_int(style.get("flatten_before_session_close_minutes"), 10))
+    return 0 <= minutes_left <= threshold
+
+
 def _parse_dt(value: Any) -> datetime | None:
     raw = str(value or "").strip()
     if not raw:
@@ -141,6 +170,169 @@ def _normalize_trade_date(value: Any) -> str:
         return digits[:8]
     digits = "".join(ch for ch in raw if ch.isdigit())
     return digits[:8] if len(digits) >= 8 else ""
+
+
+def _parse_trade_date(value: Any) -> datetime | None:
+    normalized = _normalize_trade_date(value)
+    if len(normalized) != 8:
+        return None
+    try:
+        return datetime.strptime(normalized, "%Y%m%d")
+    except ValueError:
+        return None
+
+
+def _contract_month_start(symbol: str) -> datetime | None:
+    value = str(symbol or "").strip().lower().split(".", 1)[0]
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if len(digits) < 4:
+        return None
+    year = 2000 + int(digits[:2])
+    month = int(digits[2:4])
+    if month < 1 or month > 12:
+        return None
+    return datetime(year, month, 1)
+
+
+def _contract_inside_rollover_guard(symbol: str, date: str, style: dict[str, Any]) -> tuple[bool, int | None]:
+    min_days = _safe_int(style.get("rollover_min_days_to_contract_month_start"), 0)
+    if min_days <= 0:
+        return False, None
+    trade_dt = _parse_trade_date(date)
+    contract_start = _contract_month_start(symbol)
+    if trade_dt is None or contract_start is None:
+        return False, None
+    days_to_month = (contract_start - trade_dt).days
+    return days_to_month <= min_days, days_to_month
+
+
+def _positions_path(signals_dir: Path) -> Path:
+    return signals_dir / "positions" / POSITIONS_FILENAME
+
+
+def _read_position_snapshot(signals_dir: Path) -> dict[str, Any]:
+    path = _positions_path(signals_dir)
+    if not path.exists():
+        return {"market": MARKET, "positions": [], "position_count": 0, "total_margin_required": 0.0}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"market": MARKET, "positions": [], "position_count": 0, "total_margin_required": 0.0}
+    if not isinstance(payload, dict):
+        return {"market": MARKET, "positions": [], "position_count": 0, "total_margin_required": 0.0}
+    positions = payload.get("positions")
+    if not isinstance(positions, list):
+        payload["positions"] = []
+    return payload
+
+
+def _write_position_snapshot(signals_dir: Path, snapshot: dict[str, Any]) -> None:
+    positions = [
+        position
+        for position in snapshot.get("positions", [])
+        if isinstance(position, dict) and _safe_int(position.get("net_qty"), 0) != 0
+    ]
+    total_margin = round(sum(_safe_float(position.get("margin_required"), 0.0) for position in positions), 6)
+    payload = {
+        "market": MARKET,
+        "capital_layer": "simulated",
+        "account_type": "simulated",
+        "position_count": len(positions),
+        "total_margin_required": total_margin,
+        "positions": positions,
+        "updated_at": _now_iso(),
+    }
+    path = _positions_path(signals_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+def _position_key(style_name: str, symbol: str) -> str:
+    return f"{style_name}|{symbol}"
+
+
+def _positions_by_key(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    positions: dict[str, dict[str, Any]] = {}
+    for position in snapshot.get("positions", []):
+        if not isinstance(position, dict):
+            continue
+        style_name = str(position.get("style") or position.get("strategy_name") or "").strip()
+        symbol = str(position.get("symbol") or "").strip()
+        if style_name and symbol and _safe_int(position.get("net_qty"), 0) != 0:
+            positions[_position_key(style_name, symbol)] = position
+    return positions
+
+
+def _style_margin_used(snapshot: dict[str, Any], style_name: str) -> float:
+    return round(
+        sum(
+            _safe_float(position.get("margin_required"), 0.0)
+            for position in snapshot.get("positions", [])
+            if isinstance(position, dict) and str(position.get("style") or "") == style_name
+        ),
+        6,
+    )
+
+
+def _side_sign(side: str) -> int:
+    return 1 if str(side or "").lower().strip() in {"buy", "long"} else -1
+
+
+def _position_side(net_qty: int) -> str:
+    return "long" if net_qty > 0 else "short"
+
+
+def _opposite_side_for_position(position: dict[str, Any]) -> str:
+    return "sell" if _safe_int(position.get("net_qty"), 0) > 0 else "buy"
+
+
+def _update_position_snapshot(
+    signals_dir: Path,
+    *,
+    date: str,
+    style_name: str,
+    symbol: str,
+    order: dict[str, Any],
+    receipt: dict[str, Any],
+    performance: dict[str, Any],
+) -> dict[str, Any]:
+    snapshot = _read_position_snapshot(signals_dir)
+    positions = _positions_by_key(snapshot)
+    key = _position_key(style_name, symbol)
+    previous = dict(positions.get(key, {}))
+    previous_qty = _safe_int(previous.get("net_qty"), 0)
+    filled_qty = _safe_int(receipt.get("filled_qty"), 0)
+    if filled_qty <= 0:
+        return snapshot
+    fill_sign = _side_sign(str(order.get("side") or "buy"))
+    new_qty = previous_qty + (fill_sign * filled_qty)
+    raw = receipt.get("raw_response") if isinstance(receipt.get("raw_response"), dict) else {}
+    positions.pop(key, None)
+    if new_qty != 0:
+        avg_price = _safe_float(receipt.get("avg_price"), _safe_float(order.get("price"), 0.0))
+        if previous_qty and (previous_qty > 0) == (new_qty > 0) and (previous_qty > 0) == (fill_sign > 0):
+            previous_abs = abs(previous_qty)
+            previous_price = _safe_float(previous.get("avg_price"), avg_price)
+            avg_price = round(((previous_price * previous_abs) + (avg_price * filled_qty)) / max(previous_abs + filled_qty, 1), 8)
+        positions[key] = {
+            "style": style_name,
+            "strategy_name": style_name,
+            "symbol": symbol,
+            "net_qty": new_qty,
+            "side": _position_side(new_qty),
+            "avg_price": avg_price,
+            "last_price": _safe_float(receipt.get("avg_price"), _safe_float(order.get("price"), 0.0)),
+            "margin_required": _safe_float(raw.get("margin_required"), 0.0) if previous_qty == 0 or (previous_qty > 0) != (new_qty > 0) else _safe_float(previous.get("margin_required"), 0.0) + _safe_float(raw.get("margin_required"), 0.0),
+            "notional": _safe_float(raw.get("notional"), 0.0),
+            "updated_trade_date": _normalize_trade_date(date),
+            "updated_at": _now_iso(),
+            "last_order_id": order.get("order_id"),
+            "last_bar_time": order.get("bar_time"),
+            "realized_pnl": _safe_float(previous.get("realized_pnl"), 0.0) + _safe_float(performance.get("realized_pnl"), 0.0),
+        }
+    snapshot["positions"] = sorted(positions.values(), key=lambda item: (str(item.get("style")), str(item.get("symbol"))))
+    _write_position_snapshot(signals_dir, snapshot)
+    return _read_position_snapshot(signals_dir)
 
 
 def _read_intraday_bars(reader: Any, symbol: str, date: str) -> list[dict[str, Any]]:
@@ -389,6 +581,7 @@ def run_multi_style_simulation(
     capital = _safe_float(account.get("sim_capital") if isinstance(account, dict) else None, 100_000.0)
     errors: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
+    position_snapshot = _read_position_snapshot(signals_dir)
     if cadence_value == "daily":
         universe = adapter.get_universe(date)
     else:
@@ -419,13 +612,16 @@ def run_multi_style_simulation(
                     "error": "missing_intraday_bars" if cadence_value != "daily" else "missing_daily_bars",
                 })
                 continue
+            positions = _positions_by_key(position_snapshot)
+            existing_position = positions.get(_position_key(style_name, symbol))
+            force_flatten = bool(existing_position) and _should_flatten_no_overnight(style, now)
             if cadence_value != "daily":
                 fresh, age_minutes = _is_intraday_bar_fresh(
                     latest_bar_time,
                     now=now,
                     max_age_minutes=max_intraday_bar_age_minutes,
                 )
-                if not fresh:
+                if not fresh and not force_flatten:
                     errors.append({
                         "stage": "data",
                         "symbol": symbol,
@@ -437,7 +633,27 @@ def run_multi_style_simulation(
                         "error": "stale_intraday_bar",
                     })
                     continue
-            signal = generate_style_signal(symbol, bars, style)
+            rollover_blocked, days_to_contract_month = _contract_inside_rollover_guard(symbol, date, style)
+            if rollover_blocked and not existing_position:
+                errors.append({
+                    "stage": "risk",
+                    "symbol": symbol,
+                    "style": style_name,
+                    "cadence": cadence_value,
+                    "days_to_contract_month_start": days_to_contract_month,
+                    "error": "contract_rollover_guard",
+                })
+                continue
+            if force_flatten and existing_position:
+                flatten_side = _opposite_side_for_position(existing_position)
+                signal = {
+                    "action": flatten_side,
+                    "side": flatten_side,
+                    "price": _safe_float((bars[-1] if bars else {}).get("close"), 0.0),
+                    "reason": "flatten_no_overnight",
+                }
+            else:
+                signal = generate_style_signal(symbol, bars, style)
             if signal.get("action") == "hold":
                 continue
             price = _safe_float(signal.get("price"), 0.0)
@@ -446,12 +662,14 @@ def run_multi_style_simulation(
                 continue
             try:
                 rule = get_contract_rule(symbol)
-                quantity = _quantity_for_style(symbol=symbol, price=price, capital=capital, style=style)
+                quantity = abs(_safe_int(existing_position.get("net_qty"), 0)) if force_flatten and existing_position else _quantity_for_style(symbol=symbol, price=price, capital=capital, style=style)
             except Exception as exc:
                 errors.append({"stage": "risk", "symbol": symbol, "style": style_name, "error": str(exc)})
                 continue
             period_key = _order_period_key(date, bar_cadence, latest_bar_time)
-            order_id = f"SIM-CNF-{style_name}-{symbol}-{period_key}".replace("/", "-")
+            intent = "flatten_no_overnight" if force_flatten else "open_or_reverse"
+            suffix = "-flatten" if force_flatten else ""
+            order_id = f"SIM-CNF-{style_name}-{symbol}-{period_key}{suffix}".replace("/", "-")
             order = {
                 "order_id": order_id,
                 "symbol": symbol,
@@ -466,6 +684,7 @@ def run_multi_style_simulation(
                 "contract_multiplier": rule.contract_multiplier,
                 "cadence": bar_cadence,
                 "bar_time": latest_bar_time,
+                "intent": intent,
                 "bar_volume": _safe_float((bars[-1] if bars else {}).get("volume"), 0.0),
                 "previous_close": _safe_float((bars[-2] if len(bars) >= 2 else {}).get("close"), price),
             }
@@ -486,6 +705,25 @@ def run_multi_style_simulation(
                     "error": "repeated_same_side_exposure",
                 })
                 continue
+            existing_qty = _safe_int((existing_position or {}).get("net_qty"), 0)
+            is_reducing = existing_qty != 0 and (existing_qty > 0) != (_side_sign(str(order["side"])) > 0)
+            if not is_reducing:
+                projected_cost = estimate_order_cost(symbol=symbol, side=str(order["side"]), quantity=quantity, price=price)
+                current_margin = _style_margin_used(position_snapshot, style_name)
+                margin_cap = capital * min(max(_safe_float(style.get("max_margin_usage"), 0.20), 0.01), 0.80)
+                if current_margin + projected_cost.margin_required > margin_cap:
+                    errors.append({
+                        "stage": "risk",
+                        "symbol": symbol,
+                        "style": style_name,
+                        "cadence": bar_cadence,
+                        "bar_time": latest_bar_time,
+                        "current_margin_required": round(current_margin, 6),
+                        "projected_margin_required": round(projected_cost.margin_required, 6),
+                        "margin_cap": round(margin_cap, 6),
+                        "error": "margin_cap_exceeded",
+                    })
+                    continue
             previous_opposite = _latest_opposite_fill(
                 signals_dir,
                 date=date,
@@ -533,6 +771,15 @@ def run_multi_style_simulation(
                 signal=signal,
             )
             signal_result = _write_filled_signal(signals_dir, card, receipt)
+            position_snapshot = _update_position_snapshot(
+                signals_dir,
+                date=date,
+                style_name=style_name,
+                symbol=symbol,
+                order=order,
+                receipt=receipt,
+                performance=performance,
+            )
             records.append(
                 {
                     "date": date,

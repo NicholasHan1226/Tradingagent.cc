@@ -464,6 +464,171 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["records"][0]["signal_result"]["status"], "partial")
             self.assertEqual(len(list((tmp_path / "signals" / "partial").glob("SIM-CNF-*.json"))), 1)
 
+    def test_multi_style_runner_writes_position_snapshot_and_blocks_margin_cap(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class TwoContractReader(FakeFuturesReader):
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return [
+                    {"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"},
+                    {"symbol": "rb2605", "name": "螺纹钢2605", "exchange": "SHFE", "status": "listed"},
+                ] if market == "Futures" else []
+
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
+                if market != "Futures" or interval != "5min":
+                    return []
+                return [
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3400, "volume": 1000},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3450, "volume": 1000},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 3500, "volume": 1000},
+                ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = TwoContractReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 2, "products": ("rb",)},
+                styles={
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.001,
+                        "risk_per_trade": 0.08,
+                        "max_margin_usage": 0.10,
+                        "slippage_bps": 0.0,
+                    },
+                },
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-03 14:56:00"),
+            )
+
+            self.assertEqual(result["filled_count"], 1)
+            self.assertEqual(result["errors"][0]["error"], "margin_cap_exceeded")
+            snapshot_path = tmp_path / "signals" / "positions" / "cn_futures_sim_positions.json"
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            self.assertEqual(snapshot["position_count"], 1)
+            self.assertEqual(snapshot["positions"][0]["symbol"], "rb2601")
+            self.assertGreater(snapshot["positions"][0]["margin_required"], 0)
+
+    def test_index_intraday_directional_forces_flatten_near_close(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class ClosingReader(FakeMixedFuturesReader):
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return [{"symbol": "IF2601.CFFEX", "name": "沪深300股指2601", "exchange": "CFFEX", "status": "listed"}] if market == "Futures" else []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = ClosingReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 1, "products": ("if",)},
+                styles={
+                    "index_intraday_directional": {
+                        "name": "index_intraday_directional",
+                        "style_family": "index_intraday_directional",
+                        "signal_threshold": 0.001,
+                        "risk_per_trade": 0.01,
+                        "products": ["if"],
+                        "momentum_lookback_bars": 3,
+                        "moving_average_bars": 4,
+                        "no_overnight": True,
+                        "flatten_before_session_close_minutes": 10,
+                        "slippage_bps": 0.0,
+                    },
+                },
+            )
+
+            first = run_multi_style_simulation(
+                adapter,
+                "20260706",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-06 14:31:00"),
+            )
+            second = run_multi_style_simulation(
+                adapter,
+                "20260706",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-06 14:51:00"),
+            )
+
+            self.assertEqual(first["filled_count"], 1)
+            self.assertEqual(second["filled_count"], 1)
+            self.assertEqual(second["records"][0]["order"]["intent"], "flatten_no_overnight")
+            self.assertEqual(second["records"][0]["order"]["side"], "sell")
+            snapshot = json.loads((tmp_path / "signals" / "positions" / "cn_futures_sim_positions.json").read_text(encoding="utf-8"))
+            self.assertEqual(snapshot["position_count"], 0)
+
+    def test_multi_style_runner_blocks_contracts_inside_rollover_guard(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class ExpiringReader(FakeFuturesReader):
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return [{"symbol": "rb2607", "name": "螺纹钢2607", "exchange": "SHFE", "status": "listed"}] if market == "Futures" else []
+
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
+                return [
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3400, "volume": 1000},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3450, "volume": 1000},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 3500, "volume": 1000},
+                ] if market == "Futures" and interval == "5min" else []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = ExpiringReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 1, "products": ("rb",)},
+                styles={
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.001,
+                        "risk_per_trade": 0.03,
+                        "rollover_min_days_to_contract_month_start": 5,
+                    },
+                },
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-03 14:56:00"),
+            )
+
+            self.assertEqual(result["filled_count"], 0)
+            self.assertEqual(result["errors"][0]["error"], "contract_rollover_guard")
+
     def test_adapter_falls_back_to_sharedsignals_sqlite_for_futures_assets(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 
