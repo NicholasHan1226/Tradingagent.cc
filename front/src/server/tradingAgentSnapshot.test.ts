@@ -241,4 +241,56 @@ describe('TradingAgent snapshot reader', () => {
       stageTimes: expect.objectContaining({ triggered: '09:12' }),
     }))
   })
+
+  it('uses the server-local simulated ledger as the homepage funnel and holdings source', async () => {
+    const root = await createWorkspace()
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(ledgerRoot, { recursive: true })
+
+    await writeFile(
+      join(ledgerRoot, 'positions.json'),
+      JSON.stringify({
+        cash: 10812.35,
+        positions: {
+          BTCUSDT: { avg_cost: 62891.44, quantity: 0.0186, realized_pnl: 12.5 },
+        },
+      }),
+    )
+    await writeFile(
+      join(ledgerRoot, 'trade_journal.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        fill_price: 62699.99,
+        fill_qty: 0.0106,
+        notional: 666.67,
+        order_id: 'SIM-2026-07-04-BTCUSDT-buy-grid',
+        realized_pnl: 0,
+        side: 'buy',
+        symbol: 'BTCUSDT',
+        timestamp: '2026-07-04T11:17:34+00:00',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.holdings).toContainEqual(expect.objectContaining({
+      symbol: 'BTC-USD',
+      market: 'Crypto',
+      role: 'Grid 持仓',
+    }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({
+      symbol: 'BTC-USD',
+      status: 'executed',
+      method: 'Grid · 买入',
+      stage: '执行确认',
+      impact: '成交 $667',
+    }))
+    expect(snapshot.performance).toEqual([])
+    expect(snapshot.domains.holdings.status).toBe('ready')
+    expect(snapshot.domains.signals.status).toBe('ready')
+  })
 })

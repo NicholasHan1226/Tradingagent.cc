@@ -31,6 +31,17 @@ type PositionPlanFile = {
   positions?: PositionRow[]
 }
 
+type SimLedgerPosition = {
+  avg_cost?: number
+  quantity?: number
+  realized_pnl?: number
+}
+
+type SimLedgerPositionsFile = {
+  cash?: number
+  positions?: Record<string, SimLedgerPosition>
+}
+
 type SignalFile = {
   ts_code?: string
   symbol?: string
@@ -48,6 +59,18 @@ type SignalFile = {
   triggered_at?: string
   created_at?: string
   updated_at?: string
+}
+
+type SimLedgerTradeRow = {
+  capital_layer?: string
+  fill_price?: number
+  fill_qty?: number
+  notional?: number
+  order_id?: string
+  realized_pnl?: number
+  side?: string
+  symbol?: string
+  timestamp?: string
 }
 
 type PerformanceReviewRow = {
@@ -68,6 +91,7 @@ type PerformanceReviewRow = {
 
 const SIGNAL_BUCKETS = ['pending', 'claimed', 'running', 'filled', 'expired', 'cancelled', 'failed', 'partial']
 const MAX_SIGNALS_PER_BUCKET = 80
+const MAX_SIM_LEDGER_SIGNALS = 120
 
 export async function readTradingAgentSnapshot({
   workspaceRoot,
@@ -81,19 +105,26 @@ export async function readTradingAgentSnapshot({
   const positionPlanPath = toProjectPath(projectRoot, tradingAgentReadModelSources.capitalPlan)
   const filledSignalsPath = join(projectRoot, 'signals/filled')
   const reviewPath = toProjectPath(projectRoot, tradingAgentReadModelSources.review)
+  const reviewFallbackPath = join(projectRoot, 'shared/review/data/daily_reviews.jsonl')
+  const simLedgerRoot = join(projectRoot, 'shared/logs/sim_ledger')
   const holdings = await readPositionSnapshots(positionsPath)
-  const fallbackHoldings = holdings.length > 0 ? holdings : await readPositionPlan(positionPlanPath)
-  const signals = await readSignalQueue(queueRoot)
-  const performance = await readPerformanceSeries(reviewPath)
+  const planHoldings = await readPositionPlan(positionPlanPath)
+  const simLedgerHoldings = await readSimLedgerHoldings(simLedgerRoot)
+  const fallbackHoldings = firstNonEmpty(holdings, planHoldings, simLedgerHoldings)
+  const queueSignals = await readSignalQueue(queueRoot)
+  const simLedgerSignals = await readSimLedgerSignals(simLedgerRoot, now)
+  const signals = queueSignals.length > 0 ? queueSignals : simLedgerSignals
+  const performance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
   const hasOrders = await directoryHasJson(filledSignalsPath)
   const hasPlan = await fileExists(positionPlanPath)
-  const hasReview = await fileExists(reviewPath)
+  const hasReview = await fileExists(reviewPath) || await fileExists(reviewFallbackPath)
+  const hasSimLedger = simLedgerHoldings.length > 0 || simLedgerSignals.length > 0
 
   return {
     mode: 'simulated',
     generatedAt,
     domains: {
-      performance: domainHealth(performance.length > 0 || hasOrders || hasReview || hasPlan ? 'ready' : 'empty', generatedAt),
+      performance: domainHealth(performance.length > 0 || hasOrders || hasReview || hasPlan || hasSimLedger ? 'ready' : 'empty', generatedAt),
       signals: domainHealth(signals.length > 0 ? 'ready' : 'empty', generatedAt),
       holdings: domainHealth(fallbackHoldings.length > 0 ? 'ready' : 'empty', generatedAt),
       decisions: domainHealth(hasReview ? 'ready' : 'empty', generatedAt),
@@ -161,6 +192,20 @@ async function readPositionPlan(path: string): Promise<HoldingRow[]> {
   }
 }
 
+async function readSimLedgerHoldings(root: string): Promise<HoldingRow[]> {
+  const files = await listSimLedgerFiles(root, 'positions.json')
+  const rows = await Promise.all(files.map(async (file) => {
+    try {
+      const payload = JSON.parse(await readFile(file.path, 'utf8')) as SimLedgerPositionsFile
+      return Object.entries(payload.positions ?? {}).map(([symbol, position]) => parseSimLedgerPosition(symbol, position, file.market, file.strategy))
+    } catch {
+      return []
+    }
+  }))
+
+  return rows.flat().filter((row): row is HoldingRow => Boolean(row))
+}
+
 function readLegacySimulatedPositions(path: string): HoldingRow[] {
   try {
     const db = new DatabaseSync(path, { readOnly: true })
@@ -170,6 +215,22 @@ function readLegacySimulatedPositions(path: string): HoldingRow[] {
     return rows.map(parsePositionRow).filter((row): row is HoldingRow => Boolean(row))
   } catch {
     return []
+  }
+}
+
+function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, marketHint: string, strategy: string): HoldingRow | null {
+  if (!symbol || !position.quantity) return null
+  const market = normalizeMarket(marketHint, symbol)
+  const cost = Number(position.avg_cost ?? 0) * Number(position.quantity ?? 0)
+
+  return {
+    symbol: normalizeSymbol(symbol, market),
+    name: normalizeSymbol(symbol, market),
+    market,
+    weight: formatCost(cost),
+    pnl: formatCurrency(position.realized_pnl ?? 0),
+    risk: position.quantity > 0 ? '正常' : '观察',
+    role: `${formatStrategyName(strategy)} 持仓`,
   }
 }
 
@@ -186,6 +247,60 @@ function parsePositionRow(row: unknown): HoldingRow | null {
     pnl: formatCurrency(position.pnl ?? position.realized_pnl ?? 0),
     risk: '正常',
     role: position.thesis ?? (position.side ? `${position.side} 持仓` : '模拟盘持仓'),
+  }
+}
+
+async function readSimLedgerSignals(root: string, now: Date): Promise<SignalRow[]> {
+  const files = await listSimLedgerFiles(root, 'trade_journal.jsonl')
+  const rows = await Promise.all(files.map(async (file) => {
+    try {
+      const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
+      return lines.slice(-MAX_SIM_LEDGER_SIGNALS).map((line) => {
+        try {
+          return parseSimLedgerTrade(JSON.parse(line) as SimLedgerTradeRow, file.market, file.strategy, now)
+        } catch {
+          return null
+        }
+      })
+    } catch {
+      return []
+    }
+  }))
+
+  return rows
+    .flat()
+    .filter((row): row is SignalRow => Boolean(row))
+    .sort((a, b) => Number.parseInt(a.age, 10) - Number.parseInt(b.age, 10))
+    .slice(0, MAX_SIM_LEDGER_SIGNALS)
+}
+
+function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strategy: string, now: Date): SignalRow | null {
+  if (!row.symbol) return null
+  const market = normalizeMarket(marketHint, row.symbol)
+  const symbol = normalizeSymbol(row.symbol, market)
+  const timestamp = row.timestamp
+
+  return {
+    symbol,
+    name: symbol,
+    market,
+    method: `${formatStrategyName(strategy)} · ${row.side === 'sell' ? '卖出' : '买入'}`,
+    status: 'executed',
+    impact: row.notional === undefined ? '--' : `成交 ${formatCurrencyAmount(row.notional)}`,
+    confidence: '已成交',
+    age: formatAge(timestamp, now),
+    reason: `模拟盘已按 ${formatPrice(row.fill_price)} 成交`,
+    next: '进入收益与持仓复盘',
+    steps: 6,
+    stage: '执行确认',
+    stageTimes: {
+      discovered: formatClock(timestamp),
+      scored: formatClock(timestamp),
+      debated: formatClock(timestamp),
+      riskChecked: formatClock(timestamp),
+      triggered: formatClock(timestamp),
+    },
+    stageLatencyMinutes: 0,
   }
 }
 
@@ -210,6 +325,26 @@ async function readSignalQueue(root: string): Promise<SignalRow[]> {
 
   const rows = await Promise.all(files.map((file) => readSignalFile(file.path, file.bucket)))
   return rows.filter((row): row is SignalRow => Boolean(row))
+}
+
+async function listSimLedgerFiles(root: string, targetName: 'positions.json' | 'trade_journal.jsonl') {
+  const files: Array<{ path: string; market: string; strategy: string }> = []
+  try {
+    const markets = await readdir(root, { withFileTypes: true })
+    for (const market of markets) {
+      if (!market.isDirectory()) continue
+      const marketRoot = join(root, market.name)
+      const strategies = await readdir(marketRoot, { withFileTypes: true })
+      for (const strategy of strategies) {
+        if (!strategy.isDirectory()) continue
+        const path = join(marketRoot, strategy.name, targetName)
+        if (await fileExists(path)) files.push({ path, market: market.name, strategy: strategy.name })
+      }
+    }
+  } catch {
+    return []
+  }
+  return files
 }
 
 async function readSignalFile(path: string, bucket: string): Promise<SignalRow | null> {
@@ -269,8 +404,8 @@ function inferMarket(symbol: string): Market {
   if (symbol.endsWith('.HK')) return 'HK'
   if (symbol.endsWith('.SH') || symbol.endsWith('.SZ')) return 'A-share'
   if (symbol.endsWith('.US')) return 'US'
-  if (symbol.includes('-USD') || symbol.includes('PERP')) return 'Crypto'
-  if (symbol.startsWith('PM-')) return 'PM'
+  if (/^[A-Z]{2,12}USDT$/.test(symbol) || symbol.includes('-USD') || symbol.includes('PERP')) return 'Crypto'
+  if (symbol.startsWith('PM-') || /^\d{5,8}$/.test(symbol)) return 'PM'
   return 'All Markets'
 }
 
@@ -282,6 +417,20 @@ function normalizeMarket(market: string | undefined, symbol: string): Market {
   if (value === 'crypto') return 'Crypto'
   if (value === 'pm' || value === 'prediction' || value === 'prediction-market') return 'PM'
   return inferMarket(symbol)
+}
+
+function normalizeSymbol(symbol: string, market: Market) {
+  if (market === 'Crypto' && symbol.endsWith('USDT')) return symbol.replace(/USDT$/, '-USD')
+  if (market === 'PM' && !symbol.startsWith('PM-')) return `PM-${symbol}`
+  return symbol
+}
+
+function formatStrategyName(value: string) {
+  return value
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 function mapSignalStatus(status: string): SignalStatus {
@@ -357,6 +506,10 @@ function firstNumber(...values: Array<number | undefined>) {
   return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value))
 }
 
+function firstNonEmpty<T>(...values: T[][]) {
+  return values.find((value) => value.length > 0) ?? []
+}
+
 function formatReviewDay(value?: string) {
   if (!value) return undefined
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
@@ -369,7 +522,16 @@ function formatCurrency(value: number) {
   return `${sign}$${Math.abs(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 }
 
+function formatCurrencyAmount(value: number) {
+  return `$${Math.abs(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+}
+
 function formatCost(value?: number) {
   if (value === undefined) return '--'
   return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+}
+
+function formatPrice(value?: number) {
+  if (value === undefined) return '账本价格'
+  return value.toLocaleString('en-US', { maximumFractionDigits: value < 10 ? 4 : 2 })
 }

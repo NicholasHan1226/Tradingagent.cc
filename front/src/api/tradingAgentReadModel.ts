@@ -13,6 +13,7 @@ export const tradingAgentReadModelSources = {
   strategyAttribution: 'shared/review/attribution/strategy_attribution.jsonl',
   factorAttribution: 'shared/review/attribution/factor_attribution.jsonl',
   strategyVersion: 'shared/review/strategies/strategy_version.jsonl',
+  simLedger: 'shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}',
 } as const
 
 export type TradingAgentReadModelHealth = {
