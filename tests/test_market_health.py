@@ -75,6 +75,26 @@ class MarketHealthTest(unittest.TestCase):
 
         self.assertEqual(check.status, "pass")
 
+    def test_sim_position_sync_passes_before_first_local_trade(self) -> None:
+        check = market_health._check_simulated_position_sync()
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.details["bootstrap_state"], "no_trades_yet")
+
+    def test_failure_receipts_pass_before_first_failure_or_trade(self) -> None:
+        check = market_health._check_failure_receipts()
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.details["bootstrap_state"], "no_receipts_expected_yet")
+
+    def test_failure_receipts_warn_when_failed_signal_has_no_receipt(self) -> None:
+        self._write_json("signals/failed/ORDER-1.json", {"order_id": "ORDER-1", "status": "failed"})
+
+        check = market_health._check_failure_receipts()
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["failed_count"], 1)
+
     def test_sim_market_loop_passes_with_cron_data_and_ledger(self) -> None:
         ledger = self.root / "shared/logs/sim_ledger/crypto/grid/trade_journal.jsonl"
         ledger.parent.mkdir(parents=True)

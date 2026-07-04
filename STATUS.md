@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (cn futures position and rollover guards)
+> 最后更新：2026-07-05 (Ashare health bootstrap receipts)
 
 ---
 
@@ -24,7 +24,7 @@
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **复盘/报告输入**：日报、周报、归因和汇总邮件默认通过 `load_review_trades()` 读取 legacy shadow fills + `shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl` + A股 `shared/logs/local_sim/local_sim_trades.jsonl`；报告保留 `review_trade_count`、`shadow_trade_count`、`simulated_trade_count` 三个计数，避免服务器本地模拟成交被误判为无样本
 - **影子盘状态闭环**：US/Crypto/PM/HK 本地 shadow runner 的 `simulated_fill.status=filled|partial` 会立即推进到 `signals/shadow/filled`；若状态机推进失败，卡片进入 `signals/shadow/failed` 并保留 `settlement_warning`，不再把已模拟成交卡片长期留在 `shadow/pending`
-- **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查同时读取本地回执与旧 Hermes 回执路径
+- **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查同时读取本地回执与旧 Hermes 回执路径，并能识别“尚无首笔本地模拟成交”的 bootstrap 状态，避免把无样本误报为链路故障
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
@@ -33,7 +33,7 @@
 
 - HK 按 Nicholas 最新决策暂不接入生产模拟盘；`hk_basic` 正常但 `hk_daily` 当前仍返回 0 行。HK 代码、wrapper 和数据诊断保留，默认不跑 cron、不纳入多市场健康结论。
 - A股当前日期为周末，服务器侧真实生产时段尚无当天生产成交样本；2026-07-05 隔离执行测试已确认不启用 Hermes 时，真实 SharedSignals 数据可生成 9 个 A股模拟订单并完成 9/9 本地 `server_local_sim_only` fill，同时写入临时 local_sim 账本、持仓快照和 filled signals。生产账本不写周末假单，等待下一个真实交易时段由 cron 写入样本。
-- A股本地模拟回执链路已具备签名回执文件，但生产环境仍需等待下一次真实交易时段产生真实生产样本，才能把 `ashare_sim_position_sync` 与 `failure_receipts` 从 warn 收敛到 pass。
+- A股本地模拟回执链路已具备签名回执文件；生产环境仍需等待下一次真实交易时段产生真实生产样本，用于验证真实 cron 样本写入和收益复盘质量。健康检查已能区分“无首笔成交样本”和“有失败/有成交但缺回执”，后者才会告警。
 - Hermes/Mini GUI 路径已按 Nicholas 最新要求搁置为第二选择；只有未来显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时才需要重新验证 mini health、同花顺按钮识别、截图回执和账户同步。
 - 多市场旧系统 symlink 依赖已全部清除（61 个死 symlink）；工具独立实现已完成，剩余风险在 A股下一个交易日生产样本与晋降级/guard 的持续运行验证
 - 集合竞价支持标记为 STUB，未实现
@@ -70,6 +70,12 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-05 Ashare health bootstrap receipts
+
+- [x] A股健康检查对 `signals/positions/simulated_ashare_positions.json` 增加 bootstrap 判断：服务器本地模拟盘尚无成交时，缺少持仓快照不再误报为异常；一旦出现本地模拟成交，仍要求快照可读。
+- [x] `failure_receipts` 检查增加本地模拟成交计数：无失败、无本地模拟成交时视为“回执待首笔事件生成”；有失败或有成交时仍必须存在可读回执。
+- [x] 新增回归测试覆盖无交易 bootstrap、失败无回执告警和影子盘状态推进，避免健康检查在周末/首日空样本时持续误报。
 
 ### 2026-07-05 style evolution runtime state isolation
 

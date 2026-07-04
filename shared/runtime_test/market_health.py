@@ -266,6 +266,10 @@ def _check_mini_health(url: str = DEFAULT_MINI_HEALTH_URL) -> Check:
 
 def _check_simulated_position_sync() -> Check:
     path = ROOT / "signals/positions/simulated_ashare_positions.json"
+    local_trades_path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
+    local_trade_count = 0
+    if local_trades_path.exists():
+        local_trade_count = sum(1 for line in local_trades_path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
     data = _load_json(path, {}) or {}
     positions = data.get("positions") or data.get("holdings") or []
     if isinstance(positions, dict):
@@ -277,12 +281,20 @@ def _check_simulated_position_sync() -> Check:
     else:
         position_count = 0
         sample = []
-    ok = path.exists() and position_count >= 0
+    no_trade_bootstrap = not path.exists() and local_trade_count == 0
+    ok = (path.exists() and position_count >= 0) or no_trade_bootstrap
     return Check(
         "ashare_sim_position_sync",
         _status(ok, warn=True),
-        "A股模拟持仓快照可读" if ok else "A股模拟持仓快照缺失",
-        {"path": str(path.relative_to(ROOT)), "position_count": position_count, "sample": sample, "mtime": path.stat().st_mtime if path.exists() else None},
+        "A股模拟持仓快照可读" if path.exists() else "A股模拟盘暂无成交，持仓快照待首笔成交生成" if no_trade_bootstrap else "A股模拟持仓快照缺失",
+        {
+            "path": str(path.relative_to(ROOT)),
+            "position_count": position_count,
+            "sample": sample,
+            "mtime": path.stat().st_mtime if path.exists() else None,
+            "local_trade_count": local_trade_count,
+            "bootstrap_state": "no_trades_yet" if no_trade_bootstrap else "",
+        },
         severity="warn",
     )
 
@@ -342,6 +354,10 @@ def _check_local_sim_ledger() -> Check:
 
 def _check_failure_receipts() -> Check:
     failed = _iter_json_files(ROOT / "signals/failed")
+    local_trades_path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
+    local_trade_count = 0
+    if local_trades_path.exists():
+        local_trade_count = sum(1 for line in local_trades_path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
     receipt_paths = [
         ROOT / "signals/sim_execution_receipts.jsonl",
         ROOT.parent / "MarketGraph/outputs/sim_execution_receipts.jsonl",
@@ -359,12 +375,20 @@ def _check_failure_receipts() -> Check:
             except Exception:
                 continue
             latest_receipts.append({key: item.get(key) for key in ["id", "signal_id", "order_id", "code", "symbol", "status", "success", "filled_qty", "message", "receipt_sha256"]})
-    ok = bool(existing_paths) and bool(latest_receipts)
+    no_receipt_expected = not failed and local_trade_count == 0
+    ok = (bool(existing_paths) and bool(latest_receipts)) or no_receipt_expected
     return Check(
         "failure_receipts",
         _status(ok, warn=True),
-        "失败/回执记录可复盘" if ok else "失败/回执记录不足",
-        {"failed_count": len(failed), "receipt_path_exists": bool(existing_paths), "receipt_paths": existing_paths, "latest_receipts": latest_receipts[-5:]},
+        "失败/回执记录可复盘" if latest_receipts else "暂无失败或模拟成交，回执待首笔事件生成" if no_receipt_expected else "失败/回执记录不足",
+        {
+            "failed_count": len(failed),
+            "local_trade_count": local_trade_count,
+            "receipt_path_exists": bool(existing_paths),
+            "receipt_paths": existing_paths,
+            "latest_receipts": latest_receipts[-5:],
+            "bootstrap_state": "no_receipts_expected_yet" if no_receipt_expected else "",
+        },
         severity="warn",
     )
 
