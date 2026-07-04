@@ -54,6 +54,7 @@ shared/review/**/*.jsonl
 *.bak.*
 shared/review/**/*.md
 shared/risk/**/*.jsonl
+shared/risk/reports/
 signals_archive/
 /shared/data/__pycache__/
 /shared/data/**/*.pyc
