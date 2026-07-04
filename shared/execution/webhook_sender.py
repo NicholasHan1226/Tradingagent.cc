@@ -16,7 +16,12 @@ from typing import Any
 
 import os
 
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+_raw_secret = os.environ.get("WEBHOOK_SECRET", "")
+if not _raw_secret:
+    import warnings
+    warnings.warn("WEBHOOK_SECRET is empty — HMAC signatures will use empty key. "
+                  "Set WEBHOOK_SECRET in environment for production.", RuntimeWarning)
+WEBHOOK_SECRET = _raw_secret
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "http://localhost:9865/")
 RECEIPTS_PATH = Path(os.environ.get("SIM_RECEIPTS_PATH", "/opt/investment/MarketGraph/outputs/sim_execution_receipts.jsonl"))
 TIMEOUT_SECONDS = 10
