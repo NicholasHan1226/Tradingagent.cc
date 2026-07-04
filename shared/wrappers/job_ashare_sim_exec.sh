@@ -65,17 +65,21 @@ PY
 IFS=$'\t' read -r mini_status mini_busy mini_expired_pending mini_halt_signal mini_halt_reason <<< "${mini_health_state}"
 
 ensure_cron_paths
+# Server-local simulated ledger must continue even when the Mini/Hermes bridge is
+# unhealthy. In degraded bridge states, disable the immediate webhook attempt;
+# the Python executor will still write the server-local paper fill and queue the
+# signal file for Mini/Hermes to consume later.
 if [[ "${mini_status}" == "ERR" ]]; then
-    printf '[%s] %s skipped=mini_health_unavailable detail=%q\n' "$(timestamp)" "${JOB_NAME}" "${mini_busy}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
-    exit 0
-fi
-if [[ "${mini_status}" == "HALTED" ]]; then
-    printf '[%s] %s skipped=mini_halted busy=%s expired_pending=%s signal=%q reason=%q\n' "$(timestamp)" "${JOB_NAME}" "${mini_busy}" "${mini_expired_pending}" "${mini_halt_signal}" "${mini_halt_reason}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
-    exit 0
-fi
-if (( mini_busy > MINI_BUSY_LIMIT )); then
-    printf '[%s] %s skipped=mini_busy busy=%s expired_pending=%s limit=%s\n' "$(timestamp)" "${JOB_NAME}" "${mini_busy}" "${mini_expired_pending}" "${MINI_BUSY_LIMIT}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
-    exit 0
+    export ASHARE_SIM_WEBHOOK_ENABLED=0
+    printf '[%s] %s mini_health_unavailable detail=%q action=continue_server_local_sim webhook=disabled\n' "$(timestamp)" "${JOB_NAME}" "${mini_busy}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
+elif [[ "${mini_status}" == "HALTED" ]]; then
+    export ASHARE_SIM_WEBHOOK_ENABLED=0
+    printf '[%s] %s mini_halted busy=%s expired_pending=%s signal=%q reason=%q action=continue_server_local_sim webhook=disabled\n' "$(timestamp)" "${JOB_NAME}" "${mini_busy}" "${mini_expired_pending}" "${mini_halt_signal}" "${mini_halt_reason}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
+elif (( mini_busy > MINI_BUSY_LIMIT )); then
+    export ASHARE_SIM_WEBHOOK_ENABLED=0
+    printf '[%s] %s mini_busy busy=%s expired_pending=%s limit=%s action=continue_server_local_sim webhook=disabled\n' "$(timestamp)" "${JOB_NAME}" "${mini_busy}" "${mini_expired_pending}" "${MINI_BUSY_LIMIT}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
+else
+    printf '[%s] %s mini_ready busy=%s expired_pending=%s action=dual_write webhook=enabled\n' "$(timestamp)" "${JOB_NAME}" "${mini_busy}" "${mini_expired_pending}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
 fi
 
 run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" "${PYTHON_BIN}" "${ENTRYPOINT}" --job "${JOB_NAME}"

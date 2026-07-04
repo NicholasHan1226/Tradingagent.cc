@@ -4,14 +4,16 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from shared.execution import sim_executor_registry
+from shared.execution import local_sim_ledger, sim_executor_registry
 from shared.execution.sim_broker import SimResult, execute_sim_order
 
 
@@ -78,6 +80,58 @@ class SimBrokerV2Test(unittest.TestCase):
         self.assertEqual(captured["account"]["capital_layer"], "simulated")
         self.assertEqual(captured["config"]["account_type"], "simulated")
         self.assertEqual(captured["config"]["capital_layer"], "simulated")
+
+
+    def test_ashare_sim_order_records_server_local_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            patches = [
+                patch.object(local_sim_ledger, "LOCAL_SIM_DIR", base),
+                patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", base / "local_sim_trades.jsonl"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", base / "local_sim_positions.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_LOCK", base / ".local_sim.lock"),
+            ]
+            for p in patches:
+                p.start()
+                self.addCleanup(p.stop)
+
+            def ashare_bridge_executor(order, account, config) -> SimResult:
+                return SimResult(
+                    status="pending",
+                    filled_qty=0,
+                    avg_price=0.0,
+                    fee=0.0,
+                    message="queued for Mini/Hermes simulated execution",
+                    order_id=str(order["order_id"]),
+                    market="ashare",
+                    raw_response={"mode": "mini_bridge_pending"},
+                )
+
+            sim_executor_registry.register_sim_executor("ashare", ashare_bridge_executor)
+
+            result = execute_sim_order(
+                order={
+                    "order_id": "SIM-ASHARE-DUAL-1",
+                    "idempotency_key": "SIM:ashare:acct:20260704:600000.SH:buy",
+                    "ts_code": "600000.SH",
+                    "side": "buy",
+                    "quantity": 100,
+                    "price": 10.0,
+                },
+                market="ashare",
+                account={"account": "ashare_sim"},
+                config={"local_sim_slippage_bps": 0},
+            )
+
+            self.assertEqual(result.status, "pending")
+            backup = result.raw_response.get("local_sim_backup", {})
+            self.assertTrue(backup.get("recorded"), backup)
+            self.assertEqual(backup.get("status"), "filled")
+            pnl = local_sim_ledger.get_local_sim_pnl("ashare_sim")
+            self.assertEqual(pnl["total_trades"], 1)
+            self.assertEqual(pnl["positions"]["600000.SH"]["quantity"], 100)
+            self.assertEqual(pnl["market_value"], 1000.0)
 
     def test_execute_sim_order_rejects_real_payload_before_sanitizing(self) -> None:
         calls: list[object] = []

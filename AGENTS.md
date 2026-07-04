@@ -57,8 +57,9 @@ A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending �
 
 ### Mini/Hermes 健康门
 
-- `job_ashare_sim_exec` 发单前检查 mini health：`pending + in_progress > ASHARE_SIM_MINI_BUSY_LIMIT`（默认 0）时跳过。
-- mini `/health` 返回 `halted=true` 时记 `skipped=mini_halted`，不能当普通 `mini_busy`。
+- `job_ashare_sim_exec` 发单前检查 mini health；mini 正常时 A股模拟单同时进入 Mini/Hermes/同花顺模拟盘和服务器本地模拟账本。
+- mini `/health` 不可用、`halted=true` 或 `pending + in_progress > ASHARE_SIM_MINI_BUSY_LIMIT`（默认 0）时，不再跳过服务器模拟闭环；任务必须记录 `mini_health_unavailable` / `mini_halted` / `mini_busy`，临时设置 `ASHARE_SIM_WEBHOOK_ENABLED=0`，继续写服务器本地 paper fill 与信号文件队列。
+- 服务器本地模拟账本是训练/复盘数据保全，不等同于同花顺 GUI 成交；Hermes/mini 成功或失败仍以回执和截图确认为准。
 - Hermes/mini 点击提交但没有严格持仓表/委托/成交确认时，写 unconfirmed failed receipt，创建 `executor_halt.json`，停止消费队列。截图确认只看裁剪后的持仓表区域。
 - 同花顺模式识别：用 AX 标签确认"模拟"，不依赖 Vision 判断资金/账户区域。显式真实风险标识是"实盘"、"资金账号"、"普通交易"、"融资融券"。
 
