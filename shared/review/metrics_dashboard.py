@@ -21,9 +21,10 @@ def compute():
     for m in ['Ashare','Crypto','PM','US']:
         perf_file = perf_dir / m / 'style_performance.jsonl'
         if perf_file.exists():
-            lines = perf_file.read_text().strip().split('\n')
+            raw = perf_file.read_text().strip()
+            lines = raw.split('\n') if raw else []
             metrics['markets'][m] = {'total_runs': len(lines), 'latest': None}
-            if lines:
+            if lines and lines[-1].strip():
                 metrics['markets'][m]['latest'] = json.loads(lines[-1])
     return metrics
 
