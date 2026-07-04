@@ -117,17 +117,48 @@ class LocalStyleSimulator:
                 "account_type": "simulated",
                 "real_execution": False,
             }
+        from shared.execution.sim_engine import SimExecutionEngine, SimOrder
+
+        side = str(order.get("side") or "buy").strip().lower()
+        snapshot = dict(order.get("market_snapshot") or {})
+        if side == "buy":
+            snapshot.setdefault("ask_price", order.get("ask_price", price))
+            snapshot.setdefault("ask_size", order.get("ask_size", quantity))
+            snapshot.setdefault("cash_available", account.get("cash_available", account.get("cash", account.get("initial_capital"))))
+        else:
+            snapshot.setdefault("bid_price", order.get("bid_price", price))
+            snapshot.setdefault("bid_size", order.get("bid_size", quantity))
+            if order.get("sellable_qty") is not None:
+                snapshot.setdefault("sellable_qty", order.get("sellable_qty"))
+        snapshot.setdefault("last_price", order.get("last_price", price))
+        snapshot.setdefault("available_qty", order.get("available_qty", quantity))
+        sim_order = SimOrder(
+            symbol=str(order.get("symbol") or order.get("ts_code") or order.get("market_id") or ""),
+            side=side,
+            quantity=quantity,
+            limit_price=price,
+            order_type=str(order.get("order_type") or "market"),
+            time_in_force=str(order.get("time_in_force") or "day"),
+            market=self.market,
+            order_id=str(order.get("order_id") or ""),
+            metadata=dict(order),
+        )
+        record = SimExecutionEngine(self.market).submit_order(sim_order, snapshot)
+        status = "pending" if record.state == "open" else record.state
+        fee = float((record.fees or {}).get("total", 0.0) or 0.0)
         return {
-            "status": "filled",
+            "status": status,
             "market": self.market,
             "symbol": order.get("symbol") or order.get("ts_code") or order.get("market_id"),
-            "side": order.get("side", "buy"),
+            "side": side,
             "quantity": quantity,
-            "filled_qty": quantity,
-            "avg_price": price,
-            "notional": round(quantity * price, 6),
-            "fee": 0.0,
-            "broker": "local_sim_only",
+            "filled_qty": record.filled_qty,
+            "avg_price": record.avg_fill_price,
+            "notional": round(record.filled_qty * record.avg_fill_price, 6),
+            "fee": fee,
+            "reason": record.reason,
+            "broker": "local_matching_engine",
+            "engine_record": record.as_dict(),
             "capital_layer": "simulated",
             "account_type": "simulated",
             "real_execution": False,

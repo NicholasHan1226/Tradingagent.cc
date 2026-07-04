@@ -93,11 +93,27 @@ class AshareSimExecutorTest(unittest.TestCase):
 
         self.assertEqual(result.status, "filled")
         self.assertEqual(result.filled_qty, 100)
-        self.assertEqual(result.avg_price, 10.5)
+        self.assertGreaterEqual(result.avg_price, 10.5)
         self.assertEqual(result.capital_layer, "simulated")
         self.assertEqual(result.account_type, "simulated")
-        self.assertEqual(result.raw_response["mode"], "server_local_sim_only")
+        self.assertEqual(result.raw_response["mode"], "server_local_sim_engine")
+        self.assertEqual(result.raw_response["engine_record"]["state"], "filled")
         send_mock.assert_not_called()
+
+    def test_ashare_server_local_fill_rejects_non_lot_buy(self) -> None:
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-NONLOT",
+                "ts_code": "600000.SH",
+                "quantity": 120,
+                "price": 10.5,
+                "side": "buy",
+            },
+            account={"account_id": "ashare_sim"},
+        )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertEqual(result.raw_response["engine_record"]["reason"], "buy_quantity_not_lot_aligned")
 
     def test_ashare_sim_execute_sends_webhook_when_hermes_explicitly_enabled(self) -> None:
         with patch(

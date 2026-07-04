@@ -10,6 +10,7 @@ real-trading gate.
 from __future__ import annotations
 
 import json
+import math
 import random
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -36,6 +37,11 @@ DEFAULT_MARKET_MODELS: dict[str, dict[str, Any]] = {
         "volume_impact_bps": 8.0,
         "price_improvement_bps": 0.5,
         "queue_ahead_ratio": 0.35,
+        "price_tick": 0.01,
+        "lot_size": 100,
+        "enforce_buy_lot": True,
+        "price_limit_pct": 0.10,
+        "bar_participation_cap": 0.10,
         "default_counterparty": "simulated_ashare_book",
     },
     "crypto": {
@@ -47,6 +53,7 @@ DEFAULT_MARKET_MODELS: dict[str, dict[str, Any]] = {
         "volume_impact_bps": 6.0,
         "price_improvement_bps": 0.8,
         "queue_ahead_ratio": 0.2,
+        "bar_participation_cap": 0.05,
         "default_counterparty": "simulated_crypto_book",
     },
     "us": {
@@ -58,6 +65,8 @@ DEFAULT_MARKET_MODELS: dict[str, dict[str, Any]] = {
         "volume_impact_bps": 4.0,
         "price_improvement_bps": 0.4,
         "queue_ahead_ratio": 0.25,
+        "price_tick": 0.01,
+        "bar_participation_cap": 0.05,
         "default_counterparty": "simulated_us_book",
     },
     "pm": {
@@ -69,6 +78,9 @@ DEFAULT_MARKET_MODELS: dict[str, dict[str, Any]] = {
         "volume_impact_bps": 10.0,
         "price_improvement_bps": 0.0,
         "queue_ahead_ratio": 0.5,
+        "price_tick": 0.001,
+        "min_price": 0.001,
+        "max_price": 0.999,
         "default_counterparty": "simulated_pm_book",
     },
 }
@@ -94,6 +106,22 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 def _safe_qty(value: Any) -> float:
     qty = _safe_float(value, 0.0)
     return qty if qty > 0 else 0.0
+
+
+def _first_positive(mapping: dict[str, Any], *keys: str, default: float = 0.0) -> float:
+    for key in keys:
+        value = _safe_float(mapping.get(key), 0.0)
+        if value > 0:
+            return value
+    return default
+
+
+def _round_price(value: float, tick: float, *, side: str) -> float:
+    if tick <= 0:
+        return round(value, 8)
+    units = value / tick
+    rounded = math.ceil(units - 1e-12) * tick if side == "buy" else math.floor(units + 1e-12) * tick
+    return round(rounded, 8)
 
 
 def _load_profile(profile: dict[str, Any] | str | Path | None) -> dict[str, Any]:
@@ -286,7 +314,15 @@ class VolatilitySlippageModel:
         if volatility_bps <= 0:
             volatility = _safe_float(market_snapshot.get("volatility"), 0.0)
             volatility_bps = volatility * 10_000.0 if volatility <= 1.0 else volatility
-        available_qty = max(_safe_float(market_snapshot.get("available_qty"), order.quantity), 1.0)
+        if order.side == "buy":
+            available_qty = _first_positive(market_snapshot, "ask_size", "ask_qty", "best_ask_size", "available_qty", default=0.0)
+        else:
+            available_qty = _first_positive(market_snapshot, "bid_size", "bid_qty", "best_bid_size", "available_qty", default=0.0)
+        if available_qty <= 0:
+            bar_volume = _first_positive(market_snapshot, "bar_volume", "volume", "vol", default=0.0)
+            if bar_volume > 0:
+                available_qty = bar_volume * _safe_float(self.config.get("bar_participation_cap"), 1.0)
+        available_qty = max(available_qty or order.quantity, 1.0)
         participation = min(1.0, order.quantity / available_qty)
         bps = (
             _safe_float(self.config.get("base_slippage_bps"), 0.0)
@@ -296,10 +332,28 @@ class VolatilitySlippageModel:
         return round(max(0.0, bps), 6)
 
     def price(self, order: SimOrder, market_snapshot: dict[str, Any]) -> tuple[float, float]:
-        mid = _safe_float(
-            market_snapshot.get("mid_price", market_snapshot.get("last_price", market_snapshot.get("close"))),
-            order.limit_price,
-        )
+        if order.side == "buy":
+            mid = _first_positive(
+                market_snapshot,
+                "ask_price",
+                "best_ask",
+                "ask",
+                "mid_price",
+                "last_price",
+                "close",
+                default=order.limit_price,
+            )
+        else:
+            mid = _first_positive(
+                market_snapshot,
+                "bid_price",
+                "best_bid",
+                "bid",
+                "mid_price",
+                "last_price",
+                "close",
+                default=order.limit_price,
+            )
         slippage_bps = self.estimate_bps(order, market_snapshot)
         improvement_bps = _safe_float(self.config.get("price_improvement_bps"), 0.0)
         effective_bps = max(0.0, slippage_bps - improvement_bps)
@@ -310,6 +364,22 @@ class VolatilitySlippageModel:
                 fill_price = min(fill_price, order.limit_price)
             else:
                 fill_price = max(fill_price, order.limit_price)
+        min_price = _safe_float(self.config.get("min_price"), 0.0)
+        max_price = _safe_float(self.config.get("max_price"), 0.0)
+        if min_price > 0:
+            fill_price = max(min_price, fill_price)
+        if max_price > 0:
+            fill_price = min(max_price, fill_price)
+        fill_price = _round_price(fill_price, _safe_float(self.config.get("price_tick"), 0.0), side=order.side)
+        if order.order_type == "limit":
+            if order.side == "buy":
+                fill_price = min(fill_price, order.limit_price)
+            else:
+                fill_price = max(fill_price, order.limit_price)
+        if min_price > 0:
+            fill_price = max(min_price, fill_price)
+        if max_price > 0:
+            fill_price = min(max_price, fill_price)
         return round(fill_price, 8), round(slippage_bps - improvement_bps, 6)
 
     def to_real(self) -> dict[str, Any]:
@@ -347,6 +417,12 @@ class SimExecutionEngine:
         record = SimOrderRecord(order=order, state="pending")
         self.orders[order.order_id] = record
         self._transition(record, "open")
+
+        rule_rejection = self._rule_rejection(order, snapshot)
+        if rule_rejection:
+            record.reason = rule_rejection
+            self._transition(record, "rejected")
+            return record
 
         if not self._is_marketable(order, snapshot):
             record.reason = "limit_not_marketable"
@@ -430,13 +506,67 @@ class SimExecutionEngine:
     def _is_marketable(self, order: SimOrder, snapshot: dict[str, Any]) -> bool:
         if order.order_type == "market":
             return True
-        mid = _safe_float(snapshot.get("mid_price", snapshot.get("last_price", snapshot.get("close"))), order.limit_price)
         if order.side == "buy":
-            return order.limit_price >= mid
-        return order.limit_price <= mid
+            required = _first_positive(snapshot, "ask_price", "best_ask", "ask", "mid_price", "last_price", "close", default=order.limit_price)
+            return order.limit_price >= required
+        required = _first_positive(snapshot, "bid_price", "best_bid", "bid", "mid_price", "last_price", "close", default=order.limit_price)
+        return order.limit_price <= required
+
+    def _rule_rejection(self, order: SimOrder, snapshot: dict[str, Any]) -> str:
+        if order.market != self.market:
+            return "market_mismatch"
+        lot_size = _safe_float(self.model_config.get("lot_size"), 0.0)
+        if lot_size > 0 and order.side == "buy" and self.model_config.get("enforce_buy_lot", False):
+            if abs(order.quantity / lot_size - round(order.quantity / lot_size)) > 1e-9:
+                return "buy_quantity_not_lot_aligned"
+
+        if order.side == "sell":
+            sellable_qty = _safe_float(snapshot.get("sellable_qty"), -1.0)
+            if sellable_qty >= 0 and order.quantity > sellable_qty + 1e-12:
+                return "insufficient_sellable_qty_t1"
+
+        lower_limit = _safe_float(snapshot.get("lower_limit"), 0.0)
+        upper_limit = _safe_float(snapshot.get("upper_limit"), 0.0)
+        if not lower_limit or not upper_limit:
+            reference_price = _first_positive(snapshot, "previous_close", "pre_close", "reference_price", default=0.0)
+            price_limit_pct = _safe_float(snapshot.get("price_limit_pct"), _safe_float(self.model_config.get("price_limit_pct"), 0.0))
+            if reference_price > 0 and price_limit_pct > 0:
+                lower_limit = reference_price * (1.0 - price_limit_pct)
+                upper_limit = reference_price * (1.0 + price_limit_pct)
+        if lower_limit > 0 and order.limit_price < lower_limit - 1e-9:
+            return "price_below_lower_limit"
+        if upper_limit > 0 and order.limit_price > upper_limit + 1e-9:
+            return "price_above_upper_limit"
+
+        if self.market == "pm":
+            min_price = _safe_float(self.model_config.get("min_price"), 0.0)
+            max_price = _safe_float(self.model_config.get("max_price"), 0.0)
+            if min_price > 0 and order.limit_price < min_price:
+                return "price_below_min_probability"
+            if max_price > 0 and order.limit_price > max_price:
+                return "price_above_max_probability"
+
+        if order.side == "buy":
+            cash_available = _safe_float(snapshot.get("cash_available"), -1.0)
+            if cash_available >= 0:
+                reference = self._reference_execution_price(order, snapshot)
+                estimated_notional = reference * order.quantity
+                estimated_fee = self.commission_model.calculate(order.side, estimated_notional).get("total", 0.0)
+                if cash_available + 1e-9 < estimated_notional + estimated_fee:
+                    return "insufficient_cash"
+        return ""
 
     def _fill_quantity(self, order: SimOrder, snapshot: dict[str, Any]) -> float:
-        available = _safe_float(snapshot.get("available_qty"), order.quantity)
+        if order.side == "buy":
+            available = _first_positive(snapshot, "ask_size", "ask_qty", "best_ask_size", "available_qty", default=0.0)
+        else:
+            available = _first_positive(snapshot, "bid_size", "bid_qty", "best_bid_size", "available_qty", default=0.0)
+        if available <= 0:
+            bar_volume = _first_positive(snapshot, "bar_volume", "volume", "vol", default=0.0)
+            if bar_volume > 0:
+                available = bar_volume * _safe_float(self.model_config.get("bar_participation_cap"), 1.0)
+        if available <= 0:
+            available = order.quantity
         queue_position = max(0.0, _safe_float(snapshot.get("queue_position"), 0.0))
         queue_ahead = _safe_float(self.model_config.get("queue_ahead_ratio"), 0.0) * queue_position
         fillable = max(0.0, available - queue_ahead)
@@ -444,9 +574,17 @@ class SimExecutionEngine:
             fillable *= max(0.05, 1.0 - min(0.95, queue_position))
         participation_cap = _safe_float(snapshot.get("participation_cap"), 1.0)
         fill_qty = min(order.quantity, fillable, max(0.0, order.quantity * participation_cap))
+        lot_size = _safe_float(self.model_config.get("lot_size"), 0.0)
+        if lot_size > 0 and order.side == "buy" and fill_qty < order.quantity:
+            fill_qty = math.floor(fill_qty / lot_size) * lot_size
         if order.time_in_force.lower() == "fok" and fill_qty + 1e-12 < order.quantity:
             return 0.0
         return round(fill_qty, 8)
+
+    def _reference_execution_price(self, order: SimOrder, snapshot: dict[str, Any]) -> float:
+        if order.side == "buy":
+            return _first_positive(snapshot, "ask_price", "best_ask", "ask", "mid_price", "last_price", "close", default=order.limit_price)
+        return _first_positive(snapshot, "bid_price", "best_bid", "bid", "mid_price", "last_price", "close", default=order.limit_price)
 
     def _apply_position(self, order: SimOrder, fill: SimFill, fees: dict[str, float]) -> None:
         pos = self.positions.setdefault(order.symbol, SimPosition(symbol=order.symbol))

@@ -175,6 +175,8 @@ class StyleRunner:
         initial_capital = self._initial_capital(account)
         notional = initial_capital * style.position_pct
         quantity = self._quantity(notional, price)
+        if self.market == "ashare" and side == "buy":
+            quantity = math.floor(quantity / 100.0) * 100.0
         if self.market == "pm":
             order: dict[str, Any] = {
                 "market_id": symbol,

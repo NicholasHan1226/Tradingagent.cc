@@ -167,7 +167,7 @@ class SimBrokerV2Test(unittest.TestCase):
             )
 
             self.assertEqual(result.status, "filled")
-            self.assertEqual(result.raw_response.get("mode"), "server_local_sim_only")
+            self.assertEqual(result.raw_response.get("mode"), "server_local_sim_engine")
             self.assertTrue(result.raw_response.get("local_sim_backup", {}).get("recorded"))
             self.assertTrue((base / "local_sim_trades.jsonl").exists())
             self.assertTrue((base / "simulated_ashare_positions.json").exists())

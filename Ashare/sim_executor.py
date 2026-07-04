@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from shared.execution.signal_state_machine import SignalStateMachine
+from shared.execution.sim_engine import SimExecutionEngine, SimOrder
 from shared.execution.sim_broker import SimResult
 from shared.execution.sim_executor_registry import register_sim_executor
 from shared.execution.webhook_sender import send_sim_signal_to_mini
@@ -78,6 +79,111 @@ def _reject(order_id: str, code: str, message: str) -> SimResult:
             "mode": "pre_bridge_validation",
             "code": code,
             "reason": message,
+        },
+    )
+
+
+def _first_value(*values: Any, default: Any = None) -> Any:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def _snapshot_from_payload(
+    order: dict[str, Any],
+    account: dict[str, Any] | str | None,
+    config: dict[str, Any],
+    card: dict[str, Any],
+) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+    for source in (config.get("market_snapshot"), order.get("market_snapshot")):
+        if isinstance(source, dict):
+            snapshot.update(source)
+
+    price = float(card.get("price") or 0.0)
+    side = str(card.get("side") or "buy").lower()
+    if side == "buy":
+        snapshot.setdefault("ask_price", _first_value(order.get("ask_price"), config.get("ask_price"), price))
+        snapshot.setdefault("ask_size", _first_value(order.get("ask_size"), config.get("ask_size"), card.get("quantity")))
+    else:
+        snapshot.setdefault("bid_price", _first_value(order.get("bid_price"), config.get("bid_price"), price))
+        snapshot.setdefault("bid_size", _first_value(order.get("bid_size"), config.get("bid_size"), card.get("quantity")))
+    snapshot.setdefault("last_price", _first_value(order.get("last_price"), config.get("last_price"), price))
+    snapshot.setdefault("available_qty", _first_value(order.get("available_qty"), config.get("available_qty"), card.get("quantity")))
+
+    for key in (
+        "previous_close",
+        "pre_close",
+        "reference_price",
+        "upper_limit",
+        "lower_limit",
+        "price_limit_pct",
+        "bar_volume",
+        "volume",
+        "vol",
+        "volatility",
+        "volatility_bps",
+        "queue_position",
+        "participation_cap",
+    ):
+        value = _first_value(order.get(key), config.get(key))
+        if value is not None:
+            snapshot.setdefault(key, value)
+
+    if isinstance(account, dict):
+        cash_available = _first_value(account.get("cash_available"), account.get("cash"), account.get("available_cash"))
+        sellable_qty = _first_value(account.get("sellable_qty"), account.get("available_position"))
+    else:
+        cash_available = None
+        sellable_qty = None
+    cash_available = _first_value(order.get("cash_available"), config.get("cash_available"), cash_available)
+    sellable_qty = _first_value(order.get("sellable_qty"), config.get("sellable_qty"), sellable_qty)
+    if cash_available is not None:
+        snapshot.setdefault("cash_available", cash_available)
+    if sellable_qty is not None:
+        snapshot.setdefault("sellable_qty", sellable_qty)
+    return snapshot
+
+
+def _execute_server_local(
+    order: dict[str, Any],
+    account: dict[str, Any] | str | None,
+    config: dict[str, Any],
+    card: dict[str, Any],
+) -> SimResult:
+    safe_metadata = dict(order)
+    safe_card = dict(card)
+    safe_card["direct_execution"] = False
+    safe_metadata["signal_card"] = safe_card
+    sim_order = SimOrder(
+        symbol=str(card["ts_code"]),
+        side=str(card.get("side") or "buy"),
+        quantity=int(card["quantity"]),
+        limit_price=float(card["price"]),
+        order_type=str(order.get("order_type") or config.get("order_type") or "market"),
+        time_in_force=str(order.get("time_in_force") or config.get("time_in_force") or "day"),
+        market=MARKET,
+        order_id=str(card["order_id"]),
+        metadata=safe_metadata,
+    )
+    engine = SimExecutionEngine(MARKET, profile=config.get("sim_engine_profile"))
+    record = engine.submit_order(sim_order, _snapshot_from_payload(order, account, config, card))
+    status = "pending" if record.state == "open" else record.state
+    fee = float((record.fees or {}).get("total", 0.0) or 0.0)
+    return SimResult(
+        status=status,
+        filled_qty=int(record.filled_qty or 0),
+        avg_price=float(record.avg_fill_price or 0.0),
+        fee=fee,
+        message=f"Server-local A-share simulated fill via matching engine: {record.state}",
+        order_id=sim_order.order_id,
+        market=MARKET,
+        raw_response={
+            "mode": "server_local_sim_engine",
+            "hermes_enabled": False,
+            "signal_card": card,
+            "engine_record": record.as_dict(),
         },
     )
 
@@ -161,20 +267,7 @@ def ashare_sim_execute(
 
     hermes_enabled = bool(config.get("hermes_enabled")) or os.environ.get("ASHARE_SIM_HERMES_ENABLED", "0") == "1"
     if not hermes_enabled:
-        return SimResult(
-            status="filled",
-            filled_qty=int(card["quantity"]),
-            avg_price=float(card["price"]),
-            fee=float(config.get("local_sim_fee", 0.0) or 0.0),
-            message="Server-local A-share simulated fill; Hermes bridge reserved but disabled",
-            order_id=order_id,
-            market=MARKET,
-            raw_response={
-                "mode": "server_local_sim_only",
-                "hermes_enabled": False,
-                "signal_card": card,
-            },
-        )
+        return _execute_server_local(order, account, config, card)
 
     signals_dir = Path(config.get("signals_dir") or DEFAULT_SIGNALS_DIR)
     env_webhook = os.environ.get("ASHARE_SIM_WEBHOOK_ENABLED")
