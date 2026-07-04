@@ -12,17 +12,20 @@ As of 2026-07-05, the static dashboard has been deployed to Cloudflare Pages:
 | Pages project | `tradingagent-front` |
 | Production URL | `https://tradingagent-front.pages.dev` |
 | First deployment URL | `https://d29e260e.tradingagent-front.pages.dev` |
+| Latest checked deployment URL | `https://f343696d.tradingagent-front.pages.dev` |
 | Custom dashboard domain | `https://dashboard.tradingagent.cc` |
 | DNS status | `dashboard.tradingagent.cc` is a proxied CNAME to `tradingagent-front.pages.dev` |
+| Tunnel | `tradingagent-front-api` (`88b5a0af-35fe-438d-b294-2d1b441631ca`) |
+| API domain | `https://api.tradingagent.cc/api/trading-agent/snapshot` |
 
-The dashboard page is public on Cloudflare. The live snapshot API is not yet
-connected through Cloudflare Tunnel because server SSH access was not available
-from the current local machine during this setup.
+The dashboard page is public on Cloudflare. The live snapshot API is connected
+through Cloudflare Tunnel to the TradingAgent server's local read-only snapshot
+service on `127.0.0.1:8787`.
 
-The Pages Function at `/api/trading-agent/snapshot` is already present as the
-future read-only proxy. Until `TRADING_AGENT_SNAPSHOT_UPSTREAM_URL` is set in
-Cloudflare Pages, it returns a clear JSON `503` instead of accidentally serving
-the frontend HTML shell.
+The Pages Function at `/api/trading-agent/snapshot` is the same-origin
+read-only proxy. It uses the Cloudflare Pages server-side variable
+`TRADING_AGENT_SNAPSHOT_UPSTREAM_URL` and currently forwards to
+`https://api.tradingagent.cc/api/trading-agent/snapshot`.
 
 ## Target Result
 
@@ -38,7 +41,7 @@ Cloudflare Pages
   |
   | read-only snapshot fetch
   v
-Cloudflare Tunnel or Worker proxy
+Cloudflare Tunnel
   |
   | private origin connection
   v
@@ -110,7 +113,7 @@ TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://dashboard.tradingagent.cc,https://tr
 node dist-server/server/tradingAgentSnapshotHttp.js
 ```
 
-Tunnel route shape:
+Current Tunnel route shape:
 
 ```text
 api.tradingagent.cc -> http://127.0.0.1:8787
@@ -156,10 +159,11 @@ Recommended target split:
 | `dashboard.tradingagent.cc` | Cloudflare Pages custom domain | Dashboard UI |
 | `tradingagent.cc` | Cloudflare Pages custom domain or redirect to dashboard | Public dashboard entry |
 | `www.tradingagent.cc` | Redirect or Pages custom domain | Convenience alias |
-| `api.tradingagent.cc` | Cloudflare Tunnel public hostname or Worker route | Read-only snapshot API |
+| `api.tradingagent.cc` | Cloudflare Tunnel public hostname | Read-only snapshot API |
 
 `dashboard.tradingagent.cc` has already been moved away from the mainland
-Alibaba Cloud A-record entry. Keep the old Nginx server available during the
+Alibaba Cloud A-record entry. `api.tradingagent.cc` is routed through the
+Cloudflare Tunnel record. Keep the old Nginx server available during the
 migration window so rollback is fast. The apex and `www` records are still left
 on the previous Alibaba Cloud A-record route until they are intentionally moved.
 
@@ -202,9 +206,9 @@ Keep these boundaries explicit:
 6. Deploy the Pages Function proxy. Done.
 7. Set DNS/custom domains in Cloudflare. Done for `dashboard.tradingagent.cc`.
 8. Verify the public dashboard loads from Pages. Done.
-9. Create the Tunnel public hostname for `api.tradingagent.cc`.
-10. Set `TRADING_AGENT_SNAPSHOT_UPSTREAM_URL` in Cloudflare Pages.
-11. Verify the browser snapshot call returns JSON through Cloudflare.
+9. Create the Tunnel public hostname for `api.tradingagent.cc`. Done.
+10. Set `TRADING_AGENT_SNAPSHOT_UPSTREAM_URL` in Cloudflare Pages. Done.
+11. Verify the browser snapshot call returns JSON through Cloudflare. Done.
 12. Keep the Alibaba Cloud Nginx route available until the Cloudflare route has
     been checked from normal browsers.
 
@@ -230,8 +234,9 @@ Backend rollback:
 
 ## Not Covered Yet
 
-- Cloudflare Tunnel is not installed or configured on the TradingAgent server
-  from this local session because SSH login was unavailable.
-- No Cloudflare Access policy is configured yet.
+- No Cloudflare Access policy is configured yet for `api.tradingagent.cc`.
 - `tradingagent.cc` and `www.tradingagent.cc` still point to the previous
   Alibaba Cloud A-record route.
+- The snapshot currently returns the live API envelope, but several data
+  domains may still be empty until TradingAgent writes richer performance,
+  holdings, signal timeline, and decision records.

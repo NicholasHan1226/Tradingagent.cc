@@ -71,7 +71,19 @@ TradingAgent signals / positions / review / risk
 
 ## 生产形态
 
-当前生产版本和 TradingAgent 放在同一台杭州服务器：
+当前用户访问入口已经切到 Cloudflare：
+
+```text
+dashboard.tradingagent.cc
+  Cloudflare Pages
+    /                         -> front/dist
+    /api/trading-agent/snapshot -> Pages Function
+      -> api.tradingagent.cc
+      -> Cloudflare Tunnel
+      -> 127.0.0.1:8787 on TradingAgent server
+```
+
+TradingAgent 服务器仍保留旧 Nginx 入口，作为回滚路径：
 
 ```text
 8.138.181.177
@@ -101,17 +113,18 @@ VITE_TRADING_AGENT_SNAPSHOT_URL=/api/trading-agent/snapshot
 
 详细部署和 Nginx 示例见 [docs/integration.md](docs/integration.md)。
 
-Cloudflare 迁移准备说明见 [docs/cloudflare.md](docs/cloudflare.md)。目标形态是：
+Cloudflare 部署说明见 [docs/cloudflare.md](docs/cloudflare.md)。当前形态是：
 
 - 前端静态页面部署到 Cloudflare Pages。
-- 只读 snapshot API 继续运行在 TradingAgent 服务器内侧，并通过 Cloudflare Tunnel 或 Worker 受控代理接入。
+- 只读 snapshot API 继续运行在 TradingAgent 服务器内侧，并通过 Cloudflare Tunnel 接入。
 - API 仍只读，不暴露交易执行、队列写入、账户、回调或密钥。
 
 当前域名说明：
 
 - `dashboard.tradingagent.cc` 已切到 Cloudflare Pages 项目 `tradingagent-front`。
+- `api.tradingagent.cc` 已通过 Cloudflare Tunnel 指向杭州服务器内侧 `127.0.0.1:8787`。
+- `dashboard.tradingagent.cc/api/trading-agent/snapshot` 已通过 Pages Function 代理到实时快照 API。
 - `tradingagent.cc` 和 `www.tradingagent.cc` 暂时仍保留杭州 Nginx A 记录，作为旧入口和回滚路径。
-- Pages Function 已预留 `/api/trading-agent/snapshot` 代理入口；Cloudflare Tunnel 接好前会返回明确 JSON 缺口，不应被解读为实时数据已接入。
 - 杭州 Nginx 入口继续保留，便于在 Cloudflare 路由异常时回退。
 
 ## 本地运行
