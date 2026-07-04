@@ -60,6 +60,20 @@ Recommended production shape on the Hangzhou host:
 3. The Node snapshot service reads the verified TradingAgent workspace.
 4. The API returns only display-ready snapshot JSON.
 
+Current production deployment:
+
+- Host: `8.138.181.177`
+- Workspace: `/opt/investment/tradingagent`
+- Front source: `/opt/investment/tradingagent/front`
+- Node runtime: `/opt/investment/tools/node-v24.4.1/bin/node`
+- Service: `tradingagent-front-api.service`
+- Nginx site: `/etc/nginx/sites-available/tradingagent-front`
+- Internal API: `127.0.0.1:8787`
+- Public server names: `dashboard.tradingagent.cc`, `tradingagent.cc`,
+  `www.tradingagent.cc`
+- DNS status: the Nginx site is ready, but the domain A records must point to
+  `8.138.181.177` before normal browser access reaches this server.
+
 When the frontend and API share the same domain, the frontend can use the
 same-origin route:
 
@@ -80,8 +94,7 @@ FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent \
 TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1 \
 TRADING_AGENT_SNAPSHOT_PORT=8787 \
 TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://dashboard.tradingagent.cc \
-TRADING_AGENT_SNAPSHOT_API_TOKEN=server-only-token \
-npm run start:api
+/opt/investment/tools/node-v24.4.1/bin/node dist-server/server/tradingAgentSnapshotHttp.js
 ```
 
 Routes:
@@ -156,15 +169,20 @@ Description=TradingAgent front snapshot API
 After=network.target
 
 [Service]
+User=marketgraph
+Group=marketgraph
 WorkingDirectory=/opt/investment/tradingagent/front
 Environment=FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent
 Environment=TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1
 Environment=TRADING_AGENT_SNAPSHOT_PORT=8787
 Environment=TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://dashboard.tradingagent.cc
-Environment=TRADING_AGENT_SNAPSHOT_API_TOKEN=server-only-token
-ExecStart=/usr/bin/npm run start:api
-Restart=always
+ExecStart=/opt/investment/tools/node-v24.4.1/bin/node /opt/investment/tradingagent/front/dist-server/server/tradingAgentSnapshotHttp.js
+Restart=on-failure
 RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/investment/tradingagent
 
 [Install]
 WantedBy=multi-user.target
@@ -173,7 +191,9 @@ WantedBy=multi-user.target
 Production verification:
 
 - `curl http://127.0.0.1:8787/healthz` returns `ok`.
-- `curl -H "Authorization: Bearer server-only-token" http://127.0.0.1:8787/api/trading-agent/snapshot` returns JSON.
+- `curl http://127.0.0.1:8787/api/trading-agent/snapshot` returns JSON when
+  the service is bound to localhost and token auth is unset.
+- `curl --resolve dashboard.tradingagent.cc:80:8.138.181.177 http://dashboard.tradingagent.cc/` returns the React app before DNS is switched.
 - The public dashboard route loads the React app.
 - The public `/api/trading-agent/snapshot` route returns JSON through Nginx.
 - The snapshot response reports simulated display data and does not expose

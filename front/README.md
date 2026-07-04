@@ -71,17 +71,20 @@ TradingAgent signals / positions / review / risk
 
 ## 生产形态
 
-首个生产版本建议和 TradingAgent 放在同一台杭州服务器：
+当前生产版本和 TradingAgent 放在同一台杭州服务器：
 
 ```text
 8.138.181.177
-  Nginx / HTTPS
+  Nginx
     /                         -> front/dist
     /api/trading-agent/snapshot -> 127.0.0.1:8787
 
-  Node snapshot API
+  tradingagent-front-api.service
     bind 127.0.0.1:8787
     read /opt/investment/tradingagent
+
+  Node runtime
+    /opt/investment/tools/node-v24.4.1/bin/node
 ```
 
 推荐生产源码路径：
@@ -97,6 +100,12 @@ VITE_TRADING_AGENT_SNAPSHOT_URL=/api/trading-agent/snapshot
 ```
 
 详细部署和 Nginx 示例见 [docs/integration.md](docs/integration.md)。
+
+当前域名说明：
+
+- Nginx 已配置 `dashboard.tradingagent.cc`、`tradingagent.cc` 和 `www.tradingagent.cc`。
+- DNS 仍需指向 `8.138.181.177` 后，普通浏览器才能直接访问云端页面。
+- 在 DNS 修正前，可用 `curl --resolve dashboard.tradingagent.cc:80:8.138.181.177` 验证生产站点。
 
 ## 本地运行
 
