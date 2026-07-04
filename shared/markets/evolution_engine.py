@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.markets.evolution_guard import evaluate_guard
 from shared.markets.performance_tracker import compare_styles, load_history
 from shared.markets.style_config import styles_dir_for_market
 
@@ -378,14 +379,36 @@ def evaluate_all_markets(
     *,
     review_root: Path | str | None = None,
 ) -> dict[str, Any]:
+    guard_state = evaluate_guard(markets, review_root=review_root)
+    guard_blocked = bool(
+        guard_state.get("blocked")
+        or guard_state.get("sim_halted")
+        or guard_state.get("evolution_paused")
+        or guard_state.get("weights_frozen")
+        or str(guard_state.get("state") or "").strip().lower() in {"blocked", "guard_blocked"}
+    )
+    if guard_blocked:
+        return {
+            "generated_at": _now_iso(),
+            "state": "guard_blocked",
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "real_execution": False,
+            "markets": [],
+            "changed": False,
+            "guard": guard_state,
+        }
+
     results = [evaluate_and_adjust(market, review_root=review_root) for market in markets]
     return {
         "generated_at": _now_iso(),
+        "state": "evaluated",
         "capital_layer": "simulated",
         "account_type": "simulated",
         "real_execution": False,
         "markets": results,
         "changed": any(result.get("actions") for result in results),
+        "guard": guard_state,
     }
 
 

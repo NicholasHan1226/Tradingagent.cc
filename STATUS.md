@@ -44,6 +44,19 @@
 
 ## 五、最近完成
 
+### 2026-07-04 shadow broker + evolution guard/cron 修复
+
+- [x] 新增 `shared/execution/shadow_broker.py`：影子盘只记录不执行，支持 JSONL trade log、JSON positions/pnl、按 strategy/date/market 查询 PnL，并拒绝 real/live/direct payload。
+- [x] `shared/markets/evolution_engine.py` 的 `evaluate_all_markets()` 已前置调用 `evaluate_guard()`；guard 阻断时返回 `state=guard_blocked`，不执行调权或 variant 生成。
+- [x] `cron/evolution.sh` 已改为调用函数入口 `evaluate_all_markets()`，保留 flock、日志、timeout、`.env` 读取和可配置 markets/review root。
+- [x] 验证：`py_compile`、`bash -n cron/evolution.sh`、shadow/router 聚焦回归 20 项 + 4 subtests、orchestrator/sim loop 回归 9 项 + 2 subtests、evolution guard smoke 通过。
+
+### 2026-07-04 多市场 shadow runner 补齐
+
+- [x] 新增 `PM/shadow_runner.py`、`Crypto/shadow_runner.py`、`US/shadow_runner.py`、`HK/shadow_runner.py`，均为 sim/shadow-only：读取 universe、生成最小 mock order、调用本地 simulator、写入 `shadow/pending` signal card。
+- [x] 写入卡片固定 `capital_layer=shadow`、`account_type=shadow`、`real_execution=false`、`direct_execution=false`，并复用现有安全 guard 拒绝 real/live/direct payload。
+- [x] 验证：新增文件 `py_compile` 通过；`tests/test_market_base_layer.py tests/test_pm_workflow_config.py tests/test_crypto_phase_d_tools.py tests/test_us_hk_phase_d_p0.py` 通过（15 passed，7 subtests passed）。
+
 ### 2026-07-04 production-grade simulated execution layer
 
 - [x] 新增 `shared/execution/sim_engine.py`：`SimOrder` / `SimFill` / `SimPosition`、A-share 1bps commission + 2.5bps sell stamp duty、波动率滑点、partial fill、queue position、price improvement 和 `pending -> open -> partial/filled/cancelled/rejected` 状态机。

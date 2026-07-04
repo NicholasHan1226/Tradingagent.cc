@@ -38,3 +38,9 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 30 8 * * * /opt/investment/tradingagent/shared/wrappers/job_email_notify.sh
 0 8,20 * * * /opt/investment/tradingagent/shared/wrappers/job_alert.sh
 */30 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_report.sh
+
+# New entries (2026-07-04)
+0 9 * * 1-5 /opt/investment/tradingagent/cron/auto_pipeline.sh
+*/10 * * * * /opt/investment/tradingagent/cron/health_check.sh
+0 */4 * * * /opt/investment/tradingagent/cron/evolution.sh
+0 16 * * 1-5 /opt/investment/tradingagent/cron/daily_review.sh
