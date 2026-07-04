@@ -57,8 +57,36 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.signals[0]).toMatchObject({ symbol: '0700.HK', status: 'pending' })
     expect(snapshot.domains.holdings.status).toBe('ready')
     expect(snapshot.domains.signals.status).toBe('ready')
-    expect(snapshot.sourceRefs.positions).toBe('TradingAgent/signals/positions/*.json')
-    expect(snapshot.sourceRefs.capitalPlan).toBe('TradingAgent/shared/accounting/position_plan.jsonl')
+    expect(snapshot.sourceRefs.positions).toBe('signals/positions/*.json')
+    expect(snapshot.sourceRefs.capitalPlan).toBe('shared/accounting/position_plan.jsonl')
+  })
+
+  it('can read directly from the TradingAgent project root used by production deployment', async () => {
+    const root = join(await createWorkspace(), 'TradingAgent')
+    await mkdir(join(root, 'signals/pending'), { recursive: true })
+
+    await writeFile(
+      join(root, 'shared/accounting/position_plan.jsonl'),
+      JSON.stringify({
+        positions: [{ ts_code: '600519.SH', quantity: 100, running_cost: 120000, realized_pnl: 8200 }],
+      }) + '\n',
+    )
+    await writeFile(
+      join(root, 'signals/pending/600519.SH.json'),
+      JSON.stringify({
+        ts_code: '600519.SH',
+        market: 'cn',
+        status: 'pending',
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      now: new Date('2026-07-04T10:00:00.000Z'),
+    })
+
+    expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: '600519.SH', market: 'A-share' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: '600519.SH', status: 'pending' }))
   })
 
   it('keeps mixed signal outcomes visible and normalizes backend market labels', async () => {
@@ -93,6 +121,40 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.signals.length).toBeLessThanOrEqual(240)
     expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'BTC-USD', market: 'Crypto', status: 'missed' }))
     expect(snapshot.signals[0]).toMatchObject({ market: 'PM' })
+  })
+
+  it('includes claimed and running cards from the live signal pipeline as active opportunities', async () => {
+    const root = await createWorkspace()
+    await mkdir(join(root, 'signals/claimed'), { recursive: true })
+    await mkdir(join(root, 'signals/running'), { recursive: true })
+
+    await writeFile(
+      join(root, 'signals/claimed/0700.HK.json'),
+      JSON.stringify({
+        ts_code: '0700.HK',
+        market: 'HK',
+        status: 'claimed',
+        scored_at: '2026-07-04T09:44:00.000+08:00',
+      }),
+    )
+    await writeFile(
+      join(root, 'signals/running/AAPL.US.json'),
+      JSON.stringify({
+        ts_code: 'AAPL.US',
+        market: 'US',
+        status: 'running',
+        debated_at: '2026-07-04T09:47:00.000+08:00',
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T10:00:00.000Z'),
+    })
+
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: '0700.HK', status: 'pending', next: '等待执行确认', stage: '形成信号' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'AAPL.US', status: 'pending', next: '执行中，等待回执', stage: '交易条件' }))
   })
 
   it('reads return series from the daily review so the homepage can show real performance history', async () => {

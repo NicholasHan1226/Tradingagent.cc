@@ -15,12 +15,16 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByLabelText('机会漏斗')).toBeInTheDocument()
     expect(screen.getByText('收益曲线')).toBeInTheDocument()
     expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '模拟盘' })).toBeInTheDocument()
-    expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '实盘预留' })).toBeInTheDocument()
+    expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '实盘待接入' })).toBeInTheDocument()
+    expect(screen.getByText('发现')).toBeInTheDocument()
+    expect(screen.getByText('筛选')).toBeInTheDocument()
+    expect(screen.getAllByText('交易信号').length).toBeGreaterThan(0)
     expect(screen.queryByRole('heading', { name: '机会从全市场进入，只把可执行结果留在首页。' })).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '今日操作' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '现在关注' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '本轮结果' })).not.toBeInTheDocument()
     expect(screen.queryByText('现在判断')).not.toBeInTheDocument()
     expect(screen.queryByText('看决策')).not.toBeInTheDocument()
+    expect(screen.queryByText('总览')).not.toBeInTheDocument()
   })
 
   it('replaces demo signals with TradingAgent snapshot signals when the local API is available', async () => {
@@ -77,18 +81,18 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('2 个机会进入，1 个进入观察')).toBeInTheDocument())
-    expect(screen.getByText('BTC-USD')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('2 个机会进入，2 个形成交易信号 · 留存 100%')).toBeInTheDocument())
+    expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
   })
 
   it('switches the return card between simulated and reserved live mode in place', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    fireEvent.click(within(card).getByRole('button', { name: '实盘预留' }))
+    fireEvent.click(within(card).getByRole('button', { name: '实盘待接入' }))
 
-    expect(within(card).getByText('实盘尚未接入')).toBeInTheDocument()
-    expect(within(card).getByText('真实资金接入前只展示准备状态，不展示模拟收益。')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
+    expect(within(card).getByText('接入完成后显示真实收益、持仓和风险。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -107,9 +111,9 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    fireEvent.click(within(card).getByRole('button', { name: '实盘预留' }))
+    fireEvent.click(within(card).getByRole('button', { name: '实盘待接入' }))
 
-    expect(within(card).getByText('实盘尚未接入')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

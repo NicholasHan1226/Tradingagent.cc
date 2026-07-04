@@ -14,11 +14,11 @@ gated and must not trigger execution from the front layer.
 
 | Front result | Preferred source | Fallback / supporting source | Status |
 | --- | --- | --- | --- |
-| Current opportunities | `TradingAgent/signals/pending/*.json` | other `signals/*/*.json` buckets | Ready |
-| Positions | `TradingAgent/signals/positions/*.json` | `TradingAgent/shared/accounting/position_plan.jsonl` | Partial |
-| Performance | `TradingAgent/shared/review/daily/daily_brief.jsonl` | `TradingAgent/signals/filled/*.json` | Ready for read model |
+| Current opportunities | `signals/pending/*.json` | `signals/{claimed,running,filled,cancelled,expired,failed,partial}/*.json` | Ready |
+| Positions | `signals/positions/*.json` | `shared/accounting/position_plan.jsonl` | Partial |
+| Performance | `shared/review/daily/daily_brief.jsonl` | `signals/filled/*.json` | Ready for read model |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
-| Risk | `TradingAgent/shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
+| Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
 | Live readiness | execution schemas and filled signal writeback | manual authorization state | Gated |
 
 ## Read-Only Contract
@@ -76,7 +76,7 @@ snapshot route:
 
 ```bash
 npm run build:api
-FINANCE_WORKSPACE_ROOT=/opt/investment/TradingAgent \
+FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent \
 TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1 \
 TRADING_AGENT_SNAPSHOT_PORT=8787 \
 TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://dashboard.tradingagent.cc \
@@ -95,7 +95,8 @@ Security boundary:
 - Keep the API bound to `127.0.0.1` behind a reverse proxy when possible.
 - Use HTTPS at the proxy layer.
 - Require `Authorization: Bearer <token>` when the endpoint is not fully
-  private.
+  private. If a token is enabled and the browser uses a same-origin route,
+  inject the token at the proxy layer; do not send it from browser JavaScript.
 - Allow only the dashboard origin in
   `TRADING_AGENT_SNAPSHOT_CORS_ORIGINS`.
 - Never expose TradingAgent execution, order mutation, callback, account,
@@ -122,7 +123,7 @@ server {
   listen 443 ssl;
   server_name dashboard.tradingagent.cc;
 
-  root /opt/investment/TradingAgent/front/dist;
+  root /opt/investment/tradingagent/front/dist;
   index index.html;
 
   location / {
@@ -134,18 +135,66 @@ server {
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Authorization "Bearer server-only-token";
   }
 }
 ```
 
+If the internal API is bound to `127.0.0.1` and only reachable through the same
+server Nginx process, the token can be omitted by leaving
+`TRADING_AGENT_SNAPSHOT_API_TOKEN` unset. If the token is set, Nginx must inject
+the `Authorization` header as shown above.
+
+## Production Service Shape
+
+Keep the API as a local service and let Nginx handle the public HTTPS surface.
+One practical `systemd` shape:
+
+```ini
+[Unit]
+Description=TradingAgent front snapshot API
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/investment/tradingagent/front
+Environment=FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent
+Environment=TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1
+Environment=TRADING_AGENT_SNAPSHOT_PORT=8787
+Environment=TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://dashboard.tradingagent.cc
+Environment=TRADING_AGENT_SNAPSHOT_API_TOKEN=server-only-token
+ExecStart=/usr/bin/npm run start:api
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Production verification:
+
+- `curl http://127.0.0.1:8787/healthz` returns `ok`.
+- `curl -H "Authorization: Bearer server-only-token" http://127.0.0.1:8787/api/trading-agent/snapshot` returns JSON.
+- The public dashboard route loads the React app.
+- The public `/api/trading-agent/snapshot` route returns JSON through Nginx.
+- The snapshot response reports simulated display data and does not expose
+  execution, account, credential, callback, or mutation routes.
+
+Rollback:
+
+- Keep the previous `front/dist` and `front/dist-server` build directories or
+  redeploy the previous Git commit.
+- Restart only the local snapshot API service after rolling back server files.
+- Nginx can be reverted independently because it only serves static files and
+  proxies the read-only route.
+
 The route may read:
 
-- `TradingAgent/signals/{pending,filled,cancelled,expired,failed,partial}/*.json`
-- `TradingAgent/signals/positions/*.json`
-- `TradingAgent/shared/accounting/position_plan.jsonl`
-- `TradingAgent/shared/review/daily/daily_brief.jsonl`
-- `TradingAgent/shared/review/attribution/*.jsonl`
-- `TradingAgent/shared/risk/risk_limits.yaml`
+- `signals/{pending,claimed,running,filled,cancelled,expired,failed,partial}/*.json`
+- `signals/positions/*.json`
+- `shared/accounting/position_plan.jsonl`
+- `shared/review/daily/daily_brief.jsonl`
+- `shared/review/attribution/*.jsonl`
+- `shared/risk/risk_limits.yaml`
 
 The route must not:
 
@@ -153,7 +202,7 @@ The route must not:
 - claim, cancel, expire, fill, or mutate signal cards
 - import execution routers as action surfaces
 - send orders, emails, webhooks, or account callbacks
-- merge simulated, shadow, and live results into one number
+- merge different account layers into one result number
 
 ## Current Gap
 
@@ -167,3 +216,8 @@ runtime still needs to mount the same endpoint and point it at the verified
 TradingAgent workspace root. That production mount must keep the same
 read-only rule and must not expose execution, callback, or order mutation
 routes to the dashboard.
+
+The next data gaps are narrower: `midday_review.jsonl`, strategy/factor
+attribution JSONL, `risk_limits.yaml`, and filled signal details are declared as
+readable sources but still need snapshot parsing before the UI should present
+them as complete panels.

@@ -25,8 +25,8 @@ describe('TradingAgent read-model adapter', () => {
     expect(response.mode).toBe('simulated')
     expect(response.status).toBe('ready')
     expect(response.domains.performance.status).toBe('ready')
-    expect(baseSnapshot.sourceRefs.positions).toBe('TradingAgent/signals/positions/*.json')
-    expect(baseSnapshot.sourceRefs.review).toBe('TradingAgent/shared/review/daily/daily_brief.jsonl')
+    expect(baseSnapshot.sourceRefs.positions).toBe('signals/positions/*.json')
+    expect(baseSnapshot.sourceRefs.review).toBe('shared/review/daily/daily_brief.jsonl')
   })
 
   it('keeps stale source health visible instead of flattening it into ready', () => {

@@ -36,6 +36,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+
+def _sibling_project(name: str) -> Path:
+    return Path(os.environ.get(f"{name.upper()}_ROOT", _PROJECT_ROOT.parent / name))
+
 # ---------------------------------------------------------------------------
 # 1. _tail_lines edge cases
 # ---------------------------------------------------------------------------
@@ -278,10 +282,12 @@ class TestBatchSqlEdgeCases(unittest.TestCase):
         import importlib.util
         import uuid
 
-        # Ensure SharedSignals is on sys.path for env_bootstrap imports
-        ss_dir = str(Path(__file__).resolve().parent.parent.parent / "SharedSignals")
-        if ss_dir not in sys.path:
-            sys.path.insert(0, ss_dir)
+        sharedsignals_root = _sibling_project("SharedSignals")
+        ss_reader_path = sharedsignals_root / "reader.py"
+        if not ss_reader_path.exists():
+            self.skipTest(f"SharedSignals reader.py not found at {ss_reader_path}")
+        if str(sharedsignals_root) not in sys.path:
+            sys.path.insert(0, str(sharedsignals_root))
 
         # Use a unique module name so LazyPath isn't cached from prior imports
         unique_name = f"SharedSignals.reader_{uuid.uuid4().hex[:8]}"
@@ -289,9 +295,6 @@ class TestBatchSqlEdgeCases(unittest.TestCase):
         # Set env var BEFORE module exec so LazyPath resolves correctly
         os.environ["MARKETDATA_SQLITE"] = str(self._db_path)
 
-        ss_reader_path = Path(
-            "/Users/nicholashan/Projects/Finance/SharedSignals/reader.py"
-        )
         spec = importlib.util.spec_from_file_location(
             unique_name, str(ss_reader_path)
         )
@@ -395,14 +398,20 @@ class TestThreadingHTTPServerCapacityGate(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # Ensure SharedSignals is on sys.path for api_server imports
-        ss_dir = str(Path(__file__).resolve().parent.parent.parent / "SharedSignals")
-        if ss_dir not in sys.path:
-            sys.path.insert(0, ss_dir)
+        cls._sharedsignals_root = _sibling_project("SharedSignals")
+        if str(cls._sharedsignals_root) not in sys.path:
+            sys.path.insert(0, str(cls._sharedsignals_root))
+
+    def _import_api_server(self):
+        if not (self._sharedsignals_root / "api_server.py").exists():
+            self.skipTest(f"SharedSignals api_server.py not found at {self._sharedsignals_root / 'api_server.py'}")
+        import api_server as srv
+
+        return srv
 
     def test_capacity_gate_returns_503_when_full(self):
         """When max_threads threads are acquired, process_request sends 503."""
-        import api_server as srv
+        srv = self._import_api_server()
 
         # Create server with max_threads=2
         server = srv.SharedSignalsHTTPServer(
@@ -424,13 +433,13 @@ class TestThreadingHTTPServerCapacityGate(unittest.TestCase):
         server.server_close()
 
     def test_daemon_threads_and_allow_reuse_address_set(self):
-        import api_server as srv
+        srv = self._import_api_server()
 
         self.assertTrue(srv.SharedSignalsHTTPServer.daemon_threads)
         self.assertTrue(srv.SharedSignalsHTTPServer.allow_reuse_address)
 
     def test_server_starts_and_stops_without_errors(self):
-        import api_server as srv
+        srv = self._import_api_server()
 
         server = srv.SharedSignalsHTTPServer(
             ("127.0.0.1", 0),
@@ -444,7 +453,7 @@ class TestThreadingHTTPServerCapacityGate(unittest.TestCase):
 
     def test_max_threads_enforced_under_concurrent_requests(self):
         """Simulate concurrent requests hitting the capacity gate."""
-        import api_server as srv
+        srv = self._import_api_server()
 
         server = srv.SharedSignalsHTTPServer(
             ("127.0.0.1", 0),
@@ -506,7 +515,7 @@ class TestThreadingHTTPServerCapacityGate(unittest.TestCase):
 
     def test_marketgraph_server_capacity_503(self):
         """Test MarketGraphHTTPServer returns 503 when at capacity."""
-        mg_path = Path("/Users/nicholashan/Projects/Finance/MarketGraph/deploy/_api_server.py")
+        mg_path = _sibling_project("MarketGraph") / "deploy" / "_api_server.py"
         if not mg_path.exists():
             self.skipTest("MarketGraph _api_server.py not found at expected path")
 

@@ -8,6 +8,7 @@ export function MarketHeader({
   liveReturn,
   signalCount,
   setActiveMarket,
+  targetReturn,
   tradeSignalCount,
 }: {
   activePage: Page
@@ -15,6 +16,7 @@ export function MarketHeader({
   liveReturn: number
   signalCount: number
   setActiveMarket: (market: Market) => void
+  targetReturn: number
   tradeSignalCount: number
 }) {
   const meta = pageMeta[activePage]
@@ -29,13 +31,12 @@ export function MarketHeader({
         </div>
       </div>
       <div className="market-stats">
-        <Stat label="目标差" value={`+${(liveReturn - 8).toFixed(2)}%`} />
+        <Stat label="目标差" value={`${liveReturn - targetReturn >= 0 ? '+' : ''}${(liveReturn - targetReturn).toFixed(2)}%`} />
         <Stat detail="已收录" label="机会" value={`${signalCount}`} />
         <Stat detail="可处理" label="交易信号" value={`${tradeSignalCount}`} cyan />
         <Stat label="最大回撤" value="-6.12%" red />
       </div>
       <div className="market-tools">
-        <span className="market-freshness"><i />实时</span>
         <div className="market-filter">
           <button
             aria-expanded={showMarkets}

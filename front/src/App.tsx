@@ -18,7 +18,6 @@ function App() {
   const [activePage, setActivePage] = useState<Page>('主页')
   const [activeMarket, setActiveMarket] = useState<Market>('All Markets')
   const [accountMode, setAccountMode] = useState<AccountMode>('simulated')
-  const [showLiveGate, setShowLiveGate] = useState(false)
   const [dashboardState, setDashboardState] = useState(() => toDashboardState(mockDashboardApiResponse('ready')))
   const [readModelSnapshot, setReadModelSnapshot] = useState<TradingAgentReadModelSnapshot | null>(null)
   const [now, setNow] = useState(() => new Date())
@@ -58,20 +57,13 @@ function App() {
   const chartEvents = useMemo(() => deriveChartEvents(livePerformanceData, visibleSignals), [livePerformanceData, visibleSignals])
   const domainStatus = (domain: DataDomain) => dashboardState.domains[domain]?.status ?? dashboardState.status
   const handleRetry = () => setDashboardState(toDashboardState(mockDashboardApiResponse('ready')))
-  const selectAccountMode = (mode: AccountMode) => {
-    setAccountMode(mode)
-    setShowLiveGate(false)
-  }
+  const selectAccountMode = (mode: AccountMode) => setAccountMode(mode)
 
   return (
     <main className="hyper-shell">
       <TopNav
-        accountMode={accountMode}
         activePage={activePage}
-        onDismissLiveGate={() => setShowLiveGate(false)}
-        selectAccountMode={selectAccountMode}
         setActivePage={setActivePage}
-        showLiveGate={showLiveGate}
       />
       <MarketHeader
         activePage={activePage}
@@ -79,6 +71,7 @@ function App() {
         liveReturn={latestPoint.simulated}
         signalCount={visibleSignals.length}
         setActiveMarket={setActiveMarket}
+        targetReturn={latestPoint.target}
         tradeSignalCount={signalFunnel.tradeSignals.length}
       />
 

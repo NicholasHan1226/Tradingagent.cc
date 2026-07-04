@@ -92,7 +92,7 @@ export function PerformanceChart({
         <span><i className="cyan" />模拟盘</span>
         <span><i className="amber" />目标</span>
         <span><i className="muted" />市场基准</span>
-        <span><i className="red" />机会缺口</span>
+        <span><i className="red" />机会偏差</span>
       </div>
       <div className="chart-live-labels" aria-hidden="true">
         <span className="current">现在 +{latestPoint.simulated.toFixed(2)}%</span>
@@ -124,7 +124,7 @@ function ChartTooltip({ active, payload, label }: any) {
     simulated: '模拟盘',
     target: '目标',
     benchmark: '市场基准',
-    opportunity: '机会缺口',
+    opportunity: '机会偏差',
   }
 
   return (

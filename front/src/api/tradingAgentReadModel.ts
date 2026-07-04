@@ -3,16 +3,16 @@ import type { HoldingRow, PerformancePoint, SignalRow } from '../types/dashboard
 import type { DataDomain } from '../types/status.ts'
 
 export const tradingAgentReadModelSources = {
-  capitalPlan: 'TradingAgent/shared/accounting/position_plan.jsonl',
-  positions: 'TradingAgent/signals/positions/*.json',
-  filledSignals: 'TradingAgent/signals/filled/*.json',
-  signalQueue: 'TradingAgent/signals/{pending,filled,expired,cancelled,failed,partial}',
-  review: 'TradingAgent/shared/review/daily/daily_brief.jsonl',
-  middayReview: 'TradingAgent/shared/review/daily/midday_review.jsonl',
-  riskLimits: 'TradingAgent/shared/risk/risk_limits.yaml',
-  strategyAttribution: 'TradingAgent/shared/review/attribution/strategy_attribution.jsonl',
-  factorAttribution: 'TradingAgent/shared/review/attribution/factor_attribution.jsonl',
-  strategyVersion: 'TradingAgent/shared/review/strategies/strategy_version.jsonl',
+  capitalPlan: 'shared/accounting/position_plan.jsonl',
+  positions: 'signals/positions/*.json',
+  filledSignals: 'signals/filled/*.json',
+  signalQueue: 'signals/{pending,claimed,running,filled,expired,cancelled,failed,partial}',
+  review: 'shared/review/daily/daily_brief.jsonl',
+  middayReview: 'shared/review/daily/midday_review.jsonl',
+  riskLimits: 'shared/risk/risk_limits.yaml',
+  strategyAttribution: 'shared/review/attribution/strategy_attribution.jsonl',
+  factorAttribution: 'shared/review/attribution/factor_attribution.jsonl',
+  strategyVersion: 'shared/review/strategies/strategy_version.jsonl',
 } as const
 
 export type TradingAgentReadModelHealth = {
