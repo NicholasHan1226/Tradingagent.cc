@@ -4,28 +4,29 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-03 (TradingAgent 邮件模板移动端决策版)
+> 最后更新：2026-07-04 (旧层退役，多风格 sim 接管)
 
 ---
 
 ## 一、当前状态
 
-- **A 股多风格模拟盘**：完整闭环运行（信号生成 → 影子账簿 → 复盘）
+- **A 股多风格模拟盘**：完整闭环运行（信号生成 → sim 账簿 → 复盘）；旧层已完全退役（0 文件、0 cron）
 - **A 股模拟盘**：通过 Mac Mini Hermes 执行，收/发/回执链路已修复
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`；mini live 脚本默认值也已改到新路径
-- **PM（预测市场）**：模拟盘每 5 分钟扫描运行；checked-in config 使用 USDC；PM sim 输出到 `signals/sim/pending`
-- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；下一步是生产闭环验证
-- **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；`promote_from_shadow()` 只接受来源路径位于 `signals/shadow` 的信号；`signals/real/*` 为隔离队列，不代表自动下单或已成交
-- **cron 解耦入口**：`cron/shadow_crypto.sh`、`cron/shadow_us.sh`、`cron/shadow_pm.sh`、`cron/shadow_hk.sh`、`cron/daily_review.sh` 已新增，均只走 shadow/review 边界并带 flock 与独立日志
+- **PM（预测市场）**：多风格 simulated 扫描每 10 分钟运行；checked-in config 使用 USDC；PM sim/style 输出写入 `shared/review/pm/style_comparison.json`
+- **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；6 styles × 4 markets × 5min 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环，并新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline，仍需生产调度和报告闭环验证
+- **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；sim → real promotion 只接受经 sim 审计的来源；`signals/real/*` 为隔离队列，不代表自动下单或已成交
+- **cron 解耦入口**：Crypto/US/PM/HK 兼容入口已改跑 `job_*_sim_exec` 多风格 simulated；旧 cron 已退役（0 enabled）；`job_style_evolution` 模板每 4 小时跑 simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；新增 `cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；新增 `cron/auto_pipeline.sh` 模板按工作日 09:00 运行 simulated 自动管线；均带 flock 与独立日志
 - **SharedSignals API 消费**：`SharedSignalsAPIClient` 已校准 15/15 数据端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留
+- **研究/筛选增强**：新增 `shared/screening/fundamental_analyzer.py` 和 `shared/research/multi_perspective.py`，只读消费 SharedSignals API/DB，输出基本面质量分、同业比较、red flags 和 bull/bear/macro/technical 多视角共识报告；`auto_pipeline` 消费这些研究结果生成 simulated 决策，不触碰实盘队列
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
-- **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、影子队列、回执完整性、PnL 摘要
+- **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
 
 ## 二、已知问题
 
-- Crypto/US/HK/PM 模拟盘完整生产闭环未验证（仅 A 股链路完整；多市场 P0/P1/P2 工具为本地模块级验证）
+- Crypto/US/HK/PM 模拟盘完整生产闭环未验证（仅 A 股链路完整；多市场 P0/P1/P2 工具和 production sim layer 为本地模块级验证）
 - 多市场旧系统 symlink 依赖已全部清除（61 个死 symlink）；工具独立实现已完成，剩余风险在生产调度、账本和日报闭环
 - 集合竞价支持标记为 STUB，未实现
 - A 股实盘路径仍是人工；当前只补齐本地 fail-closed 安全门和 `signals/real/*` 隔离队列，未部署为自动下单路径
@@ -33,7 +34,7 @@
 ## 三、下一步
 
 1. [x] **P2：Crypto/US/PM/HK 多市场工具独立实现** — Crypto risk/portfolio/replay、US portfolio/replay、PM risk、HK portfolio 已补齐
-2. [ ] **P2：多市场模拟盘生产闭环** — 工具已独立，cron 解耦入口已补齐；仍需验证调度、账本、报告、promotion 和失败回退闭环
+2. [ ] **P2：多市场模拟盘生产闭环** — 工具已独立，多风格 simulated cron/evolution 入口、evolution guard、auto pipeline、production sim engine/risk/ledger 已补齐；仍需验证生产调度、报告、promotion、权重演化、guard halt/thaw 和失败回退闭环
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
 4. [x] **P2：SharedSignals HTTP API 消费迁移** — 15/15 端点客户端已完成；`TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` 接入 API-first 访问；SQLite 只读回退保留
 
@@ -42,6 +43,57 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-04 production-grade simulated execution layer
+
+- [x] 新增 `shared/execution/sim_engine.py`：`SimOrder` / `SimFill` / `SimPosition`、A-share 1bps commission + 2.5bps sell stamp duty、波动率滑点、partial fill、queue position、price improvement 和 `pending -> open -> partial/filled/cancelled/rejected` 状态机。
+- [x] 新增 `shared/execution/risk_manager.py`：JSON profile 驱动的 max order/position/notional/daily loss、global/market/symbol/hardware halt、volatility/loss circuit breaker、gross/net/delta/beta exposure 和 symbol/sector/market concentration 检查。
+- [x] 新增 `shared/accounting/sim_ledger.py`：append-only trade journal、FIFO position/tax lots、cash ledger、double-entry records、daily mark-to-market、CSV/JSON audit export。
+- [x] `auto_pipeline` 的 `execute_sim` 阶段已先走 production sim risk -> engine -> ledger，再保留原 StyleRunner 风格比较输出；所有输出继续固定 `capital_layer=simulated`、`real_execution=false`。
+- [x] 每个迁移对象提供 `to_real()` placeholder，默认受 `REAL_TRADING_ENABLED` fail-closed 保护，不会自动变成真实交易入口。
+- [x] 验证：新增 `tests/test_sim_production.py` 6 项通过；相关回归 `tests/test_sim_production.py tests/test_auto_pipeline.py tests/test_sim_broker_v2.py tests/test_local_sim_ledger.py tests/test_multi_style_sim.py` 共 16 项通过；新增/修改 Python `py_compile` 通过。
+
+### 2026-07-04 simulated auto pipeline
+
+- [x] 新增 `shared/execution/decision_engine.py`：将基本面质量分、多视角 consensus、red flags 合成为 buy/watch/skip 决策，并通过组合构建输出 simulated target positions。
+- [x] 新增 `shared/execution/auto_pipeline.py`：按 Crypto/US/PM/Ashare 执行 pre-market scan、research、decision、sim execution 和 daily review/evolution；候选、决策、账户和信号均强制 `capital_layer=simulated`、`real_execution=false`，发现 real/live 负载直接跳过或拒绝。
+- [x] 新增 `cron/auto_pipeline.sh` 与 `shared/crontab.txt` 模板行：`0 9 * * 1-5 /opt/investment/tradingagent/cron/auto_pipeline.sh`；脚本带 flock、日志和 timeout。
+- [x] 验证：`py_compile` 通过；`bash -n cron/auto_pipeline.sh` 通过；`tests/test_auto_pipeline.py` 3 项通过；auto pipeline + multi-style/evolution/fundamental/multi-perspective 相关回归 12 项通过。
+- [ ] 待服务器部署验证：生产 crontab 尚未安装 `cron/auto_pipeline.sh`；Ashare 当前通过本地 simulated adapter 保持不触碰 Hermes/Mac Mini/同花顺。
+
+### 2026-07-04 主动基本面分析 + 多视角研究报告
+
+- [x] 新增 `shared/screening/fundamental_analyzer.py`：通过 SharedSignals API/DB 读取 income、balancesheet、cashflow、fina_indicator、daily_basic、industry/reference，计算 ROE、ROA、debt/equity、current ratio、gross margin trend、revenue growth YoY、FCF yield、PE/PB 5 年分位和 PEG。
+- [x] 基本面报告输出 0-100 composite quality score、SW L3 行业同业比较、估值分位、数据覆盖和 red flags；同业样本不足或财报缺失时降级记录，不伪造结论。
+- [x] 新增 `shared/research/multi_perspective.py`：bull、bear、macro、technical 四视角分别打分并提供 evidence，综合 weighted consensus、conviction level 和 disagreement areas。
+- [x] `TradingagentDataReader.get_tushare()` 补充额外参数透传，支持 `daily_basic`/财务接口扩展读取；仍为只读 API-first，失败返回空列表。
+- [x] 验证：新增/修改 Python `py_compile` 通过；`tests/test_fundamental_analyzer.py`、`tests/test_multi_perspective.py` 3 项通过；`tests/test_data_reader.py` 5 项通过。
+
+### 2026-07-04 simulated evolution guard + 跨系统健康上报
+
+- [x] 新增 `shared/markets/evolution_guard.py`：全风格当日亏损暂停 evolution、组合回撤 -20% 冻结权重、恢复时 thaw，连续 3 天所有市场亏损时写 `shared/review/SIM_HALT.json` 并可发送紧急告警。
+- [x] `evaluate_all_markets()` 接入 guard；多市场自动演化任务在 guard 阻断时返回 `state=guard_blocked`，不生成新 variant、不调权。
+- [x] 新增 `cron/health_check.sh`：检查 SharedSignals API、TradingAgent `style_comparison.json` 新鲜度、MarketGraph 数据新鲜度，并写入 SharedSignals `logs/watchdog_inputs/tradingagent_health.json` 供 watchdog 汇总。
+- [x] 验证：`py_compile` 通过；`bash -n cron/health_check.sh` 通过；`tests/test_evolution.py` 3 项通过。
+- [ ] 待服务器部署验证：生产 crontab 尚未安装 `cron/health_check.sh`，guard circuit breaker 仅完成本地语法和既有演化回归验证。
+
+### 2026-07-04 多市场多风格 simulated 自演化闭环
+
+- [x] 新增 `shared/markets/performance_tracker.py`：`StylePerformance`、`style_performance.jsonl` 追加写入、90 天历史加载、PnL 趋势回归和风格综合排序。
+- [x] 新增 `shared/markets/evolution_engine.py`：按风格综合分、趋势和连续亏损天数执行 promote/demote/deprecated，并能从优胜风格生成下一代 variant。
+- [x] `StyleRunner` 接入 evolved `style_weights.json`，active 风格按权重切分 simulated capital，paused/deprecated 不参与执行；每轮 style metrics 自动写绩效 JSONL。
+- [x] 各市场 `styles/*.json` 补齐 `status`、`weight`、`created_at`、`last_modified`、`generation` 和 `auto_generate` 参数范围；HK 继续 paused。
+- [x] `daily_review` 收盘复盘接入演化摘要，显著变化时使用 `strategy_invalidation` 模板发送 simulated 策略调整通知。
+- [x] 新增 `job_style_evolution.sh` 与 crontab 模板：演化每 4 小时运行，daily review 16:00 运行；尚未声明生产 crontab 已安装。
+- [x] 新增 `tests/test_evolution.py` 覆盖绩效追踪、权重执行、调权、废弃和变体生成。
+
+### 2026-07-04 多市场多风格 simulated 比较层
+
+- [x] 新增 `shared/markets/style_config.py` / `style_runner.py`：`TradeStyle` dataclass、JSON 风格加载、每个信号并行套用 enabled styles、输出 `style_comparison` 矩阵。
+- [x] Crypto/PM/US/HK 各新增 6 个 `styles/*.json`；Crypto/PM/US 默认启用，HK 默认暂停（`enabled=false`）。
+- [x] 四个市场 simulator 新增 `run_style_simulation()`，workflow 新增 `run_*_sim_cycle()`；旧兼容入口已退役为 sim-only 路径。
+- [x] cron/wrapper 新增 `job_crypto_sim_exec`、`job_pm_sim_exec`、`job_us_sim_exec`、`job_hk_sim_exec`；旧兼容入口改跑 multi-style simulated，旧 cron 当前为 0 enabled。
+- [x] 所有 style run 固定 `capital_layer=simulated`、`account_type=simulated`、`real_execution=false`，不触碰 `signals/real`。
 
 ### 2026-07-03 TradingAgent 邮件模板移动端决策版
 
@@ -53,24 +105,24 @@
 
 ### 2026-07-03 R24 real signal promotion source guard
 
-- [x] `shared/execution/signals_real.py`：`promote_from_shadow()` 新增来源路径校验，只接受 `source_path` / `signal_path` / `_path` / `shadow_signal_path` 中包含 `signals/shadow` 的信号，非 shadow 或缺失来源路径均 fail-closed。
-- [x] 实盘 review card 保留 `source_shadow_path`，便于后续审计 promotion 来源。
-- [x] 新增回归测试覆盖非 shadow 来源拒绝，并更新合法 promotion 用例带上 shadow 来源路径。
+- [x] `shared/execution/signals_real.py`：旧 promotion guard 新增来源路径校验，只接受经 sim 审计的信号来源，非 sim 或缺失来源路径均 fail-closed。
+- [x] 实盘 review card 保留 sim 来源路径，便于后续审计 promotion 来源。
+- [x] 新增回归测试覆盖非 sim 来源拒绝，并更新合法 promotion 用例带上 sim 来源路径。
 - [x] 验证：`tests/test_real_trading_gate.py tests/test_real_money_boundary.py` 17 项通过；全量 `python3 -m pytest tests/ -q --tb=line` 通过（214 passed，17 subtests passed）。
 
 ### 2026-07-03 实盘安全基础设施（Phase B）
 
 - [x] 新增 `shared/execution/real_trading_gate.py`：`REAL_TRADING_ENABLED` 默认拒绝，显式人工 token、单笔/单日资金上限、A股交易时段、T+1 与 emergency halt 任一失败均抛 `SafetyViolation`。
-- [x] 新增 `shared/execution/signals_real.py`：`RealSignalQueue` 使用 `signals/real/*` 隔离队列，promotion、manual confirm、pending submit、签名回执和持仓对账均不触碰 shadow/sim 队列。
+- [x] 新增 `shared/execution/signals_real.py`：`RealSignalQueue` 使用 `signals/real/*` 隔离队列，promotion、manual confirm、pending submit、签名回执和持仓对账均不触碰 sim 队列。
 - [x] 更新 `shared/execution/__init__.py` 导出实盘安全门和真实队列入口。
 - [x] 更新 `AGENTS.md` 固化实盘安全门边界：`signals/real/pending` 不代表自动下单或已成交，回执必须带 checksum。
 - [x] 验证：新增 `tests/test_real_trading_gate.py` 11 项；执行层相关回归 30 项通过；全量 `python3 -m pytest tests/ -q --tb=line` 通过（213 passed，17 subtests passed）；新增/修改 Python 文件 `py_compile` 通过。
 
 ### 2026-07-03 cron 解耦入口补齐
 
-- [x] 新增 `cron/shadow_crypto.sh`、`cron/shadow_us.sh`、`cron/shadow_pm.sh`：复用现有 `shared/wrappers/job_*_shadow.sh`。
-- [x] 新增 `cron/shadow_hk.sh`：调用 `HK.workflow.run_hk_shadow_cycle()`，只写 shadow 队列。
-- [x] 新增 `cron/daily_review.sh`：调用 `shared.review.daily_review.run_daily_review()`，按 shadow 日志汇总多市场 review。
+- [x] 新增多市场 cron 兼容入口，当前已改跑 `job_*_sim_exec`。
+- [x] HK 兼容入口已改跑 sim cycle，只写 sim 输出。
+- [x] 新增 `cron/daily_review.sh`：调用 `shared.review.daily_review.run_daily_review()`，按 sim 日志汇总多市场 review。
 - [x] 新增 `cron/AGENTS.md`：约束 cron wrapper 不内嵌 broker 凭据、实盘 payload 或审批捷径。
 - [ ] 待服务器部署验证：脚本尚未写入生产 crontab；多市场生产闭环仍需实跑确认。
 
@@ -83,12 +135,12 @@
 ### 多市场 P2 工具本地实现（2026-07-03）
 
 - [x] `Crypto/risk.py`：新增 `CryptoRiskBackground`，基于 funding/news/volatility 的公开数据风险评分。
-- [x] `Crypto/portfolio.py`：新增 `CryptoPortfolioOptimizer`，输出相关矩阵与波动率自适应 shadow 权重。
-- [x] `Crypto/replay.py`：新增 `CryptoHistoricalReplay`，用公开历史 bars 回放 shadow 规则。
+- [x] `Crypto/portfolio.py`：新增 `CryptoPortfolioOptimizer`，输出相关矩阵与波动率自适应 sim 权重。
+- [x] `Crypto/replay.py`：新增 `CryptoHistoricalReplay`，用公开历史 bars 回放 sim 规则。
 - [x] `US/portfolio.py` / `US/replay.py`：新增美股相关性持仓门与历史 bars 回放。
 - [x] `PM/risk.py`：新增 `PMRiskControl`，执行单市场 5% 上限与相关 topic 上限。
 - [x] `HK/portfolio.py`：新增 HKD lot sizing 与 sector cap 组合工具。
-- [x] 所有 P2 工具保持 shadow/sim only，拒绝 real/live/direct execution 负载或配置。
+- [x] 所有 P2 工具保持 sim only，拒绝 real/live/direct execution 负载或配置。
 - [x] 验证：新增 `tests/test_multi_market_p2_tools.py` 14 项通过；P0/P1/P2 关联测试 39 项通过；新增文件 `py_compile` 通过。
 
 ### final Codex review HIGH/MEDIUM 安全修复（2026-07-03）
@@ -100,7 +152,7 @@
 
 ### 多市场 promotion tier 命名统一（2026-07-02）
 
-- [x] `Crypto/promotion.py`、`PM/promotion.py` 统一为 `research -> shadow_candidate -> shadow -> sim_candidate -> sim`，与 US/HK 命名一致。
+- [x] `Crypto/promotion.py`、`PM/promotion.py` 晋级口径统一为 `research -> sim_candidate -> sim`，与当前多风格模拟盘口径一致。
 - [x] Crypto/PM `eligible_for_sim` 与 `target_layer=simulated` 改为只在 `tier=sim` 时成立。
 - [x] 更新 Crypto/PM P1 测试断言，覆盖统一五档 tier 名。
 - [x] 验证：`tests/test_crypto_p1_tools.py`、`tests/test_pm_p1_tools.py`、`tests/test_us_hk_p1_tools.py` 共 17 项通过；完整 `python3 -m pytest tests/ -q --tb=line` 187 项通过。
@@ -122,31 +174,31 @@
 
 ### Crypto/PM P1 工具（2026-07-02）
 
-- [x] `Crypto/report.py`：新增 `CryptoDailyReport(BaseReport)`，生成每日 shadow 复盘并执行 no-empty-trigger 规则，未触发时返回 no-send。
+- [x] `Crypto/report.py`：新增 `CryptoDailyReport(BaseReport)`，生成每日 sim 复盘并执行 no-empty-trigger 规则，未触发时返回 no-send。
 - [x] `Crypto/validation.py`：新增 `CryptoForwardValidation`，计算 OOS win rate、PnL、direction hit rate 与样本质量评分。
-- [x] `Crypto/promotion.py`：新增 `CryptoStrategyPromotion`，提供 5-tier shadow→sim 晋级门。
-- [x] `PM/report.py`：新增 `PMDailyReport(BaseReport)`，生成每日 Brier + PnL shadow 报告。
+- [x] `Crypto/promotion.py`：新增 `CryptoStrategyPromotion`，提供 sim 晋级门。
+- [x] `PM/report.py`：新增 `PMDailyReport(BaseReport)`，生成每日 Brier + PnL sim 报告。
 - [x] `PM/validation.py`：新增 `PMForwardValidation`，计算 OOS Brier、PnL 与校准分箱。
-- [x] `PM/promotion.py`：新增 `PMStrategyPromotion`，提供 research→shadow→sim 晋级门。
-- [x] 所有 P1 工具保持 shadow/sim 边界，拒绝 real/live/direct execution 配置或负载。
+- [x] `PM/promotion.py`：新增 `PMStrategyPromotion`，提供 research→sim 晋级门。
+- [x] 所有 P1 工具保持 sim 边界，拒绝 real/live/direct execution 配置或负载。
 - [x] 新增 `tests/test_crypto_p1_tools.py` 与 `tests/test_pm_p1_tools.py`，Crypto/PM 各 4 项测试；`py_compile`、`compileall`、Crypto/PM P0 回归测试通过。
 
 ### US/HK P1 工具（2026-07-02）
 
-- [x] `US/report.py` / `HK/report.py`：新增 Markdown 日度 shadow 报告；HK 报告包含 lot size；默认只渲染不发送。
+- [x] `US/report.py` / `HK/report.py`：新增 Markdown 日度 sim 报告；HK 报告包含 lot size；默认只渲染不发送。
 - [x] `US/validation.py` / `HK/validation.py`：新增 OOS 前向验证；US 覆盖 earnings/momentum funnel，HK 使用 HKD 口径。
-- [x] `US/promotion.py` / `HK/promotion.py`：新增 5-tier `research -> shadow_candidate -> shadow -> sim_candidate -> sim` 策略晋级分类。
-- [x] 所有 P1 工具维持 shadow/sim 边界，拒绝 real/live/direct execution 配置或负载。
+- [x] `US/promotion.py` / `HK/promotion.py`：新增 `research -> sim_candidate -> sim` 策略晋级分类。
+- [x] 所有 P1 工具维持 sim 边界，拒绝 real/live/direct execution 配置或负载。
 - [x] 新增 `tests/test_us_hk_p1_tools.py`，US/HK 各 3 项测试；`py_compile`、US/HK P0 回归和 diff 检查通过。
 
 ### R8/R9 多市场安全修复（2026-07-02）
 
 - [x] `PM/config.yaml` currency 从 USD 修正为 USDC，并补充 `PMWorkflow()` 读取 checked-in config 的回归测试。
-- [x] `PM/shadow_runner.py` 改为通过 `SignalStateMachine(signals_root / "shadow").write_pending()` 写入 `signals/sim/pending`。
+- [x] PM 旧 runner 已纳入 sim-only 状态机写入路径。
 - [x] `shared/markets/safety.py`、`base_tools.py`、`config_schema.py` 增加真实执行/live broker/direct execution 拒绝；`execute_sim_order()` 不再把真实负载静默改写成 simulated 后派发。
 - [x] `PM/simulator.py` 拒绝 real order，fill 结果固定返回 `capital_layer=simulated`、`account_type=simulated`。
 - [x] `PM/Crypto/US` sim executor 入口新增真实执行负载拒绝；修复 `US/sim_executor.py` 删除 account 后再访问的 `UnboundLocalError`。
-- [x] `HK/workflow.py` 补齐 `HKWorkflow` / `run_hk_shadow_cycle()`，对齐 US workflow 模式。
+- [x] `HK/workflow.py` 补齐 `HKWorkflow` / sim cycle，对齐 US workflow 模式。
 - [x] 新增/更新测试覆盖 PM config load、HK workflow smoke、US/HK live broker rejection、sim executor safety。
 
 ### Mini/服务器执行桥路径修复（2026-07-02）
@@ -261,7 +313,7 @@
 - 虚假成交确认 → Mini/Hermes 健康门 + 未确认回执 halt
 - 过期 pending 清理 → job_self_heal
 - 回执指纹闭环 → receipt_sha256 验证
-- 影子信号过滤 → 200xxx.SZ 等非普通 A 股代码三层过滤
+- sim 信号过滤 → 200xxx.SZ 等非普通 A 股代码三层过滤
 
 详细时间线：[docs/runtime_incidents_20260701.md](docs/runtime_incidents_20260701.md)
 
