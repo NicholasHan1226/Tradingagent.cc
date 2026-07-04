@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (CNFutures review scoring + review reports consume simulated ledgers)
+> 最后更新：2026-07-04 (SharedSignals-only data-source audit + production cron/doc alignment)
 
 ---
 
@@ -18,7 +18,8 @@
 - **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；sim → real promotion 只接受经 sim 审计的来源；`signals/real/*` 为隔离队列，不代表自动下单或已成交
 - **CNFutures 模拟盘**：国内期货只跑模拟盘，无单独影子盘；多风格模拟会写 `shared/review/data/cn_futures_sim_reviews.jsonl`，新增 `score_summary` 标记样本不足、手续费、保证金占用、名义金额、可用 PnL 样本和风格状态；`CNFutures/live_gateway.py` 为未来 CTP/期货公司接入预留 fail-closed 占位，当前拒绝全部真实期货订单；生产 crontab 预期工作日 17:20 运行 `job_cn_futures_sim.sh`
 - **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US 模拟闭环；`job_style_evolution` 模板每 4 小时跑 simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；均带 flock 与独立日志
-- **SharedSignals API 消费**：`SharedSignalsAPIClient` 已校准 15/15 数据端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；A股 `get_assets()` 走 SharedSignals `stock_basic` read model，单日 `get_bars_daily()` 会补齐 start=end；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号；HK 数据与模拟入口保留但暂不进入生产调度
+- **SharedSignals API 消费**：`SharedSignalsAPIClient` 已覆盖核心 15 个数据消费端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；A股 `get_assets()` 走 SharedSignals `stock_basic` read model，单日 `get_bars_daily()` 会补齐 start=end；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号；HK 数据与模拟入口保留但暂不进入生产调度
+- **数据源边界复核**：2026-07-04 主服务器生产路径审计未发现 TradingAgent 活动代码直接调用 Tushare/Binance/Polymarket/Alpaca/Yahoo 等行情源；HTTP 调用保留在 SharedSignals API 客户端、健康检查、邮件/webhook 和研究 LLM 路径。误拷贝的 untracked `Users/` 旧目录已从服务器删除，`.gitignore` 已防止再次出现。
 - **研究/筛选增强**：新增 `shared/screening/fundamental_analyzer.py` 和 `shared/research/multi_perspective.py`，只读消费 SharedSignals API/DB，输出基本面质量分、同业比较、red flags 和 bull/bear/macro/technical 多视角共识报告；`auto_pipeline` 消费这些研究结果生成 simulated 决策，不触碰实盘队列
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **复盘/报告输入**：日报、周报、归因和汇总邮件默认通过 `load_review_trades()` 读取 legacy shadow fills + `shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl` + A股 `shared/logs/local_sim/local_sim_trades.jsonl`；报告保留 `review_trade_count`、`shadow_trade_count`、`simulated_trade_count` 三个计数，避免服务器本地模拟成交被误判为无样本
@@ -56,6 +57,13 @@
 - [x] 新增 `CNFutures/live_gateway.py` 作为未来 CTP/SimNow/期货公司接入占位；当前 `real_trading_enabled=false`、`broker_adapter_ready=false`，所有真实期货订单请求抛 `SafetyViolation`，不得降级为 simulated。
 - [x] `CNFutures/README.md` 已同步评分用途与实盘预留边界。
 - [x] `shared/crontab.txt` 已补 CNFutures 工作日 17:20 收盘后模拟入口；SharedSignals 期货日线由 P6 定时采集负责，避免重复采集。
+
+### 2026-07-04 SharedSignals-only data-source audit
+
+- [x] 主服务器 `/opt/investment/tradingagent` 已确认：TradingAgent 生产模拟盘、影子盘、健康检查和研究路径不直接采集外部市场数据；市场数据入口是 SharedSignals API-first reader，SQLite read model 只作只读回退。
+- [x] 服务器误拷贝的 untracked `Users/` 目录含 7 个过期文件，落后于当前 `shared/wrappers/tradings_cron_entry.py`、`shared/execution/local_sim_ledger.py`、A股节假日/T+1 修复等生产代码；已删除并在 `.gitignore` 中忽略 `Users/` 防止复发。
+- [x] `crontab.txt` 与 `shared/crontab.txt` 已改为 2026-07-04 生产快照/边界说明；旧 2026-07-03 模板不再作为当前生产事实。
+- [x] 服务器运行状态：A股本地模拟、Crypto、US、PM、健康检查、复盘、CNFutures 模拟入口均在 `marketgraph` 用户 crontab 中；HK 按 Nicholas 决策继续停用。
 
 ### 2026-07-04 server-side simulated trading closure
 
@@ -217,7 +225,7 @@
 
 - [x] `SharedSignalsAPIClient` 已覆盖 15 个数据端点：trading day、market data、fundamentals、reference、macro、capital flow、events、sentiment、crypto、PM、associations、impacts、industry、realtime 5min、tushare。
 - [x] `TradingagentDataReader` 已接入 API-first 访问核心读取路径；API 不可用时回退 SQLite 只读路径并打 degraded 状态。
-- [ ] MarketGraph 侧仍待迁移；TradingAgent 侧不再把 15/15 客户端视为孤儿代码。
+- [x] TradingAgent 侧不再把 15/15 客户端视为孤儿代码；MarketGraph 当前生产采集边界已切到 SharedSignals-owned collectors，研究图谱读取仍保留只读文件/DB 兼容路径。
 
 ### 多市场 P2 工具本地实现（2026-07-03）
 
