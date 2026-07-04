@@ -4,8 +4,16 @@ import unittest
 
 from Crypto.adapter import CryptoAdapter
 from Crypto.sim_executor import crypto_sim_execute
+from Crypto.simulator import CryptoSimulator
 from shared.execution.sim_broker import SimResult, execute_sim_order
 from shared.execution.sim_executor_registry import get_sim_executor
+
+
+
+
+class EmptyCryptoMarketData:
+    def get_latest_price(self, symbol: str, date: str):
+        return None
 
 
 class FakeBinanceClient:
@@ -71,6 +79,25 @@ class CryptoSimExecutorTest(unittest.TestCase):
         self.assertEqual(result.order_id, "SIM-2")
         self.assertIn("real/live execution is rejected", result.message)
         self.assertEqual(client.calls, [])
+
+
+    def test_crypto_simulator_falls_back_to_sharedsignals_order_price(self) -> None:
+        simulator = CryptoSimulator(market_data=EmptyCryptoMarketData())
+
+        fill = simulator.simulate(
+            {
+                "order_id": "SIM-CRYPTO-FALLBACK",
+                "symbol": "BTCUSDT",
+                "quantity": 2,
+                "price": 123.45,
+                "trade_date": "20260704",
+            },
+            {"account_id": "crypto_sim", "account_type": "simulated"},
+        )
+
+        self.assertEqual(fill["status"], "filled")
+        self.assertEqual(fill["avg_price"], 123.45)
+        self.assertEqual(fill["filled_qty"], 2.0)
 
     def test_crypto_sim_executor_rejects_real_execution_payload_directly(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):

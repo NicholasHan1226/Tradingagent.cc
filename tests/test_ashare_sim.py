@@ -33,7 +33,7 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(adapter.get_shadow_account(), "ashare_shadow")
         self.assertEqual(adapter.get_sim_account(), "ashare_sim")
 
-    def test_ashare_sim_execute_queues_pending_signal_card_for_mini_bridge(self) -> None:
+    def test_ashare_sim_execute_queues_pending_signal_card_when_hermes_enabled(self) -> None:
         result = ashare_sim_execute(
             order={
                 "order_id": "SIM-ASHARE-1",
@@ -43,7 +43,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "side": "buy",
             },
             account={"account_id": "ashare_sim"},
-            config={"signals_dir": self.signals_dir},
+            config={"signals_dir": self.signals_dir, "hermes_enabled": True},
         )
 
         self.assertIsInstance(result, SimResult)
@@ -72,13 +72,34 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "side": "buy",
             },
             account={"account_id": "ashare_sim"},
-            config={"signals_dir": self.signals_dir},
+            config={"signals_dir": self.signals_dir, "hermes_enabled": True},
         )
 
         self.assertEqual(result.status, "rejected")
         self.assertFalse((self.signals_dir / "pending" / "SIM-ASHARE-BSHARE.json").exists())
 
-    def test_ashare_sim_execute_sends_webhook_on_default_production_path(self) -> None:
+    def test_ashare_sim_execute_defaults_to_server_local_fill_without_hermes(self) -> None:
+        with patch("Ashare.sim_executor.send_sim_signal_to_mini") as send_mock:
+            result = ashare_sim_execute(
+                order={
+                    "order_id": "SIM-ASHARE-LOCAL",
+                    "ts_code": "600000.SH",
+                    "quantity": 100,
+                    "price": 10.5,
+                    "side": "buy",
+                },
+                account={"account_id": "ashare_sim"},
+            )
+
+        self.assertEqual(result.status, "filled")
+        self.assertEqual(result.filled_qty, 100)
+        self.assertEqual(result.avg_price, 10.5)
+        self.assertEqual(result.capital_layer, "simulated")
+        self.assertEqual(result.account_type, "simulated")
+        self.assertEqual(result.raw_response["mode"], "server_local_sim_only")
+        send_mock.assert_not_called()
+
+    def test_ashare_sim_execute_sends_webhook_when_hermes_explicitly_enabled(self) -> None:
         with patch(
             "Ashare.sim_executor.send_sim_signal_to_mini",
             return_value={"status": "sent", "success": True, "order_id": "SIM-ASHARE-WEBHOOK"},
@@ -92,6 +113,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                     "side": "buy",
                 },
                 account={"account_id": "ashare_sim"},
+                config={"hermes_enabled": True},
             )
 
         self.assertEqual(result.status, "pending")
@@ -134,7 +156,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "side": "buy",
             },
             account={"account_id": "ashare_sim"},
-            config={"signals_dir": self.signals_dir},
+            config={"signals_dir": self.signals_dir, "hermes_enabled": True},
         )
         self.assertEqual(queue_result.status, "pending")
 

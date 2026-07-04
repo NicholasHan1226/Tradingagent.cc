@@ -23,6 +23,7 @@ from shared.markets.safety import reject_real_execution_payload
 
 SIM_LEDGER = Path(__file__).resolve().parent.parent / "logs" / "sim_orders.jsonl"
 SIM_STATUSES = {"filled", "partial", "rejected", "failed", "pending"}
+LOCAL_BACKUP_STATUSES = {"filled", "partial", "pending"}
 
 
 @dataclass
@@ -67,6 +68,26 @@ class SimFill:
     filled_quantity: int = 0
     model: str = ""
     details: dict[str, Any] = field(default_factory=dict)
+
+
+def _ensure_builtin_executor(market_key: str) -> None:
+    """Import and register built-in executors so callers do not depend on import order."""
+    try:
+        from .sim_executor_registry import register_sim_executor
+    except Exception:
+        return
+    if market_key == "ashare":
+        try:
+            from Ashare.sim_executor import ashare_sim_execute
+        except Exception:
+            return
+        register_sim_executor("ashare", ashare_sim_execute)
+    elif market_key == "crypto":
+        try:
+            from Crypto.sim_executor import crypto_sim_execute
+        except Exception:
+            return
+        register_sim_executor("crypto", crypto_sim_execute)
 
 
 def _normalize_sim_status(status: Any) -> str:
@@ -137,7 +158,7 @@ def execute_sim_order(
     ``SimResult``. The returned receipt is always marked as
     ``capital_layer=simulated`` and ``account_type=simulated``.
     """
-    from .sim_executor_registry import get_sim_executor
+    from .sim_executor_registry import get_sim_executor, local_sim_executor
 
     market_key = str(market or "").lower().strip()
     order_payload = dict(order or {})
@@ -158,6 +179,9 @@ def execute_sim_order(
     sim_account = _with_sim_markers(account_payload)
     sim_config = _with_sim_markers(config_payload)
     executor = get_sim_executor(market_key)
+    if executor is None or (executor is local_sim_executor and market_key in {"ashare", "crypto"}):
+        _ensure_builtin_executor(market_key)
+        executor = get_sim_executor(market_key)
     if executor is None:
         return SimResult(
             status="failed",
@@ -177,7 +201,11 @@ def execute_sim_order(
         )
 
     sim_result = _coerce_sim_result(result, sim_order, market_key)
-    if market_key == "ashare" and os.environ.get("TRADINGS_LOCAL_SIM_BACKUP_ENABLED", "1") != "0":
+    if (
+        market_key == "ashare"
+        and sim_result.status in LOCAL_BACKUP_STATUSES
+        and os.environ.get("TRADINGS_LOCAL_SIM_BACKUP_ENABLED", "1") != "0"
+    ):
         try:
             from .local_sim_ledger import record_local_sim_order
 

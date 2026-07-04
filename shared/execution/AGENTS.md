@@ -20,13 +20,14 @@
 ## 边界
 - 真实资金只给Nicholas手工确认, 不自动下单/撤单/点击
 - 影子盘和模拟盘可全自动记录
-- Hermes/Mac Mini 是执行桥：只负责同花顺 GUI 执行、截图/视觉定位、有限重试、回执和账户同步；不做买卖判断，不拒绝服务器已生成的 simulated 信号。
-- A 股模拟盘权威闭环是服务器 TradingAgent `signals/pending` → mini 接收/执行 → 服务器 TradingAgent `signals/filled|failed|positions`；兼容旧 MarketGraph receipt/ledger 输出只作历史留痕，不作为新的权威状态。
+- Hermes/Mac Mini 是 A 股同花顺 GUI 执行桥的预留第二路径：只负责 GUI 执行、截图/视觉定位、有限重试、回执和账户同步；不做买卖判断，不拒绝服务器已生成的 simulated 信号。
+- A 股模拟盘权威闭环默认在服务器本地完成：TradingAgent 生成 simulated order → `Ashare/sim_executor.py` paper fill → `shared/execution/sim_broker.py`/统一模拟账本记录 → 复盘与训练消费。`signals/pending` → mini → `signals/filled|failed|positions` 只在 `ASHARE_SIM_HERMES_ENABLED=1` 时作为同花顺 GUI 对照路径启用。
 - 成功点击后即使本地回执保存或远端同步异常，也必须进入待同步/人工排查，不能把同一信号重新放回待执行造成重复点击。
 
 
 ## Mac Mini Hermes 运行前提
 
+- 本节仅适用于 `ASHARE_SIM_HERMES_ENABLED=1` 的备用 GUI 执行路径；服务器本地模拟盘默认不依赖 mini。
 - mini 侧必须同时运行 `com.nicholashan.sim-signal-receiver` 和 `com.nicholashan.sim-signal-executor`；服务器通过反向 SSH 隧道 `127.0.0.1:9865` 投递信号，receiver 落地到本地 `Ashare/signals/pending`，executor 再执行 GUI。
 - A 股模拟盘当前按 Nicholas 的业务定义视作模拟盘；LaunchAgent 必须保留 `SIM_ACCEPT_ASHARE_PANEL_AS_SIM=1`，同时保留 DashScope/视觉定位环境，因为按钮定位仍依赖截图和视觉判断。
 - 接收器/隧道健康检查优先看服务器 `curl http://127.0.0.1:9865/health` 和 mini 本地 `curl http://127.0.0.1:8654/health`；只看到 ssh 隧道不代表 receiver 正常。
@@ -64,7 +65,8 @@
 - 当前检查覆盖：A股 universe 合规性、影子账本污染和收益口径、执行/影子队列隔离、mini/Hermes 健康、模拟持仓快照、邮件模板/发送记录、失败回执可复盘性。
 - 通过标准：`overall_status=pass` 且 `signals/pending|claimed|running` 为 0、`signals/shadow/*` 可有影子研究记录、`200xxx.SZ/900xxx.SH` 不出现在 A股影子账本。
 
-## 2026-07-01 双模拟盘边界
-- `Ashare/sim_executor.py` 继续负责把 A股 simulated 信号送到 Mac mini Hermes，同花顺模拟盘成交必须靠 mini 回执确认。
-- `shared/execution/local_sim_ledger.py` 是服务器本地模拟盘备份账本：只记录 server paper fill，用于训练/复盘数据保全；不得把它当同花顺 GUI 成交。
-- `shared/execution/sim_broker.py` 对 A股 simulated 订单默认同步写本地备份账本；可用 `TRADINGS_LOCAL_SIM_BACKUP_ENABLED=0` 临时关闭。
+## 2026-07-04 A股服务器本地模拟盘边界
+- `Ashare/sim_executor.py` 默认返回服务器本地 `server_local_sim_only` paper fill，不写 Hermes pending。
+- `shared/execution/local_sim_ledger.py` 和统一 `shared/logs/sim_ledger/ashare` 是 A 股服务器本地模拟盘的训练/复盘事实源；只记录 server paper fill，不等同于同花顺 GUI 成交。
+- `shared/execution/sim_broker.py` 对 A 股 simulated 订单默认同步写本地模拟账本；可用 `TRADINGS_LOCAL_SIM_BACKUP_ENABLED=0` 临时关闭本地备份记录。
+- Hermes/同花顺 GUI 模拟路径仍保留，但必须显式打开 `ASHARE_SIM_HERMES_ENABLED=1`，并以 mini 回执和截图作为 GUI 对照证据。

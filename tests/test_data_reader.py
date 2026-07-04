@@ -304,6 +304,29 @@ class FakeAPIClient:
         return [{"symbol": ts_code, "trade_date": end or start, "close": 10.29, "amount": 888789.3933}]
 
 
+class EmptyShellAPIClient(FakeAPIClient):
+    def get_market_data(self, ts_code, start=None, end=None, freq="daily"):
+        self.market_data_calls.append({"ts_code": ts_code, "start": start, "end": end, "freq": freq})
+        return [{}]
+
+
+class FakeSharedBars:
+    last_error = None
+
+    def get_bars_daily(self, market, symbol, start_date="", end_date=""):
+        return [
+            {
+                "market": market,
+                "symbol": symbol,
+                "trade_date": end_date or start_date,
+                "close": 23350.03,
+            }
+        ]
+
+    def get_bars_intraday(self, market, symbol, interval="5m", start_time="", end_time=""):
+        return []
+
+
 class TestTradingagentDataReaderAPI(unittest.TestCase):
     def test_get_assets_uses_sharedsignals_stock_basic_for_ashare(self) -> None:
         api = FakeAPIClient()
@@ -325,6 +348,22 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(rows[0]["close"], 10.29)
         self.assertEqual(api.market_data_calls[0]["start"], "20260703")
         self.assertEqual(api.market_data_calls[0]["end"], "20260703")
+
+    def test_get_market_data_falls_back_when_api_returns_empty_shell(self) -> None:
+        api = EmptyShellAPIClient()
+        reader = TradingagentDataReader(shared=FakeSharedBars(), api_client=api)
+
+        rows = reader.get_market_data("HSI", market="Global", start="20260701", end="20260703")
+
+        self.assertEqual(rows[0]["close"], 23350.03)
+        self.assertEqual(rows[0]["market"], "Global")
+        self.assertEqual(rows[0]["symbol"], "HSI")
+
+    def test_hk_suffix_is_preserved_for_read_model_symbol(self) -> None:
+        self.assertEqual(
+            TradingagentDataReader._market_symbol_from_ts_code("00700.HK", None),
+            ("HK", "00700.HK"),
+        )
 
 
 class TestMarketGraphCSVReader(unittest.TestCase):

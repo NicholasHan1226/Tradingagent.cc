@@ -6,9 +6,9 @@
   "max_hold_days": 5,
   "pyramid": false,
   "scale_in_steps": 1,
-  "conviction_min": 0.6,
+  "conviction_min": 0.5,
   "capital_layer": "simulated",
   "weight": 1.0,
-  "status": "paused",
-  "description": "HK grid \u2014 market paused"
+  "status": "active",
+  "description": "HK grid simulated via SharedSignals HSI proxy while HK stock daily data is unavailable"
 }

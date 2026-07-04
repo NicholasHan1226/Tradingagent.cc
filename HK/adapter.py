@@ -41,10 +41,14 @@ class HKAdapter(MarketAdapter):
 
     def normalize_symbol(self, symbol: str) -> str:
         raw = str(symbol or "").strip().upper()
+        if raw in {"HSI", "HSCEI", "HSTECH"}:
+            return raw
         if raw.endswith(".HK"):
             raw = raw[:-3]
-        raw = raw.zfill(5)
-        return f"{raw}.HK"
+        if raw.isdigit():
+            raw = raw.zfill(5)
+            return f"{raw}.HK"
+        return raw
 
     def to_sharedsignals_symbol(self, symbol: str) -> str:
         return self.normalize_symbol(symbol)

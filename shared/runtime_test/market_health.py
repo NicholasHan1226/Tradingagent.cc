@@ -10,9 +10,10 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib import request
@@ -31,6 +32,26 @@ REQUIRED_TEMPLATES = [
     "trading_signal.py",
     "system_health.py",
 ]
+SIM_MARKETS = ("ashare", "crypto", "pm", "us", "hk")
+SIM_LOG_NAMES = {
+    "ashare": "ashare_sim.log",
+    "crypto": "crypto_sim.log",
+    "pm": "pm_sim.log",
+    "us": "us_sim.log",
+    "hk": "hk_sim.log",
+}
+SIM_WRAPPERS = {
+    "ashare": "job_ashare_sim_exec.sh",
+    "crypto": "job_crypto_sim.sh",
+    "pm": "job_pm_sim.sh",
+    "us": "job_us_sim.sh",
+    "hk": "job_hk_sim.sh",
+}
+DEFAULT_SIM_SYMBOLS = {
+    "crypto": ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"),
+    "us": ("TSLA", "NVDA", "META", "AMZN", "GOOGL", "AMD", "NFLX", "AVGO", "COIN", "PLTR"),
+    "hk": ("00700.HK", "09988.HK", "03690.HK", "09618.HK", "00005.HK", "00388.HK"),
+}
 
 
 @dataclass
@@ -51,6 +72,51 @@ def _load_json(path: Path, default: Any = None) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if number == number and number > 0 else 0.0
+
+
+def _price(row: dict[str, Any]) -> float:
+    for key in ("latest_price", "price", "close", "last_price", "market_price", "yes_price", "probability"):
+        value = _safe_float(row.get(key))
+        if value > 0:
+            return value
+    return 0.0
+
+
+def _unwrap_rows(rows: Any) -> list[dict[str, Any]]:
+    if rows is None:
+        return []
+    if isinstance(rows, dict):
+        rows = rows.get("data", [rows])
+    if not isinstance(rows, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        data = row.get("data")
+        normalized.append(dict(data) if isinstance(data, dict) else dict(row))
+    return normalized
+
+
+def _latest_priced(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    priced = [row for row in rows if _price(row) > 0]
+    if not priced:
+        return None
+    return priced[-1]
+
+
+def _file_age_minutes(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    return round(max(0.0, (datetime.now(timezone.utc).timestamp() - path.stat().st_mtime) / 60.0), 2)
 
 
 def _iter_json_files(path: Path) -> list[Path]:
@@ -290,6 +356,263 @@ def _check_failure_receipts() -> Check:
     )
 
 
+def _installed_crontab_text() -> tuple[str, str]:
+    commands = (["crontab", "-u", "marketgraph", "-l"], ["crontab", "-l"])
+    errors: list[str] = []
+    for command in commands:
+        try:
+            result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=5)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{' '.join(command)}: {exc.__class__.__name__}: {exc}")
+            continue
+        if result.returncode == 0:
+            return result.stdout, ""
+        errors.append(f"{' '.join(command)}: {result.stderr.strip() or result.stdout.strip()}")
+    return "", "; ".join(error for error in errors if error)
+
+
+def _latest_cron_result(market: str) -> dict[str, Any]:
+    path = ROOT / "shared/logs/cron" / SIM_LOG_NAMES.get(market, f"{market}_sim.log")
+    payload: dict[str, Any] | None = None
+    if path.exists():
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in reversed(lines[-200:]):
+            start = line.find("{")
+            if start < 0:
+                continue
+            try:
+                parsed = json.loads(line[start:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict) and str(parsed.get("market") or "").lower() == market:
+                payload = parsed
+                break
+    return {
+        "path": str(path.relative_to(ROOT)),
+        "exists": path.exists(),
+        "age_minutes": _file_age_minutes(path),
+        "payload": payload or {},
+    }
+
+
+def _count_jsonl_rows(path: Path) -> int:
+    try:
+        return sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+    except OSError:
+        return 0
+
+
+def _sim_ledger_summary(market: str) -> dict[str, Any]:
+    if market == "ashare":
+        path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
+        return {
+            "type": "server_local_sim_backup",
+            "trade_rows": _count_jsonl_rows(path),
+            "ledger_count": 1 if path.exists() else 0,
+            "latest_file": str(path.relative_to(ROOT)),
+            "latest_age_minutes": _file_age_minutes(path),
+        }
+
+    files = sorted((ROOT / "shared/logs/sim_ledger" / market).glob("*/trade_journal.jsonl"))
+    latest = max(files, key=lambda item: item.stat().st_mtime) if files else None
+    return {
+        "type": "style_sim_ledger",
+        "trade_rows": sum(_count_jsonl_rows(path) for path in files),
+        "ledger_count": len(files),
+        "latest_file": str(latest.relative_to(ROOT)) if latest else "",
+        "latest_age_minutes": _file_age_minutes(latest) if latest else None,
+    }
+
+
+def _probe_market_data(market: str) -> dict[str, Any]:
+    try:
+        from shared.data.reader import SharedSignalsAPIClient, TradingagentDataReader
+
+        api_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip() or DEFAULT_SHAREDSIGNALS_API_URL
+        reader = TradingagentDataReader(api_client=SharedSignalsAPIClient(base_url=api_url))
+        priced_rows: list[dict[str, Any]] = []
+        asset_count = 0
+        if market == "ashare":
+            assets = reader.get_assets("Ashare") or reader.get_assets("ashare")
+            asset_count = len(assets)
+            regular = [
+                row for row in assets
+                if isinstance(row, dict) and VALID_ASHARE_RE.match(str(row.get("symbol") or row.get("ts_code") or ""))
+            ]
+            return {
+                "status": "ok" if regular and not reader.degraded else ("warn" if regular else "fail"),
+                "asset_count": asset_count,
+                "priced_signal_count": 0,
+                "regular_ashare_count": len(regular),
+                "reader_degraded": reader.degraded,
+                "reader_errors": reader.errors[-5:],
+            }
+        if market == "pm":
+            rows = _unwrap_rows(reader.get_pm_markets(limit=10))
+            priced_rows = [row for row in rows if _price(row) > 0]
+        elif market == "crypto":
+            for symbol in DEFAULT_SIM_SYMBOLS["crypto"]:
+                latest = _latest_priced(_unwrap_rows(reader.get_crypto_klines(symbol=symbol, limit=50)))
+                if latest:
+                    priced_rows.append(latest)
+        elif market in {"us", "hk"}:
+            end = datetime.now(timezone.utc).date()
+            start = end - timedelta(days=10)
+            market_name = "HK" if market == "hk" else "US"
+            for symbol in DEFAULT_SIM_SYMBOLS[market]:
+                latest = _latest_priced(
+                    _unwrap_rows(
+                        reader.get_market_data(
+                            ts_code=symbol,
+                            market=market_name,
+                            start=start.strftime("%Y%m%d"),
+                            end=end.strftime("%Y%m%d"),
+                            freq="daily",
+                        )
+                    )
+                )
+                if latest:
+                    priced_rows.append(latest)
+            if market == "hk" and not priced_rows:
+                proxy_rows: list[dict[str, Any]] = []
+                for symbol in ("HSI",):
+                    latest = _latest_priced(
+                        _unwrap_rows(
+                            reader.get_market_data(
+                                ts_code=symbol,
+                                market="Global",
+                                start=start.strftime("%Y%m%d"),
+                                end=end.strftime("%Y%m%d"),
+                                freq="daily",
+                            )
+                        )
+                    )
+                    if latest:
+                        item = dict(latest)
+                        item["symbol"] = symbol
+                        item["market_proxy_for"] = "HK"
+                        proxy_rows.append(item)
+                if proxy_rows:
+                    return {
+                        "status": "warn",
+                        "asset_count": asset_count,
+                        "priced_signal_count": 0,
+                        "proxy_priced_signal_count": len(proxy_rows),
+                        "proxy": "HSI",
+                        "reason": "hk_stock_daily_missing_using_hsi_proxy",
+                        "sample": [
+                            {key: row.get(key) for key in ("symbol", "market", "trade_date", "price", "close", "latest_price", "market_proxy_for")}
+                            for row in proxy_rows[:5]
+                        ],
+                        "reader_degraded": reader.degraded,
+                        "reader_errors": reader.errors[-5:],
+                    }
+        ok = bool(priced_rows) and not reader.degraded
+        return {
+            "status": "ok" if ok else ("warn" if priced_rows else "fail"),
+            "asset_count": asset_count,
+            "priced_signal_count": len(priced_rows),
+            "sample": [
+                {key: row.get(key) for key in ("symbol", "ts_code", "market_id", "trade_date", "price", "close", "latest_price", "yes_price")}
+                for row in priced_rows[:5]
+            ],
+            "reader_degraded": reader.degraded,
+            "reader_errors": reader.errors[-5:],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "fail", "error": f"{exc.__class__.__name__}: {exc}"}
+
+
+def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: str = "") -> Check:
+    data = _probe_market_data(market)
+    ledger = _sim_ledger_summary(market)
+    cron_result = _latest_cron_result(market)
+    wrapper = SIM_WRAPPERS.get(market, "")
+    cron_installed = bool(wrapper and wrapper in crontab_text)
+
+    hard_fail_reasons: list[str] = []
+    warn_reasons: list[str] = []
+    if not cron_installed:
+        hard_fail_reasons.append("cron_missing")
+    if data.get("status") == "fail":
+        hard_fail_reasons.append("market_data_missing")
+    elif data.get("status") == "warn":
+        warn_reasons.append("market_data_degraded")
+    if market != "ashare" and int(ledger.get("trade_rows") or 0) <= 0:
+        hard_fail_reasons.append("sim_trade_ledger_empty")
+    if market == "ashare" and int(ledger.get("trade_rows") or 0) <= 0:
+        warn_reasons.append("server_local_sim_has_no_production_trades_yet")
+    payload = cron_result.get("payload") or {}
+    if payload and payload.get("status") not in {"ok", "market_closed"}:
+        if market == "hk" and payload.get("status") == "no_data":
+            hard_fail_reasons.append("latest_cron_no_data")
+        else:
+            warn_reasons.append(f"latest_cron_status={payload.get('status')}")
+    elif not payload and market in {"crypto", "pm"}:
+        warn_reasons.append("latest_cron_json_missing")
+    if crontab_error and not crontab_text:
+        warn_reasons.append("crontab_unreadable")
+
+    status = "fail" if hard_fail_reasons else ("warn" if warn_reasons else "pass")
+    return Check(
+        f"{market}_sim_loop",
+        status,
+        f"{market} 模拟盘闭环{'正常' if status == 'pass' else '需要处理'}",
+        {
+            "market": market,
+            "cron_installed": cron_installed,
+            "wrapper": wrapper,
+            "crontab_error": crontab_error,
+            "data_probe": data,
+            "ledger": ledger,
+            "latest_cron_result": cron_result,
+            "fail_reasons": hard_fail_reasons,
+            "warn_reasons": warn_reasons,
+        },
+        severity="error" if status == "fail" else ("warn" if status == "warn" else "info"),
+    )
+
+
+def run_sim_market_health(markets: tuple[str, ...] = SIM_MARKETS) -> dict[str, Any]:
+    crontab_text, crontab_error = _installed_crontab_text()
+    checks = [_check_sim_market_loop(market, crontab_text, crontab_error) for market in markets]
+    failed = [check for check in checks if check.status == "fail"]
+    warned = [check for check in checks if check.status == "warn"]
+    overall = "fail" if failed else ("warn" if warned else "pass")
+    return {
+        "market": "all_sim",
+        "generated_at": _now_iso(),
+        "overall_status": overall,
+        "summary": {
+            "pass": sum(1 for check in checks if check.status == "pass"),
+            "warn": len(warned),
+            "fail": len(failed),
+        },
+        "checks": [check.__dict__ for check in checks],
+    }
+
+
+def run_all_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict[str, Any]:
+    ashare = run_ashare_health(mini_health_url=mini_health_url)
+    sim = run_sim_market_health()
+    checks = list(ashare["checks"]) + list(sim["checks"])
+    failed = [check for check in checks if check.get("status") == "fail"]
+    warned = [check for check in checks if check.get("status") == "warn"]
+    overall = "fail" if failed else ("warn" if warned else "pass")
+    return {
+        "market": "all",
+        "generated_at": _now_iso(),
+        "overall_status": overall,
+        "summary": {
+            "pass": sum(1 for check in checks if check.get("status") == "pass"),
+            "warn": len(warned),
+            "fail": len(failed),
+        },
+        "sections": {"ashare": ashare, "sim_markets": sim},
+        "checks": checks,
+    }
+
+
 def run_ashare_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict[str, Any]:
     checks = [
         _check_ashare_universe(),
@@ -319,12 +642,16 @@ def run_ashare_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="tradingagent market health checks")
-    parser.add_argument("--market", default="ashare", choices=["ashare"], help="market to check")
+    parser.add_argument("--market", default="ashare", choices=["ashare", "sim", "all"], help="market scope to check")
     parser.add_argument("--mini-health-url", default=DEFAULT_MINI_HEALTH_URL)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args(argv)
     if args.market == "ashare":
         result = run_ashare_health(mini_health_url=args.mini_health_url)
+    elif args.market == "sim":
+        result = run_sim_market_health()
+    elif args.market == "all":
+        result = run_all_health(mini_health_url=args.mini_health_url)
     else:  # pragma: no cover
         raise ValueError(args.market)
     print(json.dumps(result, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=False))

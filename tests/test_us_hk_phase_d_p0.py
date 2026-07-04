@@ -124,6 +124,7 @@ class USHKPhaseDP0Test(unittest.TestCase):
         self.assertEqual(config.sessions["HKEX"]["regular"], (("09:30", "12:00"), ("13:00", "16:00")))
         self.assertEqual(adapter.normalize_symbol("700"), "00700.HK")
         self.assertEqual(adapter.normalize_symbol("00700"), "00700.HK")
+        self.assertEqual(adapter.normalize_symbol("HSI"), "HSI")
         self.assertEqual(adapter.to_sharedsignals_symbol("9988"), "09988.HK")
         self.assertEqual(adapter.get_universe("2026-07-02"), ["00700.HK", "09988.HK"])
         self.assertEqual(market_data.get_latest_price("700", "2026-07-02"), 382.4)

@@ -43,13 +43,21 @@ configs = {
         "cfg_mod": "US.common",
         "cfg_cls": "USConfig",
     },
+    "hk": {
+        "sim_mod": "HK.simulator",
+        "sim_cls": "HKSimulator",
+        "cfg_mod": "HK.common",
+        "cfg_cls": "HKConfig",
+    },
 }
 cfg = configs.get(market, configs["crypto"])
 
 DEFAULT_SYMBOLS = {
     "crypto": ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"),
     "us": ("TSLA", "NVDA", "META", "AMZN", "GOOGL", "AMD", "NFLX", "AVGO", "COIN", "PLTR"),
+    "hk": ("00700.HK", "09988.HK", "03690.HK", "09618.HK", "00005.HK", "00388.HK"),
 }
+DEFAULT_HK_PROXY_SYMBOLS = ("HSI",)
 
 
 def _symbols_for_market(name: str) -> tuple[str, ...]:
@@ -57,6 +65,13 @@ def _symbols_for_market(name: str) -> tuple[str, ...]:
     if raw:
         return tuple(item.strip().upper() for item in raw.split(",") if item.strip())
     return DEFAULT_SYMBOLS.get(name, ())
+
+
+def _hk_proxy_symbols() -> tuple[str, ...]:
+    raw = os.environ.get("SIM_HK_PROXY_SYMBOLS")
+    if raw:
+        return tuple(item.strip().upper() for item in raw.split(",") if item.strip())
+    return DEFAULT_HK_PROXY_SYMBOLS
 
 
 def _unwrap_rows(rows: Any) -> list[dict[str, Any]]:
@@ -133,15 +148,16 @@ def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) ->
             latest = _latest(_unwrap_rows(reader.get_crypto_klines(symbol=symbol, limit=50)))
             if latest:
                 source_rows.append(latest)
-    elif name == "us":
+    elif name in {"us", "hk"}:
         source_rows = []
         start, end = _lookback_window()
+        market_name = "HK" if name == "hk" else "US"
         for symbol in _symbols_for_market(name):
             latest = _latest(
                 _unwrap_rows(
                     reader.get_market_data(
                         ts_code=symbol,
-                        market="US",
+                        market=market_name,
                         start=start,
                         end=end,
                         freq="daily",
@@ -149,7 +165,26 @@ def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) ->
                 )
             )
             if latest:
+                latest.setdefault("symbol", symbol)
                 source_rows.append(latest)
+        if name == "hk" and not source_rows:
+            for symbol in _hk_proxy_symbols():
+                latest = _latest(
+                    _unwrap_rows(
+                        reader.get_market_data(
+                            ts_code=symbol,
+                            market="Global",
+                            start=start,
+                            end=end,
+                            freq="daily",
+                        )
+                    )
+                )
+                if latest:
+                    latest["symbol"] = symbol
+                    latest["market_proxy_for"] = "HK"
+                    latest["data_source"] = f"SharedSignals HK proxy/{symbol}"
+                    source_rows.append(latest)
     else:
         source_rows = []
 
@@ -169,7 +204,7 @@ def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) ->
                 "capital_layer": "simulated",
                 "account_type": "simulated",
                 "real_execution": False,
-                "data_source": "SharedSignals reader/API",
+                "data_source": str(row.get("data_source") or "SharedSignals reader/API"),
             }
         )
         if len(signals) >= limit:

@@ -44,6 +44,8 @@ class CryptoSimulator(BaseSimulator):
         date = str(order.get("trade_date") or order.get("date") or "")
         price = self.fill_price(symbol, date)
         if price is None or price <= 0:
+            price = self._optional_positive_float(order.get("price") or order.get("limit_price") or order.get("latest_price"))
+        if price is None or price <= 0:
             raise ValueError(f"no public Crypto fill price for {symbol} at {date}")
 
         notional = quantity * price
@@ -75,6 +77,14 @@ class CryptoSimulator(BaseSimulator):
         if not symbol:
             raise ValueError("Crypto order symbol is required")
         return symbol
+
+    @staticmethod
+    def _optional_positive_float(value: Any) -> float | None:
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return None
+        return result if result > 0 and result == result else None
 
     @staticmethod
     def _positive_float(value: Any, name: str) -> float:

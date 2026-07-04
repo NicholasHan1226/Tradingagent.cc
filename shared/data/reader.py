@@ -484,6 +484,8 @@ class TradingagentDataReader:
         suffix = suffix.upper()
         if suffix in {"SH", "SZ", "BJ"}:
             return market or "Ashare", symbol
+        if suffix == "HK":
+            return market or "HK", code
         return market or suffix, symbol
 
     @staticmethod
@@ -499,6 +501,18 @@ class TradingagentDataReader:
                 item["volume"] = item["vol"]
             normalized.append(item)
         return normalized
+
+    @staticmethod
+    def _has_priced_market_rows(rows: list[dict[str, Any]]) -> bool:
+        for row in rows:
+            for key in ("adjusted_close", "close", "price", "latest_price", "last_price", "market_price", "yes_price"):
+                try:
+                    value = float(row.get(key))
+                except (TypeError, ValueError):
+                    continue
+                if value > 0 and value == value:
+                    return True
+        return False
 
     @staticmethod
     def _normalize_asset_rows(rows: list[dict[str, Any]], market: str | None = None) -> list[dict[str, Any]]:
@@ -579,8 +593,15 @@ class TradingagentDataReader:
                 end=end_value,
                 freq="daily",
             )
+            normalized = self._normalize_market_rows(result, market, symbol)
+            if not self._has_priced_market_rows(normalized):
+                fallback_rows = fallback()
+                if fallback_rows:
+                    self._last_api_used = False
+                    self._record_shared_error("get_bars_daily")
+                    return self._normalize_market_rows(fallback_rows, market, symbol)
             self._record_shared_error("get_bars_daily")
-            return self._normalize_market_rows(result, market, symbol)
+            return normalized
         except Exception as e:
             self.errors.append(f"get_bars_daily: {e}")
             self.stale = True
@@ -618,8 +639,15 @@ class TradingagentDataReader:
                 end=end_value,
                 freq=freq,
             )
+            normalized = self._normalize_market_rows(result, market_name, symbol)
+            if not self._has_priced_market_rows(normalized):
+                fallback_rows = fallback()
+                if fallback_rows:
+                    self._last_api_used = False
+                    self._record_shared_error("get_market_data")
+                    return self._normalize_market_rows(fallback_rows, market_name, symbol)
             self._record_shared_error("get_market_data")
-            return self._normalize_market_rows(result, market_name, symbol)
+            return normalized
         except Exception as e:
             self.errors.append(f"get_market_data: {e}")
             self.stale = True

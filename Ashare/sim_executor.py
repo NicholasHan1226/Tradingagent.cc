@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """A-share simulated executor backed by the Mac Mini file bridge.
 
-Production simulated orders must not talk to Tonghuashun UI directly from the
-server-side tradingagent process. Instead, this executor writes a pending signal
-card for the Mini cron bridge and returns ``pending``. Local tests may enable
-mock mode to return an immediate filled receipt without any UI dependency.
+Production simulated orders default to the server-local paper loop. The Mac Mini
+Hermes/Tonghuashun bridge is retained as an explicitly enabled secondary route
+(``ASHARE_SIM_HERMES_ENABLED=1`` or ``config["hermes_enabled"]=True``), but is
+not required for server-side simulated training data.
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ def _signal_card(
             "sellable_from": str(config.get("sellable_from") or today),
             "sellable_date": str(config.get("sellable_date") or today),
         },
-        "notes": "Production simulated execution is delegated to the Mac Mini bridge.",
+        "notes": "Hermes/Mac Mini bridge is reserved; server-local simulated execution is primary unless explicitly enabled.",
     }
 
 
@@ -150,11 +150,28 @@ def ashare_sim_execute(
             filled_qty=int(card["quantity"]),
             avg_price=float(card["price"]),
             fee=float(config.get("mock_fee", 0.0) or 0.0),
-            message="Local mock fill for A-share Mini bridge tests",
+            message="Local mock fill for A-share simulated execution tests",
             order_id=order_id,
             market=MARKET,
             raw_response={
                 "mode": "mock_filled",
+                "signal_card": card,
+            },
+        )
+
+    hermes_enabled = bool(config.get("hermes_enabled")) or os.environ.get("ASHARE_SIM_HERMES_ENABLED", "0") == "1"
+    if not hermes_enabled:
+        return SimResult(
+            status="filled",
+            filled_qty=int(card["quantity"]),
+            avg_price=float(card["price"]),
+            fee=float(config.get("local_sim_fee", 0.0) or 0.0),
+            message="Server-local A-share simulated fill; Hermes bridge reserved but disabled",
+            order_id=order_id,
+            market=MARKET,
+            raw_response={
+                "mode": "server_local_sim_only",
+                "hermes_enabled": False,
                 "signal_card": card,
             },
         )
@@ -164,8 +181,9 @@ def ashare_sim_execute(
     if "webhook" in config:
         webhook_enabled = bool(config.get("webhook"))
     elif signals_dir == DEFAULT_SIGNALS_DIR:
-        # Production A-share simulated orders must actively enter the Mini bridge.
-        # Set ASHARE_SIM_WEBHOOK_ENABLED=0 only for emergency rollback.
+        # Hermes is a reserved secondary route. When explicitly enabled, the
+        # production path can still attempt the Mini webhook unless separately
+        # disabled for rollback.
         webhook_enabled = env_webhook != "0"
     else:
         webhook_enabled = env_webhook == "1"

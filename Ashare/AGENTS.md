@@ -3,7 +3,7 @@
 > **阅读顺序：** [AGENTS.md](../AGENTS.md) → [STATUS.md](../STATUS.md) → 本文件
 
 ## 目标
-A股交易全闭环 (T+1, Hermes同花顺执行)。
+A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易时段和普通 A 股过滤；Hermes/同花顺 GUI 执行仅作为未来可显式开启的第二路径。
 
 ## 约束
 - T+1: 当天买不能当天卖
@@ -18,7 +18,8 @@ A股交易全闭环 (T+1, Hermes同花顺执行)。
 - 闲置资金尾盘买逆回购(204001)
 
 ## 执行
-- 模拟盘: 服务器通过 `Ashare/sim_executor.py` 生成/发送信号卡，Mac Mini live executor `~/.hermes/scripts/sim-signal-executor.py` 负责同花顺模拟盘执行和回写
+- 模拟盘: 默认由服务器通过 `Ashare/sim_executor.py` 和 `shared/execution/sim_broker.py` 完成本地 paper fill、账本和复盘闭环；不依赖 Mini/Hermes。
+- Hermes 备用路径: 只有显式设置 `ASHARE_SIM_HERMES_ENABLED=1` 时，服务器才把模拟信号卡投递给 Mac Mini live executor `~/.hermes/scripts/sim-signal-executor.py`，由同花顺模拟盘执行并回写。
 - 实盘: 仅人工确认与只读同步；不得自动点击真实账户委托
 - 5-10分钟级别自动化
 

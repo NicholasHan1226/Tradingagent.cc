@@ -133,6 +133,39 @@ class SimBrokerV2Test(unittest.TestCase):
             self.assertEqual(pnl["positions"]["600000.SH"]["quantity"], 100)
             self.assertEqual(pnl["market_value"], 1000.0)
 
+
+    def test_ashare_builtin_executor_loads_without_prior_import_and_records_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            patches = [
+                patch.object(local_sim_ledger, "LOCAL_SIM_DIR", base),
+                patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", base / "local_sim_trades.jsonl"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", base / "local_sim_positions.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_LOCK", base / ".local_sim.lock"),
+            ]
+            for p in patches:
+                p.start()
+                self.addCleanup(p.stop)
+
+            result = execute_sim_order(
+                order={
+                    "order_id": "SIM-ASHARE-BUILTIN-1",
+                    "ts_code": "600000.SH",
+                    "side": "buy",
+                    "quantity": 100,
+                    "price": 10.0,
+                },
+                market="ashare",
+                account={"account": "ashare_sim"},
+                config={"local_sim_slippage_bps": 0},
+            )
+
+            self.assertEqual(result.status, "filled")
+            self.assertEqual(result.raw_response.get("mode"), "server_local_sim_only")
+            self.assertTrue(result.raw_response.get("local_sim_backup", {}).get("recorded"))
+            self.assertTrue((base / "local_sim_trades.jsonl").exists())
+
     def test_execute_sim_order_rejects_real_payload_before_sanitizing(self) -> None:
         calls: list[object] = []
 

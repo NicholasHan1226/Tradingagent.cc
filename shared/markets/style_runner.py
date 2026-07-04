@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import os
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +31,8 @@ class StyleRunner:
         *,
         styles_dir: Path | str | None = None,
         review_root: Path | str | None = None,
+        ledger_root: Path | str | None = None,
+        record_ledger: bool | None = None,
     ) -> None:
         self.market = str(market or "").lower().strip()
         if not self.market:
@@ -36,6 +40,12 @@ class StyleRunner:
         self.simulator = simulator
         self.styles_dir = Path(styles_dir) if styles_dir is not None else None
         self.review_root = Path(review_root) if review_root is not None else DEFAULT_REVIEW_ROOT
+        self.ledger_root = Path(ledger_root) if ledger_root is not None else TRADINGAGENT_ROOT / "shared" / "logs" / "sim_ledger"
+        if record_ledger is None:
+            enabled = os.environ.get("TRADINGAGENT_SIM_LEDGER_ENABLED", "1").strip().lower()
+            self.record_ledger = enabled not in {"0", "false", "no", "off"}
+        else:
+            self.record_ledger = bool(record_ledger)
 
     def run(
         self,
@@ -105,6 +115,7 @@ class StyleRunner:
                 "conviction": round(conviction, 4),
                 "conviction_min": style.conviction_min,
                 "pnl": 0.0,
+                "ledger": {"status": "skipped", "reason": "low_conviction"},
                 "capital_layer": "simulated",
                 "account_type": "simulated",
                 "real_execution": False,
@@ -119,6 +130,7 @@ class StyleRunner:
             fill = {}
             status = "error"
             error = str(exc)
+        ledger = self._record_ledger_fill(style, order, fill, style_account)
         pnl = self._estimate_pnl(style, order, fill, conviction)
         return {
             "style_name": style.name,
@@ -135,6 +147,7 @@ class StyleRunner:
             "pnl": pnl,
             "win": pnl > 0,
             "fill": self._sim_fill(fill),
+            "ledger": ledger,
             "error": error,
             "capital_layer": "simulated",
             "account_type": "simulated",
@@ -302,6 +315,124 @@ class StyleRunner:
         cleaned["account_type"] = "simulated"
         cleaned["real_execution"] = False
         return cleaned
+
+    def _record_ledger_fill(
+        self,
+        style: TradeStyle,
+        order: dict[str, Any],
+        fill: dict[str, Any],
+        account: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self.record_ledger:
+            return {"status": "disabled"}
+        fill_status = str(fill.get("status") or "").strip().lower()
+        if fill_status not in {"filled", "partial"}:
+            return {"status": "skipped", "reason": f"fill_status={fill_status or 'missing'}"}
+        try:
+            from shared.accounting.sim_ledger import SimLedger
+
+            order_id = str(order.get("order_id") or fill.get("order_id") or "").strip()
+            if not order_id:
+                return {"status": "skipped", "reason": "missing_order_id"}
+            style_key = self._safe_path_part(style.name)
+            ledger = SimLedger(self.ledger_root / self.market / style_key, starting_cash=self._initial_capital(account))
+            if self._ledger_has_order(ledger.trade_journal_path, order_id):
+                return {"status": "duplicate", "order_id": order_id, "ledger_root": str(ledger.root)}
+
+            symbol = str(
+                order.get("symbol")
+                or order.get("ts_code")
+                or order.get("market_id")
+                or fill.get("symbol")
+                or fill.get("market_id")
+                or ""
+            ).strip()
+            side = str(order.get("side") or fill.get("side") or "buy").strip().lower()
+            qty = self._filled_quantity(order, fill)
+            price = self._filled_price(order, fill)
+            if not symbol or side not in {"buy", "sell"} or qty <= 0 or price <= 0:
+                return {
+                    "status": "skipped",
+                    "reason": "missing_symbol_side_quantity_or_price",
+                    "order_id": order_id,
+                    "symbol": symbol,
+                }
+            fee = self._safe_number(fill.get("fee") or fill.get("fees") or 0.0)
+            fill_id = str(fill.get("fill_id") or "").strip()
+            if not fill_id:
+                digest = hashlib.sha256(f"{order_id}:{qty}:{price}:{fee}".encode("utf-8")).hexdigest()[:12]
+                fill_id = f"FILL-{digest}"
+            journal = ledger.record_fill(
+                {**order, "symbol": symbol, "side": side, "order_id": order_id},
+                {
+                    **fill,
+                    "fill_id": fill_id,
+                    "order_id": order_id,
+                    "fill_qty": qty,
+                    "fill_price": price,
+                    "fill_time": fill.get("filled_at") or fill.get("timestamp") or fill.get("fill_time"),
+                },
+                fees={"total": fee},
+            )
+            return {
+                "status": "recorded",
+                "order_id": order_id,
+                "entry_id": journal.get("entry_id"),
+                "ledger_root": str(ledger.root),
+            }
+        except Exception as exc:  # noqa: BLE001 - ledger failure must not stop simulated research runs
+            return {"status": "error", "error": f"{exc.__class__.__name__}: {exc}"}
+
+    @staticmethod
+    def _ledger_has_order(path: Path, order_id: str) -> bool:
+        if not path.exists():
+            return False
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if str(row.get("order_id") or "") == order_id:
+                        return True
+        except OSError:
+            return False
+        return False
+
+    @staticmethod
+    def _filled_quantity(order: dict[str, Any], fill: dict[str, Any]) -> float:
+        for key in ("fill_qty", "filled_qty", "filled_quantity", "quantity", "qty"):
+            value = fill.get(key) if key in fill else order.get(key)
+            parsed = StyleRunner._safe_number(value)
+            if parsed > 0:
+                return parsed
+        return 0.0
+
+    @staticmethod
+    def _filled_price(order: dict[str, Any], fill: dict[str, Any]) -> float:
+        for key in ("fill_price", "avg_price", "filled_price", "price", "limit_price"):
+            value = fill.get(key) if key in fill else order.get(key)
+            parsed = StyleRunner._safe_number(value)
+            if parsed > 0:
+                return parsed
+        return 0.0
+
+    @staticmethod
+    def _safe_number(value: Any) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return parsed if parsed == parsed else 0.0
+
+    @staticmethod
+    def _safe_path_part(value: Any) -> str:
+        raw = str(value or "style").strip() or "style"
+        cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in raw)
+        return cleaned[:80] or "style"
 
     @staticmethod
     def _conviction(signal: dict[str, Any]) -> float:

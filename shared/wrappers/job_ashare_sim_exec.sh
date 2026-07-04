@@ -20,6 +20,7 @@ export TRADINGS_DEEPSEEK_TIMEOUT="${TRADINGS_DEEPSEEK_TIMEOUT:-15}"
 export TRADINGS_DEEPSEEK_RETRIES="${TRADINGS_DEEPSEEK_RETRIES:-1}"
 
 ensure_cron_paths
+HERMES_ENABLED="${ASHARE_SIM_HERMES_ENABLED:-0}"
 market_open="$(${PYTHON_BIN} - <<'PYSRV'
 from datetime import datetime
 now = datetime.now()
@@ -30,6 +31,14 @@ PYSRV
 )"
 if [[ "${market_open}" != "Y" ]]; then
     printf '[%s] %s skipped=market_closed phase=%s\n' "$(timestamp)" "${JOB_NAME}" "${PHASE}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
+    exit 0
+fi
+
+if [[ "${HERMES_ENABLED}" != "1" ]]; then
+    export ASHARE_SIM_HERMES_ENABLED=0
+    export ASHARE_SIM_WEBHOOK_ENABLED=0
+    printf '[%s] %s hermes_reserved action=server_local_sim_only webhook=disabled\n' "$(timestamp)" "${JOB_NAME}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
+    run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" "${PYTHON_BIN}" "${ENTRYPOINT}" --job "${JOB_NAME}"
     exit 0
 fi
 

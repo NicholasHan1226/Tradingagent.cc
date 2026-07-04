@@ -25,9 +25,10 @@
 
 ### 执行桥
 
-A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending → Mac Mini Hermes → signals/filled/failed/positions`
+A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：`job_ashare_sim_exec → Ashare/sim_executor.py → shared/execution/sim_broker.py → shared/logs/sim_ledger/ashare`。
 
-- Hermes/mini 只执行和回写，不做买卖判断。
+- Hermes/mini 是 A 股同花顺 GUI 执行桥的预留第二路径，只有显式设置 `ASHARE_SIM_HERMES_ENABLED=1` 时才投递到 `signals/pending` 并要求 mini 回执。
+- Hermes/mini 只执行和回写，不做买卖判断；当前服务器本地模拟闭环不依赖 Hermes 可用性。
 - `~/Desktop/Investment` 不再是 active dev root 或 live runtime root；Mac Mini live runtime 使用 `~/.hermes/ashare-runtime`，服务器写回使用 `/opt/investment/tradingagent/signals`。
 - 旧桌面路径任务 `ai.hermes.sim-remote-sync` 与 `ai.hermes.condition-cleanup` 已于 2026-07-02 禁用；不得重新启用，除非先确认新的事实源、回滚方式和验证方式。
 - MarketGraph 不得直接触发 Hermes/Mac Mini/同花顺或任何执行 webhook。
@@ -58,9 +59,10 @@ A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending �
 
 ### Mini/Hermes 健康门
 
-- `job_ashare_sim_exec` 发单前检查 mini health；mini 正常时 A股模拟单同时进入 Mini/Hermes/同花顺模拟盘和服务器本地模拟账本。
-- mini `/health` 不可用、`halted=true` 或 `pending + in_progress > ASHARE_SIM_MINI_BUSY_LIMIT`（默认 0）时，不再跳过服务器模拟闭环；任务必须记录 `mini_health_unavailable` / `mini_halted` / `mini_busy`，临时设置 `ASHARE_SIM_WEBHOOK_ENABLED=0`，继续写服务器本地 paper fill 与信号文件队列。
-- 服务器本地模拟账本是训练/复盘数据保全，不等同于同花顺 GUI 成交；Hermes/mini 成功或失败仍以回执和截图确认为准。
+- `job_ashare_sim_exec` 默认不检查 mini health，也不写 Hermes pending；A 股模拟单在服务器内完成 paper fill、账本和复盘数据闭环。
+- 仅当 `ASHARE_SIM_HERMES_ENABLED=1` 时，任务才启用 mini health/backpressure 检查，并把同一模拟信号投递给 Mini/Hermes/同花顺模拟盘作为第二执行路径。
+- Hermes 路径启用后，mini `/health` 不可用、`halted=true` 或 `pending + in_progress > ASHARE_SIM_MINI_BUSY_LIMIT`（默认 0）时，不得阻断服务器本地模拟闭环；任务必须记录 `mini_health_unavailable` / `mini_halted` / `mini_busy`，临时设置 `ASHARE_SIM_WEBHOOK_ENABLED=0`，继续写服务器本地 paper fill。
+- 服务器本地模拟账本是训练/复盘数据权威来源；Hermes/mini 成功或失败只用于同花顺 GUI 模拟盘对照，仍以回执和截图确认为准。
 - Hermes/mini 点击提交但没有严格持仓表/委托/成交确认时，写 unconfirmed failed receipt，创建 `executor_halt.json`，停止消费队列。截图确认只看裁剪后的持仓表区域。
 - 同花顺模式识别：用 AX 标签确认"模拟"，不依赖 Vision 判断资金/账户区域。显式真实风险标识是"实盘"、"资金账号"、"普通交易"、"融资融券"。
 
