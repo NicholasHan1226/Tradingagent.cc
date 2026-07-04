@@ -1,0 +1,7 @@
+{
+  // Cloudflare Pages static-site configuration for TradingAgent Front.
+  // Do not add account_id, API tokens, tunnel credentials, or secrets here.
+  "name": "tradingagent-front",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-07-05"
+}

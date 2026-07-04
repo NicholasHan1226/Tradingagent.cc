@@ -101,11 +101,18 @@ VITE_TRADING_AGENT_SNAPSHOT_URL=/api/trading-agent/snapshot
 
 详细部署和 Nginx 示例见 [docs/integration.md](docs/integration.md)。
 
+Cloudflare 迁移准备说明见 [docs/cloudflare.md](docs/cloudflare.md)。目标形态是：
+
+- 前端静态页面部署到 Cloudflare Pages。
+- 只读 snapshot API 继续运行在 TradingAgent 服务器内侧，并通过 Cloudflare Tunnel 或 Worker 受控代理接入。
+- API 仍只读，不暴露交易执行、队列写入、账户、回调或密钥。
+
 当前域名说明：
 
 - Nginx 已配置 `dashboard.tradingagent.cc`、`tradingagent.cc` 和 `www.tradingagent.cc`。
 - DNS 仍需指向 `8.138.181.177` 后，普通浏览器才能直接访问云端页面。
 - 在 DNS 修正前，可用 `curl --resolve dashboard.tradingagent.cc:80:8.138.181.177` 验证生产站点。
+- 如果域名迁到 Cloudflare Pages，以上杭州 Nginx 入口应作为回滚路径保留，不再作为默认公网入口。
 
 ## 本地运行
 
