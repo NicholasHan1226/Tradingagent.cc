@@ -68,7 +68,7 @@ describe('dashboard view rules', () => {
       { day: '现在', simulated: 9.42, target: 8, benchmark: 2.15, opportunity: -2.55 },
     ]
 
-    const result = getLivePerformanceData(new Date('2026-07-04T10:00:00+08:00'), performanceRows)
+    const result = getLivePerformanceData(new Date('2026-07-04T10:00:00+08:00'), performanceRows, true)
 
     expect(result[0]).toBe(performanceRows[0])
     expect(result[1]).not.toBe(performanceRows[1])

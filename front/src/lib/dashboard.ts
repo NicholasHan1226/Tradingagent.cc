@@ -16,7 +16,10 @@ export function getVisibleSignals(rows: SignalRow[], activeMarket: Market) {
   return filteredRows.length ? filteredRows : rows
 }
 
-export function getLivePerformanceData(now: Date, rows: PerformancePoint[]) {
+export function getLivePerformanceData(now: Date, rows: PerformancePoint[], animateLatest = false) {
+  if (!rows.length) return rows
+  if (!animateLatest) return rows
+
   const seconds = now.getSeconds()
   const liveMove = (Math.sin(seconds / 4) + Math.cos(seconds / 7)) * 0.16
 
@@ -25,8 +28,8 @@ export function getLivePerformanceData(now: Date, rows: PerformancePoint[]) {
 
     return {
       ...point,
-      simulated: Number((9.42 + liveMove).toFixed(2)),
-      opportunity: Number((-2.55 + liveMove * 0.2).toFixed(2)),
+      simulated: Number((point.simulated + liveMove).toFixed(2)),
+      opportunity: Number((point.opportunity + liveMove * 0.2).toFixed(2)),
     }
   })
 }

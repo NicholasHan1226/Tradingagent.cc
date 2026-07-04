@@ -13,11 +13,11 @@ describe('App navigation and result-first dashboard', () => {
 
     expect(screen.getByLabelText('实时收益')).toBeInTheDocument()
     expect(screen.getByLabelText('机会漏斗')).toBeInTheDocument()
-    expect(screen.getByText('收益曲线')).toBeInTheDocument()
+    expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
     expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '模拟盘' })).toBeInTheDocument()
-    expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '实盘待接入' })).toBeInTheDocument()
+    expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '实盘' })).toBeInTheDocument()
     expect(screen.getByText('发现')).toBeInTheDocument()
-    expect(screen.getByText('筛选')).toBeInTheDocument()
+    expect(screen.getByText('风控')).toBeInTheDocument()
     expect(screen.getAllByText('交易信号').length).toBeGreaterThan(0)
     expect(screen.queryByRole('heading', { name: '机会从全市场进入，只把可执行结果留在首页。' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '现在关注' })).toBeInTheDocument()
@@ -85,14 +85,47 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
   })
 
+  it('does not replace an empty TradingAgent snapshot with demo results', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            mode: 'simulated',
+            generatedAt: '2026-07-04T10:00:00.000Z',
+            domains: {
+              performance: { status: 'empty', updatedAt: '2026-07-04T10:00:00.000Z' },
+              signals: { status: 'empty', updatedAt: '2026-07-04T10:00:00.000Z' },
+              holdings: { status: 'empty', updatedAt: '2026-07-04T10:00:00.000Z' },
+              decisions: { status: 'empty', updatedAt: '2026-07-04T10:00:00.000Z' },
+              risk: { status: 'empty', updatedAt: '2026-07-04T10:00:00.000Z' },
+            },
+            performance: [],
+            holdings: [],
+            signals: [],
+            sourceRefs: tradingAgentReadModelSources,
+          }),
+          { status: 200 },
+        ),
+      ),
+    )
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByText('等待收益数据')).toBeInTheDocument())
+    expect(screen.getAllByText('暂无新机会').length).toBeGreaterThan(0)
+    expect(screen.getByText('暂无持仓记录')).toBeInTheDocument()
+    expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
+  })
+
   it('switches the return card between simulated and reserved live mode in place', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    fireEvent.click(within(card).getByRole('button', { name: '实盘待接入' }))
+    fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
-    expect(within(card).getByText('接入完成后显示真实收益、持仓和风险。')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘未启用').length).toBeGreaterThan(0)
+    expect(within(card).getByText('授权和风控开关完成后，这里切换到真实账户结果。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -111,9 +144,9 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    fireEvent.click(within(card).getByRole('button', { name: '实盘待接入' }))
+    fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('实盘未启用').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

@@ -4,6 +4,8 @@ import type { AccountMode, Page } from '../../types/dashboard'
 export function RealtimeReturnCard({
   accountMode,
   executedCount,
+  hasPerformanceData,
+  headline,
   liveProfit,
   liveReturn,
   missedCount,
@@ -14,6 +16,8 @@ export function RealtimeReturnCard({
 }: {
   accountMode: AccountMode
   executedCount: number
+  hasPerformanceData: boolean
+  headline: string
   liveProfit: number
   liveReturn: number
   missedCount: number
@@ -35,14 +39,19 @@ export function RealtimeReturnCard({
             模拟盘
           </button>
           <button className={isLive ? 'selected' : ''} onClick={() => selectAccountMode('live')} type="button">
-            实盘待接入
+            实盘
           </button>
         </div>
       </div>
       {isLive ? (
         <div className="return-placeholder">
-          <strong>实盘待接入</strong>
-          <p>接入完成后显示真实收益、持仓和风险。</p>
+          <strong>实盘未启用</strong>
+          <p>授权和风控开关完成后，这里切换到真实账户结果。</p>
+        </div>
+      ) : !hasPerformanceData ? (
+        <div className="return-placeholder">
+          <strong>等待收益数据</strong>
+          <p>{headline}</p>
         </div>
       ) : (
         <>
@@ -52,7 +61,7 @@ export function RealtimeReturnCard({
             <b>+{liveReturn.toFixed(2)}%</b>
             <em>{gapLabel}</em>
           </div>
-          <small>{executedCount} 个兑现 · {pendingCount} 个推进 · {missedCount} 个错过时机</small>
+          <small>{headline} {executedCount} 个兑现 · {pendingCount} 个推进 · {missedCount} 个复盘。</small>
         </>
       )}
       <button onClick={() => setActivePage('收益')} type="button">收益归因</button>

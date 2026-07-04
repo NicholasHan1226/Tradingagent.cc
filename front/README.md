@@ -48,7 +48,7 @@ TradingAgent signals / positions / review / risk
 - TradingAgent 读取器：`src/server/tradingAgentSnapshot.ts`。
 - 真实数据适配：`src/api/tradingAgentReadModel.ts` 和
   `src/adapters/tradingAgentReadModel.ts`。
-- fallback 数据：`src/data/dashboard.ts`，只用于接口不可用或字段暂缺时展示。
+- 本地预览数据：`src/data/dashboard.ts`，只在快照接口不可用时用于开发预览；如果接口可用但某个领域返回空数组，前端必须展示真实空状态，不得回退到样例收益、机会或持仓。
 
 ## 数据边界
 
@@ -153,7 +153,7 @@ npm run build:api
 
 ## 当前缺口
 
-- 持仓真实读模型还不完整，当前可能显示为空或 fallback。
+- 持仓真实读模型还不完整，当前生产快照可能显示为空。
 - 收益曲线仍需要后端输出更稳定的日内/日级收益序列。
 - 机会漏斗需要后端补充每个机会的阶段变化时间线，才能做到更真实的动态流动。
 - 逐笔成交、午盘复盘、策略归因和风险限额文件已列为可用来源，但仍需补充到 snapshot 构建。

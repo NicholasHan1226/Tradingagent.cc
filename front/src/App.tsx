@@ -4,10 +4,10 @@ import type { TradingAgentReadModelSnapshot } from './api/tradingAgentReadModel'
 import { toDashboardState } from './adapters/dashboard'
 import { MarketHeader } from './components/MarketHeader'
 import { TopNav } from './components/TopNav'
-import { mockDashboardApiResponse, performanceData, signals as mockSignals } from './data/dashboard'
+import { holdings as mockHoldings, mockDashboardApiResponse, performanceData, signals as mockSignals } from './data/dashboard'
 import { deriveChartEvents } from './lib/chartEvents'
 import { getLivePerformanceData, getSignalFunnel, getVisibleSignals } from './lib/dashboard'
-import { getSnapshotPerformance, getSnapshotSignals } from './lib/dashboardSnapshot'
+import { getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
 import type { DataDomain } from './types/status'
@@ -34,7 +34,14 @@ function App() {
     async function refreshSnapshot() {
       try {
         const snapshot = await client.getSnapshot()
-        if (mounted) setReadModelSnapshot(snapshot)
+        if (mounted) {
+          setReadModelSnapshot(snapshot)
+          setDashboardState({
+            mode: snapshot.mode,
+            status: 'ready',
+            domains: snapshot.domains,
+          })
+        }
       } catch {
         if (mounted) setReadModelSnapshot(null)
       }
@@ -50,8 +57,22 @@ function App() {
 
   const performanceRows = useMemo(() => getSnapshotPerformance(readModelSnapshot, performanceData), [readModelSnapshot])
   const signalRows = useMemo(() => getSnapshotSignals(readModelSnapshot, mockSignals), [readModelSnapshot])
-  const livePerformanceData = useMemo(() => getLivePerformanceData(now, performanceRows), [now, performanceRows])
-  const latestPoint = livePerformanceData[livePerformanceData.length - 1]
+  const holdingRows = useMemo(() => getSnapshotHoldings(readModelSnapshot, mockHoldings), [readModelSnapshot])
+  const isUsingDemoSnapshot = readModelSnapshot === null
+  const hasPerformanceData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'performance')
+  const hasSignalData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'signals')
+  const hasHoldingData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'holdings')
+  const livePerformanceData = useMemo(
+    () => getLivePerformanceData(now, performanceRows, isUsingDemoSnapshot),
+    [isUsingDemoSnapshot, now, performanceRows],
+  )
+  const latestPoint = livePerformanceData[livePerformanceData.length - 1] ?? {
+    day: '现在',
+    simulated: 0,
+    target: 0,
+    benchmark: 0,
+    opportunity: 0,
+  }
   const visibleSignals = useMemo(() => getVisibleSignals(signalRows, activeMarket), [activeMarket, signalRows])
   const signalFunnel = useMemo(() => getSignalFunnel(visibleSignals), [visibleSignals])
   const chartEvents = useMemo(() => deriveChartEvents(livePerformanceData, visibleSignals), [livePerformanceData, visibleSignals])
@@ -68,8 +89,10 @@ function App() {
       <MarketHeader
         activePage={activePage}
         activeMarket={activeMarket}
+        hasPerformanceData={hasPerformanceData}
         liveReturn={latestPoint.simulated}
         signalCount={visibleSignals.length}
+        snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
         setActiveMarket={setActiveMarket}
         targetReturn={latestPoint.target}
         tradeSignalCount={signalFunnel.tradeSignals.length}
@@ -80,6 +103,10 @@ function App() {
           <HomeDashboard
             accountMode={accountMode}
             data={livePerformanceData}
+            hasHoldingData={hasHoldingData}
+            hasPerformanceData={hasPerformanceData}
+            hasSignalData={hasSignalData}
+            holdings={holdingRows}
             latestPoint={latestPoint}
             now={now}
             domainStatus={domainStatus}

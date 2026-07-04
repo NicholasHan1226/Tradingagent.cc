@@ -2,15 +2,15 @@ import type { CSSProperties } from 'react'
 import { getSignalFunnel } from '../../lib/dashboard'
 import type { SignalRow } from '../../types/dashboard'
 
-export function SignalFunnelFlow({ signals }: { signals: SignalRow[] }) {
+export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: boolean; signals: SignalRow[] }) {
   const funnel = getSignalFunnel(signals)
-  const stageNames = ['发现', '评分', '筛选', '风控', '信号']
+  const stageNames = ['发现', '成形', '条件', '风控', '信号']
   const maxStageCount = Math.max(1, ...funnel.stages.map((stage) => stage.rows.length))
   const executedSignals = funnel.executed
   const pendingSignals = funnel.pending
   const missedSignals = funnel.missed
   const blockedSignals = [...funnel.blocked, ...funnel.cancelled]
-  const particles = signals.slice(0, 36).map((signal, index) => {
+  const particles = hasSignalData ? signals.slice(0, 36).map((signal, index) => {
     const stopStage = getStopStage(signal)
     const tone = signal.status === 'blocked' || signal.status === 'cancelled'
       ? 'red'
@@ -27,15 +27,18 @@ export function SignalFunnelFlow({ signals }: { signals: SignalRow[] }) {
       stopLeft: `${Math.min(93, stopStage * 20 - 7)}%`,
       tone,
     }
-  })
+  }) : []
   const passRate = Math.round((funnel.tradeSignals.length / Math.max(1, signals.length)) * 100)
+  const caption = hasSignalData
+    ? `${signals.length} 个机会进入，${funnel.tradeSignals.length} 个形成交易信号 · 留存 ${passRate}%`
+    : '机会通道已连接，等待新的市场机会进入'
 
   return (
     <section className="signal-flow-module" aria-label="机会漏斗">
       <div className="signal-flow-board">
         <div className="flow-caption">
           <span>机会漏斗</span>
-          <strong>{signals.length} 个机会进入，{funnel.tradeSignals.length} 个形成交易信号 · 留存 {passRate}%</strong>
+          <strong>{caption}</strong>
         </div>
         <div className="funnel-pipeline" role="img" aria-label="机会从发现到交易信号的动态漏斗">
           <div className="funnel-stage-grid">
@@ -53,6 +56,7 @@ export function SignalFunnelFlow({ signals }: { signals: SignalRow[] }) {
             })}
           </div>
           <div className="funnel-flow-canvas" aria-hidden="true">
+            {!hasSignalData && <div className="funnel-scanner" />}
             <div className="funnel-flow-band">
               <span style={{ '--retained': `${Math.round((funnel.stages[1]?.rows.length ?? 0) / maxStageCount * 100)}%` } as CSSProperties} />
               <span style={{ '--retained': `${Math.round((funnel.stages[2]?.rows.length ?? 0) / maxStageCount * 100)}%` } as CSSProperties} />
@@ -78,8 +82,8 @@ export function SignalFunnelFlow({ signals }: { signals: SignalRow[] }) {
         </div>
         <div className="flow-outcome-strip">
           <span><b>{executedSignals.length}</b> 已兑现</span>
-          <span><b>{pendingSignals.length}</b> 观察中</span>
-          <span><b>{missedSignals.length}</b> 错过时机</span>
+          <span><b>{pendingSignals.length}</b> 推进中</span>
+          <span><b>{missedSignals.length}</b> 机会复盘</span>
           <span><b>{blockedSignals.length}</b> 风控拦截</span>
         </div>
       </div>

@@ -57,18 +57,18 @@ function snapshot(partial: Partial<TradingAgentReadModelSnapshot>): TradingAgent
   }
 }
 
-describe('dashboard snapshot fallback', () => {
+describe('dashboard snapshot source priority', () => {
   it('uses live TradingAgent signals when the snapshot has rows', () => {
     expect(getSnapshotSignals(snapshot({ signals: [snapshotSignal] }), [fallbackSignal])).toEqual([snapshotSignal])
   })
 
-  it('keeps demo signals when the snapshot is absent or empty', () => {
+  it('keeps demo signals only when the snapshot is absent', () => {
     expect(getSnapshotSignals(null, [fallbackSignal])).toEqual([fallbackSignal])
-    expect(getSnapshotSignals(snapshot({ signals: [] }), [fallbackSignal])).toEqual([fallbackSignal])
+    expect(getSnapshotSignals(snapshot({ signals: [] }), [fallbackSignal])).toEqual([])
   })
 
-  it('uses snapshot performance only when the series is populated', () => {
+  it('uses snapshot performance whenever the snapshot is present', () => {
     expect(getSnapshotPerformance(snapshot({ performance: [snapshotPoint] }), [fallbackPoint])).toEqual([snapshotPoint])
-    expect(getSnapshotPerformance(snapshot({ performance: [] }), [fallbackPoint])).toEqual([fallbackPoint])
+    expect(getSnapshotPerformance(snapshot({ performance: [] }), [fallbackPoint])).toEqual([])
   })
 })

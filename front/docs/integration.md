@@ -226,16 +226,16 @@ The route must not:
 
 ## Current Gap
 
-The local Vite dev and preview runtimes now mount the read-only endpoint and
-the React app prefers that snapshot when it is available. The browser still
-falls back to mock display data if the endpoint is unavailable or if a domain
-does not yet expose usable rows.
+The local Vite dev, preview runtimes, Cloudflare Pages route, and server-side
+read-only API now use the same snapshot contract. The React app uses local
+preview data only when the endpoint is unavailable. If the endpoint is
+available but a domain returns an empty array, the UI must show a real empty
+state instead of substituting sample returns, opportunities, or holdings.
 
-The remaining production gap is the hosted server boundary: a production
-runtime still needs to mount the same endpoint and point it at the verified
-TradingAgent workspace root. That production mount must keep the same
-read-only rule and must not expose execution, callback, or order mutation
-routes to the dashboard.
+The production boundary is currently Cloudflare Pages for the static frontend
+plus Cloudflare Tunnel to the server-side snapshot API. The same read-only rule
+must be preserved: no execution, callback, or order mutation routes belong to
+this dashboard.
 
 The next data gaps are narrower: `midday_review.jsonl`, strategy/factor
 attribution JSONL, `risk_limits.yaml`, and filled signal details are declared as

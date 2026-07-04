@@ -6,21 +6,26 @@ export function MarketHeader({
   activePage,
   activeMarket,
   liveReturn,
+  hasPerformanceData,
   signalCount,
   setActiveMarket,
+  snapshotGeneratedAt,
   targetReturn,
   tradeSignalCount,
 }: {
   activePage: Page
   activeMarket: Market
+  hasPerformanceData: boolean
   liveReturn: number
   signalCount: number
   setActiveMarket: (market: Market) => void
+  snapshotGeneratedAt: string | null
   targetReturn: number
   tradeSignalCount: number
 }) {
   const meta = pageMeta[activePage]
   const [showMarkets, setShowMarkets] = useState(false)
+  const freshness = snapshotGeneratedAt ? '数据已连接' : '本地预览'
 
   return (
     <section className="market-header">
@@ -31,12 +36,14 @@ export function MarketHeader({
         </div>
       </div>
       <div className="market-stats">
-        <Stat label="目标差" value={`${liveReturn - targetReturn >= 0 ? '+' : ''}${(liveReturn - targetReturn).toFixed(2)}%`} />
-        <Stat detail="已收录" label="机会" value={`${signalCount}`} />
+        <Stat label="当前收益" value={hasPerformanceData ? `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%` : '等待'} cyan={hasPerformanceData} />
+        <Stat label="目标差" value={hasPerformanceData ? `${liveReturn - targetReturn >= 0 ? '+' : ''}${(liveReturn - targetReturn).toFixed(2)}%` : '等待'} />
+        <Stat detail="机会池" label="机会" value={`${signalCount}`} />
         <Stat detail="可处理" label="交易信号" value={`${tradeSignalCount}`} cyan />
-        <Stat label="最大回撤" value="-6.12%" red />
+        <Stat label="最大回撤" value={hasPerformanceData ? '-6.12%' : '等待'} red={hasPerformanceData} />
       </div>
       <div className="market-tools">
+        <span className="market-freshness"><i />{freshness}</span>
         <div className="market-filter">
           <button
             aria-expanded={showMarkets}
