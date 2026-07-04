@@ -95,7 +95,8 @@ Security boundary:
 - Keep the API bound to `127.0.0.1` behind a reverse proxy when possible.
 - Use HTTPS at the proxy layer.
 - Require `Authorization: Bearer <token>` when the endpoint is not fully
-  private.
+  private. If a token is enabled and the browser uses a same-origin route,
+  inject the token at the proxy layer; do not send it from browser JavaScript.
 - Allow only the dashboard origin in
   `TRADING_AGENT_SNAPSHOT_CORS_ORIGINS`.
 - Never expose TradingAgent execution, order mutation, callback, account,
@@ -134,9 +135,57 @@ server {
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Authorization "Bearer server-only-token";
   }
 }
 ```
+
+If the internal API is bound to `127.0.0.1` and only reachable through the same
+server Nginx process, the token can be omitted by leaving
+`TRADING_AGENT_SNAPSHOT_API_TOKEN` unset. If the token is set, Nginx must inject
+the `Authorization` header as shown above.
+
+## Production Service Shape
+
+Keep the API as a local service and let Nginx handle the public HTTPS surface.
+One practical `systemd` shape:
+
+```ini
+[Unit]
+Description=TradingAgent front snapshot API
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/investment/tradingagent/front
+Environment=FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent
+Environment=TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1
+Environment=TRADING_AGENT_SNAPSHOT_PORT=8787
+Environment=TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://dashboard.tradingagent.cc
+Environment=TRADING_AGENT_SNAPSHOT_API_TOKEN=server-only-token
+ExecStart=/usr/bin/npm run start:api
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Production verification:
+
+- `curl http://127.0.0.1:8787/healthz` returns `ok`.
+- `curl -H "Authorization: Bearer server-only-token" http://127.0.0.1:8787/api/trading-agent/snapshot` returns JSON.
+- The public dashboard route loads the React app.
+- The public `/api/trading-agent/snapshot` route returns JSON through Nginx.
+- The snapshot response reports simulated display data and does not expose
+  execution, account, credential, callback, or mutation routes.
+
+Rollback:
+
+- Keep the previous `front/dist` and `front/dist-server` build directories or
+  redeploy the previous Git commit.
+- Restart only the local snapshot API service after rolling back server files.
+- Nginx can be reverted independently because it only serves static files and
+  proxies the read-only route.
 
 The route may read:
 

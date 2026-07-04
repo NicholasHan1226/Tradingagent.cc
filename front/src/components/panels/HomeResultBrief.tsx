@@ -8,7 +8,8 @@ export function HomeResultBrief({ setActivePage, signals }: { setActivePage: (pa
   const closed = getClosedSignals(signals)
   const lead = actionable[0]
   const review = closed.find((signal) => signal.status === 'missed') ?? closed[0]
-  const protectedSignal = signals.find((signal) => signal.status === 'blocked') ?? actionable[1]
+  const protectedSignal = signals.find((signal) => signal.status === 'blocked')
+  const pausedSignal = protectedSignal ?? actionable[1]
 
   return (
     <section className="panel rail-panel home-result-brief">
@@ -18,7 +19,7 @@ export function HomeResultBrief({ setActivePage, signals }: { setActivePage: (pa
         <div className="summary-list">
           <SummaryRow label="主要来源" value="A股、美股趋势" tone="cyan" />
           <SummaryRow label="需要回看" value={review?.symbol ?? '暂无'} tone={review?.status === 'missed' ? 'red' : undefined} />
-          <SummaryRow label="已避开风险" value={protectedSignal?.symbol ?? '暂无'} />
+          <SummaryRow label={protectedSignal ? '已避开风险' : '暂缓观察'} value={pausedSignal?.symbol ?? '暂无'} />
         </div>
       </div>
       <div className="home-brief-section brief-action-section">
@@ -31,11 +32,11 @@ export function HomeResultBrief({ setActivePage, signals }: { setActivePage: (pa
               <em>{lead.reason}</em>
             </button>
           )}
-          {protectedSignal && (
+          {pausedSignal && (
             <button onClick={() => setActivePage('风险')} type="button">
-              <span>暂缓跟进</span>
-              <strong>{protectedSignal.symbol}</strong>
-              <em>{protectedSignal.reason}</em>
+              <span>{protectedSignal ? '风险已挡住' : '暂缓观察'}</span>
+              <strong>{pausedSignal.symbol}</strong>
+              <em>{pausedSignal.reason}</em>
             </button>
           )}
           {review && (

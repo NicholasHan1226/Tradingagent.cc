@@ -15,7 +15,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByLabelText('机会漏斗')).toBeInTheDocument()
     expect(screen.getByText('收益曲线')).toBeInTheDocument()
     expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '模拟盘' })).toBeInTheDocument()
-    expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '实盘' })).toBeInTheDocument()
+    expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '实盘待接入' })).toBeInTheDocument()
     expect(screen.getByText('发现')).toBeInTheDocument()
     expect(screen.getByText('筛选')).toBeInTheDocument()
     expect(screen.getAllByText('交易信号').length).toBeGreaterThan(0)
@@ -89,9 +89,9 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
+    fireEvent.click(within(card).getByRole('button', { name: '实盘待接入' }))
 
-    expect(within(card).getByText('实盘待接入')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
     expect(within(card).getByText('接入完成后显示真实收益、持仓和风险。')).toBeInTheDocument()
   })
 
@@ -111,9 +111,9 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
+    fireEvent.click(within(card).getByRole('button', { name: '实盘待接入' }))
 
-    expect(within(card).getByText('实盘待接入')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

@@ -35,7 +35,7 @@ export function RealtimeReturnCard({
             模拟盘
           </button>
           <button className={isLive ? 'selected' : ''} onClick={() => selectAccountMode('live')} type="button">
-            实盘
+            实盘待接入
           </button>
         </div>
       </div>
@@ -46,7 +46,7 @@ export function RealtimeReturnCard({
         </div>
       ) : (
         <>
-          <span className="return-kicker">当前模拟盘收益</span>
+          <span className="return-kicker">模拟盘 · 当前收益</span>
           <strong>+{formatCurrency(liveProfit)}</strong>
           <div className="return-subline">
             <b>+{liveReturn.toFixed(2)}%</b>
