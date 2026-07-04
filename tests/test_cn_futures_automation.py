@@ -140,6 +140,61 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 else:
                     os.environ["SHARED_SIGNALS_DB"] = old_db
 
+    def test_adapter_prefers_contracts_with_available_daily_bars(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "marketdata.sqlite"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE market_assets (
+                    market TEXT,
+                    symbol TEXT,
+                    name TEXT,
+                    status TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE market_bars_daily (
+                    market TEXT,
+                    symbol TEXT,
+                    trade_date TEXT,
+                    close REAL
+                )
+                """
+            )
+            conn.executemany(
+                "INSERT INTO market_assets VALUES (?, ?, ?, ?)",
+                [
+                    ("Futures", "CU0001.SHF", "old copper", None),
+                    ("Futures", "CU2609.SHF", "copper current", None),
+                    ("Futures", "RB2609.SHF", "rebar current", None),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO market_bars_daily VALUES (?, ?, ?, ?)",
+                [
+                    ("Futures", "CU2609.SHF", "20260703", 71000.0),
+                    ("Futures", "RB2609.SHF", "20260703", 3500.0),
+                ],
+            )
+            conn.commit()
+            old_db = os.environ.get("SHARED_SIGNALS_DB")
+            os.environ["SHARED_SIGNALS_DB"] = str(db_path)
+            try:
+                adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 2})
+
+                self.assertEqual(adapter.get_universe("20260703"), ["CU2609.SHF", "RB2609.SHF"])
+                self.assertEqual(adapter.get_universe("20260704"), ["CU2609.SHF", "RB2609.SHF"])
+            finally:
+                if old_db is None:
+                    os.environ.pop("SHARED_SIGNALS_DB", None)
+                else:
+                    os.environ["SHARED_SIGNALS_DB"] = old_db
+
 
 if __name__ == "__main__":
     unittest.main()
