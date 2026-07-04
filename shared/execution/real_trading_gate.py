@@ -7,6 +7,7 @@ real trading; every public gate raises ``SafetyViolation`` on failure.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import date, datetime, time
