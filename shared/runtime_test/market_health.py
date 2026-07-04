@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -17,7 +18,10 @@ from typing import Any
 from urllib import request
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 DEFAULT_MINI_HEALTH_URL = "http://127.0.0.1:9865/health"
+DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
 VALID_ASHARE_RE = re.compile(r"^(000|001|002|003|300|301|600|601|603|605|688|689)\d{3}(\.(SZ|SH))?$", re.I)
 INVALID_ASHARE_RE = re.compile(r"\b(?:200\d{3}\.SZ|900\d{3}\.SH)\b", re.I)
 REQUIRED_TEMPLATES = [
@@ -67,20 +71,18 @@ def _status(ok: bool, warn: bool = False) -> str:
 
 def _check_ashare_universe() -> Check:
     try:
-        from shared.data.reader import SharedSignalsReader
+        from shared.data.reader import SharedSignalsAPIClient, TradingagentDataReader
 
-        reader = SharedSignalsReader()
-        try:
-            assets = reader.get_assets("Ashare") or reader.get_assets("ashare")
-        finally:
-            reader.close()
+        api_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip() or DEFAULT_SHAREDSIGNALS_API_URL
+        reader = TradingagentDataReader(api_client=SharedSignalsAPIClient(base_url=api_url))
+        assets = reader.get_assets("Ashare") or reader.get_assets("ashare")
         symbols = [str(row.get("symbol") or "").strip() for row in assets if isinstance(row, dict) and row.get("symbol")]
         regular = [symbol for symbol in symbols if VALID_ASHARE_RE.match(symbol)]
         excluded = [symbol for symbol in symbols if symbol not in regular]
-        ok = bool(regular)
+        ok = bool(regular) and not reader.degraded
         return Check(
             "ashare_universe",
-            _status(ok),
+            _status(ok, warn=bool(regular)),
             "A股普通股票资产入口正常" if ok else "A股普通股票资产入口异常",
             {
                 "asset_count": len(symbols),
@@ -88,10 +90,33 @@ def _check_ashare_universe() -> Check:
                 "excluded_non_regular_count": len(excluded),
                 "excluded_sample": excluded[:20],
                 "sample": regular[:20],
+                "reader_degraded": reader.degraded,
+                "reader_errors": reader.errors[-5:],
             },
         )
     except Exception as exc:  # noqa: BLE001
         return Check("ashare_universe", "fail", "A股资产入口检查失败", {"error": f"{exc.__class__.__name__}: {exc}"})
+
+def _normalize_shadow_pnl_payload(pnl: dict[str, Any]) -> dict[str, Any]:
+    ashare = pnl.get("ashare_shadow", {}) if isinstance(pnl, dict) else {}
+    if isinstance(ashare, dict) and ashare:
+        return ashare
+
+    try:
+        from shared.execution.shadow_broker import get_shadow_pnl
+
+        replay = get_shadow_pnl("ashare_shadow", datetime.now(timezone.utc).strftime("%Y%m%d"), market="ashare")
+    except Exception:
+        replay = {}
+    return {
+        "total_trades": int(replay.get("total_trades") or 0),
+        "market_value": 0.0,
+        "realized_pnl": float(replay.get("realized_pnl") or 0.0),
+        "unrealized_pnl": 0.0,
+        "total_pnl": float(replay.get("pnl") or replay.get("realized_pnl") or 0.0),
+        "valuation_source": "shadow_broker_replay",
+    }
+
 
 def _check_shadow_ledger() -> Check:
     files = [
@@ -104,7 +129,7 @@ def _check_shadow_ledger() -> Check:
         text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
         matches[str(path.relative_to(ROOT))] = len(INVALID_ASHARE_RE.findall(text))
     pnl = _load_json(ROOT / "shared/logs/shadow/shadow_pnl.json", {}) or {}
-    ashare = pnl.get("ashare_shadow", {}) if isinstance(pnl, dict) else {}
+    ashare = _normalize_shadow_pnl_payload(pnl if isinstance(pnl, dict) else {})
     required = ["realized_pnl", "unrealized_pnl", "market_value", "total_pnl", "valuation_source"]
     missing = [key for key in required if key not in ashare]
     ok = all(count == 0 for count in matches.values()) and not missing
@@ -183,7 +208,7 @@ def _check_simulated_position_sync() -> Check:
     ok = path.exists() and position_count >= 0
     return Check(
         "ashare_sim_position_sync",
-        _status(ok),
+        _status(ok, warn=True),
         "A股模拟持仓快照可读" if ok else "A股模拟持仓快照缺失",
         {"path": str(path.relative_to(ROOT)), "position_count": position_count, "sample": sample, "mtime": path.stat().st_mtime if path.exists() else None},
         severity="warn",

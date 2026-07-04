@@ -4,20 +4,20 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (P2 cleanup smoke coverage)
+> 最后更新：2026-07-04 (A股 SharedSignals API universe + health fix)
 
 ---
 
 ## 一、当前状态
 
-- **A 股多风格模拟盘**：完整闭环运行（信号生成 → sim 账簿 → 复盘）；旧层已完全退役（0 文件、0 cron）
+- **A 股多风格模拟盘**：完整闭环运行（信号生成 → sim 账簿 → 复盘）；旧层已完全退役（0 文件、0 cron）；A股资产入口已通过 SharedSignals `/tushare?api_name=stock_basic` 恢复，当前健康检查 6 pass / 2 warn / 0 fail
 - **A 股模拟盘**：通过 Mac Mini Hermes 执行，收/发/回执链路已修复
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 正常运行，只执行和回写，不做买卖判断；live runtime 为 `~/.hermes/ashare-runtime`，服务器回写为 `/opt/investment/tradingagent/signals`；mini live 脚本默认值也已改到新路径
 - **PM（预测市场）**：多风格 simulated 扫描每 10 分钟运行；checked-in config 使用 USDC；PM sim/style 输出写入 `shared/review/pm/style_comparison.json`
 - **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；6 styles × 4 markets × 5min 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环，并新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline，仍需生产调度和报告闭环验证
 - **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；sim → real promotion 只接受经 sim 审计的来源；`signals/real/*` 为隔离队列，不代表自动下单或已成交
 - **cron 解耦入口**：Crypto/US/PM/HK 兼容入口已改跑 `job_*_sim_exec` 多风格 simulated；旧 cron 已退役（0 enabled）；`job_style_evolution` 模板每 4 小时跑 simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；新增 `cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；新增 `cron/auto_pipeline.sh` 模板按工作日 09:00 运行 simulated 自动管线；均带 flock 与独立日志
-- **SharedSignals API 消费**：`SharedSignalsAPIClient` 已校准 15/15 数据端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号
+- **SharedSignals API 消费**：`SharedSignalsAPIClient` 已校准 15/15 数据端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；A股 `get_assets()` 走 SharedSignals `stock_basic` read model，单日 `get_bars_daily()` 会补齐 start=end；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号
 - **研究/筛选增强**：新增 `shared/screening/fundamental_analyzer.py` 和 `shared/research/multi_perspective.py`，只读消费 SharedSignals API/DB，输出基本面质量分、同业比较、red flags 和 bull/bear/macro/technical 多视角共识报告；`auto_pipeline` 消费这些研究结果生成 simulated 决策，不触碰实盘队列
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
@@ -27,6 +27,7 @@
 ## 二、已知问题
 
 - Crypto/US/PM 5 分钟模拟入口已通过 SharedSignals reader/API-first 验证；HK 5 分钟生产调度与日报闭环仍未验证。
+- A股健康检查当前剩余 warn：Mini/Hermes 尚未回写 `signals/positions/simulated_ashare_positions.json`，且暂无失败/回执样本；需在下一个交易日或 Mini GUI 点击测试补证据。
 - 多市场旧系统 symlink 依赖已全部清除（61 个死 symlink）；工具独立实现已完成，剩余风险在生产调度、账本和日报闭环
 - 集合竞价支持标记为 STUB，未实现
 - A 股实盘路径仍是人工；当前只补齐本地 fail-closed 安全门和 `signals/real/*` 隔离队列，未部署为自动下单路径
@@ -43,6 +44,14 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-04 A股 SharedSignals API universe + health fix
+
+- [x] `TradingagentDataReader.get_assets()` 新增 A股 API-first 资产入口，通过 SharedSignals `/tushare?api_name=stock_basic` 读取 3781 条资产，健康检查识别 3480 条普通 A股。
+- [x] `get_bars_daily()` / `get_market_data()` 修复单日查询参数：只有 end/date 时自动设置 start=end，避免 SharedSignals `/market_data` 返回空壳行。
+- [x] A股健康检查改用生产同款 `TradingagentDataReader`，空影子账本用 `shadow_broker` 回放为 0 PnL；模拟持仓快照缺失从 fail 调整为 warn；脚本可直接运行并默认使用本机 SharedSignals API `127.0.0.1:8082`。
+- [x] 补齐真实交易安全门日志路径所需 `logging` 导入，避免错误分支复盘日志触发 `NameError`。
+- [x] 验证：`tests/test_data_reader.py tests/test_market_health.py` 12 passed；A股健康检查 6 pass / 2 warn / 0 fail；隔离闭环测试确认 Mini webhook 禁用时仍写 `signals/pending` 临时队列和服务器本地 paper fill。
 
 ### 2026-07-04 P2 cleanup smoke coverage
 

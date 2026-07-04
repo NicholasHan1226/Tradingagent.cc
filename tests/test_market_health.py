@@ -41,6 +41,13 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["execution_queue"]["pending"], 0)
         self.assertEqual(check.details["shadow_queue"]["pending"], 1)
 
+    def test_shadow_ledger_passes_when_no_shadow_trades_exist(self) -> None:
+        check = market_health._check_shadow_ledger()
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.details["ashare_pnl"]["total_trades"], 0)
+        self.assertEqual(check.details["ashare_pnl"]["valuation_source"], "shadow_broker_replay")
+
     def test_shadow_ledger_detects_invalid_ashare_codes_and_missing_pnl_fields(self) -> None:
         self._write_json("shared/logs/shadow/shadow_pnl.json", {"ashare_shadow": {"positions": {"200011.SZ": {}}}})
         self._write_json("shared/logs/shadow/shadow_positions.json", {"ashare_shadow": {"200011.SZ": {}}})

@@ -500,6 +500,54 @@ class TradingagentDataReader:
             normalized.append(item)
         return normalized
 
+    @staticmethod
+    def _normalize_asset_rows(rows: list[dict[str, Any]], market: str | None = None) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            item = dict(row)
+            symbol = str(item.get("symbol") or item.get("ts_code") or "").strip().upper()
+            if not symbol:
+                continue
+            if "." not in symbol and market and market.lower() in {"ashare", "a_share", "a-share"}:
+                symbol = TradingagentDataReader._to_ts_code("Ashare", symbol)
+            item["symbol"] = symbol
+            item.setdefault("market", market or item.get("market") or ("Ashare" if symbol.endswith((".SH", ".SZ", ".BJ")) else ""))
+            if "sector" not in item and item.get("industry"):
+                item["sector"] = item.get("industry")
+            if "status" not in item:
+                item["status"] = "active"
+            normalized.append(item)
+        return normalized
+
+    @staticmethod
+    def _is_ashare_market(market: str | None) -> bool:
+        key = str(market or "").strip().lower()
+        return key in {"", "ashare", "a_share", "a-share", "a股", "cn", "china"}
+
+    def get_assets(self, market: str | None = None) -> list[dict[str, Any]]:
+        try:
+            if self._is_ashare_market(market):
+                def fallback() -> list[dict[str, Any]]:
+                    rows = self.shared.get_assets("Ashare")
+                    if not rows:
+                        rows = self.shared.get_assets("ashare")
+                    return rows
+
+                result = self._api_call("get_tushare", fallback, api_name="stock_basic")
+                self._record_shared_error("get_assets")
+                return self._normalize_asset_rows(result, "Ashare")
+
+            result = self.shared.get_assets(market)
+            self._record_shared_error("get_assets")
+            return self._normalize_asset_rows(result, market)
+        except Exception as e:
+            self.errors.append(f"get_assets: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
     def get_asset(self, market: str, symbol: str) -> dict[str, Any] | None:
         try:
             result = self.shared.get_asset(market, symbol)
@@ -517,15 +565,18 @@ class TradingagentDataReader:
         try:
             ts_code = self._to_ts_code(market, symbol)
 
+            start_value = start or end or None
+            end_value = end or start or None
+
             def fallback() -> list[dict[str, Any]]:
-                return self.shared.get_bars_daily(market, symbol, start, end)
+                return self.shared.get_bars_daily(market, symbol, start_value or "", end_value or "")
 
             result = self._api_call(
                 "get_market_data",
                 fallback,
                 ts_code=ts_code,
-                start=start or None,
-                end=end or None,
+                start=start_value,
+                end=end_value,
                 freq="daily",
             )
             self._record_shared_error("get_bars_daily")
@@ -546,13 +597,16 @@ class TradingagentDataReader:
     ) -> list[dict[str, Any]]:
         market_name, symbol = self._market_symbol_from_ts_code(ts_code, market)
 
+        start_value = start or end or None
+        end_value = end or start or None
+
         def fallback() -> list[dict[str, Any]]:
             if freq in {"5m", "5min", "intraday"}:
                 return self.shared.get_bars_intraday(
-                    market_name, symbol, "5m", start or "", end or ""
+                    market_name, symbol, "5m", start_value or "", end_value or ""
                 )
             return self.shared.get_bars_daily(
-                market_name, symbol, start or "", end or ""
+                market_name, symbol, start_value or "", end_value or ""
             )
 
         try:
@@ -560,8 +614,8 @@ class TradingagentDataReader:
                 "get_market_data",
                 fallback,
                 ts_code=ts_code,
-                start=start,
-                end=end,
+                start=start_value,
+                end=end_value,
                 freq=freq,
             )
             self._record_shared_error("get_market_data")

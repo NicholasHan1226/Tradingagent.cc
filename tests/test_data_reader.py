@@ -272,6 +272,61 @@ class TestSharedSignalsReader(unittest.TestCase):
         self.assertGreaterEqual(len(missing_reader.errors), 1)
 
 
+class FakeAPIClient:
+    def __init__(self) -> None:
+        self.errors: list[str] = []
+        self.tushare_calls: list[dict[str, object]] = []
+        self.market_data_calls: list[dict[str, object]] = []
+
+    def get_tushare(self, api_name, ts_code=None, start_date=None, end_date=None, **kwargs):
+        self.tushare_calls.append({
+            "api_name": api_name,
+            "ts_code": ts_code,
+            "start_date": start_date,
+            "end_date": end_date,
+            **kwargs,
+        })
+        if api_name == "stock_basic":
+            return [
+                {
+                    "symbol": "000001.SZ",
+                    "name": "平安银行",
+                    "market": "Ashare",
+                    "exchange": "SZSE",
+                    "industry": "银行",
+                    "list_date": "19910403",
+                }
+            ]
+        return []
+
+    def get_market_data(self, ts_code, start=None, end=None, freq="daily"):
+        self.market_data_calls.append({"ts_code": ts_code, "start": start, "end": end, "freq": freq})
+        return [{"symbol": ts_code, "trade_date": end or start, "close": 10.29, "amount": 888789.3933}]
+
+
+class TestTradingagentDataReaderAPI(unittest.TestCase):
+    def test_get_assets_uses_sharedsignals_stock_basic_for_ashare(self) -> None:
+        api = FakeAPIClient()
+        reader = TradingagentDataReader(api_client=api)
+
+        rows = reader.get_assets("ashare")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["symbol"], "000001.SZ")
+        self.assertEqual(rows[0]["sector"], "银行")
+        self.assertEqual(api.tushare_calls[0]["api_name"], "stock_basic")
+
+    def test_get_bars_daily_single_end_date_uses_same_start_date(self) -> None:
+        api = FakeAPIClient()
+        reader = TradingagentDataReader(api_client=api)
+
+        rows = reader.get_bars_daily("ashare", "000001.SZ", None, "20260703")
+
+        self.assertEqual(rows[0]["close"], 10.29)
+        self.assertEqual(api.market_data_calls[0]["start"], "20260703")
+        self.assertEqual(api.market_data_calls[0]["end"], "20260703")
+
+
 class TestMarketGraphCSVReader(unittest.TestCase):
     def test_csv_reader_methods(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
