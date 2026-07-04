@@ -64,6 +64,7 @@
 - [x] `CNFutures/sim_runner.py` 在同风格同合约反向成交时估算 round-trip realized PnL，供复盘胜率和演化样本使用；当前仍是同日反向信号估算，不等同真实 CTP 持仓回报。
 - [x] 新增 `signals/positions/cn_futures_sim_positions.json` 模拟持仓快照；新开仓会检查同风格现有保证金占用，超过 `max_margin_usage` 时拒绝。
 - [x] `no_overnight` 风格在日盘收盘前窗口生成 simulated flatten 单；`rollover_min_days_to_contract_month_start` 可阻止临近/进入合约月的新开仓。
+- [x] 若 5 分钟 bar/order 带一级 bid/ask 与可用量，模拟成交会用 buy→ask、sell→bid，并用对应盘口量限制成交；显式 `last_trade_date` / `expiry_date` 会触发到期保护。
 
 ## 四、活跃任务
 

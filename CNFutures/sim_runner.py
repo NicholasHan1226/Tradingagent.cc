@@ -206,6 +206,27 @@ def _contract_inside_rollover_guard(symbol: str, date: str, style: dict[str, Any
     return days_to_month <= min_days, days_to_month
 
 
+def _first_present(row: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _enrich_order_from_bar(order: dict[str, Any], bar: dict[str, Any]) -> None:
+    mapped = {
+        "bid_price": _first_present(bar, "bid_price", "bid1", "best_bid"),
+        "ask_price": _first_present(bar, "ask_price", "ask1", "best_ask"),
+        "bid_size": _first_present(bar, "bid_size", "bid_volume", "bid1_volume"),
+        "ask_size": _first_present(bar, "ask_size", "ask_volume", "ask1_volume"),
+        "last_trade_date": _first_present(bar, "last_trade_date", "expiry_date", "expiration_date", "delivery_date"),
+    }
+    for key, value in mapped.items():
+        if value not in (None, ""):
+            order[key] = value
+
+
 def _positions_path(signals_dir: Path) -> Path:
     return signals_dir / "positions" / POSITIONS_FILENAME
 
@@ -687,7 +708,9 @@ def run_multi_style_simulation(
                 "intent": intent,
                 "bar_volume": _safe_float((bars[-1] if bars else {}).get("volume"), 0.0),
                 "previous_close": _safe_float((bars[-2] if len(bars) >= 2 else {}).get("close"), price),
+                "trade_date": date,
             }
+            _enrich_order_from_bar(order, bars[-1] if bars else {})
             if _has_repeated_same_side_exposure(
                 signals_dir,
                 date=date,
@@ -740,6 +763,7 @@ def run_multi_style_simulation(
                     "style": style_name,
                     "slippage_bps": _safe_float(style.get("slippage_bps"), 2.0),
                     "volume_participation": _safe_float(style.get("volume_participation"), 0.05),
+                    "rollover_min_days_to_expiry": _safe_int(style.get("rollover_min_days_to_expiry"), 0),
                 },
             )
             receipt = {

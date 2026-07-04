@@ -226,6 +226,57 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(rejected.status, "rejected")
         self.assertEqual(rejected.raw_response["limit_up"], 3850.0)
 
+    def test_sim_executor_uses_order_book_quote_and_depth_quantity(self) -> None:
+        import CNFutures.sim_executor  # noqa: F401
+        from shared.execution.sim_broker import execute_sim_order
+
+        result = execute_sim_order(
+            order={
+                "order_id": "SIM-CNF-DEPTH",
+                "symbol": "rb2601",
+                "side": "buy",
+                "quantity": 5,
+                "price": 3500.0,
+                "ask_price": 3502.0,
+                "ask_size": 2,
+                "previous_close": 3500.0,
+                "bar_volume": 1000,
+            },
+            market="cn_futures",
+            account={"account": "simnow"},
+            config={"fee_mode": "round_trip_estimate", "slippage_bps": 0.0},
+        )
+
+        self.assertEqual(result.status, "partial")
+        self.assertEqual(result.filled_qty, 2)
+        self.assertEqual(result.avg_price, 3502.0)
+        self.assertEqual(result.raw_response["execution_price_source"], "order_book_ask")
+        self.assertEqual(result.raw_response["order_book_available_qty"], 2)
+
+    def test_sim_executor_rejects_expiring_contract_with_explicit_metadata(self) -> None:
+        import CNFutures.sim_executor  # noqa: F401
+        from shared.execution.sim_broker import execute_sim_order
+
+        result = execute_sim_order(
+            order={
+                "order_id": "SIM-CNF-EXPIRY",
+                "symbol": "rb2607",
+                "side": "buy",
+                "quantity": 1,
+                "price": 3500.0,
+                "trade_date": "20260703",
+                "last_trade_date": "20260705",
+                "previous_close": 3500.0,
+            },
+            market="cn_futures",
+            account={"account": "simnow"},
+            config={"rollover_min_days_to_expiry": 5},
+        )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertEqual(result.raw_response["source"], "cn_futures_sim_executor_expiry_guard")
+        self.assertEqual(result.raw_response["days_to_expiry"], 2)
+
     def test_review_summarizes_errors_and_style_health(self) -> None:
         from CNFutures.review import summarize_errors, style_health
 

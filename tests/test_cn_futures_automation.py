@@ -629,6 +629,58 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["errors"][0]["error"], "contract_rollover_guard")
 
+    def test_multi_style_runner_passes_order_book_fields_to_executor(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class DepthReader(FakeFuturesReader):
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return [{"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"}] if market == "Futures" else []
+
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
+                return [
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3400, "volume": 1000},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3450, "volume": 1000},
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:55:00",
+                        "close": 3500,
+                        "volume": 1000,
+                        "ask_price": 3502.0,
+                        "ask_size": 1,
+                    },
+                ] if market == "Futures" and symbol == "rb2601" and interval == "5min" else []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = DepthReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 1, "products": ("rb",)},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.001, "risk_per_trade": 0.03, "slippage_bps": 0.0}},
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-03 14:56:00"),
+            )
+
+            self.assertEqual(result["record_count"], 1)
+            self.assertEqual(result["records"][0]["receipt"]["status"], "partial")
+            self.assertEqual(result["records"][0]["receipt"]["avg_price"], 3502.0)
+            self.assertEqual(result["records"][0]["receipt"]["raw_response"]["execution_price_source"], "order_book_ask")
+
     def test_adapter_falls_back_to_sharedsignals_sqlite_for_futures_assets(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 

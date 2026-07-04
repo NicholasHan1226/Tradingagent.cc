@@ -83,6 +83,8 @@ fills:
 
 - execution price is adjusted by configurable slippage bps and rounded to the
   contract tick size
+- if a 5-minute bar or order carries best bid/ask fields, buys use ask and
+  sells use bid, with available quote size capping simulated fills
 - static daily price-limit bounds reject clearly invalid simulated prices
 - 5-minute bar volume limits maximum fill quantity through
   `volume_participation`; oversized orders become `partial`
@@ -99,11 +101,13 @@ fills:
   day-session close window
 - styles can block new orders inside a configurable contract-month rollover
   guard window
+- explicit `last_trade_date` / `expiry_date` metadata triggers an expiry guard
+  before simulated execution
 
 This is closer to real trading than ideal fills, but it still does not model
-live order book queue priority, bid/ask depth, exact exchange limit-state
-matching, exchange-grade forced liquidation, or precise exchange delivery
-calendars.
+live multi-level order book queue priority, exact exchange limit-state matching,
+exchange-grade forced liquidation, or precise exchange delivery calendars when
+SharedSignals does not provide that metadata.
 
 ## Review
 
