@@ -26,6 +26,26 @@ elif [[ -f "${MARKETGRAPH_CRON_ENV}" ]]; then
     source "${MARKETGRAPH_CRON_ENV}"
 fi
 
+# SharedSignals/ShareChannel API is the default data entry for TradingAgent.
+# Direct SQLite reads are kept only as read-only fallback when the API is unreachable.
+export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
+export SHAREDSIGNALS_API_TIMEOUT="${SHAREDSIGNALS_API_TIMEOUT:-10}"
+export SHAREDSIGNALS_API_RETRIES="${SHAREDSIGNALS_API_RETRIES:-1}"
+
+# Normalize email/Cloudflare variable names across the three systems.
+export CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-${CF_EMAIL_ACCOUNT_ID:-}}"
+export CLOUDFLARE_EMAIL_API_TOKEN="${CLOUDFLARE_EMAIL_API_TOKEN:-${CF_EMAIL_API_TOKEN:-}}"
+export CF_EMAIL_ACCOUNT_ID="${CF_EMAIL_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID:-}}"
+export CF_EMAIL_API_TOKEN="${CF_EMAIL_API_TOKEN:-${CLOUDFLARE_EMAIL_API_TOKEN:-}}"
+export EMAIL_FROM_TRADING="${EMAIL_FROM_TRADING:-${EMAIL_TRADING_FROM:-notice@tradingagent.cc}}"
+export EMAIL_TO_TRADING="${EMAIL_TO_TRADING:-${EMAIL_TRADING_TO:-tradingadviser@coze.email}}"
+export EMAIL_FROM_SYSTEM="${EMAIL_FROM_SYSTEM:-${EMAIL_SYSTEM_FROM:-notice@tradingagent.cc}}"
+export EMAIL_TO_SYSTEM="${EMAIL_TO_SYSTEM:-${EMAIL_SYSTEM_TO:-soc@coze.email}}"
+export EMAIL_TRADING_FROM="${EMAIL_TRADING_FROM:-${EMAIL_FROM_TRADING}}"
+export EMAIL_TRADING_TO="${EMAIL_TRADING_TO:-${EMAIL_TO_TRADING}}"
+export EMAIL_SYSTEM_FROM="${EMAIL_SYSTEM_FROM:-${EMAIL_FROM_SYSTEM}}"
+export EMAIL_SYSTEM_TO="${EMAIL_SYSTEM_TO:-${EMAIL_TO_SYSTEM}}"
+
 export MARKETGRAPH_VENV_ROOT="${MARKETGRAPH_VENV_ROOT:-/opt/marketgraph/venv}"
 export PYTHON_VENV_ROOT="${PYTHON_VENV_ROOT:-${MARKETGRAPH_VENV_ROOT}}"
 if [[ -z "${VIRTUAL_ENV:-}" && -d "${PYTHON_VENV_ROOT}" ]]; then

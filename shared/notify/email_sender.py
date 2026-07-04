@@ -15,7 +15,8 @@ from urllib import error, request
 
 from .email_templates import CHANNELS, get_channel
 
-DEFAULT_ENV_FILE = Path(os.environ.get("MARKETGRAPH_ENV_FILE", "/opt/investment/MarketGraph/.env"))
+DEFAULT_ENV_FILE = Path(os.environ.get("MARKETGRAPH_ENV_FILE", "/opt/marketgraph/.env"))
+FALLBACK_ENV_FILES = (DEFAULT_ENV_FILE, Path("/opt/investment/MarketGraph/deploy/marketgraph_cron.env"))
 EMAIL_LOG = Path(__file__).resolve().parent / "logs" / "emails_sent.jsonl"
 LOCAL_FALLBACK_DIR = Path(__file__).resolve().parent / "logs" / "email_fallback"
 REQUEST_TIMEOUT = 20
@@ -24,6 +25,12 @@ RATE_LIMIT_STATE: Path | None = None
 ALLOWED_ENV_KEYS = {
     "CLOUDFLARE_EMAIL_API_TOKEN",
     "CLOUDFLARE_ACCOUNT_ID",
+    "CF_EMAIL_API_TOKEN",
+    "CF_EMAIL_ACCOUNT_ID",
+}
+ENV_ALIASES = {
+    "CF_EMAIL_API_TOKEN": "CLOUDFLARE_EMAIL_API_TOKEN",
+    "CF_EMAIL_ACCOUNT_ID": "CLOUDFLARE_ACCOUNT_ID",
 }
 DEFAULT_SUBJECTS = {
     "pre_market_plan": "tradingagent 盘前规划",
@@ -168,26 +175,35 @@ def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any]) -> di
         raise RuntimeError(f"url error: {exc.reason}") from exc
 
 
-def load_env_from_file(env_path: Path = DEFAULT_ENV_FILE) -> list[str]:
+def load_env_from_file(env_path: Path | None = None) -> list[str]:
     """Load known email env vars for cron environments that start with a thin env."""
-    if not env_path.exists():
-        return []
-
+    env_paths = [env_path] if env_path is not None else list(dict.fromkeys(FALLBACK_ENV_FILES))
     loaded: list[str] = []
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
+    for current_path in env_paths:
+        if current_path is None or not current_path.exists():
             continue
-        if line.startswith("export "):
-            line = line[7:].strip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if key not in ALLOWED_ENV_KEYS or key in os.environ:
-            continue
-        os.environ[key] = _normalize_env_value(value)
-        loaded.append(key)
+        for raw_line in current_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key not in ALLOWED_ENV_KEYS or key in os.environ:
+                continue
+            os.environ[key] = _normalize_env_value(value)
+            loaded.append(key)
+            alias = ENV_ALIASES.get(key)
+            if alias and alias not in os.environ:
+                os.environ[alias] = os.environ[key]
+                loaded.append(alias)
+    for source, alias in ENV_ALIASES.items():
+        if source in os.environ and alias not in os.environ:
+            os.environ[alias] = os.environ[source]
+            loaded.append(alias)
     return loaded
 
 
@@ -198,8 +214,8 @@ def _send_via_cloudflare(
     html_body: str,
     from_addr: str,
 ) -> dict[str, Any]:
-    token = os.getenv("CLOUDFLARE_EMAIL_API_TOKEN")
-    account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+    token = os.getenv("CLOUDFLARE_EMAIL_API_TOKEN") or os.getenv("CF_EMAIL_API_TOKEN")
+    account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID") or os.getenv("CF_EMAIL_ACCOUNT_ID")
     if not token or not account_id:
         raise RuntimeError("missing Cloudflare credentials")
 

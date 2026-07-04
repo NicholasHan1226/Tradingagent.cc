@@ -36,6 +36,7 @@ A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending �
 ### 数据流
 
 - SharedSignals 是独立供数层：定时采集/维护先沉淀数据，TradingAgent 通过 reader/read model 按需读取。
+- 生产运行时必须设置 `SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`；`TradingagentDataReader` 默认通过 SharedSignals/ShareChannel API 取数，SQLite 仅是只读降级路径。
 - TradingAgent 不应在每次交易判断时重新现场采集 Tushare。
 - 跨系统写入必须走明确数据契约，不把一个系统目录当作另一个系统的内部模块直接改写。
 
@@ -103,6 +104,7 @@ A 股模拟盘执行闭环必须走：`job_ashare_sim_exec → signals/pending �
 - 交易通道：`notice@tradingagent.cc → tradingadviser@coze.email`
 - 系统通道：`notice@tradingagent.cc → soc@coze.email`
 - 发送方式：Cloudflare Email Service REST endpoint
+- 生产 env 入口：`/opt/marketgraph/.env` 保存 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_EMAIL_API_TOKEN` 和 `EMAIL_FROM_/EMAIL_TO_`；loader 会兼容旧 `CF_EMAIL_*` 与 `EMAIL_*_FROM/TO` 命名，但文档和新增配置必须使用规范名。
 
 ## 服务器
 

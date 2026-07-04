@@ -51,6 +51,12 @@
 - [x] `shared/review/benchmark.py` 的 SQLite fallback 查询已移除列上的 `LOWER()` / `REPLACE()`，改为市场值枚举和日期格式范围查询，保留只读 fallback 行为。
 - [x] 验证：目标 Python `py_compile` 通过；受影响 TradingAgent pytest 集合 54 项 + 6 subtests 通过（仅既有 `WEBHOOK_SECRET` 空值 warning）。
 
+### 2026-07-04 A股 API-first 与邮件通道对齐
+
+- [x] `shared/env_loader.sh` 已默认注入 `SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`，A股 `job_ashare_sim_exec` 运行时通过 SharedSignals/ShareChannel API 优先取数。
+- [x] Cloudflare 邮件凭据加载入口从不存在的 `/opt/investment/MarketGraph/.env` 改为 `/opt/marketgraph/.env`，并兼容 `CF_EMAIL_*` alias。
+- [x] `/opt/investment/.env` 的旧邮件地址漂移已修正；交易通道和系统通道按 `AGENTS.md` 分流。
+
 ### 2026-07-04 测试状态泄漏修复
 
 - [x] `tests/test_signal_state_machine.py`、`test_real_money_boundary.py`、`test_t_plus_1_integration.py` 中直接改写的模块级路径已改为 `patch.object` + cleanup，测试结束后自动恢复原值。
