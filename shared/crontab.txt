@@ -44,3 +44,4 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 */10 * * * * /opt/investment/tradingagent/cron/health_check.sh
 0 */4 * * * /opt/investment/tradingagent/cron/evolution.sh
 0 16 * * 1-5 /opt/investment/tradingagent/cron/daily_review.sh
+20 17 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_sim.log 2>&1

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from shared.accounting import position_ledger
 from shared.notify import email_sender
-from shared.review import benchmark, daily_review, self_heal_loop, weekly_review
+from shared.review import benchmark, daily_review, self_heal_loop, sim_ledger_reader, weekly_review
 from shared.wrappers import tradings_cron_entry as cron
 
 
@@ -24,6 +24,8 @@ class CronHandlersV2Test(unittest.TestCase):
         self.heal_dir = self.shared_dir / "review" / "heal"
         self.filled_dir = self.tmp_path / "signals" / "filled"
         self.ledger_dir = self.shared_dir / "logs"
+        self.sim_ledger_dir = self.ledger_dir / "sim_ledger"
+        self.local_sim_trades = self.ledger_dir / "local_sim" / "local_sim_trades.jsonl"
 
         self._patch(cron, "ROOT", self.tmp_path)
         self._patch(cron, "SHARED", self.shared_dir)
@@ -32,6 +34,9 @@ class CronHandlersV2Test(unittest.TestCase):
         self._patch(daily_review, "SHADOW_TRADES_LOG", self.shadow_dir / "shadow_trades.jsonl")
         self._patch(daily_review, "FILLED_SIGNALS_DIR", self.filled_dir)
         self._patch(daily_review, "DAILY_LOG", self.review_data_dir / "daily_reviews.jsonl")
+        self._patch(daily_review, "DIRECTION_HIT_LOG", self.review_data_dir / "direction_hit_reviews.jsonl")
+        self._patch(sim_ledger_reader, "DEFAULT_SIM_LEDGER_ROOT", self.sim_ledger_dir)
+        self._patch(sim_ledger_reader, "DEFAULT_LOCAL_SIM_TRADES", self.local_sim_trades)
         self._patch(benchmark, "LAST_PERIOD_STORE", self.review_data_dir / "last_period_return.json")
         self._patch(benchmark, "BENCHMARK_STORE", self.review_data_dir / "benchmark_history.json")
         self._patch(position_ledger, "LEDGER_DIR", self.ledger_dir)
@@ -179,6 +184,39 @@ class CronHandlersV2Test(unittest.TestCase):
         self.assertIn("升级候选=trend", result["email_data"]["summary"])
         self.assertIn("降级候选=mean_revert", result["email_data"]["summary"])
         self.assertTrue((self.shared_dir / "review" / "weekly" / "weekly_review.json").exists())
+
+    def test_run_weekly_review_uses_simulated_ledgers_when_no_shadow_trades(self) -> None:
+        self._append_jsonl(
+            self.sim_ledger_dir / "pm" / "grid" / "trade_journal.jsonl",
+            {
+                "timestamp": "2026-07-03T13:15:00+00:00",
+                "order_id": "SIM-PM-1",
+                "fill_id": "FILL-PM-1",
+                "symbol": "PM-ELECTION",
+                "side": "buy",
+                "fill_qty": 10,
+                "fill_price": 0.61,
+                "realized_pnl": 12.0,
+                "capital_layer": "simulated",
+            },
+        )
+        self._write_json(
+            self.review_data_dir / "weekly_state.json",
+            {"strategies": {"simulated:grid": {"consecutive_positive_weeks": 1, "consecutive_below50_weeks": 0}}},
+        )
+        sent, sender = self._capture_send_email()
+
+        with patch.object(email_sender, "send_email", side_effect=sender):
+            result = cron.run_weekly_review("job_pm_weekly", "review/weekly/pm_weekly.json")
+
+        self.assertEqual(result["capital_layer"], "simulated")
+        self.assertEqual(result["simulated_trade_count"], 1)
+        self.assertEqual(result["shadow_trade_count"], 0)
+        self.assertEqual(result["review_trade_count"], 1)
+        self.assertEqual(result["email_notification"]["status"], "sent")
+        self.assertEqual(len(sent), 1)
+        self.assertIn("升级候选=grid", result["email_data"]["summary"])
+        self.assertTrue((self.shared_dir / "review" / "weekly" / "pm_weekly.json").exists())
 
     def test_run_alert_renders_system_health_and_sends(self) -> None:
         self._append_jsonl(

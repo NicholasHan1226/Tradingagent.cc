@@ -32,7 +32,11 @@ REQUIRED_TEMPLATES = [
     "trading_signal.py",
     "system_health.py",
 ]
-SIM_MARKETS = ("ashare", "crypto", "pm", "us", "hk")
+SIM_MARKETS = tuple(
+    item.strip().lower()
+    for item in os.environ.get("TRADINGAGENT_SIM_MARKETS", "ashare,crypto,pm,us").split(",")
+    if item.strip()
+)
 SIM_LOG_NAMES = {
     "ashare": "ashare_sim.log",
     "crypto": "crypto_sim.log",

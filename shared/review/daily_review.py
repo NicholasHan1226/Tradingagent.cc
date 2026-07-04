@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover - optional upstream dependency
 
 from .attribution import attribute, attribute_pct
 from .benchmark import compare_to_benchmark, get_benchmark, record_last_period
+from .sim_ledger_reader import load_sim_trades_for_date, summarize_trade_sources
 
 REVIEW_DIR = Path(__file__).resolve().parent
 TRADINGAGENT_ROOT = REVIEW_DIR.parent.parent
@@ -423,6 +424,70 @@ def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
     return rows or _read_signal_fills(trade_date)
 
 
+def _dedupe_trade_key(row: dict[str, Any]) -> tuple[str, str]:
+    layer = _normalize_capital_layer(row.get("capital_layer"))
+    identifiers = (
+        row.get("order_id"),
+        row.get("signal_id"),
+        row.get("fill_id"),
+        row.get("trade_id"),
+        row.get("idempotency_key"),
+    )
+    for value in identifiers:
+        key = str(value or "").strip()
+        if key:
+            return layer, key
+    fallback = "|".join(
+        str(row.get(key, "") or "")
+        for key in ("market", "ts_code", "side", "quantity", "price", "created_at", "trade_date")
+    )
+    return layer, fallback
+
+
+def _dedupe_trades(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str]] = set()
+    deduped: list[dict[str, Any]] = []
+    for row in rows:
+        key = _dedupe_trade_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _normalize_review_trade(row: dict[str, Any], default_layer: str) -> dict[str, Any]:
+    normalized = dict(row)
+    normalized.update(_normalize_trade(row, default_layer=default_layer))
+    return normalized
+
+
+def load_review_trades(trade_date: str) -> list[dict[str, Any]]:
+    """Load all trade fills that should feed reviews.
+
+    Keep load_shadow_trades() backward compatible while the review/report layer
+    consumes both legacy shadow fills and simulated ledger fills.
+    """
+    sim_trades = [
+        _normalize_review_trade(row, default_layer="simulated")
+        for row in load_sim_trades_for_date(trade_date)
+    ]
+    shadow_trades = load_shadow_trades(trade_date)
+    return _dedupe_trades(sim_trades + shadow_trades)
+
+
+def review_trade_source_counts(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    layer_counts: dict[str, int] = {}
+    for trade in trades:
+        layer = _normalize_capital_layer(trade.get("capital_layer"))
+        layer_counts[layer] = layer_counts.get(layer, 0) + 1
+    return {
+        "total": len(trades),
+        "by_capital_layer": layer_counts,
+        "by_source": summarize_trade_sources(trades),
+    }
+
+
 def load_positions(as_of_date: str) -> list[dict[str, Any]]:
     try:
         return [
@@ -509,13 +574,13 @@ def _direction_hit_review(trade: dict[str, Any], close_price: float, trade_date:
 
 
 def load_direction_hits(trade_date: str) -> list[dict[str, Any]]:
-    """Review shadow trade direction against same-day close.
+    """Review trade direction against same-day close.
 
     Buy + close higher is a hit; sell/reduce + close lower is a hit. The
     output is grouped by capital_layer and market, then written as review
     evidence under shared/review/data/.
     """
-    trades = load_shadow_trades(trade_date)
+    trades = load_review_trades(trade_date)
     close_cache: dict[tuple[str, str], float] = {}
     reviews: list[dict[str, Any]] = []
 
@@ -564,14 +629,17 @@ def run_daily_review(
     try:
         session_key = str(session or "").lower()
         positions = load_positions(trade_date)
-        trades = load_shadow_trades(trade_date)
+        trades = load_review_trades(trade_date)
+        source_counts = review_trade_source_counts(trades)
 
         if session_key == "lunch":
             morning_trades = [trade for trade in trades if _is_morning_trade(trade)]
             result = review_lunch(positions, morning_trades, benchmark_return=benchmark_return, stage=stage, trade_date=trade_date)
             result["trade_date"] = trade_date
-            result["capital_layer"] = "shadow"
+            result["capital_layer"] = _preferred_capital_layer(list(result.get("capital_layer_reviews") or {}))
             result["stale"] = not morning_trades
+            result["review_trade_count"] = len(morning_trades)
+            result["source_trade_counts"] = review_trade_source_counts(morning_trades)
             return result
 
         if session_key == "close":
@@ -580,8 +648,10 @@ def run_daily_review(
             result["trade_date"] = trade_date
             result["direction_hit_reviews"] = direction_hit_reviews
             result["review_outcome_count"] = len(direction_hit_reviews)
-            result["capital_layer"] = "shadow"
+            result["capital_layer"] = _preferred_capital_layer(list(result.get("capital_layer_reviews") or {}))
             result["stale"] = not trades
+            result["review_trade_count"] = len(trades)
+            result["source_trade_counts"] = source_counts
             return result
 
         return {"session": session, "error": f"unsupported session: {session}", "trade_date": trade_date}
@@ -730,7 +800,7 @@ def review_lunch(
     result = {
         "session": "lunch",
         "as_of": _now_iso(),
-        "capital_layer": "shadow",
+        "capital_layer": _preferred_capital_layer(list(capital_layer_reviews)),
         "stale": not morning_trades,
         "capital_layer_reviews": capital_layer_reviews,
         "market_reviews": market_reviews,
@@ -894,7 +964,7 @@ def review_close(
     result = {
         "session": "close",
         "as_of": _now_iso(),
-        "capital_layer": "shadow",
+        "capital_layer": _preferred_capital_layer(list(capital_layer_reviews)),
         "stale": not all_trades,
         "capital_layer_reviews": capital_layer_reviews,
         "market_reviews": market_reviews,

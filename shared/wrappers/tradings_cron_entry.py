@@ -201,7 +201,8 @@ def _load_shadow_trades_for_date(target_date: str) -> list[dict[str, Any]]:
     from shared.review import daily_review as review_driver
 
     rows = []
-    for row in review_driver.load_shadow_trades(target_date):
+    loader = getattr(review_driver, "load_review_trades", review_driver.load_shadow_trades)
+    for row in loader(target_date):
         entry = dict(row)
         entry["market"] = _normalize_market(entry.get("market")) if entry.get("market") else _market_from_symbol(entry.get("ts_code"))
         rows.append(entry)
@@ -285,6 +286,47 @@ def _count_signals(trades: list[dict[str, Any]]) -> int:
     return len(signal_ids) if signal_ids else len(trades)
 
 
+def _normalize_capital_layer(value: Any, default: str = "shadow") -> str:
+    raw = str(value or default).strip().lower()
+    if raw in {"real", "live"}:
+        return "real"
+    if raw in {"sim", "simulated", "simulation"}:
+        return "simulated"
+    if raw in {"shadow", "paper", "paper_portfolio", "paper_tracking"}:
+        return "shadow"
+    return default
+
+
+def _preferred_report_layer(layers: list[str] | tuple[str, ...] | set[str]) -> str:
+    priority = {"real": 0, "simulated": 1, "shadow": 2}
+    normalized = [_normalize_capital_layer(layer) for layer in layers if str(layer or "").strip()]
+    return sorted(normalized, key=lambda layer: priority.get(layer, 99))[0] if normalized else "shadow"
+
+
+def _trades_for_layer(trades: list[dict[str, Any]], layer: str) -> list[dict[str, Any]]:
+    target = _normalize_capital_layer(layer)
+    return [row for row in trades if _normalize_capital_layer(row.get("capital_layer")) == target]
+
+
+def _trade_count_by_layer(trades: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in trades:
+        layer = _normalize_capital_layer(row.get("capital_layer"))
+        counts[layer] = counts.get(layer, 0) + 1
+    return counts
+
+
+def _trade_count_fields(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = _trade_count_by_layer(trades)
+    return {
+        "review_trade_count": len(trades),
+        "shadow_trade_count": counts.get("shadow", 0),
+        "simulated_trade_count": counts.get("simulated", 0),
+        "real_trade_count": counts.get("real", 0),
+        "trade_count_by_capital_layer": counts,
+    }
+
+
 def _trade_notional(trades: list[dict[str, Any]]) -> float:
     return sum(abs(_safe_float(row.get("quantity")) * _safe_float(row.get("price"))) for row in trades)
 
@@ -335,10 +377,11 @@ def _position_market_summary(positions: list[dict[str, Any]]) -> dict[str, int]:
 def _shadow_layer_review(review_payload: dict[str, Any]) -> dict[str, Any]:
     layer_reviews = review_payload.get("capital_layer_reviews")
     if isinstance(layer_reviews, dict):
-        shadow = layer_reviews.get("shadow")
-        if isinstance(shadow, dict):
-            return shadow
-    if review_payload.get("capital_layer") == "shadow":
+        preferred_layer = _preferred_report_layer(layer_reviews.keys())
+        preferred = layer_reviews.get(preferred_layer)
+        if isinstance(preferred, dict):
+            return preferred
+    if _normalize_capital_layer(review_payload.get("capital_layer")) in {"real", "simulated", "shadow"}:
         return review_payload
     return {}
 
@@ -404,7 +447,7 @@ def _build_system_health(
     nightly_review: dict[str, Any],
 ) -> dict[str, Any]:
     checks = {
-        "shadow_trades": bool(trades),
+        "review_trades": bool(trades),
         "midday_review": bool(midday_review),
         "nightly_review": bool(nightly_review),
         "daily_log": bool(_read_last_jsonl(SHARED / "review/data/daily_reviews.jsonl")),
@@ -521,8 +564,9 @@ def _load_week_shadow_trades(anchor_trade_date: str, market: str | None = None) 
 
     week_start, week_end = _week_window(anchor_trade_date)
     rows: list[dict[str, Any]] = []
+    loader = getattr(review_driver, "load_review_trades", review_driver.load_shadow_trades)
     for one_day in _iter_trade_dates(week_start, week_end):
-        for row in review_driver.load_shadow_trades(one_day):
+        for row in loader(one_day):
             entry = dict(row)
             entry["market"] = _normalize_market(entry.get("market")) if entry.get("market") else _market_from_symbol(entry.get("ts_code"))
             if market and entry["market"] != market:
@@ -585,9 +629,10 @@ def _weekly_trends(layer_review: dict[str, Any]) -> dict[str, str]:
     promotes = len(layer_review.get("strategies_to_promote") or [])
     eliminates = len(layer_review.get("strategies_to_eliminate") or [])
     adjustments = len(layer_review.get("conditions_to_adjust") or [])
+    layer = _normalize_capital_layer(layer_review.get("capital_layer"))
     return {
         "market": (
-            f"shadow 周胜率 {_safe_float(layer_review.get('week_win_rate')):.0%}, "
+            f"{layer} 周胜率 {_safe_float(layer_review.get('week_win_rate')):.0%}, "
             f"周交易 {int(layer_review.get('week_trade_count', 0) or 0)} 笔"
         ),
         "sectors": f"强势维度: {leaders}; 弱势维度: {laggards}",
@@ -610,7 +655,7 @@ def _weekly_next_week_rows(layer_review: dict[str, Any], strategy_rows: list[dic
             "action": "延续本周最强策略，同时观察是否还能维持正胜率",
         })
     if not rows:
-        rows.append({"focus": "全市场", "action": "本周样本不足，继续积累 shadow 交易并等待下周复盘"})
+        rows.append({"focus": "全市场", "action": "本周样本不足，继续积累模拟/影子交易并等待下周复盘"})
     return rows[:8]
 
 
@@ -936,14 +981,14 @@ def _compose_morning_email_data(
         "holdings": _positions_for_template(positions),
         "capital": _capital_summary(positions),
         "market_outlook": {
-            "regime": f"shadow {sum(1 for row in market_rows if row['direction'] == '活跃')}/{len(DAILY_BRIEF_MARKETS)} 市场活跃",
+            "regime": f"review {sum(1 for row in market_rows if row['direction'] == '活跃')}/{len(DAILY_BRIEF_MARKETS)} 市场活跃",
             "trend": health["status"],
             "key_levels": f"signals={signal_count}; trades={len(trades)}; latest_review={health['latest_review_session']}",
         },
         "sector_focus": market_rows,
         "strategy": [
             {"name": "系统健康", "action": health["status"], "target": health["detail"]},
-            {"name": "今日信号", "action": str(signal_count), "target": f"shadow trades={len(trades)}"},
+            {"name": "今日信号", "action": str(signal_count), "target": f"review trades={len(trades)}"},
             {
                 "name": "最近复盘",
                 "action": health["latest_review_session"],
@@ -954,7 +999,7 @@ def _compose_morning_email_data(
             "盘前规划",
             trade_date_value,
             [
-                f"4市场 shadow 状态已汇总，今日 signal count={signal_count}",
+                f"4市场复盘状态已汇总，今日 signal count={signal_count}",
                 f"系统健康={health['status']}",
             ],
         ),
@@ -1289,9 +1334,9 @@ def run_daily_brief_morning() -> dict[str, Any]:
         "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
         "generated_at": now_iso(),
         "trade_date": current_trade_date,
-        "capital_layer": "shadow",
+        "capital_layer": _preferred_report_layer(_trade_count_by_layer(trades).keys()),
         "signal_count": _count_signals(trades),
-        "shadow_trade_count": len(trades),
+        **_trade_count_fields(trades),
         "system_health": health,
         "market_statuses": _market_focus_rows(trades, positions, _shadow_layer_review(nightly_review or midday_review)),
         "email_notification": email_result,
@@ -1316,8 +1361,8 @@ def run_daily_brief_day() -> dict[str, Any]:
         "phase": "lunch",
         "generated_at": now_iso(),
         "trade_date": current_trade_date,
-        "capital_layer": "shadow",
-        "shadow_trade_count": len(trades),
+        "capital_layer": result.get("capital_layer", _preferred_report_layer(_trade_count_by_layer(trades).keys())),
+        **_trade_count_fields(trades),
         "email_notification": email_result,
         "email_data": email_data,
     })
@@ -1340,8 +1385,8 @@ def run_daily_brief_night() -> dict[str, Any]:
         "phase": "close",
         "generated_at": now_iso(),
         "trade_date": current_trade_date,
-        "capital_layer": "shadow",
-        "shadow_trade_count": len(trades),
+        "capital_layer": result.get("capital_layer", _preferred_report_layer(_trade_count_by_layer(trades).keys())),
+        **_trade_count_fields(trades),
         "email_notification": email_result,
         "email_data": email_data,
     })
@@ -1431,19 +1476,20 @@ def run_weekly_review(job_name: str, output_rel: str) -> dict[str, Any]:
     market_scope = _market_scope_for_job(job_name)
     week_trades, week_start, week_end = _load_week_shadow_trades(trade_date(), market=market_scope)
     result = review_week(week_trades)
-    layer_key = market_scope and "shadow" or "shadow"
+    layer_key = _preferred_report_layer((result.get("capital_layer_reviews") or {}).keys())
     layer_review = (result.get("capital_layer_reviews") or {}).get(layer_key) or {}
-    email_data = _compose_weekly_email_data(week_start, week_end, week_trades, layer_review)
+    layer_trades = _trades_for_layer(week_trades, layer_key) or week_trades
+    email_data = _compose_weekly_email_data(week_start, week_end, layer_trades, layer_review)
     email_result = send_template_email("weekly_report", email_data)
     result.update({
         "job": job_name,
         "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
         "generated_at": now_iso(),
-        "capital_layer": "shadow",
+        "capital_layer": layer_key,
         "market": market_scope or "all",
         "week_start": week_start,
         "week_end": week_end,
-        "shadow_trade_count": len(week_trades),
+        **_trade_count_fields(week_trades),
         "email_notification": email_result,
         "email_data": email_data,
     })
@@ -1463,8 +1509,8 @@ def run_attribution(job_name: str, output_rel: str) -> dict[str, Any]:
         "state": "ok",
         "generated_at": now_iso(),
         "trade_date": current_trade_date,
-        "capital_layer": "shadow",
-        "shadow_trade_count": len(trades),
+        "capital_layer": _preferred_report_layer(_trade_count_by_layer(trades).keys()),
+        **_trade_count_fields(trades),
         "attribution": attribution,
         "attribution_pct": attribution_pct,
     }
@@ -1703,9 +1749,9 @@ def _market_review_snapshot(job_name: str, market: str, output_rel: str) -> dict
         "state": "ok",
         "generated_at": now_iso(),
         "trade_date": current_trade_date,
-        "capital_layer": "shadow",
+        "capital_layer": _preferred_report_layer(_trade_count_by_layer(trades).keys()),
         "market": _normalize_market(market),
-        "shadow_trade_count": len(trades),
+        **_trade_count_fields(trades),
         "attribution": attribute(trades),
     }
     append_jsonl(SHARED / output_rel, payload)
@@ -1743,18 +1789,19 @@ def run_pm_promote() -> dict[str, Any]:
 
     week_trades, week_start, week_end = _load_week_shadow_trades(trade_date(), market="PM")
     result = review_week(week_trades)
-    shadow = (result.get("capital_layer_reviews") or {}).get("shadow") or {}
+    layer_key = _preferred_report_layer((result.get("capital_layer_reviews") or {}).keys())
+    layer_review = (result.get("capital_layer_reviews") or {}).get(layer_key) or {}
     payload = {
         "job": "job_pm_promote",
         "state": "ok",
         "generated_at": now_iso(),
-        "capital_layer": "shadow",
+        "capital_layer": layer_key,
         "market": "PM",
         "week_start": week_start,
         "week_end": week_end,
-        "shadow_trade_count": len(week_trades),
-        "strategies_to_promote": shadow.get("strategies_to_promote", []),
-        "strategies_to_eliminate": shadow.get("strategies_to_eliminate", []),
+        **_trade_count_fields(week_trades),
+        "strategies_to_promote": layer_review.get("strategies_to_promote", []),
+        "strategies_to_eliminate": layer_review.get("strategies_to_eliminate", []),
         "review": result,
     }
     append_jsonl(SHARED / "review/pm/pm_promotion.jsonl", payload)
@@ -1829,7 +1876,8 @@ def run_cross_market_review() -> dict[str, Any]:
         "state": "ok",
         "generated_at": now_iso(),
         "trade_date": current_trade_date,
-        "capital_layer": "shadow",
+        "capital_layer": _preferred_report_layer(_trade_count_by_layer(trades).keys()),
+        **_trade_count_fields(trades),
         "market_reviews": market_reviews,
     }
     append_jsonl(SHARED / "review/cross/cross_market_review.jsonl", payload)
@@ -1838,16 +1886,17 @@ def run_cross_market_review() -> dict[str, Any]:
 
 def run_backtest_report() -> dict[str, Any]:
     daily_rows = _read_jsonl_dicts(SHARED / "review/data/daily_reviews.jsonl")
-    shadow_rows = [
+    review_rows = [
         row for row in daily_rows
-        if str(row.get("capital_layer") or "shadow").strip().lower() == "shadow"
+        if _normalize_capital_layer(row.get("capital_layer")) in {"shadow", "simulated", "real"}
     ]
-    recent_rows = shadow_rows[-20:]
+    recent_rows = review_rows[-20:]
+    layer_key = _preferred_report_layer([row.get("capital_layer", "shadow") for row in recent_rows])
     payload = {
         "job": "job_backtest_report",
         "state": "ok",
         "generated_at": now_iso(),
-        "capital_layer": "shadow",
+        "capital_layer": layer_key,
         "sample_count": len(recent_rows),
         "total_pnl": round(sum(_safe_float(row.get("pnl")) for row in recent_rows), 6),
         "avg_hit_rate": round(
@@ -1888,10 +1937,10 @@ def run_pm_report() -> dict[str, Any]:
         "state": "ok" if risk.get("state") == "ok" else "degraded",
         "generated_at": now_iso(),
         "trade_date": trade_date(),
-        "capital_layer": "shadow",
+        "capital_layer": _preferred_report_layer(_trade_count_by_layer(trades).keys()),
         "market": "PM",
         "position_count": len(positions),
-        "shadow_trade_count": len(trades),
+        **_trade_count_fields(trades),
         "positions": positions,
         "trades": trades,
         "risk": risk,
@@ -1936,13 +1985,17 @@ def _build_email_notify_payload() -> tuple[str, str, str]:
             continue
 
         layer_reviews = payload.get("capital_layer_reviews") or {}
-        shadow = layer_reviews.get("shadow") or {}
+        layer_key = _preferred_report_layer(layer_reviews.keys()) if isinstance(layer_reviews, dict) else "shadow"
+        selected = layer_reviews.get(layer_key) if isinstance(layer_reviews, dict) else {}
+        if not isinstance(selected, dict):
+            selected = {}
         summary_bits = [
             f"state={payload.get('state', '--')}",
-            f"signals={shadow.get('signal_count', '--')}",
-            f"hit_rate={_format_pct(shadow.get('hit_rate'))}",
-            f"pnl={shadow.get('pnl', '--')}",
-            f"positions={shadow.get('position_count', '--')}",
+            f"layer={layer_key}",
+            f"signals={selected.get('signal_count', '--')}",
+            f"hit_rate={_format_pct(selected.get('hit_rate'))}",
+            f"pnl={selected.get('pnl', '--')}",
+            f"positions={selected.get('position_count', '--')}",
         ]
         lines.append(f"{title}: " + ", ".join(summary_bits))
         html_sections.append(
@@ -1951,10 +2004,11 @@ def _build_email_notify_payload() -> tuple[str, str, str]:
                 f"<h3>{title}</h3>",
                 "<ul>",
                 f"<li>状态: {payload.get('state', '--')}</li>",
-                f"<li>信号数: {shadow.get('signal_count', '--')}</li>",
-                f"<li>命中率: {_format_pct(shadow.get('hit_rate'))}</li>",
-                f"<li>盈亏: {shadow.get('pnl', '--')}</li>",
-                f"<li>持仓数: {shadow.get('position_count', '--')}</li>",
+                f"<li>资金层: {layer_key}</li>",
+                f"<li>信号数: {selected.get('signal_count', '--')}</li>",
+                f"<li>命中率: {_format_pct(selected.get('hit_rate'))}</li>",
+                f"<li>盈亏: {selected.get('pnl', '--')}</li>",
+                f"<li>持仓数: {selected.get('position_count', '--')}</li>",
                 "</ul>",
                 "</div>",
             ])

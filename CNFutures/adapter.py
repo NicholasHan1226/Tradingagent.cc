@@ -80,6 +80,7 @@ class CNFuturesAdapter(MarketAdapter):
         strategy_dir: Path | None = None,
         styles: dict[str, dict[str, Any]] | None = None,
     ) -> None:
+        self._explicit_reader = reader is not None
         if reader is not None:
             self.reader = reader
         elif TradingsDataReader is not None:
@@ -94,20 +95,54 @@ class CNFuturesAdapter(MarketAdapter):
         return MARKET
 
     def get_universe(self, date: str) -> list[str]:
-        del date
         assets = self._get_assets()
+        asset_by_symbol = {
+            str(asset.get("symbol") or asset.get("ts_code") or "").strip().lower(): asset
+            for asset in assets
+            if isinstance(asset, dict) and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+        }
         max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
         allowed_products = {
             str(item).strip().lower()
             for item in self.universe_filter.get("products", ())
             if str(item).strip()
         }
+
+        symbols_with_bars = [] if self._explicit_reader else self._get_symbols_with_bars(date)
+        if symbols_with_bars:
+            selected = self._select_symbols(
+                symbols_with_bars,
+                asset_by_symbol=asset_by_symbol,
+                allowed_products=allowed_products,
+                max_symbols=max_symbols,
+            )
+            if selected:
+                return selected
+
+        asset_symbols = [
+            str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+            for asset in assets
+            if isinstance(asset, dict)
+        ]
+        return self._select_symbols(
+            asset_symbols,
+            asset_by_symbol=asset_by_symbol,
+            allowed_products=allowed_products,
+            max_symbols=max_symbols,
+        )
+
+    def _select_symbols(
+        self,
+        candidate_symbols: list[str],
+        *,
+        asset_by_symbol: dict[str, dict[str, Any]],
+        allowed_products: set[str],
+        max_symbols: int,
+    ) -> list[str]:
         symbols: list[str] = []
         seen: set[str] = set()
-        for asset in assets:
-            if not isinstance(asset, dict):
-                continue
-            symbol = str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+        for candidate in candidate_symbols:
+            symbol = str(candidate or "").strip()
             symbol_key = symbol.lower()
             if not symbol or symbol_key in seen:
                 continue
@@ -117,6 +152,7 @@ class CNFuturesAdapter(MarketAdapter):
                 continue
             if allowed_products and product not in allowed_products:
                 continue
+            asset = asset_by_symbol.get(symbol_key, {})
             if self.universe_filter.get("active_only", True) and not _is_active(asset):
                 continue
             seen.add(symbol_key)
@@ -124,6 +160,43 @@ class CNFuturesAdapter(MarketAdapter):
             if len(symbols) >= max_symbols:
                 break
         return symbols
+
+    def _get_symbols_with_bars(self, date: str) -> list[str]:
+        db_path = self._shared_signals_db_path()
+        if not db_path.exists():
+            return []
+        trade_date = str(date or "").strip()
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT DISTINCT symbol
+                FROM market_bars_daily
+                WHERE market=? AND trade_date=?
+                ORDER BY symbol ASC
+                """,
+                (READER_MARKET, trade_date),
+            ).fetchall()
+            if rows:
+                return [str(row["symbol"]) for row in rows if row["symbol"]]
+            rows = conn.execute(
+                """
+                SELECT DISTINCT symbol
+                FROM market_bars_daily
+                WHERE market=?
+                AND trade_date=(
+                    SELECT MAX(trade_date)
+                    FROM market_bars_daily
+                    WHERE market=? AND trade_date<=?
+                )
+                ORDER BY symbol ASC
+                """,
+                (READER_MARKET, READER_MARKET, trade_date),
+            ).fetchall()
+        except Exception:
+            return []
+        return [str(row["symbol"]) for row in rows if row["symbol"]]
 
     def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
         return READER_MARKET, str(symbol or "").strip()
