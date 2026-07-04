@@ -7,6 +7,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${TRADINGAGENT_PYTHON:-python3}"
 MARKETS="${TRADINGAGENT_EVOLUTION_MARKETS:-crypto,pm,us,hk}"
+ENV_LOADER="${ROOT}/shared/env_loader.sh"
+if [ -f "${ENV_LOADER}" ]; then
+  source "${ENV_LOADER}"
+fi
 REVIEW_ROOT="${TRADINGAGENT_REVIEW_ROOT:-${ROOT}/shared/review}"
 LOG_DIR="${ROOT}/shared/logs/cron"
 LOCK_DIR="${ROOT}/shared/logs/locks"
