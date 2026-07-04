@@ -10,9 +10,9 @@
   "conviction_min": 0.45,
   "description": "Probability-adapted grid style for staged entries around mispriced markets.",
   "status": "active",
-  "weight": 0.166667,
+  "weight": 0.12605,
   "created_at": "2026-07-03T16:56:35+00:00",
-  "last_modified": "2026-07-03T16:56:35+00:00",
+  "last_modified": "2026-07-04T03:57:48+00:00",
   "generation": 1,
   "auto_generate": {
     "position_pct": {

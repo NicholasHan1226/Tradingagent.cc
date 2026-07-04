@@ -10,7 +10,7 @@
   "conviction_min": 0.62,
   "description": "US equity simulation for high-conviction momentum or earnings drift signals.",
   "status": "active",
-  "weight": 0.166667,
+  "weight": 0.173913,
   "created_at": "2026-07-03T16:56:35+00:00",
   "last_modified": "2026-07-03T16:56:35+00:00",
   "generation": 1,

@@ -1,0 +1,1 @@
+{"name":"grid","position_pct":0.05,"stop_loss_pct":0.03,"take_profit_pct":0.05,"max_hold_days":3,"pyramid":false,"scale_in_steps":3,"conviction_min":0.50,"capital_layer":"simulated","weight":1.0,"status":"active","description":"A股网格：阶梯买入，震荡市，快速止盈"}
