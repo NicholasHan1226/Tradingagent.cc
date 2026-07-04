@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+"""Read-only CNFutures live-chain validation.
+
+This script checks whether the China futures 5-minute data and simulated
+trading loop are ready for live observation. It does not create signals, place
+orders, write reviews, or mutate cron state.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+CN_FUTURES_REVIEW = ROOT / "shared/review/data/cn_futures_sim_reviews.jsonl"
+CN_FUTURES_STYLE_COMPARISON = ROOT / "shared/review/cn_futures/style_comparison.json"
+CN_FUTURES_STYLE_PERFORMANCE = ROOT / "shared/review/cn_futures/style_performance.jsonl"
+CN_FUTURES_SIM_LOG = ROOT / "shared/logs/cron/cn_futures_sim.log"
+
+
+@dataclass
+class Check:
+    name: str
+    status: str
+    summary: str
+    details: dict[str, Any] = field(default_factory=dict)
+    severity: str = "error"
+
+
+RunCommand = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _file_age_minutes(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    return round(max(0.0, datetime.now(timezone.utc).timestamp() - path.stat().st_mtime) / 60.0, 2)
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        return rows
+    for line in lines:
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            rows.append(payload)
+    return rows
+
+
+def _latest_json_from_log(path: Path) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if path.exists():
+        for line in reversed(path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]):
+            start = line.find("{")
+            if start < 0:
+                continue
+            try:
+                parsed = json.loads(line[start:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                payload = parsed
+                break
+    return {
+        "path": str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path),
+        "exists": path.exists(),
+        "age_minutes": _file_age_minutes(path),
+        "payload": payload,
+    }
+
+
+def _overall_status(checks: list[Check]) -> str:
+    if any(check.status == "fail" for check in checks):
+        return "fail"
+    if any(check.status == "warn" for check in checks):
+        return "warn"
+    return "pass"
+
+
+def resolve_sharedsignals_root(value: Path | None = None) -> Path:
+    if value is not None:
+        return value
+    env_value = os.environ.get("SHAREDSIGNALS_ROOT", "").strip()
+    if env_value:
+        return Path(env_value)
+    sibling = ROOT.parent / "SharedSignals"
+    if sibling.exists():
+        return sibling
+    return Path("/opt/investment/SharedSignals")
+
+
+def check_sharedsignals_freshness(
+    sharedsignals_root: Path,
+    *,
+    sqlite_db: Path | None = None,
+    max_age_minutes: int = 10,
+    python_bin: str | None = None,
+    run_command: RunCommand = subprocess.run,
+) -> Check:
+    tool = sharedsignals_root / "tools/check_cn_futures_5min_freshness.py"
+    if not tool.exists():
+        return Check(
+            "sharedsignals_5min_freshness",
+            "fail",
+            "SharedSignals 期货5分钟新鲜度脚本不存在",
+            {"sharedsignals_root": str(sharedsignals_root), "tool": str(tool)},
+        )
+
+    command = [
+        python_bin or sys.executable,
+        str(tool),
+        "--json",
+        "--max-age-minutes",
+        str(max(max_age_minutes, 1)),
+    ]
+    if sqlite_db is not None:
+        command.extend(["--sqlite-db", str(sqlite_db)])
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{sharedsignals_root}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
+
+    try:
+        result = run_command(
+            command,
+            cwd=str(sharedsignals_root),
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return Check(
+            "sharedsignals_5min_freshness",
+            "fail",
+            "SharedSignals 期货5分钟新鲜度检查无法执行",
+            {"error": f"{exc.__class__.__name__}: {exc}", "command": command},
+        )
+
+    stdout = (result.stdout or "").strip()
+    try:
+        payload = json.loads(stdout.splitlines()[-1]) if stdout else {}
+    except json.JSONDecodeError:
+        return Check(
+            "sharedsignals_5min_freshness",
+            "fail",
+            "SharedSignals 期货5分钟新鲜度输出不是有效 JSON",
+            {"returncode": result.returncode, "stdout_tail": stdout[-500:], "stderr_tail": (result.stderr or "")[-500:]},
+        )
+
+    freshness_status = str(payload.get("status") or "unknown")
+    if result.returncode == 0 and freshness_status == "fresh":
+        status = "pass"
+        summary = "SharedSignals 期货5分钟数据新鲜"
+    elif result.returncode in {0, 1} and freshness_status in {"stale", "no_data"}:
+        status = "warn"
+        summary = f"SharedSignals 期货5分钟数据当前为 {freshness_status}"
+    else:
+        status = "fail"
+        summary = "SharedSignals 期货5分钟新鲜度检查失败"
+
+    return Check(
+        "sharedsignals_5min_freshness",
+        status,
+        summary,
+        {
+            "returncode": result.returncode,
+            "report": payload,
+            "stderr_tail": (result.stderr or "")[-500:],
+            "tool": str(tool),
+        },
+        severity="warn" if status == "warn" else "error",
+    )
+
+
+def check_cron_entries(crontab_text: str | None = None, crontab_error: str = "") -> Check:
+    if crontab_text is None:
+        try:
+            from shared.runtime_test.market_health import _installed_crontab_text
+
+            crontab_text, crontab_error = _installed_crontab_text()
+        except Exception as exc:  # noqa: BLE001
+            crontab_text = ""
+            crontab_error = f"{exc.__class__.__name__}: {exc}"
+
+    required = {
+        "sharedsignals_collector": "cn_futures_5min.sh",
+        "tradingagent_sim": "job_cn_futures_sim.sh",
+    }
+    found = {name: token in (crontab_text or "") for name, token in required.items()}
+    missing = [name for name, exists in found.items() if not exists]
+    if not missing:
+        status = "pass"
+        summary = "SharedSignals 采集和 TradingAgent 模拟盘 cron 已安装"
+    elif crontab_error and not crontab_text:
+        status = "warn"
+        summary = "无法读取当前 cron，需在服务器确认"
+    else:
+        status = "fail"
+        summary = "CNFutures 5分钟链路 cron 缺失"
+    return Check(
+        "cn_futures_cron",
+        status,
+        summary,
+        {"found": found, "missing": missing, "crontab_error": crontab_error},
+        severity="warn" if status == "warn" else "error",
+    )
+
+
+def check_sim_log(log_path: Path | None = None) -> Check:
+    log_path = log_path or CN_FUTURES_SIM_LOG
+    latest = _latest_json_from_log(log_path)
+    payload = latest.get("payload") if isinstance(latest.get("payload"), dict) else {}
+    if not latest["exists"]:
+        return Check("cn_futures_sim_log", "warn", "CNFutures 模拟盘 cron 日志还不存在", latest, severity="warn")
+    if payload and payload.get("status") in {"ok", "market_closed"}:
+        return Check("cn_futures_sim_log", "pass", "CNFutures 模拟盘最近一次日志正常", latest, severity="info")
+    if payload:
+        return Check("cn_futures_sim_log", "warn", "CNFutures 模拟盘最近一次日志需要复核", latest, severity="warn")
+    return Check("cn_futures_sim_log", "warn", "CNFutures 模拟盘日志存在但未找到 JSON 结果", latest, severity="warn")
+
+
+def check_review(review_path: Path | None = None) -> Check:
+    review_path = review_path or CN_FUTURES_REVIEW
+    rows = _read_jsonl(review_path)
+    latest = rows[-1] if rows else {}
+    details = {
+        "path": str(review_path.relative_to(ROOT)) if review_path.is_relative_to(ROOT) else str(review_path),
+        "exists": review_path.exists(),
+        "age_minutes": _file_age_minutes(review_path),
+        "review_rows": len(rows),
+        "latest_generated_at": latest.get("generated_at", ""),
+        "latest_state": latest.get("state", ""),
+        "latest_filled_count": int(latest.get("filled_count") or 0) if latest else 0,
+        "latest_error_count": int(latest.get("error_count") or 0) if latest else 0,
+        "latest_error_summary": latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {},
+        "latest_style_health": latest.get("style_health") if isinstance(latest.get("style_health"), dict) else {},
+    }
+    if not rows:
+        return Check("cn_futures_review", "warn", "CNFutures 复盘样本还未产生", details, severity="warn")
+    if details["latest_filled_count"] > 0:
+        return Check("cn_futures_review", "pass", "CNFutures 最近复盘已有模拟成交样本", details, severity="info")
+    return Check("cn_futures_review", "warn", "CNFutures 最近复盘存在但尚无模拟成交样本", details, severity="warn")
+
+
+def check_style_outputs(
+    comparison_path: Path | None = None,
+    performance_path: Path | None = None,
+) -> Check:
+    comparison_path = comparison_path or CN_FUTURES_STYLE_COMPARISON
+    performance_path = performance_path or CN_FUTURES_STYLE_PERFORMANCE
+    comparison = _read_json(comparison_path)
+    performance_rows = _read_jsonl(performance_path)
+    details = {
+        "style_comparison": {
+            "path": str(comparison_path.relative_to(ROOT)) if comparison_path.is_relative_to(ROOT) else str(comparison_path),
+            "exists": comparison_path.exists(),
+            "age_minutes": _file_age_minutes(comparison_path),
+            "type": type(comparison).__name__ if comparison is not None else "",
+            "item_count": len(comparison) if isinstance(comparison, list) else (len(comparison) if isinstance(comparison, dict) else 0),
+        },
+        "style_performance": {
+            "path": str(performance_path.relative_to(ROOT)) if performance_path.is_relative_to(ROOT) else str(performance_path),
+            "exists": performance_path.exists(),
+            "age_minutes": _file_age_minutes(performance_path),
+            "row_count": len(performance_rows),
+            "latest": performance_rows[-1] if performance_rows else {},
+        },
+    }
+    if comparison_path.exists() and performance_path.exists() and performance_rows:
+        return Check("cn_futures_style_outputs", "pass", "CNFutures 风格对比和表现历史已生成", details, severity="info")
+    return Check("cn_futures_style_outputs", "warn", "CNFutures 风格输出还不完整", details, severity="warn")
+
+
+def check_existing_health_surfaces() -> Check:
+    details: dict[str, Any] = {}
+    statuses: list[str] = []
+    try:
+        from shared.runtime_test.market_health import run_sim_market_health
+
+        health = run_sim_market_health(("cn_futures",))
+        details["market_health"] = health
+        statuses.append(str(health.get("overall_status") or "unknown"))
+    except Exception as exc:  # noqa: BLE001
+        details["market_health_error"] = f"{exc.__class__.__name__}: {exc}"
+        statuses.append("fail")
+
+    try:
+        from shared.runtime_test.ops_report import cn_futures_review_summary
+
+        details["ops_review_summary"] = cn_futures_review_summary()
+    except Exception as exc:  # noqa: BLE001
+        details["ops_review_summary_error"] = f"{exc.__class__.__name__}: {exc}"
+        statuses.append("fail")
+
+    if "fail" in statuses:
+        return Check("cn_futures_existing_health_surfaces", "fail", "已有 health/ops 入口读取 CNFutures 失败", details)
+    if "warn" in statuses:
+        return Check("cn_futures_existing_health_surfaces", "warn", "已有 health/ops 入口可读但需要复核", details, severity="warn")
+    return Check("cn_futures_existing_health_surfaces", "pass", "已有 health/ops 入口可读取 CNFutures 状态", details, severity="info")
+
+
+def recommendations(checks: list[Check]) -> list[str]:
+    failed = [check.name for check in checks if check.status == "fail"]
+    warned = [check.name for check in checks if check.status == "warn"]
+    if failed:
+        return [f"先处理硬失败检查项: {', '.join(failed)}。"]
+    notes: list[str] = []
+    if "sharedsignals_5min_freshness" in warned:
+        notes.append("若当前是周末或非交易时段，可等下一次日盘/夜盘再复查5分钟数据新鲜度。")
+    if "cn_futures_review" in warned or "cn_futures_style_outputs" in warned:
+        notes.append("等待 TradingAgent 5分钟模拟盘产生样本后，再用复盘和风格表现判断策略有效性。")
+    if not notes:
+        notes.append("链路已具备观察条件；继续累计样本，不自动提升到实盘。")
+    return notes
+
+
+def run_live_check(
+    *,
+    sharedsignals_root: Path | None = None,
+    sqlite_db: Path | None = None,
+    max_age_minutes: int = 10,
+    python_bin: str | None = None,
+    run_command: RunCommand = subprocess.run,
+    crontab_text: str | None = None,
+    crontab_error: str = "",
+) -> dict[str, Any]:
+    resolved_sharedsignals_root = resolve_sharedsignals_root(sharedsignals_root)
+    checks = [
+        check_sharedsignals_freshness(
+            resolved_sharedsignals_root,
+            sqlite_db=sqlite_db,
+            max_age_minutes=max_age_minutes,
+            python_bin=python_bin,
+            run_command=run_command,
+        ),
+        check_cron_entries(crontab_text, crontab_error),
+        check_sim_log(),
+        check_review(),
+        check_style_outputs(),
+        check_existing_health_surfaces(),
+    ]
+    overall = _overall_status(checks)
+    return {
+        "market": "cn_futures",
+        "report_type": "live_chain_validation",
+        "generated_at": _now_iso(),
+        "overall_status": overall,
+        "summary": {
+            "pass": sum(1 for check in checks if check.status == "pass"),
+            "warn": sum(1 for check in checks if check.status == "warn"),
+            "fail": sum(1 for check in checks if check.status == "fail"),
+        },
+        "sharedsignals_root": str(resolved_sharedsignals_root),
+        "checks": [check.__dict__ for check in checks],
+        "recommendations": recommendations(checks),
+        "real_trading_enabled": False,
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Read-only CNFutures live-chain validation.")
+    parser.add_argument("--sharedsignals-root", type=Path, default=None)
+    parser.add_argument("--sqlite-db", type=Path, default=None)
+    parser.add_argument("--max-age-minutes", type=int, default=10)
+    parser.add_argument("--python-bin", default=None, help="Python executable for SharedSignals freshness check.")
+    parser.add_argument("--pretty", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    report = run_live_check(
+        sharedsignals_root=args.sharedsignals_root,
+        sqlite_db=args.sqlite_db,
+        max_age_minutes=args.max_age_minutes,
+        python_bin=args.python_bin,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
+    return 2 if report["overall_status"] == "fail" else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

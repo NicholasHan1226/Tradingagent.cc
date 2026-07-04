@@ -78,6 +78,39 @@ health/metrics surfaces. They do not create a standalone dashboard, do not grant
 live trading permission, and do not automatically promote a style into real
 trading.
 
+## Live Chain Validation
+
+Use the read-only live-chain check before judging whether the 5-minute futures
+loop is ready for observation:
+
+```bash
+python shared/runtime_test/cn_futures_live_check.py --pretty
+```
+
+On production, point it at the SharedSignals runtime if the sibling directory is
+not available:
+
+```bash
+python shared/runtime_test/cn_futures_live_check.py \
+  --sharedsignals-root /opt/investment/SharedSignals \
+  --pretty
+```
+
+The report joins:
+
+- SharedSignals Futures 5-minute freshness from `tools/check_cn_futures_5min_freshness.py`
+- SharedSignals and TradingAgent cron entries
+- latest CNFutures simulation cron log
+- append-only review rows in `shared/review/data/cn_futures_sim_reviews.jsonl`
+- style comparison and style performance outputs
+- existing `market_health` and `ops_report` CNFutures surfaces
+
+`pass` means the chain has fresh data and review/style samples. `warn` is
+acceptable during weekends, closed sessions, or before the first live sample is
+produced. `fail` means a hard wiring problem such as missing cron, unreadable
+freshness output, or broken existing health surfaces. The script is read-only
+and always reports `real_trading_enabled=false`.
+
 ## Real Trading Reserve
 
 `CNFutures/live_gateway.py` is a fail-closed placeholder for future CTP / futures-company integration. It currently:
