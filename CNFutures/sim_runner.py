@@ -19,6 +19,9 @@ from .signal_engine import generate_style_signal
 from . import sim_executor as _sim_executor  # noqa: F401  # Ensure registry side effect.
 
 
+INTRADAY_INTERVAL = "5min"
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -51,6 +54,67 @@ def _read_daily_bars(reader: Any, symbol: str, date: str) -> list[dict[str, Any]
     return [dict(row) for row in rows or [] if isinstance(row, dict)]
 
 
+def _normalize_trade_date(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    first_part = raw[:10]
+    digits = "".join(ch for ch in first_part if ch.isdigit())
+    if len(digits) >= 8:
+        return digits[:8]
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    return digits[:8] if len(digits) >= 8 else ""
+
+
+def _read_intraday_bars(reader: Any, symbol: str, date: str) -> list[dict[str, Any]]:
+    get_bars = getattr(reader, "get_bars_intraday", None)
+    if not callable(get_bars):
+        return []
+    rows: Any
+    try:
+        rows = get_bars(READER_MARKET, symbol, INTRADAY_INTERVAL)
+    except TypeError:
+        try:
+            rows = get_bars(market=READER_MARKET, symbol=symbol, interval=INTRADAY_INTERVAL)
+        except TypeError:
+            rows = get_bars(market=READER_MARKET, symbol=symbol, interval=INTRADAY_INTERVAL, start="", end="")
+        except Exception:
+            return []
+    except Exception:
+        return []
+    trade_date = _normalize_trade_date(date)
+    normalized = [dict(row) for row in rows or [] if isinstance(row, dict)]
+    filtered = [
+        row
+        for row in normalized
+        if not trade_date
+        or _normalize_trade_date(row.get("trade_date") or row.get("bar_time") or row.get("time")) == trade_date
+    ]
+    filtered.sort(key=lambda row: str(row.get("bar_time") or row.get("time") or row.get("trade_time") or ""))
+    return filtered
+
+
+def _bars_for_cadence(reader: Any, symbol: str, date: str, cadence: str) -> tuple[list[dict[str, Any]], str, str]:
+    cadence_value = str(cadence or INTRADAY_INTERVAL).lower()
+    if cadence_value in {"daily", "1d", "day"}:
+        return _read_daily_bars(reader, symbol, date), "daily", ""
+    bars = _read_intraday_bars(reader, symbol, date)
+    latest_bar_time = str((bars[-1] if bars else {}).get("bar_time") or (bars[-1] if bars else {}).get("time") or "")
+    return bars, INTRADAY_INTERVAL, latest_bar_time
+
+
+def _order_period_key(date: str, cadence: str, latest_bar_time: str) -> str:
+    if cadence == "daily":
+        return str(date)
+    raw = latest_bar_time or str(date)
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) >= 12:
+        return digits[:12]
+    if len(digits) >= 8:
+        return digits[:8]
+    return str(date)
+
+
 def _quantity_for_style(
     *,
     symbol: str,
@@ -69,6 +133,8 @@ def _quantity_for_style(
 def _signal_card(
     *,
     date: str,
+    cadence: str,
+    latest_bar_time: str,
     style_name: str,
     symbol: str,
     order: dict[str, Any],
@@ -100,6 +166,8 @@ def _signal_card(
         "timestamp": _now_iso(),
         "idempotency_key": order_id,
         "source": "cn_futures_multi_style_simulation",
+        "cadence": cadence,
+        "bar_time": latest_bar_time,
         "signal": signal,
         "margin_required": raw.get("margin_required"),
         "fee": receipt.get("fee"),
@@ -133,16 +201,22 @@ def run_multi_style_simulation(
     *,
     signals_dir: Path,
     review_path: Path | None = None,
+    cadence: str = INTRADAY_INTERVAL,
 ) -> dict[str, Any]:
     """Run all configured futures styles through simulated execution."""
 
+    cadence_value = "daily" if str(cadence or "").lower() in {"daily", "1d", "day"} else INTRADAY_INTERVAL
     config = adapter.get_strategy_config()
     styles = config.get("styles") if isinstance(config.get("styles"), dict) else {}
     account = adapter.get_sim_account()
     capital = _safe_float(account.get("sim_capital") if isinstance(account, dict) else None, 100_000.0)
     errors: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
-    universe = adapter.get_universe(date)
+    if cadence_value == "daily":
+        universe = adapter.get_universe(date)
+    else:
+        get_intraday_universe = getattr(adapter, "get_intraday_universe", None)
+        universe = get_intraday_universe(date, interval=INTRADAY_INTERVAL) if callable(get_intraday_universe) else adapter.get_universe(date)
     if not universe:
         errors.append({"stage": "universe", "market": MARKET, "error": "empty_futures_universe"})
     if not styles:
@@ -152,9 +226,15 @@ def run_multi_style_simulation(
         style = dict(style_config or {})
         style.setdefault("name", style_name)
         for symbol in universe:
-            bars = _read_daily_bars(reader, symbol, date)
+            bars, bar_cadence, latest_bar_time = _bars_for_cadence(reader, symbol, date, cadence_value)
             if not bars:
-                errors.append({"stage": "data", "symbol": symbol, "style": style_name, "error": "missing_daily_bars"})
+                errors.append({
+                    "stage": "data",
+                    "symbol": symbol,
+                    "style": style_name,
+                    "cadence": cadence_value,
+                    "error": "missing_intraday_bars" if cadence_value != "daily" else "missing_daily_bars",
+                })
                 continue
             signal = generate_style_signal(symbol, bars, style)
             if signal.get("action") == "hold":
@@ -169,7 +249,8 @@ def run_multi_style_simulation(
             except Exception as exc:
                 errors.append({"stage": "risk", "symbol": symbol, "style": style_name, "error": str(exc)})
                 continue
-            order_id = f"SIM-CNF-{style_name}-{symbol}-{date}".replace("/", "-")
+            period_key = _order_period_key(date, bar_cadence, latest_bar_time)
+            order_id = f"SIM-CNF-{style_name}-{symbol}-{period_key}".replace("/", "-")
             order = {
                 "order_id": order_id,
                 "symbol": symbol,
@@ -182,6 +263,8 @@ def run_multi_style_simulation(
                 "capital_layer": "simulated",
                 "account_type": "simulated",
                 "contract_multiplier": rule.contract_multiplier,
+                "cadence": bar_cadence,
+                "bar_time": latest_bar_time,
             }
             receipt_obj = execute_sim_order(
                 order=order,
@@ -201,12 +284,23 @@ def run_multi_style_simulation(
                 "market": receipt_obj.market,
                 "raw_response": receipt_obj.raw_response,
             }
-            card = _signal_card(date=date, style_name=style_name, symbol=symbol, order=order, receipt=receipt, signal=signal)
+            card = _signal_card(
+                date=date,
+                cadence=bar_cadence,
+                latest_bar_time=latest_bar_time,
+                style_name=style_name,
+                symbol=symbol,
+                order=order,
+                receipt=receipt,
+                signal=signal,
+            )
             signal_result = _write_filled_signal(signals_dir, card, receipt)
             records.append(
                 {
                     "date": date,
                     "market": MARKET,
+                    "cadence": bar_cadence,
+                    "bar_time": latest_bar_time,
                     "style": style_name,
                     "symbol": symbol,
                     "signal": signal,
@@ -224,6 +318,7 @@ def run_multi_style_simulation(
         "market": MARKET,
         "reader_market": READER_MARKET,
         "date": date,
+        "cadence": cadence_value,
         "capital_layer": "simulated",
         "account_type": "simulated",
         "state": "degraded" if errors else "ok",

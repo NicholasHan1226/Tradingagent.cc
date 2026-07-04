@@ -48,6 +48,32 @@ class FakeFuturesReader:
         }
         return rows.get(symbol, [])
 
+    def get_bars_intraday(
+        self,
+        market: str,
+        symbol: str,
+        interval: str = "5min",
+        start: object = None,
+        end: object = None,
+    ) -> list[dict[str, object]]:
+        self.last_intraday_market = market
+        self.last_intraday_symbol = symbol
+        rows = {
+            "rb2601": [
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3450, "volume": 1000},
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3500, "volume": 1300},
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 3560, "volume": 1800},
+            ],
+            "cu2601": [
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 70000, "volume": 1000},
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 69950, "volume": 900},
+                {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 69850, "volume": 800},
+            ],
+        }
+        if market != "Futures" or interval != "5min":
+            return []
+        return rows.get(symbol, [])
+
 
 class CNFuturesAutomationTest(unittest.TestCase):
     def test_adapter_reads_futures_assets_without_using_trading_logic_upstream(self) -> None:
@@ -87,12 +113,16 @@ class CNFuturesAutomationTest(unittest.TestCase):
             )
 
             self.assertEqual(result["state"], "ok")
+            self.assertEqual(result["cadence"], "5min")
             self.assertEqual(result["capital_layer"], "simulated")
             self.assertEqual(result["market"], "cn_futures")
             self.assertEqual(result["style_count"], 2)
             self.assertEqual(result["filled_count"], 2)
             self.assertEqual(result["real_trading_enabled"], False)
             self.assertEqual({row["style"] for row in result["records"]}, {"trend", "breakout"})
+            self.assertTrue(all(row["cadence"] == "5min" for row in result["records"]))
+            self.assertTrue(all(row["bar_time"] == "2026-07-03 14:55:00" for row in result["records"]))
+            self.assertTrue(all(row["order"]["order_id"].endswith("-202607031455") for row in result["records"]))
             self.assertTrue(all(row["receipt"]["capital_layer"] == "simulated" for row in result["records"]))
             self.assertTrue(all(row["signal_card"]["account_type"] == "simulated" for row in result["records"]))
             filled_files = list((tmp_path / "signals" / "filled").glob("SIM-CNF-*.json"))
@@ -193,6 +223,63 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
                 self.assertEqual(adapter.get_universe("20260703"), ["CU2609.SHF", "RB2609.SHF"])
                 self.assertEqual(adapter.get_universe("20260704"), ["CU2609.SHF", "RB2609.SHF"])
+            finally:
+                if old_db is None:
+                    os.environ.pop("SHARED_SIGNALS_DB", None)
+                else:
+                    os.environ["SHARED_SIGNALS_DB"] = old_db
+
+    def test_adapter_prefers_contracts_with_available_intraday_bars(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "marketdata.sqlite"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE market_assets (
+                    market TEXT,
+                    symbol TEXT,
+                    name TEXT,
+                    status TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE market_bars_intraday (
+                    market TEXT,
+                    symbol TEXT,
+                    bar_time TEXT,
+                    trade_date TEXT,
+                    interval TEXT,
+                    close REAL
+                )
+                """
+            )
+            conn.executemany(
+                "INSERT INTO market_assets VALUES (?, ?, ?, ?)",
+                [
+                    ("Futures", "CU2609.SHF", "copper current", None),
+                    ("Futures", "RB2609.SHF", "rebar current", None),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    ("Futures", "CU2609.SHF", "2026-07-03 14:55:00", "20260703", "5min", 71000.0),
+                    ("Futures", "RB2609.SHF", "2026-07-03 14:55:00", "20260703", "5min", 3500.0),
+                ],
+            )
+            conn.commit()
+            old_db = os.environ.get("SHARED_SIGNALS_DB")
+            os.environ["SHARED_SIGNALS_DB"] = str(db_path)
+            try:
+                adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 2})
+
+                self.assertEqual(adapter.get_intraday_universe("20260703"), ["CU2609.SHF", "RB2609.SHF"])
+                rows = adapter.get_bars_intraday("Futures", "RB2609.SHF", "5min", end="20260703")
+                self.assertEqual(rows[-1]["bar_time"], "2026-07-03 14:55:00")
             finally:
                 if old_db is None:
                     os.environ.pop("SHARED_SIGNALS_DB", None)

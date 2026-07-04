@@ -33,7 +33,7 @@ DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
 DEFAULT_STYLES: dict[str, dict[str, Any]] = {
     "trend": {
         "name": "trend",
-        "description": "Daily trend-following futures simulation lane",
+        "description": "5-minute trend-following futures simulation lane",
         "signal_threshold": 0.01,
         "risk_per_trade": 0.03,
         "max_margin_usage": 0.30,
@@ -131,6 +131,32 @@ class CNFuturesAdapter(MarketAdapter):
             max_symbols=max_symbols,
         )
 
+    def get_intraday_universe(self, date: str, *, interval: str = "5min") -> list[str]:
+        """Prefer contracts with fresh 5-minute bars for intraday simulation."""
+
+        symbols_with_bars = [] if self._explicit_reader else self._get_symbols_with_intraday_bars(date, interval)
+        if not symbols_with_bars:
+            return self.get_universe(date)
+        assets = self._get_assets()
+        asset_by_symbol = {
+            str(asset.get("symbol") or asset.get("ts_code") or "").strip().lower(): asset
+            for asset in assets
+            if isinstance(asset, dict) and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+        }
+        max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
+        allowed_products = {
+            str(item).strip().lower()
+            for item in self.universe_filter.get("products", ())
+            if str(item).strip()
+        }
+        selected = self._select_symbols(
+            symbols_with_bars,
+            asset_by_symbol=asset_by_symbol,
+            allowed_products=allowed_products,
+            max_symbols=max_symbols,
+        )
+        return selected or self.get_universe(date)
+
     def _select_symbols(
         self,
         candidate_symbols: list[str],
@@ -193,6 +219,43 @@ class CNFuturesAdapter(MarketAdapter):
                 ORDER BY symbol ASC
                 """,
                 (READER_MARKET, READER_MARKET, trade_date),
+            ).fetchall()
+        except Exception:
+            return []
+        return [str(row["symbol"]) for row in rows if row["symbol"]]
+
+    def _get_symbols_with_intraday_bars(self, date: str, interval: str) -> list[str]:
+        db_path = self._shared_signals_db_path()
+        if not db_path.exists():
+            return []
+        trade_date = str(date or "").replace("-", "").strip()
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT DISTINCT symbol
+                FROM market_bars_intraday
+                WHERE market=? AND interval=? AND trade_date=?
+                ORDER BY symbol ASC
+                """,
+                (READER_MARKET, interval, trade_date),
+            ).fetchall()
+            if rows:
+                return [str(row["symbol"]) for row in rows if row["symbol"]]
+            rows = conn.execute(
+                """
+                SELECT DISTINCT symbol
+                FROM market_bars_intraday
+                WHERE market=? AND interval=?
+                AND trade_date=(
+                    SELECT MAX(trade_date)
+                    FROM market_bars_intraday
+                    WHERE market=? AND interval=? AND trade_date<=?
+                )
+                ORDER BY symbol ASC
+                """,
+                (READER_MARKET, interval, READER_MARKET, interval, trade_date),
             ).fetchall()
         except Exception:
             return []
@@ -296,6 +359,40 @@ class CNFuturesAdapter(MarketAdapter):
                 """,
                 (READER_MARKET, symbol, end, end),
             ).fetchall()
+        except Exception:
+            return []
+        return [dict(row) for row in reversed(rows)]
+
+    def get_bars_intraday(
+        self,
+        market: str,
+        symbol: str,
+        interval: str = "5min",
+        start: Any = None,
+        end: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Read 5-minute futures bars from SharedSignals SQLite."""
+
+        if market != READER_MARKET:
+            return []
+        db_path = self._shared_signals_db_path()
+        if not db_path.exists():
+            return []
+        trade_date = str(end or start or "").replace("-", "").strip()
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            sql = """
+                SELECT *
+                FROM market_bars_intraday
+                WHERE market=? AND symbol=? AND interval=?
+            """
+            params: list[Any] = [READER_MARKET, symbol, interval]
+            if trade_date:
+                sql += " AND trade_date=?"
+                params.append(trade_date)
+            sql += " ORDER BY bar_time DESC LIMIT 120"
+            rows = conn.execute(sql, tuple(params)).fetchall()
         except Exception:
             return []
         return [dict(row) for row in reversed(rows)]

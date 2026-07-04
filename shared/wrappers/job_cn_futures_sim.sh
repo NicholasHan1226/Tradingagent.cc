@@ -11,7 +11,7 @@ source "${WRAPPER_DIR}/_common.sh"
 
 JOB_NAME="job_cn_futures_sim"
 PHASE="intraday"
-LEVEL3_TARGET="next_futures_session_continue"
+LEVEL3_TARGET="cn_futures_5min_simulation"
 ENTRYPOINT="CNFutures.run_simulation"
 
-run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" "${PYTHON_BIN}" -m "${ENTRYPOINT}" --json
+run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" "${PYTHON_BIN}" -m "${ENTRYPOINT}" --cadence 5min --json

@@ -5,8 +5,8 @@
 ## Data Flow
 
 ```
-SharedSignals(Tushare fut_basic/fut_daily)
-  -> market_assets / market_bars_daily, market="Futures"
+SharedSignals(Tushare fut_basic/fut_daily/rt_fut_min)
+  -> market_assets / market_bars_daily / market_bars_intraday, market="Futures"
   -> CNFutures adapter, internal market="cn_futures"
   -> multi-style signal generation
   -> simulated fill
@@ -27,7 +27,7 @@ MarketGraph 可以读取同一份 SharedSignals 数据做商品、宏观和跨�
 Run one simulation cycle:
 
 ```bash
-python -m CNFutures.run_simulation --json
+python -m CNFutures.run_simulation --cadence 5min --json
 ```
 
 Cron wrapper:
@@ -37,6 +37,13 @@ shared/wrappers/job_cn_futures_sim.sh
 ```
 
 The wrapper uses the existing Tradings env loader and writes normal cron logs. It does not write to SharedSignals, MarketGraph, CTP, or any broker account.
+
+Production cadence is 5 minutes during day and night futures sessions. The
+TradingAgent cron runs one minute after SharedSignals CN futures 5-minute
+collection, so simulation reads the latest `market_bars_intraday` bar with
+`interval="5min"`. Order idempotency includes the latest bar timestamp, not
+only the trade date, so separate 5-minute bars can create separate simulated
+orders while duplicate reruns of the same bar remain idempotent.
 
 ## Review
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--signals-dir", type=Path, default=DEFAULT_SIGNALS_DIR, help="Tradings signal state directory.")
     parser.add_argument("--review-path", type=Path, default=DEFAULT_REVIEW_PATH, help="Append-only review JSONL path.")
     parser.add_argument("--max-symbols", type=int, default=None, help="Optional cap for futures universe size.")
+    parser.add_argument("--cadence", default=os.environ.get("CN_FUTURES_SIM_CADENCE", "5min"), choices=("5min", "daily"), help="Simulation cadence, default: 5min.")
     parser.add_argument("--json", action="store_true", help="Print compact JSON output.")
     return parser.parse_args()
 
@@ -33,6 +35,7 @@ def _summary(result: dict[str, Any]) -> dict[str, Any]:
         "market": result.get("market"),
         "reader_market": result.get("reader_market"),
         "date": result.get("date"),
+        "cadence": result.get("cadence"),
         "state": result.get("state"),
         "capital_layer": result.get("capital_layer"),
         "account_type": result.get("account_type"),
@@ -58,6 +61,7 @@ def main() -> int:
         adapter.reader or adapter,
         signals_dir=args.signals_dir,
         review_path=args.review_path,
+        cadence=args.cadence,
     )
     output = _summary(result)
     output["review_path"] = str(args.review_path)
@@ -66,7 +70,7 @@ def main() -> int:
     else:
         print(
             "CNFutures simulation "
-            f"state={output['state']} filled={output['filled_count']} "
+            f"cadence={output['cadence']} state={output['state']} filled={output['filled_count']} "
             f"styles={output['style_count']} universe={output['universe_count']} "
             f"real_trading_enabled={output['real_trading_enabled']}"
         )

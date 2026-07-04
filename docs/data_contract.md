@@ -91,11 +91,14 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
 
 - Asset universe: `market_assets` with `market="Futures"`.
 - Daily bars: `market_bars_daily` with `market="Futures"`.
+- 5-minute bars: `market_bars_intraday` with `market="Futures"` and
+  `interval="5min"`.
 - Reader mapping: `CNFutures` internal market is `cn_futures`; upstream reader
   market remains `Futures`.
-- Current cadence assumption: `fut_daily` is daily data. It is valid for daily
-  simulation and review, not for 5-minute futures execution unless a separate
-  intraday source is verified.
+- Current cadence assumption: intraday CNFutures simulation must use
+  `rt_fut_min` rows already collected by SharedSignals. `fut_daily` remains a
+  daily fallback/review input and must not be described as 5-minute execution
+  data.
 - API health is not trading eligibility. A degraded SharedSignals API response
   may still leave a usable SQLite read model, and a healthy API response does
   not prove real-time, tradable, or account-authorized data.
