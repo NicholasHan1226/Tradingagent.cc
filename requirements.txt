@@ -1,1 +1,6 @@
 PyYAML>=6.0
+pytest>=8.0
+# Additional runtime dependencies (optional, for full feature set):
+# tushare>=1.4  — A-share data (via SharedSignals)
+# duckdb>=1.0   — analytical queries (via SharedSignals)
+# requests>=2.31 — HTTP client fallback
