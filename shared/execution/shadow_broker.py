@@ -7,7 +7,10 @@ It never talks to a live broker and rejects real/live/direct execution payloads.
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import json
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -23,6 +26,8 @@ SHADOW_TRADES = SHADOW_DIR / "shadow_trades.jsonl"
 SHADOW_POSITIONS = SHADOW_DIR / "shadow_positions.json"
 SHADOW_PNL = SHADOW_DIR / "shadow_pnl.json"
 SHADOW_LOCK = SHADOW_DIR / ".shadow.lock"
+LOCK_RETRY_ATTEMPTS = 3
+LOCK_RETRY_DELAY_SECONDS = 0.1
 
 
 def _now_iso() -> str:
@@ -124,18 +129,27 @@ def _iter_trade_rows() -> Iterator[dict[str, Any]]:
 def _file_lock() -> Iterator[None]:
     SHADOW_LOCK.parent.mkdir(parents=True, exist_ok=True)
     with SHADOW_LOCK.open("a+", encoding="utf-8") as handle:
+        _acquire_exclusive_lock(handle.fileno(), SHADOW_LOCK)
         try:
-            import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             yield
         finally:
-            try:
-                import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            except Exception:
-                pass
+
+def _acquire_exclusive_lock(fd: int, lock_path: Path) -> None:
+    last_error: OSError | None = None
+    retry_errnos = {errno.EACCES, errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN)}
+    for attempt in range(1, LOCK_RETRY_ATTEMPTS + 1):
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError as exc:
+            if exc.errno not in retry_errnos:
+                raise
+            last_error = exc
+            if attempt < LOCK_RETRY_ATTEMPTS:
+                time.sleep(LOCK_RETRY_DELAY_SECONDS * attempt)
+    raise TimeoutError(f"Could not acquire shadow broker lock {lock_path} after {LOCK_RETRY_ATTEMPTS} attempts") from last_error
 
 
 def _validate_shadow_order(order: dict[str, Any]) -> None:

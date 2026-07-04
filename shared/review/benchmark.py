@@ -89,6 +89,20 @@ def _date_key(value: str | date) -> str:
     return value.strftime("%Y%m%d") if isinstance(value, date) else _to_trade_date(value).strftime("%Y%m%d")
 
 
+def _date_range_variants(target_date: str) -> tuple[tuple[str, str], ...]:
+    target = _to_trade_date(target_date)
+    start = target - timedelta(days=BENCHMARK_LOOKBACK_DAYS)
+    return (
+        (start.strftime("%Y%m%d"), target.strftime("%Y%m%d")),
+        (start.strftime("%Y-%m-%d"), target.strftime("%Y-%m-%d")),
+        (start.strftime("%Y/%m/%d"), target.strftime("%Y/%m/%d")),
+    )
+
+
+def _market_variants(market: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys((market, market.lower(), market.upper())))
+
+
 def _shared_signals_db_path() -> Path:
     env_value = os.environ.get("SHARED_SIGNALS_DB")
     return Path(env_value).expanduser() if env_value else Path(DEFAULT_SHARED_SIGNALS_DB)
@@ -138,15 +152,20 @@ def _rows_from_sqlite(symbol: str, target_date: str) -> list[dict[str, Any]]:
     conn = sqlite3.connect(_sqlite_uri(db_path), uri=True)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(
-            "SELECT trade_date, close FROM market_bars_daily "
-            "WHERE LOWER(market)=LOWER(?) AND symbol=? "
-            "AND REPLACE(REPLACE(trade_date, '-', ''), '/', '')<=? "
-            "AND close IS NOT NULL "
-            "ORDER BY REPLACE(REPLACE(trade_date, '-', ''), '/', '') ASC",
-            ("Ashare", symbol, target_date),
-        ).fetchall()
-        return [dict(row) for row in rows]
+        market_values = _market_variants("Ashare")
+        placeholders = ", ".join("?" for _ in market_values)
+        rows: list[dict[str, Any]] = []
+        for start_date, end_date in _date_range_variants(target_date):
+            fetched = conn.execute(
+                "SELECT trade_date, close FROM market_bars_daily "
+                f"WHERE market IN ({placeholders}) AND symbol=? "
+                "AND trade_date>=? AND trade_date<=? "
+                "AND close IS NOT NULL "
+                "ORDER BY trade_date ASC",
+                (*market_values, symbol, start_date, end_date),
+            ).fetchall()
+            rows.extend(dict(row) for row in fetched)
+        return rows
     finally:
         conn.close()
 

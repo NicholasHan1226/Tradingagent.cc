@@ -23,7 +23,9 @@ All amounts in CNY, rounded to 0.01 (cent precision).
 from __future__ import annotations
 
 import fcntl
+import errno
 import sqlite3
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -42,6 +44,8 @@ CAPITAL_TABLES = {
     "simulated": "capital_ledger_simulated",
     "shadow": "capital_ledger_shadow",
 }
+LOCK_RETRY_ATTEMPTS = 3
+LOCK_RETRY_DELAY_SECONDS = 0.1
 
 CSV_HEADERS = [
     "entry_id",
@@ -89,11 +93,27 @@ def _ledger_lock() -> Iterator[None]:
     """Serialize ledger readers/writers and one-time migrations across processes."""
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
     with open(LEDGER_DIR / CAPITAL_LOCK.name, "a+", encoding="utf-8") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        _acquire_exclusive_lock(fh.fileno(), CAPITAL_LOCK)
         try:
             yield
         finally:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _acquire_exclusive_lock(fd: int, lock_path: Path) -> None:
+    last_error: OSError | None = None
+    retry_errnos = {errno.EACCES, errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN)}
+    for attempt in range(1, LOCK_RETRY_ATTEMPTS + 1):
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError as exc:
+            if exc.errno not in retry_errnos:
+                raise
+            last_error = exc
+            if attempt < LOCK_RETRY_ATTEMPTS:
+                time.sleep(LOCK_RETRY_DELAY_SECONDS * attempt)
+    raise TimeoutError(f"Could not acquire ledger lock {lock_path} after {LOCK_RETRY_ATTEMPTS} attempts") from last_error
 
 
 def _normalize_capital_layer(value: str | None) -> str:

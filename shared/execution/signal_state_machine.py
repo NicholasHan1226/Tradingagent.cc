@@ -9,9 +9,11 @@ matters for cron workers.
 from __future__ import annotations
 
 import fcntl
+import errno
 import json
 import os
 import re
+import time as time_module
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, time
@@ -35,6 +37,8 @@ TERMINAL_STATES = (FILLED, EXPIRED, CANCELLED, FAILED, PARTIAL)
 SIGNAL_STATES = ACTIVE_STATES + TERMINAL_STATES
 
 _ORDER_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+LOCK_RETRY_ATTEMPTS = 3
+LOCK_RETRY_DELAY_SECONDS = 0.1
 
 
 class SignalStateConflict(RuntimeError):
@@ -65,11 +69,28 @@ class SignalStateMachine:
     def _locked(self) -> Iterator[None]:
         self.signals_dir.mkdir(parents=True, exist_ok=True)
         with open(self.lock_path, "a", encoding="utf-8") as fh:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            self._acquire_exclusive_lock(fh.fileno())
             try:
                 yield
             finally:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+    def _acquire_exclusive_lock(self, fd: int) -> None:
+        last_error: OSError | None = None
+        retry_errnos = {errno.EACCES, errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN)}
+        for attempt in range(1, LOCK_RETRY_ATTEMPTS + 1):
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except OSError as exc:
+                if exc.errno not in retry_errnos:
+                    raise
+                last_error = exc
+                if attempt < LOCK_RETRY_ATTEMPTS:
+                    time_module.sleep(LOCK_RETRY_DELAY_SECONDS * attempt)
+        raise TimeoutError(
+            f"Could not acquire signal state lock {self.lock_path} after {LOCK_RETRY_ATTEMPTS} attempts"
+        ) from last_error
 
     def write_pending(self, card: dict[str, Any]) -> dict[str, Any]:
         """Atomically create a globally unique pending signal card."""

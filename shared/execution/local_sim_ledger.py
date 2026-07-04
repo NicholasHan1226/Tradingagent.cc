@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import fcntl
+import errno
 import json
 import os
 import re
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -20,6 +22,8 @@ LOCAL_SIM_POSITIONS = LOCAL_SIM_DIR / "local_sim_positions.json"
 LOCAL_SIM_PNL = LOCAL_SIM_DIR / "local_sim_pnl.json"
 LOCAL_SIM_LOCK = LOCAL_SIM_DIR / ".local_sim.lock"
 DEFAULT_ACCOUNT = "ashare_server_sim"
+LOCK_RETRY_ATTEMPTS = 3
+LOCK_RETRY_DELAY_SECONDS = 0.1
 
 
 def _bj_today() -> date:
@@ -62,11 +66,27 @@ class LocalSimTrade:
 def _lock() -> Iterator[None]:
     LOCAL_SIM_DIR.mkdir(parents=True, exist_ok=True)
     with LOCAL_SIM_LOCK.open("a+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        _acquire_exclusive_lock(handle.fileno(), LOCAL_SIM_LOCK)
         try:
             yield
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _acquire_exclusive_lock(fd: int, lock_path: Path) -> None:
+    last_error: OSError | None = None
+    retry_errnos = {errno.EACCES, errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN)}
+    for attempt in range(1, LOCK_RETRY_ATTEMPTS + 1):
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError as exc:
+            if exc.errno not in retry_errnos:
+                raise
+            last_error = exc
+            if attempt < LOCK_RETRY_ATTEMPTS:
+                time.sleep(LOCK_RETRY_DELAY_SECONDS * attempt)
+    raise TimeoutError(f"Could not acquire local sim lock {lock_path} after {LOCK_RETRY_ATTEMPTS} attempts") from last_error
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:

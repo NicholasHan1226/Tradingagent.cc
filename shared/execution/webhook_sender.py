@@ -26,6 +26,8 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "http://localhost:9865/")
 RECEIPTS_PATH = Path(os.environ.get("SIM_RECEIPTS_PATH", "/opt/investment/MarketGraph/outputs/sim_execution_receipts.jsonl"))
 TIMEOUT_SECONDS = 10
 RETRY_COUNT = 2
+RETRY_BACKOFF_BASE_SECONDS = 0.25
+RETRY_BACKOFF_MAX_SECONDS = 2.0
 
 
 def _order_get(order: Any, key: str, default: Any = None) -> Any:
@@ -103,6 +105,11 @@ def _post_once(url: str, body: bytes, signature: str, timeout: int | float) -> d
     }
 
 
+def _retry_backoff_seconds(attempt: int) -> float:
+    delay = RETRY_BACKOFF_BASE_SECONDS * (2 ** max(0, attempt - 1))
+    return min(delay, RETRY_BACKOFF_MAX_SECONDS)
+
+
 def send_sim_signal_to_mini(
     order: dict[str, Any] | Any,
     url: str = WEBHOOK_URL,
@@ -135,7 +142,7 @@ def send_sim_signal_to_mini(
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
             last_error = str(exc)
             if attempt < attempts:
-                time.sleep(0)
+                time.sleep(_retry_backoff_seconds(attempt))
 
     return {
         "status": "failed",

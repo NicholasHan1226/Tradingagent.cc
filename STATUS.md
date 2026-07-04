@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (5分钟模拟入口 API-first 验证)
+> 最后更新：2026-07-04 (P0 resilience fixes)
 
 ---
 
@@ -43,6 +43,13 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-04 P0 resilience fixes
+
+- [x] `position_ledger.py`、`capital_ledger.py`、`signal_state_machine.py`、`local_sim_ledger.py`、`shadow_broker.py` 的阻塞 `flock(LOCK_EX)` 已改为 `LOCK_EX | LOCK_NB`，并加 3 次递增等待重试；拿不到锁时显式 `TimeoutError`，不假成功。
+- [x] `webhook_sender.py` 的 `time.sleep(0)` 已替换为指数退避，避免 Mini webhook 异常时忙等。
+- [x] `shared/review/benchmark.py` 的 SQLite fallback 查询已移除列上的 `LOWER()` / `REPLACE()`，改为市场值枚举和日期格式范围查询，保留只读 fallback 行为。
+- [x] 验证：目标 Python `py_compile` 通过；受影响 TradingAgent pytest 集合 54 项 + 6 subtests 通过（仅既有 `WEBHOOK_SECRET` 空值 warning）。
 
 ### 2026-07-04 测试状态泄漏修复
 
