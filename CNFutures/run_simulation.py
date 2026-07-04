@@ -55,7 +55,7 @@ def main() -> int:
     result = run_multi_style_simulation(
         adapter,
         str(args.date),
-        adapter.reader,
+        adapter.reader or adapter,
         signals_dir=args.signals_dir,
         review_path=args.review_path,
     )

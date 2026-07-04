@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,7 @@ except Exception:  # pragma: no cover
 
 READER_MARKET = "Futures"
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
+DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
 
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "active_only": True,
@@ -171,12 +174,13 @@ class CNFuturesAdapter(MarketAdapter):
 
     def _get_assets(self) -> list[dict[str, Any]]:
         if self.reader is None:
-            return []
+            return self._get_assets_from_sqlite()
         get_assets = getattr(self.reader, "get_assets", None)
         if callable(get_assets):
             rows = get_assets(market=READER_MARKET)
-            if rows:
-                return [dict(row) for row in rows]
+            filtered = [dict(row) for row in rows or [] if dict(row).get("market") in (None, "", READER_MARKET)]
+            if filtered:
+                return filtered
         shared = getattr(self.reader, "shared", None)
         connect = getattr(shared, "_connect", None)
         if callable(connect):
@@ -186,9 +190,42 @@ class CNFuturesAdapter(MarketAdapter):
                     (READER_MARKET,),
                 ).fetchall()
             except Exception:
-                return []
+                return self._get_assets_from_sqlite()
             return [dict(row) for row in rows]
-        return []
+        return self._get_assets_from_sqlite()
+
+    def get_bars_daily(
+        self,
+        market: str,
+        symbol: str,
+        start: Any = None,
+        end: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Read daily bars from SharedSignals SQLite when no reader facade exists."""
+
+        del start
+        if market != READER_MARKET:
+            return []
+        db_path = self._shared_signals_db_path()
+        if not db_path.exists():
+            return []
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM market_bars_daily
+                WHERE market=? AND symbol=?
+                AND (? IS NULL OR trade_date<=?)
+                ORDER BY trade_date DESC
+                LIMIT 120
+                """,
+                (READER_MARKET, symbol, end, end),
+            ).fetchall()
+        except Exception:
+            return []
+        return [dict(row) for row in reversed(rows)]
 
     def _load_styles(self) -> dict[str, dict[str, Any]]:
         if self._styles_override is not None:
@@ -204,6 +241,24 @@ class CNFuturesAdapter(MarketAdapter):
             name = str(payload.get("name") or path.stem)
             styles[name] = payload
         return styles
+
+    def _shared_signals_db_path(self) -> Path:
+        return Path(os.environ.get("SHARED_SIGNALS_DB") or DEFAULT_SHARED_SIGNALS_DB)
+
+    def _get_assets_from_sqlite(self) -> list[dict[str, Any]]:
+        db_path = self._shared_signals_db_path()
+        if not db_path.exists():
+            return []
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM market_assets WHERE market=? ORDER BY symbol ASC",
+                (READER_MARKET,),
+            ).fetchall()
+        except Exception:
+            return []
+        return [dict(row) for row in rows]
 
 
 __all__ = ["CNFuturesAdapter", "READER_MARKET"]

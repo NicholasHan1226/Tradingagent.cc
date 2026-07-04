@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -105,6 +107,38 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(review_rows[0]["filled_count"], 2)
             self.assertEqual(review_rows[0]["styles"]["trend"]["filled_count"], 1)
             self.assertEqual(review_rows[0]["styles"]["breakout"]["filled_count"], 1)
+
+    def test_adapter_falls_back_to_sharedsignals_sqlite_for_futures_assets(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "marketdata.sqlite"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE market_assets (
+                    market TEXT,
+                    symbol TEXT,
+                    name TEXT,
+                    status TEXT
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO market_assets VALUES (?, ?, ?, ?)",
+                ("Futures", "RB2601.SHF", "螺纹钢2601", None),
+            )
+            conn.commit()
+            old_db = os.environ.get("SHARED_SIGNALS_DB")
+            os.environ["SHARED_SIGNALS_DB"] = str(db_path)
+            try:
+                adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 1})
+                self.assertEqual(adapter.get_universe("20260703"), ["RB2601.SHF"])
+            finally:
+                if old_db is None:
+                    os.environ.pop("SHARED_SIGNALS_DB", None)
+                else:
+                    os.environ["SHARED_SIGNALS_DB"] = old_db
 
 
 if __name__ == "__main__":
