@@ -237,7 +237,9 @@ plus Cloudflare Tunnel to the server-side snapshot API. The same read-only rule
 must be preserved: no execution, callback, or order mutation routes belong to
 this dashboard.
 
-The next data gaps are narrower: `midday_review.jsonl`, strategy/factor
-attribution JSONL, `risk_limits.yaml`, and filled signal details are declared as
-readable sources but still need snapshot parsing before the UI should present
-them as complete panels.
+The data gap is now narrower: server-local simulated ledger positions and trade
+journals feed the homepage holdings and signal funnel. `midday_review.jsonl`,
+strategy/factor attribution JSONL, `risk_limits.yaml`, and richer per-signal
+stage records still need snapshot parsing before the UI should present them as
+complete panels. Performance charts still require a real PnL / mark-to-market
+series; the frontend must not infer returns from trade notional or cost basis.
