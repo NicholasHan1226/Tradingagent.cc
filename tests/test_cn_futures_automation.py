@@ -293,6 +293,44 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertNotIn(("index_intraday_directional", "rb2601"), pairs)
             self.assertNotIn(("trend", "IF2601.CFFEX"), pairs)
 
+    def test_index_intraday_directional_style_skips_outside_day_session_runtime(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = FakeMixedFuturesReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 1, "products": ("if",)},
+                styles={
+                    "index_intraday_directional": {
+                        "name": "index_intraday_directional",
+                        "style_family": "index_intraday_directional",
+                        "signal_threshold": 0.001,
+                        "risk_per_trade": 0.01,
+                        "products": ["if", "ih", "ic", "im"],
+                        "momentum_lookback_bars": 3,
+                        "moving_average_bars": 4,
+                        "no_overnight": True,
+                    },
+                },
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260706",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-06 21:01:00"),
+            )
+
+            self.assertEqual(result["state"], "ok")
+            self.assertEqual(result["filled_count"], 0)
+            self.assertEqual(result["records"], [])
+            self.assertEqual(result["errors"], [])
+
     def test_multi_style_runner_blocks_repeated_same_side_exposure(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation

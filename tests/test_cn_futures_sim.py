@@ -83,6 +83,41 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(guarded["action"], "hold")
         self.assertEqual(guarded["reason"], "session_close_guard")
 
+    def test_index_intraday_directional_signal_rejects_non_day_session_bars(self) -> None:
+        from CNFutures.signal_engine import generate_style_signal
+
+        style = {
+            "name": "index_intraday_directional",
+            "style_family": "index_intraday_directional",
+            "signal_threshold": 0.001,
+            "momentum_lookback_bars": 3,
+            "moving_average_bars": 4,
+            "no_overnight": True,
+            "day_session_only": True,
+        }
+        night_bars = [
+            {"bar_time": "2026-07-06 21:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 21:05:00", "close": 3502, "volume": 1000},
+            {"bar_time": "2026-07-06 21:10:00", "close": 3505, "volume": 1100},
+            {"bar_time": "2026-07-06 21:15:00", "close": 3512, "volume": 1400},
+            {"bar_time": "2026-07-06 21:20:00", "close": 3520, "volume": 1600},
+        ]
+        lunch_break_bars = [
+            {"bar_time": "2026-07-06 11:05:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 11:10:00", "close": 3502, "volume": 1000},
+            {"bar_time": "2026-07-06 11:15:00", "close": 3505, "volume": 1100},
+            {"bar_time": "2026-07-06 11:20:00", "close": 3512, "volume": 1400},
+            {"bar_time": "2026-07-06 11:35:00", "close": 3520, "volume": 1600},
+        ]
+
+        night = generate_style_signal("IF2601.CFFEX", night_bars, style)
+        lunch_break = generate_style_signal("IF2601.CFFEX", lunch_break_bars, style)
+
+        self.assertEqual(night["action"], "hold")
+        self.assertEqual(night["reason"], "outside_day_session")
+        self.assertEqual(lunch_break["action"], "hold")
+        self.assertEqual(lunch_break["reason"], "outside_day_session")
+
     def test_sim_executor_registers_cn_futures_as_simulated_only(self) -> None:
         import CNFutures.sim_executor  # noqa: F401
         from shared.execution.sim_broker import execute_sim_order

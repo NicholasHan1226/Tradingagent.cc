@@ -58,6 +58,14 @@ def _minutes_to_day_close(row: dict[str, Any]) -> int | None:
     return int((close_dt - parsed).total_seconds() // 60)
 
 
+def _is_day_session_bar(row: dict[str, Any]) -> bool:
+    parsed = _bar_time(row)
+    if parsed is None:
+        return False
+    current = parsed.time()
+    return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(15, 0))
+
+
 def _index_intraday_directional_signal(
     symbol: str,
     bars: list[dict[str, Any]],
@@ -70,6 +78,15 @@ def _index_intraday_directional_signal(
     close_guard = int(_safe_float(style.get("flatten_before_session_close_minutes"), 10))
     if len(bars) <= max(lookback, ma_window):
         return {"symbol": symbol, "style": style_name, "action": "hold", "reason": "insufficient_intraday_bars", "confidence": 0.0}
+
+    if bool(style.get("day_session_only", True)) and not _is_day_session_bar(bars[-1]):
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "reason": "outside_day_session",
+            "confidence": 0.0,
+        }
 
     if bool(style.get("no_overnight", True)):
         minutes_left = _minutes_to_day_close(bars[-1])

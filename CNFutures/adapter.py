@@ -69,6 +69,7 @@ DEFAULT_STYLES: dict[str, dict[str, Any]] = {
         "moving_average_bars": 6,
         "prediction_horizon_bars": 3,
         "no_overnight": True,
+        "day_session_only": True,
         "flatten_before_session_close_minutes": 10,
     },
 }

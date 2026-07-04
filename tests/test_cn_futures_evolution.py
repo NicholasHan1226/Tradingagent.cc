@@ -124,6 +124,7 @@ class CNFuturesEvolutionTest(unittest.TestCase):
                     "moving_average_bars": 6,
                     "prediction_horizon_bars": 3,
                     "no_overnight": True,
+                    "day_session_only": True,
                     "flatten_before_session_close_minutes": 10,
                 },
             )
@@ -139,6 +140,7 @@ class CNFuturesEvolutionTest(unittest.TestCase):
             self.assertEqual(variant["style_family"], "index_intraday_directional")
             self.assertEqual(variant["products"], ["if", "ih", "ic", "im"])
             self.assertTrue(variant["no_overnight"])
+            self.assertTrue(variant["day_session_only"])
             self.assertFalse(variant["real_trading_enabled"])
 
 

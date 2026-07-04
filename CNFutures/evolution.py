@@ -212,6 +212,7 @@ def _tweak_style(base: dict[str, Any], name: str) -> dict[str, Any]:
         )
         variant["prediction_horizon_bars"] = max(1, _safe_int(base.get("prediction_horizon_bars"), 3))
         variant["no_overnight"] = True
+        variant["day_session_only"] = True
         variant["flatten_before_session_close_minutes"] = max(5, _safe_int(base.get("flatten_before_session_close_minutes"), 10))
     return variant
 

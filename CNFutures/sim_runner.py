@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,7 @@ from . import sim_executor as _sim_executor  # noqa: F401  # Ensure registry sid
 
 INTRADAY_INTERVAL = "5min"
 DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES = 10.0
+CN_TZ = timezone(timedelta(hours=8))
 
 
 def _now_iso() -> str:
@@ -64,6 +65,26 @@ def _style_allows_symbol(style: dict[str, Any], symbol: str) -> bool:
         return normalize_product(symbol) in allowed
     except ValueError:
         return False
+
+
+def _cn_local_time(now: datetime | None) -> time | None:
+    if now is None:
+        return None
+    current = now
+    if current.tzinfo is not None:
+        current = current.astimezone(CN_TZ)
+    return current.time()
+
+
+def _style_allows_session(style: dict[str, Any], now: datetime | None) -> bool:
+    if str(style.get("style_family") or "").strip().lower() != "index_intraday_directional":
+        return True
+    if not bool(style.get("no_overnight", True)):
+        return True
+    current = _cn_local_time(now)
+    if current is None:
+        return True
+    return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(15, 0))
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -328,6 +349,8 @@ def run_multi_style_simulation(
         style = dict(style_config or {})
         style.setdefault("name", style_name)
         if not _style_is_active(style):
+            continue
+        if not _style_allows_session(style, now):
             continue
         for symbol in universe:
             if not _style_allows_symbol(style, symbol):

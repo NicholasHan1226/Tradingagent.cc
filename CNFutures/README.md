@@ -32,9 +32,10 @@ Checked-in styles live under `CNFutures/strategies/`:
 `index_intraday_directional` uses 5-minute bars to estimate short-horizon
 direction from multi-bar momentum, moving-average distance, and volume
 confirmation. It can emit simulated `buy`, `sell`, or `hold`, and it stops
-opening new signals near the day-session close so the lane remains flat-only
-overnight. This style is for simulated validation of index-direction timing; it
-does not enable real CFFEX trading.
+opening new signals near the day-session close. The style is day-session only:
+bars outside 09:30-11:30 and 13:00-15:00 China time are forced to `hold`, and
+night-session automation skips the style. This style is for simulated
+validation of index-direction timing; it does not enable real CFFEX trading.
 
 ## Automation Entry
 
@@ -58,6 +59,11 @@ collection, so simulation reads the latest `market_bars_intraday` bar with
 `interval="5min"`. Order idempotency includes the latest bar timestamp, not
 only the trade date, so separate 5-minute bars can create separate simulated
 orders while duplicate reruns of the same bar remain idempotent.
+
+SharedSignals CN futures 5-minute collection defaults to the commodity products
+`rb/cu/i/m` plus stock-index futures `IF/IH/IC/IM`. The index-direction style
+must continue reading those bars through SharedSignals/read-model APIs rather
+than adding a separate TradingAgent data download path.
 
 The 5-minute runner rejects stale intraday input by default when the latest bar
 is more than 10 minutes old. Configure the threshold with

@@ -10,5 +10,6 @@
   "moving_average_bars": 6,
   "prediction_horizon_bars": 3,
   "no_overnight": true,
+  "day_session_only": true,
   "flatten_before_session_close_minutes": 10
 }
