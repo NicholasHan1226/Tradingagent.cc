@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover
 
 READER_MARKET = "Futures"
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
+DEFAULT_REVIEW_ROOT = Path(__file__).resolve().parents[1] / "shared" / "review"
 DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
 
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
@@ -402,7 +403,7 @@ class CNFuturesAdapter(MarketAdapter):
             return {str(name): dict(config) for name, config in self._styles_override.items()}
         styles = {name: dict(config) for name, config in DEFAULT_STYLES.items()}
         if not self.strategy_dir.exists():
-            return styles
+            return self._apply_runtime_styles(styles)
         for path in sorted(self.strategy_dir.glob("*.json")):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
@@ -410,6 +411,38 @@ class CNFuturesAdapter(MarketAdapter):
                 continue
             name = str(payload.get("name") or path.stem)
             styles[name] = payload
+        return self._apply_runtime_styles(styles)
+
+    def _apply_runtime_styles(self, styles: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        review_root = Path(os.environ.get("CN_FUTURES_REVIEW_ROOT") or DEFAULT_REVIEW_ROOT)
+        generated_dir = review_root / MARKET / "generated_styles"
+        if generated_dir.exists():
+            for path in sorted(generated_dir.glob("*.json")):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                name = str(payload.get("name") or path.stem)
+                if name:
+                    styles[name] = payload
+        weights_path = review_root / MARKET / "style_weights.json"
+        try:
+            weight_payload = json.loads(weights_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return styles
+        overlays = weight_payload.get("styles") if isinstance(weight_payload, dict) else {}
+        if not isinstance(overlays, dict):
+            return styles
+        for name, overlay in overlays.items():
+            if name not in styles or not isinstance(overlay, dict):
+                continue
+            styles[name].update({
+                key: overlay[key]
+                for key in ("status", "enabled", "weight", "evolution_action", "evolution_reason", "last_modified")
+                if key in overlay
+            })
         return styles
 
     def _shared_signals_db_path(self) -> Path:

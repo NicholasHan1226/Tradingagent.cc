@@ -25,6 +25,8 @@ if str(ROOT) not in sys.path:
 CN_FUTURES_REVIEW = ROOT / "shared/review/data/cn_futures_sim_reviews.jsonl"
 CN_FUTURES_STYLE_COMPARISON = ROOT / "shared/review/cn_futures/style_comparison.json"
 CN_FUTURES_STYLE_PERFORMANCE = ROOT / "shared/review/cn_futures/style_performance.jsonl"
+CN_FUTURES_EVOLUTION_PLAN = ROOT / "shared/review/cn_futures/evolution_plan.json"
+CN_FUTURES_STYLE_WEIGHTS = ROOT / "shared/review/cn_futures/style_weights.json"
 CN_FUTURES_SIM_LOG = ROOT / "shared/logs/cron/cn_futures_sim.log"
 
 
@@ -214,6 +216,7 @@ def check_cron_entries(crontab_text: str | None = None, crontab_error: str = "")
     required = {
         "sharedsignals_collector": "cn_futures_5min.sh",
         "tradingagent_sim": "job_cn_futures_sim.sh",
+        "tradingagent_evolution": "job_cn_futures_evolution.sh",
     }
     found = {name: token in (crontab_text or "") for name, token in required.items()}
     missing = [name for name, exists in found.items() if not exists]
@@ -300,6 +303,40 @@ def check_style_outputs(
     return Check("cn_futures_style_outputs", "warn", "CNFutures 风格输出还不完整", details, severity="warn")
 
 
+def check_evolution_outputs(
+    plan_path: Path | None = None,
+    weights_path: Path | None = None,
+) -> Check:
+    plan_path = plan_path or CN_FUTURES_EVOLUTION_PLAN
+    weights_path = weights_path or CN_FUTURES_STYLE_WEIGHTS
+    plan_payload = _read_json(plan_path)
+    weights_payload = _read_json(weights_path)
+    plan = plan_payload if isinstance(plan_payload, dict) else {}
+    weights = weights_payload if isinstance(weights_payload, dict) else {}
+    style_weights = weights.get("styles") if isinstance(weights.get("styles"), dict) else {}
+    details = {
+        "evolution_plan": {
+            "path": str(plan_path.relative_to(ROOT)) if plan_path.is_relative_to(ROOT) else str(plan_path),
+            "exists": plan_path.exists(),
+            "age_minutes": _file_age_minutes(plan_path),
+            "state": plan.get("state", "") if isinstance(plan, dict) else "",
+            "action_count": len(plan.get("actions") or []) if isinstance(plan, dict) else 0,
+        },
+        "style_weights": {
+            "path": str(weights_path.relative_to(ROOT)) if weights_path.is_relative_to(ROOT) else str(weights_path),
+            "exists": weights_path.exists(),
+            "age_minutes": _file_age_minutes(weights_path),
+            "style_count": len(style_weights),
+            "real_trading_enabled": bool(weights.get("real_trading_enabled")) if isinstance(weights, dict) else None,
+        },
+    }
+    if plan_path.exists() and weights_path.exists() and style_weights:
+        if bool(weights.get("real_trading_enabled")):
+            return Check("cn_futures_evolution_outputs", "fail", "CNFutures 自迭代输出错误启用了实盘标记", details)
+        return Check("cn_futures_evolution_outputs", "pass", "CNFutures 模拟盘自迭代输出已生成", details, severity="info")
+    return Check("cn_futures_evolution_outputs", "warn", "CNFutures 模拟盘自迭代输出还未生成", details, severity="warn")
+
+
 def check_existing_health_surfaces() -> Check:
     details: dict[str, Any] = {}
     statuses: list[str] = []
@@ -366,6 +403,7 @@ def run_live_check(
         check_sim_log(),
         check_review(),
         check_style_outputs(),
+        check_evolution_outputs(),
         check_existing_health_surfaces(),
     ]
     overall = _overall_status(checks)

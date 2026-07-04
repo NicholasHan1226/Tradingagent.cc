@@ -42,6 +42,13 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _style_is_active(style: dict[str, Any]) -> bool:
+    status = str(style.get("status") or "").strip().lower()
+    if status in {"paused", "deprecated"}:
+        return False
+    return bool(style.get("enabled", True))
+
+
 def _parse_dt(value: Any) -> datetime | None:
     raw = str(value or "").strip()
     if not raw:
@@ -199,7 +206,8 @@ def _quantity_for_style(
     margin_per_lot = max(cost.margin_required, 1.0)
     max_margin_usage = min(max(_safe_float(style.get("max_margin_usage"), 0.20), 0.01), 0.80)
     risk_per_trade = min(max(_safe_float(style.get("risk_per_trade"), 0.02), 0.001), max_margin_usage)
-    margin_budget = capital * min(max_margin_usage, risk_per_trade)
+    weight = min(max(_safe_float(style.get("weight"), 1.0), 0.01), 1.0)
+    margin_budget = capital * min(max_margin_usage, risk_per_trade * weight)
     return max(1, int(margin_budget // margin_per_lot))
 
 
@@ -302,6 +310,8 @@ def run_multi_style_simulation(
     for style_name, style_config in styles.items():
         style = dict(style_config or {})
         style.setdefault("name", style_name)
+        if not _style_is_active(style):
+            continue
         for symbol in universe:
             bars, bar_cadence, latest_bar_time = _bars_for_cadence(reader, symbol, date, cadence_value)
             if not bars:

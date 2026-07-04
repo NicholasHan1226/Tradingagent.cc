@@ -78,6 +78,41 @@ health/metrics surfaces. They do not create a standalone dashboard, do not grant
 live trading permission, and do not automatically promote a style into real
 trading.
 
+## Simulated Evolution
+
+CNFutures has a simulated-only style governor:
+
+```bash
+python -m CNFutures.evolution --pretty
+```
+
+Preview without writing runtime overlays:
+
+```bash
+python -m CNFutures.evolution --dry-run --pretty
+```
+
+The governor reads `style_performance.jsonl`, `style_comparison.json`, and the
+checked-in JSON files under `CNFutures/strategies/`. It writes only runtime
+simulation overlays under `shared/review/cn_futures/`:
+
+- `style_weights.json`: active/paused status and simulated risk weights
+- `evolution_plan.json`: latest decision record
+- `evolution_log.jsonl`: append-only decision history
+- `generated_styles/*.json`: small candidate variants for further simulation
+
+The checked-in strategy files stay read-only during evolution. The adapter loads
+runtime generated styles and weight overlays for future simulated runs, so poor
+or blocked styles can be paused and improving styles can receive more simulated
+risk. This remains a simulation lane: outputs include
+`real_trading_enabled=false`, do not touch CTP/SimNow, and do not promote any
+style to real trading.
+
+Production cron runs the governor every 30 minutes during CN futures day and
+night sessions. This slower cadence is intentional: 5-minute simulation keeps
+collecting samples, while evolution waits for enough evidence before changing
+simulated style weights.
+
 ## Live Chain Validation
 
 Use the read-only live-chain check before judging whether the 5-minute futures
@@ -103,6 +138,7 @@ The report joins:
 - latest CNFutures simulation cron log
 - append-only review rows in `shared/review/data/cn_futures_sim_reviews.jsonl`
 - style comparison and style performance outputs
+- simulated evolution plan and style weights
 - existing `market_health` and `ops_report` CNFutures surfaces
 
 `pass` means the chain has fresh data and review/style samples. `warn` is

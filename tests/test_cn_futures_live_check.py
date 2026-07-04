@@ -25,6 +25,8 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
             patch.object(live_check, "CN_FUTURES_REVIEW", self.root / "shared/review/data/cn_futures_sim_reviews.jsonl"),
             patch.object(live_check, "CN_FUTURES_STYLE_COMPARISON", self.root / "shared/review/cn_futures/style_comparison.json"),
             patch.object(live_check, "CN_FUTURES_STYLE_PERFORMANCE", self.root / "shared/review/cn_futures/style_performance.jsonl"),
+            patch.object(live_check, "CN_FUTURES_EVOLUTION_PLAN", self.root / "shared/review/cn_futures/evolution_plan.json"),
+            patch.object(live_check, "CN_FUTURES_STYLE_WEIGHTS", self.root / "shared/review/cn_futures/style_weights.json"),
             patch.object(live_check, "CN_FUTURES_SIM_LOG", self.root / "shared/logs/cron/cn_futures_sim.log"),
         ]
         for item in patches:
@@ -65,6 +67,13 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
             "shared/review/cn_futures/style_performance.jsonl",
             [{"style_name": "trend", "market": "cn_futures", "trades": 2}],
         )
+        plan = self.root / "shared/review/cn_futures/evolution_plan.json"
+        plan.write_text(json.dumps({"state": "observed", "actions": [], "real_trading_enabled": False}), encoding="utf-8")
+        weights = self.root / "shared/review/cn_futures/style_weights.json"
+        weights.write_text(
+            json.dumps({"real_trading_enabled": False, "styles": {"trend": {"status": "active", "weight": 1.0}}}),
+            encoding="utf-8",
+        )
         log = self.root / "shared/logs/cron/cn_futures_sim.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text('noise\n{"market":"cn_futures","status":"ok","signals":2}\n', encoding="utf-8")
@@ -74,7 +83,7 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
             report = live_check.run_live_check(
                 sharedsignals_root=self.sharedsignals,
                 run_command=self._fake_runner({"status": "no_data", "error": "no bars"}, returncode=1),
-                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh",
+                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh\njob_cn_futures_evolution.sh",
             )
 
         self.assertEqual(report["overall_status"], "warn")
@@ -90,18 +99,18 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
             report = live_check.run_live_check(
                 sharedsignals_root=self.sharedsignals,
                 run_command=self._fake_runner({"status": "fresh", "latest_bar_time": "2026-07-06T09:05:00+08:00"}, returncode=0),
-                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh",
+                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh\njob_cn_futures_evolution.sh",
             )
 
         self.assertEqual(report["overall_status"], "pass")
-        self.assertEqual(report["summary"], {"pass": 6, "warn": 0, "fail": 0})
+        self.assertEqual(report["summary"], {"pass": 7, "warn": 0, "fail": 0})
 
     def test_fails_when_sharedsignals_freshness_script_errors(self) -> None:
         with patch.object(live_check, "check_existing_health_surfaces", return_value=live_check.Check("cn_futures_existing_health_surfaces", "pass", "ok")):
             report = live_check.run_live_check(
                 sharedsignals_root=self.sharedsignals,
                 run_command=self._fake_runner({"status": "error", "error": "database missing"}, returncode=2),
-                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh",
+                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh\njob_cn_futures_evolution.sh",
             )
 
         self.assertEqual(report["overall_status"], "fail")
@@ -113,6 +122,7 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
 
         self.assertEqual(check.status, "fail")
         self.assertIn("sharedsignals_collector", check.details["missing"])
+        self.assertIn("tradingagent_evolution", check.details["missing"])
 
 
 if __name__ == "__main__":
