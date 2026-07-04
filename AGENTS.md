@@ -18,7 +18,7 @@
 ## 代码位置
 
 - 生产路径：`/opt/investment/tradingagent/`
-- 开发路径：`/Users/nicholashan/Projects/Finance/tradingagent/`
+- 开发路径：`/Users/nicholashan/Projects/Finance/TradingAgent/`
 - 工具集：`/opt/investment/tools/`（约 20 个工具）
 
 ## 架构边界（永久规则）

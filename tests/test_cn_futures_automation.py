@@ -78,6 +78,14 @@ class FakeFuturesReader:
 
 
 class CNFuturesAutomationTest(unittest.TestCase):
+    def test_adapter_default_reader_uses_tradingagent_data_reader(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from shared.data.reader import TradingagentDataReader
+
+        adapter = CNFuturesAdapter()
+
+        self.assertIsInstance(adapter.reader, TradingagentDataReader)
+
     def test_adapter_reads_futures_assets_without_using_trading_logic_upstream(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 

@@ -79,6 +79,7 @@
 ### 2026-07-04 CNFutures 5-minute simulated trading cadence
 
 - [x] `CNFutures/adapter.py` 已支持读取 SharedSignals `market_bars_intraday`，使用 `market="Futures"`、`interval="5min"` 作为期货 5 分钟模拟交易输入。
+- [x] `CNFutures/adapter.py` 默认读取器已修正为 `TradingagentDataReader`，保证默认路径走 SharedSignals API-first；SQLite 直接读只保留为显式降级/测试回退。
 - [x] `CNFutures/run_simulation.py` 默认 `--cadence 5min`；`CNFutures/sim_runner.py` 会优先读取分钟线，订单幂等键包含最新 `bar_time`，避免 5 分钟调度被同日幂等挡住。
 - [x] 5 分钟 runner 已加入 `--max-intraday-bar-age-minutes` / `CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES`，默认最新 bar 超过 10 分钟则拒绝模拟下单并记录 `stale_intraday_bar`。
 - [x] 同一交易日、同一风格、同一合约的连续同方向模拟信号会被标记为 `repeated_same_side_exposure`，避免每 5 分钟重复加同方向风险；反向信号仍允许形成新模拟成交。
@@ -120,7 +121,7 @@
 - [x] `get_bars_daily()` / `get_market_data()` 修复单日查询参数：只有 end/date 时自动设置 start=end，避免 SharedSignals `/market_data` 返回空壳行。
 - [x] A股健康检查改用生产同款 `TradingagentDataReader`，空影子账本用 `shadow_broker` 回放为 0 PnL；模拟持仓快照缺失从 fail 调整为 warn；脚本可直接运行并默认使用本机 SharedSignals API `127.0.0.1:8082`。
 - [x] 补齐真实交易安全门日志路径所需 `logging` 导入，避免错误分支复盘日志触发 `NameError`。
-- [x] 验证：`tests/test_data_reader.py tests/test_market_health.py` 12 passed；A股健康检查 6 pass / 2 warn / 0 fail；隔离闭环测试确认 Mini webhook 禁用时仍写 `signals/pending` 临时队列和服务器本地 paper fill。
+- [x] 验证：`tests/test_data_reader.py tests/test_market_health.py` 12 passed；A股健康检查 6 pass / 2 warn / 0 fail；隔离闭环测试确认 Mini webhook 禁用时不写 Hermes `signals/pending`，仍可完成服务器本地 paper fill。
 
 ### 2026-07-04 P2 cleanup smoke coverage
 
@@ -374,13 +375,13 @@
 
 ### Goal 2 审计 Round 3（高强度终检 — TradingAgent 侧）
 
-**TradingAgent 相关发现（CRITICAL/HIGH）：**
+**TradingAgent 历史发现（CRITICAL/HIGH，当前状态见上方 2026-07-04/07-05 条目）：**
 - **MarketGraphCSVReader 路径错误：** `intake` 路径缺少 `data/` 目录，`get_regime()` 路径错误 — 导致体制信号、事件候选、情绪信号三个关键 CSV 静默加载失败（已修复）
-- **SharedSignalsAPIClient 孤儿代码：** `shared_signals_api.py` 已定义完整 HTTP 客户端（15 接口），但 `TradingagentDataReader` 从未实例化或使用它 — 所有数据仍走直接 SQLite 读取
-- **TradingagentDataReader 无数据新鲜度检查：** `errors`/`stale` 字段只写从未被消费，stale=True 后无任何恢复逻辑
+- **SharedSignalsAPIClient 孤儿代码：** 已修复；`TradingagentDataReader` 默认 API-first，SQLite 只保留只读回退
+- **TradingagentDataReader 无数据新鲜度检查：** 已补健康检查、错误告警和市场 loop 巡检
 - **N+1 查询扇出：** 评分管线对每只股票做 5-6 次独立查询，20 只股票 > 100 次调用，无批量接口
-- **直接 SQLite 读取绕过了 API 鉴权：** TradingAgent 绕开 SharedSignals HTTP API 直接读 SQLite，使得 API token/scope 安全模型形同虚设
-- **无死人手刹：** 连续 N 次 SQLite 错误或 CSV 空返回后无告警
+- **直接 SQLite 读取绕过了 API 鉴权：** 已修复为 SharedSignals API-first，SQLite 仅为生产本机只读降级路径
+- **无死人手刹：** 已补连续错误日志告警
 
 **已应用修复（Round 3，影响 TradingAgent）：**
 9. [x] `tradingagent/shared/data/reader.py`：MarketGraphCSVReader `intake` 路径从 `self.root / "intake"` → `self.root / "data" / "intake"`，`get_regime()` 路径从 `self.root / "all_weather_regime.csv"` → `self.root / "data" / "all_weather_regime.csv"`

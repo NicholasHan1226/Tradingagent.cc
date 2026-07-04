@@ -15,9 +15,9 @@ from . import MARKET
 from .contract_rules import normalize_product
 
 try:  # Optional in partial local checkouts.
-    from shared.data.reader import TradingsDataReader
+    from shared.data.reader import TradingagentDataReader
 except Exception:  # pragma: no cover
-    TradingsDataReader = None  # type: ignore[assignment]
+    TradingagentDataReader = None  # type: ignore[assignment]
 
 
 READER_MARKET = "Futures"
@@ -83,8 +83,8 @@ class CNFuturesAdapter(MarketAdapter):
         self._explicit_reader = reader is not None
         if reader is not None:
             self.reader = reader
-        elif TradingsDataReader is not None:
-            self.reader = TradingsDataReader()
+        elif TradingagentDataReader is not None:
+            self.reader = TradingagentDataReader()
         else:
             self.reader = None
         self.universe_filter = {**DEFAULT_UNIVERSE_FILTER, **dict(universe_filter or {})}

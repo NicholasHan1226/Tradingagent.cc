@@ -9,7 +9,7 @@ Covers:
   5. requirements.txt critical import resolution
 
 Run:
-  PYTHONPATH=/Users/nicholashan/Projects/Finance/tradingagent \
+  PYTHONPATH=/Users/nicholashan/Projects/Finance/TradingAgent \
   python3 -m pytest tests/test_p1_edge_cases.py -v --tb=short
 """
 
