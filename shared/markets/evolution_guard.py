@@ -200,7 +200,6 @@ def _notify_circuit_breaker(result: dict[str, Any]) -> dict[str, Any]:
                 "summary": json.dumps(result, ensure_ascii=False),
             },
             channel="system",
-            to="tradingadviser@coze.email",
             subject="[TradingAgent] simulated circuit breaker halted",
         )
     except Exception as exc:  # noqa: BLE001

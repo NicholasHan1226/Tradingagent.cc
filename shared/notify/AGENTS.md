@@ -37,3 +37,7 @@
 ## 2026-07-04 系统邮件 smoke
 - 主服务器已实测 TradingAgent 系统邮件：Cloudflare Email Service 从 `notice@tradingagent.cc` 发往 `soc@coze.email` 成功，主题含 `[SMOKE][TradingAgent][系统]`。
 - 后续健康检查、异常告警、自愈和对账类邮件继续走系统通道；交易信号、规划、复盘、日报、周报和成交回执继续走交易通道。
+
+## 2026-07-04 路由残留修复
+- `.env.example`、alert router 注释和 simulated evolution guard 已统一到 `notice@tradingagent.cc`。
+- 模板发送时显式 `channel="system"` 会优先使用系统通道默认收件人 `soc@coze.email`，除非调用方显式传入 `to`。

@@ -4,7 +4,7 @@
 | 角色 | IP | 规格 | 职责 |
 |------|-----|------|------|
 | 杭州 (主) | 8.138.181.177 | 2核3.4GB/99GB | 所有系统 (除A股实盘) |
-| 新加坡 | 47.82.153.58 | 30GB | 境外RSS采集 (495源) |
+| 新加坡 | 47.82.153.58 | 30GB | 境外 RSS mirror / 待收口节点 |
 | Mac Mini | 本地 | — | A股实盘执行 (Hermes同花顺) |
 
 ## 域名
@@ -20,11 +20,11 @@
 - Python: 3.12.3 (venv /opt/marketgraph/venv)
 - OS: Ubuntu 24.04
 - 无DuckDB/Redis (3.4GB RAM限制, 未来扩展)
-- SQLite: marketdata.sqlite(75MB) + reference_index.sqlite(5MB) + rss_collector.db
+- SQLite: marketdata.sqlite(75MB) + reference_index.sqlite(5MB)；`rss_collector.db` 仍在旧 `/opt/investment/MarketGraphRuntime/` 路径，迁移前只按残留资产处理
 
 ## 网络
 - Nginx :80 → 127.0.0.1:8080 (API server)
-- RSSHub :1200 (Node.js)
+- RSSHub :1200 (Node.js, 迁移期残留进程；旧 RSSCollector cron 已禁用)
 - Mihomo :7890/:7891 (Clash代理, Binance/Polymarket走代理)
 - 新加坡 → rsync → 杭州 staging (每5min)
 

@@ -371,7 +371,7 @@ def send_template_email(
 ) -> dict[str, Any]:
     html_body = render_template_html(template_name, data)
     channel = channel or _channel_key_for_template(template_name)
-    recipient = to or get_channel(template_name)["to"]
+    recipient = to or CHANNELS.get(channel, get_channel(template_name))["to"]
     resolved_subject = subject or _default_subject(template_name, data)
     plain_body = str(data.get("summary") or f"{resolved_subject}\n请查看 HTML 邮件内容。")
     try:

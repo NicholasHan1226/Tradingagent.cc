@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (system email smoke + CNFutures cadence)
+> 最后更新：2026-07-04 (email route residual fixes + CNFutures cadence)
 
 ---
 
@@ -49,6 +49,12 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-04 email route residual fixes
+
+- [x] `.env.example` 的 `CLOUDFLARE_EMAIL_FROM` 已从旧 `notice@agentspaces.cc` 改为 `notice@tradingagent.cc`。
+- [x] `shared/notify/alert_router.py` 文档注释已同步为交易通道 `notice@tradingagent.cc -> tradingadviser@coze.email`。
+- [x] simulated evolution circuit breaker 的系统告警不再硬发 `tradingadviser@coze.email`；`send_template_email()` 已改为显式 `channel` 优先解析默认收件人。
 
 ### 2026-07-04 system email smoke verification
 
