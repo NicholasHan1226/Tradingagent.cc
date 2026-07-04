@@ -88,6 +88,7 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
 
         self.assertEqual(report["overall_status"], "warn")
         self.assertEqual(report["summary"]["fail"], 0)
+        self.assertEqual(report["observation_phase"], "waiting_for_5min_data")
         freshness = next(check for check in report["checks"] if check["name"] == "sharedsignals_5min_freshness")
         self.assertEqual(freshness["status"], "warn")
         self.assertFalse(report["real_trading_enabled"])
@@ -104,6 +105,8 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
 
         self.assertEqual(report["overall_status"], "pass")
         self.assertEqual(report["summary"], {"pass": 7, "warn": 0, "fail": 0})
+        self.assertEqual(report["observation_phase"], "ready_to_observe")
+        self.assertEqual(report["alerts"], [])
 
     def test_fails_when_sharedsignals_freshness_script_errors(self) -> None:
         with patch.object(live_check, "check_existing_health_surfaces", return_value=live_check.Check("cn_futures_existing_health_surfaces", "pass", "ok")):
@@ -116,6 +119,7 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         self.assertEqual(report["overall_status"], "fail")
         freshness = next(check for check in report["checks"] if check["name"] == "sharedsignals_5min_freshness")
         self.assertEqual(freshness["status"], "fail")
+        self.assertEqual(report["observation_phase"], "blocked")
 
     def test_cron_missing_is_hard_failure_when_crontab_is_readable(self) -> None:
         check = live_check.check_cron_entries("job_cn_futures_sim.sh")
@@ -123,6 +127,24 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         self.assertEqual(check.status, "fail")
         self.assertIn("sharedsignals_collector", check.details["missing"])
         self.assertIn("tradingagent_evolution", check.details["missing"])
+
+    def test_alerts_when_market_session_has_no_fresh_5min_data(self) -> None:
+        with patch.object(live_check, "check_existing_health_surfaces", return_value=live_check.Check("cn_futures_existing_health_surfaces", "pass", "ok")):
+            report = live_check.run_live_check(
+                sharedsignals_root=self.sharedsignals,
+                run_command=self._fake_runner(
+                    {
+                        "status": "stale",
+                        "latest_bar_time": None,
+                        "session": {"current": "day", "in_session": True},
+                    },
+                    returncode=1,
+                ),
+                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh\njob_cn_futures_evolution.sh",
+            )
+
+        codes = {alert["code"] for alert in report["alerts"]}
+        self.assertIn("futures_5min_missing_in_session", codes)
 
 
 if __name__ == "__main__":

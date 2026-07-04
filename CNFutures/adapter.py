@@ -70,6 +70,8 @@ DEFAULT_STYLES: dict[str, dict[str, Any]] = {
         "prediction_horizon_bars": 3,
         "no_overnight": True,
         "day_session_only": True,
+        "trend_alignment_required": True,
+        "min_volume_ratio": 1.05,
         "flatten_before_session_close_minutes": 10,
     },
 }

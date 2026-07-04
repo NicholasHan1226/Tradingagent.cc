@@ -34,8 +34,12 @@ direction from multi-bar momentum, moving-average distance, and volume
 confirmation. It can emit simulated `buy`, `sell`, or `hold`, and it stops
 opening new signals near the day-session close. The style is day-session only:
 bars outside 09:30-11:30 and 13:00-15:00 China time are forced to `hold`, and
-night-session automation skips the style. This style is for simulated
-validation of index-direction timing; it does not enable real CFFEX trading.
+night-session automation skips the style. To improve win-rate quality before
+sample size is large, the style also requires momentum and moving-average
+distance to point in the same direction and defaults to `min_volume_ratio=1.05`;
+weak or misaligned moves become `hold` instead of simulated trades. This style
+is for simulated validation of index-direction timing; it does not enable real
+CFFEX trading.
 
 ## Automation Entry
 
@@ -98,6 +102,55 @@ health/metrics surfaces. They do not create a standalone dashboard, do not grant
 live trading permission, and do not automatically promote a style into real
 trading.
 
+## Observation Report
+
+Use the read-only observation report as the dashboard-ready summary of the
+5-minute futures loop:
+
+```bash
+python -m CNFutures.observation_report --pretty
+```
+
+On production, point it at the SharedSignals runtime:
+
+```bash
+python -m CNFutures.observation_report \
+  --sharedsignals-root /opt/investment/SharedSignals \
+  --pretty
+```
+
+The report summarizes:
+
+- current phase: waiting for 5-minute data, waiting for simulated samples,
+  waiting for style review, ready to observe, or blocked
+- data freshness, latest bar time, symbol count, and current/next session
+- latest simulated review counts, fills, errors, and error summary
+- ranked style rows, runtime style weights, generated variants, and alerts
+
+It is read-only by default. `--write-json <path>` may be used by a dashboard or
+cron wrapper to publish a snapshot, but the report itself does not create
+signals, change weights, or touch broker adapters.
+
+Optional wrapper:
+
+```bash
+shared/wrappers/job_cn_futures_observation_report.sh
+```
+
+Opening validation is also read-only:
+
+```bash
+python -m CNFutures.opening_validator --pretty
+```
+
+It checks whether the current day/night session has started receiving Futures
+5-minute bars and whether symbol coverage is above the minimum threshold.
+Optional wrapper:
+
+```bash
+shared/wrappers/job_cn_futures_opening_validation.sh
+```
+
 ## Simulated Evolution
 
 CNFutures has a simulated-only style governor:
@@ -124,14 +177,20 @@ simulation overlays under `shared/review/cn_futures/`:
 The checked-in strategy files stay read-only during evolution. The adapter loads
 runtime generated styles and weight overlays for future simulated runs, so poor
 or blocked styles can be paused and improving styles can receive more simulated
-risk. This remains a simulation lane: outputs include
+risk. When a style has improving positive samples, the governor can create up
+to three variants per cycle (`precision`, `fast`, `smooth`) under the objective
+`win_rate_first_risk_adjusted`. This raises iteration speed by testing a small
+parameter family in parallel while keeping the base strategy file unchanged.
+This remains a simulation lane: outputs include
 `real_trading_enabled=false`, do not touch CTP/SimNow, and do not promote any
 style to real trading.
 
 When `index_intraday_directional` performs well, generated variants keep the
-same style family, `IF/IH/IC/IM` product scope, and `no_overnight=true`. The
-evolution layer can tune thresholds, lookback windows, and simulated risk
-weights, but it cannot turn this lane into a real-trading strategy.
+same style family, `IF/IH/IC/IM` product scope, `no_overnight=true`,
+`day_session_only=true`, `trend_alignment_required=true`, and volume
+confirmation. The evolution layer can tune thresholds, lookback windows,
+volume filters, and simulated risk weights, but it cannot turn this lane into a
+real-trading strategy.
 
 Production cron runs the governor every 30 minutes during CN futures day and
 night sessions. This slower cadence is intentional: 5-minute simulation keeps
@@ -166,7 +225,8 @@ The report joins:
 - simulated evolution plan and style weights
 - existing `market_health` and `ops_report` CNFutures surfaces
 
-`pass` means the chain has fresh data and review/style samples. `warn` is
+It also emits `observation_phase` and `alerts` for the dashboard. `pass` means
+the chain has fresh data and review/style samples. `warn` is
 acceptable during weekends, closed sessions, or before the first live sample is
 produced. `fail` means a hard wiring problem such as missing cron, unreadable
 freshness output, or broken existing health surfaces. The script is read-only
@@ -182,3 +242,16 @@ and always reports `real_trading_enabled=false`.
 - forbids falling back from a rejected real order to simulated execution
 
 Promotion to future real trading is a separate gate. It requires documented broker authorization, account setup, futures-company margin/fee metadata, risk limits, callback reconciliation, manual approval, emergency halt, and a reviewed fail-closed CTP gateway.
+
+Minimum future live-trading handoff conditions:
+
+- at least one full live-sim observation window with fresh SharedSignals
+  Futures 5-minute bars and no hard live-chain failures
+- sufficient realized PnL samples in simulated review output; open-only fills
+  remain `sample_insufficient`
+- risk limits documented per style, product, margin usage, daily loss, and
+  emergency halt
+- broker adapter, order callback, position reconciliation, receipt checksum,
+  and manual approval token verified in a non-production account
+- Nicholas explicitly approves moving a named style from simulation review into
+  a separate real-trading queue

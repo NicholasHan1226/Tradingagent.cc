@@ -49,11 +49,13 @@ class CNFuturesEvolutionTest(unittest.TestCase):
             self.assertTrue((review_root / "cn_futures/evolution_log.jsonl").exists())
             self.assertTrue((review_root / "cn_futures/style_weights.json").exists())
             generated = sorted((review_root / "cn_futures/generated_styles").glob("trend_g2_*.json"))
-            self.assertEqual(len(generated), 1)
+            self.assertEqual(len(generated), 3)
             variant = json.loads(generated[0].read_text(encoding="utf-8"))
             self.assertEqual(variant["parent_style"], "trend")
             self.assertEqual(variant["capital_layer"], "simulated")
             self.assertFalse(variant["real_trading_enabled"])
+            self.assertEqual(result["selection_objective"], "win_rate_first_risk_adjusted")
+            self.assertEqual(len(result["generated_variants"]), 3)
 
     def test_adapter_loads_generated_styles_and_weight_overlay(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -125,6 +127,8 @@ class CNFuturesEvolutionTest(unittest.TestCase):
                     "prediction_horizon_bars": 3,
                     "no_overnight": True,
                     "day_session_only": True,
+                    "trend_alignment_required": True,
+                    "min_volume_ratio": 1.05,
                     "flatten_before_session_close_minutes": 10,
                 },
             )
@@ -135,12 +139,15 @@ class CNFuturesEvolutionTest(unittest.TestCase):
 
             self.assertEqual(result["state"], "adjusted")
             generated = sorted((review_root / "cn_futures/generated_styles").glob("index_intraday_directional_g2_*.json"))
-            self.assertEqual(len(generated), 1)
+            self.assertEqual(len(generated), 3)
             variant = json.loads(generated[0].read_text(encoding="utf-8"))
             self.assertEqual(variant["style_family"], "index_intraday_directional")
             self.assertEqual(variant["products"], ["if", "ih", "ic", "im"])
             self.assertTrue(variant["no_overnight"])
             self.assertTrue(variant["day_session_only"])
+            self.assertTrue(variant["trend_alignment_required"])
+            self.assertGreaterEqual(variant["min_volume_ratio"], 1.0)
+            self.assertEqual(variant["selection_objective"], "win_rate_first_risk_adjusted")
             self.assertFalse(variant["real_trading_enabled"])
 
 

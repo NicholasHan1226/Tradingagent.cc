@@ -76,6 +76,8 @@ def _index_intraday_directional_signal(
     ma_window = max(lookback + 1, int(_safe_float(style.get("moving_average_bars"), 6)))
     threshold = abs(_safe_float(style.get("signal_threshold"), 0.0025))
     close_guard = int(_safe_float(style.get("flatten_before_session_close_minutes"), 10))
+    min_volume_ratio = max(0.0, _safe_float(style.get("min_volume_ratio"), 1.05))
+    trend_alignment_required = bool(style.get("trend_alignment_required", True))
     if len(bars) <= max(lookback, ma_window):
         return {"symbol": symbol, "style": style_name, "action": "hold", "reason": "insufficient_intraday_bars", "confidence": 0.0}
 
@@ -110,6 +112,33 @@ def _index_intraday_directional_signal(
     ma_distance = (latest / average) - 1.0
     volume_ratio = _volume_ratio(bars)
     directional_score = (momentum * 0.70) + (ma_distance * 0.30)
+    if trend_alignment_required and momentum * ma_distance <= 0:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "momentum": momentum,
+            "ma_distance": ma_distance,
+            "directional_score": directional_score,
+            "volume_ratio": volume_ratio,
+            "confidence": 0.0,
+            "reason": "trend_alignment_filter",
+        }
+    if volume_ratio < min_volume_ratio:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "momentum": momentum,
+            "ma_distance": ma_distance,
+            "directional_score": directional_score,
+            "volume_ratio": volume_ratio,
+            "min_volume_ratio": min_volume_ratio,
+            "confidence": 0.0,
+            "reason": "volume_confirmation_filter",
+        }
     action = "hold"
     if directional_score >= threshold and momentum > 0:
         action = "buy"

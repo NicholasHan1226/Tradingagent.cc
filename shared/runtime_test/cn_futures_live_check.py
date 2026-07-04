@@ -380,6 +380,50 @@ def recommendations(checks: list[Check]) -> list[str]:
     return notes
 
 
+def observation_alerts(checks: list[Check]) -> list[dict[str, Any]]:
+    """Return dashboard-friendly alerts without mutating runtime state."""
+
+    by_name = {check.name: check for check in checks}
+    alerts: list[dict[str, Any]] = []
+    freshness = by_name.get("sharedsignals_5min_freshness")
+    if freshness is not None:
+        report = freshness.details.get("report") if isinstance(freshness.details.get("report"), dict) else {}
+        session = report.get("session") if isinstance(report.get("session"), dict) else {}
+        freshness_status = str(report.get("status") or "").lower()
+        if freshness.status == "fail":
+            alerts.append({"severity": "error", "code": "futures_data_check_failed", "message": "期货5分钟数据检查失败，先修数据检查入口。"})
+        elif bool(session.get("in_session")) and freshness_status in {"stale", "no_data"}:
+            alerts.append({"severity": "warn", "code": "futures_5min_missing_in_session", "message": "当前处于期货交易时段，但5分钟行情还没有新鲜数据。"})
+    review = by_name.get("cn_futures_review")
+    if review is not None and review.status == "warn":
+        latest_filled = int(review.details.get("latest_filled_count") or 0)
+        if latest_filled <= 0:
+            alerts.append({"severity": "info", "code": "cn_futures_no_sim_samples", "message": "CNFutures 模拟盘还没有有效成交样本，暂不能评估胜率。"})
+    styles = by_name.get("cn_futures_style_outputs")
+    if styles is not None and styles.status == "warn":
+        alerts.append({"severity": "info", "code": "cn_futures_style_outputs_incomplete", "message": "风格对比输出还不完整，继续等待模拟盘和复盘样本。"})
+    evolution = by_name.get("cn_futures_evolution_outputs")
+    if evolution is not None and evolution.status == "fail":
+        alerts.append({"severity": "error", "code": "cn_futures_evolution_gate_failed", "message": "自迭代输出存在硬失败，不能推广任何风格。"})
+    return alerts
+
+
+def observation_phase(checks: list[Check]) -> str:
+    by_name = {check.name: check for check in checks}
+    if any(check.status == "fail" for check in checks):
+        return "blocked"
+    freshness = by_name.get("sharedsignals_5min_freshness")
+    review = by_name.get("cn_futures_review")
+    styles = by_name.get("cn_futures_style_outputs")
+    if freshness is None or freshness.status != "pass":
+        return "waiting_for_5min_data"
+    if review is None or review.status != "pass":
+        return "waiting_for_sim_samples"
+    if styles is None or styles.status != "pass":
+        return "waiting_for_style_review"
+    return "ready_to_observe"
+
+
 def run_live_check(
     *,
     sharedsignals_root: Path | None = None,
@@ -412,6 +456,8 @@ def run_live_check(
         "report_type": "live_chain_validation",
         "generated_at": _now_iso(),
         "overall_status": overall,
+        "observation_phase": observation_phase(checks),
+        "alerts": observation_alerts(checks),
         "summary": {
             "pass": sum(1 for check in checks if check.status == "pass"),
             "warn": sum(1 for check in checks if check.status == "warn"),

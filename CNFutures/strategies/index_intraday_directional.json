@@ -11,5 +11,7 @@
   "prediction_horizon_bars": 3,
   "no_overnight": true,
   "day_session_only": true,
+  "trend_alignment_required": true,
+  "min_volume_ratio": 1.05,
   "flatten_before_session_close_minutes": 10
 }

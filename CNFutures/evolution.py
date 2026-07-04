@@ -27,6 +27,7 @@ DEFAULT_STRATEGY_DIR = STRATEGY_DIR
 MIN_WEIGHT = 0.05
 MAX_WEIGHT = 0.60
 DEFAULT_MIN_TRADES = 20
+DEFAULT_MAX_VARIANTS_PER_CYCLE = 3
 
 
 def _now_iso() -> str:
@@ -178,16 +179,28 @@ def _normalize_active_weights(weights: dict[str, dict[str, Any]]) -> None:
         values["weight"] = round(_safe_float(values.get("weight"), 0.0) / total, 6)
 
 
-def _tweak_style(base: dict[str, Any], name: str) -> dict[str, Any]:
+def _tweak_style(base: dict[str, Any], name: str, *, experiment: str = "balanced") -> dict[str, Any]:
     variant = deepcopy({key: value for key, value in base.items() if not str(key).startswith("_")})
     signal_threshold = _safe_float(base.get("signal_threshold"), 0.01)
     risk_per_trade = _safe_float(base.get("risk_per_trade"), 0.02)
     max_margin_usage = _safe_float(base.get("max_margin_usage"), 0.20)
     family = str(base.get("style_family") or "").strip().lower()
+    threshold_multiplier = {
+        "precision": 1.10,
+        "fast": 0.85,
+        "smooth": 1.00,
+    }.get(experiment, 0.95)
+    risk_multiplier = {
+        "precision": 0.75,
+        "fast": 0.90,
+        "smooth": 0.80,
+    }.get(experiment, 0.85)
     variant.update({
         "name": name,
         "description": f"Auto-generated simulated CNFutures variant from {base.get('name')}.",
         "parent_style": base.get("name"),
+        "evolution_experiment": experiment,
+        "selection_objective": "win_rate_first_risk_adjusted",
         "generation": _safe_int(base.get("generation"), 1) + 1,
         "status": "active",
         "enabled": True,
@@ -197,41 +210,60 @@ def _tweak_style(base: dict[str, Any], name: str) -> dict[str, Any]:
         "real_trading_enabled": False,
         "capital_layer": "simulated",
         "account_type": "simulated",
-        "signal_threshold": round(min(0.05, max(0.003, signal_threshold * 0.95)), 6),
-        "risk_per_trade": round(min(0.05, max(0.003, risk_per_trade * 0.85)), 6),
+        "signal_threshold": round(min(0.05, max(0.003, signal_threshold * threshold_multiplier)), 6),
+        "risk_per_trade": round(min(0.05, max(0.003, risk_per_trade * risk_multiplier)), 6),
         "max_margin_usage": round(min(0.50, max(0.05, max_margin_usage * 0.90)), 6),
     })
     if family == "index_intraday_directional":
-        variant["signal_threshold"] = round(min(0.02, max(0.001, signal_threshold * 0.90)), 6)
-        variant["risk_per_trade"] = round(min(0.03, max(0.002, risk_per_trade * 0.85)), 6)
+        variant["signal_threshold"] = round(min(0.02, max(0.001, signal_threshold * threshold_multiplier)), 6)
+        variant["risk_per_trade"] = round(min(0.03, max(0.002, risk_per_trade * risk_multiplier)), 6)
         variant["max_margin_usage"] = round(min(0.20, max(0.03, max_margin_usage * 0.90)), 6)
-        variant["momentum_lookback_bars"] = max(2, _safe_int(base.get("momentum_lookback_bars"), 3) + 1)
+        lookback_delta = {"precision": 1, "fast": -1, "smooth": 2}.get(experiment, 1)
+        ma_delta = {"precision": 1, "fast": -1, "smooth": 3}.get(experiment, 1)
+        variant["momentum_lookback_bars"] = max(2, _safe_int(base.get("momentum_lookback_bars"), 3) + lookback_delta)
         variant["moving_average_bars"] = max(
             variant["momentum_lookback_bars"] + 1,
-            _safe_int(base.get("moving_average_bars"), 6) + 1,
+            _safe_int(base.get("moving_average_bars"), 6) + ma_delta,
         )
         variant["prediction_horizon_bars"] = max(1, _safe_int(base.get("prediction_horizon_bars"), 3))
         variant["no_overnight"] = True
         variant["day_session_only"] = True
+        variant["trend_alignment_required"] = True
+        base_volume = max(1.0, _safe_float(base.get("min_volume_ratio"), 1.05))
+        volume_delta = {"precision": 0.05, "fast": -0.02, "smooth": 0.02}.get(experiment, 0.0)
+        variant["min_volume_ratio"] = round(min(1.30, max(1.00, base_volume + volume_delta)), 4)
         variant["flatten_before_session_close_minutes"] = max(5, _safe_int(base.get("flatten_before_session_close_minutes"), 10))
     return variant
 
 
-def _maybe_generate_variant(
+def _maybe_generate_variants(
     top_style: dict[str, Any],
     *,
     review_root: Path | str | None = None,
     dry_run: bool = False,
-) -> dict[str, Any]:
+    max_variants: int = DEFAULT_MAX_VARIANTS_PER_CYCLE,
+) -> list[dict[str, Any]]:
     base_name = str(top_style.get("name") or "style")
-    name = f"{base_name}_g{_safe_int(top_style.get('generation'), 1) + 1}_{_today_compact()}"
-    path = generated_styles_dir(review_root) / f"{name}.json"
-    if path.exists():
-        return {"action": "variant_exists", "style_name": name, "path": str(path)}
-    payload = _tweak_style(top_style, name)
-    if not dry_run:
-        _write_json(path, payload)
-    return {"action": "variant_generated" if not dry_run else "variant_planned", "style_name": name, "base_style": base_name, "path": str(path)}
+    generation = _safe_int(top_style.get("generation"), 1) + 1
+    experiments = ["precision", "fast", "smooth"][: max(1, int(max_variants))]
+    results: list[dict[str, Any]] = []
+    for experiment in experiments:
+        name = f"{base_name}_g{generation}_{experiment}_{_today_compact()}"
+        path = generated_styles_dir(review_root) / f"{name}.json"
+        if path.exists():
+            results.append({"action": "variant_exists", "style_name": name, "base_style": base_name, "experiment": experiment, "path": str(path)})
+            continue
+        payload = _tweak_style(top_style, name, experiment=experiment)
+        if not dry_run:
+            _write_json(path, payload)
+        results.append({
+            "action": "variant_generated" if not dry_run else "variant_planned",
+            "style_name": name,
+            "base_style": base_name,
+            "experiment": experiment,
+            "path": str(path),
+        })
+    return results
 
 
 def evaluate_styles(
@@ -239,6 +271,7 @@ def evaluate_styles(
     strategy_dir: Path | str | None = None,
     review_root: Path | str | None = None,
     min_trades: int = DEFAULT_MIN_TRADES,
+    max_variants_per_cycle: int = DEFAULT_MAX_VARIANTS_PER_CYCLE,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Evaluate CNFutures styles and write simulated runtime overlays."""
@@ -323,19 +356,25 @@ def evaluate_styles(
         })
 
     _normalize_active_weights(weights)
-    variant_action: dict[str, Any] | None = None
+    variant_actions: list[dict[str, Any]] = []
     top_metric = ranking_by_style.get(top_name, {})
     if top_name and top_name in styles and _safe_int(top_metric.get("trades"), 0) >= min_trades and top_metric.get("trend") == "improving" and _safe_float(top_metric.get("pnl"), 0.0) > 0:
-        variant_action = _maybe_generate_variant(styles[top_name], review_root=review_root, dry_run=dry_run)
-        actions.append({"style_name": top_name, **variant_action, "reason": "top_style_improving"})
-        weights[str(variant_action["style_name"])] = {
-            "status": "active",
-            "enabled": True,
-            "weight": MIN_WEIGHT,
-            "evolution_action": variant_action["action"],
-            "evolution_reason": "top_style_improving",
-            "last_modified": _now_iso(),
-        }
+        variant_actions = _maybe_generate_variants(
+            styles[top_name],
+            review_root=review_root,
+            dry_run=dry_run,
+            max_variants=max_variants_per_cycle,
+        )
+        for variant_action in variant_actions:
+            actions.append({"style_name": top_name, **variant_action, "reason": "top_style_improving_parameter_search"})
+            weights[str(variant_action["style_name"])] = {
+                "status": "active",
+                "enabled": True,
+                "weight": MIN_WEIGHT,
+                "evolution_action": variant_action["action"],
+                "evolution_reason": "top_style_improving_parameter_search",
+                "last_modified": _now_iso(),
+            }
         _normalize_active_weights(weights)
 
     state = "no_performance_history" if not rankings else ("adjusted" if any(action["action"] not in {"observe"} for action in actions) else "observed")
@@ -349,10 +388,13 @@ def evaluate_styles(
         "real_trading_enabled": False,
         "dry_run": dry_run,
         "min_trades": min_trades,
+        "max_variants_per_cycle": max_variants_per_cycle,
+        "selection_objective": "win_rate_first_risk_adjusted",
         "actions": actions,
         "rankings": rankings,
         "weights": weights,
-        "generated_variant": variant_action or {},
+        "generated_variant": variant_actions[0] if variant_actions else {},
+        "generated_variants": variant_actions,
         "written_paths": {} if dry_run else {
             "style_weights": str(style_weights_path(review_root)),
             "evolution_plan": str(evolution_plan_path(review_root)),
@@ -381,6 +423,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--strategy-dir", type=Path, default=DEFAULT_STRATEGY_DIR)
     parser.add_argument("--review-root", type=Path, default=DEFAULT_REVIEW_ROOT)
     parser.add_argument("--min-trades", type=int, default=DEFAULT_MIN_TRADES)
+    parser.add_argument("--max-variants-per-cycle", type=int, default=DEFAULT_MAX_VARIANTS_PER_CYCLE)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--pretty", action="store_true")
     return parser.parse_args(argv)
@@ -392,6 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         strategy_dir=args.strategy_dir,
         review_root=args.review_root,
         min_trades=args.min_trades,
+        max_variants_per_cycle=args.max_variants_per_cycle,
         dry_run=args.dry_run,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2 if args.pretty else None))

@@ -55,6 +55,7 @@ class CNFuturesSimTest(unittest.TestCase):
             "moving_average_bars": 4,
             "prediction_horizon_bars": 3,
             "no_overnight": True,
+            "min_volume_ratio": 1.05,
             "flatten_before_session_close_minutes": 10,
         }
         up_bars = [
@@ -82,6 +83,43 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(sell["action"], "sell")
         self.assertEqual(guarded["action"], "hold")
         self.assertEqual(guarded["reason"], "session_close_guard")
+
+    def test_index_intraday_directional_signal_filters_weak_confirmation(self) -> None:
+        from CNFutures.signal_engine import generate_style_signal
+
+        style = {
+            "name": "index_intraday_directional",
+            "style_family": "index_intraday_directional",
+            "signal_threshold": 0.001,
+            "momentum_lookback_bars": 3,
+            "moving_average_bars": 4,
+            "no_overnight": True,
+            "day_session_only": True,
+            "trend_alignment_required": True,
+            "min_volume_ratio": 1.05,
+        }
+        weak_volume_bars = [
+            {"bar_time": "2026-07-06 14:10:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3502, "volume": 1000},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3505, "volume": 1000},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3512, "volume": 1000},
+            {"bar_time": "2026-07-06 14:30:00", "close": 3520, "volume": 1000},
+        ]
+        misaligned_bars = [
+            {"bar_time": "2026-07-06 14:10:00", "close": 3700, "volume": 1000},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3800, "volume": 1000},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3800, "volume": 1000},
+            {"bar_time": "2026-07-06 14:30:00", "close": 3600, "volume": 1500},
+        ]
+
+        weak_volume = generate_style_signal("IF2601.CFFEX", weak_volume_bars, style)
+        misaligned = generate_style_signal("IF2601.CFFEX", misaligned_bars, style)
+
+        self.assertEqual(weak_volume["action"], "hold")
+        self.assertEqual(weak_volume["reason"], "volume_confirmation_filter")
+        self.assertEqual(misaligned["action"], "hold")
+        self.assertEqual(misaligned["reason"], "trend_alignment_filter")
 
     def test_index_intraday_directional_signal_rejects_non_day_session_bars(self) -> None:
         from CNFutures.signal_engine import generate_style_signal
