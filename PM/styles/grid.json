@@ -1,5 +1,5 @@
 {
-  "enabled": true,
+  "enabled": false,
   "name": "grid",
   "position_pct": 0.03,
   "stop_loss_pct": -0.08,
@@ -9,10 +9,10 @@
   "scale_in_steps": 3,
   "conviction_min": 0.45,
   "description": "Probability-adapted grid style for staged entries around mispriced markets.",
-  "status": "active",
-  "weight": 0.12605,
+  "status": "paused",
+  "weight": 0.02,
   "created_at": "2026-07-03T16:56:35+00:00",
-  "last_modified": "2026-07-04T03:57:48+00:00",
+  "last_modified": "2026-07-04T05:19:03+00:00",
   "generation": 1,
   "auto_generate": {
     "position_pct": {
@@ -40,5 +40,6 @@
       "max": 30,
       "step": 2
     }
-  }
+  },
+  "paused": true
 }
