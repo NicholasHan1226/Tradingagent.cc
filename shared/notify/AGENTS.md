@@ -33,3 +33,7 @@
 - Cloudflare 发送接口使用 Email Service endpoint `/email/sending/send`，旧的 `/email/routing/messages` 会导致 404/鉴权失败。
 - 交易邮件固定：`notice@tradingagent.cc -> tradingadviser@coze.email`；系统邮件固定：`notice@tradingagent.cc -> soc@coze.email`。
 - 发送失败时仍保存到 `shared/notify/logs/email_fallback/`，但修复后必须用真实模板邮件验证 `status=sent`，不能只看 fallback 文件存在。
+
+## 2026-07-04 系统邮件 smoke
+- 主服务器已实测 TradingAgent 系统邮件：Cloudflare Email Service 从 `notice@tradingagent.cc` 发往 `soc@coze.email` 成功，主题含 `[SMOKE][TradingAgent][系统]`。
+- 后续健康检查、异常告警、自愈和对账类邮件继续走系统通道；交易信号、规划、复盘、日报、周报和成交回执继续走交易通道。

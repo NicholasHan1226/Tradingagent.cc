@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-04 (CNFutures 5-minute simulated trading cadence)
+> 最后更新：2026-07-04 (system email smoke + CNFutures cadence)
 
 ---
 
@@ -49,6 +49,11 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-04 system email smoke verification
+
+- [x] 主服务器实测 TradingAgent 系统邮件：Cloudflare Email Service 从 `notice@tradingagent.cc` 发往 `soc@coze.email` 成功，主题含 `[SMOKE][TradingAgent][系统]`。
+- [x] 邮件边界保持不变：交易类发 `tradingadviser@coze.email`，系统类发 `soc@coze.email`；`notice@agentspaces.cc` 不作为三系统交易发件邮箱。
 
 ### 2026-07-04 CNFutures 5-minute simulated trading cadence
 
