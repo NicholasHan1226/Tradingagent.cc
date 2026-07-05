@@ -795,7 +795,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
             old_db = os.environ.get("SHARED_SIGNALS_DB")
             os.environ["SHARED_SIGNALS_DB"] = str(db_path)
             try:
-                adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 1})
+                adapter = CNFuturesAdapter(reader=object(), universe_filter={"max_symbols": 1})
                 self.assertEqual(adapter.get_universe("20260703"), ["RB2601.SHF"])
             finally:
                 if old_db is None:
