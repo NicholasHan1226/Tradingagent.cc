@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (cross-repo path cleanup and stale docs retired)
+> 最后更新：2026-07-05 (pre-open readiness audit and stale market docs retired)
 
 ---
 
@@ -21,6 +21,8 @@
 - **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行，A股开盘验收 cron 已安装：08:55 盘前、09:35/13:05 数据验收、09:45/13:10 首样本告警；CNFutures 5 分钟模拟 cron 已安装并相对 SharedSignals 采集错后 1 分钟，观察报告错后 2 分钟刷新，风格演化按日盘/夜盘 30 分钟级运行，盘后胜率校准报告在 15:45 与 02:45 触发，开盘前只读验收在 08:55/12:55/20:55 触发，开盘后数据验收在 09:05/13:05/21:05 与 00:35 触发，首样本告警在 09:10/13:10/21:10 与 00:40 触发；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用且 wrapper 默认需要 `TRADINGAGENT_HK_SIM_ENABLED=1` 才能运行；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US/CNFutures 模拟闭环；`job_style_evolution` 模板每 4 小时只跑 Crypto/PM/US simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；均带 flock 与独立日志
 - **SharedSignals API 消费**：`SharedSignalsAPIClient` 已覆盖核心 15 个数据消费端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；A股 `get_assets()` 走 SharedSignals `stock_basic` read model，单日 `get_bars_daily()` 会补齐 start=end；`get_bars_intraday()` 已优先走 SharedSignals `/realtime_5min?market=...` 并保留 SQLite 回退，期货/A股 5 分钟行情与可选 bid/ask 字段可走同一消费入口；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号；HK 数据与模拟入口保留但暂不进入生产调度
 - **数据源边界复核**：2026-07-04 主服务器生产路径审计未发现 TradingAgent 活动代码直接调用 Tushare/Binance/Polymarket/Alpaca/Yahoo 等行情源；HTTP 调用保留在 SharedSignals API 客户端、健康检查、邮件/webhook 和研究 LLM 路径。误拷贝的 untracked `Users/` 旧目录已从服务器删除，`.gitignore` 已防止再次出现。
+- **旧市场工具目录退役口径**：2026-07-05 开盘前复核已修正 `US/AGENTS.md` 与 `PM/AGENTS.md`；旧 `/opt/investment/US/tools/`、`/opt/investment/PredictionMarkets/tools/` 只保留为历史迁移线索，不是现役生产代码、采集或执行入口。
+- **旧 cron 迁移快照退役**：根目录 `cron_gap.md` 已移入 `docs/archive/cron_gap_20260629.md`，只作历史参考；当前 cron 依据为 `STATUS.md`、仓库 `crontab.txt`、`shared/wrappers/` 和服务器 live crontab。
 - **研究/筛选增强**：新增 `shared/screening/fundamental_analyzer.py` 和 `shared/research/multi_perspective.py`，只读消费 SharedSignals API/DB，输出基本面质量分、同业比较、red flags 和 bull/bear/macro/technical 多视角共识报告；`auto_pipeline` 消费这些研究结果生成 simulated 决策，不触碰实盘队列
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **复盘/报告输入**：日报、周报、归因和汇总邮件默认通过 `load_review_trades()` 读取 legacy shadow fills + `shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl` + A股 `shared/logs/local_sim/local_sim_trades.jsonl`；报告保留 `review_trade_count`、`shadow_trade_count`、`simulated_trade_count` 三个计数，避免服务器本地模拟成交被误判为无样本
@@ -28,6 +30,7 @@
 - **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查默认读取 TradingAgent 本地回执，旧 MarketGraph 回执只在历史文件存在时作为兼容输入，并能识别“尚无首笔本地模拟成交”的 bootstrap 状态，避免把无样本误报为链路故障
 - **模拟盘健康检查**：`market_health` 已区分交易时段样本缺失与闭市等待首样本；A股和 CNFutures 在周末/闭市且尚未进入应产生样本的时段时不再误报 warn，进入或经过交易时段后仍无数据/成交会继续告警
 - **A股/CNFutures 开盘验收框架**：A股新增 `shared/runtime_test/ashare_opening_validator.py`，提供 `validate_pre_open` / `validate_opening` / `first_sample_alerts` 三个只读入口，验证 SharedSignals 日线/5分钟数据、本地模拟成交样本、签名回执、复盘日志和 filled signal cards；新增 `shared/wrappers/job_ashare_pre_open_validation.sh`、`job_ashare_opening_validation.sh`、`job_ashare_first_sample_alert.sh` 三个 wrapper，并已写入生产 crontab。CNFutures `opening_validator.py` 已增强 filled signals、receipts 和 review rows 计数与告警。两市场验收均固定 `real_trading_enabled=false`，只在异常时产生系统告警。
+- **CNFutures 验收入口兼容**：2026-07-05 复核发现 `CNFutures/opening_validator.py` 直接脚本启动会被相对导入阻断；已补兼容，`python -m CNFutures.opening_validator` 与 `python CNFutures/opening_validator.py` 均可用于只读验收。生产 wrapper 仍使用模块启动。
 - **多市场绩效去重**：Crypto/PM/US/CNFutures 共用的 `style_performance.jsonl` 已从 5 分钟 append-only 改为按 `(market, style_name, date)` 幂等写入，历史读取也会取同键最新值，避免 5 分钟任务把 runs/trades/PnL 重复放大并污染风格演化。
 - **多市场收益口径**：新增 `shared/review/pnl_summary.py` 统一摘要层，按 `realized_pnl + mark-to-market unrealized_pnl` 聚合 Ashare/Crypto/PM/US/CNFutures 模拟账本；Ashare 用 SharedSignals 日收盘价做 mark-to-market（缺失则回退成交价），其他市场用 `SimLedger` journal 重放盯市；日报、周报、运维报告、`market_health` 和 `metrics_dashboard` 均输出 `ledger_realized_pnl` / `ledger_unrealized_pnl` / `ledger_total_pnl` / `ledger_market_value` / `ledger_open_position_count` / `ledger_missing_mark_count` / `ledger_pnl_source`；Crypto/PM/US 的 `StyleRunner` 主收益口径同样基于统一模拟账本；CNFutures `sim_runner.py` 和 `review.py` 已补 unrealized 输出；HK 仍暂停，不纳入本口径。
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`

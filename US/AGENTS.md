@@ -6,7 +6,8 @@
 美股交易模拟盘/影子盘, 高频训练策略, 每日2次复盘。
 
 ## 现有代码
-- /opt/investment/US/tools/ (20个工具)
+- 本仓库 `US/` 是现役美股交易研究、模拟盘和工具入口。
+- 旧 `/opt/investment/US/tools/` 只作历史迁移线索，不是生产代码入口；不得恢复为独立采集或执行依赖。
 - Alpaca API executor (唯一真实API执行器)
 - shadow/sim/strategy 完整
 
@@ -16,8 +17,9 @@
 
 ## 工具清单 (TradingAgent tool references)
 
-- 源目录: `/opt/investment/US/tools/` (20 个 .py 工具)
-- TradingAgent 引用: `tradingagent/US/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
+- 源目录: `tradingagent/US/`。
+- 数据入口: SharedSignals API/read model 优先；Alpaca 仅作为未来受控券商/行情适配器，不替代 SharedSignals 供数层。
+- 历史迁移线索: `/opt/investment/US/tools/`；如服务器仍有残留，默认按退役资产处理。
 - 关键工具:
   - us_workflow.py — Daily workflow: collect → plan → scan → review
   - us_market_data.py — US stock data via Tushare

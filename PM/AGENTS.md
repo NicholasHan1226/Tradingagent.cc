@@ -6,7 +6,8 @@
 预测市场交易模拟盘/影子盘, 高频训练策略, 每日2次复盘。
 
 ## 现有代码
-- /opt/investment/PredictionMarkets/tools/ (20个工具)
+- 本仓库 `PM/` 是现役预测市场交易研究、模拟盘和工具入口。
+- 旧 `/opt/investment/PredictionMarkets/tools/` 只作历史迁移线索，不是生产代码入口；不得恢复为独立采集或执行依赖。
 - CLOB sandbox + Dune Analytics
 - shadow/sim/strategy 完整
 
@@ -16,8 +17,9 @@
 
 ## 工具清单 (TradingAgent tool references)
 
-- 源目录: `/opt/investment/PredictionMarkets/tools/` (20 个 .py 工具)
-- TradingAgent 引用: `tradingagent/PM/tools/` — 相对符号链接 + `manifest.csv` (filename, docstring)
+- 源目录: `tradingagent/PM/`。
+- 数据入口: SharedSignals API/read model 优先；CLOB sandbox 仅作模拟/研究适配，不替代 SharedSignals 供数层。
+- 历史迁移线索: `/opt/investment/PredictionMarkets/tools/`；如服务器仍有残留，默认按退役资产处理。
 - 关键工具:
   - pm_workflow.py — Unified PredictionMarkets simulated-training workflow
   - pm_market_data.py — Read-only Polymarket market-data collection

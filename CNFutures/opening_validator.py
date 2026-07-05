@@ -6,11 +6,16 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import sys
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .review import DEFAULT_REVIEW_PATH
+try:
+    from .review import DEFAULT_REVIEW_PATH
+except ImportError:  # pragma: no cover - direct script execution fallback
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from CNFutures.review import DEFAULT_REVIEW_PATH
 
 DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
 DEFAULT_SIGNALS_DIR = Path(__file__).resolve().parents[1] / "signals"
