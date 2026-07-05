@@ -1,7 +1,7 @@
 import type { DepthRow, HoldingRow, Market, Page, PageMeta, PerformancePoint, SignalRow, SignalStatus } from '../types/dashboard'
 import type { ApiStatus, DashboardApiResponse } from '../api/types'
 
-export const markets: Market[] = ['All Markets', 'A-share', 'US', 'Crypto', 'HK', 'PM']
+export const markets: Market[] = ['All Markets', 'A-share', 'US', 'Crypto', 'HK', 'PM', 'CNFutures']
 export const pages: Page[] = ['主页', '收益', '机会', '持仓', '决策', '风险', '复盘']
 
 export const pageMeta: Record<Page, PageMeta> = {
@@ -49,6 +49,7 @@ export const marketLabels: Record<Market, string> = {
   Crypto: '加密',
   HK: '港股',
   PM: '预测',
+  CNFutures: '中国期货',
 }
 
 export const statusLabels: Record<SignalStatus, string> = {

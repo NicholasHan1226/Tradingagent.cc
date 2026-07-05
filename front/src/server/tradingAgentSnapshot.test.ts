@@ -123,6 +123,39 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.signals[0]).toMatchObject({ market: 'PM' })
   })
 
+  it('maps China futures signals and ledger trades to a dedicated dashboard market', async () => {
+    const root = await createWorkspace()
+    await mkdir(join(root, 'TradingAgent/shared/logs/sim_ledger/cn_futures/index_intraday_directional'), { recursive: true })
+
+    await writeFile(
+      join(root, 'signals/pending/IF2601.CFFEX.json'),
+      JSON.stringify({
+        ts_code: 'IF2601.CFFEX',
+        market: 'cn_futures',
+        status: 'pending',
+      }),
+    )
+    await writeFile(
+      join(root, 'TradingAgent/shared/logs/sim_ledger/cn_futures/index_intraday_directional/trade_journal.jsonl'),
+      JSON.stringify({
+        fill_price: 3500,
+        fill_qty: 1,
+        notional: 350000,
+        side: 'buy',
+        symbol: 'IF2601.CFFEX',
+        timestamp: '2026-07-04T11:17:34+00:00',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'IF2601.CFFEX', market: 'CNFutures' }))
+  })
+
   it('includes claimed and running cards from the live signal pipeline as active opportunities', async () => {
     const root = await createWorkspace()
     await mkdir(join(root, 'signals/claimed'), { recursive: true })
@@ -216,6 +249,9 @@ describe('TradingAgent snapshot reader', () => {
           market: 'crypto',
           date: '20260703',
           pnl: 12.5,
+          realized_pnl: 0,
+          unrealized_pnl: 12.5,
+          pnl_source: 'sim_ledger_mark_to_market',
           max_dd: 40,
           trades: 3,
         }),
@@ -224,6 +260,9 @@ describe('TradingAgent snapshot reader', () => {
           market: 'crypto',
           date: '20260703',
           pnl: -2.5,
+          realized_pnl: -2.5,
+          unrealized_pnl: 0,
+          pnl_source: 'sim_ledger_mark_to_market',
           max_dd: 10,
           trades: 1,
         }),
@@ -232,6 +271,9 @@ describe('TradingAgent snapshot reader', () => {
           market: 'crypto',
           date: '20260704',
           pnl: 7.25,
+          realized_pnl: 3,
+          unrealized_pnl: 4.25,
+          pnl_source: 'sim_ledger_mark_to_market',
           max_dd: 20,
           trades: 2,
         }),
@@ -256,6 +298,9 @@ describe('TradingAgent snapshot reader', () => {
       maxDrawdownPct: 4,
       tradeCount: 2,
       pointCount: 2,
+      pnlSource: 'sim_ledger_mark_to_market',
+      realizedPnl: 0.5,
+      unrealizedPnl: 16.75,
     })
     expect(snapshot.domains.performance.status).toBe('ready')
     expect(snapshot.sourceRefs.performanceTracker).toBe('shared/review/*/style_performance.jsonl')

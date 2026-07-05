@@ -266,6 +266,13 @@ class StyleRunner:
         pnls = [float(row.get("pnl", 0.0) or 0.0) for row in executed]
         wins = [row for row in executed if row.get("win")]
         ledger_pnl = self._style_ledger(style).total_pnl(prices=mark_prices)
+        ledger_samples = [
+            float(value)
+            for value in ledger_pnl.get("pnl_samples", [])
+            if isinstance(value, (int, float)) and abs(float(value)) > 1e-12
+        ]
+        metric_pnls = ledger_samples or pnls
+        metric_wins = [value for value in metric_pnls if value > 0]
         return {
             "style_name": style.name,
             "status": style.status,
@@ -282,9 +289,10 @@ class StyleRunner:
             "equity": round(ledger_pnl["equity"], 6),
             "position_count": int(ledger_pnl["open_position_count"]),
             "missing_mark_count": int(ledger_pnl["missing_mark_count"]),
-            "win_rate": round(len(wins) / len(executed), 6) if executed else 0.0,
-            "max_dd": round(self._max_drawdown(pnls), 6),
-            "sharpe": round(self._sharpe(pnls), 6),
+            "pnl_metric_source": "sim_ledger_realized_unrealized_samples" if ledger_samples else "run_fill_pnl_fallback",
+            "win_rate": round(len(metric_wins) / len(metric_pnls), 6) if metric_pnls else (round(len(wins) / len(executed), 6) if executed else 0.0),
+            "max_dd": round(self._max_drawdown(metric_pnls), 6),
+            "sharpe": round(self._sharpe(metric_pnls), 6),
             "avg_hold_hours": round(float(style.max_hold_days) * 24.0, 6),
             "capital_layer": "simulated",
             "real_execution": False,

@@ -131,6 +131,9 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
   `observation_phase`, `alerts`, `data`, `simulation`, `styles`, `evolution`,
   and `real_trading_enabled=false`; nested `source_live_check` remains a debug
   surface for operators.
+- The TradingAgent front read model maps `cn_futures` and standard China
+  futures exchange suffixes (`.CFFEX`, `.SHFE`, `.DCE`, `.CZCE`, `.INE`,
+  `.GFEX`) to the dashboard market label `CNFutures`.
 
 CNFutures has no separate shadow layer. Multi-style testing is represented by
 isolated simulated accounts and strategy styles with `capital_layer=simulated`

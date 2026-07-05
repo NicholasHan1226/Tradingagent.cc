@@ -115,9 +115,11 @@ class StyleRunnerLedgerTest(unittest.TestCase):
 
             metric = result["style_comparison"][0]
             self.assertEqual(metric["pnl_source"], "sim_ledger_mark_to_market")
+            self.assertEqual(metric["pnl_metric_source"], "sim_ledger_realized_unrealized_samples")
             self.assertEqual(metric["realized_pnl"], 0.0)
             self.assertGreater(metric["unrealized_pnl"], 900.0)
             self.assertEqual(metric["pnl"], metric["unrealized_pnl"])
+            self.assertEqual(metric["win_rate"], 1.0)
 
     def test_style_metrics_include_realized_and_remaining_unrealized_pnl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -140,9 +142,11 @@ class StyleRunnerLedgerTest(unittest.TestCase):
 
             metric = result["style_comparison"][0]
             self.assertEqual(metric["pnl_source"], "sim_ledger_mark_to_market")
+            self.assertEqual(metric["pnl_metric_source"], "sim_ledger_realized_unrealized_samples")
             self.assertGreater(metric["realized_pnl"], 1500.0)
             self.assertGreater(metric["unrealized_pnl"], 300.0)
             self.assertAlmostEqual(metric["pnl"], metric["realized_pnl"] + metric["unrealized_pnl"], places=6)
+            self.assertEqual(metric["win_rate"], 1.0)
 
     def test_copies_market_snapshot_fields_from_signal_to_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -192,12 +196,14 @@ class SimLedgerTotalPnlTest(unittest.TestCase):
             self.assertEqual(without_prices["realized_pnl"], 10.0)
             self.assertEqual(without_prices["unrealized_pnl"], 0.0)
             self.assertEqual(without_prices["total_pnl"], 10.0)
+            self.assertEqual(without_prices["pnl_samples"], [10.0])
 
             with_prices = ledger.total_pnl(prices={"BTCUSDT": 130.0})
             self.assertEqual(with_prices["realized_pnl"], 10.0)
             self.assertEqual(with_prices["unrealized_pnl"], 15.0)
             self.assertEqual(with_prices["total_pnl"], 25.0)
             self.assertEqual(with_prices["missing_mark_count"], 0)
+            self.assertEqual(with_prices["pnl_samples"], [10.0, 15.0])
 
     def test_total_pnl_marks_missing_symbols_at_cost(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

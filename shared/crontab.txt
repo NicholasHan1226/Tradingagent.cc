@@ -21,9 +21,15 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 # Shared health/review loops.
 */15 * * * * /opt/investment/tradingagent/shared/wrappers/job_self_heal.sh >> /opt/investment/tradingagent/shared/logs/cron/self_heal.log 2>&1
 */10 * * * * /opt/investment/tradingagent/shared/wrappers/job_sim_market_health.sh >> /opt/investment/tradingagent/shared/logs/cron/sim_market_health_cron.log 2>&1
+0 9 * * 1-5 /opt/investment/tradingagent/cron/auto_pipeline.sh
+*/10 * * * * /opt/investment/tradingagent/cron/health_check.sh
+0 */4 * * * /opt/investment/tradingagent/cron/evolution.sh
+0 16 * * 1-5 /opt/investment/tradingagent/cron/daily_review.sh
 1-59/5 9-15,21-23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_sim.log 2>&1
 1-59/5 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_sim.log 2>&1
 16,46 9-15,21-23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_evolution.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_evolution.log 2>&1
 16,46 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_evolution.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_evolution.log 2>&1
 2-59/5 9-15,21-23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_observation_report.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_observation_report.log 2>&1
 2-59/5 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_observation_report.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_observation_report.log 2>&1
+5 9,13,21 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_opening_validation.log 2>&1
+35 0 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_opening_validation.log 2>&1

@@ -81,6 +81,14 @@ def _is_day_session_bar(row: dict[str, Any]) -> bool:
     return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(15, 0))
 
 
+def _is_night_session_bar(row: dict[str, Any]) -> bool:
+    parsed = _bar_time(row)
+    if parsed is None:
+        return False
+    current = parsed.time()
+    return current >= time(21, 0) or current <= time(2, 30)
+
+
 def _latest_previous_close(rows: list[dict[str, Any]]) -> float:
     for row in reversed(rows):
         previous_close = _safe_float(row.get("previous_close") or row.get("pre_close") or row.get("reference_price"), 0.0)
@@ -484,6 +492,15 @@ def generate_style_signal(
 
     if str(style.get("style_family") or "").strip().lower() == "index_intraday_directional":
         return _index_intraday_directional_signal(symbol, bars, style)
+
+    if _is_night_session_bar(bars[-1]) and not bool(style.get("night_session_allowed", False)):
+        return {
+            "symbol": symbol,
+            "style": str(style.get("name") or "default"),
+            "action": "hold",
+            "reason": "night_session_not_allowed",
+            "confidence": 0.0,
+        }
 
     if len(bars) < 2:
         return {"symbol": symbol, "action": "hold", "reason": "insufficient_bars", "confidence": 0.0}

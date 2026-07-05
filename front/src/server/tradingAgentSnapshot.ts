@@ -78,10 +78,13 @@ type StylePerformanceRow = {
   trade_date?: string
   as_of?: string
   pnl?: number | string
+  realized_pnl?: number | string
+  unrealized_pnl?: number | string
   max_dd?: number | string
   market?: string
   style_name?: string
   trades?: number | string
+  pnl_source?: string
   capital_layer?: string
   account_type?: string
   real_execution?: boolean
@@ -203,17 +206,20 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
     }
   }
 
-  const byDay = new Map<string, { pnl: number; maxDrawdown: number; trades: number }>()
+  const byDay = new Map<string, { pnl: number; realizedPnl: number; unrealizedPnl: number; maxDrawdown: number; trades: number; pnlSources: Set<string> }>()
   for (const row of rows) {
     if (row.real_execution === true) continue
     if (normalizeCapitalLayer(row) !== 'simulated') continue
     const dayKey = compactDate(row.date ?? row.trade_date ?? row.as_of)
     const pnl = parseFiniteNumber(row.pnl)
     if (!dayKey || pnl === undefined) continue
-    const current = byDay.get(dayKey) ?? { pnl: 0, maxDrawdown: 0, trades: 0 }
+    const current = byDay.get(dayKey) ?? { pnl: 0, realizedPnl: 0, unrealizedPnl: 0, maxDrawdown: 0, trades: 0, pnlSources: new Set<string>() }
     current.pnl += pnl
+    current.realizedPnl += parseFiniteNumber(row.realized_pnl) ?? 0
+    current.unrealizedPnl += parseFiniteNumber(row.unrealized_pnl) ?? 0
     current.maxDrawdown = Math.max(current.maxDrawdown, parseFiniteNumber(row.max_dd) ?? 0)
     current.trades += Math.max(0, Math.trunc(parseFiniteNumber(row.trades) ?? 0))
+    if (row.pnl_source) current.pnlSources.add(String(row.pnl_source))
     byDay.set(dayKey, current)
   }
 
@@ -238,6 +244,9 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
     }
   })
   const totalPnl = [...byDay.values()].reduce((sum, row) => sum + row.pnl, 0)
+  const totalRealizedPnl = [...byDay.values()].reduce((sum, row) => sum + row.realizedPnl, 0)
+  const totalUnrealizedPnl = [...byDay.values()].reduce((sum, row) => sum + row.unrealizedPnl, 0)
+  const pnlSources = new Set([...byDay.values()].flatMap((row) => [...row.pnlSources]))
   const latest = byDay.get(dates.at(-1)!)!
   const maxDrawdown = Math.max(...[...byDay.values()].map((row) => Math.abs(row.maxDrawdown)), 0)
 
@@ -252,6 +261,9 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
       tradeCount: latest.trades,
       pointCount: performance.length,
       source: tradingAgentReadModelSources.performanceTracker,
+      pnlSource: pnlSources.size === 1 ? [...pnlSources][0] : pnlSources.size > 1 ? 'mixed' : undefined,
+      realizedPnl: roundMoney(totalRealizedPnl),
+      unrealizedPnl: roundMoney(totalUnrealizedPnl),
       updatedAt: generatedAt,
     },
   }
@@ -539,6 +551,7 @@ function inferMarket(symbol: string): Market {
   if (symbol.endsWith('.HK')) return 'HK'
   if (symbol.endsWith('.SH') || symbol.endsWith('.SZ')) return 'A-share'
   if (symbol.endsWith('.US')) return 'US'
+  if (/\.(CFFEX|SHFE|DCE|CZCE|INE|GFEX)$/i.test(symbol)) return 'CNFutures'
   if (/^[A-Z]{2,12}USDT$/.test(symbol) || symbol.includes('-USD') || symbol.includes('PERP')) return 'Crypto'
   if (symbol.startsWith('PM-') || /^\d{5,8}$/.test(symbol)) return 'PM'
   return 'All Markets'
@@ -551,6 +564,7 @@ function normalizeMarket(market: string | undefined, symbol: string): Market {
   if (value === 'us') return 'US'
   if (value === 'crypto') return 'Crypto'
   if (value === 'pm' || value === 'prediction' || value === 'prediction-market') return 'PM'
+  if (value === 'cn_futures' || value === 'cnfutures' || value === 'futures' || value === 'china-futures' || value === 'china_futures') return 'CNFutures'
   return inferMarket(symbol)
 }
 

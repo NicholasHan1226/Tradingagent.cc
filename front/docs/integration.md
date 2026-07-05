@@ -39,12 +39,20 @@ Display-ready fields used by the homepage:
   simulated return series from `shared/review/*/style_performance.jsonl` by
   summing `pnl` per date and normalizing it against the simulated ledger
   capital base from `shared/logs/sim_ledger/*/*/positions.json`.
+- When style performance rows provide `pnl_source`, `realized_pnl`, and
+  `unrealized_pnl`, the snapshot `portfolio` includes `pnlSource`,
+  `realizedPnl`, and `unrealizedPnl`; the homepage can show that the current
+  portfolio return is based on simulated-ledger mark-to-market instead of the
+  old entry-price estimate.
 - Trade journals and position cost are not valid performance sources by
   themselves. When only those files exist, `domains.performance.status` remains
   `empty` with a message explaining the missing PnL / return series.
 - `signals[]`: `symbol`, `market`, `status`, `impact`, `confidence`,
   `reason`, `next`, `steps`, plus optional funnel fields `stage`,
   `stageTimes`, and `stageLatencyMinutes`.
+- Supported dashboard market labels include `A-share`, `US`, `Crypto`, `HK`,
+  `PM`, and `CNFutures`. CN futures symbols such as `IF2601.CFFEX` and backend
+  market labels such as `cn_futures` map to `CNFutures`.
 - Signal stage timestamps can be supplied as `discovered_at`, `scored_at`,
   `debated_at`, `risk_checked_at`, and `triggered_at`. The reader maps existing
   status and timestamps into `发现 / 评分 / 风控 / 待执行 / 成交 / 错过 / 拒绝`

@@ -526,6 +526,43 @@ class CNFuturesSimTest(unittest.TestCase):
             self.assertEqual(perf_rows[0]["market"], "cn_futures")
             self.assertFalse(perf_rows[0]["real_execution"])
 
+    def test_non_index_styles_hold_in_night_session_by_default(self) -> None:
+        from CNFutures.signal_engine import generate_style_signal
+
+        style = {"name": "trend", "signal_threshold": 0.001}
+        night_bars = [
+            {"bar_time": "2026-07-06 21:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 21:05:00", "close": 3540, "volume": 1000},
+        ]
+        signal = generate_style_signal("rb2601", night_bars, style)
+        self.assertEqual(signal["action"], "hold")
+        self.assertEqual(signal["reason"], "night_session_not_allowed")
+
+        allowed_style = {"name": "trend", "signal_threshold": 0.001, "night_session_allowed": True}
+        allowed_signal = generate_style_signal("rb2601", night_bars, allowed_style)
+        self.assertEqual(allowed_signal["action"], "buy")
+        self.assertEqual(allowed_signal["reason"], "trend_confirmed")
+
+    def test_run_simulation_respects_kill_switch(self) -> None:
+        import os
+        import subprocess
+
+        env = os.environ.copy()
+        env["CN_FUTURES_SIM_DISABLED"] = "1"
+        env["PYTHONPATH"] = str(ROOT)
+        result = subprocess.run(
+            [sys.executable, "-m", "CNFutures.run_simulation", "--json", "--date", "20260706"],
+            cwd=str(ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0)
+        output = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertEqual(output["state"], "paused")
+        self.assertEqual(output["filled_count"], 0)
+        self.assertFalse(output["real_trading_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -84,6 +84,11 @@ It also blocks repeated same-side exposure for the same style and contract on
 the same trade date; an opposite-side signal can still create a new simulated
 trade.
 
+Set `CN_FUTURES_SIM_DISABLED=1` to pause the simulated runner without editing
+cron. The command exits successfully with `state="paused"` and
+`real_trading_enabled=false`; observation/report jobs can continue so operators
+still see the paused state.
+
 ## Execution Realism
 
 The simulated executor is still paper-only, but it no longer assumes ideal

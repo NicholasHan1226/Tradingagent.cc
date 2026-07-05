@@ -41,6 +41,7 @@ export function HomeResultBrief({
           <SummaryRow label="收益" value={returnValue} tone={hasPerformanceData ? 'cyan' : undefined} />
           <SummaryRow label="机会" value={hasSignalData ? `${signals.length} 条` : '暂无机会'} />
           <SummaryRow label="持仓" value={hasHoldingData ? leadingHolding?.symbol ?? '有记录' : '暂无持仓'} />
+          {portfolio?.pnlSource && <SummaryRow label="口径" value={formatPnlSource(portfolio.pnlSource)} />}
         </div>
       </div>
       <div className="home-brief-section brief-action-section">
@@ -102,4 +103,10 @@ export function HomeResultBrief({
       </button>
     </section>
   )
+}
+
+function formatPnlSource(value: string) {
+  if (value === 'sim_ledger_mark_to_market') return '模拟账本盯市'
+  if (value === 'mixed') return '混合口径'
+  return value
 }

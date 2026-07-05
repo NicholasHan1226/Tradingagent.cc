@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (cn futures dashboard readiness and win-rate filters v2)
+> 最后更新：2026-07-05 (cn futures dashboard + simulated pnl source)
 
 ---
 
@@ -17,8 +17,8 @@
 - **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；Crypto/PM/US 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环；HK 工具与 styles 仅保留为预留能力，默认 fail-closed，不纳入 production sim / health / evolution；基础 `styles/*.json` 已恢复为只读配置，运行态权重/状态写入 `shared/review/<market>/style_weights.json`，自动生成风格写入 `shared/review/<market>/generated_styles/`；新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline；当前生产模拟盘范围为 A股/Crypto/PM/US/CNFutures，HK 暂不接入生产调度
 - **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；sim → real promotion 只接受经 sim 审计的来源；`signals/real/*` 为隔离队列，不代表自动下单或已成交
 - **模拟撮合引擎**：`shared/execution/sim_engine.py` 已进入 Phase 1，统一支持 bid/ask marketability、盘口量/5m bar volume 部分成交、A股买入整手、A股 T+1 可卖数量、A股涨跌停边界、PM 概率价格边界、现金可用性检查和轻量对手盘环境参数；A股 server-local 模拟执行与 `auto_pipeline` 本地 fallback 已接入该引擎；A股执行器会从 server-local 模拟账本补齐 `cash_available` 与 T+1 `sellable_qty`，`auto_pipeline` 会从 SharedSignals reader 的 5分钟/日线 bars 生成 `market_snapshot`；该层仍是 paper-only，不接真实券商/交易所撮合。
-- **CNFutures 模拟盘**：国内期货只跑模拟盘，无单独影子盘；多风格模拟会写 `shared/review/data/cn_futures_sim_reviews.jsonl`，并同步输出 `shared/review/cn_futures/style_comparison.json`、`style_performance.jsonl` 与只读 `observation_report.json` 供现有看板/巡检接入；观察报告已提供 `dashboard` 和 `next_validation` 顶层字段，便于看板直接展示 readiness、下一交易时段验收步骤和是否继续累计样本；`score_summary`、`error_summary` 和 `style_health` 标记样本不足、手续费、保证金占用、名义金额、可用 PnL 样本、风格状态和风控拒绝原因；`CNFutures/live_gateway.py` 为未来 CTP/期货公司接入预留 fail-closed 占位，当前拒绝全部真实期货订单；生产 crontab 已改为期货日盘/夜盘 5 分钟级运行 `job_cn_futures_sim.sh`，并读取 SharedSignals `market_bars_intraday` 的 Futures 5 分钟数据；5 分钟 runner 已加入 10 分钟默认数据新鲜度闸门、同风格/同合约连续同方向重复暴露限制、tick/slippage 成交价、静态涨跌幅边界、bar volume 部分成交、模拟持仓快照、风格保证金 cap、不过夜强制平仓、换月保护和反向平仓 PnL 估算；`index_intraday_directional` 已加日盘-only、趋势一致、成交量确认、开盘冷却、跳空冷却、低波动、方向连续性、最新 bar 反转、信号噪声比、bar gap、K线实体质量、连续同向 bars 和 late-chase 过滤，演化器按 `win_rate_first_risk_adjusted` 目标生成小型候选族群
-- **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行；CNFutures 5 分钟模拟 cron 已安装并相对 SharedSignals 采集错后 1 分钟；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用且 wrapper 默认需要 `TRADINGAGENT_HK_SIM_ENABLED=1` 才能运行；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US/CNFutures 模拟闭环；`job_style_evolution` 模板每 4 小时只跑 Crypto/PM/US simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；均带 flock 与独立日志
+- **CNFutures 模拟盘**：国内期货只跑模拟盘，无单独影子盘；多风格模拟会写 `shared/review/data/cn_futures_sim_reviews.jsonl`，并同步输出 `shared/review/cn_futures/style_comparison.json`、`style_performance.jsonl` 与只读 `observation_report.json` 供现有看板/巡检接入；观察报告已提供 `dashboard` 和 `next_validation` 顶层字段，便于看板直接展示 readiness、下一交易时段验收步骤和是否继续累计样本；`score_summary`、`error_summary` 和 `style_health` 标记样本不足、手续费、保证金占用、名义金额、可用 PnL 样本、风格状态和风控拒绝原因；`CNFutures/live_gateway.py` 为未来 CTP/期货公司接入预留 fail-closed 占位，当前拒绝全部真实期货订单；生产 crontab 已改为期货日盘/夜盘 5 分钟级运行 `job_cn_futures_sim.sh`，并读取 SharedSignals `market_bars_intraday` 的 Futures 5 分钟数据；5 分钟 runner 已加入 10 分钟默认数据新鲜度闸门、同风格/同合约连续同方向重复暴露限制、tick/slippage 成交价、静态涨跌幅边界、bar volume 部分成交、模拟持仓快照、风格保证金 cap、不过夜强制平仓、换月保护和反向平仓 PnL 估算；非指数基础风格默认拒绝夜盘 bar，只有显式 `night_session_allowed=true` 才允许夜盘模拟；`CN_FUTURES_SIM_DISABLED=1` 可临时暂停模拟任务但保留观察报告；`index_intraday_directional` 已加日盘-only、趋势一致、成交量确认、开盘冷却、跳空冷却、低波动、方向连续性、最新 bar 反转、信号噪声比、bar gap、K线实体质量、连续同向 bars 和 late-chase 过滤，演化器按 `win_rate_first_risk_adjusted` 目标生成小型候选族群
+- **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行；CNFutures 5 分钟模拟 cron 已安装并相对 SharedSignals 采集错后 1 分钟，观察报告错后 2 分钟刷新，风格演化按日盘/夜盘 30 分钟级运行，开盘验收在 09:05/13:05/21:05 与 00:35 触发；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用且 wrapper 默认需要 `TRADINGAGENT_HK_SIM_ENABLED=1` 才能运行；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US/CNFutures 模拟闭环；`job_style_evolution` 模板每 4 小时只跑 Crypto/PM/US simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；均带 flock 与独立日志
 - **SharedSignals API 消费**：`SharedSignalsAPIClient` 已覆盖核心 15 个数据消费端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；A股 `get_assets()` 走 SharedSignals `stock_basic` read model，单日 `get_bars_daily()` 会补齐 start=end；`get_bars_intraday()` 已优先走 SharedSignals `/realtime_5min?market=...` 并保留 SQLite 回退，期货/A股 5 分钟行情与可选 bid/ask 字段可走同一消费入口；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号；HK 数据与模拟入口保留但暂不进入生产调度
 - **数据源边界复核**：2026-07-04 主服务器生产路径审计未发现 TradingAgent 活动代码直接调用 Tushare/Binance/Polymarket/Alpaca/Yahoo 等行情源；HTTP 调用保留在 SharedSignals API 客户端、健康检查、邮件/webhook 和研究 LLM 路径。误拷贝的 untracked `Users/` 旧目录已从服务器删除，`.gitignore` 已防止再次出现。
 - **研究/筛选增强**：新增 `shared/screening/fundamental_analyzer.py` 和 `shared/research/multi_perspective.py`，只读消费 SharedSignals API/DB，输出基本面质量分、同业比较、red flags 和 bull/bear/macro/technical 多视角共识报告；`auto_pipeline` 消费这些研究结果生成 simulated 决策，不触碰实盘队列
@@ -28,7 +28,7 @@
 - **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查同时读取本地回执与旧 Hermes 回执路径，并能识别“尚无首笔本地模拟成交”的 bootstrap 状态，避免把无样本误报为链路故障
 - **模拟盘健康检查**：`market_health` 已区分交易时段样本缺失与闭市等待首样本；A股和 CNFutures 在周末/闭市且尚未进入应产生样本的时段时不再误报 warn，进入或经过交易时段后仍无数据/成交会继续告警
 - **多市场绩效去重**：Crypto/PM/US/CNFutures 共用的 `style_performance.jsonl` 已从 5 分钟 append-only 改为按 `(market, style_name, date)` 幂等写入，历史读取也会取同键最新值，避免 5 分钟任务把 runs/trades/PnL 重复放大并污染风格演化。
-- **多市场收益口径**：Crypto/PM/US 的 `StyleRunner` 主收益口径已从入场时的预期收益估算切换为统一模拟账本的 `realized_pnl + mark-to-market unrealized_pnl`；`style_comparison.json` 与 `style_performance.jsonl` 会输出 `pnl_source=sim_ledger_mark_to_market`、已实现收益、持仓浮盈亏、现金、持仓市值和权益。
+- **多市场收益口径**：Crypto/PM/US 的 `StyleRunner` 主收益口径已从入场时的预期收益估算切换为统一模拟账本的 `realized_pnl + mark-to-market unrealized_pnl`；`style_comparison.json` 与 `style_performance.jsonl` 会输出 `pnl_source=sim_ledger_mark_to_market`、已实现收益、持仓浮盈亏、现金、持仓市值和权益；win_rate/max_dd/sharpe 优先用账本里的已实现和持仓盯市样本计算；内置 `front/` 快照会透传 `pnlSource`、已实现/浮盈亏汇总，并在首页摘要显示“模拟账本盯市”口径。
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
@@ -61,8 +61,9 @@
 - [x] `CNFutures/observation_report.py` 新增看板稳定字段：`schema_version`、`dashboard` 和 `next_validation`；UI 可直接读 readiness、top style、filled count、latest bar 和下一步。
 - [x] CNFutures 复盘和 run summary 会输出 `cadence`、`latest_bar_time` 和 `real_trading_enabled=false`；live check 对 5分钟成交缺少 bar_time 或误带实盘标记的样本会告警。
 - [x] `CNFutures/opening_validator.py` 输出已明确 `data_source="SharedSignals read_model"` 和 `read_only=true`，避免被误解为 TradingAgent 自采集。
-- [x] `index_intraday_directional` 胜率质量过滤已增强：默认要求日盘-only、不过夜、动量与均线方向一致、`min_volume_ratio=1.05` 成交量确认，并新增开盘 15 分钟冷却、1% 以上跳空 30 分钟冷却、低于 0.1% 近期波动过滤、方向连续性过滤、最新 bar 反转过滤、信号噪声比过滤、bar gap 过滤、K线实体质量过滤、连续同向 bars 过滤和 late-chase 过滤；弱确认信号转为 `hold`。
+- [x] `index_intraday_directional` 胜率质量过滤已增强：默认要求日盘-only、不过夜、动量与均线方向一致、`min_volume_ratio=1.05` 成交量确认，并新增开盘 15 分钟冷却、1% 以上跳空 30 分钟冷却、低于 0.1% 近期波动过滤、方向连续性过滤、最新 bar 反转过滤、信号噪声比过滤、bar gap 过滤、K线实体质量过滤、连续同向 bars 过滤和 late-chase 过滤；弱确认信号转为 `hold`；非指数基础风格默认拒绝夜盘 bar，避免夜盘未充分验证时误开仓。
 - [x] `CNFutures/evolution.py` 从单一变体生成升级为小型参数族群，优秀风格可按 `precision/fast/smooth` 并行生成最多 3 个 simulated-only 候选，目标为 `win_rate_first_risk_adjusted`。
+- [x] `CN_FUTURES_SIM_DISABLED=1` 可暂停期货模拟 runner，并输出 `state=paused`、`real_trading_enabled=false` 的 JSON 摘要；cron 模板已补期货演化和开盘验收固定入口。
 
 ### 2026-07-05 Crypto/PM/US simulated performance dedupe
 
@@ -72,8 +73,8 @@
 - [x] `shared/accounting/sim_ledger.py` 新增 `total_pnl()`，按成交账本的 FIFO realized PnL 和最新信号价格对持仓 mark-to-market；缺价格时按成本价保守盯市并输出 `missing_mark_count`。
 - [x] `shared/markets/style_runner.py` 不再用 `_estimate_pnl()` 作为 Crypto/PM/US 主收益口径；风格层 `pnl` 改为 `realized_pnl + unrealized_pnl`，并保留 cash/market_value/equity 供看板和 evolution 使用。
 - [x] 回归测试覆盖买入后持仓浮盈、卖出后已实现收益 + 剩余持仓浮盈、缺失盯市价格按成本价保守处理。
-- [ ] 残余口径：win_rate/max_dd/sharpe 仍基于单笔 realized PnL 序列，买入未平仓样本会更保守；后续可升级为基于日频权益曲线计算。
-- [x] `job_cn_futures_observation_report.sh` 已接入日盘/夜盘固定 cron，模拟任务后刷新只读 `shared/review/cn_futures/observation_report.json`；`job_cn_futures_opening_validation.sh` 仍为按需验收入口。
+- [x] win_rate/max_dd/sharpe 已改为优先基于模拟账本的已实现收益和持仓盯市样本计算；没有账本样本时才回退单次成交 PnL。
+- [x] `job_cn_futures_observation_report.sh` 已接入日盘/夜盘固定 cron，模拟任务后刷新只读 `shared/review/cn_futures/observation_report.json`；`job_cn_futures_opening_validation.sh` 已加入开盘验收 cron。
 
 ### 2026-07-05 CNFutures execution realism
 

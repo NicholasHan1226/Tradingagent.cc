@@ -72,6 +72,36 @@ def _summary(result: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     args = _parse_args()
+    if os.environ.get("CN_FUTURES_SIM_DISABLED", "").strip().lower() in {"1", "true", "yes"}:
+        output = {
+            "market": "cn_futures",
+            "reader_market": "Futures",
+            "date": args.date,
+            "cadence": args.cadence,
+            "latest_bar_time": "",
+            "state": "paused",
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "universe_count": 0,
+            "style_count": 0,
+            "record_count": 0,
+            "filled_count": 0,
+            "error_count": 0,
+            "review_path": str(args.review_path),
+            "real_trading_enabled": False,
+            "max_intraday_bar_age_minutes": args.max_intraday_bar_age_minutes,
+            "disabled_reason": "CN_FUTURES_SIM_DISABLED is set",
+        }
+        if args.json:
+            print(json.dumps(output, ensure_ascii=False, sort_keys=True))
+        else:
+            print(
+                "CNFutures simulation "
+                f"cadence={output['cadence']} state={output['state']} filled={output['filled_count']} "
+                f"styles={output['style_count']} universe={output['universe_count']} "
+                f"real_trading_enabled={output['real_trading_enabled']}"
+            )
+        return 0
     universe_filter = {}
     if args.max_symbols is not None:
         universe_filter["max_symbols"] = max(1, args.max_symbols)
