@@ -37,6 +37,10 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 */10 * * * * /opt/investment/tradingagent/cron/health_check.sh
 */10 * * * * /opt/investment/tradingagent/shared/wrappers/job_sim_market_health.sh >> /opt/investment/tradingagent/shared/logs/cron/sim_market_health_cron.log 2>&1
 */5 * * * * /opt/investment/tradingagent/shared/wrappers/job_equity_snapshots.sh >> /opt/investment/tradingagent/shared/logs/cron/equity_snapshots_cron.log 2>&1
+56 8 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_opening_acceptance.sh >> /opt/investment/tradingagent/shared/logs/cron/opening_acceptance.log 2>&1
+6,45 9,13,21 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_opening_acceptance.sh >> /opt/investment/tradingagent/shared/logs/cron/opening_acceptance.log 2>&1
+56 20 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_opening_acceptance.sh >> /opt/investment/tradingagent/shared/logs/cron/opening_acceptance.log 2>&1
+41 0 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_opening_acceptance.sh >> /opt/investment/tradingagent/shared/logs/cron/opening_acceptance.log 2>&1
 0 */4 * * * /opt/investment/tradingagent/cron/evolution.sh
 0 16 * * 1-5 /opt/investment/tradingagent/cron/daily_review.sh
 
