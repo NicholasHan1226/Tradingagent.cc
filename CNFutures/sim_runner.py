@@ -583,7 +583,15 @@ def _realized_pnl_from_reversal(
         gross = (previous_price - exit_price) * qty * rule_multiplier
     else:
         return {}
-    fee = _safe_float(previous.get("fee"), 0.0) + _safe_float(receipt.get("fee"), 0.0)
+    previous_raw = previous.get("raw_response") if isinstance(previous.get("raw_response"), dict) else {}
+    receipt_raw = receipt.get("raw_response") if isinstance(receipt.get("raw_response"), dict) else {}
+    previous_fee = _safe_float(previous.get("fee"), 0.0)
+    previous_round_trip_fee = _safe_float(previous_raw.get("total_estimated_fee"), 0.0)
+    if previous_round_trip_fee > 0 and previous_fee >= previous_round_trip_fee:
+        fee = previous_fee
+    else:
+        close_fee = _safe_float(receipt_raw.get("estimated_close_fee"), 0.0)
+        fee = previous_fee + (close_fee if close_fee > 0 else _safe_float(receipt.get("fee"), 0.0))
     return {
         "realized_pnl": round(gross - fee, 6),
         "gross_pnl": round(gross, 6),

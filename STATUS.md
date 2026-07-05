@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (opening validation no-trade attribution and health alias)
+> 最后更新：2026-07-05 (CNFutures reversal fee and opening readiness hardening)
 
 ---
 
@@ -64,6 +64,7 @@
 - [x] CNFutures `first_sample_alerts` 新增 `opening_30m_review`，开盘 30 分钟前标记为累计样本，30 分钟后若仍无 5 分钟数据、模拟成交或回执会给出标准原因和下一步。
 - [x] CNFutures 日盘信号时间桶和开盘冷却从真实 09:00 起算，09:00-09:30 标记为 `day_open_first_30m`，避免遗漏期货开盘前 30 分钟行为。
 - [x] A股模拟健康检查接真实交易日历，法定节假日不会仅因周一至周五而预期产生当天样本。
+- [x] CNFutures 同日反向成交 realized PnL 不再重复扣两次 round-trip 手续费；上一笔成交已预扣开平仓估算费时，反向平仓只使用这一笔 round-trip fee，避免演化/复盘样本过度悲观。
 - [x] A股 manifest 删除不存在的旧 `a_share_no_trade_attribution.py` 入口；无交易归因以后从开盘首样本验收报告读取，不再维护第二套入口。
 
 ### 2026-07-05 CNFutures observation, win-rate filters, and faster simulation evolution

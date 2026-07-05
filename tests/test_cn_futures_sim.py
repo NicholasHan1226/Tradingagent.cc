@@ -472,6 +472,31 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(result.raw_response["source"], "cn_futures_sim_executor_expiry_guard")
         self.assertEqual(result.raw_response["days_to_expiry"], 2)
 
+    def test_reversal_pnl_uses_one_round_trip_fee_when_previous_fill_precharged_it(self) -> None:
+        from CNFutures.sim_runner import _realized_pnl_from_reversal
+
+        performance = _realized_pnl_from_reversal(
+            previous={
+                "side": "buy",
+                "filled_price": 3500.0,
+                "filled_qty": 2,
+                "fee": 14.0,
+                "raw_response": {"total_estimated_fee": 14.0},
+            },
+            side="sell",
+            receipt={
+                "avg_price": 3510.0,
+                "filled_qty": 2,
+                "fee": 14.0,
+                "raw_response": {"total_estimated_fee": 14.0, "estimated_close_fee": 7.0},
+            },
+            rule_multiplier=10,
+        )
+
+        self.assertEqual(performance["gross_pnl"], 200.0)
+        self.assertEqual(performance["round_trip_fee"], 14.0)
+        self.assertEqual(performance["realized_pnl"], 186.0)
+
     def test_review_summarizes_errors_and_style_health(self) -> None:
         from CNFutures.review import summarize_errors, style_health
 
