@@ -112,6 +112,34 @@ class EvolutionRuntimeStylesTest(unittest.TestCase):
 
             self.assertEqual({style.name for style in styles}, {"balanced", "balanced_g2_20260704"})
 
+    def test_save_run_deduplicates_same_style_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            review_root = Path(tmp) / "review"
+            base = {
+                "date": "20260705",
+                "win_rate": 0.5,
+                "max_dd": 0.02,
+                "sharpe": 1.0,
+                "avg_hold_hours": 10,
+            }
+            save_run("balanced", "crypto", {**base, "pnl": 1.0, "trades": 2}, review_root=review_root)
+            save_run("balanced", "crypto", {**base, "pnl": 3.0, "trades": 5}, review_root=review_root)
+            save_run("mean_reversion", "crypto", {**base, "pnl": 2.0, "trades": 3}, review_root=review_root)
+            save_run("balanced", "pm", {**base, "pnl": 4.0, "trades": 4}, review_root=review_root)
+
+            crypto_path = review_root / "crypto" / "style_performance.jsonl"
+            crypto_rows = [json.loads(line) for line in crypto_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(crypto_rows), 2)
+            balanced_rows = [r for r in crypto_rows if r["style_name"] == "balanced"]
+            self.assertEqual(len(balanced_rows), 1)
+            self.assertEqual(balanced_rows[0]["pnl"], 3.0)
+            self.assertEqual(balanced_rows[0]["trades"], 5)
+
+            pm_path = review_root / "pm" / "style_performance.jsonl"
+            pm_rows = [json.loads(line) for line in pm_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(pm_rows), 1)
+            self.assertEqual(pm_rows[0]["pnl"], 4.0)
+
 
 if __name__ == "__main__":
     unittest.main()

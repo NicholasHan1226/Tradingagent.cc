@@ -97,6 +97,27 @@ def _performance_from_result(style_name: str, market: str, result: dict[str, Any
     )
 
 
+def _performance_key(row: StylePerformance | dict[str, Any]) -> tuple[str, str, str]:
+    if isinstance(row, StylePerformance):
+        return (_normalize_market(row.market), str(row.style_name or ""), _compact_date(row.date))
+    return (
+        _normalize_market(row.get("market")),
+        str(row.get("style_name") or ""),
+        _compact_date(row.get("date")),
+    )
+
+
+def _dedupe_latest(rows: list[StylePerformance]) -> list[StylePerformance]:
+    latest_by_key: dict[tuple[str, str, str], StylePerformance] = {}
+    order: list[tuple[str, str, str]] = []
+    for row in rows:
+        key = _performance_key(row)
+        if key not in latest_by_key:
+            order.append(key)
+        latest_by_key[key] = row
+    return [latest_by_key[key] for key in order]
+
+
 def save_run(
     style_name: str,
     market: str,
@@ -104,13 +125,29 @@ def save_run(
     *,
     review_root: Path | str | None = None,
 ) -> StylePerformance:
-    """Append one style performance row to ``style_performance.jsonl``."""
+    """Upsert one daily style performance row to ``style_performance.jsonl``."""
 
     performance = _performance_from_result(style_name, market, result)
     output_dir = _review_dir(market, review_root)
     output_dir.mkdir(parents=True, exist_ok=True)
-    with (output_dir / "style_performance.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(performance.to_dict(), ensure_ascii=False) + "\n")
+    path = output_dir / "style_performance.jsonl"
+    rows = load_history(market, days=36500, review_root=review_root)
+    target_key = _performance_key(performance)
+    replaced = False
+    updated: list[StylePerformance] = []
+    for row in rows:
+        if _performance_key(row) == target_key:
+            if not replaced:
+                updated.append(performance)
+                replaced = True
+            continue
+        updated.append(row)
+    if not replaced:
+        updated.append(performance)
+    path.write_text(
+        "".join(json.dumps(row.to_dict(), ensure_ascii=False) + "\n" for row in updated),
+        encoding="utf-8",
+    )
     return performance
 
 
@@ -146,7 +183,35 @@ def load_history(
         if row_date < cutoff:
             continue
         rows.append(_performance_from_result(str(payload.get("style_name", "")), market, payload))
-    return rows
+    return _dedupe_latest(rows)
+
+
+def compact_history(
+    market: str,
+    *,
+    review_root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Rewrite a market performance file with one latest row per market/style/date."""
+
+    path = _review_dir(market, review_root) / "style_performance.jsonl"
+    rows = load_history(market, days=36500, review_root=review_root)
+    before = 0
+    try:
+        before = len([line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()])
+    except FileNotFoundError:
+        return {"market": _normalize_market(market), "path": str(path), "before": 0, "after": 0, "removed": 0}
+    path.write_text(
+        "".join(json.dumps(row.to_dict(), ensure_ascii=False) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    after = len(rows)
+    return {
+        "market": _normalize_market(market),
+        "path": str(path),
+        "before": before,
+        "after": after,
+        "removed": max(0, before - after),
+    }
 
 
 def _load_all_history(days: int, review_root: Path | str | None = None) -> list[StylePerformance]:
@@ -274,6 +339,7 @@ def load_style_weights(
 __all__ = [
     "StylePerformance",
     "compare_styles",
+    "compact_history",
     "detect_trend",
     "load_history",
     "load_style_weights",

@@ -27,6 +27,7 @@
 - **影子盘状态闭环**：US/Crypto/PM/HK 本地 shadow runner 的 `simulated_fill.status=filled|partial` 会立即推进到 `signals/shadow/filled`；若状态机推进失败，卡片进入 `signals/shadow/failed` 并保留 `settlement_warning`，不再把已模拟成交卡片长期留在 `shadow/pending`
 - **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查同时读取本地回执与旧 Hermes 回执路径，并能识别“尚无首笔本地模拟成交”的 bootstrap 状态，避免把无样本误报为链路故障
 - **模拟盘健康检查**：`market_health` 已区分交易时段样本缺失与闭市等待首样本；A股和 CNFutures 在周末/闭市且尚未进入应产生样本的时段时不再误报 warn，进入或经过交易时段后仍无数据/成交会继续告警
+- **多市场绩效去重**：Crypto/PM/US/CNFutures 共用的 `style_performance.jsonl` 已从 5 分钟 append-only 改为按 `(market, style_name, date)` 幂等写入，历史读取也会取同键最新值，避免 5 分钟任务把 runs/trades/PnL 重复放大并污染风格演化。
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
@@ -57,6 +58,13 @@
 - [x] `shared/runtime_test/cn_futures_live_check.py` 新增 `observation_phase` 与 `alerts`，把“等待 5 分钟数据 / 等待模拟样本 / 等待风格复盘 / ready / blocked”直接暴露给看板和运维。
 - [x] `index_intraday_directional` 胜率质量过滤已增强：默认要求日盘-only、不过夜、动量与均线方向一致、`min_volume_ratio=1.05` 成交量确认；弱确认信号转为 `hold`。
 - [x] `CNFutures/evolution.py` 从单一变体生成升级为小型参数族群，优秀风格可按 `precision/fast/smooth` 并行生成最多 3 个 simulated-only 候选，目标为 `win_rate_first_risk_adjusted`。
+
+### 2026-07-05 Crypto/PM/US simulated performance dedupe
+
+- [x] `shared/markets/performance_tracker.py` 的 `save_run()` 改为同一市场/风格/日期幂等写入，`load_history()` 与 `compare_styles()` 读取时也会自动折叠旧重复行，防止 5 分钟任务把当日重复样本累计成虚假的 runs/trades/PnL。
+- [x] 生产侧已备份并压缩 `shared/review/{crypto,pm,us}/style_performance.jsonl` 历史重复数据；压缩后 crypto=13、pm=11、us=6 条唯一市场/风格/日期记录。
+- [x] 回归测试覆盖同日同风格重复写入、旧 JSONL 压缩和 evolution/runtime style 兼容；当前 Crypto/PM/US 模拟链路 health 为 pass。
+- [ ] 残余口径：Crypto/PM/US 当前 style comparison PnL 仍是策略预期收益估算，sim ledger 已记录买入成交但尚未以真实平仓或 mark-to-market 作为 evolution 的主要收益口径；后续需要升级为 realized/unrealized 分离。
 - [x] 新增可选 wrapper：`job_cn_futures_observation_report.sh` 和 `job_cn_futures_opening_validation.sh`；当前不直接改生产 crontab，待 2026-07-06 真实开盘验证后再决定是否加入固定调度。
 
 ### 2026-07-05 CNFutures execution realism
@@ -252,7 +260,7 @@
 
 ### 2026-07-04 多市场多风格 simulated 自演化闭环
 
-- [x] 新增 `shared/markets/performance_tracker.py`：`StylePerformance`、`style_performance.jsonl` 追加写入、90 天历史加载、PnL 趋势回归和风格综合排序。
+- [x] 新增 `shared/markets/performance_tracker.py`：`StylePerformance`、`style_performance.jsonl` 幂等写入、90 天历史加载、PnL 趋势回归和风格综合排序。
 - [x] 新增 `shared/markets/evolution_engine.py`：按风格综合分、趋势和连续亏损天数执行 promote/demote/deprecated，并能从优胜风格生成下一代 variant。
 - [x] `StyleRunner` 接入 evolved `style_weights.json`，active 风格按权重切分 simulated capital，paused/deprecated 不参与执行；每轮 style metrics 自动写绩效 JSONL。
 - [x] 各市场 `styles/*.json` 补齐 `status`、`weight`、`created_at`、`last_modified`、`generation` 和 `auto_generate` 参数范围；HK 继续 paused。
