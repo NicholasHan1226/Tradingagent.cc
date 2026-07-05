@@ -19,6 +19,7 @@
 
 - 生产路径：`/opt/investment/tradingagent/`
 - 开发路径：`/Users/nicholashan/Projects/Finance/TradingAgent/`
+- 生产前端/运营看板：`front/`，同属 TradingAgent 仓库，是唯一活跃前端入口；不要使用兄弟级 dashboard 仓库作为生产或开发来源。
 - 工具集：`/opt/investment/tools/`（约 20 个工具）
 
 ## 架构边界（永久规则）

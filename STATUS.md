@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (cn futures dashboard + simulated pnl source)
+> 最后更新：2026-07-05 (single front entry + cn futures dashboard + simulated pnl source)
 
 ---
 
@@ -32,6 +32,7 @@
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
+- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。
 
 ## 二、已知问题
 
@@ -54,7 +55,7 @@
 
 ### 2026-07-05 CNFutures observation, win-rate filters, and faster simulation evolution
 
-- [x] `CNFutures/observation_report.py` 新增只读 5 分钟交易观察报告，汇总数据新鲜度、最新模拟样本、风格排名、运行态权重、生成变体和告警，可供 TradingAgentDashboard 后续接入。
+- [x] `CNFutures/observation_report.py` 新增只读 5 分钟交易观察报告，汇总数据新鲜度、最新模拟样本、风格排名、运行态权重、生成变体和告警，可供内置 `front/` 后续接入。
 - [x] `CNFutures/opening_validator.py` 新增只读开盘验收入口，验证当前日盘/夜盘开盘后 Futures 5 分钟 bar 是否落地以及合约覆盖数。
 - [x] `shared/runtime_test/cn_futures_live_check.py` 新增 `observation_phase` 与 `alerts`，把“等待 5 分钟数据 / 等待模拟样本 / 等待风格复盘 / ready / blocked”直接暴露给看板和运维。
 - [x] `shared/runtime_test/cn_futures_live_check.py` 新增 `next_validation`，把下一个交易时段要验收的 fresh 5分钟数据、模拟复盘样本、风格输出和实盘关闭状态显式化。
