@@ -99,12 +99,19 @@ def build_observation_report(
     primary_next_step = str(next_validation.get("expected_phase") or "")
     if not primary_next_step and live.get("observation_phase") == "ready_to_observe":
         primary_next_step = "continue_observation"
+    hold_summary = latest_review.get("hold_reason_summary", {}) if isinstance(latest_review.get("hold_reason_summary"), dict) else {}
+    hold_by_reason = hold_summary.get("by_reason") if isinstance(hold_summary.get("by_reason"), dict) else {}
+    top_hold_reason = ""
+    if hold_by_reason:
+        top_hold_reason = max(hold_by_reason.items(), key=lambda item: int(item[1] or 0))[0]
     dashboard = {
         "readiness": live.get("observation_phase", "unknown"),
         "status": live.get("overall_status", "unknown"),
         "primary_next_step": primary_next_step,
         "latest_bar_time": freshness_report.get("latest_bar_time") if isinstance(freshness_report, dict) else None,
         "filled_count": int(latest_review.get("filled_count") or 0) if latest_review else 0,
+        "hold_count": int(latest_review.get("hold_count") or 0) if latest_review else 0,
+        "top_hold_reason": top_hold_reason,
         "top_style": ranked_styles[0].get("style_name", "") if ranked_styles else "",
         "alerts": live.get("alerts", []),
         "real_trading_enabled": False,
@@ -132,6 +139,8 @@ def build_observation_report(
             "latest_state": latest_review.get("state", ""),
             "record_count": int(latest_review.get("record_count") or 0) if latest_review else 0,
             "filled_count": int(latest_review.get("filled_count") or 0) if latest_review else 0,
+            "hold_count": int(latest_review.get("hold_count") or 0) if latest_review else 0,
+            "hold_reason_summary": hold_summary,
             "error_count": int(latest_review.get("error_count") or 0) if latest_review else 0,
             "error_summary": latest_review.get("error_summary", {}) if isinstance(latest_review.get("error_summary"), dict) else {},
         },

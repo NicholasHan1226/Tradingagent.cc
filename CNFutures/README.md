@@ -144,6 +144,9 @@ The review payload includes `score_summary` by style:
 - `status`, where small or open-only samples are marked `sample_insufficient`
 - `error_summary` and `style_health`, so stale data, repeated same-side exposure,
   and other simulated gates can be reviewed by style without opening logs
+- `hold_count` and `hold_reason_summary`, so styles that correctly refuse weak
+  setups can be reviewed by reason, style, symbol, and session without treating
+  every no-trade cycle as missing data
 
 These scores rank simulated styles for further research and feed existing
 health/metrics surfaces. They do not create a standalone dashboard, do not grant
@@ -175,6 +178,8 @@ The report summarizes:
   so UI code does not need to parse nested check details
 - data freshness, latest bar time, symbol count, and current/next session
 - latest simulated review counts, fills, errors, and error summary
+- hold counts and top hold reason, so the dashboard can distinguish "no
+  opportunity" from data or execution gaps
 - 5-minute sample evidence such as `cadence`, `latest_bar_time`, and
   `real_trading_enabled=false` when available
 - ranked style rows, runtime style weights, generated variants, and alerts
@@ -210,6 +215,27 @@ shared/wrappers/job_cn_futures_opening_validation.sh
 
 Its output explicitly reports `data_source="SharedSignals read_model"` and
 `read_only=true`; it does not collect futures data from TradingAgent.
+
+Two additional read-only checks are available for opening-day operations:
+
+```bash
+python -m CNFutures.opening_validator --pre-open --pretty
+python -m CNFutures.opening_validator --first-sample --pretty
+```
+
+Wrappers:
+
+```bash
+shared/wrappers/job_cn_futures_pre_open_validation.sh
+shared/wrappers/job_cn_futures_first_sample_alert.sh
+```
+
+`--pre-open` checks whether SharedSignals daily Futures bars are present before
+the next day, afternoon, or night session. `--first-sample` waits for the first
+5-minute window after a session opens, then alerts if SharedSignals has no
+usable 5-minute Futures bars or if TradingAgent has not produced the first
+simulated sample. Both modes are read-only, keep `real_trading_enabled=false`,
+and do not write to SharedSignals, MarketGraph, CTP, SimNow, or broker queues.
 
 ## Simulated Evolution
 

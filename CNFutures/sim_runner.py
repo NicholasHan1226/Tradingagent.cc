@@ -89,6 +89,17 @@ def _style_allows_session(style: dict[str, Any], now: datetime | None) -> bool:
     return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(15, 0))
 
 
+def _session_bucket(now: datetime | None) -> str:
+    current = _cn_local_time(now)
+    if current is None:
+        return "unknown"
+    if time(9, 0) <= current <= time(15, 0):
+        return "day"
+    if current >= time(21, 0) or current <= time(2, 30):
+        return "night"
+    return "closed"
+
+
 def _minutes_until_day_session_close(now: datetime | None) -> float | None:
     current_time = _cn_local_time(now)
     if current_time is None:
@@ -603,7 +614,9 @@ def run_multi_style_simulation(
     capital = _safe_float(account.get("sim_capital") if isinstance(account, dict) else None, 100_000.0)
     errors: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
+    holds: list[dict[str, Any]] = []
     position_snapshot = _read_position_snapshot(signals_dir)
+    session_bucket = _session_bucket(now)
     if cadence_value == "daily":
         universe = adapter.get_universe(date)
     else:
@@ -677,6 +690,16 @@ def run_multi_style_simulation(
             else:
                 signal = generate_style_signal(symbol, bars, style)
             if signal.get("action") == "hold":
+                holds.append({
+                    "stage": "signal",
+                    "style": style_name,
+                    "symbol": symbol,
+                    "cadence": bar_cadence,
+                    "bar_time": latest_bar_time,
+                    "session": session_bucket,
+                    "reason": str(signal.get("reason") or "hold"),
+                    "confidence": signal.get("confidence", 0.0),
+                })
                 continue
             price = _safe_float(signal.get("price"), 0.0)
             if price <= 0:
@@ -824,7 +847,7 @@ def run_multi_style_simulation(
                 }
             )
 
-    review = append_review(date=date, market=MARKET, records=records, errors=errors, path=review_path)
+    review = append_review(date=date, market=MARKET, records=records, errors=errors, holds=holds, path=review_path)
     return {
         "market": MARKET,
         "reader_market": READER_MARKET,
@@ -839,6 +862,9 @@ def run_multi_style_simulation(
         "filled_count": sum(1 for record in records if record["receipt"].get("status") == "filled"),
         "records": records,
         "errors": errors,
+        "holds": holds,
+        "hold_count": len(holds),
+        "hold_reason_summary": review.get("hold_reason_summary", {}),
         "review": review,
         "real_trading_enabled": False,
         "generated_at": _now_iso(),

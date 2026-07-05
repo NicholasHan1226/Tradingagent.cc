@@ -198,6 +198,48 @@ def summarize_errors(errors: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def summarize_holds(holds: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize non-trade hold reasons for dashboard and opening diagnostics."""
+
+    by_reason: dict[str, int] = defaultdict(int)
+    by_style: dict[str, dict[str, Any]] = defaultdict(lambda: {"hold_count": 0, "by_reason": defaultdict(int)})
+    by_symbol: dict[str, int] = defaultdict(int)
+    by_session: dict[str, int] = defaultdict(int)
+    examples: list[dict[str, Any]] = []
+    for hold in holds:
+        if not isinstance(hold, dict):
+            continue
+        reason = str(hold.get("reason") or "unknown")
+        style = str(hold.get("style") or "unknown")
+        symbol = str(hold.get("symbol") or "unknown")
+        session = str(hold.get("session") or "unknown")
+        by_reason[reason] += 1
+        by_symbol[symbol] += 1
+        by_session[session] += 1
+        by_style[style]["hold_count"] += 1
+        by_style[style]["by_reason"][reason] += 1
+        if len(examples) < 12:
+            examples.append({
+                key: hold.get(key)
+                for key in ("style", "symbol", "reason", "bar_time", "cadence", "session")
+                if key in hold
+            })
+    return {
+        "total": sum(by_reason.values()),
+        "by_reason": dict(by_reason),
+        "by_style": {
+            style: {
+                "hold_count": int(values["hold_count"]),
+                "by_reason": dict(values["by_reason"]),
+            }
+            for style, values in by_style.items()
+        },
+        "by_symbol": dict(by_symbol),
+        "by_session": dict(by_session),
+        "examples": examples,
+    }
+
+
 def style_health(records: list[dict[str, Any]], errors: list[dict[str, Any]]) -> dict[str, Any]:
     """Return per-style action hints without mutating strategy configs."""
 
@@ -344,6 +386,8 @@ def write_style_outputs(payload: dict[str, Any], *, review_path: Path | None = N
         "style_comparison": style_comparison,
         "score_summary": score_summary,
         "error_summary": payload.get("error_summary") if isinstance(payload.get("error_summary"), dict) else {},
+        "hold_count": int(payload.get("hold_count") or 0),
+        "hold_reason_summary": payload.get("hold_reason_summary") if isinstance(payload.get("hold_reason_summary"), dict) else {},
         "source_review_path": str(target),
         "generated_at": payload.get("generated_at", _now_iso()),
     }
@@ -361,6 +405,7 @@ def append_review(
     market: str,
     records: list[dict[str, Any]],
     errors: list[dict[str, Any]],
+    holds: list[dict[str, Any]] | None = None,
     path: Path | None = None,
 ) -> dict[str, Any]:
     """Append one run review and return the persisted payload."""
@@ -368,6 +413,7 @@ def append_review(
     summary = summarize_records(records)
     score_summary = score_records(records)
     error_summary = summarize_errors(errors)
+    hold_summary = summarize_holds(list(holds or []))
     health = style_health(records, errors)
     payload: dict[str, Any] = {
         "date": date,
@@ -379,8 +425,10 @@ def append_review(
         "real_trading_enabled": False,
         "state": "degraded" if errors else "ok",
         "record_count": len(records),
+        "hold_count": int(hold_summary.get("total") or 0),
         "error_count": len(errors),
         "errors": errors,
+        "hold_reason_summary": hold_summary,
         "generated_at": _now_iso(),
         **summary,
         "score_summary": score_summary,
@@ -400,6 +448,7 @@ __all__ = [
     "append_review",
     "score_records",
     "summarize_errors",
+    "summarize_holds",
     "summarize_records",
     "style_health",
     "write_style_outputs",

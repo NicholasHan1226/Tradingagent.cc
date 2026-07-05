@@ -31,5 +31,8 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 16,46 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_evolution.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_evolution.log 2>&1
 2-59/5 9-15,21-23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_observation_report.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_observation_report.log 2>&1
 2-59/5 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_observation_report.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_observation_report.log 2>&1
+55 8,12,20 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_pre_open_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_pre_open_validation.log 2>&1
 5 9,13,21 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_opening_validation.log 2>&1
 35 0 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_opening_validation.log 2>&1
+10 9,13,21 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_first_sample_alert.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_first_sample_alert.log 2>&1
+40 0 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_first_sample_alert.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_first_sample_alert.log 2>&1

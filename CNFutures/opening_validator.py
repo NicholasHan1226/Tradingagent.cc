@@ -10,6 +10,7 @@ from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .review import DEFAULT_REVIEW_PATH
 
 DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
 CN_TZ = timezone(timedelta(hours=8))
@@ -37,6 +38,46 @@ def _session_start(now: datetime) -> tuple[str, datetime | None]:
     if current <= time(2, 30):
         return "night", datetime.combine(now.date() - timedelta(days=1), time(21, 0), tzinfo=CN_TZ)
     return "closed", None
+
+
+def _pre_open_session(now: datetime) -> tuple[str, datetime | None]:
+    current = now.time()
+    if time(8, 0) <= current < time(9, 0):
+        return "day", datetime.combine(now.date(), time(9, 0), tzinfo=CN_TZ)
+    if time(12, 0) <= current < time(13, 0):
+        return "afternoon", datetime.combine(now.date(), time(13, 0), tzinfo=CN_TZ)
+    if time(20, 0) <= current < time(21, 0):
+        return "night", datetime.combine(now.date(), time(21, 0), tzinfo=CN_TZ)
+    return "closed", None
+
+
+def _query_daily_bars(db_path: Path, trade_date: str) -> dict[str, Any]:
+    if not db_path.exists():
+        return {"error": f"sqlite database not found: {db_path}", "symbol_count": 0}
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        row = conn.execute(
+            """
+            SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(trade_date), MAX(trade_date)
+            FROM market_bars_daily
+            WHERE market='Futures'
+              AND trade_date <= ?
+              AND close > 0
+            """,
+            (trade_date,),
+        ).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{exc.__class__.__name__}: {exc}", "symbol_count": 0}
+    finally:
+        if conn is not None:
+            conn.close()
+    return {
+        "daily_bar_count": int(row[0] or 0) if row else 0,
+        "symbol_count": int(row[1] or 0) if row else 0,
+        "first_trade_date": row[2] if row else None,
+        "latest_trade_date": row[3] if row else None,
+    }
 
 
 def _query_session_bars(db_path: Path, start: datetime, now: datetime) -> dict[str, Any]:
@@ -72,6 +113,127 @@ def _query_session_bars(db_path: Path, start: datetime, now: datetime) -> dict[s
         "first_bar_time": row[2] if row else None,
         "latest_bar_time": row[3] if row else None,
     }
+
+
+def _read_latest_review(path: Path) -> dict[str, Any]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        return {}
+    for line in reversed(lines):
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def validate_pre_open(
+    *,
+    sqlite_db: Path = DEFAULT_SQLITE_DB,
+    now: datetime | None = None,
+    min_symbols: int = 4,
+) -> dict[str, Any]:
+    current = now or _now_cn()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=CN_TZ)
+    else:
+        current = current.astimezone(CN_TZ)
+    session_name, start = _pre_open_session(current)
+    result: dict[str, Any] = {
+        "market": "cn_futures",
+        "report_type": "pre_open_acceptance",
+        "checked_at": current.isoformat(timespec="seconds"),
+        "sqlite_db": str(sqlite_db),
+        "data_source": "SharedSignals read_model",
+        "read_only": True,
+        "session": session_name,
+        "session_start": start.isoformat(timespec="seconds") if start else None,
+        "min_symbols": max(1, int(min_symbols)),
+        "real_trading_enabled": False,
+    }
+    if start is None:
+        return {**result, "status": "warn", "reason": "not_in_pre_open_window"}
+    bars = _query_daily_bars(sqlite_db, start.strftime("%Y%m%d"))
+    result.update(bars)
+    if bars.get("error"):
+        result["status"] = "fail"
+        result["reason"] = "pre_open_daily_query_failed"
+    elif int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
+        result["status"] = "warn"
+        result["reason"] = "pre_open_daily_bars_missing"
+    else:
+        result["status"] = "pass"
+        result["reason"] = "pre_open_acceptance_passed"
+    return result
+
+
+def first_sample_alerts(
+    *,
+    sqlite_db: Path = DEFAULT_SQLITE_DB,
+    review_path: Path = DEFAULT_REVIEW_PATH,
+    now: datetime | None = None,
+    min_symbols: int = 4,
+    wait_minutes: int = 10,
+) -> dict[str, Any]:
+    current = now or _now_cn()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=CN_TZ)
+    else:
+        current = current.astimezone(CN_TZ)
+    session_name, start = _session_start(current)
+    elapsed_minutes = int((current - start).total_seconds() // 60) if start is not None else None
+    result: dict[str, Any] = {
+        "market": "cn_futures",
+        "report_type": "first_sample_alert",
+        "checked_at": current.isoformat(timespec="seconds"),
+        "sqlite_db": str(sqlite_db),
+        "review_path": str(review_path),
+        "data_source": "SharedSignals read_model",
+        "read_only": True,
+        "session": session_name,
+        "session_start": start.isoformat(timespec="seconds") if start else None,
+        "elapsed_minutes": elapsed_minutes,
+        "min_symbols": max(1, int(min_symbols)),
+        "wait_minutes": max(1, int(wait_minutes)),
+        "alerts": [],
+        "real_trading_enabled": False,
+    }
+    if start is None:
+        return {**result, "status": "warn", "reason": "outside_cn_futures_session"}
+    if elapsed_minutes is not None and elapsed_minutes < max(1, int(wait_minutes)):
+        return {**result, "status": "pass", "reason": "first_sample_check_not_due"}
+
+    bars = _query_session_bars(sqlite_db, start, current)
+    result.update(bars)
+    alerts: list[dict[str, Any]] = []
+    if bars.get("error"):
+        alerts.append({"severity": "error", "code": "futures_5min_check_failed", "message": "期货5分钟首样本检查无法读取 SharedSignals read model。"})
+    elif int(bars.get("bar_count") or 0) <= 0 or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
+        alerts.append({"severity": "warn", "code": "futures_5min_missing_in_session", "message": "期货交易时段开始后仍缺少足够的 Futures 5分钟数据。"})
+
+    latest_review = _read_latest_review(review_path)
+    latest_filled_count = int(latest_review.get("filled_count") or 0) if latest_review else 0
+    result["latest_review"] = {
+        "exists": bool(latest_review),
+        "generated_at": latest_review.get("generated_at", "") if latest_review else "",
+        "latest_bar_time": latest_review.get("latest_bar_time") or latest_review.get("bar_time") or "",
+        "filled_count": latest_filled_count,
+        "real_trading_enabled": bool(latest_review.get("real_trading_enabled")) if latest_review else False,
+    }
+    if result["latest_review"]["real_trading_enabled"]:
+        alerts.append({"severity": "error", "code": "cn_futures_real_trading_flag_enabled", "message": "CNFutures 复盘样本错误带有实盘启用标记。"})
+    elif not alerts and latest_filled_count <= 0:
+        alerts.append({"severity": "warn", "code": "cn_futures_first_sim_sample_missing", "message": "期货5分钟数据已进入会话窗口，但 TradingAgent 尚无首个模拟成交样本。"})
+    result["alerts"] = alerts
+    result["status"] = "warn" if alerts else "pass"
+    result["reason"] = "first_sample_alerts_present" if alerts else "first_sample_ready"
+    return result
 
 
 def validate_opening(
@@ -120,15 +282,31 @@ def validate_opening(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Read-only CN futures opening 5-minute data validation.")
     parser.add_argument("--sqlite-db", type=Path, default=DEFAULT_SQLITE_DB)
+    parser.add_argument("--review-path", type=Path, default=DEFAULT_REVIEW_PATH)
     parser.add_argument("--now", default=None)
     parser.add_argument("--min-symbols", type=int, default=4)
+    parser.add_argument("--pre-open", action="store_true")
+    parser.add_argument("--first-sample", action="store_true")
+    parser.add_argument("--wait-minutes", type=int, default=10)
     parser.add_argument("--pretty", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    report = validate_opening(sqlite_db=args.sqlite_db, now=_parse_now(args.now), min_symbols=args.min_symbols)
+    now = _parse_now(args.now)
+    if args.pre_open:
+        report = validate_pre_open(sqlite_db=args.sqlite_db, now=now, min_symbols=args.min_symbols)
+    elif args.first_sample:
+        report = first_sample_alerts(
+            sqlite_db=args.sqlite_db,
+            review_path=args.review_path,
+            now=now,
+            min_symbols=args.min_symbols,
+            wait_minutes=args.wait_minutes,
+        )
+    else:
+        report = validate_opening(sqlite_db=args.sqlite_db, now=now, min_symbols=args.min_symbols)
     print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
     return 2 if report.get("status") == "fail" else 0
 

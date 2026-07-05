@@ -217,6 +217,37 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["errors"][0]["error"], "stale_intraday_bar")
 
+    def test_multi_style_runner_records_hold_reason_summary(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            adapter = CNFuturesAdapter(
+                reader=FakeFuturesReader(),
+                universe_filter={"max_symbols": 1},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.50}},
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                FakeFuturesReader(),
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-03 14:56:00"),
+            )
+
+            self.assertEqual(result["filled_count"], 0)
+            self.assertEqual(result["hold_count"], 1)
+            self.assertEqual(result["hold_reason_summary"]["by_reason"]["below_threshold"], 1)
+            review_rows = [
+                json.loads(line)
+                for line in (tmp_path / "cn_futures_reviews.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(review_rows[0]["hold_reason_summary"]["by_reason"]["below_threshold"], 1)
+
     def test_multi_style_runner_skips_paused_evolved_styles(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation

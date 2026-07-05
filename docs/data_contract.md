@@ -125,6 +125,10 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
 - Review records are appended under `shared/review/data/`; signal-state writes
   go through `signals/` only. CNFutures does not write back into SharedSignals
   or MarketGraph.
+- CNFutures review rows may include `hold_count` and `hold_reason_summary` for
+  simulated no-trade decisions. These fields describe strategy/filter reasons
+  such as weak signal quality or session restrictions; they are not rejected
+  orders and must not be routed to execution queues.
 - Dashboard consumption should use
   `shared/review/cn_futures/observation_report.json`. The stable UI-facing
   surface is `schema_version`, `dashboard`, `next_validation`,

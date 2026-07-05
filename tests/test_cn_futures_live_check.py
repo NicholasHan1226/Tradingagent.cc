@@ -89,7 +89,7 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
             report = live_check.run_live_check(
                 sharedsignals_root=self.sharedsignals,
                 run_command=self._fake_runner({"status": "no_data", "error": "no bars"}, returncode=1),
-                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh\njob_cn_futures_evolution.sh\njob_cn_futures_observation_report.sh",
+                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh\njob_cn_futures_evolution.sh\njob_cn_futures_observation_report.sh\njob_cn_futures_pre_open_validation.sh\njob_cn_futures_first_sample_alert.sh",
             )
 
         self.assertEqual(report["overall_status"], "warn")
@@ -108,7 +108,7 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
             report = live_check.run_live_check(
                 sharedsignals_root=self.sharedsignals,
                 run_command=self._fake_runner({"status": "fresh", "latest_bar_time": "2026-07-06T09:05:00+08:00"}, returncode=0),
-                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh\njob_cn_futures_evolution.sh\njob_cn_futures_observation_report.sh",
+                crontab_text="cn_futures_5min.sh\njob_cn_futures_sim.sh\njob_cn_futures_evolution.sh\njob_cn_futures_observation_report.sh\njob_cn_futures_pre_open_validation.sh\njob_cn_futures_first_sample_alert.sh",
             )
 
         self.assertEqual(report["overall_status"], "pass")
