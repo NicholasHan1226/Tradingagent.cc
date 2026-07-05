@@ -1,7 +1,7 @@
 {
   "name": "closing_momentum",
   "position_pct": 0.03,
-  "stop_loss_pct": -0.035,
+  "stop_loss_pct": -0.05,
   "take_profit_pct": 0.08,
   "max_hold_days": 2,
   "pyramid": false,

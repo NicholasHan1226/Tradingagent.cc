@@ -124,6 +124,38 @@ def _round_price(value: float, tick: float, *, side: str) -> float:
     return round(rounded, 8)
 
 
+def _price_for_rule_check(order: "SimOrder", snapshot: dict[str, Any]) -> float:
+    if order.order_type == "limit":
+        return order.limit_price
+    if order.side == "buy":
+        return _first_positive(snapshot, "ask_price", "best_ask", "ask", "mid_price", "last_price", "close", default=order.limit_price)
+    return _first_positive(snapshot, "bid_price", "best_bid", "bid", "mid_price", "last_price", "close", default=order.limit_price)
+
+
+def _environment_multiplier(snapshot: dict[str, Any], *, kind: str) -> float:
+    explicit_key = "liquidity_multiplier" if kind == "liquidity" else "market_impact_multiplier"
+    explicit = _safe_float(snapshot.get(explicit_key), 0.0)
+    if explicit > 0:
+        return max(0.05, min(explicit, 5.0))
+
+    profile = str(snapshot.get("counterparty_profile") or snapshot.get("market_environment") or "").lower().strip()
+    if not profile:
+        return 1.0
+    if kind == "liquidity":
+        return {
+            "retail_panic": 0.65,
+            "retail_chase": 0.8,
+            "institutional_rebalance": 1.25,
+            "liquidity_provider": 1.5,
+        }.get(profile, 1.0)
+    return {
+        "retail_panic": 1.6,
+        "retail_chase": 1.35,
+        "institutional_rebalance": 0.9,
+        "liquidity_provider": 0.7,
+    }.get(profile, 1.0)
+
+
 def _load_profile(profile: dict[str, Any] | str | Path | None) -> dict[str, Any]:
     if profile is None:
         return {}
@@ -324,10 +356,11 @@ class VolatilitySlippageModel:
                 available_qty = bar_volume * _safe_float(self.config.get("bar_participation_cap"), 1.0)
         available_qty = max(available_qty or order.quantity, 1.0)
         participation = min(1.0, order.quantity / available_qty)
+        impact_multiplier = _environment_multiplier(market_snapshot, kind="impact")
         bps = (
             _safe_float(self.config.get("base_slippage_bps"), 0.0)
             + volatility_bps * _safe_float(self.config.get("volatility_slippage_multiplier"), 0.0)
-            + participation * _safe_float(self.config.get("volume_impact_bps"), 0.0)
+            + participation * _safe_float(self.config.get("volume_impact_bps"), 0.0) * impact_multiplier
         )
         return round(max(0.0, bps), 6)
 
@@ -533,17 +566,18 @@ class SimExecutionEngine:
             if reference_price > 0 and price_limit_pct > 0:
                 lower_limit = reference_price * (1.0 - price_limit_pct)
                 upper_limit = reference_price * (1.0 + price_limit_pct)
-        if lower_limit > 0 and order.limit_price < lower_limit - 1e-9:
+        rule_price = _price_for_rule_check(order, snapshot)
+        if lower_limit > 0 and rule_price < lower_limit - 1e-9:
             return "price_below_lower_limit"
-        if upper_limit > 0 and order.limit_price > upper_limit + 1e-9:
+        if upper_limit > 0 and rule_price > upper_limit + 1e-9:
             return "price_above_upper_limit"
 
         if self.market == "pm":
             min_price = _safe_float(self.model_config.get("min_price"), 0.0)
             max_price = _safe_float(self.model_config.get("max_price"), 0.0)
-            if min_price > 0 and order.limit_price < min_price:
+            if min_price > 0 and rule_price < min_price:
                 return "price_below_min_probability"
-            if max_price > 0 and order.limit_price > max_price:
+            if max_price > 0 and rule_price > max_price:
                 return "price_above_max_probability"
 
         if order.side == "buy":
@@ -567,6 +601,7 @@ class SimExecutionEngine:
                 available = bar_volume * _safe_float(self.model_config.get("bar_participation_cap"), 1.0)
         if available <= 0:
             available = order.quantity
+        available *= _environment_multiplier(snapshot, kind="liquidity")
         queue_position = max(0.0, _safe_float(snapshot.get("queue_position"), 0.0))
         queue_ahead = _safe_float(self.model_config.get("queue_ahead_ratio"), 0.0) * queue_position
         fillable = max(0.0, available - queue_ahead)

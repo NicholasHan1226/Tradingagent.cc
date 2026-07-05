@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from dataclasses import asdict, is_dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -86,6 +87,22 @@ def _candidate_price(candidate: dict[str, Any], market: str) -> float:
     return 0.5 if market == "pm" else 1.0
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+        return parsed if parsed == parsed else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _first_present(row: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return default
+
+
 def _safe_call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     try:
         return fn(*args, **kwargs)
@@ -121,17 +138,43 @@ class LocalStyleSimulator:
 
         side = str(order.get("side") or "buy").strip().lower()
         snapshot = dict(order.get("market_snapshot") or {})
+        has_bar_liquidity = any(order.get(key) not in (None, "") for key in ("bar_volume", "volume", "vol"))
+        default_size = None if has_bar_liquidity else quantity
         if side == "buy":
             snapshot.setdefault("ask_price", order.get("ask_price", price))
-            snapshot.setdefault("ask_size", order.get("ask_size", quantity))
+            ask_size = order.get("ask_size", default_size)
+            if ask_size is not None:
+                snapshot.setdefault("ask_size", ask_size)
             snapshot.setdefault("cash_available", account.get("cash_available", account.get("cash", account.get("initial_capital"))))
         else:
             snapshot.setdefault("bid_price", order.get("bid_price", price))
-            snapshot.setdefault("bid_size", order.get("bid_size", quantity))
+            bid_size = order.get("bid_size", default_size)
+            if bid_size is not None:
+                snapshot.setdefault("bid_size", bid_size)
             if order.get("sellable_qty") is not None:
                 snapshot.setdefault("sellable_qty", order.get("sellable_qty"))
         snapshot.setdefault("last_price", order.get("last_price", price))
-        snapshot.setdefault("available_qty", order.get("available_qty", quantity))
+        available_qty = order.get("available_qty", default_size)
+        if available_qty is not None:
+            snapshot.setdefault("available_qty", available_qty)
+        for key in (
+            "bar_volume",
+            "volume",
+            "vol",
+            "previous_close",
+            "pre_close",
+            "reference_price",
+            "upper_limit",
+            "lower_limit",
+            "queue_position",
+            "participation_cap",
+            "liquidity_multiplier",
+            "market_impact_multiplier",
+            "counterparty_profile",
+            "market_environment",
+        ):
+            if order.get(key) not in (None, ""):
+                snapshot.setdefault(key, order.get(key))
         sim_order = SimOrder(
             symbol=str(order.get("symbol") or order.get("ts_code") or order.get("market_id") or ""),
             side=side,
@@ -414,13 +457,7 @@ class AutoPipeline:
     ) -> list[dict[str, Any]]:
         decisions: list[dict[str, Any]] = []
         for report in research:
-            decision = self.decision_engine.decide(
-                candidate=report["candidate"],
-                fundamental=report["fundamental"],
-                research=report["multi_perspective"],
-                market=market,
-                as_of=trade_date,
-            )
+            decision = self._decide(report, market, trade_date)
             decision["capital_layer"] = "simulated"
             decision["account_type"] = "simulated"
             decision["real_execution"] = False
@@ -435,14 +472,137 @@ class AutoPipeline:
         decisions: list[dict[str, Any]],
         trade_date: str,
     ) -> dict[str, Any]:
-        portfolio = self.decision_engine.portfolio_rebalance(
-            decisions,
-            market=market,
-            as_of=trade_date,
-            capital=self.initial_capital,
-        )
+        try:
+            portfolio = self.decision_engine.portfolio_rebalance(
+                decisions,
+                market=market,
+                as_of=trade_date,
+                capital=self.initial_capital,
+            )
+        except TypeError:
+            portfolio = self._fallback_portfolio_rebalance(market, decisions, trade_date)
+        if not isinstance(portfolio.get("positions"), list):
+            portfolio = self._fallback_portfolio_rebalance(market, decisions, trade_date)
         reject_real_execution_payload(portfolio, context=f"AutoPipeline.{market}.portfolio")
         return portfolio
+
+    def _decide(self, report: dict[str, Any], market: str, trade_date: str) -> dict[str, Any]:
+        try:
+            result = self.decision_engine.decide(
+                candidate=report["candidate"],
+                fundamental=report["fundamental"],
+                research=report["multi_perspective"],
+                market=market,
+                as_of=trade_date,
+            )
+        except TypeError:
+            result = self.decision_engine.decide(
+                self._legacy_fundamental(report),
+                self._legacy_perspectives(report),
+                self._legacy_risk(report),
+                {"capital": self.initial_capital, "market": market, "as_of": trade_date},
+            )
+        return self._decision_dict(result, report, market)
+
+    def _decision_dict(self, result: Any, report: dict[str, Any], market: str) -> dict[str, Any]:
+        data = asdict(result) if is_dataclass(result) else dict(result or {})
+        candidate = dict(report.get("candidate") or {})
+        symbol = str(data.get("symbol") or candidate.get("symbol") or candidate.get("ts_code") or "").strip()
+        raw_action = str(data.get("action") or data.get("decision") or "watch").lower()
+        action = "buy" if raw_action in {"buy", "long"} else "sell" if raw_action in {"sell", "short", "reduce"} else "watch"
+        confidence = _safe_float(data.get("confidence", data.get("belief_score")), 0.5)
+        conviction = self._conviction_value(data.get("conviction"), confidence)
+        price = _safe_float(candidate.get("price", candidate.get("latest_price", candidate.get("close"))), _candidate_price(candidate, market))
+        return {
+            **data,
+            "market": market,
+            "symbol": symbol,
+            "ts_code": symbol,
+            "action": action,
+            "side": "buy" if action == "buy" else "sell" if action == "sell" else "watch",
+            "price": price,
+            "belief_score": confidence,
+            "conviction": conviction,
+            "position_pct": _safe_float(data.get("position_pct"), 0.0),
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "real_execution": False,
+            "direct_execution": False,
+        }
+
+    @staticmethod
+    def _conviction_value(value: Any, confidence: float) -> float:
+        if isinstance(value, str):
+            return {"high": 0.8, "medium": 0.65, "low": 0.5}.get(value.lower(), confidence)
+        parsed = _safe_float(value, 0.0)
+        return parsed if parsed > 0 else confidence
+
+    @staticmethod
+    def _legacy_fundamental(report: dict[str, Any]) -> dict[str, Any]:
+        fundamental = dict(report.get("fundamental") or {})
+        candidate = dict(report.get("candidate") or {})
+        scores = fundamental.get("scores") if isinstance(fundamental.get("scores"), dict) else {}
+        fundamental.setdefault("symbol", candidate.get("symbol") or candidate.get("ts_code") or report.get("symbol"))
+        fundamental.setdefault("composite_score", scores.get("composite", 50.0))
+        return fundamental
+
+    @staticmethod
+    def _legacy_perspectives(report: dict[str, Any]) -> dict[str, Any]:
+        perspective = dict(report.get("multi_perspective") or {})
+        if any(key in perspective for key in ("bull", "bear", "macro", "technical")):
+            return perspective
+        consensus = perspective.get("consensus") if isinstance(perspective.get("consensus"), dict) else {}
+        score = _safe_float(consensus.get("score"), 50.0)
+        return {
+            "bull": {"score": score},
+            "bear": {"score": max(0.0, 100.0 - score)},
+            "macro": {"score": score},
+            "technical": {"score": score},
+        }
+
+    @staticmethod
+    def _legacy_risk(report: dict[str, Any]) -> dict[str, Any]:
+        fundamental = dict(report.get("fundamental") or {})
+        red_flags = fundamental.get("red_flags") if isinstance(fundamental.get("red_flags"), list) else []
+        return {"risk_score": min(90.0, 20.0 + 10.0 * len(red_flags))}
+
+    def _fallback_portfolio_rebalance(self, market: str, decisions: list[dict[str, Any]], trade_date: str) -> dict[str, Any]:
+        buys = [decision for decision in decisions if str(decision.get("action") or "").lower() == "buy"]
+        buys.sort(key=lambda row: _safe_float(row.get("belief_score"), 0.0), reverse=True)
+        positions: list[dict[str, Any]] = []
+        for decision in buys[:10]:
+            position_pct = _safe_float(decision.get("position_pct"), 0.0)
+            if position_pct <= 0:
+                position_pct = min(0.10, max(0.01, _safe_float(decision.get("belief_score"), 0.5) * 0.10))
+            positions.append(
+                {
+                    "market": market,
+                    "symbol": decision.get("symbol"),
+                    "ts_code": decision.get("ts_code") or decision.get("symbol"),
+                    "side": "buy",
+                    "price": decision.get("price"),
+                    "belief_score": decision.get("belief_score", 0.5),
+                    "conviction": decision.get("conviction", 0.5),
+                    "position_pct": round(position_pct, 6),
+                    "trade_date": trade_date,
+                    "capital_layer": "simulated",
+                    "account_type": "simulated",
+                    "real_execution": False,
+                    "direct_execution": False,
+                }
+            )
+        return {
+            "market": market,
+            "capital": self.initial_capital,
+            "positions": positions,
+            "position_count": len(positions),
+            "allocated_pct": round(sum(_safe_float(row.get("position_pct"), 0.0) for row in positions), 6),
+            "trade_date": trade_date,
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "real_execution": False,
+            "direct_execution": False,
+        }
 
     def run_execution(
         self,
@@ -541,9 +701,108 @@ class AutoPipeline:
                 "real_execution": False,
                 "direct_execution": False,
             }
+            snapshot = self._market_snapshot(market, symbol, trade_date)
+            if snapshot:
+                signal["market_snapshot"] = snapshot
+                for key in (
+                    "last_price",
+                    "close",
+                    "bar_volume",
+                    "volume",
+                    "previous_close",
+                    "pre_close",
+                    "reference_price",
+                ):
+                    if snapshot.get(key) not in (None, ""):
+                        signal.setdefault(key, snapshot[key])
             reject_real_execution_payload(signal, context=f"AutoPipeline.{market}.signal")
             signals.append(signal)
         return signals
+
+    def _market_snapshot(self, market: str, symbol: str, trade_date: str) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {}
+        market_names = self._reader_market_names(market)
+        intraday = self._latest_intraday_bar(market_names, symbol, trade_date)
+        if intraday:
+            close = _safe_float(_first_present(intraday, "close", "price", "last_price"), 0.0)
+            volume = _safe_float(_first_present(intraday, "bar_volume", "volume", "vol"), 0.0)
+            if close > 0:
+                snapshot["last_price"] = close
+                snapshot["close"] = close
+            if volume > 0:
+                snapshot["bar_volume"] = volume
+                snapshot["volume"] = volume
+            for key in ("bar_time", "trade_time", "ask_price", "ask_size", "bid_price", "bid_size"):
+                if intraday.get(key) not in (None, ""):
+                    snapshot[key] = intraday[key]
+
+        daily_rows = self._recent_daily_bars(market_names, symbol, trade_date)
+        if daily_rows:
+            latest = daily_rows[-1]
+            latest_close = _safe_float(_first_present(latest, "close", "price", "last_price"), 0.0)
+            if latest_close > 0:
+                snapshot.setdefault("last_price", latest_close)
+                snapshot.setdefault("close", latest_close)
+            pre_close = _safe_float(_first_present(latest, "pre_close", "previous_close", "prev_close"), 0.0)
+            if pre_close <= 0 and len(daily_rows) >= 2:
+                pre_close = _safe_float(_first_present(daily_rows[-2], "close", "price", "last_price"), 0.0)
+            if pre_close > 0:
+                snapshot["previous_close"] = pre_close
+                snapshot["pre_close"] = pre_close
+                snapshot["reference_price"] = pre_close
+            daily_volume = _safe_float(_first_present(latest, "volume", "vol"), 0.0)
+            if daily_volume > 0:
+                snapshot.setdefault("volume", daily_volume)
+        return snapshot
+
+    @staticmethod
+    def _reader_market_names(market: str) -> tuple[str, ...]:
+        market_key = _normalize_market(market)
+        names = [market_key, market_key.capitalize(), market_key.upper()]
+        if market_key == "ashare":
+            names.insert(0, "Ashare")
+        return tuple(dict.fromkeys(names))
+
+    def _latest_intraday_bar(self, market_names: tuple[str, ...], symbol: str, trade_date: str) -> dict[str, Any]:
+        get_bars = getattr(self.reader, "get_bars_intraday", None)
+        if not callable(get_bars):
+            return {}
+        for market_name in market_names:
+            for interval in ("5min", "5m"):
+                try:
+                    rows = get_bars(market_name, symbol, interval, trade_date, trade_date)
+                except Exception:
+                    continue
+                valid = [dict(row) for row in _unwrap_rows(rows) if isinstance(row, dict)]
+                if valid:
+                    return valid[-1]
+        return {}
+
+    def _recent_daily_bars(self, market_names: tuple[str, ...], symbol: str, trade_date: str) -> list[dict[str, Any]]:
+        get_bars = getattr(self.reader, "get_bars_daily", None)
+        if not callable(get_bars):
+            return []
+        start_date = self._lookback_start(trade_date)
+        for market_name in market_names:
+            try:
+                rows = get_bars(market_name, symbol, start_date, trade_date)
+            except Exception:
+                continue
+            valid = [dict(row) for row in _unwrap_rows(rows) if isinstance(row, dict)]
+            if valid:
+                return valid
+        return []
+
+    @staticmethod
+    def _lookback_start(trade_date: str) -> str:
+        raw = str(trade_date or "").strip()
+        for fmt in ("%Y%m%d", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(raw, fmt)
+                return (parsed - timedelta(days=14)).strftime(fmt)
+            except ValueError:
+                continue
+        return ""
 
     def _styles_dir(self, market: str) -> Path:
         return self.styles_dir_by_market.get(market) or styles_dir_for_market(market)

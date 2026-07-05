@@ -40,6 +40,27 @@ class FilledSimulator:
         }
 
 
+class CapturingSimulator:
+    def __init__(self) -> None:
+        self.orders = []
+
+    def simulate(self, order, account):
+        self.orders.append(dict(order))
+        return {
+            "status": "filled",
+            "market": order["market"],
+            "symbol": order["symbol"],
+            "side": order["side"],
+            "filled_qty": order["quantity"],
+            "avg_price": order["price"],
+            "fee": 0.0,
+            "order_id": order["order_id"],
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "real_execution": False,
+        }
+
+
 class StyleRunnerLedgerTest(unittest.TestCase):
     def test_records_filled_simulated_runs_to_market_style_ledger_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -71,6 +92,34 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             self.assertGreater(rows[0]["fill_qty"], 0)
             positions = json.loads((ledger_root / "crypto" / "balanced" / "positions.json").read_text(encoding="utf-8"))
             self.assertIn("BTCUSDT", positions["positions"])
+
+    def test_copies_market_snapshot_fields_from_signal_to_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            styles_dir = root / "styles"
+            styles_dir.mkdir()
+            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            simulator = CapturingSimulator()
+            runner = StyleRunner("ashare", simulator, styles_dir=styles_dir, review_root=root / "review", record_ledger=False)
+
+            runner.run(
+                [
+                    {
+                        "symbol": "600000.SH",
+                        "price": 10.0,
+                        "side": "buy",
+                        "conviction": 0.9,
+                        "bar_volume": 1500,
+                        "previous_close": 9.8,
+                        "counterparty_profile": "retail_panic",
+                    }
+                ],
+                date="20260704",
+            )
+
+            self.assertEqual(simulator.orders[0]["bar_volume"], 1500)
+            self.assertEqual(simulator.orders[0]["previous_close"], 9.8)
+            self.assertEqual(simulator.orders[0]["counterparty_profile"], "retail_panic")
 
 
 if __name__ == "__main__":

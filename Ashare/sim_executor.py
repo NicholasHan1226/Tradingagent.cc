@@ -103,14 +103,29 @@ def _snapshot_from_payload(
 
     price = float(card.get("price") or 0.0)
     side = str(card.get("side") or "buy").lower()
+    bar_liquidity = _first_value(
+        order.get("bar_volume"),
+        order.get("volume"),
+        order.get("vol"),
+        config.get("bar_volume"),
+        config.get("volume"),
+        config.get("vol"),
+    )
+    default_size = None if bar_liquidity is not None else card.get("quantity")
     if side == "buy":
         snapshot.setdefault("ask_price", _first_value(order.get("ask_price"), config.get("ask_price"), price))
-        snapshot.setdefault("ask_size", _first_value(order.get("ask_size"), config.get("ask_size"), card.get("quantity")))
+        ask_size = _first_value(order.get("ask_size"), config.get("ask_size"), default_size)
+        if ask_size is not None:
+            snapshot.setdefault("ask_size", ask_size)
     else:
         snapshot.setdefault("bid_price", _first_value(order.get("bid_price"), config.get("bid_price"), price))
-        snapshot.setdefault("bid_size", _first_value(order.get("bid_size"), config.get("bid_size"), card.get("quantity")))
+        bid_size = _first_value(order.get("bid_size"), config.get("bid_size"), default_size)
+        if bid_size is not None:
+            snapshot.setdefault("bid_size", bid_size)
     snapshot.setdefault("last_price", _first_value(order.get("last_price"), config.get("last_price"), price))
-    snapshot.setdefault("available_qty", _first_value(order.get("available_qty"), config.get("available_qty"), card.get("quantity")))
+    available_qty = _first_value(order.get("available_qty"), config.get("available_qty"), default_size)
+    if available_qty is not None:
+        snapshot.setdefault("available_qty", available_qty)
 
     for key in (
         "previous_close",
@@ -126,6 +141,10 @@ def _snapshot_from_payload(
         "volatility_bps",
         "queue_position",
         "participation_cap",
+        "liquidity_multiplier",
+        "market_impact_multiplier",
+        "counterparty_profile",
+        "market_environment",
     ):
         value = _first_value(order.get(key), config.get(key))
         if value is not None:
@@ -139,6 +158,28 @@ def _snapshot_from_payload(
         sellable_qty = None
     cash_available = _first_value(order.get("cash_available"), config.get("cash_available"), cash_available)
     sellable_qty = _first_value(order.get("sellable_qty"), config.get("sellable_qty"), sellable_qty)
+    if cash_available is None or sellable_qty is None:
+        try:
+            from shared.execution.local_sim_ledger import get_local_sim_account_snapshot
+
+            account_snapshot = get_local_sim_account_snapshot(
+                account or _account_name(account),
+                symbol=str(card.get("ts_code") or ""),
+                trade_date=str(card.get("valid_until") or order.get("trade_date") or order.get("date") or ""),
+                starting_cash=_first_value(
+                    config.get("starting_cash"),
+                    config.get("initial_capital"),
+                    account.get("initial_capital") if isinstance(account, dict) else None,
+                    account.get("cash") if isinstance(account, dict) else None,
+                    default=100_000.0,
+                ),
+            )
+        except Exception:
+            account_snapshot = {}
+        if cash_available is None:
+            cash_available = account_snapshot.get("cash_available")
+        if sellable_qty is None:
+            sellable_qty = account_snapshot.get("sellable_qty")
     if cash_available is not None:
         snapshot.setdefault("cash_available", cash_available)
     if sellable_qty is not None:

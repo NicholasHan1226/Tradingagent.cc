@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 from Ashare.adapter import AshareAdapter
 from Ashare.sim_executor import ashare_sim_execute
 from mini.mini_consumer import MiniConsumer
+from shared.execution import local_sim_ledger
 from shared.execution.signal_state_machine import PENDING, read_json
 from shared.execution.sim_broker import SimResult
 from shared.execution.sim_executor_registry import get_sim_executor
@@ -26,6 +27,21 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.addCleanup(self.tmpdir.cleanup)
         self.tmp_path = Path(self.tmpdir.name)
         self.signals_dir = self.tmp_path / "signals"
+
+    def _patch_local_sim_paths(self) -> None:
+        base = self.tmp_path / "local_sim"
+        for name, value in (
+            ("LOCAL_SIM_DIR", base),
+            ("LOCAL_SIM_TRADES", base / "local_sim_trades.jsonl"),
+            ("LOCAL_SIM_POSITIONS", base / "local_sim_positions.json"),
+            ("LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
+            ("LOCAL_SIM_LOCK", base / ".local_sim.lock"),
+            ("LOCAL_SIM_POSITIONS_SNAPSHOT", base / "simulated_ashare_positions.json"),
+            ("LOCAL_SIM_RECEIPTS", base / "sim_execution_receipts.jsonl"),
+        ):
+            patcher = patch.object(local_sim_ledger, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def test_adapter_exposes_ashare_sim_account_without_breaking_shadow_account(self) -> None:
         adapter = AshareAdapter(reader=object())
@@ -114,6 +130,71 @@ class AshareSimExecutorTest(unittest.TestCase):
 
         self.assertEqual(result.status, "rejected")
         self.assertEqual(result.raw_response["engine_record"]["reason"], "buy_quantity_not_lot_aligned")
+
+    def test_ashare_server_local_fill_uses_bar_volume_when_book_size_missing(self) -> None:
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-BARVOL",
+                "ts_code": "600000.SH",
+                "quantity": 300,
+                "price": 10.5,
+                "side": "buy",
+                "bar_volume": 1500,
+            },
+            account={"account_id": "ashare_sim"},
+        )
+
+        self.assertEqual(result.status, "partial")
+        self.assertEqual(result.filled_qty, 100)
+        self.assertEqual(result.raw_response["engine_record"]["state"], "partial")
+
+    def test_ashare_server_local_fill_rejects_same_day_t1_sell_from_ledger(self) -> None:
+        self._patch_local_sim_paths()
+        local_sim_ledger.record_local_sim_order(
+            {
+                "order_id": "SEED-BUY",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "price": 10.0,
+                "trade_date": "2026-07-03",
+            },
+            "ashare",
+            "ashare_sim",
+            {"local_sim_slippage_bps": 0},
+        )
+
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-T1-SELL",
+                "ts_code": "600000.SH",
+                "quantity": 100,
+                "price": 10.0,
+                "side": "sell",
+                "trade_date": "2026-07-03",
+            },
+            account="ashare_sim",
+        )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertEqual(result.raw_response["engine_record"]["reason"], "insufficient_sellable_qty_t1")
+
+    def test_ashare_server_local_fill_rejects_insufficient_default_cash(self) -> None:
+        self._patch_local_sim_paths()
+
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-CASH",
+                "ts_code": "600000.SH",
+                "quantity": 20000,
+                "price": 10.0,
+                "side": "buy",
+            },
+            account="ashare_sim",
+        )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertEqual(result.raw_response["engine_record"]["reason"], "insufficient_cash")
 
     def test_ashare_sim_execute_sends_webhook_when_hermes_explicitly_enabled(self) -> None:
         with patch(

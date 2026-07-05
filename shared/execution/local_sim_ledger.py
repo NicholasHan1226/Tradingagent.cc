@@ -217,6 +217,115 @@ def _load_trades_unlocked() -> list[dict[str, Any]]:
     return rows
 
 
+def _can_sell_on(entry_date: Any, trade_date: Any) -> bool:
+    try:
+        from Ashare.t_plus_1 import can_sell
+
+        return bool(can_sell(entry_date, trade_date))
+    except Exception:
+        try:
+            return _trade_date(entry_date) < _trade_date(trade_date)
+        except Exception:
+            return False
+
+
+def _starting_cash(value: Any) -> float:
+    cash = _safe_float(value, 0.0)
+    return cash if cash > 0 else 100_000.0
+
+
+def _sim_account_snapshot_unlocked(
+    trades: list[dict[str, Any]],
+    *,
+    account: str,
+    symbol: str = "",
+    trade_date: str = "",
+    starting_cash: float = 100_000.0,
+) -> dict[str, Any]:
+    lots_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    cash_available = float(starting_cash)
+    as_of = _trade_date(trade_date)
+    for trade in trades:
+        if str(trade.get("account") or "") != account:
+            continue
+        if str(trade.get("status") or "") != "filled":
+            continue
+        code = str(trade.get("ts_code") or "").strip().upper()
+        if not code:
+            continue
+        side = str(trade.get("side") or "").lower()
+        qty = _safe_float(trade.get("quantity"), 0.0)
+        net_amount = _safe_float(trade.get("net_amount"), 0.0)
+        if qty <= 0:
+            continue
+        if side == "buy":
+            cash_available -= net_amount
+            lots_by_symbol.setdefault(code, []).append(
+                {
+                    "quantity": qty,
+                    "trade_date": _trade_date(trade.get("trade_date")),
+                    "cost_basis": net_amount,
+                }
+            )
+            continue
+        if side != "sell":
+            continue
+        cash_available += net_amount
+        remaining = qty
+        for lot in lots_by_symbol.get(code, []):
+            if remaining <= 0:
+                break
+            lot_qty = _safe_float(lot.get("quantity"), 0.0)
+            used = min(lot_qty, remaining)
+            lot["quantity"] = round(lot_qty - used, 8)
+            remaining -= used
+    positions: dict[str, dict[str, Any]] = {}
+    for code, lots in lots_by_symbol.items():
+        open_lots = [lot for lot in lots if _safe_float(lot.get("quantity"), 0.0) > 0]
+        quantity = sum(_safe_float(lot.get("quantity"), 0.0) for lot in open_lots)
+        sellable_quantity = sum(
+            _safe_float(lot.get("quantity"), 0.0)
+            for lot in open_lots
+            if _can_sell_on(lot.get("trade_date"), as_of)
+        )
+        if quantity <= 0:
+            continue
+        positions[code] = {
+            "quantity": int(quantity) if abs(quantity - round(quantity)) < 1e-12 else round(quantity, 6),
+            "sellable_quantity": int(sellable_quantity) if abs(sellable_quantity - round(sellable_quantity)) < 1e-12 else round(sellable_quantity, 6),
+            "oldest_open_date": min(str(lot.get("trade_date") or "") for lot in open_lots if lot.get("trade_date")),
+        }
+    selected = positions.get(str(symbol or "").strip().upper(), {}) if symbol else {}
+    return {
+        "account": account,
+        "trade_date": as_of,
+        "cash_available": round(cash_available, 2),
+        "sellable_qty": selected.get("sellable_quantity", 0 if symbol else None),
+        "position_qty": selected.get("quantity", 0 if symbol else None),
+        "positions": positions,
+    }
+
+
+def get_local_sim_account_snapshot(
+    account: dict[str, Any] | str | None = None,
+    *,
+    symbol: str = "",
+    trade_date: str = "",
+    starting_cash: Any = 100_000.0,
+) -> dict[str, Any]:
+    """Return server-local simulated cash and T+1 sellable quantity snapshot."""
+
+    account_name = _account_name(account or DEFAULT_ACCOUNT)
+    with _lock():
+        return _sim_account_snapshot_unlocked(
+            _load_trades_unlocked(),
+            account=account_name,
+            symbol=symbol,
+            trade_date=trade_date,
+            starting_cash=_starting_cash(starting_cash),
+        )
+
+
 def _append_trade_unlocked(trade: LocalSimTrade) -> None:
     LOCAL_SIM_TRADES.parent.mkdir(parents=True, exist_ok=True)
     with LOCAL_SIM_TRADES.open("a", encoding="utf-8") as handle:

@@ -216,6 +216,39 @@ class StyleRunner:
                 "order_id": self._order_id(style.name, symbol, side, date),
             }
         )
+        for key in (
+            "market_snapshot",
+            "ask_price",
+            "best_ask",
+            "ask",
+            "ask_size",
+            "ask_qty",
+            "best_ask_size",
+            "bid_price",
+            "best_bid",
+            "bid",
+            "bid_size",
+            "bid_qty",
+            "best_bid_size",
+            "bar_volume",
+            "volume",
+            "vol",
+            "previous_close",
+            "pre_close",
+            "reference_price",
+            "upper_limit",
+            "lower_limit",
+            "cash_available",
+            "sellable_qty",
+            "queue_position",
+            "participation_cap",
+            "liquidity_multiplier",
+            "market_impact_multiplier",
+            "counterparty_profile",
+            "market_environment",
+        ):
+            if key in signal and signal.get(key) not in (None, ""):
+                order[key] = signal[key]
         return order
 
     def _style_metrics(self, style: TradeStyle, runs: list[dict[str, Any]]) -> dict[str, Any]:
