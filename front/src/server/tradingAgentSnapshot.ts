@@ -97,6 +97,14 @@ type SimLedgerTradeRow = {
   timestamp?: string
 }
 
+type SimLedgerTimelineTrade = {
+  market: string
+  notional: number
+  strategy: string
+  timestamp: string
+  timestampMs: number
+}
+
 type StylePerformanceRow = {
   date?: string
   trade_date?: string
@@ -112,6 +120,17 @@ type StylePerformanceRow = {
   capital_layer?: string
   account_type?: string
   real_execution?: boolean
+}
+
+type StylePerformanceRecord = StylePerformanceRow & {
+  marketHint: string
+}
+
+type TimelineContribution = {
+  maxDrawdown: number
+  pnl: number
+  timestamp: string
+  timestampMs: number
 }
 
 type PerformanceReviewRow = {
@@ -215,14 +234,14 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
   summary?: PortfolioSummary
 }> {
   const files = await listStylePerformanceFiles(root)
-  const rows: StylePerformanceRow[] = []
+  const rows: StylePerformanceRecord[] = []
 
   for (const file of files) {
     try {
-      const lines = (await readFile(file, 'utf8')).trim().split('\n').filter(Boolean)
+      const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
       for (const line of lines) {
         try {
-          rows.push(JSON.parse(line) as StylePerformanceRow)
+          rows.push({ ...(JSON.parse(line) as StylePerformanceRow), marketHint: file.market })
         } catch {
           // Ignore malformed append-only rows; other rows remain usable.
         }
@@ -232,6 +251,8 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
     }
   }
 
+  const tradeTimeline = await readSimLedgerTradeTimeline(simLedgerRoot)
+  const timelineContributions: TimelineContribution[] = []
   const byDay = new Map<string, { pnl: number; realizedPnl: number; unrealizedPnl: number; maxDrawdown: number; trades: number; pnlSources: Set<string> }>()
   for (const row of rows) {
     if (row.real_execution === true) continue
@@ -240,13 +261,29 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
     const pnl = parseFiniteNumber(row.pnl)
     if (!dayKey || pnl === undefined) continue
     const current = byDay.get(dayKey) ?? { pnl: 0, realizedPnl: 0, unrealizedPnl: 0, maxDrawdown: 0, trades: 0, pnlSources: new Set<string>() }
+    const maxDrawdown = parseFiniteNumber(row.max_dd) ?? 0
     current.pnl += pnl
     current.realizedPnl += parseFiniteNumber(row.realized_pnl) ?? 0
     current.unrealizedPnl += parseFiniteNumber(row.unrealized_pnl) ?? 0
-    current.maxDrawdown = Math.max(current.maxDrawdown, parseFiniteNumber(row.max_dd) ?? 0)
+    current.maxDrawdown = Math.max(current.maxDrawdown, maxDrawdown)
     current.trades += Math.max(0, Math.trunc(parseFiniteNumber(row.trades) ?? 0))
     if (row.pnl_source) current.pnlSources.add(String(row.pnl_source))
     byDay.set(dayKey, current)
+
+    const matchingTrades = tradeTimeline.get(performanceTradeKey(dayKey, row.market ?? row.marketHint, row.style_name))
+    if (matchingTrades?.length && pnl !== 0) {
+      const totalNotional = matchingTrades.reduce((sum, trade) => sum + Math.max(0, trade.notional), 0)
+      const equalShare = 1 / matchingTrades.length
+      for (const trade of matchingTrades) {
+        const weight = totalNotional > 0 ? Math.max(0, trade.notional) / totalNotional : equalShare
+        timelineContributions.push({
+          maxDrawdown: maxDrawdown * weight,
+          pnl: pnl * weight,
+          timestamp: trade.timestamp,
+          timestampMs: trade.timestampMs,
+        })
+      }
+    }
   }
 
   if (!byDay.size) return { performance: [] }
@@ -254,7 +291,7 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
   const capitalBase = await readSimLedgerCapitalBase(simLedgerRoot)
   const dates = [...byDay.keys()].sort()
   let cumulativePnl = 0
-  const performance = dates.map((day, index) => {
+  const dailyPerformance = dates.map((day, index) => {
     const value = byDay.get(day)!
     cumulativePnl += value.pnl
     const simulated = capitalBase > 0 ? (cumulativePnl / capitalBase) * 100 : 0
@@ -269,6 +306,8 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
       opportunity: roundMetric(-drawdown),
     }
   })
+  const timelinePerformance = buildTimelinePerformance(timelineContributions, capitalBase)
+  const performance = timelinePerformance.length > dailyPerformance.length ? timelinePerformance : dailyPerformance
   const totalPnl = [...byDay.values()].reduce((sum, row) => sum + row.pnl, 0)
   const totalRealizedPnl = [...byDay.values()].reduce((sum, row) => sum + row.realizedPnl, 0)
   const totalUnrealizedPnl = [...byDay.values()].reduce((sum, row) => sum + row.unrealizedPnl, 0)
@@ -296,18 +335,51 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
 }
 
 async function listStylePerformanceFiles(root: string) {
-  const files: string[] = []
+  const files: Array<{ path: string; market: string }> = []
   try {
     const entries = await readdir(root, { withFileTypes: true })
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
       const path = join(root, entry.name, 'style_performance.jsonl')
-      if (await fileExists(path)) files.push(path)
+      if (await fileExists(path)) files.push({ path, market: entry.name })
     }
   } catch {
     return []
   }
   return files
+}
+
+function buildTimelinePerformance(contributions: TimelineContribution[], capitalBase: number): PerformancePoint[] {
+  const usable = contributions
+    .filter((row) => Number.isFinite(row.timestampMs) && Number.isFinite(row.pnl))
+    .sort((a, b) => a.timestampMs - b.timestampMs)
+  if (!usable.length) return []
+
+  const byTimestamp = new Map<number, { timestamp: string; pnl: number; maxDrawdown: number }>()
+  for (const row of usable) {
+    const current = byTimestamp.get(row.timestampMs) ?? { timestamp: row.timestamp, pnl: 0, maxDrawdown: 0 }
+    current.pnl += row.pnl
+    current.maxDrawdown += Math.abs(row.maxDrawdown)
+    byTimestamp.set(row.timestampMs, current)
+  }
+
+  const timestamps = [...byTimestamp.keys()].sort((a, b) => a - b)
+  let cumulativePnl = 0
+  return timestamps.map((timestampMs, index) => {
+    const row = byTimestamp.get(timestampMs)!
+    cumulativePnl += row.pnl
+    const simulated = capitalBase > 0 ? (cumulativePnl / capitalBase) * 100 : 0
+    const target = Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / timestamps.length))
+    const drawdown = capitalBase > 0 ? (row.maxDrawdown / capitalBase) * 100 : 0
+
+    return {
+      day: index === timestamps.length - 1 ? '现在' : formatTimelineLabel(row.timestamp),
+      simulated: roundMetric(simulated),
+      target: roundMetric(target),
+      benchmark: 0,
+      opportunity: roundMetric(-drawdown),
+    }
+  })
 }
 
 function parsePerformanceRow(row: PerformanceReviewRow): PerformancePoint | null {
@@ -445,6 +517,48 @@ async function readSimLedgerSignals(root: string, now: Date): Promise<SignalRow[
     .filter((row): row is SignalRow => Boolean(row))
     .sort((a, b) => Number.parseInt(a.age, 10) - Number.parseInt(b.age, 10))
     .slice(0, MAX_SIM_LEDGER_SIGNALS)
+}
+
+async function readSimLedgerTradeTimeline(root: string): Promise<Map<string, SimLedgerTimelineTrade[]>> {
+  const files = await listSimLedgerFiles(root, 'trade_journal.jsonl')
+  const timeline = new Map<string, SimLedgerTimelineTrade[]>()
+
+  for (const file of files) {
+    try {
+      const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
+      for (const line of lines) {
+        try {
+          const trade = JSON.parse(line) as SimLedgerTradeRow
+          if (trade.capital_layer && String(trade.capital_layer).toLowerCase() !== 'simulated') continue
+          if (!trade.timestamp) continue
+          const timestampMs = Date.parse(trade.timestamp)
+          if (!Number.isFinite(timestampMs)) continue
+          const dayKey = compactDate(trade.timestamp)
+          if (!dayKey) continue
+          const key = performanceTradeKey(dayKey, file.market, file.strategy)
+          const rows = timeline.get(key) ?? []
+          rows.push({
+            market: file.market,
+            notional: parseFiniteNumber(trade.notional) ?? 0,
+            strategy: file.strategy,
+            timestamp: trade.timestamp,
+            timestampMs,
+          })
+          timeline.set(key, rows)
+        } catch {
+          // Ignore malformed ledger rows; other trades remain usable.
+        }
+      }
+    } catch {
+      // Ignore unreadable strategy folders.
+    }
+  }
+
+  for (const rows of timeline.values()) {
+    rows.sort((a, b) => a.timestampMs - b.timestampMs)
+  }
+
+  return timeline
 }
 
 function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strategy: string, now: Date): SignalRow | null {
@@ -837,6 +951,21 @@ function formatReviewDay(value?: string) {
   return value
 }
 
+function formatTimelineLabel(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return formatReviewDay(value) ?? value
+  const parts = new Intl.DateTimeFormat('en-US', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+    timeZone: 'Asia/Shanghai',
+  }).formatToParts(date)
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? ''
+  return `${part('month')}月${part('day')}日 ${part('hour')}:${part('minute')}`
+}
+
 function compactDate(value?: string) {
   const digits = String(value ?? '').replace(/\D/g, '')
   return digits.length >= 8 ? digits.slice(0, 8) : undefined
@@ -857,6 +986,24 @@ function roundMoney(value: number) {
 
 function normalizeCapitalLayer(row: StylePerformanceRow) {
   return String(row.capital_layer ?? row.account_type ?? 'simulated').toLowerCase()
+}
+
+function performanceTradeKey(dayKey: string, market: string | undefined, style: string | undefined) {
+  return `${dayKey}:${normalizeMarketKey(market)}:${normalizeStyleKey(style)}`
+}
+
+function normalizeMarketKey(value: string | undefined) {
+  const raw = String(value ?? '').toLowerCase()
+  if (raw === 'a-share' || raw === 'a_share') return 'ashare'
+  if (raw === 'prediction' || raw === 'prediction-market') return 'pm'
+  return raw.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+}
+
+function normalizeStyleKey(value: string | undefined) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
 }
 
 function formatCurrency(value: number) {

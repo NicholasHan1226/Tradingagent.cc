@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (Ashare sim signal card and cron logging hardening)
+> 最后更新：2026-07-05 (Ashare sim signal card, cron logging, and front performance curve hardening)
 
 ---
 
@@ -36,7 +36,7 @@
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
-- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。信号漏斗会区分实时筛选、部分阶段和成交回放，避免把已成交账本回放误当成当前筛选转化率。
+- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。信号漏斗会区分实时筛选、部分阶段和成交回放，避免把已成交账本回放误当成当前筛选转化率；收益曲线优先用模拟账本成交时间展开，缺少成交时间时回退到按日 style performance。
 
 ## 二、已知问题
 

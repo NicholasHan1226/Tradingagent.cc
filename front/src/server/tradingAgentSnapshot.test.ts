@@ -306,6 +306,94 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.sourceRefs.performanceTracker).toBe('shared/review/*/style_performance.jsonl')
   })
 
+  it('expands style performance into a trade-timed return curve when ledger timestamps are available', async () => {
+    const root = await createWorkspace()
+    const performanceRoot = join(root, 'TradingAgent/shared/review/crypto')
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(performanceRoot, { recursive: true })
+    await mkdir(ledgerRoot, { recursive: true })
+
+    await writeFile(
+      join(ledgerRoot, 'positions.json'),
+      JSON.stringify({
+        cash: 1000,
+        positions: {},
+      }),
+    )
+
+    await writeFile(
+      join(ledgerRoot, 'trade_journal.jsonl'),
+      [
+        JSON.stringify({
+          capital_layer: 'simulated',
+          fill_price: 100,
+          fill_qty: 1,
+          notional: 100,
+          side: 'buy',
+          symbol: 'BTCUSDT',
+          timestamp: '2026-07-03T01:00:00+00:00',
+        }),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          fill_price: 200,
+          fill_qty: 1,
+          notional: 100,
+          side: 'buy',
+          symbol: 'ETHUSDT',
+          timestamp: '2026-07-03T02:00:00+00:00',
+        }),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          fill_price: 300,
+          fill_qty: 1,
+          notional: 100,
+          side: 'buy',
+          symbol: 'SOLUSDT',
+          timestamp: '2026-07-04T01:30:00+00:00',
+        }),
+      ].join('\n') + '\n',
+    )
+
+    await writeFile(
+      join(performanceRoot, 'style_performance.jsonl'),
+      [
+        JSON.stringify({
+          style_name: 'grid',
+          market: 'crypto',
+          date: '20260703',
+          pnl: 10,
+          max_dd: 20,
+          trades: 2,
+        }),
+        JSON.stringify({
+          style_name: 'grid',
+          market: 'crypto',
+          date: '20260704',
+          pnl: 20,
+          max_dd: 10,
+          trades: 1,
+        }),
+      ].join('\n') + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T10:00:00.000Z'),
+    })
+
+    expect(snapshot.performance).toEqual([
+      { day: '7月3日 09:00', simulated: 0.5, target: 2.67, benchmark: 0, opportunity: -1 },
+      { day: '7月3日 10:00', simulated: 1, target: 5.33, benchmark: 0, opportunity: -1 },
+      { day: '现在', simulated: 3, target: 8, benchmark: 0, opportunity: -1 },
+    ])
+    expect(snapshot.portfolio).toMatchObject({
+      pnlAmount: 30,
+      returnPct: 3,
+      pointCount: 3,
+    })
+  })
+
   it('keeps performance empty with a clear message when only trade logs exist', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
