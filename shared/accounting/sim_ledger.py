@@ -319,6 +319,45 @@ class SimLedger:
     def current_state(self) -> dict[str, Any]:
         return self._load_state()
 
+    def total_pnl(self, prices: dict[str, float] | None = None) -> dict[str, float]:
+        """Return realized PnL plus mark-to-market unrealized PnL for open positions.
+
+        ``prices`` maps symbol -> mark price. Missing symbols are marked at cost
+        (unrealized = 0) to avoid optimistic marks when no live price is available.
+        """
+        state = self._load_state()
+        positions = state.get("positions", {})
+        cash = _safe_float(state.get("cash"))
+        realized = 0.0
+        unrealized = 0.0
+        market_value = 0.0
+        open_count = 0
+        missing_mark_count = 0
+        for symbol, position in positions.items():
+            realized += _safe_float(position.get("realized_pnl"))
+            qty = _safe_float(position.get("quantity"))
+            avg = _safe_float(position.get("avg_cost"))
+            if qty <= 1e-12:
+                continue
+            open_count += 1
+            mark = _safe_float(prices.get(symbol) if prices else None)
+            if mark <= 0:
+                mark = avg
+                missing_mark_count += 1
+            market_value += round(mark * qty, 8)
+            unrealized += round((mark - avg) * qty, 8)
+        equity = cash + market_value
+        return {
+            "realized_pnl": round(realized, 8),
+            "unrealized_pnl": round(unrealized, 8),
+            "total_pnl": round(realized + unrealized, 8),
+            "cash": round(cash, 8),
+            "market_value": round(market_value, 8),
+            "equity": round(equity, 8),
+            "open_position_count": open_count,
+            "missing_mark_count": missing_mark_count,
+        }
+
     def to_real(self) -> dict[str, Any]:
         validate_real_trading_enabled()
         return {

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from shared.accounting.sim_ledger import SimLedger
 from shared.markets.style_runner import StyleRunner
 
 
@@ -93,6 +94,56 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             positions = json.loads((ledger_root / "crypto" / "balanced" / "positions.json").read_text(encoding="utf-8"))
             self.assertIn("BTCUSDT", positions["positions"])
 
+    def test_style_metrics_use_ledger_mark_to_market_pnl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            styles_dir = root / "styles"
+            review_root = root / "review"
+            ledger_root = root / "ledger"
+            styles_dir.mkdir()
+            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            runner = StyleRunner(
+                "crypto",
+                FilledSimulator(),
+                styles_dir=styles_dir,
+                review_root=review_root,
+                ledger_root=ledger_root,
+            )
+
+            runner.run([{"symbol": "BTCUSDT", "price": 100.0, "side": "buy", "conviction": 0.9}], date="20260704")
+            result = runner.run([{"symbol": "BTCUSDT", "price": 110.0, "side": "buy", "conviction": 0.9}], date="20260704")
+
+            metric = result["style_comparison"][0]
+            self.assertEqual(metric["pnl_source"], "sim_ledger_mark_to_market")
+            self.assertEqual(metric["realized_pnl"], 0.0)
+            self.assertGreater(metric["unrealized_pnl"], 900.0)
+            self.assertEqual(metric["pnl"], metric["unrealized_pnl"])
+
+    def test_style_metrics_include_realized_and_remaining_unrealized_pnl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            styles_dir = root / "styles"
+            review_root = root / "review"
+            ledger_root = root / "ledger"
+            styles_dir.mkdir()
+            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            runner = StyleRunner(
+                "crypto",
+                FilledSimulator(),
+                styles_dir=styles_dir,
+                review_root=review_root,
+                ledger_root=ledger_root,
+            )
+
+            runner.run([{"symbol": "BTCUSDT", "price": 100.0, "side": "buy", "conviction": 0.9}], date="20260704")
+            result = runner.run([{"symbol": "BTCUSDT", "price": 120.0, "side": "sell", "conviction": 0.9}], date="20260704")
+
+            metric = result["style_comparison"][0]
+            self.assertEqual(metric["pnl_source"], "sim_ledger_mark_to_market")
+            self.assertGreater(metric["realized_pnl"], 1500.0)
+            self.assertGreater(metric["unrealized_pnl"], 300.0)
+            self.assertAlmostEqual(metric["pnl"], metric["realized_pnl"] + metric["unrealized_pnl"], places=6)
+
     def test_copies_market_snapshot_fields_from_signal_to_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -120,6 +171,46 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             self.assertEqual(simulator.orders[0]["bar_volume"], 1500)
             self.assertEqual(simulator.orders[0]["previous_close"], 9.8)
             self.assertEqual(simulator.orders[0]["counterparty_profile"], "retail_panic")
+
+
+class SimLedgerTotalPnlTest(unittest.TestCase):
+    def test_total_pnl_combines_realized_and_unrealized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = SimLedger(Path(tmp) / "ledger", starting_cash=10_000.0)
+            ledger.record_fill(
+                {"order_id": "B1", "symbol": "BTCUSDT", "side": "buy"},
+                {"fill_id": "F1", "order_id": "B1", "fill_qty": 1.0, "fill_price": 100.0, "fill_time": "2026-07-04T00:00:00+00:00"},
+                fees={"total": 0.0},
+            )
+            ledger.record_fill(
+                {"order_id": "S1", "symbol": "BTCUSDT", "side": "sell"},
+                {"fill_id": "F2", "order_id": "S1", "fill_qty": 0.5, "fill_price": 120.0, "fill_time": "2026-07-04T00:00:00+00:00"},
+                fees={"total": 0.0},
+            )
+
+            without_prices = ledger.total_pnl()
+            self.assertEqual(without_prices["realized_pnl"], 10.0)
+            self.assertEqual(without_prices["unrealized_pnl"], 0.0)
+            self.assertEqual(without_prices["total_pnl"], 10.0)
+
+            with_prices = ledger.total_pnl(prices={"BTCUSDT": 130.0})
+            self.assertEqual(with_prices["realized_pnl"], 10.0)
+            self.assertEqual(with_prices["unrealized_pnl"], 15.0)
+            self.assertEqual(with_prices["total_pnl"], 25.0)
+            self.assertEqual(with_prices["missing_mark_count"], 0)
+
+    def test_total_pnl_marks_missing_symbols_at_cost(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = SimLedger(Path(tmp) / "ledger", starting_cash=10_000.0)
+            ledger.record_fill(
+                {"order_id": "B1", "symbol": "BTCUSDT", "side": "buy"},
+                {"fill_id": "F1", "order_id": "B1", "fill_qty": 1.0, "fill_price": 100.0, "fill_time": "2026-07-04T00:00:00+00:00"},
+                fees={"total": 0.0},
+            )
+
+            result = ledger.total_pnl(prices={"ETHUSDT": 200.0})
+            self.assertEqual(result["unrealized_pnl"], 0.0)
+            self.assertEqual(result["missing_mark_count"], 1)
 
 
 if __name__ == "__main__":

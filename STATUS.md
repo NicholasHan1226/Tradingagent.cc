@@ -28,6 +28,7 @@
 - **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查同时读取本地回执与旧 Hermes 回执路径，并能识别“尚无首笔本地模拟成交”的 bootstrap 状态，避免把无样本误报为链路故障
 - **模拟盘健康检查**：`market_health` 已区分交易时段样本缺失与闭市等待首样本；A股和 CNFutures 在周末/闭市且尚未进入应产生样本的时段时不再误报 warn，进入或经过交易时段后仍无数据/成交会继续告警
 - **多市场绩效去重**：Crypto/PM/US/CNFutures 共用的 `style_performance.jsonl` 已从 5 分钟 append-only 改为按 `(market, style_name, date)` 幂等写入，历史读取也会取同键最新值，避免 5 分钟任务把 runs/trades/PnL 重复放大并污染风格演化。
+- **多市场收益口径**：Crypto/PM/US 的 `StyleRunner` 主收益口径已从入场时的预期收益估算切换为统一模拟账本的 `realized_pnl + mark-to-market unrealized_pnl`；`style_comparison.json` 与 `style_performance.jsonl` 会输出 `pnl_source=sim_ledger_mark_to_market`、已实现收益、持仓浮盈亏、现金、持仓市值和权益。
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
@@ -64,7 +65,10 @@
 - [x] `shared/markets/performance_tracker.py` 的 `save_run()` 改为同一市场/风格/日期幂等写入，`load_history()` 与 `compare_styles()` 读取时也会自动折叠旧重复行，防止 5 分钟任务把当日重复样本累计成虚假的 runs/trades/PnL。
 - [x] 生产侧已备份并压缩 `shared/review/{crypto,pm,us}/style_performance.jsonl` 历史重复数据；压缩后 crypto=13、pm=11、us=6 条唯一市场/风格/日期记录。
 - [x] 回归测试覆盖同日同风格重复写入、旧 JSONL 压缩和 evolution/runtime style 兼容；当前 Crypto/PM/US 模拟链路 health 为 pass。
-- [ ] 残余口径：Crypto/PM/US 当前 style comparison PnL 仍是策略预期收益估算，sim ledger 已记录买入成交但尚未以真实平仓或 mark-to-market 作为 evolution 的主要收益口径；后续需要升级为 realized/unrealized 分离。
+- [x] `shared/accounting/sim_ledger.py` 新增 `total_pnl()`，按成交账本的 FIFO realized PnL 和最新信号价格对持仓 mark-to-market；缺价格时按成本价保守盯市并输出 `missing_mark_count`。
+- [x] `shared/markets/style_runner.py` 不再用 `_estimate_pnl()` 作为 Crypto/PM/US 主收益口径；风格层 `pnl` 改为 `realized_pnl + unrealized_pnl`，并保留 cash/market_value/equity 供看板和 evolution 使用。
+- [x] 回归测试覆盖买入后持仓浮盈、卖出后已实现收益 + 剩余持仓浮盈、缺失盯市价格按成本价保守处理。
+- [ ] 残余口径：win_rate/max_dd/sharpe 仍基于单笔 realized PnL 序列，买入未平仓样本会更保守；后续可升级为基于日频权益曲线计算。
 - [x] `job_cn_futures_observation_report.sh` 已接入日盘/夜盘固定 cron，模拟任务后刷新只读 `shared/review/cn_futures/observation_report.json`；`job_cn_futures_opening_validation.sh` 仍为按需验收入口。
 
 ### 2026-07-05 CNFutures execution realism

@@ -64,6 +64,8 @@ class StyleRunner:
         for signal in normalized_signals:
             reject_real_execution_payload(signal, context=f"StyleRunner.{self.market}.signal")
 
+        mark_prices = self._signal_mark_prices(normalized_signals)
+
         runs: list[dict[str, Any]] = []
         for style in styles:
             style_runs = [
@@ -72,7 +74,7 @@ class StyleRunner:
             ]
             runs.extend(style_runs)
 
-        matrix = [self._style_metrics(style, runs) for style in styles]
+        matrix = [self._style_metrics(style, runs, mark_prices=mark_prices) for style in styles]
         for metric in matrix:
             save_run(str(metric.get("style_name", "")), self.market, {**metric, "date": date}, review_root=self.review_root)
         payload = {
@@ -131,7 +133,7 @@ class StyleRunner:
             status = "error"
             error = str(exc)
         ledger = self._record_ledger_fill(style, order, fill, style_account)
-        pnl = self._estimate_pnl(style, order, fill, conviction)
+        pnl = self._ledger_run_pnl(ledger, order, fill)
         return {
             "style_name": style.name,
             "style_status": style.status,
@@ -145,6 +147,8 @@ class StyleRunner:
             "quantity": order.get("quantity"),
             "price": order.get("price"),
             "pnl": pnl,
+            "realized_pnl": pnl,
+            "unrealized_pnl": 0.0,
             "win": pnl > 0,
             "fill": self._sim_fill(fill),
             "ledger": ledger,
@@ -251,11 +255,17 @@ class StyleRunner:
                 order[key] = signal[key]
         return order
 
-    def _style_metrics(self, style: TradeStyle, runs: list[dict[str, Any]]) -> dict[str, Any]:
+    def _style_metrics(
+        self,
+        style: TradeStyle,
+        runs: list[dict[str, Any]],
+        mark_prices: dict[str, float] | None = None,
+    ) -> dict[str, Any]:
         rows = [row for row in runs if row.get("style_name") == style.name]
         executed = [row for row in rows if row.get("status") not in {"skipped_low_conviction"}]
         pnls = [float(row.get("pnl", 0.0) or 0.0) for row in executed]
         wins = [row for row in executed if row.get("win")]
+        ledger_pnl = self._style_ledger(style).total_pnl(prices=mark_prices)
         return {
             "style_name": style.name,
             "status": style.status,
@@ -263,7 +273,15 @@ class StyleRunner:
             "generation": style.generation,
             "trades": len(executed),
             "skipped": len(rows) - len(executed),
-            "pnl": round(sum(pnls), 6),
+            "pnl_source": "sim_ledger_mark_to_market",
+            "pnl": round(ledger_pnl["total_pnl"], 6),
+            "realized_pnl": round(ledger_pnl["realized_pnl"], 6),
+            "unrealized_pnl": round(ledger_pnl["unrealized_pnl"], 6),
+            "cash": round(ledger_pnl["cash"], 6),
+            "market_value": round(ledger_pnl["market_value"], 6),
+            "equity": round(ledger_pnl["equity"], 6),
+            "position_count": int(ledger_pnl["open_position_count"]),
+            "missing_mark_count": int(ledger_pnl["missing_mark_count"]),
             "win_rate": round(len(wins) / len(executed), 6) if executed else 0.0,
             "max_dd": round(self._max_drawdown(pnls), 6),
             "sharpe": round(self._sharpe(pnls), 6),
@@ -361,6 +379,16 @@ class StyleRunner:
         cleaned["real_execution"] = False
         return cleaned
 
+    def _style_ledger(self, style: TradeStyle, account: dict[str, Any] | None = None) -> Any:
+        from shared.accounting.sim_ledger import SimLedger
+
+        style_key = self._safe_path_part(style.name)
+        starting_cash = self._initial_capital(account) if account is not None else 0.0
+        return SimLedger(
+            self.ledger_root / self.market / style_key,
+            starting_cash=starting_cash,
+        )
+
     def _record_ledger_fill(
         self,
         style: TradeStyle,
@@ -374,13 +402,10 @@ class StyleRunner:
         if fill_status not in {"filled", "partial"}:
             return {"status": "skipped", "reason": f"fill_status={fill_status or 'missing'}"}
         try:
-            from shared.accounting.sim_ledger import SimLedger
-
             order_id = str(order.get("order_id") or fill.get("order_id") or "").strip()
             if not order_id:
                 return {"status": "skipped", "reason": "missing_order_id"}
-            style_key = self._safe_path_part(style.name)
-            ledger = SimLedger(self.ledger_root / self.market / style_key, starting_cash=self._initial_capital(account))
+            ledger = self._style_ledger(style, account)
             if self._ledger_has_order(ledger.trade_journal_path, order_id):
                 return {"status": "duplicate", "order_id": order_id, "ledger_root": str(ledger.root)}
 
@@ -502,10 +527,26 @@ class StyleRunner:
         return 0.5
 
     @staticmethod
-    def _initial_capital(account: dict[str, Any]) -> float:
+    def _signal_mark_prices(signals: list[dict[str, Any]]) -> dict[str, float]:
+        prices: dict[str, float] = {}
+        for signal in signals:
+            symbol = str(
+                signal.get("symbol")
+                or signal.get("ts_code")
+                or signal.get("market_id")
+                or signal.get("pair")
+                or ""
+            ).strip()
+            price = StyleRunner._positive_price(signal)
+            if symbol and price > 0:
+                prices[symbol] = price
+        return prices
+
+    @staticmethod
+    def _initial_capital(account: dict[str, Any] | None) -> float:
         for key in ("initial_capital", "equity", "cash", "capital", "balance"):
             try:
-                value = float(account.get(key))
+                value = float((account or {}).get(key))
             except (TypeError, ValueError):
                 continue
             if value > 0 and value == value:
@@ -519,17 +560,17 @@ class StyleRunner:
         return round(notional / price, 8)
 
     @staticmethod
-    def _estimate_pnl(style: TradeStyle, order: dict[str, Any], fill: dict[str, Any], conviction: float) -> float:
+    def _ledger_run_pnl(ledger: dict[str, Any], order: dict[str, Any], fill: dict[str, Any]) -> float:
+        """Per-run PnL from the ledger journal entry (realized PnL for sells, 0 for buys).
+
+        Style-level total PnL is computed separately from the ledger state using
+        realized_pnl + mark-to-market unrealized_pnl.
+        """
         if str(fill.get("status", "")).lower() not in {"filled", "partial"}:
             return 0.0
-        notional = float(fill.get("notional") or 0.0)
-        if notional <= 0:
-            quantity = float(fill.get("filled_qty", fill.get("quantity", order.get("quantity", 0))) or 0.0)
-            price = float(fill.get("avg_price", fill.get("fill_price", order.get("price", 0))) or 0.0)
-            notional = quantity * price
-        expected_return = conviction * style.take_profit_pct + (1.0 - conviction) * style.stop_loss_pct
-        fee = float(fill.get("fee", 0.0) or 0.0)
-        return round((notional * expected_return) - fee, 6)
+        if isinstance(ledger, dict) and "realized_pnl" in ledger:
+            return round(float(ledger.get("realized_pnl", 0.0) or 0.0), 6)
+        return 0.0
 
     @staticmethod
     def _max_drawdown(pnls: list[float]) -> float:
