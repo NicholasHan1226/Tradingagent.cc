@@ -1,4 +1,5 @@
 import { getHomeOutcome } from '../../lib/dashboard'
+import { formatCurrency } from '../../lib/format'
 import type { HoldingRow, Page, PortfolioSummary, SignalRow } from '../../types/dashboard'
 import { PanelTitle } from '../PanelTitle'
 import { SummaryRow } from '../SummaryRow'
@@ -25,38 +26,43 @@ export function HomeResultBrief({
   const drawdownLimit = 7
   const drawdownDistance = Math.max(0, drawdownLimit - Math.abs(drawdown))
   const drawdownCaption = drawdownDistance > 1 ? `距离 ${drawdownLimit}% 限制 ${drawdownDistance.toFixed(2)}%` : `接近 ${drawdownLimit}% 限制`
+  const returnValue = portfolio
+    ? `${formatCurrency(portfolio.pnlAmount)} / ${portfolio.returnPct >= 0 ? '+' : ''}${portfolio.returnPct.toFixed(2)}%`
+    : hasPerformanceData
+      ? '有收益曲线'
+      : '暂无曲线'
 
   return (
     <section className="panel rail-panel home-result-brief">
-      <PanelTitle action="全部机会" kicker="结果摘要" onAction={() => setActivePage('机会')} title="当前结果" />
+      <PanelTitle action="看机会" kicker="首页摘要" onAction={() => setActivePage('机会')} title="现在该看什么" />
       <div className="home-brief-section brief-result-section">
-        <span className="section-label">账户层</span>
+        <span className="section-label">核心结果</span>
         <div className="summary-list">
-          <SummaryRow label="动态收益" value={hasPerformanceData ? '有结果' : '暂无曲线'} tone={hasPerformanceData ? 'cyan' : undefined} />
-          <SummaryRow label="交易漏斗" value={hasSignalData ? `${signals.length} 个机会` : '暂无机会'} />
-          <SummaryRow label="持仓贡献" value={hasHoldingData ? leadingHolding?.symbol ?? '有记录' : '暂无持仓'} />
+          <SummaryRow label="收益" value={returnValue} tone={hasPerformanceData ? 'cyan' : undefined} />
+          <SummaryRow label="机会" value={hasSignalData ? `${signals.length} 条` : '暂无机会'} />
+          <SummaryRow label="持仓" value={hasHoldingData ? leadingHolding?.symbol ?? '有记录' : '暂无持仓'} />
         </div>
       </div>
       <div className="home-brief-section brief-action-section">
-        <span className="section-label">推进结果</span>
+        <span className="section-label">优先查看</span>
         <div className="decision-list compact">
           {hasSignalData && leadSignal && (
             <button onClick={() => setActivePage('机会')} type="button">
-              <span>正在推进</span>
+              <span>最靠前机会</span>
               <strong>{leadSignal.symbol}</strong>
               <em>{leadSignal.reason}</em>
             </button>
           )}
           {hasSignalData && blockedSignal && (
             <button onClick={() => setActivePage('风险')} type="button">
-              <span>已被边界挡住</span>
+              <span>风险挡住</span>
               <strong>{blockedSignal.symbol}</strong>
               <em>{blockedSignal.reason}</em>
             </button>
           )}
           {hasSignalData && reviewSignal && (
             <button onClick={() => setActivePage('复盘')} type="button">
-              <span>进入复盘</span>
+              <span>需要复盘</span>
               <strong>{reviewSignal.symbol}</strong>
               <em>{reviewSignal.reason}</em>
             </button>
@@ -70,7 +76,7 @@ export function HomeResultBrief({
         </div>
       </div>
       <div className="home-brief-section brief-risk-section">
-        <span className="section-label">风险距离</span>
+        <span className="section-label">风险边界</span>
         {hasPerformanceData ? (
           <div className="risk-cards compact">
             <button className="risk-card red" onClick={() => setActivePage('风险')} type="button">
@@ -79,9 +85,9 @@ export function HomeResultBrief({
               <em>{drawdownCaption}</em>
             </button>
             <button className="risk-card cyan" onClick={() => setActivePage('风险')} type="button">
-              <span>风险保护</span>
-              <strong>$1.24M</strong>
-              <em>控制敞口</em>
+              <span>限制线</span>
+              <strong>{drawdownLimit}%</strong>
+              <em>仍在范围内</em>
             </button>
           </div>
         ) : (
@@ -92,7 +98,7 @@ export function HomeResultBrief({
         )}
       </div>
       <button className="primary-action" onClick={() => setActivePage('收益')} type="button">
-        查看收益贡献
+        查看收益原因
       </button>
     </section>
   )

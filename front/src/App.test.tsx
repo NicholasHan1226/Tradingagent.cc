@@ -81,7 +81,7 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('2 个机会进入 · 0 个成交 · 转化 0%')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('2 个进入 · 2 个留下 · 0 个成交')).toBeInTheDocument())
     expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
   })
 

@@ -49,6 +49,12 @@ Display-ready fields used by the homepage:
   `debated_at`, `risk_checked_at`, and `triggered_at`. The reader maps existing
   status and timestamps into `发现 / 评分 / 风控 / 待执行 / 成交 / 错过 / 拒绝`
   so the animated funnel reflects only real read-only file state.
+- The homepage trading funnel is designed to animate real stage movement. If
+  the API only exposes completed simulated-ledger trade journals, the UI will
+  show a completed-trade replay instead of inventing upstream drop-off. To show
+  a true screening funnel, upstream records should include one row per
+  opportunity with its latest `status`, current `stage`, and available stage
+  timestamps before execution.
 - `holdings[]`: `symbol`, `market`, `weight`, `pnl`, `risk`, and `role`.
 
 ## Same-Server Production Deployment

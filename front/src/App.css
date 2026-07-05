@@ -723,12 +723,11 @@ button:not(:disabled) {
 .signal-flow-board {
   position: relative;
   min-width: 0;
-  min-height: 264px;
+  min-height: 286px;
   border: 1px solid rgba(224, 246, 240, 0.064);
   border-radius: 4px;
   background:
-    radial-gradient(ellipse at 14% 54%, rgba(82, 210, 198, 0.055), transparent 31%),
-    linear-gradient(180deg, rgba(240, 246, 244, 0.016), transparent 46%),
+    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 46%),
     rgba(1, 5, 5, 0.46);
   overflow: hidden;
 }
@@ -774,8 +773,8 @@ button:not(:disabled) {
   position: relative;
   z-index: 1;
   display: grid;
-  gap: 14px;
-  min-height: 264px;
+  gap: 12px;
+  min-height: 286px;
   padding: 50px 14px 50px;
 }
 
@@ -792,11 +791,11 @@ button:not(:disabled) {
 .funnel-stage-card {
   min-width: 0;
   display: grid;
-  gap: 6px;
-  min-height: 86px;
+  gap: 5px;
+  min-height: 76px;
   padding: 11px 12px 9px;
   border-left: 1px solid var(--border-hairline);
-  background: linear-gradient(180deg, rgba(240, 246, 244, 0.018), rgba(240, 246, 244, 0));
+  background: rgba(240, 246, 244, 0.006);
 }
 
 .funnel-stage-card:first-child {
@@ -836,13 +835,13 @@ button:not(:disabled) {
 
 .funnel-flow-canvas {
   position: relative;
-  height: 90px;
+  height: 116px;
   overflow: hidden;
   border-top: 1px solid var(--border-hairline);
   border-bottom: 1px solid var(--border-hairline);
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.026), transparent 52%),
-    linear-gradient(180deg, rgba(240, 246, 244, 0.017), transparent 45%, rgba(240, 246, 244, 0.012)),
+    linear-gradient(90deg, rgba(105, 228, 215, 0.02), transparent 52%),
+    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 45%, rgba(240, 246, 244, 0.01)),
     rgba(1, 5, 5, 0.5);
 }
 
@@ -868,11 +867,11 @@ button:not(:disabled) {
 .funnel-flow-canvas::before {
   content: '';
   position: absolute;
-  inset: 13px 14px;
+  inset: 17px 14px;
   border: 1px solid rgba(240, 246, 244, 0.052);
-  clip-path: polygon(0 0, 100% 27%, 100% 73%, 0 100%);
+  clip-path: polygon(0 6%, 100% 28%, 100% 72%, 0 94%);
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.078), rgba(105, 228, 215, 0.018) 48%, rgba(240, 246, 244, 0.014));
+    linear-gradient(90deg, rgba(105, 228, 215, 0.052), rgba(105, 228, 215, 0.016) 48%, rgba(240, 246, 244, 0.012));
 }
 
 .funnel-flow-canvas::after {
@@ -889,7 +888,7 @@ button:not(:disabled) {
 
 .funnel-mouth {
   position: absolute;
-  inset: 13px 14px;
+  inset: 17px 14px;
   pointer-events: none;
 }
 
@@ -920,27 +919,35 @@ button:not(:disabled) {
   --to-left: 93%;
   position: absolute;
   z-index: 2;
-  top: calc(14px + (var(--lane) * 8px));
+  top: calc(16px + (var(--lane) * 12px));
   left: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 10px;
-  height: 10px;
+  width: auto;
+  min-width: 9px;
+  height: 18px;
+  padding: 0 6px;
   color: var(--accent-cyan);
+  border: 1px solid rgba(105, 228, 215, 0.16);
+  border-radius: 999px;
+  background: rgba(1, 5, 5, 0.78);
   animation: signal-flow-run var(--duration) cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
   animation-delay: var(--delay);
   will-change: left, opacity;
 }
 
 .funnel-particle::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  border: 1px solid #06100f;
-  border-radius: 999px;
-  background: currentColor;
+  content: attr(data-symbol);
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
+  color: currentColor;
+  font: 680 9px/1 var(--font-number);
+  letter-spacing: 0;
 }
 
 .funnel-particle b {
@@ -949,14 +956,17 @@ button:not(:disabled) {
 
 .funnel-particle.amber {
   color: var(--state-amber);
+  border-color: rgba(226, 180, 91, 0.16);
 }
 
 .funnel-particle.red {
   color: var(--state-red);
+  border-color: rgba(255, 91, 116, 0.16);
 }
 
 .funnel-particle.muted {
   color: var(--text-secondary);
+  border-color: rgba(210, 225, 220, 0.12);
 }
 
 .flow-outcome-strip {

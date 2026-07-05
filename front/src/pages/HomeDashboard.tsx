@@ -94,14 +94,14 @@ export function HomeDashboard({
           <div className="chart-meta">
             <span>{formatTime(now)} (UTC+8)</span>
             <b>{hasPerformanceData ? '已更新' : '等待数据'}</b>
-            <em>{hasPerformanceData ? `机会偏差 ${latestPoint.opportunity.toFixed(2)}%` : '未显示样例收益'}</em>
+            <em>{hasPerformanceData ? `机会差 ${latestPoint.opportunity.toFixed(2)}%` : '未显示样例收益'}</em>
           </div>
         </section>
 
         <section className="home-drilldown" aria-label="当前机会和持仓结果">
           <div className="drilldown-header">
-            <span>机会 / 持仓结果</span>
-            <strong>只展示已有记录，不用样例补位</strong>
+            <span>机会和持仓</span>
+            <strong>只显示真实记录</strong>
           </div>
           <div className="home-support-grid">
             <OpportunityFocus hasSignalData={hasSignalData} setActivePage={setActivePage} signals={signals} />

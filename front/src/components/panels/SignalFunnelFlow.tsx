@@ -3,6 +3,7 @@ import { getSignalFunnel } from '../../lib/dashboard'
 import type { SignalRow } from '../../types/dashboard'
 
 const STAGE_NAMES = ['发现', '筛选', '风控', '排队', '成交']
+const OUTCOME_LABELS = ['成交', '等待', '复盘', '拦截']
 
 export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: boolean; signals: SignalRow[] }) {
   const funnel = getSignalFunnel(signals)
@@ -13,8 +14,16 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
   const missedSignals = funnel.missed
   const blockedSignals = [...funnel.blocked, ...funnel.cancelled]
   const passRate = Math.round((funnel.executed.length / Math.max(1, signals.length)) * 100)
+  const stageDrops = funnel.stages.map((stage, index) => {
+    if (index === 0) return 0
+    return Math.max(0, funnel.stages[index - 1].rows.length - stage.rows.length)
+  })
+  const hasStageDrop = stageDrops.some((drop) => drop > 0)
+  const hasTimingEvidence = signals.some((signal) => signal.stageLatencyMinutes && signal.stageLatencyMinutes > 0)
   const caption = hasSignalData
-    ? `${signals.length} 个机会进入 · ${funnel.executed.length} 个成交 · 转化 ${passRate}%`
+    ? hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
+      ? `${signals.length} 个进入 · ${funnel.tradeSignals.length} 个留下 · ${funnel.executed.length} 个成交`
+      : `${signals.length} 条成交回放 · 转化 ${passRate}%`
     : '等待机会流入'
   const particles = buildParticles(hasSignalData ? signals : placeholderSignals())
 
@@ -31,7 +40,7 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
               <div className="funnel-stage-card" key={stage.label}>
                 <span>{STAGE_NAMES[index] ?? stage.label}</span>
                 <strong>{stage.rows.length}</strong>
-                <em>{getStageHint(index, stage.rows.length, signals.length)}</em>
+                <em>{getStageHint(index, stage.rows.length, signals.length, stageDrops[index])}</em>
                 <div className="stage-meter" aria-hidden="true">
                   <i style={{ width: `${stageWidths[index]}%` }} />
                 </div>
@@ -61,6 +70,7 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
                   '--lane': particle.lane,
                   '--to-left': particle.stopLeft,
                 } as CSSProperties}
+                data-symbol={particle.symbol}
                 title={particle.label}
               >
                 <b />
@@ -69,19 +79,21 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
           </div>
         </div>
         <div className="flow-outcome-strip">
-          <span><b>{executedSignals.length}</b> 成交</span>
-          <span><b>{pendingSignals.length}</b> 等待</span>
-          <span><b>{missedSignals.length}</b> 复盘</span>
-          <span><b>{blockedSignals.length}</b> 拦截</span>
+          {[executedSignals, pendingSignals, missedSignals, blockedSignals].map((rows, index) => (
+            <span key={OUTCOME_LABELS[index]}>
+              <b>{rows.length}</b> {OUTCOME_LABELS[index]}
+            </span>
+          ))}
         </div>
       </div>
     </section>
   )
 }
 
-function getStageHint(index: number, count: number, total: number) {
+function getStageHint(index: number, count: number, total: number, dropped: number) {
   if (index === 0) return '进入'
   if (total <= 0) return '等待'
+  if (dropped > 0) return `留下 ${count}`
   if (count === total) return '全量通过'
   return `${Math.round((count / total) * 100)}%`
 }
@@ -102,10 +114,16 @@ function buildParticles(rows: SignalRow[]) {
       duration: `${6.2 + (index % 5) * 0.46}s`,
       label: signal.symbol,
       lane: index % 7,
+      symbol: compactSymbol(signal.symbol),
       stopLeft: `${Math.min(93, stopStage * 20 - 8)}%`,
       tone,
     }
   })
+}
+
+function compactSymbol(symbol: string) {
+  if (symbol.length <= 8) return symbol
+  return symbol.replace(/(\.US|\.SH|\.SZ|-USD|-PERP)$/i, '').slice(0, 8)
 }
 
 function placeholderSignals(): SignalRow[] {
