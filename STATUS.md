@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (Ashare sim signal card, cron logging, and front performance curve hardening)
+> 最后更新：2026-07-05 (combined-cron health reporting and PM proxy handoff)
 
 ---
 
@@ -18,7 +18,7 @@
 - **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；sim → real promotion 只接受经 sim 审计的来源；`signals/real/*` 为隔离队列，不代表自动下单或已成交
 - **模拟撮合引擎**：`shared/execution/sim_engine.py` 已进入 Phase 1，统一支持 bid/ask marketability、盘口量/5m bar volume 部分成交、A股买入整手、A股 T+1 可卖数量、A股涨跌停边界、PM 概率价格边界、现金可用性检查和轻量对手盘环境参数；A股 server-local 模拟执行与 `auto_pipeline` 本地 fallback 已接入该引擎；A股执行器会从 server-local 模拟账本补齐 `cash_available` 与 T+1 `sellable_qty`，`auto_pipeline` 会从 SharedSignals reader 的 5分钟/日线 bars 生成 `market_snapshot`；该层仍是 paper-only，不接真实券商/交易所撮合。
 - **CNFutures 模拟盘**：国内期货只跑模拟盘，无单独影子盘；多风格模拟会写 `shared/review/data/cn_futures_sim_reviews.jsonl`，并同步输出 `shared/review/cn_futures/style_comparison.json`、`style_performance.jsonl`、`observation_report.json` 与盘后 `win_rate_calibration_report.{json,md}` 供现有看板/巡检接入；观察报告已提供 `dashboard` 和 `next_validation` 顶层字段，便于看板直接展示 readiness、下一交易时段验收步骤和是否继续累计样本；`score_summary`、`error_summary`、`style_health`、`hold_count`、`hold_reason_summary`、`forward_label_summary` 和 `dynamic_threshold_candidates` 标记样本不足、手续费、保证金占用、名义金额、可用 PnL 样本、风格状态、风控拒绝原因、主动不交易原因、前向标签和动态阈值候选；`CNFutures/live_gateway.py` 为未来 CTP/期货公司接入预留 fail-closed 占位，当前拒绝全部真实期货订单；生产 crontab 已改为期货日盘/夜盘 5 分钟级运行 `job_cn_futures_sim.sh`，并读取 SharedSignals `market_bars_intraday` 的 Futures 5 分钟数据；5 分钟 runner 已加入 10 分钟默认数据新鲜度闸门、同风格/同合约连续同方向重复暴露限制、tick/slippage 成交价、静态涨跌幅边界、bar volume 部分成交、模拟持仓快照、风格保证金 cap、不过夜强制平仓、换月保护和反向平仓 PnL 估算；手续费模型已显式区分 `rate` 与 `fixed_per_lot`，不再靠费率数值大小推断；非指数基础风格默认拒绝夜盘 bar，只有显式 `night_session_allowed=true` 才允许夜盘模拟；`CN_FUTURES_SIM_DISABLED=1` 可临时暂停模拟任务但保留观察报告；`index_intraday_directional` 已加日盘-only、趋势一致、成交量确认、开盘冷却、跳空冷却、低波动、方向连续性、最新 bar 反转、信号噪声比、bar gap、K线实体质量、连续同向 bars 和 late-chase 过滤，并输出场景标签与模拟出场计划，演化器按 `win_rate_first_risk_adjusted` 目标生成小型候选族群
-- **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行，A股开盘验收 cron 已安装：08:55 盘前、09:35/13:05 数据验收、09:45/13:10 首样本告警；CNFutures 5 分钟模拟 cron 已安装并相对 SharedSignals 采集错后 1 分钟，观察报告错后 2 分钟刷新，风格演化按日盘/夜盘 30 分钟级运行，盘后胜率校准报告在 15:45 与 02:45 触发，开盘前只读验收在 08:55/12:55/20:55 触发，开盘后数据验收在 09:05/13:05/21:05 与 00:35 触发，首样本告警在 09:10/13:10/21:10 与 00:40 触发；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用且 wrapper 默认需要 `TRADINGAGENT_HK_SIM_ENABLED=1` 才能运行；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US/CNFutures 模拟闭环；`job_style_evolution` 模板每 4 小时只跑 Crypto/PM/US simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康；关键 wrapper 的 early setup stderr 已进入各自 `shared/logs/cron/*.log`，便于定位 env/source 启动失败；均带 flock 与独立日志
+- **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行，A股开盘验收 cron 已安装：08:55 盘前、09:35/13:05 数据验收、09:45/13:10 首样本告警；CNFutures 5 分钟模拟 cron 已安装并相对 SharedSignals 采集错后 1 分钟，观察报告错后 2 分钟刷新，风格演化按日盘/夜盘 30 分钟级运行，盘后胜率校准报告在 15:45 与 02:45 触发，开盘前只读验收在 08:55/12:55/20:55 触发，开盘后数据验收在 09:05/13:05/21:05 与 00:35 触发，首样本告警在 09:10/13:10/21:10 与 00:40 触发；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用且 wrapper 默认需要 `TRADINGAGENT_HK_SIM_ENABLED=1` 才能运行；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US/CNFutures 模拟闭环；`job_style_evolution` 模板每 4 小时只跑 Crypto/PM/US simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康，并调用 MarketGraph `deploy/install_combined_crontab.sh --check` 验证 SharedSignals/TradingAgent/MarketGraph 三系统 live crontab 覆盖；关键 wrapper 的 early setup stderr 已进入各自 `shared/logs/cron/*.log`，便于定位 env/source 启动失败；均带 flock 与独立日志
 - **SharedSignals API 消费**：`SharedSignalsAPIClient` 已覆盖核心 15 个数据消费端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；A股 `get_assets()` 走 SharedSignals `stock_basic` read model，单日 `get_bars_daily()` 会补齐 start=end；`get_bars_intraday()` 已优先走 SharedSignals `/realtime_5min?market=...` 并保留 SQLite 回退，期货/A股 5 分钟行情与可选 bid/ask 字段可走同一消费入口；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号；HK 数据与模拟入口保留但暂不进入生产调度
 - **数据源边界复核**：2026-07-04 主服务器生产路径审计未发现 TradingAgent 活动代码直接调用 Tushare/Binance/Polymarket/Alpaca/Yahoo 等行情源；HTTP 调用保留在 SharedSignals API 客户端、健康检查、邮件/webhook 和研究 LLM 路径。误拷贝的 untracked `Users/` 旧目录已从服务器删除，`.gitignore` 已防止再次出现。
 - **旧市场工具目录退役口径**：2026-07-05 开盘前复核已修正 `US/AGENTS.md` 与 `PM/AGENTS.md`；旧 `/opt/investment/US/tools/`、`/opt/investment/PredictionMarkets/tools/` 只保留为历史迁移线索，不是现役生产代码、采集或执行入口。
@@ -111,6 +111,13 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-05 combined-cron health reporting
+
+- [x] `cron/health_check.sh` 新增 `combined_crontab` 只读检查，调用 MarketGraph `deploy/install_combined_crontab.sh --check`；任一关键 cron 缺失会把 TradingAgent 外部健康报告标记为 `critical`。
+- [x] 检查结果写入 SharedSignals `logs/watchdog_inputs/tradingagent_health.json(.jsonl)`，复用现有 watchdog 与系统邮件链路；不新增 daemon、不安装新 crontab、不修改交易队列。
+- [x] 该检查只读执行，不会安装或覆盖 live crontab；真正安装仍只允许走 MarketGraph 合并安装脚本。
+
 
 ### 2026-07-05 cross-repo path and stale docs cleanup
 

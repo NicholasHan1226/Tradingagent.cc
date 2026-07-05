@@ -110,6 +110,33 @@ def check_marketgraph(root: Path, max_age: int) -> dict:
     return {"status": status, "latest_file": str(latest), "age_minutes": age, "max_age_minutes": max_age}
 
 
+def check_combined_crontab(mg_root: Path) -> dict:
+    script = mg_root / "deploy" / "install_combined_crontab.sh"
+    if not script.exists():
+        return {"status": "critical", "script": str(script), "reason": "combined_crontab_check_missing"}
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            [str(script), "--check"],
+            cwd=str(mg_root),
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except Exception as exc:
+        return {"status": "critical", "script": str(script), "error": f"{exc.__class__.__name__}: {exc}"}
+    ok = result.returncode == 0
+    return {
+        "status": "ok" if ok else "critical",
+        "script": str(script),
+        "returncode": result.returncode,
+        "stdout": result.stdout[-1000:],
+        "stderr": result.stderr[-1000:],
+    }
+
+
 def worse(statuses: list[str]) -> str:
     order = {"ok": 0, "degraded": 1, "critical": 2}
     return max(statuses, key=lambda item: order.get(item, 0))
@@ -123,11 +150,13 @@ result = {
     "sharedsignals_api": check_sharedsignals(os.environ["SHAREDSIGNALS_HEALTH_URL"]),
     "tradingagent_sim_output": check_sim_output(root, int(os.environ["MAX_SIM_OUTPUT_AGE_MIN"])),
     "marketgraph_freshness": check_marketgraph(mg_root, int(os.environ["MAX_MARKETGRAPH_AGE_MIN"])),
+    "combined_crontab": check_combined_crontab(mg_root),
 }
 result["status"] = worse([
     result["sharedsignals_api"]["status"],
     result["tradingagent_sim_output"]["status"],
     result["marketgraph_freshness"]["status"],
+    result["combined_crontab"]["status"],
 ])
 
 output_file = Path(os.environ["OUTPUT_FILE"])
