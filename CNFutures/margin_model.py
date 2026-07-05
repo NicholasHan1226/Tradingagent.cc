@@ -44,10 +44,18 @@ def _coerce_price(value: object) -> float:
     return price
 
 
-def _fee(notional: float, quantity: int, fee_rule: float) -> float:
-    if fee_rule < 1:
+def _fee(notional: float, quantity: int, fee_rule: float, fee_type: str) -> float:
+    normalized_type = str(fee_type or "").strip().lower()
+    if normalized_type in {"rate", "notional_rate"}:
         return round(notional * fee_rule, 2)
-    return round(quantity * fee_rule, 2)
+    if normalized_type in {"fixed_per_lot", "per_lot", "fixed"}:
+        return round(quantity * fee_rule, 2)
+    raise ValueError(f"unsupported futures fee_type: {fee_type}")
+
+
+def _validate_fee_rule(rule: ContractRule) -> None:
+    _fee(1.0, 1, rule.open_fee_rate, rule.open_fee_type)
+    _fee(1.0, 1, rule.close_fee_rate, rule.close_fee_type)
 
 
 def estimate_order_cost(
@@ -59,6 +67,7 @@ def estimate_order_cost(
     """Estimate margin and round-trip fee for a simulated order."""
 
     rule = get_contract_rule(symbol)
+    _validate_fee_rule(rule)
     qty = _coerce_quantity(quantity)
     px = _coerce_price(price)
     direction = str(side or "").lower().strip()
@@ -67,8 +76,8 @@ def estimate_order_cost(
 
     notional = round(px * rule.contract_multiplier * qty, 2)
     margin_required = round(notional * rule.margin_rate, 2)
-    open_fee = _fee(notional, qty, rule.open_fee_rate)
-    close_fee = _fee(notional, qty, rule.close_fee_rate)
+    open_fee = _fee(notional, qty, rule.open_fee_rate, rule.open_fee_type)
+    close_fee = _fee(notional, qty, rule.close_fee_rate, rule.close_fee_type)
     return OrderCostEstimate(
         symbol=str(symbol).strip().lower(),
         side=direction,

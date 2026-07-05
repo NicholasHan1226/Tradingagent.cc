@@ -3,6 +3,7 @@ import {
   getActionableSignals,
   getClosedSignals,
   getLivePerformanceData,
+  getSignalFunnel,
   getVisibleSignals,
 } from './dashboard'
 import type { PerformancePoint, SignalRow } from '../types/dashboard'
@@ -73,5 +74,38 @@ describe('dashboard view rules', () => {
     expect(result[0]).toBe(performanceRows[0])
     expect(result[1]).not.toBe(performanceRows[1])
     expect(result[1].target).toBe(8)
+  })
+
+  it('marks executed-only ledger rows as replay rather than a live screening funnel', () => {
+    const funnel = getSignalFunnel([
+      {
+        ...rows[2],
+        stage: '成交',
+        stageEvidence: 'replay',
+      },
+    ])
+
+    expect(funnel.mode).toBe('replay')
+    expect(funnel.hasScreeningEvidence).toBe(false)
+    expect(funnel.stageDrops).toEqual([0, 0, 0, 0, 0])
+  })
+
+  it('marks dropped or partially staged signals as a screening funnel', () => {
+    const funnel = getSignalFunnel([
+      {
+        ...rows[0],
+        stage: '待执行',
+        stageEvidence: 'partial',
+      },
+      {
+        ...rows[1],
+        stage: '拒绝',
+        stageEvidence: 'partial',
+      },
+    ])
+
+    expect(funnel.mode).toBe('screening')
+    expect(funnel.hasScreeningEvidence).toBe(true)
+    expect(funnel.stageDrops.some((drop) => drop > 0)).toBe(true)
   })
 })

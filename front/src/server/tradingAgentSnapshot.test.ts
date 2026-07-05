@@ -351,6 +351,21 @@ describe('TradingAgent snapshot reader', () => {
         risk_checked_at: '2026-07-04T09:49:00.000+08:00',
       }),
     )
+    await mkdir(join(root, 'signals/partial'), { recursive: true })
+    await writeFile(
+      join(root, 'signals/partial/BTC-USD.json'),
+      JSON.stringify({
+        ts_code: 'BTC-USD',
+        market: 'crypto',
+        status: 'partial',
+        timestamp: '2026-07-04T09:31:00.000+08:00',
+        updated_at: '2026-07-04T09:36:00.000+08:00',
+        risk_check: {
+          passed: false,
+          checks: ['波动过高'],
+        },
+      }),
+    )
     await writeFile(
       join(root, 'signals/filled/600519.SH.json'),
       JSON.stringify({
@@ -361,7 +376,10 @@ describe('TradingAgent snapshot reader', () => {
         discovered_at: '2026-07-04T08:58:00.000+08:00',
         scored_at: '2026-07-04T09:05:00.000+08:00',
         risk_checked_at: '2026-07-04T09:08:00.000+08:00',
-        triggered_at: '2026-07-04T09:12:00.000+08:00',
+        trigger: {
+          triggered_at: '2026-07-04T09:12:00.000+08:00',
+          trigger_price: 10.22,
+        },
       }),
     )
 
@@ -382,6 +400,13 @@ describe('TradingAgent snapshot reader', () => {
       stage: '成交',
       impact: '+24.3 bps',
       stageTimes: expect.objectContaining({ triggered: '09:12' }),
+    }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({
+      symbol: 'BTC-USD',
+      status: 'blocked',
+      stage: '拒绝',
+      reason: '风控未通过：波动过高',
+      stageTimes: expect.objectContaining({ discovered: '09:31', riskChecked: '09:36' }),
     }))
   })
 
@@ -430,6 +455,7 @@ describe('TradingAgent snapshot reader', () => {
       status: 'executed',
       method: 'Grid · 买入',
       stage: '成交',
+      stageEvidence: 'replay',
       impact: '成交 $667',
     }))
     expect(snapshot.performance).toEqual([])

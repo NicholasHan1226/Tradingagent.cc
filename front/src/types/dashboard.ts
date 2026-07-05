@@ -55,6 +55,7 @@ export type SignalRow = {
   stage?: '发现' | '评分' | '风控' | '待执行' | '成交' | '错过' | '拒绝'
   stageTimes?: Partial<Record<'discovered' | 'scored' | 'debated' | 'riskChecked' | 'triggered', string>>
   stageLatencyMinutes?: number
+  stageEvidence?: 'full' | 'partial' | 'replay'
 }
 
 export type HoldingRow = {

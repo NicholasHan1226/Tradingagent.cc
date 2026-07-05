@@ -791,14 +791,39 @@ def run_ashare_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict
     }
 
 
+def run_cn_futures_health() -> dict[str, Any]:
+    try:
+        from shared.runtime_test.cn_futures_live_check import run_live_check
+
+        return run_live_check()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "market": "cn_futures",
+            "generated_at": _now_iso(),
+            "overall_status": "fail",
+            "summary": {"pass": 0, "warn": 0, "fail": 1},
+            "checks": [
+                Check(
+                    "cn_futures_live_chain",
+                    "fail",
+                    "CNFutures 只读健康检查入口失败",
+                    {"error": f"{exc.__class__.__name__}: {exc}"},
+                ).__dict__
+            ],
+            "real_trading_enabled": False,
+        }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="tradingagent market health checks")
-    parser.add_argument("--market", default="ashare", choices=["ashare", "sim", "all"], help="market scope to check")
+    parser.add_argument("--market", default="ashare", choices=["ashare", "cn_futures", "sim", "all"], help="market scope to check")
     parser.add_argument("--mini-health-url", default=DEFAULT_MINI_HEALTH_URL)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args(argv)
     if args.market == "ashare":
         result = run_ashare_health(mini_health_url=args.mini_health_url)
+    elif args.market == "cn_futures":
+        result = run_cn_futures_health()
     elif args.market == "sim":
         result = run_sim_market_health()
     elif args.market == "all":

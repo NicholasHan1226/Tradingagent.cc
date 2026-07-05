@@ -203,6 +203,20 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["ledger"]["trade_rows"], 2)
         self.assertEqual(check.details["ledger"]["latest_style_health"]["trend"]["status"], "active_sample")
 
+    def test_cn_futures_market_health_entrypoint_is_read_only(self) -> None:
+        payload = {
+            "market": "cn_futures",
+            "overall_status": "pass",
+            "summary": {"pass": 1, "warn": 0, "fail": 0},
+            "checks": [],
+            "real_trading_enabled": False,
+        }
+        with patch("shared.runtime_test.cn_futures_live_check.run_live_check", return_value=payload):
+            result = market_health.run_cn_futures_health()
+
+        self.assertEqual(result["market"], "cn_futures")
+        self.assertFalse(result["real_trading_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

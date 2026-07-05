@@ -33,12 +33,22 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(suffixed_rule.product, "rb")
         self.assertEqual(normalize_product("I2509.DCE"), "i")
         self.assertEqual(normalize_product("IF2601.CFFEX"), "if")
+        self.assertEqual(rule.open_fee_type, "rate")
         self.assertEqual(rule.contract_multiplier, 10)
         self.assertEqual(cost.notional, 70000.0)
         self.assertEqual(cost.margin_required, 9100.0)
         self.assertEqual(cost.open_fee, 7.0)
         self.assertEqual(cost.estimated_close_fee, 7.0)
         self.assertEqual(cost.total_estimated_fee, 14.0)
+        fixed_fee_cost = estimate_order_cost(
+            symbol="m2601.DCE",
+            side="buy",
+            quantity=2,
+            price=3000.0,
+        )
+        self.assertEqual(fixed_fee_cost.rule.open_fee_type, "fixed_per_lot")
+        self.assertEqual(fixed_fee_cost.open_fee, 3.0)
+        self.assertEqual(fixed_fee_cost.estimated_close_fee, 3.0)
         index_rule = get_contract_rule("IF2601.CFFEX")
         self.assertEqual(index_rule.exchange, "CFFEX")
         self.assertEqual(index_rule.contract_multiplier, 300)

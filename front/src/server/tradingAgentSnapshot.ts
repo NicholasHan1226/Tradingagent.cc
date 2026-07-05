@@ -52,6 +52,7 @@ type SignalFile = {
   reason?: string
   expected_alpha_bps?: number
   alpha_bps?: number
+  timestamp?: string
   discovered_at?: string
   scored_at?: string
   debated_at?: string
@@ -59,6 +60,29 @@ type SignalFile = {
   triggered_at?: string
   created_at?: string
   updated_at?: string
+  risk_check?: {
+    passed?: boolean
+    checks?: string[]
+  }
+  trigger?: {
+    triggered_at?: string
+    trigger_price?: number | null
+  }
+  fill?: {
+    filled_at?: string
+    filled_price?: number
+    filled_qty?: number
+  }
+  simulated_fill?: {
+    filled_at?: string
+    avg_price?: number
+    filled_price?: number
+    quantity?: number
+    filled_qty?: number
+    notional?: number
+    status?: string
+  }
+  filled_at?: string
 }
 
 type SimLedgerTradeRow = {
@@ -448,6 +472,7 @@ function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strateg
       triggered: formatClock(timestamp),
     },
     stageLatencyMinutes: 0,
+    stageEvidence: 'replay',
   }
 }
 
@@ -499,22 +524,26 @@ async function readSignalFile(path: string, bucket: string, now: Date): Promise<
     const raw = JSON.parse(await readFile(path, 'utf8')) as SignalFile
     const symbol = raw.ts_code ?? raw.symbol
     if (!symbol) return null
+    const status = mapSignalStatus(raw.status ?? bucket, raw)
+    const stage = inferSignalStage(raw, bucket)
+    const stageTimes = formatStageTimes(raw)
 
     return {
       symbol,
       name: symbol,
       market: normalizeMarket(raw.market, symbol),
       method: raw.direction ? `${raw.direction}` : '待确认',
-      status: mapSignalStatus(raw.status ?? bucket),
+      status,
       impact: formatAlphaBps(raw.alpha_bps ?? raw.expected_alpha_bps),
       confidence: raw.confidence ? String(raw.confidence) : '--',
-      age: formatAge(raw.discovered_at ?? raw.created_at, now),
-      reason: raw.reason ?? '等待下一次确认',
+      age: formatAge(raw.discovered_at ?? raw.created_at ?? raw.timestamp, now),
+      reason: raw.reason ?? formatRiskReason(raw) ?? '等待下一次确认',
       next: mapSignalNext(bucket),
-      steps: bucket === 'filled' ? 6 : 5,
-      stage: inferSignalStage(raw, bucket),
-      stageTimes: formatStageTimes(raw),
+      steps: stageToSteps(stage),
+      stage,
+      stageTimes,
       stageLatencyMinutes: calculateStageLatency(raw),
+      stageEvidence: getStageEvidence(stageTimes, raw),
     }
   } catch {
     return null
@@ -582,7 +611,8 @@ function formatStrategyName(value: string) {
     .join(' ')
 }
 
-function mapSignalStatus(status: string): SignalStatus {
+function mapSignalStatus(status: string, signal?: SignalFile): SignalStatus {
+  if (signal?.risk_check?.passed === false) return 'blocked'
   if (status === 'filled' || status === 'executed') return 'executed'
   if (status === 'cancelled') return 'cancelled'
   if (status === 'expired' || status === 'failed') return 'missed'
@@ -600,30 +630,58 @@ function mapSignalNext(bucket: string) {
 
 function inferSignalStage(signal: SignalFile, bucket: string): SignalRow['stage'] {
   const status = signal.status ?? bucket
+  if (signal.risk_check?.passed === false || status === 'partial') return '拒绝' as SignalRow['stage']
   if (status === 'failed' || status === 'rejected') return '拒绝' as SignalRow['stage']
   if (status === 'expired' || status === 'cancelled') return '错过' as SignalRow['stage']
-  if (status === 'filled' || status === 'executed' || signal.triggered_at) return '成交' as SignalRow['stage']
+  if (status === 'filled' || status === 'executed' || signal.triggered_at || signal.trigger?.triggered_at || signal.fill?.filled_at || signal.simulated_fill?.filled_at || signal.filled_at) return '成交' as SignalRow['stage']
   if (status === 'claimed' || status === 'running') return '待执行' as SignalRow['stage']
-  if (signal.risk_checked_at || status === 'partial') return '风控' as SignalRow['stage']
+  if (signal.risk_checked_at || signal.risk_check) return '风控' as SignalRow['stage']
   if (signal.debated_at || signal.scored_at) return '评分' as SignalRow['stage']
   return '发现' as SignalRow['stage']
 }
 
 function formatStageTimes(signal: SignalFile): SignalRow['stageTimes'] {
+  const triggeredAt = signal.triggered_at ?? signal.trigger?.triggered_at ?? signal.fill?.filled_at ?? signal.simulated_fill?.filled_at ?? signal.filled_at
+  const discoveredAt = signal.discovered_at ?? signal.created_at ?? signal.timestamp
+  const riskCheckedAt = signal.risk_checked_at ?? (signal.risk_check ? signal.updated_at ?? signal.timestamp : undefined)
+
   return {
-    discovered: formatClock(signal.discovered_at ?? signal.created_at),
+    discovered: formatClock(discoveredAt),
     scored: formatClock(signal.scored_at),
     debated: formatClock(signal.debated_at),
-    riskChecked: formatClock(signal.risk_checked_at),
-    triggered: formatClock(signal.triggered_at),
+    riskChecked: formatClock(riskCheckedAt),
+    triggered: formatClock(triggeredAt),
   }
 }
 
 function calculateStageLatency(signal: SignalFile) {
-  const start = Date.parse(signal.discovered_at ?? signal.created_at ?? '')
-  const end = Date.parse(signal.triggered_at ?? signal.risk_checked_at ?? signal.scored_at ?? signal.updated_at ?? '')
+  const start = Date.parse(signal.discovered_at ?? signal.created_at ?? signal.timestamp ?? '')
+  const end = Date.parse(signal.triggered_at ?? signal.trigger?.triggered_at ?? signal.fill?.filled_at ?? signal.simulated_fill?.filled_at ?? signal.filled_at ?? signal.risk_checked_at ?? signal.updated_at ?? signal.scored_at ?? '')
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return undefined
   return Math.round((end - start) / 60000)
+}
+
+function stageToSteps(stage: SignalRow['stage']) {
+  if (stage === '成交' || stage === '错过') return 6
+  if (stage === '待执行') return 5
+  if (stage === '风控' || stage === '拒绝') return 4
+  if (stage === '评分') return 3
+  return 1
+}
+
+function getStageEvidence(stageTimes: SignalRow['stageTimes'], signal: SignalFile): SignalRow['stageEvidence'] {
+  const values = Object.values(stageTimes ?? {}).filter(Boolean)
+  if (values.length >= 3 && new Set(values).size > 1) return 'full'
+  if (values.length >= 2 || signal.risk_check || signal.trigger || signal.fill || signal.simulated_fill) return 'partial'
+  return 'partial'
+}
+
+function formatRiskReason(signal: SignalFile) {
+  if (signal.risk_check?.passed === false) {
+    const checks = signal.risk_check.checks?.filter(Boolean).slice(0, 2).join('、')
+    return checks ? `风控未通过：${checks}` : '风控未通过'
+  }
+  return undefined
 }
 
 function formatClock(value?: string) {

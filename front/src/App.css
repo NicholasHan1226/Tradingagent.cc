@@ -758,9 +758,25 @@ button:not(:disabled) {
 }
 
 .flow-caption span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: var(--text-primary);
   font-size: 11px;
   font-weight: 720;
+}
+
+.flow-caption b {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 7px;
+  border: 1px solid rgba(105, 228, 215, 0.18);
+  border-radius: 999px;
+  color: var(--accent-cyan);
+  background: rgba(105, 228, 215, 0.035);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .flow-caption strong {
@@ -789,13 +805,17 @@ button:not(:disabled) {
 }
 
 .funnel-stage-card {
+  --stage-strength: 100%;
   min-width: 0;
   display: grid;
   gap: 5px;
   min-height: 76px;
   padding: 11px 12px 9px;
   border-left: 1px solid var(--border-hairline);
-  background: rgba(240, 246, 244, 0.006);
+  background:
+    linear-gradient(180deg, rgba(105, 228, 215, 0.016), transparent 58%),
+    linear-gradient(90deg, rgba(105, 228, 215, 0.03) 0 var(--stage-strength), transparent var(--stage-strength)),
+    rgba(240, 246, 244, 0.006);
 }
 
 .funnel-stage-card:first-child {
@@ -843,6 +863,12 @@ button:not(:disabled) {
     linear-gradient(90deg, rgba(105, 228, 215, 0.018), transparent 46%, rgba(105, 228, 215, 0.01)),
     linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 45%, rgba(240, 246, 244, 0.008)),
     rgba(1, 5, 5, 0.5);
+}
+
+.signal-flow-board.mode-replay .funnel-flow-canvas {
+  background:
+    linear-gradient(90deg, rgba(105, 228, 215, 0.012), transparent 46%, rgba(105, 228, 215, 0.018)),
+    rgba(1, 5, 5, 0.58);
 }
 
 .funnel-scanner {
@@ -910,6 +936,13 @@ button:not(:disabled) {
     rgba(4, 15, 15, 0.7);
   clip-path: polygon(0 0, 100% 17%, 100% 83%, 0 100%);
   opacity: 0.76;
+}
+
+.mode-replay .funnel-mouth span {
+  border-color: rgba(105, 228, 215, 0.1);
+  background:
+    linear-gradient(90deg, rgba(105, 228, 215, 0.045), rgba(105, 228, 215, 0.012)),
+    rgba(4, 15, 15, 0.52);
 }
 
 .funnel-particle {
@@ -1019,6 +1052,50 @@ button:not(:disabled) {
   border-radius: 4px;
   background: rgba(1, 5, 5, 0.8);
   overflow: hidden;
+}
+
+.flow-drop-track {
+  position: absolute;
+  left: 21%;
+  right: 21%;
+  bottom: 83px;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
+  gap: 0;
+  height: 42px;
+  pointer-events: none;
+}
+
+.flow-drop-track span {
+  position: relative;
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  height: 100%;
+}
+
+.flow-drop-track span::before {
+  content: '';
+  width: 1px;
+  height: 100%;
+  background: rgba(240, 246, 244, 0.035);
+}
+
+.flow-drop-track i {
+  position: absolute;
+  bottom: 0;
+  width: 3px;
+  min-height: 4px;
+  border-radius: 999px 999px 0 0;
+  background: rgba(105, 228, 215, 0.2);
+  opacity: 0.32;
+}
+
+.flow-drop-track .has-drop i {
+  background: var(--state-amber);
+  opacity: 0.78;
 }
 
 .chart-section-title {

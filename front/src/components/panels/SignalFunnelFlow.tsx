@@ -15,31 +15,35 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
   const missedSignals = funnel.missed
   const blockedSignals = [...funnel.blocked, ...funnel.cancelled]
   const passRate = Math.round((funnel.executed.length / Math.max(1, signals.length)) * 100)
-  const stageDrops = funnel.stages.map((stage, index) => {
-    if (index === 0) return 0
-    return Math.max(0, funnel.stages[index - 1].rows.length - stage.rows.length)
-  })
+  const stageDrops = funnel.stageDrops
   const hasStageDrop = stageDrops.some((drop) => drop > 0)
   const hasTimingEvidence = signals.some((signal) => signal.stageLatencyMinutes && signal.stageLatencyMinutes > 0)
   const bottleneck = getBottleneck(funnel.stages.map((stage) => ({ label: stage.label, count: stage.rows.length })))
   const caption = hasSignalData
-    ? hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
+    ? funnel.mode === 'screening' || hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
       ? `${signals.length} 个进入 · ${funnel.tradeSignals.length} 个留下 · ${funnel.executed.length} 个成交`
       : `${signals.length} 条成交回放 · 转化 ${passRate}%`
     : '等待机会流入'
-  const particles = buildParticles(hasSignalData ? signals : placeholderSignals())
+  const modeLabel = funnel.mode === 'screening'
+    ? '实时筛选'
+    : funnel.mode === 'partial'
+      ? '部分阶段'
+      : funnel.mode === 'replay'
+        ? '成交回放'
+        : '等待数据'
+  const particles = buildParticles(hasSignalData ? signals : placeholderSignals(), funnel.mode)
 
   return (
     <section className="signal-flow-module" aria-label="交易漏斗">
-      <div className="signal-flow-board">
+      <div className={`signal-flow-board mode-${funnel.mode}`}>
         <div className="flow-caption">
-          <span>交易漏斗</span>
+          <span>交易漏斗 <b>{modeLabel}</b></span>
           <strong>{caption}</strong>
         </div>
         <div className="funnel-pipeline" role="img" aria-label="机会从发现到交易结果的动态筛选漏斗">
           <div className="funnel-stage-grid" aria-hidden="true">
             {funnel.stages.map((stage, index) => (
-              <div className="funnel-stage-card" key={stage.label}>
+              <div className="funnel-stage-card" key={stage.label} style={{ '--stage-strength': `${stageWidths[index]}%` } as CSSProperties}>
                 <span>{stage.label}</span>
                 <strong>{stage.rows.length}</strong>
                 <em>{getStageHint(index, stage.rows.length, signals.length, stageDrops[index])}</em>
@@ -80,6 +84,13 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
             ))}
           </div>
         </div>
+        <div className="flow-drop-track" aria-hidden="true">
+          {stageDrops.slice(1).map((drop, index) => (
+            <span className={drop > 0 ? 'has-drop' : ''} key={`${funnel.stages[index].label}-${funnel.stages[index + 1].label}`}>
+              <i style={{ height: `${Math.min(100, Math.max(8, drop * 12))}%` }} />
+            </span>
+          ))}
+        </div>
         <div className="flow-outcome-strip">
           {[executedSignals, pendingSignals, missedSignals, blockedSignals].map((rows, index) => (
             <span key={OUTCOME_LABELS[index]}>
@@ -105,7 +116,7 @@ function getBottleneck(stages: { label: string; count: number }[]) {
   }))
   const biggest = drops.sort((a, b) => b.drop - a.drop)[0]
   if (!biggest || biggest.drop === 0) return '当前全量通过'
-  return `${biggest.from}到${biggest.to}少了 ${biggest.drop} 条`
+  return `${biggest.from}到${biggest.to}减少 ${biggest.drop} 条`
 }
 
 function getStageHint(index: number, count: number, total: number, dropped: number) {
@@ -116,12 +127,12 @@ function getStageHint(index: number, count: number, total: number, dropped: numb
   return `${Math.round((count / total) * 100)}%`
 }
 
-function buildParticles(rows: SignalRow[]) {
+function buildParticles(rows: SignalRow[], mode: ReturnType<typeof getSignalFunnel>['mode']) {
   const visibleRows = rows.slice(0, MAX_ANIMATED_SIGNALS)
   const labelIndexes = pickLabelIndexes(visibleRows)
 
   return visibleRows.map((signal, index) => {
-    const stopStage = getStopStage(signal)
+    const stopStage = mode === 'replay' ? 5 : getStopStage(signal)
     const tone = signal.status === 'blocked' || signal.status === 'cancelled'
       ? 'red'
       : signal.status === 'missed'

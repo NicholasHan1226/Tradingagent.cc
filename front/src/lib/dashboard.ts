@@ -44,15 +44,23 @@ export function getSignalFunnel(rows: SignalRow[]) {
   const conditioned = rows.filter((signal) => signalStageRank(signal) >= 2)
   const riskPassed = rows.filter((signal) => signalStageRank(signal) >= 3 && signal.status !== 'blocked' && signal.status !== 'cancelled')
   const tradeSignals = riskPassed.filter((signal) => signal.status === 'executed' || signal.status === 'pending' || signal.status === 'missed')
+  const stages = [
+    { label: '发现', rows: discovered },
+    { label: '研判', rows: formed },
+    { label: '风控', rows: conditioned },
+    { label: '队列', rows: riskPassed },
+    { label: '结果', rows: tradeSignals },
+  ]
+  const stageDrops = stages.map((stage, index) => index === 0 ? 0 : Math.max(0, stages[index - 1].rows.length - stage.rows.length))
+  const hasScreeningEvidence = rows.some((signal) => signal.stageEvidence === 'full' || (signal.stageEvidence === 'partial' && signal.stage !== '成交')) || stageDrops.some((drop) => drop > 0)
+  const hasReplayEvidence = rows.length > 0 && rows.every((signal) => signal.stageEvidence === 'replay' || signal.stage === '成交')
+  const mode = rows.length === 0 ? 'empty' : hasScreeningEvidence ? 'screening' : hasReplayEvidence ? 'replay' : 'partial'
 
   return {
-    stages: [
-      { label: '发现', rows: discovered },
-      { label: '评分', rows: formed },
-      { label: '风控', rows: conditioned },
-      { label: '待执行', rows: riskPassed },
-      { label: '结果', rows: tradeSignals },
-    ],
+    mode,
+    hasScreeningEvidence,
+    stageDrops,
+    stages,
     tradeSignals,
     executed: tradeSignals.filter((signal) => signal.status === 'executed'),
     pending: tradeSignals.filter((signal) => signal.status === 'pending'),

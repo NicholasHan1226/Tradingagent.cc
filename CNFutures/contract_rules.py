@@ -22,6 +22,8 @@ class ContractRule:
     open_fee_rate: float
     close_fee_rate: float
     price_limit_rate: float
+    open_fee_type: str = "rate"
+    close_fee_type: str = "rate"
     night_session: bool = False
 
 
@@ -68,6 +70,8 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         open_fee_rate=1.5,
         close_fee_rate=1.5,
         price_limit_rate=0.07,
+        open_fee_type="fixed_per_lot",
+        close_fee_type="fixed_per_lot",
         night_session=True,
     ),
     "if": ContractRule(
