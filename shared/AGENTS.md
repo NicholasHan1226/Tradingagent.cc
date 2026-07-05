@@ -23,7 +23,8 @@
 
 ## 写入端单一事实源
 - TradingAgent 写入端必须遵守单一事实源, 详细契约见 `docs/write_end_contract.md`。
-- A 股模拟执行必须由 `job_ashare_sim_exec` 调用 simulated loop 写入 `signals/pending/`，再由 Mac Mini Hermes 执行桥领取、执行、回写；MarketGraph 只能提供研究/信号输入，不能直连执行端。
+- A 股模拟盘默认走服务器本地 paper fill：`job_ashare_sim_exec → Ashare/sim_executor.py → shared/execution/sim_broker.py → shared/logs/sim_ledger/ashare`。本地闭环直接生成 `filled`/`positions` 等 simulated 状态，不依赖 Mac Mini Hermes。
+- Hermes/同花顺 GUI 执行桥仅作为第二路径，只有显式设置 `ASHARE_SIM_HERMES_ENABLED=1` 时，服务器才把同一模拟信号投递到 `signals/pending/`，由 Mac Mini 领取、执行并回写；MarketGraph 只能提供研究/信号输入，不能直连执行端。
 - `signals/` 是执行队列唯一写入面:
   - `signals/pending/` 待执行
   - `signals/filled/` 已成交

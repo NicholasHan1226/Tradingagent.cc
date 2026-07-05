@@ -5,7 +5,7 @@
 |------|-----|------|------|
 | 杭州 (主) | 8.138.181.177 | 2核3.4GB/99GB | 所有系统 (除A股实盘) |
 | 新加坡 | 47.82.153.58 | 30GB | 境外 RSS mirror / 待收口节点 |
-| Mac Mini | 本地 | — | A股实盘执行 (Hermes同花顺) |
+| Mac Mini | 本地 | — | A股模拟盘可选 Hermes/同花顺 GUI 第二路径（需 `ASHARE_SIM_HERMES_ENABLED=1`）；实盘仅手工确认，不自动下单 |
 
 ## 域名
 - tradingagent.cc — 统一域名

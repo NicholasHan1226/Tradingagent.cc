@@ -255,7 +255,7 @@
 - [x] 新增 `shared/execution/auto_pipeline.py`：按 Crypto/US/PM/Ashare 执行 pre-market scan、research、decision、sim execution 和 daily review/evolution；候选、决策、账户和信号均强制 `capital_layer=simulated`、`real_execution=false`，发现 real/live 负载直接跳过或拒绝。
 - [x] 新增 `cron/auto_pipeline.sh` 与 `shared/crontab.txt` 模板行：`0 9 * * 1-5 /opt/investment/tradingagent/cron/auto_pipeline.sh`；脚本带 flock、日志和 timeout。
 - [x] 验证：`py_compile` 通过；`bash -n cron/auto_pipeline.sh` 通过；`tests/test_auto_pipeline.py` 3 项通过；auto pipeline + multi-style/evolution/fundamental/multi-perspective 相关回归 12 项通过。
-- [ ] 待服务器部署验证：生产 crontab 尚未安装 `cron/auto_pipeline.sh`；Ashare 当前通过本地 simulated adapter 保持不触碰 Hermes/Mac Mini/同花顺。
+- [x] 生产 crontab 已安装 `cron/auto_pipeline.sh`；Ashare 当前通过本地 simulated adapter 保持不触碰 Hermes/Mac Mini/同花顺，Hermes 仅作为显式启用的第二路径。
 
 ### 2026-07-04 主动基本面分析 + 多视角研究报告
 
@@ -271,7 +271,7 @@
 - [x] `evaluate_all_markets()` 接入 guard；多市场自动演化任务在 guard 阻断时返回 `state=guard_blocked`，不生成新 variant、不调权。
 - [x] 新增 `cron/health_check.sh`：检查 SharedSignals API、TradingAgent `style_comparison.json` 新鲜度、MarketGraph 数据新鲜度，并写入 SharedSignals `logs/watchdog_inputs/tradingagent_health.json` 供 watchdog 汇总。
 - [x] 验证：`py_compile` 通过；`bash -n cron/health_check.sh` 通过；`tests/test_evolution.py` 3 项通过。
-- [ ] 待服务器部署验证：生产 crontab 尚未安装 `cron/health_check.sh`，guard circuit breaker 仅完成本地语法和既有演化回归验证。
+- [x] 生产 crontab 已安装 `cron/health_check.sh`；guard circuit breaker 已完成本地语法和既有演化回归验证，生产侧由统一健康 cron 上报。
 
 ### 2026-07-04 多市场多风格 simulated 自演化闭环
 
@@ -320,7 +320,7 @@
 - [x] HK 兼容入口已改跑 sim cycle，只写 sim 输出。
 - [x] 新增 `cron/daily_review.sh`：调用 `shared.review.daily_review.run_daily_review()`，按 sim 日志汇总多市场 review。
 - [x] 新增 `cron/AGENTS.md`：约束 cron wrapper 不内嵌 broker 凭据、实盘 payload 或审批捷径。
-- [ ] 待服务器部署验证：脚本尚未写入生产 crontab；多市场生产闭环仍需实跑确认。
+- [x] 生产 crontab 已安装多市场模拟与健康检查脚本；真实交易保持 fail-closed，多市场生产闭环继续按真实交易时段积累样本。
 
 ### SharedSignals API 15/15 端点迁移对齐（2026-07-03）
 

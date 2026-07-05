@@ -75,9 +75,9 @@ E: 基本面深度  — 周/季度财报更新
 - 小资金集中, 影子盘测分散策略
 
 ## 执行
-- 模拟盘: UI自动化 (新策略验证期)
+- A股模拟盘: 默认由服务器本地 `Ashare/sim_executor.py` + `shared/execution/sim_broker.py` 完成 paper fill、统一模拟账本和复盘闭环；Hermes/同花顺 GUI 仅作为 `ASHARE_SIM_HERMES_ENABLED=1` 的第二对照路径
 - 影子盘: 多策略并行记录 (已验证策略平行运行)
-- 实盘: Hermes桌面控制同花顺 (5-10min级别, Mac Mini)
+- 实盘: 仅 Nicholas 手工确认，不自动点击；Mac Mini/Hermes 只用于可选模拟盘第二路径和只读账户同步，不做真实下单
 - CNFutures: 先走多风格全自动模拟盘 + SimNow/CTP 文档预留, 实盘自动化默认关闭
 - US: Alpaca API (未来实盘)
 - 升级路径: 非期货按各市场规则推进; CNFutures 为模拟多风格验证→受控小实盘预留→规模化

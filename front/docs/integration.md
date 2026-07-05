@@ -16,6 +16,8 @@ gated and must not trigger execution from the front layer.
 | --- | --- | --- | --- |
 | Current opportunities | `signals/pending/*.json` | `signals/{claimed,running,filled,cancelled,expired,failed,partial}/*.json` | Ready |
 | Positions | `signals/positions/*.json` | `shared/accounting/position_plan.jsonl` | Partial |
+
+> **A股模拟盘默认走服务器本地闭环**：`Ashare/sim_executor.py` 生成 simulated fill 后直接进入 `signals/filled/` 与 `signals/positions/`；`signals/pending/` 仅在显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时用于 Hermes/同花顺 GUI 第二路径。
 | Performance | `shared/review/daily/daily_brief.jsonl` return fields | `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
 | Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
