@@ -18,6 +18,18 @@ export type PerformancePoint = {
   opportunity: number
 }
 
+export type PortfolioSummary = {
+  pnlAmount: number
+  returnPct: number
+  capitalBase: number
+  targetPct: number
+  maxDrawdownPct: number
+  tradeCount: number
+  pointCount: number
+  source: string
+  updatedAt: string
+}
+
 export type ChartEvent = {
   day: string
   title: string
@@ -37,7 +49,7 @@ export type SignalRow = {
   reason: string
   next: string
   steps: number
-  stage?: '发现机会' | '形成信号' | '交易条件' | '风险筛选' | '执行确认'
+  stage?: '发现' | '评分' | '风控' | '待执行' | '成交' | '错过' | '拒绝'
   stageTimes?: Partial<Record<'discovered' | 'scored' | 'debated' | 'riskChecked' | 'triggered', string>>
   stageLatencyMinutes?: number
 }

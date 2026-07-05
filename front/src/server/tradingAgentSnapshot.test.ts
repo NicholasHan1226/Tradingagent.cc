@@ -153,8 +153,8 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T10:00:00.000Z'),
     })
 
-    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: '0700.HK', status: 'pending', next: '等待执行确认', stage: '形成信号' }))
-    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'AAPL.US', status: 'pending', next: '执行中，等待回执', stage: '交易条件' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: '0700.HK', status: 'pending', next: '等待执行确认', stage: '待执行' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'AAPL.US', status: 'pending', next: '执行中，等待回执', stage: '待执行' }))
   })
 
   it('reads return series from the daily review so the homepage can show real performance history', async () => {
@@ -191,6 +191,104 @@ describe('TradingAgent snapshot reader', () => {
       { day: '7月4日', simulated: 3.1, target: 2, benchmark: 0.7, opportunity: -0.5 },
     ])
     expect(snapshot.domains.performance.status).toBe('ready')
+  })
+
+  it('reads real simulated PnL series from market style performance trackers', async () => {
+    const root = await createWorkspace()
+    const performanceRoot = join(root, 'TradingAgent/shared/review/crypto')
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(performanceRoot, { recursive: true })
+    await mkdir(ledgerRoot, { recursive: true })
+
+    await writeFile(
+      join(ledgerRoot, 'positions.json'),
+      JSON.stringify({
+        cash: 1000,
+        positions: {},
+      }),
+    )
+
+    await writeFile(
+      join(performanceRoot, 'style_performance.jsonl'),
+      [
+        JSON.stringify({
+          style_name: 'grid',
+          market: 'crypto',
+          date: '20260703',
+          pnl: 12.5,
+          max_dd: 40,
+          trades: 3,
+        }),
+        JSON.stringify({
+          style_name: 'momentum',
+          market: 'crypto',
+          date: '20260703',
+          pnl: -2.5,
+          max_dd: 10,
+          trades: 1,
+        }),
+        JSON.stringify({
+          style_name: 'grid',
+          market: 'crypto',
+          date: '20260704',
+          pnl: 7.25,
+          max_dd: 20,
+          trades: 2,
+        }),
+      ].join('\n') + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T10:00:00.000Z'),
+    })
+
+    expect(snapshot.performance).toEqual([
+      { day: '7月3日', simulated: 1, target: 4, benchmark: 0, opportunity: -4 },
+      { day: '现在', simulated: 1.73, target: 8, benchmark: 0, opportunity: -2 },
+    ])
+    expect(snapshot.portfolio).toMatchObject({
+      pnlAmount: 17.25,
+      returnPct: 1.73,
+      capitalBase: 1000,
+      targetPct: 8,
+      maxDrawdownPct: 4,
+      tradeCount: 2,
+      pointCount: 2,
+    })
+    expect(snapshot.domains.performance.status).toBe('ready')
+    expect(snapshot.sourceRefs.performanceTracker).toBe('shared/review/*/style_performance.jsonl')
+  })
+
+  it('keeps performance empty with a clear message when only trade logs exist', async () => {
+    const root = await createWorkspace()
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(ledgerRoot, { recursive: true })
+
+    await writeFile(
+      join(ledgerRoot, 'trade_journal.jsonl'),
+      JSON.stringify({
+        fill_price: 62699.99,
+        fill_qty: 0.0106,
+        notional: 666.67,
+        side: 'buy',
+        symbol: 'BTCUSDT',
+        timestamp: '2026-07-04T11:17:34+00:00',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.performance).toEqual([])
+    expect(snapshot.domains.performance).toMatchObject({
+      status: 'empty',
+      message: expect.stringContaining('完整收益曲线'),
+    })
   })
 
   it('preserves signal stage timestamps so the funnel can animate the real decision path', async () => {
@@ -230,13 +328,13 @@ describe('TradingAgent snapshot reader', () => {
 
     expect(snapshot.signals).toContainEqual(expect.objectContaining({
       symbol: '0700.HK',
-      stage: '风险筛选',
+      stage: '风控',
       impact: '+18.6 bps',
       stageTimes: expect.objectContaining({ discovered: '09:41', scored: '09:44', riskChecked: '09:49' }),
     }))
     expect(snapshot.signals).toContainEqual(expect.objectContaining({
       symbol: '600519.SH',
-      stage: '执行确认',
+      stage: '成交',
       impact: '+24.3 bps',
       stageTimes: expect.objectContaining({ triggered: '09:12' }),
     }))
@@ -286,7 +384,7 @@ describe('TradingAgent snapshot reader', () => {
       symbol: 'BTC-USD',
       status: 'executed',
       method: 'Grid · 买入',
-      stage: '执行确认',
+      stage: '成交',
       impact: '成交 $667',
     }))
     expect(snapshot.performance).toEqual([])

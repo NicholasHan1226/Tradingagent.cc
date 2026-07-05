@@ -16,7 +16,7 @@ gated and must not trigger execution from the front layer.
 | --- | --- | --- | --- |
 | Current opportunities | `signals/pending/*.json` | `signals/{claimed,running,filled,cancelled,expired,failed,partial}/*.json` | Ready |
 | Positions | `signals/positions/*.json` | `shared/accounting/position_plan.jsonl` | Partial |
-| Performance | `shared/review/daily/daily_brief.jsonl` | `signals/filled/*.json` | Ready for read model |
+| Performance | `shared/review/daily/daily_brief.jsonl` return fields | `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
 | Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
 | Live readiness | execution schemas and filled signal writeback | manual authorization state | Gated |
@@ -35,12 +35,20 @@ Display-ready fields used by the homepage:
   The local reader accepts daily review aliases such as
   `simulated_return_pct`, `return_pct`, `pnl_pct`, `target_return_pct`,
   `benchmark_return_pct`, and `opportunity_gap_pct`.
+- If daily review return fields are absent, the reader can build a real
+  simulated return series from `shared/review/*/style_performance.jsonl` by
+  summing `pnl` per date and normalizing it against the simulated ledger
+  capital base from `shared/logs/sim_ledger/*/*/positions.json`.
+- Trade journals and position cost are not valid performance sources by
+  themselves. When only those files exist, `domains.performance.status` remains
+  `empty` with a message explaining the missing PnL / return series.
 - `signals[]`: `symbol`, `market`, `status`, `impact`, `confidence`,
   `reason`, `next`, `steps`, plus optional funnel fields `stage`,
   `stageTimes`, and `stageLatencyMinutes`.
 - Signal stage timestamps can be supplied as `discovered_at`, `scored_at`,
-  `debated_at`, `risk_checked_at`, and `triggered_at`. These drive the
-  animated opportunity funnel and should reflect the real pipeline path.
+  `debated_at`, `risk_checked_at`, and `triggered_at`. The reader maps existing
+  status and timestamps into `发现 / 评分 / 风控 / 待执行 / 成交 / 错过 / 拒绝`
+  so the animated funnel reflects only real read-only file state.
 - `holdings[]`: `symbol`, `market`, `weight`, `pnl`, `risk`, and `role`.
 
 ## Same-Server Production Deployment
@@ -213,7 +221,10 @@ The route may read:
 - `signals/positions/*.json`
 - `shared/accounting/position_plan.jsonl`
 - `shared/review/daily/daily_brief.jsonl`
+- `shared/review/*/style_performance.jsonl`
 - `shared/review/attribution/*.jsonl`
+- `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}`
+- `shared/logs/local_sim/local_sim_trades.jsonl`
 - `shared/risk/risk_limits.yaml`
 
 The route must not:
@@ -238,8 +249,10 @@ must be preserved: no execution, callback, or order mutation routes belong to
 this dashboard.
 
 The data gap is now narrower: server-local simulated ledger positions and trade
-journals feed the homepage holdings and signal funnel. `midday_review.jsonl`,
-strategy/factor attribution JSONL, `risk_limits.yaml`, and richer per-signal
-stage records still need snapshot parsing before the UI should present them as
-complete panels. Performance charts still require a real PnL / mark-to-market
-series; the frontend must not infer returns from trade notional or cost basis.
+journals feed the homepage holdings and signal funnel, and
+`shared/review/*/style_performance.jsonl` can feed a real simulated return curve
+when present with simulated ledger capital. `midday_review.jsonl`, strategy/factor attribution JSONL,
+`risk_limits.yaml`, richer per-signal stage records, and normalized
+mark-to-market return series still need upstream data before the UI should
+present them as complete panels. The frontend must not infer returns from trade
+notional or cost basis.

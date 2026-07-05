@@ -92,7 +92,7 @@ export function ThemePage({
       <div className="theme-layout">
         <section className="theme-main">
           <section className="panel">
-            <PanelTitle action="看机会" kicker="判断路径" onAction={() => setActivePage('机会')} title="从机会到结果" />
+            <PanelTitle action="看机会" kicker="结果路径" onAction={() => setActivePage('机会')} title="从机会到结果" />
             <StatusBoundary loading={<ChartSkeleton height={300} />} onRetry={onRetry} status={domainStatus('decisions')}>
               <DecisionFormation />
             </StatusBoundary>

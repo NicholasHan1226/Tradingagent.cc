@@ -8,7 +8,7 @@ import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
-import type { AccountMode, ChartEvent, HoldingRow, Page, PerformancePoint, SignalRow } from '../types/dashboard'
+import type { AccountMode, ChartEvent, HoldingRow, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
 export function HomeDashboard({
@@ -20,6 +20,7 @@ export function HomeDashboard({
   hasSignalData,
   holdings,
   now,
+  portfolio,
   domainStatus,
   onRetry,
   selectAccountMode,
@@ -36,6 +37,7 @@ export function HomeDashboard({
   holdings: HoldingRow[]
   latestPoint: PerformancePoint
   now: Date
+  portfolio: PortfolioSummary | null
   domainStatus: (domain: DataDomain) => DomainStatus
   onRetry: () => void
   selectAccountMode: (mode: AccountMode) => void
@@ -43,11 +45,12 @@ export function HomeDashboard({
   signals: SignalRow[]
 }) {
   const signalFunnel = getSignalFunnel(signals)
-  const simulatedCapitalBase = 1365336.73
-  const liveProfit = simulatedCapitalBase * latestPoint.simulated / 100
+  const liveProfit = portfolio?.pnlAmount ?? 0
+  const liveReturn = portfolio?.returnPct ?? latestPoint.simulated
+  const targetReturn = portfolio?.targetPct ?? latestPoint.target
   const headline = hasPerformanceData
-    ? '收益保持在目标上方，风险仍在边界内。'
-    : '收益通道已连接，等待交易系统写入最新曲线。'
+    ? '模拟盘正在目标上方运行。'
+    : '暂无收益结果，先保持为空。'
 
   return (
     <div className="home-layout">
@@ -61,12 +64,13 @@ export function HomeDashboard({
               hasPerformanceData={hasPerformanceData}
               headline={headline}
               liveProfit={liveProfit}
-              liveReturn={latestPoint.simulated}
+              liveReturn={liveReturn}
               missedCount={signalFunnel.missed.length}
               pendingCount={signalFunnel.pending.length}
+              portfolio={portfolio}
               selectAccountMode={selectAccountMode}
               setActivePage={setActivePage}
-              targetReturn={latestPoint.target}
+              targetReturn={targetReturn}
             />
           </div>
           <div className="chart-section-title">
@@ -91,10 +95,10 @@ export function HomeDashboard({
           </div>
         </section>
 
-        <section className="home-drilldown" aria-label="当前机会和持仓">
+        <section className="home-drilldown" aria-label="当前机会和持仓结果">
           <div className="drilldown-header">
-            <span>当前结果</span>
-            <strong>机会与持仓只展示可用记录</strong>
+            <span>机会 / 持仓结果</span>
+            <strong>只展示已有记录，不用样例补位</strong>
           </div>
           <div className="home-support-grid">
             <OpportunityFocus hasSignalData={hasSignalData} setActivePage={setActivePage} signals={signals} />

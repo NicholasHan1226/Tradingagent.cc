@@ -58,8 +58,9 @@ function App() {
   const performanceRows = useMemo(() => getSnapshotPerformance(readModelSnapshot, performanceData), [readModelSnapshot])
   const signalRows = useMemo(() => getSnapshotSignals(readModelSnapshot, mockSignals), [readModelSnapshot])
   const holdingRows = useMemo(() => getSnapshotHoldings(readModelSnapshot, mockHoldings), [readModelSnapshot])
+  const portfolioSummary = readModelSnapshot?.portfolio ?? null
   const isUsingDemoSnapshot = readModelSnapshot === null
-  const hasPerformanceData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'performance')
+  const hasPerformanceData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'performance') || Boolean(portfolioSummary)
   const hasSignalData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'signals')
   const hasHoldingData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'holdings')
   const livePerformanceData = useMemo(
@@ -90,11 +91,12 @@ function App() {
         activePage={activePage}
         activeMarket={activeMarket}
         hasPerformanceData={hasPerformanceData}
-        liveReturn={latestPoint.simulated}
+        liveReturn={portfolioSummary?.returnPct ?? latestPoint.simulated}
+        maxDrawdown={portfolioSummary?.maxDrawdownPct ?? null}
         signalCount={visibleSignals.length}
         snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
         setActiveMarket={setActiveMarket}
-        targetReturn={latestPoint.target}
+        targetReturn={portfolioSummary?.targetPct ?? latestPoint.target}
         tradeSignalCount={signalFunnel.tradeSignals.length}
       />
 
@@ -109,6 +111,7 @@ function App() {
             holdings={holdingRows}
             latestPoint={latestPoint}
             now={now}
+            portfolio={portfolioSummary}
             domainStatus={domainStatus}
             onRetry={handleRetry}
             selectAccountMode={selectAccountMode}

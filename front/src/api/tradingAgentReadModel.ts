@@ -1,5 +1,5 @@
 import type { ApiStatus, DashboardApiResponse } from './types.ts'
-import type { HoldingRow, PerformancePoint, SignalRow } from '../types/dashboard.ts'
+import type { HoldingRow, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
 import type { DataDomain } from '../types/status.ts'
 
 export const tradingAgentReadModelSources = {
@@ -14,6 +14,8 @@ export const tradingAgentReadModelSources = {
   factorAttribution: 'shared/review/attribution/factor_attribution.jsonl',
   strategyVersion: 'shared/review/strategies/strategy_version.jsonl',
   simLedger: 'shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}',
+  localSimLedger: 'shared/logs/local_sim/local_sim_trades.jsonl',
+  performanceTracker: 'shared/review/*/style_performance.jsonl',
 } as const
 
 export type TradingAgentReadModelHealth = {
@@ -27,6 +29,7 @@ export type TradingAgentReadModelSnapshot = {
   generatedAt: string
   domains: Record<DataDomain, TradingAgentReadModelHealth>
   performance: PerformancePoint[]
+  portfolio?: PortfolioSummary
   holdings: HoldingRow[]
   signals: SignalRow[]
   sourceRefs: typeof tradingAgentReadModelSources

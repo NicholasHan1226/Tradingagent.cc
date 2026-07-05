@@ -20,7 +20,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByText('风控')).toBeInTheDocument()
     expect(screen.getAllByText('交易信号').length).toBeGreaterThan(0)
     expect(screen.queryByRole('heading', { name: '机会从全市场进入，只把可执行结果留在首页。' })).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '现在关注' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '正在推进' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '本轮结果' })).not.toBeInTheDocument()
     expect(screen.queryByText('现在判断')).not.toBeInTheDocument()
     expect(screen.queryByText('看决策')).not.toBeInTheDocument()
@@ -81,7 +81,7 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('2 个机会进入，2 个形成交易信号 · 留存 100%')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('2 个机会进入 · 2 个形成结果 · 留存 100%')).toBeInTheDocument())
     expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
   })
 
@@ -112,8 +112,8 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('等待收益数据')).toBeInTheDocument())
-    expect(screen.getAllByText('暂无新机会').length).toBeGreaterThan(0)
+    await waitFor(() => expect(screen.getByText('等待收益结果')).toBeInTheDocument())
+    expect(screen.getAllByText('暂无机会结果').length).toBeGreaterThan(0)
     expect(screen.getByText('暂无持仓记录')).toBeInTheDocument()
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
   })
@@ -124,8 +124,8 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘未启用').length).toBeGreaterThan(0)
-    expect(within(card).getByText('授权和风控开关完成后，这里切换到真实账户结果。')).toBeInTheDocument()
+    expect(within(card).getAllByText('真实账户待接入').length).toBeGreaterThan(0)
+    expect(within(card).getByText('接入口已预留；授权和风控确认前，不展示真实资金结果。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -146,7 +146,7 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘未启用').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('真实账户待接入').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

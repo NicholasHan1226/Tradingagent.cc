@@ -3,7 +3,7 @@ import type { SignalRow } from '../../types/dashboard'
 import { AssetCell } from '../AssetCell'
 import { Timeline } from '../Timeline'
 
-const stages = ['发现', '判断', '复核', '风控', '等待', '结果']
+const stages = ['发现', '成形', '复核', '风控', '推进', '结果']
 
 export function SignalTable({ signals }: { signals: SignalRow[] }) {
   return (

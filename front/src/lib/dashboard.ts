@@ -1,4 +1,4 @@
-import type { Market, PerformancePoint, SignalRow } from '../types/dashboard'
+import type { HoldingRow, Market, PerformancePoint, SignalRow } from '../types/dashboard'
 import type { DomainHealth } from '../types/status'
 
 export function getActionableSignals(rows: SignalRow[]) {
@@ -47,11 +47,11 @@ export function getSignalFunnel(rows: SignalRow[]) {
 
   return {
     stages: [
-      { label: '发现机会', rows: discovered },
-      { label: '形成信号', rows: formed },
-      { label: '交易条件', rows: conditioned },
-      { label: '风险筛选', rows: riskPassed },
-      { label: '交易信号', rows: tradeSignals },
+      { label: '发现', rows: discovered },
+      { label: '评分', rows: formed },
+      { label: '风控', rows: conditioned },
+      { label: '待执行', rows: riskPassed },
+      { label: '结果', rows: tradeSignals },
     ],
     tradeSignals,
     executed: tradeSignals.filter((signal) => signal.status === 'executed'),
@@ -62,12 +62,28 @@ export function getSignalFunnel(rows: SignalRow[]) {
   }
 }
 
+export function getHomeOutcome(signals: SignalRow[], holdings: HoldingRow[]) {
+  const actionable = getActionableSignals(signals)
+  const closed = getClosedSignals(signals)
+  const leadSignal = actionable.find((signal) => signal.status === 'pending') ?? actionable[0]
+  const blockedSignal = signals.find((signal) => signal.status === 'blocked' || signal.status === 'cancelled')
+  const reviewSignal = closed.find((signal) => signal.status === 'missed') ?? closed[0]
+  const leadingHolding = holdings[0]
+
+  return {
+    leadSignal,
+    blockedSignal,
+    reviewSignal,
+    leadingHolding,
+  }
+}
+
 function signalStageRank(signal: SignalRow) {
-  if (signal.stage === '执行确认') return 4
-  if (signal.stage === '风险筛选') return 3
-  if (signal.stage === '交易条件') return 2
-  if (signal.stage === '形成信号') return 1
-  if (signal.stage === '发现机会') return 0
+  if (signal.stage === '成交' || signal.stage === '错过') return 4
+  if (signal.stage === '待执行') return 3
+  if (signal.stage === '风控' || signal.stage === '拒绝') return 2
+  if (signal.stage === '评分') return 1
+  if (signal.stage === '发现') return 0
   if (signal.steps >= 6) return 4
   if (signal.steps >= 5) return 3
   if (signal.steps >= 4) return 2

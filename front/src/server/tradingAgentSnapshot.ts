@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
-import type { HoldingRow, Market, PerformancePoint, SignalRow, SignalStatus } from '../types/dashboard.ts'
+import type { HoldingRow, Market, PerformancePoint, PortfolioSummary, SignalRow, SignalStatus } from '../types/dashboard.ts'
 
 type SnapshotOptions = {
   workspaceRoot: string
@@ -73,6 +73,20 @@ type SimLedgerTradeRow = {
   timestamp?: string
 }
 
+type StylePerformanceRow = {
+  date?: string
+  trade_date?: string
+  as_of?: string
+  pnl?: number | string
+  max_dd?: number | string
+  market?: string
+  style_name?: string
+  trades?: number | string
+  capital_layer?: string
+  account_type?: string
+  real_execution?: boolean
+}
+
 type PerformanceReviewRow = {
   trade_date?: string
   date?: string
@@ -92,6 +106,7 @@ type PerformanceReviewRow = {
 const SIGNAL_BUCKETS = ['pending', 'claimed', 'running', 'filled', 'expired', 'cancelled', 'failed', 'partial']
 const MAX_SIGNALS_PER_BUCKET = 80
 const MAX_SIM_LEDGER_SIGNALS = 120
+const DEFAULT_TARGET_RETURN_PCT = 8
 
 export async function readTradingAgentSnapshot({
   workspaceRoot,
@@ -106,31 +121,41 @@ export async function readTradingAgentSnapshot({
   const filledSignalsPath = join(projectRoot, 'signals/filled')
   const reviewPath = toProjectPath(projectRoot, tradingAgentReadModelSources.review)
   const reviewFallbackPath = join(projectRoot, 'shared/review/data/daily_reviews.jsonl')
+  const performanceTrackerRoot = join(projectRoot, 'shared/review')
   const simLedgerRoot = join(projectRoot, 'shared/logs/sim_ledger')
   const holdings = await readPositionSnapshots(positionsPath)
   const planHoldings = await readPositionPlan(positionPlanPath)
   const simLedgerHoldings = await readSimLedgerHoldings(simLedgerRoot)
   const fallbackHoldings = firstNonEmpty(holdings, planHoldings, simLedgerHoldings)
-  const queueSignals = await readSignalQueue(queueRoot)
+  const queueSignals = await readSignalQueue(queueRoot, now)
   const simLedgerSignals = await readSimLedgerSignals(simLedgerRoot, now)
   const signals = queueSignals.length > 0 ? queueSignals : simLedgerSignals
-  const performance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
+  const reviewPerformance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
+  const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
+  const performance = firstNonEmpty(reviewPerformance, trackerPortfolio.performance)
   const hasOrders = await directoryHasJson(filledSignalsPath)
   const hasPlan = await fileExists(positionPlanPath)
   const hasReview = await fileExists(reviewPath) || await fileExists(reviewFallbackPath)
   const hasSimLedger = simLedgerHoldings.length > 0 || simLedgerSignals.length > 0
+  const hasPerformanceEvidence = hasReview || trackerPortfolio.summary !== undefined
+  const performanceMessage = performance.length > 0
+    ? undefined
+    : hasOrders || hasPlan || hasSimLedger || hasReview
+      ? '已接入交易和持仓记录；完整收益曲线等待净值或收益序列持续写入。'
+      : '等待模拟盘写入收益、目标和市场基准。'
 
   return {
     mode: 'simulated',
     generatedAt,
     domains: {
-      performance: domainHealth(performance.length > 0 || hasOrders || hasReview || hasPlan || hasSimLedger ? 'ready' : 'empty', generatedAt),
+      performance: domainHealth(performance.length > 0 ? 'ready' : 'empty', generatedAt, performanceMessage),
       signals: domainHealth(signals.length > 0 ? 'ready' : 'empty', generatedAt),
       holdings: domainHealth(fallbackHoldings.length > 0 ? 'ready' : 'empty', generatedAt),
-      decisions: domainHealth(hasReview ? 'ready' : 'empty', generatedAt),
+      decisions: domainHealth(hasPerformanceEvidence ? 'ready' : 'empty', generatedAt),
       risk: domainHealth(fallbackHoldings.length > 0 || signals.length > 0 ? 'ready' : 'empty', generatedAt),
     },
     performance,
+    portfolio: trackerPortfolio.summary,
     holdings: fallbackHoldings,
     signals,
     sourceRefs: tradingAgentReadModelSources,
@@ -154,6 +179,97 @@ async function readPerformanceSeries(path: string): Promise<PerformancePoint[]> 
   } catch {
     return []
   }
+}
+
+async function readStylePerformancePortfolio(root: string, simLedgerRoot: string, generatedAt: string): Promise<{
+  performance: PerformancePoint[]
+  summary?: PortfolioSummary
+}> {
+  const files = await listStylePerformanceFiles(root)
+  const rows: StylePerformanceRow[] = []
+
+  for (const file of files) {
+    try {
+      const lines = (await readFile(file, 'utf8')).trim().split('\n').filter(Boolean)
+      for (const line of lines) {
+        try {
+          rows.push(JSON.parse(line) as StylePerformanceRow)
+        } catch {
+          // Ignore malformed append-only rows; other rows remain usable.
+        }
+      }
+    } catch {
+      // Ignore unreadable market folders.
+    }
+  }
+
+  const byDay = new Map<string, { pnl: number; maxDrawdown: number; trades: number }>()
+  for (const row of rows) {
+    if (row.real_execution === true) continue
+    if (normalizeCapitalLayer(row) !== 'simulated') continue
+    const dayKey = compactDate(row.date ?? row.trade_date ?? row.as_of)
+    const pnl = parseFiniteNumber(row.pnl)
+    if (!dayKey || pnl === undefined) continue
+    const current = byDay.get(dayKey) ?? { pnl: 0, maxDrawdown: 0, trades: 0 }
+    current.pnl += pnl
+    current.maxDrawdown = Math.max(current.maxDrawdown, parseFiniteNumber(row.max_dd) ?? 0)
+    current.trades += Math.max(0, Math.trunc(parseFiniteNumber(row.trades) ?? 0))
+    byDay.set(dayKey, current)
+  }
+
+  if (!byDay.size) return { performance: [] }
+
+  const capitalBase = await readSimLedgerCapitalBase(simLedgerRoot)
+  const dates = [...byDay.keys()].sort()
+  let cumulativePnl = 0
+  const performance = dates.map((day, index) => {
+    const value = byDay.get(day)!
+    cumulativePnl += value.pnl
+    const simulated = capitalBase > 0 ? (cumulativePnl / capitalBase) * 100 : 0
+    const target = Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / dates.length))
+    const drawdown = capitalBase > 0 ? (Math.abs(value.maxDrawdown) / capitalBase) * 100 : 0
+
+    return {
+      day: index === dates.length - 1 ? '现在' : formatReviewDay(day) ?? day,
+      simulated: roundMetric(simulated),
+      target: roundMetric(target),
+      benchmark: 0,
+      opportunity: roundMetric(-drawdown),
+    }
+  })
+  const totalPnl = [...byDay.values()].reduce((sum, row) => sum + row.pnl, 0)
+  const latest = byDay.get(dates.at(-1)!)!
+  const maxDrawdown = Math.max(...[...byDay.values()].map((row) => Math.abs(row.maxDrawdown)), 0)
+
+  return {
+    performance,
+    summary: {
+      pnlAmount: roundMoney(totalPnl),
+      returnPct: roundMetric(capitalBase > 0 ? (totalPnl / capitalBase) * 100 : 0),
+      capitalBase: roundMoney(capitalBase),
+      targetPct: DEFAULT_TARGET_RETURN_PCT,
+      maxDrawdownPct: roundMetric(capitalBase > 0 ? (maxDrawdown / capitalBase) * 100 : 0),
+      tradeCount: latest.trades,
+      pointCount: performance.length,
+      source: tradingAgentReadModelSources.performanceTracker,
+      updatedAt: generatedAt,
+    },
+  }
+}
+
+async function listStylePerformanceFiles(root: string) {
+  const files: string[] = []
+  try {
+    const entries = await readdir(root, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const path = join(root, entry.name, 'style_performance.jsonl')
+      if (await fileExists(path)) files.push(path)
+    }
+  } catch {
+    return []
+  }
+  return files
 }
 
 function parsePerformanceRow(row: PerformanceReviewRow): PerformancePoint | null {
@@ -204,6 +320,25 @@ async function readSimLedgerHoldings(root: string): Promise<HoldingRow[]> {
   }))
 
   return rows.flat().filter((row): row is HoldingRow => Boolean(row))
+}
+
+async function readSimLedgerCapitalBase(root: string): Promise<number> {
+  const files = await listSimLedgerFiles(root, 'positions.json')
+  let capitalBase = 0
+
+  for (const file of files) {
+    try {
+      const payload = JSON.parse(await readFile(file.path, 'utf8')) as SimLedgerPositionsFile
+      capitalBase += parseFiniteNumber(payload.cash) ?? 0
+      for (const position of Object.values(payload.positions ?? {})) {
+        capitalBase += (parseFiniteNumber(position.avg_cost) ?? 0) * (parseFiniteNumber(position.quantity) ?? 0)
+      }
+    } catch {
+      // Ignore malformed ledger files; the snapshot API is read-only and should remain resilient.
+    }
+  }
+
+  return capitalBase
 }
 
 function readLegacySimulatedPositions(path: string): HoldingRow[] {
@@ -292,7 +427,7 @@ function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strateg
     reason: `模拟盘已按 ${formatPrice(row.fill_price)} 成交`,
     next: '进入收益与持仓复盘',
     steps: 6,
-    stage: '执行确认',
+    stage: '成交',
     stageTimes: {
       discovered: formatClock(timestamp),
       scored: formatClock(timestamp),
@@ -304,7 +439,7 @@ function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strateg
   }
 }
 
-async function readSignalQueue(root: string): Promise<SignalRow[]> {
+async function readSignalQueue(root: string, now = new Date()): Promise<SignalRow[]> {
   const files: Array<{ bucket: string; path: string }> = []
 
   for (const bucket of SIGNAL_BUCKETS) {
@@ -323,7 +458,7 @@ async function readSignalQueue(root: string): Promise<SignalRow[]> {
     }
   }
 
-  const rows = await Promise.all(files.map((file) => readSignalFile(file.path, file.bucket)))
+  const rows = await Promise.all(files.map((file) => readSignalFile(file.path, file.bucket, now)))
   return rows.filter((row): row is SignalRow => Boolean(row))
 }
 
@@ -347,7 +482,7 @@ async function listSimLedgerFiles(root: string, targetName: 'positions.json' | '
   return files
 }
 
-async function readSignalFile(path: string, bucket: string): Promise<SignalRow | null> {
+async function readSignalFile(path: string, bucket: string, now: Date): Promise<SignalRow | null> {
   try {
     const raw = JSON.parse(await readFile(path, 'utf8')) as SignalFile
     const symbol = raw.ts_code ?? raw.symbol
@@ -361,7 +496,7 @@ async function readSignalFile(path: string, bucket: string): Promise<SignalRow |
       status: mapSignalStatus(raw.status ?? bucket),
       impact: formatAlphaBps(raw.alpha_bps ?? raw.expected_alpha_bps),
       confidence: raw.confidence ? String(raw.confidence) : '--',
-      age: formatAge(raw.discovered_at ?? raw.created_at, new Date()),
+      age: formatAge(raw.discovered_at ?? raw.created_at, now),
       reason: raw.reason ?? '等待下一次确认',
       next: mapSignalNext(bucket),
       steps: bucket === 'filled' ? 6 : 5,
@@ -378,8 +513,8 @@ async function readJson(path: string) {
   return JSON.parse(await readFile(path, 'utf8')) as unknown
 }
 
-function domainHealth(status: ApiStatus, updatedAt: string) {
-  return { status, updatedAt }
+function domainHealth(status: ApiStatus, updatedAt: string, message?: string) {
+  return message ? { status, updatedAt, message } : { status, updatedAt }
 }
 
 async function fileExists(path: string) {
@@ -451,11 +586,13 @@ function mapSignalNext(bucket: string) {
 
 function inferSignalStage(signal: SignalFile, bucket: string): SignalRow['stage'] {
   const status = signal.status ?? bucket
-  if (status === 'filled' || status === 'executed' || signal.triggered_at) return '执行确认'
-  if (signal.risk_checked_at || status === 'partial') return '风险筛选'
-  if (signal.debated_at) return '交易条件'
-  if (signal.scored_at) return '形成信号'
-  return '发现机会'
+  if (status === 'failed' || status === 'rejected') return '拒绝' as SignalRow['stage']
+  if (status === 'expired' || status === 'cancelled') return '错过' as SignalRow['stage']
+  if (status === 'filled' || status === 'executed' || signal.triggered_at) return '成交' as SignalRow['stage']
+  if (status === 'claimed' || status === 'running') return '待执行' as SignalRow['stage']
+  if (signal.risk_checked_at || status === 'partial') return '风控' as SignalRow['stage']
+  if (signal.debated_at || signal.scored_at) return '评分' as SignalRow['stage']
+  return '发现' as SignalRow['stage']
 }
 
 function formatStageTimes(signal: SignalFile): SignalRow['stageTimes'] {
@@ -514,7 +651,31 @@ function formatReviewDay(value?: string) {
   if (!value) return undefined
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
   if (match) return `${Number(match[2])}月${Number(match[3])}日`
+  const compactMatch = /^(\d{4})(\d{2})(\d{2})$/.exec(value)
+  if (compactMatch) return `${Number(compactMatch[2])}月${Number(compactMatch[3])}日`
   return value
+}
+
+function compactDate(value?: string) {
+  const digits = String(value ?? '').replace(/\D/g, '')
+  return digits.length >= 8 ? digits.slice(0, 8) : undefined
+}
+
+function parseFiniteNumber(value: number | string | undefined) {
+  const number = typeof value === 'string' ? Number.parseFloat(value) : value
+  return typeof number === 'number' && Number.isFinite(number) ? number : undefined
+}
+
+function roundMetric(value: number) {
+  return Number(value.toFixed(2))
+}
+
+function roundMoney(value: number) {
+  return Number(value.toFixed(2))
+}
+
+function normalizeCapitalLayer(row: StylePerformanceRow) {
+  return String(row.capital_layer ?? row.account_type ?? 'simulated').toLowerCase()
 }
 
 function formatCurrency(value: number) {

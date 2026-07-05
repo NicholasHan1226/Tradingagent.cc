@@ -13,7 +13,7 @@ export function HoldingsCompact({
 }) {
   return (
     <section className="panel rail-panel">
-      <PanelTitle action="查看持仓" kicker="持仓" onAction={() => setActivePage('持仓')} title="仓位贡献" />
+      <PanelTitle action="查看持仓" kicker="持仓结果" onAction={() => setActivePage('持仓')} title="仓位贡献" />
       <div className="compact-holdings">
         {hasHoldingData ? (
           holdings.slice(0, 3).map((holding) => (
@@ -26,7 +26,7 @@ export function HoldingsCompact({
         ) : (
           <div className="empty-panel-copy">
             <strong>暂无持仓记录</strong>
-            <span>模拟盘写入持仓后，会显示仓位、收益和风险。</span>
+            <span>模拟盘形成持仓后，会显示仓位、收益和风险。</span>
           </div>
         )}
       </div>

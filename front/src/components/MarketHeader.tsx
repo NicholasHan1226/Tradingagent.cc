@@ -6,6 +6,7 @@ export function MarketHeader({
   activePage,
   activeMarket,
   liveReturn,
+  maxDrawdown,
   hasPerformanceData,
   signalCount,
   setActiveMarket,
@@ -17,6 +18,7 @@ export function MarketHeader({
   activeMarket: Market
   hasPerformanceData: boolean
   liveReturn: number
+  maxDrawdown: number | null
   signalCount: number
   setActiveMarket: (market: Market) => void
   snapshotGeneratedAt: string | null
@@ -32,7 +34,7 @@ export function MarketHeader({
       <div className="market-symbol">
         <div>
           <strong>{meta.title}</strong>
-          <span>模拟盘 · {marketLabels[activeMarket]} · {meta.copy}</span>
+        <span>模拟盘 · {marketLabels[activeMarket]} · {meta.copy}</span>
         </div>
       </div>
       <div className="market-stats">
@@ -40,7 +42,7 @@ export function MarketHeader({
         <Stat label="目标差" value={hasPerformanceData ? `${liveReturn - targetReturn >= 0 ? '+' : ''}${(liveReturn - targetReturn).toFixed(2)}%` : '等待'} />
         <Stat detail="机会池" label="机会" value={`${signalCount}`} />
         <Stat detail="可处理" label="交易信号" value={`${tradeSignalCount}`} cyan />
-        <Stat label="最大回撤" value={hasPerformanceData ? '-6.12%' : '等待'} red={hasPerformanceData} />
+        <Stat label="最大回撤" value={hasPerformanceData ? `-${Math.abs(maxDrawdown ?? 0).toFixed(2)}%` : '等待'} red={hasPerformanceData} />
       </div>
       <div className="market-tools">
         <span className="market-freshness"><i />{freshness}</span>

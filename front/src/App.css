@@ -610,19 +610,20 @@ button:not(:disabled) {
 .theme-layout {
   display: grid;
   gap: 0;
-  margin: 14px 48px 34px;
+  margin: 12px 40px 34px;
   min-height: calc(100% - 56px);
   border: 1px solid rgba(240, 246, 244, 0.052);
   border-radius: 4px;
   background:
-    linear-gradient(180deg, rgba(5, 12, 12, 0.74), rgba(2, 7, 7, 0.9)),
+    linear-gradient(180deg, rgba(5, 12, 12, 0.82), rgba(2, 7, 7, 0.94)),
+    linear-gradient(90deg, rgba(109, 224, 213, 0.035), transparent 22%, transparent 78%, rgba(109, 224, 213, 0.025)),
     var(--surface-workbench);
   box-shadow: none;
   overflow: hidden;
 }
 
 .home-layout {
-  grid-template-columns: minmax(0, 1fr) 336px;
+  grid-template-columns: minmax(0, 1fr) 316px;
 }
 
 .theme-layout {
@@ -674,16 +675,16 @@ button:not(:disabled) {
 }
 
 .hero-performance {
-  min-height: 430px;
-  padding: 18px 22px 0;
+  min-height: 466px;
+  padding: 18px 20px 0;
 }
 
 .performance-headline {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 286px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 14px;
   align-items: start;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .eyebrow {
@@ -718,12 +719,13 @@ button:not(:disabled) {
 .signal-flow-board {
   position: relative;
   min-width: 0;
-  min-height: 246px;
-  border: 1px solid rgba(240, 246, 244, 0.06);
+  min-height: 264px;
+  border: 1px solid rgba(224, 246, 240, 0.064);
   border-radius: 4px;
   background:
-    linear-gradient(180deg, rgba(240, 246, 244, 0.018), transparent 46%),
-    rgba(1, 5, 5, 0.34);
+    radial-gradient(ellipse at 14% 54%, rgba(82, 210, 198, 0.055), transparent 31%),
+    linear-gradient(180deg, rgba(240, 246, 244, 0.016), transparent 46%),
+    rgba(1, 5, 5, 0.46);
   overflow: hidden;
 }
 
@@ -733,6 +735,7 @@ button:not(:disabled) {
   inset: 0;
   pointer-events: none;
   background:
+    linear-gradient(90deg, rgba(109, 224, 213, 0.03), transparent 20%, transparent 80%, rgba(109, 224, 213, 0.018)),
     linear-gradient(90deg, transparent 19.9%, rgba(240, 246, 244, 0.04) 20%, transparent 20.12%),
     linear-gradient(90deg, transparent 39.9%, rgba(240, 246, 244, 0.04) 40%, transparent 40.12%),
     linear-gradient(90deg, transparent 59.9%, rgba(240, 246, 244, 0.04) 60%, transparent 60.12%),
@@ -746,13 +749,13 @@ button:not(:disabled) {
   right: 14px;
   z-index: 2;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
 
 .flow-caption span {
-  color: var(--accent-cyan);
+  color: var(--text-primary);
   font-size: 11px;
   font-weight: 720;
 }
@@ -767,9 +770,9 @@ button:not(:disabled) {
   position: relative;
   z-index: 1;
   display: grid;
-  gap: 16px;
-  min-height: 246px;
-  padding: 50px 16px 52px;
+  gap: 14px;
+  min-height: 264px;
+  padding: 50px 14px 50px;
 }
 
 .funnel-stage-grid {
@@ -778,17 +781,18 @@ button:not(:disabled) {
   gap: 0;
   border: 1px solid rgba(240, 246, 244, 0.052);
   border-radius: 4px;
-  background: rgba(1, 5, 5, 0.64);
+  background: rgba(1, 5, 5, 0.72);
   overflow: hidden;
 }
 
 .funnel-stage-card {
   min-width: 0;
   display: grid;
-  gap: 7px;
-  min-height: 78px;
-  padding: 11px 12px 10px;
+  gap: 6px;
+  min-height: 86px;
+  padding: 11px 12px 9px;
   border-left: 1px solid var(--border-hairline);
+  background: linear-gradient(180deg, rgba(240, 246, 244, 0.018), rgba(240, 246, 244, 0));
 }
 
 .funnel-stage-card:first-child {
@@ -806,6 +810,13 @@ button:not(:disabled) {
   font: 720 23px/1 var(--font-number);
 }
 
+.funnel-stage-card em {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 620;
+}
+
 .stage-meter {
   width: 100%;
   height: 2px;
@@ -821,13 +832,14 @@ button:not(:disabled) {
 
 .funnel-flow-canvas {
   position: relative;
-  height: 78px;
+  height: 90px;
   overflow: hidden;
   border-top: 1px solid var(--border-hairline);
   border-bottom: 1px solid var(--border-hairline);
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.035), transparent 52%),
-    rgba(1, 5, 5, 0.38);
+    linear-gradient(90deg, rgba(105, 228, 215, 0.026), transparent 52%),
+    linear-gradient(180deg, rgba(240, 246, 244, 0.017), transparent 45%, rgba(240, 246, 244, 0.012)),
+    rgba(1, 5, 5, 0.5);
 }
 
 .funnel-scanner {
@@ -852,11 +864,11 @@ button:not(:disabled) {
 .funnel-flow-canvas::before {
   content: '';
   position: absolute;
-  inset: 9px 12px;
+  inset: 13px 14px;
   border: 1px solid rgba(240, 246, 244, 0.052);
-  clip-path: polygon(0 0, 100% 24%, 100% 76%, 0 100%);
+  clip-path: polygon(0 0, 100% 27%, 100% 73%, 0 100%);
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.08), rgba(105, 228, 215, 0.018) 48%, rgba(240, 246, 244, 0.018));
+    linear-gradient(90deg, rgba(105, 228, 215, 0.078), rgba(105, 228, 215, 0.018) 48%, rgba(240, 246, 244, 0.014));
 }
 
 .funnel-flow-canvas::after {
@@ -871,21 +883,30 @@ button:not(:disabled) {
   pointer-events: none;
 }
 
-.funnel-flow-band {
+.funnel-mouth {
   position: absolute;
-  inset: 13px 18px;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-items: center;
-  gap: 0;
+  inset: 13px 14px;
+  pointer-events: none;
 }
 
-.funnel-flow-band span {
-  width: var(--retained);
-  max-width: 100%;
-  height: 1px;
-  border-radius: 999px;
-  background: rgba(105, 228, 215, 0.2);
+.funnel-mouth span {
+  --stage-offset: 0%;
+  --stage-width: 100%;
+  position: absolute;
+  top: 50%;
+  left: var(--stage-offset);
+  width: 20%;
+  height: calc(var(--stage-width) * 0.34);
+  min-height: 8px;
+  max-height: 36px;
+  transform: translateY(-50%);
+  border-top: 1px solid rgba(105, 228, 215, 0.18);
+  border-bottom: 1px solid rgba(105, 228, 215, 0.12);
+  background:
+    linear-gradient(90deg, rgba(105, 228, 215, 0.12), rgba(105, 228, 215, 0.026)),
+    rgba(4, 15, 15, 0.7);
+  clip-path: polygon(0 0, 100% 17%, 100% 83%, 0 100%);
+  opacity: 0.9;
 }
 
 .funnel-particle {
@@ -895,13 +916,13 @@ button:not(:disabled) {
   --to-left: 93%;
   position: absolute;
   z-index: 2;
-  top: calc(12px + (var(--lane) * 9px));
+  top: calc(14px + (var(--lane) * 8px));
   left: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   color: var(--accent-cyan);
   animation: signal-flow-run var(--duration) cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
   animation-delay: var(--delay);
@@ -910,11 +931,12 @@ button:not(:disabled) {
 
 .funnel-particle::before {
   content: '';
-  width: 7px;
-  height: 7px;
+  width: 5px;
+  height: 5px;
   border: 1px solid #06100f;
   border-radius: 999px;
   background: currentColor;
+  box-shadow: none;
 }
 
 .funnel-particle b {
@@ -929,6 +951,10 @@ button:not(:disabled) {
   color: var(--state-red);
 }
 
+.funnel-particle.muted {
+  color: var(--text-secondary);
+}
+
 .flow-outcome-strip {
   position: absolute;
   right: 12px;
@@ -939,7 +965,7 @@ button:not(:disabled) {
   grid-template-columns: repeat(4, 1fr);
   border: 1px solid rgba(240, 246, 244, 0.052);
   border-radius: 4px;
-  background: rgba(1, 5, 5, 0.72);
+  background: rgba(1, 5, 5, 0.8);
   overflow: hidden;
 }
 
@@ -1025,16 +1051,17 @@ button:not(:disabled) {
 
 .realtime-return-card {
   display: grid;
-  align-content: center;
+  align-content: start;
   justify-items: start;
-  gap: 8px;
-  min-height: 224px;
+  gap: 10px;
+  min-height: 264px;
   padding: 18px;
-  border: 1px solid rgba(240, 246, 244, 0.06);
+  border: 1px solid rgba(224, 246, 240, 0.064);
   border-radius: 4px;
   background:
-    linear-gradient(180deg, rgba(105, 228, 215, 0.035), transparent 58%),
-    rgba(1, 5, 5, 0.46);
+    radial-gradient(circle at 80% 12%, rgba(109, 224, 213, 0.1), transparent 32%),
+    linear-gradient(180deg, rgba(105, 228, 215, 0.04), transparent 58%),
+    rgba(1, 5, 5, 0.56);
 }
 
 .return-card-head {
@@ -1062,35 +1089,40 @@ button:not(:disabled) {
 }
 
 .return-mode-switch {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid rgba(210, 225, 220, 0.075);
-  border-radius: 5px;
-  background: rgba(1, 5, 5, 0.62);
+  gap: 0;
+  padding: 3px;
+  border: 1px solid rgba(210, 225, 220, 0.08);
+  border-radius: 999px;
+  background: rgba(1, 5, 5, 0.72);
 }
 
 .realtime-return-card .return-mode-switch button {
+  position: relative;
+  z-index: 1;
   height: 24px;
   margin: 0;
-  padding: 0 8px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 999px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 700;
 }
 
 .realtime-return-card .return-mode-switch button.selected {
   color: #031111;
-  background: var(--accent-cyan);
+  background: linear-gradient(180deg, #94f1e8, var(--accent-cyan));
+  box-shadow: 0 0 18px rgba(109, 224, 213, 0.16);
 }
 
 .realtime-return-card strong {
   color: var(--accent-cyan);
-  font: 760 34px/1.02 var(--font-number);
+  margin-top: 8px;
+  font: 760 38px/1.02 var(--font-number);
 }
 
 .realtime-return-card b {
@@ -1106,7 +1138,7 @@ button:not(:disabled) {
 
 .realtime-return-card small {
   display: block;
-  max-width: 204px;
+  max-width: 236px;
   line-height: 1.45;
 }
 
@@ -1129,12 +1161,12 @@ button:not(:disabled) {
 
 .realtime-return-card button {
   height: 30px;
-  margin-top: 2px;
-  padding: 0 10px;
-  border: 1px solid #243234;
-  border-radius: 5px;
+  margin-top: auto;
+  padding: 0 12px;
+  border: 1px solid rgba(109, 224, 213, 0.16);
+  border-radius: 999px;
   color: var(--text-secondary);
-  background: #0a1315;
+  background: rgba(10, 19, 21, 0.82);
   font-size: 11px;
 }
 
@@ -2196,10 +2228,103 @@ button:not(:disabled) {
     overflow: auto;
   }
 
-  .top-nav,
-  .market-header,
+  .top-nav {
+    min-width: 0;
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 0 14px;
+  }
+
+  .top-nav nav {
+    gap: 20px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .top-actions {
+    display: none;
+  }
+
+  .market-header {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    height: auto;
+    padding: 22px 20px 18px;
+  }
+
+  .market-stats {
+    grid-template-columns: repeat(5, minmax(132px, 1fr));
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .market-tools {
+    justify-self: start;
+  }
+
+  .workspace {
+    height: auto;
+    min-height: calc(100vh - 56px);
+    overflow: visible;
+  }
+
   .home-layout,
   .theme-layout {
-    min-width: 1120px;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    margin: 10px 14px 24px;
+  }
+
+  .home-rail,
+  .theme-rail {
+    border-top: 1px solid var(--border-hairline);
+    border-left: 0;
+  }
+
+  .performance-headline,
+  .home-support-grid,
+  .theme-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-support-grid .rail-panel + .rail-panel {
+    border-top: 1px solid var(--border-hairline);
+    border-left: 0;
+  }
+
+  .flow-caption {
+    align-items: start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .funnel-pipeline {
+    padding-top: 64px;
+  }
+
+  .funnel-stage-grid,
+  .flow-outcome-strip {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .flow-outcome-strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .funnel-stage-card {
+    padding: 10px 8px 9px;
+  }
+
+  .funnel-stage-card span,
+  .flow-outcome-strip span {
+    font-size: 10px;
+  }
+
+  .funnel-stage-card strong {
+    font-size: 20px;
+  }
+
+  .flow-outcome-strip span {
+    gap: 4px;
   }
 }

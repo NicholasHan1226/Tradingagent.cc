@@ -1,5 +1,5 @@
 import { formatCurrency } from '../../lib/format'
-import type { AccountMode, Page } from '../../types/dashboard'
+import type { AccountMode, Page, PortfolioSummary } from '../../types/dashboard'
 
 export function RealtimeReturnCard({
   accountMode,
@@ -10,6 +10,7 @@ export function RealtimeReturnCard({
   liveReturn,
   missedCount,
   pendingCount,
+  portfolio,
   selectAccountMode,
   setActivePage,
   targetReturn,
@@ -22,6 +23,7 @@ export function RealtimeReturnCard({
   liveReturn: number
   missedCount: number
   pendingCount: number
+  portfolio: PortfolioSummary | null
   selectAccountMode: (mode: AccountMode) => void
   setActivePage: (page: Page) => void
   targetReturn: number
@@ -29,12 +31,21 @@ export function RealtimeReturnCard({
   const targetGap = liveReturn - targetReturn
   const isLive = accountMode === 'live'
   const gapLabel = targetGap >= 0 ? `高于目标 +${targetGap.toFixed(2)}%` : `低于目标 ${targetGap.toFixed(2)}%`
+  const modeLabel = isLive ? '实盘' : '模拟盘'
+  const hasAmount = portfolio !== null
+  const primaryResult = hasAmount ? formatCurrency(liveProfit) : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
+  const resultCaption = hasAmount
+    ? `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
+    : '等待金额口径'
+  const activityLabel = portfolio
+    ? `${portfolio.tradeCount} 次成交 · ${portfolio.pointCount} 个收益点`
+    : `兑现 ${executedCount} · 推进 ${pendingCount} · 复盘 ${missedCount}`
 
   return (
     <aside className="realtime-return-card" aria-label="实时收益">
       <div className="return-card-head">
-        <span>实时收益</span>
-        <div className="return-mode-switch" aria-label="收益账户切换">
+        <span>{modeLabel}</span>
+        <div className="return-mode-switch" aria-label="账户层切换" role="tablist">
           <button className={!isLive ? 'selected' : ''} onClick={() => selectAccountMode('simulated')} type="button">
             模拟盘
           </button>
@@ -45,26 +56,26 @@ export function RealtimeReturnCard({
       </div>
       {isLive ? (
         <div className="return-placeholder">
-          <strong>实盘未启用</strong>
-          <p>授权和风控开关完成后，这里切换到真实账户结果。</p>
+          <strong>真实账户待接入</strong>
+          <p>接入口已预留；授权和风控确认前，不展示真实资金结果。</p>
         </div>
       ) : !hasPerformanceData ? (
         <div className="return-placeholder">
-          <strong>等待收益数据</strong>
+          <strong>等待收益结果</strong>
           <p>{headline}</p>
         </div>
       ) : (
         <>
-          <span className="return-kicker">模拟盘 · 当前收益</span>
-          <strong>+{formatCurrency(liveProfit)}</strong>
+          <span className="return-kicker">实时收益</span>
+          <strong>{primaryResult}</strong>
           <div className="return-subline">
-            <b>+{liveReturn.toFixed(2)}%</b>
+            <b>{resultCaption}</b>
             <em>{gapLabel}</em>
           </div>
-          <small>{headline} {executedCount} 个兑现 · {pendingCount} 个推进 · {missedCount} 个复盘。</small>
+          <small>{headline} {activityLabel}</small>
         </>
       )}
-      <button onClick={() => setActivePage('收益')} type="button">收益归因</button>
+      <button onClick={() => setActivePage('收益')} type="button">查看收益明细</button>
     </aside>
   )
 }

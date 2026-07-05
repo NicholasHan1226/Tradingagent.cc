@@ -34,7 +34,7 @@ export function OpportunityTable({ signals }: { signals: SignalRow[] }) {
         <div className="terminal-row terminal-head">
           <span>机会</span>
           <span>市场</span>
-          <span>当前判断</span>
+          <span>当前结果</span>
           <span>还差什么</span>
           <span>有效期</span>
           <span>预期影响</span>

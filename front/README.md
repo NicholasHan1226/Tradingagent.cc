@@ -154,7 +154,8 @@ npm run build:api
 ## 当前缺口
 
 - 模拟盘持仓和已成交信号已接入 `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}`。
-- 收益曲线仍需要后端输出更稳定的日内/日级市值、PnL 或收益率序列；前端不得用成交额或成本冒充收益。
-- 机会漏斗已能读取模拟账本成交路径；如果要展示“发现 -> 成形 -> 条件 -> 风控 -> 信号”的完整过程，后端仍需写入每个机会的阶段变化时间线。
+- 收益曲线现在会优先读取 `shared/review/daily/daily_brief.jsonl` 中明确的 return 字段，其次读取
+  `shared/review/*/style_performance.jsonl` 的真实 simulated PnL，并用模拟账本本金换算为收益率；如果只存在成交日志或持仓成本，snapshot 会保持收益为空并给出缺口说明，前端不得用成交额或成本冒充收益。
+- 机会漏斗已能从 signal 状态和模拟账本成交路径派生 `发现 / 评分 / 风控 / 待执行 / 成交 / 错过 / 拒绝` 阶段；更精确的阶段时间线仍需要后端在每个机会上写入完整 stage timestamps。
 - 午盘复盘、策略归因和风险限额文件已列为可用来源，但仍需补充到 snapshot 构建后才能作为完整面板展示。
 - 实盘只保留未来接入口；未验证账户授权前，前端不得展示为已接入。
