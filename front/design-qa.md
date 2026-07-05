@@ -351,3 +351,17 @@ Checks added in this pass:
 - `npm run build:api`: passed.
 - `npm run lint && npm test -- --run && npm run build && npm run build:api`:
   passed, 14 files / 55 tests.
+
+## July 5 Equity Snapshot Readiness
+
+81. Realtime return source priority: the snapshot reader now prefers explicit
+    simulated equity series from review folders or simulated-ledger
+    `daily_mark_to_market` files before falling back to daily review returns or
+    style performance.
+82. Live safety guard: rows marked `capital_layer=real` or
+    `real_execution=true` are ignored by the simulated dashboard reader, so the
+    reserved live layer cannot be accidentally blended into simulated returns.
+83. Production handoff: integration docs now define the minimum backend fields
+    needed for a true mark-to-market dashboard curve: timestamp, equity,
+    capital base, realized/unrealized PnL, drawdown, target, benchmark, trade
+    count, and source label.

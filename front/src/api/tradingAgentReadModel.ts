@@ -15,6 +15,7 @@ export const tradingAgentReadModelSources = {
   strategyVersion: 'shared/review/strategies/strategy_version.jsonl',
   simLedger: 'shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}',
   localSimLedger: 'shared/logs/local_sim/local_sim_trades.jsonl',
+  equitySnapshots: 'shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl and shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl',
   performanceTracker: 'shared/review/*/style_performance.jsonl',
 } as const
 

@@ -394,6 +394,99 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
+  it('prefers simulated equity snapshots as the primary realtime performance source', async () => {
+    const root = await createWorkspace()
+    const equityRoot = join(root, 'TradingAgent/shared/review/portfolio')
+    const performanceRoot = join(root, 'TradingAgent/shared/review/crypto')
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(equityRoot, { recursive: true })
+    await mkdir(performanceRoot, { recursive: true })
+    await mkdir(ledgerRoot, { recursive: true })
+
+    await writeFile(
+      join(equityRoot, 'equity_snapshots.jsonl'),
+      [
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T09:30:00+08:00',
+          total_equity: 100800,
+          capital_base: 100000,
+          realized_pnl: 300,
+          unrealized_pnl: 500,
+          target_return_pct: 1.2,
+          benchmark_return_pct: 0.1,
+          opportunity_gap_pct: -0.4,
+          max_drawdown_pct: 0.5,
+          trade_count: 4,
+          pnl_source: 'equity_snapshot',
+        }),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:00:00+08:00',
+          total_equity: 102500,
+          capital_base: 100000,
+          realized_pnl: 1000,
+          unrealized_pnl: 1500,
+          target_return_pct: 1.6,
+          benchmark_return_pct: 0.3,
+          opportunity_gap_pct: -0.2,
+          max_drawdown_pct: 0.8,
+          trade_count: 7,
+          pnl_source: 'equity_snapshot',
+        }),
+        JSON.stringify({
+          capital_layer: 'real',
+          timestamp: '2026-07-04T10:30:00+08:00',
+          total_equity: 999999,
+          capital_base: 100000,
+          pnl: 899999,
+        }),
+      ].join('\n') + '\n',
+    )
+
+    await writeFile(
+      join(ledgerRoot, 'positions.json'),
+      JSON.stringify({
+        cash: 1000,
+        positions: {},
+      }),
+    )
+    await writeFile(
+      join(performanceRoot, 'style_performance.jsonl'),
+      JSON.stringify({
+        style_name: 'grid',
+        market: 'crypto',
+        date: '20260704',
+        pnl: 7.25,
+        max_dd: 20,
+        trades: 2,
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T10:00:00.000Z'),
+    })
+
+    expect(snapshot.performance).toEqual([
+      { day: '7月4日 09:30', simulated: 0.8, target: 1.2, benchmark: 0.1, opportunity: -0.4 },
+      { day: '现在', simulated: 2.5, target: 1.6, benchmark: 0.3, opportunity: -0.2 },
+    ])
+    expect(snapshot.portfolio).toMatchObject({
+      pnlAmount: 2500,
+      returnPct: 2.5,
+      capitalBase: 100000,
+      maxDrawdownPct: 0.8,
+      tradeCount: 7,
+      pointCount: 2,
+      source: expect.stringContaining('daily_mark_to_market'),
+      pnlSource: 'equity_snapshot',
+      realizedPnl: 1000,
+      unrealizedPnl: 1500,
+    })
+  })
+
   it('keeps performance empty with a clear message when only trade logs exist', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')

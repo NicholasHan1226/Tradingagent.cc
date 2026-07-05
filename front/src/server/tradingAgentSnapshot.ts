@@ -126,6 +126,71 @@ type StylePerformanceRecord = StylePerformanceRow & {
   marketHint: string
 }
 
+type EquitySnapshotRow = {
+  timestamp?: string
+  ts?: string
+  as_of?: string
+  generated_at?: string
+  updated_at?: string
+  date?: string
+  trade_date?: string
+  equity?: number | string
+  total_equity?: number | string
+  nav?: number | string
+  net_value?: number | string
+  account_value?: number | string
+  portfolio_value?: number | string
+  capital_base?: number | string
+  initial_equity?: number | string
+  starting_equity?: number | string
+  start_equity?: number | string
+  principal?: number | string
+  pnl?: number | string
+  total_pnl?: number | string
+  net_pnl?: number | string
+  realized_pnl?: number | string
+  unrealized_pnl?: number | string
+  return_pct?: number | string
+  simulated_return_pct?: number | string
+  target_return_pct?: number | string
+  target_pct?: number | string
+  benchmark_return_pct?: number | string
+  benchmark_pct?: number | string
+  opportunity_gap_pct?: number | string
+  missed_alpha_pct?: number | string
+  max_drawdown_pct?: number | string
+  max_dd_pct?: number | string
+  max_dd?: number | string
+  drawdown?: number | string
+  trade_count?: number | string
+  trades?: number | string
+  pnl_source?: string
+  source?: string
+  capital_layer?: string
+  account_type?: string
+  real_execution?: boolean
+}
+
+type EquitySnapshotRecord = EquitySnapshotRow & {
+  sourcePath: string
+}
+
+type ParsedEquitySnapshot = {
+  benchmarkPct: number
+  capitalBase: number
+  maxDrawdownPct: number
+  opportunityPct: number
+  pnl: number
+  realizedPnl: number
+  returnPct: number
+  sources: Set<string>
+  targetPct: number
+  timestamp: string
+  timestampMs: number
+  tradeCount: number
+  unrealizedPnl: number
+}
+
 type TimelineContribution = {
   maxDrawdown: number
   pnl: number
@@ -178,13 +243,14 @@ export async function readTradingAgentSnapshot({
   const signals = queueSignals.length > 0 ? queueSignals : simLedgerSignals
   const funnelEvents = buildFunnelEvents(signals)
   const reviewPerformance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
+  const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
-  const performance = firstNonEmpty(reviewPerformance, trackerPortfolio.performance)
+  const performance = firstNonEmpty(equityPortfolio.performance, reviewPerformance, trackerPortfolio.performance)
   const hasOrders = await directoryHasJson(filledSignalsPath)
   const hasPlan = await fileExists(positionPlanPath)
   const hasReview = await fileExists(reviewPath) || await fileExists(reviewFallbackPath)
   const hasSimLedger = simLedgerHoldings.length > 0 || simLedgerSignals.length > 0
-  const hasPerformanceEvidence = hasReview || trackerPortfolio.summary !== undefined
+  const hasPerformanceEvidence = hasReview || equityPortfolio.summary !== undefined || trackerPortfolio.summary !== undefined
   const performanceMessage = performance.length > 0
     ? undefined
     : hasOrders || hasPlan || hasSimLedger || hasReview
@@ -202,7 +268,7 @@ export async function readTradingAgentSnapshot({
       risk: domainHealth(fallbackHoldings.length > 0 || signals.length > 0 ? 'ready' : 'empty', generatedAt),
     },
     performance,
-    portfolio: trackerPortfolio.summary,
+    portfolio: equityPortfolio.summary ?? trackerPortfolio.summary,
     holdings: fallbackHoldings,
     signals,
     funnelEvents,
@@ -226,6 +292,166 @@ async function readPerformanceSeries(path: string): Promise<PerformancePoint[]> 
       .filter((row): row is PerformancePoint => Boolean(row))
   } catch {
     return []
+  }
+}
+
+async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: string): Promise<{
+  performance: PerformancePoint[]
+  summary?: PortfolioSummary
+}> {
+  const files = await listEquitySnapshotFiles(projectRoot)
+  const rows: EquitySnapshotRecord[] = []
+
+  for (const file of files) {
+    try {
+      const lines = (await readFile(file, 'utf8')).trim().split('\n').filter(Boolean)
+      for (const line of lines) {
+        try {
+          rows.push({ ...(JSON.parse(line) as EquitySnapshotRow), sourcePath: file })
+        } catch {
+          // Ignore malformed append-only rows; other equity snapshots remain usable.
+        }
+      }
+    } catch {
+      // Ignore unreadable optional sources.
+    }
+  }
+
+  const snapshots = rows
+    .filter((row) => row.real_execution !== true)
+    .filter((row) => normalizeCapitalLayer(row) === 'simulated')
+    .map(parseEquitySnapshotRecord)
+    .filter((row): row is ParsedEquitySnapshot => Boolean(row))
+    .sort((a, b) => a.timestampMs - b.timestampMs)
+
+  if (!snapshots.length) return { performance: [] }
+
+  const grouped = new Map<number, ParsedEquitySnapshot>()
+  for (const snapshot of snapshots) {
+    const current = grouped.get(snapshot.timestampMs)
+    if (!current) {
+      grouped.set(snapshot.timestampMs, { ...snapshot })
+      continue
+    }
+
+    const previousCapitalBase = current.capitalBase
+    current.capitalBase += snapshot.capitalBase
+    current.pnl += snapshot.pnl
+    current.realizedPnl += snapshot.realizedPnl
+    current.unrealizedPnl += snapshot.unrealizedPnl
+    current.tradeCount += snapshot.tradeCount
+    current.maxDrawdownPct = Math.max(current.maxDrawdownPct, snapshot.maxDrawdownPct)
+    current.benchmarkPct = weightedAverage(current.benchmarkPct, previousCapitalBase, snapshot.benchmarkPct, snapshot.capitalBase)
+    current.opportunityPct = weightedAverage(current.opportunityPct, previousCapitalBase, snapshot.opportunityPct, snapshot.capitalBase)
+    current.targetPct = Math.max(current.targetPct, snapshot.targetPct)
+    for (const source of snapshot.sources) current.sources.add(source)
+  }
+
+  const timestamps = [...grouped.keys()].sort((a, b) => a - b)
+  const performance = timestamps.map((timestampMs, index) => {
+    const row = grouped.get(timestampMs)!
+    const simulated = row.capitalBase > 0 ? (row.pnl / row.capitalBase) * 100 : row.returnPct
+    const target = row.targetPct > 0 ? row.targetPct : Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / timestamps.length))
+
+    return {
+      day: index === timestamps.length - 1 ? '现在' : formatTimelineLabel(row.timestamp),
+      simulated: roundMetric(simulated),
+      target: roundMetric(target),
+      benchmark: roundMetric(row.benchmarkPct),
+      opportunity: roundMetric(row.opportunityPct),
+    }
+  })
+  const latest = grouped.get(timestamps.at(-1)!)!
+
+  return {
+    performance,
+    summary: {
+      pnlAmount: roundMoney(latest.pnl),
+      returnPct: roundMetric(latest.capitalBase > 0 ? (latest.pnl / latest.capitalBase) * 100 : latest.returnPct),
+      capitalBase: roundMoney(latest.capitalBase),
+      targetPct: latest.targetPct > 0 ? roundMetric(latest.targetPct) : DEFAULT_TARGET_RETURN_PCT,
+      maxDrawdownPct: roundMetric(latest.maxDrawdownPct),
+      tradeCount: latest.tradeCount,
+      pointCount: performance.length,
+      source: tradingAgentReadModelSources.equitySnapshots,
+      pnlSource: latest.sources.size === 1 ? [...latest.sources][0] : latest.sources.size > 1 ? 'mixed' : 'equity_snapshot',
+      realizedPnl: roundMoney(latest.realizedPnl),
+      unrealizedPnl: roundMoney(latest.unrealizedPnl),
+      updatedAt: generatedAt,
+    },
+  }
+}
+
+async function listEquitySnapshotFiles(projectRoot: string): Promise<string[]> {
+  const reviewRoot = join(projectRoot, 'shared/review')
+  const simLedgerRoot = join(projectRoot, 'shared/logs/sim_ledger')
+  const files: string[] = []
+
+  for (const folder of ['portfolio', 'daily']) {
+    for (const name of ['equity_snapshots.jsonl', 'equity_series.jsonl']) {
+      const candidate = join(reviewRoot, folder, name)
+      if (await fileExists(candidate)) files.push(candidate)
+    }
+  }
+
+  try {
+    const entries = await readdir(reviewRoot, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === 'portfolio' || entry.name === 'daily') continue
+      for (const name of ['equity_snapshots.jsonl', 'equity_series.jsonl']) {
+        const candidate = join(reviewRoot, entry.name, name)
+        if (await fileExists(candidate)) files.push(candidate)
+      }
+    }
+  } catch {
+    // Review root is optional in fresh workspaces.
+  }
+
+  for (const targetName of ['daily_mark_to_market.jsonl', 'equity_snapshots.jsonl'] as const) {
+    for (const file of await listSimLedgerFiles(simLedgerRoot, targetName)) {
+      files.push(file.path)
+    }
+  }
+
+  return [...new Set(files)]
+}
+
+function parseEquitySnapshotRecord(row: EquitySnapshotRecord): ParsedEquitySnapshot | null {
+  const timestamp = row.timestamp ?? row.ts ?? row.as_of ?? row.generated_at ?? row.updated_at ?? row.date ?? row.trade_date
+  if (!timestamp) return null
+  const timestampMs = parseSnapshotTimestamp(timestamp)
+  if (!Number.isFinite(timestampMs)) return null
+
+  const equity = firstParsedNumber(row.total_equity, row.equity, row.nav, row.net_value, row.account_value, row.portfolio_value)
+  const capitalBase = firstParsedNumber(row.capital_base, row.initial_equity, row.starting_equity, row.start_equity, row.principal)
+  const realizedPnl = parseFiniteNumber(row.realized_pnl) ?? 0
+  const unrealizedPnl = parseFiniteNumber(row.unrealized_pnl) ?? 0
+  const explicitPnl = firstParsedNumber(row.pnl, row.total_pnl, row.net_pnl)
+  const pnl = explicitPnl ?? (realizedPnl || unrealizedPnl ? realizedPnl + unrealizedPnl : equity !== undefined && capitalBase !== undefined ? equity - capitalBase : undefined)
+  const returnPct = firstParsedNumber(row.simulated_return_pct, row.return_pct)
+
+  if (pnl === undefined && returnPct === undefined) return null
+
+  const base = capitalBase ?? (equity !== undefined && pnl !== undefined ? equity - pnl : undefined)
+  if (base === undefined || base <= 0) return null
+
+  const drawdownPct = firstParsedNumber(row.max_drawdown_pct, row.max_dd_pct)
+  const drawdownAmount = firstParsedNumber(row.max_dd, row.drawdown)
+
+  return {
+    benchmarkPct: firstParsedNumber(row.benchmark_return_pct, row.benchmark_pct) ?? 0,
+    capitalBase: base,
+    maxDrawdownPct: Math.abs(drawdownPct ?? (drawdownAmount !== undefined ? (drawdownAmount / base) * 100 : 0)),
+    opportunityPct: firstParsedNumber(row.opportunity_gap_pct, row.missed_alpha_pct) ?? 0,
+    pnl: pnl ?? (returnPct! / 100) * base,
+    realizedPnl,
+    returnPct: returnPct ?? 0,
+    sources: new Set([row.pnl_source ?? row.source ?? 'equity_snapshot']),
+    targetPct: firstParsedNumber(row.target_return_pct, row.target_pct) ?? 0,
+    timestamp: String(timestamp),
+    timestampMs,
+    tradeCount: Math.max(0, Math.trunc(firstParsedNumber(row.trade_count, row.trades) ?? 0)),
+    unrealizedPnl,
   }
 }
 
@@ -615,7 +841,7 @@ async function readSignalQueue(root: string, now = new Date()): Promise<SignalRo
   return rows.filter((row): row is SignalRow => Boolean(row))
 }
 
-async function listSimLedgerFiles(root: string, targetName: 'positions.json' | 'trade_journal.jsonl') {
+async function listSimLedgerFiles(root: string, targetName: 'positions.json' | 'trade_journal.jsonl' | 'equity_snapshots.jsonl' | 'daily_mark_to_market.jsonl') {
   const files: Array<{ path: string; market: string; strategy: string }> = []
   try {
     const markets = await readdir(root, { withFileTypes: true })
@@ -976,6 +1202,25 @@ function parseFiniteNumber(value: number | string | undefined) {
   return typeof number === 'number' && Number.isFinite(number) ? number : undefined
 }
 
+function firstParsedNumber(...values: Array<number | string | undefined>) {
+  return values.map(parseFiniteNumber).find((value): value is number => value !== undefined)
+}
+
+function parseSnapshotTimestamp(value: string) {
+  const direct = Date.parse(value)
+  if (Number.isFinite(direct)) return direct
+  const compact = /^(\d{4})(\d{2})(\d{2})(?:[T_ -]?(\d{2})(\d{2})(\d{2})?)?/.exec(value)
+  if (!compact) return Number.NaN
+  const [, year, month, day, hour = '00', minute = '00', second = '00'] = compact
+  return Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}+08:00`)
+}
+
+function weightedAverage(leftValue: number, leftWeight: number, rightValue: number, rightWeight: number) {
+  const totalWeight = Math.max(0, leftWeight) + Math.max(0, rightWeight)
+  if (totalWeight <= 0) return rightValue
+  return ((leftValue * Math.max(0, leftWeight)) + (rightValue * Math.max(0, rightWeight))) / totalWeight
+}
+
 function roundMetric(value: number) {
   return Number(value.toFixed(2))
 }
@@ -984,7 +1229,7 @@ function roundMoney(value: number) {
   return Number(value.toFixed(2))
 }
 
-function normalizeCapitalLayer(row: StylePerformanceRow) {
+function normalizeCapitalLayer(row: StylePerformanceRow | EquitySnapshotRow) {
   return String(row.capital_layer ?? row.account_type ?? 'simulated').toLowerCase()
 }
 

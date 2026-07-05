@@ -18,7 +18,7 @@ gated and must not trigger execution from the front layer.
 | Positions | `signals/positions/*.json` | `shared/accounting/position_plan.jsonl` | Partial |
 
 > **A股模拟盘默认走服务器本地闭环**：`Ashare/sim_executor.py` 生成 simulated fill 后直接进入 `signals/filled/` 与 `signals/positions/`；`signals/pending/` 仅在显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时用于 Hermes/同花顺 GUI 第二路径。
-| Performance | `shared/review/daily/daily_brief.jsonl` return fields | `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
+| Performance | `shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl` or `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl` | `shared/review/daily/daily_brief.jsonl` return fields, then `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
 | Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
 | Live readiness | execution schemas and filled signal writeback | manual authorization state | Gated |
@@ -34,7 +34,22 @@ The response must use `Cache-Control: no-store`.
 Display-ready fields used by the homepage:
 
 - `performance[]`: `day`, `simulated`, `target`, `benchmark`, `opportunity`.
-  The local reader accepts daily review aliases such as
+- The highest-trust simulated performance source is an explicit equity snapshot
+  series. The reader accepts:
+  - `shared/review/portfolio/equity_snapshots.jsonl`
+  - `shared/review/daily/equity_snapshots.jsonl`
+  - `shared/review/*/equity_snapshots.jsonl`
+  - the same folders with `equity_series.jsonl`
+  - `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl`
+  - `shared/logs/sim_ledger/*/*/equity_snapshots.jsonl`
+- Equity snapshot rows should include `capital_layer=simulated` plus timestamp
+  and value fields such as `timestamp`, `total_equity` or `equity`,
+  `capital_base`, `realized_pnl`, `unrealized_pnl`, `target_return_pct`,
+  `benchmark_return_pct`, `opportunity_gap_pct`, `max_drawdown_pct`,
+  `trade_count`, and `pnl_source`. Rows marked `real_execution=true` or
+  `capital_layer=real` are ignored by the simulated dashboard reader.
+- If explicit equity snapshots are absent, the local reader accepts daily review
+  aliases such as
   `simulated_return_pct`, `return_pct`, `pnl_pct`, `target_return_pct`,
   `benchmark_return_pct`, and `opportunity_gap_pct`.
 - If daily review return fields are absent, the reader can build a real
