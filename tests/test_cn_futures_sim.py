@@ -121,6 +121,57 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(misaligned["action"], "hold")
         self.assertEqual(misaligned["reason"], "trend_alignment_filter")
 
+    def test_index_intraday_directional_signal_filters_open_gap_and_low_volatility(self) -> None:
+        from CNFutures.signal_engine import generate_style_signal
+
+        style = {
+            "name": "index_intraday_directional",
+            "style_family": "index_intraday_directional",
+            "signal_threshold": 0.0005,
+            "momentum_lookback_bars": 3,
+            "moving_average_bars": 4,
+            "no_overnight": True,
+            "day_session_only": True,
+            "trend_alignment_required": True,
+            "min_volume_ratio": 1.0,
+            "open_cooldown_minutes": 15,
+            "gap_cooldown_minutes": 30,
+            "max_open_gap_pct": 0.01,
+            "min_recent_range_pct": 0.001,
+        }
+        open_cooldown_bars = [
+            {"bar_time": "2026-07-06 09:30:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 09:35:00", "close": 3505, "volume": 1000},
+            {"bar_time": "2026-07-06 09:40:00", "close": 3510, "volume": 1100},
+            {"bar_time": "2026-07-06 09:42:00", "close": 3515, "volume": 1200},
+            {"bar_time": "2026-07-06 09:44:00", "close": 3520, "volume": 1300},
+        ]
+        gap_bars = [
+            {"bar_time": "2026-07-06 09:30:00", "close": 3500, "volume": 1000, "previous_close": 3400},
+            {"bar_time": "2026-07-06 09:35:00", "close": 3510, "volume": 1000, "previous_close": 3400},
+            {"bar_time": "2026-07-06 09:40:00", "close": 3520, "volume": 1100, "previous_close": 3400},
+            {"bar_time": "2026-07-06 09:45:00", "close": 3530, "volume": 1200, "previous_close": 3400},
+            {"bar_time": "2026-07-06 09:50:00", "close": 3540, "volume": 1300, "previous_close": 3400},
+        ]
+        low_volatility_bars = [
+            {"bar_time": "2026-07-06 14:10:00", "close": 3500.0, "volume": 1000},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3500.4, "volume": 1000},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3500.8, "volume": 1100},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3501.0, "volume": 1200},
+            {"bar_time": "2026-07-06 14:30:00", "close": 3501.2, "volume": 1300},
+        ]
+
+        open_cooldown = generate_style_signal("IF2601.CFFEX", open_cooldown_bars, style)
+        gap = generate_style_signal("IF2601.CFFEX", gap_bars, style)
+        low_volatility = generate_style_signal("IF2601.CFFEX", low_volatility_bars, style)
+
+        self.assertEqual(open_cooldown["action"], "hold")
+        self.assertEqual(open_cooldown["reason"], "opening_cooldown")
+        self.assertEqual(gap["action"], "hold")
+        self.assertEqual(gap["reason"], "opening_gap_cooldown")
+        self.assertEqual(low_volatility["action"], "hold")
+        self.assertEqual(low_volatility["reason"], "low_volatility_filter")
+
     def test_index_intraday_directional_signal_rejects_non_day_session_bars(self) -> None:
         from CNFutures.signal_engine import generate_style_signal
 

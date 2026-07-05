@@ -58,12 +58,56 @@ def _minutes_to_day_close(row: dict[str, Any]) -> int | None:
     return int((close_dt - parsed).total_seconds() // 60)
 
 
+def _minutes_since_session_open(row: dict[str, Any]) -> int | None:
+    parsed = _bar_time(row)
+    if parsed is None:
+        return None
+    current = parsed.time()
+    if time(9, 30) <= current <= time(11, 30):
+        open_time = time(9, 30)
+    elif time(13, 0) <= current <= time(15, 0):
+        open_time = time(13, 0)
+    else:
+        return None
+    open_dt = datetime.combine(parsed.date(), open_time)
+    return int((parsed - open_dt).total_seconds() // 60)
+
+
 def _is_day_session_bar(row: dict[str, Any]) -> bool:
     parsed = _bar_time(row)
     if parsed is None:
         return False
     current = parsed.time()
     return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(15, 0))
+
+
+def _latest_previous_close(rows: list[dict[str, Any]]) -> float:
+    for row in reversed(rows):
+        previous_close = _safe_float(row.get("previous_close") or row.get("pre_close") or row.get("reference_price"), 0.0)
+        if previous_close > 0:
+            return previous_close
+    return 0.0
+
+
+def _opening_gap_pct(rows: list[dict[str, Any]], previous_close: float) -> float:
+    if previous_close <= 0:
+        return 0.0
+    for row in rows:
+        if not _is_day_session_bar(row):
+            continue
+        opening_price = _safe_float(row.get("open") or row.get("close"), 0.0)
+        if opening_price > 0:
+            return (opening_price / previous_close) - 1.0
+    return 0.0
+
+
+def _recent_range_pct(rows: list[dict[str, Any]], window: int) -> float:
+    closes = [_safe_float(row.get("close"), 0.0) for row in rows[-max(2, window):]]
+    closes = [close for close in closes if close > 0]
+    if len(closes) < 2:
+        return 0.0
+    latest = closes[-1]
+    return ((max(closes) - min(closes)) / latest) if latest > 0 else 0.0
 
 
 def _index_intraday_directional_signal(
@@ -78,6 +122,10 @@ def _index_intraday_directional_signal(
     close_guard = int(_safe_float(style.get("flatten_before_session_close_minutes"), 10))
     min_volume_ratio = max(0.0, _safe_float(style.get("min_volume_ratio"), 1.05))
     trend_alignment_required = bool(style.get("trend_alignment_required", True))
+    open_cooldown_minutes = max(0, int(_safe_float(style.get("open_cooldown_minutes"), 15)))
+    gap_cooldown_minutes = max(0, int(_safe_float(style.get("gap_cooldown_minutes"), 30)))
+    max_open_gap_pct = max(0.0, _safe_float(style.get("max_open_gap_pct"), 0.01))
+    min_recent_range_pct = max(0.0, _safe_float(style.get("min_recent_range_pct"), 0.001))
     if len(bars) <= max(lookback, ma_window):
         return {"symbol": symbol, "style": style_name, "action": "hold", "reason": "insufficient_intraday_bars", "confidence": 0.0}
 
@@ -87,6 +135,18 @@ def _index_intraday_directional_signal(
             "style": style_name,
             "action": "hold",
             "reason": "outside_day_session",
+            "confidence": 0.0,
+        }
+
+    minutes_since_open = _minutes_since_session_open(bars[-1])
+    if open_cooldown_minutes > 0 and minutes_since_open is not None and minutes_since_open < open_cooldown_minutes:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "reason": "opening_cooldown",
+            "minutes_since_open": minutes_since_open,
+            "open_cooldown_minutes": open_cooldown_minutes,
             "confidence": 0.0,
         }
 
@@ -107,6 +167,41 @@ def _index_intraday_directional_signal(
     average = _moving_average(bars, ma_window)
     if latest <= 0 or previous <= 0 or average <= 0:
         return {"symbol": symbol, "style": style_name, "action": "hold", "reason": "invalid_price", "confidence": 0.0}
+
+    previous_close = _latest_previous_close(bars)
+    gap_pct = _opening_gap_pct(bars, previous_close)
+    if (
+        gap_cooldown_minutes > 0
+        and max_open_gap_pct > 0
+        and minutes_since_open is not None
+        and minutes_since_open <= gap_cooldown_minutes
+        and abs(gap_pct) >= max_open_gap_pct
+    ):
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "reason": "opening_gap_cooldown",
+            "gap_pct": gap_pct,
+            "max_open_gap_pct": max_open_gap_pct,
+            "minutes_since_open": minutes_since_open,
+            "gap_cooldown_minutes": gap_cooldown_minutes,
+            "confidence": 0.0,
+        }
+
+    recent_range_pct = _recent_range_pct(bars, ma_window)
+    if min_recent_range_pct > 0 and recent_range_pct < min_recent_range_pct:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "reason": "low_volatility_filter",
+            "recent_range_pct": recent_range_pct,
+            "min_recent_range_pct": min_recent_range_pct,
+            "confidence": 0.0,
+        }
 
     momentum = (latest / previous) - 1.0
     ma_distance = (latest / average) - 1.0

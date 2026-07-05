@@ -1,5 +1,5 @@
 import { getHomeOutcome } from '../../lib/dashboard'
-import type { HoldingRow, Page, SignalRow } from '../../types/dashboard'
+import type { HoldingRow, Page, PortfolioSummary, SignalRow } from '../../types/dashboard'
 import { PanelTitle } from '../PanelTitle'
 import { SummaryRow } from '../SummaryRow'
 
@@ -8,6 +8,7 @@ export function HomeResultBrief({
   hasPerformanceData,
   hasSignalData,
   holdings,
+  portfolio,
   setActivePage,
   signals,
 }: {
@@ -15,10 +16,15 @@ export function HomeResultBrief({
   hasPerformanceData: boolean
   hasSignalData: boolean
   holdings: HoldingRow[]
+  portfolio: PortfolioSummary | null
   setActivePage: (page: Page) => void
   signals: SignalRow[]
 }) {
   const { blockedSignal, leadSignal, leadingHolding, reviewSignal } = getHomeOutcome(signals, holdings)
+  const drawdown = portfolio?.maxDrawdownPct ?? 0
+  const drawdownLimit = 7
+  const drawdownDistance = Math.max(0, drawdownLimit - Math.abs(drawdown))
+  const drawdownCaption = drawdownDistance > 1 ? `距离 ${drawdownLimit}% 限制 ${drawdownDistance.toFixed(2)}%` : `接近 ${drawdownLimit}% 限制`
 
   return (
     <section className="panel rail-panel home-result-brief">
@@ -69,8 +75,8 @@ export function HomeResultBrief({
           <div className="risk-cards compact">
             <button className="risk-card red" onClick={() => setActivePage('风险')} type="button">
               <span>最大回撤</span>
-              <strong>-6.12%</strong>
-              <em>接近 -7% 限制</em>
+              <strong>-{Math.abs(drawdown).toFixed(2)}%</strong>
+              <em>{drawdownCaption}</em>
             </button>
             <button className="risk-card cyan" onClick={() => setActivePage('风险')} type="button">
               <span>风险保护</span>

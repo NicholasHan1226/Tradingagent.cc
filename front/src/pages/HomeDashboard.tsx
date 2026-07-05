@@ -48,8 +48,11 @@ export function HomeDashboard({
   const liveProfit = portfolio?.pnlAmount ?? 0
   const liveReturn = portfolio?.returnPct ?? latestPoint.simulated
   const targetReturn = portfolio?.targetPct ?? latestPoint.target
+  const targetGap = liveReturn - targetReturn
   const headline = hasPerformanceData
-    ? '模拟盘正在目标上方运行。'
+    ? targetGap >= 0
+      ? '模拟盘高于目标运行。'
+      : '模拟盘低于目标，先看机会质量和风险距离。'
     : '暂无收益结果，先保持为空。'
 
   return (
@@ -108,7 +111,7 @@ export function HomeDashboard({
       </section>
 
       <aside className="home-rail">
-        <HomeResultBrief hasHoldingData={hasHoldingData} hasPerformanceData={hasPerformanceData} hasSignalData={hasSignalData} holdings={holdings} setActivePage={setActivePage} signals={signals} />
+        <HomeResultBrief hasHoldingData={hasHoldingData} hasPerformanceData={hasPerformanceData} hasSignalData={hasSignalData} holdings={holdings} portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
       </aside>
     </div>
   )

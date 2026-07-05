@@ -38,3 +38,5 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 */15 * * * * /opt/investment/tradingagent/shared/wrappers/job_self_heal.sh >> /opt/investment/tradingagent/shared/logs/cron/self_heal.log 2>&1
 1-59/5 9-15,21-23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_sim.log 2>&1
 1-59/5 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_sim.log 2>&1
+2-59/5 9-15,21-23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_observation_report.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_observation_report.log 2>&1
+2-59/5 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_observation_report.sh >> /opt/investment/tradingagent/shared/logs/cron/cn_futures_observation_report.log 2>&1

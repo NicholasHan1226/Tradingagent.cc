@@ -37,9 +37,11 @@ bars outside 09:30-11:30 and 13:00-15:00 China time are forced to `hold`, and
 night-session automation skips the style. To improve win-rate quality before
 sample size is large, the style also requires momentum and moving-average
 distance to point in the same direction and defaults to `min_volume_ratio=1.05`;
-weak or misaligned moves become `hold` instead of simulated trades. This style
-is for simulated validation of index-direction timing; it does not enable real
-CFFEX trading.
+weak or misaligned moves become `hold` instead of simulated trades. It also
+skips the first 15 minutes after a day-session open, pauses after large opening
+gaps for 30 minutes, and filters very low realized 5-minute range so the
+win-rate lane avoids thin/noisy setups. This style is for simulated validation
+of index-direction timing; it does not enable real CFFEX trading.
 
 ## Automation Entry
 
@@ -171,6 +173,11 @@ Optional wrapper:
 ```bash
 shared/wrappers/job_cn_futures_observation_report.sh
 ```
+
+The production cron refreshes this report after each CNFutures simulated cycle
+during day/night futures sessions. It is read-only and writes
+`shared/review/cn_futures/observation_report.json` for dashboard consumption;
+it does not create signals, mutate style weights, or touch execution queues.
 
 Opening validation is also read-only:
 

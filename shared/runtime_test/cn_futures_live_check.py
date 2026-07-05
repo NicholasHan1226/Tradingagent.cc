@@ -217,6 +217,7 @@ def check_cron_entries(crontab_text: str | None = None, crontab_error: str = "")
         "sharedsignals_collector": "cn_futures_5min.sh",
         "tradingagent_sim": "job_cn_futures_sim.sh",
         "tradingagent_evolution": "job_cn_futures_evolution.sh",
+        "tradingagent_observation": "job_cn_futures_observation_report.sh",
     }
     found = {name: token in (crontab_text or "") for name, token in required.items()}
     missing = [name for name, exists in found.items() if not exists]
