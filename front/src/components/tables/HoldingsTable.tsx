@@ -1,8 +1,9 @@
-import { holdings, marketLabels } from '../../data/dashboard'
+import { marketLabels } from '../../data/dashboard'
 import { riskClass } from '../../lib/format'
+import type { HoldingRow } from '../../types/dashboard'
 import { AssetCell } from '../AssetCell'
 
-export function HoldingsTable() {
+export function HoldingsTable({ holdings }: { holdings: HoldingRow[] }) {
   return (
     <div className="terminal-table holdings-table">
       <div className="terminal-row terminal-head">

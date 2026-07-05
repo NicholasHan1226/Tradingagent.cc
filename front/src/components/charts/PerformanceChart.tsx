@@ -10,10 +10,11 @@ import {
   YAxis,
 } from 'recharts'
 import type { ChartEvent, Page, PerformancePoint } from '../../types/dashboard'
+import { DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT } from '../../lib/dashboardConstants'
 import { chartColors } from './chartConfig'
 
 function getPerformanceDomain(data: PerformancePoint[]) {
-  const values = data.flatMap((point) => [point.simulated, point.target, point.benchmark, point.opportunity, -7, 8])
+  const values = data.flatMap((point) => [point.simulated, point.target, point.benchmark, point.opportunity, -DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT])
   const min = Math.floor(Math.min(...values) - 2)
   const max = Math.ceil(Math.max(...values) + 2)
   return [min, max] as [number, number]
@@ -60,8 +61,8 @@ export function PerformanceChart({
             axisLine={false}
           />
           <Tooltip content={<ChartTooltip />} cursor={{ stroke: chartColors.cursor }} />
-          <ReferenceLine y={8} stroke={chartColors.target} strokeDasharray="4 7" />
-          <ReferenceLine y={-7} stroke={chartColors.opportunity} strokeDasharray="4 7" />
+          <ReferenceLine y={TARGET_RETURN_PCT} stroke={chartColors.target} strokeDasharray="4 7" />
+          <ReferenceLine y={-DRAWDOWN_LIMIT_PCT} stroke={chartColors.opportunity} strokeDasharray="4 7" />
           <ReferenceLine x="现在" stroke={chartColors.simulated} strokeDasharray="2 8" />
           <ReferenceDot
             x="现在"
@@ -135,7 +136,7 @@ function ChartTooltip({ active, payload, label }: any) {
           {labels[item.dataKey] ?? item.dataKey}: {Number(item.value).toFixed(2)}%
         </span>
       ))}
-      <em>目标线 +8.00% · 风险线 -7.00%</em>
+      <em>目标线 +{TARGET_RETURN_PCT.toFixed(2)}% · 风险线 -{DRAWDOWN_LIMIT_PCT.toFixed(2)}%</em>
     </div>
   )
 }

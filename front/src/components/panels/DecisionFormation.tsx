@@ -1,22 +1,25 @@
+import { getSignalFunnel } from '../../lib/dashboard'
+import type { PortfolioSummary, SignalRow } from '../../types/dashboard'
 import { OutcomePill } from '../OutcomePill'
 import { SummaryRow } from '../SummaryRow'
 
-export function DecisionFormation() {
+export function DecisionFormation({ portfolio, signals }: { portfolio: PortfolioSummary | null; signals: SignalRow[] }) {
+  const funnel = getSignalFunnel(signals)
   const rows = [
-    { label: '发现机会', value: 1284, detail: '全市场都看过' },
-    { label: '理由清楚', value: 843, detail: '值得继续看' },
-    { label: '可以下手', value: 612, detail: '条件已满足' },
-    { label: '风险可控', value: 487, detail: '风险可接受' },
-    { label: '进入组合', value: 356, detail: '仓位已安排' },
-    { label: '形成结果', value: 329, detail: '已兑现或已处理' },
+    { label: '发现机会', value: funnel.stages[0]?.rows.length ?? 0, detail: '全市场进入' },
+    { label: '理由清楚', value: funnel.stages[1]?.rows.length ?? 0, detail: '有可解释原因' },
+    { label: '风控检查', value: funnel.stages[2]?.rows.length ?? 0, detail: '先看风险' },
+    { label: '进入队列', value: funnel.stages[3]?.rows.length ?? 0, detail: '等待或准备执行' },
+    { label: '形成结果', value: funnel.stages[4]?.rows.length ?? 0, detail: '已兑现或已处理' },
   ]
-  const maxValue = rows[0].value
+  const maxValue = Math.max(1, rows[0].value)
+  const averageLatency = getAverageLatency(signals)
 
   return (
     <div className="formation-flow">
       <div className="formation-header">
         <span>漏斗留存</span>
-        <strong>1,284 → 329</strong>
+        <strong>{rows[0].value.toLocaleString('en-US')} → {rows[rows.length - 1].value.toLocaleString('en-US')}</strong>
       </div>
       <div className="formation-funnel" aria-label="决策形成漏斗">
         {rows.map((row, index) => (
@@ -24,19 +27,29 @@ export function DecisionFormation() {
         ))}
       </div>
       <div className="formation-outcomes">
-        <OutcomePill label="已兑现 59.3%" tone="cyan" value="195" />
-        <OutcomePill label="观察中 23.4%" tone="amber" value="77" />
-        <OutcomePill label="已保护 9.4%" tone="red" value="31" />
-        <OutcomePill label="已放弃 7.9%" tone="muted" value="26" />
+        <OutcomePill label={`${ratio(funnel.executed.length, signals.length)} 已兑现`} tone="cyan" value={String(funnel.executed.length)} />
+        <OutcomePill label={`${ratio(funnel.pending.length, signals.length)} 观察中`} tone="amber" value={String(funnel.pending.length)} />
+        <OutcomePill label={`${ratio(funnel.blocked.length, signals.length)} 已保护`} tone="red" value={String(funnel.blocked.length)} />
+        <OutcomePill label={`${ratio(funnel.cancelled.length, signals.length)} 已放弃`} tone="muted" value={String(funnel.cancelled.length)} />
       </div>
       <div className="formation-notes">
-        <SummaryRow label="研究把握度" value="78%" />
-        <SummaryRow label="平均耗时" value="18分钟" />
-        <SummaryRow label="兑现率" value="72.4%" tone="cyan" />
-        <SummaryRow label="避开风险" value="$1.24M" tone="cyan" />
+        <SummaryRow label="机会转化" value={ratio(funnel.tradeSignals.length, signals.length)} />
+        <SummaryRow label="平均耗时" value={averageLatency ? `${averageLatency}分钟` : '等待记录'} />
+        <SummaryRow label="兑现率" value={ratio(funnel.executed.length, Math.max(1, funnel.tradeSignals.length))} tone="cyan" />
+        <SummaryRow label="当前收益" value={portfolio ? `${portfolio.returnPct >= 0 ? '+' : ''}${portfolio.returnPct.toFixed(2)}%` : '等待收益'} tone={portfolio && portfolio.returnPct >= 0 ? 'cyan' : undefined} />
       </div>
     </div>
   )
+}
+
+function ratio(value: number, total: number) {
+  return `${Math.round((value / Math.max(1, total)) * 100)}%`
+}
+
+function getAverageLatency(signals: SignalRow[]) {
+  const latencies = signals.map((signal) => signal.stageLatencyMinutes).filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+  if (!latencies.length) return 0
+  return Math.round(latencies.reduce((total, value) => total + value, 0) / latencies.length)
 }
 
 function FunnelRow({

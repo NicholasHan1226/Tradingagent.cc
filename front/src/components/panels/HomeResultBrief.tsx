@@ -1,4 +1,5 @@
 import { getHomeOutcome } from '../../lib/dashboard'
+import { DRAWDOWN_LIMIT_PCT } from '../../lib/dashboardConstants'
 import { formatCurrency } from '../../lib/format'
 import type { HoldingRow, Page, PortfolioSummary, SignalRow } from '../../types/dashboard'
 import { PanelTitle } from '../PanelTitle'
@@ -23,7 +24,7 @@ export function HomeResultBrief({
 }) {
   const { blockedSignal, leadSignal, leadingHolding, reviewSignal } = getHomeOutcome(signals, holdings)
   const drawdown = portfolio?.maxDrawdownPct ?? 0
-  const drawdownLimit = 7
+  const drawdownLimit = DRAWDOWN_LIMIT_PCT
   const drawdownDistance = Math.max(0, drawdownLimit - Math.abs(drawdown))
   const drawdownCaption = drawdownDistance > 1 ? `距离 ${drawdownLimit}% 限制 ${drawdownDistance.toFixed(2)}%` : `接近 ${drawdownLimit}% 限制`
   const returnValue = portfolio

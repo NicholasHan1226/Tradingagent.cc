@@ -65,6 +65,24 @@ Display-ready fields used by the homepage:
   timestamps before execution.
 - `holdings[]`: `symbol`, `market`, `weight`, `pnl`, `risk`, and `role`.
 
+## Result-First Panel Rules
+
+Every primary page should start with a compact summary board before detailed
+charts or tables. The summary board must answer the user's first question for
+that page, such as current return, actionable opportunities, position
+contribution, decision throughput, risk boundary, or review outcome.
+
+Panel numbers must be derived from the snapshot fields passed into the React
+page, not from production-looking constants in component files. If a source is
+missing, show a clear empty or waiting state instead of substituting sample
+return, opportunity, position, attribution, or risk values.
+
+The homepage funnel is a live result view, not a decorative flow. It can animate
+stage movement only from `signals[].stage`, `signals[].stageTimes`, status, and
+latency fields exposed by the read model. When upstream records do not include
+real screening stages, the frontend must label the view as a completed-signal
+replay or waiting state rather than claiming a full opportunity funnel.
+
 ## Same-Server Production Deployment
 
 The preferred first production shape is to keep the dashboard frontend and the

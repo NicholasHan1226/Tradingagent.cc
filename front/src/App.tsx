@@ -125,6 +125,8 @@ function App() {
             activePage={activePage}
             data={livePerformanceData}
             latestPoint={latestPoint}
+            holdings={holdingRows}
+            portfolio={portfolioSummary}
             domainStatus={domainStatus}
             onRetry={handleRetry}
             setActivePage={setActivePage}

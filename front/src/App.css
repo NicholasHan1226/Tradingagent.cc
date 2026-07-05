@@ -1024,6 +1024,36 @@ button:not(:disabled) {
   font: 720 12px/1 var(--font-number);
 }
 
+.flow-bottleneck {
+  position: absolute;
+  right: 12px;
+  bottom: 46px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 5px 8px;
+  border: 1px solid rgba(240, 246, 244, 0.06);
+  border-radius: 4px;
+  background: rgba(1, 5, 5, 0.78);
+}
+
+.flow-bottleneck span {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.flow-bottleneck strong {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @keyframes signal-flow-run {
   0% {
     opacity: 0;
@@ -1148,6 +1178,40 @@ button:not(:disabled) {
   display: flex;
   align-items: baseline;
   gap: 10px;
+}
+
+.return-facts {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid rgba(240, 246, 244, 0.052);
+  background: rgba(1, 5, 5, 0.5);
+}
+
+.return-facts span {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 9px 10px;
+  border-left: 1px solid var(--border-hairline);
+}
+
+.return-facts span:first-child {
+  border-left: 0;
+}
+
+.return-facts em {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.return-facts b {
+  color: var(--text-secondary);
+  font: 700 13px/1 var(--font-number);
 }
 
 .realtime-return-card small {
@@ -1355,6 +1419,64 @@ button:not(:disabled) {
 
 .theme-main {
   border-right: 1px solid var(--border-hairline);
+}
+
+.page-summary-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--border-hairline);
+  background: rgba(1, 5, 5, 0.42);
+}
+
+.page-summary-metric {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  min-height: 76px;
+  padding: 14px 16px;
+  border-right: 1px solid var(--border-hairline);
+}
+
+.page-summary-metric:last-child {
+  border-right: 0;
+}
+
+.page-summary-metric span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-summary-metric strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font: 730 22px/1 var(--font-number);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-summary-metric em {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-summary-metric.cyan strong {
+  color: var(--accent-cyan);
+}
+
+.page-summary-metric.red strong {
+  color: var(--state-red);
+}
+
+.page-summary-metric.amber strong {
+  color: var(--state-amber);
 }
 
 .theme-rail .panel,

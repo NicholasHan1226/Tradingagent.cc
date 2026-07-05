@@ -1,16 +1,31 @@
-import type { Page } from '../../types/dashboard'
+import type { HoldingRow, Page, PortfolioSummary, SignalRow } from '../../types/dashboard'
 import { PanelTitle } from '../PanelTitle'
 import { SummaryRow } from '../SummaryRow'
 
-export function ResultSummary({ setActivePage }: { setActivePage: (page: Page) => void }) {
+export function ResultSummary({
+  holdings,
+  portfolio,
+  setActivePage,
+  signals,
+}: {
+  holdings: HoldingRow[]
+  portfolio: PortfolioSummary | null
+  setActivePage: (page: Page) => void
+  signals: SignalRow[]
+}) {
+  const topHolding = holdings[0]
+  const missed = signals.filter((signal) => signal.status === 'missed')
+  const blocked = signals.filter((signal) => signal.status === 'blocked')
+  const returnValue = portfolio ? `${portfolio.returnPct >= 0 ? '+' : ''}${portfolio.returnPct.toFixed(2)}%` : '等待收益'
+
   return (
     <section className="panel rail-panel">
       <PanelTitle action="看来源" kicker="结果来源" onAction={() => setActivePage('决策')} title="当前结果" />
       <div className="summary-list">
-        <SummaryRow label="收益主要来自" value="A股、美股趋势" tone="cyan" />
-        <SummaryRow label="错过原因" value="入场条件偏严" tone="red" />
-        <SummaryRow label="风险已挡住" value="$1.24M" tone="cyan" />
-        <SummaryRow label="真实账户" value="暂不展示" />
+        <SummaryRow label="当前收益" value={returnValue} tone={portfolio && portfolio.returnPct >= 0 ? 'cyan' : undefined} />
+        <SummaryRow label="最大贡献" value={topHolding ? `${topHolding.symbol} ${topHolding.pnl}` : '等待持仓'} tone={topHolding?.pnl.startsWith('-') ? 'red' : 'cyan'} />
+        <SummaryRow label="需要复盘" value={`${missed.length} 条`} tone={missed.length ? 'amber' : undefined} />
+        <SummaryRow label="风险已挡住" value={`${blocked.length} 条`} tone={blocked.length ? 'red' : 'cyan'} />
       </div>
       <button className="primary-action" onClick={() => setActivePage('收益')} type="button">
         查看收益贡献

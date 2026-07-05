@@ -1,3 +1,4 @@
+import { DRAWDOWN_LIMIT_PCT } from '../../lib/dashboardConstants'
 import { formatCurrency } from '../../lib/format'
 import type { AccountMode, Page, PortfolioSummary } from '../../types/dashboard'
 
@@ -40,6 +41,7 @@ export function RealtimeReturnCard({
   const activityLabel = portfolio
     ? `${portfolio.tradeCount} 次成交 · ${portfolio.pointCount} 个收益点`
     : `兑现 ${executedCount} · 推进 ${pendingCount} · 复盘 ${missedCount}`
+  const drawdownDistance = portfolio ? Math.max(0, DRAWDOWN_LIMIT_PCT - Math.abs(portfolio.maxDrawdownPct)) : null
 
   return (
     <aside className="realtime-return-card" aria-label="实时收益">
@@ -71,6 +73,20 @@ export function RealtimeReturnCard({
           <div className="return-subline">
             <b>{resultCaption}</b>
             <em>{gapLabel}</em>
+          </div>
+          <div className="return-facts" aria-label="收益关键指标">
+            <span>
+              <em>目标差</em>
+              <b>{targetGap >= 0 ? '+' : ''}{targetGap.toFixed(2)}%</b>
+            </span>
+            <span>
+              <em>回撤距离</em>
+              <b>{drawdownDistance !== null ? `${drawdownDistance.toFixed(2)}%` : '等待'}</b>
+            </span>
+            <span>
+              <em>成交</em>
+              <b>{portfolio?.tradeCount ?? executedCount}</b>
+            </span>
           </div>
           <small>{headline} {activityLabel}</small>
         </>

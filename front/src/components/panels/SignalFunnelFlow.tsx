@@ -2,7 +2,6 @@ import type { CSSProperties } from 'react'
 import { getSignalFunnel } from '../../lib/dashboard'
 import type { SignalRow } from '../../types/dashboard'
 
-const STAGE_NAMES = ['发现', '筛选', '风控', '排队', '成交']
 const OUTCOME_LABELS = ['成交', '等待', '复盘', '拦截']
 
 export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: boolean; signals: SignalRow[] }) {
@@ -20,6 +19,7 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
   })
   const hasStageDrop = stageDrops.some((drop) => drop > 0)
   const hasTimingEvidence = signals.some((signal) => signal.stageLatencyMinutes && signal.stageLatencyMinutes > 0)
+  const bottleneck = getBottleneck(funnel.stages.map((stage) => ({ label: stage.label, count: stage.rows.length })))
   const caption = hasSignalData
     ? hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
       ? `${signals.length} 个进入 · ${funnel.tradeSignals.length} 个留下 · ${funnel.executed.length} 个成交`
@@ -38,7 +38,7 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
           <div className="funnel-stage-grid" aria-hidden="true">
             {funnel.stages.map((stage, index) => (
               <div className="funnel-stage-card" key={stage.label}>
-                <span>{STAGE_NAMES[index] ?? stage.label}</span>
+                <span>{stage.label}</span>
                 <strong>{stage.rows.length}</strong>
                 <em>{getStageHint(index, stage.rows.length, signals.length, stageDrops[index])}</em>
                 <div className="stage-meter" aria-hidden="true">
@@ -85,9 +85,25 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
             </span>
           ))}
         </div>
+        <div className="flow-bottleneck">
+          <span>瓶颈</span>
+          <strong>{bottleneck}</strong>
+        </div>
       </div>
     </section>
   )
+}
+
+function getBottleneck(stages: { label: string; count: number }[]) {
+  if (!stages.length || stages[0].count === 0) return '等待机会进入'
+  const drops = stages.slice(1).map((stage, index) => ({
+    from: stages[index].label,
+    to: stage.label,
+    drop: Math.max(0, stages[index].count - stage.count),
+  }))
+  const biggest = drops.sort((a, b) => b.drop - a.drop)[0]
+  if (!biggest || biggest.drop === 0) return '当前全量通过'
+  return `${biggest.from}到${biggest.to}少了 ${biggest.drop} 条`
 }
 
 function getStageHint(index: number, count: number, total: number, dropped: number) {

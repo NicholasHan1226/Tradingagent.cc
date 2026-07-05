@@ -165,7 +165,7 @@ describe('App navigation and result-first dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: '决策' }))
 
     expect(screen.getByText('漏斗留存')).toBeInTheDocument()
-    expect(screen.getByText('流失 34.3%')).toBeInTheDocument()
-    expect(screen.getByText('已兑现 59.3%')).toBeInTheDocument()
+    expect(screen.getByText('流失 33.3%')).toBeInTheDocument()
+    expect(screen.getByText('33% 已兑现')).toBeInTheDocument()
   })
 })
