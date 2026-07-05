@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (CNFutures health entry + dashboard funnel evidence)
+> 最后更新：2026-07-05 (combined crontab restored for SharedSignals + TradingAgent)
 
 ---
 
@@ -101,6 +101,8 @@
 
 ### 2026-07-05 simulated matching residual risk fixes
 
+- [x] 主服务器 live crontab 已恢复为 SharedSignals + TradingAgent 合并版本；CNFutures 单市场健康检查中 `cn_futures_cron` 从 fail 恢复为 pass。修复前缺失的是 SharedSignals `cn_futures_5min.sh` 采集调度，不是 TradingAgent 模拟执行器。
+- [x] 当前 `market_health.py --market cn_futures` 生产结果为 warn/0 fail：cron 已齐，剩余 warn 是周末/闭市尚无 Futures 5分钟数据、模拟复盘样本和风格输出，等待下一交易时段产生样本。
 - [x] `CNFutures/contract_rules.py` 与 `margin_model.py` 已将期货手续费从隐式数值判断升级为显式 `open_fee_type` / `close_fee_type`，支持 `rate` 与 `fixed_per_lot`，当前测试覆盖 `rb` 费率制和 `m` 固定每手制。
 - [x] `shared/runtime_test/market_health.py --market cn_futures` 已接入 CNFutures 只读 live-chain validator，方便单市场排查 SharedSignals 5分钟数据、cron、模拟日志、复盘样本、风格输出和实盘关闭状态。
 - [x] `front/` 看板信号漏斗新增 `stageEvidence`，成交账本回放标记为 `replay`；风险拒绝、触发、成交和部分阶段时间会在只读 snapshot 中体现，前端不会写入任何交易队列。
