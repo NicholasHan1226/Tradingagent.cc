@@ -408,6 +408,18 @@ describe('TradingAgent snapshot reader', () => {
       reason: '风控未通过：波动过高',
       stageTimes: expect.objectContaining({ discovered: '09:31', riskChecked: '09:36' }),
     }))
+    expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
+      symbol: '0700.HK',
+      stage: '风控',
+      status: '通过',
+      source: 'signal_queue',
+    }))
+    expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
+      symbol: 'BTC-USD',
+      stage: '风控',
+      status: '拦截',
+      source: 'signal_queue',
+    }))
   })
 
   it('uses the server-local simulated ledger as the homepage funnel and holdings source', async () => {
@@ -457,6 +469,12 @@ describe('TradingAgent snapshot reader', () => {
       stage: '成交',
       stageEvidence: 'replay',
       impact: '成交 $667',
+    }))
+    expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
+      symbol: 'BTC-USD',
+      stage: '结果',
+      status: '成交',
+      source: 'sim_ledger',
     }))
     expect(snapshot.performance).toEqual([])
     expect(snapshot.domains.holdings.status).toBe('ready')

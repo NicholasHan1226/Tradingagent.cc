@@ -36,7 +36,7 @@ export function RealtimeReturnCard({
   const hasAmount = portfolio !== null
   const primaryResult = hasAmount ? formatCurrency(liveProfit) : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
   const resultCaption = hasAmount
-    ? `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
+    ? `收益率 ${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
     : '等待金额口径'
   const activityLabel = portfolio
     ? `${portfolio.tradeCount} 次成交 · ${portfolio.pointCount} 个收益点`
@@ -57,7 +57,7 @@ export function RealtimeReturnCard({
           </button>
         </div>
       </div>
-      <span className="return-kicker">实时收益</span>
+      <span className="return-kicker">现在收益</span>
       {isLive ? (
         <div className="return-placeholder">
           <strong>真实账户待接入</strong>

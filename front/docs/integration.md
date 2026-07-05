@@ -59,6 +59,10 @@ Display-ready fields used by the homepage:
   `debated_at`, `risk_checked_at`, and `triggered_at`. The reader maps existing
   status and timestamps into `发现 / 评分 / 风控 / 待执行 / 成交 / 错过 / 拒绝`
   so the animated funnel reflects only real read-only file state.
+- `funnelEvents[]`: read-only display events derived from `signals[]` and the
+  simulated ledger. Each event carries `symbol`, `market`, `stage`, `status`,
+  `source`, and optional `at` / `reason`, allowing the homepage funnel to
+  animate real pipeline movement without writing to queues or inventing stages.
 - The homepage trading funnel is designed to animate real stage movement. If
   the API only exposes completed simulated-ledger trade journals, the UI will
   show a completed-trade replay instead of inventing upstream drop-off. To show
@@ -83,11 +87,12 @@ page, not from production-looking constants in component files. If a source is
 missing, show a clear empty or waiting state instead of substituting sample
 return, opportunity, position, attribution, or risk values.
 
-The homepage funnel is a live result view, not a decorative flow. It can animate
-stage movement only from `signals[].stage`, `signals[].stageTimes`, status, and
-latency fields exposed by the read model. When upstream records do not include
-real screening stages, the frontend must label the view as a completed-signal
-replay or waiting state rather than claiming a full opportunity funnel.
+The homepage funnel is a live result view, not a decorative flow. It should
+prefer `funnelEvents[]` from the read model, and may fall back to
+`signals[].stage`, `signals[].stageTimes`, status, and latency fields. When
+upstream records do not include real screening stages, the frontend must label
+the view as a completed-signal replay or waiting state rather than claiming a
+full opportunity funnel.
 
 ## Same-Server Production Deployment
 

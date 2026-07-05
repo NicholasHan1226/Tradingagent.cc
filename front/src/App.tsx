@@ -7,12 +7,14 @@ import { TopNav } from './components/TopNav'
 import { holdings as mockHoldings, mockDashboardApiResponse, performanceData, signals as mockSignals } from './data/dashboard'
 import { deriveChartEvents } from './lib/chartEvents'
 import { getLivePerformanceData, getSignalFunnel, getVisibleSignals } from './lib/dashboard'
-import { getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
+import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
 import type { DataDomain } from './types/status'
 import type { AccountMode, Market, Page } from './types/dashboard'
 import './App.css'
+import './styles/home-funnel.css'
+import './styles/page-summary.css'
 
 function App() {
   const [activePage, setActivePage] = useState<Page>('主页')
@@ -58,6 +60,7 @@ function App() {
   const performanceRows = useMemo(() => getSnapshotPerformance(readModelSnapshot, performanceData), [readModelSnapshot])
   const signalRows = useMemo(() => getSnapshotSignals(readModelSnapshot, mockSignals), [readModelSnapshot])
   const holdingRows = useMemo(() => getSnapshotHoldings(readModelSnapshot, mockHoldings), [readModelSnapshot])
+  const funnelEvents = useMemo(() => getSnapshotFunnelEvents(readModelSnapshot, []), [readModelSnapshot])
   const portfolioSummary = readModelSnapshot?.portfolio ?? null
   const isUsingDemoSnapshot = readModelSnapshot === null
   const hasPerformanceData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'performance') || Boolean(portfolioSummary)
@@ -75,6 +78,10 @@ function App() {
     opportunity: 0,
   }
   const visibleSignals = useMemo(() => getVisibleSignals(signalRows, activeMarket), [activeMarket, signalRows])
+  const visibleFunnelEvents = useMemo(
+    () => funnelEvents.filter((event) => activeMarket === 'All Markets' || event.market === activeMarket),
+    [activeMarket, funnelEvents],
+  )
   const signalFunnel = useMemo(() => getSignalFunnel(visibleSignals), [visibleSignals])
   const chartEvents = useMemo(() => deriveChartEvents(livePerformanceData, visibleSignals), [livePerformanceData, visibleSignals])
   const domainStatus = (domain: DataDomain) => dashboardState.domains[domain]?.status ?? dashboardState.status
@@ -118,6 +125,7 @@ function App() {
             selectAccountMode={selectAccountMode}
             setActivePage={setActivePage}
             signals={visibleSignals}
+            funnelEvents={visibleFunnelEvents}
             events={chartEvents}
           />
         ) : (

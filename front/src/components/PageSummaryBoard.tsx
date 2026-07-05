@@ -26,18 +26,38 @@ export function PageSummaryBoard({
   signals: SignalRow[]
 }) {
   const metrics = getPageMetrics(page, { holdings, performance, portfolio, signals })
+  const summary = getPageSummary(page, metrics)
 
   return (
     <section className="page-summary-board" aria-label={`${page}摘要`}>
-      {metrics.map((metric) => (
-        <div className={`page-summary-metric ${metric.tone ?? ''}`} key={`${metric.label}-${metric.value}`}>
-          <span>{metric.label}</span>
-          <strong>{metric.value}</strong>
-          {metric.detail && <em>{metric.detail}</em>}
-        </div>
-      ))}
+      <div className="page-summary-intro">
+        <span>{page}总览</span>
+        <strong>{summary.title}</strong>
+        <em>{summary.detail}</em>
+      </div>
+      <div className="page-summary-metrics">
+        {metrics.map((metric) => (
+          <div className={`page-summary-metric ${metric.tone ?? ''}`} key={`${metric.label}-${metric.value}`}>
+            <span>{metric.label}</span>
+            <strong>{metric.value}</strong>
+            {metric.detail && <em>{metric.detail}</em>}
+          </div>
+        ))}
+      </div>
     </section>
   )
+}
+
+function getPageSummary(page: Page, metrics: Metric[]) {
+  const first = metrics[0]
+  const second = metrics[1]
+
+  if (page === '收益') return { title: `当前结果 ${first.value}`, detail: second ? `${second.label} ${second.value}` : '持续跟踪目标差和回撤' }
+  if (page === '机会') return { title: `${first.value} 个机会可继续处理`, detail: '优先看等待确认、风险拦截和正向影响' }
+  if (page === '持仓') return { title: `${first.value} 个持仓在模拟盘中`, detail: '先看贡献、集中度和风险偏高项' }
+  if (page === '决策') return { title: `${first.value} 条机会进入决策管道`, detail: '看从发现到结果的转化和被保护数量' }
+  if (page === '风险') return { title: `当前回撤 ${first.value}`, detail: '先确认距离限制线还有多少空间' }
+  return { title: `${first.value} 条记录已关闭`, detail: '复盘已兑现、未兑现和主要来源' }
 }
 
 function getPageMetrics(

@@ -15,6 +15,7 @@ const baseSnapshot: TradingAgentReadModelSnapshot = {
   performance: [],
   holdings: [],
   signals: [],
+  funnelEvents: [],
   sourceRefs: tradingAgentReadModelSources,
 }
 

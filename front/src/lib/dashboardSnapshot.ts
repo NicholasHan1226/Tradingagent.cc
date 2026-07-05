@@ -1,5 +1,5 @@
 import type { TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel'
-import type { HoldingRow, PerformancePoint, SignalRow } from '../types/dashboard'
+import type { FunnelEvent, HoldingRow, PerformancePoint, SignalRow } from '../types/dashboard'
 
 export function getSnapshotSignals(snapshot: TradingAgentReadModelSnapshot | null, fallback: SignalRow[]) {
   if (!snapshot) return fallback
@@ -14,6 +14,11 @@ export function getSnapshotPerformance(snapshot: TradingAgentReadModelSnapshot |
 export function getSnapshotHoldings(snapshot: TradingAgentReadModelSnapshot | null, fallback: HoldingRow[]) {
   if (!snapshot) return fallback
   return snapshot.holdings
+}
+
+export function getSnapshotFunnelEvents(snapshot: TradingAgentReadModelSnapshot | null, fallback: FunnelEvent[]) {
+  if (!snapshot) return fallback
+  return snapshot.funnelEvents
 }
 
 export function hasSnapshotRows(snapshot: TradingAgentReadModelSnapshot | null, domain: 'performance' | 'signals' | 'holdings') {

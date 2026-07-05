@@ -52,6 +52,7 @@ function snapshot(partial: Partial<TradingAgentReadModelSnapshot>): TradingAgent
     performance: [],
     holdings: [],
     signals: [],
+    funnelEvents: [],
     sourceRefs: tradingAgentReadModelSources,
     ...partial,
   }

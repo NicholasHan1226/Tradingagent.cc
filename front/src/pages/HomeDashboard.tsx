@@ -8,7 +8,7 @@ import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
-import type { AccountMode, ChartEvent, HoldingRow, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
+import type { AccountMode, ChartEvent, FunnelEvent, HoldingRow, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
 export function HomeDashboard({
@@ -26,6 +26,7 @@ export function HomeDashboard({
   selectAccountMode,
   setActivePage,
   signals,
+  funnelEvents,
   events,
 }: {
   accountMode: AccountMode
@@ -43,6 +44,7 @@ export function HomeDashboard({
   selectAccountMode: (mode: AccountMode) => void
   setActivePage: (page: Page) => void
   signals: SignalRow[]
+  funnelEvents: FunnelEvent[]
 }) {
   const signalFunnel = getSignalFunnel(signals)
   const liveProfit = portfolio?.pnlAmount ?? 0
@@ -51,16 +53,16 @@ export function HomeDashboard({
   const targetGap = liveReturn - targetReturn
   const headline = hasPerformanceData
     ? targetGap >= 0
-      ? '模拟盘高于目标运行。'
-      : '模拟盘低于目标，先看机会质量和风险距离。'
-    : '暂无收益结果，先保持为空。'
+      ? '当前收益领先目标，回撤仍在边界内。'
+      : '收益暂时落后目标，先看机会质量和风险距离。'
+    : '收益结果还没有写入，先看机会和持仓。'
 
   return (
     <div className="home-layout">
       <section className="home-main">
         <section className="panel performance-panel hero-performance">
           <div className="performance-headline">
-            <SignalFunnelFlow hasSignalData={hasSignalData} signals={signals} />
+            <SignalFunnelFlow events={funnelEvents} hasSignalData={hasSignalData} signals={signals} />
             <RealtimeReturnCard
               accountMode={accountMode}
               executedCount={signalFunnel.executed.length}

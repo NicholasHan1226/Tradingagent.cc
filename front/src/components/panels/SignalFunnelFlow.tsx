@@ -1,13 +1,14 @@
 import type { CSSProperties } from 'react'
 import { getSignalFunnel } from '../../lib/dashboard'
-import type { SignalRow } from '../../types/dashboard'
+import type { FunnelEvent, SignalRow } from '../../types/dashboard'
 
 const OUTCOME_LABELS = ['成交', '等待', '复盘', '拦截']
 const MAX_ANIMATED_SIGNALS = 64
 const MAX_VISIBLE_LABELS = 6
 
-export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: boolean; signals: SignalRow[] }) {
+export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: FunnelEvent[]; hasSignalData: boolean; signals: SignalRow[] }) {
   const funnel = getSignalFunnel(signals)
+  const eventStages = getEventStageCounts(events)
   const maxStageCount = Math.max(1, ...funnel.stages.map((stage) => stage.rows.length))
   const stageWidths = funnel.stages.map((stage) => Math.max(12, Math.round((stage.rows.length / maxStageCount) * 100)))
   const executedSignals = funnel.executed
@@ -19,7 +20,10 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
   const hasStageDrop = stageDrops.some((drop) => drop > 0)
   const hasTimingEvidence = signals.some((signal) => signal.stageLatencyMinutes && signal.stageLatencyMinutes > 0)
   const bottleneck = getBottleneck(funnel.stages.map((stage) => ({ label: stage.label, count: stage.rows.length })))
-  const caption = hasSignalData
+  const hasEventSource = events.length > 0
+  const caption = hasEventSource
+    ? `${events.length} 个管道事件 · ${signals.length} 个机会 · ${funnel.executed.length} 个已兑现`
+    : hasSignalData
     ? funnel.mode === 'screening' || hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
       ? `${signals.length} 个进入 · ${funnel.tradeSignals.length} 个留下 · ${funnel.executed.length} 个成交`
       : `${signals.length} 条成交回放 · 转化 ${passRate}%`
@@ -31,7 +35,10 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
       : funnel.mode === 'replay'
         ? '成交回放'
         : '等待数据'
-  const particles = buildParticles(hasSignalData ? signals : placeholderSignals(), funnel.mode)
+  const particles = hasEventSource
+    ? buildEventParticles(events)
+    : buildParticles(hasSignalData ? signals : placeholderSignals(), funnel.mode)
+  const latestEvents = events.slice(-4).reverse()
 
   return (
     <section className="signal-flow-module" aria-label="交易漏斗">
@@ -45,10 +52,10 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
             {funnel.stages.map((stage, index) => (
               <div className="funnel-stage-card" key={stage.label} style={{ '--stage-strength': `${stageWidths[index]}%` } as CSSProperties}>
                 <span>{stage.label}</span>
-                <strong>{stage.rows.length}</strong>
-                <em>{getStageHint(index, stage.rows.length, signals.length, stageDrops[index])}</em>
+                <strong>{eventStages[stage.label] ?? stage.rows.length}</strong>
+                <em>{hasEventSource ? '事件进入' : getStageHint(index, stage.rows.length, signals.length, stageDrops[index])}</em>
                 <div className="stage-meter" aria-hidden="true">
-                  <i style={{ width: `${stageWidths[index]}%` }} />
+                  <i style={{ width: `${hasEventSource ? eventStageWidth(eventStages[stage.label], events.length) : stageWidths[index]}%` }} />
                 </div>
               </div>
             ))}
@@ -102,9 +109,31 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
           <span>瓶颈</span>
           <strong>{bottleneck}</strong>
         </div>
+        {latestEvents.length > 0 && (
+          <div className="flow-event-tape" aria-label="最近管道事件">
+            {latestEvents.map((event) => (
+              <span className={eventStatusClass(event.status)} key={event.id}>
+                <b>{event.stage}</b>
+                <strong>{event.symbol}</strong>
+                <em>{event.label}</em>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   )
+}
+
+function getEventStageCounts(events: FunnelEvent[]) {
+  return events.reduce<Record<string, number>>((counts, event) => {
+    counts[event.stage] = (counts[event.stage] ?? 0) + 1
+    return counts
+  }, {})
+}
+
+function eventStageWidth(count = 0, total: number) {
+  return Math.max(8, Math.min(100, Math.round((count / Math.max(1, total)) * 140)))
 }
 
 function getBottleneck(stages: { label: string; count: number }[]) {
@@ -152,6 +181,74 @@ function buildParticles(rows: SignalRow[], mode: ReturnType<typeof getSignalFunn
       tone,
     }
   })
+}
+
+function buildEventParticles(events: FunnelEvent[]) {
+  const visibleEvents = events.slice(-MAX_ANIMATED_SIGNALS)
+  const labelIndexes = pickEventLabelIndexes(visibleEvents)
+
+  return visibleEvents.map((event, index) => {
+    const stopStage = eventStageToStop(event.stage)
+    const tone = event.status === '拦截' || event.status === '复盘'
+      ? 'red'
+      : event.status === '机会'
+        ? 'amber'
+        : event.status === '等待'
+          ? 'muted'
+          : 'cyan'
+
+    return {
+      begin: `${-(index * 0.36)}s`,
+      duration: `${5.6 + (index % 7) * 0.34}s`,
+      label: `${event.symbol}-${event.stage}`,
+      lane: index % 10,
+      showLabel: labelIndexes.has(index),
+      symbol: compactSymbol(event.symbol),
+      stopLeft: `${Math.min(93, stopStage * 20 - 8)}%`,
+      tone,
+    }
+  })
+}
+
+function pickEventLabelIndexes(events: FunnelEvent[]) {
+  const seen = new Set<string>()
+  const selected = events
+    .map((event, index) => ({ index, label: compactSymbol(event.symbol), priority: eventPriority(event) }))
+    .filter((row) => isReadableLabel(row.label))
+    .sort((a, b) => b.priority - a.priority || b.index - a.index)
+    .filter((row) => {
+      if (seen.has(row.label)) return false
+      seen.add(row.label)
+      return true
+    })
+    .slice(0, MAX_VISIBLE_LABELS)
+    .map((row) => row.index)
+
+  return new Set(selected)
+}
+
+function eventPriority(event: FunnelEvent) {
+  if (event.status === '机会') return 90
+  if (event.status === '拦截') return 80
+  if (event.status === '等待') return 60
+  if (event.status === '成交') return 40
+  return 20
+}
+
+function eventStageToStop(stage: FunnelEvent['stage']) {
+  if (stage === '结果') return 5
+  if (stage === '队列') return 4
+  if (stage === '风控') return 3
+  if (stage === '研判') return 2
+  return 1
+}
+
+function eventStatusClass(status: FunnelEvent['status']) {
+  if (status === '成交') return 'event-filled'
+  if (status === '机会') return 'event-opportunity'
+  if (status === '拦截') return 'event-block'
+  if (status === '复盘') return 'event-review'
+  return 'event-watch'
 }
 
 function pickLabelIndexes(rows: SignalRow[]) {

@@ -1,5 +1,5 @@
 import type { ApiStatus, DashboardApiResponse } from './types.ts'
-import type { HoldingRow, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
+import type { FunnelEvent, HoldingRow, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
 import type { DataDomain } from '../types/status.ts'
 
 export const tradingAgentReadModelSources = {
@@ -32,5 +32,6 @@ export type TradingAgentReadModelSnapshot = {
   portfolio?: PortfolioSummary
   holdings: HoldingRow[]
   signals: SignalRow[]
+  funnelEvents: FunnelEvent[]
   sourceRefs: typeof tradingAgentReadModelSources
 }

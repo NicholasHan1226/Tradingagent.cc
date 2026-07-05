@@ -58,6 +58,21 @@ export type SignalRow = {
   stageEvidence?: 'full' | 'partial' | 'replay'
 }
 
+export type FunnelEventStage = '发现' | '研判' | '风控' | '队列' | '结果'
+export type FunnelEventStatus = '进入' | '通过' | '等待' | '成交' | '机会' | '拦截' | '复盘'
+
+export type FunnelEvent = {
+  id: string
+  symbol: string
+  market: Market
+  stage: FunnelEventStage
+  status: FunnelEventStatus
+  label: string
+  at?: string
+  source: 'signal_queue' | 'sim_ledger'
+  reason?: string
+}
+
 export type HoldingRow = {
   symbol: string
   name: string

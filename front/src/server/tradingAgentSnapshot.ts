@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
-import type { HoldingRow, Market, PerformancePoint, PortfolioSummary, SignalRow, SignalStatus } from '../types/dashboard.ts'
+import type { FunnelEvent, FunnelEventStatus, HoldingRow, Market, PerformancePoint, PortfolioSummary, SignalRow, SignalStatus } from '../types/dashboard.ts'
 
 type SnapshotOptions = {
   workspaceRoot: string
@@ -157,6 +157,7 @@ export async function readTradingAgentSnapshot({
   const queueSignals = await readSignalQueue(queueRoot, now)
   const simLedgerSignals = await readSimLedgerSignals(simLedgerRoot, now)
   const signals = queueSignals.length > 0 ? queueSignals : simLedgerSignals
+  const funnelEvents = buildFunnelEvents(signals)
   const reviewPerformance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
   const performance = firstNonEmpty(reviewPerformance, trackerPortfolio.performance)
@@ -185,6 +186,7 @@ export async function readTradingAgentSnapshot({
     portfolio: trackerPortfolio.summary,
     holdings: fallbackHoldings,
     signals,
+    funnelEvents,
     sourceRefs: tradingAgentReadModelSources,
   }
 }
@@ -674,6 +676,113 @@ function getStageEvidence(stageTimes: SignalRow['stageTimes'], signal: SignalFil
   if (values.length >= 3 && new Set(values).size > 1) return 'full'
   if (values.length >= 2 || signal.risk_check || signal.trigger || signal.fill || signal.simulated_fill) return 'partial'
   return 'partial'
+}
+
+function buildFunnelEvents(signals: SignalRow[]): FunnelEvent[] {
+  return signals.flatMap((signal, index) => {
+    const source = signal.stageEvidence === 'replay' ? 'sim_ledger' : 'signal_queue'
+    const rank = eventStageRank(signal)
+    const baseId = `${source}-${signal.symbol}-${index}`
+    const events: FunnelEvent[] = [
+      {
+        id: `${baseId}-discover`,
+        symbol: signal.symbol,
+        market: signal.market,
+        stage: '发现',
+        status: '进入',
+        label: '发现机会',
+        at: signal.stageTimes?.discovered,
+        source,
+        reason: signal.reason,
+      },
+    ]
+
+    if (rank >= 1 || signal.stageTimes?.scored || signal.stageTimes?.debated) {
+      events.push({
+        id: `${baseId}-research`,
+        symbol: signal.symbol,
+        market: signal.market,
+        stage: '研判',
+        status: '通过',
+        label: '形成判断',
+        at: signal.stageTimes?.debated ?? signal.stageTimes?.scored,
+        source,
+        reason: signal.method,
+      })
+    }
+
+    if (rank >= 2 || signal.status === 'blocked') {
+      events.push({
+        id: `${baseId}-risk`,
+        symbol: signal.symbol,
+        market: signal.market,
+        stage: '风控',
+        status: signal.status === 'blocked' ? '拦截' : '通过',
+        label: signal.status === 'blocked' ? '风险拦截' : '风控通过',
+        at: signal.stageTimes?.riskChecked,
+        source,
+        reason: signal.reason,
+      })
+    }
+
+    if (rank >= 3 && signal.status !== 'blocked') {
+      events.push({
+        id: `${baseId}-queue`,
+        symbol: signal.symbol,
+        market: signal.market,
+        stage: '队列',
+        status: signal.status === 'pending' ? '等待' : '通过',
+        label: signal.status === 'pending' ? '等待触发' : '进入结果',
+        at: signal.stageTimes?.triggered,
+        source,
+        reason: signal.next,
+      })
+    }
+
+    if (rank >= 4 || signal.status !== 'pending') {
+      events.push({
+        id: `${baseId}-result`,
+        symbol: signal.symbol,
+        market: signal.market,
+        stage: '结果',
+        status: eventResultStatus(signal),
+        label: eventResultLabel(signal),
+        at: signal.stageTimes?.triggered,
+        source,
+        reason: signal.impact,
+      })
+    }
+
+    return events
+  })
+}
+
+function eventStageRank(signal: SignalRow) {
+  if (signal.stage === '成交' || signal.stage === '错过') return 4
+  if (signal.stage === '待执行') return 3
+  if (signal.stage === '风控' || signal.stage === '拒绝') return 2
+  if (signal.stage === '评分') return 1
+  if (signal.steps >= 6) return 4
+  if (signal.steps >= 5) return 3
+  if (signal.steps >= 4) return 2
+  if (signal.steps >= 2) return 1
+  return 0
+}
+
+function eventResultStatus(signal: SignalRow): FunnelEventStatus {
+  if (signal.status === 'executed') return '成交'
+  if (signal.status === 'missed') return '机会'
+  if (signal.status === 'blocked') return '拦截'
+  if (signal.status === 'cancelled') return '复盘'
+  return '等待'
+}
+
+function eventResultLabel(signal: SignalRow) {
+  if (signal.status === 'executed') return '已兑现'
+  if (signal.status === 'missed') return '机会未兑现'
+  if (signal.status === 'blocked') return '风险挡住'
+  if (signal.status === 'cancelled') return '已取消'
+  return '等待结果'
 }
 
 function formatRiskReason(signal: SignalFile) {

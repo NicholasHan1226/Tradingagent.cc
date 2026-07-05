@@ -186,6 +186,14 @@ monogram / abstract flow mark with a cleaner wordmark-only logo.
 56. Live return chart event chips are now derived from performance movement and
     active opportunities, so new real data can generate review anchors without
     hand-maintained labels.
+57. The homepage trading funnel now consumes `funnelEvents[]` from the
+    read-only snapshot. Events are derived from signal queue rows or simulated
+    ledger replay, so the animated funnel and latest-event tape no longer rely
+    only on static signal rows.
+58. Subpages now share a result-first summary board pattern: a page-level
+    conclusion on the left and four key metrics on the right, matching the
+    Hyperliquid-style component rhythm more closely than standalone metric
+    strips.
 57. The latest workbench pass reduced the visible page-title height, lowered
     contour opacity, reduced workbench border strength, tightened radii, and
     made the homepage result area read as one embedded information surface

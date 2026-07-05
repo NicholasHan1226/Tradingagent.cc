@@ -76,7 +76,7 @@ function assertTradingAgentSnapshot(payload: unknown): asserts payload is Tradin
     Boolean(domains) &&
     ['performance', 'signals', 'holdings', 'decisions', 'risk'].every((domain) => domain in domains!)
 
-  if (candidate.mode !== 'simulated' || !candidate.generatedAt || !hasDomains || !candidate.sourceRefs) {
+  if (candidate.mode !== 'simulated' || !candidate.generatedAt || !hasDomains || !Array.isArray(candidate.funnelEvents) || !candidate.sourceRefs) {
     throw new Error('TradingAgent snapshot contract is invalid')
   }
 }

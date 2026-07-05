@@ -29,6 +29,7 @@ const snapshot: TradingAgentReadModelSnapshot = {
       steps: 5,
     },
   ],
+  funnelEvents: [],
   sourceRefs: tradingAgentReadModelSources,
 }
 
