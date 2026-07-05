@@ -4,7 +4,7 @@ import type { SignalRow } from '../../types/dashboard'
 
 const OUTCOME_LABELS = ['成交', '等待', '复盘', '拦截']
 const MAX_ANIMATED_SIGNALS = 64
-const MAX_VISIBLE_LABELS = 10
+const MAX_VISIBLE_LABELS = 6
 
 export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: boolean; signals: SignalRow[] }) {
   const funnel = getSignalFunnel(signals)
@@ -118,13 +118,7 @@ function getStageHint(index: number, count: number, total: number, dropped: numb
 
 function buildParticles(rows: SignalRow[]) {
   const visibleRows = rows.slice(0, MAX_ANIMATED_SIGNALS)
-  const labelIndexes = new Set(
-    visibleRows
-      .map((signal, index) => ({ index, priority: labelPriority(signal) }))
-      .sort((a, b) => b.priority - a.priority || a.index - b.index)
-      .slice(0, MAX_VISIBLE_LABELS)
-      .map((row) => row.index),
-  )
+  const labelIndexes = pickLabelIndexes(visibleRows)
 
   return visibleRows.map((signal, index) => {
     const stopStage = getStopStage(signal)
@@ -149,12 +143,33 @@ function buildParticles(rows: SignalRow[]) {
   })
 }
 
+function pickLabelIndexes(rows: SignalRow[]) {
+  const seen = new Set<string>()
+  const selected = rows
+    .map((signal, index) => ({ index, label: compactSymbol(signal.symbol), priority: labelPriority(signal) }))
+    .filter((row) => isReadableLabel(row.label))
+    .sort((a, b) => b.priority - a.priority || a.index - b.index)
+    .filter((row) => {
+      if (seen.has(row.label)) return false
+      seen.add(row.label)
+      return true
+    })
+    .slice(0, MAX_VISIBLE_LABELS)
+    .map((row) => row.index)
+
+  return new Set(selected)
+}
+
 function labelPriority(signal: SignalRow) {
   if (signal.status === 'missed') return 80
   if (signal.status === 'blocked' || signal.status === 'cancelled') return 70
   if (signal.status === 'pending') return 60
   if (signal.stageLatencyMinutes && signal.stageLatencyMinutes > 0) return 40
   return signal.status === 'executed' ? 20 : 10
+}
+
+function isReadableLabel(label: string) {
+  return label.length >= 3 && !/^0+$/.test(label)
 }
 
 function compactSymbol(symbol: string) {

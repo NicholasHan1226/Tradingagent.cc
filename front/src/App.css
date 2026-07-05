@@ -940,12 +940,13 @@ button:not(:disabled) {
 .funnel-particle::before {
   content: '';
   display: block;
-  width: 7px;
-  height: 7px;
-  border: 1px solid currentColor;
+  width: 4px;
+  height: 4px;
+  border: 0;
   border-radius: 999px;
-  background: rgba(1, 5, 5, 0.86);
-  box-shadow: 0 0 0 1px rgba(1, 5, 5, 0.8);
+  background: currentColor;
+  opacity: 0.82;
+  box-shadow: 0 0 0 1px rgba(1, 5, 5, 0.8), 0 0 8px rgba(105, 228, 215, 0.12);
 }
 
 .funnel-particle::after {
@@ -979,9 +980,9 @@ button:not(:disabled) {
 }
 
 .funnel-particle.quiet {
-  min-width: 7px;
-  width: 7px;
-  height: 7px;
+  min-width: 4px;
+  width: 4px;
+  height: 4px;
   padding: 0;
   border-color: transparent;
   background: transparent;
