@@ -681,6 +681,61 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["records"][0]["receipt"]["avg_price"], 3502.0)
             self.assertEqual(result["records"][0]["receipt"]["raw_response"]["execution_price_source"], "order_book_ask")
 
+    def test_multi_style_runner_preserves_expiry_metadata_from_intraday_bar(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class ExpiryReader(FakeFuturesReader):
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return [{"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"}] if market == "Futures" else []
+
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
+                return [
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3400, "volume": 1000},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3450, "volume": 1000},
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:55:00",
+                        "close": 3500,
+                        "volume": 1000,
+                        "last_trade_date": "20261215",
+                        "expiry_date": "20261231",
+                    },
+                ] if market == "Futures" and symbol == "rb2601" and interval == "5min" else []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = ExpiryReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 1, "products": ("rb",)},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.001, "risk_per_trade": 0.03}},
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-03 14:56:00"),
+            )
+
+            self.assertEqual(result["record_count"], 1)
+            order = result["records"][0]["order"]
+            raw_response = result["records"][0]["receipt"]["raw_response"]
+            self.assertEqual(order["last_trade_date"], "20261215")
+            self.assertEqual(order["expiry_date"], "20261231")
+            self.assertEqual(raw_response["last_trade_date"], "20261215")
+            self.assertEqual(raw_response["expiry_date"], "20261231")
+
     def test_adapter_falls_back_to_sharedsignals_sqlite_for_futures_assets(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 

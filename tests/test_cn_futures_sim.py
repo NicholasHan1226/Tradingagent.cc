@@ -252,6 +252,8 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(result.avg_price, 3502.0)
         self.assertEqual(result.raw_response["execution_price_source"], "order_book_ask")
         self.assertEqual(result.raw_response["order_book_available_qty"], 2)
+        self.assertEqual(result.raw_response["ask_price"], 3502.0)
+        self.assertEqual(result.raw_response["ask_size"], 2)
 
     def test_sim_executor_rejects_expiring_contract_with_explicit_metadata(self) -> None:
         import CNFutures.sim_executor  # noqa: F401

@@ -220,7 +220,8 @@ def _enrich_order_from_bar(order: dict[str, Any], bar: dict[str, Any]) -> None:
         "ask_price": _first_present(bar, "ask_price", "ask1", "best_ask"),
         "bid_size": _first_present(bar, "bid_size", "bid_volume", "bid1_volume"),
         "ask_size": _first_present(bar, "ask_size", "ask_volume", "ask1_volume"),
-        "last_trade_date": _first_present(bar, "last_trade_date", "expiry_date", "expiration_date", "delivery_date"),
+        "last_trade_date": _first_present(bar, "last_trade_date"),
+        "expiry_date": _first_present(bar, "expiry_date", "expiration_date", "delivery_date"),
     }
     for key, value in mapped.items():
         if value not in (None, ""):

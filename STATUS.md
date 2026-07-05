@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (intraday API-first and sim matching hardening)
+> 最后更新：2026-07-05 (cn futures quote lifecycle receipt trace)
 
 ---
 
@@ -68,6 +68,7 @@
 - [x] 新增 `signals/positions/cn_futures_sim_positions.json` 模拟持仓快照；新开仓会检查同风格现有保证金占用，超过 `max_margin_usage` 时拒绝。
 - [x] `no_overnight` 风格在日盘收盘前窗口生成 simulated flatten 单；`rollover_min_days_to_contract_month_start` 可阻止临近/进入合约月的新开仓。
 - [x] 若 5 分钟 bar/order 带一级 bid/ask 与可用量，模拟成交会用 buy→ask、sell→bid，并用对应盘口量限制成交；显式 `last_trade_date` / `expiry_date` 会触发到期保护。
+- [x] SharedSignals 5 分钟期货字段已在 TradingAgent reader、CNFutures order 和 simulated receipt 中完整留痕：`bid_price/ask_price/bid_size/ask_size/last_trade_date/expiry_date`；成功成交与 partial 回执均保留字段，便于复盘和看板解释成交价、成交量限制与合约到期保护。
 
 ## 四、活跃任务
 

@@ -316,6 +316,10 @@ class FakeAPIClient:
                 "close": 3520.0,
                 "bid_price": 3519.0,
                 "ask_price": 3521.0,
+                "bid_size": 12,
+                "ask_size": 9,
+                "last_trade_date": "20260915",
+                "expiry_date": "20260930",
             }
         ]
 
@@ -396,6 +400,9 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
 
         self.assertEqual(rows[0]["close"], 3520.0)
         self.assertEqual(rows[0]["bid_price"], 3519.0)
+        self.assertEqual(rows[0]["ask_size"], 9)
+        self.assertEqual(rows[0]["last_trade_date"], "20260915")
+        self.assertEqual(rows[0]["expiry_date"], "20260930")
         self.assertEqual(api.realtime_calls[0], {"ts_code": "RB2609.SHF", "date": "20260703", "market": "Futures"})
 
     def test_get_bars_intraday_falls_back_when_api_returns_empty_shell(self) -> None:

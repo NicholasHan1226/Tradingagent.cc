@@ -49,6 +49,8 @@ Rows are returned as dictionaries. Missing rows return `[]` or `None` through
   `interval`.
 - Optional L1 fields are passed through when SharedSignals has them:
   `bid_price`, `ask_price`, `bid_size`, `ask_size`.
+- Optional futures contract lifecycle fields are passed through when
+  SharedSignals has them: `last_trade_date`, `expiry_date`.
 
 ## MarketGraph CSV Inputs
 
@@ -108,6 +110,9 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
   `interval="5min"`.
 - API path: SharedSignals `/realtime_5min?market=Futures&ts_code=<contract>`;
   SQLite remains a same-host read-only fallback.
+- Optional L1 and lifecycle fields from SharedSignals are preserved through the
+  CNFutures runner into simulated order receipts: `bid_price`, `ask_price`,
+  `bid_size`, `ask_size`, `last_trade_date`, and `expiry_date`.
 - Reader mapping: `CNFutures` internal market is `cn_futures`; upstream reader
   market remains `Futures`.
 - Current cadence assumption: intraday CNFutures simulation must use

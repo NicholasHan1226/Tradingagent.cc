@@ -85,6 +85,8 @@ fills:
   contract tick size
 - if a 5-minute bar or order carries best bid/ask fields, buys use ask and
   sells use bid, with available quote size capping simulated fills
+- simulated fill receipts preserve best bid/ask, quote size, last trade date,
+  and expiry date when SharedSignals provides them
 - static daily price-limit bounds reject clearly invalid simulated prices
 - 5-minute bar volume limits maximum fill quantity through
   `volume_participation`; oversized orders become `partial`
