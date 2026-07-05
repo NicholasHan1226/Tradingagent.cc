@@ -18,8 +18,8 @@ export function SignalTable({ signals }: { signals: SignalRow[] }) {
         <span>下次规则</span>
         <span>时间</span>
       </div>
-      {signals.map((signal) => (
-        <div className="terminal-row" key={signal.symbol}>
+      {signals.map((signal, index) => (
+        <div className="terminal-row" key={`${signal.symbol}-${signal.status}-${signal.age}-${index}`}>
           <AssetCell symbol={signal.symbol} name={signal.name} />
           <span>{marketLabels[signal.market]}</span>
           <span className={`status ${signal.status}`}>{statusLabels[signal.status]}</span>

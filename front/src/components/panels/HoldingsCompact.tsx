@@ -16,8 +16,8 @@ export function HoldingsCompact({
       <PanelTitle action="查看持仓" kicker="持仓结果" onAction={() => setActivePage('持仓')} title="仓位贡献" />
       <div className="compact-holdings">
         {hasHoldingData ? (
-          holdings.slice(0, 3).map((holding) => (
-            <button key={holding.symbol} onClick={() => setActivePage('持仓')} type="button">
+          holdings.slice(0, 3).map((holding, index) => (
+            <button key={`${holding.symbol}-${holding.role}-${index}`} onClick={() => setActivePage('持仓')} type="button">
               <AssetCell symbol={holding.symbol} name={holding.name} />
               <span>{holding.weight}</span>
               <strong className={holding.pnl.startsWith('-') ? 'red-text' : 'cyan-text'}>{holding.pnl}</strong>

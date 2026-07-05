@@ -18,8 +18,8 @@ export function OpportunityFocus({
       <PanelTitle action="全部机会" kicker="当前机会" onAction={() => setActivePage('机会')} title="正在推进" />
       <div className="focus-list">
         {hasSignalData ? (
-          topSignals.map((signal) => (
-            <button className="focus-item" key={signal.symbol} onClick={() => setActivePage('机会')} type="button">
+          topSignals.map((signal, index) => (
+            <button className="focus-item" key={`${signal.symbol}-${signal.status}-${signal.age}-${index}`} onClick={() => setActivePage('机会')} type="button">
               <span>
                 <strong>{signal.symbol}</strong>
                 <em>{signal.reason}</em>
