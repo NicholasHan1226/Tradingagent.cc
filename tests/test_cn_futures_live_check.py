@@ -54,8 +54,11 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
                 {
                     "generated_at": "2026-07-06T01:05:00+00:00",
                     "state": "ok",
+                    "cadence": "5min",
+                    "latest_bar_time": "2026-07-06 09:05:00",
                     "filled_count": 2,
                     "error_count": 0,
+                    "real_trading_enabled": False,
                     "style_health": {"trend": {"status": "active_sample"}},
                 }
             ],
@@ -76,7 +79,10 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         )
         log = self.root / "shared/logs/cron/cn_futures_sim.log"
         log.parent.mkdir(parents=True, exist_ok=True)
-        log.write_text('noise\n{"market":"cn_futures","status":"ok","signals":2}\n', encoding="utf-8")
+        log.write_text(
+            'noise\n{"market":"cn_futures","status":"ok","cadence":"5min","filled_count":2,"latest_bar_time":"2026-07-06 09:05:00"}\n',
+            encoding="utf-8",
+        )
 
     def test_warns_without_data_but_structure_is_readable(self) -> None:
         with patch.object(live_check, "check_existing_health_surfaces", return_value=live_check.Check("cn_futures_existing_health_surfaces", "pass", "ok")):
@@ -89,6 +95,8 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         self.assertEqual(report["overall_status"], "warn")
         self.assertEqual(report["summary"]["fail"], 0)
         self.assertEqual(report["observation_phase"], "waiting_for_5min_data")
+        self.assertEqual(report["next_validation"]["expected_phase"], "wait_for_next_session")
+        self.assertFalse(report["next_validation"]["real_trading_enabled"])
         freshness = next(check for check in report["checks"] if check["name"] == "sharedsignals_5min_freshness")
         self.assertEqual(freshness["status"], "warn")
         self.assertFalse(report["real_trading_enabled"])
@@ -106,6 +114,7 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         self.assertEqual(report["overall_status"], "pass")
         self.assertEqual(report["summary"], {"pass": 7, "warn": 0, "fail": 0})
         self.assertEqual(report["observation_phase"], "ready_to_observe")
+        self.assertEqual(report["next_validation"]["expected_phase"], "continue_observation")
         self.assertEqual(report["alerts"], [])
 
     def test_fails_when_sharedsignals_freshness_script_errors(self) -> None:
@@ -145,6 +154,28 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
 
         codes = {alert["code"] for alert in report["alerts"]}
         self.assertIn("futures_5min_missing_in_session", codes)
+
+    def test_sim_log_warns_when_5min_fill_has_no_bar_time(self) -> None:
+        log = self.root / "shared/logs/cron/cn_futures_sim.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text('{"market":"cn_futures","status":"ok","cadence":"5min","filled_count":1}\n', encoding="utf-8")
+
+        check = live_check.check_sim_log(log)
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["payload"]["filled_count"], 1)
+
+    def test_review_warns_when_filled_5min_sample_lacks_bar_time_or_real_flag_is_on(self) -> None:
+        self._write_jsonl(
+            "shared/review/data/cn_futures_sim_reviews.jsonl",
+            [{"state": "ok", "cadence": "5min", "filled_count": 1, "real_trading_enabled": True}],
+        )
+
+        check = live_check.check_review()
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["latest_real_trading_enabled"], True)
+        self.assertFalse(check.details["latest_has_bar_time"])
 
 
 if __name__ == "__main__":

@@ -86,6 +86,8 @@ class CNFuturesObservationReportTest(unittest.TestCase):
             self.assertEqual(report["simulation"]["filled_count"], 1)
             self.assertEqual(report["styles"]["ranked"][0]["style_name"], "index_intraday_directional")
             self.assertEqual(report["evolution"]["action_count"], 1)
+            self.assertEqual(report["dashboard"]["readiness"], "ready_to_observe")
+            self.assertEqual(report["dashboard"]["primary_next_step"], "continue_observation")
             self.assertFalse(report["real_trading_enabled"])
 
 

@@ -91,6 +91,8 @@ def validate_opening(
         "report_type": "opening_validation",
         "checked_at": current.isoformat(timespec="seconds"),
         "sqlite_db": str(sqlite_db),
+        "data_source": "SharedSignals read_model",
+        "read_only": True,
         "session": session_name,
         "session_start": start.isoformat(timespec="seconds") if start else None,
         "min_symbols": max(1, int(min_symbols)),

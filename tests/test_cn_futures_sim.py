@@ -172,6 +172,133 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(low_volatility["action"], "hold")
         self.assertEqual(low_volatility["reason"], "low_volatility_filter")
 
+    def test_index_intraday_directional_signal_filters_choppy_reversal_and_noise(self) -> None:
+        from CNFutures.signal_engine import generate_style_signal
+
+        style = {
+            "name": "index_intraday_directional",
+            "style_family": "index_intraday_directional",
+            "signal_threshold": 0.0005,
+            "momentum_lookback_bars": 4,
+            "moving_average_bars": 5,
+            "no_overnight": True,
+            "day_session_only": True,
+            "trend_alignment_required": True,
+            "min_volume_ratio": 1.0,
+            "min_recent_range_pct": 0.0001,
+            "min_directional_consistency": 0.75,
+            "max_intrabar_reversal_pct": 0.001,
+            "min_signal_to_range_ratio": 0.55,
+        }
+        choppy_bars = [
+            {"bar_time": "2026-07-06 14:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:05:00", "close": 3510, "volume": 1000},
+            {"bar_time": "2026-07-06 14:10:00", "close": 3504, "volume": 1100},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3514, "volume": 1200},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3508, "volume": 1300},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3520, "volume": 1600},
+        ]
+        reversal_bars = [
+            {"bar_time": "2026-07-06 14:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:05:00", "close": 3505, "volume": 1000},
+            {"bar_time": "2026-07-06 14:10:00", "close": 3510, "volume": 1100},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3515, "volume": 1200},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3520, "volume": 1300},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3522, "high": 3535, "low": 3518, "volume": 1600},
+        ]
+        noisy_bars = [
+            {"bar_time": "2026-07-06 14:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:05:00", "close": 3520, "volume": 1000},
+            {"bar_time": "2026-07-06 14:10:00", "close": 3510, "volume": 1100},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3525, "volume": 1200},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3515, "volume": 1300},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3526, "volume": 1600},
+        ]
+
+        choppy = generate_style_signal("IF2601.CFFEX", choppy_bars, style)
+        reversal = generate_style_signal("IF2601.CFFEX", reversal_bars, style)
+        noisy = generate_style_signal("IF2601.CFFEX", noisy_bars, {**style, "min_directional_consistency": 0.0})
+
+        self.assertEqual(choppy["action"], "hold")
+        self.assertEqual(choppy["reason"], "directional_consistency_filter")
+        self.assertEqual(reversal["action"], "hold")
+        self.assertEqual(reversal["reason"], "intrabar_reversal_filter")
+        self.assertEqual(noisy["action"], "hold")
+        self.assertEqual(noisy["reason"], "signal_noise_filter")
+
+    def test_index_intraday_directional_signal_filters_bar_quality_and_late_chase(self) -> None:
+        from CNFutures.signal_engine import generate_style_signal
+
+        style = {
+            "name": "index_intraday_directional",
+            "style_family": "index_intraday_directional",
+            "signal_threshold": 0.0005,
+            "momentum_lookback_bars": 4,
+            "moving_average_bars": 5,
+            "no_overnight": True,
+            "day_session_only": True,
+            "trend_alignment_required": True,
+            "min_volume_ratio": 1.0,
+            "min_recent_range_pct": 0.0001,
+            "min_directional_consistency": 0.0,
+            "max_intrabar_reversal_pct": 0.0,
+            "min_signal_to_range_ratio": 0.0,
+            "max_bar_gap_minutes": 7,
+            "min_body_to_range_ratio": 0.45,
+            "min_consecutive_aligned_bars": 3,
+            "max_late_chase_pct": 0.006,
+        }
+        gap_bars = [
+            {"bar_time": "2026-07-06 14:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:05:00", "close": 3505, "volume": 1000},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3510, "volume": 1100},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3515, "volume": 1200},
+            {"bar_time": "2026-07-06 14:30:00", "close": 3520, "volume": 1300},
+            {"bar_time": "2026-07-06 14:35:00", "close": 3526, "volume": 1600},
+        ]
+        long_wick_bars = [
+            {"bar_time": "2026-07-06 14:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:05:00", "close": 3505, "volume": 1000},
+            {"bar_time": "2026-07-06 14:10:00", "close": 3510, "volume": 1100},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3515, "volume": 1200},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3520, "volume": 1300},
+            {"bar_time": "2026-07-06 14:25:00", "open": 3519, "high": 3535, "low": 3515, "close": 3523, "volume": 1600},
+        ]
+        not_consecutive_bars = [
+            {"bar_time": "2026-07-06 14:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:05:00", "close": 3510, "volume": 1000},
+            {"bar_time": "2026-07-06 14:10:00", "close": 3518, "volume": 1100},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3512, "volume": 1200},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3520, "volume": 1300},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3528, "volume": 1600},
+        ]
+        chase_bars = [
+            {"bar_time": "2026-07-06 14:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:05:00", "close": 3505, "volume": 1000},
+            {"bar_time": "2026-07-06 14:10:00", "close": 3510, "volume": 1100},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3515, "volume": 1200},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3520, "volume": 1300},
+            {"bar_time": "2026-07-06 14:25:00", "open": 3521, "high": 3545, "low": 3520, "close": 3544, "volume": 1800},
+        ]
+
+        gap = generate_style_signal("IF2601.CFFEX", gap_bars, style)
+        long_wick = generate_style_signal("IF2601.CFFEX", long_wick_bars, style)
+        not_consecutive = generate_style_signal("IF2601.CFFEX", not_consecutive_bars, {**style, "min_body_to_range_ratio": 0.0})
+        chase = generate_style_signal(
+            "IF2601.CFFEX",
+            chase_bars,
+            {**style, "min_body_to_range_ratio": 0.0, "min_consecutive_aligned_bars": 0},
+        )
+
+        self.assertEqual(gap["action"], "hold")
+        self.assertEqual(gap["reason"], "bar_gap_filter")
+        self.assertEqual(long_wick["action"], "hold")
+        self.assertEqual(long_wick["reason"], "body_to_range_filter")
+        self.assertEqual(not_consecutive["action"], "hold")
+        self.assertEqual(not_consecutive["reason"], "consecutive_alignment_filter")
+        self.assertEqual(chase["action"], "hold")
+        self.assertEqual(chase["reason"], "late_chase_filter")
+
     def test_index_intraday_directional_signal_rejects_non_day_session_bars(self) -> None:
         from CNFutures.signal_engine import generate_style_signal
 

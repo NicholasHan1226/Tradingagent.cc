@@ -40,8 +40,14 @@ distance to point in the same direction and defaults to `min_volume_ratio=1.05`;
 weak or misaligned moves become `hold` instead of simulated trades. It also
 skips the first 15 minutes after a day-session open, pauses after large opening
 gaps for 30 minutes, and filters very low realized 5-minute range so the
-win-rate lane avoids thin/noisy setups. This style is for simulated validation
-of index-direction timing; it does not enable real CFFEX trading.
+win-rate lane avoids thin/noisy setups. The second-stage quality filters also
+require recent bars to move consistently in the predicted direction, reject
+latest-bar intrabar reversals such as spike-and-fade moves, and require the
+direction score to be large enough relative to recent range. A further bar
+quality layer rejects missing 5-minute bar gaps, latest bars with weak
+body-to-range commitment, insufficient consecutive aligned bars, and obvious
+late-chase entries after a sharp extension. This style is for simulated
+validation of index-direction timing; it does not enable real CFFEX trading.
 
 ## Automation Entry
 
@@ -160,8 +166,12 @@ The report summarizes:
 
 - current phase: waiting for 5-minute data, waiting for simulated samples,
   waiting for style review, ready to observe, or blocked
+- dashboard-ready `schema_version`, `dashboard`, and `next_validation` fields
+  so UI code does not need to parse nested check details
 - data freshness, latest bar time, symbol count, and current/next session
 - latest simulated review counts, fills, errors, and error summary
+- 5-minute sample evidence such as `cadence`, `latest_bar_time`, and
+  `real_trading_enabled=false` when available
 - ranked style rows, runtime style weights, generated variants, and alerts
 
 It is read-only by default. `--write-json <path>` may be used by a dashboard or
@@ -192,6 +202,9 @@ Optional wrapper:
 ```bash
 shared/wrappers/job_cn_futures_opening_validation.sh
 ```
+
+Its output explicitly reports `data_source="SharedSignals read_model"` and
+`read_only=true`; it does not collect futures data from TradingAgent.
 
 ## Simulated Evolution
 
@@ -272,7 +285,9 @@ the chain has fresh data and review/style samples. `warn` is
 acceptable during weekends, closed sessions, or before the first live sample is
 produced. `fail` means a hard wiring problem such as missing cron, unreadable
 freshness output, or broken existing health surfaces. The script is read-only
-and always reports `real_trading_enabled=false`.
+and always reports `real_trading_enabled=false`. `next_validation` tells the
+next session workflow whether to wait for the next session, validate the
+current session, or continue accumulating win-rate samples.
 
 ## Real Trading Reserve
 

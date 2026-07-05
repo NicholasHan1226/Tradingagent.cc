@@ -245,6 +245,12 @@ def check_sim_log(log_path: Path | None = None) -> Check:
     payload = latest.get("payload") if isinstance(latest.get("payload"), dict) else {}
     if not latest["exists"]:
         return Check("cn_futures_sim_log", "warn", "CNFutures 模拟盘 cron 日志还不存在", latest, severity="warn")
+    cadence = str(payload.get("cadence") or "").lower()
+    filled_count = int(payload.get("filled_count") or payload.get("signals") or 0) if payload else 0
+    latest_bar_time = str(payload.get("latest_bar_time") or payload.get("bar_time") or "").strip()
+    if payload and cadence == "5min" and filled_count > 0 and not latest_bar_time:
+        latest["reason"] = "missing_5min_bar_time"
+        return Check("cn_futures_sim_log", "warn", "CNFutures 5分钟模拟盘日志有成交但缺少 bar_time", latest, severity="warn")
     if payload and payload.get("status") in {"ok", "market_closed"}:
         return Check("cn_futures_sim_log", "pass", "CNFutures 模拟盘最近一次日志正常", latest, severity="info")
     if payload:
@@ -263,6 +269,10 @@ def check_review(review_path: Path | None = None) -> Check:
         "review_rows": len(rows),
         "latest_generated_at": latest.get("generated_at", ""),
         "latest_state": latest.get("state", ""),
+        "latest_cadence": latest.get("cadence", ""),
+        "latest_bar_time": latest.get("latest_bar_time") or latest.get("bar_time") or "",
+        "latest_has_bar_time": bool(latest.get("latest_bar_time") or latest.get("bar_time")),
+        "latest_real_trading_enabled": bool(latest.get("real_trading_enabled")),
         "latest_filled_count": int(latest.get("filled_count") or 0) if latest else 0,
         "latest_error_count": int(latest.get("error_count") or 0) if latest else 0,
         "latest_error_summary": latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {},
@@ -270,6 +280,10 @@ def check_review(review_path: Path | None = None) -> Check:
     }
     if not rows:
         return Check("cn_futures_review", "warn", "CNFutures 复盘样本还未产生", details, severity="warn")
+    if details["latest_real_trading_enabled"]:
+        return Check("cn_futures_review", "warn", "CNFutures 复盘样本错误带有实盘启用标记", details, severity="warn")
+    if details["latest_filled_count"] > 0 and str(details["latest_cadence"]).lower() == "5min" and not details["latest_has_bar_time"]:
+        return Check("cn_futures_review", "warn", "CNFutures 5分钟复盘样本有成交但缺少 bar_time", details, severity="warn")
     if details["latest_filled_count"] > 0:
         return Check("cn_futures_review", "pass", "CNFutures 最近复盘已有模拟成交样本", details, severity="info")
     return Check("cn_futures_review", "warn", "CNFutures 最近复盘存在但尚无模拟成交样本", details, severity="warn")
@@ -425,6 +439,39 @@ def observation_phase(checks: list[Check]) -> str:
     return "ready_to_observe"
 
 
+def next_validation_plan(checks: list[Check]) -> dict[str, Any]:
+    by_name = {check.name: check for check in checks}
+    freshness = by_name.get("sharedsignals_5min_freshness")
+    report = freshness.details.get("report") if freshness is not None and isinstance(freshness.details.get("report"), dict) else {}
+    session = report.get("session") if isinstance(report.get("session"), dict) else {}
+    phase = observation_phase(checks)
+    if phase == "ready_to_observe":
+        expected_phase = "continue_observation"
+        primary_check = "accumulate_win_rate_samples"
+    elif bool(session.get("in_session")):
+        expected_phase = "validate_current_session"
+        primary_check = "fresh_5min_data_then_sim_sample"
+    else:
+        expected_phase = "wait_for_next_session"
+        primary_check = "fresh_5min_data_at_next_session_open"
+    return {
+        "expected_phase": expected_phase,
+        "primary_check": primary_check,
+        "current_session": session.get("current", ""),
+        "in_session": bool(session.get("in_session")),
+        "next_session_start": session.get("next_session_start", ""),
+        "acceptance": {
+            "freshness_status": "fresh",
+            "cron_required": ["cn_futures_5min.sh", "job_cn_futures_sim.sh", "job_cn_futures_observation_report.sh"],
+            "requires_sim_review_with_filled_count": True,
+            "requires_style_outputs": True,
+            "requires_real_trading_enabled_false": True,
+        },
+        "manual_command": "python shared/runtime_test/cn_futures_live_check.py --pretty",
+        "real_trading_enabled": False,
+    }
+
+
 def run_live_check(
     *,
     sharedsignals_root: Path | None = None,
@@ -459,6 +506,7 @@ def run_live_check(
         "overall_status": overall,
         "observation_phase": observation_phase(checks),
         "alerts": observation_alerts(checks),
+        "next_validation": next_validation_plan(checks),
         "summary": {
             "pass": sum(1 for check in checks if check.status == "pass"),
             "warn": sum(1 for check in checks if check.status == "warn"),

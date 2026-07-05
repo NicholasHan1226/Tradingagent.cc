@@ -95,13 +95,30 @@ def build_observation_report(
         key=lambda row: (float(row.get("win_rate") or 0.0), float(row.get("sharpe") or 0.0), float(row.get("pnl") or 0.0)),
         reverse=True,
     )
+    next_validation = live.get("next_validation", {}) if isinstance(live.get("next_validation"), dict) else {}
+    primary_next_step = str(next_validation.get("expected_phase") or "")
+    if not primary_next_step and live.get("observation_phase") == "ready_to_observe":
+        primary_next_step = "continue_observation"
+    dashboard = {
+        "readiness": live.get("observation_phase", "unknown"),
+        "status": live.get("overall_status", "unknown"),
+        "primary_next_step": primary_next_step,
+        "latest_bar_time": freshness_report.get("latest_bar_time") if isinstance(freshness_report, dict) else None,
+        "filled_count": int(latest_review.get("filled_count") or 0) if latest_review else 0,
+        "top_style": ranked_styles[0].get("style_name", "") if ranked_styles else "",
+        "alerts": live.get("alerts", []),
+        "real_trading_enabled": False,
+    }
     return {
         "market": STYLE_REVIEW_MARKET,
         "report_type": "cn_futures_5min_observation",
+        "schema_version": "2026-07-05.dashboard.v1",
         "generated_at": live.get("generated_at", ""),
         "overall_status": live.get("overall_status", "unknown"),
         "observation_phase": live.get("observation_phase", "unknown"),
         "alerts": live.get("alerts", []),
+        "dashboard": dashboard,
+        "next_validation": next_validation,
         "data": {
             "freshness_status": freshness_report.get("status", "unknown") if isinstance(freshness_report, dict) else "unknown",
             "latest_bar_time": freshness_report.get("latest_bar_time") if isinstance(freshness_report, dict) else None,

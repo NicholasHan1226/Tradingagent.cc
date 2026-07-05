@@ -110,6 +110,90 @@ def _recent_range_pct(rows: list[dict[str, Any]], window: int) -> float:
     return ((max(closes) - min(closes)) / latest) if latest > 0 else 0.0
 
 
+def _directional_consistency(rows: list[dict[str, Any]], window: int, action: str) -> float:
+    closes = [_safe_float(row.get("close"), 0.0) for row in rows[-max(2, window + 1):]]
+    closes = [close for close in closes if close > 0]
+    if len(closes) < 2:
+        return 0.0
+    diffs = [current - previous for previous, current in zip(closes, closes[1:]) if current != previous]
+    if not diffs:
+        return 0.0
+    if action == "buy":
+        aligned = sum(1 for diff in diffs if diff > 0)
+    elif action == "sell":
+        aligned = sum(1 for diff in diffs if diff < 0)
+    else:
+        return 0.0
+    return aligned / len(diffs)
+
+
+def _intrabar_reversal_pct(row: dict[str, Any], action: str) -> float:
+    close = _safe_float(row.get("close"), 0.0)
+    if close <= 0:
+        return 0.0
+    if action == "buy":
+        high = _safe_float(row.get("high"), 0.0)
+        return max(0.0, (high - close) / close) if high > 0 else 0.0
+    if action == "sell":
+        low = _safe_float(row.get("low"), 0.0)
+        return max(0.0, (close - low) / close) if low > 0 else 0.0
+    return 0.0
+
+
+def _max_bar_gap_minutes(rows: list[dict[str, Any]], window: int) -> int:
+    parsed = [_bar_time(row) for row in rows[-max(2, window + 1):]]
+    parsed = [value for value in parsed if value is not None]
+    if len(parsed) < 2:
+        return 0
+    gaps = [
+        int((current - previous).total_seconds() // 60)
+        for previous, current in zip(parsed, parsed[1:])
+        if current >= previous
+    ]
+    return max(gaps) if gaps else 0
+
+
+def _body_to_range_ratio(row: dict[str, Any]) -> float:
+    open_price = _safe_float(row.get("open"), 0.0)
+    close = _safe_float(row.get("close"), 0.0)
+    high = _safe_float(row.get("high"), 0.0)
+    low = _safe_float(row.get("low"), 0.0)
+    if open_price <= 0 or close <= 0 or high <= 0 or low <= 0 or high <= low:
+        return 1.0
+    return abs(close - open_price) / (high - low)
+
+
+def _consecutive_aligned_bars(rows: list[dict[str, Any]], action: str) -> int:
+    closes = [_safe_float(row.get("close"), 0.0) for row in rows]
+    closes = [close for close in closes if close > 0]
+    count = 0
+    for previous, current in reversed(list(zip(closes, closes[1:]))):
+        if action == "buy" and current > previous:
+            count += 1
+        elif action == "sell" and current < previous:
+            count += 1
+        else:
+            break
+    return count
+
+
+def _late_chase_pct(rows: list[dict[str, Any]], window: int, action: str) -> float:
+    recent = rows[-max(2, window + 1):]
+    closes = [_safe_float(row.get("close"), 0.0) for row in recent]
+    closes = [close for close in closes if close > 0]
+    if len(closes) < 2:
+        return 0.0
+    latest = closes[-1]
+    baseline = sum(closes[:-1]) / len(closes[:-1])
+    if baseline <= 0:
+        return 0.0
+    if action == "buy":
+        return max(0.0, (latest / baseline) - 1.0)
+    if action == "sell":
+        return max(0.0, (baseline / latest) - 1.0) if latest > 0 else 0.0
+    return 0.0
+
+
 def _index_intraday_directional_signal(
     symbol: str,
     bars: list[dict[str, Any]],
@@ -126,6 +210,13 @@ def _index_intraday_directional_signal(
     gap_cooldown_minutes = max(0, int(_safe_float(style.get("gap_cooldown_minutes"), 30)))
     max_open_gap_pct = max(0.0, _safe_float(style.get("max_open_gap_pct"), 0.01))
     min_recent_range_pct = max(0.0, _safe_float(style.get("min_recent_range_pct"), 0.001))
+    min_directional_consistency = max(0.0, min(1.0, _safe_float(style.get("min_directional_consistency"), 0.60)))
+    max_intrabar_reversal_pct = max(0.0, _safe_float(style.get("max_intrabar_reversal_pct"), 0.002))
+    min_signal_to_range_ratio = max(0.0, _safe_float(style.get("min_signal_to_range_ratio"), 0.35))
+    max_bar_gap_minutes = max(0, int(_safe_float(style.get("max_bar_gap_minutes"), 7)))
+    min_body_to_range_ratio = max(0.0, min(1.0, _safe_float(style.get("min_body_to_range_ratio"), 0.30)))
+    min_consecutive_aligned_bars = max(0, int(_safe_float(style.get("min_consecutive_aligned_bars"), 2)))
+    max_late_chase_pct = max(0.0, _safe_float(style.get("max_late_chase_pct"), 0.012))
     if len(bars) <= max(lookback, ma_window):
         return {"symbol": symbol, "style": style_name, "action": "hold", "reason": "insufficient_intraday_bars", "confidence": 0.0}
 
@@ -203,6 +294,19 @@ def _index_intraday_directional_signal(
             "confidence": 0.0,
         }
 
+    observed_bar_gap_minutes = _max_bar_gap_minutes(bars, lookback)
+    if max_bar_gap_minutes > 0 and observed_bar_gap_minutes > max_bar_gap_minutes:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "reason": "bar_gap_filter",
+            "observed_bar_gap_minutes": observed_bar_gap_minutes,
+            "max_bar_gap_minutes": max_bar_gap_minutes,
+            "confidence": 0.0,
+        }
+
     momentum = (latest / previous) - 1.0
     ma_distance = (latest / average) - 1.0
     volume_ratio = _volume_ratio(bars)
@@ -254,6 +358,94 @@ def _index_intraday_directional_signal(
             "reason": "direction_score_below_threshold",
         }
 
+    directional_consistency = _directional_consistency(bars, lookback, action)
+    if min_directional_consistency > 0 and directional_consistency < min_directional_consistency:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "momentum": momentum,
+            "ma_distance": ma_distance,
+            "directional_score": directional_score,
+            "directional_consistency": directional_consistency,
+            "min_directional_consistency": min_directional_consistency,
+            "confidence": 0.0,
+            "reason": "directional_consistency_filter",
+        }
+
+    intrabar_reversal_pct = _intrabar_reversal_pct(bars[-1], action)
+    if max_intrabar_reversal_pct > 0 and intrabar_reversal_pct > max_intrabar_reversal_pct:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "momentum": momentum,
+            "ma_distance": ma_distance,
+            "directional_score": directional_score,
+            "intrabar_reversal_pct": intrabar_reversal_pct,
+            "max_intrabar_reversal_pct": max_intrabar_reversal_pct,
+            "confidence": 0.0,
+            "reason": "intrabar_reversal_filter",
+        }
+
+    signal_to_range_ratio = abs(directional_score) / recent_range_pct if recent_range_pct > 0 else 0.0
+    if min_signal_to_range_ratio > 0 and signal_to_range_ratio < min_signal_to_range_ratio:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "momentum": momentum,
+            "ma_distance": ma_distance,
+            "directional_score": directional_score,
+            "recent_range_pct": recent_range_pct,
+            "signal_to_range_ratio": signal_to_range_ratio,
+            "min_signal_to_range_ratio": min_signal_to_range_ratio,
+            "confidence": 0.0,
+            "reason": "signal_noise_filter",
+        }
+
+    body_to_range_ratio = _body_to_range_ratio(bars[-1])
+    if min_body_to_range_ratio > 0 and body_to_range_ratio < min_body_to_range_ratio:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "body_to_range_ratio": body_to_range_ratio,
+            "min_body_to_range_ratio": min_body_to_range_ratio,
+            "confidence": 0.0,
+            "reason": "body_to_range_filter",
+        }
+
+    consecutive_aligned_bars = _consecutive_aligned_bars(bars, action)
+    if min_consecutive_aligned_bars > 0 and consecutive_aligned_bars < min_consecutive_aligned_bars:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "consecutive_aligned_bars": consecutive_aligned_bars,
+            "min_consecutive_aligned_bars": min_consecutive_aligned_bars,
+            "confidence": 0.0,
+            "reason": "consecutive_alignment_filter",
+        }
+
+    late_chase_pct = _late_chase_pct(bars, lookback, action)
+    if max_late_chase_pct > 0 and late_chase_pct > max_late_chase_pct:
+        return {
+            "symbol": symbol,
+            "style": style_name,
+            "action": "hold",
+            "price": latest,
+            "late_chase_pct": late_chase_pct,
+            "max_late_chase_pct": max_late_chase_pct,
+            "confidence": 0.0,
+            "reason": "late_chase_filter",
+        }
+
     confidence = min(0.95, max(0.10, abs(directional_score) / max(threshold, 0.0001) * 0.30))
     if volume_ratio >= 1.15:
         confidence = min(0.98, confidence + 0.08)
@@ -268,6 +460,12 @@ def _index_intraday_directional_signal(
         "ma_distance": ma_distance,
         "directional_score": directional_score,
         "volume_ratio": volume_ratio,
+        "directional_consistency": directional_consistency,
+        "intrabar_reversal_pct": intrabar_reversal_pct,
+        "signal_to_range_ratio": signal_to_range_ratio,
+        "body_to_range_ratio": body_to_range_ratio,
+        "consecutive_aligned_bars": consecutive_aligned_bars,
+        "late_chase_pct": late_chase_pct,
         "confidence": confidence,
         "reason": "index_intraday_direction_confirmed",
         "prediction_horizon_bars": int(_safe_float(style.get("prediction_horizon_bars"), 3)),

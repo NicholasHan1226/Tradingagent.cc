@@ -125,6 +125,12 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
 - Review records are appended under `shared/review/data/`; signal-state writes
   go through `signals/` only. CNFutures does not write back into SharedSignals
   or MarketGraph.
+- Dashboard consumption should use
+  `shared/review/cn_futures/observation_report.json`. The stable UI-facing
+  surface is `schema_version`, `dashboard`, `next_validation`,
+  `observation_phase`, `alerts`, `data`, `simulation`, `styles`, `evolution`,
+  and `real_trading_enabled=false`; nested `source_live_check` remains a debug
+  surface for operators.
 
 CNFutures has no separate shadow layer. Multi-style testing is represented by
 isolated simulated accounts and strategy styles with `capital_layer=simulated`

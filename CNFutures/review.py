@@ -45,6 +45,18 @@ def _record_pnl(record: dict[str, Any]) -> float | None:
     return None
 
 
+def _latest_record_value(records: list[dict[str, Any]], key: str) -> Any:
+    for record in reversed(records):
+        value = record.get(key)
+        if value not in (None, ""):
+            return value
+        order = record.get("order") if isinstance(record.get("order"), dict) else {}
+        value = order.get(key)
+        if value not in (None, ""):
+            return value
+    return ""
+
+
 def score_records(records: list[dict[str, Any]], *, min_sample_trades: int = 20) -> dict[str, Any]:
     """Score simulated CN futures styles from append-only review records.
 
@@ -360,8 +372,11 @@ def append_review(
     payload: dict[str, Any] = {
         "date": date,
         "market": market,
+        "cadence": _latest_record_value(records, "cadence"),
+        "latest_bar_time": _latest_record_value(records, "bar_time"),
         "capital_layer": "simulated",
         "account_type": "simulated",
+        "real_trading_enabled": False,
         "state": "degraded" if errors else "ok",
         "record_count": len(records),
         "error_count": len(errors),

@@ -54,6 +54,8 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["session"], "day")
         self.assertEqual(report["symbol_count"], 4)
+        self.assertEqual(report["data_source"], "SharedSignals read_model")
+        self.assertTrue(report["read_only"])
 
     def test_warns_when_session_has_no_bars(self) -> None:
         db_path = self._db([])

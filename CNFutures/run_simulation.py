@@ -44,11 +44,18 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _summary(result: dict[str, Any]) -> dict[str, Any]:
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    latest_bar_time = ""
+    for record in reversed(records):
+        if isinstance(record, dict) and record.get("bar_time"):
+            latest_bar_time = str(record.get("bar_time"))
+            break
     return {
         "market": result.get("market"),
         "reader_market": result.get("reader_market"),
         "date": result.get("date"),
         "cadence": result.get("cadence"),
+        "latest_bar_time": latest_bar_time,
         "state": result.get("state"),
         "capital_layer": result.get("capital_layer"),
         "account_type": result.get("account_type"),
