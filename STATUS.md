@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (combined-cron health reporting and PM proxy handoff)
+> 最后更新：2026-07-05 (simulated equity snapshot writer for dashboard)
 
 ---
 
@@ -36,7 +36,7 @@
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
-- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。信号漏斗会区分实时筛选、部分阶段和成交回放，避免把已成交账本回放误当成当前筛选转化率；收益曲线优先用模拟账本成交时间展开，缺少成交时间时回退到按日 style performance。默认本地 fallback 不再展示暂停的 HK 样例，改用 CNFutures simulated-only 样例；真实 snapshot 若带 HK 历史数据仍按输入展示，但 HK 不进入默认市场筛选和生产调度。
+- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。信号漏斗会区分实时筛选、部分阶段和成交回放，避免把已成交账本回放误当成当前筛选转化率；收益曲线优先读取模拟账本权益快照 `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl`，该快照由 `shared/runtime_test/write_equity_snapshots.py` 追加写入，字段包含本金、权益、已实现/未实现收益、回撤、交易数和价格缺失状态；缺少快照时才回退到日复盘 return 字段或按日 style performance。默认本地 fallback 不再展示暂停的 HK 样例，改用 CNFutures simulated-only 样例；真实 snapshot 若带 HK 历史数据仍按输入展示，但 HK 不进入默认市场筛选和生产调度。
 
 ## 二、已知问题
 
@@ -112,6 +112,12 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-05 simulated equity snapshot writer for dashboard
+
+- [x] `shared/accounting/sim_ledger.py` 的 `daily_mark_to_market()` 已补齐前端收益看板所需字段：`capital_base`、`total_equity`、`total_pnl`、`realized_pnl`、`unrealized_pnl`、`return_pct`、`target_return_pct`、`max_drawdown_pct`、`trade_count`、`missing_mark_count` 和 `pnl_source`。
+- [x] 新增 `shared/review/equity_snapshots.py` 与运维入口 `shared/runtime_test/write_equity_snapshots.py`，可扫描 `shared/logs/sim_ledger/<market>/<style>/positions.json`，读取 SharedSignals 价格后追加 `daily_mark_to_market.jsonl`；价格缺失时保守按成本估值并标记 `sim_ledger_cost_fallback`。
+- [x] 该入口只写模拟账本权益快照，不写 `signals/`，不触发交易，不接触实盘队列、账户、邮件或 webhook；前端 `front/` 会把这些快照作为实时收益曲线的最高优先级来源。
 
 ### 2026-07-05 combined-cron health reporting
 

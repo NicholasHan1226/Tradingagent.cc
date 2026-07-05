@@ -48,6 +48,12 @@ Display-ready fields used by the homepage:
   `benchmark_return_pct`, `opportunity_gap_pct`, `max_drawdown_pct`,
   `trade_count`, and `pnl_source`. Rows marked `real_execution=true` or
   `capital_layer=real` are ignored by the simulated dashboard reader.
+- Backend writer: `PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/write_equity_snapshots.py --pretty`
+  appends one simulated mark-to-market snapshot per style ledger into
+  `shared/logs/sim_ledger/<market>/<style>/daily_mark_to_market.jsonl`.
+  It reads existing simulated positions, uses SharedSignals close prices when
+  available, and marks missing prices as `sim_ledger_cost_fallback` rather
+  than inventing return.
 - If explicit equity snapshots are absent, the local reader accepts daily review
   aliases such as
   `simulated_return_pct`, `return_pct`, `pnl_pct`, `target_return_pct`,

@@ -250,16 +250,28 @@ class SimLedger:
         *,
         date: str,
         benchmark_return: float = 0.0,
+        target_return_pct: float = 0.0,
     ) -> dict[str, Any]:
         state = self._load_state()
         positions = state.get("positions", {})
         market_value = 0.0
         unrealized = 0.0
+        realized = 0.0
+        missing_mark_count = 0
+        open_position_count = 0
         position_rows: list[dict[str, Any]] = []
         for symbol, position in positions.items():
             qty = _safe_float(position.get("quantity"))
-            mark = _safe_float(prices.get(symbol), _safe_float(position.get("avg_cost")))
+            if qty <= 1e-12:
+                realized += _safe_float(position.get("realized_pnl"))
+                continue
             avg = _safe_float(position.get("avg_cost"))
+            mark = _safe_float(prices.get(symbol), 0.0)
+            if mark <= 0:
+                mark = avg
+                missing_mark_count += 1
+            realized += _safe_float(position.get("realized_pnl"))
+            open_position_count += 1
             value = round(qty * mark, 8)
             pnl = round((mark - avg) * qty, 8)
             market_value += value
@@ -274,19 +286,50 @@ class SimLedger:
             })
         cash = _safe_float(state.get("cash"))
         equity = round(cash + market_value, 8)
+        realized = round(realized, 8)
+        unrealized = round(unrealized, 8)
+        total_pnl = round(realized + unrealized, 8)
+        capital_base = self._external_capital_base(fallback=round(equity - total_pnl, 8))
+        prior_rows = self._read_jsonl(self.mtm_path)
+        prior_equities = [
+            _safe_float(row.get("equity") or row.get("total_equity"))
+            for row in prior_rows
+            if _safe_float(row.get("equity") or row.get("total_equity")) > 0
+        ]
+        high_water = max(prior_equities + [equity, capital_base])
+        drawdown_pct = round(((high_water - equity) / high_water) * 100, 6) if high_water > 0 else 0.0
+        return_pct = round((total_pnl / capital_base) * 100, 6) if abs(capital_base) > 1e-12 else 0.0
         benchmark_pnl = round(equity * _safe_float(benchmark_return), 8)
+        benchmark_return_pct = round(_safe_float(benchmark_return) * 100, 6)
+        trade_count = len(self._read_jsonl(self.trade_journal_path))
         payload = {
             "date": date,
             "timestamp": _now_iso(),
             "cash": cash,
             "market_value": round(market_value, 8),
             "equity": equity,
-            "unrealized_pnl": round(unrealized, 8),
+            "total_equity": equity,
+            "capital_base": capital_base,
+            "pnl": total_pnl,
+            "total_pnl": total_pnl,
+            "realized_pnl": realized,
+            "unrealized_pnl": unrealized,
+            "return_pct": return_pct,
+            "target_return_pct": round(_safe_float(target_return_pct), 6),
+            "max_drawdown_pct": drawdown_pct,
             "benchmark_return": benchmark_return,
+            "benchmark_return_pct": benchmark_return_pct,
             "benchmark_pnl": benchmark_pnl,
-            "pnl_vs_benchmark": round(unrealized - benchmark_pnl, 8),
+            "pnl_vs_benchmark": round(total_pnl - benchmark_pnl, 8),
+            "open_position_count": open_position_count,
+            "missing_mark_count": missing_mark_count,
+            "trade_count": trade_count,
+            "pnl_source": "sim_ledger_mark_to_market" if missing_mark_count == 0 else "sim_ledger_cost_fallback",
+            "source": "sim_ledger_daily_mark_to_market",
+            "account_type": "simulated",
             "positions": position_rows,
             "capital_layer": "simulated",
+            "real_execution": False,
         }
         _append_jsonl(self.mtm_path, payload)
         return payload
@@ -383,6 +426,17 @@ class SimLedger:
     def _save_state(self, state: dict[str, Any]) -> None:
         _write_json(self.positions_path, state)
         _write_json(self.tax_lots_path, state.get("tax_lots", {}))
+
+    def _external_capital_base(self, *, fallback: float) -> float:
+        capital_base = 0.0
+        found_capital_event = False
+        for event in self._read_jsonl(self.cash_ledger_path):
+            event_type = str(event.get("event_type") or "").lower()
+            if event_type not in {"deposit", "withdrawal"}:
+                continue
+            found_capital_event = True
+            capital_base += _safe_float(event.get("amount"))
+        return round(capital_base if found_capital_event else fallback, 8)
 
     def _apply_buy(
         self,
