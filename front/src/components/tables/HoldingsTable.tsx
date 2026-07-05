@@ -10,7 +10,7 @@ export function HoldingsTable({ holdings }: { holdings: HoldingRow[] }) {
         <span>标的</span>
         <span>市场</span>
         <span>角色</span>
-        <span>权重</span>
+        <span>仓位/金额</span>
         <span>浮动收益</span>
         <span>风险</span>
       </div>

@@ -2,6 +2,7 @@ import { marketLabels, statusLabels } from '../data/dashboard'
 import { getClosedSignals, getSignalFunnel } from '../lib/dashboard'
 import { DRAWDOWN_LIMIT_PCT } from '../lib/dashboardConstants'
 import { formatCurrency } from '../lib/format'
+import { summarizeHoldingExposure } from '../lib/holdings'
 import type { HoldingRow, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 
 type Metric = {
@@ -62,7 +63,7 @@ function getPageMetrics(
   const positiveImpact = signals.reduce((total, signal) => total + Math.max(0, readImpact(signal.impact)), 0)
   const topHolding = holdings[0]
   const highRiskCount = holdings.filter((holding) => holding.risk === '偏高').length
-  const totalWeight = holdings.reduce((total, holding) => total + readPercent(holding.weight), 0)
+  const exposureSummary = summarizeHoldingExposure(holdings)
   const positiveHoldings = holdings.filter((holding) => !holding.pnl.startsWith('-')).length
   const drawdown = Math.abs(portfolio?.maxDrawdownPct ?? 0)
   const drawdownLimit = DRAWDOWN_LIMIT_PCT
@@ -92,7 +93,7 @@ function getPageMetrics(
   if (page === '持仓') {
     return [
       { label: '持仓数量', value: String(holdings.length), detail: `${positiveHoldings} 个正贡献` },
-      { label: '总仓位', value: `${totalWeight.toFixed(1)}%`, detail: '已记录权重' },
+      { label: exposureSummary.label, value: exposureSummary.value, detail: exposureSummary.detail },
       { label: '最大贡献', value: topHolding?.symbol ?? '等待持仓', detail: topHolding?.pnl ?? '暂无收益', tone: topHolding?.pnl.startsWith('-') ? 'red' : 'cyan' },
       { label: '风险偏高', value: String(highRiskCount), detail: highRiskCount ? '需要优先查看' : '暂无偏高', tone: highRiskCount ? 'red' : 'cyan' },
     ]
@@ -134,11 +135,6 @@ function formatPercent(value: number) {
 
 function readImpact(value: string) {
   const parsed = Number(value.replace('+', '').replace('%', '').trim())
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-function readPercent(value: string) {
-  const parsed = Number(value.replace('%', '').trim())
   return Number.isFinite(parsed) ? parsed : 0
 }
 

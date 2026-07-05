@@ -835,13 +835,13 @@ button:not(:disabled) {
 
 .funnel-flow-canvas {
   position: relative;
-  height: 116px;
+  height: 128px;
   overflow: hidden;
   border-top: 1px solid var(--border-hairline);
   border-bottom: 1px solid var(--border-hairline);
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.02), transparent 52%),
-    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 45%, rgba(240, 246, 244, 0.01)),
+    linear-gradient(90deg, rgba(105, 228, 215, 0.018), transparent 46%, rgba(105, 228, 215, 0.01)),
+    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 45%, rgba(240, 246, 244, 0.008)),
     rgba(1, 5, 5, 0.5);
 }
 
@@ -867,11 +867,11 @@ button:not(:disabled) {
 .funnel-flow-canvas::before {
   content: '';
   position: absolute;
-  inset: 17px 14px;
+  inset: 18px 14px;
   border: 1px solid rgba(240, 246, 244, 0.052);
   clip-path: polygon(0 6%, 100% 28%, 100% 72%, 0 94%);
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.052), rgba(105, 228, 215, 0.016) 48%, rgba(240, 246, 244, 0.012));
+    linear-gradient(90deg, rgba(105, 228, 215, 0.032), rgba(105, 228, 215, 0.012) 48%, rgba(240, 246, 244, 0.01));
 }
 
 .funnel-flow-canvas::after {
@@ -888,7 +888,7 @@ button:not(:disabled) {
 
 .funnel-mouth {
   position: absolute;
-  inset: 17px 14px;
+  inset: 18px 14px;
   pointer-events: none;
 }
 
@@ -906,10 +906,10 @@ button:not(:disabled) {
   border-top: 1px solid rgba(105, 228, 215, 0.18);
   border-bottom: 1px solid rgba(105, 228, 215, 0.12);
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.12), rgba(105, 228, 215, 0.026)),
+    linear-gradient(90deg, rgba(105, 228, 215, 0.075), rgba(105, 228, 215, 0.018)),
     rgba(4, 15, 15, 0.7);
   clip-path: polygon(0 0, 100% 17%, 100% 83%, 0 100%);
-  opacity: 0.9;
+  opacity: 0.76;
 }
 
 .funnel-particle {
@@ -919,7 +919,7 @@ button:not(:disabled) {
   --to-left: 93%;
   position: absolute;
   z-index: 2;
-  top: calc(16px + (var(--lane) * 12px));
+  top: calc(14px + (var(--lane) * 11px));
   left: 8px;
   display: inline-flex;
   align-items: center;
@@ -938,6 +938,34 @@ button:not(:disabled) {
 }
 
 .funnel-particle::before {
+  content: '';
+  display: block;
+  width: 7px;
+  height: 7px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: rgba(1, 5, 5, 0.86);
+  box-shadow: 0 0 0 1px rgba(1, 5, 5, 0.8);
+}
+
+.funnel-particle::after {
+  content: '';
+  position: absolute;
+  right: calc(100% + 2px);
+  width: 18px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, currentColor);
+  opacity: 0.24;
+}
+
+.funnel-particle.labeled {
+  min-width: 28px;
+  height: 18px;
+  padding: 0 6px;
+  background: rgba(1, 5, 5, 0.84);
+}
+
+.funnel-particle.labeled::before {
   content: attr(data-symbol);
   width: auto;
   height: auto;
@@ -948,6 +976,15 @@ button:not(:disabled) {
   color: currentColor;
   font: 680 9px/1 var(--font-number);
   letter-spacing: 0;
+}
+
+.funnel-particle.quiet {
+  min-width: 7px;
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
 }
 
 .funnel-particle b {

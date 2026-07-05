@@ -64,6 +64,10 @@ Display-ready fields used by the homepage:
   opportunity with its latest `status`, current `stage`, and available stage
   timestamps before execution.
 - `holdings[]`: `symbol`, `market`, `weight`, `pnl`, `risk`, and `role`.
+  `weight` may be a percentage such as `12.8%` or a formatted exposure amount
+  such as `$1,022`; frontend summaries must parse the unit before aggregating.
+  Mixed amount/percentage batches should show a waiting or normalization state
+  instead of pretending both units share one allocation scale.
 
 ## Result-First Panel Rules
 

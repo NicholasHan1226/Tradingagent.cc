@@ -1,5 +1,5 @@
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
-import { marketLabels } from '../../data/dashboard'
+import { getMarketAllocation } from '../../lib/holdings'
 import type { HoldingRow } from '../../types/dashboard'
 import { PanelTitle } from '../PanelTitle'
 import { ContributionTooltip } from './ContributionPanel'
@@ -37,20 +37,5 @@ export function AllocationPanel({ holdings }: { holdings: HoldingRow[] }) {
 }
 
 function getAllocationData(holdings: HoldingRow[]) {
-  const byMarket = holdings.reduce<Record<string, number>>((acc, holding) => {
-    const market = marketLabels[holding.market]
-    acc[market] = (acc[market] ?? 0) + readPercent(holding.weight)
-    return acc
-  }, {})
-
-  const rows = Object.entries(byMarket)
-    .map(([name, value]) => ({ name, value: Number(value.toFixed(1)) }))
-    .sort((a, b) => b.value - a.value)
-
-  return rows.length ? rows : [{ name: '等待持仓', value: 100 }]
-}
-
-function readPercent(value: string) {
-  const parsed = Number(value.replace('%', '').trim())
-  return Number.isFinite(parsed) ? parsed : 0
+  return getMarketAllocation(holdings)
 }

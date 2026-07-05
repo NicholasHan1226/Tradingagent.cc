@@ -56,6 +56,7 @@ export function RealtimeReturnCard({
           </button>
         </div>
       </div>
+      <span className="return-kicker">实时收益</span>
       {isLive ? (
         <div className="return-placeholder">
           <strong>真实账户待接入</strong>
@@ -68,7 +69,6 @@ export function RealtimeReturnCard({
         </div>
       ) : (
         <>
-          <span className="return-kicker">实时收益</span>
           <strong>{primaryResult}</strong>
           <div className="return-subline">
             <b>{resultCaption}</b>

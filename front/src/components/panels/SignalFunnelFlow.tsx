@@ -3,6 +3,8 @@ import { getSignalFunnel } from '../../lib/dashboard'
 import type { SignalRow } from '../../types/dashboard'
 
 const OUTCOME_LABELS = ['成交', '等待', '复盘', '拦截']
+const MAX_ANIMATED_SIGNALS = 64
+const MAX_VISIBLE_LABELS = 10
 
 export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: boolean; signals: SignalRow[] }) {
   const funnel = getSignalFunnel(signals)
@@ -62,7 +64,7 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
             </div>
             {particles.map((particle, index) => (
               <i
-                className={`funnel-particle ${particle.tone}`}
+                className={`funnel-particle ${particle.tone} ${particle.showLabel ? 'labeled' : 'quiet'}`}
                 key={`${particle.label}-${index}`}
                 style={{
                   '--delay': particle.begin,
@@ -70,7 +72,7 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
                   '--lane': particle.lane,
                   '--to-left': particle.stopLeft,
                 } as CSSProperties}
-                data-symbol={particle.symbol}
+                data-symbol={particle.showLabel ? particle.symbol : undefined}
                 title={particle.label}
               >
                 <b />
@@ -115,7 +117,16 @@ function getStageHint(index: number, count: number, total: number, dropped: numb
 }
 
 function buildParticles(rows: SignalRow[]) {
-  return rows.slice(0, 42).map((signal, index) => {
+  const visibleRows = rows.slice(0, MAX_ANIMATED_SIGNALS)
+  const labelIndexes = new Set(
+    visibleRows
+      .map((signal, index) => ({ index, priority: labelPriority(signal) }))
+      .sort((a, b) => b.priority - a.priority || a.index - b.index)
+      .slice(0, MAX_VISIBLE_LABELS)
+      .map((row) => row.index),
+  )
+
+  return visibleRows.map((signal, index) => {
     const stopStage = getStopStage(signal)
     const tone = signal.status === 'blocked' || signal.status === 'cancelled'
       ? 'red'
@@ -127,14 +138,23 @@ function buildParticles(rows: SignalRow[]) {
 
     return {
       begin: `${-(index * 0.52)}s`,
-      duration: `${6.2 + (index % 5) * 0.46}s`,
+      duration: `${6.4 + (index % 6) * 0.42}s`,
       label: signal.symbol,
-      lane: index % 7,
+      lane: index % 9,
+      showLabel: labelIndexes.has(index),
       symbol: compactSymbol(signal.symbol),
       stopLeft: `${Math.min(93, stopStage * 20 - 8)}%`,
       tone,
     }
   })
+}
+
+function labelPriority(signal: SignalRow) {
+  if (signal.status === 'missed') return 80
+  if (signal.status === 'blocked' || signal.status === 'cancelled') return 70
+  if (signal.status === 'pending') return 60
+  if (signal.stageLatencyMinutes && signal.stageLatencyMinutes > 0) return 40
+  return signal.status === 'executed' ? 20 : 10
 }
 
 function compactSymbol(symbol: string) {
