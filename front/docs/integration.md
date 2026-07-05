@@ -41,6 +41,10 @@ Display-ready fields used by the homepage:
   simulated return series from `shared/review/*/style_performance.jsonl` by
   summing `pnl` per date and normalizing it against the simulated ledger
   capital base from `shared/logs/sim_ledger/*/*/positions.json`.
+- When matching simulated `trade_journal.jsonl` timestamps are available for
+  the same market/style/date, the reader expands style-level daily PnL into a
+  trade-timed return curve. This preserves the style performance PnL total while
+  making the homepage curve move at real ledger event times.
 - When style performance rows provide `pnl_source`, `realized_pnl`, and
   `unrealized_pnl`, the snapshot `portfolio` includes `pnlSource`,
   `realizedPnl`, and `unrealizedPnl`; the homepage can show that the current
