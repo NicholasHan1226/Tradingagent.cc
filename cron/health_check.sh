@@ -71,18 +71,29 @@ def file_age_minutes(path: Path) -> float | None:
 
 
 def check_sharedsignals(url: str) -> dict:
-    try:
-        with urllib.request.urlopen(url, timeout=8) as resp:
-            body = resp.read(65536).decode("utf-8", errors="replace")
-        status_code = getattr(resp, "status", 200)
+    errors: list[str] = []
+    for attempt in range(1, 4):
         try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            payload = {"raw": body[:200]}
-        ok = 200 <= int(status_code) < 300
-        return {"status": "ok" if ok else "critical", "url": url, "status_code": status_code, "payload_status": payload.get("status") if isinstance(payload, dict) else None}
-    except (OSError, urllib.error.URLError) as exc:
-        return {"status": "critical", "url": url, "error": str(exc)}
+            with urllib.request.urlopen(url, timeout=8) as resp:
+                body = resp.read(65536).decode("utf-8", errors="replace")
+            status_code = getattr(resp, "status", 200)
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = {"raw": body[:200]}
+            ok = 200 <= int(status_code) < 300
+            return {
+                "status": "ok" if ok else "critical",
+                "url": url,
+                "status_code": status_code,
+                "payload_status": payload.get("status") if isinstance(payload, dict) else None,
+                "attempts": attempt,
+            }
+        except (OSError, urllib.error.URLError) as exc:
+            errors.append(f"attempt={attempt} error={exc}")
+            if attempt < 3:
+                time.sleep(2)
+    return {"status": "critical", "url": url, "attempts": 3, "errors": errors[-3:]}
 
 
 def check_sim_output(root: Path, max_age: int) -> dict:

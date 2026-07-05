@@ -117,6 +117,7 @@
 
 - [x] `cron/health_check.sh` 新增 `combined_crontab` 只读检查，调用 MarketGraph `deploy/install_combined_crontab.sh --check`；任一关键 cron 缺失会把 TradingAgent 外部健康报告标记为 `critical`。
 - [x] 检查结果写入 SharedSignals `logs/watchdog_inputs/tradingagent_health.json(.jsonl)`，复用现有 watchdog 与系统邮件链路；不新增 daemon、不安装新 crontab、不修改交易队列。
+- [x] SharedSignals API 探针增加 3 次短重试，避免 API 单次慢响应或 SQLite 瞬时锁竞争把整条健康链路误报为 `critical`；连续失败仍按 critical 上报。
 - [x] 该检查只读执行，不会安装或覆盖 live crontab；真正安装仍只允许走 MarketGraph 合并安装脚本。
 
 ### 2026-07-05 cross-repo path and stale docs cleanup
