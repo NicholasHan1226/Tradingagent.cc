@@ -36,3 +36,20 @@ def test_render_text_contains_plain_status():
 
     assert "开盘验收：通过" in text
     assert "sharedsignals_api" in text
+
+
+def test_sharedsignals_degraded_with_core_ok_is_pass(monkeypatch):
+    payload = {
+        "status": "degraded",
+        "checks": {
+            "functions": {"status": "ok"},
+            "cron": {"status": "ok"},
+            "data_freshness": {"status": "degraded"},
+        },
+    }
+    monkeypatch.setattr(opening_acceptance, "_http_json", lambda _url: (200, payload))
+
+    result = opening_acceptance.check_sharedsignals("http://127.0.0.1:8082")
+
+    assert result.status == "pass"
+    assert result.details["payload_status"] == "degraded"

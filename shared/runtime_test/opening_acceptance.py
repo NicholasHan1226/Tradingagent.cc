@@ -98,12 +98,22 @@ def check_sharedsignals(api_url: str) -> AcceptanceCheck:
         )
     payload_status = str(payload.get("status") or "").lower()
     ok = 200 <= status_code < 300 and payload_status in {"ok", "healthy", "degraded"}
-    status = "pass" if ok and payload_status != "degraded" else ("warn" if ok else "fail")
+    checks = payload.get("checks", {}) if isinstance(payload.get("checks"), dict) else {}
+    functions_status = str((checks.get("functions") or {}).get("status") or "").lower() if isinstance(checks.get("functions"), dict) else ""
+    cron_status = str((checks.get("cron") or {}).get("status") or "").lower() if isinstance(checks.get("cron"), dict) else ""
+    core_ok = ok and functions_status in {"ok", ""} and cron_status in {"ok", ""}
+    status = "pass" if core_ok else ("warn" if ok else "fail")
     return AcceptanceCheck(
         "sharedsignals_api",
         status,
-        "SharedSignals API 可用" if ok else "SharedSignals API 返回异常",
-        {"url": health_url, "status_code": status_code, "payload_status": payload_status},
+        "SharedSignals 核心 API 可用" if core_ok else ("SharedSignals API 可用但有降级项" if ok else "SharedSignals API 返回异常"),
+        {
+            "url": health_url,
+            "status_code": status_code,
+            "payload_status": payload_status,
+            "functions_status": functions_status,
+            "cron_status": cron_status,
+        },
     )
 
 
