@@ -69,10 +69,18 @@ them only for scoring and confidence weighting.
 - `SHARED_SIGNALS_DB`: overrides the SQLite path.
   Default: `/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite`.
 - `MARKETGRAPH_DATA`: overrides the MarketGraph CSV root.
-  Default: `/opt/investment/MarketGraph/data`.
+  Default: unset, which disables local CSV fallback. Configure it only for a
+  same-host deployment or an explicitly mounted MarketGraph export directory.
 - `SHARED_SIGNALS_ROOT`: overrides SharedSignals root for importing
   `reference/market_calendar.py`.
   Default: `/opt/investment/SharedSignals`.
+- `SHARED_SIGNALS_CALENDAR_ROOT`: optional override for A-share trading
+  calendar file discovery. Default: same as `SHARED_SIGNALS_ROOT`.
+
+TradingAgent receipts default to `signals/sim_execution_receipts.jsonl`.
+MarketGraph `outputs/` receipt files are historical compatibility inputs only
+when they already exist; new simulated execution receipts must not be written to
+MarketGraph.
 
 ## Fail-Safe Behavior
 

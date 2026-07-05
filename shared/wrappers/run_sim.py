@@ -12,8 +12,8 @@ from typing import Any
 
 LOCAL_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(LOCAL_ROOT))
-sys.path.insert(0, "/opt/investment/tradingagent")
-sys.path.insert(0, "/opt/investment/SharedSignals")
+sys.path.insert(0, os.environ.get("TRADINGAGENT_ROOT", "/opt/investment/tradingagent"))
+sys.path.insert(0, os.environ.get("SHARED_SIGNALS_ROOT", "/opt/investment/SharedSignals"))
 
 os.environ.setdefault("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082")
 os.environ.setdefault(

@@ -24,7 +24,7 @@ if not _raw_secret:
                   "Set WEBHOOK_SECRET in environment for production.", RuntimeWarning)
 WEBHOOK_SECRET = _raw_secret
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "http://localhost:9865/")
-RECEIPTS_PATH = Path(os.environ.get("SIM_RECEIPTS_PATH", "/opt/investment/MarketGraph/outputs/sim_execution_receipts.jsonl"))
+RECEIPTS_PATH = Path(os.environ.get("SIM_RECEIPTS_PATH", "/opt/investment/tradingagent/signals/sim_execution_receipts.jsonl"))
 TIMEOUT_SECONDS = 10
 RETRY_COUNT = 2
 RETRY_BACKOFF_BASE_SECONDS = 0.25

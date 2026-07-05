@@ -2066,7 +2066,8 @@ def run_ashare_night_calibration() -> dict[str, Any]:
     research = run_research_report()
     backtest = run_backtest_report()
     latest_daily = _read_last_jsonl(SHARED / "review/daily/daily_brief.jsonl")
-    closing_scan = _read_json(Path("/opt/investment/MarketGraph/outputs/ashare_closing_buy_candidates.json"))
+    closing_scan_path = os.environ.get("MARKETGRAPH_CLOSING_CANDIDATES_PATH", "").strip()
+    closing_scan = _read_json(Path(closing_scan_path)) if closing_scan_path else {}
     payload = {
         "job": "job_ashare_night_calibration",
         "state": "ok",

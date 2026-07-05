@@ -11,24 +11,26 @@ export TRADINGAGENT_ROOT="${TRADINGAGENT_ROOT:-/opt/investment/tradingagent}"
 export TRADINGAGENT_SHARED_ROOT="${TRADINGAGENT_SHARED_ROOT:-${TRADINGAGENT_ROOT}/shared}"
 export TRADINGAGENT_WRAPPERS_ROOT="${TRADINGAGENT_WRAPPERS_ROOT:-${TRADINGAGENT_SHARED_ROOT}/wrappers}"
 export SHARED_SIGNALS_ROOT="${SHARED_SIGNALS_ROOT:-/opt/investment/SharedSignals}"
-export MARKETGRAPH_ROOT="${MARKETGRAPH_ROOT:-/opt/investment/MarketGraph}"
-export MARKETGRAPH_RUNTIME_ROOT="${MARKETGRAPH_RUNTIME_ROOT:-/opt/investment/MarketGraphRuntime}"
+export SHAREDSIGNALS_RUNTIME_ROOT="${SHAREDSIGNALS_RUNTIME_ROOT:-${MARKETGRAPH_RUNTIME_ROOT:-/opt/investment/MarketGraphRuntime}}"
 
-export MARKETGRAPH_CRON_LOADER="${MARKETGRAPH_CRON_LOADER:-${MARKETGRAPH_ROOT}/deploy/marketgraph_cron_loader.sh}"
-export MARKETGRAPH_CRON_ENV="${MARKETGRAPH_CRON_ENV:-${MARKETGRAPH_ROOT}/deploy/marketgraph_cron.env}"
+export TRADINGAGENT_ENV_FILE="${TRADINGAGENT_ENV_FILE:-${TRADINGAGENT_ROOT}/.env}"
+export FINANCE_SHARED_ENV_FILE="${FINANCE_SHARED_ENV_FILE:-/opt/marketgraph/.env}"
 
-# Chain upstream MarketGraph cron env first so existing secrets/token wiring stays intact.
-if [[ -f "${MARKETGRAPH_CRON_LOADER}" ]]; then
+# Load TradingAgent-owned env first, then the shared finance env for common
+# credentials. Do not source MarketGraph deploy env; the three systems must be
+# able to run on separate hosts.
+if [[ -f "${TRADINGAGENT_ENV_FILE}" ]]; then
     # shellcheck disable=SC1090
-    source "${MARKETGRAPH_CRON_LOADER}"
-elif [[ -f "${MARKETGRAPH_CRON_ENV}" ]]; then
+    source "${TRADINGAGENT_ENV_FILE}"
+fi
+if [[ -f "${FINANCE_SHARED_ENV_FILE}" ]]; then
     # shellcheck disable=SC1090
-    source "${MARKETGRAPH_CRON_ENV}"
+    source "${FINANCE_SHARED_ENV_FILE}"
 fi
 
 # SharedSignals/ShareChannel API is the default data entry for TradingAgent.
 # Direct SQLite reads are kept only as read-only fallback when the API is unreachable.
-export SHARED_SIGNALS_DB="${SHARED_SIGNALS_DB:-${MARKETGRAPH_RUNTIME_ROOT}/read_model/marketdata.sqlite}"
+export SHARED_SIGNALS_DB="${SHARED_SIGNALS_DB:-${SHAREDSIGNALS_RUNTIME_ROOT}/read_model/marketdata.sqlite}"
 export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
 export SHAREDSIGNALS_API_TIMEOUT="${SHAREDSIGNALS_API_TIMEOUT:-10}"
 export SHAREDSIGNALS_API_RETRIES="${SHAREDSIGNALS_API_RETRIES:-1}"
@@ -47,8 +49,14 @@ export EMAIL_TRADING_TO="${EMAIL_TRADING_TO:-${EMAIL_TO_TRADING}}"
 export EMAIL_SYSTEM_FROM="${EMAIL_SYSTEM_FROM:-${EMAIL_FROM_SYSTEM}}"
 export EMAIL_SYSTEM_TO="${EMAIL_SYSTEM_TO:-${EMAIL_TO_SYSTEM}}"
 
-export MARKETGRAPH_VENV_ROOT="${MARKETGRAPH_VENV_ROOT:-/opt/marketgraph/venv}"
-export PYTHON_VENV_ROOT="${PYTHON_VENV_ROOT:-${MARKETGRAPH_VENV_ROOT}}"
+export TRADINGAGENT_VENV_ROOT="${TRADINGAGENT_VENV_ROOT:-/opt/tradingagent/venv}"
+if [[ -z "${PYTHON_VENV_ROOT:-}" ]]; then
+    if [[ -d "${TRADINGAGENT_VENV_ROOT}" ]]; then
+        export PYTHON_VENV_ROOT="${TRADINGAGENT_VENV_ROOT}"
+    else
+        export PYTHON_VENV_ROOT="/opt/marketgraph/venv"
+    fi
+fi
 if [[ -z "${VIRTUAL_ENV:-}" && -d "${PYTHON_VENV_ROOT}" ]]; then
     export VIRTUAL_ENV="${PYTHON_VENV_ROOT}"
 fi
@@ -62,7 +70,7 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
 fi
 export PIP_BIN="${PIP_BIN:-${PYTHON_VENV_ROOT}/bin/pip}"
 
-export TRADINGS_RUNTIME_ROOT="${TRADINGS_RUNTIME_ROOT:-${MARKETGRAPH_RUNTIME_ROOT}/tradings}"
+export TRADINGS_RUNTIME_ROOT="${TRADINGS_RUNTIME_ROOT:-${SHAREDSIGNALS_RUNTIME_ROOT}/tradings}"
 export TRADINGS_STATE_ROOT="${TRADINGS_STATE_ROOT:-${TRADINGS_RUNTIME_ROOT}/state}"
 export TRADINGS_TMP_ROOT="${TRADINGS_TMP_ROOT:-${TRADINGS_RUNTIME_ROOT}/tmp}"
 export TRADINGS_LOG_ROOT="${TRADINGS_LOG_ROOT:-${TRADINGAGENT_SHARED_ROOT}/logs}"
@@ -70,7 +78,7 @@ export TRADINGS_CRON_LOG_ROOT="${TRADINGS_CRON_LOG_ROOT:-${TRADINGS_LOG_ROOT}/cr
 export TRADINGS_REPAIR_QUEUE="${TRADINGS_REPAIR_QUEUE:-${TRADINGS_LOG_ROOT}/repair_queue.jsonl}"
 export TRADINGS_GATE_ROOT="${TRADINGS_GATE_ROOT:-${TRADINGAGENT_SHARED_ROOT}/risk/gate}"
 
-export PYTHONPATH="${TRADINGAGENT_ROOT}:${SHARED_SIGNALS_ROOT}:${MARKETGRAPH_ROOT}:${PYTHONPATH:-}"
+export PYTHONPATH="${TRADINGAGENT_ROOT}:${SHARED_SIGNALS_ROOT}:${PYTHONPATH:-}"
 
 # Secret references only. Do not place plaintext secrets in this file.
 export TRADINGS_OPENAI_API_KEY="${TRADINGS_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"

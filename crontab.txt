@@ -11,10 +11,8 @@
 SHELL=/bin/bash
 BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
-# A-share observation/real-review signal digest; no broker execution.
-*/10 9-15 * * 1-5 /opt/investment/MarketGraph/deploy/job_trading_signals.sh >> /opt/investment/tradingagent/shared/logs/cron/job_trading_signals.log 2>&1
-57 14 * * 1-5 /opt/investment/MarketGraph/deploy/job_trading_signals.sh >> /opt/investment/tradingagent/shared/logs/cron/job_trading_signals.log 2>&1
-40,50,56 14 * * 1-5 /opt/investment/MarketGraph/deploy/job_ashare_closing_scan.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_closing_scan.log 2>&1
+# A-share observation/real-review signal digest belongs to MarketGraph crontab.
+# See MarketGraph/deploy/crontab.txt; TradingAgent does not own those jobs/logs.
 
 # A-share server-local simulated execution. Hermes/Mini is reserved as second
 # path only when explicitly enabled by environment.

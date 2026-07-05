@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from functools import lru_cache
@@ -16,8 +17,8 @@ except Exception:  # pragma: no cover - optional SharedSignals integration
     shared_data_reader = None  # type: ignore[assignment]
 
 TRADE_CALENDAR_SEARCH_ROOTS = (
-    Path("/opt/investment/SharedSignals"),
-    Path("/opt/investment/MarketGraph/data"),
+    Path(os.environ.get("SHARED_SIGNALS_ROOT", "/opt/investment/SharedSignals")),
+    Path(os.environ.get("SHARED_SIGNALS_CALENDAR_ROOT", "/opt/investment/SharedSignals")),
 )
 TRADE_CALENDAR_PATTERNS = (
     "trade_cal.csv",

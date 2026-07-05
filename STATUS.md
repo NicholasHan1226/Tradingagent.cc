@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (combined crontab restored for SharedSignals + TradingAgent)
+> 最后更新：2026-07-05 (cross-repo path cleanup and stale docs retired)
 
 ---
 
@@ -25,7 +25,7 @@
 - **复盘节奏**：11:45 午盘 / 15:30 收盘 / 22:00 夜间校准 / 07:30 晨报
 - **复盘/报告输入**：日报、周报、归因和汇总邮件默认通过 `load_review_trades()` 读取 legacy shadow fills + `shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl` + A股 `shared/logs/local_sim/local_sim_trades.jsonl`；报告保留 `review_trade_count`、`shadow_trade_count`、`simulated_trade_count` 三个计数，避免服务器本地模拟成交被误判为无样本
 - **影子盘状态闭环**：US/Crypto/PM/HK 本地 shadow runner 的 `simulated_fill.status=filled|partial` 会立即推进到 `signals/shadow/filled`；若状态机推进失败，卡片进入 `signals/shadow/failed` 并保留 `settlement_warning`，不再把已模拟成交卡片长期留在 `shadow/pending`
-- **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查同时读取本地回执与旧 Hermes 回执路径，并能识别“尚无首笔本地模拟成交”的 bootstrap 状态，避免把无样本误报为链路故障
+- **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查默认读取 TradingAgent 本地回执，旧 MarketGraph 回执只在历史文件存在时作为兼容输入，并能识别“尚无首笔本地模拟成交”的 bootstrap 状态，避免把无样本误报为链路故障
 - **模拟盘健康检查**：`market_health` 已区分交易时段样本缺失与闭市等待首样本；A股和 CNFutures 在周末/闭市且尚未进入应产生样本的时段时不再误报 warn，进入或经过交易时段后仍无数据/成交会继续告警
 - **A股/CNFutures 开盘验收框架**：A股新增 `shared/runtime_test/ashare_opening_validator.py`，提供 `validate_pre_open` / `validate_opening` / `first_sample_alerts` 三个只读入口，验证 SharedSignals 日线/5分钟数据、本地模拟成交样本、签名回执、复盘日志和 filled signal cards；新增 `shared/wrappers/job_ashare_pre_open_validation.sh`、`job_ashare_opening_validation.sh`、`job_ashare_first_sample_alert.sh` 三个 wrapper，并已写入生产 crontab。CNFutures `opening_validator.py` 已增强 filled signals、receipts 和 review rows 计数与告警。两市场验收均固定 `real_trading_enabled=false`，只在异常时产生系统告警。
 - **多市场绩效去重**：Crypto/PM/US/CNFutures 共用的 `style_performance.jsonl` 已从 5 分钟 append-only 改为按 `(market, style_name, date)` 幂等写入，历史读取也会取同键最新值，避免 5 分钟任务把 runs/trades/PnL 重复放大并污染风格演化。
@@ -98,6 +98,15 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-05 cross-repo path and stale docs cleanup
+
+- [x] TradingAgent 模拟回执默认写入 `signals/sim_execution_receipts.jsonl`；旧 `MarketGraph/outputs/sim_execution_receipts.jsonl` 只在历史文件存在时作为兼容读取，不再作为默认写入面。
+- [x] `TradingagentDataReader` 不再默认读取同机 `/opt/investment/MarketGraph`；MarketGraph CSV fallback 必须显式设置 `MARKETGRAPH_DATA`，便于未来三系统分服务器独立运行。
+- [x] A股 T+1 日历查找移除默认 MarketGraph 数据目录，改为 SharedSignals root / calendar root。
+- [x] `shared/env_loader.sh` 不再 source MarketGraph deploy env，也不再把 MarketGraph 仓库加入 `PYTHONPATH`；TradingAgent env 优先，公共 finance env 仅作为兼容密钥来源。
+- [x] TradingAgent cron 模板移除 MarketGraph 观察任务；MarketGraph 任务归属 `MarketGraph/deploy/crontab.txt`，日志写入 MarketGraphRuntime。
+- [x] 删除 2026-06-30 过期 handoff 文档，重写 `docs/data_sources.md`，修正 `docs/AGENTS.md` 中过期/不存在入口。
 
 ### 2026-07-05 simulated matching residual risk fixes
 

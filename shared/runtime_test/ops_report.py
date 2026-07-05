@@ -186,10 +186,11 @@ def failure_review() -> dict[str, Any]:
 
 
 def receipt_integrity(paths: list[Path] | None = None) -> dict[str, Any]:
-    paths = paths or [
-        ROOT.parent / "MarketGraph" / "outputs" / "sim_execution_receipts.jsonl",
-        SIGNALS / "sim_execution_receipts.jsonl",
-    ]
+    if paths is None:
+        paths = [SIGNALS / "sim_execution_receipts.jsonl"]
+        legacy_path = ROOT.parent / "MarketGraph" / "outputs" / "sim_execution_receipts.jsonl"
+        if legacy_path.exists():
+            paths.append(legacy_path)
     total = signed = unsigned = invalid = payload_linked = 0
     by_path: list[dict[str, Any]] = []
     for path in paths:

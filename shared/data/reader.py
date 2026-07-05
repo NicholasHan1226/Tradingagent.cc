@@ -461,8 +461,9 @@ class TradingagentDataReader:
     @property
     def marketgraph(self) -> MarketGraphCSVReader:
         if self._marketgraph is None:
+            marketgraph_data = os.environ.get("MARKETGRAPH_DATA", "").strip()
             self._marketgraph = MarketGraphCSVReader(
-                Path(os.environ.get("MARKETGRAPH_ROOT", "/opt/investment/MarketGraph")),
+                Path(marketgraph_data) if marketgraph_data else Path("/nonexistent/tradingagent/marketgraph_csv_disabled"),
                 api_client=self._api_client,
             )
         return self._marketgraph

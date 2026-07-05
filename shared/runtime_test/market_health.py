@@ -387,10 +387,10 @@ def _check_failure_receipts() -> Check:
     local_trade_count = 0
     if local_trades_path.exists():
         local_trade_count = sum(1 for line in local_trades_path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
-    receipt_paths = [
-        ROOT / "signals/sim_execution_receipts.jsonl",
-        ROOT.parent / "MarketGraph/outputs/sim_execution_receipts.jsonl",
-    ]
+    receipt_paths = [ROOT / "signals/sim_execution_receipts.jsonl"]
+    legacy_receipts = ROOT.parent / "MarketGraph/outputs/sim_execution_receipts.jsonl"
+    if legacy_receipts.exists():
+        receipt_paths.append(legacy_receipts)
     latest_receipts = []
     existing_paths = []
     for receipts in receipt_paths:
