@@ -26,7 +26,8 @@ MarketGraph, or legacy Ashare data directories.
 ## Reader API
 
 `shared.data.reader.TradingagentDataReader` is the consumer-facing facade. It
-uses SharedSignals HTTP API first when `SHAREDSIGNALS_API_URL` is configured,
+uses SharedSignals HTTP API first; production cron/env defaults set
+`SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`,
 then falls back to the read-only SQLite reader on API failure or empty API
 shells.
 

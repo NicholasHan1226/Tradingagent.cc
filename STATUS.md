@@ -357,7 +357,7 @@
 - [x] `TradingagentDataReader` 新增 `api_client` 参数；配置 `SHAREDSIGNALS_API_URL` 时自动创建 `SharedSignalsAPIClient`。
 - [x] `get_market_data` / `get_events` / `is_trading_day` 优先走 SharedSignals HTTP API；API 不可用时回退 SQLite 只读路径并设置 `degraded=True`。
 - [x] `SharedSignalsAPIClient` 移除 deprecated 状态，校准 15 个当前 API server 端点，补充 timeout / retry / backoff 配置，去除 `X-API-Key` 双重暴露。
-- [x] `.env.example` 新增 `SHAREDSIGNALS_API_URL`（默认空，直接走 SQLite）、`SHAREDSIGNALS_API_KEY`、timeout/retry 配置。
+- [x] `.env.example` 的 `SHAREDSIGNALS_API_URL` 默认指向 `http://127.0.0.1:8082`；SQLite 只保留为本机只读降级路径，默认 DB 指向 `/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite`。
 - [x] 验证：`py_compile`、导入 smoke、`tests/test_data_reader.py` 通过。
 
 ### 多市场 P1 Codex review 修复（2026-07-02）

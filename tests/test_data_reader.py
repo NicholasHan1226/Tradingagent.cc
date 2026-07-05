@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from shared.data.reader import (  # noqa: E402
+    _default_shared_signals_db,
     MarketGraphCSVReader,
     SharedSignalsReader,
     TradingagentDataReader,
@@ -270,6 +272,13 @@ class TestSharedSignalsReader(unittest.TestCase):
         self.assertEqual(missing_reader.get_event_candidates(), [])
         self.assertTrue(missing_reader.stale)
         self.assertGreaterEqual(len(missing_reader.errors), 1)
+
+    def test_default_sqlite_fallback_uses_runtime_read_model(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(
+                _default_shared_signals_db(),
+                Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite"),
+            )
 
 
 class FakeAPIClient:

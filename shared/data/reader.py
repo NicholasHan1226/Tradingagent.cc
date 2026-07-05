@@ -21,16 +21,17 @@ from .shared_signals_api import SharedSignalsAPIClient
 
 # -- Default paths -----------------------------------------------------------
 
-DEFAULT_SHARED_SIGNALS_DB = Path(
-    os.environ.get(
-        "SHARED_SIGNALS_DB",
-        os.environ.get(
-            "SHAREDSIGNALS_ROOT",
-            "/opt/investment/SharedSignals",
-        )
-        + "/read_model/marketdata.sqlite",
+def _default_shared_signals_db() -> Path:
+    configured = os.environ.get("SHARED_SIGNALS_DB")
+    if configured:
+        return Path(configured)
+    runtime_root = Path(
+        os.environ.get("MARKETGRAPH_RUNTIME_ROOT", "/opt/investment/MarketGraphRuntime")
     )
-)
+    return runtime_root / "read_model" / "marketdata.sqlite"
+
+
+DEFAULT_SHARED_SIGNALS_DB = _default_shared_signals_db()
 
 
 # -- SharedSignals SQLite Reader ---------------------------------------------

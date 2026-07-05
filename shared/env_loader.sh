@@ -28,6 +28,7 @@ fi
 
 # SharedSignals/ShareChannel API is the default data entry for TradingAgent.
 # Direct SQLite reads are kept only as read-only fallback when the API is unreachable.
+export SHARED_SIGNALS_DB="${SHARED_SIGNALS_DB:-${MARKETGRAPH_RUNTIME_ROOT}/read_model/marketdata.sqlite}"
 export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
 export SHAREDSIGNALS_API_TIMEOUT="${SHAREDSIGNALS_API_TIMEOUT:-10}"
 export SHAREDSIGNALS_API_RETRIES="${SHAREDSIGNALS_API_RETRIES:-1}"
