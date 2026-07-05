@@ -178,11 +178,14 @@ type EquitySnapshotRecord = EquitySnapshotRow & {
 type ParsedEquitySnapshot = {
   benchmarkPct: number
   capitalBase: number
+  dayKey: string
+  isSimLedgerSnapshot: boolean
   maxDrawdownPct: number
   opportunityPct: number
   pnl: number
   realizedPnl: number
   returnPct: number
+  sourcePath: string
   sources: Set<string>
   targetPct: number
   timestamp: string
@@ -326,26 +329,9 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
 
   if (!snapshots.length) return { performance: [] }
 
-  const grouped = new Map<number, ParsedEquitySnapshot>()
-  for (const snapshot of snapshots) {
-    const current = grouped.get(snapshot.timestampMs)
-    if (!current) {
-      grouped.set(snapshot.timestampMs, { ...snapshot })
-      continue
-    }
-
-    const previousCapitalBase = current.capitalBase
-    current.capitalBase += snapshot.capitalBase
-    current.pnl += snapshot.pnl
-    current.realizedPnl += snapshot.realizedPnl
-    current.unrealizedPnl += snapshot.unrealizedPnl
-    current.tradeCount += snapshot.tradeCount
-    current.maxDrawdownPct = Math.max(current.maxDrawdownPct, snapshot.maxDrawdownPct)
-    current.benchmarkPct = weightedAverage(current.benchmarkPct, previousCapitalBase, snapshot.benchmarkPct, snapshot.capitalBase)
-    current.opportunityPct = weightedAverage(current.opportunityPct, previousCapitalBase, snapshot.opportunityPct, snapshot.capitalBase)
-    current.targetPct = Math.max(current.targetPct, snapshot.targetPct)
-    for (const source of snapshot.sources) current.sources.add(source)
-  }
+  const grouped = snapshots.some((snapshot) => snapshot.isSimLedgerSnapshot)
+    ? groupSimLedgerEquitySnapshots(snapshots.filter((snapshot) => snapshot.isSimLedgerSnapshot))
+    : groupEquitySnapshotsByTimestamp(snapshots)
 
   const timestamps = [...grouped.keys()].sort((a, b) => a - b)
   const performance = timestamps.map((timestampMs, index) => {
@@ -380,6 +366,63 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
       updatedAt: generatedAt,
     },
   }
+}
+
+function groupEquitySnapshotsByTimestamp(snapshots: ParsedEquitySnapshot[]) {
+  const grouped = new Map<number, ParsedEquitySnapshot>()
+  for (const snapshot of snapshots) {
+    const current = grouped.get(snapshot.timestampMs)
+    if (!current) {
+      grouped.set(snapshot.timestampMs, { ...snapshot })
+      continue
+    }
+
+    mergeEquitySnapshot(current, snapshot)
+  }
+  return grouped
+}
+
+function groupSimLedgerEquitySnapshots(snapshots: ParsedEquitySnapshot[]) {
+  const latestByLedgerDay = new Map<string, ParsedEquitySnapshot>()
+  for (const snapshot of snapshots) {
+    const key = `${snapshot.dayKey}|${snapshot.sourcePath}`
+    const current = latestByLedgerDay.get(key)
+    if (!current || snapshot.timestampMs >= current.timestampMs) latestByLedgerDay.set(key, snapshot)
+  }
+
+  const groupedByDay = new Map<string, ParsedEquitySnapshot>()
+  for (const snapshot of [...latestByLedgerDay.values()].sort((a, b) => a.timestampMs - b.timestampMs)) {
+    const current = groupedByDay.get(snapshot.dayKey)
+    if (!current) {
+      groupedByDay.set(snapshot.dayKey, { ...snapshot, sources: new Set(snapshot.sources) })
+      continue
+    }
+    if (snapshot.timestampMs > current.timestampMs) {
+      current.timestamp = snapshot.timestamp
+      current.timestampMs = snapshot.timestampMs
+    }
+    mergeEquitySnapshot(current, snapshot)
+  }
+
+  return new Map(
+    [...groupedByDay.values()]
+      .sort((a, b) => a.timestampMs - b.timestampMs)
+      .map((snapshot) => [snapshot.timestampMs, snapshot] as const),
+  )
+}
+
+function mergeEquitySnapshot(current: ParsedEquitySnapshot, snapshot: ParsedEquitySnapshot) {
+  const previousCapitalBase = current.capitalBase
+  current.capitalBase += snapshot.capitalBase
+  current.pnl += snapshot.pnl
+  current.realizedPnl += snapshot.realizedPnl
+  current.unrealizedPnl += snapshot.unrealizedPnl
+  current.tradeCount += snapshot.tradeCount
+  current.maxDrawdownPct = Math.max(current.maxDrawdownPct, snapshot.maxDrawdownPct)
+  current.benchmarkPct = weightedAverage(current.benchmarkPct, previousCapitalBase, snapshot.benchmarkPct, snapshot.capitalBase)
+  current.opportunityPct = weightedAverage(current.opportunityPct, previousCapitalBase, snapshot.opportunityPct, snapshot.capitalBase)
+  current.targetPct = Math.max(current.targetPct, snapshot.targetPct)
+  for (const source of snapshot.sources) current.sources.add(source)
 }
 
 async function listEquitySnapshotFiles(projectRoot: string): Promise<string[]> {
@@ -421,6 +464,8 @@ function parseEquitySnapshotRecord(row: EquitySnapshotRecord): ParsedEquitySnaps
   if (!timestamp) return null
   const timestampMs = parseSnapshotTimestamp(timestamp)
   if (!Number.isFinite(timestampMs)) return null
+  const dayKey = compactDate(row.date ?? row.trade_date ?? String(timestamp)) ?? compactDate(formatDateForSnapshot(timestampMs))
+  if (!dayKey) return null
 
   const equity = firstParsedNumber(row.total_equity, row.equity, row.nav, row.net_value, row.account_value, row.portfolio_value)
   const capitalBase = firstParsedNumber(row.capital_base, row.initial_equity, row.starting_equity, row.start_equity, row.principal)
@@ -441,11 +486,14 @@ function parseEquitySnapshotRecord(row: EquitySnapshotRecord): ParsedEquitySnaps
   return {
     benchmarkPct: firstParsedNumber(row.benchmark_return_pct, row.benchmark_pct) ?? 0,
     capitalBase: base,
+    dayKey,
+    isSimLedgerSnapshot: row.sourcePath.includes('/shared/logs/sim_ledger/'),
     maxDrawdownPct: Math.abs(drawdownPct ?? (drawdownAmount !== undefined ? (drawdownAmount / base) * 100 : 0)),
     opportunityPct: firstParsedNumber(row.opportunity_gap_pct, row.missed_alpha_pct) ?? 0,
     pnl: pnl ?? (returnPct! / 100) * base,
     realizedPnl,
     returnPct: returnPct ?? 0,
+    sourcePath: row.sourcePath,
     sources: new Set([row.pnl_source ?? row.source ?? 'equity_snapshot']),
     targetPct: firstParsedNumber(row.target_return_pct, row.target_pct) ?? 0,
     timestamp: String(timestamp),
@@ -1195,6 +1243,10 @@ function formatTimelineLabel(value: string) {
 function compactDate(value?: string) {
   const digits = String(value ?? '').replace(/\D/g, '')
   return digits.length >= 8 ? digits.slice(0, 8) : undefined
+}
+
+function formatDateForSnapshot(timestampMs: number) {
+  return new Date(timestampMs).toISOString().slice(0, 10)
 }
 
 function parseFiniteNumber(value: number | string | undefined) {
