@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Read-only opening validation for CN futures 5-minute data."""
+"""Read-only opening acceptance for A-share simulated trading.
+
+Validates SharedSignals 5-minute data, server-local simulated trade samples,
+receipts and review artifacts after the market opens. Alerts are produced only
+when anomalies are detected; the script never creates orders or writes ledger
+state.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +16,7 @@ from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .review import DEFAULT_REVIEW_PATH
-
 DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
-DEFAULT_SIGNALS_DIR = Path(__file__).resolve().parents[1] / "signals"
-DEFAULT_RECEIPT_PATH = Path(__file__).resolve().parents[1] / "signals" / "sim_execution_receipts.jsonl"
 CN_TZ = timezone(timedelta(hours=8))
 
 
@@ -33,23 +35,19 @@ def _parse_now(value: str | None) -> datetime:
 
 def _session_start(now: datetime) -> tuple[str, datetime | None]:
     current = now.time()
-    if time(9, 0) <= current <= time(15, 0):
-        return "day", datetime.combine(now.date(), time(9, 0), tzinfo=CN_TZ)
-    if current >= time(21, 0):
-        return "night", datetime.combine(now.date(), time(21, 0), tzinfo=CN_TZ)
-    if current <= time(2, 30):
-        return "night", datetime.combine(now.date() - timedelta(days=1), time(21, 0), tzinfo=CN_TZ)
+    if time(9, 30) <= current <= time(11, 30):
+        return "morning", datetime.combine(now.date(), time(9, 30), tzinfo=CN_TZ)
+    if time(13, 0) <= current <= time(15, 0):
+        return "afternoon", datetime.combine(now.date(), time(13, 0), tzinfo=CN_TZ)
     return "closed", None
 
 
 def _pre_open_session(now: datetime) -> tuple[str, datetime | None]:
     current = now.time()
-    if time(8, 0) <= current < time(9, 0):
-        return "day", datetime.combine(now.date(), time(9, 0), tzinfo=CN_TZ)
-    if time(12, 0) <= current < time(13, 0):
+    if time(8, 0) <= current < time(9, 30):
+        return "morning", datetime.combine(now.date(), time(9, 30), tzinfo=CN_TZ)
+    if time(11, 30) <= current < time(13, 0):
         return "afternoon", datetime.combine(now.date(), time(13, 0), tzinfo=CN_TZ)
-    if time(20, 0) <= current < time(21, 0):
-        return "night", datetime.combine(now.date(), time(21, 0), tzinfo=CN_TZ)
     return "closed", None
 
 
@@ -63,7 +61,7 @@ def _query_daily_bars(db_path: Path, trade_date: str) -> dict[str, Any]:
             """
             SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(trade_date), MAX(trade_date)
             FROM market_bars_daily
-            WHERE market='Futures'
+            WHERE market='Ashare'
               AND trade_date <= ?
               AND close > 0
             """,
@@ -94,9 +92,8 @@ def _query_session_bars(db_path: Path, start: datetime, now: datetime) -> dict[s
             """
             SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(bar_time), MAX(bar_time)
             FROM market_bars_intraday
-            WHERE market='Futures'
+            WHERE market='Ashare'
               AND COALESCE(interval, '') IN ('5min', '5MIN', '5')
-              AND provider LIKE '%rt_fut_min%'
               AND bar_time >= ?
               AND bar_time <= ?
             """,
@@ -107,32 +104,12 @@ def _query_session_bars(db_path: Path, start: datetime, now: datetime) -> dict[s
     finally:
         if conn is not None:
             conn.close()
-    bar_count = int(row[0] or 0) if row else 0
-    symbol_count = int(row[1] or 0) if row else 0
     return {
-        "bar_count": bar_count,
-        "symbol_count": symbol_count,
+        "bar_count": int(row[0] or 0) if row else 0,
+        "symbol_count": int(row[1] or 0) if row else 0,
         "first_bar_time": row[2] if row else None,
         "latest_bar_time": row[3] if row else None,
     }
-
-
-def _read_latest_review(path: Path) -> dict[str, Any]:
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except FileNotFoundError:
-        return {}
-    for line in reversed(lines):
-        text = line.strip()
-        if not text:
-            continue
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            return payload
-    return {}
 
 
 def _count_jsonl_rows(path: Path) -> int:
@@ -147,14 +124,16 @@ def _count_filled_signals(signals_dir: Path, date: str) -> int:
         return 0
     trade_date = date.replace("-", "")
     count = 0
-    for path in filled_dir.glob("SIM-CNF-*.json"):
+    for path in filled_dir.glob("*.json"):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         if not isinstance(payload, dict):
             continue
-        card_date = str(payload.get("trade_date") or payload.get("valid_until") or payload.get("bar_time") or "")[:10].replace("-", "")
+        if str(payload.get("market") or "").lower() != "ashare":
+            continue
+        card_date = str(payload.get("trade_date") or payload.get("valid_until") or "")[:10].replace("-", "")
         if card_date == trade_date:
             count += 1
     return count
@@ -173,7 +152,7 @@ def _count_market_receipts(receipt_path: Path, date: str) -> int:
             continue
         if not isinstance(payload, dict):
             continue
-        if str(payload.get("market") or "").lower() != "cn_futures":
+        if str(payload.get("market") or "").lower() != "ashare":
             continue
         receipt_date = str(payload.get("trade_date") or payload.get("receipt_at") or "")[:10].replace("-", "")
         if receipt_date == date:
@@ -185,7 +164,7 @@ def validate_pre_open(
     *,
     sqlite_db: Path = DEFAULT_SQLITE_DB,
     now: datetime | None = None,
-    min_symbols: int = 4,
+    min_symbols: int = 1000,
 ) -> dict[str, Any]:
     current = now or _now_cn()
     if current.tzinfo is None:
@@ -194,7 +173,7 @@ def validate_pre_open(
         current = current.astimezone(CN_TZ)
     session_name, start = _pre_open_session(current)
     result: dict[str, Any] = {
-        "market": "cn_futures",
+        "market": "ashare",
         "report_type": "pre_open_acceptance",
         "checked_at": current.isoformat(timespec="seconds"),
         "sqlite_db": str(sqlite_db),
@@ -221,86 +200,11 @@ def validate_pre_open(
     return result
 
 
-def first_sample_alerts(
-    *,
-    sqlite_db: Path = DEFAULT_SQLITE_DB,
-    review_path: Path = DEFAULT_REVIEW_PATH,
-    signals_dir: Path = DEFAULT_SIGNALS_DIR,
-    receipt_path: Path = DEFAULT_RECEIPT_PATH,
-    now: datetime | None = None,
-    min_symbols: int = 4,
-    wait_minutes: int = 10,
-) -> dict[str, Any]:
-    current = now or _now_cn()
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=CN_TZ)
-    else:
-        current = current.astimezone(CN_TZ)
-    session_name, start = _session_start(current)
-    elapsed_minutes = int((current - start).total_seconds() // 60) if start is not None else None
-    result: dict[str, Any] = {
-        "market": "cn_futures",
-        "report_type": "first_sample_alert",
-        "checked_at": current.isoformat(timespec="seconds"),
-        "sqlite_db": str(sqlite_db),
-        "review_path": str(review_path),
-        "data_source": "SharedSignals read_model",
-        "read_only": True,
-        "session": session_name,
-        "session_start": start.isoformat(timespec="seconds") if start else None,
-        "elapsed_minutes": elapsed_minutes,
-        "min_symbols": max(1, int(min_symbols)),
-        "wait_minutes": max(1, int(wait_minutes)),
-        "alerts": [],
-        "real_trading_enabled": False,
-    }
-    if start is None:
-        return {**result, "status": "warn", "reason": "outside_cn_futures_session"}
-    if elapsed_minutes is not None and elapsed_minutes < max(1, int(wait_minutes)):
-        return {**result, "status": "pass", "reason": "first_sample_check_not_due"}
-
-    bars = _query_session_bars(sqlite_db, start, current)
-    result.update(bars)
-    alerts: list[dict[str, Any]] = []
-    if bars.get("error"):
-        alerts.append({"severity": "error", "code": "futures_5min_check_failed", "message": "期货5分钟首样本检查无法读取 SharedSignals read model。"})
-    elif int(bars.get("bar_count") or 0) <= 0 or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
-        alerts.append({"severity": "warn", "code": "futures_5min_missing_in_session", "message": "期货交易时段开始后仍缺少足够的 Futures 5分钟数据。"})
-
-    latest_review = _read_latest_review(review_path)
-    latest_filled_count = int(latest_review.get("filled_count") or 0) if latest_review else 0
-    trade_date = current.strftime("%Y%m%d")
-    filled_signal_count = _count_filled_signals(signals_dir, trade_date)
-    receipt_count = _count_market_receipts(receipt_path, trade_date)
-    result["latest_review"] = {
-        "exists": bool(latest_review),
-        "generated_at": latest_review.get("generated_at", "") if latest_review else "",
-        "latest_bar_time": latest_review.get("latest_bar_time") or latest_review.get("bar_time") or "",
-        "filled_count": latest_filled_count,
-        "real_trading_enabled": bool(latest_review.get("real_trading_enabled")) if latest_review else False,
-    }
-    result["samples"] = {
-        "filled_signals": filled_signal_count,
-        "sim_execution_receipts": receipt_count,
-        "review_rows": _count_jsonl_rows(review_path),
-    }
-    if result["latest_review"]["real_trading_enabled"]:
-        alerts.append({"severity": "error", "code": "cn_futures_real_trading_flag_enabled", "message": "CNFutures 复盘样本错误带有实盘启用标记。"})
-    if latest_filled_count <= 0 and filled_signal_count <= 0:
-        alerts.append({"severity": "warn", "code": "cn_futures_first_sim_sample_missing", "message": "期货5分钟数据已进入会话窗口，但 TradingAgent 尚无首个模拟成交样本。"})
-    if filled_signal_count > 0 and receipt_count <= 0:
-        alerts.append({"severity": "warn", "code": "cn_futures_first_receipt_missing", "message": "CNFutures 已有模拟成交信号，但签名回执尚未生成。"})
-    result["alerts"] = alerts
-    result["status"] = "warn" if alerts else "pass"
-    result["reason"] = "first_sample_alerts_present" if alerts else "first_sample_ready"
-    return result
-
-
 def validate_opening(
     *,
     sqlite_db: Path = DEFAULT_SQLITE_DB,
     now: datetime | None = None,
-    min_symbols: int = 4,
+    min_symbols: int = 10,
 ) -> dict[str, Any]:
     current = now or _now_cn()
     if current.tzinfo is None:
@@ -309,7 +213,7 @@ def validate_opening(
         current = current.astimezone(CN_TZ)
     session_name, start = _session_start(current)
     result: dict[str, Any] = {
-        "market": "cn_futures",
+        "market": "ashare",
         "report_type": "opening_validation",
         "checked_at": current.isoformat(timespec="seconds"),
         "sqlite_db": str(sqlite_db),
@@ -321,7 +225,7 @@ def validate_opening(
         "real_trading_enabled": False,
     }
     if start is None:
-        return {**result, "status": "warn", "reason": "outside_cn_futures_session"}
+        return {**result, "status": "warn", "reason": "outside_ashare_session"}
     bars = _query_session_bars(sqlite_db, start, current)
     result.update(bars)
     if bars.get("error"):
@@ -339,17 +243,95 @@ def validate_opening(
     return result
 
 
+def first_sample_alerts(
+    *,
+    sqlite_db: Path = DEFAULT_SQLITE_DB,
+    signals_dir: Path | None = None,
+    local_sim_path: Path | None = None,
+    receipt_path: Path | None = None,
+    review_path: Path | None = None,
+    now: datetime | None = None,
+    min_symbols: int = 10,
+    wait_minutes: int = 10,
+) -> dict[str, Any]:
+    current = now or _now_cn()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=CN_TZ)
+    else:
+        current = current.astimezone(CN_TZ)
+    session_name, start = _session_start(current)
+    elapsed_minutes = int((current - start).total_seconds() // 60) if start is not None else None
+
+    root = Path(__file__).resolve().parents[2]
+    signals_dir = signals_dir or root / "signals"
+    local_sim_path = local_sim_path or root / "shared" / "logs" / "local_sim" / "local_sim_trades.jsonl"
+    receipt_path = receipt_path or root / "signals" / "sim_execution_receipts.jsonl"
+    review_path = review_path or root / "shared" / "review" / "data" / "daily_reviews.jsonl"
+
+    result: dict[str, Any] = {
+        "market": "ashare",
+        "report_type": "first_sample_alert",
+        "checked_at": current.isoformat(timespec="seconds"),
+        "sqlite_db": str(sqlite_db),
+        "data_source": "SharedSignals read_model",
+        "read_only": True,
+        "session": session_name,
+        "session_start": start.isoformat(timespec="seconds") if start else None,
+        "elapsed_minutes": elapsed_minutes,
+        "min_symbols": max(1, int(min_symbols)),
+        "wait_minutes": max(1, int(wait_minutes)),
+        "alerts": [],
+        "real_trading_enabled": False,
+    }
+    if start is None:
+        return {**result, "status": "warn", "reason": "outside_ashare_session"}
+    if elapsed_minutes is not None and elapsed_minutes < max(1, int(wait_minutes)):
+        return {**result, "status": "pass", "reason": "first_sample_check_not_due"}
+
+    bars = _query_session_bars(sqlite_db, start, current)
+    result.update(bars)
+    alerts: list[dict[str, Any]] = []
+    if bars.get("error"):
+        alerts.append({"severity": "error", "code": "ashare_5min_check_failed", "message": "A股5分钟首样本检查无法读取 SharedSignals read model。"})
+    elif int(bars.get("bar_count") or 0) <= 0 or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
+        alerts.append({"severity": "warn", "code": "ashare_5min_missing_in_session", "message": "A股交易时段开始后仍缺少足够的5分钟数据。"})
+
+    trade_date = current.strftime("%Y%m%d")
+    local_sim_count = _count_jsonl_rows(local_sim_path)
+    receipt_count = _count_market_receipts(receipt_path, trade_date)
+    review_count = _count_jsonl_rows(review_path)
+    filled_signal_count = _count_filled_signals(signals_dir, trade_date)
+    result["samples"] = {
+        "local_sim_trades": local_sim_count,
+        "sim_execution_receipts": receipt_count,
+        "daily_reviews": review_count,
+        "filled_signals": filled_signal_count,
+    }
+    if local_sim_count <= 0:
+        alerts.append({"severity": "warn", "code": "ashare_first_sim_trade_missing", "message": "A股5分钟数据已进入会话窗口，但服务器本地模拟盘尚无成交样本。"})
+    if receipt_count <= 0:
+        alerts.append({"severity": "warn", "code": "ashare_first_receipt_missing", "message": "A股已有本地模拟成交，但签名回执尚未生成。"})
+    if review_count <= 0:
+        alerts.append({"severity": "info", "code": "ashare_review_not_yet_run", "message": "A股复盘日志尚未生成，等待日终复盘任务。"})
+
+    result["alerts"] = alerts
+    result["status"] = "warn" if alerts else "pass"
+    result["reason"] = "first_sample_alerts_present" if alerts else "first_sample_ready"
+    return result
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Read-only CN futures opening 5-minute data validation.")
+    parser = argparse.ArgumentParser(description="Read-only A-share opening acceptance.")
     parser.add_argument("--sqlite-db", type=Path, default=DEFAULT_SQLITE_DB)
-    parser.add_argument("--review-path", type=Path, default=DEFAULT_REVIEW_PATH)
-    parser.add_argument("--signals-dir", type=Path, default=DEFAULT_SIGNALS_DIR)
-    parser.add_argument("--receipt-path", type=Path, default=DEFAULT_RECEIPT_PATH)
+    parser.add_argument("--signals-dir", type=Path, default=None)
+    parser.add_argument("--local-sim-path", type=Path, default=None)
+    parser.add_argument("--receipt-path", type=Path, default=None)
+    parser.add_argument("--review-path", type=Path, default=None)
     parser.add_argument("--now", default=None)
-    parser.add_argument("--min-symbols", type=int, default=4)
+    parser.add_argument("--min-symbols", type=int, default=10)
+    parser.add_argument("--wait-minutes", type=int, default=10)
     parser.add_argument("--pre-open", action="store_true")
     parser.add_argument("--first-sample", action="store_true")
-    parser.add_argument("--wait-minutes", type=int, default=10)
     parser.add_argument("--pretty", action="store_true")
     return parser.parse_args(argv)
 
@@ -362,9 +344,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.first_sample:
         report = first_sample_alerts(
             sqlite_db=args.sqlite_db,
-            review_path=args.review_path,
             signals_dir=args.signals_dir,
+            local_sim_path=args.local_sim_path,
             receipt_path=args.receipt_path,
+            review_path=args.review_path,
             now=now,
             min_symbols=args.min_symbols,
             wait_minutes=args.wait_minutes,

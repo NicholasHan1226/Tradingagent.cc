@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (cn futures post-session win-rate calibration)
+> 最后更新：2026-07-05 (unified sim PnL summary + Ashare/CNFutures opening acceptance)
 
 ---
 
@@ -27,8 +27,9 @@
 - **影子盘状态闭环**：US/Crypto/PM/HK 本地 shadow runner 的 `simulated_fill.status=filled|partial` 会立即推进到 `signals/shadow/filled`；若状态机推进失败，卡片进入 `signals/shadow/failed` 并保留 `settlement_warning`，不再把已模拟成交卡片长期留在 `shadow/pending`
 - **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查同时读取本地回执与旧 Hermes 回执路径，并能识别“尚无首笔本地模拟成交”的 bootstrap 状态，避免把无样本误报为链路故障
 - **模拟盘健康检查**：`market_health` 已区分交易时段样本缺失与闭市等待首样本；A股和 CNFutures 在周末/闭市且尚未进入应产生样本的时段时不再误报 warn，进入或经过交易时段后仍无数据/成交会继续告警
+- **A股/CNFutures 开盘验收框架**：A股新增 `shared/runtime_test/ashare_opening_validator.py`，提供 `validate_pre_open` / `validate_opening` / `first_sample_alerts` 三个只读入口，验证 SharedSignals 日线/5分钟数据、本地模拟成交样本、签名回执、复盘日志和 filled signal cards；新增 `shared/wrappers/job_ashare_pre_open_validation.sh`、`job_ashare_opening_validation.sh`、`job_ashare_first_sample_alert.sh` 三个 wrapper。CNFutures `opening_validator.py` 已增强 filled signals、receipts 和 review rows 计数与告警。两市场验收均固定 `real_trading_enabled=false`，只在异常时产生系统告警。
 - **多市场绩效去重**：Crypto/PM/US/CNFutures 共用的 `style_performance.jsonl` 已从 5 分钟 append-only 改为按 `(market, style_name, date)` 幂等写入，历史读取也会取同键最新值，避免 5 分钟任务把 runs/trades/PnL 重复放大并污染风格演化。
-- **多市场收益口径**：Crypto/PM/US 的 `StyleRunner` 主收益口径已从入场时的预期收益估算切换为统一模拟账本的 `realized_pnl + mark-to-market unrealized_pnl`；`style_comparison.json` 与 `style_performance.jsonl` 会输出 `pnl_source=sim_ledger_mark_to_market`、已实现收益、持仓浮盈亏、现金、持仓市值和权益；win_rate/max_dd/sharpe 优先用账本里的已实现和持仓盯市样本计算；内置 `front/` 快照会透传 `pnlSource`、已实现/浮盈亏汇总，并在首页摘要显示“模拟账本盯市”口径。
+- **多市场收益口径**：新增 `shared/review/pnl_summary.py` 统一摘要层，按 `realized_pnl + mark-to-market unrealized_pnl` 聚合 Ashare/Crypto/PM/US/CNFutures 模拟账本；Ashare 用 SharedSignals 日收盘价做 mark-to-market（缺失则回退成交价），其他市场用 `SimLedger` journal 重放盯市；日报、周报、运维报告、`market_health` 和 `metrics_dashboard` 均输出 `ledger_realized_pnl` / `ledger_unrealized_pnl` / `ledger_total_pnl` / `ledger_market_value` / `ledger_open_position_count` / `ledger_missing_mark_count` / `ledger_pnl_source`；Crypto/PM/US 的 `StyleRunner` 主收益口径同样基于统一模拟账本；CNFutures `sim_runner.py` 和 `review.py` 已补 unrealized 输出；HK 仍暂停，不纳入本口径。
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
@@ -51,7 +52,7 @@
 2. [ ] **P2：多市场模拟盘生产闭环** — 服务器侧 A股/Crypto/PM/US simulated cron、SharedSignals reader/API-first、统一账本、日报/周报复盘读取和健康检查已完成首轮验证；剩余为 A股下一个交易日生产样本、promotion/权重演化/guard halt-thaw 的持续运行验证
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
 4. [x] **P2：SharedSignals HTTP API 消费迁移** — 15/15 端点客户端已完成；`TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` / `get_bars_intraday` 接入 API-first 访问；SQLite 只读回退保留
-5. [ ] **CNFutures：5 分钟样本生产观察** — 已接入 5 分钟模拟交易 cadence、只读开盘验收、观察报告和 live-chain 告警；仍需要在下一个期货交易时段确认 SharedSignals `rt_fut_min` 非空写入后，TradingAgent 产生带 `bar_time` 的模拟成交样本
+5. [ ] **A股/CNFutures 下一个真实交易时段开盘验收** — A股新增 `shared/runtime_test/ashare_opening_validator.py` 与三个 wrapper（pre_open / opening / first_sample_alert），只读验证 SharedSignals 日线/5分钟数据、本地模拟成交、签名回执、复盘日志和 filled signals，异常才发系统告警；CNFutures `opening_validator.py` 已增强 filled/receipt/review 样本告警；两者均固定 `real_trading_enabled=false`，等待下一交易日生产样本验证。
 
 ### 2026-07-05 CNFutures observation, win-rate filters, and faster simulation evolution
 

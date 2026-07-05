@@ -254,7 +254,14 @@ def pnl_summary() -> dict[str, Any]:
     attribution = read_json(SHARED / "review" / "attribution" / "strategy_attribution_latest.json")
     if not attribution:
         attribution = read_json(SHARED / "review" / "attribution" / "strategy_attribution.json")
-    return {"server_local_sim": local, "shadow": shadow, "strategy_attribution": attribution}
+    sim_ledger: dict[str, Any] = {}
+    try:
+        from shared.review.pnl_summary import sim_ledger_pnl_summary
+
+        sim_ledger = sim_ledger_pnl_summary()
+    except Exception as exc:  # pragma: no cover - defensive runtime report
+        sim_ledger = {"error": str(exc)}
+    return {"server_local_sim": local, "shadow": shadow, "strategy_attribution": attribution, "sim_ledger": sim_ledger}
 
 
 def cn_futures_review_summary(path: Path | None = None) -> dict[str, Any]:

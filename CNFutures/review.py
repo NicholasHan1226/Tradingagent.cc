@@ -425,6 +425,7 @@ def _style_metric(
     style_state: dict[str, Any],
     forward_state: dict[str, Any] | None = None,
     threshold_candidate: dict[str, Any] | None = None,
+    unrealized_pnl: float = 0.0,
 ) -> dict[str, Any]:
     filled_count = int(style_state.get("filled_count") or style_score.get("filled_count") or 0)
     trade_count = int(style_score.get("trade_count") or filled_count)
@@ -434,11 +435,16 @@ def _style_metric(
     sharpe = realized_pnl / max(1.0, drawdown + fee) if trade_count else 0.0
     forward_state = forward_state if isinstance(forward_state, dict) else {}
     threshold_candidate = threshold_candidate if isinstance(threshold_candidate, dict) else {}
+    total_pnl = round(realized_pnl + unrealized_pnl, 6)
     return {
         "style_name": style_name,
         "market": STYLE_REVIEW_MARKET,
         "date": date,
-        "pnl": round(realized_pnl, 6),
+        "pnl_source": "sim_ledger_mark_to_market",
+        "pnl": total_pnl,
+        "realized_pnl": round(realized_pnl, 6),
+        "unrealized_pnl": round(unrealized_pnl, 6),
+        "total_pnl": total_pnl,
         "win_rate": _safe_float(style_score.get("win_rate")),
         "forward_win_rate": forward_state.get("win_rate"),
         "forward_labeled_count": int(forward_state.get("labeled") or 0),
@@ -463,7 +469,12 @@ def _style_metric(
     }
 
 
-def write_style_outputs(payload: dict[str, Any], *, review_path: Path | None = None) -> dict[str, str]:
+def write_style_outputs(
+    payload: dict[str, Any],
+    *,
+    review_path: Path | None = None,
+    position_pnl_summary: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, str]:
     """Write dashboard-compatible style comparison outputs for CNFutures."""
 
     from shared.markets.performance_tracker import compare_styles, save_run
@@ -484,6 +495,11 @@ def write_style_outputs(payload: dict[str, Any], *, review_path: Path | None = N
         for item in threshold_candidates
         if isinstance(item, dict) and item.get("style_name")
     }
+    unrealized_by_style: dict[str, float] = {}
+    if isinstance(position_pnl_summary, dict):
+        for style_name, values in position_pnl_summary.items():
+            if isinstance(values, dict):
+                unrealized_by_style[style_name] = _safe_float(values.get("unrealized_pnl"))
     style_names = sorted(set(style_scores) | set(health) | set(styles))
     metrics = [
         _style_metric(
@@ -493,6 +509,7 @@ def write_style_outputs(payload: dict[str, Any], *, review_path: Path | None = N
             style_state=health.get(style_name) if isinstance(health.get(style_name), dict) else {},
             forward_state=forward_styles.get(style_name) if isinstance(forward_styles.get(style_name), dict) else {},
             threshold_candidate=threshold_by_style.get(style_name) if isinstance(threshold_by_style.get(style_name), dict) else {},
+            unrealized_pnl=unrealized_by_style.get(style_name, 0.0),
         )
         for style_name in style_names
     ]
@@ -556,6 +573,7 @@ def append_review(
     errors: list[dict[str, Any]],
     holds: list[dict[str, Any]] | None = None,
     path: Path | None = None,
+    position_pnl_summary: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Append one run review and return the persisted payload."""
 
@@ -590,7 +608,8 @@ def append_review(
     }
     target = path or DEFAULT_REVIEW_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
-    payload["style_output_paths"] = write_style_outputs(payload, review_path=target)
+    payload["style_output_paths"] = write_style_outputs(payload, review_path=target, position_pnl_summary=position_pnl_summary)
+    payload["position_pnl_summary"] = position_pnl_summary
     with target.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     return payload

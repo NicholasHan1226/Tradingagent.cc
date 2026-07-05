@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from .attribution import attribute_pct
+from .pnl_summary import sim_ledger_pnl_summary
+from .sim_ledger_reader import DEFAULT_LOCAL_SIM_TRADES, DEFAULT_SIM_LEDGER_ROOT
 
 REVIEW_DIR = Path(__file__).resolve().parent
 WEEKLY_LOG = REVIEW_DIR / "data" / "weekly_reviews.jsonl"
@@ -150,6 +152,10 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
     state = _read_json(WEEKLY_STATE)
     as_of = _now_iso()
     capital_layer_reviews: dict[str, Any] = {}
+    ledger_pnl_summary = sim_ledger_pnl_summary(
+        ledger_root=DEFAULT_SIM_LEDGER_ROOT,
+        local_trades_path=DEFAULT_LOCAL_SIM_TRADES,
+    )
 
     for layer in sorted(grouped or {"shadow": []}):
         layer_trades = grouped.get(layer, [])
@@ -176,6 +182,22 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
         total_pnl = sum(_safe_float(t.get("pnl")) for t in layer_trades)
         total_wins = sum(1 for t in layer_trades if _safe_float(t.get("pnl")) > 0)
         week_wr = total_wins / len(layer_trades) if layer_trades else 0.0
+        layer_ledger = {
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "total_pnl": 0.0,
+            "market_value": 0.0,
+            "open_position_count": 0,
+            "missing_mark_count": 0,
+        }
+        if layer == "simulated":
+            for market_pnl in ledger_pnl_summary.values():
+                layer_ledger["realized_pnl"] += float(market_pnl.get("realized_pnl") or 0.0)
+                layer_ledger["unrealized_pnl"] += float(market_pnl.get("unrealized_pnl") or 0.0)
+                layer_ledger["total_pnl"] += float(market_pnl.get("total_pnl") or 0.0)
+                layer_ledger["market_value"] += float(market_pnl.get("market_value") or 0.0)
+                layer_ledger["open_position_count"] += int(market_pnl.get("open_position_count") or 0)
+                layer_ledger["missing_mark_count"] += int(market_pnl.get("missing_mark_count") or 0)
         capital_layer_reviews[layer] = {
             "capital_layer": layer,
             "week_pnl": round(total_pnl, 6),
@@ -186,6 +208,13 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
             "conditions_to_adjust": conditions_to_adjust,
             "strategies_to_eliminate": strategies_to_eliminate,
             "strategies_to_promote": strategies_to_promote,
+            "ledger_realized_pnl": round(layer_ledger["realized_pnl"], 6),
+            "ledger_unrealized_pnl": round(layer_ledger["unrealized_pnl"], 6),
+            "ledger_total_pnl": round(layer_ledger["total_pnl"], 6),
+            "ledger_market_value": round(layer_ledger["market_value"], 6),
+            "ledger_open_position_count": layer_ledger["open_position_count"],
+            "ledger_missing_mark_count": layer_ledger["missing_mark_count"],
+            "ledger_pnl_source": "sim_ledger_mark_to_market" if layer == "simulated" else "",
         }
 
     _write_json(WEEKLY_STATE, state)

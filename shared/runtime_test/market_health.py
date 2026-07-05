@@ -469,6 +469,14 @@ def _count_jsonl_rows(path: Path) -> int:
 
 
 def _sim_ledger_summary(market: str) -> dict[str, Any]:
+    pnl: dict[str, Any] = {}
+    try:
+        from shared.review.pnl_summary import sim_ledger_pnl_summary
+
+        pnl_result = sim_ledger_pnl_summary(markets=(market,))
+        pnl = pnl_result.get(market, {})
+    except Exception as exc:  # noqa: BLE001
+        pnl = {"error": f"{exc.__class__.__name__}: {exc}"}
     if market == "ashare":
         path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
         return {
@@ -477,6 +485,10 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
             "ledger_count": 1 if path.exists() else 0,
             "latest_file": str(path.relative_to(ROOT)),
             "latest_age_minutes": _file_age_minutes(path),
+            "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
+            "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
+            "total_pnl": round(_safe_float(pnl.get("total_pnl")), 6),
+            "pnl_source": pnl.get("pnl_source", ""),
         }
     if market == "cn_futures":
         review_path = ROOT / "shared/review/data/cn_futures_sim_reviews.jsonl"
@@ -504,6 +516,10 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
             "latest_error_count": int(latest.get("error_count") or 0) if latest else 0,
             "latest_error_summary": latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {},
             "latest_style_health": latest.get("style_health") if isinstance(latest.get("style_health"), dict) else {},
+            "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
+            "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
+            "total_pnl": round(_safe_float(pnl.get("total_pnl")), 6),
+            "pnl_source": pnl.get("pnl_source", ""),
         }
 
     files = sorted((ROOT / "shared/logs/sim_ledger" / market).glob("*/trade_journal.jsonl"))
@@ -514,6 +530,10 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
         "ledger_count": len(files),
         "latest_file": str(latest.relative_to(ROOT)) if latest else "",
         "latest_age_minutes": _file_age_minutes(latest) if latest else None,
+        "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
+        "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
+        "total_pnl": round(_safe_float(pnl.get("total_pnl")), 6),
+        "pnl_source": pnl.get("pnl_source", ""),
     }
 
 

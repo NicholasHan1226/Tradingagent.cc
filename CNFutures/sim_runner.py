@@ -427,6 +427,10 @@ def _update_position_snapshot(
             previous_abs = abs(previous_qty)
             previous_price = _safe_float(previous.get("avg_price"), avg_price)
             avg_price = round(((previous_price * previous_abs) + (avg_price * filled_qty)) / max(previous_abs + filled_qty, 1), 8)
+        mark_price = _safe_float(order.get("price"), _safe_float(receipt.get("avg_price"), avg_price))
+        contract_multiplier = _safe_int(
+            order.get("contract_multiplier") or raw.get("contract_multiplier"), 1
+        )
         positions[key] = {
             "style": style_name,
             "strategy_name": style_name,
@@ -435,6 +439,8 @@ def _update_position_snapshot(
             "side": _position_side(new_qty),
             "avg_price": avg_price,
             "last_price": _safe_float(receipt.get("avg_price"), _safe_float(order.get("price"), 0.0)),
+            "mark_price": mark_price,
+            "contract_multiplier": contract_multiplier,
             "margin_required": _safe_float(raw.get("margin_required"), 0.0) if previous_qty == 0 or (previous_qty > 0) != (new_qty > 0) else _safe_float(previous.get("margin_required"), 0.0) + _safe_float(raw.get("margin_required"), 0.0),
             "notional": _safe_float(raw.get("notional"), 0.0),
             "updated_trade_date": _normalize_trade_date(date),
@@ -605,6 +611,31 @@ def _quantity_for_style(
     weight = min(max(_safe_float(style.get("weight"), 1.0), 0.01), 1.0)
     margin_budget = capital * min(max_margin_usage, risk_per_trade * weight)
     return max(1, int(margin_budget // margin_per_lot))
+
+
+def _compute_position_pnl_summary(signals_dir: Path) -> dict[str, dict[str, Any]]:
+    """Compute realized + mark-to-market unrealized PnL per style from the position snapshot."""
+    snapshot = _read_position_snapshot(signals_dir)
+    summary: dict[str, dict[str, Any]] = {}
+    for position in snapshot.get("positions", []):
+        if not isinstance(position, dict):
+            continue
+        style_name = str(position.get("style") or position.get("strategy_name") or "unknown")
+        net_qty = _safe_int(position.get("net_qty"), 0)
+        avg_price = _safe_float(position.get("avg_price"), 0.0)
+        mark_price = _safe_float(position.get("mark_price"), avg_price)
+        multiplier = _safe_int(position.get("contract_multiplier"), 1)
+        realized = _safe_float(position.get("realized_pnl"), 0.0)
+        unrealized = round((mark_price - avg_price) * net_qty * multiplier, 6)
+        item = summary.setdefault(
+            style_name,
+            {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "total_pnl": 0.0, "open_position_count": 0},
+        )
+        item["realized_pnl"] = round(item["realized_pnl"] + realized, 6)
+        item["unrealized_pnl"] = round(item["unrealized_pnl"] + unrealized, 6)
+        item["total_pnl"] = round(item["realized_pnl"] + item["unrealized_pnl"], 6)
+        item["open_position_count"] += 1
+    return summary
 
 
 def _signal_card(
@@ -935,7 +966,16 @@ def run_multi_style_simulation(
                 }
             )
 
-    review = append_review(date=date, market=MARKET, records=records, errors=errors, holds=holds, path=review_path)
+    position_pnl_summary = _compute_position_pnl_summary(signals_dir)
+    review = append_review(
+        date=date,
+        market=MARKET,
+        records=records,
+        errors=errors,
+        holds=holds,
+        path=review_path,
+        position_pnl_summary=position_pnl_summary,
+    )
     return {
         "market": MARKET,
         "reader_market": READER_MARKET,

@@ -332,7 +332,11 @@ def _append_trade_unlocked(trade: LocalSimTrade) -> None:
         handle.write(json.dumps(asdict(trade), ensure_ascii=False) + "\n")
 
 
-def _replay_account(trades: list[dict[str, Any]], account: str | None = None) -> dict[str, Any]:
+def _replay_account(
+    trades: list[dict[str, Any]],
+    account: str | None = None,
+    mark_prices: dict[str, float] | None = None,
+) -> dict[str, Any]:
     positions: dict[str, dict[str, Any]] = {}
     realized_pnl = 0.0
     total_trades = 0
@@ -382,13 +386,15 @@ def _replay_account(trades: list[dict[str, Any]], account: str | None = None) ->
             continue
         cost = round(float(pos.get("cost_basis") or 0.0), 2)
         last_price = round(float(pos.get("last_price") or 0.0), 6)
-        value = round(qty * last_price, 2)
+        mark_price = round(float(mark_prices.get(code, last_price)) if mark_prices else last_price, 6)
+        value = round(qty * mark_price, 2)
         row_unrealized = round(value - cost, 2)
         clean_positions[code] = {
             "quantity": int(qty) if abs(qty - round(qty)) < 1e-12 else round(qty, 6),
             "cost_basis": cost,
             "avg_cost": round(cost / qty, 4) if qty else 0.0,
             "last_price": last_price,
+            "mark_price": mark_price,
             "market_value": value,
             "unrealized_pnl": row_unrealized,
             "trades": int(pos.get("trades") or 0),
@@ -532,6 +538,9 @@ def record_local_sim_order(
     }
 
 
-def get_local_sim_pnl(account: str | None = None) -> dict[str, Any]:
+def get_local_sim_pnl(
+    account: str | None = None,
+    mark_prices: dict[str, float] | None = None,
+) -> dict[str, Any]:
     with _lock():
-        return _replay_account(_load_trades_unlocked(), account)
+        return _replay_account(_load_trades_unlocked(), account, mark_prices=mark_prices)

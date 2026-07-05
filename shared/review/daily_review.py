@@ -31,7 +31,13 @@ except Exception:  # pragma: no cover - optional upstream dependency
 
 from .attribution import attribute, attribute_pct
 from .benchmark import compare_to_benchmark, get_benchmark, record_last_period
-from .sim_ledger_reader import load_sim_trades_for_date, summarize_trade_sources
+from .pnl_summary import sim_ledger_pnl_summary
+from .sim_ledger_reader import (
+    DEFAULT_LOCAL_SIM_TRADES,
+    DEFAULT_SIM_LEDGER_ROOT,
+    load_sim_trades_for_date,
+    summarize_trade_sources,
+)
 
 REVIEW_DIR = Path(__file__).resolve().parent
 TRADINGAGENT_ROOT = REVIEW_DIR.parent.parent
@@ -695,6 +701,13 @@ def review_lunch(
     layer_market_trades = _group_by_capital_layer_market(morning_trades)
     layers = sorted(set(layer_positions) | set(layer_trades) or {"shadow"})
 
+    ledger_pnl_summary: dict[str, dict[str, Any]] = {}
+    if "simulated" in layers:
+        ledger_pnl_summary = sim_ledger_pnl_summary(
+            ledger_root=DEFAULT_SIM_LEDGER_ROOT,
+            local_trades_path=DEFAULT_LOCAL_SIM_TRADES,
+        )
+
     goals = _load_goals()
     stage_goals = _stage_goals(goals, stage)
     benchmark_date = trade_date or datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -704,12 +717,14 @@ def review_lunch(
         market: str,
         layer_pos: list[dict[str, Any]],
         layer_trade: list[dict[str, Any]],
+        ledger_pnl: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         signal_count = sum(1 for t in layer_trade if t.get("signal_id"))
         hit = _hit_rate(layer_trade)
         realized_pnl = _sum_pnl(layer_trade)
         floating_pnl = sum(_safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight")) for p in layer_pos)
         pnl = realized_pnl + floating_pnl
+        ledger = ledger_pnl or {}
 
         reduce_list = [
             p.get("ts_code", "?")
@@ -755,6 +770,13 @@ def review_lunch(
             "pnl": round(pnl, 6),
             "realized_pnl": round(realized_pnl, 6),
             "floating_pnl": round(floating_pnl, 6),
+            "ledger_realized_pnl": round(ledger.get("realized_pnl", 0.0), 6),
+            "ledger_unrealized_pnl": round(ledger.get("unrealized_pnl", 0.0), 6),
+            "ledger_total_pnl": round(ledger.get("total_pnl", 0.0), 6),
+            "ledger_market_value": round(ledger.get("market_value", 0.0), 6),
+            "ledger_open_position_count": int(ledger.get("open_position_count", 0)),
+            "ledger_missing_mark_count": int(ledger.get("missing_mark_count", 0)),
+            "ledger_pnl_source": ledger.get("pnl_source", ""),
             "position_count": len(layer_pos),
             "morning_trade_count": len(layer_trade),
             "stale": not layer_trade,
@@ -787,11 +809,13 @@ def review_lunch(
         )
         layer_review["market_reviews"] = {}
         for market in layer_markets:
+            market_ledger_pnl = ledger_pnl_summary.get(market) if layer == "simulated" and market != "all" else None
             market_review = build_review(
                 layer,
                 market,
                 layer_market_positions.get(layer, {}).get(market, []),
                 layer_market_trades.get(layer, {}).get(market, []),
+                ledger_pnl=market_ledger_pnl,
             )
             layer_review["market_reviews"][market] = market_review
             _merge_market_review(market_reviews, market, layer, market_review)
@@ -851,6 +875,12 @@ def review_close(
     layer_market_positions = _group_by_capital_layer_market(positions)
     layer_market_trades = _group_by_capital_layer_market(all_trades)
     layers = sorted(set(layer_positions) | set(layer_trades) or {"shadow"})
+    ledger_pnl_summary: dict[str, dict[str, Any]] = {}
+    if "simulated" in layers:
+        ledger_pnl_summary = sim_ledger_pnl_summary(
+            ledger_root=DEFAULT_SIM_LEDGER_ROOT,
+            local_trades_path=DEFAULT_LOCAL_SIM_TRADES,
+        )
     goals = _load_goals()
     stage_goals = _stage_goals(goals, stage)
 
@@ -859,12 +889,14 @@ def review_close(
         market: str,
         layer_pos: list[dict[str, Any]],
         layer_trd: list[dict[str, Any]],
+        ledger_pnl: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         wins = [t for t in layer_trd if _safe_float(t.get("pnl")) > 0]
         losses = [t for t in layer_trd if _safe_float(t.get("pnl")) < 0]
         pnl = _sum_pnl(layer_trd)
         floating = sum(_safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight")) for p in layer_pos)
         total_pnl = pnl + floating
+        ledger = ledger_pnl or {}
         win_rate = len(wins) / len(layer_trd) if layer_trd else 0.0
         avg_win = (_sum_pnl(wins) / len(wins)) if wins else 0.0
         avg_loss = (_sum_pnl(losses) / len(losses)) if losses else 0.0
@@ -916,6 +948,13 @@ def review_close(
             "win_rate": round(win_rate, 4),
             "trades_summary": trades_summary,
             "pnl": round(total_pnl, 6),
+            "ledger_realized_pnl": round(ledger.get("realized_pnl", 0.0), 6),
+            "ledger_unrealized_pnl": round(ledger.get("unrealized_pnl", 0.0), 6),
+            "ledger_total_pnl": round(ledger.get("total_pnl", 0.0), 6),
+            "ledger_market_value": round(ledger.get("market_value", 0.0), 6),
+            "ledger_open_position_count": int(ledger.get("open_position_count", 0)),
+            "ledger_missing_mark_count": int(ledger.get("missing_mark_count", 0)),
+            "ledger_pnl_source": ledger.get("pnl_source", ""),
             "stale": not layer_trd,
             "attribution": attr,
             "comparisons": {
@@ -951,11 +990,13 @@ def review_close(
         )
         layer_review["market_reviews"] = {}
         for market in layer_markets:
+            market_ledger_pnl = ledger_pnl_summary.get(market) if layer == "simulated" and market != "all" else None
             market_review = build_review(
                 layer,
                 market,
                 layer_market_positions.get(layer, {}).get(market, []),
                 layer_market_trades.get(layer, {}).get(market, []),
+                ledger_pnl=market_ledger_pnl,
             )
             layer_review["market_reviews"][market] = market_review
             _merge_market_review(market_reviews, market, layer, market_review)
