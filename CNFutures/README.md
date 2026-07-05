@@ -212,6 +212,33 @@ during day/night futures sessions. It is read-only and writes
 `shared/review/cn_futures/observation_report.json` for dashboard consumption;
 it does not create signals, mutate style weights, or touch execution queues.
 
+## Win-Rate Calibration
+
+Post-session calibration is intentionally lightweight:
+
+```bash
+python -m CNFutures.calibration --pretty
+```
+
+Optional wrapper:
+
+```bash
+shared/wrappers/job_cn_futures_calibration_report.sh
+```
+
+The calibration task reads CNFutures simulated filled/partial signal cards and
+SharedSignals Futures 5-minute bars, then writes:
+
+- `shared/review/cn_futures/forward_labels.jsonl`
+- `shared/review/cn_futures/win_rate_calibration_report.json`
+- `shared/review/cn_futures/win_rate_calibration_report.md`
+
+It does not rewrite append-only simulation reviews, does not change checked-in
+strategy JSON, does not create orders, and keeps `real_trading_enabled=false`.
+If not enough future 5-minute bars exist yet, labels remain
+`pending_future_bars` and the report recommends observation instead of
+parameter changes.
+
 Opening validation is also read-only:
 
 ```bash

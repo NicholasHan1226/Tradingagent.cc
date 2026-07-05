@@ -134,6 +134,11 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
   may be `pending_future_bars` until enough later 5-minute bars exist; these
   fields are review/evolution metadata only and must not be treated as broker
   instructions.
+- CNFutures post-session calibration may write
+  `shared/review/cn_futures/forward_labels.jsonl` and
+  `shared/review/cn_futures/win_rate_calibration_report.{json,md}`. These are
+  derived review artifacts from simulated signal cards and SharedSignals bars;
+  they do not rewrite execution state or SharedSignals data.
 - Dashboard consumption should use
   `shared/review/cn_futures/observation_report.json`. The stable UI-facing
   surface is `schema_version`, `dashboard`, `next_validation`,

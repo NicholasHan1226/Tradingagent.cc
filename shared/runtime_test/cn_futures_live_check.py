@@ -218,6 +218,7 @@ def check_cron_entries(crontab_text: str | None = None, crontab_error: str = "")
         "tradingagent_sim": "job_cn_futures_sim.sh",
         "tradingagent_evolution": "job_cn_futures_evolution.sh",
         "tradingagent_observation": "job_cn_futures_observation_report.sh",
+        "tradingagent_calibration": "job_cn_futures_calibration_report.sh",
         "tradingagent_pre_open_validation": "job_cn_futures_pre_open_validation.sh",
         "tradingagent_first_sample_alert": "job_cn_futures_first_sample_alert.sh",
     }
@@ -464,7 +465,7 @@ def next_validation_plan(checks: list[Check]) -> dict[str, Any]:
         "next_session_start": session.get("next_session_start", ""),
         "acceptance": {
             "freshness_status": "fresh",
-            "cron_required": ["cn_futures_5min.sh", "job_cn_futures_sim.sh", "job_cn_futures_observation_report.sh"],
+            "cron_required": ["cn_futures_5min.sh", "job_cn_futures_sim.sh", "job_cn_futures_observation_report.sh", "job_cn_futures_calibration_report.sh"],
             "requires_sim_review_with_filled_count": True,
             "requires_style_outputs": True,
             "requires_real_trading_enabled_false": True,
