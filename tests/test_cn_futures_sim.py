@@ -154,18 +154,18 @@ class CNFuturesSimTest(unittest.TestCase):
             "min_recent_range_pct": 0.001,
         }
         open_cooldown_bars = [
-            {"bar_time": "2026-07-06 09:30:00", "close": 3500, "volume": 1000},
-            {"bar_time": "2026-07-06 09:35:00", "close": 3505, "volume": 1000},
-            {"bar_time": "2026-07-06 09:40:00", "close": 3510, "volume": 1100},
-            {"bar_time": "2026-07-06 09:42:00", "close": 3515, "volume": 1200},
-            {"bar_time": "2026-07-06 09:44:00", "close": 3520, "volume": 1300},
+            {"bar_time": "2026-07-06 09:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 09:05:00", "close": 3505, "volume": 1000},
+            {"bar_time": "2026-07-06 09:10:00", "close": 3510, "volume": 1100},
+            {"bar_time": "2026-07-06 09:12:00", "close": 3515, "volume": 1200},
+            {"bar_time": "2026-07-06 09:14:00", "close": 3520, "volume": 1300},
         ]
         gap_bars = [
-            {"bar_time": "2026-07-06 09:30:00", "close": 3500, "volume": 1000, "previous_close": 3400},
-            {"bar_time": "2026-07-06 09:35:00", "close": 3510, "volume": 1000, "previous_close": 3400},
-            {"bar_time": "2026-07-06 09:40:00", "close": 3520, "volume": 1100, "previous_close": 3400},
-            {"bar_time": "2026-07-06 09:45:00", "close": 3530, "volume": 1200, "previous_close": 3400},
-            {"bar_time": "2026-07-06 09:50:00", "close": 3540, "volume": 1300, "previous_close": 3400},
+            {"bar_time": "2026-07-06 09:00:00", "close": 3500, "volume": 1000, "previous_close": 3400},
+            {"bar_time": "2026-07-06 09:05:00", "close": 3510, "volume": 1000, "previous_close": 3400},
+            {"bar_time": "2026-07-06 09:10:00", "close": 3520, "volume": 1100, "previous_close": 3400},
+            {"bar_time": "2026-07-06 09:15:00", "close": 3530, "volume": 1200, "previous_close": 3400},
+            {"bar_time": "2026-07-06 09:20:00", "close": 3540, "volume": 1300, "previous_close": 3400},
         ]
         low_volatility_bars = [
             {"bar_time": "2026-07-06 14:10:00", "close": 3500.0, "volume": 1000},
@@ -181,6 +181,7 @@ class CNFuturesSimTest(unittest.TestCase):
 
         self.assertEqual(open_cooldown["action"], "hold")
         self.assertEqual(open_cooldown["reason"], "opening_cooldown")
+        self.assertEqual(open_cooldown["minutes_since_open"], 14)
         self.assertEqual(gap["action"], "hold")
         self.assertEqual(gap["reason"], "opening_gap_cooldown")
         self.assertEqual(low_volatility["action"], "hold")

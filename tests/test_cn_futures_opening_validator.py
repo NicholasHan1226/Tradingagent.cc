@@ -168,6 +168,30 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["status"], "warn")
         codes = {alert["code"] for alert in report["alerts"]}
         self.assertIn("cn_futures_first_sim_sample_missing", codes)
+        self.assertEqual(report["opening_30m_review"]["status"], "pass")
+        self.assertEqual(report["opening_30m_review"]["phase"], "accumulating_opening_30m")
+
+    def test_opening_30m_review_warns_when_no_simulated_trade_after_window(self) -> None:
+        db_path = self._db(
+            [
+                ("IF2609.CFX", "2026-07-06 09:05:00"),
+                ("IH2609.CFX", "2026-07-06 09:05:00"),
+                ("IC2609.CFX", "2026-07-06 09:10:00"),
+                ("IM2609.CFX", "2026-07-06 09:10:00"),
+            ]
+        )
+
+        report = first_sample_alerts(
+            sqlite_db=db_path,
+            now=datetime.fromisoformat("2026-07-06T09:35:00+08:00"),
+            min_symbols=4,
+            review_path=Path("/tmp/nonexistent-cn-futures-review.jsonl"),
+        )
+
+        self.assertEqual(report["opening_30m_review"]["status"], "warn")
+        self.assertEqual(report["opening_30m_review"]["phase"], "no_simulated_trade")
+        codes = {alert["code"] for alert in report["alerts"]}
+        self.assertIn("cn_futures_opening_30m_no_simulated_trade", codes)
 
 
 if __name__ == "__main__":

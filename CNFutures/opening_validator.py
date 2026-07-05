@@ -186,6 +186,69 @@ def _count_market_receipts(receipt_path: Path, date: str) -> int:
     return count
 
 
+def _opening_30m_review(
+    *,
+    bars: dict[str, Any],
+    latest_review: dict[str, Any],
+    filled_signal_count: int,
+    receipt_count: int,
+    elapsed_minutes: int | None,
+    min_symbols: int,
+) -> dict[str, Any]:
+    bar_count = int(bars.get("bar_count") or 0)
+    symbol_count = int(bars.get("symbol_count") or 0)
+    hold_summary = latest_review.get("hold_reason_summary", {}) if isinstance(latest_review.get("hold_reason_summary"), dict) else {}
+    hold_by_reason = hold_summary.get("by_reason") if isinstance(hold_summary.get("by_reason"), dict) else {}
+    top_hold_reason = ""
+    if hold_by_reason:
+        top_hold_reason = max(hold_by_reason.items(), key=lambda item: int(item[1] or 0))[0]
+    if elapsed_minutes is None:
+        status = "waiting"
+        phase = "outside_session"
+        action = "wait_for_next_session"
+    elif elapsed_minutes < 30:
+        status = "pass"
+        phase = "accumulating_opening_30m"
+        action = "continue_accumulating_samples"
+    elif bars.get("error"):
+        status = "warn"
+        phase = "data_query_failed"
+        action = "check_sharedsignals_futures_read_model"
+    elif bar_count <= 0 or symbol_count < max(1, int(min_symbols)):
+        status = "warn"
+        phase = "insufficient_5min_data"
+        action = "check_cn_futures_5min_collector"
+    elif int(latest_review.get("filled_count") or 0) <= 0 and filled_signal_count <= 0:
+        status = "warn"
+        phase = "no_simulated_trade"
+        action = "review_hold_reasons_and_strategy_filters"
+    elif filled_signal_count > 0 and receipt_count <= 0:
+        status = "warn"
+        phase = "receipt_missing"
+        action = "check_cn_futures_receipt_writer"
+    else:
+        status = "pass"
+        phase = "opening_30m_ready"
+        action = "continue_observation"
+    return {
+        "window_minutes": 30,
+        "status": status,
+        "phase": phase,
+        "next_action": action,
+        "top_hold_reason": top_hold_reason,
+        "inputs": {
+            "elapsed_minutes": elapsed_minutes,
+            "bar_count": bar_count,
+            "symbol_count": symbol_count,
+            "min_symbols": max(1, int(min_symbols)),
+            "latest_review_exists": bool(latest_review),
+            "latest_review_filled_count": int(latest_review.get("filled_count") or 0) if latest_review else 0,
+            "filled_signals": filled_signal_count,
+            "sim_execution_receipts": receipt_count,
+        },
+    }
+
+
 def validate_pre_open(
     *,
     sqlite_db: Path = DEFAULT_SQLITE_DB,
@@ -289,6 +352,20 @@ def first_sample_alerts(
         "sim_execution_receipts": receipt_count,
         "review_rows": _count_jsonl_rows(review_path),
     }
+    result["opening_30m_review"] = _opening_30m_review(
+        bars=bars,
+        latest_review=latest_review,
+        filled_signal_count=filled_signal_count,
+        receipt_count=receipt_count,
+        elapsed_minutes=elapsed_minutes,
+        min_symbols=min_symbols,
+    )
+    if result["opening_30m_review"]["status"] == "warn":
+        alerts.append({
+            "severity": "warn",
+            "code": f"cn_futures_opening_30m_{result['opening_30m_review']['phase']}",
+            "message": "CNFutures 开盘后30分钟验收未完全通过。",
+        })
     if result["latest_review"]["real_trading_enabled"]:
         alerts.append({"severity": "error", "code": "cn_futures_real_trading_flag_enabled", "message": "CNFutures 复盘样本错误带有实盘启用标记。"})
     if latest_filled_count <= 0 and filled_signal_count <= 0:

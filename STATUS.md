@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-05 (pre-open readiness audit and stale market docs retired)
+> 最后更新：2026-07-05 (opening validation no-trade attribution and health alias)
 
 ---
 
@@ -28,15 +28,15 @@
 - **复盘/报告输入**：日报、周报、归因和汇总邮件默认通过 `load_review_trades()` 读取 legacy shadow fills + `shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl` + A股 `shared/logs/local_sim/local_sim_trades.jsonl`；报告保留 `review_trade_count`、`shadow_trade_count`、`simulated_trade_count` 三个计数，避免服务器本地模拟成交被误判为无样本
 - **影子盘状态闭环**：US/Crypto/PM/HK 本地 shadow runner 的 `simulated_fill.status=filled|partial` 会立即推进到 `signals/shadow/filled`；若状态机推进失败，卡片进入 `signals/shadow/failed` 并保留 `settlement_warning`，不再把已模拟成交卡片长期留在 `shadow/pending`
 - **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查默认读取 TradingAgent 本地回执，旧 MarketGraph 回执只在历史文件存在时作为兼容输入，并能识别“尚无首笔本地模拟成交”的 bootstrap 状态，避免把无样本误报为链路故障
-- **模拟盘健康检查**：`market_health` 已区分交易时段样本缺失与闭市等待首样本；A股和 CNFutures 在周末/闭市且尚未进入应产生样本的时段时不再误报 warn，进入或经过交易时段后仍无数据/成交会继续告警
-- **A股/CNFutures 开盘验收框架**：A股新增 `shared/runtime_test/ashare_opening_validator.py`，提供 `validate_pre_open` / `validate_opening` / `first_sample_alerts` 三个只读入口，验证 SharedSignals 日线/5分钟数据、本地模拟成交样本、签名回执、复盘日志和 filled signal cards；新增 `shared/wrappers/job_ashare_pre_open_validation.sh`、`job_ashare_opening_validation.sh`、`job_ashare_first_sample_alert.sh` 三个 wrapper，并已写入生产 crontab。CNFutures `opening_validator.py` 已增强 filled signals、receipts 和 review rows 计数与告警。两市场验收均固定 `real_trading_enabled=false`，只在异常时产生系统告警。
+- **模拟盘健康检查**：`market_health` 已区分交易时段样本缺失与闭市等待首样本；A股通过 `Ashare.t_plus_1.is_trading_day()` 判断真实交易日，法定节假日不会仅因工作日误判为应有样本；A股和 CNFutures 在周末/闭市且尚未进入应产生样本的时段时不再误报 warn，进入或经过交易时段后仍无数据/成交会继续告警
+- **A股/CNFutures 开盘验收框架**：A股新增 `shared/runtime_test/ashare_opening_validator.py`，提供 `validate_pre_open` / `validate_opening` / `first_sample_alerts` 三个只读入口，验证 SharedSignals 日线/5分钟数据、本地模拟成交样本、签名回执、复盘日志和 filled signal cards；`first_sample_alerts` 会输出 `no_trade_explanation`，并只按当天本地模拟成交计数，避免旧成交掩盖当天未交易原因；不存在的旧 `a_share_no_trade_attribution.py` manifest 入口已退役。新增 `shared/wrappers/job_ashare_pre_open_validation.sh`、`job_ashare_opening_validation.sh`、`job_ashare_first_sample_alert.sh` 三个 wrapper，并已写入生产 crontab。CNFutures `opening_validator.py` 已增强 filled signals、receipts 和 review rows 计数与告警，并输出 `opening_30m_review` 标准块，用于区分开盘 30 分钟仍在积累样本、缺 5 分钟数据、无模拟成交和缺回执。两市场验收均固定 `real_trading_enabled=false`，只在异常时产生系统告警。
 - **CNFutures 验收入口兼容**：2026-07-05 复核发现 `CNFutures/opening_validator.py` 直接脚本启动会被相对导入阻断；已补兼容，`python -m CNFutures.opening_validator` 与 `python CNFutures/opening_validator.py` 均可用于只读验收。生产 wrapper 仍使用模块启动。
 - **多市场绩效去重**：Crypto/PM/US/CNFutures 共用的 `style_performance.jsonl` 已从 5 分钟 append-only 改为按 `(market, style_name, date)` 幂等写入，历史读取也会取同键最新值，避免 5 分钟任务把 runs/trades/PnL 重复放大并污染风格演化。
 - **多市场收益口径**：新增 `shared/review/pnl_summary.py` 统一摘要层，按 `realized_pnl + mark-to-market unrealized_pnl` 聚合 Ashare/Crypto/PM/US/CNFutures 模拟账本；Ashare 用 SharedSignals 日收盘价做 mark-to-market（缺失则回退成交价），其他市场用 `SimLedger` journal 重放盯市；日报、周报、运维报告、`market_health` 和 `metrics_dashboard` 均输出 `ledger_realized_pnl` / `ledger_unrealized_pnl` / `ledger_total_pnl` / `ledger_market_value` / `ledger_open_position_count` / `ledger_missing_mark_count` / `ledger_pnl_source`；Crypto/PM/US 的 `StyleRunner` 主收益口径同样基于统一模拟账本；CNFutures `sim_runner.py` 和 `review.py` 已补 unrealized 输出；HK 仍暂停，不纳入本口径。
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
-- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。信号漏斗会区分实时筛选、部分阶段和成交回放，避免把已成交账本回放误当成当前筛选转化率。
+- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。信号漏斗会区分实时筛选、部分阶段和成交回放，避免把已成交账本回放误当成当前筛选转化率。
 
 ## 二、已知问题
 
@@ -56,6 +56,15 @@
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
 4. [x] **P2：SharedSignals HTTP API 消费迁移** — 15/15 端点客户端已完成；`TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` / `get_bars_intraday` 接入 API-first 访问；SQLite 只读回退保留
 5. [ ] **A股/CNFutures 下一个真实交易时段开盘验收** — A股新增 `shared/runtime_test/ashare_opening_validator.py` 与三个 wrapper（pre_open / opening / first_sample_alert），并已写入生产 crontab；只读验证 SharedSignals 日线/5分钟数据、本地模拟成交、签名回执、复盘日志和 filled signals，异常才发系统告警；CNFutures `opening_validator.py` 已增强 filled/receipt/review 样本告警；两者均固定 `real_trading_enabled=false`，等待下一交易日生产样本验证。
+
+### 2026-07-05 opening validation residual fixes
+
+- [x] TradingAgent front snapshot API 同时支持 `/healthz` 与 `/health`，方便 systemd、反代或外部监控统一探针。
+- [x] A股 `first_sample_alerts` 新增 `no_trade_explanation`，把没有交易拆成数据读取失败、未到首样本窗口、无 5 分钟数据、覆盖不足、无信号/全被风控拒绝、执行缺失、回执缺失、复盘待生成和闭环 ready；本地模拟成交只按当天日期计数。
+- [x] CNFutures `first_sample_alerts` 新增 `opening_30m_review`，开盘 30 分钟前标记为累计样本，30 分钟后若仍无 5 分钟数据、模拟成交或回执会给出标准原因和下一步。
+- [x] CNFutures 日盘信号时间桶和开盘冷却从真实 09:00 起算，09:00-09:30 标记为 `day_open_first_30m`，避免遗漏期货开盘前 30 分钟行为。
+- [x] A股模拟健康检查接真实交易日历，法定节假日不会仅因周一至周五而预期产生当天样本。
+- [x] A股 manifest 删除不存在的旧 `a_share_no_trade_attribution.py` 入口；无交易归因以后从开盘首样本验收报告读取，不再维护第二套入口。
 
 ### 2026-07-05 CNFutures observation, win-rate filters, and faster simulation evolution
 

@@ -48,6 +48,21 @@ async function listen(server: ReturnType<typeof createTradingAgentSnapshotHttpSe
 }
 
 describe('TradingAgent cloud snapshot API server', () => {
+  it('serves both /healthz and /health for operational probes', async () => {
+    const baseUrl = await listen(
+      createTradingAgentSnapshotHttpServer({
+        readSnapshot: async () => snapshot,
+      }),
+    )
+
+    const healthz = await fetch(`${baseUrl}/healthz`)
+    const health = await fetch(`${baseUrl}/health`)
+
+    expect(healthz.status).toBe(200)
+    expect(health.status).toBe(200)
+    await expect(health.json()).resolves.toMatchObject({ ok: true, service: 'trading-agent-snapshot-api' })
+  })
+
   it('serves a read-only snapshot with no-store cache and restricted CORS', async () => {
     const baseUrl = await listen(
       createTradingAgentSnapshotHttpServer({

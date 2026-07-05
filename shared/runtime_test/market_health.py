@@ -73,6 +73,15 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _is_ashare_trading_day(current: datetime) -> bool:
+    try:
+        from Ashare.t_plus_1 import is_trading_day
+
+        return bool(is_trading_day(current.strftime("%Y%m%d")))
+    except Exception:
+        return current.weekday() < 5
+
+
 def _market_session_state(market: str, now: datetime | None = None) -> dict[str, Any]:
     """Return whether today's production samples should already exist."""
     current = (now or datetime.now(timezone.utc)).astimezone(timezone(timedelta(hours=8)))
@@ -81,7 +90,7 @@ def _market_session_state(market: str, now: datetime | None = None) -> dict[str,
     in_session = False
     samples_expected_today = False
     if market == "ashare":
-        trading_day = weekday < 5
+        trading_day = _is_ashare_trading_day(current)
         windows = ((9 * 60 + 30, 11 * 60 + 30), (13 * 60, 15 * 60))
         in_session = trading_day and any(start <= minutes <= end for start, end in windows)
         samples_expected_today = trading_day and minutes >= 9 * 60 + 30

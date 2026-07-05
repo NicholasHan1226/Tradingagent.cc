@@ -69,7 +69,6 @@ a_share_momentum_shadow_strategy.py,review,Build a shadow-only near-limit moment
 a_share_money_confirmation_ladder.py,review,Moneyflow confirmation ladder for A-share decision inputs.
 a_share_moneyflow_backfill.py,shared,Backfill disk-persistent moneyflow cache from daily Tushare API.
 a_share_monte_carlo.py,review,Monte Carlo simulation on OOS trade return sequences.
-a_share_no_trade_attribution.py,review,Persist no-trade attribution and formal observation card gaps.
 a_share_open_confirm_notify.py,notify,Send the open-confirm email from workflow output and the dynamic panel.
 a_share_open_readiness_audit.py,review,Audit A-share automation readiness before the next market open.
 a_share_opportunity_recall_report.py,review,Measure whether strong A-share opportunities entered condition capture.

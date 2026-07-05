@@ -39,7 +39,7 @@ export function createSnapshotRequestHandler({
       return
     }
 
-    if (url.pathname === '/healthz') {
+    if (url.pathname === '/healthz' || url.pathname === '/health') {
       sendJson(res, 200, { ok: true, service: 'trading-agent-snapshot-api' })
       return
     }

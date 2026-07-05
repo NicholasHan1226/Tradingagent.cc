@@ -63,8 +63,8 @@ def _minutes_since_session_open(row: dict[str, Any]) -> int | None:
     if parsed is None:
         return None
     current = parsed.time()
-    if time(9, 30) <= current <= time(11, 30):
-        open_time = time(9, 30)
+    if time(9, 0) <= current <= time(11, 30):
+        open_time = time(9, 0)
     elif time(13, 0) <= current <= time(15, 0):
         open_time = time(13, 0)
     else:
@@ -78,7 +78,7 @@ def _is_day_session_bar(row: dict[str, Any]) -> bool:
     if parsed is None:
         return False
     current = parsed.time()
-    return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(15, 0))
+    return (time(9, 0) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(15, 0))
 
 
 def _is_night_session_bar(row: dict[str, Any]) -> bool:
@@ -207,6 +207,8 @@ def _time_bucket(row: dict[str, Any]) -> str:
     if parsed is None:
         return "unknown"
     current = parsed.time()
+    if time(9, 0) <= current < time(9, 30):
+        return "day_open_first_30m"
     if time(9, 30) <= current < time(10, 30):
         return "day_open"
     if time(10, 30) <= current <= time(11, 30):

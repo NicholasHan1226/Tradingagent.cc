@@ -118,6 +118,35 @@ def _count_jsonl_rows(path: Path) -> int:
     return sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
 
 
+def _count_local_sim_trades(path: Path, date: str) -> int:
+    if not path.exists():
+        return 0
+    count = 0
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        market = str(payload.get("market") or payload.get("market_type") or "ashare").lower()
+        if market not in {"ashare", "a_share", "a-share"}:
+            continue
+        trade_date = str(
+            payload.get("trade_date")
+            or payload.get("date")
+            or payload.get("filled_at")
+            or payload.get("executed_at")
+            or payload.get("timestamp")
+            or ""
+        )[:10].replace("-", "")
+        if trade_date == date:
+            count += 1
+    return count
+
+
 def _count_filled_signals(signals_dir: Path, date: str) -> int:
     filled_dir = signals_dir / "filled"
     if not filled_dir.exists():
@@ -158,6 +187,65 @@ def _count_market_receipts(receipt_path: Path, date: str) -> int:
         if receipt_date == date:
             count += 1
     return count
+
+
+def _explain_no_trade(
+    *,
+    bars: dict[str, Any],
+    local_sim_count: int,
+    receipt_count: int,
+    filled_signal_count: int,
+    review_count: int,
+    elapsed_minutes: int | None,
+    wait_minutes: int,
+    min_symbols: int,
+) -> dict[str, Any]:
+    """Classify why the opening probe has not produced a simulated A-share trade."""
+
+    bar_count = int(bars.get("bar_count") or 0)
+    symbol_count = int(bars.get("symbol_count") or 0)
+    if bars.get("error"):
+        category = "data_query_failed"
+        action = "check_sharedsignals_read_model"
+    elif elapsed_minutes is not None and elapsed_minutes < max(1, int(wait_minutes)):
+        category = "not_due_yet"
+        action = "wait_until_first_sample_window"
+    elif bar_count <= 0:
+        category = "no_5min_data"
+        action = "check_sharedsignals_p0_5min_collection"
+    elif symbol_count < max(1, int(min_symbols)):
+        category = "low_5min_coverage"
+        action = "check_sharedsignals_symbol_coverage"
+    elif local_sim_count <= 0 and filled_signal_count <= 0:
+        category = "no_trade_signal_or_all_rejected"
+        action = "check_signal_generation_and_risk_rejections"
+    elif filled_signal_count > 0 and local_sim_count <= 0:
+        category = "execution_missing"
+        action = "check_server_local_sim_executor"
+    elif local_sim_count > 0 and receipt_count <= 0:
+        category = "receipt_missing"
+        action = "check_sim_execution_receipt_writer"
+    elif review_count <= 0:
+        category = "review_pending"
+        action = "wait_for_review_or_run_daily_review"
+    else:
+        category = "trade_loop_ready"
+        action = "continue_monitoring"
+    return {
+        "category": category,
+        "next_action": action,
+        "inputs": {
+            "bar_count": bar_count,
+            "symbol_count": symbol_count,
+            "min_symbols": max(1, int(min_symbols)),
+            "local_sim_trades": local_sim_count,
+            "filled_signals": filled_signal_count,
+            "sim_execution_receipts": receipt_count,
+            "daily_reviews": review_count,
+            "elapsed_minutes": elapsed_minutes,
+            "wait_minutes": max(1, int(wait_minutes)),
+        },
+    }
 
 
 def validate_pre_open(
@@ -297,7 +385,7 @@ def first_sample_alerts(
         alerts.append({"severity": "warn", "code": "ashare_5min_missing_in_session", "message": "A股交易时段开始后仍缺少足够的5分钟数据。"})
 
     trade_date = current.strftime("%Y%m%d")
-    local_sim_count = _count_jsonl_rows(local_sim_path)
+    local_sim_count = _count_local_sim_trades(local_sim_path, trade_date)
     receipt_count = _count_market_receipts(receipt_path, trade_date)
     review_count = _count_jsonl_rows(review_path)
     filled_signal_count = _count_filled_signals(signals_dir, trade_date)
@@ -307,6 +395,16 @@ def first_sample_alerts(
         "daily_reviews": review_count,
         "filled_signals": filled_signal_count,
     }
+    result["no_trade_explanation"] = _explain_no_trade(
+        bars=bars,
+        local_sim_count=local_sim_count,
+        receipt_count=receipt_count,
+        filled_signal_count=filled_signal_count,
+        review_count=review_count,
+        elapsed_minutes=elapsed_minutes,
+        wait_minutes=wait_minutes,
+        min_symbols=min_symbols,
+    )
     if local_sim_count <= 0:
         alerts.append({"severity": "warn", "code": "ashare_first_sim_trade_missing", "message": "A股5分钟数据已进入会话窗口，但服务器本地模拟盘尚无成交样本。"})
     if receipt_count <= 0:

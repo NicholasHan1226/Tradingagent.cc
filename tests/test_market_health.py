@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +23,16 @@ class MarketHealthTest(unittest.TestCase):
         path = self.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def test_ashare_session_uses_real_trading_day_calendar(self) -> None:
+        with patch.object(market_health, "_is_ashare_trading_day", return_value=False):
+            state = market_health._market_session_state(
+                "ashare",
+                now=datetime.fromisoformat("2026-10-01T10:00:00+08:00"),
+            )
+
+        self.assertFalse(state["in_session"])
+        self.assertFalse(state["samples_expected_today"])
 
     def test_signal_queue_isolation_fails_when_shadow_leaks_into_execution_pending(self) -> None:
         self._write_json("signals/pending/SHADOW-ashare-000001.json", {"capital_layer": "shadow", "order_id": "SHADOW-1"})
