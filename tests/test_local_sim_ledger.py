@@ -65,6 +65,22 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertFalse(result["recorded"])
 
+    def test_bootstrap_snapshot_creates_empty_sim_state(self) -> None:
+        result = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=20000, trade_date="20260706")
+
+        self.assertEqual(result["status"], "bootstrapped")
+        self.assertTrue(result["written"])
+        snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
+        self.assertEqual(snapshot["bootstrap_state"], "no_trades_yet")
+        self.assertEqual(snapshot["cash_available"], 20000.0)
+        self.assertEqual(snapshot["positions"], [])
+        self.assertEqual(snapshot["pnl"]["ashare_sim"]["cash_available"], 20000.0)
+
+        again = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=30000)
+        self.assertEqual(again["status"], "snapshot_exists")
+        snapshot_again = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
+        self.assertEqual(snapshot_again["cash_available"], 20000.0)
+
 
 if __name__ == "__main__":
     unittest.main()

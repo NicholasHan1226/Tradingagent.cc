@@ -939,6 +939,84 @@ def _build_pool_for_market(
     return deps.build_pool(date=date, universe=universe)
 
 
+def _sim_no_trade_explanation(
+    *,
+    universe_count: int,
+    candidate_count: int,
+    order_count: int,
+    portfolio_positions: int,
+    filled_count: int,
+    failed_count: int,
+    pending_count: int,
+    duplicate_count: int,
+    skipped_candidates: list[dict[str, Any]],
+    risk_rejections: list[dict[str, Any]],
+    execution_skips: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if filled_count > 0:
+        category = "filled"
+        action = "review_filled_receipts"
+    elif universe_count <= 0:
+        category = "no_universe"
+        action = "check_sharedsignals_assets_and_daily_coverage"
+    elif candidate_count <= 0:
+        category = "no_candidates"
+        action = "check_candidate_pool_thresholds_and_universe_filter"
+    elif skipped_candidates and len(skipped_candidates) >= candidate_count:
+        category = "all_candidates_missing_price"
+        action = "check_sharedsignals_daily_or_realtime_prices"
+    elif order_count <= 0 and risk_rejections:
+        category = "all_rejected_by_risk"
+        action = "review_risk_rejections"
+    elif order_count <= 0:
+        category = "no_portfolio_orders"
+        action = "check_position_sizing_and_portfolio_constructor"
+    elif portfolio_positions <= 0:
+        category = "portfolio_empty"
+        action = "check_capital_lot_size_and_constructor_output"
+    elif duplicate_count > 0 and failed_count <= 0 and pending_count <= 0:
+        category = "duplicate_existing_signal"
+        action = "review_same_day_idempotency_state"
+    elif execution_skips:
+        category = "execution_skipped"
+        action = "review_execution_skip_reasons"
+    elif failed_count > 0:
+        category = "execution_failed"
+        action = "review_failed_receipts"
+    elif pending_count > 0:
+        category = "pending_execution"
+        action = "review_pending_signal_state"
+    elif errors:
+        category = "degraded_errors"
+        action = "review_orchestrator_errors"
+    else:
+        category = "no_filled_sim_orders"
+        action = "review_full_sim_run"
+    return {
+        "category": category,
+        "action": action,
+        "counts": {
+            "universe": universe_count,
+            "candidates": candidate_count,
+            "orders": order_count,
+            "portfolio_positions": portfolio_positions,
+            "filled": filled_count,
+            "failed": failed_count,
+            "pending": pending_count,
+            "duplicates": duplicate_count,
+            "skipped_candidates": len(skipped_candidates),
+            "risk_rejections": len(risk_rejections),
+            "execution_skips": len(execution_skips),
+            "errors": len(errors),
+        },
+        "sample_skipped_candidates": skipped_candidates[:10],
+        "sample_risk_rejections": risk_rejections[:10],
+        "sample_execution_skips": execution_skips[:10],
+        "sample_errors": errors[:5],
+    }
+
+
 def _run_condition_lifecycle(
     market: str,
     pool: dict[str, Any],
@@ -1313,6 +1391,8 @@ def run_sim_loop(
     candidates = _candidate_symbols(pool, list(scores_by_symbol))[:max_candidates]
     orders_for_portfolio: list[dict[str, Any]] = []
     skipped_candidates: list[dict[str, Any]] = []
+    risk_rejections: list[dict[str, Any]] = []
+    execution_skips: list[dict[str, Any]] = []
     signal_audit_by_symbol = {audit["ts_code"]: audit for audit in audits if audit.get("stage") == "signal"}
     risk_portfolio = {
         "positions": existing_positions,
@@ -1400,6 +1480,15 @@ def run_sim_loop(
         )
         audits.append(risk_audit)
         if not risk.get("approved") or _safe_float(risk.get("adjusted_weight"), 0.0) <= 0:
+            risk_rejections.append(
+                {
+                    "symbol": symbol,
+                    "approved": bool(risk.get("approved")),
+                    "adjusted_weight": _safe_float(risk.get("adjusted_weight"), 0.0),
+                    "reasons": risk.get("reasons", []),
+                    "capital_layer": capital_layer,
+                }
+            )
             continue
         orders_for_portfolio.append({
             "ts_code": symbol,
@@ -1454,7 +1543,9 @@ def run_sim_loop(
             "note": f"orchestrator sim loop {market} {date}",
         }
         if order["quantity"] <= 0 or order["price"] <= 0:
-            errors.append({"stage": "execution.sim_broker", "status": "skipped", "symbol": symbol, "reason": "non-positive quantity or price", "capital_layer": capital_layer})
+            skip = {"stage": "execution.sim_broker", "status": "skipped", "symbol": symbol, "reason": "non-positive quantity or price", "capital_layer": capital_layer}
+            execution_skips.append(skip)
+            errors.append(skip)
             continue
         existing_signal = _find_existing_sim_signal(
             signals_dir,
@@ -1578,6 +1669,26 @@ def run_sim_loop(
     )
     stage_calls.append("review.daily_review")
 
+    filled_count = sum(1 for record in records if record["signal_result"].get("status") == "filled")
+    failed_count = sum(1 for record in records if record["signal_result"].get("status") == "failed")
+    pending_count = sum(1 for record in records if record["signal_result"].get("status") == "pending")
+    duplicate_count = sum(1 for record in records if record["signal_result"].get("status") == "duplicate")
+    portfolio_positions = len([row for row in (portfolio.get("positions", []) or []) if isinstance(row, dict) and row.get("ts_code")])
+    no_trade_explanation = _sim_no_trade_explanation(
+        universe_count=len(universe),
+        candidate_count=len(candidates),
+        order_count=len(orders_for_portfolio),
+        portfolio_positions=portfolio_positions,
+        filled_count=filled_count,
+        failed_count=failed_count,
+        pending_count=pending_count,
+        duplicate_count=duplicate_count,
+        skipped_candidates=skipped_candidates,
+        risk_rejections=risk_rejections,
+        execution_skips=execution_skips,
+        errors=errors,
+    )
+
     return {
         "market": market,
         "date": date,
@@ -1591,9 +1702,15 @@ def run_sim_loop(
         "order_count": len(orders_for_portfolio),
         "skipped_candidate_count": len(skipped_candidates),
         "skipped_candidates": skipped_candidates[:20],
-        "filled_count": sum(1 for record in records if record["signal_result"].get("status") == "filled"),
-        "failed_count": sum(1 for record in records if record["signal_result"].get("status") == "failed"),
-        "pending_count": sum(1 for record in records if record["signal_result"].get("status") == "pending"),
+        "risk_rejection_count": len(risk_rejections),
+        "risk_rejections": risk_rejections[:20],
+        "execution_skip_count": len(execution_skips),
+        "execution_skips": execution_skips[:20],
+        "filled_count": filled_count,
+        "failed_count": failed_count,
+        "pending_count": pending_count,
+        "duplicate_count": duplicate_count,
+        "no_trade_explanation": no_trade_explanation,
         "portfolio": portfolio,
         "records": records,
         "audit_events": audits,

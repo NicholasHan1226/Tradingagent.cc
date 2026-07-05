@@ -1297,6 +1297,18 @@ def run_sim_orchestrator(job_name: str, market: str) -> dict[str, Any]:
     result = run_sim_loop(adapter, trade_date(), reader, deps=deps)
     result.update({"job": job_name, "state": result.get("state", "ok"), "generated_at": now_iso()})
     append_jsonl(SHARED / "logs/orchestrator_sim_runs.jsonl", result)
+    if str(market).lower() == "ashare" and int(result.get("filled_count") or 0) <= 0:
+        append_jsonl(
+            SHARED / "logs/ashare_no_trade_explanations.jsonl",
+            {
+                "job": job_name,
+                "market": result.get("market", market),
+                "date": result.get("date"),
+                "generated_at": result.get("generated_at"),
+                "state": result.get("state"),
+                "no_trade_explanation": result.get("no_trade_explanation", {}),
+            },
+        )
     return result
 
 

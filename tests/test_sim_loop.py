@@ -336,6 +336,29 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["records"][0]["receipt"]["raw_response"]["mode"], "server_local_sim_engine")
         self.assertEqual(filled["filled_quantity"], 100)
 
+    def test_run_sim_loop_reports_no_trade_risk_rejections(self) -> None:
+        deps = self._deps()
+
+        def reject_risk(order: dict[str, object], portfolio: dict[str, object]) -> dict[str, object]:
+            return {"approved": False, "adjusted_weight": 0.0, "reasons": ["unit risk rejection"]}
+
+        deps.risk_check = reject_risk
+
+        result = run_sim_loop(
+            StubSimAdapter(),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals",
+        )
+
+        self.assertEqual(result["filled_count"], 0)
+        self.assertEqual(result["order_count"], 0)
+        self.assertEqual(result["risk_rejection_count"], 1)
+        self.assertEqual(result["no_trade_explanation"]["category"], "all_rejected_by_risk")
+        self.assertEqual(result["no_trade_explanation"]["counts"]["risk_rejections"], 1)
+        self.assertEqual(result["risk_rejections"][0]["reasons"], ["unit risk rejection"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -234,6 +234,13 @@ def _starting_cash(value: Any) -> float:
     return cash if cash > 0 else 100_000.0
 
 
+def _starting_cash_for_bootstrap(value: Any = None) -> float:
+    cash = _safe_float(value, 0.0)
+    if cash <= 0:
+        cash = _safe_float(os.environ.get("ASHARE_SIM_INITIAL_CASH"), 0.0)
+    return cash if cash > 0 else 20_000.0
+
+
 def _sim_account_snapshot_unlocked(
     trades: list[dict[str, Any]],
     *,
@@ -423,7 +430,12 @@ def _persist_unlocked(trades: list[dict[str, Any]]) -> None:
     _write_positions_snapshot(positions, pnl)
 
 
-def _write_positions_snapshot(positions: dict[str, dict[str, Any]], pnl: dict[str, dict[str, Any]]) -> None:
+def _write_positions_snapshot(
+    positions: dict[str, dict[str, Any]],
+    pnl: dict[str, dict[str, Any]],
+    *,
+    bootstrap: dict[str, Any] | None = None,
+) -> None:
     flat_positions: list[dict[str, Any]] = []
     for account, account_positions in positions.items():
         for ts_code, position in account_positions.items():
@@ -450,8 +462,59 @@ def _write_positions_snapshot(positions: dict[str, dict[str, Any]], pnl: dict[st
         "positions_by_account": positions,
         "pnl": pnl,
     }
+    if bootstrap:
+        payload.update(bootstrap)
     LOCAL_SIM_POSITIONS_SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
     LOCAL_SIM_POSITIONS_SNAPSHOT.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def ensure_local_sim_bootstrap_snapshot(
+    account: dict[str, Any] | str | None = None,
+    *,
+    starting_cash: Any = None,
+    trade_date: str = "",
+    force: bool = False,
+) -> dict[str, Any]:
+    """Create an empty A-share simulated snapshot before the first local fill."""
+
+    account_name = _account_name(account or "ashare_sim")
+    cash = _starting_cash_for_bootstrap(starting_cash)
+    with _lock():
+        trades = _load_trades_unlocked()
+        if trades:
+            _persist_unlocked(trades)
+            return {"status": "existing_trades", "written": False, "trade_count": len(trades), "account": account_name}
+        if LOCAL_SIM_POSITIONS_SNAPSHOT.exists() and not force:
+            return {"status": "snapshot_exists", "written": False, "trade_count": 0, "account": account_name}
+
+        positions = {account_name: {}}
+        pnl = {
+            account_name: {
+                "account": account_name,
+                "total_trades": 0,
+                "buys": 0,
+                "sells": 0,
+                "realized_pnl": 0.0,
+                "unrealized_pnl": 0.0,
+                "market_value": 0.0,
+                "total_pnl": 0.0,
+                "cash_available": round(cash, 2),
+                "positions": {},
+            }
+        }
+        LOCAL_SIM_POSITIONS.parent.mkdir(parents=True, exist_ok=True)
+        LOCAL_SIM_POSITIONS.write_text(json.dumps(positions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        LOCAL_SIM_PNL.write_text(json.dumps(pnl, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _write_positions_snapshot(
+            positions,
+            pnl,
+            bootstrap={
+                "bootstrap_state": "no_trades_yet",
+                "cash_available": round(cash, 2),
+                "trade_date": _trade_date(trade_date),
+            },
+        )
+    return {"status": "bootstrapped", "written": True, "trade_count": 0, "account": account_name, "cash_available": round(cash, 2)}
 
 
 def record_local_sim_order(

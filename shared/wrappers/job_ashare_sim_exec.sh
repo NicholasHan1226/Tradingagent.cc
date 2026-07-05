@@ -21,6 +21,21 @@ export TRADINGS_DEEPSEEK_RETRIES="${TRADINGS_DEEPSEEK_RETRIES:-1}"
 
 ensure_cron_paths
 HERMES_ENABLED="${ASHARE_SIM_HERMES_ENABLED:-0}"
+set +e
+bootstrap_state="$(${PYTHON_BIN} - <<'PYSRV'
+import json
+from shared.execution.local_sim_ledger import ensure_local_sim_bootstrap_snapshot
+
+print(json.dumps(ensure_local_sim_bootstrap_snapshot(), ensure_ascii=False, sort_keys=True))
+PYSRV
+)"
+bootstrap_exit=$?
+set -e
+if (( bootstrap_exit == 0 )); then
+    printf '[%s] %s bootstrap_snapshot=%q\n' "$(timestamp)" "${JOB_NAME}" "${bootstrap_state}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
+else
+    printf '[%s] %s bootstrap_snapshot_failed exit_code=%s detail=%q action=continue\n' "$(timestamp)" "${JOB_NAME}" "${bootstrap_exit}" "${bootstrap_state}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
+fi
 market_open="$(${PYTHON_BIN} - <<'PYSRV'
 from datetime import datetime
 now = datetime.now()

@@ -190,6 +190,7 @@ class AshareAdapterTest(unittest.TestCase):
         self.assertIn("trend_follow", config["strategies"])
         self.assertEqual(config["market_rules"]["settlement"], "T+1")
         self.assertIn("opening_auction", config["market_rules"]["sessions"])
+        self.assertEqual(config["sim_capital"], 20_000.0)
         self.assertEqual(config["default_price"], 0.0)
         self.assertTrue(config["universe_filter"]["exclude_non_a_share"])
 

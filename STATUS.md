@@ -11,7 +11,7 @@
 ## 一、当前状态
 
 - **A 股多风格模拟盘**：完整闭环运行（信号生成 → server-local paper fill → sim 账簿 → 复盘）；旧层已完全退役（0 文件、0 cron）；A股资产入口已通过 SharedSignals `/tushare?api_name=stock_basic` 恢复
-- **A 股模拟盘**：默认走服务器本地闭环，不依赖 Mac Mini Hermes；Hermes/同花顺 GUI 路径已降级为第二选择，只在 `ASHARE_SIM_HERMES_ENABLED=1` 时启用并投递 `signals/pending`；A股 simulated signal card 显式固定 `real_trading_enabled=false`；2026-07-05 已修复 A股 sim account 字符串阻断 server-local fill 的问题，隔离真实数据 smoke 验证 9/9 本地成交、local_sim 账本与 `signals/positions/simulated_ashare_positions.json` 持仓快照均可生成
+- **A 股模拟盘**：默认走服务器本地闭环，不依赖 Mac Mini Hermes；Hermes/同花顺 GUI 路径已降级为第二选择，只在 `ASHARE_SIM_HERMES_ENABLED=1` 时启用并投递 `signals/pending`；A股 simulated signal card 显式固定 `real_trading_enabled=false`；2026-07-05 已修复 A股 sim account 字符串阻断 server-local fill 的问题，隔离真实数据 smoke 验证 9/9 本地成交、local_sim 账本与 `signals/positions/simulated_ashare_positions.json` 持仓快照均可生成；A股 simulated capital 已显式固定为 20,000 元，`job_ashare_sim_exec` 会在开盘前/盘中首轮保证空账本快照存在，尚无成交时输出 `bootstrap_state=no_trades_yet`、现金与空持仓，避免 dashboard/验收等待第一笔成交
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 仍保留为 GUI 执行桥，只执行和回写，不做买卖判断；当前 A 股服务器本地模拟闭环不要求 mini 在线
 - **PM（预测市场）**：多风格 simulated 扫描每 10 分钟运行；checked-in config 使用 USDC；PM sim/style 输出写入 `shared/review/pm/style_comparison.json`
 - **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；Crypto/PM/US 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环；HK 工具与 styles 仅保留为预留能力，默认 fail-closed，不纳入 production sim / health / evolution；基础 `styles/*.json` 已恢复为只读配置，运行态权重/状态写入 `shared/review/<market>/style_weights.json`，自动生成风格写入 `shared/review/<market>/generated_styles/`；新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline；当前生产模拟盘范围为 A股/Crypto/PM/US/CNFutures，HK 暂不接入生产调度
@@ -61,7 +61,7 @@
 
 - [x] TradingAgent front snapshot API 同时支持 `/healthz` 与 `/health`，方便 systemd、反代或外部监控统一探针。
 - [x] TradingAgent front 默认 fallback 数据移除暂停 HK 信号、持仓和分配样例，改用 CNFutures simulated-only 样例，避免真实 snapshot 缺失时页面误展示港股生产机会。
-- [x] A股 `first_sample_alerts` 新增 `no_trade_explanation`，把没有交易拆成数据读取失败、未到首样本窗口、无 5 分钟数据、覆盖不足、无信号/全被风控拒绝、执行缺失、回执缺失、复盘待生成和闭环 ready；本地模拟成交只按当天日期计数。
+- [x] A股 `first_sample_alerts` 新增 `no_trade_explanation`，把没有交易拆成数据读取失败、未到首样本窗口、无 5 分钟数据、覆盖不足、无信号/全被风控拒绝、执行缺失、回执缺失、复盘待生成和闭环 ready；本地模拟成交只按当天日期计数。A股 simulated orchestrator 每轮也会返回并在无成交时追加 `shared/logs/ashare_no_trade_explanations.jsonl`，记录候选数、订单数、风控拒绝、价格/手数跳过、重复信号、执行失败/挂起等漏斗原因，方便盘后复盘。
 - [x] CNFutures `first_sample_alerts` 新增 `opening_30m_review`，开盘 30 分钟前标记为累计样本，30 分钟后若仍无 5 分钟数据、模拟成交或回执会给出标准原因和下一步。
 - [x] CNFutures 日盘信号时间桶和开盘冷却从真实 09:00 起算，09:00-09:30 标记为 `day_open_first_30m`，避免遗漏期货开盘前 30 分钟行为。
 - [x] A股模拟健康检查接真实交易日历，法定节假日不会仅因周一至周五而预期产生当天样本。
