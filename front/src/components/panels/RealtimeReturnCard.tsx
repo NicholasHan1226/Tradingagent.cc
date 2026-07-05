@@ -42,6 +42,7 @@ export function RealtimeReturnCard({
     ? `${portfolio.tradeCount} 次成交 · ${portfolio.pointCount} 个收益点`
     : `兑现 ${executedCount} · 推进 ${pendingCount} · 复盘 ${missedCount}`
   const drawdownDistance = portfolio ? Math.max(0, DRAWDOWN_LIMIT_PCT - Math.abs(portfolio.maxDrawdownPct)) : null
+  const drawdownLabel = drawdownDistance !== null ? `${drawdownDistance.toFixed(2)}%` : '等待'
 
   return (
     <aside className="realtime-return-card" aria-label="实时收益">
@@ -69,9 +70,12 @@ export function RealtimeReturnCard({
         </div>
       ) : (
         <>
-          <strong>{primaryResult}</strong>
+          <div className="return-primary">
+            <strong>{primaryResult}</strong>
+            <span>{resultCaption}</span>
+          </div>
           <div className="return-subline">
-            <b>{resultCaption}</b>
+            <b>{modeLabel}</b>
             <em>{gapLabel}</em>
           </div>
           <div className="return-facts" aria-label="收益关键指标">
@@ -80,15 +84,15 @@ export function RealtimeReturnCard({
               <b>{targetGap >= 0 ? '+' : ''}{targetGap.toFixed(2)}%</b>
             </span>
             <span>
-              <em>回撤距离</em>
-              <b>{drawdownDistance !== null ? `${drawdownDistance.toFixed(2)}%` : '等待'}</b>
+              <em>风险距离</em>
+              <b>{drawdownLabel}</b>
             </span>
             <span>
               <em>成交</em>
               <b>{portfolio?.tradeCount ?? executedCount}</b>
             </span>
           </div>
-          <small>{headline} {activityLabel}</small>
+          <small>{headline.replace('。', '')} · {activityLabel}</small>
         </>
       )}
       <button onClick={() => setActivePage('收益')} type="button">查看收益明细</button>
