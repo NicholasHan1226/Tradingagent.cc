@@ -75,6 +75,7 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(card["market"], "ashare")
         self.assertEqual(card["capital_layer"], "simulated")
         self.assertEqual(card["account_type"], "simulated")
+        self.assertFalse(card["real_trading_enabled"])
         self.assertEqual(card["quantity"], 100)
         self.assertEqual(card["price"], 10.5)
 

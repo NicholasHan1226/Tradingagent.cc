@@ -14,6 +14,7 @@ LOG_FILE="${LOG_DIR}/daily_review.log"
 LOCK_FILE="${LOCK_DIR}/daily_review.lock"
 
 mkdir -p "${LOG_DIR}" "${LOCK_DIR}"
+exec 2>>"${LOG_FILE}"
 
 exec 200>"${LOCK_FILE}"
 if ! flock -n 200; then

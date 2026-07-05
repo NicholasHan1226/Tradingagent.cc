@@ -17,6 +17,7 @@ LOG_FILE="${LOG_DIR}/auto_pipeline.log"
 LOCK_FILE="${LOCK_DIR}/auto_pipeline.lock"
 
 mkdir -p "${LOG_DIR}" "${LOCK_DIR}"
+exec 2>>"${LOG_FILE}"
 
 exec 200>"${LOCK_FILE}"
 if ! flock -n 200; then

@@ -252,6 +252,7 @@ def _signal_card(
         "status": "pending",
         "capital_layer": "simulated",
         "account_type": "simulated",
+        "real_trading_enabled": False,
         "account": _account_name(account),
         "manual_confirm_required": False,
         "direct_execution": True,

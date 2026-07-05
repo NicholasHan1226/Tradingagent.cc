@@ -8,9 +8,6 @@ ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${TRADINGAGENT_PYTHON:-python3}"
 MARKETS="${TRADINGAGENT_EVOLUTION_MARKETS:-crypto,pm,us}"
 ENV_LOADER="${ROOT}/shared/env_loader.sh"
-if [ -f "${ENV_LOADER}" ]; then
-  source "${ENV_LOADER}"
-fi
 REVIEW_ROOT="${TRADINGAGENT_REVIEW_ROOT:-${ROOT}/shared/review}"
 LOG_DIR="${ROOT}/shared/logs/cron"
 LOCK_DIR="${ROOT}/shared/logs/locks"
@@ -18,6 +15,11 @@ LOG_FILE="${LOG_DIR}/evolution.log"
 LOCK_FILE="${LOCK_DIR}/evolution.lock"
 
 mkdir -p "${LOG_DIR}" "${LOCK_DIR}"
+exec 2>>"${LOG_FILE}"
+
+if [ -f "${ENV_LOADER}" ]; then
+  source "${ENV_LOADER}"
+fi
 
 exec 200>"${LOCK_FILE}"
 if ! flock -n 200; then
