@@ -26,6 +26,7 @@
 - **复盘/报告输入**：日报、周报、归因和汇总邮件默认通过 `load_review_trades()` 读取 legacy shadow fills + `shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl` + A股 `shared/logs/local_sim/local_sim_trades.jsonl`；报告保留 `review_trade_count`、`shadow_trade_count`、`simulated_trade_count` 三个计数，避免服务器本地模拟成交被误判为无样本
 - **影子盘状态闭环**：US/Crypto/PM/HK 本地 shadow runner 的 `simulated_fill.status=filled|partial` 会立即推进到 `signals/shadow/filled`；若状态机推进失败，卡片进入 `signals/shadow/failed` 并保留 `settlement_warning`，不再把已模拟成交卡片长期留在 `shadow/pending`
 - **A股本地模拟回执**：`local_sim_ledger` 在写入 server-local simulated trade、positions、PnL 和 `signals/positions/simulated_ashare_positions.json` 的同时，会追加带 `receipt_sha256` 的 `signals/sim_execution_receipts.jsonl`；健康检查同时读取本地回执与旧 Hermes 回执路径，并能识别“尚无首笔本地模拟成交”的 bootstrap 状态，避免把无样本误报为链路故障
+- **模拟盘健康检查**：`market_health` 已区分交易时段样本缺失与闭市等待首样本；A股和 CNFutures 在周末/闭市且尚未进入应产生样本的时段时不再误报 warn，进入或经过交易时段后仍无数据/成交会继续告警
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
@@ -82,6 +83,7 @@
 - [x] `auto_pipeline` 已从 SharedSignals reader 的 5分钟/日线 bars 生成 `market_snapshot`，`StyleRunner` 会透传盘口、bar volume、previous_close、现金/可卖量和对手盘环境字段。
 - [x] `auto_pipeline` 已兼容当前 `DecisionEngine` 旧接口，新增 all-stage smoke；A股基础 styles 已全部通过统一 `TradeStyle` 校验，`closing_momentum` 保持 paused。
 - [x] `TradingagentDataReader.get_bars_intraday()` 已改为 SharedSignals API-first，通过 `/realtime_5min?market=...` 读取 A股/期货 5 分钟 read model；API 不可用或返回空壳时仍回退本机 SQLite。
+- [x] `market_health` 对 A股/CNFutures 首样本状态加入交易时段判断：闭市等待不再形成系统 warn；交易时段应有样本但缺失时仍保持 warn，避免周末误报和开盘漏报。
 
 ### 2026-07-05 Ashare health bootstrap receipts
 

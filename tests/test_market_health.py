@@ -135,10 +135,19 @@ class MarketHealthTest(unittest.TestCase):
 
     def test_ashare_sim_loop_warns_without_production_trade_sample(self) -> None:
         with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):
-            check = market_health._check_sim_market_loop("ashare", "job_ashare_sim_exec.sh")
+            with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):
+                check = market_health._check_sim_market_loop("ashare", "job_ashare_sim_exec.sh")
 
         self.assertEqual(check.status, "warn")
         self.assertIn("server_local_sim_has_no_production_trades_yet", check.details["warn_reasons"])
+
+    def test_ashare_sim_loop_passes_without_sample_before_session(self) -> None:
+        with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):
+            with patch.object(market_health, "_market_session_state", return_value={"in_session": False, "samples_expected_today": False}):
+                check = market_health._check_sim_market_loop("ashare", "job_ashare_sim_exec.sh")
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.details["warn_reasons"], [])
 
     def test_default_sim_market_health_excludes_deferred_hk(self) -> None:
         def fake_check(market: str, crontab_text: str = "", crontab_error: str = "") -> market_health.Check:
@@ -154,11 +163,20 @@ class MarketHealthTest(unittest.TestCase):
 
     def test_cn_futures_sim_loop_warns_without_live_samples(self) -> None:
         with patch.object(market_health, "_probe_market_data", return_value={"status": "fail", "reason": "futures_universe_missing"}):
-            check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh")
+            with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):
+                check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh")
 
         self.assertEqual(check.status, "warn")
         self.assertIn("futures_market_data_not_ready", check.details["warn_reasons"])
         self.assertIn("cn_futures_review_has_no_samples_yet", check.details["warn_reasons"])
+
+    def test_cn_futures_sim_loop_waits_without_sample_before_session(self) -> None:
+        with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "reason": "futures_intraday_waiting_for_next_session"}):
+            with patch.object(market_health, "_market_session_state", return_value={"in_session": False, "samples_expected_today": False}):
+                check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh")
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.details["warn_reasons"], [])
 
     def test_cn_futures_sim_loop_reads_append_only_review_as_ledger(self) -> None:
         review = self.root / "shared/review/data/cn_futures_sim_reviews.jsonl"
@@ -178,7 +196,8 @@ class MarketHealthTest(unittest.TestCase):
         )
 
         with patch.object(market_health, "_probe_market_data", return_value={"status": "warn", "priced_signal_count": 0}):
-            check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh")
+            with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):
+                check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh")
 
         self.assertEqual(check.status, "warn")
         self.assertEqual(check.details["ledger"]["trade_rows"], 2)

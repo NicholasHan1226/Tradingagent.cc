@@ -73,6 +73,35 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _market_session_state(market: str, now: datetime | None = None) -> dict[str, Any]:
+    """Return whether today's production samples should already exist."""
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone(timedelta(hours=8)))
+    weekday = current.weekday()
+    minutes = current.hour * 60 + current.minute
+    in_session = False
+    samples_expected_today = False
+    if market == "ashare":
+        trading_day = weekday < 5
+        windows = ((9 * 60 + 30, 11 * 60 + 30), (13 * 60, 15 * 60))
+        in_session = trading_day and any(start <= minutes <= end for start, end in windows)
+        samples_expected_today = trading_day and minutes >= 9 * 60 + 30
+    elif market == "cn_futures":
+        day_session = weekday < 5 and 9 * 60 <= minutes <= 15 * 60
+        night_session = weekday < 5 and 21 * 60 <= minutes <= 23 * 60 + 59
+        early_session = 1 <= weekday <= 5 and 0 <= minutes <= 2 * 60 + 30
+        in_session = day_session or night_session or early_session
+        samples_expected_today = (
+            (weekday < 5 and minutes >= 9 * 60)
+            or (1 <= weekday <= 5 and minutes <= 2 * 60 + 30)
+        )
+    return {
+        "timezone": "Asia/Shanghai",
+        "local_time": current.isoformat(timespec="seconds"),
+        "in_session": in_session,
+        "samples_expected_today": samples_expected_today,
+    }
+
+
 def _load_json(path: Path, default: Any = None) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -584,14 +613,16 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                 if priced:
                     priced_rows.append(priced[-1])
                     latest_bar_time = max(latest_bar_time, str(priced[-1].get("bar_time") or ""))
-            status = "ok" if priced_rows else ("warn" if symbols else "fail")
-            reason = "" if priced_rows else ("futures_intraday_bars_missing" if symbols else "futures_universe_missing")
+            session_state = _market_session_state(market)
+            status = "ok" if priced_rows else ("warn" if symbols and session_state["samples_expected_today"] else "fail" if not symbols else "ok")
+            reason = "" if priced_rows else ("futures_intraday_bars_missing" if symbols and session_state["samples_expected_today"] else "futures_intraday_waiting_for_next_session" if symbols else "futures_universe_missing")
             return {
                 "status": status,
                 "asset_count": len(symbols),
                 "priced_signal_count": len(priced_rows),
                 "latest_bar_time": latest_bar_time,
                 "reason": reason,
+                "market_session": session_state,
                 "sample": [
                     {key: row.get(key) for key in ("symbol", "ts_code", "market", "trade_date", "bar_time", "close", "price")}
                     for row in priced_rows[:5]
@@ -621,6 +652,8 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     cron_result = _latest_cron_result(market)
     wrapper = SIM_WRAPPERS.get(market, "")
     cron_installed = bool(wrapper and wrapper in crontab_text)
+    session_state = _market_session_state(market)
+    samples_expected = bool(session_state.get("samples_expected_today"))
 
     hard_fail_reasons: list[str] = []
     warn_reasons: list[str] = []
@@ -635,9 +668,9 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
         warn_reasons.append("market_data_degraded")
     if market not in {"ashare", "cn_futures"} and int(ledger.get("trade_rows") or 0) <= 0:
         hard_fail_reasons.append("sim_trade_ledger_empty")
-    if market == "ashare" and int(ledger.get("trade_rows") or 0) <= 0:
+    if market == "ashare" and int(ledger.get("trade_rows") or 0) <= 0 and samples_expected:
         warn_reasons.append("server_local_sim_has_no_production_trades_yet")
-    if market == "cn_futures" and int(ledger.get("review_rows") or 0) <= 0:
+    if market == "cn_futures" and int(ledger.get("review_rows") or 0) <= 0 and samples_expected:
         warn_reasons.append("cn_futures_review_has_no_samples_yet")
     payload = cron_result.get("payload") or {}
     if payload and payload.get("status") not in {"ok", "market_closed"}:
@@ -663,6 +696,7 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
             "data_probe": data,
             "ledger": ledger,
             "latest_cron_result": cron_result,
+            "market_session": session_state,
             "fail_reasons": hard_fail_reasons,
             "warn_reasons": warn_reasons,
         },
