@@ -14,8 +14,8 @@ export function HoldingsTable({ holdings }: { holdings: HoldingRow[] }) {
         <span>浮动收益</span>
         <span>风险</span>
       </div>
-      {holdings.map((holding) => (
-        <div className="terminal-row" key={holding.symbol}>
+      {holdings.map((holding, index) => (
+        <div className="terminal-row" key={`${holding.symbol}-${holding.role}-${index}`}>
           <AssetCell symbol={holding.symbol} name={holding.name} />
           <span>{marketLabels[holding.market]}</span>
           <span>{holding.role}</span>
