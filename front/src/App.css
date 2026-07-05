@@ -685,7 +685,7 @@ button:not(:disabled) {
 
 .performance-headline {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 360px;
   gap: 14px;
   align-items: start;
   margin-bottom: 14px;
@@ -1141,9 +1141,8 @@ button:not(:disabled) {
   border: 1px solid rgba(224, 246, 240, 0.064);
   border-radius: 4px;
   background:
-    radial-gradient(circle at 80% 12%, rgba(109, 224, 213, 0.1), transparent 32%),
-    linear-gradient(180deg, rgba(105, 228, 215, 0.04), transparent 58%),
-    rgba(1, 5, 5, 0.56);
+    linear-gradient(180deg, rgba(240, 246, 244, 0.018), transparent 54%),
+    rgba(1, 5, 5, 0.62);
 }
 
 .return-card-head {
@@ -1201,15 +1200,26 @@ button:not(:disabled) {
   box-shadow: 0 0 18px rgba(109, 224, 213, 0.16);
 }
 
-.realtime-return-card strong {
+.return-primary {
+  display: grid;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.return-primary strong,
+.realtime-return-card > strong {
   color: var(--accent-cyan);
-  margin-top: 8px;
-  font: 760 38px/1.02 var(--font-number);
+  font: 760 46px/1.02 var(--font-number);
+}
+
+.return-primary span {
+  color: var(--accent-cyan);
+  font: 720 18px/1 var(--font-number);
 }
 
 .realtime-return-card b {
   color: var(--accent-cyan);
-  font: 720 21px/1 var(--font-number);
+  font: 720 15px/1 var(--font-number);
 }
 
 .return-subline {
