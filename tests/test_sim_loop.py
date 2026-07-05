@@ -304,6 +304,7 @@ class SimLoopTest(unittest.TestCase):
             received_markets.append(market)
             ashare_order = dict(order)
             ashare_order["ts_code"] = "600000.SH"
+            ashare_order["quantity"] = 100
             return ashare_sim_execute(
                 ashare_order,
                 account=account,
@@ -332,8 +333,8 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(filled["capital_layer"], "simulated")
         self.assertEqual(filled["account_type"], "simulated")
         self.assertEqual(received_markets, ["unit"])
-        self.assertEqual(result["records"][0]["receipt"]["raw_response"]["mode"], "server_local_sim_only")
-        self.assertEqual(filled["quantity"], 10)
+        self.assertEqual(result["records"][0]["receipt"]["raw_response"]["mode"], "server_local_sim_engine")
+        self.assertEqual(filled["filled_quantity"], 100)
 
 
 if __name__ == "__main__":

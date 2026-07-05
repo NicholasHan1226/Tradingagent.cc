@@ -277,6 +277,7 @@ class FakeAPIClient:
         self.errors: list[str] = []
         self.tushare_calls: list[dict[str, object]] = []
         self.market_data_calls: list[dict[str, object]] = []
+        self.realtime_calls: list[dict[str, object]] = []
 
     def get_tushare(self, api_name, ts_code=None, start_date=None, end_date=None, **kwargs):
         self.tushare_calls.append({
@@ -303,10 +304,29 @@ class FakeAPIClient:
         self.market_data_calls.append({"ts_code": ts_code, "start": start, "end": end, "freq": freq})
         return [{"symbol": ts_code, "trade_date": end or start, "close": 10.29, "amount": 888789.3933}]
 
+    def get_realtime_5min(self, ts_code, date=None, market=None):
+        self.realtime_calls.append({"ts_code": ts_code, "date": date, "market": market})
+        return [
+            {
+                "market": market,
+                "symbol": ts_code,
+                "bar_time": "2026-07-03T14:55:00+08:00",
+                "trade_date": date,
+                "interval": "5min",
+                "close": 3520.0,
+                "bid_price": 3519.0,
+                "ask_price": 3521.0,
+            }
+        ]
+
 
 class EmptyShellAPIClient(FakeAPIClient):
     def get_market_data(self, ts_code, start=None, end=None, freq="daily"):
         self.market_data_calls.append({"ts_code": ts_code, "start": start, "end": end, "freq": freq})
+        return [{}]
+
+    def get_realtime_5min(self, ts_code, date=None, market=None):
+        self.realtime_calls.append({"ts_code": ts_code, "date": date, "market": market})
         return [{}]
 
 
@@ -324,7 +344,16 @@ class FakeSharedBars:
         ]
 
     def get_bars_intraday(self, market, symbol, interval="5m", start_time="", end_time=""):
-        return []
+        return [
+            {
+                "market": market,
+                "symbol": symbol,
+                "bar_time": "2026-07-03T14:55:00+08:00",
+                "trade_date": end_time or start_time,
+                "interval": interval,
+                "close": 23350.03,
+            }
+        ]
 
 
 class TestTradingagentDataReaderAPI(unittest.TestCase):
@@ -358,6 +387,26 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(rows[0]["close"], 23350.03)
         self.assertEqual(rows[0]["market"], "Global")
         self.assertEqual(rows[0]["symbol"], "HSI")
+
+    def test_get_bars_intraday_prefers_sharedsignals_api(self) -> None:
+        api = FakeAPIClient()
+        reader = TradingagentDataReader(api_client=api)
+
+        rows = reader.get_bars_intraday("Futures", "RB2609.SHF", "5min", "", "20260703")
+
+        self.assertEqual(rows[0]["close"], 3520.0)
+        self.assertEqual(rows[0]["bid_price"], 3519.0)
+        self.assertEqual(api.realtime_calls[0], {"ts_code": "RB2609.SHF", "date": "20260703", "market": "Futures"})
+
+    def test_get_bars_intraday_falls_back_when_api_returns_empty_shell(self) -> None:
+        api = EmptyShellAPIClient()
+        reader = TradingagentDataReader(shared=FakeSharedBars(), api_client=api)
+
+        rows = reader.get_bars_intraday("Global", "HSI", "5min", "20260703", "20260703")
+
+        self.assertEqual(rows[0]["close"], 23350.03)
+        self.assertEqual(rows[0]["market"], "Global")
+        self.assertEqual(api.realtime_calls[0], {"ts_code": "HSI", "date": "20260703", "market": "Global"})
 
     def test_hk_suffix_is_preserved_for_read_model_symbol(self) -> None:
         self.assertEqual(

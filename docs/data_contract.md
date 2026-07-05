@@ -25,7 +25,12 @@ MarketGraph, or legacy Ashare data directories.
 
 ## Reader API
 
-`shared.data.reader.SharedSignalsReader` exposes:
+`shared.data.reader.TradingagentDataReader` is the consumer-facing facade. It
+uses SharedSignals HTTP API first when `SHAREDSIGNALS_API_URL` is configured,
+then falls back to the read-only SQLite reader on API failure or empty API
+shells.
+
+`shared.data.reader.SharedSignalsReader` exposes the SQLite fallback methods:
 
 - `get_bars_daily(market, symbol, start, end)`
 - `get_bars_intraday(market, symbol, interval, start, end)`
@@ -35,7 +40,15 @@ MarketGraph, or legacy Ashare data directories.
 - `get_coverage(market, date)`
 
 Rows are returned as dictionaries. Missing rows return `[]` or `None` through
-`TradingAgentDataReader`.
+`TradingagentDataReader`.
+
+5-minute intraday reads use:
+
+- API-first path: SharedSignals `/realtime_5min?market=<market>&ts_code=<symbol>&date=<YYYYMMDD>`.
+- SQLite fallback: `market_bars_intraday` filtered by `market`, `symbol`, and
+  `interval`.
+- Optional L1 fields are passed through when SharedSignals has them:
+  `bid_price`, `ask_price`, `bid_size`, `ask_size`.
 
 ## MarketGraph CSV Inputs
 
@@ -93,6 +106,8 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
 - Daily bars: `market_bars_daily` with `market="Futures"`.
 - 5-minute bars: `market_bars_intraday` with `market="Futures"` and
   `interval="5min"`.
+- API path: SharedSignals `/realtime_5min?market=Futures&ts_code=<contract>`;
+  SQLite remains a same-host read-only fallback.
 - Reader mapping: `CNFutures` internal market is `cn_futures`; upstream reader
   market remains `Futures`.
 - Current cadence assumption: intraday CNFutures simulation must use

@@ -746,9 +746,28 @@ class TradingagentDataReader:
         start: str = "", end: str = "",
     ) -> list[dict[str, Any]]:
         try:
-            result = self.shared.get_bars_intraday(market, symbol, interval, start, end)
+            read_symbol = self._to_ts_code(market, symbol)
+            date_value = end or start or None
+
+            def fallback() -> list[dict[str, Any]]:
+                return self.shared.get_bars_intraday(market, symbol, interval, start, end)
+
+            result = self._api_call(
+                "get_realtime_5min",
+                fallback,
+                ts_code=read_symbol,
+                date=date_value,
+                market=market,
+            )
+            normalized = self._normalize_market_rows(result, market, symbol)
+            if not self._has_priced_market_rows(normalized):
+                fallback_rows = fallback()
+                if fallback_rows:
+                    self._last_api_used = False
+                    self._record_shared_error("get_bars_intraday")
+                    return self._normalize_market_rows(fallback_rows, market, symbol)
             self._record_shared_error("get_bars_intraday")
-            return result
+            return normalized
         except Exception as e:
             self.errors.append(f"get_bars_intraday: {e}")
             self.stale = True

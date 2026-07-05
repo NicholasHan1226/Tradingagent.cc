@@ -214,11 +214,9 @@ class SharedSignalsAPIClient:
         return self._get("/industry", {"ts_code": ts_code})
 
     def get_realtime_5min(
-        self, ts_code: str, date: str | None = None,
+        self, ts_code: str, date: str | None = None, market: str | None = None,
     ) -> list[dict[str, Any]]:
-        if date is None:
-            date = datetime.now().strftime("%Y%m%d")
-        return self._get("/realtime_5min", {"ts_code": ts_code, "date": date})
+        return self._get("/realtime_5min", {"ts_code": ts_code, "date": date or "", "market": market or ""})
 
     def get_tushare(
         self, api_name: str, ts_code: str | None = None,
