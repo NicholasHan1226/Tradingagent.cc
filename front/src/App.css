@@ -456,7 +456,7 @@ button:not(:disabled) {
   grid-row: 2;
   width: fit-content;
   max-width: 100%;
-  height: 46px;
+  height: 52px;
   min-width: 0;
   border: 1px solid var(--border-workbench);
   border-radius: 4px;
@@ -473,6 +473,10 @@ button:not(:disabled) {
   min-width: 132px;
   height: 100%;
   padding: 0 16px;
+}
+
+.market-stats span:first-child {
+  min-width: 184px;
 }
 
 .market-tools {
@@ -535,7 +539,7 @@ button:not(:disabled) {
 
 .market-stats strong {
   color: var(--text-primary);
-  font: 650 14px/1 var(--font-number);
+  font: 650 15px/1 var(--font-number);
   white-space: nowrap;
 }
 

@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 import { getSignalFunnel } from '../../lib/dashboard'
 import type { SignalRow } from '../../types/dashboard'
 
-const STAGE_NAMES = ['发现', '评分', '风控', '待执行', '结果']
+const STAGE_NAMES = ['发现', '筛选', '风控', '排队', '成交']
 
 export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: boolean; signals: SignalRow[] }) {
   const funnel = getSignalFunnel(signals)
@@ -12,17 +12,17 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
   const pendingSignals = funnel.pending
   const missedSignals = funnel.missed
   const blockedSignals = [...funnel.blocked, ...funnel.cancelled]
-  const passRate = Math.round((funnel.tradeSignals.length / Math.max(1, signals.length)) * 100)
+  const passRate = Math.round((funnel.executed.length / Math.max(1, signals.length)) * 100)
   const caption = hasSignalData
-    ? `${signals.length} 个机会进入 · ${funnel.tradeSignals.length} 个形成结果 · 留存 ${passRate}%`
+    ? `${signals.length} 个机会进入 · ${funnel.executed.length} 个成交 · 转化 ${passRate}%`
     : '等待机会流入'
   const particles = buildParticles(hasSignalData ? signals : placeholderSignals())
 
   return (
-    <section className="signal-flow-module" aria-label="机会漏斗">
+    <section className="signal-flow-module" aria-label="交易漏斗">
       <div className="signal-flow-board">
         <div className="flow-caption">
-          <span>机会漏斗</span>
+          <span>交易漏斗</span>
           <strong>{caption}</strong>
         </div>
         <div className="funnel-pipeline" role="img" aria-label="机会从发现到交易结果的动态筛选漏斗">
@@ -31,7 +31,7 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
               <div className="funnel-stage-card" key={stage.label}>
                 <span>{STAGE_NAMES[index] ?? stage.label}</span>
                 <strong>{stage.rows.length}</strong>
-                <em>{index === 0 ? '进入' : `${stageWidths[index]}%`}</em>
+                <em>{getStageHint(index, stage.rows.length, signals.length)}</em>
                 <div className="stage-meter" aria-hidden="true">
                   <i style={{ width: `${stageWidths[index]}%` }} />
                 </div>
@@ -69,14 +69,21 @@ export function SignalFunnelFlow({ hasSignalData, signals }: { hasSignalData: bo
           </div>
         </div>
         <div className="flow-outcome-strip">
-          <span><b>{executedSignals.length}</b> 已成交</span>
-          <span><b>{pendingSignals.length}</b> 待执行</span>
-          <span><b>{missedSignals.length}</b> 机会复盘</span>
-          <span><b>{blockedSignals.length}</b> 已拦截</span>
+          <span><b>{executedSignals.length}</b> 成交</span>
+          <span><b>{pendingSignals.length}</b> 等待</span>
+          <span><b>{missedSignals.length}</b> 复盘</span>
+          <span><b>{blockedSignals.length}</b> 拦截</span>
         </div>
       </div>
     </section>
   )
+}
+
+function getStageHint(index: number, count: number, total: number) {
+  if (index === 0) return '进入'
+  if (total <= 0) return '等待'
+  if (count === total) return '全量通过'
+  return `${Math.round((count / total) * 100)}%`
 }
 
 function buildParticles(rows: SignalRow[]) {

@@ -12,13 +12,13 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     expect(screen.getByLabelText('实时收益')).toBeInTheDocument()
-    expect(screen.getByLabelText('机会漏斗')).toBeInTheDocument()
+    expect(screen.getByLabelText('交易漏斗')).toBeInTheDocument()
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
     expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '模拟盘' })).toBeInTheDocument()
     expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '实盘' })).toBeInTheDocument()
     expect(screen.getByText('发现')).toBeInTheDocument()
     expect(screen.getByText('风控')).toBeInTheDocument()
-    expect(screen.getAllByText('交易信号').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('信号').length).toBeGreaterThan(0)
     expect(screen.queryByRole('heading', { name: '机会从全市场进入，只把可执行结果留在首页。' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '正在推进' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '本轮结果' })).not.toBeInTheDocument()
@@ -81,7 +81,7 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('2 个机会进入 · 2 个形成结果 · 留存 100%')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('2 个机会进入 · 0 个成交 · 转化 0%')).toBeInTheDocument())
     expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
   })
 

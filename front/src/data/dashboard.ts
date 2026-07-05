@@ -7,7 +7,7 @@ export const pages: Page[] = ['主页', '收益', '机会', '持仓', '决策', 
 export const pageMeta: Record<Page, PageMeta> = {
   主页: {
     title: '全市场总览',
-    copy: '实时收益、目标差、风险边界和当前机会集中在一屏。',
+    copy: '收益、机会、持仓和风险边界集中在一屏。',
     mode: '总览',
   },
   收益: {

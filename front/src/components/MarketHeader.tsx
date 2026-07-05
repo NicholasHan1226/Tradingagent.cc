@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { marketLabels, markets, pageMeta } from '../data/dashboard'
+import { formatCurrency } from '../lib/format'
 import type { Market, Page } from '../types/dashboard'
 
 export function MarketHeader({
   activePage,
   activeMarket,
+  liveProfit,
   liveReturn,
   maxDrawdown,
   hasPerformanceData,
@@ -17,6 +19,7 @@ export function MarketHeader({
   activePage: Page
   activeMarket: Market
   hasPerformanceData: boolean
+  liveProfit: number | null
   liveReturn: number
   maxDrawdown: number | null
   signalCount: number
@@ -28,6 +31,14 @@ export function MarketHeader({
   const meta = pageMeta[activePage]
   const [showMarkets, setShowMarkets] = useState(false)
   const freshness = snapshotGeneratedAt ? '数据已连接' : '本地预览'
+  const returnValue = hasPerformanceData
+    ? liveProfit !== null
+      ? formatCurrency(liveProfit)
+      : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
+    : '等待'
+  const returnDetail = hasPerformanceData && liveProfit !== null
+    ? `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
+    : undefined
 
   return (
     <section className="market-header">
@@ -38,10 +49,10 @@ export function MarketHeader({
         </div>
       </div>
       <div className="market-stats">
-        <Stat label="当前收益" value={hasPerformanceData ? `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%` : '等待'} cyan={hasPerformanceData} />
+        <Stat detail={returnDetail} label="当前收益" value={returnValue} cyan={hasPerformanceData} />
         <Stat label="目标差" value={hasPerformanceData ? `${liveReturn - targetReturn >= 0 ? '+' : ''}${(liveReturn - targetReturn).toFixed(2)}%` : '等待'} />
         <Stat detail="机会池" label="机会" value={`${signalCount}`} />
-        <Stat detail="可处理" label="交易信号" value={`${tradeSignalCount}`} cyan />
+        <Stat detail="可处理" label="信号" value={`${tradeSignalCount}`} cyan />
         <Stat label="最大回撤" value={hasPerformanceData ? `-${Math.abs(maxDrawdown ?? 0).toFixed(2)}%` : '等待'} red={hasPerformanceData} />
       </div>
       <div className="market-tools">
