@@ -2,33 +2,52 @@ import type { CSSProperties } from 'react'
 import { getSignalFunnel } from '../../lib/dashboard'
 import type { FunnelEvent, SignalRow } from '../../types/dashboard'
 
-const OUTCOME_LABELS = ['成交', '等待', '复盘', '拦截']
+const OUTCOME_LABELS = ['成交', '待执行', '复盘', '放弃']
 const MAX_ANIMATED_SIGNALS = 64
 const MAX_VISIBLE_LABELS = 6
+const FLOW_STAGES = [
+  { label: '机会进入', fallbackIndex: 0 },
+  { label: '初筛', fallbackIndex: 1 },
+  { label: '研究', fallbackIndex: 1 },
+  { label: '风控', fallbackIndex: 2 },
+  { label: '待执行', fallbackIndex: 3 },
+] as const
 
 export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: FunnelEvent[]; hasSignalData: boolean; signals: SignalRow[] }) {
   const funnel = getSignalFunnel(signals)
-  const eventStages = getEventStageCounts(events)
-  const maxStageCount = Math.max(1, ...funnel.stages.map((stage) => stage.rows.length))
-  const stageWidths = funnel.stages.map((stage) => Math.max(12, Math.round((stage.rows.length / maxStageCount) * 100)))
+  const eventFlow = getEventFlow(events)
+  const visualStages = getVisualStages(funnel, eventFlow)
+  const maxStageCount = Math.max(1, ...visualStages.map((stage) => stage.count))
+  const stageWidths = visualStages.map((stage) => Math.max(12, Math.round((stage.count / maxStageCount) * 100)))
   const executedSignals = funnel.executed
   const pendingSignals = funnel.pending
   const missedSignals = funnel.missed
   const blockedSignals = [...funnel.blocked, ...funnel.cancelled]
+  const outcomeRows = getOutcomeRows(eventFlow, {
+    executed: executedSignals.length,
+    pending: pendingSignals.length,
+    missed: missedSignals.length,
+    abandoned: blockedSignals.length,
+  })
   const passRate = Math.round((funnel.executed.length / Math.max(1, signals.length)) * 100)
-  const stageDrops = funnel.stageDrops
-  const hasStageDrop = stageDrops.some((drop) => drop > 0)
+  const visualStageDrops = visualStages.map((stage) => stage.dropped)
+  const hasStageDrop = visualStageDrops.some((drop) => drop > 0)
   const hasTimingEvidence = signals.some((signal) => signal.stageLatencyMinutes && signal.stageLatencyMinutes > 0)
-  const bottleneck = getBottleneck(funnel.stages.map((stage) => ({ label: stage.label, count: stage.rows.length })))
+  const bottleneck = getBottleneck(visualStages.map((stage) => ({ label: stage.label, count: stage.count })))
   const hasEventSource = events.length > 0
+  const eventCaption = eventFlow
+    ? `${eventFlow.total} 个机会进入 · ${eventFlow.outcomes.executed} 个成交 · ${eventFlow.outcomes.abandoned} 个放弃`
+    : '等待机会流入'
   const caption = hasEventSource
-    ? `${events.length} 个管道事件 · ${signals.length} 个机会 · ${funnel.executed.length} 个已兑现`
+    ? eventCaption
     : hasSignalData
     ? funnel.mode === 'screening' || hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
       ? `${signals.length} 个进入 · ${funnel.tradeSignals.length} 个留下 · ${funnel.executed.length} 个成交`
       : `${signals.length} 条成交回放 · 转化 ${passRate}%`
     : '等待机会流入'
-  const modeLabel = funnel.mode === 'screening'
+  const modeLabel = hasEventSource
+    ? '真实流动'
+    : funnel.mode === 'screening'
     ? '实时筛选'
     : funnel.mode === 'partial'
       ? '部分阶段'
@@ -42,20 +61,20 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
 
   return (
     <section className="signal-flow-module" aria-label="交易漏斗">
-      <div className={`signal-flow-board mode-${funnel.mode}`}>
+      <div className={`signal-flow-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''}`}>
         <div className="flow-caption">
           <span>交易漏斗 <b>{modeLabel}</b></span>
           <strong>{caption}</strong>
         </div>
         <div className="funnel-pipeline" role="img" aria-label="机会从发现到交易结果的动态筛选漏斗">
           <div className="funnel-stage-grid" aria-hidden="true">
-            {funnel.stages.map((stage, index) => (
+            {visualStages.map((stage, index) => (
               <div className="funnel-stage-card" key={stage.label} style={{ '--stage-strength': `${stageWidths[index]}%` } as CSSProperties}>
                 <span>{stage.label}</span>
-                <strong>{eventStages[stage.label] ?? stage.rows.length}</strong>
-                <em>{hasEventSource ? '事件进入' : getStageHint(index, stage.rows.length, signals.length, stageDrops[index])}</em>
+                <strong>{stage.count}</strong>
+                <em>{stage.hint}</em>
                 <div className="stage-meter" aria-hidden="true">
-                  <i style={{ width: `${hasEventSource ? eventStageWidth(eventStages[stage.label], events.length) : stageWidths[index]}%` }} />
+                  <i style={{ width: `${stage.width}%` }} />
                 </div>
               </div>
             ))}
@@ -63,14 +82,19 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
           <div className="funnel-flow-canvas" aria-hidden="true">
             {!hasSignalData && <div className="funnel-scanner" />}
             <div className="funnel-mouth">
-              {stageWidths.map((width, index) => (
+              {visualStages.map((stage, index) => (
                 <span
-                  key={funnel.stages[index]?.label ?? index}
+                  key={stage.label}
                   style={{
                     '--stage-offset': `${index * 20}%`,
-                    '--stage-width': `${width}%`,
+                    '--stage-width': `${stageWidths[index]}%`,
                   } as CSSProperties}
                 />
+              ))}
+            </div>
+            <div className="flow-lane-labels">
+              {visualStages.map((stage) => (
+                <span key={stage.label}>{stage.label}</span>
               ))}
             </div>
             {particles.map((particle, index) => (
@@ -92,16 +116,16 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
           </div>
         </div>
         <div className="flow-drop-track" aria-hidden="true">
-          {stageDrops.slice(1).map((drop, index) => (
-            <span className={drop > 0 ? 'has-drop' : ''} key={`${funnel.stages[index].label}-${funnel.stages[index + 1].label}`}>
+          {visualStageDrops.slice(1).map((drop, index) => (
+            <span className={drop > 0 ? 'has-drop' : ''} key={`${visualStages[index].label}-${visualStages[index + 1].label}`}>
               <i style={{ height: `${Math.min(100, Math.max(8, drop * 12))}%` }} />
             </span>
           ))}
         </div>
         <div className="flow-outcome-strip">
-          {[executedSignals, pendingSignals, missedSignals, blockedSignals].map((rows, index) => (
+          {outcomeRows.map((count, index) => (
             <span key={OUTCOME_LABELS[index]}>
-              <b>{rows.length}</b> {OUTCOME_LABELS[index]}
+              <b>{count}</b> {OUTCOME_LABELS[index]}
             </span>
           ))}
         </div>
@@ -125,15 +149,93 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
   )
 }
 
-function getEventStageCounts(events: FunnelEvent[]) {
-  return events.reduce<Record<string, number>>((counts, event) => {
-    counts[event.stage] = (counts[event.stage] ?? 0) + 1
-    return counts
+type EventFlow = {
+  total: number
+  stages: Record<(typeof FLOW_STAGES)[number]['label'], number>
+  outcomes: {
+    executed: number
+    pending: number
+    review: number
+    abandoned: number
+  }
+}
+
+function getEventFlow(events: FunnelEvent[]): EventFlow | null {
+  if (!events.length) return null
+
+  const bySignal = events.reduce<Record<string, FunnelEvent[]>>((groups, event) => {
+    const key = `${event.market}:${event.symbol}`
+    groups[key] = [...(groups[key] ?? []), event]
+    return groups
   }, {})
+
+  const signals = Object.values(bySignal)
+  const hasStage = (rows: FunnelEvent[], stage: FunnelEvent['stage']) => rows.some((event) => event.stage === stage)
+  const hasAnyStage = (rows: FunnelEvent[], stages: FunnelEvent['stage'][]) => stages.some((stage) => hasStage(rows, stage))
+  const resultRows = signals
+    .map((rows) => rows.find((event) => event.stage === '结果'))
+    .filter((row): row is FunnelEvent => Boolean(row))
+
+  return {
+    total: signals.length,
+    stages: {
+      机会进入: signals.filter((rows) => hasStage(rows, '发现')).length,
+      初筛: signals.filter((rows) => hasAnyStage(rows, ['研判', '风控', '队列', '结果'])).length,
+      研究: signals.filter((rows) => hasStage(rows, '研判')).length,
+      风控: signals.filter((rows) => hasStage(rows, '风控')).length,
+      待执行: signals.filter((rows) => hasStage(rows, '队列')).length,
+    },
+    outcomes: {
+      executed: resultRows.filter((event) => event.status === '成交').length,
+      pending: resultRows.filter((event) => event.status === '等待' || event.status === '机会').length,
+      review: resultRows.filter((event) => event.status === '复盘').length,
+      abandoned: resultRows.filter((event) => event.status === '拦截').length,
+    },
+  }
+}
+
+function getVisualStages(funnel: ReturnType<typeof getSignalFunnel>, eventFlow: EventFlow | null) {
+  return FLOW_STAGES.map((stage, index) => {
+    const fallbackCount = funnel.stages[stage.fallbackIndex]?.rows.length ?? 0
+    const count = eventFlow ? eventFlow.stages[stage.label] : fallbackCount
+    const previousCount = index === 0
+      ? count
+      : eventFlow
+        ? eventFlow.stages[FLOW_STAGES[index - 1].label]
+        : funnel.stages[FLOW_STAGES[index - 1].fallbackIndex]?.rows.length ?? 0
+    const dropped = index === 0 ? 0 : Math.max(0, previousCount - count)
+
+    return {
+      count,
+      dropped,
+      hint: eventFlow ? getEventStageHint(stage.label, count, eventFlow.total, dropped) : getStageHint(index, count, funnel.stages[0]?.rows.length ?? 0, dropped),
+      label: stage.label,
+      width: eventFlow ? eventStageWidth(count, eventFlow.total) : Math.max(12, Math.round((count / Math.max(1, funnel.stages[0]?.rows.length ?? 1)) * 100)),
+    }
+  })
+}
+
+function getOutcomeRows(eventFlow: EventFlow | null, fallback: { executed: number; pending: number; missed: number; abandoned: number }) {
+  if (!eventFlow) return [fallback.executed, fallback.pending, fallback.missed, fallback.abandoned]
+
+  return [
+    eventFlow.outcomes.executed,
+    eventFlow.outcomes.pending,
+    eventFlow.outcomes.review,
+    eventFlow.outcomes.abandoned,
+  ]
 }
 
 function eventStageWidth(count = 0, total: number) {
   return Math.max(8, Math.min(100, Math.round((count / Math.max(1, total)) * 140)))
+}
+
+function getEventStageHint(label: string, count: number, total: number, dropped: number) {
+  if (count <= 0) return '等待'
+  if (label === '机会进入') return '进入'
+  if (label === '待执行') return '排队'
+  if (dropped > 0) return `留下 ${count}`
+  return `${Math.round((count / Math.max(1, total)) * 100)}%`
 }
 
 function getBottleneck(stages: { label: string; count: number }[]) {

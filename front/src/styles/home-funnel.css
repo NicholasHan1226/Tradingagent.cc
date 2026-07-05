@@ -1,7 +1,167 @@
+.signal-flow-board.mode-real-flow {
+  min-height: 344px;
+  background:
+    radial-gradient(circle at 12% 44%, rgba(105, 228, 215, 0.07), transparent 28%),
+    linear-gradient(180deg, rgba(240, 246, 244, 0.018), transparent 52%),
+    rgba(1, 5, 5, 0.54);
+}
+
+.signal-flow-board.mode-real-flow::before {
+  background:
+    linear-gradient(90deg, rgba(105, 228, 215, 0.04), transparent 22%, transparent 78%, rgba(255, 91, 116, 0.022)),
+    linear-gradient(90deg, transparent 19.9%, rgba(240, 246, 244, 0.05) 20%, transparent 20.12%),
+    linear-gradient(90deg, transparent 39.9%, rgba(240, 246, 244, 0.05) 40%, transparent 40.12%),
+    linear-gradient(90deg, transparent 59.9%, rgba(240, 246, 244, 0.05) 60%, transparent 60.12%),
+    linear-gradient(90deg, transparent 79.9%, rgba(240, 246, 244, 0.05) 80%, transparent 80.12%);
+}
+
+.signal-flow-board.mode-real-flow .funnel-pipeline {
+  min-height: 344px;
+  padding-bottom: 112px;
+}
+
+.mode-real-flow .funnel-stage-grid {
+  border-color: rgba(105, 228, 215, 0.1);
+  background: rgba(1, 8, 8, 0.82);
+}
+
+.mode-real-flow .funnel-stage-card {
+  min-height: 82px;
+  background:
+    linear-gradient(180deg, rgba(105, 228, 215, 0.024), transparent 60%),
+    linear-gradient(90deg, rgba(105, 228, 215, 0.06) 0 var(--stage-strength), transparent var(--stage-strength)),
+    rgba(240, 246, 244, 0.006);
+}
+
+.mode-real-flow .funnel-stage-card span {
+  color: var(--text-secondary);
+}
+
+.mode-real-flow .funnel-stage-card strong {
+  color: var(--text-primary);
+}
+
+.mode-real-flow .funnel-stage-card:nth-child(4) .stage-meter i,
+.mode-real-flow .funnel-stage-card:nth-child(5) .stage-meter i {
+  background: var(--state-amber);
+}
+
+.mode-real-flow .funnel-flow-canvas {
+  height: 154px;
+  border-color: rgba(105, 228, 215, 0.09);
+  background:
+    linear-gradient(90deg, rgba(105, 228, 215, 0.03), transparent 52%, rgba(226, 180, 91, 0.018)),
+    rgba(1, 5, 5, 0.62);
+}
+
+.mode-real-flow .funnel-flow-canvas::before {
+  inset: 24px 16px 30px;
+  border-color: rgba(105, 228, 215, 0.12);
+  clip-path: polygon(0 0, 100% 26%, 100% 74%, 0 100%);
+  background:
+    linear-gradient(90deg, rgba(105, 228, 215, 0.08), rgba(105, 228, 215, 0.024) 42%, rgba(226, 180, 91, 0.018) 72%, rgba(255, 91, 116, 0.018)),
+    rgba(4, 15, 15, 0.56);
+}
+
+.mode-real-flow .funnel-flow-canvas::after {
+  background:
+    linear-gradient(90deg, transparent 19.8%, rgba(240, 246, 244, 0.07) 20%, transparent 20.2%),
+    linear-gradient(90deg, transparent 39.8%, rgba(240, 246, 244, 0.065) 40%, transparent 40.2%),
+    linear-gradient(90deg, transparent 59.8%, rgba(240, 246, 244, 0.06) 60%, transparent 60.2%),
+    linear-gradient(90deg, transparent 79.8%, rgba(240, 246, 244, 0.055) 80%, transparent 80.2%);
+}
+
+.mode-real-flow .funnel-mouth {
+  inset: 24px 16px 30px;
+}
+
+.mode-real-flow .funnel-mouth span {
+  height: calc(var(--stage-width) * 0.42);
+  min-height: 11px;
+  max-height: 44px;
+  border-color: rgba(105, 228, 215, 0.18);
+  background:
+    linear-gradient(90deg, rgba(105, 228, 215, 0.095), rgba(105, 228, 215, 0.024)),
+    rgba(4, 15, 15, 0.78);
+}
+
+.flow-lane-labels {
+  position: absolute;
+  right: 16px;
+  bottom: 8px;
+  left: 16px;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  pointer-events: none;
+}
+
+.flow-lane-labels span {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 680;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mode-real-flow .flow-lane-labels {
+  display: none;
+}
+
+.mode-real-flow .funnel-particle {
+  top: calc(22px + (var(--lane) * 10px));
+  border-color: rgba(105, 228, 215, 0.22);
+  background: rgba(1, 8, 8, 0.9);
+}
+
+.mode-real-flow .funnel-particle.red {
+  border-color: rgba(255, 91, 116, 0.28);
+}
+
+.mode-real-flow .funnel-particle.amber,
+.mode-real-flow .funnel-particle.muted {
+  border-color: rgba(226, 180, 91, 0.26);
+}
+
+.mode-real-flow .flow-outcome-strip {
+  bottom: 48px;
+}
+
+.mode-real-flow .flow-outcome-strip span:nth-child(1) b {
+  color: var(--accent-cyan);
+}
+
+.mode-real-flow .flow-outcome-strip span:nth-child(2) b,
+.mode-real-flow .flow-outcome-strip span:nth-child(3) b {
+  color: var(--state-amber);
+}
+
+.mode-real-flow .flow-outcome-strip span:nth-child(4) b {
+  color: var(--state-red);
+}
+
+.mode-real-flow .flow-bottleneck {
+  bottom: 12px;
+}
+
+.mode-real-flow .flow-drop-track {
+  bottom: 126px;
+}
+
 .flow-event-tape {
+  position: absolute;
+  right: 12px;
+  bottom: 84px;
+  left: 12px;
+  z-index: 4;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(240, 246, 244, 0.06);
   border-top: 1px solid var(--border-hairline);
+  border-radius: 4px;
   background: linear-gradient(180deg, rgba(4, 18, 17, 0.62), rgba(1, 8, 8, 0.8));
 }
 
@@ -49,6 +209,19 @@
 }
 
 @media (max-width: 980px) {
+  .signal-flow-board.mode-real-flow {
+    min-height: 390px;
+  }
+
+  .signal-flow-board.mode-real-flow .funnel-pipeline {
+    min-height: 390px;
+    padding-bottom: 146px;
+  }
+
+  .mode-real-flow .flow-event-tape {
+    bottom: 84px;
+  }
+
   .flow-event-tape {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

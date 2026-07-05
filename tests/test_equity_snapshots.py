@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from shared.accounting.sim_ledger import SimLedger
 from shared.review.equity_snapshots import write_sim_ledger_equity_snapshots
+from shared.review.pnl_summary import load_mark_prices_for_positions
 
 
 class EquitySnapshotTest(unittest.TestCase):
@@ -148,6 +149,67 @@ class EquitySnapshotTest(unittest.TestCase):
 
             self.assertEqual(result["ledgers"][0]["status"], "dry_run")
             self.assertFalse((style_dir / "daily_mark_to_market.jsonl").exists())
+
+    def test_load_mark_prices_uses_recent_daily_bar_for_weekend_snapshot(self) -> None:
+        class FakeReader:
+            def __init__(self, api_client=None):
+                self.calls = []
+
+            def get_bars_daily(self, market, symbol, start="", end=""):
+                self.calls.append((market, symbol, start, end))
+                return [
+                    {"market": market, "symbol": symbol, "trade_date": "20260703", "close": 12.34},
+                    {"market": market, "symbol": symbol, "trade_date": "20260701", "close": 11.11},
+                ]
+
+        with patch("shared.data.reader.TradingagentDataReader", FakeReader):
+            prices = load_mark_prices_for_positions(
+                {"600000.SH": {"quantity": 100}},
+                "ashare",
+                trade_date="20260705",
+            )
+
+        self.assertEqual(prices, {"600000.SH": 12.34})
+
+    def test_load_mark_prices_uses_crypto_endpoint(self) -> None:
+        class FakeReader:
+            def __init__(self, api_client=None):
+                pass
+
+            def get_crypto_klines(self, symbol, limit=None):
+                return [
+                    {"symbol": symbol, "trade_date": "20260704", "close": 61000.0},
+                    {"symbol": symbol, "trade_date": "20260705", "close": 62500.5},
+                ]
+
+        with patch("shared.data.reader.TradingagentDataReader", FakeReader):
+            prices = load_mark_prices_for_positions(
+                {"BTCUSDT": {"quantity": 0.1}},
+                "crypto",
+                trade_date="20260705",
+            )
+
+        self.assertEqual(prices, {"BTCUSDT": 62500.5})
+
+    def test_load_mark_prices_uses_pm_market_prices(self) -> None:
+        class FakeReader:
+            def __init__(self, api_client=None):
+                pass
+
+            def get_pm_markets(self, limit=100):
+                return [
+                    {"market_id": "111111", "latest_price": 0.31},
+                    {"market_id": "558943", "latest_price": 0.9765},
+                ]
+
+        with patch("shared.data.reader.TradingagentDataReader", FakeReader):
+            prices = load_mark_prices_for_positions(
+                {"558943": {"quantity": 100}},
+                "pm",
+                trade_date="20260705",
+            )
+
+        self.assertEqual(prices, {"558943": 0.9765})
 
 
 if __name__ == "__main__":

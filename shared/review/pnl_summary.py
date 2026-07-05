@@ -12,7 +12,7 @@ import json
 import shutil
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,52 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return parsed if parsed == parsed else default
     except (TypeError, ValueError):
         return default
+
+
+def _row_time_key(row: dict[str, Any]) -> str:
+    return str(
+        row.get("trade_date")
+        or row.get("price_time")
+        or row.get("latest_price_time")
+        or row.get("collected_at")
+        or row.get("bar_time")
+        or row.get("open_time")
+        or ""
+    )
+
+
+def _row_price(row: dict[str, Any]) -> float:
+    for key in (
+        "close",
+        "adjusted_close",
+        "price",
+        "latest_price",
+        "last_price",
+        "market_price",
+        "yes_price",
+        "bestBid",
+        "bestAsk",
+    ):
+        price = _safe_float(row.get(key), 0.0)
+        if price > 0:
+            return price
+    return 0.0
+
+
+def _latest_priced(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    priced = [row for row in rows if isinstance(row, dict) and _row_price(row) > 0]
+    if not priced:
+        return None
+    return sorted(priced, key=_row_time_key)[-1]
+
+
+def _lookback_window(end_date: str, days: int = 14) -> tuple[str, str]:
+    try:
+        end = datetime.strptime(end_date, "%Y%m%d").date()
+    except (TypeError, ValueError):
+        end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=days)
+    return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
 
 
 def _read_jsonl_dicts(path: Path) -> list[dict[str, Any]]:
@@ -268,23 +314,56 @@ def load_mark_prices_for_positions(
             or "http://127.0.0.1:8082"
         )
         reader = TradingagentDataReader(api_client=SharedSignalsAPIClient(base_url=api_url))
+        market_key = str(market).lower().strip()
+        date = trade_date or __import__("datetime", fromlist=["date"]).date.today().strftime("%Y%m%d")
+        start, end = _lookback_window(date)
+
+        if market_key == "crypto":
+            get_crypto = getattr(reader, "get_crypto_klines", None)
+            if not callable(get_crypto):
+                return prices
+            for symbol in positions:
+                try:
+                    latest = _latest_priced(get_crypto(symbol=symbol, limit=50) or [])
+                    if latest:
+                        prices[symbol] = _row_price(latest)
+                except Exception:  # noqa: BLE001
+                    continue
+            return prices
+
+        if market_key == "pm":
+            get_pm = getattr(reader, "get_pm_markets", None)
+            if not callable(get_pm):
+                return prices
+            try:
+                rows = get_pm(limit=500) or []
+            except Exception:  # noqa: BLE001
+                rows = []
+            wanted = {str(symbol).strip() for symbol in positions}
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                market_id = str(row.get("market_id") or row.get("id") or "").strip()
+                if market_id in wanted:
+                    price = _row_price(row)
+                    if price > 0:
+                        prices[market_id] = price
+            return prices
+
         get_bars = getattr(reader, "get_bars_daily", None)
         if not callable(get_bars):
             return prices
-        reader_market = "Ashare" if market == "ashare" else market
-        date = trade_date or __import__("datetime", fromlist=["date"]).date.today().strftime("%Y%m%d")
+        reader_market = {
+            "ashare": "Ashare",
+            "us": "US",
+            "hk": "HK",
+            "cn_futures": "Futures",
+        }.get(market_key, market)
         for symbol in positions:
             try:
-                rows = get_bars(reader_market, symbol, date, date)
-                for row in reversed(rows or []):
-                    if not isinstance(row, dict):
-                        continue
-                    close = _safe_float(
-                        row.get("close") or row.get("adj_close") or row.get("price"), 0.0
-                    )
-                    if close > 0:
-                        prices[symbol] = close
-                        break
+                latest = _latest_priced(get_bars(reader_market, symbol, start, end) or [])
+                if latest:
+                    prices[symbol] = _row_price(latest)
             except Exception:  # noqa: BLE001
                 continue
     except Exception:  # noqa: BLE001
