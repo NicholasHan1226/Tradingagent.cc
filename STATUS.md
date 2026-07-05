@@ -36,7 +36,7 @@
 - **服务端**：杭州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
-- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。信号漏斗会区分实时筛选、部分阶段和成交回放，避免把已成交账本回放误当成当前筛选转化率；收益曲线优先用模拟账本成交时间展开，缺少成交时间时回退到按日 style performance。
+- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。信号漏斗会区分实时筛选、部分阶段和成交回放，避免把已成交账本回放误当成当前筛选转化率；收益曲线优先用模拟账本成交时间展开，缺少成交时间时回退到按日 style performance。默认本地 fallback 不再展示暂停的 HK 样例，改用 CNFutures simulated-only 样例；真实 snapshot 若带 HK 历史数据仍按输入展示，但 HK 不进入默认市场筛选和生产调度。
 
 ## 二、已知问题
 
@@ -60,6 +60,7 @@
 ### 2026-07-05 opening validation residual fixes
 
 - [x] TradingAgent front snapshot API 同时支持 `/healthz` 与 `/health`，方便 systemd、反代或外部监控统一探针。
+- [x] TradingAgent front 默认 fallback 数据移除暂停 HK 信号、持仓和分配样例，改用 CNFutures simulated-only 样例，避免真实 snapshot 缺失时页面误展示港股生产机会。
 - [x] A股 `first_sample_alerts` 新增 `no_trade_explanation`，把没有交易拆成数据读取失败、未到首样本窗口、无 5 分钟数据、覆盖不足、无信号/全被风控拒绝、执行缺失、回执缺失、复盘待生成和闭环 ready；本地模拟成交只按当天日期计数。
 - [x] CNFutures `first_sample_alerts` 新增 `opening_30m_review`，开盘 30 分钟前标记为累计样本，30 分钟后若仍无 5 分钟数据、模拟成交或回执会给出标准原因和下一步。
 - [x] CNFutures 日盘信号时间桶和开盘冷却从真实 09:00 起算，09:00-09:30 标记为 `day_open_first_30m`，避免遗漏期货开盘前 30 分钟行为。
@@ -117,7 +118,6 @@
 - [x] `cron/health_check.sh` 新增 `combined_crontab` 只读检查，调用 MarketGraph `deploy/install_combined_crontab.sh --check`；任一关键 cron 缺失会把 TradingAgent 外部健康报告标记为 `critical`。
 - [x] 检查结果写入 SharedSignals `logs/watchdog_inputs/tradingagent_health.json(.jsonl)`，复用现有 watchdog 与系统邮件链路；不新增 daemon、不安装新 crontab、不修改交易队列。
 - [x] 该检查只读执行，不会安装或覆盖 live crontab；真正安装仍只允许走 MarketGraph 合并安装脚本。
-
 
 ### 2026-07-05 cross-repo path and stale docs cleanup
 

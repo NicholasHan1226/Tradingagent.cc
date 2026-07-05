@@ -277,6 +277,21 @@ usable 5-minute Futures bars or if TradingAgent has not produced the first
 simulated sample. Both modes are read-only, keep `real_trading_enabled=false`,
 and do not write to SharedSignals, MarketGraph, CTP, SimNow, or broker queues.
 
+Minimum next-session acceptance checklist:
+
+1. Before open, verify the production read model exists and SharedSignals
+   reports Futures daily or latest 5-minute coverage for the target session.
+2. At 08:55, 12:55, or 20:55, run the pre-open validator and confirm
+   `read_only=true` and `real_trading_enabled=false`.
+3. At 09:05, 13:05, 21:05, or 00:35, run the opening validator and confirm
+   Futures 5-minute bars are present for the current session.
+4. At 09:10, 13:10, 21:10, or 00:40, run the first-sample validator and check
+   top-level alerts, not only the `opening_30m_review` block.
+5. By 09:30, 13:30, 21:30, or 01:00, confirm one of two outcomes: a simulated
+   sample/review/receipt exists, or the report gives a clear hold/no-trade
+   reason. Missing data, missing review, and missing receipt must stay visible
+   as warnings.
+
 ## Simulated Evolution
 
 CNFutures has a simulated-only style governor:

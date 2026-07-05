@@ -139,7 +139,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByText('可处理机会')).toBeInTheDocument()
     expect(screen.getByText('预期机会')).toBeInTheDocument()
     expect(screen.getByText('BTC-USD')).toBeInTheDocument()
-    expect(screen.getByText('0700.HK')).toBeInTheDocument()
+    expect(screen.getByText('IF2601.CFFEX')).toBeInTheDocument()
   })
 
   it('keeps the reserved live state inside the return card', () => {

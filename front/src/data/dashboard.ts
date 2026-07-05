@@ -148,16 +148,16 @@ export const signals: SignalRow[] = [
     steps: 5,
   },
   {
-    symbol: '0700.HK',
-    name: '腾讯',
-    market: 'HK',
-    method: '事件机会',
+    symbol: 'IF2601.CFFEX',
+    name: '沪深300期指',
+    market: 'CNFutures',
+    method: '模拟开盘观察',
     status: 'pending',
     impact: '--',
-    confidence: '86%',
+    confidence: '64%',
     age: '31分钟',
-    reason: '财报预期和资金流正在靠近',
-    next: '等价格和成交量再走强',
+    reason: '等待 5 分钟样本和模拟回执',
+    next: '只做模拟观察，不接实盘',
     steps: 5,
   },
   {
@@ -178,7 +178,7 @@ export const signals: SignalRow[] = [
 export const holdings: HoldingRow[] = [
   { symbol: '600519.SH', name: '贵州茅台', market: 'A-share', weight: '12.8%', pnl: '+$18.4K', risk: '正常', role: '核心收益' },
   { symbol: 'AAPL.US', name: '苹果', market: 'US', weight: '10.6%', pnl: '+$14.7K', risk: '正常', role: '趋势收益' },
-  { symbol: '0700.HK', name: '腾讯', market: 'HK', weight: '8.4%', pnl: '+$9.8K', risk: '观察', role: '事件收益' },
+  { symbol: 'RB2609.SHF', name: '螺纹钢期货', market: 'CNFutures', weight: '8.4%', pnl: '+$9.8K', risk: '观察', role: '模拟训练' },
   { symbol: 'BTC-USD', name: '比特币', market: 'Crypto', weight: '6.9%', pnl: '-$4.2K', risk: '偏高', role: '波动仓位' },
 ]
 
@@ -200,7 +200,7 @@ export const contributionData = [
 export const allocationData = [
   { name: 'A股', value: 38 },
   { name: '美股', value: 27 },
-  { name: '港股', value: 18 },
+  { name: '中国期货', value: 18 },
   { name: '加密', value: 11 },
   { name: '现金', value: 6 },
 ]
