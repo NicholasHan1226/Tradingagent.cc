@@ -332,3 +332,22 @@ Checks added in this pass:
 - Chrome narrow desktop screenshot at 814x837 confirmed the desktop layout
   remains readable on the left-side viewport; mobile/fully responsive treatment
   remains intentionally out of scope.
+
+## July 5 Production Data Refinement
+
+78. Return curve refinement: `style_performance` PnL can now be expanded onto
+    matching simulated ledger trade timestamps. The final PnL total remains
+    sourced from the review performance file; trade logs only provide timing.
+79. Performance integrity guard: trade journals without a PnL/review source
+    still leave `performance[]` empty, preventing the UI from using traded
+    notional or cost basis as a fake return curve.
+80. Documentation cleanup: the active frontend is no longer described as
+    mock-only. The current read model consumes the server-side snapshot route
+    and keeps execution surfaces out of `front/`.
+
+Checks added in this pass:
+
+- `npm test -- --run src/server/tradingAgentSnapshot.test.ts`: passed, 11 tests.
+- `npm run build:api`: passed.
+- `npm run lint && npm test -- --run && npm run build && npm run build:api`:
+  passed, 14 files / 55 tests.
