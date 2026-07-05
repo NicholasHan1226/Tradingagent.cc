@@ -25,6 +25,8 @@ class CNFuturesObservationReportTest(unittest.TestCase):
                         "filled_count": 1,
                         "hold_count": 3,
                         "hold_reason_summary": {"by_reason": {"below_threshold": 3}},
+                        "forward_label_summary": {"styles": {"index_intraday_directional": {"labeled": 4, "pending": 1, "win_rate": 0.75}}},
+                        "dynamic_threshold_candidates": [{"style_name": "index_intraday_directional", "action": "observe"}],
                         "error_count": 0,
                     }
                 )
@@ -87,6 +89,10 @@ class CNFuturesObservationReportTest(unittest.TestCase):
             self.assertEqual(report["data"]["freshness_status"], "fresh")
             self.assertEqual(report["simulation"]["filled_count"], 1)
             self.assertEqual(report["simulation"]["hold_count"], 3)
+            self.assertEqual(report["simulation"]["forward_label_summary"]["styles"]["index_intraday_directional"]["labeled"], 4)
+            self.assertEqual(report["dashboard"]["forward_labeled_count"], 4)
+            self.assertEqual(report["dashboard"]["forward_pending_count"], 1)
+            self.assertEqual(report["dashboard"]["dynamic_threshold_candidate_count"], 1)
             self.assertEqual(report["dashboard"]["top_hold_reason"], "below_threshold")
             self.assertEqual(report["styles"]["ranked"][0]["style_name"], "index_intraday_directional")
             self.assertEqual(report["evolution"]["action_count"], 1)

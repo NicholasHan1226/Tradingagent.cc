@@ -239,6 +239,86 @@ def _enrich_order_from_bar(order: dict[str, Any], bar: dict[str, Any]) -> None:
             order[key] = value
 
 
+def _scenario_tags(symbol: str, signal: dict[str, Any], now: datetime | None) -> dict[str, Any]:
+    tags = signal.get("scenario_tags") if isinstance(signal.get("scenario_tags"), dict) else {}
+    product = "unknown"
+    try:
+        product = normalize_product(symbol)
+    except ValueError:
+        pass
+    return {
+        "product": product,
+        "session": _session_bucket(now),
+        "time_bucket": tags.get("time_bucket", "unknown"),
+        "direction": signal.get("side") or signal.get("action") or "unknown",
+        "volatility_bucket": tags.get("volatility_bucket", "unknown"),
+        "volume_bucket": tags.get("volume_bucket", "unknown"),
+        "signal_strength_bucket": tags.get("signal_strength_bucket", "unknown"),
+    }
+
+
+def _exit_plan_for_signal(signal: dict[str, Any], style: dict[str, Any]) -> dict[str, Any]:
+    plan = signal.get("exit_plan") if isinstance(signal.get("exit_plan"), dict) else {}
+    horizon = max(1, _safe_int(plan.get("prediction_horizon_bars") or signal.get("prediction_horizon_bars") or style.get("prediction_horizon_bars"), 3))
+    time_stop_bars = max(1, _safe_int(plan.get("time_stop_bars") or style.get("time_stop_bars"), horizon))
+    max_hold_bars = max(time_stop_bars, _safe_int(plan.get("max_hold_bars") or style.get("max_hold_bars"), max(horizon, time_stop_bars)))
+    return {
+        "prediction_horizon_bars": horizon,
+        "time_stop_bars": time_stop_bars,
+        "max_hold_bars": max_hold_bars,
+        "stop_loss_pct": max(0.0, _safe_float(plan.get("stop_loss_pct") if "stop_loss_pct" in plan else style.get("stop_loss_pct"), 0.004)),
+        "take_profit_pct": max(0.0, _safe_float(plan.get("take_profit_pct") if "take_profit_pct" in plan else style.get("take_profit_pct"), 0.006)),
+        "flatten_before_session_close_minutes": max(0, _safe_int(plan.get("flatten_before_session_close_minutes") or style.get("flatten_before_session_close_minutes"), 10)),
+        "no_overnight": bool(plan.get("no_overnight", style.get("no_overnight", True))),
+    }
+
+
+def _forward_outcome_label(bars: list[dict[str, Any]], signal: dict[str, Any], exit_plan: dict[str, Any]) -> dict[str, Any]:
+    side = str(signal.get("side") or signal.get("action") or "").lower().strip()
+    direction = 1 if side == "buy" else (-1 if side == "sell" else 0)
+    entry_price = _safe_float(signal.get("price"), 0.0)
+    horizon = max(1, _safe_int(exit_plan.get("prediction_horizon_bars"), 3))
+    if direction == 0 or entry_price <= 0:
+        return {"status": "unscored", "reason": "not_directional_signal", "prediction_horizon_bars": horizon}
+    entry_index = len(bars) - 1
+    future_rows = bars[entry_index + 1 : entry_index + 1 + horizon]
+    if not future_rows:
+        return {
+            "status": "pending_future_bars",
+            "prediction_horizon_bars": horizon,
+            "entry_price": entry_price,
+            "direction": side,
+        }
+    closes = [_safe_float(row.get("close"), 0.0) for row in future_rows]
+    closes = [value for value in closes if value > 0]
+    if not closes:
+        return {"status": "unscored", "reason": "missing_future_close", "prediction_horizon_bars": horizon, "entry_price": entry_price, "direction": side}
+    directional_returns = [direction * ((close / entry_price) - 1.0) for close in closes]
+    horizon_return = directional_returns[min(len(directional_returns), horizon) - 1]
+    max_favorable = max(directional_returns)
+    max_adverse = min(directional_returns)
+    stop_loss_pct = max(0.0, _safe_float(exit_plan.get("stop_loss_pct"), 0.0))
+    take_profit_pct = max(0.0, _safe_float(exit_plan.get("take_profit_pct"), 0.0))
+    time_stop_bars = max(1, _safe_int(exit_plan.get("time_stop_bars"), horizon))
+    time_stop_index = min(len(directional_returns), time_stop_bars) - 1
+    time_stop_return = directional_returns[time_stop_index]
+    return {
+        "status": "labeled",
+        "prediction_horizon_bars": horizon,
+        "entry_price": entry_price,
+        "direction": side,
+        "future_bar_count": len(future_rows),
+        "horizon_return_pct": round(horizon_return, 8),
+        "time_stop_return_pct": round(time_stop_return, 8),
+        "max_favorable_excursion_pct": round(max_favorable, 8),
+        "max_adverse_excursion_pct": round(max_adverse, 8),
+        "direction_correct": horizon_return > 0,
+        "time_stop_positive": time_stop_return > 0,
+        "take_profit_hit": bool(take_profit_pct and max_favorable >= take_profit_pct),
+        "stop_loss_hit": bool(stop_loss_pct and abs(max_adverse) >= stop_loss_pct),
+    }
+
+
 def _positions_path(signals_dir: Path) -> Path:
     return signals_dir / "positions" / POSITIONS_FILENAME
 
@@ -701,6 +781,9 @@ def run_multi_style_simulation(
                     "confidence": signal.get("confidence", 0.0),
                 })
                 continue
+            exit_plan = _exit_plan_for_signal(signal, style)
+            scenario_tags = _scenario_tags(symbol, signal, now)
+            forward_outcome = _forward_outcome_label(bars, signal, exit_plan)
             price = _safe_float(signal.get("price"), 0.0)
             if price <= 0:
                 errors.append({"stage": "signal", "symbol": symbol, "style": style_name, "error": "invalid_price"})
@@ -733,6 +816,8 @@ def run_multi_style_simulation(
                 "bar_volume": _safe_float((bars[-1] if bars else {}).get("volume"), 0.0),
                 "previous_close": _safe_float((bars[-2] if len(bars) >= 2 else {}).get("close"), price),
                 "trade_date": date,
+                "scenario_tags": scenario_tags,
+                "exit_plan": exit_plan,
             }
             _enrich_order_from_bar(order, bars[-1] if bars else {})
             if _has_repeated_same_side_exposure(
@@ -837,6 +922,9 @@ def run_multi_style_simulation(
                     "style": style_name,
                     "symbol": symbol,
                     "signal": signal,
+                    "scenario_tags": scenario_tags,
+                    "exit_plan": exit_plan,
+                    "forward_outcome": forward_outcome,
                     "order": order,
                     "receipt": receipt,
                     "performance": performance,

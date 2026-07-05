@@ -80,6 +80,10 @@ class CNFuturesSimTest(unittest.TestCase):
 
         self.assertEqual(buy["action"], "buy")
         self.assertEqual(buy["style_family"], "index_intraday_directional")
+        self.assertEqual(buy["scenario_tags"]["time_bucket"], "day_late")
+        self.assertEqual(buy["scenario_tags"]["direction"], "buy")
+        self.assertEqual(buy["exit_plan"]["prediction_horizon_bars"], 3)
+        self.assertEqual(buy["exit_plan"]["time_stop_bars"], 3)
         self.assertEqual(sell["action"], "sell")
         self.assertEqual(guarded["action"], "hold")
         self.assertEqual(guarded["reason"], "session_close_guard")
@@ -504,6 +508,23 @@ class CNFuturesSimTest(unittest.TestCase):
                     "raw_response": {"margin_required": 100.0, "notional": 1000.0},
                 },
                 "performance": {"realized_pnl": 5.0},
+                "scenario_tags": {
+                    "session": "day",
+                    "time_bucket": "day_afternoon",
+                    "product": "if",
+                    "direction": "buy",
+                    "volatility_bucket": "normal",
+                    "volume_bucket": "strong",
+                },
+                "forward_outcome": {
+                    "status": "labeled",
+                    "direction_correct": True,
+                    "time_stop_positive": True,
+                    "take_profit_hit": True,
+                    "stop_loss_hit": False,
+                    "horizon_return_pct": 0.003,
+                    "time_stop_return_pct": 0.002,
+                },
             }
 
             payload = append_review(
@@ -523,6 +544,9 @@ class CNFuturesSimTest(unittest.TestCase):
             self.assertTrue(perf_path.exists())
             self.assertEqual(style_payload["market"], "cn_futures")
             self.assertEqual(style_payload["style_comparison"][0]["style_name"], "trend")
+            self.assertEqual(style_payload["forward_label_summary"]["styles"]["trend"]["labeled"], 1)
+            self.assertEqual(style_payload["forward_label_summary"]["styles"]["trend"]["win_rate"], 1.0)
+            self.assertEqual(style_payload["style_comparison"][0]["forward_labeled_count"], 1)
             self.assertEqual(perf_rows[0]["market"], "cn_futures")
             self.assertFalse(perf_rows[0]["real_execution"])
 

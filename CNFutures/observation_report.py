@@ -104,6 +104,11 @@ def build_observation_report(
     top_hold_reason = ""
     if hold_by_reason:
         top_hold_reason = max(hold_by_reason.items(), key=lambda item: int(item[1] or 0))[0]
+    forward_summary = latest_review.get("forward_label_summary", {}) if isinstance(latest_review.get("forward_label_summary"), dict) else {}
+    threshold_candidates = latest_review.get("dynamic_threshold_candidates", []) if isinstance(latest_review.get("dynamic_threshold_candidates"), list) else []
+    forward_styles = forward_summary.get("styles") if isinstance(forward_summary.get("styles"), dict) else {}
+    forward_labeled_count = sum(int(row.get("labeled") or 0) for row in forward_styles.values() if isinstance(row, dict))
+    forward_pending_count = sum(int(row.get("pending") or 0) for row in forward_styles.values() if isinstance(row, dict))
     dashboard = {
         "readiness": live.get("observation_phase", "unknown"),
         "status": live.get("overall_status", "unknown"),
@@ -112,6 +117,9 @@ def build_observation_report(
         "filled_count": int(latest_review.get("filled_count") or 0) if latest_review else 0,
         "hold_count": int(latest_review.get("hold_count") or 0) if latest_review else 0,
         "top_hold_reason": top_hold_reason,
+        "forward_labeled_count": forward_labeled_count,
+        "forward_pending_count": forward_pending_count,
+        "dynamic_threshold_candidate_count": len(threshold_candidates),
         "top_style": ranked_styles[0].get("style_name", "") if ranked_styles else "",
         "alerts": live.get("alerts", []),
         "real_trading_enabled": False,
@@ -141,6 +149,8 @@ def build_observation_report(
             "filled_count": int(latest_review.get("filled_count") or 0) if latest_review else 0,
             "hold_count": int(latest_review.get("hold_count") or 0) if latest_review else 0,
             "hold_reason_summary": hold_summary,
+            "forward_label_summary": forward_summary,
+            "dynamic_threshold_candidates": threshold_candidates,
             "error_count": int(latest_review.get("error_count") or 0) if latest_review else 0,
             "error_summary": latest_review.get("error_summary", {}) if isinstance(latest_review.get("error_summary"), dict) else {},
         },

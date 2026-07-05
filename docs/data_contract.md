@@ -129,6 +129,11 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
   simulated no-trade decisions. These fields describe strategy/filter reasons
   such as weak signal quality or session restrictions; they are not rejected
   orders and must not be routed to execution queues.
+- CNFutures review rows may include `forward_label_summary` and
+  `dynamic_threshold_candidates` for simulated strategy calibration. Live rows
+  may be `pending_future_bars` until enough later 5-minute bars exist; these
+  fields are review/evolution metadata only and must not be treated as broker
+  instructions.
 - Dashboard consumption should use
   `shared/review/cn_futures/observation_report.json`. The stable UI-facing
   surface is `schema_version`, `dashboard`, `next_validation`,

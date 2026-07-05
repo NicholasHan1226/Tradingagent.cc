@@ -157,6 +157,16 @@ def _latest_style_states(review_root: Path | str | None = None) -> dict[str, dic
     }
 
 
+def _latest_dynamic_threshold_candidates(review_root: Path | str | None = None) -> dict[str, dict[str, Any]]:
+    payload = _read_json(_review_dir(review_root) / "style_comparison.json")
+    rows = payload.get("dynamic_threshold_candidates") if isinstance(payload.get("dynamic_threshold_candidates"), list) else []
+    return {
+        str(row.get("style_name")): dict(row)
+        for row in rows
+        if isinstance(row, dict) and row.get("style_name")
+    }
+
+
 def _style_status(style: dict[str, Any]) -> str:
     status = str(style.get("status") or "").strip().lower()
     if status in {"active", "paused", "deprecated"}:
@@ -301,6 +311,7 @@ def evaluate_styles(
     styles = load_runtime_styles(strategy_dir=strategy_dir, review_root=review_root)
     rankings = compare_styles(STYLE_REVIEW_MARKET, review_root=review_root)
     style_states = _latest_style_states(review_root)
+    threshold_candidates = _latest_dynamic_threshold_candidates(review_root)
     ranking_by_style = {str(row.get("style_name")): row for row in rankings}
     weights: dict[str, dict[str, Any]] = {}
     actions: list[dict[str, Any]] = []
@@ -328,6 +339,7 @@ def evaluate_styles(
         current_weight = _base_weight(style)
         state = style_states.get(name, {})
         metric = ranking_by_style.get(name, {})
+        threshold_candidate = threshold_candidates.get(name, {})
         trades = _safe_int(metric.get("trades") or state.get("filled_count"), 0)
         pnl = _safe_float(metric.get("pnl"), 0.0)
         trend = str(metric.get("trend") or "stable")
@@ -358,6 +370,8 @@ def evaluate_styles(
             action = "reduce_weight"
             reason = "negative_or_declining_performance"
             weight = max(MIN_WEIGHT, current_weight * 0.75)
+        if isinstance(threshold_candidate, dict) and threshold_candidate.get("action") in {"raise_threshold", "test_lower_threshold_variant"}:
+            reason = f"{reason}; {threshold_candidate.get('reason')}"
 
         weights[name] = {
             "status": status,
@@ -375,6 +389,7 @@ def evaluate_styles(
             "after": {"status": status, "weight": round(weight, 6)},
             "metric": metric,
             "latest_state": state,
+            "dynamic_threshold_candidate": threshold_candidate,
         })
 
     _normalize_active_weights(weights)
@@ -414,6 +429,7 @@ def evaluate_styles(
         "selection_objective": "win_rate_first_risk_adjusted",
         "actions": actions,
         "rankings": rankings,
+        "dynamic_threshold_candidates": list(threshold_candidates.values()),
         "weights": weights,
         "generated_variant": variant_actions[0] if variant_actions else {},
         "generated_variants": variant_actions,

@@ -240,6 +240,134 @@ def summarize_holds(holds: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _scenario_key(tags: dict[str, Any]) -> str:
+    parts = [
+        str(tags.get("session") or "unknown"),
+        str(tags.get("time_bucket") or "unknown"),
+        str(tags.get("product") or "unknown"),
+        str(tags.get("direction") or "unknown"),
+        str(tags.get("volatility_bucket") or "unknown"),
+        str(tags.get("volume_bucket") or "unknown"),
+    ]
+    return "|".join(parts)
+
+
+def summarize_forward_outcomes(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize forward direction labels and scenario win rates."""
+
+    by_style: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"total": 0, "labeled": 0, "pending": 0, "wins": 0, "losses": 0, "time_stop_wins": 0, "take_profit_hits": 0, "stop_loss_hits": 0}
+    )
+    by_scenario: dict[str, dict[str, Any]] = defaultdict(lambda: {"total": 0, "labeled": 0, "wins": 0, "losses": 0})
+    examples: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        style = str(record.get("style") or "unknown")
+        outcome = record.get("forward_outcome") if isinstance(record.get("forward_outcome"), dict) else {}
+        tags = record.get("scenario_tags") if isinstance(record.get("scenario_tags"), dict) else {}
+        status = str(outcome.get("status") or "missing")
+        style_row = by_style[style]
+        style_row["total"] += 1
+        if status == "pending_future_bars":
+            style_row["pending"] += 1
+            continue
+        if status != "labeled":
+            continue
+        scenario = _scenario_key(tags)
+        scenario_row = by_scenario[scenario]
+        scenario_row["total"] += 1
+        scenario_row["labeled"] += 1
+        style_row["labeled"] += 1
+        if bool(outcome.get("direction_correct")):
+            style_row["wins"] += 1
+            scenario_row["wins"] += 1
+        else:
+            style_row["losses"] += 1
+            scenario_row["losses"] += 1
+        if bool(outcome.get("time_stop_positive")):
+            style_row["time_stop_wins"] += 1
+        if bool(outcome.get("take_profit_hit")):
+            style_row["take_profit_hits"] += 1
+        if bool(outcome.get("stop_loss_hit")):
+            style_row["stop_loss_hits"] += 1
+        if len(examples) < 12:
+            examples.append({
+                "style": style,
+                "symbol": record.get("symbol"),
+                "bar_time": record.get("bar_time"),
+                "scenario": scenario,
+                "horizon_return_pct": outcome.get("horizon_return_pct"),
+                "time_stop_return_pct": outcome.get("time_stop_return_pct"),
+                "direction_correct": outcome.get("direction_correct"),
+            })
+    styles: dict[str, dict[str, Any]] = {}
+    for style, values in by_style.items():
+        labeled = int(values["labeled"])
+        wins = int(values["wins"])
+        time_stop_wins = int(values["time_stop_wins"])
+        row = dict(values)
+        row["win_rate"] = (wins / labeled) if labeled else None
+        row["time_stop_win_rate"] = (time_stop_wins / labeled) if labeled else None
+        styles[style] = row
+    scenarios: dict[str, dict[str, Any]] = {}
+    for scenario, values in by_scenario.items():
+        labeled = int(values["labeled"])
+        wins = int(values["wins"])
+        row = dict(values)
+        row["win_rate"] = (wins / labeled) if labeled else None
+        scenarios[scenario] = row
+    return {
+        "styles": styles,
+        "scenarios": scenarios,
+        "examples": examples,
+    }
+
+
+def dynamic_threshold_candidates(forward_summary: dict[str, Any], hold_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    """Suggest simulated-only threshold changes from labeled outcomes and hold pressure."""
+
+    styles = forward_summary.get("styles") if isinstance(forward_summary.get("styles"), dict) else {}
+    hold_by_style = hold_summary.get("by_style") if isinstance(hold_summary.get("by_style"), dict) else {}
+    candidates: list[dict[str, Any]] = []
+    for style, values in sorted(styles.items()):
+        if not isinstance(values, dict):
+            continue
+        labeled = int(values.get("labeled") or 0)
+        pending = int(values.get("pending") or 0)
+        win_rate = values.get("win_rate")
+        holds = hold_by_style.get(style) if isinstance(hold_by_style.get(style), dict) else {}
+        by_reason = holds.get("by_reason") if isinstance(holds.get("by_reason"), dict) else {}
+        top_hold_reason = ""
+        if by_reason:
+            top_hold_reason = max(by_reason.items(), key=lambda item: int(item[1] or 0))[0]
+        action = "observe"
+        threshold_multiplier = 1.0
+        reason = "await_forward_labels" if labeled < 20 else "stable"
+        if labeled >= 20 and win_rate is not None and float(win_rate) < 0.50:
+            action = "raise_threshold"
+            threshold_multiplier = 1.10
+            reason = "forward_win_rate_below_floor"
+        elif labeled >= 20 and win_rate is not None and float(win_rate) >= 0.62 and top_hold_reason in {"direction_score_below_threshold", "volume_confirmation_filter"}:
+            action = "test_lower_threshold_variant"
+            threshold_multiplier = 0.95
+            reason = "high_win_rate_with_hold_pressure"
+        candidates.append({
+            "style_name": style,
+            "action": action,
+            "reason": reason,
+            "labeled_count": labeled,
+            "pending_count": pending,
+            "win_rate": win_rate,
+            "time_stop_win_rate": values.get("time_stop_win_rate"),
+            "threshold_multiplier": threshold_multiplier,
+            "top_hold_reason": top_hold_reason,
+            "capital_layer": "simulated",
+            "real_trading_enabled": False,
+        })
+    return candidates
+
+
 def style_health(records: list[dict[str, Any]], errors: list[dict[str, Any]]) -> dict[str, Any]:
     """Return per-style action hints without mutating strategy configs."""
 
@@ -295,6 +423,8 @@ def _style_metric(
     style_name: str,
     style_score: dict[str, Any],
     style_state: dict[str, Any],
+    forward_state: dict[str, Any] | None = None,
+    threshold_candidate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     filled_count = int(style_state.get("filled_count") or style_score.get("filled_count") or 0)
     trade_count = int(style_score.get("trade_count") or filled_count)
@@ -302,12 +432,19 @@ def _style_metric(
     drawdown = _safe_float(style_score.get("max_drawdown"))
     fee = _safe_float(style_score.get("fee"))
     sharpe = realized_pnl / max(1.0, drawdown + fee) if trade_count else 0.0
+    forward_state = forward_state if isinstance(forward_state, dict) else {}
+    threshold_candidate = threshold_candidate if isinstance(threshold_candidate, dict) else {}
     return {
         "style_name": style_name,
         "market": STYLE_REVIEW_MARKET,
         "date": date,
         "pnl": round(realized_pnl, 6),
         "win_rate": _safe_float(style_score.get("win_rate")),
+        "forward_win_rate": forward_state.get("win_rate"),
+        "forward_labeled_count": int(forward_state.get("labeled") or 0),
+        "forward_pending_count": int(forward_state.get("pending") or 0),
+        "time_stop_win_rate": forward_state.get("time_stop_win_rate"),
+        "threshold_candidate": threshold_candidate,
         "max_dd": round(drawdown, 6),
         "sharpe": round(sharpe, 6),
         "trades": trade_count,
@@ -339,6 +476,14 @@ def write_style_outputs(payload: dict[str, Any], *, review_path: Path | None = N
     style_scores = score_summary.get("style_scores") if isinstance(score_summary.get("style_scores"), dict) else {}
     health = payload.get("style_health") if isinstance(payload.get("style_health"), dict) else {}
     styles = payload.get("styles") if isinstance(payload.get("styles"), dict) else {}
+    forward_summary = payload.get("forward_label_summary") if isinstance(payload.get("forward_label_summary"), dict) else {}
+    forward_styles = forward_summary.get("styles") if isinstance(forward_summary.get("styles"), dict) else {}
+    threshold_candidates = payload.get("dynamic_threshold_candidates") if isinstance(payload.get("dynamic_threshold_candidates"), list) else []
+    threshold_by_style = {
+        str(item.get("style_name")): item
+        for item in threshold_candidates
+        if isinstance(item, dict) and item.get("style_name")
+    }
     style_names = sorted(set(style_scores) | set(health) | set(styles))
     metrics = [
         _style_metric(
@@ -346,6 +491,8 @@ def write_style_outputs(payload: dict[str, Any], *, review_path: Path | None = N
             style_name=style_name,
             style_score=style_scores.get(style_name) if isinstance(style_scores.get(style_name), dict) else {},
             style_state=health.get(style_name) if isinstance(health.get(style_name), dict) else {},
+            forward_state=forward_styles.get(style_name) if isinstance(forward_styles.get(style_name), dict) else {},
+            threshold_candidate=threshold_by_style.get(style_name) if isinstance(threshold_by_style.get(style_name), dict) else {},
         )
         for style_name in style_names
     ]
@@ -388,6 +535,8 @@ def write_style_outputs(payload: dict[str, Any], *, review_path: Path | None = N
         "error_summary": payload.get("error_summary") if isinstance(payload.get("error_summary"), dict) else {},
         "hold_count": int(payload.get("hold_count") or 0),
         "hold_reason_summary": payload.get("hold_reason_summary") if isinstance(payload.get("hold_reason_summary"), dict) else {},
+        "forward_label_summary": forward_summary,
+        "dynamic_threshold_candidates": threshold_candidates,
         "source_review_path": str(target),
         "generated_at": payload.get("generated_at", _now_iso()),
     }
@@ -414,6 +563,8 @@ def append_review(
     score_summary = score_records(records)
     error_summary = summarize_errors(errors)
     hold_summary = summarize_holds(list(holds or []))
+    forward_summary = summarize_forward_outcomes(records)
+    threshold_candidates = dynamic_threshold_candidates(forward_summary, hold_summary)
     health = style_health(records, errors)
     payload: dict[str, Any] = {
         "date": date,
@@ -429,6 +580,8 @@ def append_review(
         "error_count": len(errors),
         "errors": errors,
         "hold_reason_summary": hold_summary,
+        "forward_label_summary": forward_summary,
+        "dynamic_threshold_candidates": threshold_candidates,
         "generated_at": _now_iso(),
         **summary,
         "score_summary": score_summary,
@@ -446,7 +599,9 @@ def append_review(
 __all__ = [
     "DEFAULT_REVIEW_PATH",
     "append_review",
+    "dynamic_threshold_candidates",
     "score_records",
+    "summarize_forward_outcomes",
     "summarize_errors",
     "summarize_holds",
     "summarize_records",

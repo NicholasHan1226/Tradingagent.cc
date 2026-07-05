@@ -48,6 +48,11 @@ quality layer rejects missing 5-minute bar gaps, latest bars with weak
 body-to-range commitment, insufficient consecutive aligned bars, and obvious
 late-chase entries after a sharp extension. This style is for simulated
 validation of index-direction timing; it does not enable real CFFEX trading.
+Confirmed signals also carry simulated review metadata: `scenario_tags` for
+session/product/volatility/volume/signal-strength buckets and an `exit_plan`
+with prediction horizon, time stop, max hold, stop-loss, take-profit, and
+no-overnight intent. These fields support review and evolution only; they do
+not route to any real broker.
 
 ## Automation Entry
 
@@ -147,6 +152,12 @@ The review payload includes `score_summary` by style:
 - `hold_count` and `hold_reason_summary`, so styles that correctly refuse weak
   setups can be reviewed by reason, style, symbol, and session without treating
   every no-trade cycle as missing data
+- `forward_label_summary`, which counts pending or labeled forward outcomes by
+  style and scenario. Live 5-minute runs start as `pending_future_bars`;
+  historical/replay rows with future bars can be labeled with direction
+  correctness, time-stop result, take-profit hits, stop-loss hits, MFE, and MAE.
+- `dynamic_threshold_candidates`, simulated-only suggestions for raising or
+  testing lower thresholds based on forward labels and hold pressure.
 
 These scores rank simulated styles for further research and feed existing
 health/metrics surfaces. They do not create a standalone dashboard, do not grant
@@ -180,6 +191,8 @@ The report summarizes:
 - latest simulated review counts, fills, errors, and error summary
 - hold counts and top hold reason, so the dashboard can distinguish "no
   opportunity" from data or execution gaps
+- forward-labeled and forward-pending sample counts, plus dynamic threshold
+  candidate count
 - 5-minute sample evidence such as `cadence`, `latest_bar_time`, and
   `real_trading_enabled=false` when available
 - ranked style rows, runtime style weights, generated variants, and alerts
@@ -275,8 +288,8 @@ When `index_intraday_directional` performs well, generated variants keep the
 same style family, `IF/IH/IC/IM` product scope, `no_overnight=true`,
 `day_session_only=true`, `trend_alignment_required=true`, and volume
 confirmation. The evolution layer can tune thresholds, lookback windows,
-volume filters, and simulated risk weights, but it cannot turn this lane into a
-real-trading strategy.
+volume filters, simulated risk weights, and simulated-only threshold
+candidates, but it cannot turn this lane into a real-trading strategy.
 
 Production cron runs the governor every 30 minutes during CN futures day and
 night sessions. This slower cadence is intentional: 5-minute simulation keeps

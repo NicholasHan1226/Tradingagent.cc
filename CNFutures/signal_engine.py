@@ -202,6 +202,45 @@ def _late_chase_pct(rows: list[dict[str, Any]], window: int, action: str) -> flo
     return 0.0
 
 
+def _time_bucket(row: dict[str, Any]) -> str:
+    parsed = _bar_time(row)
+    if parsed is None:
+        return "unknown"
+    current = parsed.time()
+    if time(9, 30) <= current < time(10, 30):
+        return "day_open"
+    if time(10, 30) <= current <= time(11, 30):
+        return "day_late_morning"
+    if time(13, 0) <= current < time(14, 15):
+        return "day_afternoon"
+    if time(14, 15) <= current <= time(15, 0):
+        return "day_late"
+    return "off_session"
+
+
+def _bucket(value: float, *, low: float, high: float, labels: tuple[str, str, str]) -> str:
+    if value < low:
+        return labels[0]
+    if value < high:
+        return labels[1]
+    return labels[2]
+
+
+def _exit_plan(style: dict[str, Any]) -> dict[str, Any]:
+    horizon = max(1, int(_safe_float(style.get("prediction_horizon_bars"), 3)))
+    time_stop_bars = max(1, int(_safe_float(style.get("time_stop_bars"), horizon)))
+    max_hold_bars = max(time_stop_bars, int(_safe_float(style.get("max_hold_bars"), max(horizon, time_stop_bars))))
+    return {
+        "prediction_horizon_bars": horizon,
+        "time_stop_bars": time_stop_bars,
+        "max_hold_bars": max_hold_bars,
+        "stop_loss_pct": max(0.0, _safe_float(style.get("stop_loss_pct"), 0.004)),
+        "take_profit_pct": max(0.0, _safe_float(style.get("take_profit_pct"), 0.006)),
+        "flatten_before_session_close_minutes": max(0, int(_safe_float(style.get("flatten_before_session_close_minutes"), 10))),
+        "no_overnight": bool(style.get("no_overnight", True)),
+    }
+
+
 def _index_intraday_directional_signal(
     symbol: str,
     bars: list[dict[str, Any]],
@@ -457,6 +496,15 @@ def _index_intraday_directional_signal(
     confidence = min(0.95, max(0.10, abs(directional_score) / max(threshold, 0.0001) * 0.30))
     if volume_ratio >= 1.15:
         confidence = min(0.98, confidence + 0.08)
+    exit_plan = _exit_plan(style)
+    scenario_tags = {
+        "style_family": "index_intraday_directional",
+        "time_bucket": _time_bucket(bars[-1]),
+        "direction": action,
+        "volatility_bucket": _bucket(recent_range_pct, low=0.002, high=0.006, labels=("low", "normal", "high")),
+        "volume_bucket": _bucket(volume_ratio, low=1.05, high=1.20, labels=("weak", "confirmed", "strong")),
+        "signal_strength_bucket": _bucket(abs(directional_score), low=threshold * 1.1, high=threshold * 1.8, labels=("borderline", "confirmed", "strong")),
+    }
     return {
         "symbol": symbol,
         "style": style_name,
@@ -476,8 +524,10 @@ def _index_intraday_directional_signal(
         "late_chase_pct": late_chase_pct,
         "confidence": confidence,
         "reason": "index_intraday_direction_confirmed",
-        "prediction_horizon_bars": int(_safe_float(style.get("prediction_horizon_bars"), 3)),
-        "no_overnight": bool(style.get("no_overnight", True)),
+        "prediction_horizon_bars": exit_plan["prediction_horizon_bars"],
+        "exit_plan": exit_plan,
+        "scenario_tags": scenario_tags,
+        "no_overnight": exit_plan["no_overnight"],
         "capital_layer": "simulated",
         "account_type": "simulated",
     }

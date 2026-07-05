@@ -108,6 +108,37 @@ class CNFuturesEvolutionTest(unittest.TestCase):
             self.assertFalse(result["weights"]["trend"]["enabled"])
             self.assertEqual(result["weights"]["trend"]["evolution_action"], "pause")
 
+    def test_evolution_carries_dynamic_threshold_candidates_into_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            styles_dir = root / "strategies"
+            review_root = root / "review"
+            self._write_style(styles_dir, "index_intraday_directional", {"style_family": "index_intraday_directional"})
+            comparison = {
+                "market": "cn_futures",
+                "dynamic_threshold_candidates": [
+                    {
+                        "style_name": "index_intraday_directional",
+                        "action": "raise_threshold",
+                        "reason": "forward_win_rate_below_floor",
+                        "labeled_count": 25,
+                        "win_rate": 0.44,
+                        "threshold_multiplier": 1.10,
+                        "real_trading_enabled": False,
+                    }
+                ],
+            }
+            comparison_path = review_root / "cn_futures/style_comparison.json"
+            comparison_path.parent.mkdir(parents=True)
+            comparison_path.write_text(json.dumps(comparison), encoding="utf-8")
+
+            result = evaluate_styles(strategy_dir=styles_dir, review_root=review_root, min_trades=20)
+
+            self.assertEqual(result["dynamic_threshold_candidates"][0]["action"], "raise_threshold")
+            action = next(item for item in result["actions"] if item["style_name"] == "index_intraday_directional")
+            self.assertEqual(action["dynamic_threshold_candidate"]["threshold_multiplier"], 1.10)
+            self.assertFalse(result["dynamic_threshold_candidates"][0]["real_trading_enabled"])
+
     def test_index_intraday_directional_variant_preserves_style_framework(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
