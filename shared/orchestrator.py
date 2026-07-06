@@ -7,7 +7,7 @@ import json
 import inspect
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -44,6 +44,15 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return default
+
+
+def _lookback_start(date: str, calendar_days: int = 14) -> str:
+    raw = str(date or "").replace("-", "")[:8]
+    try:
+        target = datetime.strptime(raw, "%Y%m%d")
+    except ValueError:
+        return ""
+    return (target - timedelta(days=calendar_days)).strftime("%Y%m%d")
 
 
 def _safe_quantity(value: Any, default: int | float = 0) -> int | float:
@@ -167,8 +176,21 @@ def _safe_stage(
 
 
 def _latest_price(reader: Any, market: str, symbol: str, date: str, default: float) -> float:
+    get_intraday = getattr(reader, "get_bars_intraday", None)
+    if callable(get_intraday):
+        try:
+            intraday_rows = get_intraday(market, symbol, "5m", date, date)
+        except Exception:
+            intraday_rows = []
+        for row in reversed(intraday_rows or []):
+            price = _safe_float(
+                row.get("close", row.get("last_price", row.get("price"))),
+                0.0,
+            )
+            if price > 0:
+                return price
     try:
-        rows = reader.get_bars_daily(market, symbol, None, date)
+        rows = reader.get_bars_daily(market, symbol, _lookback_start(date), date)
     except Exception:
         return default
     if not rows:
@@ -178,7 +200,7 @@ def _latest_price(reader: Any, market: str, symbol: str, date: str, default: flo
 
 def _latest_volatility(reader: Any, market: str, symbol: str, date: str, default: float) -> float:
     try:
-        rows = reader.get_bars_daily(market, symbol, None, date)
+        rows = reader.get_bars_daily(market, symbol, _lookback_start(date, 45), date)
     except Exception:
         return default
     closes = [_safe_float(row.get("close"), 0.0) for row in rows[-21:]]

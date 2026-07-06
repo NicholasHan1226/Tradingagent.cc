@@ -9,7 +9,7 @@ from unittest.mock import patch
 from shared.accounting import trade_audit_trail
 from shared.execution import shadow_broker
 from shared.markets.base import MarketAdapter
-from shared.orchestrator import OrchestratorDeps, run_shadow_loop
+from shared.orchestrator import OrchestratorDeps, _latest_price, _latest_volatility, run_shadow_loop
 from shared.portfolio.constructor import construct as construct_portfolio
 
 
@@ -82,6 +82,40 @@ class OrchestratorTest(unittest.TestCase):
         self.calls: list[str] = []
         self.score_requests: list[dict[str, object]] = []
         self.pool_requests: list[dict[str, object]] = []
+
+    def test_latest_price_prefers_intraday_and_daily_uses_lookback(self) -> None:
+        class Reader:
+            daily_calls: list[tuple[object, object]] = []
+
+            def get_bars_intraday(self, market, symbol, interval="5m", start="", end=""):
+                return [{"close": 10.2}, {"close": 10.8}]
+
+            def get_bars_daily(self, market, symbol, start=None, end=None):
+                self.daily_calls.append((start, end))
+                return [{"close": 9.8}]
+
+        reader = Reader()
+
+        self.assertEqual(_latest_price(reader, "ashare", "000001.SZ", "20260706", 0.0), 10.8)
+        self.assertEqual(reader.daily_calls, [])
+
+    def test_latest_price_and_volatility_fall_back_to_recent_daily_window(self) -> None:
+        class Reader:
+            daily_calls: list[tuple[object, object]] = []
+
+            def get_bars_intraday(self, market, symbol, interval="5m", start="", end=""):
+                return []
+
+            def get_bars_daily(self, market, symbol, start=None, end=None):
+                self.daily_calls.append((start, end))
+                return [{"close": 10.0}, {"close": 10.5}, {"close": 11.0}]
+
+        reader = Reader()
+
+        self.assertEqual(_latest_price(reader, "ashare", "000001.SZ", "20260706", 0.0), 11.0)
+        self.assertGreater(_latest_volatility(reader, "ashare", "000001.SZ", "20260706", 0.2), 0.01)
+        self.assertIn(("20260622", "20260706"), reader.daily_calls)
+        self.assertIn(("20260522", "20260706"), reader.daily_calls)
 
     def _deps(self, *, fail_debate: bool = False, use_batch_score: bool = False) -> OrchestratorDeps:
         def score_stock(market: str, symbol: str, data_reader: object = None, date: str | None = None) -> dict[str, object]:
