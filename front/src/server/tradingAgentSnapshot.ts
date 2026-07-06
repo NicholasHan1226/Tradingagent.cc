@@ -31,6 +31,21 @@ type PositionPlanFile = {
   positions?: PositionRow[]
 }
 
+type CNFuturesPositionRow = {
+  symbol?: string
+  style?: string
+  net_qty?: number
+  avg_price?: number
+  mark_price?: number
+  margin_required?: number
+  realized_pnl?: number
+  unrealized_pnl?: number
+}
+
+type CNFuturesPositionsFile = {
+  positions?: CNFuturesPositionRow[]
+}
+
 type SimLedgerPosition = {
   avg_cost?: number
   quantity?: number
@@ -772,9 +787,9 @@ async function readPositionSnapshots(root: string): Promise<HoldingRow[]> {
   try {
     const names = await readdir(root)
     const rows = await Promise.all(
-      names.filter((name) => name.endsWith('.json')).map(async (name) => parsePositionRow(await readJson(join(root, name)))),
+      names.filter((name) => name.endsWith('.json')).map(async (name) => parsePositionSnapshot(await readJson(join(root, name)))),
     )
-    return rows.filter((row): row is HoldingRow => Boolean(row))
+    return rows.flat().filter((row): row is HoldingRow => Boolean(row))
   } catch {
     return []
   }
@@ -848,6 +863,45 @@ function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, mar
     pnl: formatCurrency(position.realized_pnl ?? 0),
     risk: position.quantity > 0 ? '正常' : '观察',
     role: `${formatStrategyName(strategy)} 持仓`,
+  }
+}
+
+function parsePositionSnapshot(payload: unknown): HoldingRow[] {
+  if (Array.isArray(payload)) {
+    return payload.map(parsePositionRow).filter((row): row is HoldingRow => Boolean(row))
+  }
+
+  const direct = parsePositionRow(payload)
+  if (direct) return [direct]
+
+  const snapshot = payload as CNFuturesPositionsFile
+  if (Array.isArray(snapshot.positions)) {
+    return snapshot.positions
+      .map(parseCNFuturesPositionRow)
+      .filter((row): row is HoldingRow => Boolean(row))
+  }
+
+  return []
+}
+
+function parseCNFuturesPositionRow(row: CNFuturesPositionRow): HoldingRow | null {
+  const symbol = String(row.symbol ?? '').trim()
+  if (!symbol) return null
+  const qty = parseFiniteNumber(row.net_qty) ?? 0
+  if (qty === 0) return null
+  const margin = parseFiniteNumber(row.margin_required)
+  const realized = parseFiniteNumber(row.realized_pnl) ?? 0
+  const unrealized = parseFiniteNumber(row.unrealized_pnl) ?? 0
+  const style = row.style ? formatStrategyName(String(row.style)) : '期货模拟'
+
+  return {
+    symbol,
+    name: symbol,
+    market: 'CNFutures',
+    weight: margin === undefined ? `${qty} 手` : formatCurrency(margin),
+    pnl: formatCurrency(realized + unrealized),
+    risk: qty > 0 ? '正常' : '观察',
+    role: `${style} 持仓`,
   }
 }
 

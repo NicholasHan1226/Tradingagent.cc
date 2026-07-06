@@ -240,7 +240,7 @@ class AutoPipeline:
         evolution_fn: Callable[..., dict[str, Any]] = evaluate_and_adjust,
         review_root: Path | str | None = None,
         styles_dir_by_market: dict[str, Path | str] | None = None,
-        max_candidates: int = 25,
+        max_candidates: int = 10,
         initial_capital: float = 100_000.0,
     ) -> None:
         self.reader = reader or TradingagentDataReader()
@@ -570,7 +570,8 @@ class AutoPipeline:
         buys = [decision for decision in decisions if str(decision.get("action") or "").lower() == "buy"]
         buys.sort(key=lambda row: _safe_float(row.get("belief_score"), 0.0), reverse=True)
         positions: list[dict[str, Any]] = []
-        for decision in buys[:10]:
+        max_positions = 3 if market == "ashare" else 10
+        for decision in buys[:max_positions]:
             position_pct = _safe_float(decision.get("position_pct"), 0.0)
             if position_pct <= 0:
                 position_pct = min(0.10, max(0.01, _safe_float(decision.get("belief_score"), 0.5) * 0.10))
@@ -828,7 +829,7 @@ def run_auto_pipeline(
     markets: tuple[str, ...] | list[str] | None = None,
     stage: str = "all",
     review_root: Path | str | None = None,
-    max_candidates: int = 25,
+    max_candidates: int = 10,
 ) -> dict[str, Any]:
     return AutoPipeline(review_root=review_root, max_candidates=max_candidates).run(
         trade_date=trade_date,
@@ -843,7 +844,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--market", action="append", dest="markets", default=None)
     parser.add_argument("--stage", default="all", choices=("all", "daily_review"))
     parser.add_argument("--review-root", default=None)
-    parser.add_argument("--max-candidates", type=int, default=25)
+    parser.add_argument("--max-candidates", type=int, default=10)
     args = parser.parse_args(argv)
     result = run_auto_pipeline(
         trade_date=args.trade_date,

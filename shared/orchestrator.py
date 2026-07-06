@@ -658,6 +658,117 @@ def _candidate_symbols(pool: dict[str, Any], fallback_universe: list[str]) -> li
     return ordered
 
 
+def _rank_symbols_by_score(symbols: list[str], scores_by_symbol: dict[str, dict[str, Any]]) -> list[str]:
+    indexed = list(enumerate(symbols))
+
+    def score_key(item: tuple[int, str]) -> tuple[float, int]:
+        index, symbol = item
+        score = scores_by_symbol.get(symbol) or {}
+        return (_safe_float(score.get("combined", score.get("score")), 0.0), -index)
+
+    return [symbol for _, symbol in sorted(indexed, key=score_key, reverse=True)]
+
+
+def _max_new_positions(
+    existing_positions: list[dict[str, Any]],
+    max_portfolio_positions: int,
+) -> int:
+    if max_portfolio_positions <= 0:
+        return 0
+    existing_codes = {
+        str(position.get("ts_code") or position.get("symbol") or "").strip()
+        for position in existing_positions
+        if isinstance(position, dict)
+    }
+    existing_codes.discard("")
+    return max(0, max_portfolio_positions - len(existing_codes))
+
+
+def _exclusion_rows(
+    rows: list[dict[str, Any]],
+    *,
+    kind: str,
+    market: str,
+    date: str,
+    account: str,
+    capital_layer: str,
+    account_type: str,
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        payload = dict(row)
+        payload.update(
+            {
+                "kind": kind,
+                "market": market,
+                "date": date,
+                "trade_date": _date_iso(date),
+                "account": account,
+                "capital_layer": capital_layer,
+                "account_type": account_type,
+                "generated_at": _now_iso(),
+            }
+        )
+        result.append(payload)
+    return result
+
+
+def _write_sim_execution_exclusions(
+    *,
+    market: str,
+    date: str,
+    account: str,
+    skipped_candidates: list[dict[str, Any]],
+    risk_rejections: list[dict[str, Any]],
+    execution_skips: list[dict[str, Any]],
+    capital_layer: str,
+    account_type: str,
+    review_root: Path | None = None,
+) -> dict[str, Any]:
+    rows = [
+        *_exclusion_rows(
+            skipped_candidates,
+            kind="skipped_candidate",
+            market=market,
+            date=date,
+            account=account,
+            capital_layer=capital_layer,
+            account_type=account_type,
+        ),
+        *_exclusion_rows(
+            risk_rejections,
+            kind="risk_rejection",
+            market=market,
+            date=date,
+            account=account,
+            capital_layer=capital_layer,
+            account_type=account_type,
+        ),
+        *_exclusion_rows(
+            execution_skips,
+            kind="execution_skip",
+            market=market,
+            date=date,
+            account=account,
+            capital_layer=capital_layer,
+            account_type=account_type,
+        ),
+    ]
+    if not rows:
+        return {"status": "empty", "rows": 0}
+    base_review_root = review_root or (ROOT / "shared" / "review")
+    target_dir = base_review_root / str(market or "unknown").lower()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    compact = str(date or "").replace("-", "")[:8]
+    path = target_dir / f"execution_exclusions_{compact}.jsonl"
+    with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    return {"status": "written", "path": str(path), "rows": len(rows)}
+
+
 def _account_name(account: Any, default: str) -> str:
     if isinstance(account, dict):
         for key in ("account", "account_id", "account_name", "name", "strategy_name"):
@@ -1089,6 +1200,7 @@ def run_shadow_loop(
     method = str(config.get("portfolio_method", "conviction_weighted"))
     regime = str(config.get("regime", "unknown"))
     max_candidates = max(1, int(config.get("max_candidates", 20)))
+    score_limit = max(max_candidates, int(config.get("score_universe_limit", max_candidates)))
     default_price = _safe_float(config.get("default_price"), 1.0)
     default_volatility = _safe_float(config.get("default_volatility"), 0.20)
     market_rules = config.get("market_rules") if isinstance(config.get("market_rules"), dict) else {}
@@ -1107,7 +1219,7 @@ def run_shadow_loop(
         universe,
         date,
         reader,
-        max_candidates=max_candidates,
+        max_candidates=score_limit,
         errors=errors,
         stage_calls=stage_calls,
         audits=audits,
@@ -1132,7 +1244,7 @@ def run_shadow_loop(
     )
     stage_calls.append("screening.condition_lifecycle")
 
-    candidates = _candidate_symbols(pool, list(scores_by_symbol))[:max_candidates]
+    candidates = _rank_symbols_by_score(_candidate_symbols(pool, list(scores_by_symbol)), scores_by_symbol)[:max_candidates]
     orders_for_portfolio: list[dict[str, Any]] = []
     skipped_candidates: list[dict[str, Any]] = []
     signal_audit_by_symbol = {audit["ts_code"]: audit for audit in audits if audit.get("stage") == "signal"}
@@ -1373,6 +1485,8 @@ def run_sim_loop(
     method = str(config.get("portfolio_method", "conviction_weighted"))
     regime = str(config.get("regime", "unknown"))
     max_candidates = max(1, int(config.get("max_candidates", 20)))
+    score_limit = max(max_candidates, int(config.get("score_universe_limit", max_candidates)))
+    max_portfolio_positions = max(1, int(config.get("max_portfolio_positions", config.get("max_positions", 9999))))
     default_price = _safe_float(config.get("default_price"), 1.0)
     default_volatility = _safe_float(config.get("default_volatility"), 0.20)
 
@@ -1389,7 +1503,7 @@ def run_sim_loop(
         universe,
         date,
         reader,
-        max_candidates=max_candidates,
+        max_candidates=score_limit,
         errors=errors,
         stage_calls=stage_calls,
         audits=audits,
@@ -1417,14 +1531,14 @@ def run_sim_loop(
     )
     stage_calls.append("screening.condition_lifecycle")
 
-    candidates = _candidate_symbols(pool, list(scores_by_symbol))[:max_candidates]
+    candidates = _rank_symbols_by_score(_candidate_symbols(pool, list(scores_by_symbol)), scores_by_symbol)[:max_candidates]
     orders_for_portfolio: list[dict[str, Any]] = []
     skipped_candidates: list[dict[str, Any]] = []
     risk_rejections: list[dict[str, Any]] = []
     execution_skips: list[dict[str, Any]] = []
     signal_audit_by_symbol = {audit["ts_code"]: audit for audit in audits if audit.get("stage") == "signal"}
     risk_portfolio = {
-        "positions": existing_positions,
+        "positions": list(existing_positions),
         "total_exposure": sum(_safe_float(position.get("weight"), 0.0) for position in existing_positions),
         "capital_layer": capital_layer,
         "account_type": account_type,
@@ -1530,6 +1644,29 @@ def run_sim_loop(
             "mapped_market": mapped_market,
             "mapped_symbol": mapped_symbol,
         })
+        risk_portfolio["positions"].append(
+            {
+                "ts_code": symbol,
+                "weight": _safe_float(risk.get("adjusted_weight"), proposed_weight),
+                "sector": str(score.get("sector", "unknown")),
+                "market": market,
+                "capital_layer": capital_layer,
+                "account_type": account_type,
+            }
+        )
+        risk_portfolio["total_exposure"] = _safe_float(risk_portfolio.get("total_exposure"), 0.0) + _safe_float(
+            risk.get("adjusted_weight"),
+            proposed_weight,
+        )
+
+    orders_for_portfolio = sorted(
+        orders_for_portfolio,
+        key=lambda row: (
+            _safe_float(scores_by_symbol.get(str(row.get("ts_code")), {}).get("combined"), 0.0),
+            _safe_float(row.get("belief_score"), 0.0),
+        ),
+        reverse=True,
+    )[: _max_new_positions(existing_positions, max_portfolio_positions)]
 
     portfolio = _safe_stage(
         "portfolio.constructor",
@@ -1690,6 +1827,25 @@ def run_sim_loop(
         audits.append(result_audit)
         records.append({"symbol": symbol, "order": order, "receipt": receipt, "signal_result": signal_result, "email_notification": email_notification})
 
+    exclusion_log = _safe_stage(
+        "review.execution_exclusions",
+        errors,
+        lambda: _write_sim_execution_exclusions(
+            market=market,
+            date=date,
+            account=account,
+            skipped_candidates=skipped_candidates,
+            risk_rejections=risk_rejections,
+            execution_skips=execution_skips,
+            capital_layer=capital_layer,
+            account_type=account_type,
+            review_root=signals_dir.parent / "shared" / "review",
+        ),
+        default={"status": "degraded", "rows": 0},
+        capital_layer=capital_layer,
+    )
+    stage_calls.append("review.execution_exclusions")
+
     review = _safe_stage(
         "review.daily_review",
         errors,
@@ -1736,6 +1892,7 @@ def run_sim_loop(
         "risk_rejections": risk_rejections[:20],
         "execution_skip_count": len(execution_skips),
         "execution_skips": execution_skips[:20],
+        "execution_exclusion_log": exclusion_log,
         "filled_count": filled_count,
         "failed_count": failed_count,
         "pending_count": pending_count,

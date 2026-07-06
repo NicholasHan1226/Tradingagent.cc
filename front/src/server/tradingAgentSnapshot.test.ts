@@ -918,4 +918,38 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.domains.holdings.status).toBe('ready')
     expect(snapshot.domains.signals.status).toBe('ready')
   })
+
+  it('reads CNFutures simulated position snapshots from signals/positions', async () => {
+    const root = await createWorkspace()
+
+    await writeFile(
+      join(root, 'TradingAgent/signals/positions/cn_futures_sim_positions.json'),
+      JSON.stringify({
+        positions: [
+          {
+            symbol: 'IF2607.CFE',
+            style: 'index_intraday_directional',
+            net_qty: 1,
+            avg_price: 4100,
+            mark_price: 4118,
+            margin_required: 123000,
+            realized_pnl: 800,
+            unrealized_pnl: 5400,
+          },
+        ],
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T02:30:00.000Z'),
+    })
+
+    expect(snapshot.holdings).toContainEqual(expect.objectContaining({
+      symbol: 'IF2607.CFE',
+      market: 'CNFutures',
+      role: 'Index Intraday Directional 持仓',
+    }))
+  })
 })

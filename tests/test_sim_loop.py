@@ -50,6 +50,41 @@ class StubReader:
         return [{"close": 9.8}, {"close": 10.0}, {"close": 10.2}]
 
 
+class MultiCandidateSimAdapter(StubSimAdapter):
+    def __init__(
+        self,
+        symbols: list[str],
+        *,
+        max_candidates: int = 3,
+        score_universe_limit: int | None = None,
+        max_portfolio_positions: int = 3,
+    ) -> None:
+        self.symbols = symbols
+        self.max_candidates = max_candidates
+        self.score_universe_limit = score_universe_limit or max_candidates
+        self.max_portfolio_positions = max_portfolio_positions
+
+    def get_universe(self, date: str) -> list[str]:
+        return list(self.symbols)
+
+    def get_market(self) -> str:
+        return "ashare"
+
+    def get_strategy_config(self) -> dict[str, object]:
+        return {
+            "portfolio_method": "conviction_weighted",
+            "regime": "ashare_default",
+            "max_candidates": self.max_candidates,
+            "score_universe_limit": self.score_universe_limit,
+            "max_portfolio_positions": self.max_portfolio_positions,
+            "default_price": 0.0,
+            "default_volatility": 0.20,
+        }
+
+    def get_sim_account(self) -> dict[str, object]:
+        return {"account": "ashare_sim", "sim_capital": 200000.0, "positions": []}
+
+
 def _patch_shadow_paths(testcase: unittest.TestCase, tmp_path: Path) -> None:
     shadow_dir = tmp_path / "shadow"
     for name, value in (
@@ -186,6 +221,37 @@ class SimLoopTest(unittest.TestCase):
             record_audit_event=trade_audit_trail.record_event,
             execute_sim_order=execute_sim_order,
         )
+
+    def _multi_candidate_deps(self) -> OrchestratorDeps:
+        deps = self._deps()
+
+        def risk_check(order: dict[str, object], portfolio: dict[str, object]) -> dict[str, object]:
+            self.calls.append("risk")
+            return {"approved": True, "adjusted_weight": order["weight"], "adjustments": ["ok"], "reasons": []}
+
+        def construct(orders: list[dict[str, object]], capital: float, method: str, regime: str) -> dict[str, object]:
+            self.calls.append("portfolio")
+            return {
+                "method": method,
+                "capital": capital,
+                "positions": [
+                    {
+                        "ts_code": order["ts_code"],
+                        "weight": order["weight"],
+                        "shares": 100,
+                        "amount": 1000.0,
+                        "sector": "unit",
+                        "price": 10.0,
+                    }
+                    for order in orders
+                ],
+                "total_weight": sum(float(order["weight"]) for order in orders),
+                "cash_weight": 0.95,
+            }
+
+        deps.risk_check = risk_check
+        deps.construct = construct
+        return deps
 
     def test_run_sim_loop_fills_signal_audit_and_review_as_simulated(self) -> None:
         result = run_sim_loop(
@@ -358,6 +424,86 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["no_trade_explanation"]["category"], "all_rejected_by_risk")
         self.assertEqual(result["no_trade_explanation"]["counts"]["risk_rejections"], 1)
         self.assertEqual(result["risk_rejections"][0]["reasons"], ["unit risk rejection"])
+
+    def test_run_sim_loop_ranks_candidates_by_combined_score_before_limit(self) -> None:
+        scores = {"AAA": 0.10, "BBB": 0.92, "CCC": 0.81}
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": scores[symbol], "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["AAA", "BBB", "CCC"], max_candidates=2, score_universe_limit=3, max_portfolio_positions=2),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_ranked",
+        )
+
+        self.assertEqual(result["candidate_count"], 2)
+        self.assertEqual([record["symbol"] for record in result["records"]], ["BBB", "CCC"])
+        self.assertEqual([order["ts_code"] for order in self.executed_orders], ["BBB", "CCC"])
+
+    def test_run_sim_loop_caps_ashare_new_positions_to_configured_target(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 1.0 - index * 0.01, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for index, symbol in enumerate(universe)
+            ]
+
+        deps.score_universe = score_universe
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"], max_candidates=6, score_universe_limit=6, max_portfolio_positions=3),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_capped",
+        )
+
+        self.assertEqual(result["order_count"], 3)
+        self.assertEqual(result["filled_count"], 3)
+        self.assertEqual([order["ts_code"] for order in self.executed_orders], ["AAA", "BBB", "CCC"])
+
+    def test_run_sim_loop_persists_exclusions_even_when_some_orders_fill(self) -> None:
+        class SelectiveReader:
+            def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, float]]:
+                if symbol == "BAD":
+                    return []
+                return [{"close": 10.0}]
+
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.9 if symbol == "GOOD" else 0.8, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["GOOD", "BAD"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=2),
+            "20260630",
+            SelectiveReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_exclusions",
+        )
+
+        self.assertEqual(result["filled_count"], 1)
+        self.assertEqual(result["skipped_candidate_count"], 1)
+        self.assertEqual(result["execution_exclusion_log"]["rows"], 1)
+        exclusion_path = Path(result["execution_exclusion_log"]["path"])
+        rows = [json.loads(line) for line in exclusion_path.read_text(encoding="utf-8").splitlines()]
+        self.assertIn(rows[0]["kind"], {"skipped_candidate", "risk_rejection", "execution_skip"})
+        self.assertEqual(rows[0]["symbol"], "BAD")
 
 
 if __name__ == "__main__":

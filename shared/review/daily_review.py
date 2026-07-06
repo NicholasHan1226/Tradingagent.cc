@@ -47,10 +47,15 @@ DAILY_LOG = REVIEW_DIR / "data" / "daily_reviews.jsonl"
 DIRECTION_HIT_LOG = REVIEW_DIR / "data" / "direction_hit_reviews.jsonl"
 SHADOW_TRADES_LOG = SHARED_DIR / "logs" / "shadow" / "shadow_trades.jsonl"
 FILLED_SIGNALS_DIR = TRADINGAGENT_ROOT / "signals" / "filled"
+EXECUTION_EXCLUSION_ROOT = REVIEW_DIR
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _today_compact() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d")
 
 
 def _ensure_dirs() -> None:
@@ -204,6 +209,59 @@ def _hit_rate(trades: list[dict[str, Any]]) -> float:
 
 def _sum_pnl(trades: list[dict[str, Any]]) -> float:
     return sum(_safe_float(t.get("pnl")) for t in trades)
+
+
+def _load_execution_exclusions(trade_date: str) -> dict[str, dict[str, dict[str, Any]]]:
+    compact = _compact_date(trade_date)
+    grouped: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(lambda: {
+        "total": 0,
+        "skipped_candidates": 0,
+        "risk_rejections": 0,
+        "execution_skips": 0,
+        "sample": [],
+    }))
+    for path in sorted(EXECUTION_EXCLUSION_ROOT.glob(f"*/execution_exclusions_{compact}.jsonl")):
+        for row in _read_jsonl_dicts(path):
+            if not isinstance(row, dict):
+                continue
+            row_date = _first_present(row, "date", "trade_date", "generated_at", default="")
+            if row_date and not _date_eq(row_date, compact):
+                continue
+            layer = _normalize_capital_layer(row.get("capital_layer"), default="simulated")
+            market = _normalize_market(row.get("market"), default=path.parent.name)
+            kind = str(row.get("kind") or "").strip()
+            bucket = grouped[layer][market]
+            bucket["total"] += 1
+            if kind == "skipped_candidate":
+                bucket["skipped_candidates"] += 1
+            elif kind == "risk_rejection":
+                bucket["risk_rejections"] += 1
+            elif kind == "execution_skip":
+                bucket["execution_skips"] += 1
+            if len(bucket["sample"]) < 5:
+                bucket["sample"].append(
+                    {
+                        "kind": kind,
+                        "symbol": _first_present(row, "symbol", "ts_code", default=""),
+                        "reason": _first_present(row, "reason", "reasons", default=""),
+                    }
+                )
+    return {layer: dict(markets) for layer, markets in grouped.items()}
+
+
+def _execution_quality(
+    exclusions: dict[str, dict[str, dict[str, Any]]],
+    layer: str,
+    market: str,
+) -> dict[str, Any]:
+    record = exclusions.get(layer, {}).get(market, {})
+    return {
+        "exclusion_count": int(record.get("total", 0) or 0),
+        "skipped_candidates": int(record.get("skipped_candidates", 0) or 0),
+        "risk_rejections": int(record.get("risk_rejections", 0) or 0),
+        "execution_skips": int(record.get("execution_skips", 0) or 0),
+        "sample": record.get("sample", []) if isinstance(record.get("sample"), list) else [],
+    }
 
 
 def _stage_goals(goals: dict[str, Any], stage: str = "stage_1_sim") -> dict[str, Any]:
@@ -649,7 +707,7 @@ def run_daily_review(
             return result
 
         if session_key == "close":
-            result = review_close(trades, positions, benchmark_return, stage=stage)
+            result = review_close(trades, positions, benchmark_return, stage=stage, trade_date=trade_date)
             direction_hit_reviews = load_direction_hits(trade_date)
             result["trade_date"] = trade_date
             result["direction_hit_reviews"] = direction_hit_reviews
@@ -707,6 +765,7 @@ def review_lunch(
             ledger_root=DEFAULT_SIM_LEDGER_ROOT,
             local_trades_path=DEFAULT_LOCAL_SIM_TRADES,
         )
+    execution_exclusions = _load_execution_exclusions(trade_date or _today_compact())
 
     goals = _load_goals()
     stage_goals = _stage_goals(goals, stage)
@@ -793,6 +852,7 @@ def review_lunch(
             },
             "afternoon_plan": next_plan,
             "next_plan": next_plan,
+            "execution_quality": _execution_quality(execution_exclusions, layer, market),
         }
 
     capital_layer_reviews: dict[str, Any] = {}
@@ -843,6 +903,7 @@ def review_close(
     portfolio_returns_series: list[float] | None = None,
     benchmark_returns_series: list[float] | None = None,
     stage: str = "stage_1_sim",
+    trade_date: str | None = None,
 ) -> dict[str, Any]:
     """Close review @ 15:30.
 
@@ -881,6 +942,7 @@ def review_close(
             ledger_root=DEFAULT_SIM_LEDGER_ROOT,
             local_trades_path=DEFAULT_LOCAL_SIM_TRADES,
         )
+    execution_exclusions = _load_execution_exclusions(trade_date or _today_compact())
     goals = _load_goals()
     stage_goals = _stage_goals(goals, stage)
 
@@ -974,6 +1036,7 @@ def review_close(
                     f"下日重点: {'维持信号' if vs_goals.get('all_goals_met') else '收紧止损+降权出血维度'}."
                 ),
             },
+            "execution_quality": _execution_quality(execution_exclusions, layer, market),
         }
 
     capital_layer_reviews: dict[str, Any] = {}
