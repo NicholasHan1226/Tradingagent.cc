@@ -59,6 +59,8 @@ DEFAULT_SIM_SYMBOLS = {
     "us": ("TSLA", "NVDA", "META", "AMZN", "GOOGL", "AMD", "NFLX", "AVGO", "COIN", "PLTR"),
     "hk": ("00700.HK", "09988.HK", "03690.HK", "09618.HK", "00005.HK", "00388.HK"),
 }
+CRYPTO_ONE_BAR_THRESHOLD = 0.012
+CRYPTO_LOOKBACK_THRESHOLD = 0.025
 
 
 @dataclass
@@ -174,6 +176,69 @@ def _latest_priced(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not priced:
         return None
     return priced[-1]
+
+
+def _row_time(row: dict[str, Any]) -> str:
+    return str(
+        row.get("trade_date")
+        or row.get("price_time")
+        or row.get("latest_price_time")
+        or row.get("collected_at")
+        or row.get("open_time")
+        or ""
+    )
+
+
+def _priced_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted((row for row in rows if _price(row) > 0), key=_row_time)
+
+
+def _pct_change(latest: float, previous: float) -> float:
+    if previous <= 0:
+        return 0.0
+    return latest / previous - 1.0
+
+
+def _crypto_momentum_diagnostic(symbol: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    priced = _priced_rows(rows)
+    if not priced:
+        return {
+            "symbol": symbol,
+            "rows": len(rows),
+            "priced_rows": 0,
+            "latest_price": 0.0,
+            "one_bar_return": 0.0,
+            "lookback_return": 0.0,
+            "strategy_candidate": False,
+            "reason": "crypto_klines_empty",
+        }
+    latest_price = _price(priced[-1])
+    if len(priced) < 2:
+        return {
+            "symbol": symbol,
+            "rows": len(rows),
+            "priced_rows": len(priced),
+            "latest_price": latest_price,
+            "latest_time": _row_time(priced[-1]),
+            "one_bar_return": 0.0,
+            "lookback_return": 0.0,
+            "strategy_candidate": False,
+            "reason": "crypto_insufficient_priced_rows",
+        }
+    one_bar_return = _pct_change(latest_price, _price(priced[-2]))
+    lookback_return = _pct_change(latest_price, _price(priced[0]))
+    candidate = one_bar_return >= CRYPTO_ONE_BAR_THRESHOLD or lookback_return >= CRYPTO_LOOKBACK_THRESHOLD
+    return {
+        "symbol": symbol,
+        "rows": len(rows),
+        "priced_rows": len(priced),
+        "latest_price": latest_price,
+        "latest_time": _row_time(priced[-1]),
+        "one_bar_return": round(one_bar_return, 6),
+        "lookback_return": round(lookback_return, 6),
+        "strategy_candidate": candidate,
+        "reason": "crypto_strategy_candidate" if candidate else "crypto_momentum_threshold_not_met",
+    }
 
 
 def _file_age_minutes(path: Path) -> float | None:
@@ -838,10 +903,46 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                 }
             asset_count = len(rows)
         elif market == "crypto":
+            diagnostics: list[dict[str, Any]] = []
             for symbol in DEFAULT_SIM_SYMBOLS["crypto"]:
-                latest = _latest_priced(_unwrap_rows(reader.get_crypto_klines(symbol=symbol, limit=50)))
+                rows = _unwrap_rows(reader.get_crypto_klines(symbol=symbol, limit=50))
+                diagnostic = _crypto_momentum_diagnostic(symbol, rows)
+                diagnostics.append(diagnostic)
+                latest = _latest_priced(rows)
                 if latest:
                     priced_rows.append(latest)
+            strategy_candidates = [row for row in diagnostics if row.get("strategy_candidate")]
+            if not priced_rows:
+                return {
+                    "status": "warn",
+                    "asset_count": len(DEFAULT_SIM_SYMBOLS["crypto"]),
+                    "priced_signal_count": 0,
+                    "strategy_candidate_count": 0,
+                    "reason": "crypto_klines_empty",
+                    "momentum_thresholds": {
+                        "one_bar_return": CRYPTO_ONE_BAR_THRESHOLD,
+                        "lookback_return": CRYPTO_LOOKBACK_THRESHOLD,
+                    },
+                    "sample": diagnostics[:5],
+                    "reader_degraded": reader.degraded,
+                    "reader_errors": reader.errors[-5:],
+                }
+            if not strategy_candidates:
+                return {
+                    "status": "warn",
+                    "asset_count": len(DEFAULT_SIM_SYMBOLS["crypto"]),
+                    "priced_signal_count": len(priced_rows),
+                    "strategy_candidate_count": 0,
+                    "reason": "crypto_momentum_threshold_not_met",
+                    "momentum_thresholds": {
+                        "one_bar_return": CRYPTO_ONE_BAR_THRESHOLD,
+                        "lookback_return": CRYPTO_LOOKBACK_THRESHOLD,
+                    },
+                    "sample": diagnostics[:5],
+                    "reader_degraded": reader.degraded,
+                    "reader_errors": reader.errors[-5:],
+                }
+            asset_count = len(DEFAULT_SIM_SYMBOLS["crypto"])
         elif market in {"us", "hk"}:
             end = datetime.now(timezone.utc).date()
             start = end - timedelta(days=10)
@@ -963,6 +1064,12 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     if market not in {"ashare", "cn_futures"} and int(ledger.get("trade_rows") or 0) <= 0:
         if market == "pm" and data.get("reason") in {"pm_market_rows_empty", "pm_prices_missing", "pm_model_probability_missing"}:
             warn_reasons.append("pm_waiting_for_market_data")
+        elif market == "crypto" and data.get("reason") in {
+            "crypto_klines_empty",
+            "crypto_insufficient_priced_rows",
+            "crypto_momentum_threshold_not_met",
+        }:
+            warn_reasons.append("crypto_waiting_for_momentum_signal")
         else:
             hard_fail_reasons.append("sim_trade_ledger_empty")
     if market == "ashare" and int(ledger.get("trade_rows") or 0) <= 0 and samples_expected:

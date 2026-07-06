@@ -71,6 +71,38 @@ def test_crypto_momentum_series_generates_explicit_buy_signal(monkeypatch):
     assert signals[0]["signal_source"] == "explicit_strategy_signal"
 
 
+def test_crypto_no_signal_diagnostics_explain_empty_klines(monkeypatch):
+    monkeypatch.setattr(run_sim, "market", "crypto")
+    monkeypatch.setattr(run_sim, "_symbols_for_market", lambda name: ("BTCUSDT",))
+    reader = FakeReader({"BTCUSDT": []})
+
+    diagnostics = run_sim._signal_diagnostics(reader, "crypto", limit=10)
+
+    assert diagnostics["total_priced_rows"] == 0
+    assert diagnostics["strategy_candidate_rows"] == 0
+    assert diagnostics["reason"] == "crypto_klines_empty"
+    assert diagnostics["no_priced_symbols"] == ["BTCUSDT"]
+
+
+def test_crypto_no_signal_diagnostics_explain_momentum_not_met(monkeypatch):
+    monkeypatch.setattr(run_sim, "market", "crypto")
+    monkeypatch.setattr(run_sim, "_symbols_for_market", lambda name: ("BTCUSDT",))
+    reader = FakeReader({
+        "BTCUSDT": [
+            {"symbol": "BTCUSDT", "close": 100.0, "trade_date": "20260701"},
+            {"symbol": "BTCUSDT", "close": 100.5, "trade_date": "20260702"},
+        ]
+    })
+
+    diagnostics = run_sim._signal_diagnostics(reader, "crypto", limit=10)
+
+    assert diagnostics["total_priced_rows"] == 2
+    assert diagnostics["strategy_candidate_rows"] == 0
+    assert diagnostics["reason"] == "crypto_momentum_threshold_not_met"
+    assert diagnostics["below_threshold_symbols"] == ["BTCUSDT"]
+    assert diagnostics["sample"][0]["one_bar_return"] < diagnostics["momentum_thresholds"]["one_bar_return"]
+
+
 def test_us_small_move_does_not_generate_trade_signal(monkeypatch):
     monkeypatch.setattr(run_sim, "market", "us")
     monkeypatch.setattr(run_sim, "_symbols_for_market", lambda name: ("TSLA",))

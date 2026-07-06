@@ -88,6 +88,8 @@ DEFAULT_SYMBOLS = {
     "hk": ("00700.HK", "09988.HK", "03690.HK", "09618.HK", "00005.HK", "00388.HK"),
 }
 DEFAULT_HK_PROXY_SYMBOLS = ("HSI",)
+CRYPTO_ONE_BAR_THRESHOLD = 0.012
+CRYPTO_LOOKBACK_THRESHOLD = 0.025
 
 
 def _symbols_for_market(name: str) -> tuple[str, ...]:
@@ -186,7 +188,7 @@ def _strategy_signal_from_series(name: str, symbol: str, rows: list[dict[str, An
     lookback_return = _pct_change(latest_price, first_price)
 
     if name == "crypto":
-        if one_bar_return < 0.012 and lookback_return < 0.025:
+        if one_bar_return < CRYPTO_ONE_BAR_THRESHOLD and lookback_return < CRYPTO_LOOKBACK_THRESHOLD:
             return None
         strategy_name = "crypto_momentum_breakout"
         conviction = min(0.95, max(0.55, 0.55 + one_bar_return * 4 + lookback_return * 2))
@@ -345,9 +347,93 @@ def _pm_signal_diagnostics(reader: TradingagentDataReader, limit: int = 10) -> d
     }
 
 
+def _crypto_signal_diagnostics(reader: TradingagentDataReader, limit: int = 10) -> dict[str, Any]:
+    symbols = _symbols_for_market("crypto")
+    samples: list[dict[str, Any]] = []
+    total_priced_rows = 0
+    explicit_side_rows = 0
+    strategy_candidate_rows = 0
+    symbols_with_priced_rows = 0
+    insufficient_rows_symbols: list[str] = []
+    below_threshold_symbols: list[str] = []
+    no_priced_symbols: list[str] = []
+
+    for symbol in symbols:
+        rows = _unwrap_rows(reader.get_crypto_klines(symbol=symbol, limit=50))
+        priced = _priced_rows(rows)
+        total_priced_rows += len(priced)
+        explicit_side_rows += sum(1 for row in rows if _explicit_trade_side(row))
+        strategy_signal = _strategy_signal_from_series("crypto", symbol, rows)
+        if strategy_signal:
+            strategy_candidate_rows += 1
+        if priced:
+            symbols_with_priced_rows += 1
+        if not priced:
+            reason = "crypto_klines_empty"
+            no_priced_symbols.append(symbol)
+            one_bar_return = 0.0
+            lookback_return = 0.0
+            latest_price = 0.0
+        elif len(priced) < 2:
+            reason = "crypto_insufficient_priced_rows"
+            insufficient_rows_symbols.append(symbol)
+            one_bar_return = 0.0
+            lookback_return = 0.0
+            latest_price = _price(priced[-1])
+        else:
+            latest_price = _price(priced[-1])
+            one_bar_return = _pct_change(latest_price, _price(priced[-2]))
+            lookback_return = _pct_change(latest_price, _price(priced[0]))
+            reason = "crypto_strategy_candidate" if strategy_signal else "crypto_momentum_threshold_not_met"
+            if not strategy_signal:
+                below_threshold_symbols.append(symbol)
+        if len(samples) < min(limit, 5):
+            samples.append(
+                {
+                    "symbol": symbol,
+                    "rows": len(rows),
+                    "priced_rows": len(priced),
+                    "latest_price": latest_price,
+                    "latest_time": _row_time(priced[-1]) if priced else "",
+                    "one_bar_return": round(one_bar_return, 6),
+                    "lookback_return": round(lookback_return, 6),
+                    "reason": reason,
+                }
+            )
+
+    if not symbols:
+        reason = "crypto_symbols_empty"
+    elif total_priced_rows <= 0:
+        reason = "crypto_klines_empty"
+    elif strategy_candidate_rows <= 0 and insufficient_rows_symbols and not below_threshold_symbols:
+        reason = "crypto_insufficient_priced_rows"
+    elif strategy_candidate_rows <= 0:
+        reason = "crypto_momentum_threshold_not_met"
+    else:
+        reason = "crypto_strategy_candidates_available"
+    return {
+        "symbols_checked": len(symbols),
+        "symbols_with_priced_rows": symbols_with_priced_rows,
+        "total_priced_rows": total_priced_rows,
+        "explicit_side_rows": explicit_side_rows,
+        "strategy_candidate_rows": strategy_candidate_rows,
+        "momentum_thresholds": {
+            "one_bar_return": CRYPTO_ONE_BAR_THRESHOLD,
+            "lookback_return": CRYPTO_LOOKBACK_THRESHOLD,
+        },
+        "reason": reason,
+        "no_priced_symbols": no_priced_symbols,
+        "insufficient_rows_symbols": insufficient_rows_symbols,
+        "below_threshold_symbols": below_threshold_symbols,
+        "sample": samples,
+    }
+
+
 def _signal_diagnostics(reader: TradingagentDataReader, name: str, limit: int = 10) -> dict[str, Any]:
     if name == "pm":
         return _pm_signal_diagnostics(reader, limit=limit)
+    if name == "crypto":
+        return _crypto_signal_diagnostics(reader, limit=limit)
     return {}
 
 
@@ -503,7 +589,7 @@ def main() -> int:
                     "data_source": "SharedSignals reader/API",
                     "reader_degraded": bool(reader.degraded or reader.stale),
                     "reader_errors": reader.errors[-5:],
-                    "reason": "no explicit buy/sell signal; price rows are data only",
+                    "reason": diagnostics.get("reason") or "no explicit buy/sell signal; price rows are data only",
                     **({"diagnostics": diagnostics} if diagnostics else {}),
                     "price_only_smoke_enable_with": "TRADINGAGENT_SIM_ALLOW_PRICE_ONLY_SIGNALS=1",
                 },

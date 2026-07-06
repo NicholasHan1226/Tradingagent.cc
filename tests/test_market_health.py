@@ -319,6 +319,34 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["fail_reasons"], [])
         self.assertIn("pm_waiting_for_market_data", check.details["warn_reasons"])
 
+    def test_crypto_sim_market_loop_warns_when_momentum_threshold_not_met(self) -> None:
+        with patch.object(
+            market_health,
+            "_probe_market_data",
+            return_value={
+                "status": "warn",
+                "reason": "crypto_momentum_threshold_not_met",
+                "priced_signal_count": 5,
+                "strategy_candidate_count": 0,
+            },
+        ):
+            check = market_health._check_sim_market_loop("crypto", "job_crypto_sim.sh")
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["fail_reasons"], [])
+        self.assertIn("crypto_waiting_for_momentum_signal", check.details["warn_reasons"])
+
+    def test_crypto_sim_market_loop_fails_when_candidate_exists_but_no_ledger(self) -> None:
+        with patch.object(
+            market_health,
+            "_probe_market_data",
+            return_value={"status": "ok", "priced_signal_count": 5, "strategy_candidate_count": 1},
+        ):
+            check = market_health._check_sim_market_loop("crypto", "job_crypto_sim.sh")
+
+        self.assertEqual(check.status, "fail")
+        self.assertIn("sim_trade_ledger_empty", check.details["fail_reasons"])
+
     def test_ashare_sim_loop_warns_without_production_trade_sample(self) -> None:
         with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):
             with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):

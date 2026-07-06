@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-07 (PM 空跑诊断、CNFutures 精确取数、看板策略来源与 A股无交易归因)
+> 最后更新：2026-07-07 (Crypto 空跑动量诊断、PM 空跑诊断、CNFutures 精确取数、看板策略来源与 A股无交易归因)
 
 ---
 
@@ -18,6 +18,7 @@
 - **模拟资金口径**：2026-07-07 起所有生产模拟盘默认按每市场 200,000 RMB 起始资金管理；A股与 CNFutures 使用 200,000 CNY 原币资金，US/Crypto/PM 使用默认 7.2 汇率折算为 27,777.777778 USD/USDT/USDC，并在看板/汇总层统一折回 RMB 展示。多风格不是每个风格各给 20 万，而是在该市场 20 万人民币等值总账户内按 active style weight 归一化拆分；`shared/markets/sim_capital.py` 是默认资金事实源。
 - **维护样本隔离**：2026-07-07 修复 US/Crypto/PM 维护重跑样本被前端计入生产模拟交易量和盈亏的问题。`trade_journal.jsonl`、`daily_mark_to_market.jsonl`、`style_performance.jsonl` 与 `style_comparison.json` 均支持 `exclude_from_dashboard=true` 或 `run_context/run_mode/run_source/sample_type` 包含 `maintenance/backfill/smoke/repair/bootstrap/dry-run` 的排除标记；`front/` 快照聚合会统一跳过这些样本。生产模拟样本默认继续计入；手动回补、烟测或修复重跑必须设置 `TRADINGAGENT_SIM_RUN_CONTEXT` 或 `TRADINGAGENT_SIM_EXCLUDE_FROM_DASHBOARD=1`，避免污染看板、复盘和演化输入。
 - **多市场信号门禁**：2026-07-07 起 Crypto/US/PM/HK 通用 `run_sim.py` 不再把 SharedSignals 行情行直接转换成 `buy` 模拟信号；输入行显式带 `side/action/direction/signal/decision/recommendation=buy|sell`，或由市场专属策略生成 `signal_source=explicit_strategy_signal` 后，才会进入 StyleRunner。当前内置策略口径为 Crypto 动量突破、US 趋势跟随、PM 模型概率相对市场概率价差；价格行只用于估值/成交价。人工价格行烟测必须显式设置 `TRADINGAGENT_SIM_ALLOW_PRICE_ONLY_SIGNALS=1`，且这类样本自动写入 `exclude_from_dashboard=true` 与 `sample_type=price_only_smoke`，不进入生产看板/复盘/演化口径。看板信号表会展示成交账本中的 `strategy_name`、`signal_source`、`reason` 与 `conviction`，用于证明成交来自明确策略，而不是价格行样本。
+- **Crypto 空跑归因**：2026-07-07 起 `run_sim.py` 在 Crypto 无交易信号时输出结构化诊断，包含检查币种数、可定价 K 线数、显式方向行数、策略候选数、单根/回看动量阈值、每个样本的 `one_bar_return` / `lookback_return` 和原因；`market_health` 会把 `crypto_momentum_threshold_not_met` / K 线空缺识别为等待有效动量信号的 warn，不再把“策略未触发”误判为执行闭环故障。若出现策略候选但账本仍无成交，仍按 fail 处理。
 - **看板交易数口径**：2026-07-07 起 `front/` 对 sim ledger replay 信号按 `market + symbol + status + stage` 去重，市场级 `tradeCount` 不再用风格层 `filled_count` 放大；多风格子账户同一标的的成交仍保留在 style comparison 的 `filledCount` 中，用户看板的市场摘要按唯一市场机会展示。`StyleRunner` 与 `SimLedger` 会把 `strategy_name`、`signal_source`、`reason`、`conviction/score` 等策略来源写入成交账本，便于复盘证明成交来自明确策略。
 - **实盘安全基础设施**：新增 `shared/execution/real_trading_gate.py` 与 `signals_real.py`，真实交易默认拒绝，必须显式环境开关、人工确认 token、资金上限、交易时段、T+1 与 halt 检查全部通过；sim → real promotion 只接受经 sim 审计的来源；`signals/real/*` 为隔离队列，不代表自动下单或已成交
 - **模拟撮合引擎**：`shared/execution/sim_engine.py` 已进入 Phase 1，统一支持 bid/ask marketability、盘口量/5m bar volume 部分成交、A股买入整手、A股 T+1 可卖数量、A股涨跌停边界、PM 概率价格边界、现金可用性检查和轻量对手盘环境参数；A股 server-local 模拟执行与 `auto_pipeline` 本地 fallback 已接入该引擎；A股执行器会从 server-local 模拟账本补齐 `cash_available` 与 T+1 `sellable_qty`，`auto_pipeline` 会从 SharedSignals reader 的 5分钟/日线 bars 生成 `market_snapshot`；该层仍是 paper-only，不接真实券商/交易所撮合。
