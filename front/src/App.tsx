@@ -16,6 +16,8 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
+const DASHBOARD_BUILD_ID = '20260706-cache-resync'
+
 function App() {
   const [activePage, setActivePage] = useState<Page>('主页')
   const [activeMarket, setActiveMarket] = useState<Market>('All Markets')
@@ -109,7 +111,7 @@ function App() {
   const selectAccountMode = (mode: AccountMode) => setAccountMode(mode)
 
   return (
-    <main className="hyper-shell">
+    <main className="hyper-shell" data-build={DASHBOARD_BUILD_ID}>
       <TopNav
         activePage={activePage}
         setActivePage={setActivePage}
