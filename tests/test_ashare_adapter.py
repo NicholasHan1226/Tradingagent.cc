@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from Ashare.adapter import AshareAdapter
+from shared.execution import local_sim_ledger
 from shared.screening.six_dimension_scorer import score_stock
 
 
@@ -182,6 +187,46 @@ class AshareAdapterTest(unittest.TestCase):
         self.assertEqual(adapter.map_symbol_to_reader("600519.SH"), ("ashare", "600519.SH"))
         self.assertEqual(adapter.map_symbol_to_reader("000001"), ("ashare", "000001"))
         self.assertEqual(adapter.get_shadow_account(), "ashare_shadow")
+
+    def test_sim_account_reads_server_local_positions_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot = Path(tmpdir) / "simulated_ashare_positions.json"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "source": "server_local_sim_backup",
+                        "synced_at": "2026-07-06T07:31:01+00:00",
+                        "positions": [
+                            {
+                                "account": "ashare_sim",
+                                "ts_code": "000001.SZ",
+                                "quantity": 700,
+                                "avg_price": 10.3,
+                                "last_price": 10.2,
+                                "market_value": 7140.0,
+                            },
+                            {
+                                "account": "other",
+                                "ts_code": "000002.SZ",
+                                "quantity": 100,
+                                "market_value": 1000.0,
+                            },
+                        ],
+                        "pnl": {"ashare_sim": {"cash_available": 123456.78}},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot):
+                account = AshareAdapter(reader=FakeAshareReader()).get_sim_account()
+
+        self.assertEqual(account["account"], "ashare_sim")
+        self.assertEqual(account["cash_available"], 123456.78)
+        self.assertEqual(len(account["positions"]), 1)
+        self.assertEqual(account["positions"][0]["ts_code"], "000001.SZ")
+        self.assertEqual(account["positions"][0]["sellable_quantity"], 700)
+        self.assertEqual(account["positions"][0]["value"], 7140.0)
 
     def test_strategy_config_loads_eight_strategies_and_market_rules(self) -> None:
         adapter = AshareAdapter(reader=FakeAshareReader())

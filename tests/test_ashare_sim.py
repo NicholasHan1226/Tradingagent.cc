@@ -47,7 +47,7 @@ class AshareSimExecutorTest(unittest.TestCase):
         adapter = AshareAdapter(reader=object())
 
         self.assertEqual(adapter.get_shadow_account(), "ashare_shadow")
-        self.assertEqual(adapter.get_sim_account(), "ashare_sim")
+        self.assertEqual(adapter.get_sim_account()["account"], "ashare_sim")
 
     def test_ashare_sim_execute_queues_pending_signal_card_when_hermes_enabled(self) -> None:
         result = ashare_sim_execute(

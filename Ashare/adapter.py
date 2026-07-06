@@ -188,8 +188,58 @@ class AshareAdapter(MarketAdapter):
     def get_shadow_account(self) -> str:
         return "ashare_shadow"
 
-    def get_sim_account(self) -> str:
-        return "ashare_sim"
+    def get_sim_account(self) -> dict[str, Any]:
+        account = "ashare_sim"
+        fallback = {
+            "account": account,
+            "sim_capital": 200_000.0,
+            "cash_available": 200_000.0,
+            "positions": [],
+            "source": "ashare_adapter_empty_sim_account",
+        }
+        try:
+            from shared.execution.local_sim_ledger import LOCAL_SIM_POSITIONS_SNAPSHOT
+
+            if not LOCAL_SIM_POSITIONS_SNAPSHOT.exists():
+                return fallback
+            payload = json.loads(LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Unable to load A-share local sim snapshot: %s", exc)
+            return fallback
+        if not isinstance(payload, dict):
+            return fallback
+
+        raw_positions = payload.get("positions")
+        positions: list[dict[str, Any]] = []
+        if isinstance(raw_positions, list):
+            for row in raw_positions:
+                if not isinstance(row, dict):
+                    continue
+                row_account = str(row.get("account") or account)
+                if row_account != account:
+                    continue
+                position = dict(row)
+                position.setdefault("account", account)
+                position.setdefault("sellable_quantity", position.get("quantity", 0))
+                position.setdefault("value", position.get("market_value", 0.0))
+                positions.append(position)
+
+        pnl = payload.get("pnl") if isinstance(payload.get("pnl"), dict) else {}
+        account_pnl = pnl.get(account) if isinstance(pnl.get(account), dict) else {}
+        cash_available = _safe_float(
+            account_pnl.get("cash_available", payload.get("cash_available")),
+            200_000.0,
+        )
+        return {
+            "account": account,
+            "sim_capital": 200_000.0,
+            "cash_available": cash_available,
+            "available_cash": cash_available,
+            "positions": positions,
+            "pnl": account_pnl,
+            "source": str(payload.get("source") or "server_local_sim_backup"),
+            "snapshot_synced_at": str(payload.get("synced_at") or ""),
+        }
 
     def _get_assets(self) -> list[dict[str, Any]]:
         get_assets = getattr(self.reader, "get_assets", None)
