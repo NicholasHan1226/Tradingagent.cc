@@ -191,7 +191,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('初筛').length).toBeGreaterThan(0)
     expect(screen.getAllByText('研究').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('待执行').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('进入队列').length).toBeGreaterThan(0)
     expect(screen.getAllByText('成交').length).toBeGreaterThan(0)
     expect(screen.getAllByText('放弃').length).toBeGreaterThan(0)
   })
@@ -202,8 +202,8 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
 
-    expect(within(card).getAllByText('真实账户待接入').length).toBeGreaterThan(0)
-    expect(within(card).getByText('接入口已预留；授权和风控确认前，不展示真实资金结果。')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘结果未开启').length).toBeGreaterThan(0)
+    expect(within(card).getByText('接入完成后可在这里切换查看；当前只展示模拟盘。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -224,7 +224,7 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
 
-    expect(within(card).getAllByText('真实账户待接入').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('实盘结果未开启').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

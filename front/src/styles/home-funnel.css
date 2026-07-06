@@ -1,9 +1,8 @@
 .signal-flow-board.mode-real-flow {
   min-height: 344px;
   background:
-    radial-gradient(circle at 12% 44%, rgba(105, 228, 215, 0.07), transparent 28%),
-    linear-gradient(180deg, rgba(240, 246, 244, 0.018), transparent 52%),
-    rgba(1, 5, 5, 0.54);
+    linear-gradient(180deg, rgba(240, 246, 244, 0.014), transparent 56%),
+    rgba(1, 5, 5, 0.72);
 }
 
 .signal-flow-board.mode-real-flow::before {
@@ -21,15 +20,14 @@
 }
 
 .mode-real-flow .funnel-stage-grid {
-  border-color: rgba(105, 228, 215, 0.1);
-  background: rgba(1, 8, 8, 0.82);
+  border-color: rgba(240, 246, 244, 0.07);
+  background: rgba(1, 6, 6, 0.88);
 }
 
 .mode-real-flow .funnel-stage-card {
-  min-height: 82px;
+  min-height: 72px;
   background:
-    linear-gradient(180deg, rgba(105, 228, 215, 0.024), transparent 60%),
-    linear-gradient(90deg, rgba(105, 228, 215, 0.06) 0 var(--stage-strength), transparent var(--stage-strength)),
+    linear-gradient(90deg, rgba(105, 228, 215, 0.036) 0 var(--stage-strength), transparent var(--stage-strength)),
     rgba(240, 246, 244, 0.006);
 }
 
@@ -43,24 +41,24 @@
 
 .mode-real-flow .funnel-stage-card:nth-child(4) .stage-meter i,
 .mode-real-flow .funnel-stage-card:nth-child(5) .stage-meter i {
-  background: var(--state-amber);
+  background: var(--accent-cyan);
 }
 
 .mode-real-flow .funnel-flow-canvas {
-  height: 154px;
-  border-color: rgba(105, 228, 215, 0.09);
+  height: 174px;
+  border-color: rgba(240, 246, 244, 0.07);
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.03), transparent 52%, rgba(226, 180, 91, 0.018)),
-    rgba(1, 5, 5, 0.62);
+    linear-gradient(180deg, rgba(240, 246, 244, 0.01), transparent 52%),
+    rgba(1, 5, 5, 0.78);
 }
 
 .mode-real-flow .funnel-flow-canvas::before {
   inset: 24px 16px 30px;
-  border-color: rgba(105, 228, 215, 0.12);
+  border-color: rgba(105, 228, 215, 0.1);
   clip-path: polygon(0 0, 100% 26%, 100% 74%, 0 100%);
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.08), rgba(105, 228, 215, 0.024) 42%, rgba(226, 180, 91, 0.018) 72%, rgba(255, 91, 116, 0.018)),
-    rgba(4, 15, 15, 0.56);
+    linear-gradient(90deg, rgba(105, 228, 215, 0.065), rgba(105, 228, 215, 0.018) 52%, rgba(240, 246, 244, 0.012)),
+    rgba(4, 15, 15, 0.64);
 }
 
 .mode-real-flow .funnel-flow-canvas::after {
@@ -79,9 +77,9 @@
   height: calc(var(--stage-width) * 0.42);
   min-height: 11px;
   max-height: 44px;
-  border-color: rgba(105, 228, 215, 0.18);
+  border-color: rgba(105, 228, 215, 0.14);
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.095), rgba(105, 228, 215, 0.024)),
+    linear-gradient(90deg, rgba(105, 228, 215, 0.07), rgba(105, 228, 215, 0.018)),
     rgba(4, 15, 15, 0.78);
 }
 
@@ -111,9 +109,9 @@
 }
 
 .mode-real-flow .funnel-particle {
-  top: calc(22px + (var(--lane) * 10px));
-  border-color: rgba(105, 228, 215, 0.22);
-  background: rgba(1, 8, 8, 0.9);
+  top: calc(24px + (var(--lane) * 11px));
+  border-color: rgba(105, 228, 215, 0.18);
+  background: rgba(1, 7, 7, 0.92);
 }
 
 .mode-real-flow .funnel-particle.red {
@@ -157,12 +155,21 @@
   left: 12px;
   z-index: 4;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: 78px repeat(4, minmax(0, 1fr));
   overflow: hidden;
-  border: 1px solid rgba(240, 246, 244, 0.06);
+  border: 1px solid rgba(240, 246, 244, 0.058);
   border-top: 1px solid var(--border-hairline);
   border-radius: 4px;
-  background: linear-gradient(180deg, rgba(4, 18, 17, 0.62), rgba(1, 8, 8, 0.8));
+  background: rgba(1, 7, 7, 0.86);
+}
+
+.flow-event-tape > .event-tape-label {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 680;
+  border-right: 1px solid var(--border-hairline);
 }
 
 .flow-event-tape span {
@@ -196,7 +203,7 @@
 
 .flow-event-tape .event-opportunity strong,
 .flow-event-tape .event-watch strong {
-  color: var(--state-amber);
+  color: var(--text-primary);
 }
 
 .flow-event-tape .event-block strong,

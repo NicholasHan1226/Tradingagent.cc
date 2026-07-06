@@ -31,7 +31,7 @@ export function PageSummaryBoard({
   return (
     <section className="page-summary-board" aria-label={`${page}摘要`}>
       <div className="page-summary-intro">
-        <span>{page}总览</span>
+        <span>{page}摘要</span>
         <strong>{summary.title}</strong>
         <em>{summary.detail}</em>
       </div>

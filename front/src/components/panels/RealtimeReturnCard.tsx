@@ -37,7 +37,7 @@ export function RealtimeReturnCard({
   const primaryResult = hasAmount ? formatCurrency(liveProfit) : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
   const resultCaption = hasAmount
     ? `收益率 ${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
-    : '等待金额口径'
+    : '等待金额'
   const activityLabel = portfolio
     ? `${portfolio.tradeCount} 次成交 · ${portfolio.pointCount} 个收益点`
     : `兑现 ${executedCount} · 推进 ${pendingCount} · 复盘 ${missedCount}`
@@ -57,11 +57,11 @@ export function RealtimeReturnCard({
           </button>
         </div>
       </div>
-      <span className="return-kicker">现在收益</span>
+      <span className="return-kicker">实时收益</span>
       {isLive ? (
         <div className="return-placeholder">
-          <strong>真实账户待接入</strong>
-          <p>接入口已预留；授权和风控确认前，不展示真实资金结果。</p>
+          <strong>实盘结果未开启</strong>
+          <p>接入完成后可在这里切换查看；当前只展示模拟盘。</p>
         </div>
       ) : !hasPerformanceData ? (
         <div className="return-placeholder">
@@ -92,10 +92,10 @@ export function RealtimeReturnCard({
               <b>{portfolio?.tradeCount ?? executedCount}</b>
             </span>
           </div>
-          <small>{headline.replace('。', '')} · {activityLabel}</small>
+          <small>{gapLabel} · {activityLabel}</small>
         </>
       )}
-      <button onClick={() => setActivePage('收益')} type="button">查看收益明细</button>
+      <button onClick={() => setActivePage('收益')} type="button">查看收益详情</button>
     </aside>
   )
 }

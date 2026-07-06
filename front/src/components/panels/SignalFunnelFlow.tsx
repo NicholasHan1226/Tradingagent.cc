@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 import { getSignalFunnel } from '../../lib/dashboard'
 import type { FunnelEvent, SignalRow } from '../../types/dashboard'
 
-const OUTCOME_LABELS = ['成交', '待执行', '复盘', '放弃']
+const OUTCOME_LABELS = ['成交', '观察中', '复盘', '放弃']
 const MAX_ANIMATED_SIGNALS = 64
 const MAX_VISIBLE_LABELS = 6
 const FLOW_STAGES = [
@@ -10,7 +10,7 @@ const FLOW_STAGES = [
   { label: '初筛', fallbackIndex: 1 },
   { label: '研究', fallbackIndex: 1 },
   { label: '风控', fallbackIndex: 2 },
-  { label: '待执行', fallbackIndex: 3 },
+  { label: '进入队列', fallbackIndex: 3 },
 ] as const
 
 export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: FunnelEvent[]; hasSignalData: boolean; signals: SignalRow[] }) {
@@ -37,14 +37,14 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
   const hasEventSource = events.length > 0
   const eventCaption = eventFlow
     ? `${eventFlow.total} 个机会进入 · ${eventFlow.outcomes.executed} 个成交 · ${eventFlow.outcomes.abandoned} 个放弃`
-    : '等待机会流入'
+    : '等待新机会'
   const caption = hasEventSource
     ? eventCaption
     : hasSignalData
     ? funnel.mode === 'screening' || hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
       ? `${signals.length} 个进入 · ${funnel.tradeSignals.length} 个留下 · ${funnel.executed.length} 个成交`
       : `${signals.length} 条成交回放 · 转化 ${passRate}%`
-    : '等待机会流入'
+    : '等待新机会'
   const modeLabel = hasEventSource
     ? '真实流动'
     : funnel.mode === 'screening'
@@ -130,11 +130,12 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
           ))}
         </div>
         <div className="flow-bottleneck">
-          <span>瓶颈</span>
+          <span>筛选结果</span>
           <strong>{bottleneck}</strong>
         </div>
         {latestEvents.length > 0 && (
           <div className="flow-event-tape" aria-label="最近管道事件">
+            <b className="event-tape-label">最新流动</b>
             {latestEvents.map((event) => (
               <span className={eventStatusClass(event.status)} key={event.id}>
                 <b>{event.stage}</b>
@@ -183,7 +184,7 @@ function getEventFlow(events: FunnelEvent[]): EventFlow | null {
       初筛: signals.filter((rows) => hasAnyStage(rows, ['研判', '风控', '队列', '结果'])).length,
       研究: signals.filter((rows) => hasStage(rows, '研判')).length,
       风控: signals.filter((rows) => hasStage(rows, '风控')).length,
-      待执行: signals.filter((rows) => hasStage(rows, '队列')).length,
+      进入队列: signals.filter((rows) => hasStage(rows, '队列')).length,
     },
     outcomes: {
       executed: resultRows.filter((event) => event.status === '成交').length,
@@ -233,7 +234,7 @@ function eventStageWidth(count = 0, total: number) {
 function getEventStageHint(label: string, count: number, total: number, dropped: number) {
   if (count <= 0) return '等待'
   if (label === '机会进入') return '进入'
-  if (label === '待执行') return '排队'
+  if (label === '进入队列') return '准备'
   if (dropped > 0) return `留下 ${count}`
   return `${Math.round((count / Math.max(1, total)) * 100)}%`
 }
@@ -246,8 +247,8 @@ function getBottleneck(stages: { label: string; count: number }[]) {
     drop: Math.max(0, stages[index].count - stage.count),
   }))
   const biggest = drops.sort((a, b) => b.drop - a.drop)[0]
-  if (!biggest || biggest.drop === 0) return '当前全量通过'
-  return `${biggest.from}到${biggest.to}减少 ${biggest.drop} 条`
+  if (!biggest || biggest.drop === 0) return '当前全部通过'
+  return `${biggest.from}→${biggest.to} 筛掉 ${biggest.drop} 条`
 }
 
 function getStageHint(index: number, count: number, total: number, dropped: number) {

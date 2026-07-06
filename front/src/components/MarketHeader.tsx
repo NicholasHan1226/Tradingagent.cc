@@ -30,7 +30,7 @@ export function MarketHeader({
 }) {
   const meta = pageMeta[activePage]
   const [showMarkets, setShowMarkets] = useState(false)
-  const freshness = snapshotGeneratedAt ? '数据已连接' : '本地预览'
+  const freshness = snapshotGeneratedAt ? '实时更新' : '预览数据'
   const returnValue = hasPerformanceData
     ? liveProfit !== null
       ? formatCurrency(liveProfit)
