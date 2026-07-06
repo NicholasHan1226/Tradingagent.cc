@@ -117,6 +117,25 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "warn")
         self.assertEqual(check.details["failed_count"], 1)
 
+    def test_local_sim_ledger_checks_code_field_not_raw_line_text(self) -> None:
+        from shared.execution import local_sim_ledger
+
+        trades_path = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
+        pnl_path = self.root / "shared/logs/local_sim/local_sim_pnl.json"
+        trades_path.parent.mkdir(parents=True, exist_ok=True)
+        trades_path.write_text(
+            json.dumps({"ts_code": "000001.SZ", "net_amount": 2000.0}, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        pnl_path.write_text(json.dumps({"ashare_sim": {}}, ensure_ascii=False), encoding="utf-8")
+
+        with patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", trades_path):
+            with patch.object(local_sim_ledger, "LOCAL_SIM_PNL", pnl_path):
+                check = market_health._check_local_sim_ledger()
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.details["invalid_code_matches"], 0)
+
     def test_optional_mini_health_does_not_block_server_local_sim_by_default(self) -> None:
         with patch.dict("os.environ", {"ASHARE_SIM_HERMES_ENABLED": "0"}):
             check = market_health._check_optional_mini_health("http://127.0.0.1:1/health")

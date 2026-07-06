@@ -396,7 +396,14 @@ def _check_local_sim_ledger() -> Check:
         invalid_matches = 0
         if trades_path.exists():
             for line in trades_path.read_text(encoding="utf-8", errors="replace").splitlines():
-                if "200" in line or "900" in line:
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    continue
+                symbol = str(item.get("ts_code") or item.get("symbol") or item.get("code") or "").strip()
+                if symbol and not VALID_ASHARE_RE.match(symbol):
                     invalid_matches += 1
         pnl = _load_json(pnl_path, {}) if pnl_path.exists() else {}
         ok = invalid_matches == 0
