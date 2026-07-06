@@ -133,6 +133,10 @@ class EquitySnapshotTest(unittest.TestCase):
             ]
             self.assertEqual(rows[-1]["date"], "20260705")
             self.assertEqual(rows[-1]["target_return_pct"], 8.0)
+            self.assertEqual(rows[-1]["currency"], "USDT")
+            self.assertEqual(rows[-1]["display_currency"], "CNY")
+            self.assertEqual(rows[-1]["fx_to_cny"], 7.2)
+            self.assertEqual(rows[-1]["total_pnl_cny"], 360.0)
 
     def test_writer_dry_run_does_not_write_snapshot_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -288,6 +292,45 @@ class EquitySnapshotTest(unittest.TestCase):
             )
 
         self.assertEqual(prices, {"558943": 0.9765})
+
+    def test_load_mark_prices_marks_pm_no_positions_from_yes_price(self) -> None:
+        class FakeReader:
+            def __init__(self, api_client=None):
+                pass
+
+            def get_pm_markets(self, limit=100):
+                return [
+                    {"market_id": "558943", "yes_price": 0.8},
+                ]
+
+        with patch("shared.data.reader.TradingagentDataReader", FakeReader):
+            prices = load_mark_prices_for_positions(
+                {"558943:no": {"quantity": 100, "market_id": "558943", "outcome": "no"}},
+                "pm",
+                trade_date="20260705",
+            )
+
+        self.assertIn("558943:no", prices)
+        self.assertAlmostEqual(prices["558943:no"], 0.2, places=6)
+
+    def test_load_mark_prices_prefers_explicit_pm_no_price(self) -> None:
+        class FakeReader:
+            def __init__(self, api_client=None):
+                pass
+
+            def get_pm_markets(self, limit=100):
+                return [
+                    {"market_id": "558943", "yes_price": 0.8, "no_price": 0.35},
+                ]
+
+        with patch("shared.data.reader.TradingagentDataReader", FakeReader):
+            prices = load_mark_prices_for_positions(
+                {"558943:no": {"quantity": 100, "market_id": "558943", "outcome": "no"}},
+                "pm",
+                trade_date="20260705",
+            )
+
+        self.assertEqual(prices, {"558943:no": 0.35})
 
 
 if __name__ == "__main__":

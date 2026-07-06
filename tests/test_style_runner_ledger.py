@@ -176,6 +176,34 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             self.assertEqual(simulator.orders[0]["previous_close"], 9.8)
             self.assertEqual(simulator.orders[0]["counterparty_profile"], "retail_panic")
 
+    def test_pm_orders_keep_outcome_and_market_id_in_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            styles_dir = root / "styles"
+            review_root = root / "review"
+            ledger_root = root / "ledger"
+            styles_dir.mkdir()
+            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            runner = StyleRunner(
+                "pm",
+                FilledSimulator(),
+                styles_dir=styles_dir,
+                review_root=review_root,
+                ledger_root=ledger_root,
+            )
+
+            runner.run([{"market_id": "558943", "price": 0.2, "side": "buy", "outcome": "no", "conviction": 0.9}], date="20260704")
+
+            journal = ledger_root / "pm" / "balanced" / "trade_journal.jsonl"
+            rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(rows[0]["symbol"], "558943:no")
+            self.assertEqual(rows[0]["market_id"], "558943")
+            self.assertEqual(rows[0]["outcome"], "no")
+            positions = json.loads((ledger_root / "pm" / "balanced" / "positions.json").read_text(encoding="utf-8"))
+            self.assertIn("558943:no", positions["positions"])
+            self.assertEqual(positions["positions"]["558943:no"]["market_id"], "558943")
+            self.assertEqual(positions["positions"]["558943:no"]["outcome"], "no")
+
 
 class SimLedgerTotalPnlTest(unittest.TestCase):
     def test_total_pnl_combines_realized_and_unrealized(self) -> None:

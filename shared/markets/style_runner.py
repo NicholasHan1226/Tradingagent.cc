@@ -182,11 +182,12 @@ class StyleRunner:
         if self.market == "ashare" and side == "buy":
             quantity = math.floor(quantity / 100.0) * 100.0
         if self.market == "pm":
+            outcome = str(signal.get("outcome") or "yes").lower()
             order: dict[str, Any] = {
                 "market_id": symbol,
-                "symbol": symbol,
+                "symbol": f"{symbol}:{outcome}",
                 "side": side if side in {"buy", "sell"} else "buy",
-                "outcome": str(signal.get("outcome") or "yes").lower(),
+                "outcome": outcome,
                 "quantity": max(1, int(round(quantity))),
                 "price": max(0.01, min(0.99, price)),
             }
@@ -217,7 +218,9 @@ class StyleRunner:
                 "account_type": "simulated",
                 "direct_execution": False,
                 "real_execution": False,
-                "order_id": self._order_id(style.name, symbol, side, date),
+                "order_id": self._order_id(style.name, f"{symbol}:{order.get('outcome')}", side, date)
+                if self.market == "pm"
+                else self._order_id(style.name, symbol, side, date),
             }
         )
         for key in (

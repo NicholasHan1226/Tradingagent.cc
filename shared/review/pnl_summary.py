@@ -64,6 +64,57 @@ def _row_price(row: dict[str, Any]) -> float:
     return 0.0
 
 
+def _clamp_probability(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _pm_position_market_id(symbol: str, position: dict[str, Any] | None = None) -> str:
+    position = position or {}
+    explicit = str(position.get("market_id") or "").strip()
+    if explicit:
+        return explicit
+    raw = str(symbol or "").strip()
+    if ":" in raw:
+        return raw.split(":", 1)[0]
+    return raw
+
+
+def _pm_position_outcome(symbol: str, position: dict[str, Any] | None = None) -> str:
+    position = position or {}
+    raw = str(position.get("outcome") or "").strip().lower()
+    if raw in {"yes", "no"}:
+        return raw
+    symbol_outcome = str(symbol or "").rsplit(":", 1)[-1].strip().lower()
+    if symbol_outcome in {"yes", "no"}:
+        return symbol_outcome
+    return "yes"
+
+
+def _pm_yes_price(row: dict[str, Any]) -> float:
+    for key in ("yes_price", "last_price", "price", "latest_price", "market_price", "implied_probability", "probability"):
+        price = _safe_float(row.get(key), 0.0)
+        if price > 0:
+            return _clamp_probability(price)
+    return 0.0
+
+
+def _pm_no_price(row: dict[str, Any]) -> float:
+    for key in ("no_price", "no_last_price", "no_latest_price", "no_market_price"):
+        price = _safe_float(row.get(key), 0.0)
+        if price > 0:
+            return _clamp_probability(price)
+    yes_price = _pm_yes_price(row)
+    if yes_price > 0:
+        return _clamp_probability(1.0 - yes_price)
+    return 0.0
+
+
+def _pm_mark_price(row: dict[str, Any], outcome: str) -> float:
+    if outcome == "no":
+        return _pm_no_price(row)
+    return _pm_yes_price(row)
+
+
 def _latest_priced(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     priced = [row for row in rows if isinstance(row, dict) and _row_price(row) > 0]
     if not priced:
@@ -369,15 +420,22 @@ def load_mark_prices_for_positions(
                 rows = get_pm(limit=500) or []
             except Exception:  # noqa: BLE001
                 rows = []
-            wanted = {str(symbol).strip() for symbol in positions}
+            wanted = {
+                _pm_position_market_id(symbol, position)
+                for symbol, position in positions.items()
+            }
             for row in rows:
                 if not isinstance(row, dict):
                     continue
                 market_id = str(row.get("market_id") or row.get("id") or "").strip()
                 if market_id in wanted:
-                    price = _row_price(row)
-                    if price > 0:
-                        prices[market_id] = price
+                    for symbol, position in positions.items():
+                        if _pm_position_market_id(symbol, position) != market_id:
+                            continue
+                        outcome = _pm_position_outcome(symbol, position)
+                        price = _pm_mark_price(row, outcome)
+                        if price > 0:
+                            prices[str(symbol)] = price
             return prices
 
         get_bars = getattr(reader, "get_bars_daily", None)

@@ -53,6 +53,7 @@ export type MarketSummary = {
   errorCount?: number
   capitalBase?: number
   pnlAmount?: number
+  pnlCurrency?: 'USD' | 'CNY'
   returnPct?: number
   maxDrawdownPct?: number
   realizedPnl?: number

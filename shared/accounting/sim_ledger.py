@@ -30,6 +30,29 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _add_cny_fields(payload: dict[str, Any]) -> None:
+    fx_to_cny = _safe_float(payload.get("fx_to_cny"), 0.0)
+    if fx_to_cny <= 0:
+        return
+    for key in (
+        "capital_base",
+        "cash",
+        "equity",
+        "total_equity",
+        "market_value",
+        "pnl",
+        "total_pnl",
+        "realized_pnl",
+        "unrealized_pnl",
+        "benchmark_pnl",
+        "pnl_vs_benchmark",
+    ):
+        value = payload.get(key)
+        if value is None:
+            continue
+        payload[f"{key}_cny"] = round(_safe_float(value) * fx_to_cny, 8)
+
+
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
@@ -240,6 +263,10 @@ class SimLedger:
             "realized_pnl": round(realized_pnl, 8),
             "capital_layer": "simulated",
         }
+        if order_payload.get("outcome") not in (None, ""):
+            journal["outcome"] = str(order_payload.get("outcome")).lower()
+        if order_payload.get("market_id") not in (None, ""):
+            journal["market_id"] = str(order_payload.get("market_id"))
         _append_jsonl(self.trade_journal_path, journal)
         _append_jsonl(self.cash_ledger_path, {"timestamp": timestamp, "event_type": f"trade_{side}", "amount": cash_delta, "symbol": symbol})
         return {**journal, "entry_id": entry.entry_id}
@@ -251,6 +278,7 @@ class SimLedger:
         date: str,
         benchmark_return: float = 0.0,
         target_return_pct: float = 0.0,
+        extra_fields: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         state = self._load_state()
         positions = state.get("positions", {})
@@ -331,6 +359,9 @@ class SimLedger:
             "capital_layer": "simulated",
             "real_execution": False,
         }
+        if extra_fields:
+            payload.update(extra_fields)
+        _add_cny_fields(payload)
         _append_jsonl(self.mtm_path, payload)
         return payload
 
@@ -451,6 +482,10 @@ class SimLedger:
         stamp_duty: float,
     ) -> None:
         position = positions.setdefault(symbol, {"quantity": 0.0, "avg_cost": 0.0, "realized_pnl": 0.0})
+        if order.get("outcome") not in (None, ""):
+            position["outcome"] = str(order.get("outcome")).lower()
+        if order.get("market_id") not in (None, ""):
+            position["market_id"] = str(order.get("market_id"))
         old_qty = _safe_float(position.get("quantity"))
         old_avg = _safe_float(position.get("avg_cost"))
         total_cost = (old_qty * old_avg) + (qty * price) + fees

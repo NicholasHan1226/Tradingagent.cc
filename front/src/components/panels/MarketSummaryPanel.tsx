@@ -58,7 +58,7 @@ function formatSummaryReturn(summary: MarketSummary) {
   const returnPart = summary.returnPct === undefined ? '' : `${summary.returnPct >= 0 ? '+' : ''}${summary.returnPct.toFixed(2)}%`
   const amountPart = summary.pnlAmount === undefined
     ? ''
-    : summary.market === 'A-share'
+    : summary.pnlCurrency === 'CNY'
       ? formatSignedCnyCompact(summary.pnlAmount)
       : formatCurrency(summary.pnlAmount)
   return [amountPart, returnPart].filter(Boolean).join(' · ')

@@ -50,6 +50,8 @@ type CNFuturesPositionsFile = {
 
 type SimLedgerPosition = {
   avg_cost?: number
+  market_id?: string
+  outcome?: string
   quantity?: number
   realized_pnl?: number
 }
@@ -124,8 +126,10 @@ type SimLedgerTradeRow = {
   capital_layer?: string
   fill_price?: number
   fill_qty?: number
+  market_id?: string
   notional?: number
   order_id?: string
+  outcome?: string
   realized_pnl?: number
   side?: string
   symbol?: string
@@ -180,6 +184,7 @@ type StylePerformanceRecord = StylePerformanceRow & {
 }
 
 type MarketPerformanceSummary = {
+  capitalBase?: number
   latestAt?: string
   maxDrawdown: number
   pnl: number
@@ -212,12 +217,16 @@ type EquitySnapshotRow = {
   date?: string
   trade_date?: string
   equity?: number | string
+  equity_cny?: number | string
   total_equity?: number | string
+  total_equity_cny?: number | string
   nav?: number | string
   net_value?: number | string
   account_value?: number | string
   portfolio_value?: number | string
+  cash_cny?: number | string
   capital_base?: number | string
+  capital_base_cny?: number | string
   initial_equity?: number | string
   starting_equity?: number | string
   start_equity?: number | string
@@ -225,8 +234,13 @@ type EquitySnapshotRow = {
   pnl?: number | string
   total_pnl?: number | string
   net_pnl?: number | string
+  pnl_cny?: number | string
+  total_pnl_cny?: number | string
+  net_pnl_cny?: number | string
   realized_pnl?: number | string
+  realized_pnl_cny?: number | string
   unrealized_pnl?: number | string
+  unrealized_pnl_cny?: number | string
   return_pct?: number | string
   simulated_return_pct?: number | string
   target_return_pct?: number | string
@@ -243,6 +257,9 @@ type EquitySnapshotRow = {
   trades?: number | string
   pnl_source?: string
   source?: string
+  currency?: string
+  display_currency?: string
+  fx_to_cny?: number | string
   capital_layer?: string
   account_type?: string
   real_execution?: boolean
@@ -301,6 +318,8 @@ const DEFAULT_TARGET_RETURN_PCT = 8
 const SIM_LEDGER_EQUITY_BUCKET_MS = 5 * 60 * 1000
 const MAX_EQUITY_PERFORMANCE_POINTS = 48
 const DASHBOARD_MARKETS: Market[] = ['A-share', 'US', 'Crypto', 'PM', 'CNFutures']
+const DEFAULT_USD_CNY = 7.2
+const DEFAULT_HKD_CNY = 0.92
 
 export async function readTradingAgentSnapshot({
   workspaceRoot,
@@ -480,6 +499,7 @@ async function buildMarketSummaries({
 }): Promise<MarketSummary[]> {
   const styleSummaries = await readStyleComparisonMarketSummaries(performanceRoot)
   const performanceSummaries = await readStylePerformanceMarketSummaries(performanceRoot)
+  const equitySummaries = await readEquitySnapshotMarketSummaries(simLedgerRoot)
   const capitalBaseByMarket = await readSimLedgerCapitalBaseByMarket(simLedgerRoot)
 
   return DASHBOARD_MARKETS.map((market) => {
@@ -487,12 +507,12 @@ async function buildMarketSummaries({
     const marketSignals = signals.filter((signal) => signal.market === market)
     const executedCount = marketSignals.filter((signal) => signal.status === 'executed').length
     const styleSummary = styleSummaries.get(market)
-    const performanceSummary = performanceSummaries.get(market)
+    const performanceSummary = equitySummaries.get(market) ?? performanceSummaries.get(market)
     const isAshare = market === 'A-share'
     const ashareAccount = isAshare ? portfolio?.ashareAccount : undefined
     const capitalBase = ashareAccount
       ? roundMoney(ashareAccount.accountEquity - ashareAccount.accountTotalPnl)
-      : capitalBaseByMarket.get(market)
+      : performanceSummary?.capitalBase ?? capitalBaseByMarket.get(market)
     const pnlAmount = ashareAccount?.accountTotalPnl ?? performanceSummary?.pnl
     const returnPct = ashareAccount
       ? ashareAccount.accountReturnPct
@@ -522,6 +542,7 @@ async function buildMarketSummaries({
       errorCount: styleSummary?.errorCount,
       capitalBase: capitalBase === undefined ? undefined : roundMoney(capitalBase),
       pnlAmount: hasMeaningfulPnl && pnlAmount !== undefined ? roundMoney(pnlAmount) : undefined,
+      pnlCurrency: 'CNY',
       returnPct,
       maxDrawdownPct: performanceSummary ? roundMetric(Math.abs(performanceSummary.maxDrawdown)) : undefined,
       realizedPnl: performanceSummary ? roundMoney(performanceSummary.realizedPnl) : undefined,
@@ -624,6 +645,55 @@ async function readStylePerformanceMarketSummaries(root: string): Promise<Map<Ma
   return summaries
 }
 
+async function readEquitySnapshotMarketSummaries(root: string): Promise<Map<Market, MarketPerformanceSummary>> {
+  const latestBySource = new Map<string, { market: Market; snapshot: ParsedEquitySnapshot }>()
+
+  for (const file of await listSimLedgerFiles(root, 'daily_mark_to_market.jsonl')) {
+    const market = normalizeMarketFolder(file.market)
+    if (market === 'All Markets' || market === 'HK') continue
+    try {
+      const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
+      for (const line of lines) {
+        try {
+          const snapshot = parseEquitySnapshotRecord({ ...(JSON.parse(line) as EquitySnapshotRow), sourcePath: file.path })
+          if (!snapshot) continue
+          const key = `${market}:${file.strategy}:${file.path}`
+          const current = latestBySource.get(key)
+          if (!current || snapshot.timestampMs >= current.snapshot.timestampMs) {
+            latestBySource.set(key, { market, snapshot })
+          }
+        } catch {
+          // Ignore malformed append-only rows.
+        }
+      }
+    } catch {
+      // Ignore missing optional snapshot files.
+    }
+  }
+
+  const summaries = new Map<Market, MarketPerformanceSummary>()
+  for (const { market, snapshot } of latestBySource.values()) {
+    const current = summaries.get(market) ?? {
+      capitalBase: 0,
+      maxDrawdown: 0,
+      pnl: 0,
+      realizedPnl: 0,
+      trades: 0,
+      unrealizedPnl: 0,
+    }
+    current.capitalBase = (current.capitalBase ?? 0) + snapshot.capitalBase
+    current.pnl += snapshot.pnl
+    current.realizedPnl += snapshot.realizedPnl
+    current.unrealizedPnl += snapshot.unrealizedPnl
+    current.maxDrawdown = Math.max(current.maxDrawdown, snapshot.maxDrawdownPct)
+    current.trades += snapshot.tradeCount
+    current.latestAt = latestIso(current.latestAt, snapshot.timestamp)
+    summaries.set(market, current)
+  }
+
+  return summaries
+}
+
 async function readSimLedgerCapitalBaseByMarket(root: string): Promise<Map<Market, number>> {
   const capitalBaseByMarket = new Map<Market, number>()
   for (const file of await listSimLedgerFiles(root, 'positions.json')) {
@@ -635,7 +705,7 @@ async function readSimLedgerCapitalBaseByMarket(root: string): Promise<Map<Marke
       for (const position of Object.values(payload.positions ?? {})) {
         capitalBase += (parseFiniteNumber(position.avg_cost) ?? 0) * (parseFiniteNumber(position.quantity) ?? 0)
       }
-      capitalBaseByMarket.set(market, (capitalBaseByMarket.get(market) ?? 0) + capitalBase)
+      capitalBaseByMarket.set(market, (capitalBaseByMarket.get(market) ?? 0) + toCny(capitalBase, market))
     } catch {
       // Ignore malformed ledger files.
     }
@@ -1180,11 +1250,24 @@ function parseEquitySnapshotRecord(row: EquitySnapshotRecord): ParsedEquitySnaps
   const dayKey = compactDate(row.date ?? row.trade_date ?? String(timestamp)) ?? compactDate(formatDateForSnapshot(timestampMs))
   if (!dayKey) return null
 
-  const equity = firstParsedNumber(row.total_equity, row.equity, row.nav, row.net_value, row.account_value, row.portfolio_value)
-  const capitalBase = firstParsedNumber(row.capital_base, row.initial_equity, row.starting_equity, row.start_equity, row.principal)
-  const realizedPnl = parseFiniteNumber(row.realized_pnl) ?? 0
-  const unrealizedPnl = parseFiniteNumber(row.unrealized_pnl) ?? 0
-  const explicitPnl = firstParsedNumber(row.pnl, row.total_pnl, row.net_pnl)
+  const fxToCny = snapshotFxToCny(row)
+  const rawEquity = firstParsedNumber(row.total_equity, row.equity, row.nav, row.net_value, row.account_value, row.portfolio_value)
+  const rawCapitalBase = firstParsedNumber(row.capital_base, row.initial_equity, row.starting_equity, row.start_equity, row.principal)
+  const rawRealizedPnl = parseFiniteNumber(row.realized_pnl) ?? 0
+  const rawUnrealizedPnl = parseFiniteNumber(row.unrealized_pnl) ?? 0
+  const rawExplicitPnl = firstParsedNumber(row.pnl, row.total_pnl, row.net_pnl)
+  const equity = firstParsedNumber(row.total_equity_cny, row.equity_cny)
+    ?? normalizeSnapshotMoney(rawEquity, fxToCny)
+  const capitalBase = parseFiniteNumber(row.capital_base_cny)
+    ?? normalizeSnapshotMoney(rawCapitalBase, fxToCny)
+  const realizedPnl = parseFiniteNumber(row.realized_pnl_cny)
+    ?? normalizeSnapshotMoney(rawRealizedPnl, fxToCny)
+    ?? 0
+  const unrealizedPnl = parseFiniteNumber(row.unrealized_pnl_cny)
+    ?? normalizeSnapshotMoney(rawUnrealizedPnl, fxToCny)
+    ?? 0
+  const explicitPnl = firstParsedNumber(row.pnl_cny, row.total_pnl_cny, row.net_pnl_cny)
+    ?? normalizeSnapshotMoney(rawExplicitPnl, fxToCny)
   const pnl = explicitPnl ?? (realizedPnl || unrealizedPnl ? realizedPnl + unrealizedPnl : equity !== undefined && capitalBase !== undefined ? equity - capitalBase : undefined)
   const returnPct = firstParsedNumber(row.simulated_return_pct, row.return_pct)
 
@@ -1453,14 +1536,15 @@ function readLegacySimulatedPositions(path: string): HoldingRow[] {
 function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, marketHint: string, strategy: string): HoldingRow | null {
   if (!symbol || !position.quantity) return null
   const market = normalizeMarket(marketHint, symbol)
-  const cost = Number(position.avg_cost ?? 0) * Number(position.quantity ?? 0)
+  const cost = toCny(Number(position.avg_cost ?? 0) * Number(position.quantity ?? 0), market)
+  const realizedPnl = toCny(position.realized_pnl ?? 0, market)
 
   return {
     symbol: normalizeSymbol(symbol, market),
     name: normalizeSymbol(symbol, market),
     market,
     weight: formatCost(cost),
-    pnl: formatCurrency(position.realized_pnl ?? 0),
+    pnl: formatCurrency(realizedPnl),
     risk: position.quantity > 0 ? '正常' : '观察',
     role: `${formatStrategyName(strategy)} 持仓`,
   }
@@ -1606,7 +1690,7 @@ function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strateg
     market,
     method: `${formatStrategyName(strategy)} · ${row.side === 'sell' ? '卖出' : '买入'}`,
     status: 'executed',
-    impact: row.notional === undefined ? '--' : `成交 ${formatCurrencyAmount(row.notional)}`,
+    impact: row.notional === undefined ? '--' : `成交 ${formatCurrencyAmount(toCny(row.notional, market))}`,
     confidence: '已成交',
     age: formatAge(timestamp, now),
     reason: `模拟盘已按 ${formatPrice(row.fill_price)} 成交`,
@@ -1654,6 +1738,7 @@ async function listSimLedgerFiles(root: string, targetName: 'positions.json' | '
     const markets = await readdir(root, { withFileTypes: true })
     for (const market of markets) {
       if (!market.isDirectory()) continue
+      if (market.name.toLowerCase() === 'hk' && process.env.TRADINGAGENT_HK_SIM_ENABLED !== '1') continue
       const marketRoot = join(root, market.name)
       const strategies = await readdir(marketRoot, { withFileTypes: true })
       for (const strategy of strategies) {
@@ -2056,6 +2141,41 @@ function parseSnapshotTimestamp(value: string) {
   return Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}+08:00`)
 }
 
+function snapshotFxToCny(row: EquitySnapshotRecord) {
+  const explicit = parseFiniteNumber(row.fx_to_cny)
+  if (explicit !== undefined && explicit > 0) return explicit
+  const currency = String(row.display_currency ?? row.currency ?? '').trim().toUpperCase()
+  if (currency === 'CNY') return 1
+  if (currency === 'HKD') return DEFAULT_HKD_CNY
+  if (currency === 'USD' || currency === 'USDC' || currency === 'USDT') return DEFAULT_USD_CNY
+  return marketFxToCny(sourcePathMarket(row.sourcePath))
+}
+
+function normalizeSnapshotMoney(value: number | undefined, fxToCny: number) {
+  return value === undefined ? undefined : roundMoney(value * fxToCny)
+}
+
+function sourcePathMarket(path: string): Market {
+  const normalized = path.toLowerCase().replace(/\\/g, '/')
+  if (normalized.includes('/sim_ledger/ashare/')) return 'A-share'
+  if (normalized.includes('/sim_ledger/crypto/')) return 'Crypto'
+  if (normalized.includes('/sim_ledger/us/')) return 'US'
+  if (normalized.includes('/sim_ledger/pm/')) return 'PM'
+  if (normalized.includes('/sim_ledger/cn_futures/')) return 'CNFutures'
+  if (normalized.includes('/sim_ledger/hk/')) return 'HK'
+  return 'All Markets'
+}
+
+function marketFxToCny(market: Market) {
+  if (market === 'US' || market === 'Crypto' || market === 'PM') return DEFAULT_USD_CNY
+  if (market === 'HK') return DEFAULT_HKD_CNY
+  return 1
+}
+
+function toCny(value: number, market: Market) {
+  return roundMoney(value * marketFxToCny(market))
+}
+
 function weightedAverage(leftValue: number, leftWeight: number, rightValue: number, rightWeight: number) {
   const totalWeight = Math.max(0, leftWeight) + Math.max(0, rightWeight)
   if (totalWeight <= 0) return rightValue
@@ -2093,17 +2213,16 @@ function normalizeStyleKey(value: string | undefined) {
 }
 
 function formatCurrency(value: number) {
-  const sign = value >= 0 ? '+' : '-'
-  return `${sign}$${Math.abs(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+  return formatCny(value, true)
 }
 
 function formatCurrencyAmount(value: number) {
-  return `$${Math.abs(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+  return formatCny(value, false)
 }
 
 function formatCost(value?: number) {
   if (value === undefined) return '--'
-  return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+  return formatCny(value, false)
 }
 
 function formatMarketCost(value: number | undefined, market: HoldingRow['market']) {
@@ -2111,14 +2230,12 @@ function formatMarketCost(value: number | undefined, market: HoldingRow['market'
   return formatMarketCurrencyAmount(value, market)
 }
 
-function formatMarketCurrency(value: number, market: HoldingRow['market']) {
-  if (market === 'A-share') return formatCny(value, true)
-  return formatCurrency(value)
+function formatMarketCurrency(value: number, _market: HoldingRow['market']) {
+  return formatCny(value, true)
 }
 
-function formatMarketCurrencyAmount(value: number, market: HoldingRow['market']) {
-  if (market === 'A-share') return formatCny(value, false)
-  return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+function formatMarketCurrencyAmount(value: number, _market: HoldingRow['market']) {
+  return formatCny(value, false)
 }
 
 function formatCny(value: number, signed: boolean) {

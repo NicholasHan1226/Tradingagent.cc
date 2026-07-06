@@ -685,15 +685,15 @@ describe('TradingAgent snapshot reader', () => {
       { day: '现在', simulated: 0.7, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 21,
+      pnlAmount: 151.2,
       returnPct: 0.7,
-      capitalBase: 3000,
+      capitalBase: 21600,
       maxDrawdownPct: 1.4,
       tradeCount: 8,
       pointCount: 3,
       pnlSource: 'sim_ledger_mark_to_market',
-      realizedPnl: 11,
-      unrealizedPnl: 10,
+      realizedPnl: 79.2,
+      unrealizedPnl: 72,
     })
   })
 
@@ -777,9 +777,9 @@ describe('TradingAgent snapshot reader', () => {
       { day: '现在', simulated: 0.7, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 21,
+      pnlAmount: 151.2,
       returnPct: 0.7,
-      capitalBase: 3000,
+      capitalBase: 21600,
       tradeCount: 5,
     })
   })
@@ -1126,7 +1126,7 @@ describe('TradingAgent snapshot reader', () => {
       method: 'Grid · 买入',
       stage: '成交',
       stageEvidence: 'replay',
-      impact: '成交 $667',
+      impact: '成交 ¥4,800',
     }))
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
       symbol: 'BTC-USD',

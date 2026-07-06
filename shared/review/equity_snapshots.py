@@ -21,6 +21,8 @@ from shared.review.pnl_summary import DEFAULT_SIM_LEDGER_ROOT, load_mark_prices_
 DEFAULT_MARKETS = ("ashare", "crypto", "pm", "us", "cn_futures")
 DEFAULT_LOCAL_SIM_DIR = DEFAULT_SIM_LEDGER_ROOT.parent / "local_sim"
 DEFAULT_ASHARE_SIM_CAPITAL = 200_000.0
+DEFAULT_USD_CNY = 7.2
+DEFAULT_HKD_CNY = 0.92
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -38,6 +40,55 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return parsed if parsed == parsed else default
     except (TypeError, ValueError):
         return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        import os
+
+        return _safe_float(os.environ.get(name), default)
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def _market_currency(market: str) -> str:
+    key = str(market).lower().strip()
+    if key in {"ashare", "cn_futures"}:
+        return "CNY"
+    if key == "hk":
+        return "HKD"
+    if key == "pm":
+        return "USDC"
+    if key == "crypto":
+        return "USDT"
+    return "USD"
+
+
+def _fx_to_cny(market: str) -> float:
+    key = str(market).lower().strip()
+    if key in {"ashare", "cn_futures"}:
+        return 1.0
+    if key == "hk":
+        return _env_float("TRADINGAGENT_HKD_CNY", DEFAULT_HKD_CNY)
+    if key == "pm":
+        return _env_float("TRADINGAGENT_USDC_CNY", _env_float("TRADINGAGENT_USD_CNY", DEFAULT_USD_CNY))
+    if key == "crypto":
+        return _env_float("TRADINGAGENT_USDT_CNY", _env_float("TRADINGAGENT_USD_CNY", DEFAULT_USD_CNY))
+    return _env_float("TRADINGAGENT_USD_CNY", DEFAULT_USD_CNY)
+
+
+def _with_cny_fields(payload: dict[str, Any], market: str) -> dict[str, Any]:
+    fx = _fx_to_cny(market)
+    currency = _market_currency(market)
+    for key in ("capital_base", "cash", "equity", "total_equity", "market_value", "pnl", "total_pnl", "realized_pnl", "unrealized_pnl", "benchmark_pnl", "pnl_vs_benchmark"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        payload[f"{key}_cny"] = round(_safe_float(value) * fx, 8)
+    payload["currency"] = currency
+    payload["display_currency"] = "CNY"
+    payload["fx_to_cny"] = round(fx, 8)
+    return payload
 
 
 def _active_positions(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -230,6 +281,7 @@ def _write_ashare_local_sim_snapshot(
         "trade_count": int(pnl.get("total_trades") or 0),
         "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl"), 0.0), 6),
     }
+    _with_cny_fields(snapshot, "ashare")
     snapshot_path = ledger_root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl"
     _append_jsonl(snapshot_path, snapshot, dry_run=dry_run)
     return {
@@ -332,13 +384,17 @@ def write_sim_ledger_equity_snapshots(
                 "capital_layer": "simulated",
                 "real_execution": False,
             })
+            _with_cny_fields(payload, market)
         else:
+            currency_fields = _with_cny_fields({}, market)
             payload = ledger.daily_mark_to_market(
                 prices,
                 date=snapshot_date,
                 benchmark_return=benchmark_return,
                 target_return_pct=target_return_pct,
+                extra_fields=currency_fields,
             )
+            _with_cny_fields(payload, market)
             totals["written_count"] += 1
 
         missing = int(payload.get("missing_mark_count") or 0)
