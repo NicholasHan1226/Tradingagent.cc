@@ -130,6 +130,7 @@ class AshareSimExecutorTest(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "rejected")
+        self.assertIn("buy_quantity_not_lot_aligned", result.message)
         self.assertEqual(result.raw_response["engine_record"]["reason"], "buy_quantity_not_lot_aligned")
 
     def test_ashare_server_local_fill_uses_bar_volume_when_book_size_missing(self) -> None:

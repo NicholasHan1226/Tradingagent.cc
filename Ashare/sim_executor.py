@@ -90,6 +90,15 @@ def _first_value(*values: Any, default: Any = None) -> Any:
     return default
 
 
+def _date_iso(value: Any, fallback: str) -> str:
+    raw = str(value or "").strip()
+    if len(raw) == 8 and raw.isdigit():
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+    if len(raw) >= 10 and raw[4:5] == "-" and raw[7:8] == "-":
+        return raw[:10]
+    return fallback
+
+
 def _snapshot_from_payload(
     order: dict[str, Any],
     account: dict[str, Any] | str | None,
@@ -212,12 +221,13 @@ def _execute_server_local(
     record = engine.submit_order(sim_order, _snapshot_from_payload(order, account, config, card))
     status = "pending" if record.state == "open" else record.state
     fee = float((record.fees or {}).get("total", 0.0) or 0.0)
+    reason_suffix = f": {record.reason}" if getattr(record, "reason", "") else ""
     return SimResult(
         status=status,
         filled_qty=int(record.filled_qty or 0),
         avg_price=float(record.avg_fill_price or 0.0),
         fee=fee,
-        message=f"Server-local A-share simulated fill via matching engine: {record.state}",
+        message=f"Server-local A-share simulated fill via matching engine: {record.state}{reason_suffix}",
         order_id=sim_order.order_id,
         market=MARKET,
         raw_response={
@@ -236,6 +246,7 @@ def _signal_card(
 ) -> dict[str, Any]:
     now = datetime.now().astimezone()
     today = now.date().isoformat()
+    trade_date = _date_iso(order.get("trade_date") or order.get("date"), today)
     order_id = str(order.get("order_id") or f"SIM-ASHARE-{now.strftime('%Y%m%d%H%M%S')}")
     price = _coerce_float(order.get("price", order.get("limit_price", order.get("mid_price"))), 0.0)
     quantity = _coerce_int(order.get("quantity", order.get("qty", order.get("filled_qty"))), 0)
@@ -259,13 +270,13 @@ def _signal_card(
         "dry_run": bool(config.get("dry_run", False)),
         "strategy_name": str(order.get("strategy_name") or "ashare_sim_executor"),
         "timestamp": now.isoformat(timespec="seconds"),
-        "valid_until": str(config.get("valid_until") or today),
+        "valid_until": str(config.get("valid_until") or trade_date),
         "idempotency_key": str(order.get("idempotency_key") or order_id),
         "source": "ashare_sim_executor_file_bridge",
         "bridge": "mini_hermes_file_bridge",
         "t_plus_1": {
-            "sellable_from": str(config.get("sellable_from") or today),
-            "sellable_date": str(config.get("sellable_date") or today),
+            "sellable_from": str(config.get("sellable_from") or trade_date),
+            "sellable_date": str(config.get("sellable_date") or trade_date),
         },
         "notes": "Hermes/Mac Mini bridge is reserved; server-local simulated execution is primary unless explicitly enabled.",
     }
