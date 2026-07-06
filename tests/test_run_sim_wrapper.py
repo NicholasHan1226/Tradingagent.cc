@@ -14,6 +14,12 @@ class FakeReader:
     def get_crypto_klines(self, *, symbol: str, limit: int = 50):
         return self.rows.get(symbol, [])
 
+    def get_market_data(self, *, ts_code: str, market: str, start: str, end: str, freq: str):
+        return self.rows.get(ts_code, [])
+
+    def get_pm_markets(self, limit: int = 10, active_only: bool = True):
+        return self.rows.get("pm", [])[:limit]
+
 
 def test_price_rows_do_not_become_trade_signals_by_default(monkeypatch):
     monkeypatch.setattr(run_sim, "market", "crypto")
@@ -44,3 +50,80 @@ def test_price_only_smoke_signals_are_dashboard_excluded(monkeypatch):
     assert len(signals) == 1
     assert signals[0]["exclude_from_dashboard"] is True
     assert signals[0]["sample_type"] == "price_only_smoke"
+
+
+def test_crypto_momentum_series_generates_explicit_buy_signal(monkeypatch):
+    monkeypatch.setattr(run_sim, "market", "crypto")
+    monkeypatch.delenv("TRADINGAGENT_SIM_ALLOW_PRICE_ONLY_SIGNALS", raising=False)
+    reader = FakeReader({
+        "BTCUSDT": [
+            {"symbol": "BTCUSDT", "close": 100.0, "trade_date": "20260701"},
+            {"symbol": "BTCUSDT", "close": 101.0, "trade_date": "20260702"},
+            {"symbol": "BTCUSDT", "close": 104.0, "trade_date": "20260703"},
+        ]
+    })
+
+    signals = run_sim._load_signals(reader, "crypto", limit=10)
+
+    assert len(signals) == 1
+    assert signals[0]["side"] == "buy"
+    assert signals[0]["strategy_name"] == "crypto_momentum_breakout"
+    assert signals[0]["signal_source"] == "explicit_strategy_signal"
+
+
+def test_us_small_move_does_not_generate_trade_signal(monkeypatch):
+    monkeypatch.setattr(run_sim, "market", "us")
+    monkeypatch.setattr(run_sim, "_symbols_for_market", lambda name: ("TSLA",))
+    reader = FakeReader({
+        "TSLA": [
+            {"symbol": "TSLA", "close": 100.0, "trade_date": "20260701"},
+            {"symbol": "TSLA", "close": 100.4, "trade_date": "20260702"},
+            {"symbol": "TSLA", "close": 100.8, "trade_date": "20260703"},
+        ]
+    })
+
+    assert run_sim._load_signals(reader, "us", limit=10) == []
+
+
+def test_us_trend_series_generates_explicit_buy_signal(monkeypatch):
+    monkeypatch.setattr(run_sim, "market", "us")
+    monkeypatch.setattr(run_sim, "_symbols_for_market", lambda name: ("TSLA",))
+    reader = FakeReader({
+        "TSLA": [
+            {"symbol": "TSLA", "close": 100.0, "trade_date": "20260701"},
+            {"symbol": "TSLA", "close": 102.0, "trade_date": "20260702"},
+            {"symbol": "TSLA", "close": 104.5, "trade_date": "20260703"},
+        ]
+    })
+
+    signals = run_sim._load_signals(reader, "us", limit=10)
+
+    assert len(signals) == 1
+    assert signals[0]["side"] == "buy"
+    assert signals[0]["strategy_name"] == "us_trend_follow"
+
+
+def test_pm_model_edge_generates_yes_signal(monkeypatch):
+    monkeypatch.setattr(run_sim, "market", "pm")
+    reader = FakeReader({
+        "pm": [{
+            "market_id": "558943",
+            "yes_price": 0.48,
+            "model_probability": 0.60,
+            "trade_date": "20260703",
+        }]
+    })
+
+    signals = run_sim._load_signals(reader, "pm", limit=10)
+
+    assert len(signals) == 1
+    assert signals[0]["side"] == "buy"
+    assert signals[0]["outcome"] == "yes"
+    assert signals[0]["strategy_name"] == "pm_probability_edge"
+
+
+def test_pm_without_model_edge_does_not_generate_signal(monkeypatch):
+    monkeypatch.setattr(run_sim, "market", "pm")
+    reader = FakeReader({"pm": [{"market_id": "558943", "yes_price": 0.48, "trade_date": "20260703"}]})
+
+    assert run_sim._load_signals(reader, "pm", limit=10) == []
