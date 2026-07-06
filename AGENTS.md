@@ -98,6 +98,8 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 ### PM 调度
 
 - PM shadow scan 每 10 分钟运行；`run_job` 锁防止并发。
+- PM 独立研究概率由 `job_pm_research_probability` 生成，写入 `shared/review/pm/model_probabilities.jsonl` 和 `model_probabilities_summary.json`；它只读 SharedSignals PM 市场行，不写 SharedSignals，不写交易队列。
+- `PM/research_probability.py` 只允许明确外部/研究概率或弱非价格证据生成模型概率；仅情绪/类别类弱证据的 `model_confidence` 必须保持低于 0.5，默认不应越过 PM 交易 edge 阈值。可触发交易的强 edge 应来自明确研究概率字段，而不是市场价格变形。
 - `job_pm_optimize` 运行产物写入 `shared/review/pm/`，不写入 Git 跟踪路径。
 
 ### 风格演化状态

@@ -161,6 +161,7 @@ class FinalCronHandlersTest(unittest.TestCase):
             "job_us_postclose",
             "job_crypto_weekly",
             "job_pm_forward",
+            "job_pm_research_probability",
             "job_pm_optimize",
             "job_pm_promote",
             "job_gate_review_night",

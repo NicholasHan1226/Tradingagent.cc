@@ -105,6 +105,14 @@
 - **失败处理**: 2 次重试 → 跳过 → 下一轮合并
 - **归属仓库**: TradingAgent
 
+### 12b. job_pm_research_probability — PM 独立研究概率
+- **目的**: 只读 PM 市场行，生成独立研究概率文件供 PM simulated edge 门禁消费；不写 SharedSignals，不写交易队列
+- **频率**: 每 10 分钟错峰 (2-59/10 * * * *)
+- **输入**: SharedSignals PM markets/read model、明确 research_probability/marketgraph_probability/external_probability 或弱非价格证据
+- **输出**: model_probabilities.jsonl 与 model_probabilities_summary.json (写入 shared/review/pm/)
+- **失败处理**: 3 次重试 → 保持上一轮文件；无独立证据时原子清空旧概率文件，避免历史 edge 残留
+- **归属仓库**: TradingAgent
+
 ### 13. job_pm_optimize — PM 策略优化
 - **目的**: 小时级优化 PM 策略参数 (bayesian/weight adjustment)
 - **频率**: 每小时 (0 * * * *)

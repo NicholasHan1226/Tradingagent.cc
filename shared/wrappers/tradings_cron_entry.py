@@ -1798,6 +1798,16 @@ def run_pm_optimize() -> dict[str, Any]:
     return payload
 
 
+def run_pm_research_probability() -> dict[str, Any]:
+    from PM.research_probability import generate_pm_model_probabilities
+
+    return generate_pm_model_probabilities(
+        output_path=SHARED / "review/pm/model_probabilities.jsonl",
+        summary_path=SHARED / "review/pm/model_probabilities_summary.json",
+        generated_at=now_iso(),
+    )
+
+
 def run_pm_promote() -> dict[str, Any]:
     from shared.review.weekly_review import review_week
 
@@ -2185,6 +2195,7 @@ JOB_HANDLERS: dict[str, Any] = {
         "signals/pm/pm_forward_signals.jsonl",
         "forward",
     ),
+    "job_pm_research_probability": run_pm_research_probability,
     "job_pm_optimize": run_pm_optimize,
     "job_pm_promote": run_pm_promote,
     "job_daily_brief_morning": run_daily_brief_morning,

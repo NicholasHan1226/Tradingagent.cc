@@ -42,6 +42,7 @@ schedule,command,target_repo,target_module,current_frequency,suggested_frequency
 "@reboot","/opt/investment/MarketGraph/deploy/job_rss_collector.sh",SharedSignals,collection,reboot,reboot,move
 "*/30 * * * *","/opt/investment/MarketGraph/deploy/wrappers/job_pm_shadow.sh",tradingagent,trading,every_30min,every_30min,move
 "*/30 * * * *","/opt/investment/MarketGraph/deploy/wrappers/job_pm_forward.sh",tradingagent,trading,every_30min,every_30min,move
+"2-59/10 * * * *","/opt/investment/tradingagent/shared/wrappers/job_pm_research_probability.sh",tradingagent,trading,every_10min,every_10min,keep
 "0 * * * *","/opt/investment/MarketGraph/deploy/wrappers/job_pm_optimize.sh",tradingagent,trading,hourly,hourly,move
 "*/30 * * * *","/opt/investment/MarketGraph/deploy/wrappers/job_pm_risk.sh",tradingagent,risk,every_30min,every_30min,move
 "*/30 * * * *","/opt/investment/MarketGraph/deploy/wrappers/job_pm_report.sh",tradingagent,review,every_30min,every_30min,move
