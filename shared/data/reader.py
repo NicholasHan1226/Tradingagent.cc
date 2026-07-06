@@ -111,14 +111,33 @@ class SharedSignalsReader:
         start_time: str = "",
         end_time: str = "",
     ) -> list[dict[str, Any]]:
-        sql = "SELECT * FROM market_bars_intraday WHERE market=? AND symbol=? AND interval=?"
-        params: list = [market, symbol, interval]
+        interval_values = [interval]
+        if interval in {"5m", "5min"}:
+            interval_values = ["5m", "5min"]
+        placeholders = ",".join("?" for _ in interval_values)
+        sql = (
+            "SELECT * FROM market_bars_intraday "
+            f"WHERE market=? AND symbol=? AND interval IN ({placeholders})"
+        )
+        params: list = [market, symbol, *interval_values]
         if start_time:
-            sql += " AND bar_time >= ?"
-            params.append(start_time)
+            compact = start_time.replace("-", "")
+            if len(compact) == 8 and compact.isdigit():
+                iso_date = f"{compact[:4]}-{compact[4:6]}-{compact[6:8]}"
+                sql += " AND (replace(COALESCE(trade_date,''),'-','') >= ? OR substr(bar_time,1,10) >= ?)"
+                params.extend([compact, iso_date])
+            else:
+                sql += " AND bar_time >= ?"
+                params.append(start_time)
         if end_time:
-            sql += " AND bar_time <= ?"
-            params.append(end_time + "T23:59:59" if len(end_time) == 10 else end_time)
+            compact = end_time.replace("-", "")
+            if len(compact) == 8 and compact.isdigit():
+                iso_date = f"{compact[:4]}-{compact[4:6]}-{compact[6:8]}"
+                sql += " AND (replace(COALESCE(trade_date,''),'-','') <= ? OR substr(bar_time,1,10) <= ?)"
+                params.extend([compact, iso_date])
+            else:
+                sql += " AND bar_time <= ?"
+                params.append(end_time + "T23:59:59" if len(end_time) == 10 else end_time)
         sql += " ORDER BY bar_time"
         return self._query(sql, tuple(params))
 

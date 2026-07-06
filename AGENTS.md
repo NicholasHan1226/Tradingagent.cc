@@ -118,7 +118,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 
 ## 服务器
 
-- 主服务器：`8.138.181.177`（杭州）
+- 主服务器：`8.138.181.177`（阿里云华南3/广州）
 - 生产路径：`/opt/investment/tradingagent/`
 - Mini 远程访问：Tailscale `100.125.4.113` / SSH alias `macmini-tailscale`
 - `192.168.5.2` 是 RSS 服务器，不是 MarketGraph 主服务器，也不是 Hermes mini 执行桥。

@@ -185,6 +185,26 @@ class TestSharedSignalsReader(unittest.TestCase):
             ),
         )
         conn.execute(
+            "INSERT INTO market_bars_intraday VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "Ashare",
+                "000001.SZ",
+                "2026-07-06 10:50:00",
+                "20260706",
+                "5min",
+                10.4,
+                10.5,
+                10.3,
+                10.45,
+                2000,
+                20900,
+                "test_rt_min",
+                "rt_min",
+                "2026-07-06T10:51:00",
+                "{}",
+            ),
+        )
+        conn.execute(
             "INSERT INTO market_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 "evt-1",
@@ -247,6 +267,10 @@ class TestSharedSignalsReader(unittest.TestCase):
         self.assertEqual(
             self.reader.get_bars_intraday("Ashare", "600000", "5m", "2026-06-29", "2026-06-29")[0]["close"],
             10.15,
+        )
+        self.assertEqual(
+            self.reader.get_bars_intraday("Ashare", "000001.SZ", "5m", "20260706", "20260706")[0]["close"],
+            10.45,
         )
         self.assertEqual(
             self.reader.get_events("Ashare", "600000", "20260629", "20260629")[0]["event_hash"],
