@@ -496,7 +496,7 @@ async function buildMarketSummaries({
       filledCount: styleSummary?.filledCount,
       errorCount: styleSummary?.errorCount,
       capitalBase: capitalBase === undefined ? undefined : roundMoney(capitalBase),
-      pnlAmount: pnlAmount === undefined ? undefined : roundMoney(pnlAmount),
+      pnlAmount: hasMeaningfulPnl && pnlAmount !== undefined ? roundMoney(pnlAmount) : undefined,
       returnPct,
       maxDrawdownPct: performanceSummary ? roundMetric(Math.abs(performanceSummary.maxDrawdown)) : undefined,
       realizedPnl: performanceSummary ? roundMoney(performanceSummary.realizedPnl) : undefined,
