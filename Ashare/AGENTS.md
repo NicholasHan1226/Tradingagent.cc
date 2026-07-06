@@ -23,6 +23,10 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - 实盘: 仅人工确认与只读同步；不得自动点击真实账户委托
 - 5-10分钟级别自动化
 
+## 研究证据
+- `research_evidence.py` 是 A股集合竞价、尾盘动能、204001 逆回购收益估算和风格证据的只读入口；输出到 `shared/review/ashare/`，不得写入 `signals/pending`、`signals/real` 或任何执行队列。
+- `closing_momentum` 保持 research/paused，只有尾盘候选扫描、次日 open/high 兑现回测和样本阈值达标后，才能讨论进入 simulated。
+
 ## 现有代码
-- 当前 A-share 代码位于本目录：`adapter.py`、`capital_plan.py`、`sim_executor.py`、`t_plus_1.py` 和 `market_phases/`。
+- 当前 A-share 代码位于本目录：`adapter.py`、`capital_plan.py`、`research_evidence.py`、`sim_executor.py`、`t_plus_1.py` 和 `market_phases/`。
 - 旧 `/opt/investment/Ashare/tools/a_share_*.py` 已退役/归档，不得作为新的执行或依赖入口。

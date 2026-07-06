@@ -302,6 +302,28 @@ def _check_mini_health(url: str = DEFAULT_MINI_HEALTH_URL) -> Check:
         return Check("mini_hermes_health", "fail", "mini/Hermes 健康口不可达", {"url": url, "error": f"{exc.__class__.__name__}: {exc}"})
 
 
+def _check_optional_mini_health(url: str = DEFAULT_MINI_HEALTH_URL) -> Check:
+    enabled = os.environ.get("ASHARE_SIM_HERMES_ENABLED", "0").strip() == "1"
+    if not enabled:
+        return Check(
+            "mini_hermes_optional",
+            "pass",
+            "Hermes/同花顺 GUI 第二路径未启用，不影响服务器本地模拟盘",
+            {"url": url, "enabled": False, "primary_path": "server_local_sim"},
+            severity="info",
+        )
+
+    raw = _check_mini_health(url)
+    ok = raw.status == "pass"
+    return Check(
+        "mini_hermes_optional",
+        "pass" if ok else "warn",
+        "Hermes/同花顺 GUI 第二路径 ready" if ok else "Hermes/同花顺 GUI 第二路径异常，服务器本地模拟盘继续独立运行",
+        {"url": url, "enabled": True, "raw_status": raw.status, "raw_summary": raw.summary, "raw_details": raw.details},
+        severity="warn",
+    )
+
+
 def _check_simulated_position_sync() -> Check:
     path = ROOT / "signals/positions/simulated_ashare_positions.json"
     local_trades_path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
@@ -781,7 +803,7 @@ def run_ashare_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict
         _check_ashare_universe(),
         _check_shadow_ledger(),
         _check_signal_queues(),
-        _check_mini_health(mini_health_url),
+        _check_optional_mini_health(mini_health_url),
         _check_simulated_position_sync(),
         _check_local_sim_ledger(),
         _check_email_templates(),

@@ -22,6 +22,9 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 5 13 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_opening_validation.log 2>&1
 45 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_first_sample_alert.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_first_sample_alert.log 2>&1
 10 13 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_first_sample_alert.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_first_sample_alert.log 2>&1
+26 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_research_evidence.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_research_evidence.log 2>&1
+56 14 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_research_evidence.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_research_evidence.log 2>&1
+10 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_research_evidence.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_research_evidence.log 2>&1
 
 # Multi-market simulated trading loops.
 */5 10-14,22-23,0-4 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_us_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/us_sim.log 2>&1
