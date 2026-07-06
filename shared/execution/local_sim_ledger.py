@@ -62,6 +62,8 @@ class LocalSimTrade:
     net_amount: float = 0.0
     status: str = "filled"
     source: str = "server_local_sim_backup"
+    candidate_pool_layer: str = ""
+    execution_source: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
     linked_execution_status: str = ""
     note: str = ""
@@ -565,6 +567,9 @@ def record_local_sim_order(
     stamp_duty = round(amount * 0.0005, 2) if side == "sell" else 0.0
     net_amount = round(amount + commission + stamp_duty, 2) if side == "buy" else round(amount - commission - stamp_duty, 2)
     linked_status = str(getattr(receipt, "status", "") or (receipt.get("status") if isinstance(receipt, dict) else "") or "")
+    metadata = order.get("metadata") if isinstance(order.get("metadata"), dict) else {}
+    candidate_pool_layer = str(order.get("candidate_pool_layer") or metadata.get("candidate_pool_layer") or "")
+    execution_source = str(order.get("execution_source") or metadata.get("execution_source") or "")
     if linked_status and linked_status not in {"filled", "partial"}:
         return {
             "status": linked_status,
@@ -590,6 +595,8 @@ def record_local_sim_order(
         commission=commission,
         stamp_duty=stamp_duty,
         net_amount=net_amount,
+        candidate_pool_layer=candidate_pool_layer,
+        execution_source=execution_source,
         linked_execution_status=linked_status,
         note=str(order.get("note") or "server backup fill for A-share simulated signal"),
     )
@@ -606,7 +613,17 @@ def record_local_sim_order(
         trades.append(asdict(trade))
         _persist_unlocked(trades)
         _append_receipt_unlocked(
-            _build_signed_receipt(order=order, trade=trade, market=market_key, account=account_name, status="filled")
+            _build_signed_receipt(
+                order=order,
+                trade=trade,
+                market=market_key,
+                account=account_name,
+                status="filled",
+                extra={
+                    "candidate_pool_layer": candidate_pool_layer,
+                    "execution_source": execution_source,
+                },
+            )
         )
     return {
         "status": "filled",
@@ -626,6 +643,10 @@ def record_local_sim_order(
 def get_local_sim_pnl(
     account: str | None = None,
     mark_prices: dict[str, float] | None = None,
+    trade_filter: Any | None = None,
 ) -> dict[str, Any]:
     with _lock():
-        return _replay_account(_load_trades_unlocked(), account, mark_prices=mark_prices)
+        trades = _load_trades_unlocked()
+        if callable(trade_filter):
+            trades = [trade for trade in trades if trade_filter(trade)]
+        return _replay_account(trades, account, mark_prices=mark_prices)

@@ -163,8 +163,14 @@ class DailyReviewDriverTest(unittest.TestCase):
         self.assertFalse(close["stale"])
         self.assertEqual(close["review_trade_count"], 2)
         self.assertEqual(close["source_trade_counts"]["by_capital_layer"]["simulated"], 2)
+        self.assertEqual(close["source_trade_counts"]["sample_quality"]["validation_sample_count"], 1)
+        self.assertEqual(close["source_trade_counts"]["sample_quality"]["strategy_sample_valid_count"], 1)
         self.assertIn("crypto", close["capital_layer_reviews"]["simulated"]["market_reviews"])
         self.assertIn("ashare", close["capital_layer_reviews"]["simulated"]["market_reviews"])
+        ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"]["ashare"]
+        self.assertEqual(ashare_review["trades"], 1)
+        self.assertEqual(ashare_review["strategy_trades"], 0)
+        self.assertEqual(ashare_review["validation_sample_count"], 1)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from shared.accounting.sim_ledger import SimLedger
+from shared.review.sample_quality import classify_trade_sample, summarize_sample_quality
 
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
@@ -212,17 +213,40 @@ def _ashare_local_sim_summary(
         from shared.execution import local_sim_ledger
 
         # If the test harness has patched local_sim_ledger paths, respect those.
+        original_local_sim_trades = local_sim_ledger.LOCAL_SIM_TRADES
         if local_trades_path is not None:
             local_sim_ledger.LOCAL_SIM_TRADES = local_trades_path
-        pnl = local_sim_ledger.get_local_sim_pnl(account=None, mark_prices=mark_prices)
+        try:
+            pnl = local_sim_ledger.get_local_sim_pnl(account=None, mark_prices=mark_prices)
+            strategy_pnl = local_sim_ledger.get_local_sim_pnl(
+                account=None,
+                mark_prices=mark_prices,
+                trade_filter=lambda row: bool(classify_trade_sample(row).get("strategy_sample_valid")),
+            )
+            sample_quality = summarize_sample_quality(_read_jsonl_dicts(local_sim_ledger.LOCAL_SIM_TRADES))
+        finally:
+            local_sim_ledger.LOCAL_SIM_TRADES = original_local_sim_trades
     except Exception as exc:  # noqa: BLE001
         return {
             "realized_pnl": 0.0,
             "unrealized_pnl": 0.0,
             "total_pnl": 0.0,
+            "strategy_realized_pnl": 0.0,
+            "strategy_unrealized_pnl": 0.0,
+            "strategy_total_pnl": 0.0,
             "market_value": 0.0,
+            "strategy_market_value": 0.0,
             "open_position_count": 0,
+            "strategy_open_position_count": 0,
             "missing_mark_count": 0,
+            "sample_quality": {
+                "total_count": 0,
+                "strategy_sample_valid_count": 0,
+                "validation_sample_count": 0,
+                "invalid_strategy_sample_count": 0,
+                "by_classification": {},
+                "by_reason": {},
+            },
             "pnl_source": "ashare_local_sim_error",
             "error": f"{exc.__class__.__name__}: {exc}",
         }
@@ -243,13 +267,19 @@ def _ashare_local_sim_summary(
         "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
         "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
         "total_pnl": round(_safe_float(pnl.get("total_pnl")), 6),
+        "strategy_realized_pnl": round(_safe_float(strategy_pnl.get("realized_pnl")), 6),
+        "strategy_unrealized_pnl": round(_safe_float(strategy_pnl.get("unrealized_pnl")), 6),
+        "strategy_total_pnl": round(_safe_float(strategy_pnl.get("total_pnl")), 6),
         "market_value": round(_safe_float(pnl.get("market_value")), 6),
+        "strategy_market_value": round(_safe_float(strategy_pnl.get("market_value")), 6),
         "equity": round(_safe_float(pnl.get("equity")), 6)
         if "equity" in pnl
         else None,
         "cash": round(_safe_float(pnl.get("cash")), 6) if "cash" in pnl else None,
         "open_position_count": len(positions),
+        "strategy_open_position_count": len(strategy_pnl.get("positions") or {}),
         "missing_mark_count": missing_mark_count,
+        "sample_quality": sample_quality,
         "pnl_source": pnl_source,
     }
 

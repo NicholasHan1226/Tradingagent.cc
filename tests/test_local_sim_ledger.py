@@ -35,6 +35,8 @@ class LocalSimLedgerTest(unittest.TestCase):
             "side": "buy",
             "quantity": 100,
             "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
         }
         first = local_sim_ledger.record_local_sim_order(order, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
         second = local_sim_ledger.record_local_sim_order(order, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
@@ -56,10 +58,19 @@ class LocalSimLedgerTest(unittest.TestCase):
         ]
         self.assertEqual(len(receipts), 1)
         self.assertEqual(receipts[0]["status"], "filled")
+        self.assertEqual(receipts[0]["candidate_pool_layer"], "candidate")
+        self.assertEqual(receipts[0]["execution_source"], "ashare_candidate_layer")
         self.assertEqual(
             receipts[0]["receipt_sha256"],
             local_sim_ledger._payload_sha256(receipts[0], drop_checksums=True),
         )
+        trades = [
+            json.loads(line)
+            for line in local_sim_ledger.LOCAL_SIM_TRADES.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(trades[0]["candidate_pool_layer"], "candidate")
+        self.assertEqual(trades[0]["execution_source"], "ashare_candidate_layer")
 
     def test_pending_receipt_does_not_record_local_fill(self) -> None:
         order = {

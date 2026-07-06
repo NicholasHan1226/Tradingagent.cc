@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from shared.review.sample_quality import enrich_trade_sample
+
 REVIEW_DIR = Path(__file__).resolve().parent
 SHARED_DIR = REVIEW_DIR.parent
 DEFAULT_SIM_LEDGER_ROOT = SHARED_DIR / "logs" / "sim_ledger"
@@ -121,7 +123,7 @@ def _normalize_style_ledger_trade(row: dict[str, Any], path: Path, ledger_root: 
 
 
 def _normalize_local_sim_trade(row: dict[str, Any], path: Path) -> dict[str, Any]:
-    return {
+    return enrich_trade_sample({
         "ts_code": row.get("ts_code") or row.get("symbol") or "",
         "side": row.get("side") or "",
         "quantity": _safe_float(row.get("quantity")),
@@ -136,13 +138,15 @@ def _normalize_local_sim_trade(row: dict[str, Any], path: Path) -> dict[str, Any
         "trade_date": row.get("trade_date") or row.get("created_at") or "",
         "market": _normalize_market(row.get("market") or "ashare"),
         "capital_layer": "simulated",
+        "candidate_pool_layer": row.get("candidate_pool_layer") or "",
+        "execution_source": row.get("execution_source") or "",
         "source_ledger": str(path),
         "notional": _safe_float(row.get("amount") or row.get("net_amount")),
         "fees": {
             "commission": _safe_float(row.get("commission")),
             "stamp_duty": _safe_float(row.get("stamp_duty")),
         },
-    }
+    })
 
 
 def _load_style_ledger_trades(

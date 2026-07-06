@@ -32,6 +32,7 @@ except Exception:  # pragma: no cover - optional upstream dependency
 from .attribution import attribute, attribute_pct
 from .benchmark import compare_to_benchmark, get_benchmark, record_last_period
 from .pnl_summary import sim_ledger_pnl_summary
+from .sample_quality import strategy_valid_trades, summarize_sample_quality
 from .sim_ledger_reader import (
     DEFAULT_LOCAL_SIM_TRADES,
     DEFAULT_SIM_LEDGER_ROOT,
@@ -549,6 +550,7 @@ def review_trade_source_counts(trades: list[dict[str, Any]]) -> dict[str, Any]:
         "total": len(trades),
         "by_capital_layer": layer_counts,
         "by_source": summarize_trade_sources(trades),
+        "sample_quality": summarize_sample_quality(trades),
     }
 
 
@@ -644,7 +646,7 @@ def load_direction_hits(trade_date: str) -> list[dict[str, Any]]:
     output is grouped by capital_layer and market, then written as review
     evidence under shared/review/data/.
     """
-    trades = load_review_trades(trade_date)
+    trades = strategy_valid_trades(load_review_trades(trade_date))
     close_cache: dict[tuple[str, str], float] = {}
     reviews: list[dict[str, Any]] = []
 
@@ -778,9 +780,11 @@ def review_lunch(
         layer_trade: list[dict[str, Any]],
         ledger_pnl: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        signal_count = sum(1 for t in layer_trade if t.get("signal_id"))
-        hit = _hit_rate(layer_trade)
-        realized_pnl = _sum_pnl(layer_trade)
+        strategy_trade = strategy_valid_trades(layer_trade)
+        sample_quality = summarize_sample_quality(layer_trade)
+        signal_count = sum(1 for t in strategy_trade if t.get("signal_id"))
+        hit = _hit_rate(strategy_trade)
+        realized_pnl = _sum_pnl(strategy_trade)
         floating_pnl = sum(_safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight")) for p in layer_pos)
         pnl = realized_pnl + floating_pnl
         ledger = ledger_pnl or {}
@@ -797,7 +801,7 @@ def review_lunch(
             and _safe_float(p.get("momentum", 0)) > 0
         ]
         watch_list = [p.get("ts_code", "?") for p in layer_pos if p.get("ts_code") not in reduce_list + add_list]
-        attr = attribute_pct(layer_trade)
+        attr = attribute_pct(strategy_trade)
         bench_cmp = compare_to_benchmark(pnl, benchmark_return)
         bench_info = get_benchmark(benchmark_date)
         last_period_return = _safe_float(bench_info.get("last_period_return"))
@@ -816,12 +820,15 @@ def review_lunch(
             "watch": watch_list,
             "notes": "午盘复盘: 检查上午信号兑现度, 止损标的减仓, 未兑现信号加仓.",
         }
-        wins = sum(1 for t in layer_trade if _safe_float(t.get("pnl")) > 0)
-        losses = sum(1 for t in layer_trade if _safe_float(t.get("pnl")) < 0)
+        wins = sum(1 for t in strategy_trade if _safe_float(t.get("pnl")) > 0)
+        losses = sum(1 for t in strategy_trade if _safe_float(t.get("pnl")) < 0)
         return {
             "capital_layer": layer,
             "market": market,
             "trades": len(layer_trade),
+            "strategy_trades": len(strategy_trade),
+            "validation_sample_count": int(sample_quality.get("validation_sample_count", 0)),
+            "sample_quality": sample_quality,
             "wins": wins,
             "losses": losses,
             "win_rate": round(hit, 4),
@@ -832,8 +839,13 @@ def review_lunch(
             "ledger_realized_pnl": round(ledger.get("realized_pnl", 0.0), 6),
             "ledger_unrealized_pnl": round(ledger.get("unrealized_pnl", 0.0), 6),
             "ledger_total_pnl": round(ledger.get("total_pnl", 0.0), 6),
+            "ledger_strategy_realized_pnl": round(ledger.get("strategy_realized_pnl", 0.0), 6),
+            "ledger_strategy_unrealized_pnl": round(ledger.get("strategy_unrealized_pnl", 0.0), 6),
+            "ledger_strategy_total_pnl": round(ledger.get("strategy_total_pnl", 0.0), 6),
             "ledger_market_value": round(ledger.get("market_value", 0.0), 6),
+            "ledger_strategy_market_value": round(ledger.get("strategy_market_value", 0.0), 6),
             "ledger_open_position_count": int(ledger.get("open_position_count", 0)),
+            "ledger_strategy_open_position_count": int(ledger.get("strategy_open_position_count", 0)),
             "ledger_missing_mark_count": int(ledger.get("missing_mark_count", 0)),
             "ledger_pnl_source": ledger.get("pnl_source", ""),
             "position_count": len(layer_pos),
@@ -953,18 +965,22 @@ def review_close(
         layer_trd: list[dict[str, Any]],
         ledger_pnl: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        wins = [t for t in layer_trd if _safe_float(t.get("pnl")) > 0]
-        losses = [t for t in layer_trd if _safe_float(t.get("pnl")) < 0]
-        pnl = _sum_pnl(layer_trd)
+        strategy_trd = strategy_valid_trades(layer_trd)
+        sample_quality = summarize_sample_quality(layer_trd)
+        wins = [t for t in strategy_trd if _safe_float(t.get("pnl")) > 0]
+        losses = [t for t in strategy_trd if _safe_float(t.get("pnl")) < 0]
+        pnl = _sum_pnl(strategy_trd)
         floating = sum(_safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight")) for p in layer_pos)
         total_pnl = pnl + floating
         ledger = ledger_pnl or {}
-        win_rate = len(wins) / len(layer_trd) if layer_trd else 0.0
+        win_rate = len(wins) / len(strategy_trd) if strategy_trd else 0.0
         avg_win = (_sum_pnl(wins) / len(wins)) if wins else 0.0
         avg_loss = (_sum_pnl(losses) / len(losses)) if losses else 0.0
         profit_factor = (abs(_sum_pnl(wins)) / abs(_sum_pnl(losses))) if losses and _sum_pnl(losses) != 0 else float("inf") if wins else 0.0
         trades_summary = {
             "count": len(layer_trd),
+            "strategy_count": len(strategy_trd),
+            "validation_sample_count": int(sample_quality.get("validation_sample_count", 0)),
             "wins": len(wins),
             "losses": len(losses),
             "win_rate": round(win_rate, 4),
@@ -974,7 +990,7 @@ def review_close(
             "realized_pnl": round(pnl, 6),
             "floating_pnl": round(floating, 6),
         }
-        attr = attribute_pct(layer_trd)
+        attr = attribute_pct(strategy_trd)
         bench_cmp = compare_to_benchmark(
             total_pnl, benchmark_return, portfolio_returns_series, benchmark_returns_series
         )
@@ -1005,6 +1021,9 @@ def review_close(
             "capital_layer": layer,
             "market": market,
             "trades": len(layer_trd),
+            "strategy_trades": len(strategy_trd),
+            "validation_sample_count": int(sample_quality.get("validation_sample_count", 0)),
+            "sample_quality": sample_quality,
             "wins": len(wins),
             "losses": len(losses),
             "win_rate": round(win_rate, 4),
@@ -1013,8 +1032,13 @@ def review_close(
             "ledger_realized_pnl": round(ledger.get("realized_pnl", 0.0), 6),
             "ledger_unrealized_pnl": round(ledger.get("unrealized_pnl", 0.0), 6),
             "ledger_total_pnl": round(ledger.get("total_pnl", 0.0), 6),
+            "ledger_strategy_realized_pnl": round(ledger.get("strategy_realized_pnl", 0.0), 6),
+            "ledger_strategy_unrealized_pnl": round(ledger.get("strategy_unrealized_pnl", 0.0), 6),
+            "ledger_strategy_total_pnl": round(ledger.get("strategy_total_pnl", 0.0), 6),
             "ledger_market_value": round(ledger.get("market_value", 0.0), 6),
+            "ledger_strategy_market_value": round(ledger.get("strategy_market_value", 0.0), 6),
             "ledger_open_position_count": int(ledger.get("open_position_count", 0)),
+            "ledger_strategy_open_position_count": int(ledger.get("strategy_open_position_count", 0)),
             "ledger_missing_mark_count": int(ledger.get("missing_mark_count", 0)),
             "ledger_pnl_source": ledger.get("pnl_source", ""),
             "stale": not layer_trd,
