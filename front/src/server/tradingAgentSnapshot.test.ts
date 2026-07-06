@@ -576,6 +576,53 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
+  it('uses only the canonical A-share server-local ledger for dashboard equity', async () => {
+    const root = await createWorkspace()
+    const legacyAshareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/aggressive')
+    const canonicalAshareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
+    await mkdir(legacyAshareRoot, { recursive: true })
+    await mkdir(canonicalAshareRoot, { recursive: true })
+
+    await writeFile(
+      join(legacyAshareRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-04T10:00:00+08:00',
+        date: '20260704',
+        capital_base: 16666.7,
+        total_pnl: -161.1,
+        trade_count: 1,
+        pnl_source: 'legacy_ashare_style_ledger',
+      }) + '\n',
+    )
+    await writeFile(
+      join(canonicalAshareRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-04T10:00:01+08:00',
+        date: '20260704',
+        capital_base: 200000,
+        total_pnl: 0,
+        trade_count: 0,
+        pnl_source: 'ashare_local_sim_mark_to_market',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.portfolio).toMatchObject({
+      capitalBase: 200000,
+      pnlAmount: 0,
+      pnlSource: 'ashare_local_sim_mark_to_market',
+      returnPct: 0,
+      tradeCount: 0,
+    })
+  })
+
   it('keeps performance empty with a clear message when only trade logs exist', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')

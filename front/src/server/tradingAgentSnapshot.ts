@@ -899,6 +899,7 @@ async function listSimLedgerFiles(root: string, targetName: 'positions.json' | '
       const strategies = await readdir(marketRoot, { withFileTypes: true })
       for (const strategy of strategies) {
         if (!strategy.isDirectory()) continue
+        if (market.name.toLowerCase() === 'ashare' && strategy.name !== 'ashare_sim') continue
         const path = join(marketRoot, strategy.name, targetName)
         if (await fileExists(path)) files.push({ path, market: market.name, strategy: strategy.name })
       }

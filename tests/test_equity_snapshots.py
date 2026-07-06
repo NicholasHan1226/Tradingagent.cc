@@ -150,6 +150,84 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(result["ledgers"][0]["status"], "dry_run")
             self.assertFalse((style_dir / "daily_mark_to_market.jsonl").exists())
 
+    def test_writer_uses_ashare_local_sim_instead_of_legacy_style_ledgers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "logs" / "sim_ledger"
+            local_sim_dir = base / "logs" / "local_sim"
+            legacy_style = root / "ashare" / "aggressive"
+            self._seed_ledger(legacy_style)
+            local_sim_dir.mkdir(parents=True)
+            (local_sim_dir / "local_sim_pnl.json").write_text(
+                json.dumps(
+                    {
+                        "ashare_sim": {
+                            "cash_available": 200_000.0,
+                            "positions": {},
+                            "total_pnl": 0.0,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = write_sim_ledger_equity_snapshots(
+                markets=["ashare"],
+                ledger_root=root,
+                local_sim_dir=local_sim_dir,
+                trade_date="20260706",
+            )
+
+            self.assertEqual(result["totals"]["ledger_count"], 1)
+            self.assertEqual(result["totals"]["written_count"], 1)
+            self.assertEqual(result["ledgers"][0]["style"], "ashare_sim")
+            self.assertEqual(result["ledgers"][0]["equity"], 200_000.0)
+            self.assertFalse((legacy_style / "daily_mark_to_market.jsonl").exists())
+            self.assertTrue((root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").exists())
+
+    def test_writer_marks_ashare_local_sim_with_recent_prices(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "logs" / "sim_ledger"
+            local_sim_dir = base / "logs" / "local_sim"
+            local_sim_dir.mkdir(parents=True)
+            (local_sim_dir / "local_sim_trades.jsonl").write_text(
+                json.dumps(
+                    {
+                        "account": "ashare_sim",
+                        "status": "filled",
+                        "ts_code": "600000.SH",
+                        "side": "buy",
+                        "quantity": 100,
+                        "filled_price": 10.0,
+                        "net_amount": 1000.0,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "shared.review.equity_snapshots.load_mark_prices_for_positions",
+                return_value={"600000.SH": 12.0},
+            ):
+                result = write_sim_ledger_equity_snapshots(
+                    markets=["ashare"],
+                    ledger_root=root,
+                    local_sim_dir=local_sim_dir,
+                    trade_date="20260706",
+                )
+
+            self.assertEqual(result["ledgers"][0]["total_pnl"], 200.0)
+            self.assertEqual(result["ledgers"][0]["equity"], 200_200.0)
+            rows = [
+                json.loads(line)
+                for line in (root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(rows[-1]["pnl_source"], "ashare_local_sim_mark_to_market")
+            self.assertEqual(rows[-1]["open_position_count"], 1)
+
     def test_load_mark_prices_uses_recent_daily_bar_for_weekend_snapshot(self) -> None:
         class FakeReader:
             def __init__(self, api_client=None):
