@@ -487,7 +487,7 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
-  it('aggregates latest same-day simulated ledger snapshots into one live portfolio result', async () => {
+  it('keeps intraday simulated ledger snapshots as a live performance curve', async () => {
     const root = await createWorkspace()
     const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
     const usLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/us/momentum')
@@ -521,6 +521,18 @@ describe('TradingAgent snapshot reader', () => {
           trade_count: 2,
           pnl_source: 'sim_ledger_mark_to_market',
         }),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:06:01+08:00',
+          date: '20260704',
+          capital_base: 1000,
+          total_pnl: 30,
+          realized_pnl: 14,
+          unrealized_pnl: 16,
+          max_drawdown_pct: 0.7,
+          trade_count: 4,
+          pnl_source: 'sim_ledger_mark_to_market',
+        }),
       ].join('\n') + '\n',
     )
     await writeFile(
@@ -550,6 +562,18 @@ describe('TradingAgent snapshot reader', () => {
           trade_count: 3,
           pnl_source: 'sim_ledger_mark_to_market',
         }),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:06:10+08:00',
+          date: '20260704',
+          capital_base: 2000,
+          total_pnl: -9,
+          realized_pnl: -3,
+          unrealized_pnl: -6,
+          max_drawdown_pct: 1.4,
+          trade_count: 4,
+          pnl_source: 'sim_ledger_mark_to_market',
+        }),
       ].join('\n') + '\n',
     )
 
@@ -560,19 +584,20 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月3日 10:00', simulated: 0.2, target: 4, benchmark: 0, opportunity: 0 },
-      { day: '现在', simulated: 0.5, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '7月3日 10:00', simulated: 0.2, target: 2.67, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:00', simulated: 0.5, target: 5.33, benchmark: 0, opportunity: 0 },
+      { day: '现在', simulated: 0.7, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 15,
-      returnPct: 0.5,
+      pnlAmount: 21,
+      returnPct: 0.7,
       capitalBase: 3000,
-      maxDrawdownPct: 1.2,
-      tradeCount: 5,
-      pointCount: 2,
+      maxDrawdownPct: 1.4,
+      tradeCount: 8,
+      pointCount: 3,
       pnlSource: 'sim_ledger_mark_to_market',
-      realizedPnl: 7,
-      unrealizedPnl: 8,
+      realizedPnl: 11,
+      unrealizedPnl: 10,
     })
   })
 

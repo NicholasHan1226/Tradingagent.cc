@@ -221,6 +221,8 @@ const SIGNAL_BUCKETS = ['pending', 'claimed', 'running', 'filled', 'expired', 'c
 const MAX_SIGNALS_PER_BUCKET = 80
 const MAX_SIM_LEDGER_SIGNALS = 120
 const DEFAULT_TARGET_RETURN_PCT = 8
+const SIM_LEDGER_EQUITY_BUCKET_MS = 5 * 60 * 1000
+const MAX_EQUITY_PERFORMANCE_POINTS = 48
 
 export async function readTradingAgentSnapshot({
   workspaceRoot,
@@ -383,18 +385,20 @@ function groupEquitySnapshotsByTimestamp(snapshots: ParsedEquitySnapshot[]) {
 }
 
 function groupSimLedgerEquitySnapshots(snapshots: ParsedEquitySnapshot[]) {
-  const latestByLedgerDay = new Map<string, ParsedEquitySnapshot>()
+  const latestByBucketAndSource = new Map<string, ParsedEquitySnapshot>()
   for (const snapshot of snapshots) {
-    const key = `${snapshot.dayKey}|${snapshot.sourcePath}`
-    const current = latestByLedgerDay.get(key)
-    if (!current || snapshot.timestampMs >= current.timestampMs) latestByLedgerDay.set(key, snapshot)
+    const bucketMs = bucketSimLedgerTimestamp(snapshot.timestampMs)
+    const key = `${bucketMs}|${snapshot.sourcePath}`
+    const current = latestByBucketAndSource.get(key)
+    if (!current || snapshot.timestampMs >= current.timestampMs) latestByBucketAndSource.set(key, snapshot)
   }
 
-  const groupedByDay = new Map<string, ParsedEquitySnapshot>()
-  for (const snapshot of [...latestByLedgerDay.values()].sort((a, b) => a.timestampMs - b.timestampMs)) {
-    const current = groupedByDay.get(snapshot.dayKey)
+  const groupedByBucket = new Map<number, ParsedEquitySnapshot>()
+  for (const snapshot of [...latestByBucketAndSource.values()].sort((a, b) => a.timestampMs - b.timestampMs)) {
+    const bucketMs = bucketSimLedgerTimestamp(snapshot.timestampMs)
+    const current = groupedByBucket.get(bucketMs)
     if (!current) {
-      groupedByDay.set(snapshot.dayKey, { ...snapshot, sources: new Set(snapshot.sources) })
+      groupedByBucket.set(bucketMs, { ...snapshot, sources: new Set(snapshot.sources) })
       continue
     }
     if (snapshot.timestampMs > current.timestampMs) {
@@ -404,11 +408,27 @@ function groupSimLedgerEquitySnapshots(snapshots: ParsedEquitySnapshot[]) {
     mergeEquitySnapshot(current, snapshot)
   }
 
-  return new Map(
-    [...groupedByDay.values()]
-      .sort((a, b) => a.timestampMs - b.timestampMs)
-      .map((snapshot) => [snapshot.timestampMs, snapshot] as const),
-  )
+  return limitPerformanceGroups(groupedByBucket, MAX_EQUITY_PERFORMANCE_POINTS)
+}
+
+function bucketSimLedgerTimestamp(timestampMs: number) {
+  return Math.floor(timestampMs / SIM_LEDGER_EQUITY_BUCKET_MS) * SIM_LEDGER_EQUITY_BUCKET_MS
+}
+
+function limitPerformanceGroups(grouped: Map<number, ParsedEquitySnapshot>, maxPoints: number) {
+  const entries = [...grouped.entries()].sort(([a], [b]) => a - b)
+  if (entries.length <= maxPoints) return new Map(entries)
+
+  const selected = new Map<number, ParsedEquitySnapshot>()
+  const lastIndex = entries.length - 1
+  for (let index = 0; index < maxPoints; index += 1) {
+    const sourceIndex = index === maxPoints - 1
+      ? lastIndex
+      : Math.round((index / (maxPoints - 1)) * lastIndex)
+    const [timestampMs, snapshot] = entries[sourceIndex]
+    selected.set(timestampMs, snapshot)
+  }
+  return selected
 }
 
 function mergeEquitySnapshot(current: ParsedEquitySnapshot, snapshot: ParsedEquitySnapshot) {
