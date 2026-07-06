@@ -92,6 +92,17 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["bootstrap_state"], "no_trades_yet")
 
+    def test_sim_position_sync_reads_bootstrap_snapshot_state(self) -> None:
+        self._write_json(
+            "signals/positions/simulated_ashare_positions.json",
+            {"positions": [], "bootstrap_state": "no_trades_yet"},
+        )
+
+        check = market_health._check_simulated_position_sync()
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.details["bootstrap_state"], "no_trades_yet")
+
     def test_failure_receipts_pass_before_first_failure_or_trade(self) -> None:
         check = market_health._check_failure_receipts()
 

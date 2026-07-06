@@ -319,7 +319,10 @@ def _check_simulated_position_sync() -> Check:
     else:
         position_count = 0
         sample = []
-    no_trade_bootstrap = not path.exists() and local_trade_count == 0
+    snapshot_bootstrap_state = str(data.get("bootstrap_state") or "")
+    no_trade_bootstrap = (not path.exists() and local_trade_count == 0) or (
+        snapshot_bootstrap_state == "no_trades_yet" and local_trade_count == 0
+    )
     ok = (path.exists() and position_count >= 0) or no_trade_bootstrap
     return Check(
         "ashare_sim_position_sync",
@@ -331,7 +334,7 @@ def _check_simulated_position_sync() -> Check:
             "sample": sample,
             "mtime": path.stat().st_mtime if path.exists() else None,
             "local_trade_count": local_trade_count,
-            "bootstrap_state": "no_trades_yet" if no_trade_bootstrap else "",
+            "bootstrap_state": snapshot_bootstrap_state or ("no_trades_yet" if no_trade_bootstrap else ""),
         },
         severity="warn",
     )
