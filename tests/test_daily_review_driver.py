@@ -172,6 +172,53 @@ class DailyReviewDriverTest(unittest.TestCase):
         self.assertEqual(ashare_review["strategy_trades"], 0)
         self.assertEqual(ashare_review["validation_sample_count"], 1)
 
+    def test_daily_review_ignores_retired_ashare_style_ledgers(self) -> None:
+        self._write_jsonl(
+            self.sim_ledger_dir / "ashare" / "aggressive" / "trade_journal.jsonl",
+            {
+                "timestamp": "2026-06-30T10:15:00+00:00",
+                "order_id": "OLD-ASHARE-STYLE",
+                "fill_id": "OLD-FILL",
+                "symbol": "600000.SH",
+                "side": "buy",
+                "fill_qty": 100,
+                "fill_price": 10.0,
+                "realized_pnl": 99,
+                "capital_layer": "simulated",
+            },
+        )
+        self._write_jsonl(
+            self.local_sim_trades,
+            {
+                "trade_id": "LSIM-1",
+                "order_id": "SIM-ASHARE-1",
+                "idempotency_key": "idem-1",
+                "market": "ashare",
+                "account": "ashare_server_sim",
+                "trade_date": "2026-06-30",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "requested_price": 10.0,
+                "filled_price": 10.01,
+                "amount": 1001,
+                "commission": 5,
+                "stamp_duty": 0,
+                "net_amount": 1006,
+                "status": "filled",
+                "source": "server_local_sim_backup",
+                "created_at": "2026-06-30T10:35:00+00:00",
+            },
+        )
+
+        close = daily_review.run_daily_review("20260630", session="close")
+
+        self.assertEqual(close["review_trade_count"], 1)
+        self.assertEqual(
+            close["source_trade_counts"]["by_source"],
+            {str(self.local_sim_trades): 1},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -158,8 +158,10 @@ def _load_style_ledger_trades(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for path in sorted(ledger_root.glob("**/trade_journal.jsonl")):
-        market, _strategy = _infer_market_strategy(path, ledger_root)
+        market, strategy = _infer_market_strategy(path, ledger_root)
         if not _market_allowed(market, markets):
+            continue
+        if market == "ashare" and strategy != "ashare_sim":
             continue
         for row in _read_jsonl_dicts(path):
             trade_date = row.get("trade_date") or row.get("timestamp") or row.get("created_at")
