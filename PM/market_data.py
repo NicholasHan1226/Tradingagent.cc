@@ -44,7 +44,11 @@ class PMMarketData(BaseMarketData):
         except TypeError:
             rows = self._query_market_pm_prices(symbol, start, end)
         except Exception:
-            return []
+            rows = []
+
+        if not rows:
+            latest = self._latest_market_row(symbol)
+            rows = [latest] if latest else []
 
         return self._clamp_rows(rows or [])
 
@@ -58,6 +62,14 @@ class PMMarketData(BaseMarketData):
             return None
         last = rows[-1]
         return self._extract_price(last)
+
+    def get_latest_outcome_price(self, symbol: str, date: str, outcome: str = "yes") -> float | None:
+        """Return the latest YES or NO price for a market at or before date."""
+        rows = self.get_daily(symbol, start="", end=date)
+        if not rows:
+            return None
+        last = rows[-1]
+        return self._extract_outcome_price(last, outcome)
 
     def get_universe(self, date: str) -> list[str]:
         """Return active market IDs for the given date.
@@ -146,6 +158,24 @@ class PMMarketData(BaseMarketData):
                     continue
         return None
 
+    @classmethod
+    def _extract_outcome_price(cls, row: dict[str, Any], outcome: str = "yes") -> float | None:
+        """Extract a price for the requested outcome.
+
+        Market rows are canonicalized around YES prices; NO uses explicit
+        no_price when present, otherwise the complement of the YES price.
+        """
+        if str(outcome).strip().lower() == "no":
+            for key in ("no_price", "no_last_price", "no_latest_price", "no_market_price"):
+                if key in row and row[key] is not None and row[key] != "":
+                    try:
+                        return clamp_probability(float(row[key]))
+                    except (TypeError, ValueError):
+                        continue
+            yes_price = cls._extract_price(row)
+            return None if yes_price is None else clamp_probability(1.0 - yes_price)
+        return cls._extract_price(row)
+
     @staticmethod
     def _extract_market_id(row: dict[str, Any]) -> str | None:
         """Extract market identifier from a row."""
@@ -156,7 +186,7 @@ class PMMarketData(BaseMarketData):
 
     def _clamp_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Clamp all price values in rows to [0, 1]."""
-        price_keys = {"yes_price", "last_price", "price", "implied_probability", "probability",
+        price_keys = {"yes_price", "no_price", "last_price", "price", "implied_probability", "probability",
                       "yes_bid", "yes_ask", "no_bid", "no_ask"}
         result: list[dict[str, Any]] = []
         for row in rows:
@@ -168,6 +198,21 @@ class PMMarketData(BaseMarketData):
                     pass
             result.append(clamped)
         return result
+
+    def _latest_market_row(self, symbol: str) -> dict[str, Any] | None:
+        try:
+            rows = self.reader.get_pm_markets(limit=500)
+        except Exception:
+            return None
+        if not rows:
+            return None
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            market_id = self._extract_market_id(row)
+            if market_id and str(market_id) == str(symbol):
+                return row
+        return None
 
     def _query_market_pm_prices(
         self, symbol: str, start: str, end: str

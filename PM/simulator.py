@@ -104,7 +104,7 @@ class PMSimulator(BaseSimulator):
         )
 
         # Resolve fill price
-        fill_price = self._resolve_fill_price(order, limit_price, side)
+        fill_price = self._resolve_fill_price(order, limit_price, side, outcome)
 
         # Apply settlement logic
         settlement = self._compute_settlement(outcome, fill_price, qty)
@@ -132,12 +132,16 @@ class PMSimulator(BaseSimulator):
             "live_clob": False,
         }
 
-    def fill_price(self, symbol: str, date: str) -> float | None:
-        """Return the latest YES price for a market as the simulated fill.
+    def fill_price(self, symbol: str, date: str, outcome: str = "yes") -> float | None:
+        """Return the latest outcome price for a market as the simulated fill.
 
         Falls back to 0.5 (maximum entropy) when no data is available.
         """
-        price = self.market_data.get_latest_price(symbol, date)
+        get_outcome_price = getattr(self.market_data, "get_latest_outcome_price", None)
+        if callable(get_outcome_price):
+            price = get_outcome_price(symbol, date, outcome)
+        else:
+            price = self.market_data.get_latest_price(symbol, date)
         if price is not None:
             return clamp_probability(price)
         # Maximum entropy default when no data
@@ -150,6 +154,7 @@ class PMSimulator(BaseSimulator):
         order: dict[str, Any],
         limit_price: float,
         side: str,
+        outcome: str,
     ) -> float:
         """Resolve the simulated fill price from market data or order price."""
         market_id = str(order.get("market_id") or order.get("symbol") or "")
@@ -157,7 +162,7 @@ class PMSimulator(BaseSimulator):
         date = str(order.get("date") or order.get("as_of") or
                    datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
-        market_price = self.fill_price(market_id, date)
+        market_price = self.fill_price(market_id, date, outcome)
 
         # Simple spread simulation: buy fills at market + small spread, sell at market - spread
         spread = 0.005  # 0.5% default spread
