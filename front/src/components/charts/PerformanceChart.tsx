@@ -71,7 +71,7 @@ export function PerformanceChart({
       const point = data.find((item) => item.day === event.day)
       return point ? { event, point } : null
     })
-    .filter((item): item is { event: ChartEvent; point: PerformancePoint } => Boolean(item))
+    .filter((item): item is { event: ChartEvent; point: PerformancePoint } => item != null && item.point.quality !== 'outlier')
 
   return (
     <div className="chart-box hyper-chart-panel" style={{ height }}>
