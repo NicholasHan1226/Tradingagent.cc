@@ -12,7 +12,7 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     expect(screen.getByLabelText('实时收益')).toBeInTheDocument()
-    expect(screen.getByLabelText('交易漏斗')).toBeInTheDocument()
+    expect(screen.getByLabelText('机会管道')).toBeInTheDocument()
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
     expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '模拟盘' })).toBeInTheDocument()
     expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '实盘' })).toBeInTheDocument()

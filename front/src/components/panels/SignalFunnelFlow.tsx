@@ -63,7 +63,7 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
   const conversionRate = Math.round((finalStageCount / firstStageCount) * 100)
 
   return (
-    <section className="signal-flow-module" aria-label="交易漏斗">
+    <section className="signal-flow-module" aria-label="机会管道">
       <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''}`}>
         <div className="flow-caption">
           <span>机会管道 <b>{modeLabel}</b></span>
