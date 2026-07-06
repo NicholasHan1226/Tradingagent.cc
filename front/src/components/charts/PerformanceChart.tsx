@@ -20,6 +20,21 @@ function getPerformanceDomain(data: PerformancePoint[]) {
   return [min, max] as [number, number]
 }
 
+function getFocusedPerformanceDomain(data: PerformancePoint[], latestPoint: PerformancePoint) {
+  const rawDomain = getPerformanceDomain(data)
+  const visibleValues = [latestPoint.simulated, latestPoint.target, latestPoint.benchmark, latestPoint.opportunity, -DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT]
+  const center = (Math.min(...visibleValues) + Math.max(...visibleValues)) / 2
+  const span = Math.max(18, Math.min(52, Math.abs(latestPoint.simulated - latestPoint.target) + 20))
+  const min = Math.floor(Math.max(rawDomain[0], center - span / 2))
+  const max = Math.ceil(Math.min(rawDomain[1], center + span / 2))
+
+  return max - min >= 14 ? [min, max] as [number, number] : rawDomain
+}
+
+function clampToDomain(value: number, [min, max]: [number, number]) {
+  return Math.min(max, Math.max(min, value))
+}
+
 export function PerformanceChart({
   data,
   events = [],
@@ -35,6 +50,14 @@ export function PerformanceChart({
 }) {
   const targetGap = latestPoint.simulated - latestPoint.target
   const riskDistance = DRAWDOWN_LIMIT_PCT - Math.abs(Math.min(0, latestPoint.opportunity))
+  const visualDomain = getFocusedPerformanceDomain(data, latestPoint)
+  const plotData = data.map((point) => ({
+    ...point,
+    simulatedPlot: clampToDomain(point.simulated, visualDomain),
+    targetPlot: clampToDomain(point.target, visualDomain),
+    benchmarkPlot: clampToDomain(point.benchmark, visualDomain),
+    opportunityPlot: clampToDomain(point.opportunity, visualDomain),
+  }))
   const eventPoints = events
     .map((event) => {
       const point = data.find((item) => item.day === event.day)
@@ -60,7 +83,7 @@ export function PerformanceChart({
       </div>
       <div className="chart-plot">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 10, right: 18, left: -8, bottom: 4 }}>
+          <LineChart data={plotData} margin={{ top: 10, right: 18, left: -8, bottom: 4 }}>
             <CartesianGrid stroke={chartColors.grid} vertical={false} />
             <XAxis
               dataKey="day"
@@ -71,7 +94,8 @@ export function PerformanceChart({
             />
             <YAxis
               width={42}
-              domain={getPerformanceDomain(data)}
+              allowDataOverflow
+              domain={visualDomain}
               tickCount={4}
               tickFormatter={(value) => `${value}%`}
               tick={{ fill: 'var(--text-faint)', fontSize: 10 }}
@@ -84,7 +108,7 @@ export function PerformanceChart({
             <ReferenceLine x="现在" stroke={chartColors.simulated} strokeDasharray="2 8" />
             <ReferenceDot
               x="现在"
-              y={latestPoint.simulated}
+              y={clampToDomain(latestPoint.simulated, visualDomain)}
               r={4}
               fill={chartColors.simulated}
               stroke="#050b0b"
@@ -94,17 +118,17 @@ export function PerformanceChart({
               <ReferenceDot
                 key={`${event.day}-${event.targetPage}-dot`}
                 x={event.day}
-                y={point.simulated}
+                y={clampToDomain(point.simulated, visualDomain)}
                 r={3.25}
                 fill="#050b0b"
                 stroke={chartColors.simulated}
                 strokeWidth={1.4}
               />
             ))}
-            <Line type="monotone" dataKey="simulated" stroke={chartColors.simulated} strokeWidth={2.15} dot={false} animationDuration={450} />
-            <Line type="monotone" dataKey="target" stroke={chartColors.target} strokeWidth={1.25} strokeDasharray="7 8" dot={false} isAnimationActive={false} />
-            <Line type="monotone" dataKey="benchmark" stroke={chartColors.benchmark} strokeWidth={1.15} dot={false} isAnimationActive={false} />
-            <Line type="monotone" dataKey="opportunity" stroke={chartColors.opportunity} strokeWidth={1.2} strokeDasharray="7 8" dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="simulatedPlot" stroke={chartColors.simulated} strokeWidth={2.15} dot={false} animationDuration={450} />
+            <Line type="monotone" dataKey="targetPlot" stroke={chartColors.target} strokeWidth={1.25} strokeDasharray="7 8" dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="benchmarkPlot" stroke={chartColors.benchmark} strokeWidth={1.15} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="opportunityPlot" stroke={chartColors.opportunity} strokeWidth={1.2} strokeDasharray="7 8" dot={false} isAnimationActive={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -141,10 +165,10 @@ function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null
 
   const labels: Record<string, string> = {
-    simulated: '模拟盘',
-    target: '目标',
-    benchmark: '市场基准',
-    opportunity: '机会偏差',
+    simulatedPlot: '模拟盘',
+    targetPlot: '目标',
+    benchmarkPlot: '市场基准',
+    opportunityPlot: '机会差',
   }
 
   return (
@@ -152,10 +176,10 @@ function ChartTooltip({ active, payload, label }: any) {
       <strong>{label}</strong>
       {payload.map((item: any) => (
         <span key={item.dataKey}>
-          {labels[item.dataKey] ?? item.dataKey}: {Number(item.value).toFixed(2)}%
+          {labels[item.dataKey] ?? item.dataKey}: {Number(item.payload?.[String(item.dataKey).replace('Plot', '')] ?? item.value).toFixed(2)}%
         </span>
       ))}
-      <em>目标线 +{TARGET_RETURN_PCT.toFixed(2)}% · 风险线 -{DRAWDOWN_LIMIT_PCT.toFixed(2)}%</em>
+      <em>视图按当前区间裁切；数值为真实记录。</em>
     </div>
   )
 }
