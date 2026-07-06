@@ -82,11 +82,11 @@ export function HomeDashboard({
             <span>收益曲线</span>
             <strong>{hasPerformanceData ? '持续性与风险距离' : '等待收益、目标和基准数据'}</strong>
           </div>
-          <StatusBoundary loading={<ChartSkeleton height={316} />} onRetry={onRetry} status={hasPerformanceData ? domainStatus('performance') : 'ready'}>
+          <StatusBoundary loading={<ChartSkeleton height={236} />} onRetry={onRetry} status={hasPerformanceData ? domainStatus('performance') : 'ready'}>
             {hasPerformanceData ? (
-              <PerformanceChart data={data} events={events} height={316} latestPoint={latestPoint} onSelectEvent={setActivePage} />
+              <PerformanceChart data={data} events={events} height={236} latestPoint={latestPoint} onSelectEvent={setActivePage} />
             ) : (
-              <div className="chart-empty-state" style={{ height: 316 }}>
+              <div className="chart-empty-state" style={{ height: 236 }}>
                 <span>等待收益序列</span>
                 <strong>连接正常，暂无可展示的收益曲线。</strong>
                 <p>当模拟盘写入净值、目标和市场基准后，这里会自动更新。</p>
