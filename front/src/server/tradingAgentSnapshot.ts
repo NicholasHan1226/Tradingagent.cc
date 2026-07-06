@@ -317,10 +317,10 @@ export async function readTradingAgentSnapshot({
   const holdings = await readPositionSnapshots(positionsPath)
   const planHoldings = await readPositionPlan(positionPlanPath)
   const simLedgerHoldings = await readSimLedgerHoldings(simLedgerRoot)
-  const fallbackHoldings = firstNonEmpty(holdings, planHoldings, simLedgerHoldings)
+  const fallbackHoldings = mergeHoldings(holdings, planHoldings, simLedgerHoldings)
   const queueSignals = await readSignalQueue(queueRoot, now)
   const simLedgerSignals = await readSimLedgerSignals(simLedgerRoot, now)
-  const signals = queueSignals.length > 0 ? queueSignals : simLedgerSignals
+  const signals = mergeSignals(queueSignals, simLedgerSignals)
   const funnelEvents = buildFunnelEvents(signals)
   const reviewPerformance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
@@ -436,6 +436,28 @@ function attachAShareAccountSummary(
     ashareAccount,
     updatedAt: generatedAt,
   }
+}
+
+function mergeHoldings(...sources: HoldingRow[][]): HoldingRow[] {
+  const rows = new Map<string, HoldingRow>()
+  for (const source of sources) {
+    for (const holding of source) {
+      const key = `${holding.market}:${holding.symbol}:${holding.role}`
+      if (!rows.has(key)) rows.set(key, holding)
+    }
+  }
+  return [...rows.values()]
+}
+
+function mergeSignals(...sources: SignalRow[][]): SignalRow[] {
+  const rows = new Map<string, SignalRow>()
+  for (const source of sources) {
+    for (const signal of source) {
+      const key = `${signal.market}:${signal.symbol}:${signal.method}:${signal.status}:${signal.stage ?? ''}:${signal.age}`
+      if (!rows.has(key)) rows.set(key, signal)
+    }
+  }
+  return [...rows.values()].sort((a, b) => Number.parseInt(a.age, 10) - Number.parseInt(b.age, 10))
 }
 
 async function buildMarketSummaries({
@@ -636,6 +658,8 @@ function mergeMarketStyleSummary(current: MarketStyleSummary, next: MarketStyleS
 }
 
 function summarizeStyleStates(value: unknown) {
+  if (Array.isArray(value)) return summarizeStyleStateRows(value)
+
   const states = asRecord(value)
   let active = 0
   let degraded = 0
@@ -654,6 +678,24 @@ function summarizeStyleStates(value: unknown) {
     }
 
     const state = String(raw ?? '').toLowerCase()
+    if (!state) continue
+    total += 1
+    if (state.includes('active') || state.includes('ready')) active += 1
+    else if (state.includes('degraded') || state.includes('warn')) degraded += 1
+    else if (state.includes('paused') || state.includes('disabled')) paused += 1
+  }
+
+  return { active, degraded, paused, total }
+}
+
+function summarizeStyleStateRows(rows: unknown[]) {
+  let active = 0
+  let degraded = 0
+  let paused = 0
+  let total = 0
+
+  for (const row of rows) {
+    const state = String(asRecord(row).status ?? row ?? '').toLowerCase()
     if (!state) continue
     total += 1
     if (state.includes('active') || state.includes('ready')) active += 1

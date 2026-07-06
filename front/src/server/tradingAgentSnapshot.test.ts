@@ -1136,6 +1136,59 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.domains.signals.status).toBe('ready')
   })
 
+  it('merges signal queue rows with non-A-share simulated ledger rows', async () => {
+    const root = await createWorkspace()
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(ledgerRoot, { recursive: true })
+
+    await writeFile(
+      join(root, 'signals/filled/600519.SH.json'),
+      JSON.stringify({
+        ts_code: '600519.SH',
+        market: 'ashare',
+        status: 'filled',
+        fill: { filled_at: '2026-07-06T01:30:00.000Z', filled_price: 1500, filled_qty: 1 },
+      }),
+    )
+    await writeFile(
+      join(root, 'TradingAgent/signals/positions/ashare.json'),
+      JSON.stringify([{ ts_code: '600519.SH', quantity: 1, market_value: 1500, realized_pnl: 0 }]),
+    )
+    await writeFile(
+      join(ledgerRoot, 'positions.json'),
+      JSON.stringify({
+        cash: 9000,
+        positions: {
+          ETHUSDT: { avg_cost: 3100, quantity: 0.5, realized_pnl: 18 },
+        },
+      }),
+    )
+    await writeFile(
+      join(ledgerRoot, 'trade_journal.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        fill_price: 3100,
+        fill_qty: 0.5,
+        notional: 1550,
+        side: 'buy',
+        symbol: 'ETHUSDT',
+        timestamp: '2026-07-06T02:00:00.000Z',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T03:00:00.000Z'),
+    })
+
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: '600519.SH', market: 'A-share' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'ETH-USD', market: 'Crypto', stage: '成交' }))
+    expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: '600519.SH', market: 'A-share' }))
+    expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: 'ETH-USD', market: 'Crypto' }))
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({ market: 'Crypto', signalCount: 1, holdingCount: 1 }))
+  })
+
   it('reads CNFutures simulated position snapshots from signals/positions', async () => {
     const root = await createWorkspace()
 
@@ -1183,7 +1236,10 @@ describe('TradingAgent snapshot reader', () => {
         real_execution: false,
         styles_total: 2,
         styles_loaded: 2,
-        style_states: { grid: 'active', momentum: 'degraded' },
+        style_states: [
+          { style_name: 'grid', status: 'active' },
+          { style_name: 'momentum', status: 'degraded' },
+        ],
         filled_count: 3,
         error_count: 1,
         signal_count: 4,
