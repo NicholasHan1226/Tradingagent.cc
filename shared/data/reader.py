@@ -488,10 +488,17 @@ class TradingagentDataReader:
         return self._marketgraph
 
     @staticmethod
+    def _canonical_market(market: str | None) -> str:
+        key = str(market or "").strip().lower()
+        if key in {"", "ashare", "a_share", "a-share", "a股", "cn", "china"}:
+            return "Ashare"
+        return str(market or "").strip()
+
+    @staticmethod
     def _to_ts_code(market: str, symbol: str) -> str:
         if "." in symbol:
             return symbol
-        if market == "Ashare" and symbol.isdigit() and len(symbol) == 6:
+        if TradingagentDataReader._canonical_market(market) == "Ashare" and symbol.isdigit() and len(symbol) == 6:
             suffix = "SH" if symbol.startswith(("5", "6", "9")) else "SZ"
             return f"{symbol}.{suffix}"
         return symbol
@@ -598,12 +605,16 @@ class TradingagentDataReader:
         self, market: str, symbol: str, start: str = "", end: str = ""
     ) -> list[dict[str, Any]]:
         try:
-            ts_code = self._to_ts_code(market, symbol)
+            market_name = self._canonical_market(market)
+            ts_code = self._to_ts_code(market_name, symbol)
 
             start_value = start or end or None
             end_value = end or start or None
 
             def fallback() -> list[dict[str, Any]]:
+                rows = self.shared.get_bars_daily(market_name, ts_code, start_value or "", end_value or "")
+                if rows:
+                    return rows
                 return self.shared.get_bars_daily(market, symbol, start_value or "", end_value or "")
 
             result = self._api_call(
@@ -614,13 +625,13 @@ class TradingagentDataReader:
                 end=end_value,
                 freq="daily",
             )
-            normalized = self._normalize_market_rows(result, market, symbol)
+            normalized = self._normalize_market_rows(result, market_name, ts_code)
             if not self._has_priced_market_rows(normalized):
                 fallback_rows = fallback()
                 if fallback_rows:
                     self._last_api_used = False
                     self._record_shared_error("get_bars_daily")
-                    return self._normalize_market_rows(fallback_rows, market, symbol)
+                    return self._normalize_market_rows(fallback_rows, market_name, ts_code)
             self._record_shared_error("get_bars_daily")
             return normalized
         except Exception as e:

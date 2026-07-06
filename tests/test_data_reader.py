@@ -415,6 +415,22 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(api.market_data_calls[0]["start"], "20260703")
         self.assertEqual(api.market_data_calls[0]["end"], "20260703")
 
+    def test_get_bars_daily_fallback_canonicalizes_ashare_market(self) -> None:
+        class StrictAshareShared(FakeSharedBars):
+            def get_bars_daily(self, market, symbol, start_date="", end_date=""):
+                if market == "Ashare" and symbol == "000001.SZ":
+                    return super().get_bars_daily(market, symbol, start_date, end_date)
+                return []
+
+        api = EmptyShellAPIClient()
+        reader = TradingagentDataReader(shared=StrictAshareShared(), api_client=api)
+
+        rows = reader.get_bars_daily("ashare", "000001.SZ", "20260622", "20260706")
+
+        self.assertEqual(rows[0]["close"], 23350.03)
+        self.assertEqual(rows[0]["market"], "Ashare")
+        self.assertEqual(rows[0]["symbol"], "000001.SZ")
+
     def test_get_market_data_falls_back_when_api_returns_empty_shell(self) -> None:
         api = EmptyShellAPIClient()
         reader = TradingagentDataReader(shared=FakeSharedBars(), api_client=api)
