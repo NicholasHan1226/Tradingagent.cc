@@ -36,7 +36,7 @@ export function RealtimeReturnCard({
   const hasAmount = portfolio !== null
   const primaryResult = hasAmount ? formatCurrency(liveProfit) : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
   const resultCaption = hasAmount
-    ? `收益率 ${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
+    ? `当前收益率 ${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
     : '等待金额'
   const activityLabel = portfolio
     ? `${portfolio.tradeCount} 次成交 · ${portfolio.pointCount} 个收益点`
@@ -47,7 +47,7 @@ export function RealtimeReturnCard({
   return (
     <aside className="realtime-return-card" aria-label="实时收益">
       <div className="return-card-head">
-        <span>{modeLabel}</span>
+        <span>{modeLabel}收益</span>
         <div className="return-mode-switch" aria-label="账户层切换" role="tablist">
           <button className={!isLive ? 'selected' : ''} onClick={() => selectAccountMode('simulated')} type="button">
             模拟盘
@@ -57,11 +57,11 @@ export function RealtimeReturnCard({
           </button>
         </div>
       </div>
-      <span className="return-kicker">实时收益</span>
+      <span className="return-kicker">核心结果</span>
       {isLive ? (
         <div className="return-placeholder">
-          <strong>实盘结果未开启</strong>
-          <p>接入完成后可在这里切换查看；当前只展示模拟盘。</p>
+          <strong>实盘待接入</strong>
+          <p>接入后展示真实账户结果；当前以模拟盘为主。</p>
         </div>
       ) : !hasPerformanceData ? (
         <div className="return-placeholder">
@@ -95,7 +95,7 @@ export function RealtimeReturnCard({
           <small>{gapLabel} · {activityLabel}</small>
         </>
       )}
-      <button onClick={() => setActivePage('收益')} type="button">查看收益详情</button>
+      <button onClick={() => setActivePage('收益')} type="button">收益详情</button>
     </aside>
   )
 }

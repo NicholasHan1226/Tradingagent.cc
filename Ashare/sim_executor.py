@@ -180,7 +180,7 @@ def _snapshot_from_payload(
                     config.get("initial_capital"),
                     account.get("initial_capital") if isinstance(account, dict) else None,
                     account.get("cash") if isinstance(account, dict) else None,
-                    default=100_000.0,
+                    default=200_000.0,
                 ),
             )
         except Exception:

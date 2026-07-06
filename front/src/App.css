@@ -732,6 +732,14 @@ button:not(:disabled) {
   overflow: hidden;
 }
 
+.real-funnel-board {
+  min-height: 344px;
+  padding: 48px 12px 112px;
+  background:
+    linear-gradient(180deg, rgba(240, 246, 244, 0.01), transparent 54%),
+    rgba(1, 5, 5, 0.74);
+}
+
 .signal-flow-board::before {
   content: '';
   position: absolute;
@@ -783,6 +791,117 @@ button:not(:disabled) {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 560;
+}
+
+.real-funnel-stage-grid {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(240, 246, 244, 0.064);
+  border-radius: 4px;
+  background: rgba(1, 6, 6, 0.84);
+}
+
+.real-funnel-stage-card {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  min-height: 76px;
+  padding: 11px 12px;
+  border-left: 1px solid var(--border-hairline);
+}
+
+.real-funnel-stage-card:first-child {
+  border-left: 0;
+}
+
+.real-funnel-stage-card span,
+.real-funnel-stage-card em {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.real-funnel-stage-card strong {
+  color: var(--text-primary);
+  font: 740 24px/1 var(--font-number);
+}
+
+.real-funnel-stage-card em {
+  color: var(--text-faint);
+}
+
+.real-funnel-body {
+  position: relative;
+  z-index: 2;
+  height: 132px;
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(240, 246, 244, 0.058);
+  border-radius: 4px;
+  background: rgba(1, 5, 5, 0.66);
+}
+
+.real-funnel-rulers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.real-funnel-rulers i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(240, 246, 244, 0.052);
+}
+
+.real-funnel-channel {
+  position: absolute;
+  inset: 18px 14px;
+  pointer-events: none;
+}
+
+.real-funnel-segment {
+  --segment-left: 0%;
+  --segment-width: 40%;
+  position: absolute;
+  top: 50%;
+  left: var(--segment-left);
+  width: 20%;
+  height: var(--segment-width);
+  min-height: 12px;
+  max-height: 58px;
+  transform: translateY(-50%);
+  border-top: 1px solid rgba(105, 228, 215, 0.18);
+  border-bottom: 1px solid rgba(105, 228, 215, 0.08);
+  background: rgba(105, 228, 215, 0.035);
+}
+
+.real-funnel-board .funnel-particle {
+  top: calc(18px + (var(--lane) * 9px));
+  left: 10px;
+  height: 16px;
+  border-color: rgba(105, 228, 215, 0.18);
+  background: rgba(1, 7, 7, 0.92);
+}
+
+.real-funnel-board .funnel-particle.quiet {
+  top: calc(24px + (var(--lane) * 8px));
+}
+
+.real-funnel-board .flow-outcome-strip {
+  bottom: 50px;
+}
+
+.real-funnel-board .flow-bottleneck {
+  bottom: 13px;
 }
 
 .funnel-pipeline {

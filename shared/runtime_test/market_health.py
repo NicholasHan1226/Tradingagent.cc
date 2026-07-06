@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 DEFAULT_MINI_HEALTH_URL = "http://127.0.0.1:9865/health"
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
+STALE_SIGNAL_MINUTES = 60
 VALID_ASHARE_RE = re.compile(r"^(000|001|002|003|300|301|600|601|603|605|688|689)\d{3}(\.(SZ|SH))?$", re.I)
 INVALID_ASHARE_RE = re.compile(r"\b(?:200\d{3}\.SZ|900\d{3}\.SH)\b", re.I)
 REQUIRED_TEMPLATES = [
@@ -163,6 +164,19 @@ def _file_age_minutes(path: Path) -> float | None:
     return round(max(0.0, (datetime.now(timezone.utc).timestamp() - path.stat().st_mtime) / 60.0), 2)
 
 
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _iter_json_files(path: Path) -> list[Path]:
     if not path.exists():
         return []
@@ -171,6 +185,45 @@ def _iter_json_files(path: Path) -> list[Path]:
 
 def _count_json_files(path: Path) -> int:
     return len(_iter_json_files(path))
+
+
+def _compact_date_key(value: Any) -> str:
+    raw = str(value or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    return digits[:8] if len(digits) >= 8 else ""
+
+
+def _position_count_from_snapshot(payload: dict[str, Any]) -> int:
+    positions = payload.get("positions") or payload.get("holdings") or []
+    if isinstance(positions, dict):
+        return len(positions)
+    if isinstance(positions, list):
+        return len(positions)
+    return 0
+
+
+def _position_count_from_positions_payload(payload: dict[str, Any]) -> int:
+    if not isinstance(payload, dict):
+        return 0
+    total = 0
+    for account_positions in payload.values():
+        if isinstance(account_positions, dict):
+            total += len(account_positions)
+        elif isinstance(account_positions, list):
+            total += len(account_positions)
+    return total
+
+
+def _execution_card_stale(path: Path, card: dict[str, Any]) -> dict[str, Any] | None:
+    age = _file_age_minutes(path)
+    today = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).strftime("%Y%m%d")
+    for key in ("valid_until", "trade_date", "date"):
+        date_key = _compact_date_key(card.get(key))
+        if date_key and date_key < today:
+            return {"path": str(path.relative_to(ROOT)), "reason": f"{key}_expired", "date": date_key, "age_minutes": age}
+    if age is not None and age > STALE_SIGNAL_MINUTES:
+        return {"path": str(path.relative_to(ROOT)), "reason": "age_exceeded", "age_minutes": age}
+    return None
 
 
 def _status(ok: bool, warn: bool = False) -> str:
@@ -266,6 +319,7 @@ def _check_signal_queues() -> Check:
     execution = _market_layer_counts(ROOT / "signals")
     shadow = _market_layer_counts(ROOT / "signals/shadow")
     leaked_shadow = []
+    stale_execution = []
     for state in ["pending", "claimed", "running", "failed", "expired", "cancelled", "filled"]:
         for path in _iter_json_files(ROOT / "signals" / state):
             try:
@@ -274,12 +328,17 @@ def _check_signal_queues() -> Check:
                 card = {}
             if str(card.get("capital_layer") or "").lower() == "shadow" or path.name.startswith("SHADOW-"):
                 leaked_shadow.append(str(path.relative_to(ROOT)))
-    ok = execution["pending"] == 0 and execution["claimed"] == 0 and execution["running"] == 0 and not leaked_shadow
+            if state in {"pending", "claimed", "running"} and isinstance(card, dict):
+                stale = _execution_card_stale(path, card)
+                if stale:
+                    stale["state"] = state
+                    stale_execution.append(stale)
+    ok = execution["pending"] == 0 and execution["claimed"] == 0 and execution["running"] == 0 and not leaked_shadow and not stale_execution
     return Check(
         "signal_queue_isolation",
         _status(ok),
-        "执行队列与影子队列已隔离" if ok else "执行队列存在待处理/影子污染",
-        {"execution_queue": execution, "shadow_queue": shadow, "leaked_shadow_sample": leaked_shadow[:20]},
+        "执行队列与影子队列已隔离" if ok else "执行队列存在待处理/影子污染/陈旧信号",
+        {"execution_queue": execution, "shadow_queue": shadow, "leaked_shadow_sample": leaked_shadow[:20], "stale_execution_sample": stale_execution[:20]},
     )
 
 
@@ -392,7 +451,9 @@ def _check_local_sim_ledger() -> Check:
         from shared.execution import local_sim_ledger
 
         trades_path = local_sim_ledger.LOCAL_SIM_TRADES
+        positions_path = local_sim_ledger.LOCAL_SIM_POSITIONS
         pnl_path = local_sim_ledger.LOCAL_SIM_PNL
+        snapshot_path = local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT
         invalid_matches = 0
         if trades_path.exists():
             for line in trades_path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -406,20 +467,126 @@ def _check_local_sim_ledger() -> Check:
                 if symbol and not VALID_ASHARE_RE.match(symbol):
                     invalid_matches += 1
         pnl = _load_json(pnl_path, {}) if pnl_path.exists() else {}
-        ok = invalid_matches == 0
+        positions_payload = _load_json(positions_path, {}) if positions_path.exists() else {}
+        snapshot = _load_json(snapshot_path, {}) if snapshot_path.exists() else {}
+        position_count = _position_count_from_positions_payload(positions_payload if isinstance(positions_payload, dict) else {})
+        snapshot_position_count = _position_count_from_snapshot(snapshot if isinstance(snapshot, dict) else {})
+        consistency_errors: list[str] = []
+        if trades_path.exists() and snapshot_path.exists() and position_count != snapshot_position_count:
+            consistency_errors.append("position_count_mismatch")
+        missing_cash_accounts: list[str] = []
+        cash_mismatch_accounts: list[str] = []
+        snapshot_pnl = snapshot.get("pnl") if isinstance(snapshot, dict) and isinstance(snapshot.get("pnl"), dict) else {}
+        if isinstance(pnl, dict):
+            for account, account_pnl in pnl.items():
+                if not isinstance(account_pnl, dict):
+                    continue
+                local_cash = account_pnl.get("cash_available")
+                if local_cash is None:
+                    missing_cash_accounts.append(str(account))
+                    continue
+                snapshot_account = snapshot_pnl.get(account) if isinstance(snapshot_pnl.get(account), dict) else {}
+                snapshot_cash = snapshot_account.get("cash_available")
+                if snapshot_cash is not None and abs(_safe_float(local_cash) - _safe_float(snapshot_cash)) > 0.01:
+                    cash_mismatch_accounts.append(str(account))
+        if missing_cash_accounts:
+            consistency_errors.append("cash_available_missing")
+        if cash_mismatch_accounts:
+            consistency_errors.append("cash_available_mismatch")
+        ok = invalid_matches == 0 and not consistency_errors
         return Check(
             "ashare_server_local_sim",
             _status(ok),
-            "服务器本地模拟盘备份账本可用" if ok else "服务器本地模拟盘备份账本存在异常 A股代码",
+            "服务器本地模拟盘备份账本可用" if ok else "服务器本地模拟盘备份账本存在异常",
             {
                 "trade_log_exists": trades_path.exists(),
                 "pnl_exists": pnl_path.exists(),
                 "accounts": sorted(pnl.keys()) if isinstance(pnl, dict) else [],
                 "invalid_code_matches": invalid_matches,
+                "position_count": position_count,
+                "snapshot_position_count": snapshot_position_count,
+                "consistency_errors": consistency_errors,
+                "missing_cash_accounts": missing_cash_accounts,
+                "cash_mismatch_accounts": cash_mismatch_accounts,
             },
         )
     except Exception as exc:  # noqa: BLE001
         return Check("ashare_server_local_sim", "fail", "服务器本地模拟盘备份账本不可用", {"error": f"{exc.__class__.__name__}: {exc}"})
+
+
+def _latest_ashare_capital_plan_row() -> tuple[Path | None, dict[str, Any]]:
+    target_dir = ROOT / "shared/review/ashare"
+    files = sorted(target_dir.glob("capital_plan_*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True) if target_dir.exists() else []
+    for path in files:
+        rows = [line for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+        for line in reversed(rows):
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return path, payload
+    return None, {}
+
+
+def _check_ashare_capital_plan_alignment() -> Check:
+    local_trades_path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
+    local_trade_count = _count_jsonl_rows(local_trades_path)
+    snapshot_path = ROOT / "signals/positions/simulated_ashare_positions.json"
+    snapshot = _load_json(snapshot_path, {}) if snapshot_path.exists() else {}
+    snapshot_count = _position_count_from_snapshot(snapshot if isinstance(snapshot, dict) else {})
+    if local_trade_count == 0 and snapshot_count == 0:
+        return Check(
+            "ashare_capital_plan_alignment",
+            "pass",
+            "A股模拟盘尚无成交，资金计划持仓对账待首笔成交后启用",
+            {"local_trade_count": local_trade_count, "snapshot_position_count": snapshot_count, "bootstrap_state": "no_trades_yet"},
+            severity="warn",
+        )
+
+    plan_path, row = _latest_ashare_capital_plan_row()
+    if not row:
+        return Check(
+            "ashare_capital_plan_alignment",
+            "warn",
+            "A股资金计划日志尚未生成，无法对账持仓数",
+            {"local_trade_count": local_trade_count, "snapshot_position_count": snapshot_count},
+            severity="warn",
+        )
+
+    capital_plan = row.get("capital_plan") if isinstance(row.get("capital_plan"), dict) else {}
+    rebalance = row.get("rebalance") if isinstance(row.get("rebalance"), dict) else {}
+    plan_count = capital_plan.get("existing_position_count", rebalance.get("existing_position_count"))
+    plan_count_int = int(plan_count) if isinstance(plan_count, (int, float)) or str(plan_count).isdigit() else -1
+    ok = plan_count_int == snapshot_count
+    plan_ts = _parse_iso_datetime(row.get("generated_at"))
+    snapshot_ts = _parse_iso_datetime(snapshot.get("synced_at")) if isinstance(snapshot, dict) else None
+    plan_older_than_snapshot = bool(plan_ts and snapshot_ts and plan_ts < snapshot_ts)
+    status = _status(ok)
+    severity = "error" if not ok else "info"
+    message = "A股资金计划与持仓快照对账一致"
+    if not ok and plan_older_than_snapshot:
+        status = "warn"
+        severity = "warn"
+        message = "A股资金计划早于最新持仓快照，等待下一轮资金计划刷新"
+    elif not ok:
+        message = "A股资金计划读取的持仓数与持仓快照不一致"
+    return Check(
+        "ashare_capital_plan_alignment",
+        status,
+        message,
+        {
+            "latest_capital_plan": str(plan_path.relative_to(ROOT)) if plan_path else "",
+            "generated_at": row.get("generated_at"),
+            "snapshot_synced_at": snapshot.get("synced_at") if isinstance(snapshot, dict) else "",
+            "plan_older_than_snapshot": plan_older_than_snapshot,
+            "local_trade_count": local_trade_count,
+            "snapshot_position_count": snapshot_count,
+            "capital_plan_position_count": plan_count_int,
+            "cash_source": capital_plan.get("cash_source"),
+        },
+        severity=severity,
+    )
 
 
 def _check_failure_receipts() -> Check:
@@ -813,6 +980,7 @@ def run_ashare_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict
         _check_optional_mini_health(mini_health_url),
         _check_simulated_position_sync(),
         _check_local_sim_ledger(),
+        _check_ashare_capital_plan_alignment(),
         _check_email_templates(),
         _check_failure_receipts(),
     ]

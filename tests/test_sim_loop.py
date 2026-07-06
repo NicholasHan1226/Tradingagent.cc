@@ -59,12 +59,14 @@ class MultiCandidateSimAdapter(StubSimAdapter):
         score_universe_limit: int | None = None,
         max_portfolio_positions: int = 3,
         positions: list[dict[str, object]] | None = None,
+        cash_available: float | None = None,
     ) -> None:
         self.symbols = symbols
         self.max_candidates = max_candidates
         self.score_universe_limit = score_universe_limit or max_candidates
         self.max_portfolio_positions = max_portfolio_positions
         self.positions = positions or []
+        self.cash_available = cash_available
 
     def get_universe(self, date: str) -> list[str]:
         return list(self.symbols)
@@ -84,7 +86,10 @@ class MultiCandidateSimAdapter(StubSimAdapter):
         }
 
     def get_sim_account(self) -> dict[str, object]:
-        return {"account": "ashare_sim", "sim_capital": 200000.0, "positions": list(self.positions)}
+        payload: dict[str, object] = {"account": "ashare_sim", "sim_capital": 200000.0, "positions": list(self.positions)}
+        if self.cash_available is not None:
+            payload["cash_available"] = self.cash_available
+        return payload
 
 
 def _patch_shadow_paths(testcase: unittest.TestCase, tmp_path: Path) -> None:
@@ -534,6 +539,36 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["order_count"], 0)
         self.assertEqual(result["filled_count"], 0)
         self.assertEqual(self.executed_orders, [])
+
+    def test_run_sim_loop_uses_account_snapshot_cash_for_ashare_capital_plan(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.86 - index * 0.02, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for index, symbol in enumerate(universe)
+            ]
+
+        deps.score_universe = score_universe
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(
+                ["AAA", "BBB", "CCC"],
+                max_candidates=3,
+                score_universe_limit=3,
+                max_portfolio_positions=3,
+                cash_available=12_000.0,
+            ),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_cash_snapshot",
+        )
+
+        self.assertEqual(result["capital_plan"]["available_cash"], 12000.0)
+        self.assertEqual(result["capital_plan"]["cash_source"], "account_snapshot")
+        self.assertEqual(result["capital_plan"]["max_new_positions"], 0)
+        self.assertEqual(result["filled_count"], 0)
 
     def test_run_sim_loop_compresses_excess_ashare_positions_and_logs_capital_plan(self) -> None:
         deps = self._multi_candidate_deps()

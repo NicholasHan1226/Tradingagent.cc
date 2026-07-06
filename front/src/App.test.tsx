@@ -82,7 +82,7 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('2 个进入 · 2 个留下 · 0 个成交')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/2 个进入 · 2 个留下 · 0 个成交/)).toBeInTheDocument())
     expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
   })
 
@@ -186,7 +186,7 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('真实流动')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('实时')).toBeInTheDocument())
     expect(screen.getAllByText('机会进入').length).toBeGreaterThan(0)
     expect(screen.getAllByText('初筛').length).toBeGreaterThan(0)
     expect(screen.getAllByText('研究').length).toBeGreaterThan(0)
@@ -202,8 +202,8 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘结果未开启').length).toBeGreaterThan(0)
-    expect(within(card).getByText('接入完成后可在这里切换查看；当前只展示模拟盘。')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
+    expect(within(card).getByText('接入后展示真实账户结果；当前以模拟盘为主。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -224,7 +224,7 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘结果未开启').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

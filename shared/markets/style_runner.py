@@ -559,6 +559,9 @@ class StyleRunner:
                 continue
             if value > 0 and value == value:
                 return value
+        market = str((account or {}).get("market") or "").lower()
+        if market == "ashare":
+            return 200_000.0
         return 100_000.0
 
     @staticmethod

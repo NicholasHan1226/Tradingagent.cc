@@ -82,7 +82,7 @@ class SimBrokerV2Test(unittest.TestCase):
         self.assertEqual(captured["config"]["capital_layer"], "simulated")
 
 
-    def test_ashare_sim_order_records_server_local_backup(self) -> None:
+    def test_ashare_pending_order_does_not_record_server_local_backup_fill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             patches = [
@@ -128,13 +128,11 @@ class SimBrokerV2Test(unittest.TestCase):
 
             self.assertEqual(result.status, "pending")
             backup = result.raw_response.get("local_sim_backup", {})
-            self.assertTrue(backup.get("recorded"), backup)
-            self.assertEqual(backup.get("status"), "filled")
+            self.assertEqual(backup, {})
             pnl = local_sim_ledger.get_local_sim_pnl("ashare_sim")
-            self.assertEqual(pnl["total_trades"], 1)
-            self.assertEqual(pnl["positions"]["600000.SH"]["quantity"], 100)
-            self.assertEqual(pnl["market_value"], 1000.0)
-            self.assertTrue((base / "sim_execution_receipts.jsonl").exists())
+            self.assertEqual(pnl["total_trades"], 0)
+            self.assertEqual(pnl["positions"], {})
+            self.assertFalse((base / "sim_execution_receipts.jsonl").exists())
 
 
     def test_ashare_builtin_executor_loads_without_prior_import_and_records_backup(self) -> None:

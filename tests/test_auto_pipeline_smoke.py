@@ -63,7 +63,7 @@ class AutoPipelineSmokeTest(unittest.TestCase):
                 "quantity": 100,
                 "price": 10.0,
             },
-            {"initial_capital": 100_000.0, "capital_layer": "simulated", "account_type": "simulated"},
+            {"initial_capital": 200_000.0, "capital_layer": "simulated", "account_type": "simulated"},
         )
 
         self.assertEqual(fill["status"], "filled")
@@ -82,11 +82,17 @@ class AutoPipelineSmokeTest(unittest.TestCase):
                 "price": 10.0,
                 "bar_volume": 1500,
             },
-            {"initial_capital": 100_000.0, "capital_layer": "simulated", "account_type": "simulated"},
+            {"initial_capital": 200_000.0, "capital_layer": "simulated", "account_type": "simulated"},
         )
 
         self.assertEqual(fill["status"], "partial")
         self.assertEqual(fill["filled_qty"], 100)
+
+    def test_auto_pipeline_defaults_ashare_initial_capital_to_200000(self) -> None:
+        pipeline = AutoPipeline()
+
+        self.assertEqual(pipeline._initial_capital_for_market("ashare"), 200_000.0)
+        self.assertEqual(pipeline._initial_capital_for_market("crypto"), 100_000.0)
 
     def test_signals_include_sharedsignals_market_snapshot(self) -> None:
         pipeline = AutoPipeline(

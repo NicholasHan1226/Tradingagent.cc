@@ -225,6 +225,10 @@ def default_simulator_factory(market: str) -> Any:
     return LocalStyleSimulator(market_key)
 
 
+def _default_initial_capital(market: str) -> float:
+    return 200_000.0 if _normalize_market(market) == "ashare" else 100_000.0
+
+
 class AutoPipeline:
     """Daily pipeline: universe -> research -> decision -> sim execution -> evolution."""
 
@@ -241,7 +245,7 @@ class AutoPipeline:
         review_root: Path | str | None = None,
         styles_dir_by_market: dict[str, Path | str] | None = None,
         max_candidates: int = 10,
-        initial_capital: float = 100_000.0,
+        initial_capital: float | None = None,
     ) -> None:
         self.reader = reader or TradingagentDataReader()
         self.decision_engine = decision_engine or DecisionEngine(market="crypto")
@@ -256,7 +260,13 @@ class AutoPipeline:
             for key, value in (styles_dir_by_market or {}).items()
         }
         self.max_candidates = max(1, int(max_candidates))
-        self.initial_capital = float(initial_capital)
+        self._initial_capital_override = initial_capital
+        self.initial_capital = float(initial_capital) if initial_capital is not None else 100_000.0
+
+    def _initial_capital_for_market(self, market: str) -> float:
+        if self._initial_capital_override is not None:
+            return float(self._initial_capital_override)
+        return _default_initial_capital(market)
 
     def run(
         self,
@@ -472,12 +482,13 @@ class AutoPipeline:
         decisions: list[dict[str, Any]],
         trade_date: str,
     ) -> dict[str, Any]:
+        capital = self._initial_capital_for_market(market)
         try:
             portfolio = self.decision_engine.portfolio_rebalance(
                 decisions,
                 market=market,
                 as_of=trade_date,
-                capital=self.initial_capital,
+                capital=capital,
             )
         except TypeError:
             portfolio = self._fallback_portfolio_rebalance(market, decisions, trade_date)
@@ -500,7 +511,7 @@ class AutoPipeline:
                 self._legacy_fundamental(report),
                 self._legacy_perspectives(report),
                 self._legacy_risk(report),
-                {"capital": self.initial_capital, "market": market, "as_of": trade_date},
+                {"capital": self._initial_capital_for_market(market), "market": market, "as_of": trade_date},
             )
         return self._decision_dict(result, report, market)
 
@@ -567,6 +578,7 @@ class AutoPipeline:
         return {"risk_score": min(90.0, 20.0 + 10.0 * len(red_flags))}
 
     def _fallback_portfolio_rebalance(self, market: str, decisions: list[dict[str, Any]], trade_date: str) -> dict[str, Any]:
+        capital = self._initial_capital_for_market(market)
         buys = [decision for decision in decisions if str(decision.get("action") or "").lower() == "buy"]
         buys.sort(key=lambda row: _safe_float(row.get("belief_score"), 0.0), reverse=True)
         positions: list[dict[str, Any]] = []
@@ -594,7 +606,7 @@ class AutoPipeline:
             )
         return {
             "market": market,
-            "capital": self.initial_capital,
+            "capital": capital,
             "positions": positions,
             "position_count": len(positions),
             "allocated_pct": round(sum(_safe_float(row.get("position_pct"), 0.0) for row in positions), 6),
@@ -616,6 +628,7 @@ class AutoPipeline:
         simulator = self.simulator_factory(market)
         styles_dir = self._styles_dir(market)
         weights_before = load_style_weights(market, review_root=self.review_root)
+        capital = self._initial_capital_for_market(market)
         result = self.style_runner_cls(
             market,
             simulator,
@@ -626,7 +639,8 @@ class AutoPipeline:
             date=trade_date,
             account={
                 "account_id": f"{market}_auto_pipeline_sim",
-                "initial_capital": self.initial_capital,
+                "initial_capital": capital,
+                "market": market,
                 "capital_layer": "simulated",
                 "account_type": "simulated",
                 "real_execution": False,

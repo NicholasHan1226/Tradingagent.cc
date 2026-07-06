@@ -43,6 +43,17 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["execution_queue"]["pending"], 1)
         self.assertIn("signals/pending/SHADOW-ashare-000001.json", check.details["leaked_shadow_sample"])
 
+    def test_signal_queue_isolation_reports_expired_execution_pending(self) -> None:
+        self._write_json(
+            "signals/pending/SIM-OLD.json",
+            {"capital_layer": "simulated", "order_id": "SIM-OLD", "valid_until": "2026-01-01"},
+        )
+
+        check = market_health._check_signal_queues()
+
+        self.assertEqual(check.status, "fail")
+        self.assertEqual(check.details["stale_execution_sample"][0]["reason"], "valid_until_expired")
+
     def test_signal_queue_isolation_passes_when_shadow_uses_shadow_subqueue(self) -> None:
         self._write_json("signals/shadow/pending/SHADOW-ashare-000001.json", {"capital_layer": "shadow", "order_id": "SHADOW-1"})
 
@@ -127,7 +138,7 @@ class MarketHealthTest(unittest.TestCase):
             json.dumps({"ts_code": "000001.SZ", "net_amount": 2000.0}, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        pnl_path.write_text(json.dumps({"ashare_sim": {}}, ensure_ascii=False), encoding="utf-8")
+        pnl_path.write_text(json.dumps({"ashare_sim": {"cash_available": 200000, "positions": {}}}, ensure_ascii=False), encoding="utf-8")
 
         with patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", trades_path):
             with patch.object(local_sim_ledger, "LOCAL_SIM_PNL", pnl_path):
@@ -135,6 +146,88 @@ class MarketHealthTest(unittest.TestCase):
 
         self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["invalid_code_matches"], 0)
+
+    def test_local_sim_ledger_fails_when_snapshot_and_pnl_disagree(self) -> None:
+        from shared.execution import local_sim_ledger
+
+        local_dir = self.root / "shared/logs/local_sim"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        trades_path = local_dir / "local_sim_trades.jsonl"
+        positions_path = local_dir / "local_sim_positions.json"
+        pnl_path = local_dir / "local_sim_pnl.json"
+        snapshot_path = self.root / "signals/positions/simulated_ashare_positions.json"
+        trades_path.write_text(json.dumps({"ts_code": "000001.SZ"}, ensure_ascii=False) + "\n", encoding="utf-8")
+        positions_path.write_text(json.dumps({"ashare_sim": {"000001.SZ": {"quantity": 100}}}, ensure_ascii=False), encoding="utf-8")
+        pnl_path.write_text(json.dumps({"ashare_sim": {"cash_available": 190000, "positions": {"000001.SZ": {}}}}, ensure_ascii=False), encoding="utf-8")
+        self._write_json("signals/positions/simulated_ashare_positions.json", {"positions": [], "pnl": {"ashare_sim": {"cash_available": 190000}}})
+
+        with patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", trades_path):
+            with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", positions_path):
+                with patch.object(local_sim_ledger, "LOCAL_SIM_PNL", pnl_path):
+                    with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot_path):
+                        check = market_health._check_local_sim_ledger()
+
+        self.assertEqual(check.status, "fail")
+        self.assertIn("position_count_mismatch", check.details["consistency_errors"])
+
+    def test_capital_plan_alignment_fails_when_plan_misses_snapshot_positions(self) -> None:
+        trades = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
+        trades.parent.mkdir(parents=True, exist_ok=True)
+        trades.write_text('{"ts_code":"000001.SZ"}\n', encoding="utf-8")
+        self._write_json(
+            "signals/positions/simulated_ashare_positions.json",
+            {"positions": [{"ts_code": "000001.SZ"}, {"ts_code": "000002.SZ"}]},
+        )
+        plan = self.root / "shared/review/ashare/capital_plan_20260706.jsonl"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text(
+            json.dumps(
+                {
+                    "capital_plan": {"existing_position_count": 0, "cash_source": "account_snapshot"},
+                    "rebalance": {"existing_position_count": 0},
+                    "generated_at": "2026-07-06T01:00:00+00:00",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        check = market_health._check_ashare_capital_plan_alignment()
+
+        self.assertEqual(check.status, "fail")
+        self.assertEqual(check.details["snapshot_position_count"], 2)
+        self.assertEqual(check.details["capital_plan_position_count"], 0)
+
+    def test_capital_plan_alignment_warns_when_plan_is_older_than_snapshot(self) -> None:
+        trades = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
+        trades.parent.mkdir(parents=True, exist_ok=True)
+        trades.write_text('{"ts_code":"000001.SZ"}\n', encoding="utf-8")
+        self._write_json(
+            "signals/positions/simulated_ashare_positions.json",
+            {
+                "synced_at": "2026-07-06T02:00:00+00:00",
+                "positions": [{"ts_code": "000001.SZ"}, {"ts_code": "000002.SZ"}],
+            },
+        )
+        plan = self.root / "shared/review/ashare/capital_plan_20260706.jsonl"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text(
+            json.dumps(
+                {
+                    "capital_plan": {"existing_position_count": 0, "cash_source": "account_snapshot"},
+                    "generated_at": "2026-07-06T01:00:00+00:00",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        check = market_health._check_ashare_capital_plan_alignment()
+
+        self.assertEqual(check.status, "warn")
+        self.assertTrue(check.details["plan_older_than_snapshot"])
 
     def test_optional_mini_health_does_not_block_server_local_sim_by_default(self) -> None:
         with patch.dict("os.environ", {"ASHARE_SIM_HERMES_ENABLED": "0"}):

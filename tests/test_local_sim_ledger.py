@@ -48,6 +48,7 @@ class LocalSimLedgerTest(unittest.TestCase):
         snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
         self.assertEqual(snapshot["positions"][0]["ts_code"], "600000.SH")
         self.assertEqual(snapshot["positions"][0]["account"], "acct")
+        self.assertEqual(snapshot["pnl"]["acct"]["cash_available"], 198995.0)
         receipts = [
             json.loads(line)
             for line in local_sim_ledger.LOCAL_SIM_RECEIPTS.read_text(encoding="utf-8").splitlines()
@@ -59,6 +60,33 @@ class LocalSimLedgerTest(unittest.TestCase):
             receipts[0]["receipt_sha256"],
             local_sim_ledger._payload_sha256(receipts[0], drop_checksums=True),
         )
+
+    def test_pending_receipt_does_not_record_local_fill(self) -> None:
+        order = {
+            "order_id": "SIM-PENDING",
+            "idempotency_key": "SIM:ashare:acct:20260701:600000.SH:buy",
+            "ts_code": "600000.SH",
+            "side": "buy",
+            "quantity": 100,
+            "price": 10,
+        }
+
+        result = local_sim_ledger.record_local_sim_order(
+            order,
+            "ashare",
+            {"account": "acct"},
+            {"local_sim_slippage_bps": 0},
+            {"status": "pending"},
+        )
+
+        self.assertEqual(result["status"], "pending")
+        self.assertFalse(result["recorded"])
+        self.assertFalse(local_sim_ledger.LOCAL_SIM_TRADES.exists())
+
+    def test_default_starting_cash_is_ashare_200000(self) -> None:
+        snapshot = local_sim_ledger.get_local_sim_account_snapshot("acct")
+
+        self.assertEqual(snapshot["cash_available"], 200000.0)
 
     def test_rejects_non_regular_ashare_code(self) -> None:
         result = local_sim_ledger.record_local_sim_order({"ts_code": "200011.SZ", "side": "buy", "quantity": 100, "price": 1}, "ashare")

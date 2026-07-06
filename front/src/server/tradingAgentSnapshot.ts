@@ -511,22 +511,39 @@ function groupSimLedgerEquitySnapshots(snapshots: ParsedEquitySnapshot[]) {
     if (!current || snapshot.timestampMs >= current.timestampMs) latestByBucketAndSource.set(key, snapshot)
   }
 
-  const groupedByBucket = new Map<number, ParsedEquitySnapshot>()
-  for (const snapshot of [...latestByBucketAndSource.values()].sort((a, b) => a.timestampMs - b.timestampMs)) {
+  const snapshotsByBucket = new Map<number, ParsedEquitySnapshot[]>()
+  for (const snapshot of latestByBucketAndSource.values()) {
     const bucketMs = bucketSimLedgerTimestamp(snapshot.timestampMs)
-    const current = groupedByBucket.get(bucketMs)
-    if (!current) {
-      groupedByBucket.set(bucketMs, { ...snapshot, sources: new Set(snapshot.sources) })
-      continue
+    snapshotsByBucket.set(bucketMs, [...(snapshotsByBucket.get(bucketMs) ?? []), snapshot])
+  }
+
+  const groupedByBucket = new Map<number, ParsedEquitySnapshot>()
+  const latestBySource = new Map<string, ParsedEquitySnapshot>()
+  for (const bucketMs of [...snapshotsByBucket.keys()].sort((a, b) => a - b)) {
+    for (const snapshot of snapshotsByBucket.get(bucketMs) ?? []) {
+      latestBySource.set(snapshot.sourcePath, snapshot)
     }
-    if (snapshot.timestampMs > current.timestampMs) {
-      current.timestamp = snapshot.timestamp
-      current.timestampMs = snapshot.timestampMs
+
+    let merged: ParsedEquitySnapshot | undefined
+    for (const snapshot of [...latestBySource.values()].sort((a, b) => a.sourcePath.localeCompare(b.sourcePath))) {
+      if (!merged) {
+        merged = cloneEquitySnapshot(snapshot)
+        continue
+      }
+      if (snapshot.timestampMs > merged.timestampMs) {
+        merged.timestamp = snapshot.timestamp
+        merged.timestampMs = snapshot.timestampMs
+      }
+      mergeEquitySnapshot(merged, snapshot)
     }
-    mergeEquitySnapshot(current, snapshot)
+    if (merged) groupedByBucket.set(bucketMs, merged)
   }
 
   return limitPerformanceGroups(groupedByBucket, MAX_EQUITY_PERFORMANCE_POINTS)
+}
+
+function cloneEquitySnapshot(snapshot: ParsedEquitySnapshot): ParsedEquitySnapshot {
+  return { ...snapshot, sources: new Set(snapshot.sources) }
 }
 
 function bucketSimLedgerTimestamp(timestampMs: number) {

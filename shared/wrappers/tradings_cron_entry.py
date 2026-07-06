@@ -1087,8 +1087,9 @@ class StubMarketAdapter:
         return self.market, symbol
 
     def get_strategy_config(self) -> dict[str, Any]:
+        shadow_capital = 200000.0 if self.market.lower() == "ashare" else 100000.0
         return {
-            "shadow_capital": 100000.0,
+            "shadow_capital": shadow_capital,
             "portfolio_method": "conviction_weighted",
             "regime": "unknown",
             "max_candidates": 20,

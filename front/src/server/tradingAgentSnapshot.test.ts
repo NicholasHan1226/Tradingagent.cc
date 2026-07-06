@@ -697,6 +697,93 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
+  it('forward-fills missing simulated ledger sources so all-market returns keep one capital base', async () => {
+    const root = await createWorkspace()
+    const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    const usLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/us/momentum')
+    await mkdir(cryptoLedgerRoot, { recursive: true })
+    await mkdir(usLedgerRoot, { recursive: true })
+
+    await writeFile(
+      join(cryptoLedgerRoot, 'daily_mark_to_market.jsonl'),
+      [
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:00:01+08:00',
+          date: '20260704',
+          capital_base: 1000,
+          total_pnl: 10,
+          target_return_pct: 8,
+          trade_count: 1,
+          pnl_source: 'sim_ledger_mark_to_market',
+        }),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:06:01+08:00',
+          date: '20260704',
+          capital_base: 1000,
+          total_pnl: 20,
+          target_return_pct: 8,
+          trade_count: 2,
+          pnl_source: 'sim_ledger_mark_to_market',
+        }),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:12:01+08:00',
+          date: '20260704',
+          capital_base: 1000,
+          total_pnl: 30,
+          target_return_pct: 8,
+          trade_count: 3,
+          pnl_source: 'sim_ledger_mark_to_market',
+        }),
+      ].join('\n') + '\n',
+    )
+    await writeFile(
+      join(usLedgerRoot, 'daily_mark_to_market.jsonl'),
+      [
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:00:05+08:00',
+          date: '20260704',
+          capital_base: 2000,
+          total_pnl: -4,
+          target_return_pct: 8,
+          trade_count: 1,
+          pnl_source: 'sim_ledger_mark_to_market',
+        }),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:12:10+08:00',
+          date: '20260704',
+          capital_base: 2000,
+          total_pnl: -9,
+          target_return_pct: 8,
+          trade_count: 2,
+          pnl_source: 'sim_ledger_mark_to_market',
+        }),
+      ].join('\n') + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.performance).toEqual([
+      { day: '7月4日 10:00', simulated: 0.2, target: 2.67, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:06', simulated: 0.53, target: 5.33, benchmark: 0, opportunity: 0 },
+      { day: '现在', simulated: 0.7, target: 8, benchmark: 0, opportunity: 0 },
+    ])
+    expect(snapshot.portfolio).toMatchObject({
+      pnlAmount: 21,
+      returnPct: 0.7,
+      capitalBase: 3000,
+      tradeCount: 5,
+    })
+  })
+
   it('marks high plateau then rebase performance points as quality outliers', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')

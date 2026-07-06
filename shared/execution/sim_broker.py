@@ -23,7 +23,7 @@ from shared.markets.safety import reject_real_execution_payload
 
 SIM_LEDGER = Path(__file__).resolve().parent.parent / "logs" / "sim_orders.jsonl"
 SIM_STATUSES = {"filled", "partial", "rejected", "failed", "pending"}
-LOCAL_BACKUP_STATUSES = {"filled", "partial", "pending"}
+LOCAL_BACKUP_STATUSES = {"filled", "partial"}
 
 
 @dataclass

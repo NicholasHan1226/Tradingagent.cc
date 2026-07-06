@@ -713,6 +713,7 @@ def _ashare_dynamic_capital_plan(
     market: str,
     capital: float,
     existing_positions: list[dict[str, Any]],
+    available_cash: float | None,
     orders: list[dict[str, Any]],
     scores_by_symbol: dict[str, dict[str, Any]],
     skipped_candidates: list[dict[str, Any]],
@@ -738,7 +739,9 @@ def _ashare_dynamic_capital_plan(
         holding["value"] = _position_value(position, capital)
         holdings.append(holding)
 
-    available_cash = max(0.0, capital - sum(_position_value(position, capital) for position in existing_positions if isinstance(position, dict)))
+    cash_value = _safe_float(available_cash, -1.0)
+    if cash_value < 0:
+        cash_value = max(0.0, capital - sum(_position_value(position, capital) for position in existing_positions if isinstance(position, dict)))
     total_checked = max(1, len(orders) + len(skipped_candidates) + len(risk_rejections))
     candidates: list[dict[str, Any]] = []
     for order in orders:
@@ -751,7 +754,7 @@ def _ashare_dynamic_capital_plan(
 
     plan = plan_capital(
         holdings,
-        available_cash,
+        cash_value,
         candidates=candidates,
         dynamic=True,
         total_capital=capital,
@@ -762,6 +765,12 @@ def _ashare_dynamic_capital_plan(
     ).to_dict()
     plan["enabled"] = True
     plan["market"] = market
+    plan["existing_position_count"] = len({
+        _position_symbol(position)
+        for position in existing_positions
+        if isinstance(position, dict) and _position_symbol(position)
+    })
+    plan["cash_source"] = "account_snapshot" if available_cash is not None and _safe_float(available_cash, -1.0) >= 0 else "capital_minus_positions"
     return plan
 
 
@@ -1264,6 +1273,10 @@ def _account_positions(account: Any, config: dict[str, Any]) -> list[dict[str, A
     return positions
 
 
+def _default_capital_for_market(market: Any) -> float:
+    return 200000.0 if str(market or "").lower() == "ashare" else 100000.0
+
+
 def _account_capital(account: Any, config: dict[str, Any]) -> float:
     for source in (account if isinstance(account, dict) else {}, config):
         if not isinstance(source, dict):
@@ -1272,7 +1285,18 @@ def _account_capital(account: Any, config: dict[str, Any]) -> float:
             value = _safe_float(source.get(key), -1.0)
             if value >= 0:
                 return value
-    return 100000.0
+    return _default_capital_for_market(config.get("market"))
+
+
+def _account_available_cash(account: Any, config: dict[str, Any], capital: float, existing_positions: list[dict[str, Any]]) -> float:
+    for source in (account if isinstance(account, dict) else {}, config):
+        if not isinstance(source, dict):
+            continue
+        for key in ("cash_available", "available_cash", "cash"):
+            value = _safe_float(source.get(key), -1.0)
+            if value >= 0:
+                return value
+    return max(0.0, capital - sum(_position_value(position, capital) for position in existing_positions if isinstance(position, dict)))
 
 
 def _run_review_for_layer(
@@ -1662,7 +1686,7 @@ def run_shadow_loop(
     market = _safe_stage("adapter.get_market", errors, market_adapter.get_market, default="unknown")
     account = _safe_stage("adapter.get_shadow_account", errors, market_adapter.get_shadow_account, default=f"{market}_shadow")
     config = _strategy_config(market_adapter)
-    capital = _safe_float(config.get("shadow_capital"), 100000.0)
+    capital = _safe_float(config.get("shadow_capital"), _default_capital_for_market(market))
     method = str(config.get("portfolio_method", "conviction_weighted"))
     regime = str(config.get("regime", "unknown"))
     max_candidates = max(1, int(config.get("max_candidates", 20)))
@@ -1948,6 +1972,7 @@ def run_sim_loop(
     account = _account_name(account_obj, f"{market}_simulated")
     existing_positions = _account_positions(account_obj, config)
     capital = _account_capital(account_obj, config)
+    account_cash_available = _account_available_cash(account_obj, config, capital, existing_positions)
     method = str(config.get("portfolio_method", "conviction_weighted"))
     regime = str(config.get("regime", "unknown"))
     max_candidates = max(1, int(config.get("max_candidates", 20)))
@@ -2137,6 +2162,7 @@ def run_sim_loop(
         market=market,
         capital=capital,
         existing_positions=existing_positions,
+        available_cash=account_cash_available,
         orders=orders_for_portfolio,
         scores_by_symbol=scores_by_symbol,
         skipped_candidates=skipped_candidates,

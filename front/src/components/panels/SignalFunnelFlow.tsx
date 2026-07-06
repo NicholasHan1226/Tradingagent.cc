@@ -46,80 +46,71 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
       : `${signals.length} 条成交回放 · 转化 ${passRate}%`
     : '等待新机会'
   const modeLabel = hasEventSource
-    ? '真实流动'
+    ? '实时'
     : funnel.mode === 'screening'
-    ? '实时筛选'
+    ? '筛选中'
     : funnel.mode === 'partial'
-      ? '部分阶段'
+      ? '进行中'
       : funnel.mode === 'replay'
-        ? '成交回放'
+        ? '已完成'
         : '等待数据'
   const particles = hasEventSource
     ? buildEventParticles(events)
     : buildParticles(hasSignalData ? signals : placeholderSignals(), funnel.mode)
   const latestEvents = events.slice(-4).reverse()
+  const firstStageCount = Math.max(1, visualStages[0]?.count ?? signals.length)
+  const finalStageCount = visualStages.at(-1)?.count ?? 0
+  const conversionRate = Math.round((finalStageCount / firstStageCount) * 100)
 
   return (
     <section className="signal-flow-module" aria-label="交易漏斗">
-      <div className={`signal-flow-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''}`}>
+      <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''}`}>
         <div className="flow-caption">
-          <span>交易漏斗 <b>{modeLabel}</b></span>
-          <strong>{caption}</strong>
+          <span>机会管道 <b>{modeLabel}</b></span>
+          <strong>{caption} · 转化 {conversionRate}%</strong>
         </div>
-        <div className="funnel-pipeline" role="img" aria-label="机会从发现到交易结果的动态筛选漏斗">
-          <div className="funnel-stage-grid" aria-hidden="true">
+        <div className="real-funnel-stage-grid" aria-hidden="true">
+          {visualStages.map((stage, index) => (
+            <div className="real-funnel-stage-card" key={stage.label}>
+              <span>{stage.label}</span>
+              <strong>{stage.count}</strong>
+              <em>{index === 0 ? '进入' : stage.dropped > 0 ? `减少 ${stage.dropped}` : stage.hint}</em>
+            </div>
+          ))}
+        </div>
+        <div className="real-funnel-body" role="img" aria-label="机会从发现到交易结果的动态筛选漏斗">
+          <div className="real-funnel-rulers" aria-hidden="true">
             {visualStages.map((stage, index) => (
-              <div className="funnel-stage-card" key={stage.label} style={{ '--stage-strength': `${stageWidths[index]}%` } as CSSProperties}>
-                <span>{stage.label}</span>
-                <strong>{stage.count}</strong>
-                <em>{stage.hint}</em>
-                <div className="stage-meter" aria-hidden="true">
-                  <i style={{ width: `${stage.width}%` }} />
-                </div>
-              </div>
+              <i key={stage.label} style={{ left: `${index * 20}%` }} />
             ))}
           </div>
-          <div className="funnel-flow-canvas" aria-hidden="true">
-            {!hasSignalData && <div className="funnel-scanner" />}
-            <div className="funnel-mouth">
-              {visualStages.map((stage, index) => (
-                <span
-                  key={stage.label}
-                  style={{
-                    '--stage-offset': `${index * 20}%`,
-                    '--stage-width': `${stageWidths[index]}%`,
-                  } as CSSProperties}
-                />
-              ))}
-            </div>
-            <div className="flow-lane-labels">
-              {visualStages.map((stage) => (
-                <span key={stage.label}>{stage.label}</span>
-              ))}
-            </div>
-            {particles.map((particle, index) => (
-              <i
-                className={`funnel-particle ${particle.tone} ${particle.showLabel ? 'labeled' : 'quiet'}`}
-                key={`${particle.label}-${index}`}
+          <div className="real-funnel-channel" aria-hidden="true">
+            {visualStages.map((stage, index) => (
+              <span
+                className="real-funnel-segment"
+                key={stage.label}
                 style={{
-                  '--delay': particle.begin,
-                  '--duration': particle.duration,
-                  '--lane': particle.lane,
-                  '--to-left': particle.stopLeft,
+                  '--segment-left': `${index * 20}%`,
+                  '--segment-width': `${Math.max(10, stageWidths[index] * 0.56)}%`,
                 } as CSSProperties}
-                data-symbol={particle.showLabel ? particle.symbol : undefined}
-                title={particle.label}
-              >
-                <b />
-              </i>
+              />
             ))}
           </div>
-        </div>
-        <div className="flow-drop-track" aria-hidden="true">
-          {visualStageDrops.slice(1).map((drop, index) => (
-            <span className={drop > 0 ? 'has-drop' : ''} key={`${visualStages[index].label}-${visualStages[index + 1].label}`}>
-              <i style={{ height: `${Math.min(100, Math.max(8, drop * 12))}%` }} />
-            </span>
+          {particles.map((particle, index) => (
+            <i
+              className={`funnel-particle ${particle.tone} ${particle.showLabel ? 'labeled' : 'quiet'}`}
+              key={`${particle.label}-${index}`}
+              style={{
+                '--delay': particle.begin,
+                '--duration': particle.duration,
+                '--lane': particle.lane,
+                '--to-left': particle.stopLeft,
+              } as CSSProperties}
+              data-symbol={particle.showLabel ? particle.symbol : undefined}
+              title={particle.label}
+            >
+              <b />
+            </i>
           ))}
         </div>
         <div className="flow-outcome-strip">
@@ -390,7 +381,7 @@ function compactSymbol(symbol: string) {
 
 function placeholderSignals(): SignalRow[] {
   return Array.from({ length: 12 }, (_, index) => ({
-    symbol: `WAIT-${index}`,
+    symbol: '',
     name: '',
     market: 'All Markets',
     method: '',

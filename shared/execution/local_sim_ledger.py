@@ -25,6 +25,7 @@ LOCAL_SIM_LOCK = LOCAL_SIM_DIR / ".local_sim.lock"
 LOCAL_SIM_POSITIONS_SNAPSHOT = Path(__file__).resolve().parents[2] / "signals" / "positions" / "simulated_ashare_positions.json"
 LOCAL_SIM_RECEIPTS = Path(__file__).resolve().parents[2] / "signals" / "sim_execution_receipts.jsonl"
 DEFAULT_ACCOUNT = "ashare_server_sim"
+ASHARE_SIM_DEFAULT_CASH = 200_000.0
 LOCK_RETRY_ATTEMPTS = 3
 LOCK_RETRY_DELAY_SECONDS = 0.1
 CHECKSUM_KEYS = {"payload_sha256", "receipt_sha256", "checksum", "sha256"}
@@ -231,14 +232,14 @@ def _can_sell_on(entry_date: Any, trade_date: Any) -> bool:
 
 def _starting_cash(value: Any) -> float:
     cash = _safe_float(value, 0.0)
-    return cash if cash > 0 else 100_000.0
+    return cash if cash > 0 else ASHARE_SIM_DEFAULT_CASH
 
 
 def _starting_cash_for_bootstrap(value: Any = None) -> float:
     cash = _safe_float(value, 0.0)
     if cash <= 0:
         cash = _safe_float(os.environ.get("ASHARE_SIM_INITIAL_CASH"), 0.0)
-    return cash if cash > 0 else 200_000.0
+    return cash if cash > 0 else ASHARE_SIM_DEFAULT_CASH
 
 
 def _sim_account_snapshot_unlocked(
@@ -247,7 +248,7 @@ def _sim_account_snapshot_unlocked(
     account: str,
     symbol: str = "",
     trade_date: str = "",
-    starting_cash: float = 100_000.0,
+    starting_cash: float = ASHARE_SIM_DEFAULT_CASH,
 ) -> dict[str, Any]:
     lots_by_symbol: dict[str, list[dict[str, Any]]] = {}
     cash_available = float(starting_cash)
@@ -318,7 +319,7 @@ def get_local_sim_account_snapshot(
     *,
     symbol: str = "",
     trade_date: str = "",
-    starting_cash: Any = 100_000.0,
+    starting_cash: Any = ASHARE_SIM_DEFAULT_CASH,
 ) -> dict[str, Any]:
     """Return server-local simulated cash and T+1 sellable quantity snapshot."""
 
@@ -343,12 +344,14 @@ def _replay_account(
     trades: list[dict[str, Any]],
     account: str | None = None,
     mark_prices: dict[str, float] | None = None,
+    starting_cash: float = ASHARE_SIM_DEFAULT_CASH,
 ) -> dict[str, Any]:
     positions: dict[str, dict[str, Any]] = {}
     realized_pnl = 0.0
     total_trades = 0
     buys = 0
     sells = 0
+    cash_available = float(starting_cash)
     for trade in trades:
         if account is not None and str(trade.get("account") or "") != account:
             continue
@@ -364,6 +367,7 @@ def _replay_account(
         pos = positions.setdefault(code, {"quantity": 0.0, "cost_basis": 0.0, "last_price": 0.0, "trades": 0})
         total_trades += 1
         if side == "buy":
+            cash_available -= net_amount
             pos["quantity"] += qty
             pos["cost_basis"] += net_amount
             pos["last_price"] = filled_price or pos["last_price"]
@@ -372,6 +376,7 @@ def _replay_account(
             continue
         if side != "sell" or qty <= 0 or pos["quantity"] <= 0:
             continue
+        cash_available += net_amount
         sell_qty = min(qty, pos["quantity"])
         avg_cost = pos["cost_basis"] / pos["quantity"] if pos["quantity"] else 0.0
         released_cost = round(avg_cost * sell_qty, 2)
@@ -417,6 +422,7 @@ def _replay_account(
         "unrealized_pnl": round(unrealized, 2),
         "market_value": round(market_value, 2),
         "total_pnl": round(realized_pnl + unrealized, 2),
+        "cash_available": round(cash_available, 2),
         "positions": clean_positions,
     }
 
@@ -559,6 +565,15 @@ def record_local_sim_order(
     stamp_duty = round(amount * 0.0005, 2) if side == "sell" else 0.0
     net_amount = round(amount + commission + stamp_duty, 2) if side == "buy" else round(amount - commission - stamp_duty, 2)
     linked_status = str(getattr(receipt, "status", "") or (receipt.get("status") if isinstance(receipt, dict) else "") or "")
+    if linked_status and linked_status not in {"filled", "partial"}:
+        return {
+            "status": linked_status,
+            "recorded": False,
+            "reason": "server-local A-share ledger records filled/partial receipts only",
+            "order_id": order_id,
+            "idempotency_key": idempotency_key,
+            "account": account_name,
+        }
     trade = LocalSimTrade(
         order_id=order_id,
         idempotency_key=idempotency_key,
