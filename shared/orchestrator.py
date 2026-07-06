@@ -2043,6 +2043,11 @@ def run_sim_loop(
         _candidate_symbols(pool, list(scores_by_symbol), market=market, capital_layer=capital_layer),
         scores_by_symbol,
     )[:max_candidates]
+    candidate_layers = {
+        str(symbol): "candidate"
+        for symbol in ((pool.get("candidate", []) if isinstance(pool, dict) else []) or [])
+        if symbol
+    }
     orders_for_portfolio: list[dict[str, Any]] = []
     skipped_candidates: list[dict[str, Any]] = []
     risk_rejections: list[dict[str, Any]] = []
@@ -2299,6 +2304,14 @@ def run_sim_loop(
             "capital_layer": capital_layer,
             "account_type": account_type,
             "note": str(position.get("reason") or f"orchestrator sim loop {market} {date}"),
+            "candidate_pool_layer": str(position.get("candidate_pool_layer") or candidate_layers.get(symbol) or ("rebalance" if side == "sell" else "candidate")),
+            "execution_source": (
+                "ashare_candidate_layer"
+                if str(market).lower() == "ashare" and side == "buy"
+                else "ashare_rebalance_sell"
+                if str(market).lower() == "ashare" and side == "sell"
+                else "orchestrator_sim_loop"
+            ),
         }
         if order["quantity"] <= 0 or order["price"] <= 0:
             skip = {"stage": "execution.sim_broker", "status": "skipped", "symbol": symbol, "reason": "non-positive quantity or price", "capital_layer": capital_layer}

@@ -490,6 +490,8 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["candidate_count"], 2)
         self.assertEqual([record["symbol"] for record in result["records"]], ["BBB", "CCC"])
         self.assertEqual([order["ts_code"] for order in self.executed_orders], ["BBB", "CCC"])
+        self.assertTrue(all(order["candidate_pool_layer"] == "candidate" for order in self.executed_orders))
+        self.assertTrue(all(order["execution_source"] == "ashare_candidate_layer" for order in self.executed_orders))
 
     def test_run_sim_loop_caps_ashare_new_positions_to_configured_target(self) -> None:
         deps = self._multi_candidate_deps()
