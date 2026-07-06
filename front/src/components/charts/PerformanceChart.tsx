@@ -13,22 +13,24 @@ import type { ChartEvent, Page, PerformancePoint } from '../../types/dashboard'
 import { DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT } from '../../lib/dashboardConstants'
 import { chartColors } from './chartConfig'
 
-function getPerformanceDomain(data: PerformancePoint[]) {
-  const values = data.flatMap((point) => [point.simulated, point.target, point.benchmark, point.opportunity, -DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT])
-  const min = Math.floor(Math.min(...values) - 2)
-  const max = Math.ceil(Math.max(...values) + 2)
-  return [min, max] as [number, number]
-}
-
 function getFocusedPerformanceDomain(data: PerformancePoint[], latestPoint: PerformancePoint) {
-  const rawDomain = getPerformanceDomain(data)
-  const visibleValues = [latestPoint.simulated, latestPoint.target, latestPoint.benchmark, latestPoint.opportunity, -DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT]
-  const center = (Math.min(...visibleValues) + Math.max(...visibleValues)) / 2
-  const span = Math.max(18, Math.min(52, Math.abs(latestPoint.simulated - latestPoint.target) + 20))
-  const min = Math.floor(Math.max(rawDomain[0], center - span / 2))
-  const max = Math.ceil(Math.min(rawDomain[1], center + span / 2))
+  const visiblePoints = data.filter((point) => point.quality !== 'outlier')
+  const domainPoints = visiblePoints.length >= 3 ? visiblePoints : data
+  const visibleValues = domainPoints.flatMap((point) => [
+    point.simulated,
+    point.target,
+    point.benchmark,
+    point.opportunity,
+  ])
+  visibleValues.push(latestPoint.simulated, latestPoint.target, latestPoint.benchmark, latestPoint.opportunity, -DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT)
 
-  return max - min >= 14 ? [min, max] as [number, number] : rawDomain
+  const baseMin = Math.min(...visibleValues)
+  const baseMax = Math.max(...visibleValues)
+  const baseSpan = Math.max(18, baseMax - baseMin)
+  const min = Math.floor(baseMin - Math.max(4, baseSpan * 0.16))
+  const max = Math.ceil(Math.max(baseMax + Math.max(6, baseSpan * 0.28), latestPoint.simulated + Math.max(9, Math.abs(latestPoint.simulated - latestPoint.target) * 0.65)))
+
+  return [min, max] as [number, number]
 }
 
 function projectIntoDomain(value: number, [min, max]: [number, number]) {
@@ -132,7 +134,17 @@ export function PerformanceChart({
               />
             ))}
             <Line type="monotone" dataKey="simulatedNormalPlot" stroke={chartColors.simulated} strokeWidth={2.15} dot={false} animationDuration={450} />
-            <Line type="monotone" dataKey="simulatedOutlierPlot" stroke={chartColors.target} strokeWidth={1.2} strokeDasharray="3 7" dot={false} connectNulls={false} isAnimationActive={false} />
+            <Line
+              type="monotone"
+              dataKey="simulatedOutlierPlot"
+              stroke={chartColors.target}
+              strokeOpacity={0.46}
+              strokeWidth={1}
+              strokeDasharray="2 9"
+              dot={false}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
             <Line type="monotone" dataKey="targetPlot" stroke={chartColors.target} strokeWidth={1.25} strokeDasharray="7 8" dot={false} isAnimationActive={false} />
             <Line type="monotone" dataKey="benchmarkPlot" stroke={chartColors.benchmark} strokeWidth={1.15} dot={false} isAnimationActive={false} />
             <Line type="monotone" dataKey="opportunityPlot" stroke={chartColors.opportunity} strokeWidth={1.2} strokeDasharray="7 8" dot={false} isAnimationActive={false} />
@@ -146,7 +158,7 @@ export function PerformanceChart({
         <span><i className="red" />机会差</span>
         {hasOutlierSegment && <span><i className="outlier" />口径跳变</span>}
       </div>
-      {hasOutlierSegment && <div className="chart-quality-note">已弱化异常区间，主线看当前收益</div>}
+      {hasOutlierSegment && <div className="chart-quality-note">异常区间已弱化</div>}
       <div className="chart-live-labels" aria-hidden="true">
         <span className="current">现在 +{latestPoint.simulated.toFixed(2)}%</span>
       </div>
