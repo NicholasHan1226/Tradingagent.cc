@@ -9,7 +9,13 @@ from unittest.mock import patch
 from shared.accounting import trade_audit_trail
 from shared.execution import shadow_broker
 from shared.markets.base import MarketAdapter
-from shared.orchestrator import OrchestratorDeps, _latest_price, _latest_volatility, run_shadow_loop
+from shared.orchestrator import (
+    OrchestratorDeps,
+    _execution_quantity,
+    _latest_price,
+    _latest_volatility,
+    run_shadow_loop,
+)
 from shared.portfolio.constructor import construct as construct_portfolio
 
 
@@ -116,6 +122,11 @@ class OrchestratorTest(unittest.TestCase):
         self.assertGreater(_latest_volatility(reader, "ashare", "000001.SZ", "20260706", 0.2), 0.01)
         self.assertIn(("20260622", "20260706"), reader.daily_calls)
         self.assertIn(("20260522", "20260706"), reader.daily_calls)
+
+    def test_ashare_execution_quantity_is_lot_aligned(self) -> None:
+        self.assertEqual(_execution_quantity("ashare", "buy", 799), 700)
+        self.assertEqual(_execution_quantity("ashare", "buy", 99), 0)
+        self.assertEqual(_execution_quantity("us", "buy", 799), 799)
 
     def _deps(self, *, fail_debate: bool = False, use_batch_score: bool = False) -> OrchestratorDeps:
         def score_stock(market: str, symbol: str, data_reader: object = None, date: str | None = None) -> dict[str, object]:

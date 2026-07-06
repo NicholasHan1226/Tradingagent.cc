@@ -67,6 +67,13 @@ def _safe_quantity(value: Any, default: int | float = 0) -> int | float:
     return result
 
 
+def _execution_quantity(market: str, side: str, quantity: Any) -> int:
+    value = _safe_int(quantity, 0)
+    if str(market or "").strip().lower() == "ashare" and str(side or "").strip().lower() == "buy":
+        return (value // 100) * 100
+    return value
+
+
 def _strategy_config(adapter: MarketAdapter) -> dict[str, Any]:
     try:
         config = adapter.get_strategy_config()
@@ -1545,6 +1552,7 @@ def run_sim_loop(
         symbol = str(position["ts_code"])
         meta = order_meta.get(symbol, {})
         side = "buy"
+        quantity = _execution_quantity(market, side, position.get("shares"))
         order_id = _make_order_id("SIM-", market, symbol, date)
         idempotency_key = _sim_idempotency_key(market, account, symbol, date, side)
         order = {
@@ -1552,7 +1560,7 @@ def run_sim_loop(
             "idempotency_key": idempotency_key,
             "ts_code": symbol,
             "side": side,
-            "quantity": _safe_int(position.get("shares"), 0),
+            "quantity": quantity,
             "price": _safe_float(position.get("price"), 0.0),
             "mid_price": _safe_float(position.get("price"), 0.0),
             "limit_price": _safe_float(position.get("price"), 0.0),
