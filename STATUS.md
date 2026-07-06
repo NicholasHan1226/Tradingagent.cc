@@ -45,7 +45,7 @@
 ## 二、已知问题
 
 - HK 按 Nicholas 最新决策暂不接入生产模拟盘；`hk_basic` 正常但 `hk_daily` 当前不作为生产模拟输入。HK 代码、wrapper 和数据诊断保留，默认不跑 cron、不纳入多市场健康/evolution 结论；手动运行也需要显式 `TRADINGAGENT_HK_SIM_ENABLED=1`，HSI 代理回退需要额外 `SIM_HK_PROXY_ENABLED=1`。
-- A股已进入 2026-07-06 真实交易时段恢复验收：SharedSignals 当日 5 分钟线已落入 read model；本轮修复前 TradingAgent SQLite 回退因 `5m/5min` 和日期格式不一致读不到当日分钟线，导致研究证据与模拟盘误报 `no_universe`。修复后需继续观察真实 cron 是否产生当天 server-local 模拟成交样本。
+- A股 2026-07-06 真实交易时段恢复验收已通过：SharedSignals 当日 5 分钟线已落入 read model；TradingAgent 修复了 `5m/5min`、日期格式、A股日线回看、盘中价格取值、买入整手和健康检查误报后，服务器本地模拟盘已产生 13 笔 server-local filled、签名回执、持仓快照和成交回执邮件；`market_health.py --market ashare` 当前 8/8 pass。
 - A股本地模拟回执链路已具备签名回执文件；生产环境仍需等待下一次真实交易时段产生真实生产样本，用于验证真实 cron 样本写入和收益复盘质量。健康检查已能区分“无首笔成交样本”和“有失败/有成交但缺回执”，后者才会告警。
 - Hermes/Mini GUI 路径已按 Nicholas 最新要求搁置为第二选择；只有未来显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时才需要重新验证 mini health、同花顺按钮识别、截图回执和账户同步。
 - 多市场旧系统 symlink 依赖已全部清除（61 个死 symlink）；工具独立实现已完成，剩余风险在 A股下一个交易日生产样本与晋降级/guard 的持续运行验证
