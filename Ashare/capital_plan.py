@@ -86,6 +86,21 @@ def _context_float(context: dict[str, Any], key: str, default: float = 0.0) -> f
         return default
 
 
+def _position_key(holding: dict[str, Any]) -> str:
+    return str(holding.get("ts_code") or holding.get("code") or holding.get("symbol") or "").strip().upper()
+
+
+def _count_unique_positions(holdings: Sequence[dict]) -> int:
+    symbols = {
+        _position_key(holding)
+        for holding in holdings
+        if isinstance(holding, dict) and _position_key(holding)
+    }
+    if symbols:
+        return len(symbols)
+    return len(holdings)
+
+
 def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] | None) -> dict[str, Any]:
     context = market_context or {}
     scores = sorted((_candidate_score(cand) for cand in candidates if isinstance(cand, dict)), reverse=True)
@@ -189,7 +204,7 @@ def plan_capital(
     CapitalPlan
     """
     deployed = sum(h.get("value", 0.0) for h in holdings)
-    n_holdings = len(holdings)
+    n_holdings = _count_unique_positions(holdings)
     notes: list[str] = []
     reasons: list[str] = []
 

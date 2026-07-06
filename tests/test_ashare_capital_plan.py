@@ -59,6 +59,27 @@ class AshareCapitalPlanTest(unittest.TestCase):
         self.assertEqual(data["suggested_buys"], [])
         self.assertIn("weak_candidate_quality", data["reasons"])
 
+    def test_duplicate_lot_rows_count_as_one_existing_position(self) -> None:
+        plan = plan_capital(
+            [
+                {"ts_code": "600000.SH", "value": 10000.0},
+                {"ts_code": "600000.SH", "value": 15000.0},
+            ],
+            175000.0,
+            candidates=[
+                {"ts_code": "000001.SZ", "combined": 0.80},
+                {"ts_code": "300750.SZ", "combined": 0.76},
+            ],
+            dynamic=True,
+            market_context={"trend": "bullish", "risk_rejection_rate": 0.0, "data_issue_rate": 0.0},
+        )
+
+        data = plan.to_dict()
+
+        self.assertEqual(data["target_positions"], 3)
+        self.assertEqual(data["max_new_positions"], 2)
+        self.assertEqual(len(data["suggested_buys"]), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

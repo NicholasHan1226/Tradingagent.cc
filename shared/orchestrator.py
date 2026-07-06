@@ -791,6 +791,305 @@ def _apply_position_budgets(
         position["target_amount"] = round(budget, 2)
 
 
+def _ashare_post_sell_buy_capacity(
+    *,
+    market: str,
+    existing_positions: list[dict[str, Any]],
+    capital_plan: dict[str, Any],
+    rebalance: dict[str, Any],
+    max_portfolio_positions: int,
+) -> int:
+    if str(market).lower() != "ashare" or max_portfolio_positions <= 0:
+        return 0
+    target_positions = _safe_int(capital_plan.get("target_positions"), max_portfolio_positions)
+    if target_positions <= 0:
+        return 0
+    target_positions = min(target_positions, max_portfolio_positions)
+    planned_sell_symbols = {
+        str(row.get("ts_code") or "")
+        for row in (rebalance.get("sells", []) or [])
+        if isinstance(row, dict) and str(row.get("ts_code") or "")
+    }
+    if not planned_sell_symbols:
+        return 0
+    existing_symbols = {
+        _position_symbol(position)
+        for position in existing_positions
+        if isinstance(position, dict) and _position_symbol(position)
+    }
+    post_sell_count = len(existing_symbols - planned_sell_symbols)
+    return max(0, target_positions - post_sell_count)
+
+
+def _augment_ashare_replacement_budgets(
+    *,
+    market: str,
+    capital_plan: dict[str, Any],
+    rebalance: dict[str, Any],
+    orders_for_portfolio: list[dict[str, Any]],
+    replacement_capacity: int,
+    capital: float,
+) -> dict[str, Any]:
+    if str(market).lower() != "ashare" or replacement_capacity <= 0 or not capital_plan.get("enabled"):
+        return capital_plan
+    released_cash = sum(
+        _safe_float(row.get("amount"), 0.0)
+        for row in (rebalance.get("sells", []) or [])
+        if isinstance(row, dict)
+    )
+    if released_cash <= 0:
+        return capital_plan
+    try:
+        from Ashare.capital_plan import MAX_POSITION_VALUE, MIN_POSITION_VALUE
+    except Exception:
+        MAX_POSITION_VALUE = 70_000
+        MIN_POSITION_VALUE = 50_000
+    if released_cash < MIN_POSITION_VALUE:
+        return capital_plan
+
+    budgets = dict(capital_plan.get("position_budget_by_symbol") or {})
+    candidates = [
+        order
+        for order in orders_for_portfolio[:replacement_capacity]
+        if str(order.get("ts_code") or "") and _safe_float(budgets.get(str(order.get("ts_code") or "")), 0.0) <= 0
+    ]
+    if not candidates:
+        return capital_plan
+
+    max_single_pct = _safe_float(capital_plan.get("max_single_position_pct"), 0.0)
+    max_single_value = MAX_POSITION_VALUE
+    if max_single_pct > 0:
+        max_single_value = min(MAX_POSITION_VALUE, max(0.0, capital * max_single_pct))
+    remaining = released_cash
+    allocated: list[dict[str, Any]] = []
+    for index, order in enumerate(candidates):
+        if remaining < MIN_POSITION_VALUE:
+            break
+        remaining_slots = max(1, min(len(candidates), replacement_capacity) - index)
+        budget = min(remaining / remaining_slots, max_single_value)
+        budget = max(MIN_POSITION_VALUE, min(budget, remaining))
+        if budget < MIN_POSITION_VALUE:
+            break
+        symbol = str(order.get("ts_code") or "")
+        budgets[symbol] = round(budget, 2)
+        allocated.append({"ts_code": symbol, "budget": round(budget, 2)})
+        remaining -= budget
+
+    if not allocated:
+        return capital_plan
+    updated = dict(capital_plan)
+    updated["position_budget_by_symbol"] = budgets
+    updated["replacement_budget"] = {
+        "enabled": True,
+        "released_cash": round(released_cash, 2),
+        "allocated_cash": round(sum(row["budget"] for row in allocated), 2),
+        "replacement_capacity": replacement_capacity,
+        "allocations": allocated,
+    }
+    updated["max_new_positions"] = max(_safe_int(updated.get("max_new_positions"), 0), len(allocated))
+    return updated
+
+
+def _position_symbol(position: dict[str, Any]) -> str:
+    return str(position.get("ts_code") or position.get("symbol") or position.get("code") or "").strip()
+
+
+def _position_quantity(position: dict[str, Any]) -> int:
+    return _safe_int(position.get("quantity", position.get("shares", position.get("position_qty"))), 0)
+
+
+def _position_sellable_quantity(position: dict[str, Any]) -> int:
+    explicit = position.get("sellable_quantity", position.get("sellable_qty", position.get("available_qty")))
+    if explicit is not None:
+        return max(0, _safe_int(explicit, 0))
+    return max(0, _position_quantity(position))
+
+
+def _position_avg_price(position: dict[str, Any]) -> float:
+    return _safe_float(position.get("avg_price", position.get("avg_cost", position.get("cost"))), 0.0)
+
+
+def _position_last_price(position: dict[str, Any], fallback: float = 0.0) -> float:
+    return _safe_float(
+        position.get("last_price", position.get("mark_price", position.get("current_price", position.get("price")))),
+        fallback,
+    )
+
+
+def _merge_ashare_sell_row(base: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    merged["shares"] = _safe_int(merged.get("shares"), 0) + _safe_int(row.get("shares"), 0)
+    merged["quantity"] = _safe_int(merged.get("quantity"), 0) + _safe_int(row.get("quantity"), 0)
+    merged["amount"] = round(_safe_float(merged.get("amount"), 0.0) + _safe_float(row.get("amount"), 0.0), 2)
+    if merged["shares"] > 0 and merged["amount"] > 0:
+        merged["price"] = round(merged["amount"] / merged["shares"], 4)
+    merged["weight"] = -abs(_safe_float(merged.get("weight"), 0.0)) - abs(_safe_float(row.get("weight"), 0.0))
+    reasons: list[str] = []
+    for reason in [*(merged.get("rebalance_reasons") or []), *(row.get("rebalance_reasons") or [])]:
+        if reason and reason not in reasons:
+            reasons.append(str(reason))
+    merged["rebalance_reasons"] = reasons
+    merged["reason"] = ",".join(reasons)
+    merged["has_score"] = bool(merged.get("has_score") or row.get("has_score"))
+    merged["combined"] = min(_safe_float(merged.get("combined"), 0.0), _safe_float(row.get("combined"), 0.0))
+    merged["pnl_pct"] = min(_safe_float(merged.get("pnl_pct"), 0.0), _safe_float(row.get("pnl_pct"), 0.0))
+    return merged
+
+
+def _ashare_rebalance_plan(
+    *,
+    market: str,
+    date: str,
+    reader: Any,
+    existing_positions: list[dict[str, Any]],
+    capital_plan: dict[str, Any],
+    scores_by_symbol: dict[str, dict[str, Any]],
+    max_portfolio_positions: int,
+    default_price: float,
+    capital: float,
+) -> dict[str, Any]:
+    if str(market).lower() != "ashare":
+        return {"enabled": False, "planned_sell_count": 0, "sells": []}
+
+    target_positions = _safe_int(capital_plan.get("target_positions"), max_portfolio_positions)
+    if target_positions < 0:
+        target_positions = max_portfolio_positions
+    sellable: list[dict[str, Any]] = []
+    planned_by_symbol: dict[str, dict[str, Any]] = {}
+
+    for position in existing_positions:
+        if not isinstance(position, dict):
+            continue
+        symbol = _position_symbol(position)
+        if not symbol:
+            continue
+        quantity = _position_quantity(position)
+        sellable_quantity = _position_sellable_quantity(position)
+        if quantity <= 0 or sellable_quantity <= 0:
+            continue
+        score = scores_by_symbol.get(symbol) or {}
+        has_score = bool(score)
+        combined = _safe_float(score.get("combined", score.get("score", position.get("combined", position.get("score")))), 0.0)
+        avg_price = _position_avg_price(position)
+        price = _position_last_price(position, avg_price or default_price)
+        mapped_market = str(score.get("market") or market)
+        mapped_symbol = str(score.get("mapped_symbol") or symbol)
+        price = _latest_price(reader, mapped_market, mapped_symbol, date, price or default_price)
+        pnl_pct = ((price / avg_price) - 1.0) if avg_price > 0 and price > 0 else 0.0
+        reasons: list[str] = []
+        if pnl_pct <= -0.08:
+            reasons.append("stop_loss")
+        if has_score and combined < 0.55:
+            reasons.append("score_drop")
+        sellable.append(
+            {
+                "ts_code": symbol,
+                "side": "sell",
+                "shares": (sellable_quantity // 100) * 100,
+                "quantity": quantity,
+                "price": price,
+                "weight": -abs(_safe_float(position.get("weight"), _position_value(position, capital) / max(capital, 1.0))),
+                "amount": round(((sellable_quantity // 100) * 100) * price, 2),
+                "sector": str(position.get("sector", "unknown")),
+                "reason": ",".join(reasons) if reasons else "",
+                "rebalance_reasons": reasons,
+                "combined": combined,
+                "has_score": has_score,
+                "pnl_pct": pnl_pct,
+                "risk_audit_id": "",
+            }
+        )
+
+    sellable_by_symbol: dict[str, dict[str, Any]] = {}
+    for row in sellable:
+        if row["shares"] <= 0:
+            continue
+        symbol = str(row["ts_code"])
+        if symbol in sellable_by_symbol:
+            sellable_by_symbol[symbol] = _merge_ashare_sell_row(sellable_by_symbol[symbol], row)
+        else:
+            sellable_by_symbol[symbol] = dict(row)
+
+    for row in sellable_by_symbol.values():
+        if row["rebalance_reasons"]:
+            planned_by_symbol[row["ts_code"]] = row
+
+    existing_count = len({_position_symbol(position) for position in existing_positions if isinstance(position, dict) and _position_symbol(position)})
+    compression_target = target_positions if target_positions > 0 else max_portfolio_positions
+    excess_count = max(0, existing_count - compression_target)
+    if excess_count > 0:
+        compression_pool = [
+            row
+            for row in sellable_by_symbol.values()
+            if row["shares"] > 0 and row["ts_code"] not in planned_by_symbol
+        ]
+        compression_pool.sort(
+            key=lambda row: (
+                _safe_float(row.get("combined"), 0.0) if row.get("has_score") else -1.0,
+                _safe_float(row.get("pnl_pct"), 0.0),
+                _safe_float(row.get("amount"), 0.0),
+            )
+        )
+        for row in compression_pool[:excess_count]:
+            reasons = list(row.get("rebalance_reasons") or [])
+            reasons.append("portfolio_compression")
+            row["rebalance_reasons"] = reasons
+            row["reason"] = ",".join(reasons)
+            planned_by_symbol[row["ts_code"]] = row
+
+    sells = list(planned_by_symbol.values())
+    sells.sort(key=lambda row: (str(row.get("reason") or ""), _safe_float(row.get("combined"), 0.0)))
+    return {
+        "enabled": True,
+        "target_positions": target_positions,
+        "existing_position_count": existing_count,
+        "planned_sell_count": len(sells),
+        "sells": sells,
+    }
+
+
+def _write_ashare_capital_plan_log(
+    *,
+    market: str,
+    date: str,
+    account: str,
+    capital_plan: dict[str, Any],
+    rebalance: dict[str, Any],
+    planned_buy_count: int,
+    capital_layer: str,
+    account_type: str,
+    review_root: Path | None = None,
+) -> dict[str, Any]:
+    if str(market).lower() != "ashare":
+        return {"status": "skipped", "reason": "non_ashare_market"}
+    base_review_root = review_root or (ROOT / "shared" / "review")
+    target_dir = base_review_root / "ashare"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    compact = str(date or "").replace("-", "")[:8]
+    path = target_dir / f"capital_plan_{compact}.jsonl"
+    row = {
+        "market": market,
+        "date": date,
+        "trade_date": _date_iso(date),
+        "account": account,
+        "capital_layer": capital_layer,
+        "account_type": account_type,
+        "capital_plan": capital_plan,
+        "rebalance": {
+            "enabled": bool(rebalance.get("enabled")),
+            "target_positions": rebalance.get("target_positions"),
+            "existing_position_count": rebalance.get("existing_position_count", 0),
+            "planned_sell_count": rebalance.get("planned_sell_count", 0),
+            "sells": rebalance.get("sells", [])[:20],
+        },
+        "planned_buy_count": planned_buy_count,
+        "generated_at": _now_iso(),
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    return {"status": "written", "path": str(path), "rows": 1}
+
+
 def _exclusion_rows(
     rows: list[dict[str, Any]],
     *,
@@ -1766,7 +2065,7 @@ def run_sim_loop(
             proposed_weight,
         )
 
-    orders_for_portfolio = sorted(
+    ranked_orders_for_portfolio = sorted(
         orders_for_portfolio,
         key=lambda row: (
             _safe_float(scores_by_symbol.get(str(row.get("ts_code")), {}).get("combined"), 0.0),
@@ -1784,10 +2083,47 @@ def run_sim_loop(
         risk_rejections=risk_rejections,
     )
     stage_calls.append("portfolio.capital_plan")
-    position_capacity = _max_new_positions(existing_positions, max_portfolio_positions)
+    rebalance = _ashare_rebalance_plan(
+        market=market,
+        date=date,
+        reader=reader,
+        existing_positions=existing_positions,
+        capital_plan=capital_plan,
+        scores_by_symbol=scores_by_symbol,
+        max_portfolio_positions=max_portfolio_positions,
+        default_price=default_price,
+        capital=capital,
+    )
+    stage_calls.append("portfolio.rebalance_plan")
+    planned_sell_symbols = {
+        str(row.get("ts_code") or "")
+        for row in (rebalance.get("sells", []) or [])
+        if isinstance(row, dict)
+    }
+    base_position_capacity = _max_new_positions(existing_positions, max_portfolio_positions)
     if capital_plan.get("enabled"):
-        position_capacity = min(position_capacity, _safe_int(capital_plan.get("max_new_positions"), 0))
-    orders_for_portfolio = orders_for_portfolio[:position_capacity]
+        base_position_capacity = min(base_position_capacity, _safe_int(capital_plan.get("max_new_positions"), 0))
+    replacement_capacity = _ashare_post_sell_buy_capacity(
+        market=market,
+        existing_positions=existing_positions,
+        capital_plan=capital_plan,
+        rebalance=rebalance,
+        max_portfolio_positions=max_portfolio_positions,
+    )
+    position_capacity = max(base_position_capacity, replacement_capacity)
+    orders_for_portfolio = [
+        order
+        for order in ranked_orders_for_portfolio
+        if str(order.get("ts_code") or "") not in planned_sell_symbols
+    ][:position_capacity]
+    capital_plan = _augment_ashare_replacement_budgets(
+        market=market,
+        capital_plan=capital_plan,
+        rebalance=rebalance,
+        orders_for_portfolio=orders_for_portfolio,
+        replacement_capacity=replacement_capacity,
+        capital=capital,
+    )
 
     portfolio = _safe_stage(
         "portfolio.constructor",
@@ -1812,12 +2148,31 @@ def run_sim_loop(
         capital_plan=capital_plan,
         capital=capital,
     )
-    for position in portfolio.get("positions", []) or []:
+    capital_plan_log = _safe_stage(
+        "review.capital_plan_log",
+        errors,
+        lambda: _write_ashare_capital_plan_log(
+            market=market,
+            date=date,
+            account=account,
+            capital_plan=capital_plan,
+            rebalance=rebalance,
+            planned_buy_count=len(orders_for_portfolio),
+            capital_layer=capital_layer,
+            account_type=account_type,
+            review_root=signals_dir.parent / "shared" / "review",
+        ),
+        default={"status": "degraded", "rows": 0},
+        capital_layer=capital_layer,
+    )
+    stage_calls.append("review.capital_plan_log")
+    execution_positions = [*(rebalance.get("sells", []) or []), *((portfolio.get("positions", []) or []))]
+    for position in execution_positions:
         if not isinstance(position, dict) or not position.get("ts_code"):
             continue
         symbol = str(position["ts_code"])
         meta = order_meta.get(symbol, {})
-        side = "buy"
+        side = str(position.get("side") or "buy").lower()
         quantity = _execution_quantity(market, side, position.get("shares"))
         order_id = _make_order_id("SIM-", market, symbol, date)
         idempotency_key = _sim_idempotency_key(market, account, symbol, date, side)
@@ -1836,7 +2191,7 @@ def run_sim_loop(
             "market": market,
             "capital_layer": capital_layer,
             "account_type": account_type,
-            "note": f"orchestrator sim loop {market} {date}",
+            "note": str(position.get("reason") or f"orchestrator sim loop {market} {date}"),
         }
         if order["quantity"] <= 0 or order["price"] <= 0:
             skip = {"stage": "execution.sim_broker", "status": "skipped", "symbol": symbol, "reason": "non-positive quantity or price", "capital_layer": capital_layer}
@@ -1988,11 +2343,12 @@ def run_sim_loop(
     failed_count = sum(1 for record in records if record["signal_result"].get("status") == "failed")
     pending_count = sum(1 for record in records if record["signal_result"].get("status") == "pending")
     duplicate_count = sum(1 for record in records if record["signal_result"].get("status") == "duplicate")
+    planned_order_count = len(execution_positions)
     portfolio_positions = len([row for row in (portfolio.get("positions", []) or []) if isinstance(row, dict) and row.get("ts_code")])
     no_trade_explanation = _sim_no_trade_explanation(
         universe_count=len(universe),
         candidate_count=len(candidates),
-        order_count=len(orders_for_portfolio),
+        order_count=planned_order_count,
         portfolio_positions=portfolio_positions,
         filled_count=filled_count,
         failed_count=failed_count,
@@ -2014,7 +2370,7 @@ def run_sim_loop(
         "stage_calls": stage_calls,
         "universe_count": len(universe),
         "candidate_count": len(candidates),
-        "order_count": len(orders_for_portfolio),
+        "order_count": planned_order_count,
         "skipped_candidate_count": len(skipped_candidates),
         "skipped_candidates": skipped_candidates[:20],
         "risk_rejection_count": len(risk_rejections),
@@ -2028,6 +2384,8 @@ def run_sim_loop(
         "duplicate_count": duplicate_count,
         "no_trade_explanation": no_trade_explanation,
         "capital_plan": capital_plan,
+        "capital_plan_log": capital_plan_log,
+        "rebalance": rebalance,
         "portfolio": portfolio,
         "records": records,
         "audit_events": audits,

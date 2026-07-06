@@ -58,11 +58,13 @@ class MultiCandidateSimAdapter(StubSimAdapter):
         max_candidates: int = 3,
         score_universe_limit: int | None = None,
         max_portfolio_positions: int = 3,
+        positions: list[dict[str, object]] | None = None,
     ) -> None:
         self.symbols = symbols
         self.max_candidates = max_candidates
         self.score_universe_limit = score_universe_limit or max_candidates
         self.max_portfolio_positions = max_portfolio_positions
+        self.positions = positions or []
 
     def get_universe(self, date: str) -> list[str]:
         return list(self.symbols)
@@ -82,7 +84,7 @@ class MultiCandidateSimAdapter(StubSimAdapter):
         }
 
     def get_sim_account(self) -> dict[str, object]:
-        return {"account": "ashare_sim", "sim_capital": 200000.0, "positions": []}
+        return {"account": "ashare_sim", "sim_capital": 200000.0, "positions": list(self.positions)}
 
 
 def _patch_shadow_paths(testcase: unittest.TestCase, tmp_path: Path) -> None:
@@ -497,6 +499,195 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["order_count"], 0)
         self.assertEqual(result["filled_count"], 0)
         self.assertEqual(self.executed_orders, [])
+
+    def test_run_sim_loop_compresses_excess_ashare_positions_and_logs_capital_plan(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.86 - index * 0.03, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for index, symbol in enumerate(universe)
+            ]
+
+        deps.score_universe = score_universe
+        positions = [
+            {"ts_code": f"{i + 1:06d}.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 10.0, "last_price": 10.0, "weight": 0.08}
+            for i in range(5)
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(
+                ["AAA", "BBB", "CCC"],
+                max_candidates=3,
+                score_universe_limit=3,
+                max_portfolio_positions=3,
+                positions=positions,
+            ),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_rebalance",
+        )
+
+        sell_orders = [order for order in self.executed_orders if order["side"] == "sell"]
+        self.assertEqual(result["rebalance"]["planned_sell_count"], 2)
+        self.assertEqual(len(sell_orders), 2)
+        self.assertEqual(result["order_count"], 2)
+        self.assertEqual(result["capital_plan_log"]["status"], "written")
+        log_path = Path(result["capital_plan_log"]["path"])
+        row = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(row["rebalance"]["planned_sell_count"], 2)
+        self.assertEqual(row["capital_plan"]["target_positions"], 3)
+
+    def test_run_sim_loop_sells_stop_loss_ashare_position_even_within_target_count(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.86, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        positions = [
+            {"ts_code": "000010.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 12.0, "last_price": 10.0, "weight": 0.08}
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["AAA", "BBB", "CCC"], max_candidates=3, score_universe_limit=3, max_portfolio_positions=3, positions=positions),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_stop_loss",
+        )
+
+        sell_orders = [order for order in self.executed_orders if order["side"] == "sell"]
+        self.assertEqual(result["rebalance"]["planned_sell_count"], 1)
+        self.assertEqual(sell_orders[0]["ts_code"], "000010.SZ")
+        self.assertIn("stop_loss", sell_orders[0]["note"])
+
+    def test_run_sim_loop_merges_duplicate_lot_rows_into_one_sell_order(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.86, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        positions = [
+            {"ts_code": "000010.SZ", "quantity": 3000, "sellable_quantity": 3000, "avg_price": 12.0, "last_price": 10.0, "weight": 0.15},
+            {"ts_code": "000010.SZ", "quantity": 2000, "sellable_quantity": 2000, "avg_price": 12.0, "last_price": 10.0, "weight": 0.10},
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["AAA"], max_candidates=1, score_universe_limit=1, max_portfolio_positions=3, positions=positions),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_duplicate_lots",
+        )
+
+        sell_orders = [order for order in self.executed_orders if order["side"] == "sell"]
+        self.assertEqual(result["rebalance"]["planned_sell_count"], 1)
+        self.assertEqual(len(sell_orders), 1)
+        self.assertEqual(sell_orders[0]["ts_code"], "000010.SZ")
+        self.assertEqual(sell_orders[0]["quantity"], 5000)
+
+    def test_run_sim_loop_does_not_liquidate_normal_positions_when_capital_plan_is_defensive(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.50, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        positions = [
+            {"ts_code": "000010.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 10.0, "last_price": 10.0, "weight": 0.08},
+            {"ts_code": "000011.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 10.0, "last_price": 10.0, "weight": 0.08},
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["AAA", "BBB"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=3, positions=positions),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_defensive_hold",
+        )
+
+        self.assertEqual(result["capital_plan"]["risk_mode"], "defensive")
+        self.assertEqual(result["rebalance"]["planned_sell_count"], 0)
+        self.assertEqual(result["order_count"], 0)
+        self.assertEqual(self.executed_orders, [])
+
+    def test_run_sim_loop_does_not_buy_same_symbol_planned_for_rebalance_sell(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            scores = {"000010.SZ": 0.92, "000011.SZ": 0.88, "000012.SZ": 0.84}
+            return [
+                (symbol, {"combined": scores[symbol], "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        positions = [
+            {"ts_code": "000010.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 12.0, "last_price": 10.0, "weight": 0.08}
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["000010.SZ", "000011.SZ", "000012.SZ"], max_candidates=3, score_universe_limit=3, max_portfolio_positions=3, positions=positions),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_no_round_trip",
+        )
+
+        sell_orders = [order for order in self.executed_orders if order["side"] == "sell"]
+        buy_orders = [order for order in self.executed_orders if order["side"] == "buy"]
+        self.assertEqual(result["rebalance"]["planned_sell_count"], 1)
+        self.assertEqual(sell_orders[0]["ts_code"], "000010.SZ")
+        self.assertNotIn("000010.SZ", [order["ts_code"] for order in buy_orders])
+        self.assertEqual([order["ts_code"] for order in buy_orders], ["000011.SZ", "000012.SZ"])
+
+    def test_run_sim_loop_replaces_full_position_after_stop_loss_sell(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            scores = {"000013.SZ": 0.91, "000014.SZ": 0.82}
+            return [
+                (symbol, {"combined": scores[symbol], "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        positions = [
+            {"ts_code": "000010.SZ", "quantity": 5000, "sellable_quantity": 5000, "avg_price": 12.0, "last_price": 10.0, "weight": 0.25},
+            {"ts_code": "000011.SZ", "quantity": 5000, "sellable_quantity": 5000, "avg_price": 10.0, "last_price": 10.0, "weight": 0.25},
+            {"ts_code": "000012.SZ", "quantity": 5000, "sellable_quantity": 5000, "avg_price": 10.0, "last_price": 10.0, "weight": 0.25},
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["000013.SZ", "000014.SZ"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=3, positions=positions),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_replacement_after_sell",
+        )
+
+        sell_orders = [order for order in self.executed_orders if order["side"] == "sell"]
+        buy_orders = [order for order in self.executed_orders if order["side"] == "buy"]
+        self.assertEqual(result["rebalance"]["planned_sell_count"], 1)
+        self.assertEqual(sell_orders[0]["ts_code"], "000010.SZ")
+        self.assertEqual([order["ts_code"] for order in buy_orders], ["000013.SZ"])
+        self.assertEqual(
+            result["capital_plan"]["replacement_budget"]["allocated_cash"],
+            result["capital_plan"]["replacement_budget"]["released_cash"],
+        )
+        self.assertGreaterEqual(result["capital_plan"]["replacement_budget"]["allocated_cash"], 50000.0)
 
     def test_run_sim_loop_persists_exclusions_even_when_some_orders_fill(self) -> None:
         class SelectiveReader:

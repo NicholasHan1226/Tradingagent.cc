@@ -14,11 +14,13 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 
 ## 资金
 - 模拟盘初始 200,000 元；`capital_plan.py` 按候选质量、风控拒绝率、数据异常率和近期表现动态决定 0/1/2/3 只。强信号可集中 2-3 只，弱信号或高拒绝率时优先留现金/逆回购，不为凑仓位硬买。
+- 分批/旧持仓按唯一标的计入持仓数量；同一股票多条 lot 不得被误判为多只股票。
 - 盘前1小时资金规划
 - 闲置资金尾盘买逆回购(204001)
 
 ## 执行
 - 模拟盘: 默认由服务器通过 `Ashare/sim_executor.py` 和 `shared/execution/sim_broker.py` 完成本地 paper fill、账本和复盘闭环；不依赖 Mini/Hermes。
+- 卖出/换仓: `shared/orchestrator.py` 会在 A股模拟主循环中生成 simulated sell 压缩单；只卖可卖数量，优先处理止损、低分和超目标持仓压缩，不触碰实盘。止损/压缩释放的资金可作为同轮替换买入预算，并写入 `capital_plan.replacement_budget`。
 - Hermes 备用路径: 只有显式设置 `ASHARE_SIM_HERMES_ENABLED=1` 时，服务器才把模拟信号卡投递给 Mac Mini live executor `~/.hermes/scripts/sim-signal-executor.py`，由同花顺模拟盘执行并回写。
 - 实盘: 仅人工确认与只读同步；不得自动点击真实账户委托
 - 5-10分钟级别自动化
