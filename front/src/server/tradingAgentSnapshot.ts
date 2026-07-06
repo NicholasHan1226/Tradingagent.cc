@@ -476,9 +476,11 @@ async function buildMarketSummaries({
         : undefined
     const tradeCount = Math.max(executedCount, performanceSummary?.trades ?? 0, styleSummary?.filledCount ?? 0)
     const styleCount = Math.max(styleSummary?.styleCount ?? 0, styleSummary?.activeStyleCount ?? 0)
-    const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || pnlAmount !== undefined
+    const hasMeaningfulPnl = pnlAmount !== undefined && (pnlAmount !== 0 || (capitalBase ?? 0) > 0 || (performanceSummary?.trades ?? 0) > 0)
+    const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || hasMeaningfulPnl
+    const hasPartialEvidence = Boolean(performanceSummary || styleSummary)
     const hasOnlyStyleSummary = styleCount > 0 && holdingCount === 0 && marketSignals.length === 0 && pnlAmount === undefined
-    const status: MarketSummary['status'] = hasRuntime ? hasOnlyStyleSummary ? 'partial' : 'ready' : 'empty'
+    const status: MarketSummary['status'] = hasRuntime ? hasOnlyStyleSummary ? 'partial' : 'ready' : hasPartialEvidence ? 'partial' : 'empty'
     const latestAt = latestIso(styleSummary?.latestAt, performanceSummary?.latestAt, ashareAccount?.updatedAt, generatedAt)
 
     return {
@@ -507,7 +509,7 @@ async function buildMarketSummaries({
         capitalBase,
         errorCount: styleSummary?.errorCount,
         filledCount: styleSummary?.filledCount,
-        pnlAmount,
+        pnlAmount: hasMeaningfulPnl ? pnlAmount : undefined,
         returnPct,
         styleCount,
       }),
