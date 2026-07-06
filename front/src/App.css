@@ -1684,32 +1684,35 @@ button:not(:disabled) {
 
 .hyper-chart-panel {
   overflow: hidden;
-  border: 1px solid rgba(224, 246, 240, 0.058);
+  border: 1px solid rgba(224, 246, 240, 0.052);
   border-radius: 4px;
   background:
-    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 46%),
-    rgba(1, 5, 5, 0.72);
+    linear-gradient(180deg, rgba(240, 246, 244, 0.014), transparent 52%),
+    linear-gradient(90deg, rgba(94, 234, 223, 0.018), transparent 34%, rgba(201, 168, 90, 0.012)),
+    rgba(1, 5, 5, 0.74);
 }
 
 .chart-panel-head {
   position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
+  top: 9px;
+  right: 10px;
+  left: 10px;
   z-index: 3;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-height: 42px;
-  border-bottom: 1px solid var(--border-hairline);
-  background: rgba(1, 5, 5, 0.74);
+  min-height: 34px;
+  border: 1px solid rgba(224, 246, 240, 0.05);
+  border-radius: 4px;
+  background: rgba(1, 6, 6, 0.68);
+  backdrop-filter: blur(8px);
 }
 
 .chart-panel-head > div {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 2px;
   align-content: center;
-  padding: 7px 12px;
+  padding: 6px 10px;
   border-left: 1px solid var(--border-hairline);
 }
 
@@ -1719,13 +1722,13 @@ button:not(:disabled) {
 
 .chart-panel-head span {
   color: var(--text-faint);
-  font-size: 10px;
-  font-weight: 680;
+  font-size: 9px;
+  font-weight: 660;
 }
 
 .chart-panel-head strong {
   color: var(--text-primary);
-  font: 730 14px/1 var(--font-number);
+  font: 720 13px/1 var(--font-number);
 }
 
 .chart-panel-head > div:first-child strong {
@@ -1734,15 +1737,15 @@ button:not(:disabled) {
 
 .chart-plot {
   position: absolute;
-  inset: 43px 0 43px;
+  inset: 50px 0 38px;
 }
 
 .chart-legend {
   position: absolute;
-  top: 45px;
-  left: 12px;
+  top: 52px;
+  left: 13px;
   z-index: 3;
-  gap: 10px;
+  gap: 12px;
   color: var(--text-muted);
   font-size: 10px;
 }
@@ -1750,7 +1753,7 @@ button:not(:disabled) {
 .chart-live-labels {
   position: absolute;
   right: 14px;
-  top: 53px;
+  top: 87px;
   z-index: 4;
   display: grid;
   gap: 6px;
@@ -1760,12 +1763,12 @@ button:not(:disabled) {
 
 .chart-live-labels span {
   width: fit-content;
-  padding: 4px 7px;
-  border: 1px solid rgba(219, 242, 236, 0.058);
+  padding: 3px 7px;
+  border: 1px solid rgba(219, 242, 236, 0.052);
   border-radius: 4px;
-  background: rgba(2, 6, 6, 0.86);
+  background: rgba(2, 6, 6, 0.82);
   color: var(--text-muted);
-  font: 650 11px/1 var(--font-number);
+  font: 650 10px/1 var(--font-number);
 }
 
 .chart-live-labels .current {
@@ -1791,7 +1794,7 @@ button:not(:disabled) {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0;
   border-top: 1px solid var(--border-hairline);
-  background: rgba(1, 5, 5, 0.88);
+  background: rgba(1, 5, 5, 0.84);
 }
 
 .chart-event-bar button {
@@ -1799,7 +1802,7 @@ button:not(:disabled) {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 4px 9px;
-  min-height: 42px;
+  min-height: 38px;
   padding: 6px 11px;
   border: 0;
   border-right: 1px solid var(--border-hairline);
@@ -1828,7 +1831,7 @@ button:not(:disabled) {
   grid-row: span 2;
   align-self: center;
   color: var(--text-muted);
-  font: 680 11px/1 var(--font-number);
+  font: 660 10px/1 var(--font-number);
 }
 
 .chart-event-bar strong {

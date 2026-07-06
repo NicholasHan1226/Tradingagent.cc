@@ -23,6 +23,13 @@ function getPerformanceDomain(data: PerformancePoint[]) {
 function getFocusedPerformanceDomain(data: PerformancePoint[], latestPoint: PerformancePoint) {
   const rawDomain = getPerformanceDomain(data)
   const visibleValues = [latestPoint.simulated, latestPoint.target, latestPoint.benchmark, latestPoint.opportunity, -DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT]
+
+  if (latestPoint.simulated > TARGET_RETURN_PCT * 1.75) {
+    const floor = Math.floor(Math.min(rawDomain[0], -DRAWDOWN_LIMIT_PCT - 4))
+    const ceiling = Math.ceil(Math.max(rawDomain[1], latestPoint.simulated + Math.max(8, latestPoint.simulated * 0.28)))
+    return [floor, ceiling] as [number, number]
+  }
+
   const center = (Math.min(...visibleValues) + Math.max(...visibleValues)) / 2
   const span = Math.max(18, Math.min(52, Math.abs(latestPoint.simulated - latestPoint.target) + 20))
   const min = Math.floor(Math.max(rawDomain[0], center - span / 2))

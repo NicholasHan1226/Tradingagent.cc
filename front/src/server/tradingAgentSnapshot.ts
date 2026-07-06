@@ -402,10 +402,14 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
     : groupEquitySnapshotsByTimestamp(snapshots)
 
   const timestamps = [...grouped.keys()].sort((a, b) => a - b)
-  const performance = timestamps.map((timestampMs, index) => {
-    const row = grouped.get(timestampMs)!
+  const snapshotRows = timestamps.map((timestampMs) => grouped.get(timestampMs)!)
+  const useProgressiveTarget = shouldUseProgressiveEquityTarget(snapshotRows)
+  const performance = timestamps.map((_, index) => {
+    const row = snapshotRows[index]
     const simulated = row.capitalBase > 0 ? (row.pnl / row.capitalBase) * 100 : row.returnPct
-    const target = row.targetPct > 0 ? row.targetPct : Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / timestamps.length))
+    const target = useProgressiveTarget
+      ? Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / timestamps.length))
+      : row.targetPct > 0 ? row.targetPct : Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / timestamps.length))
 
     return {
       day: index === timestamps.length - 1 ? '现在' : formatTimelineLabel(row.timestamp),
@@ -434,6 +438,14 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
       updatedAt: generatedAt,
     },
   }
+}
+
+function shouldUseProgressiveEquityTarget(rows: ParsedEquitySnapshot[]) {
+  if (rows.length <= 2) return false
+  if (!rows.every((row) => row.isSimLedgerSnapshot)) return false
+  const positiveTargets = rows.map((row) => row.targetPct).filter((value) => value > 0)
+  if (positiveTargets.length !== rows.length) return true
+  return new Set(positiveTargets.map((value) => roundMetric(value))).size === 1
 }
 
 function groupEquitySnapshotsByTimestamp(snapshots: ParsedEquitySnapshot[]) {
