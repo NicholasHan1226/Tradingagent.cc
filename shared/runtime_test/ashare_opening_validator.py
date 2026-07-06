@@ -18,6 +18,7 @@ from typing import Any
 
 DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
 CN_TZ = timezone(timedelta(hours=8))
+NO_TRADE_LOG = Path(__file__).resolve().parents[1] / "logs" / "ashare_no_trade_explanations.jsonl"
 
 
 def _now_cn() -> datetime:
@@ -118,6 +119,22 @@ def _count_jsonl_rows(path: Path) -> int:
     return sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
 
 
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            rows.append(payload)
+    return rows
+
+
 def _count_local_sim_trades(path: Path, date: str) -> int:
     if not path.exists():
         return 0
@@ -168,6 +185,37 @@ def _count_filled_signals(signals_dir: Path, date: str) -> int:
     return count
 
 
+def _signal_status_counts(signals_dir: Path, date: str) -> dict[str, int]:
+    trade_date = date.replace("-", "")
+    counts = {
+        "pending": 0,
+        "claimed": 0,
+        "running": 0,
+        "filled": 0,
+        "failed": 0,
+        "partial": 0,
+        "expired": 0,
+        "cancelled": 0,
+    }
+    for status in counts:
+        bucket = signals_dir / status
+        if not bucket.exists():
+            continue
+        for path in bucket.glob("*.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("market") or "").lower() != "ashare":
+                continue
+            card_date = str(payload.get("trade_date") or payload.get("valid_until") or payload.get("created_at") or "")[:10].replace("-", "")
+            if card_date == trade_date:
+                counts[status] += 1
+    return counts
+
+
 def _count_market_receipts(receipt_path: Path, date: str) -> int:
     if not receipt_path.exists():
         return 0
@@ -189,6 +237,52 @@ def _count_market_receipts(receipt_path: Path, date: str) -> int:
     return count
 
 
+def _latest_no_trade_explanation(path: Path, date: str) -> dict[str, Any]:
+    rows = _read_jsonl(path)
+    for payload in reversed(rows):
+        raw_date = str(payload.get("date") or payload.get("trade_date") or payload.get("generated_at") or "")[:10].replace("-", "")
+        if raw_date and raw_date != date:
+            continue
+        explanation = payload.get("no_trade_explanation")
+        if isinstance(explanation, dict):
+            return {
+                "path": str(path),
+                "generated_at": payload.get("generated_at"),
+                "state": payload.get("state"),
+                "category": explanation.get("category"),
+                "action": explanation.get("action") or explanation.get("next_action"),
+                "counts": explanation.get("counts", {}),
+                "sample_risk_rejections": explanation.get("sample_risk_rejections", [])[:5],
+                "sample_execution_skips": explanation.get("sample_execution_skips", [])[:5],
+                "sample_errors": explanation.get("sample_errors", [])[:3],
+            }
+    return {}
+
+
+def _classify_from_latest_no_trade(latest: dict[str, Any]) -> tuple[str, str] | None:
+    category = str(latest.get("category") or "")
+    action = str(latest.get("action") or "")
+    if not category:
+        return None
+    mapped = {
+        "no_universe": ("no_universe", "check_sharedsignals_assets_and_daily_coverage"),
+        "no_candidates": ("no_candidates", "check_candidate_pool_thresholds_and_universe_filter"),
+        "all_candidates_missing_price": ("candidate_price_missing", "check_sharedsignals_daily_or_realtime_prices"),
+        "all_rejected_by_risk": ("all_rejected_by_risk", "review_risk_rejections"),
+        "no_portfolio_orders": ("no_portfolio_orders", "check_position_sizing_and_portfolio_constructor"),
+        "portfolio_empty": ("portfolio_empty_or_capital_lot_blocked", "check_capital_lot_size_and_constructor_output"),
+        "duplicate_existing_signal": ("duplicate_existing_signal", "review_same_day_idempotency_state"),
+        "execution_skipped": ("execution_skipped", "review_execution_skip_reasons"),
+        "execution_failed": ("execution_failed", "review_failed_receipts"),
+        "pending_execution": ("pending_execution", "review_pending_signal_state"),
+        "degraded_errors": ("degraded_errors", "review_orchestrator_errors"),
+        "no_filled_sim_orders": ("no_filled_sim_orders", "review_full_sim_run"),
+    }
+    if category in mapped:
+        return mapped[category]
+    return category, action or "review_latest_no_trade_log"
+
+
 def _explain_no_trade(
     *,
     bars: dict[str, Any],
@@ -196,6 +290,8 @@ def _explain_no_trade(
     receipt_count: int,
     filled_signal_count: int,
     review_count: int,
+    signal_status_counts: dict[str, int] | None = None,
+    latest_no_trade: dict[str, Any] | None = None,
     elapsed_minutes: int | None,
     wait_minutes: int,
     min_symbols: int,
@@ -204,6 +300,9 @@ def _explain_no_trade(
 
     bar_count = int(bars.get("bar_count") or 0)
     symbol_count = int(bars.get("symbol_count") or 0)
+    signal_counts = signal_status_counts or {}
+    latest_no_trade = latest_no_trade or {}
+    latest_classification = _classify_from_latest_no_trade(latest_no_trade)
     if bars.get("error"):
         category = "data_query_failed"
         action = "check_sharedsignals_read_model"
@@ -216,6 +315,11 @@ def _explain_no_trade(
     elif symbol_count < max(1, int(min_symbols)):
         category = "low_5min_coverage"
         action = "check_sharedsignals_symbol_coverage"
+    elif latest_classification is not None:
+        category, action = latest_classification
+    elif sum(int(signal_counts.get(key, 0)) for key in ("pending", "filled", "failed", "partial", "expired", "cancelled")) <= 0:
+        category = "no_signal_cards_created"
+        action = "check_signal_generation_thresholds"
     elif local_sim_count <= 0 and filled_signal_count <= 0:
         category = "no_trade_signal_or_all_rejected"
         action = "check_signal_generation_and_risk_rejections"
@@ -242,9 +346,11 @@ def _explain_no_trade(
             "filled_signals": filled_signal_count,
             "sim_execution_receipts": receipt_count,
             "daily_reviews": review_count,
+            "signals": signal_counts,
             "elapsed_minutes": elapsed_minutes,
             "wait_minutes": max(1, int(wait_minutes)),
         },
+        "latest_no_trade_log": latest_no_trade,
     }
 
 
@@ -338,6 +444,7 @@ def first_sample_alerts(
     local_sim_path: Path | None = None,
     receipt_path: Path | None = None,
     review_path: Path | None = None,
+    no_trade_log_path: Path | None = None,
     now: datetime | None = None,
     min_symbols: int = 10,
     wait_minutes: int = 10,
@@ -355,6 +462,7 @@ def first_sample_alerts(
     local_sim_path = local_sim_path or root / "shared" / "logs" / "local_sim" / "local_sim_trades.jsonl"
     receipt_path = receipt_path or root / "signals" / "sim_execution_receipts.jsonl"
     review_path = review_path or root / "shared" / "review" / "data" / "daily_reviews.jsonl"
+    no_trade_log_path = no_trade_log_path or NO_TRADE_LOG
 
     result: dict[str, Any] = {
         "market": "ashare",
@@ -389,7 +497,12 @@ def first_sample_alerts(
     receipt_count = _count_market_receipts(receipt_path, trade_date)
     review_count = _count_jsonl_rows(review_path)
     filled_signal_count = _count_filled_signals(signals_dir, trade_date)
+    signal_counts = _signal_status_counts(signals_dir, trade_date)
+    latest_no_trade = _latest_no_trade_explanation(no_trade_log_path, trade_date)
     result["samples"] = {
+        "bar_count": int(bars.get("bar_count") or 0),
+        "symbol_count": int(bars.get("symbol_count") or 0),
+        "signals": signal_counts,
         "local_sim_trades": local_sim_count,
         "sim_execution_receipts": receipt_count,
         "daily_reviews": review_count,
@@ -401,6 +514,8 @@ def first_sample_alerts(
         receipt_count=receipt_count,
         filled_signal_count=filled_signal_count,
         review_count=review_count,
+        signal_status_counts=signal_counts,
+        latest_no_trade=latest_no_trade,
         elapsed_minutes=elapsed_minutes,
         wait_minutes=wait_minutes,
         min_symbols=min_symbols,
@@ -425,6 +540,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--local-sim-path", type=Path, default=None)
     parser.add_argument("--receipt-path", type=Path, default=None)
     parser.add_argument("--review-path", type=Path, default=None)
+    parser.add_argument("--no-trade-log-path", type=Path, default=None)
     parser.add_argument("--now", default=None)
     parser.add_argument("--min-symbols", type=int, default=10)
     parser.add_argument("--wait-minutes", type=int, default=10)
@@ -446,6 +562,7 @@ def main(argv: list[str] | None = None) -> int:
             local_sim_path=args.local_sim_path,
             receipt_path=args.receipt_path,
             review_path=args.review_path,
+            no_trade_log_path=args.no_trade_log_path,
             now=now,
             min_symbols=args.min_symbols,
             wait_minutes=args.wait_minutes,

@@ -38,6 +38,8 @@
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
 - **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。首页以实时收益、交易漏斗和结果摘要为核心；交易漏斗优先读取 `funnelEvents`，展示“机会进入 → 初筛 → 研究 → 风控 → 待执行 → 成交/复盘/放弃”的动态流动，没有事件时才回退到信号阶段推导，避免把已成交账本回放误当成当前筛选转化率。收益曲线优先读取模拟账本权益快照 `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl`，该快照由 `shared/runtime_test/write_equity_snapshots.py` 追加写入，字段包含本金、权益、已实现/未实现收益、回撤、交易数和价格缺失状态；前端 API 会按“同一天、同账本取最新”再汇总为整盘收益，避免不同市场/策略写入秒级错位时只显示单个账本；缺少快照时才回退到日复盘 return 字段或按日 style performance。默认本地 fallback 不再展示暂停的 HK 样例，改用 CNFutures simulated-only 样例；真实 snapshot 若带 HK 历史数据仍按输入展示，但 HK 不进入默认市场筛选和生产调度。
 - **A股收益看板口径**：A股权益快照只接受 canonical `ashare/ashare_sim`，由 server-local `shared/logs/local_sim` 账本生成；旧 `ashare/<style>` 多风格测试账本不再进入 dashboard 汇总，避免 20k/16.6k 历史样本污染当前 200,000 元模拟盘口径。
+- **A股开盘验收与无交易分层**：`ashare_opening_validator` 的 first-sample 报告已把 5分钟 bar、信号状态、服务器本地模拟成交、签名回执、复盘行数和 no-trade 分类汇总到同一报告；若当天没有交易，会优先读取最新 `shared/logs/ashare_no_trade_explanations.jsonl`，把无候选、无信号卡、风控全拒、资金/组合构建阻塞、重复幂等、执行跳过、执行失败、回执缺失和复盘待生成区分开。`opening_acceptance.py` 短文本同步展示 bar/信号/成交/回执/复盘计数。
+- **A股旧测试账本归档**：新增 `shared/runtime_test/archive_ashare_legacy_ledgers.py`，只归档 `shared/logs/sim_ledger/ashare/*` 中非 canonical `ashare_sim` 的旧风格账本，默认 dry run，`--apply` 时移动到 `shared/logs/archive/ashare_legacy_style_ledgers/<batch>` 并写 manifest；不得删除或归档 `ashare_sim`。
 
 ## 二、已知问题
 

@@ -212,6 +212,8 @@ def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
     raw_status = str(report.get("status") or "warn").lower()
     status = "fail" if raw_status == "fail" else ("warn" if raw_status == "warn" else "pass")
     reason = str(report.get("reason") or "")
+    samples = report.get("samples", {}) if isinstance(report.get("samples"), dict) else {}
+    no_trade = report.get("no_trade_explanation", {}) if isinstance(report.get("no_trade_explanation"), dict) else {}
     return AcceptanceCheck(
         "ashare_opening_acceptance",
         status,
@@ -223,7 +225,17 @@ def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
             "bar_count": report.get("bar_count"),
             "symbol_count": report.get("symbol_count"),
             "latest_bar_time": report.get("latest_bar_time"),
-            "no_trade_explanation": report.get("no_trade_explanation", {}),
+            "sample_summary": {
+                "bar_count": report.get("bar_count") or samples.get("bar_count"),
+                "symbol_count": report.get("symbol_count") or samples.get("symbol_count"),
+                "signals": samples.get("signals", {}),
+                "local_sim_trades": samples.get("local_sim_trades"),
+                "sim_execution_receipts": samples.get("sim_execution_receipts"),
+                "daily_reviews": samples.get("daily_reviews"),
+            },
+            "no_trade_explanation": no_trade,
+            "no_trade_category": no_trade.get("category"),
+            "no_trade_next_action": no_trade.get("next_action"),
             "alerts": report.get("alerts", []),
             "raw_status": raw_status,
         },
@@ -344,6 +356,20 @@ def render_text(report: dict[str, Any]) -> str:
         latest_bar = (check.get("details") or {}).get("latest_bar_time")
         if latest_bar:
             line += f"；最新bar={latest_bar}"
+        samples = (check.get("details") or {}).get("sample_summary")
+        if isinstance(samples, dict):
+            signals = samples.get("signals") if isinstance(samples.get("signals"), dict) else {}
+            signal_total = sum(int(value or 0) for value in signals.values())
+            line += (
+                f"；bar={samples.get('bar_count') or 0}"
+                f"；信号={signal_total}"
+                f"；成交={samples.get('local_sim_trades') or 0}"
+                f"；回执={samples.get('sim_execution_receipts') or 0}"
+                f"；复盘={samples.get('daily_reviews') or 0}"
+            )
+        no_trade_category = (check.get("details") or {}).get("no_trade_category")
+        if no_trade_category:
+            line += f"；无交易分类={no_trade_category}"
         lines.append(line)
     lines.append("下一步：")
     lines.extend(f"- {item}" for item in report.get("next_actions", []))

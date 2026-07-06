@@ -116,8 +116,8 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.assertIn("ashare_first_sim_trade_missing", codes)
         self.assertIn("ashare_first_receipt_missing", codes)
         self.assertIn("ashare_review_not_yet_run", codes)
-        self.assertEqual(report["no_trade_explanation"]["category"], "no_trade_signal_or_all_rejected")
-        self.assertEqual(report["no_trade_explanation"]["next_action"], "check_signal_generation_and_risk_rejections")
+        self.assertEqual(report["no_trade_explanation"]["category"], "no_signal_cards_created")
+        self.assertEqual(report["no_trade_explanation"]["next_action"], "check_signal_generation_thresholds")
 
     def test_first_sample_ready_when_all_samples_present(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -187,7 +187,51 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         )
 
         self.assertEqual(report["samples"]["local_sim_trades"], 0)
-        self.assertEqual(report["no_trade_explanation"]["category"], "no_trade_signal_or_all_rejected")
+        self.assertEqual(report["no_trade_explanation"]["category"], "no_signal_cards_created")
+
+    def test_first_sample_uses_latest_no_trade_log_for_precise_category(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        no_trade_log = root / "ashare_no_trade_explanations.jsonl"
+        no_trade_log.write_text(
+            json.dumps(
+                {
+                    "date": "20260706",
+                    "generated_at": "2026-07-06T09:41:00+08:00",
+                    "state": "ok",
+                    "no_trade_explanation": {
+                        "category": "all_rejected_by_risk",
+                        "action": "review_risk_rejections",
+                        "counts": {"risk_rejections": 3},
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        db_path = self._db(
+            [
+                ("600000.SH", "2026-07-06 09:35:00"),
+                ("000001.SZ", "2026-07-06 09:35:00"),
+            ]
+        )
+
+        report = ashare_opening_validator.first_sample_alerts(
+            sqlite_db=db_path,
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            no_trade_log_path=no_trade_log,
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+
+        self.assertEqual(report["no_trade_explanation"]["category"], "all_rejected_by_risk")
+        self.assertEqual(report["no_trade_explanation"]["next_action"], "review_risk_rejections")
+        self.assertEqual(report["no_trade_explanation"]["latest_no_trade_log"]["counts"]["risk_rejections"], 3)
 
 
 if __name__ == "__main__":
