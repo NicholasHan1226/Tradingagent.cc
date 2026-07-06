@@ -691,8 +691,11 @@ async function readEquitySnapshotMarketSummaries(root: string): Promise<Map<Mark
     current.maxDrawdown = Math.max(current.maxDrawdown, snapshot.maxDrawdownPct)
     current.trades += snapshot.tradeCount
     current.latestAt = latestIso(current.latestAt, snapshot.timestamp)
-    current.capitalBase = defaultMarketCapitalBase(market, current.capitalBase)
     summaries.set(market, current)
+  }
+
+  for (const [market, summary] of summaries.entries()) {
+    summary.capitalBase = defaultMarketCapitalBase(market, summary.capitalBase)
   }
 
   return summaries
