@@ -1362,7 +1362,7 @@ function eventResultStatus(signal: SignalRow): FunnelEventStatus {
 
 function eventResultLabel(signal: SignalRow) {
   if (signal.status === 'executed') return '已兑现'
-  if (signal.status === 'missed') return '机会未兑现'
+  if (signal.status === 'missed') return '继续观察'
   if (signal.status === 'blocked') return '风险挡住'
   if (signal.status === 'cancelled') return '已取消'
   return '等待结果'

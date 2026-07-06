@@ -26,9 +26,9 @@ function getFocusedPerformanceDomain(data: PerformancePoint[], latestPoint: Perf
 
   const baseMin = Math.min(...visibleValues)
   const baseMax = Math.max(...visibleValues)
-  const baseSpan = Math.max(18, baseMax - baseMin)
-  const min = Math.floor(baseMin - Math.max(4, baseSpan * 0.16))
-  const max = Math.ceil(Math.max(baseMax + Math.max(6, baseSpan * 0.28), latestPoint.simulated + Math.max(9, Math.abs(latestPoint.simulated - latestPoint.target) * 0.65)))
+  const baseSpan = Math.max(16, baseMax - baseMin)
+  const min = Math.floor(baseMin - Math.max(3, baseSpan * 0.1))
+  const max = Math.ceil(baseMax + Math.min(10, Math.max(4, baseSpan * 0.14)))
 
   return [min, max] as [number, number]
 }
