@@ -98,6 +98,7 @@ function App() {
         activePage={activePage}
         activeMarket={activeMarket}
         hasPerformanceData={hasPerformanceData}
+        isCnyAccount={Boolean(portfolioSummary?.ashareAccount)}
         liveProfit={portfolioSummary?.pnlAmount ?? null}
         liveReturn={portfolioSummary?.returnPct ?? latestPoint.simulated}
         maxDrawdown={portfolioSummary?.maxDrawdownPct ?? null}

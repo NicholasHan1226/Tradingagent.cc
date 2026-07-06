@@ -1,6 +1,6 @@
 import { getHomeOutcome } from '../../lib/dashboard'
 import { DRAWDOWN_LIMIT_PCT } from '../../lib/dashboardConstants'
-import { formatCurrency } from '../../lib/format'
+import { formatCnyCompact, formatCurrency, formatSignedCnyCompact } from '../../lib/format'
 import type { HoldingRow, Page, PortfolioSummary, SignalRow } from '../../types/dashboard'
 import { PanelTitle } from '../PanelTitle'
 import { SummaryRow } from '../SummaryRow'
@@ -28,14 +28,21 @@ export function HomeResultBrief({
   const drawdownDistance = Math.max(0, drawdownLimit - Math.abs(drawdown))
   const drawdownCaption = drawdownDistance > 1 ? `距离 ${drawdownLimit}% 限制 ${drawdownDistance.toFixed(2)}%` : `接近 ${drawdownLimit}% 限制`
   const drawdownValue = hasPerformanceData ? `${Math.abs(drawdown).toFixed(2)}%` : '等待记录'
+  const ashareAccount = portfolio?.ashareAccount
   const returnValue = portfolio
-    ? `${formatCurrency(portfolio.pnlAmount)} / ${portfolio.returnPct >= 0 ? '+' : ''}${portfolio.returnPct.toFixed(2)}%`
+    ? `${ashareAccount ? formatSignedCnyCompact(portfolio.pnlAmount) : formatCurrency(portfolio.pnlAmount)} / ${portfolio.returnPct >= 0 ? '+' : ''}${portfolio.returnPct.toFixed(2)}%`
     : hasPerformanceData
       ? '有收益曲线'
       : '等待收益'
   const resultTone = hasPerformanceData && portfolio?.returnPct !== undefined && portfolio.returnPct >= 0 ? 'cyan' : undefined
   const mainSignalCount = hasSignalData ? `${signals.length}` : '0'
   const holdingLabel = hasHoldingData ? leadingHolding?.symbol ?? '有记录' : '暂无'
+  const accountFact = ashareAccount
+    ? `总资产 ${formatCnyCompact(ashareAccount.accountEquity)} · 现金 ${formatCnyCompact(ashareAccount.cashAvailable)} · 持仓 ${formatCnyCompact(ashareAccount.marketValue)}`
+    : null
+  const strategyFact = ashareAccount
+    ? `可复盘 ${ashareAccount.strategySampleValidCount}/${ashareAccount.totalSampleCount} · 链路验证 ${ashareAccount.validationSampleCount}`
+    : null
 
   return (
     <section className="panel rail-panel home-result-brief">
@@ -53,6 +60,21 @@ export function HomeResultBrief({
             <SummaryRow label="机会" value={mainSignalCount} tone={hasSignalData ? 'cyan' : undefined} />
             <SummaryRow label="持仓" value={holdingLabel} />
           </div>
+          {accountFact && (
+            <div className="brief-risk-line">
+              <span>账户事实</span>
+              <strong>{accountFact}</strong>
+            </div>
+          )}
+          {strategyFact && (
+            <div
+              className="brief-risk-line muted"
+              title="可复盘样本可进入策略胜率、归因和自我进化；链路验证样本只确认历史成交闭环。"
+            >
+              <span>样本质量</span>
+              <strong>{strategyFact}</strong>
+            </div>
+          )}
           <div className="brief-risk-line">
             <span>风险边界</span>
             <strong>{hasPerformanceData ? drawdownCaption : '等待记录'}</strong>
@@ -106,6 +128,9 @@ export function HomeResultBrief({
 
 function formatPnlSource(value: string) {
   if (value === 'sim_ledger_mark_to_market') return '当前持仓估算'
+  if (value === 'ashare_local_sim_account') return 'A股本地账本'
+  if (value === 'ashare_local_sim_mark_to_market') return 'A股收盘盯市'
+  if (value === 'ashare_local_sim_trade_price_fallback') return 'A股成交价估算'
   if (value === 'mixed') return '多来源汇总'
   return value
 }

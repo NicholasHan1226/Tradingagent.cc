@@ -120,6 +120,72 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
   })
 
+  it('shows A-share account facts and strategy sample quality in the return cards', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            mode: 'simulated',
+            generatedAt: '2026-07-06T13:10:00.000Z',
+            domains: {
+              performance: { status: 'ready', updatedAt: '2026-07-06T13:10:00.000Z' },
+              signals: { status: 'ready', updatedAt: '2026-07-06T13:10:00.000Z' },
+              holdings: { status: 'ready', updatedAt: '2026-07-06T13:10:00.000Z' },
+              decisions: { status: 'ready', updatedAt: '2026-07-06T13:10:00.000Z' },
+              risk: { status: 'ready', updatedAt: '2026-07-06T13:10:00.000Z' },
+            },
+            performance: [{ day: '现在', simulated: -0.03, target: 8, benchmark: 0, opportunity: 0 }],
+            portfolio: {
+              pnlAmount: -65,
+              returnPct: -0.03,
+              capitalBase: 200000,
+              targetPct: 8,
+              maxDrawdownPct: 0,
+              tradeCount: 13,
+              pointCount: 1,
+              source: 'shared/logs/local_sim/local_sim_trades.jsonl',
+              pnlSource: 'ashare_local_sim_account',
+              realizedPnl: 0,
+              unrealizedPnl: -65,
+              updatedAt: '2026-07-06T13:10:00.000Z',
+              ashareAccount: {
+                cashAvailable: 101397.47,
+                marketValue: 98537.53,
+                accountEquity: 199935,
+                accountTotalPnl: -65,
+                accountReturnPct: -0.03,
+                openPositionCount: 13,
+                totalSampleCount: 13,
+                validationSampleCount: 13,
+                strategySampleValidCount: 0,
+                strategyTotalPnl: 0,
+                strategyMarketValue: 0,
+                strategyOpenPositionCount: 0,
+                source: 'shared/logs/local_sim/local_sim_trades.jsonl',
+                updatedAt: '2026-07-06T13:10:00.000Z',
+              },
+            },
+            holdings: [{ symbol: '000001.SZ', name: '000001.SZ', market: 'A-share', weight: '¥7,206', pnl: '-¥5', risk: '正常', role: '模拟盘持仓' }],
+            signals: [],
+            funnelEvents: [],
+            sourceRefs: tradingAgentReadModelSources,
+          }),
+          { status: 200 },
+        ),
+      ),
+    )
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getAllByText('总资产')).not.toHaveLength(0))
+    expect(screen.getAllByText('¥19.99万').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('可复盘收益').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('有效样本').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('0/13').length).toBeGreaterThan(0)
+    expect(screen.getByText(/可复盘 0\/13 · 链路验证 13/)).toBeInTheDocument()
+  })
+
   it('renders snapshot funnel events as a real trading flow', async () => {
     vi.stubGlobal(
       'fetch',

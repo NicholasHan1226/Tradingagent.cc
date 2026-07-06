@@ -22,3 +22,22 @@ export function formatCurrency(value: number) {
     maximumFractionDigits: 2,
   }).format(value)
 }
+
+export function formatCny(value: number) {
+  return new Intl.NumberFormat('zh-CN', {
+    style: 'currency',
+    currency: 'CNY',
+    maximumFractionDigits: 0,
+  }).format(value)
+}
+
+export function formatCnyCompact(value: number) {
+  const abs = Math.abs(value)
+  if (abs >= 10000) return `${value < 0 ? '-' : ''}¥${(abs / 10000).toFixed(2)}万`
+  return formatCny(value)
+}
+
+export function formatSignedCnyCompact(value: number) {
+  const sign = value > 0 ? '+' : value < 0 ? '-' : ''
+  return `${sign}${formatCnyCompact(Math.abs(value))}`
+}

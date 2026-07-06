@@ -32,6 +32,24 @@ export type PortfolioSummary = {
   pnlSource?: string
   realizedPnl?: number
   unrealizedPnl?: number
+  ashareAccount?: AShareAccountSummary
+  updatedAt: string
+}
+
+export type AShareAccountSummary = {
+  cashAvailable: number
+  marketValue: number
+  accountEquity: number
+  accountTotalPnl: number
+  accountReturnPct: number
+  openPositionCount: number
+  totalSampleCount: number
+  validationSampleCount: number
+  strategySampleValidCount: number
+  strategyTotalPnl?: number
+  strategyMarketValue?: number
+  strategyOpenPositionCount?: number
+  source: string
   updatedAt: string
 }
 

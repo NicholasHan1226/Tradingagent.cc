@@ -17,12 +17,14 @@ type PositionRow = {
   sellable_quantity?: number
   avg_price?: number
   cost_basis?: number
+  market_value?: number
   side?: string
   price?: number
   pnl?: number
   running_avg_price?: number
   running_cost?: number
   realized_pnl?: number
+  unrealized_pnl?: number
   entry_date?: string
   thesis?: string
 }
@@ -55,6 +57,21 @@ type SimLedgerPosition = {
 type SimLedgerPositionsFile = {
   cash?: number
   positions?: Record<string, SimLedgerPosition>
+}
+
+type LocalSimTradeRow = {
+  candidate_pool_layer?: string
+  execution_source?: string
+  market?: string
+  side?: string
+  status?: string
+}
+
+type LocalSimAccountPnl = {
+  cash_available?: number | string
+  market_value?: number | string
+  total_pnl?: number | string
+  positions?: Record<string, unknown>
 }
 
 type SignalFile = {
@@ -265,6 +282,7 @@ export async function readTradingAgentSnapshot({
   const reviewPerformance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
+  const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt)
   const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
   const performance = annotatePerformanceQuality(firstNonEmpty(equityPortfolio.performance, reviewPerformance, trackerPortfolio.performance))
   const hasOrders = await directoryHasJson(filledSignalsPath)
@@ -289,13 +307,145 @@ export async function readTradingAgentSnapshot({
       risk: domainHealth(fallbackHoldings.length > 0 || signals.length > 0 ? 'ready' : 'empty', generatedAt),
     },
     performance,
-    portfolio: equityPortfolio.summary ?? trackerPortfolio.summary,
+    portfolio: attachAShareAccountSummary(equityPortfolio.summary ?? trackerPortfolio.summary, ashareAccount, generatedAt),
     holdings: fallbackHoldings,
     signals,
     funnelEvents,
     ashareResearchEvidence,
     sourceRefs: tradingAgentReadModelSources,
   }
+}
+
+async function readAShareAccountSummary(projectRoot: string, generatedAt: string): Promise<PortfolioSummary['ashareAccount'] | undefined> {
+  const localSimDir = join(projectRoot, 'shared/logs/local_sim')
+  const pnlPayload = await readOptionalJson(join(localSimDir, 'local_sim_pnl.json'))
+  const pnlRows = asRecord(pnlPayload)
+  const accountPnl = selectASharePnlAccount(pnlRows)
+  const cashAvailable = parseFiniteNumber(accountPnl?.cash_available) ?? 0
+  const marketValue = parseFiniteNumber(accountPnl?.market_value) ?? 0
+  const accountTotalPnl = parseFiniteNumber(accountPnl?.total_pnl) ?? 0
+  const accountEquity = roundMoney(cashAvailable + marketValue)
+  const capitalBase = accountEquity - accountTotalPnl
+  const sampleQuality = await readAShareSampleQuality(join(localSimDir, 'local_sim_trades.jsonl'))
+
+  if (accountEquity <= 0 && sampleQuality.totalSampleCount === 0) return undefined
+
+  return {
+    cashAvailable: roundMoney(cashAvailable),
+    marketValue: roundMoney(marketValue),
+    accountEquity,
+    accountTotalPnl: roundMoney(accountTotalPnl),
+    accountReturnPct: roundMetric(capitalBase > 0 ? (accountTotalPnl / capitalBase) * 100 : 0),
+    openPositionCount: Object.keys(accountPnl?.positions ?? {}).length,
+    totalSampleCount: sampleQuality.totalSampleCount,
+    validationSampleCount: sampleQuality.validationSampleCount,
+    strategySampleValidCount: sampleQuality.strategySampleValidCount,
+    strategyTotalPnl: sampleQuality.strategySampleValidCount === sampleQuality.totalSampleCount
+      ? roundMoney(accountTotalPnl)
+      : sampleQuality.strategySampleValidCount === 0
+        ? 0
+        : undefined,
+    strategyMarketValue: sampleQuality.strategySampleValidCount === sampleQuality.totalSampleCount
+      ? roundMoney(marketValue)
+      : sampleQuality.strategySampleValidCount === 0
+        ? 0
+        : undefined,
+    strategyOpenPositionCount: sampleQuality.strategySampleValidCount === sampleQuality.totalSampleCount
+      ? Object.keys(accountPnl?.positions ?? {}).length
+      : sampleQuality.strategySampleValidCount === 0
+        ? 0
+        : undefined,
+    source: tradingAgentReadModelSources.localSimLedger,
+    updatedAt: generatedAt,
+  }
+}
+
+function attachAShareAccountSummary(
+  summary: PortfolioSummary | undefined,
+  ashareAccount: PortfolioSummary['ashareAccount'] | undefined,
+  generatedAt: string,
+): PortfolioSummary | undefined {
+  if (!ashareAccount) return summary
+  if (summary) return { ...summary, ashareAccount }
+  return {
+    pnlAmount: ashareAccount.accountTotalPnl,
+    returnPct: ashareAccount.accountReturnPct,
+    capitalBase: roundMoney(ashareAccount.accountEquity - ashareAccount.accountTotalPnl),
+    targetPct: DEFAULT_TARGET_RETURN_PCT,
+    maxDrawdownPct: Math.max(0, -ashareAccount.accountReturnPct),
+    tradeCount: ashareAccount.totalSampleCount,
+    pointCount: 1,
+    source: tradingAgentReadModelSources.localSimLedger,
+    pnlSource: 'ashare_local_sim_account',
+    realizedPnl: 0,
+    unrealizedPnl: ashareAccount.accountTotalPnl,
+    ashareAccount,
+    updatedAt: generatedAt,
+  }
+}
+
+async function readOptionalJson(path: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(path, 'utf8')) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function selectASharePnlAccount(payload: Record<string, unknown>): LocalSimAccountPnl | undefined {
+  const direct = asRecord(payload.ashare_sim) as LocalSimAccountPnl
+  if (isLocalSimAccountPnl(direct)) return direct
+
+  for (const [key, row] of Object.entries(payload)) {
+    if (!/a-?share|ashare|cn_?stock/i.test(key)) continue
+    const account = asRecord(row) as LocalSimAccountPnl
+    if (isLocalSimAccountPnl(account)) return account
+  }
+
+  const root = payload as LocalSimAccountPnl
+  if (isLocalSimAccountPnl(root)) return root
+  return undefined
+}
+
+function isLocalSimAccountPnl(value: LocalSimAccountPnl | undefined) {
+  if (!value) return false
+  return value.cash_available !== undefined || value.market_value !== undefined || value.total_pnl !== undefined || value.positions !== undefined
+}
+
+async function readAShareSampleQuality(path: string) {
+  const rows: LocalSimTradeRow[] = []
+  try {
+    const lines = (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean)
+    for (const line of lines) {
+      try {
+        const row = JSON.parse(line) as LocalSimTradeRow
+        if (row.status && String(row.status).toLowerCase() !== 'filled') continue
+        rows.push(row)
+      } catch {
+        // Ignore malformed append-only rows.
+      }
+    }
+  } catch {
+    return { totalSampleCount: 0, validationSampleCount: 0, strategySampleValidCount: 0 }
+  }
+
+  const strategySampleValidCount = rows.filter(isAshareStrategySample).length
+  return {
+    totalSampleCount: rows.length,
+    validationSampleCount: rows.length - strategySampleValidCount,
+    strategySampleValidCount,
+  }
+}
+
+function isAshareStrategySample(row: LocalSimTradeRow) {
+  const market = String(row.market ?? 'ashare').toLowerCase()
+  const side = String(row.side ?? '').toLowerCase()
+  const source = String(row.execution_source ?? '').toLowerCase()
+  const layer = String(row.candidate_pool_layer ?? '').toLowerCase()
+  if (market !== 'ashare') return false
+  if (side === 'buy') return source === 'ashare_candidate_layer' && layer === 'candidate'
+  if (side === 'sell') return source === 'ashare_rebalance_sell'
+  return false
 }
 
 function resolveTradingAgentRoot(workspaceRoot: string) {
@@ -919,7 +1069,7 @@ function parsePositionSnapshot(payload: unknown): HoldingRow[] {
   const snapshot = payload as CNFuturesPositionsFile
   if (Array.isArray(snapshot.positions)) {
     return snapshot.positions
-      .map(parseCNFuturesPositionRow)
+      .map((row) => (asRecord(row).ts_code ? parsePositionRow(row) : parseCNFuturesPositionRow(row)))
       .filter((row): row is HoldingRow => Boolean(row))
   }
 
@@ -951,13 +1101,20 @@ function parsePositionRow(row: unknown): HoldingRow | null {
   const position = row as PositionRow
   const symbol = position.ts_code
   if (!symbol) return null
+  const market = inferMarket(symbol)
+  const marketValue = parseFiniteNumber(position.market_value)
+  const runningCost = firstParsedNumber(position.cost_basis, position.running_cost)
+  const quantity = parseFiniteNumber(position.quantity)
+  const realizedPnl = parseFiniteNumber(position.realized_pnl) ?? 0
+  const unrealizedPnl = parseFiniteNumber(position.unrealized_pnl)
+  const pnl = firstParsedNumber(position.pnl, unrealizedPnl === undefined ? undefined : realizedPnl + unrealizedPnl, position.realized_pnl) ?? 0
 
   return {
     symbol,
     name: symbol,
-    market: inferMarket(symbol),
-    weight: formatCost(position.cost_basis ?? position.running_cost ?? position.quantity),
-    pnl: formatCurrency(position.pnl ?? position.realized_pnl ?? 0),
+    market,
+    weight: formatMarketCost(marketValue ?? runningCost ?? quantity, market),
+    pnl: formatMarketCurrency(pnl, market),
     risk: '正常',
     role: position.thesis ?? (position.side ? `${position.side} 持仓` : '模拟盘持仓'),
   }
@@ -1523,6 +1680,30 @@ function formatCurrencyAmount(value: number) {
 function formatCost(value?: number) {
   if (value === undefined) return '--'
   return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+}
+
+function formatMarketCost(value: number | undefined, market: HoldingRow['market']) {
+  if (value === undefined) return '--'
+  return formatMarketCurrencyAmount(value, market)
+}
+
+function formatMarketCurrency(value: number, market: HoldingRow['market']) {
+  if (market === 'A-share') return formatCny(value, true)
+  return formatCurrency(value)
+}
+
+function formatMarketCurrencyAmount(value: number, market: HoldingRow['market']) {
+  if (market === 'A-share') return formatCny(value, false)
+  return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+}
+
+function formatCny(value: number, signed: boolean) {
+  const sign = signed && value > 0 ? '+' : ''
+  return `${sign}${new Intl.NumberFormat('zh-CN', {
+    style: 'currency',
+    currency: 'CNY',
+    maximumFractionDigits: 0,
+  }).format(value)}`
 }
 
 function formatPrice(value?: number) {

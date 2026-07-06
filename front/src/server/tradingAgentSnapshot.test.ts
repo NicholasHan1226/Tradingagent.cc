@@ -889,6 +889,77 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
+  it('adds A-share local account cash, holdings and sample quality to the portfolio summary', async () => {
+    const root = await createWorkspace()
+    const localSimRoot = join(root, 'TradingAgent/shared/logs/local_sim')
+    await mkdir(localSimRoot, { recursive: true })
+
+    await writeFile(
+      join(localSimRoot, 'local_sim_pnl.json'),
+      JSON.stringify({
+        ashare_sim: {
+          cash_available: 101397.47,
+          market_value: 98537.53,
+          total_pnl: -65,
+          positions: {
+            '000001.SZ': { quantity: 700 },
+            '000002.SZ': { quantity: 1600 },
+          },
+        },
+      }),
+    )
+    await writeFile(
+      join(localSimRoot, 'local_sim_trades.jsonl'),
+      [
+        JSON.stringify({ market: 'ashare', side: 'buy', status: 'filled', ts_code: '000001.SZ' }),
+        JSON.stringify({ market: 'ashare', side: 'buy', status: 'filled', ts_code: '000002.SZ' }),
+      ].join('\n') + '\n',
+    )
+    await writeFile(
+      join(root, 'TradingAgent/signals/positions/simulated_ashare_positions.json'),
+      JSON.stringify({
+        positions: [
+          {
+            ts_code: '000001.SZ',
+            quantity: 700,
+            avg_price: 10.3,
+            market_value: 7206.57,
+            unrealized_pnl: -5,
+          },
+        ],
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T12:00:00.000Z'),
+    })
+
+    expect(snapshot.portfolio).toMatchObject({
+      capitalBase: 200000,
+      pnlAmount: -65,
+      returnPct: -0.03,
+      tradeCount: 2,
+      ashareAccount: {
+        accountEquity: 199935,
+        cashAvailable: 101397.47,
+        marketValue: 98537.53,
+        accountTotalPnl: -65,
+        totalSampleCount: 2,
+        validationSampleCount: 2,
+        strategySampleValidCount: 0,
+        strategyTotalPnl: 0,
+        strategyMarketValue: 0,
+      },
+    })
+    expect(snapshot.holdings).toContainEqual(expect.objectContaining({
+      symbol: '000001.SZ',
+      weight: '¥7,207',
+      pnl: '-¥5',
+    }))
+  })
+
   it('keeps performance empty with a clear message when only trade logs exist', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')

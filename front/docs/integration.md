@@ -72,6 +72,24 @@ Display-ready fields used by the homepage:
   `realizedPnl`, and `unrealizedPnl`; the homepage can show that the current
   portfolio return is based on simulated-ledger mark-to-market instead of the
   old entry-price estimate.
+- When A-share local simulation account files exist under
+  `shared/logs/local_sim/`, the snapshot may attach
+  `portfolio.ashareAccount`. This object is a display-only account fact layer
+  with `cashAvailable`, `marketValue`, `accountEquity`, `accountTotalPnl`,
+  `accountReturnPct`, `openPositionCount`, `totalSampleCount`,
+  `validationSampleCount`, `strategySampleValidCount`, optional
+  `strategyTotalPnl`, optional `strategyMarketValue`, optional
+  `strategyOpenPositionCount`, `source`, and `updatedAt`.
+- `portfolio.ashareAccount` separates account facts from strategy-valid
+  samples. Filled A-share rows without `candidate_pool_layer=candidate` plus
+  `execution_source=ashare_candidate_layer` for buys, or without
+  `execution_source=ashare_rebalance_sell` for sells, remain visible as account
+  facts and chain-validation samples, but do not count toward strategy PnL,
+  win rate, attribution, or self-evolution.
+- A-share account display may use `pnlSource` values
+  `ashare_local_sim_account`, `ashare_local_sim_mark_to_market`, and
+  `ashare_local_sim_trade_price_fallback`. These are read-only display labels;
+  the front layer must not turn them into execution actions.
 - Trade journals and position cost are not valid performance sources by
   themselves. When only those files exist, `domains.performance.status` remains
   `empty` with a message explaining the missing PnL / return series.
@@ -103,9 +121,10 @@ Display-ready fields used by the homepage:
   timestamps before execution.
 - `holdings[]`: `symbol`, `market`, `weight`, `pnl`, `risk`, and `role`.
   `weight` may be a percentage such as `12.8%` or a formatted exposure amount
-  such as `$1,022`; frontend summaries must parse the unit before aggregating.
-  Mixed amount/percentage batches should show a waiting or normalization state
-  instead of pretending both units share one allocation scale.
+  such as `$1,022` / `¥7,207`; frontend summaries must parse the unit before
+  aggregating. Mixed amount/percentage batches should show a waiting or
+  normalization state instead of pretending both units share one allocation
+  scale.
 
 ## Result-First Panel Rules
 
@@ -135,7 +154,7 @@ fetches one same-origin snapshot route:
 
 `GET /api/trading-agent/snapshot`
 
-Recommended production shape on the Hangzhou host:
+Recommended production shape on the TradingAgent production host:
 
 1. Nginx serves `front/dist` as the frontend.
 2. Nginx proxies `/api/trading-agent/snapshot` to

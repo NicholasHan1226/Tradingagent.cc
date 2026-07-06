@@ -1,7 +1,7 @@
 import { marketLabels, statusLabels } from '../data/dashboard'
 import { getClosedSignals, getSignalFunnel } from '../lib/dashboard'
 import { DRAWDOWN_LIMIT_PCT } from '../lib/dashboardConstants'
-import { formatCurrency } from '../lib/format'
+import { formatCnyCompact, formatCurrency, formatSignedCnyCompact } from '../lib/format'
 import { summarizeHoldingExposure } from '../lib/holdings'
 import type { HoldingRow, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 
@@ -91,12 +91,25 @@ function getPageMetrics(
   const pendingCount = signals.filter((signal) => signal.status === 'pending').length
   const missedCount = signals.filter((signal) => signal.status === 'missed').length
   const executedCount = signals.filter((signal) => signal.status === 'executed').length
+  const ashareAccount = portfolio?.ashareAccount
+  const validSampleLabel = ashareAccount
+    ? ashareAccount.totalSampleCount > 0
+      ? `${ashareAccount.strategySampleValidCount}/${ashareAccount.totalSampleCount}`
+      : '等待样本'
+    : ''
+  const strategyMetricValue = ashareAccount?.strategySampleValidCount === 0
+    ? '暂无有效'
+    : ashareAccount?.strategyTotalPnl === undefined
+      ? validSampleLabel
+      : formatCnyCompact(ashareAccount.strategyTotalPnl)
 
   if (page === '收益') {
     return [
-      { label: '当前收益', value: portfolio ? formatCurrency(portfolio.pnlAmount) : formatPercent(currentReturn), detail: formatPercent(currentReturn), tone: currentReturn >= 0 ? 'cyan' : 'red' },
+      { label: '当前收益', value: portfolio ? (ashareAccount ? formatSignedCnyCompact(portfolio.pnlAmount) : formatCurrency(portfolio.pnlAmount)) : formatPercent(currentReturn), detail: formatPercent(currentReturn), tone: currentReturn >= 0 ? 'cyan' : 'red' },
       { label: '目标差', value: formatPercent(gap), detail: `目标 ${formatPercent(target)}`, tone: gap >= 0 ? 'cyan' : 'amber' },
-      { label: '成交次数', value: String(portfolio?.tradeCount ?? executedCount), detail: `${portfolio?.pointCount ?? performance.length} 个收益点` },
+      ashareAccount
+        ? { label: '可复盘收益', value: strategyMetricValue, detail: `有效样本 ${validSampleLabel}` }
+        : { label: '成交次数', value: String(portfolio?.tradeCount ?? executedCount), detail: `${portfolio?.pointCount ?? performance.length} 个收益点` },
       { label: '最大回撤', value: `-${drawdown.toFixed(2)}%`, detail: `限制 ${drawdownLimit}%`, tone: drawdown > drawdownLimit * 0.8 ? 'red' : 'cyan' },
     ]
   }
@@ -113,9 +126,11 @@ function getPageMetrics(
   if (page === '持仓') {
     return [
       { label: '持仓数量', value: String(holdings.length), detail: `${positiveHoldings} 个正贡献` },
-      { label: exposureSummary.label, value: exposureSummary.value, detail: exposureSummary.detail },
+      ashareAccount
+        ? { label: '账户总资产', value: formatCnyCompact(ashareAccount.accountEquity), detail: `现金 ${formatCnyCompact(ashareAccount.cashAvailable)}` }
+        : { label: exposureSummary.label, value: exposureSummary.value, detail: exposureSummary.detail },
       { label: '最大贡献', value: topHolding?.symbol ?? '等待持仓', detail: topHolding?.pnl ?? '暂无收益', tone: topHolding?.pnl.startsWith('-') ? 'red' : 'cyan' },
-      { label: '风险偏高', value: String(highRiskCount), detail: highRiskCount ? '需要优先查看' : '暂无偏高', tone: highRiskCount ? 'red' : 'cyan' },
+      { label: '风险偏高', value: String(highRiskCount), detail: highRiskCount ? '需要优先查看' : ashareAccount ? `有效样本 ${validSampleLabel}` : '暂无偏高', tone: highRiskCount ? 'red' : 'cyan' },
     ]
   }
 
