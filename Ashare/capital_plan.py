@@ -1,9 +1,9 @@
-"""Daily capital plan generator for a 20 000 RMB A-share account.
+"""Daily capital plan generator for a 200 000 RMB A-share account.
 
 Produces a structured capital allocation plan each trading day:
 
-* Allocate to 2-3 positions (5 000 - 7 000 RMB each).
-* Reserve 3 000 - 5 000 RMB as cash buffer.
+* Allocate to 2-3 positions (50 000 - 70 000 RMB each).
+* Reserve 30 000 - 50 000 RMB as cash buffer.
 * Suggest 204001 (GC-001) reverse repo for idle funds at close.
 
 Functions
@@ -20,13 +20,13 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 # ---------------------------------------------------------------------------
-# Account constants (20 000 RMB micro-account)
+# Account constants (200 000 RMB simulated account)
 # ---------------------------------------------------------------------------
-TOTAL_CAPITAL = 20_000          # total account capital in RMB
-MIN_POSITION_VALUE = 5_000      # minimum allocation per position
-MAX_POSITION_VALUE = 7_000      # maximum allocation per position
-MIN_CASH_RESERVE = 3_000        # minimum cash buffer to keep
-MAX_CASH_RESERVE = 5_000        # maximum cash buffer to keep
+TOTAL_CAPITAL = 200_000         # total account capital in RMB
+MIN_POSITION_VALUE = 50_000     # minimum allocation per position
+MAX_POSITION_VALUE = 70_000     # maximum allocation per position
+MIN_CASH_RESERVE = 30_000       # minimum cash buffer to keep
+MAX_CASH_RESERVE = 50_000       # maximum cash buffer to keep
 TARGET_POSITIONS = (2, 3)       # target 2-3 positions
 REVERSE_REPO_CODE = "204001"    # GC-001 1-day reverse repo
 

@@ -238,7 +238,7 @@ def _starting_cash_for_bootstrap(value: Any = None) -> float:
     cash = _safe_float(value, 0.0)
     if cash <= 0:
         cash = _safe_float(os.environ.get("ASHARE_SIM_INITIAL_CASH"), 0.0)
-    return cash if cash > 0 else 20_000.0
+    return cash if cash > 0 else 200_000.0
 
 
 def _sim_account_snapshot_unlocked(
@@ -485,7 +485,14 @@ def ensure_local_sim_bootstrap_snapshot(
             _persist_unlocked(trades)
             return {"status": "existing_trades", "written": False, "trade_count": len(trades), "account": account_name}
         if LOCAL_SIM_POSITIONS_SNAPSHOT.exists() and not force:
-            return {"status": "snapshot_exists", "written": False, "trade_count": 0, "account": account_name}
+            try:
+                existing = json.loads(LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
+            except Exception:
+                existing = {}
+            existing_cash = _safe_float(existing.get("cash_available"), -1.0) if isinstance(existing, dict) else -1.0
+            existing_bootstrap = str(existing.get("bootstrap_state") or "") if isinstance(existing, dict) else ""
+            if existing_bootstrap != "no_trades_yet" or abs(existing_cash - cash) < 0.01:
+                return {"status": "snapshot_exists", "written": False, "trade_count": 0, "account": account_name}
 
         positions = {account_name: {}}
         pnl = {

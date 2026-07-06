@@ -145,7 +145,7 @@ class AshareAdapter(MarketAdapter):
         strategies = self._load_strategies()
         return {
             "market": MARKET,
-            "sim_capital": 20_000.0,
+            "sim_capital": 200_000.0,
             "shadow_capital": 200_000.0,
             "portfolio_method": "conviction_weighted",
             "regime": "ashare_default",

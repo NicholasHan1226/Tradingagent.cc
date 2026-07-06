@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Email template 9: Capital plan (in pre-market).
 
-20k allocation + reverse repo.
+200k simulated-account allocation + reverse repo.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def render(data: dict[str, Any]) -> str:
 
     Args:
         data: dict with keys:
-            - total_capital: total available capital (e.g. 20000)
+            - total_capital: total available capital (e.g. 200000)
             - allocation: list of {strategy, amount, pct}
             - reverse_repo: {amount, rate, term, expected_return}
             - reserved: reserved amount
@@ -34,7 +34,7 @@ def render(data: dict[str, Any]) -> str:
     Returns:
         HTML string.
     """
-    total = data.get("total_capital", 20000)
+    total = data.get("total_capital", 200000)
     allocation = data.get("allocation", [])
     repo = data.get("reverse_repo", {})
     reserved = data.get("reserved", 0)
