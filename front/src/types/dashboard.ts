@@ -16,6 +16,8 @@ export type PerformancePoint = {
   target: number
   benchmark: number
   opportunity: number
+  quality?: 'normal' | 'outlier'
+  qualityReason?: string
 }
 
 export type PortfolioSummary = {

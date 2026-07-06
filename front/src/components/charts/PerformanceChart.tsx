@@ -54,9 +54,12 @@ export function PerformanceChart({
   const targetGap = latestPoint.simulated - latestPoint.target
   const riskDistance = DRAWDOWN_LIMIT_PCT - Math.abs(Math.min(0, latestPoint.opportunity))
   const visualDomain = getFocusedPerformanceDomain(data, latestPoint)
+  const hasOutlierSegment = data.some((point) => point.quality === 'outlier')
   const plotData = data.map((point) => ({
     ...point,
     simulatedPlot: projectIntoDomain(point.simulated, visualDomain),
+    simulatedNormalPlot: point.quality === 'outlier' ? null : projectIntoDomain(point.simulated, visualDomain),
+    simulatedOutlierPlot: point.quality === 'outlier' ? projectIntoDomain(point.simulated, visualDomain) : null,
     targetPlot: projectIntoDomain(point.target, visualDomain),
     benchmarkPlot: projectIntoDomain(point.benchmark, visualDomain),
     opportunityPlot: projectIntoDomain(point.opportunity, visualDomain),
@@ -124,11 +127,12 @@ export function PerformanceChart({
                 y={projectIntoDomain(point.simulated, visualDomain)}
                 r={3.25}
                 fill="#050b0b"
-                stroke={chartColors.simulated}
+                stroke={point.quality === 'outlier' ? chartColors.target : chartColors.simulated}
                 strokeWidth={1.4}
               />
             ))}
-            <Line type="monotone" dataKey="simulatedPlot" stroke={chartColors.simulated} strokeWidth={2.15} dot={false} animationDuration={450} />
+            <Line type="monotone" dataKey="simulatedNormalPlot" stroke={chartColors.simulated} strokeWidth={2.15} dot={false} animationDuration={450} />
+            <Line type="monotone" dataKey="simulatedOutlierPlot" stroke={chartColors.target} strokeWidth={1.2} strokeDasharray="3 7" dot={false} connectNulls={false} isAnimationActive={false} />
             <Line type="monotone" dataKey="targetPlot" stroke={chartColors.target} strokeWidth={1.25} strokeDasharray="7 8" dot={false} isAnimationActive={false} />
             <Line type="monotone" dataKey="benchmarkPlot" stroke={chartColors.benchmark} strokeWidth={1.15} dot={false} isAnimationActive={false} />
             <Line type="monotone" dataKey="opportunityPlot" stroke={chartColors.opportunity} strokeWidth={1.2} strokeDasharray="7 8" dot={false} isAnimationActive={false} />
@@ -140,7 +144,9 @@ export function PerformanceChart({
         <span><i className="amber" />目标</span>
         <span><i className="muted" />市场基准</span>
         <span><i className="red" />机会差</span>
+        {hasOutlierSegment && <span><i className="outlier" />口径跳变</span>}
       </div>
+      {hasOutlierSegment && <div className="chart-quality-note">已弱化异常区间，主线看当前收益</div>}
       <div className="chart-live-labels" aria-hidden="true">
         <span className="current">现在 +{latestPoint.simulated.toFixed(2)}%</span>
       </div>
@@ -168,7 +174,8 @@ function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null
 
   const labels: Record<string, string> = {
-    simulatedPlot: '模拟盘',
+    simulatedNormalPlot: '模拟盘',
+    simulatedOutlierPlot: '口径跳变',
     targetPlot: '目标',
     benchmarkPlot: '市场基准',
     opportunityPlot: '机会差',
@@ -177,11 +184,18 @@ function ChartTooltip({ active, payload, label }: any) {
   return (
     <div className="chart-tooltip">
       <strong>{label}</strong>
-      {payload.map((item: any) => (
-        <span key={item.dataKey}>
-          {labels[item.dataKey] ?? item.dataKey}: {Number(item.payload?.[String(item.dataKey).replace('Plot', '')] ?? item.value).toFixed(2)}%
-        </span>
-      ))}
+      {payload.map((item: any) => {
+        const rawKey = item.dataKey === 'simulatedNormalPlot' || item.dataKey === 'simulatedOutlierPlot'
+          ? 'simulated'
+          : String(item.dataKey).replace('Plot', '')
+
+        return (
+          <span key={item.dataKey}>
+            {labels[item.dataKey] ?? item.dataKey}: {Number(item.payload?.[rawKey] ?? item.value).toFixed(2)}%
+          </span>
+        )
+      })}
+      {payload.some((item: any) => item.payload?.quality === 'outlier') && <span>标记: {payload[0]?.payload?.qualityReason ?? '口径跳变候选'}</span>}
       <em>视图按当前区间压缩；数值为真实记录。</em>
     </div>
   )

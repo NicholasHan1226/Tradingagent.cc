@@ -697,6 +697,64 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
+  it('marks high plateau then rebase performance points as quality outliers', async () => {
+    const root = await createWorkspace()
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(ledgerRoot, { recursive: true })
+
+    const pnlSeries = [0, 900, 980, 990, 1000, 995, 292, 294]
+    const timestamps = [
+      '2026-07-04T10:00:00+08:00',
+      '2026-07-04T10:15:00+08:00',
+      '2026-07-04T10:30:00+08:00',
+      '2026-07-04T10:45:00+08:00',
+      '2026-07-04T11:00:00+08:00',
+      '2026-07-04T11:15:00+08:00',
+      '2026-07-04T11:30:00+08:00',
+      '2026-07-04T11:45:00+08:00',
+    ]
+    await writeFile(
+      join(ledgerRoot, 'daily_mark_to_market.jsonl'),
+      pnlSeries.map((total_pnl, index) => JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: timestamps[index],
+        date: '20260704',
+        capital_base: 1000,
+        total_pnl,
+        target_return_pct: 8,
+        trade_count: index + 1,
+        pnl_source: 'sim_ledger_mark_to_market',
+      })).join('\n') + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.performance.map((point) => point.quality ?? 'normal')).toEqual([
+      'normal',
+      'outlier',
+      'outlier',
+      'outlier',
+      'outlier',
+      'outlier',
+      'outlier',
+      'normal',
+    ])
+    expect(snapshot.performance[1]).toMatchObject({
+      qualityReason: '口径跳变候选',
+      simulated: 90,
+      target: 2,
+    })
+    expect(snapshot.performance.at(-1)).toMatchObject({
+      day: '现在',
+      simulated: 29.4,
+      target: 8,
+    })
+  })
+
   it('uses only the canonical A-share server-local ledger for dashboard equity', async () => {
     const root = await createWorkspace()
     const legacyAshareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/aggressive')

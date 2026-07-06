@@ -266,7 +266,7 @@ export async function readTradingAgentSnapshot({
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
   const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
-  const performance = firstNonEmpty(equityPortfolio.performance, reviewPerformance, trackerPortfolio.performance)
+  const performance = annotatePerformanceQuality(firstNonEmpty(equityPortfolio.performance, reviewPerformance, trackerPortfolio.performance))
   const hasOrders = await directoryHasJson(filledSignalsPath)
   const hasPlan = await fileExists(positionPlanPath)
   const hasReview = await fileExists(reviewPath) || await fileExists(reviewFallbackPath)
@@ -315,6 +315,31 @@ async function readPerformanceSeries(path: string): Promise<PerformancePoint[]> 
   } catch {
     return []
   }
+}
+
+function annotatePerformanceQuality(performance: PerformancePoint[]): PerformancePoint[] {
+  if (performance.length < 8) return performance
+
+  const latest = performance.at(-1)!
+  const highWater = Math.max(...performance.map((point) => point.simulated))
+  const hasLargeRebase = highWater - latest.simulated >= 35
+  if (!hasLargeRebase) return performance
+
+  return performance.map((point, index) => {
+    const previous = performance[index - 1]
+    const next = performance[index + 1]
+    const isHighPlateau = point.simulated - latest.simulated >= 30 && point.simulated >= DEFAULT_TARGET_RETURN_PCT + 35
+    const isJump = previous ? Math.abs(point.simulated - previous.simulated) >= 35 : false
+    const isDrop = next ? point.simulated - next.simulated >= 35 : false
+
+    if (!isHighPlateau && !isJump && !isDrop) return point
+
+    return {
+      ...point,
+      quality: 'outlier' as const,
+      qualityReason: '口径跳变候选',
+    }
+  })
 }
 
 async function readAShareResearchEvidence(path: string): Promise<AShareResearchEvidence | undefined> {
