@@ -1640,22 +1640,79 @@ button:not(:disabled) {
 .chart-box {
   position: relative;
   min-height: 0;
-  padding-bottom: 56px;
+  padding-bottom: 0;
+}
+
+.hyper-chart-panel {
+  overflow: hidden;
+  border: 1px solid rgba(224, 246, 240, 0.058);
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 46%),
+    rgba(1, 5, 5, 0.72);
+}
+
+.chart-panel-head {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 48px;
+  border-bottom: 1px solid var(--border-hairline);
+  background: rgba(1, 5, 5, 0.74);
+}
+
+.chart-panel-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  padding: 9px 14px;
+  border-left: 1px solid var(--border-hairline);
+}
+
+.chart-panel-head > div:first-child {
+  border-left: 0;
+}
+
+.chart-panel-head span {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.chart-panel-head strong {
+  color: var(--text-primary);
+  font: 730 15px/1 var(--font-number);
+}
+
+.chart-panel-head > div:first-child strong {
+  color: var(--accent-cyan);
+}
+
+.chart-plot {
+  position: absolute;
+  inset: 50px 0 52px;
 }
 
 .chart-legend {
   position: absolute;
-  top: 0;
-  right: 0;
-  gap: 14px;
+  top: 62px;
+  left: 14px;
+  z-index: 3;
+  gap: 12px;
   color: var(--text-muted);
   font-size: 11px;
 }
 
 .chart-live-labels {
   position: absolute;
-  right: 2px;
-  top: 38px;
+  right: 14px;
+  top: 62px;
+  z-index: 4;
   display: grid;
   gap: 6px;
   justify-items: end;
@@ -1665,9 +1722,9 @@ button:not(:disabled) {
 .chart-live-labels span {
   width: fit-content;
   padding: 4px 7px;
-  border: 1px solid rgba(219, 242, 236, 0.06);
+  border: 1px solid rgba(219, 242, 236, 0.058);
   border-radius: 4px;
-  background: rgba(2, 6, 6, 0.8);
+  background: rgba(2, 6, 6, 0.86);
   color: var(--text-muted);
   font: 650 11px/1 var(--font-number);
 }
@@ -1690,11 +1747,12 @@ button:not(:disabled) {
   right: 0;
   bottom: 0;
   left: 0;
+  z-index: 2;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0;
   border-top: 1px solid var(--border-hairline);
-  background: rgba(1, 4, 4, 0.88);
+  background: rgba(1, 5, 5, 0.88);
 }
 
 .chart-event-bar button {
@@ -1717,7 +1775,7 @@ button:not(:disabled) {
 }
 
 .chart-event-bar button:hover {
-  background: rgba(240, 246, 244, 0.032);
+  background: rgba(240, 246, 244, 0.026);
   color: var(--text-secondary);
 }
 
@@ -1759,8 +1817,8 @@ button:not(:disabled) {
 }
 
 .chart-legend i {
-  width: 18px;
-  height: 2px;
+  width: 16px;
+  height: 1px;
   display: inline-block;
   background: var(--text-faint);
 }
