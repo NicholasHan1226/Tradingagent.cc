@@ -132,17 +132,24 @@ class MarketHealthTest(unittest.TestCase):
         from shared.execution import local_sim_ledger
 
         trades_path = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
+        positions_path = self.root / "shared/logs/local_sim/local_sim_positions.json"
         pnl_path = self.root / "shared/logs/local_sim/local_sim_pnl.json"
+        snapshot_path = self.root / "signals/positions/simulated_ashare_positions.json"
         trades_path.parent.mkdir(parents=True, exist_ok=True)
         trades_path.write_text(
             json.dumps({"ts_code": "000001.SZ", "net_amount": 2000.0}, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
+        positions_path.write_text(json.dumps({"ashare_sim": {}}, ensure_ascii=False), encoding="utf-8")
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(json.dumps({"positions": [], "pnl": {"ashare_sim": {"cash_available": 200000}}}, ensure_ascii=False), encoding="utf-8")
         pnl_path.write_text(json.dumps({"ashare_sim": {"cash_available": 200000, "positions": {}}}, ensure_ascii=False), encoding="utf-8")
 
         with patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", trades_path):
-            with patch.object(local_sim_ledger, "LOCAL_SIM_PNL", pnl_path):
-                check = market_health._check_local_sim_ledger()
+            with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", positions_path):
+                with patch.object(local_sim_ledger, "LOCAL_SIM_PNL", pnl_path):
+                    with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot_path):
+                        check = market_health._check_local_sim_ledger()
 
         self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["invalid_code_matches"], 0)
