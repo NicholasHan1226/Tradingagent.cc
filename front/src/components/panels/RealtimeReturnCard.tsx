@@ -60,8 +60,8 @@ export function RealtimeReturnCard({
       <span className="return-kicker">核心结果</span>
       {isLive ? (
         <div className="return-placeholder">
-          <strong>实盘待接入</strong>
-          <p>接入后展示真实账户结果；当前以模拟盘为主。</p>
+          <strong>实盘准备中</strong>
+          <p>接入后会在这里切换真实账户结果；当前先看模拟盘。</p>
         </div>
       ) : !hasPerformanceData ? (
         <div className="return-placeholder">

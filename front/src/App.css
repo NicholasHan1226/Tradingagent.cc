@@ -2107,6 +2107,105 @@ button:not(:disabled) {
   padding: 8px 0;
 }
 
+.brief-scorecard {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid rgba(240, 246, 244, 0.052);
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 58%),
+    rgba(1, 5, 5, 0.36);
+}
+
+.brief-scorecard-main {
+  display: grid;
+  gap: 6px;
+  min-height: 96px;
+  padding: 14px 14px 13px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.brief-scorecard-main span,
+.brief-risk-line span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.brief-scorecard-main strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font: 740 20px/1.06 var(--font-number);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brief-scorecard-main.cyan strong {
+  color: var(--accent-cyan);
+}
+
+.brief-scorecard-main em {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.brief-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.brief-mini-grid .summary-row {
+  display: grid;
+  gap: 5px;
+  min-height: 62px;
+  padding: 10px 11px;
+  border-right: 1px solid var(--border-hairline);
+  border-bottom: 0;
+}
+
+.brief-mini-grid .summary-row:last-child {
+  border-right: 0;
+}
+
+.brief-mini-grid .summary-row strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brief-risk-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 0 13px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.brief-risk-line:last-child {
+  border-bottom: 0;
+}
+
+.brief-risk-line strong {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brief-risk-line.muted strong {
+  color: var(--text-faint);
+  font-weight: 560;
+}
+
 .brief-action-section .decision-list,
 .brief-risk-section .risk-cards {
   margin-top: 1px;
@@ -2119,7 +2218,8 @@ button:not(:disabled) {
   font: 650 12px/1 var(--font-number);
 }
 
-.primary-action {
+.primary-action,
+.secondary-action {
   width: 100%;
   height: 38px;
   margin-top: 14px;
@@ -2128,6 +2228,19 @@ button:not(:disabled) {
   background: var(--accent-cyan);
   font-size: 12px;
   font-weight: 680;
+}
+
+.secondary-action {
+  height: 34px;
+  border: 1px solid rgba(105, 228, 215, 0.12);
+  color: var(--text-secondary);
+  background: rgba(5, 12, 12, 0.54);
+}
+
+.secondary-action:hover {
+  border-color: rgba(105, 228, 215, 0.22);
+  color: var(--accent-cyan);
+  background: rgba(105, 228, 215, 0.04);
 }
 
 .decision-list {
@@ -2147,6 +2260,14 @@ button:not(:disabled) {
   text-align: left;
 }
 
+.decision-list button.decision-mini-row {
+  grid-template-columns: 74px minmax(76px, 0.55fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 9px 0;
+}
+
 .decision-list button:hover {
   background: var(--surface-hover);
 }
@@ -2161,6 +2282,12 @@ button:not(:disabled) {
 .decision-list strong {
   color: var(--text-secondary);
   font: 650 12px/1 var(--font-number);
+}
+
+.decision-list .decision-mini-row em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .focus-item,

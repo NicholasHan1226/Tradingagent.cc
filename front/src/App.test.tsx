@@ -202,8 +202,8 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
-    expect(within(card).getByText('接入后展示真实账户结果；当前以模拟盘为主。')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘准备中').length).toBeGreaterThan(0)
+    expect(within(card).getByText('接入后会在这里切换真实账户结果；当前先看模拟盘。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -224,7 +224,7 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('实盘准备中').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 
