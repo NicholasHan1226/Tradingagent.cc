@@ -12,7 +12,7 @@ As of 2026-07-05, the static dashboard has been deployed to Cloudflare Pages:
 | Pages project | `tradingagent-front` |
 | Production URL | `https://tradingagent-front.pages.dev` |
 | First deployment URL | `https://d29e260e.tradingagent-front.pages.dev` |
-| Latest checked deployment URL | `https://f343696d.tradingagent-front.pages.dev` |
+| Latest checked deployment URL | `https://30a39766.tradingagent-front.pages.dev` |
 | Custom dashboard domain | `https://dashboard.tradingagent.cc` |
 | DNS status | `dashboard.tradingagent.cc` is a proxied CNAME to `tradingagent-front.pages.dev` |
 | Tunnel | `tradingagent-front-api` (`88b5a0af-35fe-438d-b294-2d1b441631ca`) |
