@@ -31,8 +31,11 @@ function getFocusedPerformanceDomain(data: PerformancePoint[], latestPoint: Perf
   return max - min >= 14 ? [min, max] as [number, number] : rawDomain
 }
 
-function clampToDomain(value: number, [min, max]: [number, number]) {
-  return Math.min(max, Math.max(min, value))
+function projectIntoDomain(value: number, [min, max]: [number, number]) {
+  const padding = Math.max(1.5, (max - min) * 0.05)
+  if (value > max) return max - padding + Math.tanh((value - max) / 40) * padding
+  if (value < min) return min + padding - Math.tanh((min - value) / 40) * padding
+  return value
 }
 
 export function PerformanceChart({
@@ -53,10 +56,10 @@ export function PerformanceChart({
   const visualDomain = getFocusedPerformanceDomain(data, latestPoint)
   const plotData = data.map((point) => ({
     ...point,
-    simulatedPlot: clampToDomain(point.simulated, visualDomain),
-    targetPlot: clampToDomain(point.target, visualDomain),
-    benchmarkPlot: clampToDomain(point.benchmark, visualDomain),
-    opportunityPlot: clampToDomain(point.opportunity, visualDomain),
+    simulatedPlot: projectIntoDomain(point.simulated, visualDomain),
+    targetPlot: projectIntoDomain(point.target, visualDomain),
+    benchmarkPlot: projectIntoDomain(point.benchmark, visualDomain),
+    opportunityPlot: projectIntoDomain(point.opportunity, visualDomain),
   }))
   const eventPoints = events
     .map((event) => {
@@ -108,7 +111,7 @@ export function PerformanceChart({
             <ReferenceLine x="现在" stroke={chartColors.simulated} strokeDasharray="2 8" />
             <ReferenceDot
               x="现在"
-              y={clampToDomain(latestPoint.simulated, visualDomain)}
+              y={projectIntoDomain(latestPoint.simulated, visualDomain)}
               r={4}
               fill={chartColors.simulated}
               stroke="#050b0b"
@@ -118,7 +121,7 @@ export function PerformanceChart({
               <ReferenceDot
                 key={`${event.day}-${event.targetPage}-dot`}
                 x={event.day}
-                y={clampToDomain(point.simulated, visualDomain)}
+                y={projectIntoDomain(point.simulated, visualDomain)}
                 r={3.25}
                 fill="#050b0b"
                 stroke={chartColors.simulated}
@@ -179,7 +182,7 @@ function ChartTooltip({ active, payload, label }: any) {
           {labels[item.dataKey] ?? item.dataKey}: {Number(item.payload?.[String(item.dataKey).replace('Plot', '')] ?? item.value).toFixed(2)}%
         </span>
       ))}
-      <em>视图按当前区间裁切；数值为真实记录。</em>
+      <em>视图按当前区间压缩；数值为真实记录。</em>
     </div>
   )
 }
