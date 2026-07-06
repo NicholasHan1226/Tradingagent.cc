@@ -340,7 +340,18 @@ def _write_execution_signal(
         return {"order_id": card.get("order_id", ""), "status": "pending", "pending_signal": pending}
     if rejected:
         reason = str(receipt.get("message") or receipt.get("reason") or status or "sim order rejected")
-        failed = machine.fail(str(card.get("order_id", "")), reason=reason)
+        engine_record = raw_response.get("engine_record") if isinstance(raw_response.get("engine_record"), dict) else {}
+        failure_details = {
+            "receipt_status": status,
+            "receipt_message": str(receipt.get("message") or ""),
+            "receipt_reason": str(receipt.get("reason") or ""),
+            "filled_qty": receipt.get("filled_qty", receipt.get("filled_quantity", 0)),
+            "avg_price": receipt.get("avg_price", receipt.get("filled_price", 0.0)),
+            "engine_state": engine_record.get("state"),
+            "engine_reason": engine_record.get("reason"),
+            "raw_mode": raw_response.get("mode"),
+        }
+        failed = machine.fail(str(card.get("order_id", "")), reason=reason, details=failure_details)
         return {"order_id": card.get("order_id", ""), "status": "failed", "pending_signal": pending, "failed_signal": failed}
 
     fill_info = dict(receipt)

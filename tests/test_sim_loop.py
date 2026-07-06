@@ -326,6 +326,41 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["pending_signal"]["source"], "mini_webhook")
         self.assertEqual(list((signals_dir / "pending").glob("*.json")), [])
 
+    def test_write_execution_signal_persists_failure_details(self) -> None:
+        from shared.execution.signal_state_machine import read_json
+        from shared.orchestrator import _write_execution_signal
+
+        signals_dir = self.tmp_path / "signals_failure_details"
+        card = {
+            "order_id": "SIM-ASHARE-FAIL-DETAILS",
+            "ts_code": "600000.SH",
+            "market": "ashare",
+            "direction": "buy",
+            "quantity": 100,
+            "price": 10.0,
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+        }
+        receipt = {
+            "order_id": "SIM-ASHARE-FAIL-DETAILS",
+            "status": "rejected",
+            "message": "Server-local A-share simulated fill via matching engine: rejected: insufficient_cash",
+            "filled_qty": 0,
+            "avg_price": 0.0,
+            "raw_response": {
+                "mode": "server_local_sim_engine",
+                "engine_record": {"state": "rejected", "reason": "insufficient_cash"},
+            },
+        }
+
+        result = _write_execution_signal(card, receipt, signals_dir=signals_dir)
+
+        self.assertEqual(result["status"], "failed")
+        failed_card = read_json(signals_dir / "failed" / "SIM-ASHARE-FAIL-DETAILS.json")
+        self.assertIn("insufficient_cash", failed_card["failure_reason"])
+        self.assertEqual(failed_card["failure_details"]["engine_reason"], "insufficient_cash")
+        self.assertEqual(failed_card["failure_details"]["receipt_status"], "rejected")
+
     def test_run_sim_loop_skips_existing_same_day_sim_signal(self) -> None:
         signals_dir = self.tmp_path / "signals"
         filled_dir = signals_dir / "filled"

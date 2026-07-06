@@ -250,10 +250,12 @@ class SignalStateMachine:
 
             raise SignalStateConflict(f"Signal cannot be cancelled from status {current_status}")
 
-    def fail(self, order_id: str, reason: str = "") -> dict[str, Any]:
+    def fail(self, order_id: str, reason: str = "", details: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = {"failed_at": now_iso()}
         if reason:
             payload["failure_reason"] = reason
+        if details:
+            payload["failure_details"] = details
         return self._move_first_available(order_id, (PENDING, CLAIMED, RUNNING), FAILED, payload)
 
     def sweep_expired(self, now: datetime | None = None) -> dict[str, Any]:
