@@ -14,9 +14,11 @@ class FakeReader:
         self,
         bars_by_symbol: dict[str, list[dict[str, object]]],
         daily_by_symbol: dict[tuple[str, str], list[dict[str, object]]] | None = None,
+        tushare_by_api: dict[str, list[dict[str, object]]] | None = None,
     ) -> None:
         self.bars_by_symbol = bars_by_symbol
         self.daily_by_symbol = daily_by_symbol or {}
+        self.tushare_by_api = tushare_by_api or {}
 
     def get_assets(self, market: str | None = None) -> list[dict[str, object]]:
         return [{"symbol": symbol, "market": market or "Ashare"} for symbol in self.bars_by_symbol]
@@ -26,6 +28,12 @@ class FakeReader:
 
     def get_bars_daily(self, market: str, symbol: str, start: str, end: str) -> list[dict[str, object]]:
         return self.daily_by_symbol.get((symbol, start), [])
+
+    def get_tushare(
+        self, api_name: str, ts_code: str | None = None,
+        start_date: str | None = None, end_date: str | None = None,
+    ) -> list[dict[str, object]]:
+        return self.tushare_by_api.get(api_name, [])
 
 
 class AshareResearchEvidenceTest(unittest.TestCase):
@@ -189,6 +197,26 @@ class AshareResearchEvidenceTest(unittest.TestCase):
         self.assertFalse(report["real_trading_enabled"])
         self.assertEqual(report["reverse_repo"]["lots"], 2)
         self.assertEqual(report["reverse_repo"]["yield_source"], "daily_bar:close")
+
+    def test_build_report_prefers_symbols_with_recent_intraday_rows(self) -> None:
+        reader = FakeReader(
+            {
+                "000001.SZ": [{"bar_time": "2026-07-06 09:30:00", "open": 10.0, "close": 10.2}],
+                "600000.SH": [{"bar_time": "2026-07-06 09:30:00", "open": 9.0, "close": 9.1}],
+            },
+            {("204001.SH", "20260706"): [{"close": 2.2}]},
+            {"rt_min": [{"symbol": "000001.SZ"}, {"symbol": "600000.SH"}]},
+        )
+        with patch.object(research_evidence, "style_evidence", return_value={"state": "ready", "styles": []}):
+            report = research_evidence.build_research_evidence(
+                trade_date="20260706",
+                idle_cash=2000,
+                reader=reader,
+                max_symbols=1,
+            )
+
+        self.assertEqual(report["opening_auction"]["symbols_checked"], 1)
+        self.assertEqual(report["opening_auction"]["proxy_symbols_with_bars"], 1)
 
 
 if __name__ == "__main__":

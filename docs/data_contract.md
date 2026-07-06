@@ -48,10 +48,18 @@ Rows are returned as dictionaries. Missing rows return `[]` or `None` through
 - API-first path: SharedSignals `/realtime_5min?market=<market>&ts_code=<symbol>&date=<YYYYMMDD>`.
 - SQLite fallback: `market_bars_intraday` filtered by `market`, `symbol`, and
   `interval`.
+- A-share research evidence first asks SharedSignals for same-day `rt_min` /
+  `stk_mins` symbols through `get_tushare()` and only falls back to the asset
+  list when no intraday rows are indexed yet.
 - Optional L1 fields are passed through when SharedSignals has them:
   `bid_price`, `ask_price`, `bid_size`, `ask_size`.
 - Optional futures contract lifecycle fields are passed through when
   SharedSignals has them: `last_trade_date`, `expiry_date`.
+
+A-share reverse repo reads use SharedSignals `/market_data` for `204001.SH`.
+SharedSignals owns the `repo_daily` collection and projects those rows into
+`market_bars_daily`; TradingAgent treats `close` as annualized percentage yield
+for research-only cash sweep estimates.
 
 ## MarketGraph CSV Inputs
 

@@ -60,6 +60,17 @@ def _first_present(row: dict[str, Any], *keys: str, default: Any = None) -> Any:
     return default
 
 
+def _row_payload(row: dict[str, Any]) -> dict[str, Any]:
+    data = row.get("data")
+    if isinstance(data, dict):
+        merged = dict(data)
+        for key in ("market", "symbol", "ts_code", "provider", "source_file"):
+            if key in row and key not in merged:
+                merged[key] = row[key]
+        return merged
+    return row
+
+
 def _hhmm(value: Any) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -160,7 +171,7 @@ def _read_daily_bar(reader: Any, symbol: str, trade_date: str) -> dict[str, Any]
                 rows = []
             for row in rows or []:
                 if isinstance(row, dict):
-                    return row
+                    return _row_payload(row)
     return None
 
 
@@ -482,11 +493,40 @@ def _load_bars_from_reader(reader: Any, symbols: list[str], trade_date: str) -> 
             rows = reader.get_bars_intraday("Ashare", symbol, "5m", trade_date, trade_date)
         except Exception:
             rows = []
-        bars_by_symbol[symbol] = [row for row in rows if isinstance(row, dict)]
+        bars_by_symbol[symbol] = [_row_payload(row) for row in rows if isinstance(row, dict)]
     return bars_by_symbol
 
 
-def _default_symbols(reader: Any, max_symbols: int) -> list[str]:
+def _recent_intraday_symbols(reader: Any, trade_date: str, max_symbols: int) -> list[str]:
+    symbols: list[str] = []
+    seen: set[str] = set()
+    get_tushare = getattr(reader, "get_tushare", None)
+    if not callable(get_tushare):
+        return symbols
+    for api_name in ("rt_min", "stk_mins"):
+        try:
+            rows = get_tushare(api_name, start_date=trade_date, end_date=trade_date)
+        except Exception:
+            rows = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            payload = _row_payload(row)
+            symbol = str(payload.get("symbol") or payload.get("ts_code") or "").strip().upper()
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            symbols.append(symbol)
+            if len(symbols) >= max_symbols:
+                return symbols
+    return symbols
+
+
+def _default_symbols(reader: Any, max_symbols: int, trade_date: str | None = None) -> list[str]:
+    if trade_date:
+        recent = _recent_intraday_symbols(reader, trade_date, max_symbols)
+        if recent:
+            return recent
     try:
         assets = reader.get_assets("Ashare")
     except Exception:
@@ -517,7 +557,7 @@ def build_research_evidence(
             from shared.data.reader import TradingagentDataReader
 
             reader = TradingagentDataReader()
-        symbols = _default_symbols(reader, max_symbols)
+        symbols = _default_symbols(reader, max_symbols, date_value)
         bars_by_symbol = _load_bars_from_reader(reader, symbols, date_value)
     yield_source = "manual"
     if annualized_yield is None:
