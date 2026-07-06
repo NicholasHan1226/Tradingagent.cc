@@ -274,6 +274,7 @@ type ParsedEquitySnapshot = {
   capitalBase: number
   dayKey: string
   isSimLedgerSnapshot: boolean
+  markets: Set<Market>
   maxDrawdownPct: number
   opportunityPct: number
   pnl: number
@@ -315,6 +316,7 @@ const SIGNAL_BUCKETS = ['pending', 'claimed', 'running', 'filled', 'expired', 'c
 const MAX_SIGNALS_PER_BUCKET = 80
 const MAX_SIM_LEDGER_SIGNALS = 120
 const DEFAULT_TARGET_RETURN_PCT = 8
+const DEFAULT_SIM_CAPITAL_CNY = 200_000
 const SIM_LEDGER_EQUITY_BUCKET_MS = 5 * 60 * 1000
 const MAX_EQUITY_PERFORMANCE_POINTS = 48
 const DASHBOARD_MARKETS: Market[] = ['A-share', 'US', 'Crypto', 'PM', 'CNFutures']
@@ -510,9 +512,10 @@ async function buildMarketSummaries({
     const performanceSummary = equitySummaries.get(market) ?? performanceSummaries.get(market)
     const isAshare = market === 'A-share'
     const ashareAccount = isAshare ? portfolio?.ashareAccount : undefined
-    const capitalBase = ashareAccount
+    const rawCapitalBase = ashareAccount
       ? roundMoney(ashareAccount.accountEquity - ashareAccount.accountTotalPnl)
       : performanceSummary?.capitalBase ?? capitalBaseByMarket.get(market)
+    const capitalBase = defaultMarketCapitalBase(market, rawCapitalBase)
     const pnlAmount = ashareAccount?.accountTotalPnl ?? performanceSummary?.pnl
     const returnPct = ashareAccount
       ? ashareAccount.accountReturnPct
@@ -688,6 +691,7 @@ async function readEquitySnapshotMarketSummaries(root: string): Promise<Map<Mark
     current.maxDrawdown = Math.max(current.maxDrawdown, snapshot.maxDrawdownPct)
     current.trades += snapshot.tradeCount
     current.latestAt = latestIso(current.latestAt, snapshot.timestamp)
+    current.capitalBase = defaultMarketCapitalBase(market, current.capitalBase)
     summaries.set(market, current)
   }
 
@@ -1074,7 +1078,8 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
   const useProgressiveTarget = shouldUseProgressiveEquityTarget(snapshotRows)
   const performance = timestamps.map((_, index) => {
     const row = snapshotRows[index]
-    const simulated = row.capitalBase > 0 ? (row.pnl / row.capitalBase) * 100 : row.returnPct
+    const normalizedCapitalBase = normalizedCapitalBaseForMarkets(row.capitalBase, row.markets)
+    const simulated = normalizedCapitalBase > 0 ? (row.pnl / normalizedCapitalBase) * 100 : row.returnPct
     const target = useProgressiveTarget
       ? Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / timestamps.length))
       : row.targetPct > 0 ? row.targetPct : Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / timestamps.length))
@@ -1089,13 +1094,14 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
     }
   })
   const latest = grouped.get(timestamps.at(-1)!)!
+  const latestCapitalBase = normalizedCapitalBaseForMarkets(latest.capitalBase, latest.markets)
 
   return {
     performance,
     summary: {
       pnlAmount: roundMoney(latest.pnl),
-      returnPct: roundMetric(latest.capitalBase > 0 ? (latest.pnl / latest.capitalBase) * 100 : latest.returnPct),
-      capitalBase: roundMoney(latest.capitalBase),
+      returnPct: roundMetric(latestCapitalBase > 0 ? (latest.pnl / latestCapitalBase) * 100 : latest.returnPct),
+      capitalBase: roundMoney(latestCapitalBase),
       targetPct: latest.targetPct > 0 ? roundMetric(latest.targetPct) : DEFAULT_TARGET_RETURN_PCT,
       maxDrawdownPct: roundMetric(latest.maxDrawdownPct),
       tradeCount: latest.tradeCount,
@@ -1173,7 +1179,7 @@ function groupSimLedgerEquitySnapshots(snapshots: ParsedEquitySnapshot[]) {
 }
 
 function cloneEquitySnapshot(snapshot: ParsedEquitySnapshot): ParsedEquitySnapshot {
-  return { ...snapshot, sources: new Set(snapshot.sources) }
+  return { ...snapshot, markets: new Set(snapshot.markets), sources: new Set(snapshot.sources) }
 }
 
 function bucketSimLedgerTimestamp(timestampMs: number) {
@@ -1207,6 +1213,7 @@ function mergeEquitySnapshot(current: ParsedEquitySnapshot, snapshot: ParsedEqui
   current.benchmarkPct = weightedAverage(current.benchmarkPct, previousCapitalBase, snapshot.benchmarkPct, snapshot.capitalBase)
   current.opportunityPct = weightedAverage(current.opportunityPct, previousCapitalBase, snapshot.opportunityPct, snapshot.capitalBase)
   current.targetPct = Math.max(current.targetPct, snapshot.targetPct)
+  for (const market of snapshot.markets) current.markets.add(market)
   for (const source of snapshot.sources) current.sources.add(source)
 }
 
@@ -1286,6 +1293,7 @@ function parseEquitySnapshotRecord(row: EquitySnapshotRecord): ParsedEquitySnaps
     capitalBase: base,
     dayKey,
     isSimLedgerSnapshot: row.sourcePath.includes('/shared/logs/sim_ledger/'),
+    markets: new Set([marketFromEquitySourcePath(row.sourcePath)]),
     maxDrawdownPct: Math.abs(drawdownPct ?? (drawdownAmount !== undefined ? (drawdownAmount / base) * 100 : 0)),
     opportunityPct: firstParsedNumber(row.opportunity_gap_pct, row.missed_alpha_pct) ?? 0,
     pnl: pnl ?? (returnPct! / 100) * base,
@@ -1299,6 +1307,26 @@ function parseEquitySnapshotRecord(row: EquitySnapshotRecord): ParsedEquitySnaps
     tradeCount: Math.max(0, Math.trunc(firstParsedNumber(row.trade_count, row.trades) ?? 0)),
     unrealizedPnl,
   }
+}
+
+function defaultMarketCapitalBase(market: Market, current?: number) {
+  if (market === 'All Markets' || market === 'HK') return current
+  return Math.max(current ?? 0, DEFAULT_SIM_CAPITAL_CNY)
+}
+
+function normalizedCapitalBaseForMarkets(current: number, markets: Set<Market>) {
+  const activeMarkets = [...markets].filter((market) => market !== 'All Markets' && market !== 'HK')
+  if (!activeMarkets.length) return current
+  return Math.max(current, activeMarkets.length * DEFAULT_SIM_CAPITAL_CNY)
+}
+
+function marketFromEquitySourcePath(sourcePath: string): Market {
+  const normalized = sourcePath.replaceAll('\\', '/')
+  const simMatch = normalized.match(/\/shared\/logs\/sim_ledger\/([^/]+)\//)
+  if (simMatch?.[1]) return normalizeMarketFolder(simMatch[1])
+  const reviewMatch = normalized.match(/\/shared\/review\/([^/]+)\//)
+  if (reviewMatch?.[1]) return normalizeMarketFolder(reviewMatch[1])
+  return 'All Markets'
 }
 
 async function readStylePerformancePortfolio(root: string, simLedgerRoot: string, generatedAt: string): Promise<{

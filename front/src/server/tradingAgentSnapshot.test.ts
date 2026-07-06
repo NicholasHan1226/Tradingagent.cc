@@ -680,14 +680,14 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月3日 10:00', timestamp: '2026-07-03T10:00:05+08:00', simulated: 0.2, target: 2.67, benchmark: 0, opportunity: 0 },
-      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:09+08:00', simulated: 0.5, target: 5.33, benchmark: 0, opportunity: 0 },
-      { day: '现在', timestamp: '2026-07-04T10:06:10+08:00', simulated: 0.7, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '7月3日 10:00', timestamp: '2026-07-03T10:00:05+08:00', simulated: 0.01, target: 2.67, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:09+08:00', simulated: 0.03, target: 5.33, benchmark: 0, opportunity: 0 },
+      { day: '现在', timestamp: '2026-07-04T10:06:10+08:00', simulated: 0.04, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 151.2,
-      returnPct: 0.7,
-      capitalBase: 21600,
+      returnPct: 0.04,
+      capitalBase: 400000,
       maxDrawdownPct: 1.4,
       tradeCount: 8,
       pointCount: 3,
@@ -772,19 +772,19 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:05+08:00', simulated: 0.2, target: 2.67, benchmark: 0, opportunity: 0 },
-      { day: '7月4日 10:06', timestamp: '2026-07-04T10:06:01+08:00', simulated: 0.53, target: 5.33, benchmark: 0, opportunity: 0 },
-      { day: '现在', timestamp: '2026-07-04T10:12:10+08:00', simulated: 0.7, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:05+08:00', simulated: 0.01, target: 2.67, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:06', timestamp: '2026-07-04T10:06:01+08:00', simulated: 0.03, target: 5.33, benchmark: 0, opportunity: 0 },
+      { day: '现在', timestamp: '2026-07-04T10:12:10+08:00', simulated: 0.04, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 151.2,
-      returnPct: 0.7,
-      capitalBase: 21600,
+      returnPct: 0.04,
+      capitalBase: 400000,
       tradeCount: 5,
     })
   })
 
-  it('marks high plateau then rebase performance points as quality outliers', async () => {
+  it('keeps capital-base rebase history normal after applying the 200k market floor', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
     await mkdir(ledgerRoot, { recursive: true })
@@ -820,24 +820,14 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T12:00:00.000Z'),
     })
 
-    expect(snapshot.performance.map((point) => point.quality ?? 'normal')).toEqual([
-      'normal',
-      'outlier',
-      'outlier',
-      'outlier',
-      'outlier',
-      'outlier',
-      'outlier',
-      'normal',
-    ])
+    expect(snapshot.performance.map((point) => point.quality ?? 'normal')).toEqual(Array(8).fill('normal'))
     expect(snapshot.performance[1]).toMatchObject({
-      qualityReason: '口径跳变候选',
-      simulated: 90,
+      simulated: 3.24,
       target: 2,
     })
     expect(snapshot.performance.at(-1)).toMatchObject({
       day: '现在',
-      simulated: 29.4,
+      simulated: 1.06,
       target: 8,
     })
   })
