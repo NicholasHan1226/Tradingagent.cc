@@ -56,13 +56,13 @@
 
 ## 2026-07-01 执行/影子边界补充
 - `signals/pending` 是执行队列，不应放影子盘研究信号；影子盘信号放在 `signals/shadow/pending`，避免被 Hermes 或模拟执行巡检误判为堵塞。
-- A股模拟执行仍通过 mini 反向隧道 `127.0.0.1:9865 -> mini:8654` 检查健康状态；mini health `execution_status=ready` 才允许服务器生成模拟执行任务。
+- A股服务器本地模拟执行不依赖 mini/Hermes 健康状态；mini 反向隧道 `127.0.0.1:9865 -> mini:8654` 只用于显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 的同花顺 GUI 第二路径。
 - A股影子/模拟链路禁止 `200xxx.SZ` 等非普通 A股代码进入 shadow broker；被拒绝记录应保留在维护 manifest 或 failed/backup 中，不能污染当前 PnL。
 
 ## 2026-07-01 A股健康检查入口
 - A股市场健康检查入口：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/market_health.py --market ashare --pretty`。
 - 输出文件可保存到 `shared/runtime_test/ashare_health_latest.json`；默认只读，不发邮件、不点击同花顺、不改变交易状态。
-- 当前检查覆盖：A股 universe 合规性、影子账本污染和收益口径、执行/影子队列隔离、mini/Hermes 健康、模拟持仓快照、邮件模板/发送记录、失败回执可复盘性。
+- 当前检查覆盖：A股 universe 合规性、影子账本污染和收益口径、执行/影子队列隔离、服务器本地模拟账本、可选 Hermes 第二路径状态、模拟持仓快照、邮件模板/发送记录、失败回执可复盘性。
 - 通过标准：`overall_status=pass` 且 `signals/pending|claimed|running` 为 0、`signals/shadow/*` 可有影子研究记录、`200xxx.SZ/900xxx.SH` 不出现在 A股影子账本。
 
 ## 2026-07-04 A股服务器本地模拟盘边界

@@ -317,6 +317,12 @@ def _explain_no_trade(
         action = "check_sharedsignals_symbol_coverage"
     elif latest_classification is not None:
         category, action = latest_classification
+    elif local_sim_count > 0 and receipt_count <= 0:
+        category = "receipt_missing"
+        action = "check_sim_execution_receipt_writer"
+    elif review_count <= 0 and local_sim_count > 0:
+        category = "review_pending"
+        action = "wait_for_review_or_run_daily_review"
     elif sum(int(signal_counts.get(key, 0)) for key in ("pending", "filled", "failed", "partial", "expired", "cancelled")) <= 0:
         category = "no_signal_cards_created"
         action = "check_signal_generation_thresholds"
@@ -326,12 +332,6 @@ def _explain_no_trade(
     elif filled_signal_count > 0 and local_sim_count <= 0:
         category = "execution_missing"
         action = "check_server_local_sim_executor"
-    elif local_sim_count > 0 and receipt_count <= 0:
-        category = "receipt_missing"
-        action = "check_sim_execution_receipt_writer"
-    elif review_count <= 0:
-        category = "review_pending"
-        action = "wait_for_review_or_run_daily_review"
     else:
         category = "trade_loop_ready"
         action = "continue_monitoring"
@@ -522,7 +522,7 @@ def first_sample_alerts(
     )
     if local_sim_count <= 0:
         alerts.append({"severity": "warn", "code": "ashare_first_sim_trade_missing", "message": "A股5分钟数据已进入会话窗口，但服务器本地模拟盘尚无成交样本。"})
-    if receipt_count <= 0:
+    if local_sim_count > 0 and receipt_count <= 0:
         alerts.append({"severity": "warn", "code": "ashare_first_receipt_missing", "message": "A股已有本地模拟成交，但签名回执尚未生成。"})
     if review_count <= 0:
         alerts.append({"severity": "info", "code": "ashare_review_not_yet_run", "message": "A股复盘日志尚未生成，等待日终复盘任务。"})

@@ -114,10 +114,36 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["status"], "warn")
         codes = {alert["code"] for alert in report["alerts"]}
         self.assertIn("ashare_first_sim_trade_missing", codes)
-        self.assertIn("ashare_first_receipt_missing", codes)
+        self.assertNotIn("ashare_first_receipt_missing", codes)
         self.assertIn("ashare_review_not_yet_run", codes)
         self.assertEqual(report["no_trade_explanation"]["category"], "no_signal_cards_created")
         self.assertEqual(report["no_trade_explanation"]["next_action"], "check_signal_generation_thresholds")
+
+    def test_first_sample_alerts_when_trade_sample_has_no_receipt(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        local_sim = root / "local_sim_trades.jsonl"
+        local_sim.write_text(json.dumps({"trade_id": "t1", "trade_date": "20260706"}) + "\n", encoding="utf-8")
+        db_path = self._db(
+            [
+                ("600000.SH", "2026-07-06 09:35:00"),
+                ("000001.SZ", "2026-07-06 09:35:00"),
+            ]
+        )
+        report = ashare_opening_validator.first_sample_alerts(
+            sqlite_db=db_path,
+            local_sim_path=local_sim,
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+        codes = {alert["code"] for alert in report["alerts"]}
+        self.assertIn("ashare_first_receipt_missing", codes)
+        self.assertEqual(report["no_trade_explanation"]["category"], "receipt_missing")
 
     def test_first_sample_ready_when_all_samples_present(self) -> None:
         tmp = tempfile.TemporaryDirectory()
