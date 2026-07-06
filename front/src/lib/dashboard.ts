@@ -1,4 +1,4 @@
-import type { HoldingRow, Market, PerformancePoint, SignalRow } from '../types/dashboard'
+import type { HoldingRow, Market, MarketSummary, PerformancePoint, SignalRow } from '../types/dashboard'
 import type { DomainHealth } from '../types/status'
 
 export function getActionableSignals(rows: SignalRow[]) {
@@ -12,8 +12,16 @@ export function getClosedSignals(rows: SignalRow[]) {
 }
 
 export function getVisibleSignals(rows: SignalRow[], activeMarket: Market) {
-  const filteredRows = rows.filter((signal) => activeMarket === 'All Markets' || signal.market === activeMarket)
-  return filteredRows.length ? filteredRows : rows
+  return rows.filter((signal) => activeMarket === 'All Markets' || signal.market === activeMarket)
+}
+
+export function getVisibleHoldings(rows: HoldingRow[], activeMarket: Market) {
+  return rows.filter((holding) => activeMarket === 'All Markets' || holding.market === activeMarket)
+}
+
+export function getSelectedMarketSummary(rows: MarketSummary[], activeMarket: Market) {
+  if (activeMarket === 'All Markets') return undefined
+  return rows.find((summary) => summary.market === activeMarket)
 }
 
 export function getLivePerformanceData(now: Date, rows: PerformancePoint[], animateLatest = false) {

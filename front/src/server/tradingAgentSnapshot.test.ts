@@ -1169,4 +1169,42 @@ describe('TradingAgent snapshot reader', () => {
       role: 'Index Intraday Directional 持仓',
     }))
   })
+
+  it('exposes per-market runtime summaries from style comparison reports', async () => {
+    const root = await createWorkspace()
+    const reviewRoot = join(root, 'TradingAgent/shared/review/crypto')
+    await mkdir(reviewRoot, { recursive: true })
+    await writeFile(
+      join(reviewRoot, 'style_comparison.json'),
+      JSON.stringify({
+        market: 'crypto',
+        capital_layer: 'simulated',
+        account_type: 'simulated',
+        real_execution: false,
+        styles_total: 2,
+        styles_loaded: 2,
+        style_states: { grid: 'active', momentum: 'degraded' },
+        filled_count: 3,
+        error_count: 1,
+        signal_count: 4,
+        generated_at: '2026-07-06T12:35:00.000Z',
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T12:40:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'Crypto',
+      status: 'partial',
+      styleCount: 2,
+      activeStyleCount: 1,
+      degradedStyleCount: 1,
+      filledCount: 3,
+      errorCount: 1,
+    }))
+  })
 })

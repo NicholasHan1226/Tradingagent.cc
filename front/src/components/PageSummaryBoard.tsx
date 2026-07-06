@@ -3,7 +3,7 @@ import { getClosedSignals, getSignalFunnel } from '../lib/dashboard'
 import { DRAWDOWN_LIMIT_PCT } from '../lib/dashboardConstants'
 import { formatCnyCompact, formatCurrency, formatSignedCnyCompact } from '../lib/format'
 import { summarizeHoldingExposure } from '../lib/holdings'
-import type { HoldingRow, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
+import type { HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 
 type Metric = {
   label: string
@@ -13,19 +13,23 @@ type Metric = {
 }
 
 export function PageSummaryBoard({
+  activeMarket = 'All Markets',
   holdings,
+  marketSummary,
   page,
   performance,
   portfolio,
   signals,
 }: {
+  activeMarket?: Market
   holdings: HoldingRow[]
+  marketSummary?: MarketSummary
   page: Page
   performance: PerformancePoint[]
   portfolio: PortfolioSummary | null
   signals: SignalRow[]
 }) {
-  const metrics = getPageMetrics(page, { holdings, performance, portfolio, signals })
+  const metrics = getPageMetrics(page, { activeMarket, holdings, marketSummary, performance, portfolio, signals })
   const summary = getPageSummary(page, metrics)
 
   return (
@@ -64,18 +68,22 @@ function getPageMetrics(
   page: Page,
   {
     holdings,
+    marketSummary,
     performance,
     portfolio,
     signals,
+    activeMarket,
   }: {
+    activeMarket: Market
     holdings: HoldingRow[]
+    marketSummary?: MarketSummary
     performance: PerformancePoint[]
     portfolio: PortfolioSummary | null
     signals: SignalRow[]
   },
 ): Metric[] {
   const latest = performance[performance.length - 1]
-  const currentReturn = portfolio?.returnPct ?? latest?.simulated ?? 0
+  const currentReturn = marketSummary?.returnPct ?? portfolio?.returnPct ?? latest?.simulated ?? 0
   const target = portfolio?.targetPct ?? latest?.target ?? 0
   const gap = currentReturn - target
   const funnel = getSignalFunnel(signals)
@@ -85,13 +93,13 @@ function getPageMetrics(
   const highRiskCount = holdings.filter((holding) => holding.risk === '偏高').length
   const exposureSummary = summarizeHoldingExposure(holdings)
   const positiveHoldings = holdings.filter((holding) => !holding.pnl.startsWith('-')).length
-  const drawdown = Math.abs(portfolio?.maxDrawdownPct ?? 0)
+  const drawdown = Math.abs(marketSummary?.maxDrawdownPct ?? portfolio?.maxDrawdownPct ?? 0)
   const drawdownLimit = DRAWDOWN_LIMIT_PCT
   const blockedCount = signals.filter((signal) => signal.status === 'blocked').length
   const pendingCount = signals.filter((signal) => signal.status === 'pending').length
   const missedCount = signals.filter((signal) => signal.status === 'missed').length
   const executedCount = signals.filter((signal) => signal.status === 'executed').length
-  const ashareAccount = portfolio?.ashareAccount
+  const ashareAccount = activeMarket === 'All Markets' || activeMarket === 'A-share' ? portfolio?.ashareAccount : undefined
   const isCnyPortfolio = portfolio?.pnlCurrency === 'CNY'
   const validSampleLabel = ashareAccount
     ? ashareAccount.totalSampleCount > 0
@@ -106,11 +114,11 @@ function getPageMetrics(
 
   if (page === '收益') {
     return [
-      { label: '当前收益', value: portfolio ? (isCnyPortfolio ? formatSignedCnyCompact(portfolio.pnlAmount) : formatCurrency(portfolio.pnlAmount)) : formatPercent(currentReturn), detail: formatPercent(currentReturn), tone: currentReturn >= 0 ? 'cyan' : 'red' },
+      { label: '当前收益', value: formatReturnMetric({ currentReturn, isCnyPortfolio: isCnyPortfolio || activeMarket === 'A-share', marketSummary, portfolio }), detail: formatPercent(currentReturn), tone: currentReturn >= 0 ? 'cyan' : 'red' },
       { label: '目标差', value: formatPercent(gap), detail: `目标 ${formatPercent(target)}`, tone: gap >= 0 ? 'cyan' : 'amber' },
       ashareAccount
         ? { label: '可复盘收益', value: strategyMetricValue, detail: `有效样本 ${validSampleLabel}` }
-        : { label: '成交次数', value: String(portfolio?.tradeCount ?? executedCount), detail: `${portfolio?.pointCount ?? performance.length} 个收益点` },
+        : { label: '成交次数', value: String(marketSummary?.tradeCount ?? portfolio?.tradeCount ?? executedCount), detail: `${portfolio?.pointCount ?? performance.length} 个收益点` },
       { label: '最大回撤', value: `-${drawdown.toFixed(2)}%`, detail: `限制 ${drawdownLimit}%`, tone: drawdown > drawdownLimit * 0.8 ? 'red' : 'cyan' },
     ]
   }
@@ -137,7 +145,7 @@ function getPageMetrics(
 
   if (page === '决策') {
     return [
-      { label: '进入漏斗', value: String(signals.length), detail: '全市场机会' },
+      { label: '进入漏斗', value: String(signals.length), detail: activeMarket === 'All Markets' ? '全市场机会' : '当前市场机会' },
       { label: '形成结果', value: String(funnel.tradeSignals.length), detail: `${conversion(funnel.tradeSignals.length, signals.length)} 留下`, tone: 'cyan' },
       { label: '已兑现', value: String(executedCount), detail: `${conversion(executedCount, Math.max(1, funnel.tradeSignals.length))} 转化`, tone: 'cyan' },
       { label: '被保护', value: String(blockedCount), detail: blockedCount ? '风险先挡住' : '暂无拦截', tone: blockedCount ? 'red' : undefined },
@@ -163,6 +171,22 @@ function getPageMetrics(
 
 function conversion(value: number, total: number) {
   return `${Math.round((value / Math.max(1, total)) * 100)}%`
+}
+
+function formatReturnMetric({
+  currentReturn,
+  isCnyPortfolio,
+  marketSummary,
+  portfolio,
+}: {
+  currentReturn: number
+  isCnyPortfolio: boolean
+  marketSummary?: MarketSummary
+  portfolio: PortfolioSummary | null
+}) {
+  const pnlAmount = marketSummary?.pnlAmount ?? portfolio?.pnlAmount
+  if (pnlAmount === undefined) return formatPercent(currentReturn)
+  return isCnyPortfolio ? formatSignedCnyCompact(pnlAmount) : formatCurrency(pnlAmount)
 }
 
 function formatPercent(value: number) {

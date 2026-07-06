@@ -4,16 +4,18 @@ import { StatusBoundary } from '../components/StatusBoundary'
 import { AShareEvidencePanel } from '../components/panels/AShareEvidencePanel'
 import { HoldingsCompact } from '../components/panels/HoldingsCompact'
 import { HomeResultBrief } from '../components/panels/HomeResultBrief'
+import { MarketSummaryPanel } from '../components/panels/MarketSummaryPanel'
 import { OpportunityFocus } from '../components/panels/OpportunityFocus'
 import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
-import type { AShareResearchEvidence, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
+import type { AShareResearchEvidence, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
 export function HomeDashboard({
   accountMode,
+  activeMarket,
   ashareResearchEvidence,
   data,
   latestPoint,
@@ -21,6 +23,7 @@ export function HomeDashboard({
   hasPerformanceData,
   hasSignalData,
   holdings,
+  marketSummary,
   now,
   portfolio,
   domainStatus,
@@ -32,6 +35,7 @@ export function HomeDashboard({
   events,
 }: {
   accountMode: AccountMode
+  activeMarket: Market
   ashareResearchEvidence?: AShareResearchEvidence
   data: PerformancePoint[]
   events: ChartEvent[]
@@ -39,6 +43,7 @@ export function HomeDashboard({
   hasPerformanceData: boolean
   hasSignalData: boolean
   holdings: HoldingRow[]
+  marketSummary?: MarketSummary
   latestPoint: PerformancePoint
   now: Date
   portfolio: PortfolioSummary | null
@@ -116,8 +121,9 @@ export function HomeDashboard({
       </section>
 
       <aside className="home-rail">
+        <MarketSummaryPanel activeMarket={activeMarket} summary={marketSummary} />
         <HomeResultBrief hasHoldingData={hasHoldingData} hasPerformanceData={hasPerformanceData} hasSignalData={hasSignalData} holdings={holdings} portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
-        <AShareEvidencePanel evidence={ashareResearchEvidence} />
+        {(activeMarket === 'All Markets' || activeMarket === 'A-share') && <AShareEvidencePanel evidence={ashareResearchEvidence} />}
       </aside>
     </div>
   )

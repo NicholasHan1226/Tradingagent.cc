@@ -37,6 +37,32 @@ export type PortfolioSummary = {
   updatedAt: string
 }
 
+export type MarketSummaryStatus = 'ready' | 'partial' | 'empty' | 'paused'
+
+export type MarketSummary = {
+  market: Market
+  status: MarketSummaryStatus
+  holdingCount: number
+  signalCount: number
+  tradeCount: number
+  styleCount: number
+  activeStyleCount?: number
+  degradedStyleCount?: number
+  pausedStyleCount?: number
+  filledCount?: number
+  errorCount?: number
+  capitalBase?: number
+  pnlAmount?: number
+  returnPct?: number
+  maxDrawdownPct?: number
+  realizedPnl?: number
+  unrealizedPnl?: number
+  latestAt?: string
+  source: string
+  headline: string
+  detail: string
+}
+
 export type AShareAccountSummary = {
   cashAvailable: number
   marketValue: number

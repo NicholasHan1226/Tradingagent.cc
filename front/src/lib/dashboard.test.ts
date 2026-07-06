@@ -3,10 +3,11 @@ import {
   getActionableSignals,
   getClosedSignals,
   getLivePerformanceData,
+  getVisibleHoldings,
   getSignalFunnel,
   getVisibleSignals,
 } from './dashboard'
-import type { PerformancePoint, SignalRow } from '../types/dashboard'
+import type { HoldingRow, PerformancePoint, SignalRow } from '../types/dashboard'
 
 const rows: SignalRow[] = [
   {
@@ -59,8 +60,17 @@ describe('dashboard view rules', () => {
     expect(getClosedSignals(rows).map((signal) => signal.symbol)).toEqual(['AAPL.US'])
   })
 
-  it('falls back to all rows when a market has no matching rows', () => {
-    expect(getVisibleSignals(rows, 'A-share')).toHaveLength(rows.length)
+  it('keeps market filters strict when a market has no matching rows', () => {
+    expect(getVisibleSignals(rows, 'A-share')).toHaveLength(0)
+  })
+
+  it('filters holdings with the same market boundary as signals', () => {
+    const holdings: HoldingRow[] = [
+      { symbol: '600519.SH', name: '贵州茅台', market: 'A-share', weight: '¥1万', pnl: '+¥20', risk: '正常', role: '模拟盘持仓' },
+      { symbol: 'BTC-USD', name: '比特币', market: 'Crypto', weight: '$800', pnl: '+$12', risk: '正常', role: 'Grid 持仓' },
+    ]
+
+    expect(getVisibleHoldings(holdings, 'Crypto').map((holding) => holding.symbol)).toEqual(['BTC-USD'])
   })
 
   it('updates only the latest live performance point', () => {

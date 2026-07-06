@@ -187,6 +187,92 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByText(/可复盘 0\/13 · 链路验证 13/)).toBeInTheDocument()
   })
 
+  it('switches the dashboard to market-specific signals, holdings, and summaries', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            mode: 'simulated',
+            generatedAt: '2026-07-06T13:10:00.000Z',
+            domains: {
+              performance: { status: 'ready', updatedAt: '2026-07-06T13:10:00.000Z' },
+              signals: { status: 'ready', updatedAt: '2026-07-06T13:10:00.000Z' },
+              holdings: { status: 'ready', updatedAt: '2026-07-06T13:10:00.000Z' },
+              decisions: { status: 'ready', updatedAt: '2026-07-06T13:10:00.000Z' },
+              risk: { status: 'ready', updatedAt: '2026-07-06T13:10:00.000Z' },
+            },
+            performance: [{ day: '现在', simulated: 0.4, target: 8, benchmark: 0, opportunity: 0 }],
+            holdings: [
+              { symbol: '600519.SH', name: '贵州茅台', market: 'A-share', weight: '¥7,206', pnl: '-¥5', risk: '正常', role: '模拟盘持仓' },
+              { symbol: 'BTC-USD', name: 'BTC-USD', market: 'Crypto', weight: '$1,200', pnl: '+$18', risk: '正常', role: 'Grid 持仓' },
+            ],
+            signals: [
+              {
+                symbol: '600519.SH',
+                name: '贵州茅台',
+                market: 'A-share',
+                method: '候选池',
+                status: 'pending',
+                impact: '--',
+                confidence: '--',
+                age: '4m',
+                reason: '等待确认',
+                next: '继续观察',
+                steps: 3,
+              },
+              {
+                symbol: 'BTC-USD',
+                name: 'BTC-USD',
+                market: 'Crypto',
+                method: 'Grid · 买入',
+                status: 'executed',
+                impact: '成交 $667',
+                confidence: '已成交',
+                age: '2m',
+                reason: '模拟盘成交',
+                next: '进入复盘',
+                steps: 6,
+                stage: '成交',
+                stageEvidence: 'replay',
+              },
+            ],
+            funnelEvents: [],
+            marketSummaries: [
+              {
+                market: 'Crypto',
+                status: 'ready',
+                holdingCount: 1,
+                signalCount: 1,
+                tradeCount: 1,
+                styleCount: 2,
+                activeStyleCount: 2,
+                pnlAmount: 18,
+                returnPct: 0.18,
+                maxDrawdownPct: 0.4,
+                source: 'shared/review/*/style_comparison.json',
+                headline: '加密已有 1 笔模拟成交',
+                detail: '收益 +18 · 回报 +0.18% · 风格 2/2',
+              },
+            ],
+            sourceRefs: tradingAgentReadModelSources,
+          }),
+          { status: 200 },
+        ),
+      ),
+    )
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0))
+    fireEvent.click(screen.getByRole('button', { name: '全市场' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /加密/ }))
+
+    expect(screen.getByText('加密已有 1 笔模拟成交')).toBeInTheDocument()
+    expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
+    expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
+  })
+
   it('renders snapshot funnel events as a real trading flow', async () => {
     vi.stubGlobal(
       'fetch',

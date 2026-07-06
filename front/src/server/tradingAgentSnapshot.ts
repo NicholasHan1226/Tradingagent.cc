@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
-import type { AShareResearchEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, PerformancePoint, PortfolioSummary, SignalRow, SignalStatus } from '../types/dashboard.ts'
+import type { AShareResearchEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow, SignalStatus } from '../types/dashboard.ts'
 
 type SnapshotOptions = {
   workspaceRoot: string
@@ -154,8 +154,50 @@ type StylePerformanceRow = {
   real_execution?: boolean
 }
 
+type StyleComparisonPayload = {
+  account_type?: string
+  capital_layer?: string
+  error_count?: number | string
+  filled_count?: number | string
+  generated_at?: string
+  hold_count?: number | string
+  market?: string
+  real_execution?: boolean
+  record_count?: number | string
+  signal_count?: number | string
+  state?: string
+  style_comparison?: unknown
+  style_states?: unknown
+  styles_loaded?: number | string
+  styles_total?: number | string
+}
+
 type StylePerformanceRecord = StylePerformanceRow & {
   marketHint: string
+}
+
+type MarketPerformanceSummary = {
+  latestAt?: string
+  maxDrawdown: number
+  pnl: number
+  realizedPnl: number
+  trades: number
+  unrealizedPnl: number
+}
+
+type MarketStyleSummary = {
+  activeStyleCount?: number
+  degradedStyleCount?: number
+  errorCount?: number
+  filledCount?: number
+  holdCount?: number
+  latestAt?: string
+  recordCount?: number
+  signalCount?: number
+  source: string
+  status?: string
+  styleCount: number
+  pausedStyleCount?: number
 }
 
 type EquitySnapshotRow = {
@@ -255,6 +297,7 @@ const MAX_SIM_LEDGER_SIGNALS = 120
 const DEFAULT_TARGET_RETURN_PCT = 8
 const SIM_LEDGER_EQUITY_BUCKET_MS = 5 * 60 * 1000
 const MAX_EQUITY_PERFORMANCE_POINTS = 48
+const DASHBOARD_MARKETS: Market[] = ['A-share', 'US', 'Crypto', 'PM', 'CNFutures']
 
 export async function readTradingAgentSnapshot({
   workspaceRoot,
@@ -285,6 +328,15 @@ export async function readTradingAgentSnapshot({
   const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt)
   const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
   const performance = annotatePerformanceQuality(firstNonEmpty(equityPortfolio.performance, reviewPerformance, trackerPortfolio.performance))
+  const portfolio = attachAShareAccountSummary(equityPortfolio.summary ?? trackerPortfolio.summary, ashareAccount, generatedAt)
+  const marketSummaries = await buildMarketSummaries({
+    generatedAt,
+    holdings: fallbackHoldings,
+    performanceRoot: performanceTrackerRoot,
+    portfolio,
+    signals,
+    simLedgerRoot,
+  })
   const hasOrders = await directoryHasJson(filledSignalsPath)
   const hasPlan = await fileExists(positionPlanPath)
   const hasReview = await fileExists(reviewPath) || await fileExists(reviewFallbackPath)
@@ -307,10 +359,11 @@ export async function readTradingAgentSnapshot({
       risk: domainHealth(fallbackHoldings.length > 0 || signals.length > 0 ? 'ready' : 'empty', generatedAt),
     },
     performance,
-    portfolio: attachAShareAccountSummary(equityPortfolio.summary ?? trackerPortfolio.summary, ashareAccount, generatedAt),
+    portfolio,
     holdings: fallbackHoldings,
     signals,
     funnelEvents,
+    marketSummaries,
     ashareResearchEvidence,
     sourceRefs: tradingAgentReadModelSources,
   }
@@ -383,6 +436,313 @@ function attachAShareAccountSummary(
     ashareAccount,
     updatedAt: generatedAt,
   }
+}
+
+async function buildMarketSummaries({
+  generatedAt,
+  holdings,
+  performanceRoot,
+  portfolio,
+  signals,
+  simLedgerRoot,
+}: {
+  generatedAt: string
+  holdings: HoldingRow[]
+  performanceRoot: string
+  portfolio?: PortfolioSummary
+  signals: SignalRow[]
+  simLedgerRoot: string
+}): Promise<MarketSummary[]> {
+  const styleSummaries = await readStyleComparisonMarketSummaries(performanceRoot)
+  const performanceSummaries = await readStylePerformanceMarketSummaries(performanceRoot)
+  const capitalBaseByMarket = await readSimLedgerCapitalBaseByMarket(simLedgerRoot)
+
+  return DASHBOARD_MARKETS.map((market) => {
+    const holdingCount = holdings.filter((holding) => holding.market === market).length
+    const marketSignals = signals.filter((signal) => signal.market === market)
+    const executedCount = marketSignals.filter((signal) => signal.status === 'executed').length
+    const styleSummary = styleSummaries.get(market)
+    const performanceSummary = performanceSummaries.get(market)
+    const isAshare = market === 'A-share'
+    const ashareAccount = isAshare ? portfolio?.ashareAccount : undefined
+    const capitalBase = ashareAccount
+      ? roundMoney(ashareAccount.accountEquity - ashareAccount.accountTotalPnl)
+      : capitalBaseByMarket.get(market)
+    const pnlAmount = ashareAccount?.accountTotalPnl ?? performanceSummary?.pnl
+    const returnPct = ashareAccount
+      ? ashareAccount.accountReturnPct
+      : pnlAmount !== undefined && capitalBase && capitalBase > 0
+        ? roundMetric((pnlAmount / capitalBase) * 100)
+        : undefined
+    const tradeCount = Math.max(executedCount, performanceSummary?.trades ?? 0, styleSummary?.filledCount ?? 0)
+    const styleCount = Math.max(styleSummary?.styleCount ?? 0, styleSummary?.activeStyleCount ?? 0)
+    const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || pnlAmount !== undefined
+    const hasOnlyStyleSummary = styleCount > 0 && holdingCount === 0 && marketSignals.length === 0 && pnlAmount === undefined
+    const status: MarketSummary['status'] = hasRuntime ? hasOnlyStyleSummary ? 'partial' : 'ready' : 'empty'
+    const latestAt = latestIso(styleSummary?.latestAt, performanceSummary?.latestAt, ashareAccount?.updatedAt, generatedAt)
+
+    return {
+      market,
+      status,
+      holdingCount,
+      signalCount: marketSignals.length,
+      tradeCount,
+      styleCount,
+      activeStyleCount: styleSummary?.activeStyleCount,
+      degradedStyleCount: styleSummary?.degradedStyleCount,
+      pausedStyleCount: styleSummary?.pausedStyleCount,
+      filledCount: styleSummary?.filledCount,
+      errorCount: styleSummary?.errorCount,
+      capitalBase: capitalBase === undefined ? undefined : roundMoney(capitalBase),
+      pnlAmount: pnlAmount === undefined ? undefined : roundMoney(pnlAmount),
+      returnPct,
+      maxDrawdownPct: performanceSummary ? roundMetric(Math.abs(performanceSummary.maxDrawdown)) : undefined,
+      realizedPnl: performanceSummary ? roundMoney(performanceSummary.realizedPnl) : undefined,
+      unrealizedPnl: performanceSummary ? roundMoney(performanceSummary.unrealizedPnl) : undefined,
+      latestAt,
+      source: styleSummary?.source ?? (performanceSummary ? tradingAgentReadModelSources.performanceTracker : isAshare && ashareAccount ? tradingAgentReadModelSources.localSimLedger : tradingAgentReadModelSources.simLedger),
+      headline: buildMarketSummaryHeadline(market, status, holdingCount, marketSignals.length, tradeCount, styleCount),
+      detail: buildMarketSummaryDetail({
+        activeStyleCount: styleSummary?.activeStyleCount,
+        capitalBase,
+        errorCount: styleSummary?.errorCount,
+        filledCount: styleSummary?.filledCount,
+        pnlAmount,
+        returnPct,
+        styleCount,
+      }),
+    }
+  })
+}
+
+async function readStyleComparisonMarketSummaries(root: string): Promise<Map<Market, MarketStyleSummary>> {
+  const summaries = new Map<Market, MarketStyleSummary>()
+  try {
+    const entries = await readdir(root, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const path = join(root, entry.name, 'style_comparison.json')
+      const payload = asRecord(await readOptionalJson(path)) as StyleComparisonPayload
+      if (!Object.keys(payload).length) continue
+      if (payload.real_execution === true) continue
+      if (normalizeCapitalLayer(payload) !== 'simulated') continue
+
+      const market = normalizeMarketFolder(String(payload.market ?? entry.name))
+      if (market === 'All Markets' || market === 'HK') continue
+      const states = summarizeStyleStates(payload.style_states)
+      const comparisonCount = countStyleComparisonRows(payload.style_comparison)
+      const styleCount = Math.max(
+        Math.trunc(parseFiniteNumber(payload.styles_total) ?? 0),
+        Math.trunc(parseFiniteNumber(payload.styles_loaded) ?? 0),
+        states.total,
+        comparisonCount,
+      )
+      const current = summaries.get(market)
+      const next: MarketStyleSummary = {
+        source: tradingAgentReadModelSources.styleComparison,
+        status: optionalString(payload.state),
+        styleCount,
+        activeStyleCount: states.active,
+        degradedStyleCount: states.degraded,
+        pausedStyleCount: states.paused,
+        filledCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.filled_count) ?? 0)),
+        errorCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.error_count) ?? 0)),
+        holdCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.hold_count) ?? 0)),
+        recordCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.record_count) ?? 0)),
+        signalCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.signal_count) ?? 0)),
+        latestAt: optionalString(payload.generated_at),
+      }
+      summaries.set(market, current ? mergeMarketStyleSummary(current, next) : next)
+    }
+  } catch {
+    return summaries
+  }
+  return summaries
+}
+
+async function readStylePerformanceMarketSummaries(root: string): Promise<Map<Market, MarketPerformanceSummary>> {
+  const files = await listStylePerformanceFiles(root)
+  const summaries = new Map<Market, MarketPerformanceSummary>()
+
+  for (const file of files) {
+    const market = normalizeMarketFolder(file.market)
+    if (market === 'All Markets' || market === 'HK') continue
+    try {
+      const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
+      for (const line of lines) {
+        try {
+          const row = JSON.parse(line) as StylePerformanceRow
+          if (row.real_execution === true) continue
+          if (normalizeCapitalLayer(row) !== 'simulated') continue
+          const pnl = parseFiniteNumber(row.pnl)
+          const timestamp = row.as_of ?? row.date ?? row.trade_date
+          if (pnl === undefined && parseFiniteNumber(row.realized_pnl) === undefined && parseFiniteNumber(row.unrealized_pnl) === undefined) continue
+          const current = summaries.get(market) ?? { maxDrawdown: 0, pnl: 0, realizedPnl: 0, trades: 0, unrealizedPnl: 0 }
+          current.pnl += pnl ?? 0
+          current.realizedPnl += parseFiniteNumber(row.realized_pnl) ?? 0
+          current.unrealizedPnl += parseFiniteNumber(row.unrealized_pnl) ?? 0
+          current.maxDrawdown = Math.max(current.maxDrawdown, Math.abs(parseFiniteNumber(row.max_dd) ?? 0))
+          current.trades += Math.max(0, Math.trunc(parseFiniteNumber(row.trades) ?? 0))
+          current.latestAt = latestIso(current.latestAt, timestamp)
+          summaries.set(market, current)
+        } catch {
+          // Ignore malformed append-only rows.
+        }
+      }
+    } catch {
+      // Ignore unreadable market folders.
+    }
+  }
+
+  return summaries
+}
+
+async function readSimLedgerCapitalBaseByMarket(root: string): Promise<Map<Market, number>> {
+  const capitalBaseByMarket = new Map<Market, number>()
+  for (const file of await listSimLedgerFiles(root, 'positions.json')) {
+    try {
+      const market = normalizeMarketFolder(file.market)
+      if (market === 'All Markets' || market === 'HK') continue
+      const payload = JSON.parse(await readFile(file.path, 'utf8')) as SimLedgerPositionsFile
+      let capitalBase = parseFiniteNumber(payload.cash) ?? 0
+      for (const position of Object.values(payload.positions ?? {})) {
+        capitalBase += (parseFiniteNumber(position.avg_cost) ?? 0) * (parseFiniteNumber(position.quantity) ?? 0)
+      }
+      capitalBaseByMarket.set(market, (capitalBaseByMarket.get(market) ?? 0) + capitalBase)
+    } catch {
+      // Ignore malformed ledger files.
+    }
+  }
+  return capitalBaseByMarket
+}
+
+function mergeMarketStyleSummary(current: MarketStyleSummary, next: MarketStyleSummary): MarketStyleSummary {
+  return {
+    source: current.source,
+    status: next.status ?? current.status,
+    styleCount: current.styleCount + next.styleCount,
+    activeStyleCount: (current.activeStyleCount ?? 0) + (next.activeStyleCount ?? 0),
+    degradedStyleCount: (current.degradedStyleCount ?? 0) + (next.degradedStyleCount ?? 0),
+    pausedStyleCount: (current.pausedStyleCount ?? 0) + (next.pausedStyleCount ?? 0),
+    filledCount: (current.filledCount ?? 0) + (next.filledCount ?? 0),
+    errorCount: (current.errorCount ?? 0) + (next.errorCount ?? 0),
+    holdCount: (current.holdCount ?? 0) + (next.holdCount ?? 0),
+    recordCount: (current.recordCount ?? 0) + (next.recordCount ?? 0),
+    signalCount: (current.signalCount ?? 0) + (next.signalCount ?? 0),
+    latestAt: latestIso(current.latestAt, next.latestAt),
+  }
+}
+
+function summarizeStyleStates(value: unknown) {
+  const states = asRecord(value)
+  let active = 0
+  let degraded = 0
+  let paused = 0
+  let total = 0
+
+  for (const [key, raw] of Object.entries(states)) {
+    const numeric = parseFiniteNumber(raw as number | string | undefined)
+    if (numeric !== undefined && ['active', 'degraded', 'paused'].includes(key.toLowerCase())) {
+      const count = Math.max(0, Math.trunc(numeric))
+      total += count
+      if (key.toLowerCase() === 'active') active += count
+      if (key.toLowerCase() === 'degraded') degraded += count
+      if (key.toLowerCase() === 'paused') paused += count
+      continue
+    }
+
+    const state = String(raw ?? '').toLowerCase()
+    if (!state) continue
+    total += 1
+    if (state.includes('active') || state.includes('ready')) active += 1
+    else if (state.includes('degraded') || state.includes('warn')) degraded += 1
+    else if (state.includes('paused') || state.includes('disabled')) paused += 1
+  }
+
+  return { active, degraded, paused, total }
+}
+
+function countStyleComparisonRows(value: unknown) {
+  if (Array.isArray(value)) return value.length
+  const rows = asRecord(value)
+  return Object.keys(rows).length
+}
+
+function normalizeMarketFolder(value: string): Market {
+  return normalizeMarket(value, value.toUpperCase())
+}
+
+function buildMarketSummaryHeadline(market: Market, status: MarketSummary['status'], holdingCount: number, signalCount: number, tradeCount: number, styleCount: number) {
+  if (status === 'empty') return `${marketName(market)}暂无模拟记录`
+  if (tradeCount > 0) return `${marketName(market)}已有 ${tradeCount} 笔模拟成交`
+  if (signalCount > 0) return `${marketName(market)}有 ${signalCount} 条机会记录`
+  if (holdingCount > 0) return `${marketName(market)}有 ${holdingCount} 个持仓`
+  if (styleCount > 0) return `${marketName(market)}风格运行中`
+  return `${marketName(market)}等待数据`
+}
+
+function buildMarketSummaryDetail({
+  activeStyleCount,
+  capitalBase,
+  errorCount,
+  filledCount,
+  pnlAmount,
+  returnPct,
+  styleCount,
+}: {
+  activeStyleCount?: number
+  capitalBase?: number
+  errorCount?: number
+  filledCount?: number
+  pnlAmount?: number
+  returnPct?: number
+  styleCount: number
+}) {
+  const facts: string[] = []
+  if (pnlAmount !== undefined) facts.push(`收益 ${formatSignedAmount(pnlAmount)}`)
+  if (returnPct !== undefined) facts.push(`回报 ${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}%`)
+  if (capitalBase !== undefined && capitalBase > 0) facts.push(`资金 ${formatCompactAmount(capitalBase)}`)
+  if (styleCount > 0) facts.push(`风格 ${activeStyleCount ?? 0}/${styleCount}`)
+  if (filledCount !== undefined) facts.push(`成交 ${filledCount}`)
+  if (errorCount) facts.push(`失败 ${errorCount}`)
+  return facts.length ? facts.join(' · ') : '等待该市场写入模拟成交、持仓或风格收益。'
+}
+
+function marketName(market: Market) {
+  if (market === 'A-share') return 'A股'
+  if (market === 'US') return '美股'
+  if (market === 'Crypto') return '加密'
+  if (market === 'PM') return '预测'
+  if (market === 'CNFutures') return '中国期货'
+  if (market === 'HK') return '港股'
+  return '全市场'
+}
+
+function latestIso(...values: Array<string | undefined>) {
+  let latest: string | undefined
+  let latestMs = Number.NEGATIVE_INFINITY
+  for (const value of values) {
+    if (!value) continue
+    const ms = Date.parse(value)
+    if (!Number.isFinite(ms)) continue
+    if (ms > latestMs) {
+      latest = value
+      latestMs = ms
+    }
+  }
+  return latest
+}
+
+function formatSignedAmount(value: number) {
+  const sign = value >= 0 ? '+' : '-'
+  return `${sign}${formatCompactAmount(Math.abs(value))}`
+}
+
+function formatCompactAmount(value: number) {
+  const abs = Math.abs(value)
+  if (abs >= 100_000_000) return `${(value / 100_000_000).toFixed(2)}亿`
+  if (abs >= 10_000) return `${(value / 10_000).toFixed(2)}万`
+  return `${Math.round(value).toLocaleString('zh-CN')}`
 }
 
 async function readOptionalJson(path: string): Promise<unknown> {

@@ -1,5 +1,5 @@
 import type { ApiStatus, DashboardApiResponse } from './types.ts'
-import type { AShareResearchEvidence, FunnelEvent, HoldingRow, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
+import type { AShareResearchEvidence, FunnelEvent, HoldingRow, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
 import type { DataDomain } from '../types/status.ts'
 
 export const tradingAgentReadModelSources = {
@@ -17,6 +17,7 @@ export const tradingAgentReadModelSources = {
   localSimLedger: 'shared/logs/local_sim/local_sim_trades.jsonl',
   equitySnapshots: 'shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl and shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl',
   performanceTracker: 'shared/review/*/style_performance.jsonl',
+  styleComparison: 'shared/review/*/style_comparison.json',
   ashareResearchEvidence: 'shared/review/ashare/research_evidence_latest.json',
 } as const
 
@@ -35,6 +36,7 @@ export type TradingAgentReadModelSnapshot = {
   holdings: HoldingRow[]
   signals: SignalRow[]
   funnelEvents: FunnelEvent[]
+  marketSummaries?: MarketSummary[]
   ashareResearchEvidence?: AShareResearchEvidence
   sourceRefs: typeof tradingAgentReadModelSources
 }

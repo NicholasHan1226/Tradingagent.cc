@@ -19,6 +19,7 @@ gated and must not trigger execution from the front layer.
 
 > **A股模拟盘默认走服务器本地闭环**：`Ashare/sim_executor.py` 生成 simulated fill 后直接进入 `signals/filled/` 与 `signals/positions/`；`signals/pending/` 仅在显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时用于 Hermes/同花顺 GUI 第二路径。
 | Performance | `shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl` or `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl` | `shared/review/daily/daily_brief.jsonl` return fields, then `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
+| Market summaries | `shared/review/*/style_comparison.json` | `shared/review/*/style_performance.jsonl`, `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}` | Ready |
 | A-share research evidence | `shared/review/ashare/research_evidence_latest.json` | omitted from snapshot when missing or malformed | Ready |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
 | Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
@@ -101,6 +102,18 @@ Display-ready fields used by the homepage:
 - `signals[]`: `symbol`, `market`, `status`, `impact`, `confidence`,
   `reason`, `next`, `steps`, plus optional funnel fields `stage`,
   `stageTimes`, and `stageLatencyMinutes`.
+- `marketSummaries[]`: one read-only status row per active dashboard market.
+  The reader combines existing signals, holdings, simulated ledger capital,
+  `style_performance.jsonl`, and `style_comparison.json`. This lets the front
+  show why a selected market has data, partial data, or no data without
+  inventing trades.
+- Market switching is strict. Selecting `A-share`, `US`, `Crypto`, `PM`, or
+  `CNFutures` filters signals and holdings to that market. It must not fall
+  back to all-market rows when the selected market has no records.
+- The all-market performance curve remains a portfolio aggregate. For a
+  selected market, the front may show a single current-return point from
+  `marketSummaries[]`; it must not display the all-market curve as if it were
+  that market's own history.
 - Supported dashboard market labels include `A-share`, `US`, `Crypto`, `HK`,
   `PM`, and `CNFutures`. CN futures symbols such as `IF2601.CFFEX` and backend
   market labels such as `cn_futures` map to `CNFutures`.
