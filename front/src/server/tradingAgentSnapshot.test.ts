@@ -306,6 +306,96 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.sourceRefs.performanceTracker).toBe('shared/review/*/style_performance.jsonl')
   })
 
+  it('exposes read-only A-share research evidence for the homepage rail', async () => {
+    const root = await createWorkspace()
+    await mkdir(join(root, 'TradingAgent/shared/review/ashare'), { recursive: true })
+    await writeFile(
+      join(root, 'TradingAgent/shared/review/ashare/research_evidence_latest.json'),
+      JSON.stringify({
+        generated_at: '2026-07-06T09:26:00+08:00',
+        trade_date: '20260706',
+        read_only: true,
+        real_trading_enabled: false,
+        opening_auction: {
+          state: 'ready',
+          phase: 'outside',
+          data_mode: 'first_5m_proxy',
+          anomaly_count: 1,
+          symbols_with_bars: 0,
+          proxy_symbols_with_bars: 42,
+        },
+        closing_momentum: {
+          state: 'ready',
+          candidate_count: 2,
+          symbols_with_bars: 88,
+          candidates: [
+            {
+              symbol: '600000.SH',
+              tail_momentum: 0.0123,
+              volume_ratio: 4.2,
+              label_state: 'pending_next_day_bar',
+              next_day_open_return: null,
+              next_day_high_return: null,
+            },
+          ],
+        },
+        reverse_repo: {
+          action: 'lend',
+          amount: 12000,
+          lots: 12,
+          annualized_yield: 0.0205,
+          yield_source: 'daily_bar:close',
+          estimated_interest: 0.674,
+        },
+        style_evidence: {
+          summary: {
+            styles: 7,
+            active_sample: 3,
+            degraded: 2,
+            paused: 1,
+            virtual_capital: 200000,
+            allocated_capital: 200000,
+            unallocated_capital: 0,
+          },
+        },
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T02:00:00.000Z'),
+    })
+
+    expect(snapshot.ashareResearchEvidence).toMatchObject({
+      tradeDate: '20260706',
+      readOnly: true,
+      realTradingEnabled: false,
+      openingAuction: {
+        dataMode: 'first_5m_proxy',
+        anomalyCount: 1,
+        proxySymbolsWithBars: 42,
+      },
+      reverseRepo: {
+        amount: 12000,
+        annualizedYield: 0.0205,
+        yieldSource: 'daily_bar:close',
+      },
+      styleEvidence: {
+        summary: {
+          styles: 7,
+          virtualCapital: 200000,
+          allocatedCapital: 200000,
+        },
+      },
+    })
+    expect(snapshot.ashareResearchEvidence?.closingMomentum.candidates[0]).toMatchObject({
+      symbol: '600000.SH',
+      labelState: 'pending_next_day_bar',
+    })
+    expect(snapshot.sourceRefs.ashareResearchEvidence).toBe('shared/review/ashare/research_evidence_latest.json')
+  })
+
   it('expands style performance into a trade-timed return curve when ledger timestamps are available', async () => {
     const root = await createWorkspace()
     const performanceRoot = join(root, 'TradingAgent/shared/review/crypto')

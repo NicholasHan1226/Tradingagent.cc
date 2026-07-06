@@ -19,6 +19,7 @@ gated and must not trigger execution from the front layer.
 
 > **A股模拟盘默认走服务器本地闭环**：`Ashare/sim_executor.py` 生成 simulated fill 后直接进入 `signals/filled/` 与 `signals/positions/`；`signals/pending/` 仅在显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时用于 Hermes/同花顺 GUI 第二路径。
 | Performance | `shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl` or `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl` | `shared/review/daily/daily_brief.jsonl` return fields, then `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
+| A-share research evidence | `shared/review/ashare/research_evidence_latest.json` | omitted from snapshot when missing or malformed | Ready |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
 | Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
 | Live readiness | execution schemas and filled signal writeback | manual authorization state | Gated |
@@ -88,6 +89,12 @@ Display-ready fields used by the homepage:
   simulated ledger. Each event carries `symbol`, `market`, `stage`, `status`,
   `source`, and optional `at` / `reason`, allowing the homepage funnel to
   animate real pipeline movement without writing to queues or inventing stages.
+- `ashareResearchEvidence`: optional read-only homepage rail input from
+  `shared/review/ashare/research_evidence_latest.json`. It summarizes opening
+  auction or `first_5m_proxy` evidence, closing momentum candidates and
+  next-day labels, 204001 reverse repo estimate, and the 200,000 CNY virtual
+  style budget allocation. The front layer must treat it as display evidence
+  only and must never turn it into orders, queue writes, emails, or callbacks.
 - The homepage trading funnel is designed to animate real stage movement. If
   the API only exposes completed simulated-ledger trade journals, the UI will
   show a completed-trade replay instead of inventing upstream drop-off. To show

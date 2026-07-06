@@ -58,6 +58,7 @@ TradingAgent signals / positions / review / risk
 - `../signals/positions/*.json`
 - `../shared/accounting/position_plan.jsonl`
 - `../shared/review/daily/daily_brief.jsonl`
+- `../shared/review/ashare/research_evidence_latest.json`
 - `../shared/review/attribution/*.jsonl`
 - `../shared/risk/risk_limits.yaml`
 
@@ -156,6 +157,7 @@ npm run build:api
 - 模拟盘持仓和已成交信号已接入 `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}`。
 - 收益曲线现在优先读取显式权益快照：`shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl`
   或 `shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl`。如果后端尚未写入权益快照，snapshot 才回退到 `shared/review/daily/daily_brief.jsonl` 的明确 return 字段，再回退到 `shared/review/*/style_performance.jsonl` 的真实 simulated PnL，并用模拟账本本金换算为收益率；当同市场/同策略/同日期存在模拟账本成交时间戳时，snapshot 会把日级 PnL 展开成交易时间线曲线。若只存在成交日志或持仓成本，snapshot 会保持收益为空并给出缺口说明，前端不得用成交额或成本冒充收益。
+- A股研究证据卡片读取 `shared/review/ashare/research_evidence_latest.json`，只展示集合竞价/09:30 代理、尾盘候选、204001 逆回购估算和风格虚拟预算；该卡片不写队列、不触发交易、不发送邮件。
 - 后端已预留并提供权益快照生成入口：`shared/runtime_test/write_equity_snapshots.py`。生产运行时应由服务器定时或手动调用该入口，把模拟账本的已实现收益、未实现收益、本金、回撤、持仓数和价格缺失状态写入 `daily_mark_to_market.jsonl`，供首页实时收益主面板优先读取。
 - 机会漏斗已能从 signal 状态和模拟账本成交路径派生 `发现 / 评分 / 风控 / 待执行 / 成交 / 错过 / 拒绝` 阶段，并在只读快照中额外输出 `funnelEvents[]`，供首页动态漏斗按真实管道事件展示。更精确的阶段时间线仍需要后端在每个机会上写入完整 stage timestamps。
 - 午盘复盘、策略归因和风险限额文件已列为可用来源，但仍需补充到 snapshot 构建后才能作为完整面板展示。

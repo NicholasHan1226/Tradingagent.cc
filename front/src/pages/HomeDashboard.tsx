@@ -1,6 +1,7 @@
 import { PerformanceChart } from '../components/charts/PerformanceChart'
 import { ChartSkeleton } from '../components/Skeleton'
 import { StatusBoundary } from '../components/StatusBoundary'
+import { AShareEvidencePanel } from '../components/panels/AShareEvidencePanel'
 import { HoldingsCompact } from '../components/panels/HoldingsCompact'
 import { HomeResultBrief } from '../components/panels/HomeResultBrief'
 import { OpportunityFocus } from '../components/panels/OpportunityFocus'
@@ -8,11 +9,12 @@ import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
-import type { AccountMode, ChartEvent, FunnelEvent, HoldingRow, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
+import type { AShareResearchEvidence, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
 export function HomeDashboard({
   accountMode,
+  ashareResearchEvidence,
   data,
   latestPoint,
   hasHoldingData,
@@ -30,6 +32,7 @@ export function HomeDashboard({
   events,
 }: {
   accountMode: AccountMode
+  ashareResearchEvidence?: AShareResearchEvidence
   data: PerformancePoint[]
   events: ChartEvent[]
   hasHoldingData: boolean
@@ -114,6 +117,7 @@ export function HomeDashboard({
 
       <aside className="home-rail">
         <HomeResultBrief hasHoldingData={hasHoldingData} hasPerformanceData={hasPerformanceData} hasSignalData={hasSignalData} holdings={holdings} portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
+        <AShareEvidencePanel evidence={ashareResearchEvidence} />
       </aside>
     </div>
   )

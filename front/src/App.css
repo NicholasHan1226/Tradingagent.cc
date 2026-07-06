@@ -1514,6 +1514,45 @@ button:not(:disabled) {
   gap: 0;
 }
 
+.ashare-evidence-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.ashare-evidence-list {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.ashare-evidence-list > div {
+  display: grid;
+  grid-template-columns: minmax(76px, 1fr) minmax(54px, auto) minmax(52px, auto);
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-bottom: 1px solid var(--border-hairline);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.ashare-evidence-list > div:last-child {
+  border-bottom: 0;
+}
+
+.ashare-evidence-list strong {
+  color: var(--text-main);
+  font-size: 12px;
+  text-align: right;
+}
+
+.ashare-evidence-list em {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-style: normal;
+  text-align: right;
+}
+
 .home-brief-section {
   display: grid;
   gap: 9px;

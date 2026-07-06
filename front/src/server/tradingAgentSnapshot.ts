@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
-import type { FunnelEvent, FunnelEventStatus, HoldingRow, Market, PerformancePoint, PortfolioSummary, SignalRow, SignalStatus } from '../types/dashboard.ts'
+import type { AShareResearchEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, PerformancePoint, PortfolioSummary, SignalRow, SignalStatus } from '../types/dashboard.ts'
 
 type SnapshotOptions = {
   workspaceRoot: string
@@ -250,6 +250,7 @@ export async function readTradingAgentSnapshot({
   const reviewPerformance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
+  const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
   const performance = firstNonEmpty(equityPortfolio.performance, reviewPerformance, trackerPortfolio.performance)
   const hasOrders = await directoryHasJson(filledSignalsPath)
   const hasPlan = await fileExists(positionPlanPath)
@@ -277,6 +278,7 @@ export async function readTradingAgentSnapshot({
     holdings: fallbackHoldings,
     signals,
     funnelEvents,
+    ashareResearchEvidence,
     sourceRefs: tradingAgentReadModelSources,
   }
 }
@@ -297,6 +299,70 @@ async function readPerformanceSeries(path: string): Promise<PerformancePoint[]> 
       .filter((row): row is PerformancePoint => Boolean(row))
   } catch {
     return []
+  }
+}
+
+async function readAShareResearchEvidence(path: string): Promise<AShareResearchEvidence | undefined> {
+  try {
+    const payload = await readJson(path) as Record<string, unknown>
+    const opening = asRecord(payload.opening_auction)
+    const closing = asRecord(payload.closing_momentum)
+    const reverseRepo = asRecord(payload.reverse_repo)
+    const styleEvidence = asRecord(payload.style_evidence)
+    const styleSummary = asRecord(styleEvidence.summary)
+    const candidates = Array.isArray(closing.candidates) ? closing.candidates : []
+
+    return {
+      generatedAt: String(payload.generated_at ?? ''),
+      tradeDate: String(payload.trade_date ?? ''),
+      readOnly: payload.read_only === true,
+      realTradingEnabled: payload.real_trading_enabled === true,
+      openingAuction: {
+        state: String(opening.state ?? 'unknown'),
+        phase: String(opening.phase ?? 'unknown'),
+        dataMode: optionalString(opening.data_mode),
+        anomalyCount: Math.max(0, Math.trunc(parseFiniteNumber(opening.anomaly_count as number | string | undefined) ?? 0)),
+        symbolsWithBars: Math.max(0, Math.trunc(parseFiniteNumber(opening.symbols_with_bars as number | string | undefined) ?? 0)),
+        proxySymbolsWithBars: Math.max(0, Math.trunc(parseFiniteNumber(opening.proxy_symbols_with_bars as number | string | undefined) ?? 0)),
+      },
+      closingMomentum: {
+        state: String(closing.state ?? 'unknown'),
+        candidateCount: Math.max(0, Math.trunc(parseFiniteNumber(closing.candidate_count as number | string | undefined) ?? 0)),
+        symbolsWithBars: Math.max(0, Math.trunc(parseFiniteNumber(closing.symbols_with_bars as number | string | undefined) ?? 0)),
+        candidates: candidates.slice(0, 5).map((candidate) => {
+          const row = asRecord(candidate)
+          return {
+            symbol: String(row.symbol ?? ''),
+            tailMomentum: parseFiniteNumber(row.tail_momentum as number | string | undefined),
+            volumeRatio: parseFiniteNumber(row.volume_ratio as number | string | undefined),
+            labelState: optionalString(row.label_state),
+            nextDayOpenReturn: parseNullableNumber(row.next_day_open_return),
+            nextDayHighReturn: parseNullableNumber(row.next_day_high_return),
+          }
+        }).filter((candidate) => candidate.symbol),
+      },
+      reverseRepo: {
+        action: String(reverseRepo.action ?? 'skip'),
+        amount: parseFiniteNumber(reverseRepo.amount as number | string | undefined) ?? 0,
+        lots: Math.max(0, Math.trunc(parseFiniteNumber(reverseRepo.lots as number | string | undefined) ?? 0)),
+        annualizedYield: parseFiniteNumber(reverseRepo.annualized_yield as number | string | undefined) ?? 0,
+        yieldSource: optionalString(reverseRepo.yield_source),
+        estimatedInterest: parseFiniteNumber(reverseRepo.estimated_interest as number | string | undefined) ?? 0,
+      },
+      styleEvidence: {
+        summary: {
+          styles: Math.max(0, Math.trunc(parseFiniteNumber(styleSummary.styles as number | string | undefined) ?? 0)),
+          activeSample: parseFiniteNumber(styleSummary.active_sample as number | string | undefined),
+          degraded: parseFiniteNumber(styleSummary.degraded as number | string | undefined),
+          paused: parseFiniteNumber(styleSummary.paused as number | string | undefined),
+          virtualCapital: parseFiniteNumber(styleSummary.virtual_capital as number | string | undefined),
+          allocatedCapital: parseFiniteNumber(styleSummary.allocated_capital as number | string | undefined),
+          unallocatedCapital: parseFiniteNumber(styleSummary.unallocated_capital as number | string | undefined),
+        },
+      },
+    }
+  } catch {
+    return undefined
   }
 }
 
@@ -1273,6 +1339,19 @@ function formatDateForSnapshot(timestampMs: number) {
 function parseFiniteNumber(value: number | string | undefined) {
   const number = typeof value === 'string' ? Number.parseFloat(value) : value
   return typeof number === 'number' && Number.isFinite(number) ? number : undefined
+}
+
+function parseNullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+  return parseFiniteNumber(value as number | string | undefined) ?? null
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function optionalString(value: unknown) {
+  return value === undefined || value === null || value === '' ? undefined : String(value)
 }
 
 function firstParsedNumber(...values: Array<number | string | undefined>) {

@@ -112,6 +112,7 @@ function App() {
         {activePage === '主页' ? (
           <HomeDashboard
             accountMode={accountMode}
+            ashareResearchEvidence={readModelSnapshot?.ashareResearchEvidence}
             data={livePerformanceData}
             hasHoldingData={hasHoldingData}
             hasPerformanceData={hasPerformanceData}

@@ -25,6 +25,9 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 
 ## 研究证据
 - `research_evidence.py` 是 A股集合竞价、尾盘动能、204001 逆回购收益估算和风格证据的只读入口；输出到 `shared/review/ashare/`，不得写入 `signals/pending`、`signals/real` 或任何执行队列。
+- 集合竞价证据优先使用 09:15-09:25 数据；缺失时只能用 09:30 首个 5 分钟窗口作 `first_5m_proxy` 研究代理，不得伪装成真实竞价撮合数据。
+- 逆回购 204001 估算优先读取 SharedSignals reader 日线价格/收益率，缺失时才回退环境变量或默认值，并必须保留 `yield_source`。
+- 风格预算优先读取 `shared/review/ashare/style_weights.json` 运行时权重，基础 `Ashare/styles/*.json` 只作配置兜底；paused/deprecated 风格不分配 200,000 元虚拟训练预算。
 - `closing_momentum` 保持 research/paused，只有尾盘候选扫描、次日 open/high 兑现回测和样本阈值达标后，才能讨论进入 simulated。
 
 ## 现有代码

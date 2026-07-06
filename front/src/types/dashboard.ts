@@ -89,3 +89,50 @@ export type DepthRow = {
   total: string
   tone: BookTone
 }
+
+export type AShareResearchEvidence = {
+  generatedAt: string
+  tradeDate: string
+  readOnly: boolean
+  realTradingEnabled: boolean
+  openingAuction: {
+    state: string
+    phase: string
+    dataMode?: string
+    anomalyCount: number
+    symbolsWithBars: number
+    proxySymbolsWithBars?: number
+  }
+  closingMomentum: {
+    state: string
+    candidateCount: number
+    symbolsWithBars: number
+    candidates: Array<{
+      symbol: string
+      tailMomentum?: number
+      volumeRatio?: number
+      labelState?: string
+      nextDayOpenReturn?: number | null
+      nextDayHighReturn?: number | null
+    }>
+  }
+  reverseRepo: {
+    action: string
+    amount: number
+    lots: number
+    annualizedYield: number
+    yieldSource?: string
+    estimatedInterest: number
+  }
+  styleEvidence: {
+    summary: {
+      styles: number
+      activeSample?: number
+      degraded?: number
+      paused?: number
+      virtualCapital?: number
+      allocatedCapital?: number
+      unallocatedCapital?: number
+    }
+  }
+}
