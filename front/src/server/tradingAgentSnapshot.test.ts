@@ -680,14 +680,14 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月3日 10:00', timestamp: '2026-07-03T10:00:05+08:00', simulated: 0.01, target: 2.67, benchmark: 0, opportunity: 0 },
-      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:09+08:00', simulated: 0.03, target: 5.33, benchmark: 0, opportunity: 0 },
-      { day: '现在', timestamp: '2026-07-04T10:06:10+08:00', simulated: 0.04, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '7月3日 10:00', timestamp: '2026-07-03T10:00:05+08:00', simulated: 0, target: 2.67, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:09+08:00', simulated: 0.01, target: 5.33, benchmark: 0, opportunity: 0 },
+      { day: '现在', timestamp: '2026-07-04T10:06:10+08:00', simulated: 0.02, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 151.2,
-      returnPct: 0.04,
-      capitalBase: 400000,
+      returnPct: 0.02,
+      capitalBase: 1000000,
       maxDrawdownPct: 1.4,
       tradeCount: 8,
       pointCount: 3,
@@ -772,14 +772,14 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:05+08:00', simulated: 0.01, target: 2.67, benchmark: 0, opportunity: 0 },
-      { day: '7月4日 10:06', timestamp: '2026-07-04T10:06:01+08:00', simulated: 0.03, target: 5.33, benchmark: 0, opportunity: 0 },
-      { day: '现在', timestamp: '2026-07-04T10:12:10+08:00', simulated: 0.04, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:05+08:00', simulated: 0, target: 2.67, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:06', timestamp: '2026-07-04T10:06:01+08:00', simulated: 0.01, target: 5.33, benchmark: 0, opportunity: 0 },
+      { day: '现在', timestamp: '2026-07-04T10:12:10+08:00', simulated: 0.02, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 151.2,
-      returnPct: 0.04,
-      capitalBase: 400000,
+      returnPct: 0.02,
+      capitalBase: 1000000,
       tradeCount: 5,
     })
   })
@@ -822,12 +822,12 @@ describe('TradingAgent snapshot reader', () => {
 
     expect(snapshot.performance.map((point) => point.quality ?? 'normal')).toEqual(Array(8).fill('normal'))
     expect(snapshot.performance[1]).toMatchObject({
-      simulated: 3.24,
+      simulated: 0.65,
       target: 2,
     })
     expect(snapshot.performance.at(-1)).toMatchObject({
       day: '现在',
-      simulated: 1.06,
+      simulated: 0.21,
       target: 8,
     })
   })
@@ -871,7 +871,7 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.portfolio).toMatchObject({
-      capitalBase: 200000,
+      capitalBase: 1000000,
       pnlAmount: 0,
       pnlSource: 'ashare_local_sim_mark_to_market',
       returnPct: 0,

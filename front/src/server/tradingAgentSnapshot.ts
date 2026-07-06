@@ -1320,7 +1320,7 @@ function defaultMarketCapitalBase(market: Market, current?: number) {
 function normalizedCapitalBaseForMarkets(current: number, markets: Set<Market>) {
   const activeMarkets = [...markets].filter((market) => market !== 'All Markets' && market !== 'HK')
   if (!activeMarkets.length) return current
-  return Math.max(current, activeMarkets.length * DEFAULT_SIM_CAPITAL_CNY)
+  return Math.max(current, DASHBOARD_MARKETS.length * DEFAULT_SIM_CAPITAL_CNY)
 }
 
 function marketFromEquitySourcePath(sourcePath: string): Market {
