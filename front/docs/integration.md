@@ -90,6 +90,11 @@ Display-ready fields used by the homepage:
   `ashare_local_sim_account`, `ashare_local_sim_mark_to_market`, and
   `ashare_local_sim_trade_price_fallback`. These are read-only display labels;
   the front layer must not turn them into execution actions.
+- If the entire `portfolio` summary is built from the A-share local simulation
+  account fallback, it carries `pnlCurrency=CNY`. If an existing mixed or
+  multi-market portfolio summary is present, attaching `ashareAccount` must not
+  change the top-level portfolio currency; only the A-share account detail grid
+  should show CNY values.
 - Trade journals and position cost are not valid performance sources by
   themselves. When only those files exist, `domains.performance.status` remains
   `empty` with a message explaining the missing PnL / return series.

@@ -32,11 +32,12 @@ export function RealtimeReturnCard({
   const targetGap = liveReturn - targetReturn
   const isLive = accountMode === 'live'
   const ashareAccount = portfolio?.ashareAccount
+  const isCnyPortfolio = portfolio?.pnlCurrency === 'CNY'
   const gapLabel = targetGap >= 0 ? `高于目标 +${targetGap.toFixed(2)}%` : `低于目标 ${targetGap.toFixed(2)}%`
   const modeLabel = isLive ? '实盘' : '模拟盘'
   const hasAmount = portfolio !== null
   const primaryResult = hasAmount
-    ? ashareAccount
+    ? isCnyPortfolio
       ? formatSignedCnyCompact(liveProfit)
       : formatCurrency(liveProfit)
     : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`

@@ -939,6 +939,7 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.portfolio).toMatchObject({
       capitalBase: 200000,
       pnlAmount: -65,
+      pnlCurrency: 'CNY',
       returnPct: -0.03,
       tradeCount: 2,
       ashareAccount: {

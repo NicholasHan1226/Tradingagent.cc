@@ -92,6 +92,7 @@ function getPageMetrics(
   const missedCount = signals.filter((signal) => signal.status === 'missed').length
   const executedCount = signals.filter((signal) => signal.status === 'executed').length
   const ashareAccount = portfolio?.ashareAccount
+  const isCnyPortfolio = portfolio?.pnlCurrency === 'CNY'
   const validSampleLabel = ashareAccount
     ? ashareAccount.totalSampleCount > 0
       ? `${ashareAccount.strategySampleValidCount}/${ashareAccount.totalSampleCount}`
@@ -105,7 +106,7 @@ function getPageMetrics(
 
   if (page === '收益') {
     return [
-      { label: '当前收益', value: portfolio ? (ashareAccount ? formatSignedCnyCompact(portfolio.pnlAmount) : formatCurrency(portfolio.pnlAmount)) : formatPercent(currentReturn), detail: formatPercent(currentReturn), tone: currentReturn >= 0 ? 'cyan' : 'red' },
+      { label: '当前收益', value: portfolio ? (isCnyPortfolio ? formatSignedCnyCompact(portfolio.pnlAmount) : formatCurrency(portfolio.pnlAmount)) : formatPercent(currentReturn), detail: formatPercent(currentReturn), tone: currentReturn >= 0 ? 'cyan' : 'red' },
       { label: '目标差', value: formatPercent(gap), detail: `目标 ${formatPercent(target)}`, tone: gap >= 0 ? 'cyan' : 'amber' },
       ashareAccount
         ? { label: '可复盘收益', value: strategyMetricValue, detail: `有效样本 ${validSampleLabel}` }

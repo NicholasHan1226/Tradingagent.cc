@@ -29,8 +29,9 @@ export function HomeResultBrief({
   const drawdownCaption = drawdownDistance > 1 ? `距离 ${drawdownLimit}% 限制 ${drawdownDistance.toFixed(2)}%` : `接近 ${drawdownLimit}% 限制`
   const drawdownValue = hasPerformanceData ? `${Math.abs(drawdown).toFixed(2)}%` : '等待记录'
   const ashareAccount = portfolio?.ashareAccount
+  const isCnyPortfolio = portfolio?.pnlCurrency === 'CNY'
   const returnValue = portfolio
-    ? `${ashareAccount ? formatSignedCnyCompact(portfolio.pnlAmount) : formatCurrency(portfolio.pnlAmount)} / ${portfolio.returnPct >= 0 ? '+' : ''}${portfolio.returnPct.toFixed(2)}%`
+    ? `${isCnyPortfolio ? formatSignedCnyCompact(portfolio.pnlAmount) : formatCurrency(portfolio.pnlAmount)} / ${portfolio.returnPct >= 0 ? '+' : ''}${portfolio.returnPct.toFixed(2)}%`
     : hasPerformanceData
       ? '有收益曲线'
       : '等待收益'

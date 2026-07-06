@@ -377,6 +377,7 @@ function attachAShareAccountSummary(
     pointCount: 1,
     source: tradingAgentReadModelSources.localSimLedger,
     pnlSource: 'ashare_local_sim_account',
+    pnlCurrency: 'CNY',
     realizedPnl: 0,
     unrealizedPnl: ashareAccount.accountTotalPnl,
     ashareAccount,

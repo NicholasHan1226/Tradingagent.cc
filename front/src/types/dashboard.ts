@@ -30,6 +30,7 @@ export type PortfolioSummary = {
   pointCount: number
   source: string
   pnlSource?: string
+  pnlCurrency?: 'USD' | 'CNY'
   realizedPnl?: number
   unrealizedPnl?: number
   ashareAccount?: AShareAccountSummary

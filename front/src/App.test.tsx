@@ -146,6 +146,7 @@ describe('App navigation and result-first dashboard', () => {
               pointCount: 1,
               source: 'shared/logs/local_sim/local_sim_trades.jsonl',
               pnlSource: 'ashare_local_sim_account',
+              pnlCurrency: 'CNY',
               realizedPnl: 0,
               unrealizedPnl: -65,
               updatedAt: '2026-07-06T13:10:00.000Z',
