@@ -200,6 +200,7 @@
 - [x] 同一交易日、同一风格、同一合约的连续同方向模拟信号会被标记为 `repeated_same_side_exposure`，避免每 5 分钟重复加同方向风险；反向信号仍允许形成新模拟成交。
 - [x] `shared/wrappers/job_cn_futures_sim.sh` 显式以 `--cadence 5min` 运行，仍只写 simulated signal/review，不写实盘队列。
 - [x] 生产 crontab 模板已改为期货日盘/夜盘每 5 分钟运行，并相对 SharedSignals 采集错后 1 分钟读取最新 bar。
+- [x] 生产已确认 Tushare/QuickSync `rt_fut_min` 权限不足；SharedSignals 已启用 AKShare/Sina 5 分钟模拟盘备源并写入同一 `market_bars_intraday`，provider 为 `akshare_sina_rt_fut_min`。TradingAgent 继续只读 SharedSignals read model，不直接调用 AKShare/Tushare。
 
 ### 2026-07-04 CNFutures review scoring + fail-closed live reserve
 

@@ -133,9 +133,11 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
 - Reader mapping: `CNFutures` internal market is `cn_futures`; upstream reader
   market remains `Futures`.
 - Current cadence assumption: intraday CNFutures simulation must use
-  `rt_fut_min` rows already collected by SharedSignals. `fut_daily` remains a
-  daily fallback/review input and must not be described as 5-minute execution
-  data.
+  5-minute rows already collected by SharedSignals. The preferred upstream is
+  Tushare/QuickSync `rt_fut_min`; if that provider lacks permission,
+  SharedSignals may fill the same read model from its AKShare/Sina fallback with
+  `provider="akshare_sina_rt_fut_min"`. `fut_daily` remains a daily
+  fallback/review input and must not be described as 5-minute execution data.
 - API health is not trading eligibility. A degraded SharedSignals API response
   may still leave a usable SQLite read model, and a healthy API response does
   not prove real-time, tradable, or account-authorized data.
