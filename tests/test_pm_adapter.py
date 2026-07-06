@@ -4,6 +4,7 @@ import unittest
 
 from PM.adapter import PMAdapter
 from PM.scoring import score_market
+from shared.markets.sim_capital import default_sim_capital
 
 
 class MockPMReader:
@@ -71,7 +72,7 @@ class PMAdapterTest(unittest.TestCase):
     def test_strategy_config_contains_six_pm_strategies(self) -> None:
         config = PMAdapter(reader=MockPMReader()).get_strategy_config()
 
-        self.assertEqual(config["shadow_capital"], 50000.0)
+        self.assertEqual(config["shadow_capital"], default_sim_capital("pm"))
         self.assertTrue(config["probability_unit"])
         self.assertEqual(
             set(config["strategies"]),
@@ -107,4 +108,3 @@ class PMAdapterTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

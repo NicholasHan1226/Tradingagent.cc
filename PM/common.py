@@ -27,6 +27,7 @@ from shared.markets.config_schema import (
     validate_market_config,
 )
 from shared.markets.safety import assert_no_real_execution, assert_public_data_only
+from shared.markets.sim_capital import default_sim_capital
 
 
 # -- Probability helpers -------------------------------------------------------
@@ -64,7 +65,7 @@ class PMConfig:
         default_factory=lambda: CapitalConfig(
             default_layer="shadow",
             allowed_layers=("shadow", "simulated"),
-            initial_capital=50000.0,
+            initial_capital=default_sim_capital("pm"),
             currency="USDC",
         )
     )
@@ -208,7 +209,7 @@ def _build_capital(raw: dict[str, Any]) -> CapitalConfig:
         return CapitalConfig(
             default_layer=str(cap.get("default_layer", "shadow")),
             allowed_layers=tuple(allowed),
-            initial_capital=float(cap.get("initial_capital", 50000.0)),
+            initial_capital=float(cap.get("initial_capital", default_sim_capital("pm"))),
             currency=str(cap.get("currency", "USDC")),
         )
     return CapitalConfig()

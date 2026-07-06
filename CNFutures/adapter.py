@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from shared.markets.base import MarketAdapter
+from shared.markets.sim_capital import default_sim_capital
 
 from . import MARKET
 from .contract_rules import normalize_product
@@ -24,7 +25,7 @@ READER_MARKET = "Futures"
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
 DEFAULT_REVIEW_ROOT = Path(__file__).resolve().parents[1] / "shared" / "review"
 DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
-DEFAULT_SIM_CAPITAL = 2_000_000.0
+DEFAULT_SIM_CAPITAL = default_sim_capital(MARKET)
 
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "active_only": True,

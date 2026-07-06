@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from shared.execution.auto_pipeline import AutoPipeline, LocalStyleSimulator, _candidate_price
+from shared.markets.sim_capital import default_sim_capital
 
 
 class SnapshotReader:
@@ -113,7 +114,7 @@ class AutoPipelineSmokeTest(unittest.TestCase):
         pipeline = AutoPipeline()
 
         self.assertEqual(pipeline._initial_capital_for_market("ashare"), 200_000.0)
-        self.assertEqual(pipeline._initial_capital_for_market("crypto"), 100_000.0)
+        self.assertEqual(pipeline._initial_capital_for_market("crypto"), default_sim_capital("crypto"))
 
     def test_signals_include_sharedsignals_market_snapshot(self) -> None:
         pipeline = AutoPipeline(

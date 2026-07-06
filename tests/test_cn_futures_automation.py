@@ -305,6 +305,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
                         "style_family": "index_intraday_directional",
                         "signal_threshold": 0.001,
                         "risk_per_trade": 0.01,
+                        "max_margin_usage": 0.80,
                         "products": ["if", "ih", "ic", "im"],
                         "momentum_lookback_bars": 3,
                         "moving_average_bars": 4,
@@ -583,6 +584,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
                         "style_family": "index_intraday_directional",
                         "signal_threshold": 0.001,
                         "risk_per_trade": 0.01,
+                        "max_margin_usage": 0.80,
                         "products": ["if"],
                         "momentum_lookback_bars": 3,
                         "moving_average_bars": 4,
@@ -702,7 +704,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
             adapter = CNFuturesAdapter(
                 reader=reader,
                 universe_filter={"max_symbols": 1, "products": ("rb",)},
-                styles={"trend": {"name": "trend", "signal_threshold": 0.001, "risk_per_trade": 0.03, "slippage_bps": 0.0}},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.001, "risk_per_trade": 0.50, "max_margin_usage": 0.80, "slippage_bps": 0.0}},
             )
 
             result = run_multi_style_simulation(

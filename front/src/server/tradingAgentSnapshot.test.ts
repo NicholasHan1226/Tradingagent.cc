@@ -220,8 +220,8 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月3日', simulated: 2.4, target: 1.8, benchmark: 0.6, opportunity: -0.8 },
-      { day: '7月4日', simulated: 3.1, target: 2, benchmark: 0.7, opportunity: -0.5 },
+      { day: '7月3日', timestamp: '2026-07-03', simulated: 2.4, target: 1.8, benchmark: 0.6, opportunity: -0.8 },
+      { day: '7月4日', timestamp: '2026-07-04', simulated: 3.1, target: 2, benchmark: 0.7, opportunity: -0.5 },
     ])
     expect(snapshot.domains.performance.status).toBe('ready')
   })
@@ -287,8 +287,8 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月3日', simulated: 1, target: 4, benchmark: 0, opportunity: -4 },
-      { day: '现在', simulated: 1.73, target: 8, benchmark: 0, opportunity: -2 },
+      { day: '7月3日', timestamp: '20260703', simulated: 1, target: 4, benchmark: 0, opportunity: -4 },
+      { day: '现在', timestamp: '20260704', simulated: 1.73, target: 8, benchmark: 0, opportunity: -2 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 17.25,
@@ -473,9 +473,9 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月3日 09:00', simulated: 0.5, target: 2.67, benchmark: 0, opportunity: -1 },
-      { day: '7月3日 10:00', simulated: 1, target: 5.33, benchmark: 0, opportunity: -1 },
-      { day: '现在', simulated: 3, target: 8, benchmark: 0, opportunity: -1 },
+      { day: '7月3日 09:00', timestamp: '2026-07-03T01:00:00+00:00', simulated: 0.5, target: 2.67, benchmark: 0, opportunity: -1 },
+      { day: '7月3日 10:00', timestamp: '2026-07-03T02:00:00+00:00', simulated: 1, target: 5.33, benchmark: 0, opportunity: -1 },
+      { day: '现在', timestamp: '2026-07-04T01:30:00+00:00', simulated: 3, target: 8, benchmark: 0, opportunity: -1 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 30,
@@ -560,8 +560,8 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月4日 09:30', simulated: 0.8, target: 1.2, benchmark: 0.1, opportunity: -0.4 },
-      { day: '现在', simulated: 2.5, target: 1.6, benchmark: 0.3, opportunity: -0.2 },
+      { day: '7月4日 09:30', timestamp: '2026-07-04T09:30:00+08:00', simulated: 0.8, target: 1.2, benchmark: 0.1, opportunity: -0.4 },
+      { day: '现在', timestamp: '2026-07-04T10:00:00+08:00', simulated: 2.5, target: 1.6, benchmark: 0.3, opportunity: -0.2 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 2500,
@@ -680,9 +680,9 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月3日 10:00', simulated: 0.2, target: 2.67, benchmark: 0, opportunity: 0 },
-      { day: '7月4日 10:00', simulated: 0.5, target: 5.33, benchmark: 0, opportunity: 0 },
-      { day: '现在', simulated: 0.7, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '7月3日 10:00', timestamp: '2026-07-03T10:00:05+08:00', simulated: 0.2, target: 2.67, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:09+08:00', simulated: 0.5, target: 5.33, benchmark: 0, opportunity: 0 },
+      { day: '现在', timestamp: '2026-07-04T10:06:10+08:00', simulated: 0.7, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 151.2,
@@ -772,9 +772,9 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月4日 10:00', simulated: 0.2, target: 2.67, benchmark: 0, opportunity: 0 },
-      { day: '7月4日 10:06', simulated: 0.53, target: 5.33, benchmark: 0, opportunity: 0 },
-      { day: '现在', simulated: 0.7, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:05+08:00', simulated: 0.2, target: 2.67, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:06', timestamp: '2026-07-04T10:06:01+08:00', simulated: 0.53, target: 5.33, benchmark: 0, opportunity: 0 },
+      { day: '现在', timestamp: '2026-07-04T10:12:10+08:00', simulated: 0.7, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 151.2,

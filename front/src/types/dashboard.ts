@@ -12,6 +12,7 @@ export type PageMeta = {
 
 export type PerformancePoint = {
   day: string
+  timestamp?: string
   simulated: number
   target: number
   benchmark: number
@@ -19,6 +20,8 @@ export type PerformancePoint = {
   quality?: 'normal' | 'outlier'
   qualityReason?: string
 }
+
+export type PerformanceRange = 'today' | '7d' | '30d' | 'all'
 
 export type PortfolioSummary = {
   pnlAmount: number

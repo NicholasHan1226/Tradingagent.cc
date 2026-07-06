@@ -14,6 +14,7 @@ from typing import Any
 
 from shared.markets.performance_tracker import load_style_weights, save_run
 from shared.markets.safety import reject_real_execution_payload
+from shared.markets.sim_capital import default_sim_capital
 from shared.markets.style_config import TradeStyle, load_generated_trade_styles, load_trade_styles
 
 
@@ -60,6 +61,7 @@ class StyleRunner:
         reject_real_execution_payload(safe_account, context=f"StyleRunner.{self.market}.account")
         all_styles = self._load_weighted_styles(include_disabled=True)
         styles = [style for style in all_styles if style.status == "active"]
+        safe_account["_active_weight_total"] = sum(max(0.0, float(style.weight)) for style in styles) or 1.0
         normalized_signals = [dict(signal or {}) for signal in signals]
         for signal in normalized_signals:
             reject_real_execution_payload(signal, context=f"StyleRunner.{self.market}.signal")
@@ -364,6 +366,7 @@ class StyleRunner:
     def _sim_account(self, account: dict[str, Any] | None, date: str) -> dict[str, Any]:
         payload = dict(account or {})
         payload.setdefault("account_id", f"{self.market}_multi_style_sim")
+        payload.setdefault("market", self.market)
         payload.setdefault("capital_layer", "simulated")
         payload.setdefault("account_type", "simulated")
         payload.setdefault("date", date)
@@ -374,7 +377,8 @@ class StyleRunner:
     def _weighted_account(self, account: dict[str, Any], style: TradeStyle) -> dict[str, Any]:
         payload = dict(account)
         capital = self._initial_capital(account)
-        payload["initial_capital"] = round(capital * max(0.0, float(style.weight)), 6)
+        active_weight_total = max(1e-12, float(account.get("_active_weight_total") or 1.0))
+        payload["initial_capital"] = round(capital * max(0.0, float(style.weight)) / active_weight_total, 6)
         payload["style_name"] = style.name
         payload["style_weight"] = round(style.weight, 6)
         payload["capital_layer"] = "simulated"
@@ -563,9 +567,7 @@ class StyleRunner:
             if value > 0 and value == value:
                 return value
         market = str((account or {}).get("market") or "").lower()
-        if market == "ashare":
-            return 200_000.0
-        return 100_000.0
+        return default_sim_capital(market or "ashare")
 
     @staticmethod
     def _quantity(notional: float, price: float) -> float:

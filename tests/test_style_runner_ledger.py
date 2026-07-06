@@ -117,7 +117,7 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             self.assertEqual(metric["pnl_source"], "sim_ledger_mark_to_market")
             self.assertEqual(metric["pnl_metric_source"], "sim_ledger_realized_unrealized_samples")
             self.assertEqual(metric["realized_pnl"], 0.0)
-            self.assertGreater(metric["unrealized_pnl"], 900.0)
+            self.assertGreater(metric["unrealized_pnl"], 250.0)
             self.assertEqual(metric["pnl"], metric["unrealized_pnl"])
             self.assertEqual(metric["win_rate"], 1.0)
 
@@ -143,8 +143,8 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             metric = result["style_comparison"][0]
             self.assertEqual(metric["pnl_source"], "sim_ledger_mark_to_market")
             self.assertEqual(metric["pnl_metric_source"], "sim_ledger_realized_unrealized_samples")
-            self.assertGreater(metric["realized_pnl"], 1500.0)
-            self.assertGreater(metric["unrealized_pnl"], 300.0)
+            self.assertGreater(metric["realized_pnl"], 400.0)
+            self.assertGreater(metric["unrealized_pnl"], 80.0)
             self.assertAlmostEqual(metric["pnl"], metric["realized_pnl"] + metric["unrealized_pnl"], places=6)
             self.assertEqual(metric["win_rate"], 1.0)
 
@@ -203,6 +203,24 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             self.assertIn("558943:no", positions["positions"])
             self.assertEqual(positions["positions"]["558943:no"]["market_id"], "558943")
             self.assertEqual(positions["positions"]["558943:no"]["outcome"], "no")
+
+    def test_active_style_weights_split_one_market_capital_pool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            styles_dir = root / "styles"
+            styles_dir.mkdir()
+            first = {**STYLE, "name": "first", "weight": 0.67}
+            second = {**STYLE, "name": "second", "weight": 0.33}
+            (styles_dir / "first.json").write_text(json.dumps(first), encoding="utf-8")
+            (styles_dir / "second.json").write_text(json.dumps(second), encoding="utf-8")
+            simulator = CapturingSimulator()
+            runner = StyleRunner("ashare", simulator, styles_dir=styles_dir, review_root=root / "review", record_ledger=False)
+
+            runner.run([{"symbol": "600000.SH", "price": 10.0, "side": "buy", "conviction": 0.9}], date="20260704")
+
+            by_style = {order["style_name"]: order for order in simulator.orders}
+            self.assertEqual(by_style["first"]["quantity"], 1300.0)
+            self.assertEqual(by_style["second"]["quantity"], 600.0)
 
 
 class SimLedgerTotalPnlTest(unittest.TestCase):

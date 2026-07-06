@@ -1290,7 +1290,9 @@ def _account_positions(account: Any, config: dict[str, Any]) -> list[dict[str, A
 
 
 def _default_capital_for_market(market: Any) -> float:
-    return 200000.0 if str(market or "").lower() == "ashare" else 100000.0
+    from shared.markets.sim_capital import default_sim_capital
+
+    return default_sim_capital(str(market or "ashare"))
 
 
 def _account_capital(account: Any, config: dict[str, Any]) -> float:

@@ -9,6 +9,7 @@ from typing import Any
 
 from shared.data.reader import TradingagentDataReader
 from shared.markets.base import MarketAdapter
+from shared.markets.sim_capital import default_sim_capital
 from US import sim_executor as _sim_executor  # noqa: F401
 
 
@@ -162,7 +163,7 @@ class USAdapter(MarketAdapter):
         strategies = self._load_strategies()
         return {
             "market": MARKET,
-            "shadow_capital": 200_000.0,
+            "shadow_capital": default_sim_capital(MARKET),
             "portfolio_method": "conviction_weighted",
             "regime": "us_equity_default",
             "max_candidates": 25,

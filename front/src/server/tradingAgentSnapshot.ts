@@ -1081,6 +1081,7 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
 
     return {
       day: index === timestamps.length - 1 ? '现在' : formatTimelineLabel(row.timestamp),
+      timestamp: row.timestamp,
       simulated: roundMetric(simulated),
       target: roundMetric(target),
       benchmark: roundMetric(row.benchmarkPct),
@@ -1371,6 +1372,7 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
 
     return {
       day: index === dates.length - 1 ? '现在' : formatReviewDay(day) ?? day,
+      timestamp: day,
       simulated: roundMetric(simulated),
       target: roundMetric(target),
       benchmark: 0,
@@ -1446,6 +1448,7 @@ function buildTimelinePerformance(contributions: TimelineContribution[], capital
 
     return {
       day: index === timestamps.length - 1 ? '现在' : formatTimelineLabel(row.timestamp),
+      timestamp: row.timestamp,
       simulated: roundMetric(simulated),
       target: roundMetric(target),
       benchmark: 0,
@@ -1461,6 +1464,7 @@ function parsePerformanceRow(row: PerformanceReviewRow): PerformancePoint | null
 
   return {
     day,
+    timestamp: row.trade_date ?? row.date ?? row.day,
     simulated,
     target: firstNumber(row.target_return_pct, row.target_pct) ?? 0,
     benchmark: firstNumber(row.benchmark_return_pct, row.benchmark_pct) ?? 0,

@@ -6,6 +6,7 @@ import {
   getVisibleHoldings,
   getSignalFunnel,
   getVisibleSignals,
+  slicePerformanceData,
 } from './dashboard'
 import type { HoldingRow, PerformancePoint, SignalRow } from '../types/dashboard'
 
@@ -84,6 +85,31 @@ describe('dashboard view rules', () => {
     expect(result[0]).toBe(performanceRows[0])
     expect(result[1]).not.toBe(performanceRows[1])
     expect(result[1].target).toBe(8)
+  })
+
+  it('slices performance ranges without dropping the latest point', () => {
+    const performanceRows: PerformancePoint[] = Array.from({ length: 40 }, (_, index) => ({
+      day: index === 39 ? '现在' : `第${index + 1}日`,
+      simulated: index,
+      target: 8,
+      benchmark: 0,
+      opportunity: -1,
+    }))
+
+    expect(slicePerformanceData(performanceRows, 'today').map((point) => point.day)).toEqual(['第39日', '现在'])
+    expect(slicePerformanceData(performanceRows, '7d')).toHaveLength(7)
+    expect(slicePerformanceData(performanceRows, '30d')).toHaveLength(30)
+    expect(slicePerformanceData(performanceRows, 'all')).toHaveLength(40)
+  })
+
+  it('uses timestamps for today ranges when they are available', () => {
+    const performanceRows: PerformancePoint[] = [
+      { day: '前日', timestamp: '2026-07-05T15:00:00+08:00', simulated: 0, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '今早', timestamp: '2026-07-06T09:30:00+08:00', simulated: 1, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '现在', timestamp: '2026-07-06T14:50:00+08:00', simulated: 2, target: 8, benchmark: 0, opportunity: 0 },
+    ]
+
+    expect(slicePerformanceData(performanceRows, 'today').map((point) => point.day)).toEqual(['今早', '现在'])
   })
 
   it('marks executed-only ledger rows as replay rather than a live screening funnel', () => {

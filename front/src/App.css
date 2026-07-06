@@ -1951,62 +1951,74 @@ button:not(:disabled) {
     rgba(1, 5, 5, 0.74);
 }
 
-.chart-panel-head {
+.chart-panel-toolbar {
   position: absolute;
   top: 9px;
   right: 10px;
-  left: 10px;
+  left: auto;
   z-index: 3;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-height: 34px;
+  padding: 5px 6px 5px 10px;
   border: 1px solid rgba(224, 246, 240, 0.05);
   border-radius: 4px;
   background: rgba(1, 6, 6, 0.68);
   backdrop-filter: blur(8px);
 }
 
-.chart-panel-head > div {
-  min-width: 0;
+.chart-panel-toolbar .chart-range-switch {
   display: grid;
-  gap: 2px;
-  align-content: center;
-  padding: 6px 10px;
-  border-left: 1px solid var(--border-hairline);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 154px;
 }
 
-.chart-panel-head > div:first-child {
-  border-left: 0;
+.chart-range-switch button {
+  min-width: 0;
+  height: 24px;
+  border: 1px solid rgba(224, 246, 240, 0.08);
+  border-radius: 4px;
+  color: var(--text-muted);
+  background: rgba(6, 14, 14, 0.62);
+  font-size: 10px;
+  font-weight: 680;
 }
 
-.chart-panel-head span {
+.chart-range-switch button.selected {
+  color: #031010;
+  border-color: rgba(94, 234, 223, 0.5);
+  background: var(--accent-cyan);
+}
+
+.chart-panel-toolbar > span {
   color: var(--text-faint);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 660;
-}
-
-.chart-panel-head strong {
-  color: var(--text-primary);
-  font: 720 13px/1 var(--font-number);
-}
-
-.chart-panel-head > div:first-child strong {
-  color: var(--accent-cyan);
 }
 
 .chart-plot {
   position: absolute;
-  inset: 50px 0 38px;
+  inset: 14px 0 38px;
+}
+
+.hyper-chart-panel.with-range-controls .chart-plot {
+  top: 52px;
 }
 
 .chart-legend {
   position: absolute;
-  top: 52px;
+  top: 16px;
   left: 13px;
   z-index: 3;
   gap: 12px;
   color: var(--text-muted);
   font-size: 10px;
+}
+
+.hyper-chart-panel.with-range-controls .chart-legend {
+  top: 56px;
 }
 
 .chart-live-labels {

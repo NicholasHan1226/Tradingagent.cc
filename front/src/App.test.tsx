@@ -19,6 +19,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('机会进入').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
     expect(screen.getAllByText('信号').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('tablist', { name: '收益区间' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '机会从全市场进入，只把可执行结果留在首页。' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '正在推进' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '本轮结果' })).not.toBeInTheDocument()
@@ -184,7 +185,20 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('可复盘收益').length).toBeGreaterThan(0)
     expect(screen.getAllByText('有效样本').length).toBeGreaterThan(0)
     expect(screen.getAllByText('0/13').length).toBeGreaterThan(0)
-    expect(screen.getByText(/可复盘 0\/13 · 链路验证 13/)).toBeInTheDocument()
+    expect(screen.queryByText(/可复盘 0\/13 · 链路验证 13/)).not.toBeInTheDocument()
+  })
+
+  it('shows return range controls on the returns page only', () => {
+    render(<App />)
+
+    expect(screen.queryByRole('tablist', { name: '收益区间' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '收益' }))
+
+    const rangeSwitch = screen.getByRole('tablist', { name: '收益区间' })
+    expect(within(rangeSwitch).getByRole('tab', { name: '今日' })).toBeInTheDocument()
+    expect(within(rangeSwitch).getByRole('tab', { name: '7日' })).toBeInTheDocument()
+    expect(within(rangeSwitch).getByRole('tab', { name: '30日' })).toBeInTheDocument()
+    expect(within(rangeSwitch).getByRole('tab', { name: '全部' })).toBeInTheDocument()
   })
 
   it('switches the dashboard to market-specific signals, holdings, and summaries', async () => {

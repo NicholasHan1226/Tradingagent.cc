@@ -17,6 +17,7 @@ from shared.markets.performance_tracker import load_style_weights
 from shared.markets.safety import reject_real_execution_payload
 from shared.markets.style_config import styles_dir_for_market
 from shared.markets.style_runner import StyleRunner
+from shared.markets.sim_capital import default_sim_capital
 from shared.research.multi_perspective import MultiPerspectiveAnalyzer
 from shared.screening.fundamental_analyzer import FundamentalAnalyzer
 
@@ -235,7 +236,7 @@ def default_simulator_factory(market: str) -> Any:
 
 
 def _default_initial_capital(market: str) -> float:
-    return 200_000.0 if _normalize_market(market) == "ashare" else 100_000.0
+    return default_sim_capital(_normalize_market(market))
 
 
 class AutoPipeline:
@@ -270,7 +271,7 @@ class AutoPipeline:
         }
         self.max_candidates = max(1, int(max_candidates))
         self._initial_capital_override = initial_capital
-        self.initial_capital = float(initial_capital) if initial_capital is not None else 100_000.0
+        self.initial_capital = float(initial_capital) if initial_capital is not None else default_sim_capital("ashare")
 
     def _initial_capital_for_market(self, market: str) -> float:
         if self._initial_capital_override is not None:

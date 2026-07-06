@@ -2,7 +2,7 @@ market: crypto
 capital:
   default_layer: shadow
   allowed_layers: [shadow, simulated]
-  initial_capital: 100000
+  initial_capital: 27777.777778
   currency: USDT
 safety:
   real_money_enabled: false

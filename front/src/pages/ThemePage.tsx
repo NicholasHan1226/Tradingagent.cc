@@ -53,13 +53,12 @@ export function ThemePage({
           <section className="panel tall-panel">
             <PanelTitle kicker="实时收益" title="模拟盘收益走势" />
             <StatusBoundary loading={<ChartSkeleton height={430} />} onRetry={onRetry} status={domainStatus('performance')}>
-              <PerformanceChart data={data} events={events} height={430} latestPoint={latestPoint} onSelectEvent={setActivePage} />
+              <PerformanceChart data={data} events={events} height={430} latestPoint={latestPoint} onSelectEvent={setActivePage} showRangeControls />
             </StatusBoundary>
           </section>
         </section>
         <aside className="theme-rail">
           <ContributionPanel signals={signals} />
-          <RiskSnapshot portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
         </aside>
       </div>
     )

@@ -9,13 +9,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.markets.sim_capital import DEFAULT_SIM_CAPITAL_CNY, default_sim_capital
 from shared.notify.email_sender import send_email, send_template_email
 from shared.notify.email_templates import CHANNELS, wrap_html
 
 ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "shared"
 DAILY_BRIEF_MARKETS = ("Ashare", "Crypto", "US", "PM")
-DAILY_BRIEF_CAPITAL_BASE = 100000.0
+DAILY_BRIEF_CAPITAL_BASE = DEFAULT_SIM_CAPITAL_CNY
 
 
 def now_iso() -> str:
@@ -1087,7 +1088,7 @@ class StubMarketAdapter:
         return self.market, symbol
 
     def get_strategy_config(self) -> dict[str, Any]:
-        shadow_capital = 200000.0 if self.market.lower() == "ashare" else 100000.0
+        shadow_capital = default_sim_capital(self.market)
         return {
             "shadow_capital": shadow_capital,
             "portfolio_method": "conviction_weighted",
@@ -1788,7 +1789,7 @@ def run_pm_optimize() -> dict[str, Any]:
             "portfolio_method": config.get("portfolio_method", "pm_probability_weighted"),
             "max_positions": (config.get("market_rules") or {}).get("max_positions", 20),
             "max_candidates": config.get("max_candidates", 20),
-            "shadow_capital": config.get("shadow_capital", 50000.0),
+            "shadow_capital": config.get("shadow_capital", default_sim_capital("pm")),
         },
         "errors": errors,
     }

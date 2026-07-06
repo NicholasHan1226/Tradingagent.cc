@@ -1,4 +1,4 @@
-import type { HoldingRow, Market, MarketSummary, PerformancePoint, SignalRow } from '../types/dashboard'
+import type { HoldingRow, Market, MarketSummary, PerformancePoint, PerformanceRange, SignalRow } from '../types/dashboard'
 import type { DomainHealth } from '../types/status'
 
 export function getActionableSignals(rows: SignalRow[]) {
@@ -40,6 +40,29 @@ export function getLivePerformanceData(now: Date, rows: PerformancePoint[], anim
       opportunity: Number((point.opportunity + liveMove * 0.2).toFixed(2)),
     }
   })
+}
+
+export function slicePerformanceData(rows: PerformancePoint[], range: PerformanceRange) {
+  if (range === 'all' || rows.length <= 1) return rows
+
+  const timedRows = rows
+    .map((point) => ({ point, time: point.timestamp ? Date.parse(point.timestamp) : Number.NaN }))
+    .filter((item) => Number.isFinite(item.time))
+
+  if (timedRows.length) {
+    const latestTime = Math.max(...timedRows.map((item) => item.time))
+    const start = new Date(latestTime)
+    if (range === 'today') {
+      start.setHours(0, 0, 0, 0)
+    } else {
+      start.setDate(start.getDate() - (range === '7d' ? 7 : 30))
+    }
+    const filtered = timedRows.filter((item) => item.time >= start.getTime()).map((item) => item.point)
+    if (filtered.length > 1 || range !== 'today') return filtered.length ? filtered : rows.slice(-1)
+  }
+
+  const fallbackSize = range === 'today' ? 2 : range === '7d' ? 7 : 30
+  return rows.slice(Math.max(0, rows.length - fallbackSize))
 }
 
 export function isStaleHealth(health: DomainHealth, maxAgeMs: number, now = new Date()) {

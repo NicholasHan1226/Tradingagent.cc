@@ -7,6 +7,7 @@ from typing import Any
 
 from shared.data.reader import TradingagentDataReader
 from shared.markets.base import MarketAdapter
+from shared.markets.sim_capital import default_sim_capital
 
 from PM import sim_executor as _pm_sim_executor
 from PM.strategies import STRATEGY_CONFIGS
@@ -30,7 +31,7 @@ class PMAdapter(MarketAdapter):
 
     def get_strategy_config(self) -> dict[str, Any]:
         return {
-            "shadow_capital": 50000.0,
+            "shadow_capital": default_sim_capital("pm"),
             "portfolio_method": "pm_probability_weighted",
             "regime": "24_7_probability_market",
             "max_candidates": 20,

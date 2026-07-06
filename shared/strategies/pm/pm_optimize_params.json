@@ -11,7 +11,7 @@
     "portfolio_method": "pm_probability_weighted",
     "max_positions": 20,
     "max_candidates": 20,
-    "shadow_capital": 50000.0
+    "shadow_capital": 27777.777778
   },
   "errors": []
 }

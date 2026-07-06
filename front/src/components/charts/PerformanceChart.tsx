@@ -9,9 +9,18 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import type { ChartEvent, Page, PerformancePoint } from '../../types/dashboard'
+import { useMemo, useState } from 'react'
+import type { ChartEvent, Page, PerformancePoint, PerformanceRange } from '../../types/dashboard'
+import { slicePerformanceData } from '../../lib/dashboard'
 import { DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT } from '../../lib/dashboardConstants'
 import { chartColors } from './chartConfig'
+
+const RANGE_OPTIONS: Array<{ key: PerformanceRange; label: string }> = [
+  { key: 'today', label: '今日' },
+  { key: '7d', label: '7日' },
+  { key: '30d', label: '30日' },
+  { key: 'all', label: '全部' },
+]
 
 function getFocusedPerformanceDomain(data: PerformancePoint[], latestPoint: PerformancePoint) {
   const visiblePoints = data.filter((point) => point.quality !== 'outlier')
@@ -46,18 +55,22 @@ export function PerformanceChart({
   height,
   latestPoint,
   onSelectEvent,
+  showRangeControls = false,
 }: {
   data: PerformancePoint[]
   events?: ChartEvent[]
   height: number
   latestPoint: PerformancePoint
   onSelectEvent?: (page: Page) => void
+  showRangeControls?: boolean
 }) {
-  const targetGap = latestPoint.simulated - latestPoint.target
-  const riskDistance = DRAWDOWN_LIMIT_PCT - Math.abs(Math.min(0, latestPoint.opportunity))
-  const visualDomain = getFocusedPerformanceDomain(data, latestPoint)
-  const hasOutlierSegment = data.some((point) => point.quality === 'outlier')
-  const plotData = data.map((point) => ({
+  const [range, setRange] = useState<PerformanceRange>('all')
+  const visibleData = useMemo(() => (showRangeControls ? slicePerformanceData(data, range) : data), [data, range, showRangeControls])
+  const chartData = visibleData.length ? visibleData : data.slice(-1)
+  const chartLatest = chartData[chartData.length - 1] ?? latestPoint
+  const visualDomain = getFocusedPerformanceDomain(chartData, chartLatest)
+  const hasOutlierSegment = chartData.some((point) => point.quality === 'outlier')
+  const plotData = chartData.map((point) => ({
     ...point,
     simulatedPlot: projectIntoDomain(point.simulated, visualDomain),
     simulatedNormalPlot: point.quality === 'outlier' ? null : projectIntoDomain(point.simulated, visualDomain),
@@ -68,27 +81,32 @@ export function PerformanceChart({
   }))
   const eventPoints = events
     .map((event) => {
-      const point = data.find((item) => item.day === event.day)
+      const point = chartData.find((item) => item.day === event.day)
       return point ? { event, point } : null
     })
     .filter((item): item is { event: ChartEvent; point: PerformancePoint } => item != null && item.point.quality !== 'outlier')
 
   return (
-    <div className="chart-box hyper-chart-panel" style={{ height }}>
-      <div className="chart-panel-head">
-        <div>
-          <span>收益走势</span>
-          <strong>{latestPoint.simulated >= 0 ? '+' : ''}{latestPoint.simulated.toFixed(2)}%</strong>
+    <div className={`chart-box hyper-chart-panel ${showRangeControls ? 'with-range-controls' : ''}`} style={{ height }}>
+      {showRangeControls && (
+        <div className="chart-panel-toolbar">
+          <span>累计收益</span>
+          <div className="chart-range-switch" aria-label="收益区间" role="tablist">
+            {RANGE_OPTIONS.map((option) => (
+              <button
+                aria-selected={range === option.key}
+                className={range === option.key ? 'selected' : ''}
+                key={option.key}
+                onClick={() => setRange(option.key)}
+                role="tab"
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div>
-          <span>目标差</span>
-          <strong>{targetGap >= 0 ? '+' : ''}{targetGap.toFixed(2)}%</strong>
-        </div>
-        <div>
-          <span>风险距离</span>
-          <strong>{Math.max(0, riskDistance).toFixed(2)}%</strong>
-        </div>
-      </div>
+      )}
       <div className="chart-plot">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={plotData} margin={{ top: 10, right: 18, left: -8, bottom: 4 }}>
@@ -113,10 +131,10 @@ export function PerformanceChart({
             <Tooltip content={<ChartTooltip />} cursor={{ stroke: chartColors.cursor }} />
             <ReferenceLine y={TARGET_RETURN_PCT} stroke={chartColors.target} strokeDasharray="4 8" />
             <ReferenceLine y={-DRAWDOWN_LIMIT_PCT} stroke={chartColors.opportunity} strokeDasharray="4 8" />
-            <ReferenceLine x="现在" stroke={chartColors.simulated} strokeDasharray="2 8" />
+            <ReferenceLine x={chartLatest.day} stroke={chartColors.simulated} strokeDasharray="2 8" />
             <ReferenceDot
-              x="现在"
-              y={projectIntoDomain(latestPoint.simulated, visualDomain)}
+              x={chartLatest.day}
+              y={projectIntoDomain(chartLatest.simulated, visualDomain)}
               r={4}
               fill={chartColors.simulated}
               stroke="#050b0b"
@@ -160,7 +178,7 @@ export function PerformanceChart({
       </div>
       {hasOutlierSegment && <div className="chart-quality-note">异常区间已弱化</div>}
       <div className="chart-live-labels" aria-hidden="true">
-        <span className="current">现在 +{latestPoint.simulated.toFixed(2)}%</span>
+        <span className="current">{chartLatest.day} {chartLatest.simulated >= 0 ? '+' : ''}{chartLatest.simulated.toFixed(2)}%</span>
       </div>
       {eventPoints.length > 0 && (
         <div className="chart-event-bar" aria-label="收益关键节点">

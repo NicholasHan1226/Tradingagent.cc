@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from shared.markets.config_schema import MarketToolConfig
+from shared.markets.sim_capital import default_sim_capital
 
 
 US_SESSIONS = {
@@ -29,7 +30,7 @@ class USConfig(MarketToolConfig):
         default_factory=lambda: {
             "default_layer": "shadow",
             "allowed_layers": ("shadow", "simulated"),
-            "initial_capital": 100_000.0,
+            "initial_capital": default_sim_capital("us"),
             "currency": "USD",
         }
     )

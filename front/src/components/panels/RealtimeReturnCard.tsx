@@ -33,7 +33,6 @@ export function RealtimeReturnCard({
   const isLive = accountMode === 'live'
   const ashareAccount = portfolio?.ashareAccount
   const isCnyPortfolio = portfolio?.pnlCurrency === 'CNY'
-  const gapLabel = targetGap >= 0 ? `高于目标 +${targetGap.toFixed(2)}%` : `低于目标 ${targetGap.toFixed(2)}%`
   const modeLabel = isLive ? '实盘' : '模拟盘'
   const hasAmount = portfolio !== null
   const primaryResult = hasAmount
@@ -94,10 +93,6 @@ export function RealtimeReturnCard({
             <strong>{primaryResult}</strong>
             <span>{resultCaption}</span>
           </div>
-          <div className="return-subline">
-            <b>{modeLabel}</b>
-            <em>{gapLabel}</em>
-          </div>
           <div className="return-facts" aria-label="收益关键指标">
             <span>
               <em>目标差</em>
@@ -144,7 +139,7 @@ export function RealtimeReturnCard({
               </span>
             </div>
           )}
-          <small>{gapLabel} · {accountLine}</small>
+          <small>{accountLine}</small>
         </>
       )}
       <button onClick={() => setActivePage('收益')} type="button">收益详情</button>

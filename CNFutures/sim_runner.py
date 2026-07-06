@@ -741,7 +741,7 @@ def run_multi_style_simulation(
     config = adapter.get_strategy_config()
     styles = config.get("styles") if isinstance(config.get("styles"), dict) else {}
     account = adapter.get_sim_account()
-    capital = _safe_float(account.get("sim_capital") if isinstance(account, dict) else None, 100_000.0)
+    capital = _safe_float(account.get("sim_capital") if isinstance(account, dict) else None, 200_000.0)
     errors: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
     holds: list[dict[str, Any]] = []
