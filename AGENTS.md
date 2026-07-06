@@ -54,7 +54,9 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 
 - A股候选池动态 5 层结构（holdings/watch/candidate/universe/fundamental），每次调度动态重建。
 - 所有 A股入口必须只保留普通 A股代码段；`200xxx.SZ`、`900xxx.SH`、北交所等非本模拟执行链路标的必须在三层被过滤：`Ashare.adapter`、`shared/screening/universe_filter.py`、`shared/screening/candidate_pool.py`。
-- 可执行候选必须有近期日线 close > 0；无日线覆盖的股票在 universe/candidate 阶段排除。
+- 可执行候选必须有近期日线 close > 0 和成交额/流动性证据；无名称、无日线覆盖、无流动性证据的股票在 universe/candidate 阶段排除。
+- A股 simulated 新买入只允许来自 candidate 层；watch 只能观察，holdings 只参与持仓/卖出/换仓评估，候选池为空或 candidate pool 异常时必须 fail-closed 为无交易，不能回退到顺序 universe 或资产表样本。
+- A股 auto pipeline 不得用 `price=1.0` 作为候选或执行信号兜底；缺真实分钟/日线价格时跳过该候选或信号。
 - 组合构建前过滤 `price <= 0`，记录到 `skipped_candidates`。
 - Tushare daily `amount` 按千元口径存储，流动性比较前必须换算为元。
 

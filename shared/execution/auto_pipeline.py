@@ -84,7 +84,16 @@ def _candidate_price(candidate: dict[str, Any], market: str) -> float:
             continue
         if value > 0 and value == value:
             return value
-    return 0.5 if market == "pm" else 1.0
+    return 0.5 if market == "pm" else 0.0 if _normalize_market(market) == "ashare" else 1.0
+
+
+def _symbol_variants(symbol: Any) -> list[str]:
+    raw = str(symbol or "").strip()
+    if not raw:
+        return []
+    if "." in raw:
+        return [raw, raw.split(".", 1)[0]]
+    return [raw]
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -341,6 +350,10 @@ class AutoPipeline:
         }
 
     def load_universe(self, market: str, trade_date: str) -> list[dict[str, Any]]:
+        market = _normalize_market(market)
+        if market == "ashare":
+            return self._load_ashare_universe(trade_date)
+
         raw: Any = []
         method = getattr(self.reader, "get_universe", None)
         if callable(method):
@@ -406,6 +419,98 @@ class AutoPipeline:
                 }
             )
         return [item for item in candidates if item.get("symbol") != "__unsafe_candidates_skipped__"]
+
+    def _load_ashare_universe(self, trade_date: str) -> list[dict[str, Any]]:
+        try:
+            from Ashare.adapter import AshareAdapter
+
+            adapter = AshareAdapter(reader=self.reader)
+            symbols = adapter.get_universe(trade_date)
+        except Exception:
+            symbols = []
+        if not symbols:
+            return []
+
+        assets_by_symbol: dict[str, dict[str, Any]] = {}
+        get_assets = getattr(self.reader, "get_assets", None)
+        if callable(get_assets):
+            for market_name in ("ashare", "Ashare"):
+                try:
+                    rows = get_assets(market_name)
+                except Exception:
+                    rows = []
+                for row in _unwrap_rows(rows):
+                    symbol = _candidate_symbol(row)
+                    for variant in _symbol_variants(symbol):
+                        assets_by_symbol[variant] = row
+                if assets_by_symbol:
+                    break
+
+        candidates: list[dict[str, Any]] = []
+        for symbol in symbols:
+            asset = dict(assets_by_symbol.get(symbol) or assets_by_symbol.get(str(symbol).split(".", 1)[0]) or {})
+            price = self._latest_ashare_price(symbol, trade_date)
+            if price <= 0:
+                continue
+            item = {
+                **asset,
+                "symbol": symbol,
+                "ts_code": symbol,
+                "market": "ashare",
+                "price": price,
+                "latest_price": price,
+                "capital_layer": "simulated",
+                "account_type": "simulated",
+                "real_execution": False,
+                "direct_execution": False,
+                "candidate_source": "ashare_adapter_filtered_universe",
+            }
+            try:
+                reject_real_execution_payload(item, context="AutoPipeline.ashare.candidate")
+            except RuntimeError:
+                continue
+            candidates.append(item)
+            if len(candidates) >= self.max_candidates:
+                break
+        return candidates
+
+    def _latest_ashare_price(self, symbol: str, trade_date: str) -> float:
+        get_intraday = getattr(self.reader, "get_bars_intraday", None)
+        if callable(get_intraday):
+            for market_name in ("ashare", "Ashare"):
+                for variant in _symbol_variants(symbol):
+                    rows: Any = []
+                    for interval in ("5min", "5m"):
+                        try:
+                            rows = get_intraday(market_name, variant, interval, trade_date, trade_date)
+                        except TypeError:
+                            continue
+                        except Exception:
+                            rows = []
+                        if rows:
+                            break
+                    for row in reversed(rows or []):
+                        if not isinstance(row, dict):
+                            continue
+                        price = _safe_float(row.get("close", row.get("last_price", row.get("price"))), 0.0)
+                        if price > 0:
+                            return price
+
+        get_daily = getattr(self.reader, "get_bars_daily", None)
+        if callable(get_daily):
+            for market_name in ("ashare", "Ashare"):
+                for variant in _symbol_variants(symbol):
+                    try:
+                        rows = get_daily(market_name, variant, "", trade_date)
+                    except Exception:
+                        rows = []
+                    for row in reversed(rows or []):
+                        if not isinstance(row, dict):
+                            continue
+                        price = _safe_float(row.get("close"), 0.0)
+                        if price > 0:
+                            return price
+        return 0.0
 
     def run_research(
         self,
@@ -701,12 +806,25 @@ class AutoPipeline:
         for position in portfolio.get("positions", []) or []:
             symbol = str(position.get("ts_code") or position.get("symbol") or "")
             decision = by_symbol.get(symbol, {})
+            snapshot = self._market_snapshot(market, symbol, trade_date)
+            snapshot_price = _safe_float(
+                _first_present(snapshot, "last_price", "close", "price"),
+                0.0,
+            )
+            price = (
+                _safe_float(position.get("price"), 0.0)
+                or _safe_float(decision.get("price"), 0.0)
+                or snapshot_price
+                or _candidate_price(decision, market)
+            )
+            if _normalize_market(market) == "ashare" and price <= 0:
+                continue
             signal = {
                 "market": market,
                 "symbol": symbol,
                 "ts_code": symbol,
                 "side": position.get("side", "buy"),
-                "price": position.get("price") or decision.get("price") or _candidate_price(decision, market),
+                "price": price,
                 "belief_score": position.get("belief_score", decision.get("belief_score", 0.5)),
                 "conviction": position.get("conviction", decision.get("conviction", 0.5)),
                 "strategy_name": "auto_pipeline",
@@ -716,7 +834,6 @@ class AutoPipeline:
                 "real_execution": False,
                 "direct_execution": False,
             }
-            snapshot = self._market_snapshot(market, symbol, trade_date)
             if snapshot:
                 signal["market_snapshot"] = snapshot
                 for key in (

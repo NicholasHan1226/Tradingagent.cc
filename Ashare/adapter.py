@@ -307,6 +307,8 @@ class AshareAdapter(MarketAdapter):
 
     def _exclude_asset(self, asset: dict[str, Any], coverage_status: str | None, date: str) -> bool:
         cfg = self.universe_filter
+        if not str(asset.get("name") or "").strip():
+            return True
         if cfg.get("exclude_st", True) and _is_st(asset):
             return True
         if cfg.get("exclude_delisted", True) and _is_delisted(asset):
@@ -330,13 +332,14 @@ class AshareAdapter(MarketAdapter):
         if not has_close:
             return True
         if amount is None:
-            # DB error / missing data: keep asset to avoid universe collapse.
-            # Only exclude when we have explicit evidence of low liquidity.
+            # A-share execution candidates need explicit liquidity evidence.
+            # Keeping unknown-liquidity assets lets the pipeline fall back to
+            # ordered asset-table samples, which is not a tradable signal.
             logger.warning(
-                "_exclude_asset: no liquidity data for %s on %s — keeping in universe",
+                "_exclude_asset: no liquidity data for %s on %s — excluding from executable universe",
                 asset.get("symbol"), date,
             )
-            return False
+            return True
         if amount < min_amount:
             return True
         return False

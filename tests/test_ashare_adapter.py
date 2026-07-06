@@ -92,6 +92,20 @@ class FakeAshareReader:
                 "list_date": "19991110",
                 "status": "active",
             },
+            {
+                "symbol": "600004",
+                "name": "No Liquidity Evidence Unit",
+                "exchange": "SSE",
+                "list_date": "19991110",
+                "status": "active",
+            },
+            {
+                "symbol": "600005",
+                "name": "",
+                "exchange": "SSE",
+                "list_date": "19991110",
+                "status": "active",
+            },
         ]
         self.coverage = {
             "600519": "normal",
@@ -105,6 +119,8 @@ class FakeAshareReader:
             "600001": "normal",
             "600002": "normal",
             "600003": "normal",
+            "600004": "normal",
+            "600005": "normal",
         }
         # Tushare daily amount is stored in thousand CNY in the read model.
         self.amounts = {
@@ -118,6 +134,8 @@ class FakeAshareReader:
             "600000": 80_000,
             "600001": 10_000,
             "600002": 60_000,
+            "600004": "missing_amount",
+            "600005": 90_000,
         }
 
     def get_assets(self, market: str) -> list[dict[str, object]]:
@@ -132,6 +150,8 @@ class FakeAshareReader:
     def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, object]]:
         self.daily_calls.append((market, symbol, start, end))
         amount = self.amounts.get(symbol)
+        if amount == "missing_amount":
+            return [{"trade_date": "20260630", "close": 10.0}]
         if amount is None:
             return []
         return [{"trade_date": "20260630", "close": 10.0, "amount": amount}]

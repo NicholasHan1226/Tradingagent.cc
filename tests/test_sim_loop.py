@@ -540,6 +540,109 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["filled_count"], 0)
         self.assertEqual(self.executed_orders, [])
 
+    def test_run_sim_loop_ashare_does_not_trade_watch_layer(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def build_pool(
+            date: str,
+            universe: list[str],
+            market: str | None = None,
+            reader: object | None = None,
+        ) -> dict[str, list[str]]:
+            return {"candidate": [], "watch": list(universe), "holdings": [], "universe": list(universe)}
+
+        deps.build_pool = build_pool
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.92, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["000001.SZ", "000002.SZ"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=2),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_watch_only",
+        )
+
+        self.assertEqual(result["candidate_count"], 0)
+        self.assertEqual(result["order_count"], 0)
+        self.assertEqual(result["filled_count"], 0)
+        self.assertEqual(result["no_trade_explanation"]["category"], "no_candidates")
+        self.assertEqual(self.executed_orders, [])
+
+    def test_run_sim_loop_ashare_does_not_fallback_to_universe_when_pool_empty(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def build_pool(
+            date: str,
+            universe: list[str],
+            market: str | None = None,
+            reader: object | None = None,
+        ) -> dict[str, list[str]]:
+            return {"candidate": [], "watch": [], "holdings": [], "universe": list(universe)}
+
+        deps.build_pool = build_pool
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.95, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["000001.SZ", "000002.SZ"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=2),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_empty_pool",
+        )
+
+        self.assertEqual(result["candidate_count"], 0)
+        self.assertEqual(result["filled_count"], 0)
+        self.assertEqual(self.executed_orders, [])
+
+    def test_run_sim_loop_ashare_fails_closed_when_candidate_pool_errors(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def build_pool(
+            date: str,
+            universe: list[str],
+            market: str | None = None,
+            reader: object | None = None,
+        ) -> dict[str, list[str]]:
+            raise RuntimeError("candidate pool unavailable")
+
+        deps.build_pool = build_pool
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.95, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["000001.SZ", "000002.SZ"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=2),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_pool_error",
+        )
+
+        self.assertEqual(result["candidate_count"], 0)
+        self.assertEqual(result["filled_count"], 0)
+        self.assertEqual(result["no_trade_explanation"]["category"], "no_candidates")
+        self.assertTrue(any(error.get("stage") == "screening.candidate_pool" for error in result["errors"]))
+        self.assertEqual(self.executed_orders, [])
+
     def test_run_sim_loop_uses_account_snapshot_cash_for_ashare_capital_plan(self) -> None:
         deps = self._multi_candidate_deps()
 

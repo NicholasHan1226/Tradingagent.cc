@@ -654,13 +654,21 @@ def _load_shadow_trades_for_date(date: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _candidate_symbols(pool: dict[str, Any], fallback_universe: list[str]) -> list[str]:
+def _candidate_symbols(
+    pool: dict[str, Any],
+    fallback_universe: list[str],
+    *,
+    market: str = "",
+    capital_layer: str = "shadow",
+) -> list[str]:
     symbols: list[str] = []
-    for layer in ("holdings", "watch", "candidate"):
+    is_ashare_sim = str(market or "").strip().lower() == "ashare" and str(capital_layer or "").strip().lower() == "simulated"
+    layers = ("candidate",) if is_ashare_sim else ("holdings", "watch", "candidate")
+    for layer in layers:
         values = pool.get(layer, []) if isinstance(pool, dict) else []
         if isinstance(values, list):
             symbols.extend(str(item) for item in values if item)
-    if not symbols:
+    if not symbols and not is_ashare_sim:
         symbols = [str(item) for item in fallback_universe if item]
     seen: set[str] = set()
     ordered: list[str] = []
@@ -680,6 +688,12 @@ def _rank_symbols_by_score(symbols: list[str], scores_by_symbol: dict[str, dict[
         return (_safe_float(score.get("combined", score.get("score")), 0.0), -index)
 
     return [symbol for _, symbol in sorted(indexed, key=score_key, reverse=True)]
+
+
+def _candidate_pool_default(market: str, capital_layer: str, symbols: list[str]) -> dict[str, list[str]]:
+    if str(market or "").strip().lower() == "ashare" and str(capital_layer or "").strip().lower() == "simulated":
+        return {"candidate": [], "watch": [], "holdings": [], "universe": list(symbols)}
+    return {"candidate": list(symbols), "watch": [], "holdings": [], "universe": list(symbols)}
 
 
 def _max_new_positions(
@@ -1721,11 +1735,11 @@ def run_shadow_loop(
         "screening.candidate_pool",
         errors,
         lambda: _build_pool_for_market(deps, market, date, list(scores_by_symbol), reader),
-        default={"candidate": list(scores_by_symbol), "watch": [], "holdings": [], "universe": list(scores_by_symbol)},
+        default=_candidate_pool_default(market, "shadow", list(scores_by_symbol)),
     )
     stage_calls.append("screening.candidate_pool")
     if not isinstance(pool, dict):
-        pool = {"candidate": list(scores_by_symbol), "watch": [], "holdings": [], "universe": list(scores_by_symbol)}
+        pool = _candidate_pool_default(market, "shadow", list(scores_by_symbol))
     condition_lifecycle = _safe_stage(
         "screening.condition_lifecycle",
         errors,
@@ -1734,7 +1748,10 @@ def run_shadow_loop(
     )
     stage_calls.append("screening.condition_lifecycle")
 
-    candidates = _rank_symbols_by_score(_candidate_symbols(pool, list(scores_by_symbol)), scores_by_symbol)[:max_candidates]
+    candidates = _rank_symbols_by_score(
+        _candidate_symbols(pool, list(scores_by_symbol), market=market, capital_layer="shadow"),
+        scores_by_symbol,
+    )[:max_candidates]
     orders_for_portfolio: list[dict[str, Any]] = []
     skipped_candidates: list[dict[str, Any]] = []
     signal_audit_by_symbol = {audit["ts_code"]: audit for audit in audits if audit.get("stage") == "signal"}
@@ -2007,12 +2024,12 @@ def run_sim_loop(
         "screening.candidate_pool",
         errors,
         lambda: _build_pool_for_market(deps, market, date, list(scores_by_symbol), reader),
-        default={"candidate": list(scores_by_symbol), "watch": [], "holdings": [], "universe": list(scores_by_symbol)},
+        default=_candidate_pool_default(market, capital_layer, list(scores_by_symbol)),
         capital_layer=capital_layer,
     )
     stage_calls.append("screening.candidate_pool")
     if not isinstance(pool, dict):
-        pool = {"candidate": list(scores_by_symbol), "watch": [], "holdings": [], "universe": list(scores_by_symbol)}
+        pool = _candidate_pool_default(market, capital_layer, list(scores_by_symbol))
     condition_lifecycle = _safe_stage(
         "screening.condition_lifecycle",
         errors,
@@ -2022,7 +2039,10 @@ def run_sim_loop(
     )
     stage_calls.append("screening.condition_lifecycle")
 
-    candidates = _rank_symbols_by_score(_candidate_symbols(pool, list(scores_by_symbol)), scores_by_symbol)[:max_candidates]
+    candidates = _rank_symbols_by_score(
+        _candidate_symbols(pool, list(scores_by_symbol), market=market, capital_layer=capital_layer),
+        scores_by_symbol,
+    )[:max_candidates]
     orders_for_portfolio: list[dict[str, Any]] = []
     skipped_candidates: list[dict[str, Any]] = []
     risk_rejections: list[dict[str, Any]] = []
