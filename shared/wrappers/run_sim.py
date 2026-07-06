@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -54,21 +54,6 @@ def _run_audit_scope() -> dict[str, Any]:
         payload["sample_type"] = sample_type
     return payload
 
-
-if market == "hk" and not _env_enabled("TRADINGAGENT_HK_SIM_ENABLED"):
-    print(
-        json.dumps(
-            {
-                "market": market,
-                "status": "disabled",
-                "signals": 0,
-                "reason": "hk_sim_paused",
-                "enable_with": "TRADINGAGENT_HK_SIM_ENABLED=1",
-            },
-            ensure_ascii=False,
-        )
-    )
-    sys.exit(0)
 
 configs = {
     "crypto": {
@@ -178,6 +163,20 @@ def _latest(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return sorted(priced, key=_row_time)[-1]
 
 
+def _explicit_trade_side(row: dict[str, Any]) -> str:
+    for key in ("side", "action", "direction", "signal", "decision", "recommendation"):
+        raw = str(row.get(key) or "").strip().lower()
+        if raw in {"buy", "long", "open_long", "increase"}:
+            return "buy"
+        if raw in {"sell", "short", "open_short", "reduce", "close"}:
+            return "sell"
+    return ""
+
+
+def _price_only_signals_enabled() -> bool:
+    return _env_enabled("TRADINGAGENT_SIM_ALLOW_PRICE_ONLY_SIGNALS")
+
+
 def _lookback_window(days: int = 10) -> tuple[str, str]:
     end = datetime.now(timezone.utc).date()
     start = end - timedelta(days=days)
@@ -239,18 +238,23 @@ def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) ->
         price = _price(row)
         if not symbol or price <= 0:
             continue
+        side = _explicit_trade_side(row)
+        price_only = not side
+        if price_only and not _price_only_signals_enabled():
+            continue
         signals.append(
             {
                 "symbol": symbol,
                 "price": price,
                 "trade_date": _row_time(row),
-                "side": "buy",
+                "side": side or "buy",
                 "quantity": 1,
                 "market": name,
                 "capital_layer": "simulated",
                 "account_type": "simulated",
                 "real_execution": False,
                 "data_source": str(row.get("data_source") or "SharedSignals reader/API"),
+                **({"exclude_from_dashboard": True, "sample_type": "price_only_smoke"} if price_only else {}),
             }
         )
         if len(signals) >= limit:
@@ -258,50 +262,72 @@ def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) ->
     return signals
 
 
-reader = TradingagentDataReader()
-signals = _load_signals(reader, market)
+def main() -> int:
+    if market == "hk" and not _env_enabled("TRADINGAGENT_HK_SIM_ENABLED"):
+        print(
+            json.dumps(
+                {
+                    "market": market,
+                    "status": "disabled",
+                    "signals": 0,
+                    "reason": "hk_sim_paused",
+                    "enable_with": "TRADINGAGENT_HK_SIM_ENABLED=1",
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
 
-if not signals:
+    reader = TradingagentDataReader()
+    signals = _load_signals(reader, market)
+
+    if not signals:
+        print(
+            json.dumps(
+                {
+                    "market": market,
+                    "status": "no_trade_signals",
+                    "signals": 0,
+                    "data_source": "SharedSignals reader/API",
+                    "reader_degraded": bool(reader.degraded or reader.stale),
+                    "reader_errors": reader.errors[-5:],
+                    "reason": "no explicit buy/sell signal; price rows are data only",
+                    "price_only_smoke_enable_with": "TRADINGAGENT_SIM_ALLOW_PRICE_ONLY_SIGNALS=1",
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    cfg = configs.get(market, configs["crypto"])
+    sim_mod = __import__(cfg["sim_mod"], fromlist=[cfg["sim_cls"]])
+    cfg_mod = __import__(cfg["cfg_mod"], fromlist=[cfg["cfg_cls"]])
+    config = getattr(cfg_mod, cfg["cfg_cls"])()
+    simulator = getattr(sim_mod, cfg["sim_cls"])(config=config)
+
+    audit_scope = _run_audit_scope()
+    runner = StyleRunner(market, simulator)
+    runner.run(signals, date=str(date.today()), account=audit_scope)
+
     print(
         json.dumps(
             {
                 "market": market,
-                "status": "no_data",
-                "signals": 0,
+                "status": "ok",
+                "signals": len(signals),
+                "data_rows": len(signals),
+                "timestamp": str(date.today()),
                 "data_source": "SharedSignals reader/API",
+                **audit_scope,
                 "reader_degraded": bool(reader.degraded or reader.stale),
                 "reader_errors": reader.errors[-5:],
             },
             ensure_ascii=False,
+            default=str,
         )
     )
-    sys.exit(0)
+    return 0
 
-sim_mod = __import__(cfg["sim_mod"], fromlist=[cfg["sim_cls"]])
-cfg_mod = __import__(cfg["cfg_mod"], fromlist=[cfg["cfg_cls"]])
-config = getattr(cfg_mod, cfg["cfg_cls"])()
-simulator = getattr(sim_mod, cfg["sim_cls"])(config=config)
 
-from datetime import date
-
-audit_scope = _run_audit_scope()
-runner = StyleRunner(market, simulator)
-result = runner.run(signals, date=str(date.today()), account=audit_scope)
-
-print(
-    json.dumps(
-        {
-            "market": market,
-            "status": "ok",
-            "signals": len(signals),
-            "data_rows": len(signals),
-            "timestamp": str(date.today()),
-            "data_source": "SharedSignals reader/API",
-            **audit_scope,
-            "reader_degraded": bool(reader.degraded or reader.stale),
-            "reader_errors": reader.errors[-5:],
-        },
-        ensure_ascii=False,
-        default=str,
-    )
-)
+if __name__ == "__main__":
+    raise SystemExit(main())
