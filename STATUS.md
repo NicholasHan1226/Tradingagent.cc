@@ -4,14 +4,14 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-06 (A-share candidate concentration and CNFutures dashboard snapshot repair)
+> 最后更新：2026-07-06 (A-share dynamic capital plan)
 
 ---
 
 ## 一、当前状态
 
 - **A 股多风格模拟盘**：完整闭环运行（信号生成 → server-local paper fill → sim 账簿 → 复盘）；旧层已完全退役（0 文件、0 cron）；A股资产入口已通过 SharedSignals `/tushare?api_name=stock_basic` 恢复
-- **A 股模拟盘**：默认走服务器本地闭环，不依赖 Mac Mini Hermes；Hermes/同花顺 GUI 路径已降级为第二选择，只在 `ASHARE_SIM_HERMES_ENABLED=1` 时启用并投递 `signals/pending`；A股 simulated signal card 显式固定 `real_trading_enabled=false`；2026-07-05 已修复 A股 sim account 字符串阻断 server-local fill 的问题，隔离真实数据 smoke 验证 9/9 本地成交、local_sim 账本与 `signals/positions/simulated_ashare_positions.json` 持仓快照均可生成；A股 simulated capital 已显式固定为 200,000 元，`job_ashare_sim_exec` 会在开盘前/盘中首轮保证空账本快照存在，尚无成交时输出 `bootstrap_state=no_trades_yet`、现金与空持仓，避免 dashboard/验收等待第一笔成交
+- **A 股模拟盘**：默认走服务器本地闭环，不依赖 Mac Mini Hermes；Hermes/同花顺 GUI 路径已降级为第二选择，只在 `ASHARE_SIM_HERMES_ENABLED=1` 时启用并投递 `signals/pending`；A股 simulated signal card 显式固定 `real_trading_enabled=false`；2026-07-05 已修复 A股 sim account 字符串阻断 server-local fill 的问题，隔离真实数据 smoke 验证 9/9 本地成交、local_sim 账本与 `signals/positions/simulated_ashare_positions.json` 持仓快照均可生成；A股 simulated capital 已显式固定为 200,000 元，`job_ashare_sim_exec` 会在开盘前/盘中首轮保证空账本快照存在，尚无成交时输出 `bootstrap_state=no_trades_yet`、现金与空持仓，避免 dashboard/验收等待第一笔成交；A股资金计划已从固定集中升级为动态闸门：按候选质量、风控拒绝率、数据异常率和近期表现决定 0/1/2/3 只，强信号集中，弱信号留现金/逆回购，并把 `capital_plan` 写入模拟主循环结果和 portfolio
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 仍保留为 GUI 执行桥，只执行和回写，不做买卖判断；当前 A 股服务器本地模拟闭环不要求 mini 在线；A股健康检查已把 Hermes 降为 `mini_hermes_optional`，默认未启用时不影响主链路健康结论
 - **PM（预测市场）**：多风格 simulated 扫描每 10 分钟运行；checked-in config 使用 USDC；PM sim/style 输出写入 `shared/review/pm/style_comparison.json`
 - **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；Crypto/PM/US 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环；HK 工具与 styles 仅保留为预留能力，默认 fail-closed，不纳入 production sim / health / evolution；基础 `styles/*.json` 已恢复为只读配置，运行态权重/状态写入 `shared/review/<market>/style_weights.json`，自动生成风格写入 `shared/review/<market>/generated_styles/`；新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline；当前生产模拟盘范围为 A股/Crypto/PM/US/CNFutures，HK 暂不接入生产调度
@@ -45,7 +45,7 @@
 ## 二、已知问题
 
 - HK 按 Nicholas 最新决策暂不接入生产模拟盘；`hk_basic` 正常但 `hk_daily` 当前不作为生产模拟输入。HK 代码、wrapper 和数据诊断保留，默认不跑 cron、不纳入多市场健康/evolution 结论；手动运行也需要显式 `TRADINGAGENT_HK_SIM_ENABLED=1`，HSI 代理回退需要额外 `SIM_HK_PROXY_ENABLED=1`。
-- A股 2026-07-06 真实交易时段恢复验收已通过：SharedSignals 当日 5 分钟线已落入 read model；TradingAgent 修复了 `5m/5min`、日期格式、A股日线回看、盘中价格取值、买入整手和健康检查误报后，服务器本地模拟盘已产生 server-local filled、签名回执、持仓快照和成交回执邮件；后续已修正候选质量缺陷：先对 20 个候选打分，再按 combined score 选前 3 个进入 A股模拟组合，`max_portfolio_positions=3` 对齐 200,000 元集中 2-3 只的资金目标；同轮被价格、风控或执行跳过的候选会写 `shared/review/ashare/execution_exclusions_YYYYMMDD.jsonl` 并进入日报 `execution_quality`。
+- A股 2026-07-06 真实交易时段恢复验收已通过：SharedSignals 当日 5 分钟线已落入 read model；TradingAgent 修复了 `5m/5min`、日期格式、A股日线回看、盘中价格取值、买入整手和健康检查误报后，服务器本地模拟盘已产生 server-local filled、签名回执、持仓快照和成交回执邮件；后续已修正候选质量缺陷：先对 20 个候选打分，再按 combined score 排序进入 A股动态资金计划，`max_portfolio_positions=3` 作为上限而非硬买目标；同轮被价格、风控或执行跳过的候选会写 `shared/review/ashare/execution_exclusions_YYYYMMDD.jsonl` 并进入日报 `execution_quality`。
 - A股本地模拟回执链路已具备签名回执文件；生产环境仍需等待下一次真实交易时段产生真实生产样本，用于验证真实 cron 样本写入和收益复盘质量。健康检查已能区分“无首笔成交样本”和“有失败/有成交但缺回执”，后者才会告警。
 - Hermes/Mini GUI 路径已按 Nicholas 最新要求搁置为第二选择；只有未来显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时才需要重新验证 mini health、同花顺按钮识别、截图回执和账户同步。
 - 多市场旧系统 symlink 依赖已全部清除（61 个死 symlink）；工具独立实现已完成，剩余风险在 A股下一个交易日生产样本与晋降级/guard 的持续运行验证

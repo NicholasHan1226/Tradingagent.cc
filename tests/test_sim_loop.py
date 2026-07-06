@@ -472,6 +472,32 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["filled_count"], 3)
         self.assertEqual([order["ts_code"] for order in self.executed_orders], ["AAA", "BBB", "CCC"])
 
+    def test_run_sim_loop_uses_dynamic_capital_plan_to_block_weak_ashare_candidates(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            scores = {"AAA": 0.52, "BBB": 0.50, "CCC": 0.48}
+            return [
+                (symbol, {"combined": scores[symbol], "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["AAA", "BBB", "CCC"], max_candidates=3, score_universe_limit=3, max_portfolio_positions=3),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_dynamic_capital",
+        )
+
+        self.assertEqual(result["capital_plan"]["risk_mode"], "defensive")
+        self.assertEqual(result["capital_plan"]["target_positions"], 0)
+        self.assertEqual(result["order_count"], 0)
+        self.assertEqual(result["filled_count"], 0)
+        self.assertEqual(self.executed_orders, [])
+
     def test_run_sim_loop_persists_exclusions_even_when_some_orders_fill(self) -> None:
         class SelectiveReader:
             def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, float]]:

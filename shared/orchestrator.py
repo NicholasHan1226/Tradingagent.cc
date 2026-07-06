@@ -684,6 +684,113 @@ def _max_new_positions(
     return max(0, max_portfolio_positions - len(existing_codes))
 
 
+def _position_value(position: dict[str, Any], capital: float) -> float:
+    for key in ("value", "market_value", "amount"):
+        value = _safe_float(position.get(key), 0.0)
+        if value > 0:
+            return value
+    weight = _safe_float(position.get("weight"), 0.0)
+    if 0 < weight <= 1:
+        return weight * capital
+    return 0.0
+
+
+def _ashare_dynamic_capital_plan(
+    *,
+    market: str,
+    capital: float,
+    existing_positions: list[dict[str, Any]],
+    orders: list[dict[str, Any]],
+    scores_by_symbol: dict[str, dict[str, Any]],
+    skipped_candidates: list[dict[str, Any]],
+    risk_rejections: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if str(market).lower() != "ashare":
+        return {"enabled": False, "market": market}
+    try:
+        from Ashare.capital_plan import plan_capital
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "market": market,
+            "status": "degraded",
+            "error": str(exc),
+        }
+
+    holdings = []
+    for position in existing_positions:
+        if not isinstance(position, dict):
+            continue
+        holding = dict(position)
+        holding["value"] = _position_value(position, capital)
+        holdings.append(holding)
+
+    available_cash = max(0.0, capital - sum(_position_value(position, capital) for position in existing_positions if isinstance(position, dict)))
+    total_checked = max(1, len(orders) + len(skipped_candidates) + len(risk_rejections))
+    candidates: list[dict[str, Any]] = []
+    for order in orders:
+        symbol = str(order.get("ts_code") or "")
+        score = dict(scores_by_symbol.get(symbol, {}))
+        score["ts_code"] = symbol
+        score["weight"] = _safe_float(order.get("weight"), 0.0)
+        score["belief_score"] = _safe_float(order.get("belief_score"), score.get("belief_score", 0.0))
+        candidates.append(score)
+
+    plan = plan_capital(
+        holdings,
+        available_cash,
+        candidates=candidates,
+        dynamic=True,
+        total_capital=capital,
+        market_context={
+            "risk_rejection_rate": len(risk_rejections) / total_checked,
+            "data_issue_rate": len(skipped_candidates) / total_checked,
+        },
+    ).to_dict()
+    plan["enabled"] = True
+    plan["market"] = market
+    return plan
+
+
+def _apply_position_budgets(
+    *,
+    market: str,
+    portfolio: dict[str, Any],
+    order_meta: dict[str, dict[str, Any]],
+    capital_plan: dict[str, Any],
+    capital: float,
+) -> None:
+    if str(market).lower() != "ashare" or not capital_plan.get("enabled"):
+        return
+    budgets = capital_plan.get("position_budget_by_symbol")
+    if not isinstance(budgets, dict) or not budgets:
+        return
+    for position in portfolio.get("positions", []) or []:
+        if not isinstance(position, dict):
+            continue
+        symbol = str(position.get("ts_code") or "")
+        budget = _safe_float(budgets.get(symbol), 0.0)
+        if budget <= 0:
+            continue
+        meta = order_meta.get(symbol, {})
+        price = _safe_float(position.get("price"), _safe_float(meta.get("price"), 0.0))
+        if price <= 0:
+            continue
+        shares = int(budget // price)
+        shares = (shares // 100) * 100
+        if shares <= 0:
+            position["shares"] = 0
+            position["amount"] = 0.0
+            position["weight"] = 0.0
+            position["target_amount"] = round(budget, 2)
+            continue
+        amount = shares * price
+        position["shares"] = shares
+        position["amount"] = round(amount, 2)
+        position["weight"] = round(amount / max(capital, 1.0), 6)
+        position["target_amount"] = round(budget, 2)
+
+
 def _exclusion_rows(
     rows: list[dict[str, Any]],
     *,
@@ -1666,7 +1773,21 @@ def run_sim_loop(
             _safe_float(row.get("belief_score"), 0.0),
         ),
         reverse=True,
-    )[: _max_new_positions(existing_positions, max_portfolio_positions)]
+    )
+    capital_plan = _ashare_dynamic_capital_plan(
+        market=market,
+        capital=capital,
+        existing_positions=existing_positions,
+        orders=orders_for_portfolio,
+        scores_by_symbol=scores_by_symbol,
+        skipped_candidates=skipped_candidates,
+        risk_rejections=risk_rejections,
+    )
+    stage_calls.append("portfolio.capital_plan")
+    position_capacity = _max_new_positions(existing_positions, max_portfolio_positions)
+    if capital_plan.get("enabled"):
+        position_capacity = min(position_capacity, _safe_int(capital_plan.get("max_new_positions"), 0))
+    orders_for_portfolio = orders_for_portfolio[:position_capacity]
 
     portfolio = _safe_stage(
         "portfolio.constructor",
@@ -1681,8 +1802,16 @@ def run_sim_loop(
     portfolio["capital_layer"] = capital_layer
     portfolio["account_type"] = account_type
     portfolio["existing_positions"] = existing_positions
+    portfolio["capital_plan"] = capital_plan
 
     order_meta = {order["ts_code"]: order for order in orders_for_portfolio}
+    _apply_position_budgets(
+        market=market,
+        portfolio=portfolio,
+        order_meta=order_meta,
+        capital_plan=capital_plan,
+        capital=capital,
+    )
     for position in portfolio.get("positions", []) or []:
         if not isinstance(position, dict) or not position.get("ts_code"):
             continue
@@ -1898,6 +2027,7 @@ def run_sim_loop(
         "pending_count": pending_count,
         "duplicate_count": duplicate_count,
         "no_trade_explanation": no_trade_explanation,
+        "capital_plan": capital_plan,
         "portfolio": portfolio,
         "records": records,
         "audit_events": audits,

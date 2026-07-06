@@ -17,7 +17,7 @@ suggest_reverse_repo(idle_cash)
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Any, Sequence
 
 # ---------------------------------------------------------------------------
 # Account constants (200 000 RMB simulated account)
@@ -38,25 +38,137 @@ class CapitalPlan:
     available_cash: float
     deployed_capital: float
     cash_reserve: float
+    target_positions: int = TARGET_POSITIONS[1]
+    max_new_positions: int = 0
+    cash_reserve_pct: float = 0.0
+    max_single_position_pct: float = 0.0
+    risk_mode: str = "static"
     suggested_buys: list[dict] = field(default_factory=list)
+    position_budget_by_symbol: dict[str, float] = field(default_factory=dict)
     reverse_repo: dict | None = None
     notes: list[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "available_cash": self.available_cash,
             "deployed_capital": self.deployed_capital,
             "cash_reserve": self.cash_reserve,
+            "target_positions": self.target_positions,
+            "max_new_positions": self.max_new_positions,
+            "cash_reserve_pct": self.cash_reserve_pct,
+            "max_single_position_pct": self.max_single_position_pct,
+            "risk_mode": self.risk_mode,
             "suggested_buys": self.suggested_buys,
+            "position_budget_by_symbol": self.position_budget_by_symbol,
             "reverse_repo": self.reverse_repo,
             "notes": self.notes,
+            "reasons": self.reasons,
         }
+
+
+def _candidate_score(candidate: dict[str, Any]) -> float:
+    for key in ("combined", "score", "total", "belief_score", "confidence", "weight"):
+        try:
+            value = float(candidate.get(key, 0.0))
+        except (TypeError, ValueError):
+            continue
+        if value == value:
+            return value
+    return 0.0
+
+
+def _context_float(context: dict[str, Any], key: str, default: float = 0.0) -> float:
+    try:
+        value = float(context.get(key, default))
+        return value if value == value else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] | None) -> dict[str, Any]:
+    context = market_context or {}
+    scores = sorted((_candidate_score(cand) for cand in candidates if isinstance(cand, dict)), reverse=True)
+    top = scores[0] if scores else 0.0
+    avg_top3 = sum(scores[:3]) / max(1, min(3, len(scores)))
+    second = scores[1] if len(scores) > 1 else 0.0
+    risk_rejection_rate = _context_float(context, "risk_rejection_rate")
+    data_issue_rate = _context_float(context, "data_issue_rate")
+    recent_win_rate = _context_float(context, "recent_win_rate", 0.5)
+    trend = str(context.get("trend") or context.get("market_trend") or "").strip().lower()
+    reasons: list[str] = []
+
+    defensive = (
+        not scores
+        or top < 0.55
+        or risk_rejection_rate >= 0.60
+        or data_issue_rate >= 0.75
+        or bool(context.get("force_defensive"))
+    )
+    if defensive:
+        if not scores:
+            reasons.append("no_candidates")
+        if top < 0.55:
+            reasons.append("weak_candidate_quality")
+        if risk_rejection_rate >= 0.60:
+            reasons.append("high_risk_rejection_rate")
+        if data_issue_rate >= 0.75:
+            reasons.append("high_data_issue_rate")
+        if context.get("force_defensive"):
+            reasons.append("forced_defensive")
+        return {
+            "risk_mode": "defensive",
+            "target_positions": 0,
+            "cash_reserve_pct": 1.0,
+            "max_single_position_pct": 0.0,
+            "reasons": reasons,
+        }
+
+    if top >= 0.75 and avg_top3 >= 0.65 and risk_rejection_rate <= 0.25 and trend not in {"bearish", "risk_off"}:
+        risk_mode = "aggressive"
+        target_positions = 3
+        cash_reserve_pct = 0.20
+        max_single_position_pct = 0.35
+        reasons.append("strong_candidate_cluster")
+    elif top >= 0.65:
+        risk_mode = "balanced"
+        target_positions = 2
+        cash_reserve_pct = 0.30
+        max_single_position_pct = 0.30
+        reasons.append("qualified_candidate_quality")
+    else:
+        risk_mode = "cautious"
+        target_positions = 1
+        cash_reserve_pct = 0.45
+        max_single_position_pct = 0.25
+        reasons.append("thin_candidate_quality")
+
+    if top - second >= 0.18 and target_positions > 2:
+        target_positions = 2
+        reasons.append("single_name_score_concentration")
+    if recent_win_rate < 0.45:
+        target_positions = min(target_positions, 1)
+        cash_reserve_pct = max(cash_reserve_pct, 0.50)
+        risk_mode = "cautious"
+        reasons.append("recent_win_rate_below_threshold")
+
+    return {
+        "risk_mode": risk_mode,
+        "target_positions": target_positions,
+        "cash_reserve_pct": cash_reserve_pct,
+        "max_single_position_pct": max_single_position_pct,
+        "reasons": reasons,
+    }
 
 
 def plan_capital(
     holdings: Sequence[dict],
     available_cash: float,
     candidates: Sequence[dict] | None = None,
+    *,
+    dynamic: bool = False,
+    market_context: dict[str, Any] | None = None,
+    total_capital: float = TOTAL_CAPITAL,
 ) -> CapitalPlan:
     """Generate a daily capital plan.
 
@@ -79,15 +191,34 @@ def plan_capital(
     deployed = sum(h.get("value", 0.0) for h in holdings)
     n_holdings = len(holdings)
     notes: list[str] = []
+    reasons: list[str] = []
 
     # --- decide how many new positions we can / should open -------------
-    max_new = TARGET_POSITIONS[1] - n_holdings  # cap at 3 total
+    target_positions = TARGET_POSITIONS[1]
+    cash_reserve_pct = MIN_CASH_RESERVE / max(float(total_capital), 1.0)
+    max_single_position_pct = MAX_POSITION_VALUE / max(float(total_capital), 1.0)
+    risk_mode = "static"
+    if dynamic:
+        profile = _dynamic_profile(candidates or [], market_context)
+        target_positions = int(profile["target_positions"])
+        cash_reserve_pct = float(profile["cash_reserve_pct"])
+        max_single_position_pct = float(profile["max_single_position_pct"])
+        risk_mode = str(profile["risk_mode"])
+        reasons = list(profile.get("reasons", []))
+
+    max_new = target_positions - n_holdings
     if max_new < 0:
         max_new = 0
-    min_new = max(0, TARGET_POSITIONS[0] - n_holdings)
 
     # cash needed for reserve
-    cash_reserve = max(MIN_CASH_RESERVE, min(available_cash, MAX_CASH_RESERVE))
+    if dynamic:
+        cash_reserve = min(float(available_cash), max(0.0, float(total_capital) * cash_reserve_pct))
+        if target_positions > 0:
+            cash_reserve = max(min(float(available_cash), MIN_CASH_RESERVE), cash_reserve)
+        else:
+            cash_reserve = float(available_cash)
+    else:
+        cash_reserve = max(MIN_CASH_RESERVE, min(available_cash, MAX_CASH_RESERVE))
     investable = available_cash - cash_reserve
 
     if investable < MIN_POSITION_VALUE:
@@ -99,12 +230,13 @@ def plan_capital(
 
     # --- allocate to candidates -----------------------------------------
     suggested_buys: list[dict] = []
+    position_budget_by_symbol: dict[str, float] = {}
     if candidates and max_new > 0 and investable >= MIN_POSITION_VALUE:
         remaining = investable
         slots = min(max_new, len(candidates))
-
-        # equal-weight by default, or use candidate weight if provided
-        total_weight = sum(c.get("weight", 1.0) for c in candidates[:slots]) or 1.0
+        max_single_value = MAX_POSITION_VALUE
+        if dynamic and max_single_position_pct > 0:
+            max_single_value = min(MAX_POSITION_VALUE, float(total_capital) * max_single_position_pct)
 
         for i, cand in enumerate(candidates[:slots]):
             if remaining < MIN_POSITION_VALUE:
@@ -113,19 +245,22 @@ def plan_capital(
                     f"{remaining:.0f} below min {MIN_POSITION_VALUE}."
                 )
                 break
-            weight = cand.get("weight", 1.0) / total_weight
+            remaining_slots = max(1, slots - i)
             alloc = min(
-                remaining * weight,
-                MAX_POSITION_VALUE,
+                remaining / remaining_slots,
+                max_single_value,
             )
             alloc = max(MIN_POSITION_VALUE, min(alloc, remaining))
             if alloc < MIN_POSITION_VALUE:
                 break
+            code = cand.get("code", cand.get("ts_code", f"slot_{i}"))
             suggested_buys.append({
-                "code": cand.get("code", cand.get("ts_code", f"slot_{i}")),
+                "code": code,
                 "allocation": round(alloc, 2),
-                "weight": round(weight, 4),
+                "weight": round(alloc / max(float(total_capital), 1.0), 4),
+                "score": round(_candidate_score(cand), 4),
             })
+            position_budget_by_symbol[str(code)] = round(alloc, 2)
             remaining -= alloc
 
         investable -= sum(b["allocation"] for b in suggested_buys)
@@ -145,9 +280,16 @@ def plan_capital(
         available_cash=round(available_cash, 2),
         deployed_capital=round(deployed, 2),
         cash_reserve=round(cash_reserve, 2),
+        target_positions=target_positions,
+        max_new_positions=max_new,
+        cash_reserve_pct=round(cash_reserve_pct, 4),
+        max_single_position_pct=round(max_single_position_pct, 4),
+        risk_mode=risk_mode,
         suggested_buys=suggested_buys,
+        position_budget_by_symbol=position_budget_by_symbol,
         reverse_repo=reverse_repo,
         notes=notes,
+        reasons=reasons,
     )
 
 
