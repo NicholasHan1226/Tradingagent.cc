@@ -76,6 +76,8 @@ class PnlSummaryTest(unittest.TestCase):
                 "side": "buy",
                 "quantity": 100,
                 "price": 10.0,
+                "candidate_pool_layer": "candidate",
+                "execution_source": "ashare_candidate_layer",
             },
             "ashare",
             {"account": "acct"},

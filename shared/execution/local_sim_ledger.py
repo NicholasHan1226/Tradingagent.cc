@@ -136,6 +136,17 @@ def _is_regular_ashare_symbol(symbol: Any) -> bool:
     return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
 
 
+def _ashare_provenance_error(side: str, candidate_pool_layer: str, execution_source: str) -> str:
+    side_key = str(side or "").lower().strip()
+    layer = str(candidate_pool_layer or "").lower().strip()
+    source = str(execution_source or "").lower().strip()
+    if side_key == "buy" and not (layer == "candidate" and source == "ashare_candidate_layer"):
+        return "A-share simulated buy requires candidate_pool_layer=candidate and execution_source=ashare_candidate_layer"
+    if side_key == "sell" and source != "ashare_rebalance_sell":
+        return "A-share simulated sell requires execution_source=ashare_rebalance_sell"
+    return ""
+
+
 def _canonical_json(payload: dict[str, Any], *, drop_checksums: bool = False) -> bytes:
     data = {key: value for key, value in payload.items() if not (drop_checksums and key in CHECKSUM_KEYS)}
     return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -575,6 +586,16 @@ def record_local_sim_order(
             "status": linked_status,
             "recorded": False,
             "reason": "server-local A-share ledger records filled/partial receipts only",
+            "order_id": order_id,
+            "idempotency_key": idempotency_key,
+            "account": account_name,
+        }
+    provenance_error = _ashare_provenance_error(side, candidate_pool_layer, execution_source)
+    if provenance_error:
+        return {
+            "status": "rejected",
+            "recorded": False,
+            "reason": provenance_error,
             "order_id": order_id,
             "idempotency_key": idempotency_key,
             "account": account_name,

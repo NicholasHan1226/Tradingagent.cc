@@ -112,6 +112,18 @@ def _with_sim_markers(value: Any) -> Any:
     return marked
 
 
+def _ashare_provenance_error(order: dict[str, Any]) -> str:
+    side = str(order.get("side") or order.get("direction") or "buy").lower().strip()
+    metadata = order.get("metadata") if isinstance(order.get("metadata"), dict) else {}
+    candidate_pool_layer = str(order.get("candidate_pool_layer") or metadata.get("candidate_pool_layer") or "").lower().strip()
+    execution_source = str(order.get("execution_source") or metadata.get("execution_source") or "").lower().strip()
+    if side == "buy" and not (candidate_pool_layer == "candidate" and execution_source == "ashare_candidate_layer"):
+        return "A-share simulated buy requires candidate_pool_layer=candidate and execution_source=ashare_candidate_layer"
+    if side == "sell" and execution_source != "ashare_rebalance_sell":
+        return "A-share simulated sell requires execution_source=ashare_rebalance_sell"
+    return ""
+
+
 def _coerce_payload_mapping(value: Any, *, scalar_key: str = "value") -> dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
@@ -186,6 +198,16 @@ def execute_sim_order(
     sim_order = _with_sim_markers(order_payload)
     sim_account = _with_sim_markers(account_payload)
     sim_config = _with_sim_markers(config_payload)
+    if market_key == "ashare":
+        provenance_error = _ashare_provenance_error(sim_order)
+        if provenance_error:
+            return SimResult(
+                status="failed",
+                message=provenance_error,
+                order_id=str(sim_order.get("order_id", "")),
+                market=market_key,
+                raw_response={"recorded": False, "reason": provenance_error},
+            )
     executor = get_sim_executor(market_key)
     if executor is None or (executor is local_sim_executor and market_key in {"ashare", "crypto"}):
         _ensure_builtin_executor(market_key)

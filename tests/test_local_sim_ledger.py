@@ -104,6 +104,46 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertFalse(result["recorded"])
 
+    def test_rejects_ashare_buy_without_candidate_provenance(self) -> None:
+        result = local_sim_ledger.record_local_sim_order(
+            {
+                "order_id": "SIM-NO-PROVENANCE",
+                "idempotency_key": "SIM:ashare:acct:20260701:600000.SH:buy",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "price": 10,
+            },
+            "ashare",
+            {"account": "acct"},
+            {"local_sim_slippage_bps": 0},
+        )
+
+        self.assertEqual(result["status"], "rejected")
+        self.assertFalse(result["recorded"])
+        self.assertIn("candidate_pool_layer=candidate", result["reason"])
+        self.assertFalse(local_sim_ledger.LOCAL_SIM_TRADES.exists())
+
+    def test_rejects_ashare_sell_without_rebalance_provenance(self) -> None:
+        result = local_sim_ledger.record_local_sim_order(
+            {
+                "order_id": "SIM-SELL-NO-PROVENANCE",
+                "idempotency_key": "SIM:ashare:acct:20260701:600000.SH:sell",
+                "ts_code": "600000.SH",
+                "side": "sell",
+                "quantity": 100,
+                "price": 10,
+            },
+            "ashare",
+            {"account": "acct"},
+            {"local_sim_slippage_bps": 0},
+        )
+
+        self.assertEqual(result["status"], "rejected")
+        self.assertFalse(result["recorded"])
+        self.assertIn("execution_source=ashare_rebalance_sell", result["reason"])
+        self.assertFalse(local_sim_ledger.LOCAL_SIM_TRADES.exists())
+
     def test_bootstrap_snapshot_creates_empty_sim_state(self) -> None:
         result = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=200000, trade_date="20260706")
 

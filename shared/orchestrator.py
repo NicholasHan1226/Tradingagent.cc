@@ -504,6 +504,8 @@ def _build_signal_card(
         "account_type": account_type,
         "manual_confirm_required": False,
         "direct_execution": direct_execution,
+        "candidate_pool_layer": str(order.get("candidate_pool_layer") or ""),
+        "execution_source": str(order.get("execution_source") or ""),
         "risk_check": {
             "passed": bool(risk.get("approved", False)),
             "adjusted_weight": risk.get("adjusted_weight"),

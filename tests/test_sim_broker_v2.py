@@ -120,6 +120,8 @@ class SimBrokerV2Test(unittest.TestCase):
                     "side": "buy",
                     "quantity": 100,
                     "price": 10.0,
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
                 },
                 market="ashare",
                 account={"account": "ashare_sim"},
@@ -158,6 +160,8 @@ class SimBrokerV2Test(unittest.TestCase):
                     "side": "buy",
                     "quantity": 100,
                     "price": 10.0,
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
                 },
                 market="ashare",
                 account={"account": "ashare_sim"},
@@ -194,6 +198,8 @@ class SimBrokerV2Test(unittest.TestCase):
                     "side": "buy",
                     "quantity": 100,
                     "price": 10.0,
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
                 },
                 market="ashare",
                 account="ashare_sim",
@@ -206,6 +212,32 @@ class SimBrokerV2Test(unittest.TestCase):
             self.assertEqual(backup.get("account"), "ashare_sim")
             snapshot = local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8")
             self.assertIn("600000.SH", snapshot)
+
+    def test_ashare_builtin_executor_rejects_buy_without_candidate_provenance(self) -> None:
+        calls: list[object] = []
+
+        def ashare_executor(order, account, config) -> SimResult:
+            calls.append((order, account, config))
+            return SimResult(status="filled", filled_qty=100, avg_price=10.0, order_id=str(order["order_id"]), market="ashare")
+
+        sim_executor_registry.register_sim_executor("ashare", ashare_executor)
+
+        result = execute_sim_order(
+            order={
+                "order_id": "SIM-ASHARE-NO-PROVENANCE",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "price": 10.0,
+            },
+            market="ashare",
+            account={"account": "ashare_sim"},
+            config={"local_sim_slippage_bps": 0},
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("candidate_pool_layer=candidate", result.message)
+        self.assertEqual(calls, [])
 
     def test_execute_sim_order_rejects_real_payload_before_sanitizing(self) -> None:
         calls: list[object] = []

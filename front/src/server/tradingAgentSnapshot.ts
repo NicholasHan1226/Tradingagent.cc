@@ -78,7 +78,10 @@ type SignalFile = {
   ts_code?: string
   symbol?: string
   market?: string
+  candidate_pool_layer?: string
+  execution_source?: string
   direction?: string
+  side?: string
   status?: string
   confidence?: string | number
   reason?: string
@@ -1671,6 +1674,8 @@ async function readSignalFile(path: string, bucket: string, now: Date): Promise<
     const raw = JSON.parse(await readFile(path, 'utf8')) as SignalFile
     const symbol = raw.ts_code ?? raw.symbol
     if (!symbol) return null
+    const market = normalizeMarket(raw.market, symbol)
+    if (!isSignalQueueRowVisible(raw, market)) return null
     const status = mapSignalStatus(raw.status ?? bucket, raw)
     const stage = inferSignalStage(raw, bucket)
     const stageTimes = formatStageTimes(raw)
@@ -1678,7 +1683,7 @@ async function readSignalFile(path: string, bucket: string, now: Date): Promise<
     return {
       symbol,
       name: symbol,
-      market: normalizeMarket(raw.market, symbol),
+      market,
       method: raw.direction ? `${raw.direction}` : '待确认',
       status,
       impact: formatAlphaBps(raw.alpha_bps ?? raw.expected_alpha_bps),
@@ -1695,6 +1700,20 @@ async function readSignalFile(path: string, bucket: string, now: Date): Promise<
   } catch {
     return null
   }
+}
+
+function isSignalQueueRowVisible(signal: SignalFile, market: Market) {
+  if (market !== 'A-share') return true
+  const rawStatus = String(signal.status ?? '').toLowerCase()
+  const direction = String(signal.direction ?? signal.side ?? '').toLowerCase()
+  const isExecutionState = ['filled', 'executed', 'failed', 'partial', 'cancelled', 'expired'].includes(rawStatus)
+    || signal.fill !== undefined
+    || signal.simulated_fill !== undefined
+    || signal.filled_at !== undefined
+  if (!isExecutionState) return true
+  if (direction === 'sell') return String(signal.execution_source ?? '').toLowerCase() === 'ashare_rebalance_sell'
+  return String(signal.candidate_pool_layer ?? '').toLowerCase() === 'candidate'
+    && String(signal.execution_source ?? '').toLowerCase() === 'ashare_candidate_layer'
 }
 
 async function readJson(path: string) {

@@ -1027,6 +1027,9 @@ describe('TradingAgent snapshot reader', () => {
         ts_code: '600519.SH',
         market: 'cn',
         status: 'filled',
+        direction: 'buy',
+        candidate_pool_layer: 'candidate',
+        execution_source: 'ashare_candidate_layer',
         alpha_bps: 24.3,
         discovered_at: '2026-07-04T08:58:00.000+08:00',
         scored_at: '2026-07-04T09:05:00.000+08:00',
@@ -1147,6 +1150,9 @@ describe('TradingAgent snapshot reader', () => {
         ts_code: '600519.SH',
         market: 'ashare',
         status: 'filled',
+        direction: 'buy',
+        candidate_pool_layer: 'candidate',
+        execution_source: 'ashare_candidate_layer',
         fill: { filled_at: '2026-07-06T01:30:00.000Z', filled_price: 1500, filled_qty: 1 },
       }),
     )
@@ -1187,6 +1193,43 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: '600519.SH', market: 'A-share' }))
     expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: 'ETH-USD', market: 'Crypto' }))
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({ market: 'Crypto', signalCount: 1, holdingCount: 1 }))
+  })
+
+  it('hides A-share executed signal cards without candidate provenance', async () => {
+    const root = await createWorkspace()
+
+    await writeFile(
+      join(root, 'signals/filled/000001.SZ.json'),
+      JSON.stringify({
+        ts_code: '000001.SZ',
+        market: 'ashare',
+        status: 'filled',
+        direction: 'buy',
+        fill: { filled_at: '2026-07-06T03:13:20.000Z', filled_price: 10, filled_qty: 100 },
+      }),
+    )
+    await writeFile(
+      join(root, 'signals/filled/600519.SH.json'),
+      JSON.stringify({
+        ts_code: '600519.SH',
+        market: 'ashare',
+        status: 'filled',
+        direction: 'buy',
+        candidate_pool_layer: 'candidate',
+        execution_source: 'ashare_candidate_layer',
+        fill: { filled_at: '2026-07-06T03:20:00.000Z', filled_price: 1500, filled_qty: 100 },
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T04:00:00.000Z'),
+    })
+
+    expect(snapshot.signals).not.toContainEqual(expect.objectContaining({ symbol: '000001.SZ', market: 'A-share' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: '600519.SH', market: 'A-share' }))
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({ market: 'A-share', signalCount: 1 }))
   })
 
   it('reads CNFutures simulated position snapshots from signals/positions', async () => {
