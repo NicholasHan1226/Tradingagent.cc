@@ -852,13 +852,17 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                 "reader_errors": reader.errors[-5:],
             }
         if market == "pm":
-            rows = _unwrap_rows(reader.get_pm_markets(limit=10))
+            from PM.probability_model import enrich_pm_rows
+            from shared.wrappers.run_sim import _pm_strategy_signal
+
+            rows = enrich_pm_rows(_unwrap_rows(reader.get_pm_markets(limit=10)))
             priced_rows = [row for row in rows if _price(row) > 0]
             modeled_rows = [
                 row for row in priced_rows
                 if _probability(row, ("model_probability", "model_prob", "fair_probability", "estimated_probability")) > 0
             ]
             explicit_rows = [row for row in rows if _explicit_trade_side(row)]
+            candidate_rows = [row for row in priced_rows if _pm_strategy_signal(row)]
             if not rows:
                 return {
                     "status": "warn",
@@ -896,6 +900,22 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                     "reason": "pm_model_probability_missing",
                     "sample": [
                         {key: row.get(key) for key in ("symbol", "market_id", "trade_date", "price", "latest_price", "yes_price", "model_probability", "fair_probability", "estimated_probability")}
+                        for row in priced_rows[:5]
+                    ],
+                    "reader_degraded": reader.degraded,
+                    "reader_errors": reader.errors[-5:],
+                }
+            if modeled_rows and not explicit_rows and not candidate_rows:
+                return {
+                    "status": "warn",
+                    "asset_count": len(rows),
+                    "priced_signal_count": len(priced_rows),
+                    "modeled_signal_count": len(modeled_rows),
+                    "explicit_signal_count": 0,
+                    "strategy_candidate_count": 0,
+                    "reason": "pm_model_edge_below_threshold",
+                    "sample": [
+                        {key: row.get(key) for key in ("symbol", "market_id", "trade_date", "price", "latest_price", "yes_price", "model_probability", "model_source", "model_reason")}
                         for row in priced_rows[:5]
                     ],
                     "reader_degraded": reader.degraded,
@@ -1062,7 +1082,7 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     elif data.get("status") == "warn":
         warn_reasons.append("market_data_degraded")
     if market not in {"ashare", "cn_futures"} and int(ledger.get("trade_rows") or 0) <= 0:
-        if market == "pm" and data.get("reason") in {"pm_market_rows_empty", "pm_prices_missing", "pm_model_probability_missing"}:
+        if market == "pm" and data.get("reason") in {"pm_market_rows_empty", "pm_prices_missing", "pm_model_probability_missing", "pm_model_edge_below_threshold"}:
             warn_reasons.append("pm_waiting_for_market_data")
         elif market == "crypto" and data.get("reason") in {
             "crypto_klines_empty",

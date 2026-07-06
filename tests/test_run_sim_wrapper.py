@@ -154,8 +154,9 @@ def test_pm_model_edge_generates_yes_signal(monkeypatch):
     assert signals[0]["strategy_name"] == "pm_probability_edge"
 
 
-def test_pm_without_model_edge_does_not_generate_signal(monkeypatch):
+def test_pm_without_model_edge_does_not_generate_signal(monkeypatch, tmp_path):
     monkeypatch.setattr(run_sim, "market", "pm")
+    monkeypatch.setenv("TRADINGAGENT_PM_MODEL_PROBABILITY_FILE", str(tmp_path / "missing.jsonl"))
     reader = FakeReader({"pm": [{"market_id": "558943", "yes_price": 0.48, "trade_date": "20260703"}]})
 
     assert run_sim._load_signals(reader, "pm", limit=10) == []
@@ -171,12 +172,29 @@ def test_pm_no_signal_diagnostics_explain_empty_market_rows(monkeypatch):
     assert diagnostics["reason"] == "pm_market_rows_empty"
 
 
-def test_pm_no_signal_diagnostics_explain_missing_model_probability(monkeypatch):
+def test_pm_no_signal_diagnostics_explain_missing_model_probability(monkeypatch, tmp_path):
     monkeypatch.setattr(run_sim, "market", "pm")
+    monkeypatch.setenv("TRADINGAGENT_PM_MODEL_PROBABILITY_FILE", str(tmp_path / "missing.jsonl"))
     reader = FakeReader({"pm": [{"market_id": "558943", "yes_price": 0.48, "trade_date": "20260703"}]})
 
     diagnostics = run_sim._signal_diagnostics(reader, "pm", limit=10)
 
     assert diagnostics["priced_rows"] == 1
-    assert diagnostics["modeled_rows"] == 0
-    assert diagnostics["reason"] == "pm_model_probability_missing"
+    assert diagnostics["modeled_rows"] == 1
+    assert diagnostics["strategy_candidate_rows"] == 0
+    assert diagnostics["reason"] == "pm_model_edge_below_threshold"
+    assert diagnostics["sample"][0]["model_source"] == "pm_market_consensus_baseline"
+
+
+def test_pm_research_probability_file_can_generate_signal(monkeypatch, tmp_path):
+    monkeypatch.setattr(run_sim, "market", "pm")
+    source = tmp_path / "model_probabilities.jsonl"
+    source.write_text('{"market_id":"558943","model_probability":0.60,"model_source":"test_research"}\n', encoding="utf-8")
+    monkeypatch.setenv("TRADINGAGENT_PM_MODEL_PROBABILITY_FILE", str(source))
+    reader = FakeReader({"pm": [{"market_id": "558943", "yes_price": 0.48, "trade_date": "20260703"}]})
+
+    signals = run_sim._load_signals(reader, "pm", limit=10)
+
+    assert len(signals) == 1
+    assert signals[0]["outcome"] == "yes"
+    assert signals[0]["model_source"] == "test_research"

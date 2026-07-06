@@ -23,6 +23,7 @@ os.environ.setdefault(
 
 from shared.data.reader import TradingagentDataReader
 from shared.markets.style_runner import StyleRunner
+from PM.probability_model import enrich_pm_rows
 
 market = os.environ.get("SIM_MARKET", "crypto")
 market = str(market or "crypto").strip().lower()
@@ -301,7 +302,7 @@ def _pm_strategy_signal(row: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _pm_signal_diagnostics(reader: TradingagentDataReader, limit: int = 10) -> dict[str, Any]:
-    rows = _unwrap_rows(reader.get_pm_markets(limit=limit))
+    rows = enrich_pm_rows(_unwrap_rows(reader.get_pm_markets(limit=limit)))
     priced = [row for row in rows if _price(row) > 0]
     modeled = [
         row for row in priced
@@ -336,6 +337,8 @@ def _pm_signal_diagnostics(reader: TradingagentDataReader, limit: int = 10) -> d
                     "yes_price",
                     "no_price",
                     "model_probability",
+                    "model_source",
+                    "model_reason",
                     "fair_probability",
                     "estimated_probability",
                     "side",
@@ -447,7 +450,7 @@ def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) ->
     signals: list[dict[str, Any]] = []
     if name == "pm":
         source_rows = []
-        for row in _unwrap_rows(reader.get_pm_markets(limit=limit)):
+        for row in enrich_pm_rows(_unwrap_rows(reader.get_pm_markets(limit=limit))):
             if _explicit_trade_side(row):
                 source_rows.append(row)
                 continue
@@ -549,6 +552,9 @@ def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) ->
             "belief_score",
             "signal_source",
             "model_probability",
+            "model_source",
+            "model_reason",
+            "model_confidence",
             "market_probability",
             "edge",
         ):

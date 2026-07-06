@@ -319,6 +319,18 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["fail_reasons"], [])
         self.assertIn("pm_waiting_for_market_data", check.details["warn_reasons"])
 
+    def test_pm_sim_market_loop_warns_when_model_edge_is_below_threshold(self) -> None:
+        with patch.object(
+            market_health,
+            "_probe_market_data",
+            return_value={"status": "warn", "reason": "pm_model_edge_below_threshold", "priced_signal_count": 10, "modeled_signal_count": 10},
+        ):
+            check = market_health._check_sim_market_loop("pm", "job_pm_sim.sh")
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["fail_reasons"], [])
+        self.assertIn("pm_waiting_for_market_data", check.details["warn_reasons"])
+
     def test_crypto_sim_market_loop_warns_when_momentum_threshold_not_met(self) -> None:
         with patch.object(
             market_health,
