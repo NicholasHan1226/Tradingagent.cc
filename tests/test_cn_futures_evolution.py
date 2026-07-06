@@ -108,6 +108,22 @@ class CNFuturesEvolutionTest(unittest.TestCase):
             self.assertFalse(result["weights"]["trend"]["enabled"])
             self.assertEqual(result["weights"]["trend"]["evolution_action"], "pause")
 
+    def test_sample_insufficient_styles_remain_active_for_observation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            styles_dir = root / "strategies"
+            review_root = root / "review"
+            self._write_style(styles_dir, "trend")
+            save_run("trend", "cn_futures", {"date": "20260706", "pnl": 0.0, "win_rate": 0.0, "max_dd": 0.0, "sharpe": 0.0, "trades": 0}, review_root=review_root)
+
+            result = evaluate_styles(strategy_dir=styles_dir, review_root=review_root, min_trades=20)
+
+            self.assertEqual(result["weights"]["trend"]["status"], "active")
+            self.assertTrue(result["weights"]["trend"]["enabled"])
+            self.assertEqual(result["weights"]["trend"]["weight"], 1.0)
+            self.assertEqual(result["weights"]["trend"]["evolution_action"], "observe")
+            self.assertIn("sample_insufficient", result["weights"]["trend"]["evolution_reason"])
+
     def test_evolution_carries_dynamic_threshold_candidates_into_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

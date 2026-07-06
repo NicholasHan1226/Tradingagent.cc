@@ -52,6 +52,17 @@ def _style_is_active(style: dict[str, Any]) -> bool:
     return bool(style.get("enabled", True))
 
 
+def _inactive_style_reason(style: dict[str, Any]) -> str:
+    status = str(style.get("status") or "").strip().lower()
+    if status == "deprecated":
+        return "style_deprecated"
+    if status == "paused":
+        return "style_paused"
+    if not bool(style.get("enabled", True)):
+        return "style_disabled"
+    return ""
+
+
 def _style_allows_symbol(style: dict[str, Any], symbol: str) -> bool:
     raw_products = style.get("products") or style.get("target_products")
     if not raw_products:
@@ -750,8 +761,31 @@ def run_multi_style_simulation(
         style = dict(style_config or {})
         style.setdefault("name", style_name)
         if not _style_is_active(style):
+            reason = _inactive_style_reason(style) or "style_inactive"
+            holds.append({
+                "stage": "style",
+                "style": style_name,
+                "symbol": "",
+                "cadence": cadence_value,
+                "bar_time": "",
+                "session": session_bucket,
+                "reason": reason,
+                "confidence": 0.0,
+                "evolution_action": style.get("evolution_action", ""),
+                "evolution_reason": style.get("evolution_reason", ""),
+            })
             continue
         if not _style_allows_session(style, now):
+            holds.append({
+                "stage": "style",
+                "style": style_name,
+                "symbol": "",
+                "cadence": cadence_value,
+                "bar_time": "",
+                "session": session_bucket,
+                "reason": "style_session_not_allowed",
+                "confidence": 0.0,
+            })
             continue
         for symbol in universe:
             if not _style_allows_symbol(style, symbol):

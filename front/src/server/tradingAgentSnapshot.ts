@@ -1727,7 +1727,7 @@ function inferMarket(symbol: string): Market {
   if (symbol.endsWith('.HK')) return 'HK'
   if (symbol.endsWith('.SH') || symbol.endsWith('.SZ')) return 'A-share'
   if (symbol.endsWith('.US')) return 'US'
-  if (/\.(CFFEX|SHFE|DCE|CZCE|INE|GFEX)$/i.test(symbol)) return 'CNFutures'
+  if (/\.(CFFEX|CFE|CFX|SHFE|SHF|DCE|CZCE|INE|GFEX)$/i.test(symbol)) return 'CNFutures'
   if (/^[A-Z]{2,12}USDT$/.test(symbol) || symbol.includes('-USD') || symbol.includes('PERP')) return 'Crypto'
   if (symbol.startsWith('PM-') || /^\d{5,8}$/.test(symbol)) return 'PM'
   return 'All Markets'

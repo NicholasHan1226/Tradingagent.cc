@@ -361,6 +361,8 @@ def evaluate_styles(
         elif trades < min_trades:
             action = "observe"
             reason = f"sample_insufficient: trades={trades}, min_trades={min_trades}"
+            status = "active"
+            weight = MIN_WEIGHT
         elif name == top_name and pnl > 0 and trend != "declining":
             action = "promote"
             reason = "top_rank_positive_sample"

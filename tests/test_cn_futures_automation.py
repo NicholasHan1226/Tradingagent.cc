@@ -281,6 +281,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["filled_count"], 1)
             self.assertEqual({row["style"] for row in result["records"]}, {"trend"})
             self.assertEqual(result["errors"], [])
+            self.assertEqual(result["hold_reason_summary"]["by_reason"]["style_paused"], 1)
 
     def test_index_intraday_directional_style_only_trades_index_products(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -365,6 +366,8 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["records"], [])
             self.assertEqual(result["errors"], [])
+            self.assertEqual(result["hold_count"], 1)
+            self.assertEqual(result["hold_reason_summary"]["by_reason"]["style_session_not_allowed"], 1)
 
     def test_multi_style_runner_blocks_repeated_same_side_exposure(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
