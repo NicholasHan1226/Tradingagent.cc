@@ -724,6 +724,63 @@ class SimLoopTest(unittest.TestCase):
         )
         self.assertGreaterEqual(result["capital_plan"]["replacement_budget"]["allocated_cash"], 50000.0)
 
+    def test_run_sim_loop_replaces_full_position_for_opportunity_cost_gap(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            scores = {"000010.SZ": 0.60, "000013.SZ": 0.84, "000014.SZ": 0.76}
+            return [
+                (symbol, {"combined": scores[symbol], "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        positions = [
+            {"ts_code": "000010.SZ", "quantity": 5000, "sellable_quantity": 5000, "avg_price": 10.0, "last_price": 10.0, "market_value": 200000.0}
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["000010.SZ", "000013.SZ", "000014.SZ"], max_candidates=3, score_universe_limit=3, max_portfolio_positions=1, positions=positions),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_opportunity_cost",
+        )
+
+        sell_orders = [order for order in self.executed_orders if order["side"] == "sell"]
+        buy_orders = [order for order in self.executed_orders if order["side"] == "buy"]
+        self.assertEqual(result["rebalance"]["planned_sell_count"], 1)
+        self.assertEqual(sell_orders[0]["ts_code"], "000010.SZ")
+        self.assertIn("opportunity_cost", sell_orders[0]["note"])
+        self.assertEqual([order["ts_code"] for order in buy_orders], ["000013.SZ"])
+        self.assertEqual(result["capital_plan"]["replacement_budget"]["allocations"][0]["ts_code"], "000013.SZ")
+
+    def test_run_sim_loop_keeps_full_position_when_opportunity_gap_is_small(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            scores = {"000010.SZ": 0.70, "000013.SZ": 0.82}
+            return [
+                (symbol, {"combined": scores[symbol], "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        positions = [
+            {"ts_code": "000010.SZ", "quantity": 5000, "sellable_quantity": 5000, "avg_price": 10.0, "last_price": 10.0, "weight": 0.25}
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["000010.SZ", "000013.SZ"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=1, positions=positions),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_opportunity_gap_small",
+        )
+
+        self.assertEqual(result["rebalance"]["planned_sell_count"], 0)
+        self.assertEqual(self.executed_orders, [])
+
     def test_run_sim_loop_persists_exclusions_even_when_some_orders_fill(self) -> None:
         class SelectiveReader:
             def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, float]]:

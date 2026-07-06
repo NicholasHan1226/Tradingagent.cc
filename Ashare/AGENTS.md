@@ -20,7 +20,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 
 ## 执行
 - 模拟盘: 默认由服务器通过 `Ashare/sim_executor.py` 和 `shared/execution/sim_broker.py` 完成本地 paper fill、账本和复盘闭环；不依赖 Mini/Hermes。
-- 卖出/换仓: `shared/orchestrator.py` 会在 A股模拟主循环中生成 simulated sell 压缩单；只卖可卖数量，优先处理止损、低分和超目标持仓压缩，不触碰实盘。止损/压缩释放的资金可作为同轮替换买入预算，并写入 `capital_plan.replacement_budget`。
+- 卖出/换仓: `shared/orchestrator.py` 会在 A股模拟主循环中生成 simulated sell 压缩单；只卖可卖数量，优先处理止损、低分、超目标持仓压缩和轻量机会成本换仓，不触碰实盘。止损/压缩/机会成本换仓释放的资金可作为同轮替换买入预算，并写入 `capital_plan.replacement_budget`。机会成本只比较已通过风控候选与现有持仓的 `combined` 分数，默认候选分数至少 0.70 且分差至少 0.18 才触发，避免小分差频繁换仓。
 - Hermes 备用路径: 只有显式设置 `ASHARE_SIM_HERMES_ENABLED=1` 时，服务器才把模拟信号卡投递给 Mac Mini live executor `~/.hermes/scripts/sim-signal-executor.py`，由同花顺模拟盘执行并回写。
 - 实盘: 仅人工确认与只读同步；不得自动点击真实账户委托
 - 5-10分钟级别自动化

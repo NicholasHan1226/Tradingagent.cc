@@ -16,6 +16,8 @@ from shared.notify import email_sender
 
 ROOT = Path(__file__).resolve().parent.parent
 SIGNALS_DIR = ROOT / "signals"
+ASHARE_OPPORTUNITY_COST_MIN_ENTRY_SCORE = 0.70
+ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP = 0.18
 
 StageFn = Callable[..., Any]
 
@@ -947,6 +949,28 @@ def _merge_ashare_sell_row(base: dict[str, Any], row: dict[str, Any]) -> dict[st
     return merged
 
 
+def _ashare_best_replacement_candidate(
+    *,
+    symbol: str,
+    buy_candidates: list[dict[str, Any]],
+    scores_by_symbol: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    best: dict[str, Any] = {}
+    best_score = 0.0
+    for candidate in buy_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_symbol = str(candidate.get("ts_code") or candidate.get("symbol") or "").strip()
+        if not candidate_symbol or candidate_symbol == symbol:
+            continue
+        score = scores_by_symbol.get(candidate_symbol) or {}
+        combined = _safe_float(score.get("combined", score.get("score", candidate.get("combined", candidate.get("score")))), 0.0)
+        if combined > best_score:
+            best_score = combined
+            best = {"ts_code": candidate_symbol, "combined": combined}
+    return best
+
+
 def _ashare_rebalance_plan(
     *,
     market: str,
@@ -958,6 +982,7 @@ def _ashare_rebalance_plan(
     max_portfolio_positions: int,
     default_price: float,
     capital: float,
+    buy_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if str(market).lower() != "ashare":
         return {"enabled": False, "planned_sell_count": 0, "sells": []}
@@ -967,6 +992,9 @@ def _ashare_rebalance_plan(
         target_positions = max_portfolio_positions
     sellable: list[dict[str, Any]] = []
     planned_by_symbol: dict[str, dict[str, Any]] = {}
+    candidates_for_replacement = list(buy_candidates or [])
+    existing_count = len({_position_symbol(position) for position in existing_positions if isinstance(position, dict) and _position_symbol(position)})
+    effective_target = min(target_positions if target_positions > 0 else max_portfolio_positions, max_portfolio_positions)
 
     for position in existing_positions:
         if not isinstance(position, dict):
@@ -992,6 +1020,22 @@ def _ashare_rebalance_plan(
             reasons.append("stop_loss")
         if has_score and combined < 0.55:
             reasons.append("score_drop")
+        opportunity_candidate = _ashare_best_replacement_candidate(
+            symbol=symbol,
+            buy_candidates=candidates_for_replacement,
+            scores_by_symbol=scores_by_symbol,
+        )
+        opportunity_score = _safe_float(opportunity_candidate.get("combined"), 0.0)
+        opportunity_gap = opportunity_score - combined
+        if (
+            has_score
+            and not reasons
+            and effective_target > 0
+            and existing_count >= effective_target
+            and opportunity_score >= ASHARE_OPPORTUNITY_COST_MIN_ENTRY_SCORE
+            and opportunity_gap >= ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP
+        ):
+            reasons.append("opportunity_cost")
         sellable.append(
             {
                 "ts_code": symbol,
@@ -1007,6 +1051,12 @@ def _ashare_rebalance_plan(
                 "combined": combined,
                 "has_score": has_score,
                 "pnl_pct": pnl_pct,
+                "opportunity_cost": {
+                    "candidate": opportunity_candidate.get("ts_code", ""),
+                    "candidate_score": round(opportunity_score, 4),
+                    "score_gap": round(opportunity_gap, 4),
+                    "min_score_gap": ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP,
+                } if "opportunity_cost" in reasons else {},
                 "risk_audit_id": "",
             }
         )
@@ -1025,7 +1075,6 @@ def _ashare_rebalance_plan(
         if row["rebalance_reasons"]:
             planned_by_symbol[row["ts_code"]] = row
 
-    existing_count = len({_position_symbol(position) for position in existing_positions if isinstance(position, dict) and _position_symbol(position)})
     compression_target = target_positions if target_positions > 0 else max_portfolio_positions
     excess_count = max(0, existing_count - compression_target)
     if excess_count > 0:
@@ -2104,6 +2153,7 @@ def run_sim_loop(
         max_portfolio_positions=max_portfolio_positions,
         default_price=default_price,
         capital=capital,
+        buy_candidates=ranked_orders_for_portfolio,
     )
     stage_calls.append("portfolio.rebalance_plan")
     planned_sell_symbols = {
