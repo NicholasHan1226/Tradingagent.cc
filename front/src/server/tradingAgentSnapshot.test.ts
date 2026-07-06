@@ -1067,6 +1067,40 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
+  it('deduplicates multi-style simulated ledger trades in market-level summaries', async () => {
+    const root = await createWorkspace()
+    const aggressiveRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/aggressive')
+    const balancedRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/balanced')
+    await mkdir(aggressiveRoot, { recursive: true })
+    await mkdir(balancedRoot, { recursive: true })
+
+    const trade = {
+      fill_price: 62699.99,
+      fill_qty: 0.0106,
+      notional: 666.67,
+      side: 'buy',
+      symbol: 'BTCUSDT',
+      timestamp: '2026-07-04T11:17:34+00:00',
+      signal_source: 'explicit_strategy_signal',
+      strategy_name: 'crypto_momentum_breakout',
+    }
+    await writeFile(join(aggressiveRoot, 'trade_journal.jsonl'), JSON.stringify(trade) + '\n')
+    await writeFile(join(balancedRoot, 'trade_journal.jsonl'), JSON.stringify(trade) + '\n')
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.signals.filter((signal) => signal.market === 'Crypto')).toHaveLength(1)
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'Crypto',
+      signalCount: 1,
+      tradeCount: 1,
+    }))
+  })
+
   it('preserves signal stage timestamps so the funnel can animate the real decision path', async () => {
     const root = await createWorkspace()
 

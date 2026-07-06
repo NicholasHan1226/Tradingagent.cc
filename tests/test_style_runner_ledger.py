@@ -139,6 +139,43 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             self.assertTrue(performance[0]["exclude_from_dashboard"])
             self.assertEqual(performance[0]["run_context"], "maintenance_backfill")
 
+    def test_preserves_strategy_provenance_in_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            styles_dir = root / "styles"
+            review_root = root / "review"
+            ledger_root = root / "ledger"
+            styles_dir.mkdir()
+            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            runner = StyleRunner(
+                "crypto",
+                FilledSimulator(),
+                styles_dir=styles_dir,
+                review_root=review_root,
+                ledger_root=ledger_root,
+            )
+
+            runner.run(
+                [
+                    {
+                        "symbol": "BTCUSDT",
+                        "price": 100.0,
+                        "side": "buy",
+                        "conviction": 0.9,
+                        "strategy_name": "crypto_momentum_breakout",
+                        "signal_source": "explicit_strategy_signal",
+                        "reason": "momentum threshold passed",
+                    }
+                ],
+                date="20260704",
+            )
+
+            journal = ledger_root / "crypto" / "balanced" / "trade_journal.jsonl"
+            rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(rows[0]["strategy_name"], "crypto_momentum_breakout:balanced")
+            self.assertEqual(rows[0]["signal_source"], "explicit_strategy_signal")
+            self.assertEqual(rows[0]["reason"], "momentum threshold passed")
+
     def test_style_metrics_use_ledger_mark_to_market_pnl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

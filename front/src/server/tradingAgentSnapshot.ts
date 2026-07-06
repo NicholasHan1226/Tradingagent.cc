@@ -555,7 +555,7 @@ async function buildMarketSummaries({
       : pnlAmount !== undefined && capitalBase && capitalBase > 0
         ? roundMetric((pnlAmount / capitalBase) * 100)
         : undefined
-    const tradeCount = Math.max(executedCount, performanceSummary?.trades ?? 0, styleSummary?.filledCount ?? 0)
+    const tradeCount = Math.max(executedCount, performanceSummary?.trades ?? 0)
     const styleCount = Math.max(styleSummary?.styleCount ?? 0, styleSummary?.activeStyleCount ?? 0)
     const hasMeaningfulPnl = pnlAmount !== undefined && (pnlAmount !== 0 || (capitalBase ?? 0) > 0 || (performanceSummary?.trades ?? 0) > 0)
     const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || hasMeaningfulPnl
@@ -1711,7 +1711,18 @@ async function readSimLedgerSignals(root: string, now: Date): Promise<SignalRow[
     .flat()
     .filter((row): row is SignalRow => Boolean(row))
     .sort((a, b) => Number.parseInt(a.age, 10) - Number.parseInt(b.age, 10))
+    .filter(dedupeSimLedgerSignal())
     .slice(0, MAX_SIM_LEDGER_SIGNALS)
+}
+
+function dedupeSimLedgerSignal() {
+  const seen = new Set<string>()
+  return (row: SignalRow) => {
+    const key = `${row.market}:${row.symbol}:${row.status}:${row.stage}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }
 }
 
 async function readSimLedgerTradeTimeline(root: string): Promise<Map<string, SimLedgerTimelineTrade[]>> {

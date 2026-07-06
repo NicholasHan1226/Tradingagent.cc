@@ -267,6 +267,13 @@ class StyleRunner:
             "market_impact_multiplier",
             "counterparty_profile",
             "market_environment",
+            "signal_source",
+            "reason",
+            "score",
+            "belief_score",
+            "model_probability",
+            "market_probability",
+            "edge",
         ):
             if key in signal and signal.get(key) not in (None, ""):
                 order[key] = signal[key]

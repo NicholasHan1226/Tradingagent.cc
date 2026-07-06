@@ -25,6 +25,18 @@ AUDIT_SCOPE_KEYS = (
     "run_source",
     "sample_type",
 )
+PROVENANCE_KEYS = (
+    "strategy_name",
+    "style_name",
+    "signal_source",
+    "reason",
+    "conviction",
+    "score",
+    "belief_score",
+    "model_probability",
+    "market_probability",
+    "edge",
+)
 
 
 def _now_iso() -> str:
@@ -65,6 +77,14 @@ def _add_cny_fields(payload: dict[str, Any]) -> None:
 def _copy_audit_scope_fields(target: dict[str, Any], *sources: dict[str, Any]) -> None:
     for source in sources:
         for key in AUDIT_SCOPE_KEYS:
+            value = source.get(key)
+            if value not in (None, ""):
+                target[key] = value
+
+
+def _copy_provenance_fields(target: dict[str, Any], *sources: dict[str, Any]) -> None:
+    for source in sources:
+        for key in PROVENANCE_KEYS:
             value = source.get(key)
             if value not in (None, ""):
                 target[key] = value
@@ -267,6 +287,7 @@ class SimLedger:
             },
         )
         _copy_audit_scope_fields(entry.metadata, order_payload, fill_payload)
+        _copy_provenance_fields(entry.metadata, order_payload, fill_payload)
         self._append_entry(entry)
         journal = {
             "timestamp": timestamp,
@@ -282,6 +303,7 @@ class SimLedger:
             "capital_layer": "simulated",
         }
         _copy_audit_scope_fields(journal, order_payload, fill_payload)
+        _copy_provenance_fields(journal, order_payload, fill_payload)
         if order_payload.get("outcome") not in (None, ""):
             journal["outcome"] = str(order_payload.get("outcome")).lower()
         if order_payload.get("market_id") not in (None, ""):
