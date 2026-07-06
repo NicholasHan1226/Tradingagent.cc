@@ -771,6 +771,30 @@ def _probe_market_data(market: str) -> dict[str, Any]:
         if market == "pm":
             rows = _unwrap_rows(reader.get_pm_markets(limit=10))
             priced_rows = [row for row in rows if _price(row) > 0]
+            if not rows:
+                return {
+                    "status": "warn",
+                    "asset_count": 0,
+                    "priced_signal_count": 0,
+                    "reason": "pm_market_rows_empty",
+                    "sample": [],
+                    "reader_degraded": reader.degraded,
+                    "reader_errors": reader.errors[-5:],
+                }
+            if not priced_rows:
+                return {
+                    "status": "warn",
+                    "asset_count": len(rows),
+                    "priced_signal_count": 0,
+                    "reason": "pm_prices_missing",
+                    "sample": [
+                        {key: row.get(key) for key in ("symbol", "market_id", "trade_date", "price", "yes_price")}
+                        for row in rows[:5]
+                    ],
+                    "reader_degraded": reader.degraded,
+                    "reader_errors": reader.errors[-5:],
+                }
+            asset_count = len(rows)
         elif market == "crypto":
             for symbol in DEFAULT_SIM_SYMBOLS["crypto"]:
                 latest = _latest_priced(_unwrap_rows(reader.get_crypto_klines(symbol=symbol, limit=50)))
@@ -895,7 +919,10 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     elif data.get("status") == "warn":
         warn_reasons.append("market_data_degraded")
     if market not in {"ashare", "cn_futures"} and int(ledger.get("trade_rows") or 0) <= 0:
-        hard_fail_reasons.append("sim_trade_ledger_empty")
+        if market == "pm" and data.get("reason") in {"pm_market_rows_empty", "pm_prices_missing"}:
+            warn_reasons.append("pm_waiting_for_market_data")
+        else:
+            hard_fail_reasons.append("sim_trade_ledger_empty")
     if market == "ashare" and int(ledger.get("trade_rows") or 0) <= 0 and samples_expected:
         warn_reasons.append("server_local_sim_has_no_production_trades_yet")
     if market == "cn_futures" and int(ledger.get("review_rows") or 0) <= 0 and samples_expected:

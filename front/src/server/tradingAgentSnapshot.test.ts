@@ -1037,6 +1037,44 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
+  it('surfaces same-day A-share no-trade attribution in market summaries', async () => {
+    const root = await createWorkspace()
+    const logRoot = join(root, 'TradingAgent/shared/logs')
+    await mkdir(logRoot, { recursive: true })
+    await writeFile(
+      join(logRoot, 'ashare_no_trade_explanations.jsonl'),
+      [
+        JSON.stringify({
+          date: '20260706',
+          generated_at: '2026-07-06T10:00:00+08:00',
+          no_trade_explanation: {
+            category: 'all_rejected_by_risk',
+            action: 'review_risk_rejections',
+          },
+        }),
+        JSON.stringify({
+          date: '20260707',
+          generated_at: '2026-07-07T10:00:00+08:00',
+          no_trade_explanation: {
+            category: 'no_candidates',
+            action: 'check_candidate_pool_thresholds_and_universe_filter',
+          },
+        }),
+      ].join('\n') + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-07T02:30:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'A-share',
+      detail: expect.stringContaining('无交易：候选池暂无达标机会，检查候选池阈值'),
+    }))
+  })
+
   it('keeps performance empty with a clear message when only trade logs exist', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
@@ -1083,6 +1121,8 @@ describe('TradingAgent snapshot reader', () => {
       timestamp: '2026-07-04T11:17:34+00:00',
       signal_source: 'explicit_strategy_signal',
       strategy_name: 'crypto_momentum_breakout',
+      reason: 'crypto_momentum_breakout: one_bar_return=0.0160, lookback_return=0.0410',
+      conviction: 0.7425,
     }
     await writeFile(join(aggressiveRoot, 'trade_journal.jsonl'), JSON.stringify(trade) + '\n')
     await writeFile(join(balancedRoot, 'trade_journal.jsonl'), JSON.stringify(trade) + '\n')
@@ -1104,6 +1144,14 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.signals.filter((signal) => signal.market === 'Crypto')).toHaveLength(1)
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({
+      symbol: 'BTC-USD',
+      method: 'Crypto Momentum Breakout · 买入',
+      confidence: '74%',
+      reason: 'crypto_momentum_breakout: one_bar_return=0.0160, lookback_return=0.0410',
+      strategyName: 'crypto_momentum_breakout',
+      signalSource: 'explicit_strategy_signal',
+    }))
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'Crypto',
       signalCount: 1,

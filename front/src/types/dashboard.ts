@@ -96,6 +96,8 @@ export type SignalRow = {
   name: string
   market: Market
   method: string
+  strategyName?: string
+  signalSource?: string
   status: SignalStatus
   impact: string
   confidence: string

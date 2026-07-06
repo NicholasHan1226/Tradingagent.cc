@@ -115,6 +115,26 @@ class FakeMixedFuturesReader(FakeFuturesReader):
         return rows.get(symbol, [])
 
 
+class DateScopedFuturesReader(FakeFuturesReader):
+    calls: list[tuple[object, object]] = []
+
+    def get_bars_intraday(
+        self,
+        market: str,
+        symbol: str,
+        interval: str = "5min",
+        start: object = None,
+        end: object = None,
+    ) -> list[dict[str, object]]:
+        self.calls.append((start, end))
+        if market != "Futures" or symbol != "rb2601" or interval != "5min" or start != "20260703" or end != "20260703":
+            return []
+        return [
+            {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3500, "volume": 1300},
+            {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 3560, "volume": 1800},
+        ]
+
+
 class CNFuturesAutomationTest(unittest.TestCase):
     def test_adapter_default_reader_uses_tradingagent_data_reader(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -135,6 +155,16 @@ class CNFuturesAutomationTest(unittest.TestCase):
         self.assertEqual(adapter.get_universe("20260703"), ["rb2601"])
         self.assertEqual(adapter.get_sim_account()["account"], "cn_futures_sim")
         self.assertEqual(adapter.get_strategy_config()["capital_layer"], "simulated")
+
+    def test_intraday_bars_are_requested_for_the_exact_trade_date(self) -> None:
+        from CNFutures.sim_runner import _read_intraday_bars
+
+        reader = DateScopedFuturesReader()
+
+        bars = _read_intraday_bars(reader, "rb2601", "20260703")
+
+        self.assertEqual(reader.calls[0], ("20260703", "20260703"))
+        self.assertEqual(len(bars), 2)
 
     def test_multi_style_runner_executes_only_simulated_lanes_and_writes_review(self) -> None:
         import CNFutures.sim_executor  # noqa: F401

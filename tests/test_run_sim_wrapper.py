@@ -127,3 +127,24 @@ def test_pm_without_model_edge_does_not_generate_signal(monkeypatch):
     reader = FakeReader({"pm": [{"market_id": "558943", "yes_price": 0.48, "trade_date": "20260703"}]})
 
     assert run_sim._load_signals(reader, "pm", limit=10) == []
+
+
+def test_pm_no_signal_diagnostics_explain_empty_market_rows(monkeypatch):
+    monkeypatch.setattr(run_sim, "market", "pm")
+    reader = FakeReader({"pm": []})
+
+    diagnostics = run_sim._signal_diagnostics(reader, "pm", limit=10)
+
+    assert diagnostics["market_rows"] == 0
+    assert diagnostics["reason"] == "pm_market_rows_empty"
+
+
+def test_pm_no_signal_diagnostics_explain_missing_model_probability(monkeypatch):
+    monkeypatch.setattr(run_sim, "market", "pm")
+    reader = FakeReader({"pm": [{"market_id": "558943", "yes_price": 0.48, "trade_date": "20260703"}]})
+
+    diagnostics = run_sim._signal_diagnostics(reader, "pm", limit=10)
+
+    assert diagnostics["priced_rows"] == 1
+    assert diagnostics["modeled_rows"] == 0
+    assert diagnostics["reason"] == "pm_model_probability_missing"

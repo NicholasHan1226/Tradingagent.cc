@@ -295,6 +295,18 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["ledger"]["trade_rows"], 1)
         self.assertIn("market_data_degraded", check.details["warn_reasons"])
 
+    def test_pm_sim_market_loop_warns_when_data_feed_has_no_market_rows(self) -> None:
+        with patch.object(
+            market_health,
+            "_probe_market_data",
+            return_value={"status": "warn", "reason": "pm_market_rows_empty", "priced_signal_count": 0},
+        ):
+            check = market_health._check_sim_market_loop("pm", "job_pm_sim.sh")
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["fail_reasons"], [])
+        self.assertIn("pm_waiting_for_market_data", check.details["warn_reasons"])
+
     def test_ashare_sim_loop_warns_without_production_trade_sample(self) -> None:
         with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):
             with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):

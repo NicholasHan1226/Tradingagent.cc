@@ -76,6 +76,18 @@ type LocalSimAccountPnl = {
   positions?: Record<string, unknown>
 }
 
+type AShareNoTradeExplanation = {
+  category?: string
+  action?: string
+  counts?: Record<string, unknown>
+}
+
+type AShareNoTradeLogRow = {
+  date?: string
+  generated_at?: string
+  no_trade_explanation?: AShareNoTradeExplanation
+}
+
 type SignalFile = {
   ts_code?: string
   symbol?: string
@@ -136,12 +148,16 @@ type SimLedgerTradeRow = {
   order_id?: string
   outcome?: string
   realized_pnl?: number
+  reason?: string
   run_context?: string
   run_mode?: string
   run_source?: string
   sample_type?: string
   side?: string
+  signal_source?: string
   source?: string
+  strategy_name?: string
+  conviction?: number | string
   symbol?: string
   timestamp?: string
 }
@@ -351,7 +367,7 @@ const MAX_SIM_LEDGER_SIGNALS = 120
 const DEFAULT_TARGET_RETURN_PCT = 8
 const DEFAULT_SIM_CAPITAL_CNY = 200_000
 const SIM_LEDGER_EQUITY_BUCKET_MS = 5 * 60 * 1000
-const MAX_EQUITY_PERFORMANCE_POINTS = 48
+const MAX_EQUITY_PERFORMANCE_POINTS = 360
 const DASHBOARD_MARKETS: Market[] = ['A-share', 'US', 'Crypto', 'PM', 'CNFutures']
 const DEFAULT_USD_CNY = 7.2
 const DEFAULT_HKD_CNY = 0.92
@@ -383,12 +399,14 @@ export async function readTradingAgentSnapshot({
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
   const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt)
+  const ashareNoTradeExplanation = await readLatestAShareNoTradeExplanation(projectRoot, now)
   const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
   const performance = annotatePerformanceQuality(firstNonEmpty(equityPortfolio.performance, reviewPerformance, trackerPortfolio.performance))
   const portfolio = attachAShareAccountSummary(equityPortfolio.summary ?? trackerPortfolio.summary, ashareAccount, generatedAt)
   const marketSummaries = await buildMarketSummaries({
     generatedAt,
     holdings: fallbackHoldings,
+    ashareNoTradeExplanation,
     performanceRoot: performanceTrackerRoot,
     portfolio,
     signals,
@@ -470,6 +488,28 @@ async function readAShareAccountSummary(projectRoot: string, generatedAt: string
   }
 }
 
+async function readLatestAShareNoTradeExplanation(projectRoot: string, now: Date): Promise<AShareNoTradeExplanation | undefined> {
+  const path = join(projectRoot, 'shared/logs/ashare_no_trade_explanations.jsonl')
+  const dayKey = formatShanghaiDateKey(now)
+  try {
+    const lines = (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean)
+    for (const line of lines.reverse()) {
+      try {
+        const row = JSON.parse(line) as AShareNoTradeLogRow
+        const rowDay = compactDate(row.date ?? row.generated_at)
+        if (rowDay !== dayKey) continue
+        const explanation = asRecord(row.no_trade_explanation) as AShareNoTradeExplanation
+        if (explanation.category) return explanation
+      } catch {
+        // Ignore malformed no-trade rows; newer valid rows remain usable.
+      }
+    }
+  } catch {
+    // Fresh workspaces may not have no-trade attribution yet.
+  }
+  return undefined
+}
+
 function attachAShareAccountSummary(
   summary: PortfolioSummary | undefined,
   ashareAccount: PortfolioSummary['ashareAccount'] | undefined,
@@ -520,6 +560,7 @@ function mergeSignals(...sources: SignalRow[][]): SignalRow[] {
 async function buildMarketSummaries({
   generatedAt,
   holdings,
+  ashareNoTradeExplanation,
   performanceRoot,
   portfolio,
   signals,
@@ -527,6 +568,7 @@ async function buildMarketSummaries({
 }: {
   generatedAt: string
   holdings: HoldingRow[]
+  ashareNoTradeExplanation?: AShareNoTradeExplanation
   performanceRoot: string
   portfolio?: PortfolioSummary
   signals: SignalRow[]
@@ -588,6 +630,7 @@ async function buildMarketSummaries({
       headline: buildMarketSummaryHeadline(market, status, holdingCount, marketSignals.length, tradeCount, styleCount),
       detail: buildMarketSummaryDetail({
         activeStyleCount: styleSummary?.activeStyleCount,
+        ashareNoTradeExplanation: isAshare && tradeCount <= 0 ? ashareNoTradeExplanation : undefined,
         capitalBase,
         errorCount: styleSummary?.errorCount,
         filledCount: styleSummary?.filledCount,
@@ -844,6 +887,7 @@ function buildMarketSummaryHeadline(market: Market, status: MarketSummary['statu
 
 function buildMarketSummaryDetail({
   activeStyleCount,
+  ashareNoTradeExplanation,
   capitalBase,
   errorCount,
   filledCount,
@@ -852,6 +896,7 @@ function buildMarketSummaryDetail({
   styleCount,
 }: {
   activeStyleCount?: number
+  ashareNoTradeExplanation?: AShareNoTradeExplanation
   capitalBase?: number
   errorCount?: number
   filledCount?: number
@@ -863,10 +908,49 @@ function buildMarketSummaryDetail({
   if (pnlAmount !== undefined) facts.push(`收益 ${formatSignedAmount(pnlAmount)}`)
   if (returnPct !== undefined) facts.push(`回报 ${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}%`)
   if (capitalBase !== undefined && capitalBase > 0) facts.push(`资金 ${formatCompactAmount(capitalBase)}`)
+  const noTrade = formatAShareNoTradeExplanation(ashareNoTradeExplanation)
+  if (noTrade) facts.push(noTrade)
   if (styleCount > 0) facts.push(`风格 ${activeStyleCount ?? 0}/${styleCount}`)
   if (filledCount !== undefined) facts.push(`成交 ${filledCount}`)
   if (errorCount) facts.push(`失败 ${errorCount}`)
   return facts.length ? facts.join(' · ') : '等待该市场写入模拟成交、持仓或风格收益。'
+}
+
+function formatAShareNoTradeExplanation(explanation?: AShareNoTradeExplanation) {
+  if (!explanation?.category) return undefined
+  const category = {
+    all_candidates_missing_price: '候选缺价格',
+    all_rejected_by_risk: '风控全部拦截',
+    degraded_errors: '运行有降级错误',
+    duplicate_existing_signal: '已有同日信号',
+    execution_failed: '执行失败',
+    execution_skipped: '执行前置跳过',
+    no_candidates: '候选池暂无达标机会',
+    no_filled_sim_orders: '暂无成交样本',
+    no_portfolio_orders: '仓位计划未出单',
+    no_universe: '数据入口未形成股票池',
+    pending_execution: '等待执行结果',
+    portfolio_empty: '资金或手数未形成订单',
+  }[explanation.category] ?? explanation.category
+  const action = formatAShareNoTradeAction(explanation.action)
+  return action ? `无交易：${category}，${action}` : `无交易：${category}`
+}
+
+function formatAShareNoTradeAction(action?: string) {
+  return {
+    check_capital_lot_size_and_constructor_output: '检查资金和整手约束',
+    check_candidate_pool_thresholds_and_universe_filter: '检查候选池阈值',
+    check_position_sizing_and_portfolio_constructor: '检查仓位计划',
+    check_sharedsignals_assets_and_daily_coverage: '检查数据覆盖',
+    check_sharedsignals_daily_or_realtime_prices: '检查价格数据',
+    review_execution_skip_reasons: '复盘执行跳过原因',
+    review_failed_receipts: '复盘失败回执',
+    review_full_sim_run: '复盘模拟主循环',
+    review_orchestrator_errors: '检查运行错误',
+    review_pending_signal_state: '检查待执行状态',
+    review_risk_rejections: '复盘风控原因',
+    review_same_day_idempotency_state: '检查同日幂等',
+  }[String(action ?? '')]
 }
 
 function marketName(market: Market) {
@@ -1778,12 +1862,14 @@ function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strateg
     symbol,
     name: symbol,
     market,
-    method: `${formatStrategyName(strategy)} · ${row.side === 'sell' ? '卖出' : '买入'}`,
+    method: `${formatStrategyName(row.strategy_name || strategy)} · ${row.side === 'sell' ? '卖出' : '买入'}`,
+    strategyName: row.strategy_name,
+    signalSource: row.signal_source,
     status: 'executed',
     impact: row.notional === undefined ? '--' : `成交 ${formatCurrencyAmount(toCny(row.notional, market))}`,
-    confidence: '已成交',
+    confidence: formatConviction(row.conviction) ?? '已成交',
     age: formatAge(timestamp, now),
-    reason: `模拟盘已按 ${formatPrice(row.fill_price)} 成交`,
+    reason: row.reason ?? `模拟盘已按 ${formatPrice(row.fill_price)} 成交`,
     next: '进入收益与持仓复盘',
     steps: 6,
     stage: '成交',
@@ -1797,6 +1883,14 @@ function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strateg
     stageLatencyMinutes: 0,
     stageEvidence: 'replay',
   }
+}
+
+function formatConviction(value: number | string | undefined) {
+  const parsed = parseFiniteNumber(value)
+  if (parsed === undefined) return undefined
+  const ratio = parsed <= 1 ? parsed * 100 : parsed
+  if (!Number.isFinite(ratio)) return undefined
+  return `${Math.round(ratio)}%`
 }
 
 async function readSignalQueue(root: string, now = new Date()): Promise<SignalRow[]> {
@@ -2198,6 +2292,17 @@ function compactDate(value?: string) {
 
 function formatDateForSnapshot(timestampMs: number) {
   return new Date(timestampMs).toISOString().slice(0, 10)
+}
+
+function formatShanghaiDateKey(date: Date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: 'Asia/Shanghai',
+  }).formatToParts(date)
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? ''
+  return `${part('year')}${part('month')}${part('day')}`
 }
 
 function parseFiniteNumber(value: number | string | undefined) {

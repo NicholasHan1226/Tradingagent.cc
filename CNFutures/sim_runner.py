@@ -471,12 +471,12 @@ def _read_intraday_bars(reader: Any, symbol: str, date: str) -> list[dict[str, A
         return []
     rows: Any
     try:
-        rows = get_bars(READER_MARKET, symbol, INTRADAY_INTERVAL)
+        rows = get_bars(READER_MARKET, symbol, INTRADAY_INTERVAL, date, date)
     except TypeError:
         try:
-            rows = get_bars(market=READER_MARKET, symbol=symbol, interval=INTRADAY_INTERVAL)
+            rows = get_bars(market=READER_MARKET, symbol=symbol, interval=INTRADAY_INTERVAL, start=date, end=date)
         except TypeError:
-            rows = get_bars(market=READER_MARKET, symbol=symbol, interval=INTRADAY_INTERVAL, start="", end="")
+            rows = get_bars(READER_MARKET, symbol, INTRADAY_INTERVAL)
         except Exception:
             return []
     except Exception:

@@ -298,6 +298,59 @@ def _pm_strategy_signal(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _pm_signal_diagnostics(reader: TradingagentDataReader, limit: int = 10) -> dict[str, Any]:
+    rows = _unwrap_rows(reader.get_pm_markets(limit=limit))
+    priced = [row for row in rows if _price(row) > 0]
+    modeled = [
+        row for row in priced
+        if _probability(row, ("model_probability", "model_prob", "fair_probability", "estimated_probability")) > 0
+    ]
+    explicit = [row for row in rows if _explicit_trade_side(row)]
+    candidates = [row for row in rows if _pm_strategy_signal(row)]
+    threshold = _pm_min_model_edge()
+    return {
+        "market_rows": len(rows),
+        "priced_rows": len(priced),
+        "modeled_rows": len(modeled),
+        "explicit_side_rows": len(explicit),
+        "strategy_candidate_rows": len(candidates),
+        "min_model_edge": threshold,
+        "reason": (
+            "pm_market_rows_empty"
+            if not rows
+            else "pm_prices_missing"
+            if not priced
+            else "pm_model_probability_missing"
+            if not modeled and not explicit
+            else "pm_model_edge_below_threshold"
+        ),
+        "sample": [
+            {
+                key: row.get(key)
+                for key in (
+                    "market_id",
+                    "symbol",
+                    "slug",
+                    "yes_price",
+                    "no_price",
+                    "model_probability",
+                    "fair_probability",
+                    "estimated_probability",
+                    "side",
+                    "decision",
+                )
+            }
+            for row in rows[:3]
+        ],
+    }
+
+
+def _signal_diagnostics(reader: TradingagentDataReader, name: str, limit: int = 10) -> dict[str, Any]:
+    if name == "pm":
+        return _pm_signal_diagnostics(reader, limit=limit)
+    return {}
+
+
 def _lookback_window(days: int = 10) -> tuple[str, str]:
     end = datetime.now(timezone.utc).date()
     start = end - timedelta(days=days)
@@ -440,6 +493,7 @@ def main() -> int:
     signals = _load_signals(reader, market)
 
     if not signals:
+        diagnostics = _signal_diagnostics(reader, market)
         print(
             json.dumps(
                 {
@@ -450,6 +504,7 @@ def main() -> int:
                     "reader_degraded": bool(reader.degraded or reader.stale),
                     "reader_errors": reader.errors[-5:],
                     "reason": "no explicit buy/sell signal; price rows are data only",
+                    **({"diagnostics": diagnostics} if diagnostics else {}),
                     "price_only_smoke_enable_with": "TRADINGAGENT_SIM_ALLOW_PRICE_ONLY_SIGNALS=1",
                 },
                 ensure_ascii=False,

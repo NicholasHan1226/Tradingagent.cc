@@ -12,6 +12,7 @@ export function SignalTable({ signals }: { signals: SignalRow[] }) {
         <span>标的</span>
         <span>市场</span>
         <span>结果</span>
+        <span>策略</span>
         <span>为什么</span>
         <span>过程</span>
         <span>影响</span>
@@ -23,6 +24,7 @@ export function SignalTable({ signals }: { signals: SignalRow[] }) {
           <AssetCell symbol={signal.symbol} name={signal.name} />
           <span>{marketLabels[signal.market]}</span>
           <span className={`status ${signal.status}`}>{statusLabels[signal.status]}</span>
+          <span title={signal.signalSource ? `来源：${signal.signalSource}` : undefined}>{signal.strategyName ?? signal.method}</span>
           <span>{signal.reason}</span>
           <Timeline steps={signal.steps} labels={stages} />
           <span className={signal.impact.startsWith('-') ? 'red-text' : 'cyan-text'}>{signal.impact}</span>

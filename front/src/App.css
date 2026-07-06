@@ -2747,7 +2747,7 @@ button:not(:disabled) {
 }
 
 .signal-table .terminal-row {
-  grid-template-columns: 160px 70px 100px minmax(330px, 1fr) 86px 64px 56px 44px;
+  grid-template-columns: 160px 70px 88px 148px minmax(300px, 1fr) 86px 64px 56px 44px;
 }
 
 .holdings-table .terminal-row {
@@ -2815,8 +2815,8 @@ button:not(:disabled) {
 
 .opportunity-table .terminal-row > span:nth-child(6),
 .opportunity-table .terminal-row > span:nth-child(7),
-.signal-table .terminal-row > span:nth-child(6),
-.signal-table .terminal-row > span:nth-child(8),
+.signal-table .terminal-row > span:nth-child(7),
+.signal-table .terminal-row > span:nth-child(9),
 .holdings-table .terminal-row > span:nth-child(4),
 .holdings-table .terminal-row > span:nth-child(5) {
   justify-self: end;
