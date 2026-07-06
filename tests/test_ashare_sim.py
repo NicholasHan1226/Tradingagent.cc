@@ -143,7 +143,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "side": "buy",
                 "bar_volume": 1500,
             },
-            account={"account_id": "ashare_sim"},
+            account={"account_id": "ashare_sim", "cash_available": 200_000},
         )
 
         self.assertEqual(result.status, "partial")
