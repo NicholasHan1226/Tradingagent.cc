@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +59,13 @@ def _parse_date(value: Any) -> datetime | None:
         return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
     except ValueError:
         return None
+
+
+def _lookback_start(date: str, calendar_days: int = 14) -> str:
+    target = _parse_date(date)
+    if target is None:
+        return ""
+    return (target - timedelta(days=calendar_days)).strftime("%Y%m%d")
 
 
 def _is_st(asset: dict[str, Any]) -> bool:
@@ -232,8 +239,9 @@ class AshareAdapter(MarketAdapter):
         if not callable(get_bars):
             return False, None
         has_positive_close = False
+        start_date = _lookback_start(date)
         for market in (MARKET, "Ashare"):
-            rows = get_bars(market, symbol, None, date)
+            rows = get_bars(market, symbol, start_date, date)
             if not rows:
                 continue
             for row in reversed(rows):

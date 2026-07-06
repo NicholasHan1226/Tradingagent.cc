@@ -8,6 +8,7 @@ from shared.screening.six_dimension_scorer import score_stock
 
 class FakeAshareReader:
     def __init__(self) -> None:
+        self.daily_calls: list[tuple[str, str, object, object]] = []
         self.assets = [
             {
                 "symbol": "600519",
@@ -124,6 +125,7 @@ class FakeAshareReader:
         ]
 
     def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, object]]:
+        self.daily_calls.append((market, symbol, start, end))
         amount = self.amounts.get(symbol)
         if amount is None:
             return []
@@ -165,11 +167,13 @@ class FakeScoringReader:
 
 class AshareAdapterTest(unittest.TestCase):
     def test_universe_filter_excludes_st_suspended_new_illiquid_and_bse(self) -> None:
-        adapter = AshareAdapter(reader=FakeAshareReader())
+        reader = FakeAshareReader()
+        adapter = AshareAdapter(reader=reader)
 
         universe = adapter.get_universe("20260630")
 
         self.assertEqual(universe, ["600519", "000001", "600002"])
+        self.assertIn(("ashare", "600519", "20260616", "20260630"), reader.daily_calls)
 
     def test_symbol_mapping_uses_reader_symbol_without_exchange_suffix(self) -> None:
         adapter = AshareAdapter(reader=FakeAshareReader())
