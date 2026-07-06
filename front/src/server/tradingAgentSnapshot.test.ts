@@ -1086,6 +1086,16 @@ describe('TradingAgent snapshot reader', () => {
     }
     await writeFile(join(aggressiveRoot, 'trade_journal.jsonl'), JSON.stringify(trade) + '\n')
     await writeFile(join(balancedRoot, 'trade_journal.jsonl'), JSON.stringify(trade) + '\n')
+    await writeFile(
+      join(aggressiveRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        timestamp: '2026-07-04T11:18:34+00:00',
+        date: '20260704',
+        capital_base: 1000,
+        total_pnl: 10,
+        trade_count: 2,
+      }) + '\n',
+    )
 
     const snapshot = await readTradingAgentSnapshot({
       workspaceRoot: root,

@@ -555,7 +555,7 @@ async function buildMarketSummaries({
       : pnlAmount !== undefined && capitalBase && capitalBase > 0
         ? roundMetric((pnlAmount / capitalBase) * 100)
         : undefined
-    const tradeCount = Math.max(executedCount, performanceSummary?.trades ?? 0)
+    const tradeCount = executedCount > 0 ? executedCount : performanceSummary?.trades ?? 0
     const styleCount = Math.max(styleSummary?.styleCount ?? 0, styleSummary?.activeStyleCount ?? 0)
     const hasMeaningfulPnl = pnlAmount !== undefined && (pnlAmount !== 0 || (capitalBase ?? 0) > 0 || (performanceSummary?.trades ?? 0) > 0)
     const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || hasMeaningfulPnl
