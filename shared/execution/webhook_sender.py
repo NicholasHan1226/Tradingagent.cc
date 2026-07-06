@@ -11,24 +11,34 @@ import time
 import uuid
 import urllib.error
 import urllib.request
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import os
 
-_raw_secret = os.environ.get("WEBHOOK_SECRET", "")
-if not _raw_secret:
-    import warnings
-    warnings.warn("WEBHOOK_SECRET is empty — HMAC signatures will use empty key. "
-                  "Set WEBHOOK_SECRET in environment for production.", RuntimeWarning)
-WEBHOOK_SECRET = _raw_secret
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "http://localhost:9865/")
 RECEIPTS_PATH = Path(os.environ.get("SIM_RECEIPTS_PATH", "/opt/investment/tradingagent/signals/sim_execution_receipts.jsonl"))
 TIMEOUT_SECONDS = 10
 RETRY_COUNT = 2
 RETRY_BACKOFF_BASE_SECONDS = 0.25
 RETRY_BACKOFF_MAX_SECONDS = 2.0
+_EMPTY_SECRET_WARNING_EMITTED = False
+
+
+def _warn_if_empty_secret(secret: str) -> None:
+    global _EMPTY_SECRET_WARNING_EMITTED
+    if secret or _EMPTY_SECRET_WARNING_EMITTED:
+        return
+    _EMPTY_SECRET_WARNING_EMITTED = True
+    warnings.warn(
+        "WEBHOOK_SECRET is empty — HMAC signatures will use empty key. "
+        "Set WEBHOOK_SECRET before enabling the Mini webhook bridge.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 
 
 def _order_get(order: Any, key: str, default: Any = None) -> Any:
@@ -119,6 +129,7 @@ def send_sim_signal_to_mini(
     retries: int = RETRY_COUNT,
 ) -> dict[str, Any]:
     """Send a simulated order to the Mac Mini webhook receiver."""
+    _warn_if_empty_secret(secret)
     signal = build_sim_signal(order)
     body = encode_signal(signal)
     signature = sign_body(body, secret)

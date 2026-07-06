@@ -265,7 +265,7 @@
 - [x] `position_ledger.py`、`capital_ledger.py`、`signal_state_machine.py`、`local_sim_ledger.py`、`shadow_broker.py` 的阻塞 `flock(LOCK_EX)` 已改为 `LOCK_EX | LOCK_NB`，并加 3 次递增等待重试；拿不到锁时显式 `TimeoutError`，不假成功。
 - [x] `webhook_sender.py` 的 `time.sleep(0)` 已替换为指数退避，避免 Mini webhook 异常时忙等。
 - [x] `shared/review/benchmark.py` 的 SQLite fallback 查询已移除列上的 `LOWER()` / `REPLACE()`，改为市场值枚举和日期格式范围查询，保留只读 fallback 行为。
-- [x] 验证：目标 Python `py_compile` 通过；受影响 TradingAgent pytest 集合 54 项 + 6 subtests 通过（仅既有 `WEBHOOK_SECRET` 空值 warning）。
+- [x] 验证：目标 Python `py_compile` 通过；受影响 TradingAgent pytest 集合 54 项 + 6 subtests 通过；2026-07-07 已将 `WEBHOOK_SECRET` 空值告警改为仅在实际发送 Mini webhook 时触发，普通模拟盘/研究/健康检查导入路径不再刷生产日志。
 
 ### 2026-07-04 A股 API-first 与邮件通道对齐
 

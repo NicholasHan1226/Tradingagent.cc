@@ -66,6 +66,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 
 - `job_ashare_sim_exec` 默认不检查 mini health，也不写 Hermes pending；A 股模拟单在服务器内完成 paper fill、账本和复盘数据闭环。
 - 仅当 `ASHARE_SIM_HERMES_ENABLED=1` 时，任务才启用 mini health/backpressure 检查，并把同一模拟信号投递给 Mini/Hermes/同花顺模拟盘作为第二执行路径。
+- Mini webhook 未启用时，普通模拟盘/研究/健康检查任务不得因为 `WEBHOOK_SECRET` 未配置刷生产告警；只有实际发送 Mini webhook 且 secret 为空时才报警。
 - Hermes 路径启用后，mini `/health` 不可用、`halted=true` 或 `pending + in_progress > ASHARE_SIM_MINI_BUSY_LIMIT`（默认 0）时，不得阻断服务器本地模拟闭环；任务必须记录 `mini_health_unavailable` / `mini_halted` / `mini_busy`，临时设置 `ASHARE_SIM_WEBHOOK_ENABLED=0`，继续写服务器本地 paper fill。
 - 服务器本地模拟账本是训练/复盘数据权威来源；Hermes/mini 成功或失败只用于同花顺 GUI 模拟盘对照，仍以回执和截图确认为准。
 - Hermes/mini 点击提交但没有严格持仓表/委托/成交确认时，写 unconfirmed failed receipt，创建 `executor_halt.json`，停止消费队列。截图确认只看裁剪后的持仓表区域。

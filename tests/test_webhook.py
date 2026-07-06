@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import importlib
 import json
+import os
 import sys
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -33,6 +36,16 @@ class _HTTPResponse:
 
 
 class WebhookSenderTest(unittest.TestCase):
+    def test_import_does_not_warn_when_webhook_secret_missing(self) -> None:
+        with patch.dict(os.environ, {"WEBHOOK_SECRET": ""}, clear=False):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                importlib.reload(webhook_sender)
+
+        self.addCleanup(importlib.reload, webhook_sender)
+        secret_warnings = [item for item in caught if "WEBHOOK_SECRET is empty" in str(item.message)]
+        self.assertEqual(secret_warnings, [])
+
     def test_send_sim_signal_to_mini_posts_signed_payload(self) -> None:
         captured: dict[str, object] = {}
 
@@ -55,8 +68,9 @@ class WebhookSenderTest(unittest.TestCase):
             "account_type": "simulated",
         }
 
+        test_secret = "unit-test-secret"
         with patch("shared.execution.webhook_sender.urllib.request.urlopen", side_effect=fake_urlopen):
-            result = webhook_sender.send_sim_signal_to_mini(order)
+            result = webhook_sender.send_sim_signal_to_mini(order, secret=test_secret)
 
         self.assertTrue(result["success"])
         self.assertEqual(result["status"], "sent")
@@ -83,7 +97,7 @@ class WebhookSenderTest(unittest.TestCase):
         )
 
         expected_signature = hmac.new(
-            webhook_sender.WEBHOOK_SECRET.encode("utf-8"),
+            test_secret.encode("utf-8"),
             body,
             hashlib.sha256,
         ).hexdigest()
@@ -93,6 +107,29 @@ class WebhookSenderTest(unittest.TestCase):
         self.assertEqual(headers["X-hub-signature-256"], f"sha256={expected_signature}")
         self.assertEqual(result["signature"], expected_signature)
         self.assertEqual(result["payload_sha256"], hashlib.sha256(body).hexdigest())
+
+    def test_send_sim_signal_warns_when_secret_empty(self) -> None:
+        def fake_urlopen(req: object, timeout: object = None) -> _HTTPResponse:
+            return _HTTPResponse()
+
+        order = {
+            "order_id": "SIM-WEBHOOK-EMPTY-SECRET",
+            "ts_code": "600000.SH",
+            "direction": "buy",
+            "quantity": 100,
+            "price": 10.5,
+            "strategy_name": "webhook_unit_test",
+        }
+
+        webhook_sender._EMPTY_SECRET_WARNING_EMITTED = False
+        with patch("shared.execution.webhook_sender.urllib.request.urlopen", side_effect=fake_urlopen):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                result = webhook_sender.send_sim_signal_to_mini(order, secret="")
+
+        self.assertTrue(result["success"])
+        secret_warnings = [item for item in caught if "WEBHOOK_SECRET is empty" in str(item.message)]
+        self.assertEqual(len(secret_warnings), 1)
 
     def test_hermes_bridge_simulated_order_uses_webhook_sender(self) -> None:
         order = {
