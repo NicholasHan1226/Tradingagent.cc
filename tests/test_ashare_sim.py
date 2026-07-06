@@ -126,7 +126,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "price": 10.5,
                 "side": "buy",
             },
-            account={"account_id": "ashare_sim"},
+            account={"account_id": "ashare_sim", "cash_available": 200_000},
         )
 
         self.assertEqual(result.status, "rejected")
