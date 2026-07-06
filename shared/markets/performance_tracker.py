@@ -14,6 +14,15 @@ from typing import Any
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REVIEW_ROOT = TRADINGAGENT_ROOT / "shared" / "review"
+AUDIT_SCOPE_KEYS = (
+    "exclude_from_dashboard",
+    "dashboard_excluded",
+    "excluded_from_dashboard",
+    "run_context",
+    "run_mode",
+    "run_source",
+    "sample_type",
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +36,13 @@ class StylePerformance:
     sharpe: float
     trades: int
     avg_hold_hours: float
+    exclude_from_dashboard: bool = False
+    dashboard_excluded: bool = False
+    excluded_from_dashboard: bool = False
+    run_context: str = ""
+    run_mode: str = ""
+    run_source: str = ""
+    sample_type: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -94,6 +110,13 @@ def _performance_from_result(style_name: str, market: str, result: dict[str, Any
         sharpe=round(_safe_float(metric.get("sharpe")), 6),
         trades=max(0, _safe_int(metric.get("trades"))),
         avg_hold_hours=round(max(0.0, _safe_float(metric.get("avg_hold_hours"))), 6),
+        exclude_from_dashboard=bool(metric.get("exclude_from_dashboard")),
+        dashboard_excluded=bool(metric.get("dashboard_excluded")),
+        excluded_from_dashboard=bool(metric.get("excluded_from_dashboard")),
+        run_context=str(metric.get("run_context") or ""),
+        run_mode=str(metric.get("run_mode") or ""),
+        run_source=str(metric.get("run_source") or ""),
+        sample_type=str(metric.get("sample_type") or ""),
     )
 
 

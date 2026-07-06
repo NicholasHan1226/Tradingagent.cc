@@ -16,6 +16,15 @@ from shared.execution.sim_engine import SimFill, SimOrder
 
 
 DEFAULT_LEDGER_ROOT = Path(__file__).resolve().parent.parent / "logs" / "sim_ledger"
+AUDIT_SCOPE_KEYS = (
+    "exclude_from_dashboard",
+    "dashboard_excluded",
+    "excluded_from_dashboard",
+    "run_context",
+    "run_mode",
+    "run_source",
+    "sample_type",
+)
 
 
 def _now_iso() -> str:
@@ -51,6 +60,14 @@ def _add_cny_fields(payload: dict[str, Any]) -> None:
         if value is None:
             continue
         payload[f"{key}_cny"] = round(_safe_float(value) * fx_to_cny, 8)
+
+
+def _copy_audit_scope_fields(target: dict[str, Any], *sources: dict[str, Any]) -> None:
+    for source in sources:
+        for key in AUDIT_SCOPE_KEYS:
+            value = source.get(key)
+            if value not in (None, ""):
+                target[key] = value
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -249,6 +266,7 @@ class SimLedger:
                 "cost_basis_closed": round(cost_basis_closed, 8),
             },
         )
+        _copy_audit_scope_fields(entry.metadata, order_payload, fill_payload)
         self._append_entry(entry)
         journal = {
             "timestamp": timestamp,
@@ -263,6 +281,7 @@ class SimLedger:
             "realized_pnl": round(realized_pnl, 8),
             "capital_layer": "simulated",
         }
+        _copy_audit_scope_fields(journal, order_payload, fill_payload)
         if order_payload.get("outcome") not in (None, ""):
             journal["outcome"] = str(order_payload.get("outcome")).lower()
         if order_payload.get("market_id") not in (None, ""):

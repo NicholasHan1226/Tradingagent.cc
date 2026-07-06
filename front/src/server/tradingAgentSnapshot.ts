@@ -123,15 +123,25 @@ type SignalFile = {
 }
 
 type SimLedgerTradeRow = {
+  account_type?: string
   capital_layer?: string
+  dashboard_excluded?: boolean | string
+  exclude_from_dashboard?: boolean | string
+  excluded_from_dashboard?: boolean | string
   fill_price?: number
   fill_qty?: number
   market_id?: string
+  metadata?: Record<string, unknown>
   notional?: number
   order_id?: string
   outcome?: string
   realized_pnl?: number
+  run_context?: string
+  run_mode?: string
+  run_source?: string
+  sample_type?: string
   side?: string
+  source?: string
   symbol?: string
   timestamp?: string
 }
@@ -145,7 +155,11 @@ type SimLedgerTimelineTrade = {
 }
 
 type StylePerformanceRow = {
+  dashboard_excluded?: boolean | string
   date?: string
+  exclude_from_dashboard?: boolean | string
+  excluded_from_dashboard?: boolean | string
+  metadata?: Record<string, unknown>
   trade_date?: string
   as_of?: string
   pnl?: number | string
@@ -156,6 +170,10 @@ type StylePerformanceRow = {
   style_name?: string
   trades?: number | string
   pnl_source?: string
+  run_context?: string
+  run_mode?: string
+  run_source?: string
+  sample_type?: string
   capital_layer?: string
   account_type?: string
   real_execution?: boolean
@@ -164,13 +182,20 @@ type StylePerformanceRow = {
 type StyleComparisonPayload = {
   account_type?: string
   capital_layer?: string
+  dashboard_excluded?: boolean | string
   error_count?: number | string
+  exclude_from_dashboard?: boolean | string
+  excluded_from_dashboard?: boolean | string
   filled_count?: number | string
   generated_at?: string
   hold_count?: number | string
   market?: string
   real_execution?: boolean
   record_count?: number | string
+  run_context?: string
+  run_mode?: string
+  run_source?: string
+  sample_type?: string
   signal_count?: number | string
   state?: string
   style_comparison?: unknown
@@ -209,6 +234,7 @@ type MarketStyleSummary = {
 }
 
 type EquitySnapshotRow = {
+  dashboard_excluded?: boolean | string
   timestamp?: string
   ts?: string
   as_of?: string
@@ -255,7 +281,14 @@ type EquitySnapshotRow = {
   drawdown?: number | string
   trade_count?: number | string
   trades?: number | string
+  exclude_from_dashboard?: boolean | string
+  excluded_from_dashboard?: boolean | string
+  metadata?: Record<string, unknown>
   pnl_source?: string
+  run_context?: string
+  run_mode?: string
+  run_source?: string
+  sample_type?: string
   source?: string
   currency?: string
   display_currency?: string
@@ -577,6 +610,7 @@ async function readStyleComparisonMarketSummaries(root: string): Promise<Map<Mar
       if (!Object.keys(payload).length) continue
       if (payload.real_execution === true) continue
       if (normalizeCapitalLayer(payload) !== 'simulated') continue
+      if (isDashboardExcluded(payload)) continue
 
       const market = normalizeMarketFolder(String(payload.market ?? entry.name))
       if (market === 'All Markets' || market === 'HK') continue
@@ -625,6 +659,7 @@ async function readStylePerformanceMarketSummaries(root: string): Promise<Map<Ma
           const row = JSON.parse(line) as StylePerformanceRow
           if (row.real_execution === true) continue
           if (normalizeCapitalLayer(row) !== 'simulated') continue
+          if (isDashboardExcluded(row as Record<string, unknown>)) continue
           const pnl = parseFiniteNumber(row.pnl)
           const timestamp = row.as_of ?? row.date ?? row.trade_date
           if (pnl === undefined && parseFiniteNumber(row.realized_pnl) === undefined && parseFiniteNumber(row.unrealized_pnl) === undefined) continue
@@ -658,7 +693,9 @@ async function readEquitySnapshotMarketSummaries(root: string): Promise<Map<Mark
       const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
       for (const line of lines) {
         try {
-          const snapshot = parseEquitySnapshotRecord({ ...(JSON.parse(line) as EquitySnapshotRow), sourcePath: file.path })
+          const raw = JSON.parse(line) as EquitySnapshotRow
+          if (isDashboardExcluded(raw as Record<string, unknown>)) continue
+          const snapshot = parseEquitySnapshotRecord({ ...raw, sourcePath: file.path })
           if (!snapshot) continue
           const key = `${market}:${file.strategy}:${file.path}`
           const current = latestBySource.get(key)
@@ -1066,6 +1103,7 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
   const snapshots = rows
     .filter((row) => row.real_execution !== true)
     .filter((row) => normalizeCapitalLayer(row) === 'simulated')
+    .filter((row) => !isDashboardExcluded(row as Record<string, unknown>))
     .map(parseEquitySnapshotRecord)
     .filter((row): row is ParsedEquitySnapshot => Boolean(row))
     .sort((a, b) => a.timestampMs - b.timestampMs)
@@ -1360,6 +1398,7 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
   for (const row of rows) {
     if (row.real_execution === true) continue
     if (normalizeCapitalLayer(row) !== 'simulated') continue
+    if (isDashboardExcluded(row as Record<string, unknown>)) continue
     const dayKey = compactDate(row.date ?? row.trade_date ?? row.as_of)
     const pnl = parseFiniteNumber(row.pnl)
     if (!dayKey || pnl === undefined) continue
@@ -1656,7 +1695,9 @@ async function readSimLedgerSignals(root: string, now: Date): Promise<SignalRow[
       const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
       return lines.slice(-MAX_SIM_LEDGER_SIGNALS).map((line) => {
         try {
-          return parseSimLedgerTrade(JSON.parse(line) as SimLedgerTradeRow, file.market, file.strategy, now)
+          const trade = JSON.parse(line) as SimLedgerTradeRow
+          if (isDashboardExcluded(trade as Record<string, unknown>)) return null
+          return parseSimLedgerTrade(trade, file.market, file.strategy, now)
         } catch {
           return null
         }
@@ -1684,6 +1725,7 @@ async function readSimLedgerTradeTimeline(root: string): Promise<Map<string, Sim
         try {
           const trade = JSON.parse(line) as SimLedgerTradeRow
           if (trade.capital_layer && String(trade.capital_layer).toLowerCase() !== 'simulated') continue
+          if (isDashboardExcluded(trade as Record<string, unknown>)) continue
           if (!trade.timestamp) continue
           const timestampMs = Date.parse(trade.timestamp)
           if (!Number.isFinite(timestampMs)) continue
@@ -2169,6 +2211,38 @@ function firstParsedNumber(...values: Array<number | string | undefined>) {
   return values.map(parseFiniteNumber).find((value): value is number => value !== undefined)
 }
 
+function boolish(value: unknown) {
+  if (value === true) return true
+  if (typeof value !== 'string') return false
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+}
+
+function isDashboardExcluded(row: Record<string, unknown>) {
+  if (
+    boolish(row.exclude_from_dashboard)
+    || boolish(row.excluded_from_dashboard)
+    || boolish(row.dashboard_excluded)
+    || boolish(row.maintenance_run)
+  ) {
+    return true
+  }
+
+  const metadata = asRecord(row.metadata)
+  if (Object.keys(metadata).length && isDashboardExcluded(metadata)) return true
+
+  const scope = [
+    row.run_context,
+    row.run_mode,
+    row.run_source,
+    row.sample_type,
+  ]
+    .map((value) => String(value ?? '').trim().toLowerCase())
+    .filter(Boolean)
+    .join(' ')
+
+  return /\b(maintenance|backfill|smoke|repair|bootstrap|dry[-_ ]?run)\b/.test(scope)
+}
+
 function parseSnapshotTimestamp(value: string) {
   const direct = Date.parse(value)
   if (Number.isFinite(direct)) return direct
@@ -2227,7 +2301,7 @@ function roundMoney(value: number) {
   return Number(value.toFixed(2))
 }
 
-function normalizeCapitalLayer(row: StylePerformanceRow | EquitySnapshotRow) {
+function normalizeCapitalLayer(row: StylePerformanceRow | EquitySnapshotRow | SimLedgerTradeRow) {
   return String(row.capital_layer ?? row.account_type ?? 'simulated').toLowerCase()
 }
 

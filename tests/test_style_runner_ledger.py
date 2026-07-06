@@ -94,6 +94,51 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             positions = json.loads((ledger_root / "crypto" / "balanced" / "positions.json").read_text(encoding="utf-8"))
             self.assertIn("BTCUSDT", positions["positions"])
 
+    def test_preserves_dashboard_exclusion_metadata_in_ledger_and_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            styles_dir = root / "styles"
+            review_root = root / "review"
+            ledger_root = root / "ledger"
+            styles_dir.mkdir()
+            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            runner = StyleRunner(
+                "crypto",
+                FilledSimulator(),
+                styles_dir=styles_dir,
+                review_root=review_root,
+                ledger_root=ledger_root,
+            )
+
+            runner.run(
+                [
+                    {
+                        "symbol": "BTCUSDT",
+                        "price": 100.0,
+                        "side": "buy",
+                        "conviction": 0.9,
+                        "exclude_from_dashboard": True,
+                        "run_context": "maintenance_backfill",
+                    }
+                ],
+                date="20260704",
+            )
+
+            journal = ledger_root / "crypto" / "balanced" / "trade_journal.jsonl"
+            rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertTrue(rows[0]["exclude_from_dashboard"])
+            self.assertEqual(rows[0]["run_context"], "maintenance_backfill")
+            comparison = json.loads((review_root / "crypto" / "style_comparison.json").read_text(encoding="utf-8"))
+            self.assertTrue(comparison["exclude_from_dashboard"])
+            self.assertEqual(comparison["run_context"], "maintenance_backfill")
+            performance = [
+                json.loads(line)
+                for line in (review_root / "crypto" / "style_performance.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(performance[0]["exclude_from_dashboard"])
+            self.assertEqual(performance[0]["run_context"], "maintenance_backfill")
+
     def test_style_metrics_use_ledger_mark_to_market_pnl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

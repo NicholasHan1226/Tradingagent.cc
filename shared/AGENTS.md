@@ -31,6 +31,7 @@
   - `signals/cancelled/` 已撤销
   - `signals/positions/` 当前持仓快照
 - `shared/accounting/` 是资金与账本唯一写入面。
+- 维护、回补、烟测、修复重跑和 bootstrap 样本若会写入 `shared/logs/sim_ledger/` 或 `shared/review/<market>/`，必须写入 `exclude_from_dashboard=true`，或在 `run_context` / `run_mode` / `run_source` / `sample_type` 中标记 `maintenance`、`backfill`、`smoke`、`repair`、`bootstrap` 或 `dry-run`；生产看板会跳过这些样本，避免维护重跑污染交易量、PnL、复盘和演化输入。
 - `shared/review/data/` 是复盘证据唯一写入面; `outputs/` 只放可再生产物, 不回写事实。
 - `shared/signals/` 若仍存在视为废弃兼容路径, 只能重定向或只读迁移, 不再新增事实写入。
 - `executions/` 相关事实应归并到 `signals/filled/` 与 `shared/accounting/`, 不再形成平行账本。

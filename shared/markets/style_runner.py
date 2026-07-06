@@ -20,6 +20,15 @@ from shared.markets.style_config import TradeStyle, load_generated_trade_styles,
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REVIEW_ROOT = TRADINGAGENT_ROOT / "shared" / "review"
+AUDIT_SCOPE_KEYS = (
+    "exclude_from_dashboard",
+    "dashboard_excluded",
+    "excluded_from_dashboard",
+    "run_context",
+    "run_mode",
+    "run_source",
+    "sample_type",
+)
 
 
 class StyleRunner:
@@ -67,6 +76,7 @@ class StyleRunner:
             reject_real_execution_payload(signal, context=f"StyleRunner.{self.market}.signal")
 
         mark_prices = self._signal_mark_prices(normalized_signals)
+        audit_scope = self._audit_scope(safe_account, normalized_signals)
 
         runs: list[dict[str, Any]] = []
         for style in styles:
@@ -76,7 +86,7 @@ class StyleRunner:
             ]
             runs.extend(style_runs)
 
-        matrix = [self._style_metrics(style, runs, mark_prices=mark_prices) for style in styles]
+        matrix = [{**self._style_metrics(style, runs, mark_prices=mark_prices), **audit_scope} for style in styles]
         for metric in matrix:
             save_run(str(metric.get("style_name", "")), self.market, {**metric, "date": date}, review_root=self.review_root)
         payload = {
@@ -93,6 +103,7 @@ class StyleRunner:
             "runs": runs,
             "report_template": "shared/markets/style_comparison_report_template.md",
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            **audit_scope,
         }
         self._write_report(payload)
         return payload
@@ -226,6 +237,7 @@ class StyleRunner:
             }
         )
         for key in (
+            *AUDIT_SCOPE_KEYS,
             "market_snapshot",
             "ask_price",
             "best_ask",
@@ -540,6 +552,16 @@ class StyleRunner:
             if value > 0 and value == value:
                 return value
         return 0.5
+
+    @staticmethod
+    def _audit_scope(account: dict[str, Any], signals: list[dict[str, Any]]) -> dict[str, Any]:
+        scope: dict[str, Any] = {}
+        for source in [account, *signals]:
+            for key in AUDIT_SCOPE_KEYS:
+                value = source.get(key)
+                if value not in (None, "") and key not in scope:
+                    scope[key] = value
+        return scope
 
     @staticmethod
     def _signal_mark_prices(signals: list[dict[str, Any]]) -> dict[str, float]:

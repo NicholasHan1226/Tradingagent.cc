@@ -879,6 +879,92 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
+  it('excludes maintenance simulated ledger rows from dashboard returns and trades', async () => {
+    const root = await createWorkspace()
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(ledgerRoot, { recursive: true })
+
+    await writeFile(
+      join(ledgerRoot, 'trade_journal.jsonl'),
+      [
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:00:00+08:00',
+          order_id: 'SIM-PROD-BTCUSDT-buy-grid',
+          symbol: 'BTCUSDT',
+          side: 'buy',
+          fill_qty: 1,
+          fill_price: 100,
+          notional: 100,
+        }),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          exclude_from_dashboard: true,
+          run_context: 'maintenance_backfill',
+          timestamp: '2026-07-04T10:01:00+08:00',
+          order_id: 'SIM-MAINT-ETHUSDT-buy-grid',
+          symbol: 'ETHUSDT',
+          side: 'buy',
+          fill_qty: 1,
+          fill_price: 200,
+          notional: 200,
+        }),
+      ].join('\n') + '\n',
+    )
+
+    await writeFile(
+      join(ledgerRoot, 'daily_mark_to_market.jsonl'),
+      [
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:00:00+08:00',
+          date: '20260704',
+          capital_base: 1000,
+          total_pnl: 10,
+          realized_pnl: 0,
+          unrealized_pnl: 10,
+          trade_count: 1,
+          pnl_source: 'sim_ledger_mark_to_market',
+        }),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          exclude_from_dashboard: true,
+          run_context: 'maintenance_backfill',
+          timestamp: '2026-07-04T10:01:00+08:00',
+          date: '20260704',
+          capital_base: 1000,
+          total_pnl: 999,
+          realized_pnl: 0,
+          unrealized_pnl: 999,
+          trade_count: 2,
+          pnl_source: 'sim_ledger_mark_to_market',
+        }),
+      ].join('\n') + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.portfolio).toMatchObject({
+      pnlAmount: 72,
+      tradeCount: 1,
+      capitalBase: 1000000,
+    })
+    expect(snapshot.performance).toHaveLength(1)
+    expect(snapshot.performance[0]).toMatchObject({
+      simulated: 0.01,
+    })
+    expect(snapshot.signals.some((signal) => signal.symbol === 'ETHUSDT')).toBe(false)
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'Crypto',
+      pnlAmount: 72,
+      tradeCount: 1,
+    }))
+  })
+
   it('adds A-share local account cash, holdings and sample quality to the portfolio summary', async () => {
     const root = await createWorkspace()
     const localSimRoot = join(root, 'TradingAgent/shared/logs/local_sim')

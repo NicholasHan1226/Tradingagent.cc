@@ -32,6 +32,29 @@ def _env_enabled(name: str) -> bool:
     return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _run_audit_scope() -> dict[str, Any]:
+    context = str(os.environ.get("TRADINGAGENT_SIM_RUN_CONTEXT") or "").strip()
+    mode = str(os.environ.get("TRADINGAGENT_SIM_RUN_MODE") or "").strip()
+    source = str(os.environ.get("TRADINGAGENT_SIM_RUN_SOURCE") or "").strip()
+    sample_type = str(os.environ.get("TRADINGAGENT_SIM_SAMPLE_TYPE") or "").strip()
+    excluded = _env_enabled("TRADINGAGENT_SIM_EXCLUDE_FROM_DASHBOARD")
+    scoped_text = " ".join([context, mode, source, sample_type]).lower()
+    if any(token in scoped_text for token in ("maintenance", "backfill", "smoke", "repair", "bootstrap", "dry_run", "dry-run")):
+        excluded = True
+    payload: dict[str, Any] = {}
+    if excluded:
+        payload["exclude_from_dashboard"] = True
+    if context:
+        payload["run_context"] = context
+    if mode:
+        payload["run_mode"] = mode
+    if source:
+        payload["run_source"] = source
+    if sample_type:
+        payload["sample_type"] = sample_type
+    return payload
+
+
 if market == "hk" and not _env_enabled("TRADINGAGENT_HK_SIM_ENABLED"):
     print(
         json.dumps(
@@ -261,8 +284,9 @@ simulator = getattr(sim_mod, cfg["sim_cls"])(config=config)
 
 from datetime import date
 
+audit_scope = _run_audit_scope()
 runner = StyleRunner(market, simulator)
-result = runner.run(signals, date=str(date.today()))
+result = runner.run(signals, date=str(date.today()), account=audit_scope)
 
 print(
     json.dumps(
@@ -273,6 +297,7 @@ print(
             "data_rows": len(signals),
             "timestamp": str(date.today()),
             "data_source": "SharedSignals reader/API",
+            **audit_scope,
             "reader_degraded": bool(reader.degraded or reader.stale),
             "reader_errors": reader.errors[-5:],
         },
