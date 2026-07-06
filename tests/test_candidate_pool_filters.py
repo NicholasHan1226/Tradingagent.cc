@@ -25,6 +25,8 @@ class CandidatePoolAshareFilterTest(unittest.TestCase):
 
     def test_universe_filter_excludes_b_share_codes_for_ashare(self) -> None:
         class Reader:
+            daily_calls = []
+
             def get_assets(self, market: str):
                 return [
                     {"symbol": "000001.SZ", "name": "A", "list_date": "20000101", "status": "active"},
@@ -37,18 +39,21 @@ class CandidatePoolAshareFilterTest(unittest.TestCase):
                 return []
 
             def get_bars_daily(self, market: str, symbol: str, start=None, end=None):
+                self.daily_calls.append((symbol, start, end))
                 if symbol in {"600000", "600000.SH"}:
                     return []
                 return [{"trade_date": "20260701", "vol": 100, "amount": 1000000}]
 
+        reader = Reader()
         result = filter_universe(
             "20260701",
             ["000001.SZ", "200521.SZ", "900901.SH", "600000.SH"],
-            reader=Reader(),
+            reader=reader,
             market="ashare",
         )
 
         self.assertEqual(result, ["000001.SZ"])
+        self.assertIn(("000001", "20260617", "20260701"), reader.daily_calls)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ filter_universe(date, stock_list) → list[ts_code]
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from typing import Any
 
@@ -57,6 +57,14 @@ def _symbol_variants(ts_code: str) -> list[str]:
         stripped = symbol.split(".", 1)[0]
         return [stripped, symbol]
     return [symbol]
+
+
+def _lookback_start(date: str, calendar_days: int = 14) -> str:
+    try:
+        end = datetime.strptime(str(date or "").replace("-", "")[:8], "%Y%m%d")
+    except ValueError:
+        return ""
+    return (end - timedelta(days=calendar_days)).strftime("%Y%m%d")
 
 
 def _is_regular_a_share_symbol(ts_code: Any) -> bool:
@@ -132,8 +140,9 @@ def _turnover_wan(ts_code: str, date: str, reader: Any | None = None, market: st
     """获取日均成交额 (万元) — 近 5 日平均。"""
     data_reader = _get_data_reader(reader)
     try:
+        start_date = _lookback_start(date)
         for symbol in _symbol_variants(ts_code):
-            bars = data_reader.get_bars_daily(market, symbol, None, date)
+            bars = data_reader.get_bars_daily(market, symbol, start_date, date)
             if not bars:
                 continue
             recent = [b for b in reversed(bars) if isinstance(b, dict)][:5]
