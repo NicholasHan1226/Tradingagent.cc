@@ -104,7 +104,7 @@ def _session_bucket(now: datetime | None) -> str:
     current = _cn_local_time(now)
     if current is None:
         return "unknown"
-    if time(9, 0) <= current <= time(15, 0):
+    if time(9, 0) <= current <= time(11, 30) or time(13, 0) <= current <= time(15, 0):
         return "day"
     if current >= time(21, 0) or current <= time(2, 30):
         return "night"

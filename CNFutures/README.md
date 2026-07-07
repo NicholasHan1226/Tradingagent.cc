@@ -134,10 +134,14 @@ fills:
   margin-usage cap
 - `no_overnight` styles create a simulated flatten order near the configured
   day-session close window
+- lunch break is treated as market closed for 5-minute simulation, so stale
+  bars during 11:30-13:00 do not create degraded samples
 - styles can block new orders inside a configurable rollover window before and
   after the contract month starts
 - explicit `last_trade_date` / `expiry_date` metadata triggers an expiry guard
   before simulated execution
+- if no style is eligible for night trading, first-sample validation reports a
+  pass/observation state rather than an execution failure
 
 This is closer to real trading than ideal fills, but it still does not model
 live multi-level order book queue priority, exact exchange limit-state matching,

@@ -333,11 +333,11 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
             review_path=review,
         )
 
-        self.assertEqual(report["opening_30m_review"]["status"], "warn")
+        self.assertEqual(report["opening_30m_review"]["status"], "pass")
         self.assertEqual(report["opening_30m_review"]["phase"], "no_night_session")
         self.assertEqual(report["opening_30m_review"]["top_hold_reason"], "style_session_not_allowed")
         codes = {alert["code"] for alert in report["alerts"]}
-        self.assertIn("cn_futures_opening_30m_no_night_session", codes)
+        self.assertNotIn("cn_futures_opening_30m_no_night_session", codes)
         self.assertNotIn("cn_futures_first_sim_sample_missing", codes)
 
 

@@ -346,6 +346,32 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["errors"], [])
 
+    def test_multi_style_runner_reports_market_closed_during_lunch_break(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            adapter = CNFuturesAdapter(
+                reader=FakeFuturesReader(),
+                universe_filter={"max_symbols": 1},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.01}},
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                FakeFuturesReader(),
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-03 12:00:00"),
+                max_intraday_bar_age_minutes=10,
+            )
+
+            self.assertEqual(result["state"], "market_closed")
+            self.assertEqual(result["filled_count"], 0)
+            self.assertEqual(result["errors"], [])
+
     def test_multi_style_runner_rejects_stale_intraday_bars_inside_session(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation

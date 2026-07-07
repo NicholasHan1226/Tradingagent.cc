@@ -495,11 +495,12 @@ def _opening_30m_review(
         phase = "insufficient_5min_data"
         action = "check_cn_futures_5min_collector"
     elif int(latest_review.get("filled_count") or 0) <= 0 and filled_signal_count <= 0 and hold_count > 0:
-        status = "warn"
         if top_hold_reason in {"style_session_not_allowed", "night_session_not_allowed"}:
+            status = "pass"
             phase = "no_night_session"
             action = "enable_only_explicit_night_session_styles_or_wait_for_day_session"
         else:
+            status = "warn"
             phase = "strategy_hold"
             action = "review_hold_reasons_and_strategy_filters"
     elif int(latest_review.get("filled_count") or 0) <= 0 and filled_signal_count <= 0:
