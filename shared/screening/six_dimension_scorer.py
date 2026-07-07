@@ -124,6 +124,49 @@ def _direction_score(impact_hint: Any) -> float:
     return {"positive": 1.0, "negative": 0.0, "mixed": 0.5, "neutral": 0.5}.get(direction, 0.5)
 
 
+def _metric_name(row: dict[str, Any]) -> str:
+    raw = str(row.get("factor_name") or row.get("name") or row.get("metric") or "").strip().lower()
+    return raw.split(":", 1)[1] if ":" in raw else raw
+
+
+def _date_from_row(row: dict[str, Any]) -> str:
+    for key in ("event_time", "trade_date", "end_date", "report_date", "ann_date", "date", "period", "collected_at"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            digits = "".join(ch for ch in value[:10] if ch.isdigit())
+            if len(digits) >= 8:
+                return digits[:8]
+    return ""
+
+
+def _score_high(value: Any, low: float, high: float) -> float:
+    number = _safe_float(value, 0.0)
+    if high <= low:
+        return 0.5
+    return _clamp((number - low) / (high - low))
+
+
+def _score_low(value: Any, low: float, high: float) -> float:
+    number = _safe_float(value, 0.0)
+    if high <= low:
+        return 0.5
+    return _clamp(1.0 - ((number - low) / (high - low)))
+
+
+def _rows_from_reader(method: Any, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    if not callable(method):
+        return []
+    try:
+        rows = method(*args, **kwargs)
+    except TypeError:
+        return []
+    except Exception:
+        return []
+    if not isinstance(rows, list):
+        return []
+    return [dict(row) for row in rows if isinstance(row, dict)]
+
+
 def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
     """宏观维度 — 从 MarketGraph all_weather_regime.csv 获取当前 regime。"""
     try:
@@ -208,18 +251,33 @@ def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float
         market = _reader_market(config)
         for symbol in _symbol_variants(ts_code):
             rows = data_reader.get_factors(market, symbol)
+            if not rows:
+                rows = _rows_from_reader(getattr(data_reader, "get_fundamentals", None), symbol, date)
             if rows:
                 break
         if not rows:
             return 0.5
         latest_by_factor: dict[str, float] = {}
+        derived: dict[str, list[float]] = {"value": [], "growth": [], "quality": []}
         for row in rows:
-            factor = str(row["factor_name"] or "").strip().lower()
+            factor = _metric_name(row)
             if factor and factor not in latest_by_factor:
-                raw = _safe_float(row["value"], 0.5)
+                raw = _safe_float(row.get("value"), 0.5)
                 if factor in ("pe", "pb"):
                     raw = 1.0 - (raw / 100.0)
                 latest_by_factor[factor] = _clamp(raw)
+            raw_value = row.get("value")
+            if factor in {"pe", "pe_ttm", "pe_lyr", "ps", "ps_ttm"}:
+                derived["value"].append(_score_low(raw_value, 0.0, 80.0))
+            elif factor in {"pb", "pb_mrq"}:
+                derived["value"].append(_score_low(raw_value, 0.0, 10.0))
+            elif factor in {"roe", "roe_dt", "roa", "grossprofit_margin", "netprofit_margin", "profit_to_gr"}:
+                derived["quality"].append(_score_high(raw_value, 0.0, 30.0))
+            elif "yoy" in factor or "growth" in factor or factor.endswith("_qoq"):
+                derived["growth"].append(_score_high(raw_value, -30.0, 80.0))
+        for factor, values in derived.items():
+            if values and factor not in latest_by_factor:
+                latest_by_factor[factor] = _clamp(sum(values) / len(values))
         total_w = 0.0
         weighted = 0.0
         for factor, weight in factor_weights.items():
@@ -256,17 +314,25 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float | N
             "main_moneyflow",
         }
         for symbol in _symbol_variants(ts_code):
-            for row in data_reader.get_factors(market, symbol):
-                factor_name = str(row.get("factor_name") or "").strip().lower()
-                if factor_name not in moneyflow_names:
+            factor_rows = data_reader.get_factors(market, symbol)
+            capital_rows = _rows_from_reader(getattr(data_reader, "get_capital_flow", None), symbol, start_date.strftime("%Y%m%d"), date)
+            for row in [*factor_rows, *capital_rows]:
+                factor_name = _metric_name(row)
+                is_direct_net = factor_name in moneyflow_names or "net_mf" in factor_name or "net_amount" in factor_name
+                is_main_buy = factor_name in {"buy_lg_amount", "buy_elg_amount", "buy_md_amount"}
+                is_main_sell = factor_name in {"sell_lg_amount", "sell_elg_amount", "sell_md_amount"}
+                if not (is_direct_net or is_main_buy or is_main_sell):
                     continue
-                raw_time = str(row.get("event_time") or "")[:10]
+                raw_time = _date_from_row(row)
                 try:
                     event_day = datetime.strptime(raw_time.replace("-", ""), "%Y%m%d")
                 except ValueError:
                     continue
                 if start_date <= event_day <= end_date:
-                    total_net += _safe_float(row.get("value"), 0.0)
+                    value = _safe_float(row.get("value"), 0.0)
+                    if is_main_sell:
+                        value = -value
+                    total_net += value
                     found = True
             if found:
                 break

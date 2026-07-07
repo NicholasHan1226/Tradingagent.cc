@@ -297,6 +297,16 @@ class TestSharedSignalsReader(unittest.TestCase):
         self.assertTrue(missing_reader.stale)
         self.assertGreaterEqual(len(missing_reader.errors), 1)
 
+    def test_tradings_get_factors_canonicalizes_ashare_market_and_symbol(self) -> None:
+        trading_reader = TradingagentDataReader(
+            shared=self.reader,
+            marketgraph=MarketGraphCSVReader(Path(self.tmp.name) / "missing_marketgraph"),
+        )
+
+        rows = trading_reader.get_factors("ashare", "600000.SH")
+
+        self.assertEqual(rows[0]["factor_name"], "value")
+
     def test_default_sqlite_fallback_uses_runtime_read_model(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(
@@ -576,6 +586,24 @@ class EmptyScoringReader:
         return []
 
 
+class APIOnlyScoringReader(EmptyScoringReader):
+    def get_fundamentals(self, ts_code, end_date=None):
+        return [
+            {"factor_name": "daily_basic:pe_ttm", "event_time": "20260629", "value": 12.0},
+            {"factor_name": "daily_basic:pb", "event_time": "20260629", "value": 1.4},
+            {"factor_name": "fina_indicator:roe", "event_time": "20260629", "value": 18.0},
+            {"factor_name": "fina_indicator:netprofit_yoy", "event_time": "20260629", "value": 22.0},
+        ]
+
+    def get_capital_flow(self, ts_code, start=None, end=None):
+        return [
+            {"factor_name": "moneyflow:buy_lg_amount", "event_time": "20260629", "value": 90000.0},
+            {"factor_name": "moneyflow:sell_lg_amount", "event_time": "20260629", "value": 30000.0},
+            {"factor_name": "moneyflow:buy_elg_amount", "event_time": "20260629", "value": 50000.0},
+            {"factor_name": "moneyflow:sell_elg_amount", "event_time": "20260629", "value": 10000.0},
+        ]
+
+
 class TestSixDimensionScorerWithReader(unittest.TestCase):
     def test_scoring_uses_reader_and_preserves_formula(self) -> None:
         scores = six_dimension_scorer.score_stock(
@@ -591,6 +619,16 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
         self.assertAlmostEqual(scores["technical"], 0.85)
         self.assertAlmostEqual(scores["sentiment"], 0.75)
         self.assertAlmostEqual(scores["combined"], 0.6658333333333333)
+
+    def test_scoring_uses_sharedsignals_fundamentals_and_capital_flow_when_factors_empty(self) -> None:
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260629",
+            data_reader=APIOnlyScoringReader(),
+        )
+
+        self.assertGreater(scores["fundamental"], 0.5)
+        self.assertGreater(scores["capital"], 0.5)
 
     def test_scoring_missing_data_degrades_to_neutral(self) -> None:
         scores = six_dimension_scorer.score_stock(

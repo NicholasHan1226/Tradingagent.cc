@@ -742,7 +742,31 @@ class TradingagentDataReader:
         self, market: str | None = None, symbol: str = "",
     ) -> list[dict[str, Any]]:
         try:
-            result = self.shared.get_factors(market=market or "", symbol=symbol)
+            market_name = self._canonical_market(market)
+            ts_code = self._to_ts_code(market_name, symbol) if symbol else ""
+            stripped_symbol = str(symbol or "").split(".", 1)[0]
+            stripped_ts_code = str(ts_code or "").split(".", 1)[0]
+            symbols = [item for item in (symbol, ts_code, stripped_symbol, stripped_ts_code) if item]
+            seen_symbols: set[str] = set()
+            normalized_symbols: list[str] = []
+            for item in symbols:
+                if item not in seen_symbols:
+                    normalized_symbols.append(item)
+                    seen_symbols.add(item)
+
+            markets = [market_name]
+            raw_market = str(market or "").strip()
+            if raw_market and raw_market not in markets:
+                markets.append(raw_market)
+
+            result: list[dict[str, Any]] = []
+            for market_candidate in markets:
+                for symbol_candidate in normalized_symbols or [""]:
+                    result = self.shared.get_factors(market=market_candidate, symbol=symbol_candidate)
+                    if result:
+                        break
+                if result:
+                    break
             self._record_shared_error("get_factors")
             return result
         except Exception as e:

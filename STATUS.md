@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-07 (A股候选池诊断增强、CNFutures 闭市状态修正、当前合约筛选、5分钟供数备源、全量同步降载)
+> 最后更新：2026-07-07 (A股六维评分供数修复、候选池诊断增强、CNFutures 闭市状态修正、当前合约筛选、5分钟供数备源、全量同步降载)
 
 ---
 
@@ -49,6 +49,7 @@
 - **A股开盘验收与无交易分层**：`ashare_opening_validator` 的 first-sample 报告已把 5分钟 bar、信号状态、服务器本地模拟成交、签名回执、复盘行数和 no-trade 分类汇总到同一报告；若当天没有交易，会优先读取最新 `shared/logs/ashare_no_trade_explanations.jsonl`，把无候选、无信号卡、风控全拒、资金/组合构建阻塞、重复幂等、执行跳过、执行失败、回执缺失和复盘待生成区分开。缺回执只在当天已经出现服务器本地模拟成交后才告警，避免把“尚无成交”误报成“成交后缺回执”。`opening_acceptance.py` 短文本同步展示 bar/信号/成交/回执/复盘计数。
 - **A股旧测试账本归档**：新增 `shared/runtime_test/archive_ashare_legacy_ledgers.py`，只归档 `shared/logs/sim_ledger/ashare/*` 中非 canonical `ashare_sim` 的旧风格账本，默认 dry run，`--apply` 时移动到 `shared/logs/archive/ashare_legacy_style_ledgers/<batch>` 并写 manifest；不得删除或归档 `ashare_sim`。旧样本不再作为活跃输入，确认归档 manifest 后可按批次永久删除归档副本。
 - **A股只读研究证据**：`Ashare/research_evidence.py` 与 `job_ashare_research_evidence.sh` 统一输出 opening auction 异常、closing momentum 候选、204001 逆回购预估收益和 A股风格证据；集合竞价缺少 09:15-09:25 数据时会显式标记 `first_5m_proxy`，标的选择会优先读取 SharedSignals 当日 `rt_min/stk_mins` 已有分钟线的样本，再回退资产表，避免把“扫错无分钟线样本”误判为全市场无数据；204001 优先读取 SharedSignals `/market_data` 日线收益率，尾盘候选带 `next_trading_day` 与 open/high/close 兑现标签（数据未到时 `pending_next_day_bar`），风格资金按 `shared/review/ashare/style_weights.json` 运行时 active 权重切分 200,000 元虚拟预算；结果写入 `shared/review/ashare/research_evidence_latest.json` 与 append-only `research_evidence.jsonl`，固定 `read_only=true`、`real_trading_enabled=false`，不进入 simulated/real 执行队列。
+- **A股六维评分供数**：2026-07-07 生产隔离验收发现 A股 500 个评分样本六维全部为 0.5，直接原因是 SharedSignals P0 日线历史仅 7 个交易日、`/fundamentals`/`/capital_flow`/`/macro` 当前无可用行，且 TradingAgent 旧 `get_factors()` 没有对 `ashare → Ashare` 做 canonical 查询。已修复 `get_factors()` 的 A股市场名/代码双格式兜底，并让 `six_dimension_scorer` 在旧 factors 为空时消费 SharedSignals `/fundamentals` 与 `/capital_flow` read model 行；技术维度仍要求足够日线历史，不用 7 根 K 线硬凑信号。SharedSignals 已把 P0 `daily/stk_factor/stk_factor_pro` 评分相关接口窗口提高到 90 天，需等待回补后复验 `score_diagnostics.neutral_default_like_dimension_counts` 不再全等于 `scored_count`。
 
 ## 二、已知问题
 
@@ -130,6 +131,7 @@
 
 - [x] A股 `AshareAdapter` 的生产 `score_universe_limit` 从 200 扩到 500，覆盖到候选池 cap，避免只评分 universe 前几百只导致 candidate 层长期为 0；新买入仍必须来自 `candidate_pool_layer=candidate`，不放松候选阈值、不回退到 watch/universe 硬买。
 - [x] A股 `no_trade_explanation` 已补 `score_diagnostics`：候选为 0 时记录已评分数量、候选阈值、Top 分数、中性默认维度计数和缺失维度计数，后续可直接判断是 SharedSignals/MarketGraph 研究维度不足，还是候选确实没有达到交易门槛。
+- [x] A股六维评分已补供数兼容：`TradingagentDataReader.get_factors()` canonical 查询 `Ashare` 与带后缀代码，`six_dimension_scorer` 在旧 factors 为空时读取 `get_fundamentals()` 与 `get_capital_flow()` 行并映射为 value/growth/quality/capital 分；保留缺数据回退 0.5，不放松 candidate 阈值。
 - [x] A股文档已明确候选池样本不能过小，扩大评分覆盖只解决“看得太少”的问题，不改变“无科学候选就留现金/逆回购”的资金门禁。
 - [x] CNFutures 继续由 TradingAgent 只读 SharedSignals `market_bars_intraday`；Tushare 5 分钟期货接口空返回的备源修复在 SharedSignals 完成，TradingAgent 不新增独立采集。
 - [x] CNFutures adapter 的 universe/合约发现已改为 `TradingagentDataReader` reader 优先，开盘验收也优先通过 reader 查询 Futures 日线/5分钟线；直接 SQLite 只保留为显式临时库或 `CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK=1` 的兼容兜底，不再是生产默认路径。
