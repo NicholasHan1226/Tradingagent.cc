@@ -31,7 +31,7 @@ LATEST = ROOT / "shared/runtime_test/ashare_preopen_dry_run_latest.json"
 HISTORY = ROOT / "shared/runtime_test/ashare_preopen_dry_run_history.jsonl"
 CANDIDATE_THRESHOLD = 0.55
 MIN_SYMBOLS = 1000
-DEFAULT_SCORE_LIMIT = 80
+DEFAULT_SCORE_LIMIT = 10
 
 
 def _now_cn(value: str | None = None) -> datetime:

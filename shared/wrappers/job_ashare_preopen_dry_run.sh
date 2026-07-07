@@ -13,5 +13,11 @@ JOB_NAME="job_ashare_preopen_dry_run"
 PHASE="preopen_dry_run"
 LEVEL3_TARGET="ashare_preopen_dry_run"
 ENTRYPOINT="shared.runtime_test.ashare_preopen_dry_run"
+LEVEL1_RETRIES="${ASHARE_PREOPEN_DRY_RUN_RETRIES:-1}"
+SCORE_LIMIT="${ASHARE_PREOPEN_DRY_RUN_SCORE_LIMIT:-10}"
 
-run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" "${PYTHON_BIN}" -m "${ENTRYPOINT}" --send-on warn --exit-zero
+if command -v timeout >/dev/null 2>&1; then
+    run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" timeout 90s "${PYTHON_BIN}" -m "${ENTRYPOINT}" --score-limit "${SCORE_LIMIT}" --send-on warn --exit-zero
+else
+    run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" "${PYTHON_BIN}" -m "${ENTRYPOINT}" --score-limit "${SCORE_LIMIT}" --send-on warn --exit-zero
+fi
