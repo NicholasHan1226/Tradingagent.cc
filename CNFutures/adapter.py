@@ -106,6 +106,19 @@ def _is_active(asset: dict[str, Any]) -> bool:
     return status in _ACTIVE_STATUSES
 
 
+def _is_executable_contract_symbol(symbol: str) -> bool:
+    """Reject generic product symbols such as CU.SHF; simulations need contracts."""
+
+    value = str(symbol or "").strip().lower()
+    base = value.split(".", 1)[0]
+    try:
+        product = normalize_product(value)
+    except ValueError:
+        return False
+    suffix = base[len(product):]
+    return suffix.isdigit() and len(suffix) >= 3
+
+
 class CNFuturesAdapter(MarketAdapter):
     """Market boundary for CN futures automated simulation."""
 
@@ -213,6 +226,8 @@ class CNFuturesAdapter(MarketAdapter):
             symbol_key = symbol.lower()
             if not symbol or symbol_key in seen:
                 continue
+            if not _is_executable_contract_symbol(symbol):
+                continue
             try:
                 product = normalize_product(symbol)
             except ValueError:
@@ -265,7 +280,7 @@ class CNFuturesAdapter(MarketAdapter):
         max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
         for symbol in self._scan_candidate_symbols():
             try:
-                rows = get_bars_daily(READER_MARKET, symbol, "", str(date or ""))
+                rows = get_bars_daily(READER_MARKET, symbol, str(date or ""), str(date or ""))
             except Exception:
                 rows = []
             if rows:
@@ -277,6 +292,9 @@ class CNFuturesAdapter(MarketAdapter):
     def _get_symbols_with_intraday_bars_from_reader(self, date: str, interval: str) -> list[str]:
         if self.reader is None:
             return []
+        direct = self._get_intraday_symbols_from_reader_read_model(date, interval)
+        if direct:
+            return direct
         get_bars_intraday = getattr(self.reader, "get_bars_intraday", None)
         if not callable(get_bars_intraday):
             return []
@@ -284,7 +302,7 @@ class CNFuturesAdapter(MarketAdapter):
         max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
         for symbol in self._scan_candidate_symbols():
             try:
-                rows = get_bars_intraday(READER_MARKET, symbol, interval, "", str(date or ""))
+                rows = get_bars_intraday(READER_MARKET, symbol, interval, str(date or ""), str(date or ""))
             except Exception:
                 rows = []
             if rows:
@@ -292,6 +310,38 @@ class CNFuturesAdapter(MarketAdapter):
                 if len(selected) >= max_symbols:
                     break
         return selected
+
+    def _get_intraday_symbols_from_reader_read_model(self, date: str, interval: str) -> list[str]:
+        shared = getattr(self.reader, "shared", None)
+        query = getattr(shared, "_query", None)
+        if not callable(query):
+            return []
+        trade_date = str(date or "").replace("-", "").strip()
+        if not trade_date:
+            return []
+        interval_values = ["5m", "5min"] if interval in {"5m", "5min"} else [interval]
+        placeholders = ",".join("?" for _ in interval_values)
+        rows = query(
+            "SELECT DISTINCT symbol FROM market_bars_intraday "
+            f"WHERE market=? AND interval IN ({placeholders}) "
+            "AND replace(COALESCE(trade_date,''),'-','')=? "
+            "ORDER BY symbol ASC",
+            (READER_MARKET, *interval_values, trade_date),
+        )
+        if not rows:
+            return []
+        max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
+        allowed_products = {
+            str(item).strip().lower()
+            for item in self.universe_filter.get("products", ())
+            if str(item).strip()
+        }
+        return self._select_symbols(
+            [str(row.get("symbol") or "").strip() for row in rows if isinstance(row, dict)],
+            asset_by_symbol={},
+            allowed_products=allowed_products,
+            max_symbols=max_symbols,
+        )
 
     def _get_symbols_with_bars(self, date: str) -> list[str]:
         db_path = self._shared_signals_db_path()

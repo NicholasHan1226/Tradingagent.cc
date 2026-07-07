@@ -135,6 +135,36 @@ class DateScopedFuturesReader(FakeFuturesReader):
         ]
 
 
+class DateScopedUniverseReader(FakeFuturesReader):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object, object]] = []
+
+    def get_assets(self, market: str) -> list[dict[str, object]]:
+        if market != "Futures":
+            return []
+        return [
+            {"symbol": "CU.SHF", "name": "沪铜连续", "exchange": "SHFE", "status": "listed"},
+            {"symbol": "CU0001.SHF", "name": "沪铜旧合约", "exchange": "SHFE", "status": "listed"},
+            {"symbol": "CU2607.SHF", "name": "沪铜2607", "exchange": "SHFE", "status": "listed"},
+            {"symbol": "RB2607.SHF", "name": "螺纹钢2607", "exchange": "SHFE", "status": "listed"},
+        ]
+
+    def get_bars_intraday(
+        self,
+        market: str,
+        symbol: str,
+        interval: str = "5min",
+        start: object = None,
+        end: object = None,
+    ) -> list[dict[str, object]]:
+        self.calls.append((symbol, start, end))
+        if market != "Futures" or interval != "5min" or start != "20260707" or end != "20260707":
+            return []
+        if symbol in {"CU2607.SHF", "RB2607.SHF"}:
+            return [{"trade_date": "20260707", "bar_time": "2026-07-07 14:30:00", "close": 3500, "volume": 1200}]
+        return []
+
+
 class CNFuturesAutomationTest(unittest.TestCase):
     def test_adapter_default_reader_uses_tradingagent_data_reader(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -165,6 +195,16 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
         self.assertEqual(reader.calls[0], ("20260703", "20260703"))
         self.assertEqual(len(bars), 2)
+
+    def test_intraday_universe_requires_current_contract_bars(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+
+        reader = DateScopedUniverseReader()
+        adapter = CNFuturesAdapter(reader=reader, universe_filter={"max_symbols": 4, "products": ("cu", "rb")})
+
+        self.assertEqual(adapter.get_intraday_universe("20260707"), ["CU2607.SHF", "RB2607.SHF"])
+        self.assertNotIn(("CU0001.SHF", "", "20260707"), reader.calls)
+        self.assertTrue(all(call[1:] == ("20260707", "20260707") for call in reader.calls))
 
     def test_multi_style_runner_executes_only_simulated_lanes_and_writes_review(self) -> None:
         import CNFutures.sim_executor  # noqa: F401
