@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-07 (PM MarketGraph 研究概率 API、Crypto 空跑动量诊断、CNFutures 精确取数、看板策略来源与 A股无交易归因)
+> 最后更新：2026-07-07 (A股候选池评分样本扩容、CNFutures 5分钟供数备源、全量同步降载)
 
 ---
 
@@ -125,6 +125,14 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-07 A股/CNFutures 开盘稳定性修复
+
+- [x] A股 `AshareAdapter` 的生产 `score_universe_limit` 从 20 扩到 200，避免只评分 universe 前几十只导致 candidate 层长期为 0；新买入仍必须来自 `candidate_pool_layer=candidate`，不放松候选阈值、不回退到 watch/universe 硬买。
+- [x] A股文档已明确候选池样本不能过小，扩大评分覆盖只解决“看得太少”的问题，不改变“无科学候选就留现金/逆回购”的资金门禁。
+- [x] CNFutures 继续由 TradingAgent 只读 SharedSignals `market_bars_intraday`；Tushare 5 分钟期货接口空返回的备源修复在 SharedSignals 完成，TradingAgent 不新增独立采集。
+- [x] CNFutures adapter 的 universe/合约发现已改为 `TradingagentDataReader` reader 优先，开盘验收也优先通过 reader 查询 Futures 日线/5分钟线；直接 SQLite 只保留为显式临时库或 `CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK=1` 的兼容兜底，不再是生产默认路径。
+- [x] 2026-07-07 盘中已确认的生产症状：A股 job 正常运行但 `candidate_count=0`、无成交、权益约 200,000；CNFutures job 运行但缺 5 分钟 Futures bar、无成交。上述状态不能算“可交易健康”，必须等生产部署后复验 candidate、bar、filled/hold/no-trade 归因。
 
 ### 2026-07-05 simulated equity snapshot writer for dashboard
 

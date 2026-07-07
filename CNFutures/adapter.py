@@ -145,7 +145,9 @@ class CNFuturesAdapter(MarketAdapter):
             if str(item).strip()
         }
 
-        symbols_with_bars = [] if self._explicit_reader else self._get_symbols_with_bars(date)
+        symbols_with_bars = self._get_symbols_with_bars_from_reader(date)
+        if not symbols_with_bars and (self.reader is None or self._explicit_reader or self._allow_direct_sqlite_fallback()):
+            symbols_with_bars = self._get_symbols_with_bars(date)
         if symbols_with_bars:
             selected = self._select_symbols(
                 symbols_with_bars,
@@ -171,7 +173,9 @@ class CNFuturesAdapter(MarketAdapter):
     def get_intraday_universe(self, date: str, *, interval: str = "5min") -> list[str]:
         """Prefer contracts with fresh 5-minute bars for intraday simulation."""
 
-        symbols_with_bars = [] if self._explicit_reader else self._get_symbols_with_intraday_bars(date, interval)
+        symbols_with_bars = self._get_symbols_with_intraday_bars_from_reader(date, interval)
+        if not symbols_with_bars and (self.reader is None or self._explicit_reader or self._allow_direct_sqlite_fallback()):
+            symbols_with_bars = self._get_symbols_with_intraday_bars(date, interval)
         if not symbols_with_bars:
             return self.get_universe(date)
         assets = self._get_assets()
@@ -223,6 +227,71 @@ class CNFuturesAdapter(MarketAdapter):
             if len(symbols) >= max_symbols:
                 break
         return symbols
+
+    def _scan_candidate_symbols(self) -> list[str]:
+        assets = self._get_assets()
+        asset_by_symbol = {
+            str(asset.get("symbol") or asset.get("ts_code") or "").strip().lower(): asset
+            for asset in assets
+            if isinstance(asset, dict) and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+        }
+        allowed_products = {
+            str(item).strip().lower()
+            for item in self.universe_filter.get("products", ())
+            if str(item).strip()
+        }
+        scan_limit = max(
+            int(self.universe_filter.get("max_symbols", 30)),
+            int(os.environ.get("CN_FUTURES_UNIVERSE_SCAN_LIMIT", "200")),
+        )
+        return self._select_symbols(
+            [
+                str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+                for asset in assets
+                if isinstance(asset, dict)
+            ],
+            asset_by_symbol=asset_by_symbol,
+            allowed_products=allowed_products,
+            max_symbols=scan_limit,
+        )
+
+    def _get_symbols_with_bars_from_reader(self, date: str) -> list[str]:
+        if self.reader is None:
+            return []
+        get_bars_daily = getattr(self.reader, "get_bars_daily", None)
+        if not callable(get_bars_daily):
+            return []
+        selected: list[str] = []
+        max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
+        for symbol in self._scan_candidate_symbols():
+            try:
+                rows = get_bars_daily(READER_MARKET, symbol, "", str(date or ""))
+            except Exception:
+                rows = []
+            if rows:
+                selected.append(symbol)
+                if len(selected) >= max_symbols:
+                    break
+        return selected
+
+    def _get_symbols_with_intraday_bars_from_reader(self, date: str, interval: str) -> list[str]:
+        if self.reader is None:
+            return []
+        get_bars_intraday = getattr(self.reader, "get_bars_intraday", None)
+        if not callable(get_bars_intraday):
+            return []
+        selected: list[str] = []
+        max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
+        for symbol in self._scan_candidate_symbols():
+            try:
+                rows = get_bars_intraday(READER_MARKET, symbol, interval, "", str(date or ""))
+            except Exception:
+                rows = []
+            if rows:
+                selected.append(symbol)
+                if len(selected) >= max_symbols:
+                    break
+        return selected
 
     def _get_symbols_with_bars(self, date: str) -> list[str]:
         db_path = self._shared_signals_db_path()
@@ -483,6 +552,13 @@ class CNFuturesAdapter(MarketAdapter):
 
     def _shared_signals_db_path(self) -> Path:
         return Path(os.environ.get("SHARED_SIGNALS_DB") or DEFAULT_SHARED_SIGNALS_DB)
+
+    def _allow_direct_sqlite_fallback(self) -> bool:
+        value = os.environ.get("CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK", "").strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        configured = Path(os.environ.get("SHARED_SIGNALS_DB") or DEFAULT_SHARED_SIGNALS_DB)
+        return configured != DEFAULT_SHARED_SIGNALS_DB
 
     def _get_assets_from_sqlite(self) -> list[dict[str, Any]]:
         db_path = self._shared_signals_db_path()

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from datetime import datetime, time, timedelta, timezone
@@ -17,10 +18,16 @@ except ImportError:  # pragma: no cover - direct script execution fallback
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from CNFutures.review import DEFAULT_REVIEW_PATH
 
+try:
+    from shared.data.reader import TradingagentDataReader
+except Exception:  # pragma: no cover
+    TradingagentDataReader = None  # type: ignore[assignment]
+
 DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
 DEFAULT_SIGNALS_DIR = Path(__file__).resolve().parents[1] / "signals"
 DEFAULT_RECEIPT_PATH = Path(__file__).resolve().parents[1] / "signals" / "sim_execution_receipts.jsonl"
 CN_TZ = timezone(timedelta(hours=8))
+READER_MARKET = "Futures"
 
 
 def _now_cn() -> datetime:
@@ -58,7 +65,81 @@ def _pre_open_session(now: datetime) -> tuple[str, datetime | None]:
     return "closed", None
 
 
-def _query_daily_bars(db_path: Path, trade_date: str) -> dict[str, Any]:
+def _default_reader() -> Any | None:
+    if TradingagentDataReader is None:
+        return None
+    try:
+        return TradingagentDataReader()
+    except Exception:
+        return None
+
+
+def _reader_symbols(reader: Any | None, *, limit: int = 80) -> list[str]:
+    if reader is None:
+        return []
+    get_assets = getattr(reader, "get_assets", None)
+    if not callable(get_assets):
+        return []
+    try:
+        rows = get_assets(market=READER_MARKET)
+    except TypeError:
+        try:
+            rows = get_assets(READER_MARKET)
+        except Exception:
+            return []
+    except Exception:
+        return []
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("ts_code") or "").strip()
+        key = symbol.lower()
+        if not symbol or key in seen:
+            continue
+        seen.add(key)
+        symbols.append(symbol)
+        if len(symbols) >= max(1, int(limit)):
+            break
+    return symbols
+
+
+def _query_daily_bars_via_reader(reader: Any | None, trade_date: str, *, min_symbols: int) -> dict[str, Any]:
+    get_bars_daily = getattr(reader, "get_bars_daily", None)
+    if not callable(get_bars_daily):
+        return {"error": "sharedsignals_reader_unavailable", "symbol_count": 0}
+    symbols = _reader_symbols(reader, limit=max(80, int(min_symbols) * 20))
+    if not symbols:
+        return {"error": "futures_assets_empty_from_sharedsignals_reader", "symbol_count": 0}
+    latest_dates: list[str] = []
+    daily_bar_count = 0
+    symbol_count = 0
+    for symbol in symbols:
+        try:
+            rows = get_bars_daily(READER_MARKET, symbol, "", trade_date)
+        except Exception:
+            rows = []
+        priced_rows = [
+            dict(row)
+            for row in rows or []
+            if float(dict(row).get("close") or 0) > 0
+        ]
+        if not priced_rows:
+            continue
+        daily_bar_count += len(priced_rows)
+        symbol_count += 1
+        latest_dates.extend(str(row.get("trade_date") or "") for row in priced_rows if row.get("trade_date"))
+    return {
+        "daily_bar_count": daily_bar_count,
+        "symbol_count": symbol_count,
+        "first_trade_date": min(latest_dates) if latest_dates else None,
+        "latest_trade_date": max(latest_dates) if latest_dates else None,
+        "query_source": "TradingagentDataReader",
+    }
+
+
+def _query_daily_bars_sqlite(db_path: Path, trade_date: str) -> dict[str, Any]:
     if not db_path.exists():
         return {"error": f"sqlite database not found: {db_path}", "symbol_count": 0}
     conn: sqlite3.Connection | None = None
@@ -87,7 +168,7 @@ def _query_daily_bars(db_path: Path, trade_date: str) -> dict[str, Any]:
     }
 
 
-def _query_session_bars(db_path: Path, start: datetime, now: datetime) -> dict[str, Any]:
+def _query_session_bars_sqlite(db_path: Path, start: datetime, now: datetime) -> dict[str, Any]:
     if not db_path.exists():
         return {"error": f"sqlite database not found: {db_path}", "symbol_count": 0, "bar_count": 0}
     start_text = start.strftime("%Y-%m-%d %H:%M:%S")
@@ -120,6 +201,85 @@ def _query_session_bars(db_path: Path, start: datetime, now: datetime) -> dict[s
         "first_bar_time": row[2] if row else None,
         "latest_bar_time": row[3] if row else None,
     }
+
+
+def _query_session_bars_via_reader(
+    reader: Any | None,
+    start: datetime,
+    now: datetime,
+    *,
+    min_symbols: int,
+) -> dict[str, Any]:
+    get_bars_intraday = getattr(reader, "get_bars_intraday", None)
+    if not callable(get_bars_intraday):
+        return {"error": "sharedsignals_reader_unavailable", "symbol_count": 0, "bar_count": 0}
+    symbols = _reader_symbols(reader, limit=max(80, int(min_symbols) * 20))
+    if not symbols:
+        return {"error": "futures_assets_empty_from_sharedsignals_reader", "symbol_count": 0, "bar_count": 0}
+    start_text = start.strftime("%Y-%m-%d %H:%M:%S")
+    now_text = now.strftime("%Y-%m-%d %H:%M:%S")
+    first_bar = ""
+    latest_bar = ""
+    bar_count = 0
+    symbol_count = 0
+    for symbol in symbols:
+        try:
+            rows = get_bars_intraday(READER_MARKET, symbol, "5min", start.strftime("%Y%m%d"), now.strftime("%Y%m%d"))
+        except Exception:
+            rows = []
+        in_session = []
+        for row in rows or []:
+            payload = dict(row)
+            bar_time = str(payload.get("bar_time") or payload.get("time") or "")
+            if start_text <= bar_time <= now_text:
+                in_session.append(payload)
+        if not in_session:
+            continue
+        symbol_count += 1
+        bar_count += len(in_session)
+        times = [str(row.get("bar_time") or row.get("time") or "") for row in in_session]
+        if times:
+            first_bar = min([first_bar, *times]) if first_bar else min(times)
+            latest_bar = max([latest_bar, *times]) if latest_bar else max(times)
+    return {
+        "bar_count": bar_count,
+        "symbol_count": symbol_count,
+        "first_bar_time": first_bar or None,
+        "latest_bar_time": latest_bar or None,
+        "query_source": "TradingagentDataReader",
+    }
+
+
+def _allow_sqlite_fallback(sqlite_db: Path) -> bool:
+    value = str(sqlite_db) != str(DEFAULT_SQLITE_DB)
+    env_value = os.environ.get("CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK", "")
+    return value or env_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _query_daily_bars(db_path: Path, trade_date: str, *, reader: Any | None = None, min_symbols: int = 4) -> dict[str, Any]:
+    payload = _query_daily_bars_via_reader(reader or _default_reader(), trade_date, min_symbols=min_symbols)
+    if not payload.get("error") and int(payload.get("symbol_count") or 0) > 0:
+        return payload
+    if _allow_sqlite_fallback(db_path):
+        fallback = _query_daily_bars_sqlite(db_path, trade_date)
+        fallback["query_source"] = "sqlite_fallback"
+        if payload.get("error"):
+            fallback["reader_error"] = payload.get("error")
+        return fallback
+    return payload
+
+
+def _query_session_bars(db_path: Path, start: datetime, now: datetime, *, reader: Any | None = None, min_symbols: int = 4) -> dict[str, Any]:
+    payload = _query_session_bars_via_reader(reader or _default_reader(), start, now, min_symbols=min_symbols)
+    if not payload.get("error") and int(payload.get("bar_count") or 0) > 0:
+        return payload
+    if _allow_sqlite_fallback(db_path):
+        fallback = _query_session_bars_sqlite(db_path, start, now)
+        fallback["query_source"] = "sqlite_fallback"
+        if payload.get("error"):
+            fallback["reader_error"] = payload.get("error")
+        return fallback
+    return payload
 
 
 def _read_latest_review(path: Path) -> dict[str, Any]:
