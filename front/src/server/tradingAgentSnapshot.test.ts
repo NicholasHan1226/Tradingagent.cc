@@ -1560,4 +1560,36 @@ describe('TradingAgent snapshot reader', () => {
       filledCount: 0,
     }))
   })
+
+  it('uses CNFutures review samples to avoid showing live reviews as missing data', async () => {
+    const root = await createWorkspace()
+    const reviewRoot = join(root, 'TradingAgent/shared/review/data')
+    await mkdir(reviewRoot, { recursive: true })
+    await writeFile(
+      join(reviewRoot, 'cn_futures_sim_reviews.jsonl'),
+      JSON.stringify({
+        state: 'ok',
+        generated_at: '2026-07-06T21:35:00+08:00',
+        filled_count: 0,
+        hold_count: 4,
+        error_count: 0,
+        record_count: 4,
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T13:40:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'CNFutures',
+      status: 'partial',
+      runtimeState: 'strategy_wait',
+      executionFault: false,
+      styleCount: 1,
+      filledCount: 0,
+    }))
+  })
 })

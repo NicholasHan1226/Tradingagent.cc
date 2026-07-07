@@ -158,7 +158,7 @@
 - [x] CNFutures 开盘/首样本验收已区分 5分钟数据缺失、首模拟样本缺失、策略主动 hold 和夜盘未授权风格不交易；该修复只读复盘 `hold_reason_summary`，不改变模拟成交策略。
 - [x] CNFutures 开盘验收的 read-model SQLite 兜底放宽到 `5min`/`5m`/`5` interval 统一口径，不再锁死 `rt_fut_min` provider；reader 短缺时仍标记 `reader_shortfall`，TradingAgent 不新增独立采集。
 - [x] PM/Crypto 健康检查已把空跑分成 `market_data_wait`、`strategy_wait`、`execution_fault`：缺行情是数据等待，PM 缺 MarketGraph 独立概率/edge 不足或 Crypto 动量阈值未过是策略等待，只有应成交却无账本才算执行故障。
-- [x] 前端市场摘要新增 `runtimeState` / `executionFault`，市场切换后显示“运行中 / 策略等待 / 需要处理 / 等待数据”的结果层，避免把所有 warn 误读为系统坏；桌面和移动页面已做真实切换检查。
+- [x] 前端市场摘要新增 `runtimeState` / `executionFault`，市场切换后显示“运行中 / 策略等待 / 需要处理 / 等待数据”的结果层，避免把所有 warn 误读为系统坏；桌面和移动页面已做真实切换检查。CNFutures 看板摘要已接入 `shared/review/data/cn_futures_sim_reviews.jsonl`，有复盘 hold 样本时不再误显示为“等待数据”。
 - [x] 2026-07-07 盘中已确认的生产症状：A股 job 正常运行但 `candidate_count=0`、无成交、权益约 200,000；CNFutures job 运行但缺 5 分钟 Futures bar、无成交。上述状态不能算“可交易健康”，必须等生产部署后复验 candidate、bar、filled/hold/no-trade 归因。
 
 ### 2026-07-05 simulated equity snapshot writer for dashboard

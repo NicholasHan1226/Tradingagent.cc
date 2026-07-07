@@ -92,6 +92,16 @@ type AShareNoTradeLogRow = {
   no_trade_explanation?: AShareNoTradeExplanation
 }
 
+type CNFuturesReviewRow = {
+  error_count?: number | string
+  filled_count?: number | string
+  generated_at?: string
+  hold_count?: number | string
+  record_count?: number | string
+  signal_count?: number | string
+  state?: string
+}
+
 type SignalFile = {
   ts_code?: string
   symbol?: string
@@ -579,6 +589,7 @@ async function buildMarketSummaries({
   simLedgerRoot: string
 }): Promise<MarketSummary[]> {
   const styleSummaries = await readStyleComparisonMarketSummaries(performanceRoot)
+  const cnFuturesReviewSummary = await readCNFuturesReviewMarketSummary(performanceRoot)
   const performanceSummaries = await readStylePerformanceMarketSummaries(performanceRoot)
   const equitySummaries = await readEquitySnapshotMarketSummaries(simLedgerRoot)
   const capitalBaseByMarket = await readSimLedgerCapitalBaseByMarket(simLedgerRoot)
@@ -587,7 +598,11 @@ async function buildMarketSummaries({
     const holdingCount = holdings.filter((holding) => holding.market === market).length
     const marketSignals = signals.filter((signal) => signal.market === market)
     const executedCount = marketSignals.filter((signal) => signal.status === 'executed').length
-    const styleSummary = styleSummaries.get(market)
+    const baseStyleSummary = styleSummaries.get(market)
+    const reviewStyleSummary = market === 'CNFutures' ? cnFuturesReviewSummary : undefined
+    const styleSummary = baseStyleSummary && reviewStyleSummary
+      ? mergeMarketStyleSummary(baseStyleSummary, reviewStyleSummary)
+      : baseStyleSummary ?? reviewStyleSummary
     const performanceSummary = equitySummaries.get(market) ?? performanceSummaries.get(market)
     const isAshare = market === 'A-share'
     const ashareAccount = isAshare ? portfolio?.ashareAccount : undefined
@@ -601,7 +616,7 @@ async function buildMarketSummaries({
       : pnlAmount !== undefined && capitalBase && capitalBase > 0
         ? roundMetric((pnlAmount / capitalBase) * 100)
         : undefined
-    const tradeCount = executedCount > 0 ? executedCount : performanceSummary?.trades ?? 0
+    const tradeCount = executedCount > 0 ? executedCount : performanceSummary?.trades ?? styleSummary?.filledCount ?? 0
     const styleCount = Math.max(styleSummary?.styleCount ?? 0, styleSummary?.activeStyleCount ?? 0)
     const hasMeaningfulPnl = pnlAmount !== undefined && (pnlAmount !== 0 || (capitalBase ?? 0) > 0 || (performanceSummary?.trades ?? 0) > 0)
       const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || hasMeaningfulPnl
@@ -678,6 +693,40 @@ function marketRuntimeState({
   if (tradeCount > 0 || (filledCount ?? 0) > 0 || holdingCount > 0 || signalCount > 0) return 'normal'
   if (styleCount > 0 || status === 'partial') return 'strategy_wait'
   return 'empty'
+}
+
+async function readCNFuturesReviewMarketSummary(root: string): Promise<MarketStyleSummary | undefined> {
+  const path = join(root, 'data/cn_futures_sim_reviews.jsonl')
+  try {
+    const lines = (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean)
+    for (const line of lines.reverse()) {
+      try {
+        const row = JSON.parse(line) as CNFuturesReviewRow
+        const filledCount = Math.max(0, Math.trunc(parseFiniteNumber(row.filled_count) ?? 0))
+        const holdCount = Math.max(0, Math.trunc(parseFiniteNumber(row.hold_count) ?? 0))
+        const errorCount = Math.max(0, Math.trunc(parseFiniteNumber(row.error_count) ?? 0))
+        const recordCount = Math.max(0, Math.trunc(parseFiniteNumber(row.record_count) ?? filledCount + holdCount + errorCount))
+        if (recordCount <= 0 && filledCount <= 0 && holdCount <= 0 && errorCount <= 0) continue
+        return {
+          source: tradingAgentReadModelSources.cnFuturesReview,
+          status: optionalString(row.state),
+          styleCount: 1,
+          activeStyleCount: filledCount > 0 ? 1 : 0,
+          filledCount,
+          errorCount,
+          holdCount,
+          recordCount,
+          signalCount: Math.max(0, Math.trunc(parseFiniteNumber(row.signal_count) ?? 0)),
+          latestAt: optionalString(row.generated_at),
+        }
+      } catch {
+        // Ignore malformed append-only rows.
+      }
+    }
+  } catch {
+    return undefined
+  }
+  return undefined
 }
 
 async function readStyleComparisonMarketSummaries(root: string): Promise<Map<Market, MarketStyleSummary>> {
