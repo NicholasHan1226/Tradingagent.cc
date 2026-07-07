@@ -123,6 +123,31 @@ def _symbol_variants(ts_code: str) -> list[str]:
     return [stripped, ts_code] if stripped != ts_code else [ts_code]
 
 
+def _code_tokens(value: Any) -> set[str]:
+    text = str(value or "").strip().upper()
+    if not text:
+        return set()
+    tokens = {text}
+    if "." in text:
+        head, tail = text.split(".", 1)
+        tokens.add(head)
+        tokens.add(f"{tail}{head}")
+    elif len(text) == 8 and text[:2] in {"SH", "SZ"} and text[2:].isdigit():
+        tokens.add(text[2:])
+        tokens.add(f"{text[2:]}.{text[:2]}")
+    return tokens
+
+
+def _row_matches_ts_code(row: dict[str, Any], ts_code: str) -> bool:
+    expected = _code_tokens(ts_code)
+    if not expected:
+        return False
+    for key in ("subject_code", "ts_code", "symbol", "code", "asset_code"):
+        if expected & _code_tokens(row.get(key)):
+            return True
+    return False
+
+
 def _looks_like_date(value: Any) -> bool:
     raw = str(value or "").strip()
     if len(raw) == 8 and raw.isdigit():
@@ -254,7 +279,7 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
                 return _clamp(weighted / total_weight)
         candidate_rows = 0
         for row in _get_data_reader(config).get_event_candidates():
-            if row.get("subject_code") != ts_code:
+            if not _row_matches_ts_code(row, ts_code):
                 continue
             if row.get("subject_type") != "stock":
                 continue
@@ -448,9 +473,9 @@ def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float |
         allowed_status = {"sentiment_signal", "needs_review", "verified", "promoted"}
         matched_rows = 0
         for row in _get_data_reader(config).get_sentiment():
-            if not row.get("subject_code"):
+            if not any(row.get(key) for key in ("subject_code", "ts_code", "symbol", "code", "asset_code")):
                 continue
-            if row.get("subject_code") != ts_code:
+            if not _row_matches_ts_code(row, ts_code):
                 continue
             if row.get("status") not in allowed_status:
                 continue

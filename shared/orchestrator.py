@@ -1783,7 +1783,7 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
     if not rows:
         candidate_pool_status = "no_scored_symbols"
     elif candidate_count > 0:
-        candidate_pool_status = "pool_empty_despite_threshold_scores"
+        candidate_pool_status = "candidates_ready"
     elif watch_count > 0:
         candidate_pool_status = "strategy_threshold_not_met_watch_only"
     else:

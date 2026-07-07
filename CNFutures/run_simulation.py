@@ -110,17 +110,40 @@ def main() -> int:
     universe_filter = {}
     if args.max_symbols is not None:
         universe_filter["max_symbols"] = max(1, args.max_symbols)
-    adapter = CNFuturesAdapter(universe_filter=universe_filter)
-    result = run_multi_style_simulation(
-        adapter,
-        str(args.date),
-        adapter.reader or adapter,
-        signals_dir=args.signals_dir,
-        review_path=args.review_path,
-        cadence=args.cadence,
-        max_intraday_bar_age_minutes=args.max_intraday_bar_age_minutes,
-    )
-    output = _summary(result)
+    try:
+        adapter = CNFuturesAdapter(universe_filter=universe_filter)
+        result = run_multi_style_simulation(
+            adapter,
+            str(args.date),
+            adapter.reader or adapter,
+            signals_dir=args.signals_dir,
+            review_path=args.review_path,
+            cadence=args.cadence,
+            max_intraday_bar_age_minutes=args.max_intraday_bar_age_minutes,
+        )
+        output = _summary(result)
+    except Exception as exc:  # noqa: BLE001
+        output = {
+            "market": "cn_futures",
+            "reader_market": "Futures",
+            "date": args.date,
+            "cadence": args.cadence,
+            "latest_bar_time": "",
+            "state": "error",
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "universe_count": 0,
+            "style_count": 0,
+            "record_count": 0,
+            "filled_count": 0,
+            "hold_count": 0,
+            "top_hold_reason": "",
+            "error_count": 1,
+            "errors": [f"{exc.__class__.__name__}: {exc}"],
+            "review_path": str(args.review_path),
+            "real_trading_enabled": False,
+            "max_intraday_bar_age_minutes": args.max_intraday_bar_age_minutes,
+        }
     output["review_path"] = str(args.review_path)
     if args.json:
         print(json.dumps(output, ensure_ascii=False, sort_keys=True))

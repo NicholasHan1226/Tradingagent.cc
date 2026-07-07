@@ -27,7 +27,8 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
             patch.object(live_check, "CN_FUTURES_STYLE_PERFORMANCE", self.root / "shared/review/cn_futures/style_performance.jsonl"),
             patch.object(live_check, "CN_FUTURES_EVOLUTION_PLAN", self.root / "shared/review/cn_futures/evolution_plan.json"),
             patch.object(live_check, "CN_FUTURES_STYLE_WEIGHTS", self.root / "shared/review/cn_futures/style_weights.json"),
-            patch.object(live_check, "CN_FUTURES_SIM_LOG", self.root / "shared/logs/cron/cn_futures_sim.log"),
+            patch.object(live_check, "CN_FUTURES_SIM_LOG", self.root / "shared/logs/cron/job_cn_futures_sim.log"),
+            patch.object(live_check, "CN_FUTURES_LEGACY_SIM_LOG", self.root / "shared/logs/cron/cn_futures_sim.log"),
         ]
         for item in patches:
             item.start()
@@ -77,7 +78,7 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
             json.dumps({"real_trading_enabled": False, "styles": {"trend": {"status": "active", "weight": 1.0}}}),
             encoding="utf-8",
         )
-        log = self.root / "shared/logs/cron/cn_futures_sim.log"
+        log = self.root / "shared/logs/cron/job_cn_futures_sim.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text(
             'noise\n{"market":"cn_futures","status":"ok","cadence":"5min","filled_count":2,"latest_bar_time":"2026-07-06 09:05:00"}\n',
@@ -163,6 +164,26 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         check = live_check.check_sim_log(log)
 
         self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["payload"]["filled_count"], 1)
+
+    def test_sim_log_reads_wrapper_job_log_before_legacy_log(self) -> None:
+        wrapper_log = self.root / "shared/logs/cron/job_cn_futures_sim.log"
+        legacy_log = self.root / "shared/logs/cron/cn_futures_sim.log"
+        wrapper_log.parent.mkdir(parents=True, exist_ok=True)
+        wrapper_log.write_text(
+            '[2026-07-06T09:05:00+0800] job_cn_futures_sim attempt=1 phase=intraday\n'
+            '{"market":"cn_futures","status":"ok","cadence":"5min","filled_count":1,"latest_bar_time":"2026-07-06 09:05:00"}\n',
+            encoding="utf-8",
+        )
+        legacy_log.write_text(
+            '{"market":"cn_futures","status":"ok","cadence":"5min","filled_count":0}\n',
+            encoding="utf-8",
+        )
+
+        check = live_check.check_sim_log()
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.details["path"], "shared/logs/cron/job_cn_futures_sim.log")
         self.assertEqual(check.details["payload"]["filled_count"], 1)
 
     def test_review_warns_when_filled_5min_sample_lacks_bar_time_or_real_flag_is_on(self) -> None:

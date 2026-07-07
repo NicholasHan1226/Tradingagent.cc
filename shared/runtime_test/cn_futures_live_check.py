@@ -27,7 +27,8 @@ CN_FUTURES_STYLE_COMPARISON = ROOT / "shared/review/cn_futures/style_comparison.
 CN_FUTURES_STYLE_PERFORMANCE = ROOT / "shared/review/cn_futures/style_performance.jsonl"
 CN_FUTURES_EVOLUTION_PLAN = ROOT / "shared/review/cn_futures/evolution_plan.json"
 CN_FUTURES_STYLE_WEIGHTS = ROOT / "shared/review/cn_futures/style_weights.json"
-CN_FUTURES_SIM_LOG = ROOT / "shared/logs/cron/cn_futures_sim.log"
+CN_FUTURES_SIM_LOG = ROOT / "shared/logs/cron/job_cn_futures_sim.log"
+CN_FUTURES_LEGACY_SIM_LOG = ROOT / "shared/logs/cron/cn_futures_sim.log"
 
 
 @dataclass
@@ -98,6 +99,19 @@ def _latest_json_from_log(path: Path) -> dict[str, Any]:
         "age_minutes": _file_age_minutes(path),
         "payload": payload,
     }
+
+
+def _latest_json_from_logs(paths: list[Path]) -> dict[str, Any]:
+    checked: list[dict[str, Any]] = []
+    for path in paths:
+        latest = _latest_json_from_log(path)
+        checked.append({key: latest.get(key) for key in ("path", "exists", "age_minutes")})
+        if latest.get("payload"):
+            latest["checked_paths"] = checked
+            return latest
+    fallback = _latest_json_from_log(paths[0])
+    fallback["checked_paths"] = checked
+    return fallback
 
 
 def _overall_status(checks: list[Check]) -> str:
@@ -243,8 +257,8 @@ def check_cron_entries(crontab_text: str | None = None, crontab_error: str = "")
 
 
 def check_sim_log(log_path: Path | None = None) -> Check:
-    log_path = log_path or CN_FUTURES_SIM_LOG
-    latest = _latest_json_from_log(log_path)
+    paths = [log_path] if log_path is not None else [CN_FUTURES_SIM_LOG, CN_FUTURES_LEGACY_SIM_LOG]
+    latest = _latest_json_from_logs(paths)
     payload = latest.get("payload") if isinstance(latest.get("payload"), dict) else {}
     if not latest["exists"]:
         return Check("cn_futures_sim_log", "warn", "CNFutures 模拟盘 cron 日志还不存在", latest, severity="warn")

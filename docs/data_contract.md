@@ -103,6 +103,10 @@ them only for scoring and confidence weighting.
 A-share event scoring accepts MarketGraph rows with
 `status=needs_review|verified|promoted|approved`. `verified` is a reviewed
 MarketGraph evidence state and must not be filtered out before scoring.
+Event and sentiment matching normalizes common A-share code shapes such as
+`600276.SH`, `600276`, and `SH600276`, and may read `subject_code`, `ts_code`,
+`symbol`, `code`, or `asset_code`. This is a matching guard only; it does not
+lower confidence, status, or candidate thresholds.
 
 `all_weather_regime.csv` is a derived regime snapshot. MarketGraph refreshes it
 from formal event-log evidence through `09-AllWeather/tools/marketgraph_regime_snapshot.py`
@@ -193,6 +197,11 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
 - Review records are appended under `shared/review/data/`; signal-state writes
   go through `signals/` only. CNFutures does not write back into SharedSignals
   or MarketGraph.
+- The live-chain checker reads the actual wrapper cron log
+  `shared/logs/cron/job_cn_futures_sim.log`, with legacy
+  `cn_futures_sim.log` kept only as a fallback. The simulation entrypoint must
+  emit a structured JSON result even on unexpected simulated-run errors so
+  health checks can surface the cause instead of reporting an unreadable log.
 - CNFutures review rows may include `hold_count` and `hold_reason_summary` for
   simulated no-trade decisions. These fields describe strategy/filter reasons
   such as weak signal quality or session restrictions; they are not rejected

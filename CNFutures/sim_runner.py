@@ -225,7 +225,7 @@ def _contract_inside_rollover_guard(symbol: str, date: str, style: dict[str, Any
     if trade_dt is None or contract_start is None:
         return False, None
     days_to_month = (contract_start - trade_dt).days
-    return days_to_month <= min_days, days_to_month
+    return 0 <= days_to_month <= min_days, days_to_month
 
 
 def _first_present(row: dict[str, Any], *keys: str) -> Any:

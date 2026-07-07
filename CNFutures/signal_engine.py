@@ -54,7 +54,7 @@ def _minutes_to_day_close(row: dict[str, Any]) -> int | None:
     parsed = _bar_time(row)
     if parsed is None:
         return None
-    close_dt = datetime.combine(parsed.date(), time(15, 0))
+    close_dt = datetime.combine(parsed.date(), time(15, 0), tzinfo=parsed.tzinfo)
     return int((close_dt - parsed).total_seconds() // 60)
 
 
@@ -69,7 +69,7 @@ def _minutes_since_session_open(row: dict[str, Any]) -> int | None:
         open_time = time(13, 0)
     else:
         return None
-    open_dt = datetime.combine(parsed.date(), open_time)
+    open_dt = datetime.combine(parsed.date(), open_time, tzinfo=parsed.tzinfo)
     return int((parsed - open_dt).total_seconds() // 60)
 
 

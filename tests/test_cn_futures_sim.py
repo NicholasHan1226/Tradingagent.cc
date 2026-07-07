@@ -118,6 +118,41 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(guarded["action"], "hold")
         self.assertEqual(guarded["reason"], "session_close_guard")
 
+    def test_index_intraday_directional_signal_accepts_timezone_aware_bar_times(self) -> None:
+        from CNFutures.signal_engine import generate_style_signal
+
+        style = {
+            "name": "index_intraday_directional",
+            "style_family": "index_intraday_directional",
+            "signal_threshold": 0.001,
+            "momentum_lookback_bars": 3,
+            "moving_average_bars": 4,
+            "prediction_horizon_bars": 3,
+            "no_overnight": True,
+            "min_volume_ratio": 1.05,
+            "flatten_before_session_close_minutes": 10,
+        }
+        bars = [
+            {"bar_time": "2026-07-06T14:10:00+08:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06T14:15:00+08:00", "close": 3502, "volume": 1000},
+            {"bar_time": "2026-07-06T14:20:00+08:00", "close": 3505, "volume": 1100},
+            {"bar_time": "2026-07-06T14:25:00+08:00", "close": 3512, "volume": 1400},
+            {"bar_time": "2026-07-06T14:30:00+08:00", "close": 3520, "volume": 1600},
+        ]
+
+        signal = generate_style_signal("IF2601.CFFEX", bars, style)
+
+        self.assertEqual(signal["action"], "buy")
+        self.assertEqual(signal["scenario_tags"]["time_bucket"], "day_late")
+
+    def test_rollover_guard_only_blocks_before_contract_month_start(self) -> None:
+        from CNFutures.sim_runner import _contract_inside_rollover_guard
+
+        style = {"rollover_min_days_to_contract_month_start": 5}
+
+        self.assertEqual(_contract_inside_rollover_guard("IF2607.CFFEX", "20260628", style), (True, 3))
+        self.assertEqual(_contract_inside_rollover_guard("IF2607.CFFEX", "20260708", style), (False, -7))
+
     def test_index_intraday_directional_signal_filters_weak_confirmation(self) -> None:
         from CNFutures.signal_engine import generate_style_signal
 

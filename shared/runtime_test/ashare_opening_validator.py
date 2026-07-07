@@ -307,11 +307,11 @@ def _score_diagnostic_summary(score_diagnostics: dict[str, Any]) -> dict[str, An
         "evidence_reason_summary": score_diagnostics.get("evidence_reason_summary") or {},
     }
     evidence_actions = _evidence_gap_actions(score_diagnostics.get("evidence_reason_summary"))
-    if candidate_pool_status == "pool_empty_despite_threshold_scores" or candidate_count > 0:
+    if candidate_pool_status in {"candidates_ready", "pool_empty_despite_threshold_scores"} or candidate_count > 0:
         summary.update(
             {
-                "reason": "candidate_pool_anomaly",
-                "next_action": "review_candidate_pool_layering_anomaly",
+                "reason": "candidate_pool_ready" if candidate_count > 0 else "candidate_pool_anomaly",
+                "next_action": "continue_opening_observation" if candidate_count > 0 else "review_candidate_pool_layering_anomaly",
             }
         )
     elif evidence_actions:
