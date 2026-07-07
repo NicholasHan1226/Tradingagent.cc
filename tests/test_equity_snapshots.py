@@ -232,6 +232,62 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(rows[-1]["pnl_source"], "ashare_local_sim_mark_to_market")
             self.assertEqual(rows[-1]["open_position_count"], 1)
 
+    def test_ashare_local_sim_equity_includes_cash_and_market_value_after_buys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "logs" / "sim_ledger"
+            local_sim_dir = base / "logs" / "local_sim"
+            local_sim_dir.mkdir(parents=True)
+            (local_sim_dir / "local_sim_pnl.json").write_text(
+                json.dumps(
+                    {
+                        "ashare_sim": {
+                            "cash_available": 80_000.0,
+                            "market_value": 120_000.0,
+                            "total_pnl": 0.0,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (local_sim_dir / "local_sim_trades.jsonl").write_text(
+                json.dumps(
+                    {
+                        "account": "ashare_sim",
+                        "status": "filled",
+                        "ts_code": "600000.SH",
+                        "side": "buy",
+                        "quantity": 100,
+                        "filled_price": 10.0,
+                        "net_amount": 1000.0,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "shared.review.equity_snapshots.load_mark_prices_for_positions",
+                return_value={"600000.SH": 12.0},
+            ):
+                result = write_sim_ledger_equity_snapshots(
+                    markets=["ashare"],
+                    ledger_root=root,
+                    local_sim_dir=local_sim_dir,
+                    trade_date="20260706",
+                )
+
+            self.assertEqual(result["ledgers"][0]["equity"], 200_200.0)
+            rows = [
+                json.loads(line)
+                for line in (root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(rows[-1]["capital_base"], 200_000.0)
+            self.assertEqual(rows[-1]["cash"], 199_000.0)
+            self.assertEqual(rows[-1]["market_value"], 1_200.0)
+            self.assertEqual(rows[-1]["total_equity"], 200_200.0)
+
     def test_load_mark_prices_uses_recent_daily_bar_for_weekend_snapshot(self) -> None:
         class FakeReader:
             def __init__(self, api_client=None):

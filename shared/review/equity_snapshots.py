@@ -131,14 +131,6 @@ def _append_jsonl(path: Path, payload: dict[str, Any], *, dry_run: bool) -> None
 
 
 def _ashare_starting_cash(local_sim_dir: Path) -> float:
-    pnl_snapshot = _read_json(local_sim_dir / "local_sim_pnl.json", {})
-    if isinstance(pnl_snapshot, dict):
-        for account_pnl in pnl_snapshot.values():
-            if not isinstance(account_pnl, dict):
-                continue
-            cash = _safe_float(account_pnl.get("cash_available"), 0.0)
-            if cash > 0:
-                return cash
     try:
         import os
 
@@ -150,12 +142,18 @@ def _ashare_starting_cash(local_sim_dir: Path) -> float:
     return DEFAULT_ASHARE_SIM_CAPITAL
 
 
-def _replay_ashare_local_sim(local_sim_dir: Path, mark_prices: dict[str, float] | None = None) -> dict[str, Any]:
+def _replay_ashare_local_sim(
+    local_sim_dir: Path,
+    mark_prices: dict[str, float] | None = None,
+    *,
+    starting_cash: float = DEFAULT_ASHARE_SIM_CAPITAL,
+) -> dict[str, Any]:
     positions: dict[str, dict[str, Any]] = {}
     realized_pnl = 0.0
     trade_count = 0
     buys = 0
     sells = 0
+    cash_available = float(starting_cash)
     for trade in _read_jsonl(local_sim_dir / "local_sim_trades.jsonl"):
         if str(trade.get("status") or "") != "filled":
             continue
@@ -171,6 +169,7 @@ def _replay_ashare_local_sim(local_sim_dir: Path, mark_prices: dict[str, float] 
         position = positions.setdefault(code, {"quantity": 0.0, "cost_basis": 0.0, "last_price": 0.0})
         trade_count += 1
         if side == "buy":
+            cash_available -= net_amount
             position["quantity"] += qty
             position["cost_basis"] += net_amount
             position["last_price"] = filled_price or position["last_price"]
@@ -179,6 +178,7 @@ def _replay_ashare_local_sim(local_sim_dir: Path, mark_prices: dict[str, float] 
         if side != "sell" or position["quantity"] <= 0:
             continue
         sells += 1
+        cash_available += net_amount
         sell_qty = min(qty, position["quantity"])
         avg_cost = position["cost_basis"] / position["quantity"] if position["quantity"] else 0.0
         released_cost = round(avg_cost * sell_qty, 2)
@@ -228,6 +228,7 @@ def _replay_ashare_local_sim(local_sim_dir: Path, mark_prices: dict[str, float] 
         "unrealized_pnl": round(unrealized_pnl, 2),
         "market_value": round(market_value, 2),
         "total_pnl": round(realized_pnl + unrealized_pnl, 2),
+        "cash_available": round(cash_available, 2),
         "positions": clean_positions,
         "missing_mark_count": missing_mark_count,
     }
@@ -241,15 +242,17 @@ def _write_ashare_local_sim_snapshot(
     target_return_pct: float,
     dry_run: bool,
 ) -> dict[str, Any]:
-    no_mark_pnl = _replay_ashare_local_sim(local_sim_dir, mark_prices=None)
+    capital_base = _ashare_starting_cash(local_sim_dir)
+    no_mark_pnl = _replay_ashare_local_sim(local_sim_dir, mark_prices=None, starting_cash=capital_base)
     positions = no_mark_pnl.get("positions") if isinstance(no_mark_pnl, dict) else {}
     if not isinstance(positions, dict):
         positions = {}
     prices = load_mark_prices_for_positions(positions, "ashare", trade_date=snapshot_date)
-    pnl = _replay_ashare_local_sim(local_sim_dir, mark_prices=prices)
-    capital_base = _ashare_starting_cash(local_sim_dir)
+    pnl = _replay_ashare_local_sim(local_sim_dir, mark_prices=prices, starting_cash=capital_base)
     total_pnl = _safe_float(pnl.get("total_pnl"), 0.0)
-    equity = round(capital_base + total_pnl, 6)
+    cash = round(_safe_float(pnl.get("cash_available"), capital_base), 6)
+    market_value = round(_safe_float(pnl.get("market_value"), 0.0), 6)
+    equity = round(cash + market_value, 6)
     missing = int(pnl.get("missing_mark_count") or 0)
     snapshot = {
         "account_type": "simulated",
@@ -258,11 +261,11 @@ def _write_ashare_local_sim_snapshot(
         "benchmark_return_pct": 0.0,
         "capital_base": round(capital_base, 6),
         "capital_layer": "simulated",
-        "cash": None,
+        "cash": cash,
         "date": snapshot_date,
         "equity": equity,
         "market": "ashare",
-        "market_value": round(_safe_float(pnl.get("market_value"), 0.0), 6),
+        "market_value": market_value,
         "max_drawdown_pct": 0.0,
         "missing_mark_count": missing,
         "open_position_count": len(pnl.get("positions") or {}),
