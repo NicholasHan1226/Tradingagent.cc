@@ -32,7 +32,7 @@ fi
 
 cd "${ROOT}"
 
-if [ -f "${ROOT}/.env" ]; then
+if [ -r "${ROOT}/.env" ]; then
   set -a
   # shellcheck disable=SC1091
   source "${ROOT}/.env"
