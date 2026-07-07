@@ -120,8 +120,10 @@ forced into per-stock scores.
 - `SHARED_SIGNALS_DB`: overrides the SQLite path.
   Default: `/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite`.
 - `MARKETGRAPH_DATA`: overrides the MarketGraph CSV root.
-  Default: unset, which disables local CSV fallback. Configure it only for a
-  same-host deployment or an explicitly mounted MarketGraph export directory.
+  Default: unset, which disables local CSV fallback. Configure it only in a
+  same-host deployment or for an explicitly mounted MarketGraph export
+  directory. The value must point to the repo/export root, not the `data/`
+  subdirectory.
 - `SHARED_SIGNALS_ROOT`: overrides SharedSignals root for importing
   `reference/market_calendar.py`.
   Default: `/opt/investment/SharedSignals`.
