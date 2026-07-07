@@ -702,6 +702,7 @@ class TradingagentDataReader:
                     self._last_api_used = False
                     self._record_shared_error("get_bars_daily")
                     return self._normalize_market_rows(fallback_rows, market_name, ts_code)
+                return []
             self._record_shared_error("get_bars_daily")
             return normalized
         except Exception as e:
@@ -748,6 +749,7 @@ class TradingagentDataReader:
                     self._last_api_used = False
                     self._record_shared_error("get_market_data")
                     return self._normalize_market_rows(fallback_rows, market_name, symbol)
+                return []
             self._record_shared_error("get_market_data")
             return normalized
         except Exception as e:
@@ -898,6 +900,7 @@ class TradingagentDataReader:
                     self._last_api_used = False
                     self._record_shared_error("get_bars_intraday")
                     return self._normalize_market_rows(fallback_rows, market, symbol)
+                return []
             self._record_shared_error("get_bars_intraday")
             return normalized
         except Exception as e:
