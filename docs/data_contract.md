@@ -100,6 +100,21 @@ independent edge to consume.
 These remain MarketGraph-derived context, not TradingAgent facts. TradingAgent uses
 them only for scoring and confidence weighting.
 
+A-share event scoring accepts MarketGraph rows with
+`status=needs_review|verified|promoted|approved`. `verified` is a reviewed
+MarketGraph evidence state and must not be filtered out before scoring.
+
+`all_weather_regime.csv` is a derived regime snapshot. MarketGraph refreshes it
+from formal event-log evidence through `09-AllWeather/tools/marketgraph_regime_snapshot.py`
+inside the derived-refresh job; this path does not call external providers and
+does not grant trading authority. If the file is missing or stale, TradingAgent
+must treat the macro dimension as missing evidence instead of inventing a regime.
+
+`intake/sentiment_signals.csv` is optional context. Sentiment rows only affect a
+symbol when they carry a matching `subject_code` and an accepted sentiment state;
+global or subject-less sentiment remains background context and should not be
+forced into per-stock scores.
+
 ## Environment Variables
 
 - `SHARED_SIGNALS_DB`: overrides the SQLite path.

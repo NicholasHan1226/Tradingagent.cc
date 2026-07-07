@@ -223,7 +223,7 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
         min_conf = _safe_float(dim_cfg.get("min_confidence", 0.30), 0.30)
         total_weight = 0.0
         weighted = 0.0
-        allowed_status = {"needs_review", "promoted", "approved"}
+        allowed_status = {"needs_review", "verified", "promoted", "approved"}
         data_reader = _get_data_reader(config)
         market = _reader_market(config)
         for symbol in _symbol_variants(ts_code):
@@ -445,7 +445,7 @@ def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float |
         extreme_threshold = _safe_float(dim_cfg.get("extreme_threshold", 0.85), 0.85)
         total_weight = 0.0
         weighted = 0.0
-        allowed_status = {"sentiment_signal", "needs_review", "promoted"}
+        allowed_status = {"sentiment_signal", "needs_review", "verified", "promoted"}
         matched_rows = 0
         for row in _get_data_reader(config).get_sentiment():
             if not row.get("subject_code"):

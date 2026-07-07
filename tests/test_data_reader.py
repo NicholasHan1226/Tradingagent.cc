@@ -566,7 +566,7 @@ class FakeScoringReader:
             {
                 "subject_code": "600000.SH",
                 "subject_type": "stock",
-                "status": "promoted",
+                "status": "verified",
                 "confidence": "0.6",
                 "proposed_impact_hint": "positive: policy",
             },
@@ -609,7 +609,7 @@ class FakeScoringReader:
             },
             {
                 "subject_code": "600000.SH",
-                "status": "promoted",
+                "status": "verified",
                 "confidence": "0.3",
                 "proposed_impact_hint": "mixed",
             },
