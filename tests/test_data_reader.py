@@ -321,6 +321,7 @@ class FakeAPIClient:
         self.tushare_calls: list[dict[str, object]] = []
         self.market_data_calls: list[dict[str, object]] = []
         self.realtime_calls: list[dict[str, object]] = []
+        self.pm_price_calls: list[dict[str, object]] = []
 
     def get_tushare(self, api_name, ts_code=None, start_date=None, end_date=None, **kwargs):
         self.tushare_calls.append({
@@ -365,6 +366,10 @@ class FakeAPIClient:
                 "expiry_date": "20260930",
             }
         ]
+
+    def get_pm_prices(self, market_id=None, limit=200):
+        self.pm_price_calls.append({"market_id": market_id, "limit": limit})
+        return [{"market_id": market_id, "price": 0.42}]
 
 
 class EmptyShellAPIClient(FakeAPIClient):
@@ -474,11 +479,53 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(rows[0]["market"], "Global")
         self.assertEqual(api.realtime_calls[0], {"ts_code": "HSI", "date": "20260703", "market": "Global"})
 
+    def test_get_pm_prices_uses_sharedsignals_api(self) -> None:
+        api = FakeAPIClient()
+        reader = TradingagentDataReader(api_client=api)
+
+        rows = reader.get_pm_prices(market_id="pm-1", limit=5)
+
+        self.assertEqual(rows, [{"market_id": "pm-1", "price": 0.42}])
+        self.assertEqual(api.pm_price_calls, [{"market_id": "pm-1", "limit": 5}])
+
     def test_hk_suffix_is_preserved_for_read_model_symbol(self) -> None:
         self.assertEqual(
             TradingagentDataReader._market_symbol_from_ts_code("00700.HK", None),
             ("HK", "00700.HK"),
         )
+
+    def test_marketgraph_interface_gateway_is_read_through_stable_wrapper(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            finance_root = Path(temp_dir)
+            mg = finance_root / "MarketGraph"
+            tools = mg / "08-Market-Interfaces" / "tools"
+            contracts = mg / "08-Market-Interfaces" / "contracts"
+            tools.mkdir(parents=True)
+            contracts.mkdir(parents=True)
+            (mg / "data").mkdir()
+            (mg / "AGENTS.md").write_text("# test\n", encoding="utf-8")
+            (tools / "marketgraph_interface_gateway.py").write_text(
+                "def read_market_interface_snapshot(**kwargs):\n"
+                "    return {\n"
+                "        'market': kwargs.get('market'),\n"
+                "        'contract_status': 'ok',\n"
+                "        'readiness_summary': {'readiness_status': 'weak_evidence'},\n"
+                "        'tables': {'market_knowledge_edges': {'rows': [{'market': 'Ashare', 'impact_score': '0.7'}]}},\n"
+                "        'is_trading_permission': False,\n"
+                "        'can_affect_real_money': False,\n"
+                "    }\n",
+                encoding="utf-8",
+            )
+            (contracts / "ashare_marketgraph_contract.json").write_text("{}", encoding="utf-8")
+
+            import shared.data.reader as reader_module
+
+            reader_module._MARKETGRAPH_GATEWAY = None
+            with patch.dict("os.environ", {"MARKETGRAPH_ROOT": str(mg)}):
+                reader = TradingagentDataReader()
+                self.assertEqual(reader.get_market_readiness_summary("Ashare")["readiness_status"], "weak_evidence")
+                self.assertEqual(reader.get_market_knowledge_edges("Ashare")[0]["impact_score"], "0.7")
+            reader_module._MARKETGRAPH_GATEWAY = None
 
 
 class TestMarketGraphCSVReader(unittest.TestCase):
@@ -619,6 +666,8 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
         self.assertAlmostEqual(scores["technical"], 0.85)
         self.assertAlmostEqual(scores["sentiment"], 0.75)
         self.assertAlmostEqual(scores["combined"], 0.6658333333333333)
+        self.assertGreater(scores["evidence_coverage"], 0.0)
+        self.assertEqual(scores["missing_evidence_dimensions"], [])
 
     def test_scoring_uses_sharedsignals_fundamentals_and_capital_flow_when_factors_empty(self) -> None:
         scores = six_dimension_scorer.score_stock(
@@ -629,6 +678,7 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
 
         self.assertGreater(scores["fundamental"], 0.5)
         self.assertGreater(scores["capital"], 0.5)
+        self.assertIn("macro", scores["missing_evidence_dimensions"])
 
     def test_scoring_missing_data_degrades_to_neutral(self) -> None:
         scores = six_dimension_scorer.score_stock(
@@ -647,6 +697,11 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
             "combined",
         ):
             self.assertEqual(scores[key], 0.5)
+        self.assertEqual(scores["evidence_coverage"], 0.0)
+        self.assertEqual(
+            set(scores["missing_evidence_dimensions"]),
+            {"macro", "event", "fundamental", "capital", "technical", "sentiment"},
+        )
 
 
 if __name__ == "__main__":

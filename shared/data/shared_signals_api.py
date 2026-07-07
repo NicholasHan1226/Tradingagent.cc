@@ -39,6 +39,7 @@ CANONICAL_ENDPOINTS: dict[str, str] = {
     "get_sentiment": "/sentiment",
     "get_crypto_klines": "/crypto",
     "get_pm_markets": "/pm_markets",
+    "get_pm_prices": "/pm_prices",
     "get_associations": "/associations",
     "get_impacts": "/impacts",
     "get_industry": "/industry",
@@ -195,6 +196,15 @@ class SharedSignalsAPIClient:
 
     def get_pm_markets(self, limit: int = 100) -> list[dict[str, Any]]:
         return self._get("/pm_markets", {"limit": str(limit)})
+
+    def get_pm_prices(
+        self,
+        market_id: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        return self._get("/pm_prices", {"market_id": market_id or "", "limit": str(limit)})
 
     def get_associations(
         self, ts_code: str | None = None, event_id: str | None = None,

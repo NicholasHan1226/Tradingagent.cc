@@ -83,7 +83,7 @@ Level 4: 人工介入 (escalate)
 | 10 | job_crypto_weekly | 0 */12 * * * | 2x_daily | Crypto | crypto_klines + events | crypto_weekly_signals.jsonl | signals/crypto/ |
 | 11 | job_pm_shadow | */30 * * * * | 30min | PM | pm_prices + pm_markets | pm_shadow_trades.jsonl | executions/shadow/pm/ |
 | 12 | job_pm_forward | */30 * * * * | 30min | PM | pm_prices + pm_shadow | pm_forward_signals.jsonl | signals/pm/ |
-| 12b | job_pm_research_probability | 2-59/10 * * * * | 10min | PM | SharedSignals pm_markets/prices + MarketGraph PM research API | model_probabilities.jsonl | review/pm/ |
+| 12b | job_pm_research_probability | 2-59/10 * * * * | 10min | PM | SharedSignals /pm_markets + /pm_prices + MarketGraph PM research API | model_probabilities.jsonl | review/pm/ |
 | 13 | job_pm_optimize | 0 * * * * | hourly | PM | pm_shadow + pm_forward | pm_optimize_params.json | strategies/pm/ |
 | 14 | job_pm_promote | */30 * * * * | 30min | PM | pm_signals + pm_review | pm_promotion.jsonl | review/pm/ |
 | 15 | job_auto_position | 45 * * * * | hourly | 全市场 | capital_ledger + positions | position_plan.jsonl | accounting/ |

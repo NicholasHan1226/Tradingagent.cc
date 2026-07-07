@@ -1690,12 +1690,23 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
     rows: list[tuple[float, str, dict[str, Any]]] = []
     neutral_counts = {name: 0 for name in dimensions}
     missing_counts = {name: 0 for name in dimensions}
+    missing_evidence_counts = {name: 0 for name in dimensions}
     all_neutral_symbols: list[str] = []
+    all_missing_evidence_symbols: list[str] = []
+    evidence_coverage_values: list[float] = []
     for symbol, score in scores_by_symbol.items():
         if not isinstance(score, dict):
             continue
         combined = _safe_float(score.get("combined"), 0.0)
         neutral_dimensions = 0
+        missing_evidence_dimensions = set(score.get("missing_evidence_dimensions") or [])
+        for name in missing_evidence_dimensions:
+            if name in missing_evidence_counts:
+                missing_evidence_counts[name] += 1
+        if len(missing_evidence_dimensions) >= len(dimensions):
+            all_missing_evidence_symbols.append(str(symbol))
+        if "evidence_coverage" in score:
+            evidence_coverage_values.append(_safe_float(score.get("evidence_coverage"), 0.0))
         for name in dimensions:
             if name not in score:
                 missing_counts[name] += 1
@@ -1720,6 +1731,8 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
     neutral_total = sum(neutral_counts.values())
     neutral_ratio = neutral_total / max(1, len(rows) * len(dimensions))
     all_neutral_ratio = len(all_neutral_symbols) / max(1, len(rows))
+    all_missing_evidence_ratio = len(all_missing_evidence_symbols) / max(1, len(rows))
+    avg_evidence_coverage = sum(evidence_coverage_values) / max(1, len(evidence_coverage_values))
     if not rows:
         candidate_pool_status = "no_scored_symbols"
     elif candidate_count > 0:
@@ -1739,11 +1752,22 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
         "neutral_dimension_ratio": round(neutral_ratio, 4),
         "all_neutral_symbol_count": len(all_neutral_symbols),
         "all_neutral_symbol_ratio": round(all_neutral_ratio, 4),
-        "data_quality_status": "missing_evidence_default_like" if rows and all_neutral_ratio >= 0.5 else "research_dimensions_mostly_neutral" if rows and neutral_ratio >= 0.75 else "ok",
+        "data_quality_status": (
+            "missing_evidence_default_like"
+            if rows and (all_missing_evidence_ratio >= 0.5 or all_neutral_ratio >= 0.5)
+            else "research_dimensions_mostly_neutral"
+            if rows and neutral_ratio >= 0.75
+            else "ok"
+        ),
+        "average_evidence_coverage": round(avg_evidence_coverage, 4),
+        "all_missing_evidence_symbol_count": len(all_missing_evidence_symbols),
+        "all_missing_evidence_symbol_ratio": round(all_missing_evidence_ratio, 4),
+        "all_missing_evidence_symbol_sample": all_missing_evidence_symbols[: max(1, limit)],
         "top_scores": top_scores,
         "all_neutral_symbol_sample": all_neutral_symbols[: max(1, limit)],
         "neutral_default_like_dimension_counts": neutral_counts,
         "missing_dimension_counts": missing_counts,
+        "missing_evidence_dimension_counts": missing_evidence_counts,
     }
 
 

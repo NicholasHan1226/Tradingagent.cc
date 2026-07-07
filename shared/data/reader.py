@@ -9,9 +9,11 @@ TradingagentDataReader composes both into a fail-safe unified interface.
 from __future__ import annotations
 
 import csv
+import importlib.util
 import logging
 import os
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -32,6 +34,59 @@ def _default_shared_signals_db() -> Path:
 
 
 DEFAULT_SHARED_SIGNALS_DB = _default_shared_signals_db()
+
+
+def _marketgraph_root_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    for key in ("MARKETGRAPH_ROOT", "MARKETGRAPH_DATA"):
+        configured = os.environ.get(key, "").strip()
+        if configured:
+            candidates.append(Path(configured))
+    candidates.extend(
+        [
+            Path("/opt/investment/MarketGraph"),
+            Path(__file__).resolve().parents[3] / "MarketGraph",
+        ]
+    )
+    return candidates
+
+
+def _looks_like_marketgraph_root(path: Path) -> bool:
+    return (
+        (path / "08-Market-Interfaces" / "tools" / "marketgraph_interface_gateway.py").exists()
+        and (path / "08-Market-Interfaces" / "contracts").exists()
+    )
+
+
+def _resolve_marketgraph_root() -> Path | None:
+    for candidate in _marketgraph_root_candidates():
+        root = candidate.expanduser().resolve()
+        if _looks_like_marketgraph_root(root):
+            return root
+    return None
+
+
+_MARKETGRAPH_GATEWAY: Any | None = None
+
+
+def _load_marketgraph_gateway() -> Any | None:
+    global _MARKETGRAPH_GATEWAY
+    if _MARKETGRAPH_GATEWAY is not None:
+        return _MARKETGRAPH_GATEWAY
+    root = _resolve_marketgraph_root()
+    if root is None:
+        return None
+    tools_dir = root / "08-Market-Interfaces" / "tools"
+    gateway_path = tools_dir / "marketgraph_interface_gateway.py"
+    if str(tools_dir) not in sys.path:
+        sys.path.insert(0, str(tools_dir))
+    spec = importlib.util.spec_from_file_location("tradingagent_marketgraph_interface_gateway", gateway_path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _MARKETGRAPH_GATEWAY = module
+    return module
 
 
 # -- SharedSignals SQLite Reader ---------------------------------------------
@@ -970,6 +1025,29 @@ class TradingagentDataReader:
             self._maybe_alert()
             return []
 
+    def get_pm_prices(
+        self,
+        market_id: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int = 200,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        try:
+            def fallback() -> list[dict[str, Any]]:
+                return []
+
+            if "symbol" in kwargs and not market_id:
+                market_id = str(kwargs["symbol"])
+            result = self._api_call("get_pm_prices", fallback, market_id=market_id, limit=limit)
+            self._record_shared_error("get_pm_prices")
+            return result
+        except Exception as e:
+            self.errors.append(f"get_pm_prices: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
     def get_associations(
         self, ts_code: str | None = None, event_id: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -1070,3 +1148,75 @@ class TradingagentDataReader:
             self.stale = True
             self._maybe_alert()
             return []
+
+    def get_market_interface_snapshot(
+        self,
+        market: str = "Ashare",
+        *,
+        table_ids: list[str] | None = None,
+        include_rows: bool = False,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Read MarketGraph 08 stable interface through its gateway.
+
+        This is read-only research context. Missing gateway/data degrades to an
+        empty snapshot and must never relax market gates.
+        """
+        try:
+            gateway = _load_marketgraph_gateway()
+            if gateway is None:
+                return {
+                    "market": market,
+                    "contract_status": "missing_gateway",
+                    "tables": {},
+                    "readiness_summary": {},
+                    "degraded": True,
+                    "degrade_reason": "marketgraph_interface_gateway_missing",
+                    "is_trading_permission": False,
+                    "can_affect_real_money": False,
+                }
+            return dict(
+                gateway.read_market_interface_snapshot(
+                    market=market,
+                    table_ids=table_ids,
+                    include_rows=include_rows,
+                    limit=limit,
+                    caller_context="TradingAgent.shared.data.reader",
+                    record_usage=False,
+                )
+            )
+        except Exception as e:
+            self.errors.append(f"get_market_interface_snapshot: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return {
+                "market": market,
+                "contract_status": "error",
+                "tables": {},
+                "readiness_summary": {},
+                "degraded": True,
+                "degrade_reason": str(e),
+                "is_trading_permission": False,
+                "can_affect_real_money": False,
+            }
+
+    def get_market_readiness_summary(self, market: str = "Ashare") -> dict[str, Any]:
+        snapshot = self.get_market_interface_snapshot(market=market, include_rows=False)
+        summary = snapshot.get("readiness_summary")
+        return dict(summary) if isinstance(summary, dict) else {}
+
+    def get_market_knowledge_edges(
+        self,
+        market: str = "Ashare",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        snapshot = self.get_market_interface_snapshot(
+            market=market,
+            table_ids=["market_knowledge_edges"],
+            include_rows=True,
+            limit=limit,
+        )
+        table = (snapshot.get("tables") or {}).get("market_knowledge_edges")
+        rows = table.get("rows") if isinstance(table, dict) else []
+        return [dict(row) for row in rows or [] if isinstance(row, dict)]

@@ -108,7 +108,7 @@
 ### 12b. job_pm_research_probability — PM 独立研究概率
 - **目的**: 通过 MarketGraph 统一 API/read model 读取 PM 独立研究概率，并与 SharedSignals PM 市场/价格合并成 simulated edge 门禁文件；不写 SharedSignals，不写交易队列
 - **频率**: 每 10 分钟错峰 (2-59/10 * * * *)
-- **输入**: SharedSignals PM markets/prices、MarketGraph `GET /pm/research-probabilities` / `read_pm_research_probabilities`
+- **输入**: SharedSignals `/pm_markets` + `/pm_prices`、MarketGraph `GET /pm/research-probabilities` / `read_pm_research_probabilities`
 - **输出**: model_probabilities.jsonl 与 model_probabilities_summary.json (写入 shared/review/pm/)
 - **失败处理**: 3 次重试 → 无 MarketGraph 研究概率时原子清空旧概率文件，避免历史 edge 残留
 - **归属仓库**: TradingAgent
