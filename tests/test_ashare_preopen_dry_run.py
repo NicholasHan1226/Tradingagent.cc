@@ -123,7 +123,27 @@ class AsharePreopenDryRunTest(unittest.TestCase):
             mock.patch.object(ashare_preopen_dry_run.AshareAdapter, "get_sim_account", return_value=self._account()),
             mock.patch(
                 "shared.runtime_test.ashare_preopen_dry_run.score_universe",
-                return_value=[("600000.SH", {"combined": 0.5}), ("000001.SZ", {"combined": 0.45})],
+                return_value=[
+                    (
+                        "600000.SH",
+                        {
+                            "combined": 0.5,
+                            "macro": 0.5,
+                            "event": 0.5,
+                            "fundamental": 0.5,
+                            "capital": 0.5,
+                            "technical": 0.5,
+                            "sentiment": 0.5,
+                            "evidence_coverage": 0.0,
+                            "missing_evidence_dimensions": ["macro", "event", "fundamental", "capital", "technical", "sentiment"],
+                            "evidence_sources": {
+                                "technical": {"has_evidence": False, "source": "SharedSignals daily bars", "reason": "insufficient_daily_bars"},
+                                "capital": {"has_evidence": False, "source": "SharedSignals capital flow/factors", "reason": "missing_capital_flow_rows"},
+                            },
+                        },
+                    ),
+                    ("000001.SZ", {"combined": 0.45}),
+                ],
             ),
         ):
             report = ashare_preopen_dry_run.run_preopen_dry_run(
@@ -135,6 +155,8 @@ class AsharePreopenDryRunTest(unittest.TestCase):
 
         self.assertEqual(report["status"], "warn")
         self.assertEqual(report["candidate_pool"]["reason"], "no_candidate_layer_after_scoring")
+        self.assertEqual(report["candidate_pool"]["score_diagnostics"]["scored_count"], 2)
+        self.assertEqual(report["candidate_pool"]["score_diagnostics"]["evidence_reason_summary"]["capital"]["missing_capital_flow_rows"], 1)
         self.assertFalse(report["execution_gate"]["ready"])
         self.assertIn("candidate_pool:no_candidate_layer_after_scoring", report["warnings"])
 

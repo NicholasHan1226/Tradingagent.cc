@@ -21,7 +21,7 @@ from Ashare.capital_plan import TOTAL_CAPITAL, plan_capital
 from Ashare.sim_executor import _is_supported_ashare_code, _market_session_rejection
 from shared.data.reader import TradingagentDataReader
 from shared.notify import email_sender
-from shared.orchestrator import _account_available_cash, _account_capital, _account_positions, _latest_price
+from shared.orchestrator import _account_available_cash, _account_capital, _account_positions, _latest_price, _score_diagnostics
 from shared.runtime_test.ashare_opening_validator import DEFAULT_SQLITE_DB, validate_pre_open
 from shared.screening.six_dimension_scorer import score_universe
 
@@ -168,6 +168,7 @@ def _build_candidate_pool(
     universe = _latest_liquid_universe_from_read_model(sqlite_db, date, limit=score_limit)
     limited = universe[: max(1, int(score_limit))]
     scored = score_universe(date=date, universe=limited, data_reader=reader, market="ashare")
+    scores_by_symbol = {symbol: scores for symbol, scores in scored}
     candidates = [
         {
             "ts_code": symbol,
@@ -196,6 +197,7 @@ def _build_candidate_pool(
         "watch_count": len(watch),
         "top_candidates": _compact_scores([(row["ts_code"], row["scores"]) for row in candidates], limit=10),
         "top_scored": _compact_scores(scored, limit=10),
+        "score_diagnostics": _score_diagnostics(scores_by_symbol),
         "candidates_for_plan": candidates,
     }
 

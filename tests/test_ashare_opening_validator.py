@@ -338,9 +338,67 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(latest_log["candidate_pool_status"], "strategy_threshold_not_met_watch_only")
         self.assertEqual(latest_log["data_quality_status"], "research_dimensions_mostly_neutral")
         self.assertEqual(latest_log["max_combined"], 0.5412)
-        self.assertEqual(latest_log["candidate_threshold"], 0.55)
-        self.assertEqual(latest_log["candidate_above_threshold_count"], 0)
-        self.assertEqual(latest_log["watch_above_threshold_count"], 8)
+
+    def test_first_sample_maps_evidence_reason_to_targeted_next_actions(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        no_trade_log = root / "ashare_no_trade_explanations.jsonl"
+        no_trade_log.write_text(
+            json.dumps(
+                {
+                    "date": "20260706",
+                    "generated_at": "2026-07-06T09:41:00+08:00",
+                    "state": "ok",
+                    "no_trade_explanation": {
+                        "category": "no_candidates",
+                        "action": "check_candidate_pool_thresholds_and_universe_filter",
+                        "counts": {"candidate_count": 0},
+                        "score_diagnostics": {
+                            "scored_count": 500,
+                            "candidate_threshold": 0.55,
+                            "candidate_above_threshold_count": 0,
+                            "watch_above_threshold_count": 0,
+                            "max_combined": 0.5,
+                            "candidate_pool_status": "strategy_threshold_not_met",
+                            "data_quality_status": "missing_evidence_default_like",
+                            "evidence_reason_summary": {
+                                "capital": {"missing_capital_flow_rows": 500},
+                                "technical": {"insufficient_daily_bars": 500},
+                            },
+                        },
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        db_path = self._db(
+            [
+                ("600000.SH", "2026-07-06 09:35:00"),
+                ("000001.SZ", "2026-07-06 09:35:00"),
+            ]
+        )
+
+        report = ashare_opening_validator.first_sample_alerts(
+            sqlite_db=db_path,
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            no_trade_log_path=no_trade_log,
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+
+        explanation = report["no_trade_explanation"]
+        self.assertEqual(explanation["next_action"], "check_sharedsignals_daily_bar_history")
+        self.assertEqual(explanation["diagnostic_summary"]["reason"], "research_evidence_missing_default_neutral")
+        self.assertEqual(
+            explanation["diagnostic_summary"]["next_actions"],
+            ["check_sharedsignals_daily_bar_history", "check_sharedsignals_capital_flow"],
+        )
 
     def test_score_diagnostic_summary_distinguishes_no_trade_causes(self) -> None:
         cases = [

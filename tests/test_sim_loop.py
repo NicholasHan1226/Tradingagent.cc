@@ -676,6 +676,14 @@ class SimLoopTest(unittest.TestCase):
         deps.build_pool = build_pool
 
         def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            evidence_sources = {
+                "macro": {"has_evidence": False, "source": "MarketGraph regime", "reason": "missing_regime"},
+                "event": {"has_evidence": False, "source": "SharedSignals events + MarketGraph candidates", "reason": "no_matched_event_evidence"},
+                "fundamental": {"has_evidence": False, "source": "SharedSignals fundamentals/factors", "reason": "missing_fundamental_rows"},
+                "capital": {"has_evidence": False, "source": "SharedSignals capital flow/factors", "reason": "missing_capital_flow_rows"},
+                "technical": {"has_evidence": False, "source": "SharedSignals daily bars", "reason": "insufficient_daily_bars"},
+                "sentiment": {"has_evidence": False, "source": "SharedSignals/MarketGraph sentiment", "reason": "missing_sentiment_rows"},
+            }
             return [
                 (
                     symbol,
@@ -687,6 +695,9 @@ class SimLoopTest(unittest.TestCase):
                         "capital": 0.5,
                         "technical": 0.5,
                         "sentiment": 0.5,
+                        "evidence_coverage": 0.0,
+                        "missing_evidence_dimensions": ["macro", "event", "fundamental", "capital", "technical", "sentiment"],
+                        "evidence_sources": evidence_sources,
                     },
                 )
                 for symbol in universe
@@ -707,6 +718,10 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(diagnostics["all_neutral_symbol_count"], 2)
         self.assertEqual(diagnostics["data_quality_status"], "missing_evidence_default_like")
         self.assertEqual(diagnostics["all_neutral_symbol_sample"], ["000001.SZ", "000002.SZ"])
+        self.assertEqual(diagnostics["missing_and_default_like_dimension_counts"]["capital"], 2)
+        self.assertEqual(diagnostics["evidence_reason_summary"]["capital"]["missing_capital_flow_rows"], 2)
+        self.assertEqual(diagnostics["evidence_coverage_distribution"]["zero"], 2)
+        self.assertEqual(diagnostics["all_missing_evidence_symbol_reason_sample"][0]["reasons"]["technical"], "insufficient_daily_bars")
 
     def test_run_sim_loop_ashare_fails_closed_when_candidate_pool_errors(self) -> None:
         deps = self._multi_candidate_deps()

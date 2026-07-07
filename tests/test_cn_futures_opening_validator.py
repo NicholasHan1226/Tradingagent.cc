@@ -57,6 +57,15 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
         conn.close()
         return path
 
+    def _add_intraday(self, path: Path, rows: list[tuple[str, str]]) -> None:
+        conn = sqlite3.connect(path)
+        conn.executemany(
+            "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?)",
+            [("Futures", symbol, bar_time, "5min", "tushare_rt_fut_min") for symbol, bar_time in rows],
+        )
+        conn.commit()
+        conn.close()
+
     def test_passes_when_day_opening_has_symbol_coverage(self) -> None:
         db_path = self._db(
             [
@@ -137,6 +146,15 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
                 ("IM2609.CFX", "20260706", 6200.0),
             ]
         )
+        self._add_intraday(
+            db_path,
+            [
+                ("IF2609.CFX", "2026-07-05 14:55:00"),
+                ("IH2609.CFX", "2026-07-05 14:55:00"),
+                ("IC2609.CFX", "2026-07-05 14:55:00"),
+                ("IM2609.CFX", "2026-07-05 14:55:00"),
+            ],
+        )
 
         report = validate_pre_open(
             sqlite_db=db_path,
@@ -147,6 +165,9 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["reason"], "pre_open_acceptance_passed")
         self.assertEqual(report["session"], "day")
+        self.assertEqual(report["executable_symbol_count"], 4)
+        self.assertEqual(report["product_coverage"], ["ic", "if", "ih", "im"])
+        self.assertTrue(report["intraday_readiness"]["reachable"])
         self.assertFalse(report["real_trading_enabled"])
 
     def test_pre_open_warns_when_daily_bars_are_missing(self) -> None:
@@ -159,7 +180,29 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
         )
 
         self.assertEqual(report["status"], "warn")
-        self.assertEqual(report["reason"], "pre_open_daily_bars_missing")
+        self.assertEqual(report["reason"], "pre_open_executable_daily_bars_missing")
+
+    def test_pre_open_filters_generic_contracts_before_acceptance(self) -> None:
+        db_path = self._db_with_daily(
+            [
+                ("CU.SHF", "20260706", 80000.0),
+                ("RB.SHF", "20260706", 3300.0),
+                ("IF2609.CFX", "20260706", 3500.0),
+            ]
+        )
+        self._add_intraday(db_path, [("IF2609.CFX", "2026-07-05 14:55:00")])
+
+        report = validate_pre_open(
+            sqlite_db=db_path,
+            now=datetime.fromisoformat("2026-07-06T08:55:00+08:00"),
+            min_symbols=2,
+        )
+
+        self.assertEqual(report["status"], "warn")
+        self.assertEqual(report["reason"], "pre_open_executable_daily_bars_missing")
+        self.assertEqual(report["raw_symbol_count"], 3)
+        self.assertEqual(report["executable_symbol_count"], 1)
+        self.assertEqual(report["executable_symbols_sample"], ["IF2609.CFX"])
 
     def test_first_sample_alerts_when_opening_bars_are_missing(self) -> None:
         db_path = self._db([])

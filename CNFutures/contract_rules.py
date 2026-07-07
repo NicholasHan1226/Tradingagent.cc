@@ -136,6 +136,19 @@ def normalize_product(symbol: str) -> str:
     return product
 
 
+def is_executable_contract_symbol(symbol: str) -> bool:
+    """Return whether ``symbol`` looks like a concrete tradable contract."""
+
+    value = str(symbol or "").strip().lower()
+    base = value.split(".", 1)[0]
+    try:
+        product = normalize_product(value)
+    except ValueError:
+        return False
+    suffix = base[len(product):]
+    return suffix.isdigit() and len(suffix) >= 3
+
+
 def get_contract_rule(symbol: str) -> ContractRule:
     """Return static contract rules for ``symbol``."""
 
@@ -146,4 +159,4 @@ def get_contract_rule(symbol: str) -> ContractRule:
         raise ValueError(f"unsupported China futures product: {product}") from exc
 
 
-__all__ = ["ContractRule", "get_contract_rule", "normalize_product"]
+__all__ = ["ContractRule", "get_contract_rule", "is_executable_contract_symbol", "normalize_product"]

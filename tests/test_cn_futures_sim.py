@@ -15,6 +15,26 @@ if str(ROOT) not in sys.path:
 
 
 class CNFuturesSimTest(unittest.TestCase):
+    def test_force_flatten_position_close_records_realized_pnl(self) -> None:
+        from CNFutures.sim_runner import _realized_pnl_from_position_close
+
+        long_perf = _realized_pnl_from_position_close(
+            position={"net_qty": 2, "avg_price": 3500.0},
+            side="sell",
+            receipt={"filled_qty": 2, "avg_price": 3510.0, "fee": 12.0},
+            rule_multiplier=300,
+        )
+        short_perf = _realized_pnl_from_position_close(
+            position={"net_qty": -1, "avg_price": 3500.0},
+            side="buy",
+            receipt={"filled_qty": 1, "avg_price": 3490.0, "raw_response": {"estimated_close_fee": 6.0}},
+            rule_multiplier=300,
+        )
+
+        self.assertEqual(long_perf["method"], "force_flatten_position_close")
+        self.assertEqual(long_perf["realized_pnl"], 5988.0)
+        self.assertEqual(short_perf["realized_pnl"], 2994.0)
+
     def test_contract_rules_calculate_margin_and_round_trip_fee(self) -> None:
         from CNFutures.contract_rules import get_contract_rule
         from CNFutures.margin_model import estimate_order_cost

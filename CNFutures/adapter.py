@@ -13,7 +13,7 @@ from shared.markets.base import MarketAdapter
 from shared.markets.sim_capital import default_sim_capital
 
 from . import MARKET
-from .contract_rules import normalize_product
+from .contract_rules import is_executable_contract_symbol, normalize_product
 
 try:  # Optional in partial local checkouts.
     from shared.data.reader import TradingagentDataReader
@@ -109,14 +109,7 @@ def _is_active(asset: dict[str, Any]) -> bool:
 def _is_executable_contract_symbol(symbol: str) -> bool:
     """Reject generic product symbols such as CU.SHF; simulations need contracts."""
 
-    value = str(symbol or "").strip().lower()
-    base = value.split(".", 1)[0]
-    try:
-        product = normalize_product(value)
-    except ValueError:
-        return False
-    suffix = base[len(product):]
-    return suffix.isdigit() and len(suffix) >= 3
+    return is_executable_contract_symbol(symbol)
 
 
 class CNFuturesAdapter(MarketAdapter):

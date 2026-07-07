@@ -1691,8 +1691,13 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
     neutral_counts = {name: 0 for name in dimensions}
     missing_counts = {name: 0 for name in dimensions}
     missing_evidence_counts = {name: 0 for name in dimensions}
+    missing_and_default_like_counts = {name: 0 for name in dimensions}
+    evidence_reason_summary: dict[str, dict[str, int]] = {name: {} for name in dimensions}
+    evidence_source_summary: dict[str, dict[str, int]] = {name: {} for name in dimensions}
+    evidence_coverage_distribution = {"zero": 0, "low": 0, "medium": 0, "high": 0, "full": 0}
     all_neutral_symbols: list[str] = []
     all_missing_evidence_symbols: list[str] = []
+    all_missing_evidence_symbol_reasons: list[dict[str, Any]] = []
     evidence_coverage_values: list[float] = []
     for symbol, score in scores_by_symbol.items():
         if not isinstance(score, dict):
@@ -1700,13 +1705,50 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
         combined = _safe_float(score.get("combined"), 0.0)
         neutral_dimensions = 0
         missing_evidence_dimensions = set(score.get("missing_evidence_dimensions") or [])
+        evidence_sources = score.get("evidence_sources") if isinstance(score.get("evidence_sources"), dict) else {}
         for name in missing_evidence_dimensions:
             if name in missing_evidence_counts:
                 missing_evidence_counts[name] += 1
-        if len(missing_evidence_dimensions) >= len(dimensions):
+        for name in dimensions:
+            info = evidence_sources.get(name) if isinstance(evidence_sources, dict) else None
+            if not isinstance(info, dict):
+                continue
+            if info.get("has_evidence") is False:
+                missing_evidence_counts[name] += 1 if name not in missing_evidence_dimensions else 0
+                reason = str(info.get("reason") or "missing_evidence")
+                source = str(info.get("source") or "unknown")
+                evidence_reason_summary[name][reason] = evidence_reason_summary[name].get(reason, 0) + 1
+                evidence_source_summary[name][source] = evidence_source_summary[name].get(source, 0) + 1
+        all_evidence_missing = len(missing_evidence_dimensions) >= len(dimensions)
+        if isinstance(evidence_sources, dict) and evidence_sources:
+            all_evidence_missing = all(
+                isinstance(evidence_sources.get(name), dict) and evidence_sources[name].get("has_evidence") is False
+                for name in dimensions
+            )
+        if all_evidence_missing:
             all_missing_evidence_symbols.append(str(symbol))
+            if len(all_missing_evidence_symbol_reasons) < max(1, limit):
+                reasons = {}
+                for name in dimensions:
+                    info = evidence_sources.get(name) if isinstance(evidence_sources, dict) else None
+                    if isinstance(info, dict) and info.get("has_evidence") is False:
+                        reasons[name] = info.get("reason") or "missing_evidence"
+                    elif name in missing_evidence_dimensions:
+                        reasons[name] = "missing_evidence"
+                all_missing_evidence_symbol_reasons.append({"symbol": str(symbol), "reasons": reasons})
         if "evidence_coverage" in score:
-            evidence_coverage_values.append(_safe_float(score.get("evidence_coverage"), 0.0))
+            coverage = _safe_float(score.get("evidence_coverage"), 0.0)
+            evidence_coverage_values.append(coverage)
+            if coverage <= 0:
+                evidence_coverage_distribution["zero"] += 1
+            elif coverage < 0.34:
+                evidence_coverage_distribution["low"] += 1
+            elif coverage < 0.67:
+                evidence_coverage_distribution["medium"] += 1
+            elif coverage < 1.0:
+                evidence_coverage_distribution["high"] += 1
+            else:
+                evidence_coverage_distribution["full"] += 1
         for name in dimensions:
             if name not in score:
                 missing_counts[name] += 1
@@ -1715,6 +1757,9 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
             if 0.49 <= value <= 0.51:
                 neutral_counts[name] += 1
                 neutral_dimensions += 1
+                source_info = evidence_sources.get(name) if isinstance(evidence_sources, dict) else None
+                if name in missing_evidence_dimensions or (isinstance(source_info, dict) and source_info.get("has_evidence") is False):
+                    missing_and_default_like_counts[name] += 1
         if neutral_dimensions == len(dimensions):
             all_neutral_symbols.append(str(symbol))
         rows.append((combined, str(symbol), score))
@@ -1732,6 +1777,8 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
     neutral_ratio = neutral_total / max(1, len(rows) * len(dimensions))
     all_neutral_ratio = len(all_neutral_symbols) / max(1, len(rows))
     all_missing_evidence_ratio = len(all_missing_evidence_symbols) / max(1, len(rows))
+    missing_default_like_total = sum(missing_and_default_like_counts.values())
+    missing_default_like_ratio = missing_default_like_total / max(1, len(rows) * len(dimensions))
     avg_evidence_coverage = sum(evidence_coverage_values) / max(1, len(evidence_coverage_values))
     if not rows:
         candidate_pool_status = "no_scored_symbols"
@@ -1754,20 +1801,26 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
         "all_neutral_symbol_ratio": round(all_neutral_ratio, 4),
         "data_quality_status": (
             "missing_evidence_default_like"
-            if rows and (all_missing_evidence_ratio >= 0.5 or all_neutral_ratio >= 0.5)
+            if rows and (all_missing_evidence_ratio >= 0.5 or missing_default_like_ratio >= 0.5 or all_neutral_ratio >= 0.5)
             else "research_dimensions_mostly_neutral"
             if rows and neutral_ratio >= 0.75
             else "ok"
         ),
         "average_evidence_coverage": round(avg_evidence_coverage, 4),
+        "evidence_coverage_distribution": evidence_coverage_distribution,
         "all_missing_evidence_symbol_count": len(all_missing_evidence_symbols),
         "all_missing_evidence_symbol_ratio": round(all_missing_evidence_ratio, 4),
         "all_missing_evidence_symbol_sample": all_missing_evidence_symbols[: max(1, limit)],
+        "all_missing_evidence_symbol_reason_sample": all_missing_evidence_symbol_reasons,
         "top_scores": top_scores,
         "all_neutral_symbol_sample": all_neutral_symbols[: max(1, limit)],
         "neutral_default_like_dimension_counts": neutral_counts,
         "missing_dimension_counts": missing_counts,
         "missing_evidence_dimension_counts": missing_evidence_counts,
+        "missing_and_default_like_dimension_counts": missing_and_default_like_counts,
+        "missing_and_default_like_dimension_ratio": round(missing_default_like_ratio, 4),
+        "evidence_reason_summary": {name: dict(counts) for name, counts in evidence_reason_summary.items() if counts},
+        "evidence_source_summary": {name: dict(counts) for name, counts in evidence_source_summary.items() if counts},
     }
 
 

@@ -304,12 +304,22 @@ def _score_diagnostic_summary(score_diagnostics: dict[str, Any]) -> dict[str, An
         "candidate_threshold": candidate_threshold,
         "candidate_above_threshold_count": candidate_count,
         "watch_above_threshold_count": watch_count,
+        "evidence_reason_summary": score_diagnostics.get("evidence_reason_summary") or {},
     }
+    evidence_actions = _evidence_gap_actions(score_diagnostics.get("evidence_reason_summary"))
     if candidate_pool_status == "pool_empty_despite_threshold_scores" or candidate_count > 0:
         summary.update(
             {
                 "reason": "candidate_pool_anomaly",
                 "next_action": "review_candidate_pool_layering_anomaly",
+            }
+        )
+    elif evidence_actions:
+        summary.update(
+            {
+                "reason": "research_evidence_missing_default_neutral",
+                "next_action": evidence_actions[0],
+                "next_actions": evidence_actions,
             }
         )
     elif data_quality_status == "missing_evidence_default_like":
@@ -343,6 +353,43 @@ def _score_diagnostic_summary(score_diagnostics: dict[str, Any]) -> dict[str, An
     else:
         summary.update({"reason": None, "next_action": None})
     return summary
+
+
+def _evidence_gap_actions(evidence_reason_summary: Any) -> list[str]:
+    if not isinstance(evidence_reason_summary, dict):
+        return []
+    reason_actions = {
+        "missing_regime": "check_marketgraph_all_weather_regime",
+        "missing_fundamental_rows": "check_sharedsignals_fundamentals",
+        "no_supported_fundamental_factors": "check_sharedsignals_fundamentals",
+        "missing_capital_flow_rows": "check_sharedsignals_capital_flow",
+        "insufficient_daily_bars": "check_sharedsignals_daily_bar_history",
+        "insufficient_priced_daily_bars": "check_sharedsignals_daily_bar_history",
+        "invalid_momentum_base_price": "check_sharedsignals_daily_bar_history",
+        "no_matched_event_evidence": "check_marketgraph_event_candidates",
+        "missing_sentiment_rows": "check_marketgraph_sentiment_signals",
+        "scoring_exception": "review_scorer_errors",
+        "scoring_returned_none": "review_scorer_errors",
+    }
+    priority = [
+        "check_sharedsignals_daily_bar_history",
+        "check_sharedsignals_capital_flow",
+        "check_sharedsignals_fundamentals",
+        "check_marketgraph_all_weather_regime",
+        "check_marketgraph_event_candidates",
+        "check_marketgraph_sentiment_signals",
+        "review_scorer_errors",
+    ]
+    actions: list[str] = []
+    for reason_counts in evidence_reason_summary.values():
+        if not isinstance(reason_counts, dict):
+            continue
+        for reason in reason_counts:
+            action = reason_actions.get(str(reason))
+            if action and action not in actions:
+                actions.append(action)
+    actions.sort(key=lambda action: priority.index(action) if action in priority else len(priority))
+    return actions
 
 
 def _classify_from_latest_no_trade(latest: dict[str, Any]) -> tuple[str, str] | None:

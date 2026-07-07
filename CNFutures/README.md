@@ -88,6 +88,11 @@ as `CU.SHF` and expired, stale, or earlier-batch contracts are not valid
 simulation candidates even if they exist in the futures asset table or
 historical daily bars.
 
+Pre-open validation uses the same executable-contract filter as the runtime
+adapter. It reports raw symbol count, executable symbol count, covered products,
+5-minute read-model reachability, and runtime style state. A daily bar for a
+generic product symbol is not enough to pass readiness.
+
 The 5-minute runner rejects stale intraday input by default when the latest bar
 is more than 10 minutes old. Configure the threshold with
 `--max-intraday-bar-age-minutes` or `CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES`.
@@ -119,6 +124,10 @@ fills:
   and filled quantity
 - opposite-side fills for the same style and contract estimate round-trip
   realized PnL, so review scoring can start accumulating win-rate samples
+- force-flatten closes use the existing position cost basis and simulated fill
+  price to record realized PnL; `score_records` exposes `pnl_attribution` so
+  operators can distinguish no closed PnL, sample insufficiency, and actual
+  realized gains/losses
 - simulated positions are snapshotted under
   `signals/positions/cn_futures_sim_positions.json`
 - new opening orders are blocked when a style would exceed its configured

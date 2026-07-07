@@ -14,9 +14,11 @@ from typing import Any
 
 try:
     from .review import DEFAULT_REVIEW_PATH
+    from .contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
 except ImportError:  # pragma: no cover - direct script execution fallback
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from CNFutures.review import DEFAULT_REVIEW_PATH
+    from CNFutures.contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
 
 try:
     from shared.data.reader import TradingagentDataReader
@@ -26,6 +28,7 @@ except Exception:  # pragma: no cover
 DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
 DEFAULT_SIGNALS_DIR = Path(__file__).resolve().parents[1] / "signals"
 DEFAULT_RECEIPT_PATH = Path(__file__).resolve().parents[1] / "signals" / "sim_execution_receipts.jsonl"
+DEFAULT_STYLE_WEIGHTS_PATH = Path(__file__).resolve().parents[1] / "shared" / "review" / "cn_futures" / "style_weights.json"
 CN_TZ = timezone(timedelta(hours=8))
 READER_MARKET = "Futures"
 
@@ -105,6 +108,37 @@ def _reader_symbols(reader: Any | None, *, limit: int = 80) -> list[str]:
     return symbols
 
 
+def _contract_coverage(symbols: list[str]) -> dict[str, Any]:
+    raw_symbols = sorted({str(symbol or "").strip().upper() for symbol in symbols if str(symbol or "").strip()})
+    executable: list[str] = []
+    unsupported_products: set[str] = set()
+    products: set[str] = set()
+    for symbol in raw_symbols:
+        if not is_executable_contract_symbol(symbol):
+            continue
+        try:
+            product = normalize_product(symbol)
+            get_contract_rule(symbol)
+        except ValueError:
+            try:
+                product_name = normalize_product(symbol)
+            except ValueError:
+                product_name = str(symbol).split(".", 1)[0].lower()
+            unsupported_products.add(product_name)
+            continue
+        products.add(product)
+        executable.append(symbol)
+    return {
+        "raw_symbol_count": len(raw_symbols),
+        "symbol_count": len(executable),
+        "executable_symbol_count": len(executable),
+        "executable_symbols_sample": executable[:12],
+        "product_coverage": sorted(products),
+        "product_count": len(products),
+        "unsupported_products": sorted(unsupported_products),
+    }
+
+
 def _query_daily_bars_via_reader(reader: Any | None, trade_date: str, *, min_symbols: int) -> dict[str, Any]:
     get_bars_daily = getattr(reader, "get_bars_daily", None)
     if not callable(get_bars_daily):
@@ -114,7 +148,7 @@ def _query_daily_bars_via_reader(reader: Any | None, trade_date: str, *, min_sym
         return {"error": "futures_assets_empty_from_sharedsignals_reader", "symbol_count": 0}
     latest_dates: list[str] = []
     daily_bar_count = 0
-    symbol_count = 0
+    priced_symbols: list[str] = []
     for symbol in symbols:
         try:
             rows = get_bars_daily(READER_MARKET, symbol, "", trade_date)
@@ -128,11 +162,12 @@ def _query_daily_bars_via_reader(reader: Any | None, trade_date: str, *, min_sym
         if not priced_rows:
             continue
         daily_bar_count += len(priced_rows)
-        symbol_count += 1
+        priced_symbols.append(symbol)
         latest_dates.extend(str(row.get("trade_date") or "") for row in priced_rows if row.get("trade_date"))
+    coverage = _contract_coverage(priced_symbols)
     return {
         "daily_bar_count": daily_bar_count,
-        "symbol_count": symbol_count,
+        **coverage,
         "first_trade_date": min(latest_dates) if latest_dates else None,
         "latest_trade_date": max(latest_dates) if latest_dates else None,
         "query_source": "TradingagentDataReader",
@@ -145,26 +180,95 @@ def _query_daily_bars_sqlite(db_path: Path, trade_date: str) -> dict[str, Any]:
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        row = conn.execute(
+        rows = conn.execute(
             """
-            SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(trade_date), MAX(trade_date)
+            SELECT symbol, COUNT(*) AS bar_count, MIN(trade_date), MAX(trade_date)
             FROM market_bars_daily
             WHERE market='Futures'
               AND trade_date <= ?
               AND close > 0
+            GROUP BY symbol
             """,
             (trade_date,),
-        ).fetchone()
+        ).fetchall()
     except Exception as exc:  # noqa: BLE001
         return {"error": f"{exc.__class__.__name__}: {exc}", "symbol_count": 0}
     finally:
         if conn is not None:
             conn.close()
+    symbols = [str(row[0] or "") for row in rows or []]
+    coverage = _contract_coverage(symbols)
+    latest_dates = [str(row[3] or "") for row in rows or [] if row[3]]
+    first_dates = [str(row[2] or "") for row in rows or [] if row[2]]
     return {
-        "daily_bar_count": int(row[0] or 0) if row else 0,
+        "daily_bar_count": sum(int(row[1] or 0) for row in rows or []),
+        **coverage,
+        "first_trade_date": min(first_dates) if first_dates else None,
+        "latest_trade_date": max(latest_dates) if latest_dates else None,
+    }
+
+
+def _query_intraday_readiness_sqlite(db_path: Path, trade_date: str) -> dict[str, Any]:
+    if not db_path.exists():
+        return {"reachable": False, "error": f"sqlite database not found: {db_path}", "bar_count": 0, "symbol_count": 0}
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        row = conn.execute(
+            """
+            SELECT COUNT(*), COUNT(DISTINCT symbol), MAX(substr(bar_time, 1, 10)), MAX(bar_time)
+            FROM market_bars_intraday
+            WHERE market='Futures'
+              AND lower(COALESCE(interval, '')) IN ('5min', '5m', '5')
+              AND replace(substr(bar_time, 1, 10), '-', '') <= ?
+            """,
+            (trade_date,),
+        ).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        return {"reachable": False, "error": f"{exc.__class__.__name__}: {exc}", "bar_count": 0, "symbol_count": 0}
+    finally:
+        if conn is not None:
+            conn.close()
+    bar_count = int(row[0] or 0) if row else 0
+    return {
+        "reachable": bar_count > 0,
+        "bar_count": bar_count,
         "symbol_count": int(row[1] or 0) if row else 0,
-        "first_trade_date": row[2] if row else None,
-        "latest_trade_date": row[3] if row else None,
+        "latest_trade_date": row[2] if row else None,
+        "latest_bar_time": row[3] if row else None,
+        "query_source": "SharedSignals read_model/sqlite",
+    }
+
+
+def _style_state_summary(path: Path = DEFAULT_STYLE_WEIGHTS_PATH) -> dict[str, Any]:
+    if not path.exists():
+        return {"path": str(path), "exists": False, "style_count": 0, "active_styles": 0, "paused_styles": 0, "real_trading_enabled": False}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return {"path": str(path), "exists": True, "error": f"{exc.__class__.__name__}: {exc}", "style_count": 0, "active_styles": 0, "paused_styles": 0, "real_trading_enabled": False}
+    styles = payload.get("styles") if isinstance(payload, dict) else {}
+    if not isinstance(styles, dict):
+        styles = {}
+    active = 0
+    paused = 0
+    night_allowed = 0
+    for style in styles.values():
+        if not isinstance(style, dict):
+            continue
+        status = str(style.get("status") or "active").lower()
+        is_paused = status in {"paused", "deprecated", "disabled"} or style.get("paused") is True
+        paused += 1 if is_paused else 0
+        active += 0 if is_paused else 1
+        night_allowed += 1 if style.get("night_session_allowed") is True else 0
+    return {
+        "path": str(path),
+        "exists": True,
+        "style_count": len(styles),
+        "active_styles": active,
+        "paused_styles": paused,
+        "night_session_allowed_styles": night_allowed,
+        "real_trading_enabled": bool(payload.get("real_trading_enabled")) if isinstance(payload, dict) else False,
     }
 
 
@@ -457,13 +561,28 @@ def validate_pre_open(
     if start is None:
         return {**result, "status": "warn", "reason": "not_in_pre_open_window"}
     bars = _query_daily_bars(sqlite_db, start.strftime("%Y%m%d"))
+    intraday_readiness = _query_intraday_readiness_sqlite(sqlite_db, start.strftime("%Y%m%d"))
+    style_state = _style_state_summary()
+    warnings: list[str] = []
+    if not intraday_readiness.get("reachable"):
+        warnings.append("intraday_read_model_not_ready")
+    if style_state.get("exists") and int(style_state.get("style_count") or 0) > 0 and int(style_state.get("active_styles") or 0) <= 0:
+        warnings.append("no_active_cn_futures_styles")
+    if style_state.get("real_trading_enabled"):
+        warnings.append("real_trading_enabled_unexpected_for_simulated_only_market")
     result.update(bars)
+    result["intraday_readiness"] = intraday_readiness
+    result["style_state"] = style_state
+    result["warnings"] = warnings
     if bars.get("error"):
         result["status"] = "fail"
         result["reason"] = "pre_open_daily_query_failed"
     elif int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
         result["status"] = "warn"
-        result["reason"] = "pre_open_daily_bars_missing"
+        result["reason"] = "pre_open_executable_daily_bars_missing"
+    elif "intraday_read_model_not_ready" in warnings or "no_active_cn_futures_styles" in warnings:
+        result["status"] = "warn"
+        result["reason"] = warnings[0]
     else:
         result["status"] = "pass"
         result["reason"] = "pre_open_acceptance_passed"

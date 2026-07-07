@@ -616,6 +616,46 @@ def _realized_pnl_from_reversal(
     }
 
 
+def _realized_pnl_from_position_close(
+    *,
+    position: dict[str, Any] | None,
+    side: str,
+    receipt: dict[str, Any],
+    rule_multiplier: int,
+) -> dict[str, Any]:
+    if not position:
+        return {}
+    net_qty = _safe_int(position.get("net_qty"), 0)
+    entry_price = _safe_float(position.get("avg_price"), 0.0)
+    exit_price = _safe_float(receipt.get("avg_price"), 0.0)
+    closed_qty = min(abs(net_qty), _safe_int(receipt.get("filled_qty"), 0))
+    if net_qty == 0 or entry_price <= 0 or exit_price <= 0 or closed_qty <= 0:
+        return {}
+    current_side = str(side or "").lower().strip()
+    gross = 0.0
+    if net_qty > 0 and current_side in {"sell", "short"}:
+        gross = (exit_price - entry_price) * closed_qty * rule_multiplier
+    elif net_qty < 0 and current_side in {"buy", "long"}:
+        gross = (entry_price - exit_price) * closed_qty * rule_multiplier
+    else:
+        return {}
+    raw = receipt.get("raw_response") if isinstance(receipt.get("raw_response"), dict) else {}
+    fee = _safe_float(raw.get("estimated_close_fee"), 0.0)
+    if fee <= 0:
+        fee = _safe_float(receipt.get("fee"), 0.0)
+    return {
+        "realized_pnl": round(gross - fee, 6),
+        "gross_pnl": round(gross, 6),
+        "round_trip_fee": round(fee, 6),
+        "closed_quantity": closed_qty,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "entry_side": _position_side(net_qty),
+        "exit_side": current_side,
+        "method": "force_flatten_position_close",
+    }
+
+
 def _quantity_for_style(
     *,
     symbol: str,
@@ -993,12 +1033,20 @@ def run_multi_style_simulation(
                 "market": receipt_obj.market,
                 "raw_response": receipt_obj.raw_response,
             }
-            performance = _realized_pnl_from_reversal(
-                previous=previous_opposite,
-                side=str(order["side"]),
-                receipt=receipt,
-                rule_multiplier=rule.contract_multiplier,
-            )
+            if force_flatten and existing_position:
+                performance = _realized_pnl_from_position_close(
+                    position=existing_position,
+                    side=str(order["side"]),
+                    receipt=receipt,
+                    rule_multiplier=rule.contract_multiplier,
+                )
+            else:
+                performance = _realized_pnl_from_reversal(
+                    previous=previous_opposite,
+                    side=str(order["side"]),
+                    receipt=receipt,
+                    rule_multiplier=rule.contract_multiplier,
+                )
             card = _signal_card(
                 date=date,
                 cadence=bar_cadence,

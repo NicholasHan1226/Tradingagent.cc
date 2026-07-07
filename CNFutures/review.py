@@ -80,6 +80,7 @@ def score_records(records: list[dict[str, Any]], *, min_sample_trades: int = 20)
             "score": 0.0,
             "status": "sample_insufficient",
             "sample_warning": "",
+            "pnl_attribution": "sample_insufficient",
         }
     )
     equity_curves: dict[str, list[float]] = defaultdict(list)
@@ -127,6 +128,7 @@ def score_records(records: list[dict[str, Any]], *, min_sample_trades: int = 20)
                 f"has trades={trade_count}, pnl_samples={pnl_sample_count}"
             )
             metrics["score"] = 0.0
+            metrics["pnl_attribution"] = "no_closed_pnl" if pnl_sample_count <= 0 else "sample_insufficient"
             continue
         win_rate = _safe_float(metrics.get("win_rate"), 0.0)
         realized_pnl = _safe_float(metrics.get("realized_pnl"))
@@ -136,6 +138,7 @@ def score_records(records: list[dict[str, Any]], *, min_sample_trades: int = 20)
         metrics["score"] = round(realized_pnl + (win_rate * 100.0) - risk_penalty, 4)
         metrics["status"] = "eligible_for_candidate_pool" if metrics["score"] > 0 else "underperforming"
         metrics["sample_warning"] = ""
+        metrics["pnl_attribution"] = "realized_pnl_positive" if realized_pnl > 0 else ("realized_pnl_negative" if realized_pnl < 0 else "realized_pnl_flat")
     return {
         "min_sample_trades": min_sample_trades,
         "style_scores": {style: dict(metrics) for style, metrics in styles.items()},
