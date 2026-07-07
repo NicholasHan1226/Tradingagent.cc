@@ -1592,4 +1592,107 @@ describe('TradingAgent snapshot reader', () => {
       filledCount: 0,
     }))
   })
+
+  it('uses latest simulated health to show current strategy wait even with historical trades', async () => {
+    const root = await createWorkspace()
+    const healthRoot = join(root, 'TradingAgent/shared/runtime_test')
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/aggressive')
+    await mkdir(healthRoot, { recursive: true })
+    await mkdir(ledgerRoot, { recursive: true })
+    await writeFile(
+      join(ledgerRoot, 'trade_journal.jsonl'),
+      JSON.stringify({
+        market: 'crypto',
+        symbol: 'BTCUSDT',
+        side: 'buy',
+        quantity: 1,
+        price: 63000,
+        timestamp: '2026-07-07T12:00:00Z',
+      }) + '\n',
+    )
+    await writeFile(
+      join(healthRoot, 'sim_market_health_latest.json'),
+      JSON.stringify({
+        market: 'all_sim',
+        checks: [
+          {
+            name: 'crypto_sim_loop',
+            status: 'warn',
+            summary: 'crypto 模拟盘闭环策略等待',
+            details: {
+              market: 'crypto',
+              diagnostic_class: 'strategy_wait',
+              execution_fault: false,
+              warn_reasons: ['crypto_waiting_for_momentum_signal'],
+            },
+          },
+        ],
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-07T12:40:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'Crypto',
+      runtimeState: 'strategy_wait',
+      executionFault: false,
+      runtimeReason: 'crypto_waiting_for_momentum_signal',
+      headline: 'Crypto 模拟盘闭环策略等待',
+    }))
+  })
+
+  it('ignores stale simulated health when building market summaries', async () => {
+    const root = await createWorkspace()
+    const healthRoot = join(root, 'TradingAgent/shared/runtime_test')
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/aggressive')
+    await mkdir(healthRoot, { recursive: true })
+    await mkdir(ledgerRoot, { recursive: true })
+    await writeFile(
+      join(ledgerRoot, 'trade_journal.jsonl'),
+      JSON.stringify({
+        market: 'crypto',
+        symbol: 'BTCUSDT',
+        side: 'buy',
+        quantity: 1,
+        price: 63000,
+        timestamp: '2026-07-07T12:00:00Z',
+      }) + '\n',
+    )
+    await writeFile(
+      join(healthRoot, 'sim_market_health_latest.json'),
+      JSON.stringify({
+        market: 'all_sim',
+        generated_at: '2026-07-07T11:00:00.000Z',
+        checks: [
+          {
+            name: 'crypto_sim_loop',
+            status: 'warn',
+            summary: 'crypto 模拟盘闭环策略等待',
+            details: {
+              market: 'crypto',
+              diagnostic_class: 'strategy_wait',
+              execution_fault: false,
+              warn_reasons: ['crypto_waiting_for_momentum_signal'],
+            },
+          },
+        ],
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-07T12:40:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'Crypto',
+      runtimeState: 'normal',
+      runtimeReason: undefined,
+    }))
+  })
 })

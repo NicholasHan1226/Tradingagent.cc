@@ -312,11 +312,25 @@ def _score_diagnostic_summary(score_diagnostics: dict[str, Any]) -> dict[str, An
                 "next_action": "review_candidate_pool_layering_anomaly",
             }
         )
+    elif data_quality_status == "missing_evidence_default_like":
+        summary.update(
+            {
+                "reason": "research_evidence_missing_default_neutral",
+                "next_action": "review_sharedsignals_marketgraph_dimension_evidence",
+            }
+        )
     elif data_quality_status == "research_dimensions_mostly_neutral":
         summary.update(
             {
                 "reason": "research_dimensions_neutral",
                 "next_action": "review_research_dimension_coverage",
+            }
+        )
+    elif candidate_pool_status == "no_scored_symbols":
+        summary.update(
+            {
+                "reason": "score_coverage_missing",
+                "next_action": "check_ashare_score_universe_and_data_reader",
             }
         )
     elif candidate_pool_status in {"strategy_threshold_not_met", "strategy_threshold_not_met_watch_only"}:

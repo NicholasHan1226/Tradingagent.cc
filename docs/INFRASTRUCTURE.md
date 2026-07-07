@@ -3,7 +3,7 @@
 ## 服务器
 | 角色 | IP | 规格 | 职责 |
 |------|-----|------|------|
-| 杭州 (主) | 8.138.181.177 | 2核3.4GB/99GB | 所有系统 (除A股实盘) |
+| 华南3/广州 (主) | 8.138.181.177 | 4核8GB/99GB | SharedSignals、MarketGraph、TradingAgent 生产主节点 |
 | 新加坡 | 47.82.153.58 | 30GB | 境外 RSS mirror / 待收口节点 |
 | Mac Mini | 本地 | — | A股模拟盘可选 Hermes/同花顺 GUI 第二路径（需 `ASHARE_SIM_HERMES_ENABLED=1`）；实盘仅手工确认，不自动下单 |
 
@@ -19,14 +19,14 @@
 ## 环境
 - Python: 3.12.3 (venv /opt/marketgraph/venv)
 - OS: Ubuntu 24.04
-- 无DuckDB/Redis (3.4GB RAM限制, 未来扩展)
+- 当前生产以内存内 API cache + SQLite read model 为主；DuckDB/Redis 仍为后续扩展项，不作为当前运行依赖。
 - SQLite: marketdata.sqlite(75MB) + reference_index.sqlite(5MB)；`rss_collector.db` 仍在旧 `/opt/investment/MarketGraphRuntime/` 路径，迁移前只按残留资产处理
 
 ## 网络
 - Nginx :80 → 127.0.0.1:8080 (API server)
 - RSSHub :1200 (Node.js, 迁移期残留进程；旧 RSSCollector cron 已禁用)
 - Mihomo :7890/:7891 (Clash代理, Binance/Polymarket走代理)
-- 新加坡 → rsync → 杭州 staging (每5min)
+- 新加坡 → rsync → 主服务器 staging (每5min)
 
 ## API Keys
 - 详见 .env (不在此文档记录值)

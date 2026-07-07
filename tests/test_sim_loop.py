@@ -662,6 +662,52 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(diagnostics["candidate_pool_status"], "pool_empty_despite_threshold_scores")
         self.assertEqual(self.executed_orders, [])
 
+    def test_run_sim_loop_ashare_diagnoses_all_neutral_scores_as_missing_evidence(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def build_pool(
+            date: str,
+            universe: list[str],
+            market: str | None = None,
+            reader: object | None = None,
+        ) -> dict[str, list[str]]:
+            return {"candidate": [], "watch": list(universe), "holdings": [], "universe": list(universe)}
+
+        deps.build_pool = build_pool
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (
+                    symbol,
+                    {
+                        "combined": 0.5,
+                        "macro": 0.5,
+                        "event": 0.5,
+                        "fundamental": 0.5,
+                        "capital": 0.5,
+                        "technical": 0.5,
+                        "sentiment": 0.5,
+                    },
+                )
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["000001.SZ", "000002.SZ"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=2),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_neutral_pool",
+        )
+
+        diagnostics = result["no_trade_explanation"]["score_diagnostics"]
+        self.assertEqual(diagnostics["scored_count"], 2)
+        self.assertEqual(diagnostics["all_neutral_symbol_count"], 2)
+        self.assertEqual(diagnostics["data_quality_status"], "missing_evidence_default_like")
+        self.assertEqual(diagnostics["all_neutral_symbol_sample"], ["000001.SZ", "000002.SZ"])
+
     def test_run_sim_loop_ashare_fails_closed_when_candidate_pool_errors(self) -> None:
         deps = self._multi_candidate_deps()
 

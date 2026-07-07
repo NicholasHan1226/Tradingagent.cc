@@ -370,6 +370,30 @@ class AshareOpeningValidatorTest(unittest.TestCase):
             ),
             (
                 {
+                    "candidate_pool_status": "strategy_threshold_not_met_watch_only",
+                    "data_quality_status": "missing_evidence_default_like",
+                    "candidate_above_threshold_count": 0,
+                    "watch_above_threshold_count": 8,
+                    "max_combined": 0.5,
+                    "candidate_threshold": 0.55,
+                },
+                "research_evidence_missing_default_neutral",
+                "review_sharedsignals_marketgraph_dimension_evidence",
+            ),
+            (
+                {
+                    "candidate_pool_status": "no_scored_symbols",
+                    "data_quality_status": "ok",
+                    "candidate_above_threshold_count": 0,
+                    "watch_above_threshold_count": 0,
+                    "max_combined": 0,
+                    "candidate_threshold": 0.55,
+                },
+                "score_coverage_missing",
+                "check_ashare_score_universe_and_data_reader",
+            ),
+            (
+                {
                     "candidate_pool_status": "pool_empty_despite_threshold_scores",
                     "data_quality_status": "ok",
                     "candidate_above_threshold_count": 2,

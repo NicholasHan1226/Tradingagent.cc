@@ -1690,10 +1690,12 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
     rows: list[tuple[float, str, dict[str, Any]]] = []
     neutral_counts = {name: 0 for name in dimensions}
     missing_counts = {name: 0 for name in dimensions}
+    all_neutral_symbols: list[str] = []
     for symbol, score in scores_by_symbol.items():
         if not isinstance(score, dict):
             continue
         combined = _safe_float(score.get("combined"), 0.0)
+        neutral_dimensions = 0
         for name in dimensions:
             if name not in score:
                 missing_counts[name] += 1
@@ -1701,6 +1703,9 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
             value = _safe_float(score.get(name), 0.5)
             if 0.49 <= value <= 0.51:
                 neutral_counts[name] += 1
+                neutral_dimensions += 1
+        if neutral_dimensions == len(dimensions):
+            all_neutral_symbols.append(str(symbol))
         rows.append((combined, str(symbol), score))
     rows.sort(key=lambda item: item[0], reverse=True)
     top_scores = []
@@ -1714,6 +1719,7 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
     watch_count = sum(1 for combined, _, _ in rows if watch_threshold <= combined < candidate_threshold)
     neutral_total = sum(neutral_counts.values())
     neutral_ratio = neutral_total / max(1, len(rows) * len(dimensions))
+    all_neutral_ratio = len(all_neutral_symbols) / max(1, len(rows))
     if not rows:
         candidate_pool_status = "no_scored_symbols"
     elif candidate_count > 0:
@@ -1731,8 +1737,11 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
         "max_combined": round(rows[0][0], 4) if rows else 0.0,
         "candidate_pool_status": candidate_pool_status,
         "neutral_dimension_ratio": round(neutral_ratio, 4),
-        "data_quality_status": "research_dimensions_mostly_neutral" if rows and neutral_ratio >= 0.75 else "ok",
+        "all_neutral_symbol_count": len(all_neutral_symbols),
+        "all_neutral_symbol_ratio": round(all_neutral_ratio, 4),
+        "data_quality_status": "missing_evidence_default_like" if rows and all_neutral_ratio >= 0.5 else "research_dimensions_mostly_neutral" if rows and neutral_ratio >= 0.75 else "ok",
         "top_scores": top_scores,
+        "all_neutral_symbol_sample": all_neutral_symbols[: max(1, limit)],
         "neutral_default_like_dimension_counts": neutral_counts,
         "missing_dimension_counts": missing_counts,
     }

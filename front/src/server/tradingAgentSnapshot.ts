@@ -102,6 +102,27 @@ type CNFuturesReviewRow = {
   state?: string
 }
 
+type SimMarketHealthCheck = {
+  name?: string
+  status?: 'pass' | 'warn' | 'fail' | string
+  summary?: string
+  details?: {
+    market?: string
+    diagnostic_class?: string
+    execution_fault?: boolean
+    fail_reasons?: string[]
+    warn_reasons?: string[]
+  }
+}
+
+type SimMarketHealthSummary = {
+  status: 'pass' | 'warn' | 'fail' | string
+  summary?: string
+  diagnosticClass?: string
+  executionFault?: boolean
+  reasons: string[]
+}
+
 type SignalFile = {
   ts_code?: string
   symbol?: string
@@ -382,6 +403,7 @@ const DEFAULT_TARGET_RETURN_PCT = 8
 const DEFAULT_SIM_CAPITAL_CNY = 200_000
 const SIM_LEDGER_EQUITY_BUCKET_MS = 5 * 60 * 1000
 const MAX_EQUITY_PERFORMANCE_POINTS = 360
+const MAX_SIM_MARKET_HEALTH_AGE_MS = 30 * 60 * 1000
 const DASHBOARD_MARKETS: Market[] = ['A-share', 'US', 'Crypto', 'PM', 'CNFutures']
 const DEFAULT_USD_CNY = 7.2
 const DEFAULT_HKD_CNY = 0.92
@@ -422,9 +444,11 @@ export async function readTradingAgentSnapshot({
     holdings: fallbackHoldings,
     ashareNoTradeExplanation,
     performanceRoot: performanceTrackerRoot,
+    projectRoot,
     portfolio,
     signals,
     simLedgerRoot,
+    now,
   })
   const hasOrders = await directoryHasJson(filledSignalsPath)
   const hasPlan = await fileExists(positionPlanPath)
@@ -576,23 +600,28 @@ async function buildMarketSummaries({
   holdings,
   ashareNoTradeExplanation,
   performanceRoot,
+  projectRoot,
   portfolio,
   signals,
   simLedgerRoot,
+  now,
 }: {
   generatedAt: string
   holdings: HoldingRow[]
   ashareNoTradeExplanation?: AShareNoTradeExplanation
   performanceRoot: string
+  projectRoot: string
   portfolio?: PortfolioSummary
   signals: SignalRow[]
   simLedgerRoot: string
+  now: Date
 }): Promise<MarketSummary[]> {
   const styleSummaries = await readStyleComparisonMarketSummaries(performanceRoot)
   const cnFuturesReviewSummary = await readCNFuturesReviewMarketSummary(performanceRoot)
   const performanceSummaries = await readStylePerformanceMarketSummaries(performanceRoot)
   const equitySummaries = await readEquitySnapshotMarketSummaries(simLedgerRoot)
   const capitalBaseByMarket = await readSimLedgerCapitalBaseByMarket(simLedgerRoot)
+  const healthSummaries = await readSimMarketHealthSummaries(projectRoot, now)
 
   return DASHBOARD_MARKETS.map((market) => {
     const holdingCount = holdings.filter((holding) => holding.market === market).length
@@ -623,7 +652,7 @@ async function buildMarketSummaries({
       const hasPartialEvidence = Boolean(performanceSummary || styleSummary)
       const hasOnlyStyleSummary = styleCount > 0 && holdingCount === 0 && marketSignals.length === 0 && pnlAmount === undefined
       const status: MarketSummary['status'] = hasRuntime ? hasOnlyStyleSummary ? 'partial' : 'ready' : hasPartialEvidence ? 'partial' : 'empty'
-      const runtimeState = marketRuntimeState({
+      const evidenceRuntimeState = marketRuntimeState({
         errorCount: styleSummary?.errorCount,
         filledCount: styleSummary?.filledCount,
         holdingCount,
@@ -632,13 +661,27 @@ async function buildMarketSummaries({
         styleCount,
         tradeCount,
       })
+      const healthSummary = healthSummaries.get(market)
+      const runtimeState = healthSummary ? runtimeStateFromHealth(healthSummary, evidenceRuntimeState) : evidenceRuntimeState
       const latestAt = latestIso(styleSummary?.latestAt, performanceSummary?.latestAt, ashareAccount?.updatedAt, generatedAt)
+      const baseHeadline = buildMarketSummaryHeadline(market, status, holdingCount, marketSignals.length, tradeCount, styleCount)
+      const baseDetail = buildMarketSummaryDetail({
+        activeStyleCount: styleSummary?.activeStyleCount,
+        ashareNoTradeExplanation: isAshare && tradeCount <= 0 ? ashareNoTradeExplanation : undefined,
+        capitalBase,
+        errorCount: styleSummary?.errorCount,
+        filledCount: styleSummary?.filledCount,
+        pnlAmount: hasMeaningfulPnl ? pnlAmount : undefined,
+        returnPct,
+        styleCount,
+      })
 
       return {
         market,
         status,
         runtimeState,
-        executionFault: runtimeState === 'needs_attention',
+        executionFault: healthSummary?.executionFault ?? runtimeState === 'needs_attention',
+        runtimeReason: healthSummary?.reasons[0],
         holdingCount,
       signalCount: marketSignals.length,
       tradeCount,
@@ -657,19 +700,80 @@ async function buildMarketSummaries({
       unrealizedPnl: performanceSummary ? roundMoney(performanceSummary.unrealizedPnl) : undefined,
       latestAt,
       source: styleSummary?.source ?? (performanceSummary ? tradingAgentReadModelSources.performanceTracker : isAshare && ashareAccount ? tradingAgentReadModelSources.localSimLedger : tradingAgentReadModelSources.simLedger),
-      headline: buildMarketSummaryHeadline(market, status, holdingCount, marketSignals.length, tradeCount, styleCount),
-      detail: buildMarketSummaryDetail({
-        activeStyleCount: styleSummary?.activeStyleCount,
-        ashareNoTradeExplanation: isAshare && tradeCount <= 0 ? ashareNoTradeExplanation : undefined,
-        capitalBase,
-        errorCount: styleSummary?.errorCount,
-        filledCount: styleSummary?.filledCount,
-        pnlAmount: hasMeaningfulPnl ? pnlAmount : undefined,
-        returnPct,
-        styleCount,
-      }),
+      headline: healthSummary ? buildHealthAwareHeadline(market, healthSummary, baseHeadline) : baseHeadline,
+      detail: healthSummary ? buildHealthAwareDetail(healthSummary, baseDetail) : baseDetail,
       }
   })
+}
+
+async function readSimMarketHealthSummaries(projectRoot: string, now: Date): Promise<Map<Market, SimMarketHealthSummary>> {
+  const payload = asRecord(await readOptionalJson(toProjectPath(projectRoot, tradingAgentReadModelSources.simMarketHealth)))
+  if (isStaleSimMarketHealth(payload.generated_at, now)) return new Map()
+  const checks = Array.isArray(payload.checks) ? payload.checks as SimMarketHealthCheck[] : []
+  const summaries = new Map<Market, SimMarketHealthSummary>()
+  for (const check of checks) {
+    if (!check || typeof check !== 'object') continue
+    const market = normalizeHealthMarket(check.details?.market ?? check.name)
+    if (!market) continue
+    const reasons = [
+      ...(Array.isArray(check.details?.fail_reasons) ? check.details?.fail_reasons ?? [] : []),
+      ...(Array.isArray(check.details?.warn_reasons) ? check.details?.warn_reasons ?? [] : []),
+    ].map((item) => String(item)).filter(Boolean).sort(compareRuntimeReasons)
+    summaries.set(market, {
+      status: check.status ?? 'warn',
+      summary: optionalString(check.summary),
+      diagnosticClass: optionalString(check.details?.diagnostic_class),
+      executionFault: Boolean(check.details?.execution_fault),
+      reasons,
+    })
+  }
+  return summaries
+}
+
+function compareRuntimeReasons(left: string, right: string): number {
+  return runtimeReasonRank(left) - runtimeReasonRank(right)
+}
+
+function runtimeReasonRank(reason: string): number {
+  if (reason.includes('_waiting_')) return 0
+  if (reason.startsWith('latest_cron_status=')) return 1
+  if (reason === 'market_data_degraded') return 2
+  return 1
+}
+
+function isStaleSimMarketHealth(generatedAt: unknown, now: Date): boolean {
+  if (!generatedAt) return false
+  const time = Date.parse(String(generatedAt))
+  if (!Number.isFinite(time)) return true
+  return now.getTime() - time > MAX_SIM_MARKET_HEALTH_AGE_MS
+}
+
+function normalizeHealthMarket(value: unknown): Market | undefined {
+  const text = String(value ?? '').toLowerCase()
+  if (text.includes('ashare') || text.includes('a-share')) return 'A-share'
+  if (text.includes('crypto')) return 'Crypto'
+  if (text.includes('pm')) return 'PM'
+  if (text.includes('us')) return 'US'
+  if (text.includes('cn_futures') || text.includes('cnfutures') || text.includes('futures')) return 'CNFutures'
+  return undefined
+}
+
+function runtimeStateFromHealth(health: SimMarketHealthSummary, fallback: MarketSummary['runtimeState']): MarketSummary['runtimeState'] {
+  if (health.status === 'fail' || health.executionFault || health.diagnosticClass === 'execution_fault') return 'needs_attention'
+  if (health.diagnosticClass === 'strategy_wait') return 'strategy_wait'
+  if (health.diagnosticClass === 'market_data_wait') return 'empty'
+  if (health.status === 'pass') return 'normal'
+  return fallback
+}
+
+function buildHealthAwareHeadline(market: Market, health: SimMarketHealthSummary, fallback: string): string {
+  if (health.summary) return health.summary.replace(/^([a-z_]+)\s+/i, `${market} `)
+  return fallback
+}
+
+function buildHealthAwareDetail(health: SimMarketHealthSummary, fallback: string): string {
+  if (!health.reasons.length) return fallback
+  return `${fallback} · 当前原因 ${health.reasons[0]}`
 }
 
 function marketRuntimeState({

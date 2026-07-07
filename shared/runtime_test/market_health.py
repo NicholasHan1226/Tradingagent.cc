@@ -21,6 +21,12 @@ from urllib import request
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+LATEST_BY_MARKET = {
+    "ashare": ROOT / "shared/runtime_test/ashare_market_health_latest.json",
+    "cn_futures": ROOT / "shared/runtime_test/cn_futures_market_health_latest.json",
+    "sim": ROOT / "shared/runtime_test/sim_market_health_latest.json",
+    "all": ROOT / "shared/runtime_test/market_health_latest.json",
+}
 DEFAULT_MINI_HEALTH_URL = "http://127.0.0.1:9865/health"
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
 STALE_SIGNAL_MINUTES = 60
@@ -1351,6 +1357,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--market", default="ashare", choices=["ashare", "cn_futures", "sim", "all"], help="market scope to check")
     parser.add_argument("--mini-health-url", default=DEFAULT_MINI_HEALTH_URL)
     parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--write-latest", action="store_true", help="write a latest JSON report for dashboards and cron probes")
+    parser.add_argument("--latest-path", type=Path, default=None, help="override latest JSON report path")
     args = parser.parse_args(argv)
     if args.market == "ashare":
         result = run_ashare_health(mini_health_url=args.mini_health_url)
@@ -1362,6 +1370,12 @@ def main(argv: list[str] | None = None) -> int:
         result = run_all_health(mini_health_url=args.mini_health_url)
     else:  # pragma: no cover
         raise ValueError(args.market)
+    if args.write_latest:
+        latest_path = args.latest_path or LATEST_BY_MARKET[args.market]
+        latest_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = latest_path.with_suffix(latest_path.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+        tmp_path.replace(latest_path)
     print(json.dumps(result, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=False))
     return 0 if result["overall_status"] != "fail" else 2
 

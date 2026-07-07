@@ -18,6 +18,7 @@ export const tradingAgentReadModelSources = {
   equitySnapshots: 'shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl and shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl',
   performanceTracker: 'shared/review/*/style_performance.jsonl',
   styleComparison: 'shared/review/*/style_comparison.json',
+  simMarketHealth: 'shared/runtime_test/sim_market_health_latest.json',
   cnFuturesReview: 'shared/review/data/cn_futures_sim_reviews.jsonl',
   ashareResearchEvidence: 'shared/review/ashare/research_evidence_latest.json',
 } as const

@@ -48,6 +48,7 @@ export type MarketSummary = {
   status: MarketSummaryStatus
   runtimeState?: MarketRuntimeState
   executionFault?: boolean
+  runtimeReason?: string
   holdingCount: number
   signalCount: number
   tradeCount: number

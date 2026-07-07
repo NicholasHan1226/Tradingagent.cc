@@ -33,6 +33,6 @@ export PYTHONPATH="${ROOT}:/opt/investment/SharedSignals:${PYTHONPATH:-}"
 
 {
   echo "[$(date -Iseconds)] START sim_market_health"
-  timeout "${TIMEOUT}" "${PYTHON_BIN}" shared/runtime_test/market_health.py --market sim
+  timeout "${TIMEOUT}" "${PYTHON_BIN}" shared/runtime_test/market_health.py --market sim --write-latest
   echo "[$(date -Iseconds)] OK sim_market_health"
 } >> "${LOG_FILE}" 2>&1
