@@ -128,6 +128,55 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "warn")
         self.assertEqual(check.details["failed_count"], 1)
 
+    def test_failure_receipts_passes_when_only_after_hours_validation_samples_exist(self) -> None:
+        trades = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
+        trades.parent.mkdir(parents=True, exist_ok=True)
+        trades.write_text(
+            json.dumps(
+                {
+                    "ts_code": "000001.SZ",
+                    "market": "ashare",
+                    "side": "buy",
+                    "status": "filled",
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
+                    "created_at": "2026-07-07T08:26:30+00:00",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        check = market_health._check_failure_receipts()
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.severity, "info")
+        self.assertTrue(check.details["advisory"])
+        self.assertEqual(check.details["sample_quality"]["by_reason"], {"outside_ashare_regular_session": 1})
+
+    def test_failure_receipts_warns_when_trade_provenance_is_missing(self) -> None:
+        trades = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
+        trades.parent.mkdir(parents=True, exist_ok=True)
+        trades.write_text(
+            json.dumps(
+                {
+                    "ts_code": "000001.SZ",
+                    "market": "ashare",
+                    "side": "buy",
+                    "status": "filled",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        check = market_health._check_failure_receipts()
+
+        self.assertEqual(check.status, "warn")
+        self.assertFalse(check.details["advisory"])
+
     def test_local_sim_ledger_checks_code_field_not_raw_line_text(self) -> None:
         from shared.execution import local_sim_ledger
 

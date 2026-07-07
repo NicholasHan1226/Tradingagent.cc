@@ -703,6 +703,8 @@ def _check_failure_receipts() -> Check:
     local_trade_count = 0
     if local_trades_path.exists():
         local_trade_count = sum(1 for line in local_trades_path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+    sample_quality = _ashare_local_sample_quality(local_trades_path)
+    outside_session_only = _ashare_outside_session_only_samples(sample_quality)
     receipt_paths = [ROOT / "signals/sim_execution_receipts.jsonl"]
     legacy_receipts = ROOT.parent / "MarketGraph/outputs/sim_execution_receipts.jsonl"
     if legacy_receipts.exists():
@@ -721,11 +723,27 @@ def _check_failure_receipts() -> Check:
                 continue
             latest_receipts.append({key: item.get(key) for key in ["id", "signal_id", "order_id", "code", "symbol", "status", "success", "filled_qty", "message", "receipt_sha256"]})
     no_receipt_expected = not failed and local_trade_count == 0
+    validation_receipt_advisory = not failed and outside_session_only and not latest_receipts
     ok = (bool(existing_paths) and bool(latest_receipts)) or no_receipt_expected
+    if validation_receipt_advisory:
+        ok = True
+    summary = "失败/回执记录可复盘"
+    severity = "warn"
+    advisory = False
+    if latest_receipts:
+        summary = "失败/回执记录可复盘"
+    elif validation_receipt_advisory:
+        summary = "链路验证样本无需策略回执，已隔离；真实策略成交仍要求回执"
+        severity = "info"
+        advisory = True
+    elif no_receipt_expected:
+        summary = "暂无失败或模拟成交，回执待首笔事件生成"
+    else:
+        summary = "失败/回执记录不足"
     return Check(
         "failure_receipts",
         _status(ok, warn=True),
-        "失败/回执记录可复盘" if latest_receipts else "暂无失败或模拟成交，回执待首笔事件生成" if no_receipt_expected else "失败/回执记录不足",
+        summary,
         {
             "failed_count": len(failed),
             "local_trade_count": local_trade_count,
@@ -733,8 +751,10 @@ def _check_failure_receipts() -> Check:
             "receipt_paths": existing_paths,
             "latest_receipts": latest_receipts[-5:],
             "bootstrap_state": "no_receipts_expected_yet" if no_receipt_expected else "",
+            "sample_quality": sample_quality,
+            "advisory": advisory,
         },
-        severity="warn",
+        severity=severity,
     )
 
 
