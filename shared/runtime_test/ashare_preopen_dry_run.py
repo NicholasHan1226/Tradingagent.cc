@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +31,7 @@ LATEST = ROOT / "shared/runtime_test/ashare_preopen_dry_run_latest.json"
 HISTORY = ROOT / "shared/runtime_test/ashare_preopen_dry_run_history.jsonl"
 CANDIDATE_THRESHOLD = 0.55
 MIN_SYMBOLS = 1000
+DEFAULT_SCORE_LIMIT = 80
 
 
 def _now_cn(value: str | None = None) -> datetime:
@@ -79,14 +82,90 @@ def _compact_scores(scored: list[tuple[str, dict[str, float]]], *, limit: int = 
     return rows
 
 
+def _latest_liquid_universe_from_read_model(
+    sqlite_db: Path,
+    date: str,
+    *,
+    limit: int,
+) -> list[str]:
+    if not sqlite_db.exists():
+        return []
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(f"file:{sqlite_db}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        daily_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(market_bars_daily)").fetchall()
+        }
+        if not daily_columns:
+            return []
+        has_amount = "amount" in daily_columns
+        has_assets = bool(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='market_assets'").fetchone())
+        amount_expr = "COALESCE(b.amount, 0)" if has_amount else "0"
+        join_assets = "LEFT JOIN market_assets a ON a.market=b.market AND a.symbol=b.symbol" if has_assets else ""
+        name_expr = "COALESCE(a.name, '')" if has_assets else "''"
+        status_expr = "COALESCE(a.status, '')" if has_assets else "''"
+        rows = conn.execute(
+            f"""
+            WITH latest AS (
+                SELECT MAX(trade_date) AS trade_date
+                FROM market_bars_daily
+                WHERE market='Ashare'
+                  AND trade_date <= ?
+                  AND close > 0
+            )
+            SELECT b.symbol AS symbol,
+                   b.close AS close,
+                   {amount_expr} AS amount,
+                   {name_expr} AS name,
+                   {status_expr} AS status
+            FROM market_bars_daily b
+            {join_assets}
+            WHERE b.market='Ashare'
+              AND b.trade_date = (SELECT trade_date FROM latest)
+              AND b.close > 0
+            ORDER BY {amount_expr} DESC, b.symbol ASC
+            LIMIT ?
+            """,
+            (date, max(1, int(limit) * 4)),
+        ).fetchall()
+    except Exception:
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        symbol = str(row["symbol"] or "").strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        if not _is_supported_ashare_code(symbol):
+            continue
+        name = str(row["name"] or "").upper()
+        status = str(row["status"] or "").lower()
+        if "ST" in name or "退" in name or status in {"suspended", "halted", "delisted", "inactive"}:
+            continue
+        amount = _safe_float(row["amount"], 0.0)
+        if amount > 0 and amount * 1000.0 < 50_000_000.0:
+            continue
+        seen.add(symbol)
+        symbols.append(symbol)
+        if len(symbols) >= max(1, int(limit)):
+            break
+    return symbols
+
+
 def _build_candidate_pool(
     *,
     reader: Any,
-    adapter: AshareAdapter,
+    sqlite_db: Path,
     date: str,
     score_limit: int,
 ) -> dict[str, Any]:
-    universe = adapter.get_universe(date)
+    universe = _latest_liquid_universe_from_read_model(sqlite_db, date, limit=score_limit)
     limited = universe[: max(1, int(score_limit))]
     scored = score_universe(date=date, universe=limited, data_reader=reader, market="ashare")
     candidates = [
@@ -108,6 +187,7 @@ def _build_candidate_pool(
     return {
         "status": "pass" if candidates else "warn",
         "reason": "candidate_layer_ready" if candidates else "no_candidate_layer_after_scoring",
+        "universe_source": "sharedsignals_read_model_latest_liquid_daily",
         "universe_count": len(universe),
         "scored_count": len(scored),
         "score_universe_limit": max(1, int(score_limit)),
@@ -242,8 +322,11 @@ def run_preopen_dry_run(
     date = _trade_date(current)
     data_reader = reader or TradingagentDataReader()
     adapter = AshareAdapter(reader=data_reader)
-    config = adapter.get_strategy_config()
-    resolved_score_limit = int(score_limit or config.get("score_universe_limit") or 500)
+    resolved_score_limit = int(
+        score_limit
+        or os.environ.get("ASHARE_PREOPEN_DRY_RUN_SCORE_LIMIT", "")
+        or DEFAULT_SCORE_LIMIT
+    )
 
     data = validate_pre_open(sqlite_db=sqlite_db, now=current, min_symbols=MIN_SYMBOLS)
     data_status = str(data.get("status") or "warn").lower()
@@ -260,7 +343,7 @@ def run_preopen_dry_run(
 
     candidate_pool = _build_candidate_pool(
         reader=data_reader,
-        adapter=adapter,
+        sqlite_db=sqlite_db,
         date=date,
         score_limit=resolved_score_limit,
     )
