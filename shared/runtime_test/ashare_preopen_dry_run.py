@@ -249,9 +249,37 @@ def _build_capital_plan(adapter: AshareAdapter, candidates: list[dict[str, Any]]
     return plan
 
 
+def _latest_close_from_read_model(sqlite_db: Path, symbol: str, date: str) -> float:
+    if not sqlite_db.exists():
+        return 0.0
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(f"file:{sqlite_db}?mode=ro", uri=True)
+        row = conn.execute(
+            """
+            SELECT close
+            FROM market_bars_daily
+            WHERE market='Ashare'
+              AND symbol=?
+              AND trade_date <= ?
+              AND close > 0
+            ORDER BY trade_date DESC
+            LIMIT 1
+            """,
+            (symbol, date),
+        ).fetchone()
+    except Exception:
+        return 0.0
+    finally:
+        if conn is not None:
+            conn.close()
+    return _safe_float(row[0], 0.0) if row else 0.0
+
+
 def _execution_gate(
     *,
     reader: Any,
+    sqlite_db: Path,
     date: str,
     candidate: dict[str, Any] | None,
     capital_plan: dict[str, Any],
@@ -278,6 +306,10 @@ def _execution_gate(
         blockers.append("unsupported_ashare_code")
     price = _latest_price(reader, "ashare", symbol, date, 0.0)
     if price <= 0:
+        price = _latest_close_from_read_model(sqlite_db, symbol, date)
+        if price > 0:
+            warnings.append("price_from_latest_daily_close")
+    if price <= 0:
         blockers.append("missing_or_non_positive_price")
     budgets = capital_plan.get("position_budget_by_symbol") if isinstance(capital_plan.get("position_budget_by_symbol"), dict) else {}
     budget = _safe_float(budgets.get(symbol), 0.0)
@@ -290,10 +322,13 @@ def _execution_gate(
                 budget = _safe_float(row.get("allocation"), 0.0)
                 break
     if budget <= 0:
-        blockers.append("no_position_budget")
-    quantity = int(budget // max(price, 1e-9))
-    quantity = (quantity // 100) * 100
-    if quantity <= 0:
+        if int(capital_plan.get("max_new_positions") or 0) <= 0:
+            warnings.append("capital_plan_no_new_buy_budget")
+        else:
+            blockers.append("no_position_budget")
+    quantity = int(budget // max(price, 1e-9)) if budget > 0 and price > 0 else 0
+    quantity = (quantity // 100) * 100 if quantity > 0 else 0
+    if budget > 0 and quantity <= 0:
         blockers.append("quantity_below_100_lot")
     session_message = _market_session_rejection({"now": now.isoformat(timespec="seconds")})
     if session_message:
@@ -312,10 +347,13 @@ def _execution_gate(
         "execution_source": "ashare_candidate_layer",
         "dry_run": True,
     }
+    no_budget_by_plan = "capital_plan_no_new_buy_budget" in warnings and not [item for item in blockers if item != "missing_or_non_positive_price"]
+    if no_budget_by_plan and "missing_or_non_positive_price" in blockers:
+        blockers = [item for item in blockers if item != "missing_or_non_positive_price"]
     return {
-        "status": "pass" if not blockers else "fail",
-        "ready": not blockers,
-        "reason": "synthetic_order_gate_ready" if not blockers else "synthetic_order_gate_blocked",
+        "status": "pass" if not blockers and not no_budget_by_plan else ("warn" if no_budget_by_plan and not blockers else "fail"),
+        "ready": not blockers and not no_budget_by_plan,
+        "reason": "capital_plan_no_new_buy_budget" if no_budget_by_plan and not blockers else ("synthetic_order_gate_ready" if not blockers else "synthetic_order_gate_blocked"),
         "blockers": blockers,
         "warnings": warnings,
         "synthetic_order": order,
@@ -366,6 +404,7 @@ def run_preopen_dry_run(
     top_candidate = candidate_pool["candidates_for_plan"][0] if candidate_pool["candidates_for_plan"] else None
     execution_gate = _execution_gate(
         reader=data_reader,
+        sqlite_db=sqlite_db,
         date=date,
         candidate=top_candidate,
         capital_plan=capital_plan,

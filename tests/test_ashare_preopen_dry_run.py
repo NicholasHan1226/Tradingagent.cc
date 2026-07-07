@@ -177,6 +177,25 @@ class AsharePreopenDryRunTest(unittest.TestCase):
 
         self.assertEqual(universe, ["600000.SH", "600001.SH"])
 
+    def test_execution_gate_warns_not_fails_when_capital_plan_has_no_new_budget(self) -> None:
+        db_path = self._db(latest_date="20260706", count=1)
+        gate = ashare_preopen_dry_run._execution_gate(
+            reader=object(),
+            sqlite_db=db_path,
+            date="20260708",
+            candidate={"ts_code": "600000.SH"},
+            capital_plan={"max_new_positions": 0, "position_budget_by_symbol": {}, "suggested_buys": []},
+            now=datetime.fromisoformat("2026-07-08T08:35:00+08:00"),
+        )
+
+        self.assertEqual(gate["status"], "warn")
+        self.assertEqual(gate["reason"], "capital_plan_no_new_buy_budget")
+        self.assertFalse(gate["ready"])
+        self.assertEqual(gate["blockers"], [])
+        self.assertEqual(gate["synthetic_order"]["price"], 10.0)
+        self.assertIn("price_from_latest_daily_close", gate["warnings"])
+        self.assertIn("capital_plan_no_new_buy_budget", gate["warnings"])
+
     def test_fails_when_daily_data_is_stale(self) -> None:
         reader = FakeAshareReader()
         with mock.patch.object(ashare_preopen_dry_run.AshareAdapter, "get_sim_account", return_value=self._account()):

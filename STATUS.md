@@ -134,7 +134,7 @@
 
 - [x] A股 `score_diagnostics` 新增 `evidence_reason_summary`、`evidence_source_summary`、`missing_and_default_like_dimension_counts`、`evidence_coverage_distribution` 和全维缺证据样本 reason，用具体 reason 定位 SharedSignals/MarketGraph 哪条证据链缺失，不降低 `combined >= 0.55` 候选门槛。
 - [x] `ashare_preopen_dry_run` 在候选池为空时同步输出上述 score diagnostics；`ashare_opening_validator` 会把 `missing_regime`、`missing_capital_flow_rows`、`insufficient_daily_bars` 等映射到 `check_marketgraph_all_weather_regime`、`check_sharedsignals_capital_flow`、`check_sharedsignals_daily_bar_history` 等可执行动作。
-- [x] `ashare_preopen_dry_run` 的最新样本选择改为先限定普通 A股代码再取最新交易日；SharedSignals 同库内可转债/债券更新到更新日期时，不会再把普通股票候选池挤成 0。
+- [x] `ashare_preopen_dry_run` 的最新样本选择改为先限定普通 A股代码再取最新交易日；SharedSignals 同库内可转债/债券更新到更新日期时，不会再把普通股票候选池挤成 0。执行门禁价格会在 reader 缺失时回退 read model 最新收盘价；资金计划明确无新买预算时显示 warn 而非 fail，避免把“已有持仓/现金不足所以不新增买入”误报为执行故障。
 - [x] CNFutures 将可执行合约判断提升到 `contract_rules.is_executable_contract_symbol`，adapter 与盘前验收共用同一过滤；盘前验收同时报告 raw/executable symbol、产品覆盖、5分钟 read model 可达性和风格状态。
 - [x] CNFutures force-flatten 平仓按已有持仓 `avg_price` 和成交价计算 realized PnL；`score_records` 增加 `pnl_attribution`，避免“收益 0”被误读为真实无收益而不是样本不足或未闭合盈亏。
 
