@@ -323,7 +323,7 @@ class CNFuturesAdapter(MarketAdapter):
         placeholders = ",".join("?" for _ in interval_values)
         rows = query(
             "WITH scoped AS ("
-            "SELECT symbol, MAX(COALESCE(bar_time, time, '')) AS latest_bar_time "
+            "SELECT symbol, MAX(COALESCE(bar_time, '')) AS latest_bar_time "
             "FROM market_bars_intraday "
             f"WHERE market=? AND interval IN ({placeholders}) "
             "AND replace(COALESCE(trade_date,''),'-','')=? "

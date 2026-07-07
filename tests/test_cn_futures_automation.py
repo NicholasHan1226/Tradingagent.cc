@@ -237,7 +237,6 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     market TEXT,
                     symbol TEXT,
                     bar_time TEXT,
-                    time TEXT,
                     trade_date TEXT,
                     interval TEXT,
                     close REAL
@@ -245,12 +244,12 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 """
             )
             conn.executemany(
-                "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?, ?)",
                 [
-                    ("Futures", "CU2607.SHF", "2026-07-07 14:30:00", "", "20260707", "5min", 71000.0),
-                    ("Futures", "CU.SHF", "2026-07-07 14:35:00", "", "20260707", "5min", 71050.0),
-                    ("Futures", "RB2607.SHF", "2026-07-07 14:35:00", "", "20260707", "5min", 3500.0),
-                    ("Futures", "RB2608.SHF", "2026-07-07 14:35:00", "", "20260707", "5min", 3520.0),
+                    ("Futures", "CU2607.SHF", "2026-07-07 14:30:00", "20260707", "5min", 71000.0),
+                    ("Futures", "CU.SHF", "2026-07-07 14:35:00", "20260707", "5min", 71050.0),
+                    ("Futures", "RB2607.SHF", "2026-07-07 14:35:00", "20260707", "5min", 3500.0),
+                    ("Futures", "RB2608.SHF", "2026-07-07 14:35:00", "20260707", "5min", 3520.0),
                 ],
             )
             conn.commit()
