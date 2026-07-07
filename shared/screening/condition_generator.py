@@ -27,6 +27,11 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return default
 
 
+def _metric_name(row: dict[str, Any]) -> str:
+    raw = str(row.get("factor_name") or row.get("name") or row.get("metric") or "").strip().lower()
+    return raw.split(":", 1)[1] if ":" in raw else raw
+
+
 def _get_data_reader(reader: Any | None = None) -> Any:
     if reader is not None:
         return reader
@@ -284,7 +289,7 @@ def _gen_rotation(
         for row in factor_rows:
             if not isinstance(row, dict):
                 continue
-            factor = str(row.get("factor_name") or "").strip().lower()
+            factor = _metric_name(row)
             if factor and factor not in latest_by_factor:
                 latest_by_factor[factor] = _safe_float(row.get("value"), 0.0)
 

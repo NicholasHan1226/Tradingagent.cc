@@ -129,6 +129,15 @@ def _metric_name(row: dict[str, Any]) -> str:
     return raw.split(":", 1)[1] if ":" in raw else raw
 
 
+def _is_amount_metric(name: str) -> bool:
+    return "amount" in name or name.endswith("_amt") or name.endswith("moneyflow") or name in {
+        "moneyflow",
+        "capital_flow",
+        "main_net_inflow",
+        "main_moneyflow",
+    }
+
+
 def _date_from_row(row: dict[str, Any]) -> str:
     for key in ("event_time", "trade_date", "end_date", "report_date", "ann_date", "date", "period", "collected_at"):
         value = str(row.get(key) or "").strip()
@@ -316,12 +325,16 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float | N
         for symbol in _symbol_variants(ts_code):
             factor_rows = data_reader.get_factors(market, symbol)
             capital_rows = _rows_from_reader(getattr(data_reader, "get_capital_flow", None), symbol, start_date.strftime("%Y%m%d"), date)
-            for row in [*factor_rows, *capital_rows]:
+            source_rows = capital_rows or factor_rows
+            seen_keys: set[tuple[str, str, float]] = set()
+            for row in source_rows:
                 factor_name = _metric_name(row)
                 is_direct_net = factor_name in moneyflow_names or "net_mf" in factor_name or "net_amount" in factor_name
                 is_main_buy = factor_name in {"buy_lg_amount", "buy_elg_amount", "buy_md_amount"}
                 is_main_sell = factor_name in {"sell_lg_amount", "sell_elg_amount", "sell_md_amount"}
                 if not (is_direct_net or is_main_buy or is_main_sell):
+                    continue
+                if not _is_amount_metric(factor_name):
                     continue
                 raw_time = _date_from_row(row)
                 try:
@@ -330,6 +343,10 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float | N
                     continue
                 if start_date <= event_day <= end_date:
                     value = _safe_float(row.get("value"), 0.0)
+                    dedupe_key = (factor_name, raw_time, value)
+                    if dedupe_key in seen_keys:
+                        continue
+                    seen_keys.add(dedupe_key)
                     if is_main_sell:
                         value = -value
                     total_net += value

@@ -135,7 +135,7 @@ def test_us_trend_series_generates_explicit_buy_signal(monkeypatch):
     assert signals[0]["strategy_name"] == "us_trend_follow"
 
 
-def test_pm_model_edge_generates_yes_signal(monkeypatch):
+def test_pm_ignores_sharedsignals_embedded_model_probability(monkeypatch):
     monkeypatch.setattr(run_sim, "market", "pm")
     reader = FakeReader({
         "pm": [{
@@ -148,10 +148,7 @@ def test_pm_model_edge_generates_yes_signal(monkeypatch):
 
     signals = run_sim._load_signals(reader, "pm", limit=10)
 
-    assert len(signals) == 1
-    assert signals[0]["side"] == "buy"
-    assert signals[0]["outcome"] == "yes"
-    assert signals[0]["strategy_name"] == "pm_probability_edge"
+    assert signals == []
 
 
 def test_pm_without_model_edge_does_not_generate_signal(monkeypatch, tmp_path):
