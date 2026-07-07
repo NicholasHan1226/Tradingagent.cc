@@ -125,7 +125,7 @@ class SimBrokerV2Test(unittest.TestCase):
                 },
                 market="ashare",
                 account={"account": "ashare_sim"},
-                config={"local_sim_slippage_bps": 0},
+                config={"local_sim_slippage_bps": 0, "market_session_now": "2026-07-07T10:00:00+08:00"},
             )
 
             self.assertEqual(result.status, "pending")
@@ -165,7 +165,7 @@ class SimBrokerV2Test(unittest.TestCase):
                 },
                 market="ashare",
                 account={"account": "ashare_sim"},
-                config={"local_sim_slippage_bps": 0},
+                config={"local_sim_slippage_bps": 0, "market_session_now": "2026-07-07T10:00:00+08:00"},
             )
 
             self.assertEqual(result.status, "filled")
@@ -203,7 +203,7 @@ class SimBrokerV2Test(unittest.TestCase):
                 },
                 market="ashare",
                 account="ashare_sim",
-                config={"local_sim_slippage_bps": 0},
+                config={"local_sim_slippage_bps": 0, "market_session_now": "2026-07-07T10:00:00+08:00"},
             )
 
             self.assertEqual(result.status, "filled")

@@ -13,9 +13,10 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time as dt_time, timezone
 from pathlib import Path
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo
 
 LOCAL_SIM_DIR = Path(__file__).resolve().parent.parent / "logs" / "local_sim"
 LOCAL_SIM_TRADES = LOCAL_SIM_DIR / "local_sim_trades.jsonl"
@@ -29,6 +30,7 @@ ASHARE_SIM_DEFAULT_CASH = 200_000.0
 LOCK_RETRY_ATTEMPTS = 3
 LOCK_RETRY_DELAY_SECONDS = 0.1
 CHECKSUM_KEYS = {"payload_sha256", "receipt_sha256", "checksum", "sha256"}
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _bj_today() -> date:
@@ -65,6 +67,9 @@ class LocalSimTrade:
     candidate_pool_layer: str = ""
     execution_source: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    trade_timestamp_bj: str = ""
+    ashare_session_valid: bool = True
+    ashare_session_rejection: str = ""
     linked_execution_status: str = ""
     note: str = ""
 
@@ -134,6 +139,44 @@ def _is_regular_ashare_symbol(symbol: Any) -> bool:
     if exchange == "SH":
         return digits.startswith(("600", "601", "603", "605", "688", "689"))
     return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=CN_TZ)
+    return parsed.astimezone(CN_TZ)
+
+
+def _is_ashare_regular_session(ts: datetime) -> bool:
+    try:
+        from Ashare.t_plus_1 import is_trading_day
+
+        if not is_trading_day(ts.date()):
+            return False
+    except Exception:
+        if ts.weekday() >= 5:
+            return False
+    current = ts.time()
+    return (dt_time(9, 30) <= current <= dt_time(11, 30)) or (dt_time(13, 0) <= current <= dt_time(14, 57))
+
+
+def _ashare_session_metadata(market: Any, symbol: Any, created_at: str) -> dict[str, Any]:
+    if str(market or "").strip().lower() != "ashare" or not _is_regular_ashare_symbol(symbol):
+        return {"trade_timestamp_bj": "", "ashare_session_valid": True, "ashare_session_rejection": ""}
+    ts = _parse_timestamp(created_at) or datetime.now(CN_TZ)
+    session_valid = _is_ashare_regular_session(ts)
+    return {
+        "trade_timestamp_bj": ts.isoformat(timespec="seconds"),
+        "ashare_session_valid": session_valid,
+        "ashare_session_rejection": "" if session_valid else "outside_regular_session_09:30-11:30_13:00-14:57",
+    }
 
 
 def _ashare_provenance_error(side: str, candidate_pool_layer: str, execution_source: str) -> str:
@@ -600,6 +643,8 @@ def record_local_sim_order(
             "idempotency_key": idempotency_key,
             "account": account_name,
         }
+    created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    session_metadata = _ashare_session_metadata(market_key, code, created_at)
     trade = LocalSimTrade(
         order_id=order_id,
         idempotency_key=idempotency_key,
@@ -618,6 +663,10 @@ def record_local_sim_order(
         net_amount=net_amount,
         candidate_pool_layer=candidate_pool_layer,
         execution_source=execution_source,
+        created_at=created_at,
+        trade_timestamp_bj=str(session_metadata["trade_timestamp_bj"]),
+        ashare_session_valid=bool(session_metadata["ashare_session_valid"]),
+        ashare_session_rejection=str(session_metadata["ashare_session_rejection"]),
         linked_execution_status=linked_status,
         note=str(order.get("note") or "server backup fill for A-share simulated signal"),
     )

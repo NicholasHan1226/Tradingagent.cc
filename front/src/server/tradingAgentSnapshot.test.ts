@@ -1037,6 +1037,53 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
+  it('treats after-hours A-share local sim fills as validation samples in the dashboard', async () => {
+    const root = await createWorkspace()
+    const localSimRoot = join(root, 'TradingAgent/shared/logs/local_sim')
+    await mkdir(localSimRoot, { recursive: true })
+
+    await writeFile(
+      join(localSimRoot, 'local_sim_pnl.json'),
+      JSON.stringify({
+        ashare_sim: {
+          cash_available: 82683.89,
+          market_value: 117228,
+          total_pnl: -88.11,
+          positions: {
+            '000623.SZ': { quantity: 3100 },
+            '000685.SZ': { quantity: 5200 },
+          },
+        },
+      }),
+    )
+    await writeFile(
+      join(localSimRoot, 'local_sim_trades.jsonl'),
+      JSON.stringify({
+        market: 'ashare',
+        side: 'buy',
+        status: 'filled',
+        ts_code: '000623.SZ',
+        candidate_pool_layer: 'candidate',
+        execution_source: 'ashare_candidate_layer',
+        created_at: '2026-07-07T08:26:30+00:00',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-07T09:00:00.000Z'),
+    })
+
+    expect(snapshot.portfolio?.ashareAccount).toMatchObject({
+      totalSampleCount: 1,
+      validationSampleCount: 1,
+      strategySampleValidCount: 0,
+      strategyTotalPnl: 0,
+      strategyMarketValue: 0,
+    })
+  })
+
   it('surfaces same-day A-share no-trade attribution in market summaries', async () => {
     const root = await createWorkspace()
     const logRoot = join(root, 'TradingAgent/shared/logs')

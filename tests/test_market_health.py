@@ -177,6 +177,48 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "fail")
         self.assertIn("position_count_mismatch", check.details["consistency_errors"])
 
+    def test_local_sim_ledger_warns_when_after_hours_trade_is_validation_sample(self) -> None:
+        from shared.execution import local_sim_ledger
+
+        local_dir = self.root / "shared/logs/local_sim"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        trades_path = local_dir / "local_sim_trades.jsonl"
+        positions_path = local_dir / "local_sim_positions.json"
+        pnl_path = local_dir / "local_sim_pnl.json"
+        snapshot_path = self.root / "signals/positions/simulated_ashare_positions.json"
+        trades_path.write_text(
+            json.dumps(
+                {
+                    "ts_code": "000001.SZ",
+                    "market": "ashare",
+                    "side": "buy",
+                    "status": "filled",
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
+                    "created_at": "2026-07-07T08:26:30+00:00",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        positions_path.write_text(json.dumps({"ashare_sim": {"000001.SZ": {"quantity": 100}}}, ensure_ascii=False), encoding="utf-8")
+        pnl_path.write_text(json.dumps({"ashare_sim": {"cash_available": 190000, "positions": {"000001.SZ": {}}}}, ensure_ascii=False), encoding="utf-8")
+        self._write_json(
+            "signals/positions/simulated_ashare_positions.json",
+            {"positions": [{"ts_code": "000001.SZ"}], "pnl": {"ashare_sim": {"cash_available": 190000}}},
+        )
+
+        with patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", trades_path):
+            with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", positions_path):
+                with patch.object(local_sim_ledger, "LOCAL_SIM_PNL", pnl_path):
+                    with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot_path):
+                        check = market_health._check_local_sim_ledger()
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["sample_quality"]["by_reason"], {"outside_ashare_regular_session": 1})
+        self.assertEqual(check.details["sample_quality"]["strategy_sample_valid_count"], 0)
+
     def test_capital_plan_alignment_fails_when_plan_misses_snapshot_positions(self) -> None:
         trades = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
         trades.parent.mkdir(parents=True, exist_ok=True)

@@ -72,6 +72,38 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(trades[0]["candidate_pool_layer"], "candidate")
         self.assertEqual(trades[0]["execution_source"], "ashare_candidate_layer")
 
+    def test_records_ashare_session_metadata_on_trade(self) -> None:
+        order = {
+            "order_id": "SIM-SESSION",
+            "idempotency_key": "SIM:ashare:acct:20260701:600000.SH:buy:session",
+            "ts_code": "600000.SH",
+            "side": "buy",
+            "quantity": 100,
+            "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+        }
+        with patch.object(
+            local_sim_ledger,
+            "_ashare_session_metadata",
+            return_value={
+                "trade_timestamp_bj": "2026-07-07T16:26:00+08:00",
+                "ashare_session_valid": False,
+                "ashare_session_rejection": "outside_regular_session_09:30-11:30_13:00-14:57",
+            },
+        ):
+            result = local_sim_ledger.record_local_sim_order(order, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
+
+        self.assertEqual(result["status"], "filled")
+        trades = [
+            json.loads(line)
+            for line in local_sim_ledger.LOCAL_SIM_TRADES.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(trades[0]["trade_timestamp_bj"], "2026-07-07T16:26:00+08:00")
+        self.assertFalse(trades[0]["ashare_session_valid"])
+        self.assertEqual(trades[0]["ashare_session_rejection"], "outside_regular_session_09:30-11:30_13:00-14:57")
+
     def test_pending_receipt_does_not_record_local_fill(self) -> None:
         order = {
             "order_id": "SIM-PENDING",

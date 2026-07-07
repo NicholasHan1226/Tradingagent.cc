@@ -62,11 +62,15 @@ type SimLedgerPositionsFile = {
 }
 
 type LocalSimTradeRow = {
+  ashare_session_valid?: boolean
   candidate_pool_layer?: string
+  created_at?: string
   execution_source?: string
+  filled_at?: string
   market?: string
   side?: string
   status?: string
+  timestamp?: string
 }
 
 type LocalSimAccountPnl = {
@@ -1049,9 +1053,24 @@ function isAshareStrategySample(row: LocalSimTradeRow) {
   const source = String(row.execution_source ?? '').toLowerCase()
   const layer = String(row.candidate_pool_layer ?? '').toLowerCase()
   if (market !== 'ashare') return false
+  if (row.ashare_session_valid === false) return false
+  if (!isAshareRegularSession(row)) return false
   if (side === 'buy') return source === 'ashare_candidate_layer' && layer === 'candidate'
   if (side === 'sell') return source === 'ashare_rebalance_sell'
   return false
+}
+
+function isAshareRegularSession(row: LocalSimTradeRow) {
+  const raw = String(row.created_at ?? row.timestamp ?? row.filled_at ?? '').trim()
+  if (!raw) return true
+  const parsed = Date.parse(raw)
+  if (!Number.isFinite(parsed)) return true
+  const local = new Date(parsed + 8 * 60 * 60 * 1000)
+  const weekday = local.getUTCDay()
+  if (weekday === 0 || weekday === 6) return false
+  const minutes = local.getUTCHours() * 60 + local.getUTCMinutes()
+  return (minutes >= 9 * 60 + 30 && minutes <= 11 * 60 + 30)
+    || (minutes >= 13 * 60 && minutes <= 14 * 60 + 57)
 }
 
 function resolveTradingAgentRoot(workspaceRoot: string) {

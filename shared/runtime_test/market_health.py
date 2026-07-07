@@ -532,12 +532,14 @@ def _check_email_templates() -> Check:
 def _check_local_sim_ledger() -> Check:
     try:
         from shared.execution import local_sim_ledger
+        from shared.review.sample_quality import summarize_sample_quality
 
         trades_path = local_sim_ledger.LOCAL_SIM_TRADES
         positions_path = local_sim_ledger.LOCAL_SIM_POSITIONS
         pnl_path = local_sim_ledger.LOCAL_SIM_PNL
         snapshot_path = local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT
         invalid_matches = 0
+        trade_rows: list[dict[str, Any]] = []
         if trades_path.exists():
             for line in trades_path.read_text(encoding="utf-8", errors="replace").splitlines():
                 if not line.strip():
@@ -546,9 +548,17 @@ def _check_local_sim_ledger() -> Check:
                     item = json.loads(line)
                 except Exception:
                     continue
+                if isinstance(item, dict):
+                    trade_rows.append(item)
                 symbol = str(item.get("ts_code") or item.get("symbol") or item.get("code") or "").strip()
                 if symbol and not VALID_ASHARE_RE.match(symbol):
                     invalid_matches += 1
+        quality_rows = [
+            row
+            for row in trade_rows
+            if any(row.get(key) for key in ("side", "status", "created_at", "execution_source", "candidate_pool_layer", "order_id", "trade_id"))
+        ]
+        sample_quality = summarize_sample_quality(quality_rows)
         pnl = _load_json(pnl_path, {}) if pnl_path.exists() else {}
         positions_payload = _load_json(positions_path, {}) if positions_path.exists() else {}
         snapshot = _load_json(snapshot_path, {}) if snapshot_path.exists() else {}
@@ -576,22 +586,34 @@ def _check_local_sim_ledger() -> Check:
             consistency_errors.append("cash_available_missing")
         if cash_mismatch_accounts:
             consistency_errors.append("cash_available_mismatch")
-        ok = invalid_matches == 0 and not consistency_errors
+        invalid_strategy_samples = int(sample_quality.get("invalid_strategy_sample_count", 0) or 0)
+        ok = invalid_matches == 0 and not consistency_errors and invalid_strategy_samples == 0
+        status = _status(ok)
+        severity = "error"
+        summary = "服务器本地模拟盘备份账本可用"
+        if invalid_matches == 0 and not consistency_errors and invalid_strategy_samples > 0:
+            status = "warn"
+            severity = "warn"
+            summary = "服务器本地模拟盘账本可用，但存在非策略样本，已从策略绩效/演化口径隔离"
+        elif not ok:
+            summary = "服务器本地模拟盘备份账本存在异常"
         return Check(
             "ashare_server_local_sim",
-            _status(ok),
-            "服务器本地模拟盘备份账本可用" if ok else "服务器本地模拟盘备份账本存在异常",
+            status,
+            summary,
             {
                 "trade_log_exists": trades_path.exists(),
                 "pnl_exists": pnl_path.exists(),
                 "accounts": sorted(pnl.keys()) if isinstance(pnl, dict) else [],
                 "invalid_code_matches": invalid_matches,
+                "sample_quality": sample_quality,
                 "position_count": position_count,
                 "snapshot_position_count": snapshot_position_count,
                 "consistency_errors": consistency_errors,
                 "missing_cash_accounts": missing_cash_accounts,
                 "cash_mismatch_accounts": cash_mismatch_accounts,
             },
+            severity=severity,
         )
     except Exception as exc:  # noqa: BLE001
         return Check("ashare_server_local_sim", "fail", "服务器本地模拟盘备份账本不可用", {"error": f"{exc.__class__.__name__}: {exc}"})

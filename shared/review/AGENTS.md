@@ -30,6 +30,7 @@
 ## 复盘输入
 - `load_shadow_trades()` 保持旧兼容: 仅读旧 shadow trade log / filled signals fallback。
 - `load_review_trades()` 是日报、周报、归因和邮件报告的默认入口: 合并 legacy shadow fills、`shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl` 和 A股 `shared/logs/local_sim/local_sim_trades.jsonl`。
+- A股 server-local simulated 账本是账户事实; 非连续竞价时段成交必须保留在账户/持仓/回执里, 但由 `sample_quality.py` 标为 `outside_ashare_regular_session` 链路验证样本, 不得进入策略 PnL、胜率、方向命中、周度升降级或自我演化。
 - HK 暂不进入默认生产复盘输入; 如未来恢复 HK, 必须显式把 HK 放回生产市场范围并同步健康检查。
 - 报告必须同时保留 `review_trade_count`、`shadow_trade_count`、`simulated_trade_count`，避免把模拟盘样本误判为 0。
 

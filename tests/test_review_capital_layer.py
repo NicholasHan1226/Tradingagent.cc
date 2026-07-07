@@ -60,6 +60,32 @@ class ReviewCapitalLayerTest(unittest.TestCase):
             self.assertEqual({row["capital_layer"] for row in rows}, {"real", "shadow"})
             self.assertEqual(rows[0]["strategy_win_rates"]["trend"]["trades"] + rows[1]["strategy_win_rates"]["trend"]["trades"], 3)
 
+    def test_weekly_review_excludes_after_hours_ashare_sim_strategy_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            weekly_review.WEEKLY_LOG = tmpdir / "weekly_reviews.jsonl"
+            weekly_review.WEEKLY_STATE = tmpdir / "weekly_state.json"
+
+            trades = [
+                {
+                    "market": "ashare",
+                    "capital_layer": "simulated",
+                    "side": "buy",
+                    "strategy": "trend",
+                    "pnl": 10.0,
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
+                    "created_at": "2026-07-07T08:26:30+00:00",
+                }
+            ]
+
+            result = weekly_review.review_week(trades, strategies=["trend"])
+
+            simulated = result["capital_layer_reviews"]["simulated"]
+            self.assertEqual(simulated["week_trade_count"], 0)
+            self.assertEqual(simulated["strategy_win_rates"]["trend"]["trades"], 0)
+            self.assertEqual(simulated["week_pnl"], 0)
+
     def test_monthly_review_keeps_real_and_shadow_reports_separate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)

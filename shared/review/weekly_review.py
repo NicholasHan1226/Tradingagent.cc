@@ -20,6 +20,7 @@ from typing import Any
 
 from .attribution import attribute_pct
 from .pnl_summary import sim_ledger_pnl_summary
+from .sample_quality import strategy_valid_trades
 from .sim_ledger_reader import DEFAULT_LOCAL_SIM_TRADES, DEFAULT_SIM_LEDGER_ROOT
 
 REVIEW_DIR = Path(__file__).resolve().parent
@@ -158,7 +159,8 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
     )
 
     for layer in sorted(grouped or {"shadow": []}):
-        layer_trades = grouped.get(layer, [])
+        raw_layer_trades = grouped.get(layer, [])
+        layer_trades = strategy_valid_trades(raw_layer_trades) if layer == "simulated" else raw_layer_trades
         stats = _strategy_stats(layer_trades)
         for s in strategies or []:
             stats.setdefault(s, {"trades": 0, "wins": 0, "win_rate": 0.0, "pnl": 0.0})

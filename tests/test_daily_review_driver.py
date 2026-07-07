@@ -219,6 +219,43 @@ class DailyReviewDriverTest(unittest.TestCase):
             {str(self.local_sim_trades): 1},
         )
 
+    def test_daily_review_marks_after_hours_ashare_trade_as_validation_sample(self) -> None:
+        self._write_jsonl(
+            self.local_sim_trades,
+            {
+                "trade_id": "LSIM-AFTER-HOURS",
+                "order_id": "SIM-AFTER-HOURS",
+                "idempotency_key": "after-hours",
+                "market": "ashare",
+                "account": "ashare_server_sim",
+                "trade_date": "2026-07-07",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "requested_price": 10.0,
+                "filled_price": 10.01,
+                "amount": 1001,
+                "commission": 5,
+                "stamp_duty": 0,
+                "net_amount": 1006,
+                "status": "filled",
+                "source": "server_local_sim_backup",
+                "candidate_pool_layer": "candidate",
+                "execution_source": "ashare_candidate_layer",
+                "created_at": "2026-07-07T08:26:30+00:00",
+            },
+        )
+
+        close = daily_review.run_daily_review("20260707", session="close")
+
+        quality = close["source_trade_counts"]["sample_quality"]
+        self.assertEqual(quality["validation_sample_count"], 1)
+        self.assertEqual(quality["strategy_sample_valid_count"], 0)
+        self.assertEqual(quality["by_reason"], {"outside_ashare_regular_session": 1})
+        ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"]["ashare"]
+        self.assertEqual(ashare_review["trades"], 1)
+        self.assertEqual(ashare_review["strategy_trades"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
