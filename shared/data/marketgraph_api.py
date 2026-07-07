@@ -51,7 +51,7 @@ class MarketGraphAPIClient:
             return [dict(row) for row in payload if isinstance(row, dict)]
         return []
 
-    def _get(self, path: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def _request_json(self, path: str, params: dict[str, Any] | None = None) -> Any:
         clean_params = {key: str(value) for key, value in (params or {}).items() if value not in ("", None)}
         query = urllib.parse.urlencode(sorted(clean_params.items()))
         url = f"{self.base_url}{path}"
@@ -66,8 +66,7 @@ class MarketGraphAPIClient:
             try:
                 req = urllib.request.Request(url, headers=headers, method="GET")
                 with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                    payload = json.loads(response.read().decode("utf-8", errors="replace"))
-                return self._unwrap_rows(payload)
+                    return json.loads(response.read().decode("utf-8", errors="replace"))
             except urllib.error.HTTPError as exc:
                 last_error = f"HTTP {exc.code}: {exc.reason}"
                 if exc.code < 500 and exc.code != 429:
@@ -81,8 +80,12 @@ class MarketGraphAPIClient:
         self.errors.append(f"{path}: {last_error}")
         return []
 
-    def get_pm_research_probabilities(self, limit: int = 100) -> list[dict[str, Any]]:
-        return self._get("/pm/research-probabilities", {"limit": limit})
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        payload = self._request_json(path, params)
+        return self._unwrap_rows(payload)
+
+    def get_pm_research_probabilities(self, limit: int = 100) -> Any:
+        return self._request_json("/pm/research-probabilities", {"limit": limit})
 
 
 __all__ = ["MarketGraphAPIClient"]
