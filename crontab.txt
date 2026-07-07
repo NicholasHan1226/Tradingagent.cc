@@ -20,6 +20,7 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 # A-share server-local simulated execution. Hermes/Mini is reserved as second
 # path only when explicitly enabled by environment.
 1,6,11,16,21,26,31,36,41,46,51,56 9-15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sim_exec.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_sim.log 2>&1
+35 8 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_preopen_dry_run.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_preopen_dry_run.log 2>&1
 55 8 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_pre_open_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_pre_open_validation.log 2>&1
 35 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_opening_validation.log 2>&1
 5 13 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/ashare_opening_validation.log 2>&1
