@@ -134,8 +134,8 @@ fills:
   margin-usage cap
 - `no_overnight` styles create a simulated flatten order near the configured
   day-session close window
-- styles can block new orders inside a configurable contract-month rollover
-  guard window
+- styles can block new orders inside a configurable rollover window before and
+  after the contract month starts
 - explicit `last_trade_date` / `expiry_date` metadata triggers an expiry guard
   before simulated execution
 

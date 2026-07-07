@@ -34,6 +34,10 @@ _POOL_LIMITS: dict[str, int] = {
 _CANDIDATE_THRESHOLD = 0.55
 # 进入 watch 层的最低 combined
 _WATCH_THRESHOLD = 0.45
+# A股 candidate 不允许只靠技术/资金证据穿过综合分阈值。
+_MIN_ASHARE_CANDIDATE_EVIDENCE_COVERAGE = 0.5
+_ASHARE_RESEARCH_EVIDENCE_DIMENSIONS = ("event", "fundamental", "sentiment")
+_EVIDENCE_METADATA_KEYS = {"evidence_coverage", "missing_evidence_dimensions", "evidence_sources"}
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
@@ -77,6 +81,41 @@ def _filter_market_symbols(symbols: list[str], market: str) -> list[str]:
     if str(market or "").lower() != "ashare":
         return symbols
     return [symbol for symbol in symbols if _is_regular_a_share_symbol(symbol)]
+
+
+def _dimension_has_evidence(scores: dict[str, Any], dimension: str) -> bool | None:
+    evidence_sources = scores.get("evidence_sources") if isinstance(scores.get("evidence_sources"), dict) else {}
+    source_info = evidence_sources.get(dimension) if isinstance(evidence_sources, dict) else None
+    if isinstance(source_info, dict) and "has_evidence" in source_info:
+        return source_info.get("has_evidence") is True
+
+    missing_dimensions = scores.get("missing_evidence_dimensions")
+    if isinstance(missing_dimensions, (list, tuple, set)):
+        return dimension not in {str(item) for item in missing_dimensions}
+    return None
+
+
+def _ashare_candidate_evidence_allowed(scores: dict[str, Any], market: str) -> bool:
+    """Keep A-share technical/capital-only names in watch, not executable candidate."""
+    if str(market or "").lower() != "ashare":
+        return True
+    if not any(key in scores for key in _EVIDENCE_METADATA_KEYS):
+        return True
+
+    if "evidence_coverage" in scores:
+        coverage = _safe_float(scores.get("evidence_coverage"), 0.0)
+        if coverage < _MIN_ASHARE_CANDIDATE_EVIDENCE_COVERAGE:
+            return False
+
+    research_evidence = [
+        _dimension_has_evidence(scores, dimension)
+        for dimension in _ASHARE_RESEARCH_EVIDENCE_DIMENSIONS
+    ]
+    if any(value is True for value in research_evidence):
+        return True
+    if all(value is None for value in research_evidence):
+        return True
+    return False
 
 
 def _load_holdings() -> list[str]:
@@ -216,7 +255,8 @@ def build_pool(
             if ts_code in holdings:
                 continue
             scores = score_for(ts_code)
-            if scores.get("combined", 0.0) >= _CANDIDATE_THRESHOLD:
+            combined = _safe_float(scores.get("combined"), 0.0)
+            if combined >= _CANDIDATE_THRESHOLD and _ashare_candidate_evidence_allowed(scores, market):
                 candidate.append(ts_code)
                 if len(candidate) >= _POOL_LIMITS["candidate"]:
                     break
@@ -230,8 +270,11 @@ def build_pool(
             if ts_code in holdings or ts_code in candidate:
                 continue
             scores = score_for(ts_code)
-            combined = scores.get("combined", 0.0)
-            if _WATCH_THRESHOLD <= combined < _CANDIDATE_THRESHOLD:
+            combined = _safe_float(scores.get("combined"), 0.0)
+            if _WATCH_THRESHOLD <= combined < _CANDIDATE_THRESHOLD or (
+                combined >= _CANDIDATE_THRESHOLD
+                and not _ashare_candidate_evidence_allowed(scores, market)
+            ):
                 watch.append(ts_code)
                 if len(watch) >= _POOL_LIMITS["watch"]:
                     break

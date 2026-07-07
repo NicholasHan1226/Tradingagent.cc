@@ -41,6 +41,82 @@ class CandidatePoolAshareFilterTest(unittest.TestCase):
         self.assertEqual(pool["candidate"], ["000001.SZ"])
         self.assertEqual(pool["watch"], ["600000.SH"])
 
+    def test_ashare_candidate_requires_research_evidence_when_metadata_present(self) -> None:
+        technical_capital_only = {
+            "combined": 0.66,
+            "technical": 1.0,
+            "capital": 1.0,
+            "event": 0.5,
+            "fundamental": 0.5,
+            "sentiment": 0.5,
+            "evidence_coverage": 0.5,
+            "missing_evidence_dimensions": ["event", "fundamental", "sentiment"],
+            "evidence_sources": {
+                "event": {"has_evidence": False, "reason": "no_matched_event_evidence"},
+                "fundamental": {"has_evidence": False, "reason": "missing_fundamental_rows"},
+                "sentiment": {"has_evidence": False, "reason": "missing_sentiment_rows"},
+                "capital": {"has_evidence": True},
+                "technical": {"has_evidence": True},
+                "macro": {"has_evidence": True},
+            },
+        }
+        fundamental_supported = {
+            "combined": 0.61,
+            "technical": 0.8,
+            "capital": 0.8,
+            "fundamental": 0.58,
+            "event": 0.5,
+            "sentiment": 0.5,
+            "evidence_coverage": 0.5,
+            "missing_evidence_dimensions": ["event", "sentiment", "macro"],
+            "evidence_sources": {
+                "event": {"has_evidence": False, "reason": "no_matched_event_evidence"},
+                "fundamental": {"has_evidence": True, "reason": "sharedsignals_fundamentals"},
+                "sentiment": {"has_evidence": False, "reason": "missing_sentiment_rows"},
+                "capital": {"has_evidence": True},
+                "technical": {"has_evidence": True},
+                "macro": {"has_evidence": False},
+            },
+        }
+
+        pool = build_pool(
+            date="20260701",
+            universe=["000001.SZ", "600000.SH"],
+            market="ashare",
+            reader=object(),
+            scores_by_symbol={
+                "000001.SZ": technical_capital_only,
+                "600000.SH": fundamental_supported,
+            },
+        )
+
+        self.assertEqual(pool["candidate"], ["600000.SH"])
+        self.assertIn("000001.SZ", pool["watch"])
+
+    def test_ashare_candidate_requires_minimum_evidence_coverage(self) -> None:
+        pool = build_pool(
+            date="20260701",
+            universe=["000001.SZ"],
+            market="ashare",
+            reader=object(),
+            scores_by_symbol={
+                "000001.SZ": {
+                    "combined": 0.88,
+                    "fundamental": 0.9,
+                    "evidence_coverage": 0.17,
+                    "missing_evidence_dimensions": ["macro", "event", "capital", "technical", "sentiment"],
+                    "evidence_sources": {
+                        "fundamental": {"has_evidence": True},
+                        "event": {"has_evidence": False},
+                        "sentiment": {"has_evidence": False},
+                    },
+                }
+            },
+        )
+
+        self.assertEqual(pool["candidate"], [])
+        self.assertEqual(pool["watch"], ["000001.SZ"])
+
     def test_universe_filter_excludes_b_share_codes_for_ashare(self) -> None:
         class Reader:
             daily_calls = []

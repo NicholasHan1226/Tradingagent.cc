@@ -1683,7 +1683,12 @@ def _sim_no_trade_explanation(
     }
 
 
-def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: int = 10) -> dict[str, Any]:
+def _score_diagnostics(
+    scores_by_symbol: dict[str, dict[str, Any]],
+    *,
+    limit: int = 10,
+    actual_candidate_count: int | None = None,
+) -> dict[str, Any]:
     dimensions = ("macro", "event", "fundamental", "capital", "technical", "sentiment")
     candidate_threshold = 0.55
     watch_threshold = 0.45
@@ -1782,6 +1787,8 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
     avg_evidence_coverage = sum(evidence_coverage_values) / max(1, len(evidence_coverage_values))
     if not rows:
         candidate_pool_status = "no_scored_symbols"
+    elif actual_candidate_count == 0 and candidate_count > 0:
+        candidate_pool_status = "pool_empty_despite_threshold_scores"
     elif candidate_count > 0:
         candidate_pool_status = "candidates_ready"
     elif watch_count > 0:
@@ -1793,6 +1800,7 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
         "candidate_threshold": candidate_threshold,
         "watch_threshold": watch_threshold,
         "candidate_above_threshold_count": candidate_count,
+        "actual_candidate_count": actual_candidate_count,
         "watch_above_threshold_count": watch_count,
         "max_combined": round(rows[0][0], 4) if rows else 0.0,
         "candidate_pool_status": candidate_pool_status,
@@ -2641,7 +2649,7 @@ def run_sim_loop(
         risk_rejections=risk_rejections,
         execution_skips=execution_skips,
         errors=errors,
-        score_diagnostics=_score_diagnostics(scores_by_symbol) if str(market).lower() == "ashare" and len(candidates) <= 0 else None,
+        score_diagnostics=_score_diagnostics(scores_by_symbol, actual_candidate_count=len(candidates)) if str(market).lower() == "ashare" and len(candidates) <= 0 else None,
     )
 
     return {

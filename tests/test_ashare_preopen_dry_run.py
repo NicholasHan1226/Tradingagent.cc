@@ -97,7 +97,7 @@ class AsharePreopenDryRunTest(unittest.TestCase):
                 "shared.runtime_test.ashare_preopen_dry_run.score_universe",
                 return_value=[
                     ("600000.SH", {"combined": 0.8, "macro": 0.5, "event": 0.5, "fundamental": 0.8, "capital": 0.6, "technical": 0.7, "sentiment": 0.5}),
-                    ("000001.SZ", {"combined": 0.7, "macro": 0.5, "event": 0.5, "fundamental": 0.7, "capital": 0.6, "technical": 0.7, "sentiment": 0.5}),
+                    ("600001.SH", {"combined": 0.7, "macro": 0.5, "event": 0.5, "fundamental": 0.7, "capital": 0.6, "technical": 0.7, "sentiment": 0.5}),
                 ],
             ),
         ):

@@ -23,6 +23,7 @@ from shared.data.reader import TradingagentDataReader
 from shared.notify import email_sender
 from shared.orchestrator import _account_available_cash, _account_capital, _account_positions, _latest_price, _score_diagnostics
 from shared.runtime_test.ashare_opening_validator import DEFAULT_SQLITE_DB, validate_pre_open
+from shared.screening.candidate_pool import build_pool
 from shared.screening.six_dimension_scorer import score_universe
 
 
@@ -182,6 +183,15 @@ def _build_candidate_pool(
     limited = universe[: max(1, int(score_limit))]
     scored = score_universe(date=date, universe=limited, data_reader=reader, market="ashare")
     scores_by_symbol = {symbol: scores for symbol, scores in scored}
+    pool = build_pool(
+        date=date,
+        universe=limited,
+        holdings=[],
+        market="ashare",
+        reader=reader,
+        scores_by_symbol=scores_by_symbol,
+    )
+    candidate_symbols = set(pool.get("candidate") or [])
     candidates = [
         {
             "ts_code": symbol,
@@ -191,13 +201,9 @@ def _build_candidate_pool(
             "scores": scores,
         }
         for symbol, scores in scored
-        if _safe_float(scores.get("combined")) >= CANDIDATE_THRESHOLD
+        if symbol in candidate_symbols
     ]
-    watch = [
-        symbol
-        for symbol, scores in scored
-        if 0.45 <= _safe_float(scores.get("combined")) < CANDIDATE_THRESHOLD
-    ][:20]
+    watch = list(pool.get("watch") or [])[:20]
     return {
         "status": "pass" if candidates else "warn",
         "reason": "candidate_layer_ready" if candidates else "no_candidate_layer_after_scoring",
@@ -210,7 +216,7 @@ def _build_candidate_pool(
         "watch_count": len(watch),
         "top_candidates": _compact_scores([(row["ts_code"], row["scores"]) for row in candidates], limit=10),
         "top_scored": _compact_scores(scored, limit=10),
-        "score_diagnostics": _score_diagnostics(scores_by_symbol),
+        "score_diagnostics": _score_diagnostics(scores_by_symbol, actual_candidate_count=len(candidates)),
         "candidates_for_plan": candidates,
     }
 
