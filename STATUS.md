@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-07 (A股盘前 dry-run 验收、A股六维评分供数修复、候选池诊断增强、CNFutures 闭市状态修正、当前合约筛选、5分钟供数备源、全量同步降载)
+> 最后更新：2026-07-07 (A股健康检查 advisory 收口、A股盘前 dry-run 验收、A股六维评分供数修复、候选池诊断增强、CNFutures 闭市状态修正、当前合约筛选、5分钟供数备源、全量同步降载)
 
 ---
 
@@ -128,6 +128,12 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-07 A股健康检查 advisory 收口
+
+- [x] `shared/runtime_test/market_health.py` 将“全部为 `outside_ashare_regular_session` 的 A股链路验证样本”从 warn 降为 pass/info advisory；样本仍在 details 中展示，并继续隔离出策略绩效/方向命中/自我演化口径。
+- [x] A股资金计划对账接入本地模拟样本质量：若资金计划早于 outside-session 链路验证样本快照且不一致，显示 pass/info advisory；若是真实策略样本后的资金计划滞后、缺计划、来源缺失、账本/快照不一致，仍保持 warn/fail。
+- [x] 新增/更新 `tests/test_market_health.py` 覆盖链路验证样本 advisory 与资金计划 validation-only advisory，保留真实错配 warn/fail 测试。
 
 ### 2026-07-07 A股盘前 dry-run 验收
 

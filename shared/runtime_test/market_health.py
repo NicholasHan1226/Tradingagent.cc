@@ -532,33 +532,18 @@ def _check_email_templates() -> Check:
 def _check_local_sim_ledger() -> Check:
     try:
         from shared.execution import local_sim_ledger
-        from shared.review.sample_quality import summarize_sample_quality
 
         trades_path = local_sim_ledger.LOCAL_SIM_TRADES
         positions_path = local_sim_ledger.LOCAL_SIM_POSITIONS
         pnl_path = local_sim_ledger.LOCAL_SIM_PNL
         snapshot_path = local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT
         invalid_matches = 0
-        trade_rows: list[dict[str, Any]] = []
-        if trades_path.exists():
-            for line in trades_path.read_text(encoding="utf-8", errors="replace").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    item = json.loads(line)
-                except Exception:
-                    continue
-                if isinstance(item, dict):
-                    trade_rows.append(item)
-                symbol = str(item.get("ts_code") or item.get("symbol") or item.get("code") or "").strip()
-                if symbol and not VALID_ASHARE_RE.match(symbol):
-                    invalid_matches += 1
-        quality_rows = [
-            row
-            for row in trade_rows
-            if any(row.get(key) for key in ("side", "status", "created_at", "execution_source", "candidate_pool_layer", "order_id", "trade_id"))
-        ]
-        sample_quality = summarize_sample_quality(quality_rows)
+        trade_rows = _ashare_local_sim_trade_rows(trades_path)
+        for item in trade_rows:
+            symbol = str(item.get("ts_code") or item.get("symbol") or item.get("code") or "").strip()
+            if symbol and not VALID_ASHARE_RE.match(symbol):
+                invalid_matches += 1
+        sample_quality = _ashare_local_sample_quality(trades_path)
         pnl = _load_json(pnl_path, {}) if pnl_path.exists() else {}
         positions_payload = _load_json(positions_path, {}) if positions_path.exists() else {}
         snapshot = _load_json(snapshot_path, {}) if snapshot_path.exists() else {}
@@ -587,11 +572,18 @@ def _check_local_sim_ledger() -> Check:
         if cash_mismatch_accounts:
             consistency_errors.append("cash_available_mismatch")
         invalid_strategy_samples = int(sample_quality.get("invalid_strategy_sample_count", 0) or 0)
-        ok = invalid_matches == 0 and not consistency_errors and invalid_strategy_samples == 0
+        outside_session_only = _ashare_outside_session_only_samples(sample_quality)
+        ok = invalid_matches == 0 and not consistency_errors and (invalid_strategy_samples == 0 or outside_session_only)
         status = _status(ok)
         severity = "error"
         summary = "服务器本地模拟盘备份账本可用"
-        if invalid_matches == 0 and not consistency_errors and invalid_strategy_samples > 0:
+        advisory = False
+        if invalid_matches == 0 and not consistency_errors and outside_session_only:
+            status = "pass"
+            severity = "info"
+            advisory = True
+            summary = "服务器本地模拟盘账本可用；链路验证样本已隔离出策略口径"
+        elif invalid_matches == 0 and not consistency_errors and invalid_strategy_samples > 0:
             status = "warn"
             severity = "warn"
             summary = "服务器本地模拟盘账本可用，但存在非策略样本，已从策略绩效/演化口径隔离"
@@ -612,6 +604,7 @@ def _check_local_sim_ledger() -> Check:
                 "consistency_errors": consistency_errors,
                 "missing_cash_accounts": missing_cash_accounts,
                 "cash_mismatch_accounts": cash_mismatch_accounts,
+                "advisory": advisory,
             },
             severity=severity,
         )
@@ -637,6 +630,8 @@ def _latest_ashare_capital_plan_row() -> tuple[Path | None, dict[str, Any]]:
 def _check_ashare_capital_plan_alignment() -> Check:
     local_trades_path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
     local_trade_count = _count_jsonl_rows(local_trades_path)
+    sample_quality = _ashare_local_sample_quality(local_trades_path)
+    outside_session_only = _ashare_outside_session_only_samples(sample_quality)
     snapshot_path = ROOT / "signals/positions/simulated_ashare_positions.json"
     snapshot = _load_json(snapshot_path, {}) if snapshot_path.exists() else {}
     snapshot_count = _position_count_from_snapshot(snapshot if isinstance(snapshot, dict) else {})
@@ -670,7 +665,13 @@ def _check_ashare_capital_plan_alignment() -> Check:
     status = _status(ok)
     severity = "error" if not ok else "info"
     message = "A股资金计划与持仓快照对账一致"
-    if not ok and plan_older_than_snapshot:
+    advisory = False
+    if not ok and plan_older_than_snapshot and outside_session_only:
+        status = "pass"
+        severity = "info"
+        advisory = True
+        message = "A股资金计划早于链路验证样本快照；验证样本已隔离，不影响策略资金计划"
+    elif not ok and plan_older_than_snapshot:
         status = "warn"
         severity = "warn"
         message = "A股资金计划早于最新持仓快照，等待下一轮资金计划刷新"
@@ -689,6 +690,8 @@ def _check_ashare_capital_plan_alignment() -> Check:
             "snapshot_position_count": snapshot_count,
             "capital_plan_position_count": plan_count_int,
             "cash_source": capital_plan.get("cash_source"),
+            "sample_quality": sample_quality,
+            "advisory": advisory,
         },
         severity=severity,
     )
@@ -779,6 +782,42 @@ def _count_jsonl_rows(path: Path) -> int:
         return sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
     except OSError:
         return 0
+
+
+def _ashare_local_sim_trade_rows(path: Path | None = None) -> list[dict[str, Any]]:
+    target = path or (ROOT / "shared/logs/local_sim/local_sim_trades.jsonl")
+    rows: list[dict[str, Any]] = []
+    if not target.exists():
+        return rows
+    for line in target.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _ashare_local_sample_quality(path: Path | None = None) -> dict[str, Any]:
+    from shared.review.sample_quality import summarize_sample_quality
+
+    quality_rows = [
+        row
+        for row in _ashare_local_sim_trade_rows(path)
+        if any(row.get(key) for key in ("side", "status", "created_at", "execution_source", "candidate_pool_layer", "order_id", "trade_id"))
+    ]
+    return summarize_sample_quality(quality_rows)
+
+
+def _ashare_outside_session_only_samples(sample_quality: dict[str, Any]) -> bool:
+    total = int(sample_quality.get("total_count", 0) or 0)
+    valid_count = int(sample_quality.get("strategy_sample_valid_count", 0) or 0)
+    by_reason = sample_quality.get("by_reason") if isinstance(sample_quality.get("by_reason"), dict) else {}
+    outside_count = int(by_reason.get("outside_ashare_regular_session", 0) or 0)
+    return total > 0 and outside_count == total and valid_count == 0
 
 
 def _sim_ledger_summary(market: str) -> dict[str, Any]:

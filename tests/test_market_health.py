@@ -177,7 +177,7 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "fail")
         self.assertIn("position_count_mismatch", check.details["consistency_errors"])
 
-    def test_local_sim_ledger_warns_when_after_hours_trade_is_validation_sample(self) -> None:
+    def test_local_sim_ledger_passes_when_after_hours_trade_is_isolated_validation_sample(self) -> None:
         from shared.execution import local_sim_ledger
 
         local_dir = self.root / "shared/logs/local_sim"
@@ -215,9 +215,49 @@ class MarketHealthTest(unittest.TestCase):
                     with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot_path):
                         check = market_health._check_local_sim_ledger()
 
-        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.status, "pass")
+        self.assertTrue(check.details["advisory"])
         self.assertEqual(check.details["sample_quality"]["by_reason"], {"outside_ashare_regular_session": 1})
         self.assertEqual(check.details["sample_quality"]["strategy_sample_valid_count"], 0)
+
+    def test_local_sim_ledger_warns_when_provenance_is_missing(self) -> None:
+        from shared.execution import local_sim_ledger
+
+        local_dir = self.root / "shared/logs/local_sim"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        trades_path = local_dir / "local_sim_trades.jsonl"
+        positions_path = local_dir / "local_sim_positions.json"
+        pnl_path = local_dir / "local_sim_pnl.json"
+        snapshot_path = self.root / "signals/positions/simulated_ashare_positions.json"
+        trades_path.write_text(
+            json.dumps(
+                {
+                    "ts_code": "000001.SZ",
+                    "market": "ashare",
+                    "side": "buy",
+                    "status": "filled",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        positions_path.write_text(json.dumps({"ashare_sim": {"000001.SZ": {"quantity": 100}}}, ensure_ascii=False), encoding="utf-8")
+        pnl_path.write_text(json.dumps({"ashare_sim": {"cash_available": 190000, "positions": {"000001.SZ": {}}}}, ensure_ascii=False), encoding="utf-8")
+        self._write_json(
+            "signals/positions/simulated_ashare_positions.json",
+            {"positions": [{"ts_code": "000001.SZ"}], "pnl": {"ashare_sim": {"cash_available": 190000}}},
+        )
+
+        with patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", trades_path):
+            with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", positions_path):
+                with patch.object(local_sim_ledger, "LOCAL_SIM_PNL", pnl_path):
+                    with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot_path):
+                        check = market_health._check_local_sim_ledger()
+
+        self.assertEqual(check.status, "warn")
+        self.assertFalse(check.details["advisory"])
+        self.assertEqual(check.details["sample_quality"]["by_reason"], {"missing_ashare_candidate_provenance": 1})
 
     def test_capital_plan_alignment_fails_when_plan_misses_snapshot_positions(self) -> None:
         trades = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
@@ -277,6 +317,52 @@ class MarketHealthTest(unittest.TestCase):
 
         self.assertEqual(check.status, "warn")
         self.assertTrue(check.details["plan_older_than_snapshot"])
+
+    def test_capital_plan_alignment_passes_when_stale_plan_only_reflects_validation_samples(self) -> None:
+        trades = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
+        trades.parent.mkdir(parents=True, exist_ok=True)
+        trades.write_text(
+            json.dumps(
+                {
+                    "ts_code": "000001.SZ",
+                    "market": "ashare",
+                    "side": "buy",
+                    "status": "filled",
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
+                    "created_at": "2026-07-07T08:26:30+00:00",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self._write_json(
+            "signals/positions/simulated_ashare_positions.json",
+            {
+                "synced_at": "2026-07-07T08:26:30+00:00",
+                "positions": [{"ts_code": "000001.SZ"}, {"ts_code": "000002.SZ"}],
+            },
+        )
+        plan = self.root / "shared/review/ashare/capital_plan_20260707.jsonl"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text(
+            json.dumps(
+                {
+                    "capital_plan": {"existing_position_count": 0, "cash_source": "account_snapshot"},
+                    "generated_at": "2026-07-07T06:56:24+00:00",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        check = market_health._check_ashare_capital_plan_alignment()
+
+        self.assertEqual(check.status, "pass")
+        self.assertTrue(check.details["advisory"])
+        self.assertEqual(check.details["sample_quality"]["by_reason"], {"outside_ashare_regular_session": 1})
 
     def test_optional_mini_health_does_not_block_server_local_sim_by_default(self) -> None:
         with patch.dict("os.environ", {"ASHARE_SIM_HERMES_ENABLED": "0"}):
