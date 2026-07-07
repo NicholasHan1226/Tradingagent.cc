@@ -16,7 +16,8 @@ MARKETGRAPH_ROOT="${MARKETGRAPH_ROOT:-$(cd "${ROOT}/../MarketGraph" 2>/dev/null 
 WATCHDOG_INPUT_DIR="${WATCHDOG_INPUT_DIR:-${SHAREDSIGNALS_ROOT}/logs/watchdog_inputs}"
 OUTPUT_FILE="${WATCHDOG_INPUT_DIR}/tradingagent_health.json"
 OUTPUT_JSONL="${WATCHDOG_INPUT_DIR}/tradingagent_health.jsonl"
-SHAREDSIGNALS_HEALTH_URL="${SHAREDSIGNALS_API_HEALTH_URL:-http://127.0.0.1:${SHAREDSIGNALS_API_PORT:-8082}/health}"
+SHAREDSIGNALS_API_BASE_URL="${SHAREDSIGNALS_API_BASE_URL:-http://127.0.0.1:${SHAREDSIGNALS_API_PORT:-8082}}"
+SHAREDSIGNALS_HEALTH_URL="${SHAREDSIGNALS_API_HEALTH_URL:-${SHAREDSIGNALS_API_BASE_URL}/health}"
 MAX_SIM_OUTPUT_AGE_MIN="${TRADINGAGENT_SIM_OUTPUT_MAX_AGE_MIN:-180}"
 MAX_MARKETGRAPH_AGE_MIN="${MARKETGRAPH_FRESHNESS_MAX_AGE_MIN:-1440}"
 
@@ -43,6 +44,7 @@ fi
   TRADINGAGENT_ROOT="${ROOT}" \
   SHAREDSIGNALS_ROOT="${SHAREDSIGNALS_ROOT}" \
   MARKETGRAPH_ROOT="${MARKETGRAPH_ROOT}" \
+  SHAREDSIGNALS_API_BASE_URL="${SHAREDSIGNALS_API_BASE_URL}" \
   SHAREDSIGNALS_HEALTH_URL="${SHAREDSIGNALS_HEALTH_URL}" \
   OUTPUT_FILE="${OUTPUT_FILE}" \
   OUTPUT_JSONL="${OUTPUT_JSONL}" \
@@ -70,30 +72,72 @@ def file_age_minutes(path: Path) -> float | None:
     return round(max(0.0, (time.time() - path.stat().st_mtime) / 60.0), 2)
 
 
-def check_sharedsignals(url: str) -> dict:
+def http_json(url: str, timeout_seconds: float) -> tuple[int, dict]:
+    with urllib.request.urlopen(url, timeout=timeout_seconds) as resp:
+        body = resp.read(65536).decode("utf-8", errors="replace")
+        status_code = int(getattr(resp, "status", 200))
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        payload = {"raw": body[:200]}
+    return status_code, payload if isinstance(payload, dict) else {"data": payload}
+
+
+def check_sharedsignals(base_url: str, health_url: str) -> dict:
+    base = base_url.rstrip("/")
+    cache_url = f"{base}/cache/status"
+    capability_url = f"{base}/capabilities"
     errors: list[str] = []
-    for attempt in range(1, 4):
+    cache_status_code = 0
+    cache_payload: dict = {}
+    capability_status_code = 0
+    capability_payload: dict = {}
+    for attempt in range(1, 3):
         try:
-            with urllib.request.urlopen(url, timeout=8) as resp:
-                body = resp.read(65536).decode("utf-8", errors="replace")
-            status_code = getattr(resp, "status", 200)
-            try:
-                payload = json.loads(body)
-            except json.JSONDecodeError:
-                payload = {"raw": body[:200]}
-            ok = 200 <= int(status_code) < 300
-            return {
-                "status": "ok" if ok else "critical",
-                "url": url,
-                "status_code": status_code,
-                "payload_status": payload.get("status") if isinstance(payload, dict) else None,
-                "attempts": attempt,
-            }
+            cache_status_code, cache_payload = http_json(cache_url, 3)
+            capability_status_code, capability_payload = http_json(capability_url, 5)
+            break
         except (OSError, urllib.error.URLError) as exc:
             errors.append(f"attempt={attempt} error={exc}")
-            if attempt < 3:
+            if attempt < 2:
                 time.sleep(2)
-    return {"status": "critical", "url": url, "attempts": 3, "errors": errors[-3:]}
+    capability_data = capability_payload.get("data") if isinstance(capability_payload.get("data"), dict) else {}
+    endpoint_count = len(capability_data.get("endpoints") or []) if isinstance(capability_data, dict) else 0
+    cache_ok = 200 <= cache_status_code < 300 and int(cache_payload.get("functions_registered") or 0) > 0
+    capability_ok = 200 <= capability_status_code < 300 and endpoint_count > 0
+    if not (cache_ok and capability_ok):
+        return {
+            "status": "critical",
+            "cache_url": cache_url,
+            "cache_status_code": cache_status_code,
+            "capability_url": capability_url,
+            "capability_status_code": capability_status_code,
+            "capability_endpoint_count": endpoint_count,
+            "attempts": 2,
+            "errors": errors[-3:],
+        }
+    health_status_code = 0
+    health_payload: dict = {}
+    health_error = ""
+    try:
+        health_status_code, health_payload = http_json(health_url, 2)
+    except (OSError, urllib.error.URLError) as exc:
+        health_error = str(exc)
+    health_payload_status = str(health_payload.get("status") or "")
+    health_ok = 200 <= health_status_code < 300 and health_payload_status in {"ok", "degraded", "healthy"}
+    return {
+        "status": "ok" if health_ok else "degraded",
+        "cache_url": cache_url,
+        "cache_status_code": cache_status_code,
+        "functions_registered": cache_payload.get("functions_registered"),
+        "capability_url": capability_url,
+        "capability_status_code": capability_status_code,
+        "capability_endpoint_count": endpoint_count,
+        "health_url": health_url,
+        "health_status_code": health_status_code,
+        "health_payload_status": health_payload_status,
+        "health_error": health_error,
+    }
 
 
 def check_sim_output(root: Path, max_age: int) -> dict:
@@ -158,7 +202,7 @@ mg_root = Path(os.environ["MARKETGRAPH_ROOT"])
 result = {
     "timestamp": now_iso(),
     "source": "tradingagent/cron/health_check.sh",
-    "sharedsignals_api": check_sharedsignals(os.environ["SHAREDSIGNALS_HEALTH_URL"]),
+    "sharedsignals_api": check_sharedsignals(os.environ["SHAREDSIGNALS_API_BASE_URL"], os.environ["SHAREDSIGNALS_HEALTH_URL"]),
     "tradingagent_sim_output": check_sim_output(root, int(os.environ["MAX_SIM_OUTPUT_AGE_MIN"])),
     "marketgraph_freshness": check_marketgraph(mg_root, int(os.environ["MAX_MARKETGRAPH_AGE_MIN"])),
     "combined_crontab": check_combined_crontab(mg_root),
