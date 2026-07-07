@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from CNFutures.opening_validator import first_sample_alerts, validate_opening, validate_pre_open
+from CNFutures.opening_validator import _reader_symbols, first_sample_alerts, validate_opening, validate_pre_open
 
 
 class CNFuturesOpeningValidatorTest(unittest.TestCase):
@@ -65,6 +65,23 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
         )
         conn.commit()
         conn.close()
+
+    def test_reader_symbols_skip_expired_and_generic_contracts(self) -> None:
+        class Reader:
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                self.market = market
+                return [
+                    {"symbol": "A.DCE", "exchange": "DCE"},
+                    {"symbol": "A0001.DCE", "exchange": "DCE", "list_date": "19990118", "expiry_date": "20000118", "last_trade_date": "20000125"},
+                    {"symbol": "CU2608.SHF", "exchange": "SHF", "list_date": "20250818", "expiry_date": "20260817", "last_trade_date": "20260819"},
+                    {"symbol": "CU2609.SHF", "exchange": "SHF", "list_date": "20250915", "expiry_date": "20260915", "last_trade_date": "20260917"},
+                ]
+
+        reader = Reader()
+        symbols = _reader_symbols(reader, limit=4, as_of="20260708")
+
+        self.assertEqual(symbols, ["CU2608.SHF", "CU2609.SHF"])
+        self.assertEqual(reader.market, "Futures")
 
     def test_passes_when_day_opening_has_symbol_coverage(self) -> None:
         db_path = self._db(

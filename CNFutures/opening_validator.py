@@ -77,7 +77,11 @@ def _default_reader() -> Any | None:
         return None
 
 
-def _reader_symbols(reader: Any | None, *, limit: int = 80) -> list[str]:
+def _compact_date(value: Any) -> str:
+    return str(value or "").strip()[:10].replace("-", "")
+
+
+def _reader_symbols(reader: Any | None, *, limit: int = 80, as_of: str = "") -> list[str]:
     if reader is None:
         return []
     get_assets = getattr(reader, "get_assets", None)
@@ -94,10 +98,27 @@ def _reader_symbols(reader: Any | None, *, limit: int = 80) -> list[str]:
         return []
     symbols: list[str] = []
     seen: set[str] = set()
+    as_of_compact = _compact_date(as_of)
     for row in rows or []:
         if not isinstance(row, dict):
             continue
-        symbol = str(row.get("symbol") or row.get("ts_code") or "").strip()
+        symbol = str(row.get("symbol") or row.get("ts_code") or "").strip().upper()
+        if not is_executable_contract_symbol(symbol):
+            continue
+        try:
+            get_contract_rule(symbol)
+        except ValueError:
+            continue
+        if as_of_compact:
+            list_date = _compact_date(row.get("list_date"))
+            expiry_date = _compact_date(row.get("expiry_date"))
+            last_trade_date = _compact_date(row.get("last_trade_date"))
+            if list_date and list_date > as_of_compact:
+                continue
+            if expiry_date and expiry_date < as_of_compact:
+                continue
+            if last_trade_date and last_trade_date < as_of_compact:
+                continue
         key = symbol.lower()
         if not symbol or key in seen:
             continue
@@ -143,7 +164,7 @@ def _query_daily_bars_via_reader(reader: Any | None, trade_date: str, *, min_sym
     get_bars_daily = getattr(reader, "get_bars_daily", None)
     if not callable(get_bars_daily):
         return {"error": "sharedsignals_reader_unavailable", "symbol_count": 0}
-    symbols = _reader_symbols(reader, limit=max(80, int(min_symbols) * 20))
+    symbols = _reader_symbols(reader, limit=max(80, int(min_symbols) * 20), as_of=trade_date)
     if not symbols:
         return {"error": "futures_assets_empty_from_sharedsignals_reader", "symbol_count": 0}
     latest_dates: list[str] = []
@@ -316,7 +337,7 @@ def _query_session_bars_via_reader(
     get_bars_intraday = getattr(reader, "get_bars_intraday", None)
     if not callable(get_bars_intraday):
         return {"error": "sharedsignals_reader_unavailable", "symbol_count": 0, "bar_count": 0}
-    symbols = _reader_symbols(reader, limit=max(80, int(min_symbols) * 20))
+    symbols = _reader_symbols(reader, limit=max(80, int(min_symbols) * 20), as_of=start.strftime("%Y%m%d"))
     if not symbols:
         return {"error": "futures_assets_empty_from_sharedsignals_reader", "symbol_count": 0, "bar_count": 0}
     start_text = start.strftime("%Y-%m-%d %H:%M:%S")
