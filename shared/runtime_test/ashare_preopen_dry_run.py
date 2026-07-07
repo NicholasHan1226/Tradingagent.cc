@@ -190,6 +190,7 @@ def _build_candidate_pool(
         market="ashare",
         reader=reader,
         scores_by_symbol=scores_by_symbol,
+        include_fundamental_pool=False,
     )
     candidate_symbols = set(pool.get("candidate") or [])
     candidates = [

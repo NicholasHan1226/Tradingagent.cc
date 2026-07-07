@@ -186,6 +186,7 @@ def build_pool(
     market_adapter: Any | None = None,
     scores_by_symbol: dict[str, dict[str, Any]] | None = None,
     scores_map: dict[str, dict[str, Any]] | None = None,
+    include_fundamental_pool: bool | None = None,
 ) -> dict[str, list[str]]:
     """构建5层候选池。
 
@@ -231,11 +232,18 @@ def build_pool(
             universe = []
     universe = _filter_market_symbols(universe, market)[:_POOL_LIMITS["universe"]]
 
-    # 3. Fundamental 层 (长期跟踪)
-    fundamental = _filter_market_symbols(_load_fundamental_pool(reader=reader, market=market), market)[:_POOL_LIMITS["fundamental"]]
-
     precomputed_scores = scores_by_symbol if scores_by_symbol is not None else scores_map
     precomputed_scores = dict(precomputed_scores or {})
+    if include_fundamental_pool is None:
+        include_fundamental_pool = not bool(precomputed_scores)
+
+    # 3. Fundamental 层 (长期跟踪)
+    fundamental = (
+        _filter_market_symbols(_load_fundamental_pool(reader=reader, market=market), market)[:_POOL_LIMITS["fundamental"]]
+        if include_fundamental_pool
+        else []
+    )
+
     score_cache: dict[str, dict[str, Any]] = {}
 
     def score_for(ts_code: str) -> dict[str, Any]:
