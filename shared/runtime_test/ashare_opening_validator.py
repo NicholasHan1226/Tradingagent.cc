@@ -12,13 +12,14 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
 CN_TZ = timezone(timedelta(hours=8))
 NO_TRADE_LOG = Path(__file__).resolve().parents[1] / "logs" / "ashare_no_trade_explanations.jsonl"
+MAX_PRE_OPEN_DAILY_AGE_DAYS = 5
 
 
 def _now_cn() -> datetime:
@@ -79,6 +80,23 @@ def _query_daily_bars(db_path: Path, trade_date: str) -> dict[str, Any]:
         "first_trade_date": row[2] if row else None,
         "latest_trade_date": row[3] if row else None,
     }
+
+
+def _compact_date(value: str) -> date | None:
+    raw = str(value or "").strip().replace("-", "")[:8]
+    if len(raw) != 8 or not raw.isdigit():
+        return None
+    try:
+        return date(int(raw[:4]), int(raw[4:6]), int(raw[6:8]))
+    except ValueError:
+        return None
+
+
+def _daily_age_days(latest_trade_date: Any, current: datetime) -> int | None:
+    latest = _compact_date(str(latest_trade_date or ""))
+    if latest is None:
+        return None
+    return max(0, (current.date() - latest).days)
 
 
 def _query_session_bars(db_path: Path, start: datetime, now: datetime) -> dict[str, Any]:
@@ -382,12 +400,18 @@ def validate_pre_open(
         return {**result, "status": "warn", "reason": "not_in_pre_open_window"}
     bars = _query_daily_bars(sqlite_db, start.strftime("%Y%m%d"))
     result.update(bars)
+    daily_age = _daily_age_days(bars.get("latest_trade_date"), current)
+    result["latest_daily_age_days"] = daily_age
+    result["max_daily_age_days"] = MAX_PRE_OPEN_DAILY_AGE_DAYS
     if bars.get("error"):
         result["status"] = "fail"
         result["reason"] = "pre_open_daily_query_failed"
     elif int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
         result["status"] = "warn"
         result["reason"] = "pre_open_daily_bars_missing"
+    elif daily_age is None or daily_age > MAX_PRE_OPEN_DAILY_AGE_DAYS:
+        result["status"] = "warn"
+        result["reason"] = "pre_open_daily_bars_stale"
     else:
         result["status"] = "pass"
         result["reason"] = "pre_open_acceptance_passed"

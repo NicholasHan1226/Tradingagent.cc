@@ -68,6 +68,17 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["status"], "warn")
         self.assertEqual(report["reason"], "pre_open_daily_bars_missing")
 
+    def test_pre_open_warns_when_latest_daily_bars_are_stale(self) -> None:
+        db_path = self._db([], [("600000.SH", "20260625", 10.0), ("000001.SZ", "20260625", 12.0)])
+        report = ashare_opening_validator.validate_pre_open(
+            sqlite_db=db_path,
+            now=datetime.fromisoformat("2026-07-06T08:55:00+08:00"),
+            min_symbols=2,
+        )
+        self.assertEqual(report["status"], "warn")
+        self.assertEqual(report["reason"], "pre_open_daily_bars_stale")
+        self.assertGreater(report["latest_daily_age_days"], report["max_daily_age_days"])
+
     def test_opening_passes_with_5min_bars(self) -> None:
         db_path = self._db(
             [

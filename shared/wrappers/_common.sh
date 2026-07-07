@@ -34,6 +34,7 @@ run_job() {
     shift 3
 
     ensure_cron_paths
+    cd "${TRADINGAGENT_ROOT}"
 
     local log_file="${TRADINGS_CRON_LOG_ROOT}/${job_name}.log"
     local lock_file="${TRADINGS_STATE_ROOT}/${job_name}.lock"

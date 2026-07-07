@@ -18,10 +18,14 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from shared.notify import email_sender
+
 CN_TZ = timezone(timedelta(hours=8))
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
 DEFAULT_SHAREDSIGNALS_ROOT = Path(os.environ.get("SHAREDSIGNALS_ROOT", "/opt/investment/SharedSignals"))
 DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+LATEST = ROOT / "shared/runtime_test/opening_acceptance_latest.json"
+HISTORY = ROOT / "shared/runtime_test/opening_acceptance_history.jsonl"
 
 
 @dataclass
@@ -86,33 +90,56 @@ def _count_statuses(items: list[dict[str, Any]], key: str = "status") -> dict[st
 
 
 def check_sharedsignals(api_url: str) -> AcceptanceCheck:
-    health_url = f"{api_url.rstrip('/')}/health"
+    base = api_url.rstrip("/")
+    cache_url = f"{base}/cache/status"
+    capability_url = f"{base}/capabilities"
+    health_url = f"{base}/health"
     try:
-        status_code, payload = _http_json(health_url)
+        cache_status_code, cache_payload = _http_json(cache_url, timeout=3.0)
     except (OSError, urllib.error.URLError, TimeoutError) as exc:
         return AcceptanceCheck(
             "sharedsignals_api",
             "fail",
             "SharedSignals API 不可用",
-            {"url": health_url, "error": f"{exc.__class__.__name__}: {exc}"},
+            {"url": cache_url, "error": f"{exc.__class__.__name__}: {exc}"},
         )
-    payload_status = str(payload.get("status") or "").lower()
-    ok = 200 <= status_code < 300 and payload_status in {"ok", "healthy", "degraded"}
-    checks = payload.get("checks", {}) if isinstance(payload.get("checks"), dict) else {}
-    functions_status = str((checks.get("functions") or {}).get("status") or "").lower() if isinstance(checks.get("functions"), dict) else ""
-    cron_status = str((checks.get("cron") or {}).get("status") or "").lower() if isinstance(checks.get("cron"), dict) else ""
-    core_ok = ok and functions_status in {"ok", ""} and cron_status in {"ok", ""}
-    status = "pass" if core_ok else ("warn" if ok else "fail")
+    capability_status_code = 0
+    capability_payload: dict[str, Any] = {}
+    capability_error = ""
+    try:
+        capability_status_code, capability_payload = _http_json(capability_url, timeout=5.0)
+    except (OSError, urllib.error.URLError, TimeoutError) as exc:
+        capability_error = f"{exc.__class__.__name__}: {exc}"
+    health_status_code = 0
+    health_payload: dict[str, Any] = {}
+    health_error = ""
+    try:
+        health_status_code, health_payload = _http_json(health_url, timeout=2.0)
+    except (OSError, urllib.error.URLError, TimeoutError) as exc:
+        health_error = f"{exc.__class__.__name__}: {exc}"
+    cache_ok = 200 <= cache_status_code < 300 and int(cache_payload.get("functions_registered") or 0) > 0
+    capability_data = capability_payload.get("data") if isinstance(capability_payload.get("data"), dict) else {}
+    capability_ok = 200 <= capability_status_code < 300 and isinstance(capability_data.get("endpoints"), list) and len(capability_data.get("endpoints") or []) > 0
+    core_ok = cache_ok and capability_ok
+    health_payload_status = str(health_payload.get("status") or "").lower()
+    health_ok = 200 <= health_status_code < 300 and health_payload_status in {"ok", "healthy", "degraded"}
+    status = "pass" if core_ok and health_ok else ("warn" if core_ok else "fail")
     return AcceptanceCheck(
         "sharedsignals_api",
         status,
-        "SharedSignals 核心 API 可用" if core_ok else ("SharedSignals API 可用但有降级项" if ok else "SharedSignals API 返回异常"),
+        "SharedSignals 核心 API 可用" if status == "pass" else ("SharedSignals 核心 API 可用但 /health 降级" if core_ok else "SharedSignals API 返回异常"),
         {
-            "url": health_url,
-            "status_code": status_code,
-            "payload_status": payload_status,
-            "functions_status": functions_status,
-            "cron_status": cron_status,
+            "cache_url": cache_url,
+            "cache_status_code": cache_status_code,
+            "functions_registered": cache_payload.get("functions_registered"),
+            "capability_url": capability_url,
+            "capability_status_code": capability_status_code,
+            "capability_endpoint_count": len(capability_data.get("endpoints") or []) if isinstance(capability_data, dict) else 0,
+            "capability_error": capability_error,
+            "health_url": health_url,
+            "health_status_code": health_status_code,
+            "health_payload_status": health_payload_status,
+            "health_error": health_error,
         },
     )
 
@@ -225,6 +252,9 @@ def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
             "bar_count": report.get("bar_count"),
             "symbol_count": report.get("symbol_count"),
             "latest_bar_time": report.get("latest_bar_time"),
+            "latest_trade_date": report.get("latest_trade_date"),
+            "latest_daily_age_days": report.get("latest_daily_age_days"),
+            "max_daily_age_days": report.get("max_daily_age_days"),
             "sample_summary": {
                 "bar_count": report.get("bar_count") or samples.get("bar_count"),
                 "symbol_count": report.get("symbol_count") or samples.get("symbol_count"),
@@ -320,6 +350,42 @@ def run_acceptance(
     }
 
 
+def _write_outputs(report: dict[str, Any], *, append_history: bool = True) -> None:
+    LATEST.parent.mkdir(parents=True, exist_ok=True)
+    LATEST.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if append_history:
+        with HISTORY.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(report, ensure_ascii=False) + "\n")
+
+
+def _send_alert(report: dict[str, Any], rendered_text: str) -> dict[str, Any]:
+    status = str(report.get("overall_status") or "warn")
+    subject = f"[TradingAgent][开盘验收] {status} {report.get('generated_at', '')}"
+    html = (
+        "<!DOCTYPE html><html><body>"
+        "<h2>TradingAgent 开盘验收异常</h2>"
+        f"<pre style=\"white-space:pre-wrap;font-family:-apple-system,'PingFang SC',sans-serif;\">{rendered_text}</pre>"
+        "</body></html>"
+    )
+    return email_sender.send_email(
+        email_sender.CHANNELS["system"]["to"],
+        subject,
+        rendered_text,
+        html,
+        channel="system",
+        rate_limit_type=f"opening_acceptance:{status}",
+    )
+
+
+def _maybe_send_alert(report: dict[str, Any], rendered_text: str, send_on: str) -> dict[str, Any]:
+    status = str(report.get("overall_status") or "warn")
+    should_send = send_on == "warn" and status != "pass"
+    should_send = should_send or (send_on == "fail" and status == "fail")
+    if not should_send:
+        return {"status": "skipped", "reason": "opening_acceptance_pass_or_send_disabled"}
+    return _send_alert(report, rendered_text)
+
+
 def _next_actions(checks: list[AcceptanceCheck]) -> list[str]:
     actions: list[str] = []
     by_name = {check.name: check for check in checks}
@@ -384,6 +450,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sqlite-db", type=Path, default=DEFAULT_SQLITE_DB)
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON instead of concise text.")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON when --json is used.")
+    parser.add_argument("--send-on", choices=["warn", "fail", "never"], default="never")
+    parser.add_argument("--exit-zero", action="store_true", help="Return 0 after writing/reporting so cron does not retry identical alerts.")
     return parser.parse_args(argv)
 
 
@@ -395,10 +463,18 @@ def main(argv: list[str] | None = None) -> int:
         sharedsignals_api_url=args.sharedsignals_api_url,
         sqlite_db=args.sqlite_db,
     )
+    rendered = render_text(report)
+    email_result = _maybe_send_alert(report, rendered, args.send_on)
+    report["email"] = email_result
+    _write_outputs(report)
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
     else:
-        print(render_text(report))
+        print(rendered)
+        if email_result.get("status") not in {"skipped", "rate_limited"}:
+            print(f"邮件: {email_result.get('status')} -> {email_result.get('to')}")
+    if args.exit_zero:
+        return 0
     return 2 if report["overall_status"] == "fail" else 0
 
 

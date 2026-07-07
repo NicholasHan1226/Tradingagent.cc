@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from shared.runtime_test import opening_acceptance
@@ -75,18 +76,66 @@ def test_render_text_includes_ashare_loop_counts():
     assert "无交易分类=all_rejected_by_risk" in text
 
 
-def test_sharedsignals_degraded_with_core_ok_is_pass(monkeypatch):
-    payload = {
-        "status": "degraded",
-        "checks": {
-            "functions": {"status": "ok"},
-            "cron": {"status": "ok"},
-            "data_freshness": {"status": "degraded"},
-        },
-    }
-    monkeypatch.setattr(opening_acceptance, "_http_json", lambda _url: (200, payload))
+def test_sharedsignals_core_ok_health_degraded_is_warn(monkeypatch):
+    def fake_http_json(url, timeout=8.0):
+        if url.endswith("/cache/status"):
+            return 200, {"functions_registered": 14}
+        if url.endswith("/capabilities"):
+            return 200, {"data": {"endpoints": [{"name": "get_market_data"}]}}
+        if url.endswith("/health"):
+            raise TimeoutError("health timed out")
+        raise AssertionError(url)
+
+    monkeypatch.setattr(opening_acceptance, "_http_json", fake_http_json)
 
     result = opening_acceptance.check_sharedsignals("http://127.0.0.1:8082")
 
-    assert result.status == "pass"
-    assert result.details["payload_status"] == "degraded"
+    assert result.status == "warn"
+    assert result.details["functions_registered"] == 14
+    assert result.details["capability_endpoint_count"] == 1
+    assert "TimeoutError" in result.details["health_error"]
+
+
+def test_write_outputs_records_latest_and_history(tmp_path, monkeypatch):
+    latest = tmp_path / "latest.json"
+    history = tmp_path / "history.jsonl"
+    monkeypatch.setattr(opening_acceptance, "LATEST", latest)
+    monkeypatch.setattr(opening_acceptance, "HISTORY", history)
+    report = {
+        "overall_status": "warn",
+        "generated_at": "2026-07-07T08:56:00+08:00",
+        "summary": {"pass": 0, "warn": 1, "fail": 0},
+    }
+
+    opening_acceptance._write_outputs(report)
+
+    assert json.loads(latest.read_text(encoding="utf-8"))["overall_status"] == "warn"
+    assert len(history.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_send_alert_uses_system_channel(monkeypatch):
+    sent = {}
+
+    def fake_send_email(to, subject, body, html_body, *, channel, rate_limit_type):
+        sent.update(
+            {
+                "to": to,
+                "subject": subject,
+                "body": body,
+                "channel": channel,
+                "rate_limit_type": rate_limit_type,
+            }
+        )
+        return {"status": "sent", "to": to}
+
+    monkeypatch.setattr(opening_acceptance.email_sender, "send_email", fake_send_email, raising=False)
+
+    result = opening_acceptance._send_alert(
+        {"overall_status": "fail", "generated_at": "2026-07-07T08:56:00+08:00"},
+        "开盘验收：失败",
+    )
+
+    assert result["status"] == "sent"
+    assert sent["to"] == opening_acceptance.email_sender.CHANNELS["system"]["to"]
+    assert sent["channel"] == "system"
+    assert sent["rate_limit_type"] == "opening_acceptance:fail"
