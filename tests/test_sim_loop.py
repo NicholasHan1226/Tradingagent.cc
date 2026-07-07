@@ -416,7 +416,7 @@ class SimLoopTest(unittest.TestCase):
             return ashare_sim_execute(
                 ashare_order,
                 account=account,
-                config={"signals_dir": self.tmp_path / "signals"},
+                config={"signals_dir": self.tmp_path / "signals", "bypass_market_hours": True},
             )
 
         deps = self._deps()

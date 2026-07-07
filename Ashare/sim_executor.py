@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from shared.execution.signal_state_machine import SignalStateMachine
 from shared.execution.sim_engine import SimExecutionEngine, SimOrder
@@ -25,6 +26,11 @@ from shared.execution.webhook_sender import send_sim_signal_to_mini
 DEFAULT_SIGNALS_DIR = Path("/opt/investment/tradingagent/signals")
 MARKET = "ashare"
 SIM_ACCOUNT = "ashare_sim"
+CN_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _now_cn() -> datetime:
+    return datetime.now(CN_TZ)
 
 
 def _account_name(account: dict[str, Any] | str | None) -> str:
@@ -81,6 +87,53 @@ def _reject(order_id: str, code: str, message: str) -> SimResult:
             "reason": message,
         },
     )
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    raw = str(value).strip().lower()
+    if raw in {"1", "true", "yes", "y", "on"}:
+        return True
+    if raw in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _parse_session_now(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif value:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    else:
+        parsed = _now_cn()
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=CN_TZ)
+    return parsed.astimezone(CN_TZ)
+
+
+def _is_regular_trading_session(now: datetime) -> bool:
+    from Ashare.t_plus_1 import is_trading_day
+
+    if not is_trading_day(now.date()):
+        return False
+    current = now.time()
+    return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(14, 57))
+
+
+def _market_session_rejection(config: dict[str, Any]) -> str:
+    if _coerce_bool(config.get("bypass_market_hours"), False):
+        return ""
+    enforce = _coerce_bool(os.environ.get("ASHARE_SIM_ENFORCE_MARKET_HOURS"), True)
+    enforce = _coerce_bool(config.get("enforce_market_hours"), enforce)
+    if not enforce:
+        return ""
+    now = _parse_session_now(config.get("market_session_now") or config.get("now"))
+    if _is_regular_trading_session(now):
+        return ""
+    return f"market_closed: A-share simulated execution only runs during 09:30-11:30 or 13:00-14:57 Asia/Shanghai; now={now.isoformat(timespec='seconds')}"
 
 
 def _first_value(*values: Any, default: Any = None) -> Any:
@@ -317,6 +370,10 @@ def ashare_sim_execute(
                 "signal_card": card,
             },
         )
+
+    market_rejection = _market_session_rejection(config)
+    if market_rejection:
+        return _reject(order_id, code, market_rejection)
 
     hermes_enabled = bool(config.get("hermes_enabled")) or os.environ.get("ASHARE_SIM_HERMES_ENABLED", "0") == "1"
     if not hermes_enabled:

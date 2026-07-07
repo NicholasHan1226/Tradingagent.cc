@@ -5,8 +5,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -27,6 +29,12 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.addCleanup(self.tmpdir.cleanup)
         self.tmp_path = Path(self.tmpdir.name)
         self.signals_dir = self.tmp_path / "signals"
+        now_patcher = patch(
+            "Ashare.sim_executor._now_cn",
+            return_value=datetime(2026, 7, 7, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+        now_patcher.start()
+        self.addCleanup(now_patcher.stop)
 
     def _patch_local_sim_paths(self) -> None:
         base = self.tmp_path / "local_sim"
@@ -116,6 +124,45 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(result.raw_response["mode"], "server_local_sim_engine")
         self.assertEqual(result.raw_response["engine_record"]["state"], "filled")
         send_mock.assert_not_called()
+
+    def test_ashare_sim_execute_rejects_outside_regular_session_before_any_execution(self) -> None:
+        with patch("Ashare.sim_executor.send_sim_signal_to_mini") as send_mock:
+            result = ashare_sim_execute(
+                order={
+                    "order_id": "SIM-ASHARE-AFTER-CLOSE",
+                    "ts_code": "600000.SH",
+                    "quantity": 100,
+                    "price": 10.5,
+                    "side": "buy",
+                },
+                account={"account_id": "ashare_sim"},
+                config={
+                    "signals_dir": self.signals_dir,
+                    "hermes_enabled": True,
+                    "market_session_now": "2026-07-07T15:01:00+08:00",
+                },
+            )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertIn("market_closed", result.message)
+        self.assertFalse((self.signals_dir / "pending" / "SIM-ASHARE-AFTER-CLOSE.json").exists())
+        send_mock.assert_not_called()
+
+    def test_ashare_sim_execute_rejects_holiday_even_during_regular_clock_time(self) -> None:
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-HOLIDAY",
+                "ts_code": "600000.SH",
+                "quantity": 100,
+                "price": 10.5,
+                "side": "buy",
+            },
+            account={"account_id": "ashare_sim"},
+            config={"market_session_now": "2026-10-01T10:00:00+08:00"},
+        )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertIn("market_closed", result.message)
 
     def test_ashare_server_local_fill_rejects_non_lot_buy(self) -> None:
         result = ashare_sim_execute(
