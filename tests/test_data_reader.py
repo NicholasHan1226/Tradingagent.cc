@@ -381,6 +381,9 @@ class EmptyShellAPIClient(FakeAPIClient):
         self.realtime_calls.append({"ts_code": ts_code, "date": date, "market": market})
         return [{}]
 
+    def get_events(self, start=None, end=None):
+        return [{}]
+
 
 class FakeSharedBars:
     last_error = None
@@ -404,6 +407,19 @@ class FakeSharedBars:
                 "trade_date": end_time or start_time,
                 "interval": interval,
                 "close": 23350.03,
+            }
+        ]
+
+    def get_events(self, market=None, symbol="", start_date="", end_date=""):
+        return [
+            {
+                "market": market,
+                "symbol": symbol,
+                "trade_date": end_date or start_date,
+                "event_hash": "evt-fallback",
+                "title": "fallback event",
+                "direction": "positive",
+                "confidence": "0.70",
             }
         ]
 
@@ -478,6 +494,15 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(rows[0]["close"], 23350.03)
         self.assertEqual(rows[0]["market"], "Global")
         self.assertEqual(api.realtime_calls[0], {"ts_code": "HSI", "date": "20260703", "market": "Global"})
+
+    def test_get_events_falls_back_when_api_returns_empty_shell(self) -> None:
+        api = EmptyShellAPIClient()
+        reader = TradingagentDataReader(shared=FakeSharedBars(), api_client=api)
+
+        rows = reader.get_events("Ashare", "600000", "20260708", "20260708")
+
+        self.assertEqual(rows[0]["event_hash"], "evt-fallback")
+        self.assertEqual(rows[0]["direction"], "positive")
 
     def test_get_pm_prices_uses_sharedsignals_api(self) -> None:
         api = FakeAPIClient()

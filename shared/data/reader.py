@@ -586,6 +586,21 @@ class TradingagentDataReader:
         return normalized
 
     @staticmethod
+    def _has_event_payload(rows: list[dict[str, Any]]) -> bool:
+        payload_keys = (
+            "event_hash",
+            "event_id",
+            "title",
+            "content",
+            "event_type",
+            "raw_json",
+            "direction",
+            "impact_hint",
+            "proposed_impact_hint",
+        )
+        return any(any(row.get(key) for key in payload_keys) for row in rows or [] if isinstance(row, dict))
+
+    @staticmethod
     def _has_priced_market_rows(rows: list[dict[str, Any]]) -> bool:
         for row in rows:
             for key in ("adjusted_close", "close", "price", "latest_price", "last_price", "market_price", "yes_price"):
@@ -777,6 +792,12 @@ class TradingagentDataReader:
                 start=start or None,
                 end=end or None,
             )
+            if isinstance(result, list) and result and not self._has_event_payload(result):
+                fallback_rows = fallback()
+                if fallback_rows:
+                    self._last_api_used = False
+                    self._record_shared_error("get_events")
+                    result = fallback_rows
             if market:
                 result = [r for r in result if not r.get("market") or r.get("market") == market]
             if symbol:
