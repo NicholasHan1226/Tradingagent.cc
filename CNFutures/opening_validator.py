@@ -258,7 +258,7 @@ def _allow_sqlite_fallback(sqlite_db: Path) -> bool:
 
 def _query_daily_bars(db_path: Path, trade_date: str, *, reader: Any | None = None, min_symbols: int = 4) -> dict[str, Any]:
     payload = _query_daily_bars_via_reader(reader or _default_reader(), trade_date, min_symbols=min_symbols)
-    if not payload.get("error") and int(payload.get("symbol_count") or 0) > 0:
+    if not payload.get("error") and int(payload.get("symbol_count") or 0) >= max(1, int(min_symbols)):
         return payload
     if _allow_sqlite_fallback(db_path):
         fallback = _query_daily_bars_sqlite(db_path, trade_date)
@@ -271,7 +271,11 @@ def _query_daily_bars(db_path: Path, trade_date: str, *, reader: Any | None = No
 
 def _query_session_bars(db_path: Path, start: datetime, now: datetime, *, reader: Any | None = None, min_symbols: int = 4) -> dict[str, Any]:
     payload = _query_session_bars_via_reader(reader or _default_reader(), start, now, min_symbols=min_symbols)
-    if not payload.get("error") and int(payload.get("bar_count") or 0) > 0:
+    if (
+        not payload.get("error")
+        and int(payload.get("bar_count") or 0) > 0
+        and int(payload.get("symbol_count") or 0) >= max(1, int(min_symbols))
+    ):
         return payload
     if _allow_sqlite_fallback(db_path):
         fallback = _query_session_bars_sqlite(db_path, start, now)
