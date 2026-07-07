@@ -12,7 +12,7 @@ when configured on the same host.
 |---|---|---|
 | SharedSignals HTTP API | SharedSignals | preferred market data, events, assets, 5-minute bars |
 | `marketdata.sqlite` read model | SharedSignals | same-host read-only fallback |
-| MarketGraph research exports/API | MarketGraph | optional regime, event candidate and sentiment context |
+| MarketGraph research exports/API | MarketGraph | optional regime/event context and PM independent research probabilities |
 | TradingAgent `signals/` and `shared/logs/` | TradingAgent | simulated execution, receipts, positions, review evidence |
 
 ## Canonical TradingAgent Reader
@@ -24,6 +24,8 @@ simulation and review code.
 - `SHARED_SIGNALS_DB` may point to the same-host read-only SQLite model.
 - `MARKETGRAPH_DATA` is optional. Leave it unset unless a MarketGraph CSV export
   is explicitly mounted for same-host operation.
+- `MARKETGRAPH_API_URL` points to the MarketGraph read-only REST service for
+  API/read-model research evidence such as PM research probabilities.
 - `SHARED_SIGNALS_ROOT` / `SHARED_SIGNALS_CALENDAR_ROOT` are only for calendar
   compatibility imports and discovery.
 
@@ -45,8 +47,12 @@ cron templates and active documents should use the current sources above.
 - A-share: SharedSignals `stock_basic`, daily bars and 5-minute bars feed
   TradingAgent simulation; TradingAgent writes server-local simulated receipts
   under `signals/`.
-- Crypto / PM / US: SharedSignals feeds the five-minute simulated loops;
+- Crypto / US: SharedSignals feeds the five-minute simulated loops;
   TradingAgent keeps simulated ledgers and style review outputs locally.
+- PM: SharedSignals feeds market/prices; MarketGraph unified API/read model
+  feeds independent research probabilities; TradingAgent combines them locally
+  for simulated edge gating and ignores PM judgment fields embedded in
+  SharedSignals rows.
 - CNFutures: SharedSignals owns futures data collection; TradingAgent consumes
   Futures 5-minute bars for simulated-only execution and review.
 - HK: currently paused for production scheduling. Code remains fail-closed and

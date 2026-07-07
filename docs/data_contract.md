@@ -61,6 +61,34 @@ SharedSignals owns the `repo_daily` collection and projects those rows into
 `market_bars_daily`; TradingAgent treats `close` as annualized percentage yield
 for research-only cash sweep estimates.
 
+## PM Research Probability Inputs
+
+PM has two separate read-only upstream roles:
+
+- SharedSignals supplies PM market metadata and prices only, through
+  `market_pm_markets`, `market_pm_prices` and the matching HTTP/read-model
+  surfaces.
+- MarketGraph supplies independent research probability only, through REST
+  `GET /pm/research-probabilities` and MCP `read_pm_research_probabilities`.
+
+`PM/research_probability.py` merges MarketGraph research rows with SharedSignals
+market prices and writes TradingAgent's local
+`shared/review/pm/model_probabilities.jsonl`. Accepted MarketGraph research
+fields include `market_id`, `condition_id`, `slug`, `question`,
+`research_probability`, `marketgraph_probability`, `confidence`,
+`probability_source`, `model_reason`, `evidence_refs` and `as_of`.
+Market probability for edge calculation must come from SharedSignals PM
+market/price rows. MarketGraph research rows are not allowed to provide fallback
+market prices.
+
+SharedSignals rows must not be used as a PM judgment source. If a
+SharedSignals PM market/price row contains `research_probability`,
+`marketgraph_probability`, `forecast_probability` or similar inline fields,
+TradingAgent treats them as ignored upstream noise. If MarketGraph is
+unreachable or returns no PM research probability, TradingAgent clears the
+local PM model-probability file and PM simulated trading safely has no
+independent edge to consume.
+
 ## MarketGraph CSV Inputs
 
 `shared.data.reader.MarketGraphCSVReader` reads these read-only CSV outputs:
@@ -84,6 +112,10 @@ them only for scoring and confidence weighting.
   Default: `/opt/investment/SharedSignals`.
 - `SHARED_SIGNALS_CALENDAR_ROOT`: optional override for A-share trading
   calendar file discovery. Default: same as `SHARED_SIGNALS_ROOT`.
+- `MARKETGRAPH_API_URL`: MarketGraph read-only REST API. Default:
+  `http://127.0.0.1:8080` on the combined host.
+- `MARKETGRAPH_API_TOKEN`: optional bearer token loaded from the environment;
+  never hard-code it in repository files.
 
 TradingAgent receipts default to `signals/sim_execution_receipts.jsonl`.
 MarketGraph `outputs/` receipt files are historical compatibility inputs only

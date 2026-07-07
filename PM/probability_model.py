@@ -8,9 +8,6 @@ from typing import Any
 
 MODEL_PROBABILITY_KEYS = (
     "model_probability",
-    "model_prob",
-    "fair_probability",
-    "estimated_probability",
 )
 MARKET_PROBABILITY_KEYS = (
     "yes_price",
@@ -97,7 +94,7 @@ def load_model_probabilities(path: Path | None = None) -> dict[str, dict[str, An
         normalized = {
             **record,
             "model_probability": probability,
-            "model_source": str(record.get("model_source") or record.get("source") or "pm_research_probability"),
+            "model_source": str(record.get("model_source") or record.get("source") or "marketgraph_pm_research"),
         }
         for key in _market_keys(record):
             forecasts[key] = normalized
@@ -109,15 +106,10 @@ def enrich_pm_rows(rows: list[dict[str, Any]], probability_file: Path | None = N
     enriched_rows: list[dict[str, Any]] = []
     for row in rows:
         enriched = dict(row)
-        if _probability(enriched, MODEL_PROBABILITY_KEYS):
-            enriched.setdefault("model_source", "inline_pm_probability")
-            enriched_rows.append(enriched)
-            continue
-
         forecast = next((forecasts[key] for key in _market_keys(enriched) if key in forecasts), None)
         if forecast:
             enriched["model_probability"] = forecast["model_probability"]
-            enriched["model_source"] = forecast.get("model_source", "pm_research_probability")
+            enriched["model_source"] = forecast.get("model_source", "marketgraph_pm_research")
             if forecast.get("model_confidence") is not None:
                 enriched["model_confidence"] = forecast.get("model_confidence")
             if forecast.get("model_reason") is not None:
