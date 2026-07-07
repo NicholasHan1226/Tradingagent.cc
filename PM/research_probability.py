@@ -140,21 +140,27 @@ def _read_marketgraph_research_with_meta(client: Any, limit: int) -> tuple[list[
     rows = client.get_pm_research_probabilities(limit=limit)
     meta: dict[str, Any] = {}
     if isinstance(rows, dict):
-        meta = {
-            key: rows.get(key)
-            for key in (
-                "source",
-                "storage",
-                "row_count",
-                "degraded",
-                "degrade_reason",
-                "skip_reasons",
-                "readiness",
-                "response_safety",
-            )
-            if key in rows
-        }
+        envelope = rows
         nested = rows.get("rows") or rows.get("data") or []
+        if isinstance(nested, dict):
+            envelope = nested
+        for key in (
+            "source",
+            "storage",
+            "row_count",
+            "degraded",
+            "degrade_reason",
+            "skip_reasons",
+            "readiness",
+            "response_safety",
+            "blocking_stage",
+            "next_actions",
+            "diagnostics",
+        ):
+            if key in envelope:
+                meta[key] = envelope.get(key)
+            elif key in rows:
+                meta[key] = rows.get(key)
         if isinstance(nested, dict):
             nested = nested.get("rows") or nested.get("data") or []
         rows = nested

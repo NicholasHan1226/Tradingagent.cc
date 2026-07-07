@@ -67,6 +67,25 @@ class EmptyEnvelopeMarketGraphClient:
         }
 
 
+class NestedEmptyEnvelopeMarketGraphClient:
+    degraded = False
+    errors: list[str] = []
+
+    def get_pm_research_probabilities(self, limit: int = 100) -> dict[str, object]:
+        return {
+            "time": "2026-07-07T00:00:00",
+            "tool": "read_pm_research_probabilities",
+            "data": {
+                "source": "marketgraph_pm_research_read_model",
+                "row_count": 0,
+                "rows": [],
+                "degraded": True,
+                "degrade_reason": "pm_research_probability_read_model_empty",
+                "response_safety": {"is_trading_permission": False},
+            },
+        }
+
+
 def _jsonl(path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
@@ -141,6 +160,22 @@ def test_pm_research_probability_surfaces_marketgraph_empty_reason(tmp_path):
     assert result["marketgraph_research_meta"]["degrade_reason"] == "pm_research_probability_read_model_empty"
     assert "存在 3 个复盘采样任务" in result["next_action"]
     assert output.read_text(encoding="utf-8") == ""
+
+
+def test_pm_research_probability_preserves_nested_marketgraph_api_meta(tmp_path):
+    output = tmp_path / "model_probabilities.jsonl"
+    reader = FakePMReader([{"market_id": "pm-1", "price": 0.42}])
+
+    result = generate_pm_model_probabilities(
+        reader=reader,
+        marketgraph_client=NestedEmptyEnvelopeMarketGraphClient(),
+        output_path=output,
+        generated_at="2026-07-07T00:00:00+00:00",
+    )
+
+    assert result["record_count"] == 0
+    assert result["marketgraph_research_meta"]["degrade_reason"] == "pm_research_probability_read_model_empty"
+    assert result["next_action"] == "repair_marketgraph_pm_research_probability: pm_research_probability_read_model_empty"
 
 
 def test_pm_research_probability_ignores_sharedsignals_inline_research_fields(tmp_path):
