@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -939,7 +940,8 @@ class CNFuturesAutomationTest(unittest.TestCase):
             old_db = os.environ.get("SHARED_SIGNALS_DB")
             os.environ["SHARED_SIGNALS_DB"] = str(db_path)
             try:
-                adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 2})
+                with patch("CNFutures.adapter.TradingagentDataReader", None):
+                    adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 2})
 
                 self.assertEqual(adapter.get_universe("20260703"), ["CU2609.SHF", "RB2609.SHF"])
                 self.assertEqual(adapter.get_universe("20260704"), ["CU2609.SHF", "RB2609.SHF"])
@@ -995,7 +997,8 @@ class CNFuturesAutomationTest(unittest.TestCase):
             old_db = os.environ.get("SHARED_SIGNALS_DB")
             os.environ["SHARED_SIGNALS_DB"] = str(db_path)
             try:
-                adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 2})
+                with patch("CNFutures.adapter.TradingagentDataReader", None):
+                    adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 2})
 
                 self.assertEqual(adapter.get_intraday_universe("20260703"), ["CU2609.SHF", "RB2609.SHF"])
                 rows = adapter.get_bars_intraday("Futures", "RB2609.SHF", "5min", end="20260703")
