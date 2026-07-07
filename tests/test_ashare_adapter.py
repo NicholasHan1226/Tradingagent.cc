@@ -200,6 +200,20 @@ class AshareAdapterTest(unittest.TestCase):
         self.assertEqual(universe, ["600519", "000001", "600002"])
         self.assertIn(("ashare", "600519", "20260616", "20260630"), reader.daily_calls)
 
+    def test_universe_is_ranked_by_recent_liquidity_before_scoring_limit(self) -> None:
+        reader = FakeAshareReader()
+        reader.assets = [
+            {"symbol": "000001", "name": "Lower Liquidity", "exchange": "SZSE", "list_date": "19910403", "status": "active"},
+            {"symbol": "600002", "name": "Higher Liquidity", "exchange": "SSE", "list_date": "19991110", "status": "active"},
+            {"symbol": "600519", "name": "High Liquidity", "exchange": "SSE", "list_date": "20010827", "status": "active"},
+        ]
+        reader.amounts.update({"000001": 55_000, "600002": 80_000, "600519": 120_000})
+        adapter = AshareAdapter(reader=reader)
+
+        universe = adapter.get_universe("20260630")
+
+        self.assertEqual(universe, ["600519", "600002", "000001"])
+
     def test_symbol_mapping_uses_reader_symbol_without_exchange_suffix(self) -> None:
         adapter = AshareAdapter(reader=FakeAshareReader())
 

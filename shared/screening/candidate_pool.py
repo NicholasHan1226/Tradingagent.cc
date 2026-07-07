@@ -145,6 +145,8 @@ def build_pool(
     market: str | None = None,
     reader: Any | None = None,
     market_adapter: Any | None = None,
+    scores_by_symbol: dict[str, dict[str, Any]] | None = None,
+    scores_map: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, list[str]]:
     """构建5层候选池。
 
@@ -193,14 +195,27 @@ def build_pool(
     # 3. Fundamental 层 (长期跟踪)
     fundamental = _filter_market_symbols(_load_fundamental_pool(reader=reader, market=market), market)[:_POOL_LIMITS["fundamental"]]
 
+    precomputed_scores = scores_by_symbol if scores_by_symbol is not None else scores_map
+    precomputed_scores = dict(precomputed_scores or {})
+    score_cache: dict[str, dict[str, Any]] = {}
+
+    def score_for(ts_code: str) -> dict[str, Any]:
+        cached = precomputed_scores.get(ts_code) or score_cache.get(ts_code)
+        if isinstance(cached, dict):
+            return cached
+        from .six_dimension_scorer import score_stock
+
+        score = score_stock(market, ts_code, reader, date)
+        score_cache[ts_code] = dict(score or {})
+        return score_cache[ts_code]
+
     # 4. Candidate 层 (六维打分通过)
     candidate: list[str] = []
     try:
-        from .six_dimension_scorer import score_stock
         for ts_code in universe:
             if ts_code in holdings:
                 continue
-            scores = score_stock(market, ts_code, reader, date)
+            scores = score_for(ts_code)
             if scores.get("combined", 0.0) >= _CANDIDATE_THRESHOLD:
                 candidate.append(ts_code)
                 if len(candidate) >= _POOL_LIMITS["candidate"]:
@@ -211,11 +226,10 @@ def build_pool(
     # 5. Watch 层 (打分稍低, 但有潜在条件)
     watch: list[str] = []
     try:
-        from .six_dimension_scorer import score_stock
         for ts_code in universe:
             if ts_code in holdings or ts_code in candidate:
                 continue
-            scores = score_stock(market, ts_code, reader, date)
+            scores = score_for(ts_code)
             combined = scores.get("combined", 0.0)
             if _WATCH_THRESHOLD <= combined < _CANDIDATE_THRESHOLD:
                 watch.append(ts_code)

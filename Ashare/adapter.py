@@ -132,17 +132,20 @@ class AshareAdapter(MarketAdapter):
         if not assets:
             return []
         coverage = self._coverage_by_symbol(date)
-        result: list[str] = []
+        ranked: list[tuple[float, str]] = []
         for asset in assets:
             if not isinstance(asset, dict):
                 continue
             symbol = str(asset.get("symbol") or "").strip()
             if not symbol:
                 continue
-            if self._exclude_asset(asset, coverage.get(symbol), date):
+            liquidity = self._latest_liquidity(symbol, date)
+            if self._exclude_asset(asset, coverage.get(symbol), date, liquidity=liquidity):
                 continue
-            result.append(symbol)
-        return result
+            amount = liquidity[1] if liquidity[1] is not None else 0.0
+            ranked.append((amount, symbol))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return [symbol for _, symbol in ranked]
 
     def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
         raw = str(symbol or "").strip().upper()
@@ -305,7 +308,14 @@ class AshareAdapter(MarketAdapter):
                     return True, amount_yuan
         return has_positive_close, None
 
-    def _exclude_asset(self, asset: dict[str, Any], coverage_status: str | None, date: str) -> bool:
+    def _exclude_asset(
+        self,
+        asset: dict[str, Any],
+        coverage_status: str | None,
+        date: str,
+        *,
+        liquidity: tuple[bool, float | None] | None = None,
+    ) -> bool:
         cfg = self.universe_filter
         if not str(asset.get("name") or "").strip():
             return True
@@ -328,7 +338,7 @@ class AshareAdapter(MarketAdapter):
                 return True
 
         min_amount = _safe_float(cfg.get("min_liquidity_amount"), 50_000_000.0)
-        has_close, amount = self._latest_liquidity(str(asset.get("symbol") or ""), date)
+        has_close, amount = liquidity if liquidity is not None else self._latest_liquidity(str(asset.get("symbol") or ""), date)
         if not has_close:
             return True
         if amount is None:

@@ -147,7 +147,9 @@
 ### 2026-07-07 A股/CNFutures 开盘稳定性修复
 
 - [x] A股 `AshareAdapter` 的生产 `score_universe_limit` 从 200 扩到 500，覆盖到候选池 cap，避免只评分 universe 前几百只导致 candidate 层长期为 0；新买入仍必须来自 `candidate_pool_layer=candidate`，不放松候选阈值、不回退到 watch/universe 硬买。
+- [x] A股 universe 已在过滤后按近期成交额/流动性做稳定预排序，避免 `score_universe_limit` 截断到代码顺序前段；候选池构建复用本轮 `score_universe` 预计算评分，不再对 candidate/watch 层逐票重算，避免候选分层、排序、资金计划和诊断口径漂移。
 - [x] A股 `no_trade_explanation` 已补 `score_diagnostics`：候选为 0 时记录已评分数量、候选阈值、Top 分数、中性默认维度计数和缺失维度计数，后续可直接判断是 SharedSignals/MarketGraph 研究维度不足，还是候选确实没有达到交易门槛。
+- [x] A股空池诊断新增 `candidate_above_threshold_count`、`watch_above_threshold_count`、`max_combined`、`candidate_pool_status` 和 `data_quality_status`，用于区分“策略阈值未过”“观察层有效但未达买入”“候选池分层异常”和“研究维度大面积中性”。
 - [x] A股六维评分已补供数兼容：`TradingagentDataReader.get_factors()` canonical 查询 `Ashare` 与带后缀代码，`six_dimension_scorer` 在旧 factors 为空时读取 `get_fundamentals()` 与 `get_capital_flow()` 行并映射为 value/growth/quality/capital 分；资金分只混合金额字段并对专用 `/capital_flow` 行优先去重，避免把 `net_mf_vol` 当金额；候选池/轮动条件统一识别 `api_name:metric` 前缀；保留缺数据回退 0.5，不放松 candidate 阈值。
 - [x] A股文档已明确候选池样本不能过小，扩大评分覆盖只解决“看得太少”的问题，不改变“无科学候选就留现金/逆回购”的资金门禁。
 - [x] CNFutures 继续由 TradingAgent 只读 SharedSignals `market_bars_intraday`；Tushare 5 分钟期货接口空返回的备源修复在 SharedSignals 完成，TradingAgent 不新增独立采集。

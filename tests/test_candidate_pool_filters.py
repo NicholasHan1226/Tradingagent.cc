@@ -23,6 +23,24 @@ class CandidatePoolAshareFilterTest(unittest.TestCase):
         self.assertNotIn("900901.SH", pool["candidate"])
         self.assertIn("600000.SH", pool["candidate"])
 
+    def test_candidate_pool_uses_precomputed_scores_without_rescoring(self) -> None:
+        with patch("shared.screening.six_dimension_scorer.score_stock") as score_stock:
+            pool = build_pool(
+                date="20260701",
+                universe=["000001.SZ", "600000.SH", "000002.SZ"],
+                market="ashare",
+                reader=object(),
+                scores_by_symbol={
+                    "000001.SZ": {"combined": 0.56},
+                    "600000.SH": {"combined": 0.50},
+                    "000002.SZ": {"combined": 0.44},
+                },
+            )
+
+        score_stock.assert_not_called()
+        self.assertEqual(pool["candidate"], ["000001.SZ"])
+        self.assertEqual(pool["watch"], ["600000.SH"])
+
     def test_universe_filter_excludes_b_share_codes_for_ashare(self) -> None:
         class Reader:
             daily_calls = []

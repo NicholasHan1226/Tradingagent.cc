@@ -1577,13 +1577,29 @@ def _build_pool_for_market(
     date: str,
     universe: list[str],
     reader: Any,
+    scores_by_symbol: dict[str, dict[str, Any]] | None = None,
 ) -> Any:
     try:
         signature = inspect.signature(deps.build_pool)
     except (TypeError, ValueError):
         return deps.build_pool(date=date, universe=universe, market=market, reader=reader)
-    if "market" in signature.parameters or "reader" in signature.parameters or "market_adapter" in signature.parameters:
-        return deps.build_pool(date=date, universe=universe, market=market, reader=reader)
+    kwargs: dict[str, Any] = {"date": date, "universe": universe}
+    if "market" in signature.parameters:
+        kwargs["market"] = market
+    if "reader" in signature.parameters:
+        kwargs["reader"] = reader
+    if scores_by_symbol is not None and "scores_by_symbol" in signature.parameters:
+        kwargs["scores_by_symbol"] = scores_by_symbol
+    elif scores_by_symbol is not None and "scores_map" in signature.parameters:
+        kwargs["scores_map"] = scores_by_symbol
+    if (
+        "market" in signature.parameters
+        or "reader" in signature.parameters
+        or "market_adapter" in signature.parameters
+        or "scores_by_symbol" in signature.parameters
+        or "scores_map" in signature.parameters
+    ):
+        return deps.build_pool(**kwargs)
     return deps.build_pool(date=date, universe=universe)
 
 
@@ -1669,6 +1685,8 @@ def _sim_no_trade_explanation(
 
 def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: int = 10) -> dict[str, Any]:
     dimensions = ("macro", "event", "fundamental", "capital", "technical", "sentiment")
+    candidate_threshold = 0.55
+    watch_threshold = 0.45
     rows: list[tuple[float, str, dict[str, Any]]] = []
     neutral_counts = {name: 0 for name in dimensions}
     missing_counts = {name: 0 for name in dimensions}
@@ -1692,9 +1710,28 @@ def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: in
             if name in score:
                 row[name] = round(_safe_float(score.get(name), 0.5), 4)
         top_scores.append(row)
+    candidate_count = sum(1 for combined, _, _ in rows if combined >= candidate_threshold)
+    watch_count = sum(1 for combined, _, _ in rows if watch_threshold <= combined < candidate_threshold)
+    neutral_total = sum(neutral_counts.values())
+    neutral_ratio = neutral_total / max(1, len(rows) * len(dimensions))
+    if not rows:
+        candidate_pool_status = "no_scored_symbols"
+    elif candidate_count > 0:
+        candidate_pool_status = "pool_empty_despite_threshold_scores"
+    elif watch_count > 0:
+        candidate_pool_status = "strategy_threshold_not_met_watch_only"
+    else:
+        candidate_pool_status = "strategy_threshold_not_met"
     return {
         "scored_count": len(rows),
-        "candidate_threshold": 0.55,
+        "candidate_threshold": candidate_threshold,
+        "watch_threshold": watch_threshold,
+        "candidate_above_threshold_count": candidate_count,
+        "watch_above_threshold_count": watch_count,
+        "max_combined": round(rows[0][0], 4) if rows else 0.0,
+        "candidate_pool_status": candidate_pool_status,
+        "neutral_dimension_ratio": round(neutral_ratio, 4),
+        "data_quality_status": "research_dimensions_mostly_neutral" if rows and neutral_ratio >= 0.75 else "ok",
         "top_scores": top_scores,
         "neutral_default_like_dimension_counts": neutral_counts,
         "missing_dimension_counts": missing_counts,
@@ -1774,7 +1811,7 @@ def run_shadow_loop(
     pool = _safe_stage(
         "screening.candidate_pool",
         errors,
-        lambda: _build_pool_for_market(deps, market, date, list(scores_by_symbol), reader),
+        lambda: _build_pool_for_market(deps, market, date, list(scores_by_symbol), reader, scores_by_symbol),
         default=_candidate_pool_default(market, "shadow", list(scores_by_symbol)),
     )
     stage_calls.append("screening.candidate_pool")
@@ -2063,7 +2100,7 @@ def run_sim_loop(
     pool = _safe_stage(
         "screening.candidate_pool",
         errors,
-        lambda: _build_pool_for_market(deps, market, date, list(scores_by_symbol), reader),
+        lambda: _build_pool_for_market(deps, market, date, list(scores_by_symbol), reader, scores_by_symbol),
         default=_candidate_pool_default(market, capital_layer, list(scores_by_symbol)),
         capital_layer=capital_layer,
     )

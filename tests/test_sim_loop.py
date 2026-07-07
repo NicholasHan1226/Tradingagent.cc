@@ -493,6 +493,52 @@ class SimLoopTest(unittest.TestCase):
         self.assertTrue(all(order["candidate_pool_layer"] == "candidate" for order in self.executed_orders))
         self.assertTrue(all(order["execution_source"] == "ashare_candidate_layer" for order in self.executed_orders))
 
+    def test_run_sim_loop_passes_precomputed_scores_to_candidate_pool(self) -> None:
+        deps = self._multi_candidate_deps()
+        received_scores: dict[str, dict[str, object]] = {}
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                ("AAA", {"combined": 0.54, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"}),
+                ("BBB", {"combined": 0.92, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"}),
+            ]
+
+        def build_pool(
+            date: str,
+            universe: list[str],
+            market: str | None = None,
+            reader: object | None = None,
+            scores_by_symbol: dict[str, dict[str, object]] | None = None,
+        ) -> dict[str, list[str]]:
+            self.calls.append("candidate_pool")
+            received_scores.update(scores_by_symbol or {})
+            return {
+                "candidate": [
+                    symbol
+                    for symbol in universe
+                    if float((scores_by_symbol or {}).get(symbol, {}).get("combined", 0.0)) >= 0.55
+                ],
+                "watch": [],
+                "holdings": [],
+                "universe": list(universe),
+            }
+
+        deps.score_universe = score_universe
+        deps.build_pool = build_pool
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["AAA", "BBB"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=2),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_precomputed_scores",
+        )
+
+        self.assertEqual(received_scores["AAA"]["combined"], 0.54)
+        self.assertEqual(received_scores["BBB"]["combined"], 0.92)
+        self.assertEqual(result["candidate_count"], 1)
+        self.assertEqual([record["symbol"] for record in result["records"]], ["BBB"])
+
     def test_run_sim_loop_caps_ashare_new_positions_to_configured_target(self) -> None:
         deps = self._multi_candidate_deps()
 
@@ -612,6 +658,8 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(diagnostics["scored_count"], 2)
         self.assertEqual(diagnostics["candidate_threshold"], 0.55)
         self.assertEqual(diagnostics["top_scores"][0]["combined"], 0.95)
+        self.assertEqual(diagnostics["candidate_above_threshold_count"], 2)
+        self.assertEqual(diagnostics["candidate_pool_status"], "pool_empty_despite_threshold_scores")
         self.assertEqual(self.executed_orders, [])
 
     def test_run_sim_loop_ashare_fails_closed_when_candidate_pool_errors(self) -> None:
