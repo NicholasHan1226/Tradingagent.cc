@@ -166,6 +166,24 @@ class DateScopedUniverseReader(FakeFuturesReader):
         return []
 
 
+class SQLiteSharedQuery:
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = db_path
+
+    def _query(self, sql: str, params: tuple[object, ...] = ()) -> list[dict[str, object]]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+        finally:
+            conn.close()
+
+
+class ReadModelIntradayReader(FakeFuturesReader):
+    def __init__(self, db_path: Path) -> None:
+        self.shared = SQLiteSharedQuery(db_path)
+
+
 class CNFuturesAutomationTest(unittest.TestCase):
     def test_adapter_default_reader_uses_tradingagent_data_reader(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -206,6 +224,43 @@ class CNFuturesAutomationTest(unittest.TestCase):
         self.assertEqual(adapter.get_intraday_universe("20260707"), ["CU2607.SHF", "RB2607.SHF"])
         self.assertNotIn(("CU0001.SHF", "", "20260707"), reader.calls)
         self.assertTrue(all(call[1:] == ("20260707", "20260707") for call in reader.calls))
+
+    def test_intraday_universe_read_model_uses_latest_bar_batch(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "marketdata.sqlite"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE market_bars_intraday (
+                    market TEXT,
+                    symbol TEXT,
+                    bar_time TEXT,
+                    time TEXT,
+                    trade_date TEXT,
+                    interval TEXT,
+                    close REAL
+                )
+                """
+            )
+            conn.executemany(
+                "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    ("Futures", "CU2607.SHF", "2026-07-07 14:30:00", "", "20260707", "5min", 71000.0),
+                    ("Futures", "CU.SHF", "2026-07-07 14:35:00", "", "20260707", "5min", 71050.0),
+                    ("Futures", "RB2607.SHF", "2026-07-07 14:35:00", "", "20260707", "5min", 3500.0),
+                    ("Futures", "RB2608.SHF", "2026-07-07 14:35:00", "", "20260707", "5min", 3520.0),
+                ],
+            )
+            conn.commit()
+            conn.close()
+            adapter = CNFuturesAdapter(
+                reader=ReadModelIntradayReader(db_path),
+                universe_filter={"max_symbols": 4, "products": ("cu", "rb")},
+            )
+
+            self.assertEqual(adapter.get_intraday_universe("20260707"), ["RB2607.SHF", "RB2608.SHF"])
 
     def test_multi_style_runner_executes_only_simulated_lanes_and_writes_review(self) -> None:
         import CNFutures.sim_executor  # noqa: F401

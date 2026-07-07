@@ -82,10 +82,11 @@ SharedSignals CN futures 5-minute collection defaults to the commodity products
 must continue reading those bars through SharedSignals/read-model APIs rather
 than adding a separate TradingAgent data download path.
 
-Intraday simulation candidates must be executable contracts with current-day
-5-minute bars in SharedSignals. Generic product symbols such as `CU.SHF` and
-expired or stale contracts are not valid simulation candidates even if they
-exist in the futures asset table or historical daily bars.
+Intraday simulation candidates must be executable contracts from the latest
+current-day 5-minute bar batch in SharedSignals. Generic product symbols such
+as `CU.SHF` and expired, stale, or earlier-batch contracts are not valid
+simulation candidates even if they exist in the futures asset table or
+historical daily bars.
 
 The 5-minute runner rejects stale intraday input by default when the latest bar
 is more than 10 minutes old. Configure the threshold with

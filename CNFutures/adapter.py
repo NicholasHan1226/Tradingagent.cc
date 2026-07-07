@@ -322,10 +322,16 @@ class CNFuturesAdapter(MarketAdapter):
         interval_values = ["5m", "5min"] if interval in {"5m", "5min"} else [interval]
         placeholders = ",".join("?" for _ in interval_values)
         rows = query(
-            "SELECT DISTINCT symbol FROM market_bars_intraday "
+            "WITH scoped AS ("
+            "SELECT symbol, MAX(COALESCE(bar_time, time, '')) AS latest_bar_time "
+            "FROM market_bars_intraday "
             f"WHERE market=? AND interval IN ({placeholders}) "
             "AND replace(COALESCE(trade_date,''),'-','')=? "
-            "ORDER BY symbol ASC",
+            "GROUP BY symbol"
+            "), latest AS (SELECT MAX(latest_bar_time) AS latest_bar_time FROM scoped) "
+            "SELECT scoped.symbol FROM scoped, latest "
+            "WHERE scoped.latest_bar_time=latest.latest_bar_time "
+            "ORDER BY scoped.symbol ASC",
             (READER_MARKET, *interval_values, trade_date),
         )
         if not rows:
