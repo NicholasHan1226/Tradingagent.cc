@@ -181,8 +181,7 @@ def _query_session_bars_sqlite(db_path: Path, start: datetime, now: datetime) ->
             SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(bar_time), MAX(bar_time)
             FROM market_bars_intraday
             WHERE market='Futures'
-              AND COALESCE(interval, '') IN ('5min', '5MIN', '5')
-              AND provider LIKE '%rt_fut_min%'
+              AND lower(COALESCE(interval, '')) IN ('5min', '5m', '5')
               AND bar_time >= ?
               AND bar_time <= ?
             """,
@@ -251,9 +250,10 @@ def _query_session_bars_via_reader(
 
 
 def _allow_sqlite_fallback(sqlite_db: Path) -> bool:
-    value = str(sqlite_db) != str(DEFAULT_SQLITE_DB)
+    value = sqlite_db.exists()
     env_value = os.environ.get("CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK", "")
-    return value or env_value.strip().lower() in {"1", "true", "yes", "on"}
+    env_disabled = env_value.strip().lower() in {"0", "false", "no", "off"}
+    return (value and not env_disabled) or env_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _query_daily_bars(db_path: Path, trade_date: str, *, reader: Any | None = None, min_symbols: int = 4) -> dict[str, Any]:
@@ -262,9 +262,11 @@ def _query_daily_bars(db_path: Path, trade_date: str, *, reader: Any | None = No
         return payload
     if _allow_sqlite_fallback(db_path):
         fallback = _query_daily_bars_sqlite(db_path, trade_date)
-        fallback["query_source"] = "sqlite_fallback"
+        fallback["query_source"] = "SharedSignals read_model/sqlite"
         if payload.get("error"):
             fallback["reader_error"] = payload.get("error")
+        elif int(payload.get("symbol_count") or 0) < max(1, int(min_symbols)):
+            fallback["reader_shortfall"] = payload
         return fallback
     return payload
 
@@ -279,9 +281,14 @@ def _query_session_bars(db_path: Path, start: datetime, now: datetime, *, reader
         return payload
     if _allow_sqlite_fallback(db_path):
         fallback = _query_session_bars_sqlite(db_path, start, now)
-        fallback["query_source"] = "sqlite_fallback"
+        fallback["query_source"] = "SharedSignals read_model/sqlite"
         if payload.get("error"):
             fallback["reader_error"] = payload.get("error")
+        elif (
+            int(payload.get("bar_count") or 0) <= 0
+            or int(payload.get("symbol_count") or 0) < max(1, int(min_symbols))
+        ):
+            fallback["reader_shortfall"] = payload
         return fallback
     return payload
 
@@ -363,6 +370,7 @@ def _opening_30m_review(
     symbol_count = int(bars.get("symbol_count") or 0)
     hold_summary = latest_review.get("hold_reason_summary", {}) if isinstance(latest_review.get("hold_reason_summary"), dict) else {}
     hold_by_reason = hold_summary.get("by_reason") if isinstance(hold_summary.get("by_reason"), dict) else {}
+    hold_count = int(latest_review.get("hold_count") or hold_summary.get("total") or 0) if latest_review else 0
     top_hold_reason = ""
     if hold_by_reason:
         top_hold_reason = max(hold_by_reason.items(), key=lambda item: int(item[1] or 0))[0]
@@ -382,10 +390,18 @@ def _opening_30m_review(
         status = "warn"
         phase = "insufficient_5min_data"
         action = "check_cn_futures_5min_collector"
+    elif int(latest_review.get("filled_count") or 0) <= 0 and filled_signal_count <= 0 and hold_count > 0:
+        status = "warn"
+        if top_hold_reason in {"style_session_not_allowed", "night_session_not_allowed"}:
+            phase = "no_night_session"
+            action = "enable_only_explicit_night_session_styles_or_wait_for_day_session"
+        else:
+            phase = "strategy_hold"
+            action = "review_hold_reasons_and_strategy_filters"
     elif int(latest_review.get("filled_count") or 0) <= 0 and filled_signal_count <= 0:
         status = "warn"
         phase = "no_simulated_trade"
-        action = "review_hold_reasons_and_strategy_filters"
+        action = "check_sim_runner_after_data_ready"
     elif filled_signal_count > 0 and receipt_count <= 0:
         status = "warn"
         phase = "receipt_missing"
@@ -407,6 +423,7 @@ def _opening_30m_review(
             "min_symbols": max(1, int(min_symbols)),
             "latest_review_exists": bool(latest_review),
             "latest_review_filled_count": int(latest_review.get("filled_count") or 0) if latest_review else 0,
+            "latest_review_hold_count": hold_count,
             "filled_signals": filled_signal_count,
             "sim_execution_receipts": receipt_count,
         },
@@ -532,7 +549,8 @@ def first_sample_alerts(
         })
     if result["latest_review"]["real_trading_enabled"]:
         alerts.append({"severity": "error", "code": "cn_futures_real_trading_flag_enabled", "message": "CNFutures 复盘样本错误带有实盘启用标记。"})
-    if latest_filled_count <= 0 and filled_signal_count <= 0:
+    opening_phase = str(result["opening_30m_review"].get("phase") or "")
+    if latest_filled_count <= 0 and filled_signal_count <= 0 and opening_phase not in {"strategy_hold", "no_night_session"}:
         alerts.append({"severity": "warn", "code": "cn_futures_first_sim_sample_missing", "message": "期货5分钟数据已进入会话窗口，但 TradingAgent 尚无首个模拟成交样本。"})
     if filled_signal_count > 0 and receipt_count <= 0:
         alerts.append({"severity": "warn", "code": "cn_futures_first_receipt_missing", "message": "CNFutures 已有模拟成交信号，但签名回执尚未生成。"})

@@ -1514,11 +1514,50 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'Crypto',
       status: 'partial',
+      runtimeState: 'needs_attention',
+      executionFault: true,
       styleCount: 2,
       activeStyleCount: 1,
       degradedStyleCount: 1,
       filledCount: 3,
       errorCount: 1,
+    }))
+  })
+
+  it('marks a market with active styles but no trades as strategy wait', async () => {
+    const root = await createWorkspace()
+    const reviewRoot = join(root, 'TradingAgent/shared/review/pm')
+    await mkdir(reviewRoot, { recursive: true })
+    await writeFile(
+      join(reviewRoot, 'style_comparison.json'),
+      JSON.stringify({
+        market: 'pm',
+        capital_layer: 'simulated',
+        account_type: 'simulated',
+        real_execution: false,
+        styles_total: 1,
+        styles_loaded: 1,
+        style_states: [{ style_name: 'probability_edge', status: 'active' }],
+        filled_count: 0,
+        hold_count: 4,
+        error_count: 0,
+        generated_at: '2026-07-06T12:35:00.000Z',
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T12:40:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'PM',
+      status: 'partial',
+      runtimeState: 'strategy_wait',
+      executionFault: false,
+      styleCount: 1,
+      filledCount: 0,
     }))
   })
 })

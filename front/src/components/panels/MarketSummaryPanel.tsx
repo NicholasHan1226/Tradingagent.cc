@@ -12,7 +12,8 @@ export function MarketSummaryPanel({
   if (activeMarket === 'All Markets') return null
 
   const hasReturn = summary?.pnlAmount !== undefined || summary?.returnPct !== undefined
-  const status = summary?.status === 'ready' ? '运行中' : summary?.status === 'partial' ? '部分记录' : '等待数据'
+  const runtimeState = summary?.runtimeState ?? (summary?.status === 'ready' ? 'normal' : summary?.status === 'partial' ? 'strategy_wait' : 'empty')
+  const status = formatRuntimeState(runtimeState)
 
   return (
     <section className="rail-panel market-summary-panel" aria-label="当前市场摘要">
@@ -20,7 +21,7 @@ export function MarketSummaryPanel({
         <span>当前市场</span>
         <strong>{marketLabels[activeMarket]}</strong>
       </div>
-      <div className={`market-summary-status ${summary?.status ?? 'empty'}`}>
+      <div className={`market-summary-status ${summary?.status ?? 'empty'} ${runtimeState}`}>
         <span>{status}</span>
         <strong>{summary?.headline ?? `${marketLabels[activeMarket]}暂无模拟记录`}</strong>
         <em>{summary?.detail ?? '等待该市场写入模拟成交、持仓或风格收益。'}</em>
@@ -37,6 +38,13 @@ export function MarketSummaryPanel({
       </div>
     </section>
   )
+}
+
+function formatRuntimeState(state: MarketSummary['runtimeState']) {
+  if (state === 'normal') return '运行中'
+  if (state === 'strategy_wait') return '策略等待'
+  if (state === 'needs_attention') return '需要处理'
+  return '等待数据'
 }
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {

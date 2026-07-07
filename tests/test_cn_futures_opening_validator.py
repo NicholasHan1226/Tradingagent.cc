@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -89,6 +90,31 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
 
         self.assertEqual(report["status"], "warn")
         self.assertEqual(report["reason"], "opening_session_has_no_5min_bars")
+
+    def test_sqlite_read_model_accepts_5m_interval_without_provider_lock(self) -> None:
+        db_path = self._db([])
+        conn = sqlite3.connect(db_path)
+        conn.executemany(
+            "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?)",
+            [
+                ("Futures", "IF2609.CFX", "2026-07-06 09:05:00", "5m", "sharedsignals_reader"),
+                ("Futures", "IH2609.CFX", "2026-07-06 09:05:00", "5m", "sharedsignals_reader"),
+                ("Futures", "IC2609.CFX", "2026-07-06 09:05:00", "5m", "sharedsignals_reader"),
+                ("Futures", "IM2609.CFX", "2026-07-06 09:05:00", "5m", "sharedsignals_reader"),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        report = validate_opening(
+            sqlite_db=db_path,
+            now=datetime.fromisoformat("2026-07-06T09:08:00+08:00"),
+            min_symbols=4,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["query_source"], "SharedSignals read_model/sqlite")
+        self.assertEqual(report["symbol_count"], 4)
 
     def test_warns_outside_session_without_failing(self) -> None:
         db_path = self._db([])
@@ -192,6 +218,84 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["opening_30m_review"]["phase"], "no_simulated_trade")
         codes = {alert["code"] for alert in report["alerts"]}
         self.assertIn("cn_futures_opening_30m_no_simulated_trade", codes)
+
+    def test_opening_30m_review_distinguishes_strategy_hold_from_missing_sample(self) -> None:
+        db_path = self._db(
+            [
+                ("IF2609.CFX", "2026-07-06 09:05:00"),
+                ("IH2609.CFX", "2026-07-06 09:05:00"),
+                ("IC2609.CFX", "2026-07-06 09:10:00"),
+                ("IM2609.CFX", "2026-07-06 09:10:00"),
+            ]
+        )
+        review = Path(tempfile.NamedTemporaryFile(delete=False).name)
+        self.addCleanup(lambda: review.unlink(missing_ok=True))
+        review.write_text(
+            json.dumps(
+                {
+                    "state": "ok",
+                    "cadence": "5min",
+                    "filled_count": 0,
+                    "hold_count": 4,
+                    "hold_reason_summary": {"total": 4, "by_reason": {"below_threshold": 4}},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        report = first_sample_alerts(
+            sqlite_db=db_path,
+            now=datetime.fromisoformat("2026-07-06T09:35:00+08:00"),
+            min_symbols=4,
+            review_path=review,
+        )
+
+        self.assertEqual(report["opening_30m_review"]["status"], "warn")
+        self.assertEqual(report["opening_30m_review"]["phase"], "strategy_hold")
+        self.assertEqual(report["opening_30m_review"]["top_hold_reason"], "below_threshold")
+        codes = {alert["code"] for alert in report["alerts"]}
+        self.assertIn("cn_futures_opening_30m_strategy_hold", codes)
+        self.assertNotIn("cn_futures_first_sim_sample_missing", codes)
+
+    def test_opening_30m_review_distinguishes_no_night_session_from_missing_sample(self) -> None:
+        db_path = self._db(
+            [
+                ("IF2609.CFX", "2026-07-06 21:05:00"),
+                ("IH2609.CFX", "2026-07-06 21:05:00"),
+                ("IC2609.CFX", "2026-07-06 21:10:00"),
+                ("IM2609.CFX", "2026-07-06 21:10:00"),
+            ]
+        )
+        review = Path(tempfile.NamedTemporaryFile(delete=False).name)
+        self.addCleanup(lambda: review.unlink(missing_ok=True))
+        review.write_text(
+            json.dumps(
+                {
+                    "state": "ok",
+                    "cadence": "5min",
+                    "filled_count": 0,
+                    "hold_count": 4,
+                    "hold_reason_summary": {"total": 4, "by_reason": {"style_session_not_allowed": 4}},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        report = first_sample_alerts(
+            sqlite_db=db_path,
+            now=datetime.fromisoformat("2026-07-06T21:35:00+08:00"),
+            min_symbols=4,
+            review_path=review,
+        )
+
+        self.assertEqual(report["opening_30m_review"]["status"], "warn")
+        self.assertEqual(report["opening_30m_review"]["phase"], "no_night_session")
+        self.assertEqual(report["opening_30m_review"]["top_hold_reason"], "style_session_not_allowed")
+        codes = {alert["code"] for alert in report["alerts"]}
+        self.assertIn("cn_futures_opening_30m_no_night_session", codes)
+        self.assertNotIn("cn_futures_first_sim_sample_missing", codes)
 
 
 if __name__ == "__main__":

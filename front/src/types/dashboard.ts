@@ -41,10 +41,13 @@ export type PortfolioSummary = {
 }
 
 export type MarketSummaryStatus = 'ready' | 'partial' | 'empty' | 'paused'
+export type MarketRuntimeState = 'normal' | 'strategy_wait' | 'needs_attention' | 'empty'
 
 export type MarketSummary = {
   market: Market
   status: MarketSummaryStatus
+  runtimeState?: MarketRuntimeState
+  executionFault?: boolean
   holdingCount: number
   signalCount: number
   tradeCount: number

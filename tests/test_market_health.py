@@ -483,6 +483,8 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "warn")
         self.assertEqual(check.details["fail_reasons"], [])
         self.assertIn("pm_waiting_for_market_data", check.details["warn_reasons"])
+        self.assertEqual(check.details["diagnostic_class"], "market_data_wait")
+        self.assertEqual(check.details["execution_fault"], False)
 
     def test_pm_sim_market_loop_warns_when_model_probability_is_missing(self) -> None:
         with patch.object(
@@ -494,7 +496,9 @@ class MarketHealthTest(unittest.TestCase):
 
         self.assertEqual(check.status, "warn")
         self.assertEqual(check.details["fail_reasons"], [])
-        self.assertIn("pm_waiting_for_market_data", check.details["warn_reasons"])
+        self.assertIn("pm_waiting_for_marketgraph_probability", check.details["warn_reasons"])
+        self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
+        self.assertEqual(check.details["execution_fault"], False)
 
     def test_pm_sim_market_loop_warns_when_model_edge_is_below_threshold(self) -> None:
         with patch.object(
@@ -506,7 +510,9 @@ class MarketHealthTest(unittest.TestCase):
 
         self.assertEqual(check.status, "warn")
         self.assertEqual(check.details["fail_reasons"], [])
-        self.assertIn("pm_waiting_for_market_data", check.details["warn_reasons"])
+        self.assertIn("pm_waiting_for_model_edge", check.details["warn_reasons"])
+        self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
+        self.assertEqual(check.details["execution_fault"], False)
 
     def test_crypto_sim_market_loop_warns_when_momentum_threshold_not_met(self) -> None:
         with patch.object(
@@ -524,6 +530,8 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "warn")
         self.assertEqual(check.details["fail_reasons"], [])
         self.assertIn("crypto_waiting_for_momentum_signal", check.details["warn_reasons"])
+        self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
+        self.assertEqual(check.details["execution_fault"], False)
 
     def test_crypto_sim_market_loop_fails_when_candidate_exists_but_no_ledger(self) -> None:
         with patch.object(

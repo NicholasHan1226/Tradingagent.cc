@@ -132,7 +132,7 @@
 ### 2026-07-07 A股健康检查 advisory 收口
 
 - [x] `shared/runtime_test/market_health.py` 将“全部为 `outside_ashare_regular_session` 的 A股链路验证样本”从 warn 降为 pass/info advisory；样本仍在 details 中展示，并继续隔离出策略绩效/方向命中/自我演化口径。
-- [x] A股开盘/盘中验收读取 `ashare_no_trade_explanations.jsonl` 时保留 `score_diagnostics`，空池告警可直接展示已评分数量、候选阈值、Top 分数和维度中性/缺失情况，避免只看到 `no_candidates` 而无法判断是数据不足还是确实无人过线。
+- [x] A股开盘/盘中验收读取 `ashare_no_trade_explanations.jsonl` 时保留 `score_diagnostics`，并将 `candidate_pool_status`、`data_quality_status`、`max_combined`、候选阈值和 threshold counts 带入 `latest_no_trade_log` / `diagnostic_summary`；空池告警可直接区分策略阈值未过、研究维度中性或候选池分层异常，不改变交易阈值。
 - [x] A股资金计划对账接入本地模拟样本质量：若资金计划早于 outside-session 链路验证样本快照且不一致，显示 pass/info advisory；若是真实策略样本后的资金计划滞后、缺计划、来源缺失、账本/快照不一致，仍保持 warn/fail。
 - [x] A股失败/回执健康检查同步接入样本质量：纯 outside-session 链路验证样本不再要求策略成交回执，显示 pass/info advisory；失败订单、真实策略成交或缺来源样本仍保持 warn。
 - [x] 新增/更新 `tests/test_market_health.py` 覆盖链路验证样本 advisory、资金计划 validation-only advisory 和回执 validation-only advisory，保留真实错配/缺来源 warn/fail 测试。
@@ -155,6 +155,10 @@
 - [x] CNFutures 继续由 TradingAgent 只读 SharedSignals `market_bars_intraday`；Tushare 5 分钟期货接口空返回的备源修复在 SharedSignals 完成，TradingAgent 不新增独立采集。
 - [x] CNFutures adapter 的 universe/合约发现已改为 `TradingagentDataReader` reader 优先，开盘验收也优先通过 reader 查询 Futures 日线/5分钟线；直接 SQLite 只保留为显式临时库或 `CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK=1` 的兼容兜底，不再是生产默认路径。
 - [x] CNFutures 5 分钟 runner 已修正闭市口径：收盘后再次运行返回 `market_closed` 并写正常复盘行，不再把闭市后的最后一根有效 bar 误报为 stale；交易时段内真实 stale 仍保持拦截。
+- [x] CNFutures 开盘/首样本验收已区分 5分钟数据缺失、首模拟样本缺失、策略主动 hold 和夜盘未授权风格不交易；该修复只读复盘 `hold_reason_summary`，不改变模拟成交策略。
+- [x] CNFutures 开盘验收的 read-model SQLite 兜底放宽到 `5min`/`5m`/`5` interval 统一口径，不再锁死 `rt_fut_min` provider；reader 短缺时仍标记 `reader_shortfall`，TradingAgent 不新增独立采集。
+- [x] PM/Crypto 健康检查已把空跑分成 `market_data_wait`、`strategy_wait`、`execution_fault`：缺行情是数据等待，PM 缺 MarketGraph 独立概率/edge 不足或 Crypto 动量阈值未过是策略等待，只有应成交却无账本才算执行故障。
+- [x] 前端市场摘要新增 `runtimeState` / `executionFault`，市场切换后显示“运行中 / 策略等待 / 需要处理 / 等待数据”的结果层，避免把所有 warn 误读为系统坏；桌面和移动页面已做真实切换检查。
 - [x] 2026-07-07 盘中已确认的生产症状：A股 job 正常运行但 `candidate_count=0`、无成交、权益约 200,000；CNFutures job 运行但缺 5 分钟 Futures bar、无成交。上述状态不能算“可交易健康”，必须等生产部署后复验 candidate、bar、filled/hold/no-trade 归因。
 
 ### 2026-07-05 simulated equity snapshot writer for dashboard

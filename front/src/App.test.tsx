@@ -256,6 +256,8 @@ describe('App navigation and result-first dashboard', () => {
               {
                 market: 'Crypto',
                 status: 'ready',
+                runtimeState: 'strategy_wait',
+                executionFault: false,
                 holdingCount: 1,
                 signalCount: 1,
                 tradeCount: 1,
@@ -282,6 +284,7 @@ describe('App navigation and result-first dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: '全市场' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /加密/ }))
 
+    expect(screen.getByText('策略等待')).toBeInTheDocument()
     expect(screen.getByText('加密已有 1 笔模拟成交')).toBeInTheDocument()
     expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()

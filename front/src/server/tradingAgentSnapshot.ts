@@ -604,16 +604,27 @@ async function buildMarketSummaries({
     const tradeCount = executedCount > 0 ? executedCount : performanceSummary?.trades ?? 0
     const styleCount = Math.max(styleSummary?.styleCount ?? 0, styleSummary?.activeStyleCount ?? 0)
     const hasMeaningfulPnl = pnlAmount !== undefined && (pnlAmount !== 0 || (capitalBase ?? 0) > 0 || (performanceSummary?.trades ?? 0) > 0)
-    const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || hasMeaningfulPnl
-    const hasPartialEvidence = Boolean(performanceSummary || styleSummary)
-    const hasOnlyStyleSummary = styleCount > 0 && holdingCount === 0 && marketSignals.length === 0 && pnlAmount === undefined
-    const status: MarketSummary['status'] = hasRuntime ? hasOnlyStyleSummary ? 'partial' : 'ready' : hasPartialEvidence ? 'partial' : 'empty'
-    const latestAt = latestIso(styleSummary?.latestAt, performanceSummary?.latestAt, ashareAccount?.updatedAt, generatedAt)
+      const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || hasMeaningfulPnl
+      const hasPartialEvidence = Boolean(performanceSummary || styleSummary)
+      const hasOnlyStyleSummary = styleCount > 0 && holdingCount === 0 && marketSignals.length === 0 && pnlAmount === undefined
+      const status: MarketSummary['status'] = hasRuntime ? hasOnlyStyleSummary ? 'partial' : 'ready' : hasPartialEvidence ? 'partial' : 'empty'
+      const runtimeState = marketRuntimeState({
+        errorCount: styleSummary?.errorCount,
+        filledCount: styleSummary?.filledCount,
+        holdingCount,
+        signalCount: marketSignals.length,
+        status,
+        styleCount,
+        tradeCount,
+      })
+      const latestAt = latestIso(styleSummary?.latestAt, performanceSummary?.latestAt, ashareAccount?.updatedAt, generatedAt)
 
-    return {
-      market,
-      status,
-      holdingCount,
+      return {
+        market,
+        status,
+        runtimeState,
+        executionFault: runtimeState === 'needs_attention',
+        holdingCount,
       signalCount: marketSignals.length,
       tradeCount,
       styleCount,
@@ -642,8 +653,31 @@ async function buildMarketSummaries({
         returnPct,
         styleCount,
       }),
-    }
+      }
   })
+}
+
+function marketRuntimeState({
+  errorCount,
+  filledCount,
+  holdingCount,
+  signalCount,
+  status,
+  styleCount,
+  tradeCount,
+}: {
+  errorCount?: number
+  filledCount?: number
+  holdingCount: number
+  signalCount: number
+  status: MarketSummary['status']
+  styleCount: number
+  tradeCount: number
+}): MarketSummary['runtimeState'] {
+  if ((errorCount ?? 0) > 0) return 'needs_attention'
+  if (tradeCount > 0 || (filledCount ?? 0) > 0 || holdingCount > 0 || signalCount > 0) return 'normal'
+  if (styleCount > 0 || status === 'partial') return 'strategy_wait'
+  return 'empty'
 }
 
 async function readStyleComparisonMarketSummaries(root: string): Promise<Map<Market, MarketStyleSummary>> {

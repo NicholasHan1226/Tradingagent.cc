@@ -177,6 +177,48 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         self.assertEqual(check.details["latest_real_trading_enabled"], True)
         self.assertFalse(check.details["latest_has_bar_time"])
 
+    def test_review_distinguishes_strategy_hold_from_missing_sim_sample(self) -> None:
+        self._write_jsonl(
+            "shared/review/data/cn_futures_sim_reviews.jsonl",
+            [
+                {
+                    "state": "ok",
+                    "cadence": "5min",
+                    "filled_count": 0,
+                    "hold_count": 3,
+                    "hold_reason_summary": {"total": 3, "by_reason": {"below_threshold": 3}},
+                }
+            ],
+        )
+
+        check = live_check.check_review()
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["latest_sample_phase"], "strategy_hold")
+        self.assertEqual(check.details["latest_top_hold_reason"], "below_threshold")
+        self.assertIn("主动 hold", check.summary)
+
+    def test_review_distinguishes_no_night_session_from_missing_sim_sample(self) -> None:
+        self._write_jsonl(
+            "shared/review/data/cn_futures_sim_reviews.jsonl",
+            [
+                {
+                    "state": "ok",
+                    "cadence": "5min",
+                    "filled_count": 0,
+                    "hold_count": 2,
+                    "hold_reason_summary": {"total": 2, "by_reason": {"style_session_not_allowed": 2}},
+                }
+            ],
+        )
+
+        check = live_check.check_review()
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["latest_sample_phase"], "no_night_session")
+        self.assertEqual(check.details["latest_top_hold_reason"], "style_session_not_allowed")
+        self.assertIn("夜盘", check.summary)
+
 
 if __name__ == "__main__":
     unittest.main()

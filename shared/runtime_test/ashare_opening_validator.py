@@ -263,6 +263,10 @@ def _latest_no_trade_explanation(path: Path, date: str) -> dict[str, Any]:
             continue
         explanation = payload.get("no_trade_explanation")
         if isinstance(explanation, dict):
+            score_diagnostics = explanation.get("score_diagnostics", {})
+            if not isinstance(score_diagnostics, dict):
+                score_diagnostics = {}
+            diagnostic_summary = _score_diagnostic_summary(score_diagnostics)
             return {
                 "path": str(path),
                 "generated_at": payload.get("generated_at"),
@@ -273,9 +277,58 @@ def _latest_no_trade_explanation(path: Path, date: str) -> dict[str, Any]:
                 "sample_risk_rejections": explanation.get("sample_risk_rejections", [])[:5],
                 "sample_execution_skips": explanation.get("sample_execution_skips", [])[:5],
                 "sample_errors": explanation.get("sample_errors", [])[:3],
-                "score_diagnostics": explanation.get("score_diagnostics", {}),
+                "score_diagnostics": score_diagnostics,
+                "candidate_pool_status": score_diagnostics.get("candidate_pool_status"),
+                "data_quality_status": score_diagnostics.get("data_quality_status"),
+                "max_combined": score_diagnostics.get("max_combined"),
+                "candidate_threshold": score_diagnostics.get("candidate_threshold"),
+                "candidate_above_threshold_count": score_diagnostics.get("candidate_above_threshold_count"),
+                "watch_above_threshold_count": score_diagnostics.get("watch_above_threshold_count"),
+                "diagnostic_summary": diagnostic_summary,
             }
     return {}
+
+
+def _score_diagnostic_summary(score_diagnostics: dict[str, Any]) -> dict[str, Any]:
+    candidate_pool_status = str(score_diagnostics.get("candidate_pool_status") or "")
+    data_quality_status = str(score_diagnostics.get("data_quality_status") or "")
+    candidate_count = int(score_diagnostics.get("candidate_above_threshold_count") or 0)
+    watch_count = int(score_diagnostics.get("watch_above_threshold_count") or 0)
+    max_combined = score_diagnostics.get("max_combined")
+    candidate_threshold = score_diagnostics.get("candidate_threshold")
+
+    summary: dict[str, Any] = {
+        "candidate_pool_status": candidate_pool_status or None,
+        "data_quality_status": data_quality_status or None,
+        "max_combined": max_combined,
+        "candidate_threshold": candidate_threshold,
+        "candidate_above_threshold_count": candidate_count,
+        "watch_above_threshold_count": watch_count,
+    }
+    if candidate_pool_status == "pool_empty_despite_threshold_scores" or candidate_count > 0:
+        summary.update(
+            {
+                "reason": "candidate_pool_anomaly",
+                "next_action": "review_candidate_pool_layering_anomaly",
+            }
+        )
+    elif data_quality_status == "research_dimensions_mostly_neutral":
+        summary.update(
+            {
+                "reason": "research_dimensions_neutral",
+                "next_action": "review_research_dimension_coverage",
+            }
+        )
+    elif candidate_pool_status in {"strategy_threshold_not_met", "strategy_threshold_not_met_watch_only"}:
+        summary.update(
+            {
+                "reason": "strategy_threshold_not_met",
+                "next_action": "monitor_strategy_threshold_gap",
+            }
+        )
+    else:
+        summary.update({"reason": None, "next_action": None})
+    return summary
 
 
 def _classify_from_latest_no_trade(latest: dict[str, Any]) -> tuple[str, str] | None:
@@ -283,6 +336,9 @@ def _classify_from_latest_no_trade(latest: dict[str, Any]) -> tuple[str, str] | 
     action = str(latest.get("action") or "")
     if not category:
         return None
+    diagnostic_summary = latest.get("diagnostic_summary")
+    if isinstance(diagnostic_summary, dict) and diagnostic_summary.get("next_action"):
+        action = str(diagnostic_summary["next_action"])
     mapped = {
         "no_universe": ("no_universe", "check_sharedsignals_assets_and_daily_coverage"),
         "no_candidates": ("no_candidates", "check_candidate_pool_thresholds_and_universe_filter"),
@@ -298,7 +354,8 @@ def _classify_from_latest_no_trade(latest: dict[str, Any]) -> tuple[str, str] | 
         "no_filled_sim_orders": ("no_filled_sim_orders", "review_full_sim_run"),
     }
     if category in mapped:
-        return mapped[category]
+        mapped_category, mapped_action = mapped[category]
+        return mapped_category, action or mapped_action
     return category, action or "review_latest_no_trade_log"
 
 
@@ -357,6 +414,7 @@ def _explain_no_trade(
     return {
         "category": category,
         "next_action": action,
+        "diagnostic_summary": latest_no_trade.get("diagnostic_summary", {}),
         "inputs": {
             "bar_count": bar_count,
             "symbol_count": symbol_count,

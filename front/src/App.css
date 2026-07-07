@@ -1735,6 +1735,18 @@ button:not(:disabled) {
   color: var(--state-amber);
 }
 
+.market-summary-status.strategy_wait span {
+  color: var(--state-amber);
+}
+
+.market-summary-status.needs_attention span {
+  color: var(--state-red);
+}
+
+.market-summary-status.empty span {
+  color: var(--text-faint);
+}
+
 .market-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

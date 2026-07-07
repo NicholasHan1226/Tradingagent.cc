@@ -281,6 +281,113 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["no_trade_explanation"]["latest_no_trade_log"]["score_diagnostics"]["scored_count"], 500)
         self.assertEqual(report["no_trade_explanation"]["latest_no_trade_log"]["score_diagnostics"]["top_scores"][0]["symbol"], "000623.SZ")
 
+    def test_first_sample_surfaces_score_diagnostics_for_no_trade(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        no_trade_log = root / "ashare_no_trade_explanations.jsonl"
+        no_trade_log.write_text(
+            json.dumps(
+                {
+                    "date": "20260706",
+                    "generated_at": "2026-07-06T09:41:00+08:00",
+                    "state": "ok",
+                    "no_trade_explanation": {
+                        "category": "no_candidates",
+                        "action": "check_candidate_pool_thresholds_and_universe_filter",
+                        "counts": {"candidate_count": 0, "watch_count": 8},
+                        "score_diagnostics": {
+                            "scored_count": 500,
+                            "candidate_threshold": 0.55,
+                            "candidate_above_threshold_count": 0,
+                            "watch_above_threshold_count": 8,
+                            "max_combined": 0.5412,
+                            "candidate_pool_status": "strategy_threshold_not_met_watch_only",
+                            "data_quality_status": "research_dimensions_mostly_neutral",
+                        },
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        db_path = self._db(
+            [
+                ("600000.SH", "2026-07-06 09:35:00"),
+                ("000001.SZ", "2026-07-06 09:35:00"),
+            ]
+        )
+
+        report = ashare_opening_validator.first_sample_alerts(
+            sqlite_db=db_path,
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            no_trade_log_path=no_trade_log,
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+
+        explanation = report["no_trade_explanation"]
+        latest_log = explanation["latest_no_trade_log"]
+        self.assertEqual(explanation["category"], "no_candidates")
+        self.assertEqual(explanation["next_action"], "review_research_dimension_coverage")
+        self.assertEqual(explanation["diagnostic_summary"]["reason"], "research_dimensions_neutral")
+        self.assertEqual(latest_log["candidate_pool_status"], "strategy_threshold_not_met_watch_only")
+        self.assertEqual(latest_log["data_quality_status"], "research_dimensions_mostly_neutral")
+        self.assertEqual(latest_log["max_combined"], 0.5412)
+        self.assertEqual(latest_log["candidate_threshold"], 0.55)
+        self.assertEqual(latest_log["candidate_above_threshold_count"], 0)
+        self.assertEqual(latest_log["watch_above_threshold_count"], 8)
+
+    def test_score_diagnostic_summary_distinguishes_no_trade_causes(self) -> None:
+        cases = [
+            (
+                {
+                    "candidate_pool_status": "strategy_threshold_not_met",
+                    "data_quality_status": "ok",
+                    "candidate_above_threshold_count": 0,
+                    "watch_above_threshold_count": 0,
+                    "max_combined": 0.532,
+                    "candidate_threshold": 0.55,
+                },
+                "strategy_threshold_not_met",
+                "monitor_strategy_threshold_gap",
+            ),
+            (
+                {
+                    "candidate_pool_status": "strategy_threshold_not_met_watch_only",
+                    "data_quality_status": "research_dimensions_mostly_neutral",
+                    "candidate_above_threshold_count": 0,
+                    "watch_above_threshold_count": 8,
+                    "max_combined": 0.5412,
+                    "candidate_threshold": 0.55,
+                },
+                "research_dimensions_neutral",
+                "review_research_dimension_coverage",
+            ),
+            (
+                {
+                    "candidate_pool_status": "pool_empty_despite_threshold_scores",
+                    "data_quality_status": "ok",
+                    "candidate_above_threshold_count": 2,
+                    "watch_above_threshold_count": 0,
+                    "max_combined": 0.6764,
+                    "candidate_threshold": 0.55,
+                },
+                "candidate_pool_anomaly",
+                "review_candidate_pool_layering_anomaly",
+            ),
+        ]
+
+        for diagnostics, reason, next_action in cases:
+            with self.subTest(reason=reason):
+                summary = ashare_opening_validator._score_diagnostic_summary(diagnostics)
+                self.assertEqual(summary["reason"], reason)
+                self.assertEqual(summary["next_action"], next_action)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1164,13 +1164,21 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
         warn_reasons.append("market_data_degraded")
     if market not in {"ashare", "cn_futures"} and int(ledger.get("trade_rows") or 0) <= 0:
         if market == "pm" and data.get("reason") in {"pm_market_rows_empty", "pm_prices_missing", "pm_model_probability_missing", "pm_model_edge_below_threshold"}:
-            warn_reasons.append("pm_waiting_for_market_data")
+            if data.get("reason") in {"pm_market_rows_empty", "pm_prices_missing"}:
+                warn_reasons.append("pm_waiting_for_market_data")
+            elif data.get("reason") == "pm_model_probability_missing":
+                warn_reasons.append("pm_waiting_for_marketgraph_probability")
+            else:
+                warn_reasons.append("pm_waiting_for_model_edge")
         elif market == "crypto" and data.get("reason") in {
             "crypto_klines_empty",
             "crypto_insufficient_priced_rows",
             "crypto_momentum_threshold_not_met",
         }:
-            warn_reasons.append("crypto_waiting_for_momentum_signal")
+            if data.get("reason") == "crypto_klines_empty":
+                warn_reasons.append("crypto_waiting_for_market_data")
+            else:
+                warn_reasons.append("crypto_waiting_for_momentum_signal")
         else:
             hard_fail_reasons.append("sim_trade_ledger_empty")
     if market == "ashare" and int(ledger.get("trade_rows") or 0) <= 0 and samples_expected:
@@ -1189,10 +1197,43 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
         warn_reasons.append("crontab_unreadable")
 
     status = "fail" if hard_fail_reasons else ("warn" if warn_reasons else "pass")
+    strategy_wait = (
+        not hard_fail_reasons
+        and any(
+            reason in warn_reasons
+            for reason in (
+                "pm_waiting_for_marketgraph_probability",
+                "pm_waiting_for_model_edge",
+                "crypto_waiting_for_momentum_signal",
+            )
+        )
+    )
+    market_data_wait = (
+        not hard_fail_reasons
+        and not strategy_wait
+        and any(
+            reason in warn_reasons
+            for reason in (
+                "pm_waiting_for_market_data",
+                "crypto_waiting_for_market_data",
+            )
+        )
+    )
+    diagnostic_class = (
+        "strategy_wait"
+        if strategy_wait
+        else "market_data_wait"
+        if market_data_wait
+        else "execution_fault"
+        if hard_fail_reasons
+        else "normal"
+    )
+    execution_fault = bool(hard_fail_reasons)
+    state_label = "正常" if status == "pass" else ("策略等待" if strategy_wait else "数据等待" if market_data_wait else "需要处理")
     return Check(
         f"{market}_sim_loop",
         status,
-        f"{market} 模拟盘闭环{'正常' if status == 'pass' else '需要处理'}",
+        f"{market} 模拟盘闭环{state_label}",
         {
             "market": market,
             "cron_installed": cron_installed,
@@ -1204,6 +1245,8 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
             "market_session": session_state,
             "fail_reasons": hard_fail_reasons,
             "warn_reasons": warn_reasons,
+            "diagnostic_class": diagnostic_class,
+            "execution_fault": execution_fault,
         },
         severity="error" if status == "fail" else ("warn" if status == "warn" else "info"),
     )

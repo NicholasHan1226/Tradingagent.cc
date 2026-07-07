@@ -265,6 +265,19 @@ def check_review(review_path: Path | None = None) -> Check:
     review_path = review_path or CN_FUTURES_REVIEW
     rows = _read_jsonl(review_path)
     latest = rows[-1] if rows else {}
+    hold_summary = latest.get("hold_reason_summary") if isinstance(latest.get("hold_reason_summary"), dict) else {}
+    hold_by_reason = hold_summary.get("by_reason") if isinstance(hold_summary.get("by_reason"), dict) else {}
+    latest_hold_count = int(latest.get("hold_count") or hold_summary.get("total") or 0) if latest else 0
+    top_hold_reason = ""
+    if hold_by_reason:
+        top_hold_reason = max(hold_by_reason.items(), key=lambda item: int(item[1] or 0))[0]
+    sample_phase = "missing_sim_sample"
+    if int(latest.get("filled_count") or 0) > 0:
+        sample_phase = "filled_sample"
+    elif latest_hold_count > 0 and top_hold_reason in {"style_session_not_allowed", "night_session_not_allowed"}:
+        sample_phase = "no_night_session"
+    elif latest_hold_count > 0:
+        sample_phase = "strategy_hold"
     details = {
         "path": str(review_path.relative_to(ROOT)) if review_path.is_relative_to(ROOT) else str(review_path),
         "exists": review_path.exists(),
@@ -277,9 +290,13 @@ def check_review(review_path: Path | None = None) -> Check:
         "latest_has_bar_time": bool(latest.get("latest_bar_time") or latest.get("bar_time")),
         "latest_real_trading_enabled": bool(latest.get("real_trading_enabled")),
         "latest_filled_count": int(latest.get("filled_count") or 0) if latest else 0,
+        "latest_hold_count": latest_hold_count,
+        "latest_top_hold_reason": top_hold_reason,
+        "latest_sample_phase": sample_phase if latest else "",
         "latest_error_count": int(latest.get("error_count") or 0) if latest else 0,
         "latest_error_summary": latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {},
         "latest_style_health": latest.get("style_health") if isinstance(latest.get("style_health"), dict) else {},
+        "latest_hold_reason_summary": hold_summary,
     }
     if not rows:
         return Check("cn_futures_review", "warn", "CNFutures 复盘样本还未产生", details, severity="warn")
@@ -289,6 +306,10 @@ def check_review(review_path: Path | None = None) -> Check:
         return Check("cn_futures_review", "warn", "CNFutures 5分钟复盘样本有成交但缺少 bar_time", details, severity="warn")
     if details["latest_filled_count"] > 0:
         return Check("cn_futures_review", "pass", "CNFutures 最近复盘已有模拟成交样本", details, severity="info")
+    if sample_phase == "no_night_session":
+        return Check("cn_futures_review", "warn", "CNFutures 最近复盘显示夜盘未授权风格主动不交易", details, severity="warn")
+    if sample_phase == "strategy_hold":
+        return Check("cn_futures_review", "warn", "CNFutures 最近复盘显示策略主动 hold，尚无模拟成交样本", details, severity="warn")
     return Check("cn_futures_review", "warn", "CNFutures 最近复盘存在但尚无模拟成交样本", details, severity="warn")
 
 
