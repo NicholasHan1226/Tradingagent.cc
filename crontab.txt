@@ -31,7 +31,6 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 */5 * * * * /opt/investment/tradingagent/shared/wrappers/job_crypto_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/crypto_sim.log 2>&1
 2-59/10 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_research_probability.sh >> /opt/investment/tradingagent/shared/logs/cron/pm_research_probability_cron.log 2>&1
 */5 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/pm_sim.log 2>&1
-# DISABLED_20260704_hk_deferred: */5 9-16 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_hk_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/hk_sim.log 2>&1
 
 # Pipeline, health, evolution, and review.
 0 9 * * 1-5 /opt/investment/tradingagent/cron/auto_pipeline.sh
