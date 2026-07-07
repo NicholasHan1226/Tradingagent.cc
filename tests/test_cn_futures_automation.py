@@ -320,7 +320,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 "sample_insufficient",
             )
 
-    def test_multi_style_runner_rejects_stale_intraday_bars(self) -> None:
+    def test_multi_style_runner_reports_market_closed_after_session(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
 
@@ -339,6 +339,50 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 signals_dir=tmp_path / "signals",
                 review_path=tmp_path / "cn_futures_reviews.jsonl",
                 now=datetime.fromisoformat("2026-07-03 15:20:00"),
+                max_intraday_bar_age_minutes=10,
+            )
+
+            self.assertEqual(result["state"], "market_closed")
+            self.assertEqual(result["filled_count"], 0)
+            self.assertEqual(result["errors"], [])
+
+    def test_multi_style_runner_rejects_stale_intraday_bars_inside_session(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class StaleInSessionReader(FakeFuturesReader):
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
+                if market != "Futures" or interval != "5min":
+                    return []
+                return [
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:30:00", "close": 3400, "volume": 1000},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:35:00", "close": 3450, "volume": 1000},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:40:00", "close": 3500, "volume": 1000},
+                ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = StaleInSessionReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 1},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.01}},
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-03 14:56:00"),
                 max_intraday_bar_age_minutes=10,
             )
 

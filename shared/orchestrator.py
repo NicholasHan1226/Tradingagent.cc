@@ -1601,6 +1601,7 @@ def _sim_no_trade_explanation(
     risk_rejections: list[dict[str, Any]],
     execution_skips: list[dict[str, Any]],
     errors: list[dict[str, Any]],
+    score_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if filled_count > 0:
         category = "filled"
@@ -1662,6 +1663,41 @@ def _sim_no_trade_explanation(
         "sample_risk_rejections": risk_rejections[:10],
         "sample_execution_skips": execution_skips[:10],
         "sample_errors": errors[:5],
+        "score_diagnostics": score_diagnostics or {},
+    }
+
+
+def _score_diagnostics(scores_by_symbol: dict[str, dict[str, Any]], *, limit: int = 10) -> dict[str, Any]:
+    dimensions = ("macro", "event", "fundamental", "capital", "technical", "sentiment")
+    rows: list[tuple[float, str, dict[str, Any]]] = []
+    neutral_counts = {name: 0 for name in dimensions}
+    missing_counts = {name: 0 for name in dimensions}
+    for symbol, score in scores_by_symbol.items():
+        if not isinstance(score, dict):
+            continue
+        combined = _safe_float(score.get("combined"), 0.0)
+        for name in dimensions:
+            if name not in score:
+                missing_counts[name] += 1
+                continue
+            value = _safe_float(score.get(name), 0.5)
+            if 0.49 <= value <= 0.51:
+                neutral_counts[name] += 1
+        rows.append((combined, str(symbol), score))
+    rows.sort(key=lambda item: item[0], reverse=True)
+    top_scores = []
+    for combined, symbol, score in rows[: max(1, limit)]:
+        row = {"symbol": symbol, "combined": round(combined, 4)}
+        for name in dimensions:
+            if name in score:
+                row[name] = round(_safe_float(score.get(name), 0.5), 4)
+        top_scores.append(row)
+    return {
+        "scored_count": len(rows),
+        "candidate_threshold": 0.55,
+        "top_scores": top_scores,
+        "neutral_default_like_dimension_counts": neutral_counts,
+        "missing_dimension_counts": missing_counts,
     }
 
 
@@ -2482,6 +2518,7 @@ def run_sim_loop(
         risk_rejections=risk_rejections,
         execution_skips=execution_skips,
         errors=errors,
+        score_diagnostics=_score_diagnostics(scores_by_symbol) if str(market).lower() == "ashare" and len(candidates) <= 0 else None,
     )
 
     return {

@@ -156,7 +156,7 @@ class AshareAdapter(MarketAdapter):
             "shadow_capital": 200_000.0,
             "portfolio_method": "conviction_weighted",
             "regime": "ashare_default",
-            "score_universe_limit": 200,
+            "score_universe_limit": 500,
             "max_candidates": 3,
             "max_portfolio_positions": 3,
             "default_price": 0.0,

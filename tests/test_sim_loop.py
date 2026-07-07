@@ -608,6 +608,10 @@ class SimLoopTest(unittest.TestCase):
 
         self.assertEqual(result["candidate_count"], 0)
         self.assertEqual(result["filled_count"], 0)
+        diagnostics = result["no_trade_explanation"]["score_diagnostics"]
+        self.assertEqual(diagnostics["scored_count"], 2)
+        self.assertEqual(diagnostics["candidate_threshold"], 0.55)
+        self.assertEqual(diagnostics["top_scores"][0]["combined"], 0.95)
         self.assertEqual(self.executed_orders, [])
 
     def test_run_sim_loop_ashare_fails_closed_when_candidate_pool_errors(self) -> None:

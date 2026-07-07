@@ -756,6 +756,39 @@ def run_multi_style_simulation(
         errors.append({"stage": "universe", "market": MARKET, "error": "empty_futures_universe"})
     if not styles:
         errors.append({"stage": "strategy", "market": MARKET, "error": "empty_strategy_styles"})
+    if cadence_value != "daily" and session_bucket == "closed":
+        review = append_review(
+            date=date,
+            market=MARKET,
+            records=[],
+            errors=[],
+            holds=[],
+            path=review_path,
+            position_pnl_summary=_compute_position_pnl_summary(signals_dir),
+        )
+        return {
+            "market": MARKET,
+            "reader_market": READER_MARKET,
+            "date": date,
+            "cadence": cadence_value,
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "state": "market_closed",
+            "session": "closed",
+            "universe_count": len(universe),
+            "style_count": len(styles),
+            "record_count": 0,
+            "filled_count": 0,
+            "records": [],
+            "errors": [],
+            "holds": [],
+            "hold_count": 0,
+            "hold_reason_summary": review.get("hold_reason_summary", {}),
+            "review": {**review, "state": "market_closed"},
+            "real_trading_enabled": False,
+            "generated_at": _now_iso(),
+            "max_intraday_bar_age_minutes": max_intraday_bar_age_minutes,
+        }
 
     for style_name, style_config in styles.items():
         style = dict(style_config or {})
