@@ -132,6 +132,7 @@
 ### 2026-07-07 A股健康检查 advisory 收口
 
 - [x] `shared/runtime_test/market_health.py` 将“全部为 `outside_ashare_regular_session` 的 A股链路验证样本”从 warn 降为 pass/info advisory；样本仍在 details 中展示，并继续隔离出策略绩效/方向命中/自我演化口径。
+- [x] A股开盘/盘中验收读取 `ashare_no_trade_explanations.jsonl` 时保留 `score_diagnostics`，空池告警可直接展示已评分数量、候选阈值、Top 分数和维度中性/缺失情况，避免只看到 `no_candidates` 而无法判断是数据不足还是确实无人过线。
 - [x] A股资金计划对账接入本地模拟样本质量：若资金计划早于 outside-session 链路验证样本快照且不一致，显示 pass/info advisory；若是真实策略样本后的资金计划滞后、缺计划、来源缺失、账本/快照不一致，仍保持 warn/fail。
 - [x] A股失败/回执健康检查同步接入样本质量：纯 outside-session 链路验证样本不再要求策略成交回执，显示 pass/info advisory；失败订单、真实策略成交或缺来源样本仍保持 warn。
 - [x] 新增/更新 `tests/test_market_health.py` 覆盖链路验证样本 advisory、资金计划 validation-only advisory 和回执 validation-only advisory，保留真实错配/缺来源 warn/fail 测试。

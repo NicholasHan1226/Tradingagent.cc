@@ -273,6 +273,7 @@ def _latest_no_trade_explanation(path: Path, date: str) -> dict[str, Any]:
                 "sample_risk_rejections": explanation.get("sample_risk_rejections", [])[:5],
                 "sample_execution_skips": explanation.get("sample_execution_skips", [])[:5],
                 "sample_errors": explanation.get("sample_errors", [])[:3],
+                "score_diagnostics": explanation.get("score_diagnostics", {}),
             }
     return {}
 

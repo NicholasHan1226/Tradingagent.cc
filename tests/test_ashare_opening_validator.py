@@ -245,6 +245,11 @@ class AshareOpeningValidatorTest(unittest.TestCase):
                         "category": "all_rejected_by_risk",
                         "action": "review_risk_rejections",
                         "counts": {"risk_rejections": 3},
+                        "score_diagnostics": {
+                            "scored_count": 500,
+                            "candidate_threshold": 0.55,
+                            "top_scores": [{"symbol": "000623.SZ", "combined": 0.6764}],
+                        },
                     },
                 }
             )
@@ -273,6 +278,8 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["no_trade_explanation"]["category"], "all_rejected_by_risk")
         self.assertEqual(report["no_trade_explanation"]["next_action"], "review_risk_rejections")
         self.assertEqual(report["no_trade_explanation"]["latest_no_trade_log"]["counts"]["risk_rejections"], 3)
+        self.assertEqual(report["no_trade_explanation"]["latest_no_trade_log"]["score_diagnostics"]["scored_count"], 500)
+        self.assertEqual(report["no_trade_explanation"]["latest_no_trade_log"]["score_diagnostics"]["top_scores"][0]["symbol"], "000623.SZ")
 
 
 if __name__ == "__main__":
