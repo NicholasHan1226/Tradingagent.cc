@@ -533,6 +533,29 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
         self.assertEqual(check.details["execution_fault"], False)
 
+    def test_crypto_sim_market_loop_marks_strategy_wait_even_with_existing_ledger(self) -> None:
+        ledger = self.root / "shared/logs/sim_ledger/crypto/aggressive/trade_journal.jsonl"
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text('{"symbol":"BTCUSDT","side":"buy","fill_price":60000,"fill_qty":0.01}\n', encoding="utf-8")
+
+        with patch.object(
+            market_health,
+            "_probe_market_data",
+            return_value={
+                "status": "warn",
+                "reason": "crypto_momentum_threshold_not_met",
+                "priced_signal_count": 5,
+                "strategy_candidate_count": 0,
+            },
+        ):
+            check = market_health._check_sim_market_loop("crypto", "job_crypto_sim.sh")
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["ledger"]["trade_rows"], 1)
+        self.assertIn("crypto_waiting_for_momentum_signal", check.details["warn_reasons"])
+        self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
+        self.assertEqual(check.details["execution_fault"], False)
+
     def test_crypto_sim_market_loop_fails_when_candidate_exists_but_no_ledger(self) -> None:
         with patch.object(
             market_health,

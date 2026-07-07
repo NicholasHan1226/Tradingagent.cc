@@ -1162,24 +1162,11 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
             hard_fail_reasons.append("market_data_missing")
     elif data.get("status") == "warn":
         warn_reasons.append("market_data_degraded")
+        market_wait_reason = _sim_market_wait_reason(market, str(data.get("reason") or ""))
+        if market_wait_reason:
+            warn_reasons.append(market_wait_reason)
     if market not in {"ashare", "cn_futures"} and int(ledger.get("trade_rows") or 0) <= 0:
-        if market == "pm" and data.get("reason") in {"pm_market_rows_empty", "pm_prices_missing", "pm_model_probability_missing", "pm_model_edge_below_threshold"}:
-            if data.get("reason") in {"pm_market_rows_empty", "pm_prices_missing"}:
-                warn_reasons.append("pm_waiting_for_market_data")
-            elif data.get("reason") == "pm_model_probability_missing":
-                warn_reasons.append("pm_waiting_for_marketgraph_probability")
-            else:
-                warn_reasons.append("pm_waiting_for_model_edge")
-        elif market == "crypto" and data.get("reason") in {
-            "crypto_klines_empty",
-            "crypto_insufficient_priced_rows",
-            "crypto_momentum_threshold_not_met",
-        }:
-            if data.get("reason") == "crypto_klines_empty":
-                warn_reasons.append("crypto_waiting_for_market_data")
-            else:
-                warn_reasons.append("crypto_waiting_for_momentum_signal")
-        else:
+        if not _sim_market_wait_reason(market, str(data.get("reason") or "")):
             hard_fail_reasons.append("sim_trade_ledger_empty")
     if market == "ashare" and int(ledger.get("trade_rows") or 0) <= 0 and samples_expected:
         warn_reasons.append("server_local_sim_has_no_production_trades_yet")
@@ -1250,6 +1237,22 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
         },
         severity="error" if status == "fail" else ("warn" if status == "warn" else "info"),
     )
+
+
+def _sim_market_wait_reason(market: str, reason: str) -> str:
+    if market == "pm":
+        if reason in {"pm_market_rows_empty", "pm_prices_missing"}:
+            return "pm_waiting_for_market_data"
+        if reason == "pm_model_probability_missing":
+            return "pm_waiting_for_marketgraph_probability"
+        if reason == "pm_model_edge_below_threshold":
+            return "pm_waiting_for_model_edge"
+    if market == "crypto":
+        if reason == "crypto_klines_empty":
+            return "crypto_waiting_for_market_data"
+        if reason in {"crypto_insufficient_priced_rows", "crypto_momentum_threshold_not_met"}:
+            return "crypto_waiting_for_momentum_signal"
+    return ""
 
 
 def run_sim_market_health(markets: tuple[str, ...] = SIM_MARKETS) -> dict[str, Any]:
