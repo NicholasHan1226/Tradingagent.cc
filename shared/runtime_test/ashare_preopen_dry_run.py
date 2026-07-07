@@ -32,6 +32,16 @@ HISTORY = ROOT / "shared/runtime_test/ashare_preopen_dry_run_history.jsonl"
 CANDIDATE_THRESHOLD = 0.55
 MIN_SYMBOLS = 1000
 DEFAULT_SCORE_LIMIT = 10
+ASHARE_STOCK_SQL_FILTER = """
+(
+    b.symbol LIKE '000%.SZ' OR b.symbol LIKE '001%.SZ' OR
+    b.symbol LIKE '002%.SZ' OR b.symbol LIKE '003%.SZ' OR
+    b.symbol LIKE '300%.SZ' OR b.symbol LIKE '301%.SZ' OR
+    b.symbol LIKE '600%.SH' OR b.symbol LIKE '601%.SH' OR
+    b.symbol LIKE '603%.SH' OR b.symbol LIKE '605%.SH' OR
+    b.symbol LIKE '688%.SH'
+)
+"""
 
 
 def _now_cn(value: str | None = None) -> datetime:
@@ -103,6 +113,7 @@ def _latest_liquid_universe_from_read_model(
         has_amount = "amount" in daily_columns
         has_assets = bool(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='market_assets'").fetchone())
         amount_expr = "COALESCE(b.amount, 0)" if has_amount else "0"
+        order_clause = f"{amount_expr} DESC, b.symbol ASC" if has_amount else "b.symbol ASC"
         join_assets = "LEFT JOIN market_assets a ON a.market=b.market AND a.symbol=b.symbol" if has_assets else ""
         name_expr = "COALESCE(a.name, '')" if has_assets else "''"
         status_expr = "COALESCE(a.status, '')" if has_assets else "''"
@@ -110,8 +121,9 @@ def _latest_liquid_universe_from_read_model(
             f"""
             WITH latest AS (
                 SELECT MAX(trade_date) AS trade_date
-                FROM market_bars_daily
-                WHERE market='Ashare'
+                FROM market_bars_daily b
+                WHERE b.market='Ashare'
+                  AND {ASHARE_STOCK_SQL_FILTER}
                   AND trade_date <= ?
                   AND close > 0
             )
@@ -123,9 +135,10 @@ def _latest_liquid_universe_from_read_model(
             FROM market_bars_daily b
             {join_assets}
             WHERE b.market='Ashare'
+              AND {ASHARE_STOCK_SQL_FILTER}
               AND b.trade_date = (SELECT trade_date FROM latest)
               AND b.close > 0
-            ORDER BY {amount_expr} DESC, b.symbol ASC
+            ORDER BY {order_clause}
             LIMIT ?
             """,
             (date, max(1, int(limit) * 4)),

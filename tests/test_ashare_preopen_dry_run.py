@@ -160,6 +160,23 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertFalse(report["execution_gate"]["ready"])
         self.assertIn("candidate_pool:no_candidate_layer_after_scoring", report["warnings"])
 
+    def test_uses_latest_regular_stock_date_when_bonds_are_newer(self) -> None:
+        path = self._db(latest_date="20260706", count=2)
+        conn = sqlite3.connect(path)
+        conn.executemany(
+            "INSERT INTO market_bars_daily VALUES (?, ?, ?, ?)",
+            [
+                ("Ashare", "110073.SH", "20260707", 106.88),
+                ("Ashare", "110074.SH", "20260707", 271.31),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        universe = ashare_preopen_dry_run._latest_liquid_universe_from_read_model(path, "20260708", limit=2)
+
+        self.assertEqual(universe, ["600000.SH", "600001.SH"])
+
     def test_fails_when_daily_data_is_stale(self) -> None:
         reader = FakeAshareReader()
         with mock.patch.object(ashare_preopen_dry_run.AshareAdapter, "get_sim_account", return_value=self._account()):
