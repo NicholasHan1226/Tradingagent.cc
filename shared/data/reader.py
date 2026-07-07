@@ -793,8 +793,11 @@ class TradingagentDataReader:
                 fallback,
                 start=start or None,
                 end=end or None,
+                market=market or None,
+                symbol=symbol or None,
+                subject_code=self._to_ts_code(market or "", symbol) if symbol else None,
             )
-            if isinstance(result, list) and result and not self._has_event_payload(result):
+            if isinstance(result, list) and (not result or not self._has_event_payload(result)):
                 fallback_rows = fallback()
                 if fallback_rows:
                     self._last_api_used = False

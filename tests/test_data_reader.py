@@ -322,6 +322,7 @@ class FakeAPIClient:
         self.market_data_calls: list[dict[str, object]] = []
         self.realtime_calls: list[dict[str, object]] = []
         self.pm_price_calls: list[dict[str, object]] = []
+        self.event_calls: list[dict[str, object]] = []
 
     def get_tushare(self, api_name, ts_code=None, start_date=None, end_date=None, **kwargs):
         self.tushare_calls.append({
@@ -371,6 +372,17 @@ class FakeAPIClient:
         self.pm_price_calls.append({"market_id": market_id, "limit": limit})
         return [{"market_id": market_id, "price": 0.42}]
 
+    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
+        self.event_calls.append({
+            "start": start,
+            "end": end,
+            "market": market,
+            "symbol": symbol,
+            "subject_code": subject_code,
+            "event_type": event_type,
+        })
+        return [{"market": market, "symbol": symbol, "event_hash": "evt-api", "title": "api event"}]
+
 
 class EmptyShellAPIClient(FakeAPIClient):
     def get_market_data(self, ts_code, start=None, end=None, freq="daily"):
@@ -381,8 +393,29 @@ class EmptyShellAPIClient(FakeAPIClient):
         self.realtime_calls.append({"ts_code": ts_code, "date": date, "market": market})
         return [{}]
 
-    def get_events(self, start=None, end=None):
+    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
+        self.event_calls.append({
+            "start": start,
+            "end": end,
+            "market": market,
+            "symbol": symbol,
+            "subject_code": subject_code,
+            "event_type": event_type,
+        })
         return [{}]
+
+
+class EmptyEventsAPIClient(FakeAPIClient):
+    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
+        self.event_calls.append({
+            "start": start,
+            "end": end,
+            "market": market,
+            "symbol": symbol,
+            "subject_code": subject_code,
+            "event_type": event_type,
+        })
+        return []
 
 
 class FakeSharedBars:
@@ -503,6 +536,19 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
 
         self.assertEqual(rows[0]["event_hash"], "evt-fallback")
         self.assertEqual(rows[0]["direction"], "positive")
+        self.assertEqual(api.event_calls[0]["market"], "Ashare")
+        self.assertEqual(api.event_calls[0]["symbol"], "600000")
+        self.assertEqual(api.event_calls[0]["subject_code"], "600000.SH")
+
+    def test_get_events_falls_back_when_api_returns_empty_result(self) -> None:
+        api = EmptyEventsAPIClient()
+        reader = TradingagentDataReader(shared=FakeSharedBars(), api_client=api)
+
+        rows = reader.get_events("Ashare", "600000", "20260708", "20260708")
+
+        self.assertEqual(rows[0]["event_hash"], "evt-fallback")
+        self.assertEqual(api.event_calls[0]["market"], "Ashare")
+        self.assertEqual(api.event_calls[0]["symbol"], "600000")
 
     def test_get_pm_prices_uses_sharedsignals_api(self) -> None:
         api = FakeAPIClient()

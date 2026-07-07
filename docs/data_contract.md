@@ -43,6 +43,18 @@ shells.
 Rows are returned as dictionaries. Missing rows return `[]` or `None` through
 `TradingagentDataReader`.
 
+Event reads use:
+
+- API-first path: SharedSignals `/events?market=<market>&symbol=<symbol>&subject_code=<ts_code>&start=<YYYYMMDD>&end=<YYYYMMDD>`.
+- SQLite fallback: `market_events` filtered by `market`, `symbol`, and
+  `trade_date`.
+- If the HTTP API returns an empty shell or no filtered event candidates,
+  TradingAgent checks the SQLite fallback before concluding no formal event
+  evidence exists.
+- A-share code matching accepts `600276.SH`, `SH600276`, and `600276` shapes on
+  the upstream event side; this is only a read-side matching guard and does not
+  create, promote, or reinterpret events.
+
 5-minute intraday reads use:
 
 - API-first path: SharedSignals `/realtime_5min?market=<market>&ts_code=<symbol>&date=<YYYYMMDD>`.

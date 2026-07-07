@@ -425,10 +425,11 @@
 - [x] 新增 `cron/AGENTS.md`：约束 cron wrapper 不内嵌 broker 凭据、实盘 payload 或审批捷径。
 - [x] 生产 crontab 已安装多市场模拟与健康检查脚本；真实交易保持 fail-closed，多市场生产闭环继续按真实交易时段积累样本。
 
-### SharedSignals API 15/15 端点迁移对齐（2026-07-03）
+### SharedSignals API 15/15 端点迁移对齐（2026-07-03；2026-07-08 事件过滤补齐）
 
 - [x] `SharedSignalsAPIClient` 已覆盖 15 个数据端点：trading day、market data、fundamentals、reference、macro、capital flow、events、sentiment、crypto、PM、associations、impacts、industry、realtime 5min、tushare。
 - [x] `TradingagentDataReader` 已接入 API-first 访问核心读取路径；API 不可用时回退 SQLite 只读路径并打 degraded 状态。
+- [x] `get_events()` 现在向 SharedSignals `/events` 透传 `market`、`symbol` 和 `subject_code`；API 返回空壳或空候选时会再检查 SQLite 只读 `market_events` fallback，避免把候选层为空误判为正式事件证据也为空。
 - [x] TradingAgent 侧不再把 15/15 客户端视为孤儿代码；MarketGraph 当前生产采集边界已切到 SharedSignals-owned collectors，研究图谱读取仍保留只读文件/DB 兼容路径。
 
 ### 多市场 P2 工具本地实现（2026-07-03）

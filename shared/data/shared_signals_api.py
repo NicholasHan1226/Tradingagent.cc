@@ -179,9 +179,25 @@ class SharedSignalsAPIClient:
         })
 
     def get_events(
-        self, start: str | None = None, end: str | None = None,
+        self,
+        start: str | None = None,
+        end: str | None = None,
+        market: str | None = None,
+        symbol: str | None = None,
+        subject_code: str | None = None,
+        event_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._get("/events", {"start": start or "", "end": end or ""})
+        return self._get(
+            "/events",
+            {
+                "start": start or "",
+                "end": end or "",
+                "market": market or "",
+                "symbol": symbol or "",
+                "subject_code": subject_code or "",
+                "event_type": event_type or "",
+            },
+        )
 
     def get_sentiment(
         self, start: str | None = None, end: str | None = None,
