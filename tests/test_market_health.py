@@ -497,6 +497,7 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["fail_reasons"], [])
         self.assertIn("pm_waiting_for_marketgraph_probability", check.details["warn_reasons"])
+        self.assertNotIn("market_data_degraded", check.details["warn_reasons"])
         self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
         self.assertEqual(check.details["execution_fault"], False)
 
@@ -511,6 +512,7 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["fail_reasons"], [])
         self.assertIn("pm_waiting_for_model_edge", check.details["warn_reasons"])
+        self.assertNotIn("market_data_degraded", check.details["warn_reasons"])
         self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
         self.assertEqual(check.details["execution_fault"], False)
 
@@ -530,6 +532,7 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["fail_reasons"], [])
         self.assertIn("crypto_waiting_for_momentum_signal", check.details["warn_reasons"])
+        self.assertNotIn("market_data_degraded", check.details["warn_reasons"])
         self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
         self.assertEqual(check.details["execution_fault"], False)
 
@@ -553,6 +556,7 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["ledger"]["trade_rows"], 1)
         self.assertIn("crypto_waiting_for_momentum_signal", check.details["warn_reasons"])
+        self.assertNotIn("market_data_degraded", check.details["warn_reasons"])
         self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
         self.assertEqual(check.details["execution_fault"], False)
 

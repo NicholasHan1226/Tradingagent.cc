@@ -34,6 +34,7 @@
 - 维护、回补、烟测、修复重跑和 bootstrap 样本若会写入 `shared/logs/sim_ledger/` 或 `shared/review/<market>/`，必须写入 `exclude_from_dashboard=true`，或在 `run_context` / `run_mode` / `run_source` / `sample_type` 中标记 `maintenance`、`backfill`、`smoke`、`repair`、`bootstrap` 或 `dry-run`；生产看板会跳过这些样本，避免维护重跑污染交易量、PnL、复盘和演化输入。
 - 若某个 `shared/logs/sim_ledger/<market>/<style>/positions.json` 已被标记 `exclude_from_dashboard=true`，该风格目录视为隔离状态；后续 `daily_mark_to_market.jsonl` 必须继承该隔离标记，生产看板读取同目录 `daily_mark_to_market.jsonl`、`equity_snapshots.jsonl`、`trade_journal.jsonl` 与对应 `shared/review/<market>/style_performance.jsonl` 风格行时也必须跳过，直到该风格账本被明确重建为干净状态。
 - SharedSignals 行情行是数据，不是交易信号。通用多市场 `run_sim.py` 只能消费显式 `buy/sell` 信号或市场专属策略生成的 `signal_source=explicit_strategy_signal`；如需用价格行做人工烟测，必须设置 `TRADINGAGENT_SIM_ALLOW_PRICE_ONLY_SIGNALS=1`，且烟测样本默认排除看板和复盘口径。
+- A股 simulated 无成交/无订单不能只返回总数；`no_trade_explanation` 必须保留候选层计数、逐候选门禁去向、资金计划决策和组合构建摘要，能解释“有 candidate 但 0 order”到底卡在价格、风控、资金容量、整手预算、重复幂等还是执行跳过。
 - `shared/review/data/` 是复盘证据唯一写入面; `outputs/` 只放可再生产物, 不回写事实。
 - `shared/signals/` 若仍存在视为废弃兼容路径, 只能重定向或只读迁移, 不再新增事实写入。
 - `executions/` 相关事实应归并到 `signals/filled/` 与 `shared/accounting/`, 不再形成平行账本。

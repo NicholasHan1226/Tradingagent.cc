@@ -1618,6 +1618,10 @@ def _sim_no_trade_explanation(
     execution_skips: list[dict[str, Any]],
     errors: list[dict[str, Any]],
     score_diagnostics: dict[str, Any] | None = None,
+    candidate_layer_breakdown: dict[str, Any] | None = None,
+    candidate_decision_trace: list[dict[str, Any]] | None = None,
+    capital_plan_decision: dict[str, Any] | None = None,
+    portfolio_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if filled_count > 0:
         category = "filled"
@@ -1680,7 +1684,39 @@ def _sim_no_trade_explanation(
         "sample_execution_skips": execution_skips[:10],
         "sample_errors": errors[:5],
         "score_diagnostics": score_diagnostics or {},
+        "candidate_layer_breakdown": candidate_layer_breakdown or {},
+        "candidate_decision_trace": (candidate_decision_trace or [])[:10],
+        "capital_plan_decision": capital_plan_decision or {},
+        "portfolio_decision": portfolio_decision or {},
     }
+
+
+def _candidate_layer_breakdown(pool: dict[str, Any], universe_count: int) -> dict[str, int]:
+    def _count(name: str) -> int:
+        values = pool.get(name, []) if isinstance(pool, dict) else []
+        return len(values or []) if isinstance(values, list) else 0
+
+    return {
+        "holdings": _count("holdings"),
+        "watch": _count("watch"),
+        "candidate": _count("candidate"),
+        "fundamental": _count("fundamental"),
+        "universe": universe_count,
+    }
+
+
+def _candidate_score_snapshot(symbol: str, score: dict[str, Any]) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+        "symbol": symbol,
+        "combined": round(_safe_float(score.get("combined"), 0.0), 4),
+        "sector": str(score.get("sector", "unknown")),
+    }
+    if "evidence_coverage" in score:
+        snapshot["evidence_coverage"] = round(_safe_float(score.get("evidence_coverage"), 0.0), 4)
+    missing = score.get("missing_evidence_dimensions")
+    if isinstance(missing, list):
+        snapshot["missing_evidence_dimensions"] = [str(item) for item in missing[:6]]
+    return snapshot
 
 
 def _score_diagnostics(
@@ -2214,6 +2250,15 @@ def run_sim_loop(
         _candidate_symbols(pool, list(scores_by_symbol), market=market, capital_layer=capital_layer),
         scores_by_symbol,
     )[:max_candidates]
+    layer_breakdown = _candidate_layer_breakdown(pool, len(universe))
+    candidate_decisions: dict[str, dict[str, Any]] = {
+        str(symbol): {
+            **_candidate_score_snapshot(str(symbol), scores_by_symbol.get(str(symbol), {})),
+            "layer": "candidate",
+            "status": "selected_for_review",
+        }
+        for symbol in candidates
+    }
     candidate_layers = {
         str(symbol): "candidate"
         for symbol in ((pool.get("candidate", []) if isinstance(pool, dict) else []) or [])
@@ -2268,7 +2313,12 @@ def run_sim_loop(
         volatility = _latest_volatility(reader, mapped_market, mapped_symbol, date, default_volatility)
         if price <= 0:
             skipped_candidates.append({"symbol": symbol, "reason": "missing_or_non_positive_price", "price": price, "capital_layer": capital_layer})
+            candidate_decisions.setdefault(symbol, {"symbol": symbol})["price"] = price
+            candidate_decisions[symbol]["status"] = "dropped"
+            candidate_decisions[symbol]["drop_reason"] = "missing_or_non_positive_price"
             continue
+        candidate_decisions.setdefault(symbol, {"symbol": symbol})["price"] = round(price, 4)
+        candidate_decisions[symbol]["belief_score"] = round(_safe_float(debate.get("belief_score"), 0.5), 4)
         proposed_weight = _safe_stage(
             "portfolio.position_sizer",
             errors,
@@ -2299,6 +2349,11 @@ def run_sim_loop(
             risk = {"approved": False, "adjusted_weight": 0.0, "reasons": ["invalid risk result"]}
         risk["capital_layer"] = capital_layer
         risk["account_type"] = account_type
+        candidate_decisions[symbol]["proposed_weight"] = round(_safe_float(proposed_weight, 0.0), 6)
+        candidate_decisions[symbol]["risk_approved"] = bool(risk.get("approved"))
+        candidate_decisions[symbol]["risk_adjusted_weight"] = round(_safe_float(risk.get("adjusted_weight"), 0.0), 6)
+        if risk.get("reasons"):
+            candidate_decisions[symbol]["risk_reasons"] = risk.get("reasons", [])
         risk_audit = _record_audit(
             deps,
             "risk",
@@ -2319,7 +2374,10 @@ def run_sim_loop(
                     "capital_layer": capital_layer,
                 }
             )
+            candidate_decisions[symbol]["status"] = "dropped"
+            candidate_decisions[symbol]["drop_reason"] = "risk_rejected"
             continue
+        candidate_decisions[symbol]["status"] = "risk_approved"
         orders_for_portfolio.append({
             "ts_code": symbol,
             "belief_score": _safe_float(debate.get("belief_score"), 0.5),
@@ -2394,6 +2452,28 @@ def run_sim_loop(
         max_portfolio_positions=max_portfolio_positions,
     )
     position_capacity = max(base_position_capacity, replacement_capacity)
+    allowed_buy_symbols = {
+        str(order.get("ts_code") or "")
+        for order in [
+            order
+            for order in ranked_orders_for_portfolio
+            if str(order.get("ts_code") or "") not in planned_sell_symbols
+        ][:position_capacity]
+    }
+    for order in ranked_orders_for_portfolio:
+        symbol = str(order.get("ts_code") or "")
+        if not symbol or symbol not in candidate_decisions:
+            continue
+        if symbol in planned_sell_symbols:
+            candidate_decisions[symbol]["status"] = "dropped"
+            candidate_decisions[symbol]["drop_reason"] = "rebalance_planned_sell"
+        elif symbol not in allowed_buy_symbols:
+            candidate_decisions[symbol]["status"] = "dropped"
+            candidate_decisions[symbol]["drop_reason"] = (
+                "capital_plan_capacity_zero" if position_capacity <= 0 else "position_capacity_limit"
+            )
+        else:
+            candidate_decisions[symbol]["status"] = "portfolio_input"
     orders_for_portfolio = [
         order
         for order in ranked_orders_for_portfolio
@@ -2431,6 +2511,51 @@ def run_sim_loop(
         capital_plan=capital_plan,
         capital=capital,
     )
+    portfolio_buy_positions = {
+        str(row.get("ts_code") or ""): row
+        for row in (portfolio.get("positions", []) or [])
+        if isinstance(row, dict) and row.get("ts_code")
+    }
+    for symbol in allowed_buy_symbols:
+        if symbol not in candidate_decisions:
+            continue
+        position = portfolio_buy_positions.get(symbol)
+        shares = _safe_float(position.get("shares"), 0.0) if isinstance(position, dict) else 0.0
+        if not isinstance(position, dict):
+            candidate_decisions[symbol]["status"] = "dropped"
+            candidate_decisions[symbol]["drop_reason"] = "portfolio_constructor_empty"
+        elif shares <= 0:
+            candidate_decisions[symbol]["status"] = "dropped"
+            candidate_decisions[symbol]["drop_reason"] = "lot_size_or_budget_zero"
+            candidate_decisions[symbol]["portfolio_shares"] = shares
+        else:
+            candidate_decisions[symbol]["status"] = "portfolio_position"
+            candidate_decisions[symbol]["portfolio_shares"] = shares
+            candidate_decisions[symbol]["portfolio_amount"] = round(_safe_float(position.get("amount"), 0.0), 2)
+    capital_plan_decision = {
+        "enabled": bool(capital_plan.get("enabled")),
+        "risk_mode": capital_plan.get("risk_mode"),
+        "target_positions": capital_plan.get("target_positions"),
+        "max_new_positions": capital_plan.get("max_new_positions"),
+        "position_capacity": position_capacity,
+        "base_position_capacity": base_position_capacity,
+        "replacement_capacity": replacement_capacity,
+        "available_cash": round(account_cash_available, 2),
+        "reasons": capital_plan.get("reasons", []),
+        "notes": capital_plan.get("notes", []),
+    }
+    portfolio_decision = {
+        "risk_approved_candidates": len(orders_for_portfolio),
+        "ranked_risk_approved_candidates": len(ranked_orders_for_portfolio),
+        "portfolio_positions": len(portfolio_buy_positions),
+        "planned_sell_count": len(planned_sell_symbols),
+        "allowed_buy_count": len(allowed_buy_symbols),
+        "lot_or_budget_zero_count": sum(
+            1
+            for row in candidate_decisions.values()
+            if row.get("drop_reason") == "lot_size_or_budget_zero"
+        ),
+    }
     capital_plan_log = _safe_stage(
         "review.capital_plan_log",
         errors,
@@ -2649,7 +2774,11 @@ def run_sim_loop(
         risk_rejections=risk_rejections,
         execution_skips=execution_skips,
         errors=errors,
-        score_diagnostics=_score_diagnostics(scores_by_symbol, actual_candidate_count=len(candidates)) if str(market).lower() == "ashare" and len(candidates) <= 0 else None,
+        score_diagnostics=_score_diagnostics(scores_by_symbol, actual_candidate_count=len(candidates)) if str(market).lower() == "ashare" else None,
+        candidate_layer_breakdown=layer_breakdown if str(market).lower() == "ashare" else None,
+        candidate_decision_trace=list(candidate_decisions.values()) if str(market).lower() == "ashare" else None,
+        capital_plan_decision=capital_plan_decision if str(market).lower() == "ashare" else None,
+        portfolio_decision=portfolio_decision if str(market).lower() == "ashare" else None,
     )
 
     return {
@@ -2675,6 +2804,10 @@ def run_sim_loop(
         "pending_count": pending_count,
         "duplicate_count": duplicate_count,
         "no_trade_explanation": no_trade_explanation,
+        "candidate_layer_breakdown": layer_breakdown,
+        "candidate_decision_trace": list(candidate_decisions.values())[:20],
+        "capital_plan_decision": capital_plan_decision,
+        "portfolio_decision": portfolio_decision,
         "capital_plan": capital_plan,
         "capital_plan_log": capital_plan_log,
         "rebalance": rebalance,

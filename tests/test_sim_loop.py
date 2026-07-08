@@ -587,6 +587,22 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["order_count"], 0)
         self.assertEqual(result["filled_count"], 0)
         self.assertEqual(self.executed_orders, [])
+        self.assertEqual(result["no_trade_explanation"]["category"], "no_portfolio_orders")
+        self.assertEqual(result["no_trade_explanation"]["score_diagnostics"]["actual_candidate_count"], 3)
+        self.assertEqual(result["candidate_layer_breakdown"]["candidate"], 3)
+        self.assertEqual(result["capital_plan_decision"]["risk_mode"], "defensive")
+        self.assertEqual(result["capital_plan_decision"]["target_positions"], 0)
+        self.assertEqual(result["capital_plan_decision"]["position_capacity"], 0)
+        self.assertEqual(result["portfolio_decision"]["ranked_risk_approved_candidates"], 3)
+        self.assertEqual(result["portfolio_decision"]["allowed_buy_count"], 0)
+        self.assertEqual(
+            {row["symbol"]: row["drop_reason"] for row in result["candidate_decision_trace"]},
+            {
+                "AAA": "capital_plan_capacity_zero",
+                "BBB": "capital_plan_capacity_zero",
+                "CCC": "capital_plan_capacity_zero",
+            },
+        )
 
     def test_run_sim_loop_ashare_does_not_trade_watch_layer(self) -> None:
         deps = self._multi_candidate_deps()

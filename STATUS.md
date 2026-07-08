@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-08 (模拟资金口径、期货午休新鲜度修复、旧 USD 本金隔离工具)
+> 最后更新：2026-07-08 (A股 no-trade 逐候选归因、PM/Crypto 策略等待分类、旧 USD 本金隔离工具)
 
 ---
 
@@ -50,6 +50,7 @@
 - **A股复盘样本口径**：A股日报/周报/归因默认只读取 server-local `shared/logs/local_sim/local_sim_trades.jsonl`；旧 `shared/logs/sim_ledger/ashare/<style>/trade_journal.jsonl` 风格账本视为退役历史样本，不再进入默认复盘输入。
 - **A股开盘验收与无交易分层**：`ashare_opening_validator` 的 first-sample 报告已把 5分钟 bar、信号状态、服务器本地模拟成交、签名回执、复盘行数和 no-trade 分类汇总到同一报告；若当天没有交易，会优先读取最新 `shared/logs/ashare_no_trade_explanations.jsonl`，把无候选、无信号卡、风控全拒、资金/组合构建阻塞、重复幂等、执行跳过、执行失败、回执缺失和复盘待生成区分开。缺回执只在当天已经出现服务器本地模拟成交后才告警，避免把“尚无成交”误报成“成交后缺回执”。`opening_acceptance.py` 短文本同步展示 bar/信号/成交/回执/复盘计数。
 - **A股科学空跑分类**：2026-07-08 起，A股首样本验收与模拟盘总巡检会把带有最新 no-trade 日志解释的 `no_portfolio_orders`、风控全拒、重复幂等、无候选/无信号等科学空跑归为 pass/策略等待观察态，并保留 info 级原因；没有 no-trade 日志解释、数据缺失、执行失败或已成交后缺回执仍保持 warn/fail，避免告警噪音掩盖真实故障。
+- **A股 no-trade 逐候选归因**：2026-07-08 起，A股 simulated `run_sim_loop` 在无成交或无订单时不只写 counts，还会在 `no_trade_explanation` 与返回值中附带 `candidate_layer_breakdown`、`candidate_decision_trace`、`capital_plan_decision` 和 `portfolio_decision`。因此 `3213 universe / 3 candidates / 0 orders` 这类状态必须能进一步解释为价格缺失、风控拒绝、资金计划容量为 0、组合构建为空、整手/预算为 0、重复幂等或执行跳过等具体门禁；`score_diagnostics` 对 A股不再只在 candidate 为 0 时输出，候选存在但未成单时也保留评分/证据分布。
 - **盘前验收修复**：2026-07-07 已修复 `job_opening_acceptance` 生产 cron 依赖当前工作目录导致寻找 `/home/marketgraph/shared/...` 失败的问题，wrapper 会强制切到 `TRADINGAGENT_ROOT` 并使用绝对脚本路径；统一开盘验收会写 `shared/runtime_test/opening_acceptance_latest.json` 与 history，并在 warn/fail 时走系统通道邮件，cron 使用 `--exit-zero` 避免同一异常重试三次刷屏。SharedSignals 盘前核心 API 探针改用轻量 `/cache/status` + `/capabilities`，`/health` 超时只作为降级项；A股盘前日线检查新增 `latest_daily_age_days`，日线过旧会提前 warn，不再只因历史日线数量足够而误判通过。
 - **A股旧测试账本归档**：新增 `shared/runtime_test/archive_ashare_legacy_ledgers.py`，只归档 `shared/logs/sim_ledger/ashare/*` 中非 canonical `ashare_sim` 的旧风格账本，默认 dry run，`--apply` 时移动到 `shared/logs/archive/ashare_legacy_style_ledgers/<batch>` 并写 manifest；不得删除或归档 `ashare_sim`。旧样本不再作为活跃输入，确认归档 manifest 后可按批次永久删除归档副本。
 - **A股只读研究证据**：`Ashare/research_evidence.py` 与 `job_ashare_research_evidence.sh` 统一输出 opening auction 异常、closing momentum 候选、204001 逆回购预估收益和 A股风格证据；集合竞价缺少 09:15-09:25 数据时会显式标记 `first_5m_proxy`，标的选择会优先读取 SharedSignals 当日 `rt_min/stk_mins` 已有分钟线的样本，再回退资产表，避免把“扫错无分钟线样本”误判为全市场无数据；204001 优先读取 SharedSignals `/market_data` 日线收益率，尾盘候选带 `next_trading_day` 与 open/high/close 兑现标签（数据未到时 `pending_next_day_bar`），风格资金按 `shared/review/ashare/style_weights.json` 运行时 active 权重切分 200,000 元虚拟预算；结果写入 `shared/review/ashare/research_evidence_latest.json` 与 append-only `research_evidence.jsonl`，固定 `read_only=true`、`real_trading_enabled=false`，不进入 simulated/real 执行队列。
@@ -176,7 +177,7 @@
 - [x] CNFutures 5 分钟 runner 已修正闭市口径：收盘后再次运行返回 `market_closed` 并写正常复盘行，不再把闭市后的最后一根有效 bar 误报为 stale；交易时段内真实 stale 仍保持拦截。
 - [x] CNFutures 开盘/首样本验收已区分 5分钟数据缺失、首模拟样本缺失、策略主动 hold 和夜盘未授权风格不交易；该修复只读复盘 `hold_reason_summary`，不改变模拟成交策略。
 - [x] CNFutures 开盘验收的 read-model SQLite 兜底放宽到 `5min`/`5m`/`5` interval 统一口径，不再锁死 `rt_fut_min` provider；reader 短缺时仍标记 `reader_shortfall`，TradingAgent 不新增独立采集。
-- [x] PM/Crypto 健康检查已把空跑分成 `market_data_wait`、`strategy_wait`、`execution_fault`：缺行情是数据等待（warn），PM 缺 MarketGraph 独立概率/edge 不足或 Crypto 动量阈值未过是策略等待（pass/观察态），只有应成交却无账本才算执行故障。
+- [x] PM/Crypto 健康检查已把空跑分成 `market_data_wait`、`strategy_wait`、`execution_fault`：缺行情是数据等待（warn），PM 缺 MarketGraph 独立概率/edge 不足或 Crypto 动量阈值未过是策略等待（pass/观察态），不再同时混入 `market_data_degraded`；只有应成交却无账本才算执行故障。
 - [x] 前端市场摘要新增 `runtimeState` / `executionFault`，市场切换后显示“运行中 / 策略等待 / 需要处理 / 等待数据”的结果层，避免把所有 warn 误读为系统坏；桌面和移动页面已做真实切换检查。CNFutures 看板摘要已接入 `shared/review/data/cn_futures_sim_reviews.jsonl`，有复盘 hold 样本时不再误显示为“等待数据”。
 - [x] 2026-07-07 盘中已确认的生产症状：A股 job 正常运行但 `candidate_count=0`、无成交、权益约 200,000；CNFutures job 运行但缺 5 分钟 Futures bar、无成交。上述状态不能算“可交易健康”，必须等生产部署后复验 candidate、bar、filled/hold/no-trade 归因。
 

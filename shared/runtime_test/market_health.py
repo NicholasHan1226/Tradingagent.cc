@@ -1208,8 +1208,9 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
         else:
             hard_fail_reasons.append("market_data_missing")
     elif data.get("status") == "warn":
-        warn_reasons.append("market_data_degraded")
         market_wait_reason = _sim_market_wait_reason(market, str(data.get("reason") or ""))
+        if market_wait_reason in {"pm_waiting_for_market_data", "crypto_waiting_for_market_data"} or not market_wait_reason:
+            warn_reasons.append("market_data_degraded")
         if market_wait_reason:
             warn_reasons.append(market_wait_reason)
     if market not in {"ashare", "cn_futures"} and int(ledger.get("trade_rows") or 0) <= 0:
