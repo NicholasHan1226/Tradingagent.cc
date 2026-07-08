@@ -566,6 +566,20 @@ def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) ->
 
 
 def main() -> int:
+    if market in {"ashare", "a-share", "a_share"}:
+        print(
+            json.dumps(
+                {
+                    "market": market,
+                    "status": "unsupported",
+                    "reason": "ashare_sim_requires_tradings_cron_entry",
+                    "entrypoint": "shared.wrappers.tradings_cron_entry --job job_ashare_sim_exec",
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 2
+
     if market == "hk" and not _env_enabled("TRADINGAGENT_HK_SIM_ENABLED"):
         print(
             json.dumps(

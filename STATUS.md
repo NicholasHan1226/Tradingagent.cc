@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-08 (A股成交价来源证明、USD 市场人民币收益口径、dashboard 生产路由、CNFutures 收盘空复盘保护)
+> 最后更新：2026-07-08 (A股 no-trade 空候选证据门、盘前 dry-run no-write 验收、dashboard 测试治理)
 
 ---
 
@@ -48,9 +48,9 @@
 - **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。首页以实时收益、机会管道和下一步关注为核心，避免在右栏重复展示收益/账户/风险数字；机会管道优先读取 `funnelEvents`，展示“机会进入 → 初筛 → 研究 → 风控 → 待执行 → 成交/观察/复盘/放弃”的动态流动，没有事件时才回退到信号阶段推导，避免把已成交账本回放误当成当前筛选转化率。收益页的累计收益曲线支持“今日/7日/30日/全部”切换，图表只负责走势和事件点，当前收益、目标差、回撤等权威数字由页面摘要板/实时收益卡承载，不在同一面板重复展示。收益曲线优先读取模拟账本权益快照 `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl`，该快照由 `shared/runtime_test/write_equity_snapshots.py` 追加写入，字段包含本金、权益、已实现/未实现收益、回撤、交易数、价格缺失状态、原始币种、`fx_to_cny` 与 CNY 折算字段；前端 API 会按 5 分钟 bucket 汇总为整盘收益，最多保留 360 个点，支撑今日/7日/30日曲线查看，默认全部按 RMB 展示，避免跨 US/USDT/USDC/CNY 直接混合；持仓面板同时读取 `signals/positions/*.json`，已兼容 CNFutures `positions[]` 快照；信号表展示策略来源列，优先显示账本中的 `strategy_name` 与 `signal_source`，市场摘要读取 30 分钟内的 `shared/runtime_test/sim_market_health_latest.json`，把 Crypto/PM 的“策略等待”和执行故障分开；健康 latest 过期时回退到账本/风格证据，避免旧健康结论覆盖当前看板。市场摘要仍会读取当天 `shared/logs/ashare_no_trade_explanations.jsonl` 并展示 A股无交易原因和下一步检查方向；首页右栏新增闭环证明面板，按市场展示运行态、信号/成交/持仓计数和 A股 no-trade 结构化证据，区分“等待机会”和“需要处理”；A股个股资金流面板只展示信号自身携带的 `capital/moneyflow` 真实评分或净流入字段，没有真实字段时显示等待，不使用样例或视频数据。缺少快照时才回退到日复盘 return 字段或按日 style performance。默认本地 fallback 不再展示暂停的 HK 样例，改用 CNFutures simulated-only 样例；真实 sim ledger 默认也跳过 HK，只有显式 `TRADINGAGENT_HK_SIM_ENABLED=1` 才读取港股旧账本。
 - **A股收益看板口径**：A股权益快照只接受 canonical `ashare/ashare_sim`，由 server-local `shared/logs/local_sim` 账本生成；旧 `ashare/<style>` 多风格测试账本不再进入 dashboard 汇总，避免 20k/16.6k 历史样本污染当前 200,000 元模拟盘口径。
 - **A股复盘样本口径**：A股日报/周报/归因默认只读取 server-local `shared/logs/local_sim/local_sim_trades.jsonl`；旧 `shared/logs/sim_ledger/ashare/<style>/trade_journal.jsonl` 风格账本视为退役历史样本，不再进入默认复盘输入。
-- **A股开盘验收与无交易分层**：`ashare_opening_validator` 的 first-sample 报告已把 5分钟 bar、信号状态、服务器本地模拟成交、签名回执、复盘行数和 no-trade 分类汇总到同一报告；若当天没有交易，会优先读取最新 `shared/logs/ashare_no_trade_explanations.jsonl`，把无候选、无信号卡、风控全拒、资金/组合构建阻塞、重复幂等、执行跳过、执行失败、回执缺失和复盘待生成区分开。缺回执只在当天已经出现服务器本地模拟成交后才告警，避免把“尚无成交”误报成“成交后缺回执”。`opening_acceptance.py` 短文本同步展示 bar/信号/成交/回执/复盘计数。
+- **A股开盘验收与无交易分层**：`ashare_opening_validator` 的 first-sample 报告已把 5分钟 bar、信号状态、服务器本地模拟成交、签名回执、复盘行数和 no-trade 分类汇总到同一报告；若当天没有交易，会优先读取最新 `shared/logs/ashare_no_trade_explanations.jsonl`，把无候选、无信号卡、风控全拒、资金/组合构建阻塞、重复幂等、执行跳过、执行失败、回执缺失和复盘待生成区分开。缺回执只在当天已经出现服务器本地模拟成交后才告警，避免把“尚无成交”误报成“成交后缺回执”。`opening_acceptance.py` 短文本同步展示 bar/信号/成交/回执/复盘计数。2026-07-08 起 no-trade 证据门扩展到空候选场景：当日 `orders=0` 的日志必须有 `candidate_decision_trace` 字段（空候选时允许空列表）、`capital_plan_decision` 和 `portfolio_decision`；健康检查和无交易汇总缺任一项都判 incomplete/warn。
 - **A股科学空跑分类**：2026-07-08 起，A股首样本验收与模拟盘总巡检会把带有最新 no-trade 日志解释的 `no_portfolio_orders`、风控全拒、重复幂等、无候选/无信号等科学空跑归为 pass/策略等待观察态，并保留 info 级原因；没有 no-trade 日志解释、数据缺失、执行失败或已成交后缺回执仍保持 warn/fail，避免告警噪音掩盖真实故障。
-- **A股 no-trade 逐候选归因**：2026-07-08 起，A股 simulated `run_sim_loop` 在无成交或无订单时不只写 counts，还会在 `no_trade_explanation` 与返回值中附带 `candidate_layer_breakdown`、`candidate_decision_trace`、`capital_plan_decision` 和 `portfolio_decision`。因此 `3213 universe / 3 candidates / 0 orders` 这类状态必须能进一步解释为价格缺失、风控拒绝、资金计划容量为 0、组合构建为空、整手/预算为 0、重复幂等或执行跳过等具体门禁；`score_diagnostics` 对 A股不再只在 candidate 为 0 时输出，候选存在但未成单时也保留评分/证据分布。A股健康检查和开盘首样本验收会把 `candidates > 0 && orders == 0` 但缺 `candidate_decision_trace` / `capital_plan_decision` / `portfolio_decision` 的 no-trade 日志判为 evidence incomplete，不再作为 pass/策略等待放行；健康检查同时按当天 `today_trade_rows` 判断是否已有本日样本，历史成交不能再掩盖今天无成交/无证据的问题。
+- **A股 no-trade 逐候选归因**：2026-07-08 起，A股 simulated `run_sim_loop` 在无成交或无订单时不只写 counts，还会在 `no_trade_explanation` 与返回值中附带 `candidate_layer_breakdown`、`candidate_decision_trace`、`capital_plan_decision` 和 `portfolio_decision`。因此 `3213 universe / 3 candidates / 0 orders` 这类状态必须能进一步解释为价格缺失、风控拒绝、资金计划容量为 0、组合构建为空、整手/预算为 0、重复幂等或执行跳过等具体门禁；空候选也必须留下空 `candidate_decision_trace`、资金计划决策和组合决策，不能只写 `no_candidates` 分类。`score_diagnostics` 对 A股不再只在 candidate 为 0 时输出，候选存在但未成单时也保留评分/证据分布。A股健康检查和开盘首样本验收会把当日 `orders == 0` 但缺 `candidate_decision_trace` / `capital_plan_decision` / `portfolio_decision` 的 no-trade 日志判为 evidence incomplete，不再作为 pass/策略等待放行；健康检查同时按当天 `today_trade_rows` 判断是否已有本日样本，历史成交不能再掩盖今天无成交/无证据的问题。
 - **盘前验收修复**：2026-07-07 已修复 `job_opening_acceptance` 生产 cron 依赖当前工作目录导致寻找 `/home/marketgraph/shared/...` 失败的问题，wrapper 会强制切到 `TRADINGAGENT_ROOT` 并使用绝对脚本路径；统一开盘验收会写 `shared/runtime_test/opening_acceptance_latest.json` 与 history，并在 warn/fail 时走系统通道邮件，cron 使用 `--exit-zero` 避免同一异常重试三次刷屏。SharedSignals 盘前核心 API 探针改用轻量 `/cache/status` + `/capabilities`，`/health` 超时只作为降级项；A股盘前日线检查新增 `latest_daily_age_days`，日线过旧会提前 warn，不再只因历史日线数量足够而误判通过。
 - **A股旧测试账本归档**：新增 `shared/runtime_test/archive_ashare_legacy_ledgers.py`，只归档 `shared/logs/sim_ledger/ashare/*` 中非 canonical `ashare_sim` 的旧风格账本，默认 dry run，`--apply` 时移动到 `shared/logs/archive/ashare_legacy_style_ledgers/<batch>` 并写 manifest；不得删除或归档 `ashare_sim`。旧样本不再作为活跃输入，确认归档 manifest 后可按批次永久删除归档副本。
 - **A股只读研究证据**：`Ashare/research_evidence.py` 与 `job_ashare_research_evidence.sh` 统一输出 opening auction 异常、closing momentum 候选、204001 逆回购预估收益和 A股风格证据；集合竞价缺少 09:15-09:25 数据时会显式标记 `first_5m_proxy`，标的选择会优先读取 SharedSignals 当日 `rt_min/stk_mins` 已有分钟线的样本，再回退资产表，避免把“扫错无分钟线样本”误判为全市场无数据；204001 优先读取 SharedSignals `/market_data` 日线收益率，尾盘候选带 `next_trading_day` 与 open/high/close 兑现标签（数据未到时 `pending_next_day_bar`），风格资金按 `shared/review/ashare/style_weights.json` 运行时 active 权重切分 200,000 元虚拟预算；结果写入 `shared/review/ashare/research_evidence_latest.json` 与 append-only `research_evidence.jsonl`，固定 `read_only=true`、`real_trading_enabled=false`，不进入 simulated/real 执行队列。
@@ -132,6 +132,14 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-08 A股 no-trade 空候选证据门与 dry-run 验收加固
+
+- [x] A股 no-trade evidence gate 从 `candidates > 0 && orders == 0` 扩展为当日 `orders == 0` 均需结构化证据：空候选允许 `candidate_decision_trace=[]`，但字段必须存在，且 `capital_plan_decision`、`portfolio_decision` 必须非空。
+- [x] `market_health` 与 `ashare_no_trade_summary` 均会把空候选但缺资金/组合决策的日志判为 `evidence_status=incomplete` / warn，不再仅凭 `category=no_candidates` 放行。
+- [x] `tests/test_ashare_preopen_dry_run.py` 新增 no-write 断言，确认盘前 dry-run 只写 runtime_test 报告，不触碰 `signals/`、ledger、pending 或 review；该测试已纳入 `full_acceptance --profile quick`。
+- [x] 旧通用 `shared/wrappers/run_sim.py` 显式拒绝 A股入口，避免 A股被误切回缺少 no-trade 三段证据的 legacy wrapper；A股 simulated 仍必须走 `tradings_cron_entry --job job_ashare_sim_exec`。
+- [x] `front/src/App.test.tsx` 测试环境屏蔽后台定时器，消除 React 异步更新警告，测试信号更干净。
 
 ### 2026-07-08 CNFutures 收盘空复盘保护
 

@@ -636,6 +636,67 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["no_trade_explanation"]["evidence_status"], "incomplete")
         self.assertIn("candidate_decision_trace_missing", check.details["no_trade_explanation"]["evidence_gaps"])
 
+    def test_ashare_sim_loop_warns_when_empty_candidate_pool_lacks_plan_evidence(self) -> None:
+        log_path = self.root / "shared/logs/ashare_no_trade_explanations.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            json.dumps(
+                {
+                    "generated_at": "2026-07-08T10:25:00+08:00",
+                    "no_trade_explanation": {
+                        "category": "no_candidates",
+                        "counts": {"candidates": 0, "orders": 0},
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):
+            with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):
+                check = market_health._check_sim_market_loop("ashare", "job_ashare_sim_exec.sh")
+
+        self.assertEqual(check.status, "warn")
+        self.assertIn("server_local_sim_has_no_production_trades_yet", check.details["warn_reasons"])
+        self.assertEqual(check.details["no_trade_explanation"]["evidence_status"], "incomplete")
+        self.assertEqual(
+            check.details["no_trade_explanation"]["evidence_gaps"],
+            [
+                "candidate_decision_trace_missing",
+                "capital_plan_decision_missing",
+                "portfolio_decision_missing",
+            ],
+        )
+
+    def test_ashare_sim_loop_accepts_empty_candidate_pool_with_plan_evidence(self) -> None:
+        log_path = self.root / "shared/logs/ashare_no_trade_explanations.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            json.dumps(
+                {
+                    "generated_at": "2026-07-08T10:25:00+08:00",
+                    "no_trade_explanation": {
+                        "category": "no_candidates",
+                        "counts": {"candidates": 0, "orders": 0},
+                        "candidate_decision_trace": [],
+                        "capital_plan_decision": {"risk_mode": "defensive", "position_capacity": 0},
+                        "portfolio_decision": {"allowed_buy_count": 0},
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):
+            with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):
+                check = market_health._check_sim_market_loop("ashare", "job_ashare_sim_exec.sh")
+
+        self.assertEqual(check.status, "pass")
+        self.assertIn("ashare_waiting_for_portfolio_or_strategy_signal", check.details["warn_reasons"])
+        self.assertEqual(check.details["no_trade_explanation"]["evidence_status"], "ready")
+
     def test_ashare_sim_loop_warns_when_risk_rejection_gap_lacks_trace_evidence(self) -> None:
         log_path = self.root / "shared/logs/ashare_no_trade_explanations.jsonl"
         log_path.parent.mkdir(parents=True, exist_ok=True)

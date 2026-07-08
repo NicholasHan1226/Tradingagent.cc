@@ -210,6 +210,21 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(report["data"]["status"], "fail")
         self.assertIn("data:pre_open_daily_bars_stale", report["blockers"])
 
+    def test_write_outputs_does_not_touch_execution_or_review_paths(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        latest = root / "runtime_test" / "ashare_preopen_dry_run_latest.json"
+        history = root / "runtime_test" / "ashare_preopen_dry_run_history.jsonl"
+
+        with mock.patch.object(ashare_preopen_dry_run, "LATEST", latest), mock.patch.object(ashare_preopen_dry_run, "HISTORY", history):
+            ashare_preopen_dry_run.write_outputs({"status": "pass", "read_only": True, "writes_excluded": ["signals", "ledger", "pending", "review"]})
+
+        self.assertTrue(latest.exists())
+        self.assertTrue(history.exists())
+        for excluded in ("signals", "ledger", "pending", "review"):
+            self.assertFalse((root / excluded).exists(), excluded)
+
 
 if __name__ == "__main__":
     unittest.main()

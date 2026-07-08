@@ -883,10 +883,13 @@ def _ashare_candidate_order_gap_evidence_gaps(explanation: dict[str, Any]) -> li
     counts = explanation.get("counts") if isinstance(explanation.get("counts"), dict) else {}
     candidates = _int_value(counts.get("candidates"), _int_value(counts.get("candidate_count"), 0))
     orders = _int_value(counts.get("orders"), _int_value(counts.get("order_count"), 0))
-    if candidates <= 0 or orders > 0:
+    if orders > 0:
         return []
     gaps: list[str] = []
-    if not explanation.get("candidate_decision_trace"):
+    trace = explanation.get("candidate_decision_trace")
+    if candidates > 0 and not trace:
+        gaps.append("candidate_decision_trace_missing")
+    elif candidates <= 0 and not isinstance(trace, list):
         gaps.append("candidate_decision_trace_missing")
     if not explanation.get("capital_plan_decision"):
         gaps.append("capital_plan_decision_missing")

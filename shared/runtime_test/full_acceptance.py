@@ -23,6 +23,7 @@ KEY_TESTS = [
     "tests/test_market_health.py",
     "tests/test_ashare_opening_validator.py",
     "tests/test_ashare_no_trade_summary.py",
+    "tests/test_ashare_preopen_dry_run.py",
     "tests/test_run_sim_wrapper.py",
     "tests/test_pnl_summary.py",
     "tests/test_equity_snapshots.py",

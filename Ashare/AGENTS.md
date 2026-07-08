@@ -23,6 +23,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 
 ## 执行
 - 模拟盘: 默认由服务器通过 `Ashare/sim_executor.py` 和 `shared/execution/sim_broker.py` 完成本地 paper fill、账本和复盘闭环；不依赖 Mini/Hermes。
+- A股 simulated 调度入口必须是 `shared.wrappers.tradings_cron_entry --job job_ashare_sim_exec`；通用 legacy `shared/wrappers/run_sim.py` 不承载 A股 no-trade 三段证据链，已显式拒绝 A股调用。
 - 交易时段硬门禁: `Ashare/sim_executor.py` 自身会按 `Asia/Shanghai` 和 A股交易日历拒绝非连续竞价时段（09:30-11:30、13:00-14:57）的 server-local fill 与 Hermes pending；wrapper 只是第一层保护。`bypass_market_hours` / `mock_filled` 只能用于测试、回测或隔离烟测，不得用于生产模拟调度。
 - 盘前 dry-run: `shared/runtime_test/ashare_preopen_dry_run.py` 只读预演日线覆盖、最新高流动性普通 A 股小样本的候选池、资金计划和执行门禁；默认样本上限 10 只，wrapper 默认 90 秒超时，避免盘前检查全市场逐票扫描；只允许写 runtime_test 最新/历史报告，不得写 `signals/`、账本、pending、review 或实盘队列。
 - 样本隔离: 已发生的非连续竞价时段 A股 simulated 成交保留为账户事实和链路验证样本，但必须归类为 `outside_ashare_regular_session`，不得进入策略胜率、方向命中、策略 PnL 或自我演化样本。

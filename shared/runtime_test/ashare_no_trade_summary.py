@@ -83,8 +83,13 @@ def summarize_no_trade_log(path: Path = NO_TRADE_LOG, trade_date: str | None = N
     category_counts = Counter(str(_explanation(row).get("category") or "unknown") for row in rows)
     counts = latest_explanation.get("counts") if isinstance(latest_explanation.get("counts"), dict) else {}
     evidence_gaps: list[str] = []
-    if rows and int(counts.get("candidates") or 0) > 0 and int(counts.get("orders") or 0) <= 0:
-        if not latest_explanation.get("candidate_decision_trace"):
+    candidates = int(counts.get("candidates") or counts.get("candidate_count") or 0)
+    orders = int(counts.get("orders") or counts.get("order_count") or 0)
+    if rows and orders <= 0:
+        trace = latest_explanation.get("candidate_decision_trace")
+        if candidates > 0 and not trace:
+            evidence_gaps.append("candidate_decision_trace_missing")
+        elif candidates <= 0 and not isinstance(trace, list):
             evidence_gaps.append("candidate_decision_trace_missing")
         if not latest_explanation.get("capital_plan_decision"):
             evidence_gaps.append("capital_plan_decision_missing")

@@ -1,11 +1,16 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tradingAgentReadModelSources } from './api/tradingAgentReadModel'
 import App from './App'
 
 describe('App navigation and result-first dashboard', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'setInterval').mockImplementation(() => 0 as unknown as ReturnType<typeof window.setInterval>)
+  })
+
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it('renders the homepage around return, funnel, and chart without system wording', () => {

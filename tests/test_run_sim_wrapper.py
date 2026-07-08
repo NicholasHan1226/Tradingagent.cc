@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from shared.wrappers import run_sim
 
 
@@ -195,3 +197,14 @@ def test_pm_research_probability_file_can_generate_signal(monkeypatch, tmp_path)
     assert len(signals) == 1
     assert signals[0]["outcome"] == "yes"
     assert signals[0]["model_source"] == "test_research"
+
+
+def test_legacy_run_sim_refuses_ashare_entrypoint(monkeypatch, capsys):
+    monkeypatch.setattr(run_sim, "market", "ashare")
+
+    assert run_sim.main() == 2
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "unsupported"
+    assert payload["reason"] == "ashare_sim_requires_tradings_cron_entry"
+    assert "tradings_cron_entry" in payload["entrypoint"]

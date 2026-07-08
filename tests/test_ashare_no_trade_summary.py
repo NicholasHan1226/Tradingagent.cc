@@ -76,6 +76,52 @@ class AshareNoTradeSummaryTest(unittest.TestCase):
             ],
         )
 
+    def test_summary_requires_plan_evidence_even_when_candidate_pool_is_empty(self) -> None:
+        path = self._log(
+            [
+                {
+                    "date": "20260708",
+                    "no_trade_explanation": {
+                        "category": "no_candidates",
+                        "counts": {"universe": 3213, "candidates": 0, "orders": 0},
+                    },
+                }
+            ]
+        )
+
+        report = summarize_no_trade_log(path, "20260708")
+
+        self.assertEqual(report["evidence_status"], "incomplete")
+        self.assertEqual(
+            report["evidence_gaps"],
+            [
+                "candidate_decision_trace_missing",
+                "capital_plan_decision_missing",
+                "portfolio_decision_missing",
+            ],
+        )
+
+    def test_summary_accepts_empty_candidate_trace_when_plan_evidence_exists(self) -> None:
+        path = self._log(
+            [
+                {
+                    "date": "20260708",
+                    "no_trade_explanation": {
+                        "category": "no_candidates",
+                        "counts": {"universe": 3213, "candidates": 0, "orders": 0},
+                        "candidate_decision_trace": [],
+                        "capital_plan_decision": {"position_capacity": 0, "risk_mode": "defensive"},
+                        "portfolio_decision": {"allowed_buy_count": 0},
+                    },
+                }
+            ]
+        )
+
+        report = summarize_no_trade_log(path, "20260708")
+
+        self.assertEqual(report["evidence_status"], "ready")
+        self.assertEqual(report["evidence_gaps"], [])
+
     def test_summary_aggregates_same_day_rows_and_uses_latest_counts(self) -> None:
         path = self._log(
             [
