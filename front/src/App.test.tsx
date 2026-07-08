@@ -14,8 +14,8 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByLabelText('实时收益')).toBeInTheDocument()
     expect(screen.getByLabelText('机会管道')).toBeInTheDocument()
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
-    expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '模拟盘' })).toBeInTheDocument()
-    expect(within(screen.getByLabelText('实时收益')).getByRole('button', { name: '实盘' })).toBeInTheDocument()
+    expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
+    expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getAllByText('机会进入').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
     expect(screen.getAllByText('信号').length).toBeGreaterThan(0)
@@ -406,8 +406,10 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
+    fireEvent.click(within(card).getByRole('tab', { name: '实盘' }))
 
+    expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
+    expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
     expect(within(card).getAllByText('实盘准备中').length).toBeGreaterThan(0)
     expect(within(card).getByText('接入后会在这里切换真实账户结果；当前先看模拟盘。')).toBeInTheDocument()
   })
@@ -428,7 +430,7 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    fireEvent.click(within(card).getByRole('button', { name: '实盘' }))
+    fireEvent.click(within(card).getByRole('tab', { name: '实盘' }))
 
     expect(within(card).getAllByText('实盘准备中').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
