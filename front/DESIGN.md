@@ -399,3 +399,46 @@ Total: 93/100. The page is closer to Hyperliquid in density, color restraint,
 and embedded panel treatment. Remaining gap: complete backend `funnelEvents[]`
 coverage is still needed for the funnel to show real high-volume market flow
 instead of holding-context motion during quiet periods.
+
+## July 8 Dynamic Funnel And Return Polish
+
+This pass makes the homepage funnel a live chart panel instead of a static
+explanation block.
+
+- `机会管道` now uses a single dark channel with five stage rails, animated
+  particles, stage totals, drop-off count, and a compact outcome strip.
+- The real-flow event tape is hidden because repeated text rows made the funnel
+  feel like a log table. The moving channel is the main explanation.
+- Stage language is compressed to `发现 / 初筛 / 研究 / 风控 / 信号`, so users can
+  quickly understand how opportunities become trade signals.
+- The return card keeps amount and percentage together. Amount is primary,
+  percentage is secondary, and `模拟盘 / 实盘` switches in place.
+- The live tab is now a quiet reserved state (`等待接入`) instead of a separate
+  system-style entry.
+- The performance chart uses a wider visual domain so strong returns do not
+  overpower the interface. Values are unchanged; only the plotted range is
+  calmer and more terminal-like.
+
+Verification notes:
+
+- Empty local snapshot: no invented opportunities; the funnel waits.
+- Controlled read-model snapshot with four opportunities: five rails, nineteen
+  animated particles, and visible narrowing from four discoveries to three
+  signal-stage opportunities.
+- Playwright screenshots were used because the in-app browser screenshot tool
+  was not exposed in this turn.
+
+Updated score after this pass:
+
+- Visual hierarchy: 19/20
+- Typography quality: 14/15
+- Color semantics: 15/15
+- Spacing rhythm: 15/15
+- Interaction feedback: 10/10
+- Accessibility baseline: 8/10
+- Originality / brand fit: 9/10
+- Responsive integrity: 4/5
+
+Total: 94/100. The biggest remaining design gap is richer real upstream signal
+volume. The frontend is ready to animate real `funnelEvents[]`, but production
+data currently has quiet windows with holdings/performance and no new signals.

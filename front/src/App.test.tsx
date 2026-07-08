@@ -28,7 +28,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
     expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getAllByText('机会进入').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
     expect(screen.getAllByText('信号').length).toBeGreaterThan(0)
     expect(screen.queryByRole('tablist', { name: '收益区间' })).not.toBeInTheDocument()
@@ -428,11 +428,11 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getByText('实时')).toBeInTheDocument())
-    expect(screen.getAllByText('机会进入').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
     expect(screen.getAllByText('初筛').length).toBeGreaterThan(0)
     expect(screen.getAllByText('研究').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('进入队列').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('信号').length).toBeGreaterThan(0)
     expect(screen.getAllByText('成交').length).toBeGreaterThan(0)
     expect(screen.getAllByText('放弃').length).toBeGreaterThan(0)
   })
@@ -445,8 +445,8 @@ describe('App navigation and result-first dashboard', () => {
 
     expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
-    expect(within(card).getAllByText('实盘入口保留').length).toBeGreaterThan(0)
-    expect(within(card).getByText('当前以模拟盘为准。真实账户接入后，收益会在同一位置切换。')).toBeInTheDocument()
+    expect(within(card).getAllByText('等待接入').length).toBeGreaterThan(0)
+    expect(within(card).getByText('接入真实账户后，会在这里切换为实盘收益和风险边界。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -467,7 +467,7 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘入口保留').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('等待接入').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

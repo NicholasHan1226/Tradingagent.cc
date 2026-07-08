@@ -740,8 +740,8 @@ button:not(:disabled) {
 }
 
 .real-funnel-board {
-  min-height: 360px;
-  padding: 42px 12px 106px;
+  min-height: 326px;
+  padding: 42px 12px 98px;
   background:
     radial-gradient(ellipse 88% 62% at 50% 46%, rgba(105, 228, 215, 0.014), transparent 60%),
     linear-gradient(180deg, rgba(240, 246, 244, 0.008), transparent 56%),
@@ -915,15 +915,15 @@ button:not(:disabled) {
 .real-funnel-body {
   position: relative;
   z-index: 2;
-  height: 136px;
-  margin-top: 10px;
+  height: 188px;
+  margin-top: 0;
   overflow: hidden;
-  border: 1px solid rgba(240, 246, 244, 0.04);
+  border: 1px solid rgba(240, 246, 244, 0.046);
   border-radius: 4px;
   background:
-    linear-gradient(180deg, rgba(240, 246, 244, 0.008), transparent 70%),
-    linear-gradient(90deg, rgba(105, 228, 215, 0.012), transparent 24%, transparent 76%, rgba(105, 228, 215, 0.008)),
-    rgba(1, 5, 5, 0.5);
+    linear-gradient(180deg, rgba(240, 246, 244, 0.01), transparent 70%),
+    linear-gradient(90deg, rgba(105, 228, 215, 0.015), transparent 24%, transparent 76%, rgba(255, 91, 116, 0.008)),
+    rgba(1, 5, 5, 0.62);
 }
 
 .real-funnel-empty {
@@ -1072,12 +1072,77 @@ button:not(:disabled) {
   opacity: 0.7;
 }
 
+.real-funnel-rails {
+  position: absolute;
+  inset: 22px 14px 44px;
+  pointer-events: none;
+}
+
+.real-funnel-rail {
+  --rail-height: 20px;
+  --rail-top: 0px;
+  --rail-delay: 0s;
+  position: absolute;
+  top: calc(50% + var(--rail-top));
+  left: 1%;
+  right: 1%;
+  height: var(--rail-height);
+  min-height: 10px;
+  max-height: 62px;
+  transform: translateY(-50%);
+  border-top: 1px solid rgba(105, 228, 215, 0.18);
+  border-bottom: 1px solid rgba(105, 228, 215, 0.07);
+  background:
+    linear-gradient(90deg, rgba(105, 228, 215, 0.045), rgba(105, 228, 215, 0.014) 52%, rgba(240, 246, 244, 0.004)),
+    rgba(3, 13, 13, 0.5);
+  clip-path: polygon(0 0, 100% 18%, 100% 82%, 0 100%);
+  opacity: 0.84;
+  animation: funnel-rail-breathe 4.8s ease-in-out infinite;
+  animation-delay: var(--rail-delay);
+}
+
+.real-funnel-rail:nth-child(2) {
+  left: 18%;
+}
+
+.real-funnel-rail:nth-child(3) {
+  left: 36%;
+}
+
+.real-funnel-rail:nth-child(4) {
+  left: 54%;
+}
+
+.real-funnel-rail:nth-child(5) {
+  left: 72%;
+}
+
+.real-funnel-rail.amber {
+  border-top-color: rgba(226, 180, 91, 0.22);
+  background:
+    linear-gradient(90deg, rgba(226, 180, 91, 0.04), rgba(105, 228, 215, 0.01) 58%, rgba(240, 246, 244, 0.004)),
+    rgba(3, 13, 13, 0.5);
+}
+
+.real-funnel-rail.cyan {
+  border-top-color: rgba(105, 228, 215, 0.24);
+}
+
+.real-funnel-rail b {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  color: rgba(240, 246, 244, 0.58);
+  font: 720 10px/1 var(--font-number);
+}
+
 .real-funnel-board .funnel-particle {
-  top: calc(18px + (var(--lane) * 8px));
+  top: calc(34px + (var(--lane) * 11px));
   left: 12px;
-  height: 14px;
-  border-color: rgba(105, 228, 215, 0.2);
-  background: rgba(1, 7, 7, 0.84);
+  height: 12px;
+  border-color: rgba(105, 228, 215, 0.24);
+  background: rgba(1, 7, 7, 0.88);
   box-shadow: none;
 }
 
@@ -1086,11 +1151,55 @@ button:not(:disabled) {
 }
 
 .real-funnel-board .flow-outcome-strip {
-  bottom: 46px;
+  bottom: 40px;
 }
 
 .real-funnel-board .flow-bottleneck {
   bottom: 12px;
+}
+
+.flow-stage-axis {
+  position: absolute;
+  right: 14px;
+  bottom: 8px;
+  left: 14px;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  pointer-events: none;
+}
+
+.flow-stage-axis span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid rgba(240, 246, 244, 0.038);
+}
+
+.flow-stage-axis span:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.flow-stage-axis b {
+  color: var(--text-primary);
+  font: 720 13px/1 var(--font-number);
+}
+
+.flow-stage-axis em,
+.flow-stage-axis i {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-stage-axis .has-loss i {
+  color: var(--state-amber);
 }
 
 .funnel-pipeline {
@@ -1545,6 +1654,17 @@ button:not(:disabled) {
   100% {
     opacity: 0;
     left: var(--to-left);
+  }
+}
+
+@keyframes funnel-rail-breathe {
+  0%,
+  100% {
+    opacity: 0.66;
+  }
+
+  48% {
+    opacity: 0.92;
   }
 }
 
