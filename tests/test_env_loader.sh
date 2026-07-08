@@ -37,3 +37,19 @@ for var_name in "${required_vars[@]}"; do
 done
 
 echo "env_loader smoke ok"
+
+tmp_dir="$(mktemp -d)"
+trap 'chmod -R u+rwX "${tmp_dir}" >/dev/null 2>&1 || true; rm -rf "${tmp_dir}"' EXIT
+blocked_env="${tmp_dir}/blocked.env"
+printf 'export TRADINGAGENT_BLOCKED_ENV_SHOULD_NOT_LOAD=1\n' > "${blocked_env}"
+chmod 000 "${blocked_env}"
+
+TRADINGAGENT_ENV_FILE="${blocked_env}" \
+FINANCE_SHARED_ENV_FILE="${tmp_dir}/missing.env" \
+TRADINGAGENT_ROOT="${ROOT_DIR}" \
+TRADINGAGENT_SHARED_ROOT="${tmp_dir}/shared" \
+SHARED_SIGNALS_ROOT="${tmp_dir}/signals" \
+MARKETGRAPH_RUNTIME_ROOT="${tmp_dir}/runtime" \
+bash -c "source '${ENV_LOADER}'; [[ -z \"\${TRADINGAGENT_BLOCKED_ENV_SHOULD_NOT_LOAD:-}\" ]]"
+
+echo "env_loader unreadable env skip ok"
