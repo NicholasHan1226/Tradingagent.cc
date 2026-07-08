@@ -8,7 +8,7 @@
 构建自动化交易系统：主动发现机会 → 条件驱动捕捉 → 风控保护 → 复盘进化。
 
 ## 核心理念
-1. 权重式打分，不设硬门禁 — 某维度弱不排除，只拉低综合分
+1. 权重式打分 + 必要证据门禁 — 某维度弱会拉低综合分，但候选来源、价格/日线覆盖、流动性与执行来源缺失时必须 fail-closed
 2. 条件驱动，主动发现 — 不等信号触发才发现，预设计条件自动捕捉
 3. 基本面预计算 — 全市场预评分，主动发现低估/成长股
 4. 持续优化 — 复盘调整权重/参数/策略，以胜率和回报率为方向进化
@@ -28,8 +28,8 @@ shared/ (跨市场共享):
 
 Ashare/   A股(T+1, Hermes同花顺, 集合竞价+连续+收盘竞价)
 CNFutures/ 国内期货(保证金/夜盘/多空双向, 当前仅全自动模拟)
-Crypto/   加密(24/7, API可执行)
-US/       美股(Alpaca API)
+Crypto/   加密(24/7, 当前仅 simulated/shadow, 实盘 fail-closed)
+US/       美股(当前仅 simulated/shadow, 实盘 fail-closed)
 HK/       港股(预留)
 PM/       预测市场(CLOB sandbox)
 ```
@@ -76,10 +76,11 @@ E: 基本面深度  — 周/季度财报更新
 
 ## 执行
 - A股模拟盘: 默认由服务器本地 `Ashare/sim_executor.py` + `shared/execution/sim_broker.py` 完成 paper fill、统一模拟账本和复盘闭环；Hermes/同花顺 GUI 仅作为 `ASHARE_SIM_HERMES_ENABLED=1` 的第二对照路径
-- 影子盘: 多策略并行记录 (已验证策略平行运行)
-- 实盘: 仅 Nicholas 手工确认，不自动点击；Mac Mini/Hermes 只用于可选模拟盘第二路径和只读账户同步，不做真实下单
+- A股候选与证据门禁: 新买入只允许来自 `candidate` 层，必须带有 `candidate_pool_layer=candidate` 与 `execution_source=ashare_candidate_layer`；价格、日线覆盖、流动性证据、候选来源或成交价来源缺失时跳过或标记为链路验证样本，fail-closed 不硬买
+- 影子盘: 多策略并行记录 (已验证策略平行运行)；PM/Crypto/US/HK 影子和模拟工具拒绝 `real_money_enabled`/`live_broker_enabled`/`capital_layer=real` 等真实执行标记
+- 实盘: 仅 Nicholas 手工确认，不自动点击；`REAL_TRADING_ENABLED` 默认关闭，未显式启用时任何实盘订单/队列提交均抛 `SafetyViolation`，不能降级为 simulated/shadow
 - CNFutures: 先走多风格全自动模拟盘 + SimNow/CTP 文档预留, 实盘自动化默认关闭
-- US: Alpaca API (未来实盘)
+- US/Crypto: 当前仅 simulated/shadow；不连接 Alpaca 或其他真实经纪 API 自动下单，实盘 fail-closed
 - 升级路径: 非期货按各市场规则推进; CNFutures 为模拟多风格验证→受控小实盘预留→规模化
 
 ## 复盘 (3对比+归因+行动)

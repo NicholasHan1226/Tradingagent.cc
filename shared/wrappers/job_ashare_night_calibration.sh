@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+# LEGACY / NOT ACTIVE: this wrapper is not registered in crontab.txt or
+# shared/crontab.txt. It is retained only for reference or future revival.
+# Do not add to production cron without first reviewing its entrypoint and
+# confirming it aligns with current night-calibration policies.
+
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARED_DIR="$(cd "${WRAPPER_DIR}/.." && pwd)"
 
