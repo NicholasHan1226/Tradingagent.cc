@@ -1647,8 +1647,13 @@ function marketDefaultCapitalBase(market: Market): number {
   return 0
 }
 
+function isUsdCapitalMarket(market: Market) {
+  return market === 'US' || market === 'Crypto' || market === 'PM'
+}
+
 function defaultMarketCapitalBase(market: Market, current?: number) {
   if (market === 'All Markets' || market === 'HK') return current
+  if (isUsdCapitalMarket(market)) return marketDefaultCapitalBase(market)
   if (current !== undefined && current > 0) return current
   return marketDefaultCapitalBase(market)
 }
@@ -1657,6 +1662,7 @@ function normalizedCapitalBaseForMarkets(current: number, markets: Set<Market>) 
   const activeMarkets = [...markets].filter((market) => market !== 'All Markets' && market !== 'HK')
   if (!activeMarkets.length) return current
   const floor = activeMarkets.reduce((sum, market) => sum + marketDefaultCapitalBase(market), 0)
+  if (activeMarkets.some(isUsdCapitalMarket)) return floor
   return Math.max(current, floor)
 }
 

@@ -1747,7 +1747,7 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
-  it('preserves positive ledger capitalBase instead of flooring to the market default', async () => {
+  it('normalizes USD market ledger capitalBase to the canonical 10000 USD equivalent', async () => {
     const root = await createWorkspace()
     const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
     await mkdir(cryptoLedgerRoot, { recursive: true })
@@ -1774,9 +1774,9 @@ describe('TradingAgent snapshot reader', () => {
 
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'Crypto',
-      capitalBase: 36_000,
+      capitalBase: 72_000,
       pnlAmount: 3_600,
-      returnPct: 10,
+      returnPct: 5,
     }))
   })
 
