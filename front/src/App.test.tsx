@@ -195,9 +195,10 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getAllByText('总资产')).not.toHaveLength(0))
-    expect(screen.getByText('持仓流')).toBeInTheDocument()
-    expect(screen.getByText(/1 个持仓 · 0 个正贡献 · 0 个需观察/)).toBeInTheDocument()
-    expect(screen.queryByText(/1 个持仓 · 0 个正贡献 · 0 个需观察 · 转化/)).not.toBeInTheDocument()
+    expect(screen.getAllByText('机会管道').length).toBeGreaterThan(0)
+    expect(screen.getByText('暂无新机会')).toBeInTheDocument()
+    expect(screen.getByLabelText('持仓跟踪状态')).toBeInTheDocument()
+    expect(screen.queryByText(/0 个新机会 · 1 个持仓在跟踪 · 转化/)).not.toBeInTheDocument()
     expect(screen.queryByText(/暂无新信号进入/)).not.toBeInTheDocument()
     expect(screen.getAllByText('¥19.99万').length).toBeGreaterThan(0)
     expect(screen.getAllByText('可复盘收益').length).toBeGreaterThan(0)

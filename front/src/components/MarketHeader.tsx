@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { marketLabels, markets, pageMeta } from '../data/dashboard'
 import { formatCurrency, formatSignedCnyCompact } from '../lib/format'
-import type { Market, Page } from '../types/dashboard'
+import type { AccountMode, Market, Page } from '../types/dashboard'
 
 export function MarketHeader({
+  accountMode,
   activePage,
   activeMarket,
   liveProfit,
@@ -17,6 +18,7 @@ export function MarketHeader({
   targetReturn,
   tradeSignalCount,
 }: {
+  accountMode: AccountMode
   activePage: Page
   activeMarket: Market
   hasPerformanceData: boolean
@@ -33,6 +35,7 @@ export function MarketHeader({
   const meta = pageMeta[activePage]
   const [showMarkets, setShowMarkets] = useState(false)
   const freshness = snapshotGeneratedAt ? '实时更新' : '预览数据'
+  const accountLabel = accountMode === 'live' ? '实盘' : '模拟盘'
   const returnValue = hasPerformanceData
     ? liveProfit !== null
       ? isCnyAccount ? formatSignedCnyCompact(liveProfit) : formatCurrency(liveProfit)
@@ -48,7 +51,7 @@ export function MarketHeader({
       <div className="market-symbol">
         <div>
           <strong>{meta.title}</strong>
-        <span>模拟盘 · {marketLabels[activeMarket]} · {meta.copy}</span>
+        <span>{accountLabel} · {marketLabels[activeMarket]} · {meta.copy}</span>
         </div>
       </div>
       <div className="market-stats">

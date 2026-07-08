@@ -387,14 +387,14 @@ button:not(:disabled) {
   position: relative;
   z-index: 8;
   overflow: visible;
-  height: 154px;
+  height: 148px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto 46px;
+  grid-template-rows: auto 44px;
   align-items: start;
   column-gap: 28px;
   row-gap: 14px;
-  padding: 23px 48px 15px;
+  padding: 22px 48px 14px;
   background:
     linear-gradient(180deg, rgba(4, 11, 11, 0.96), rgba(1, 14, 11, 0.78));
   border-bottom: 1px solid var(--border-hairline);
@@ -434,7 +434,7 @@ button:not(:disabled) {
 .market-symbol strong {
   display: block;
   color: var(--text-primary);
-  font-size: 32px;
+  font-size: 31px;
   line-height: 1.08;
   font-weight: 640;
 }
@@ -456,11 +456,11 @@ button:not(:disabled) {
   grid-row: 2;
   width: fit-content;
   max-width: 100%;
-  height: 52px;
+  height: 50px;
   min-width: 0;
   border: 1px solid var(--border-workbench);
   border-radius: 4px;
-  background: rgba(2, 7, 7, 0.5);
+  background: rgba(2, 7, 7, 0.62);
   box-shadow: inset 0 1px 0 rgba(240, 246, 244, 0.018);
   overflow: hidden;
 }
@@ -470,13 +470,13 @@ button:not(:disabled) {
   display: grid;
   align-content: center;
   gap: 4px;
-  min-width: 132px;
+  min-width: 126px;
   height: 100%;
   padding: 0 16px;
 }
 
 .market-stats span:first-child {
-  min-width: 184px;
+  min-width: 190px;
 }
 
 .market-tools {
@@ -488,7 +488,8 @@ button:not(:disabled) {
   overflow: visible;
   border: 1px solid rgba(219, 242, 236, 0.07);
   border-radius: 5px;
-  background: rgba(5, 13, 13, 0.56);
+  background: rgba(3, 10, 10, 0.72);
+  box-shadow: inset 0 1px 0 rgba(240, 246, 244, 0.018);
 }
 
 .market-freshness {
@@ -496,12 +497,12 @@ button:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 0 12px;
+  padding: 0 11px;
   border: 0;
   border-right: 1px solid rgba(219, 242, 236, 0.06);
   border-radius: 0;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 650;
 }
@@ -520,11 +521,11 @@ button:not(:disabled) {
 
 .market-filter-trigger {
   height: 34px;
-  min-width: 98px;
+  min-width: 104px;
   padding: 0 12px;
   border: 0;
   border-radius: 0;
-  color: var(--text-secondary);
+  color: var(--accent-cyan);
   background: transparent;
   font-size: 11px;
   font-weight: 650;
@@ -538,19 +539,19 @@ button:not(:disabled) {
 .market-stats em {
   width: fit-content;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-style: normal;
 }
 
 .market-stats strong {
   color: var(--text-primary);
-  font: 650 15px/1 var(--font-number);
+  font: 700 16px/1 var(--font-number);
   white-space: nowrap;
 }
 
 .market-stats b {
   color: var(--accent-cyan);
-  font: 650 11px/1 var(--font-number);
+  font: 670 11px/1 var(--font-number);
 }
 
 .market-stats .cyan strong {
@@ -752,6 +753,11 @@ button:not(:disabled) {
   background:
     linear-gradient(180deg, rgba(240, 246, 244, 0.01), transparent 62%),
     rgba(1, 5, 5, 0.76);
+}
+
+.real-funnel-board.mode-holding-context.is-empty-flow {
+  min-height: 318px;
+  padding-bottom: 94px;
 }
 
 .signal-flow-board::before {
@@ -976,6 +982,38 @@ button:not(:disabled) {
   font-size: 12px;
   line-height: 1.55;
   text-align: center;
+}
+
+.holding-context-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-width: min(390px, 100%);
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(240, 246, 244, 0.05);
+  border-radius: 4px;
+  background: rgba(1, 6, 6, 0.68);
+}
+
+.holding-context-strip span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 12px;
+  border-left: 1px solid rgba(240, 246, 244, 0.04);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.holding-context-strip span:first-child {
+  border-left: 0;
+}
+
+.holding-context-strip b {
+  color: var(--text-primary);
+  font: 730 17px/1 var(--font-number);
 }
 
 @keyframes empty-funnel-pulse {

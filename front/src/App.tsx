@@ -120,6 +120,7 @@ function App() {
         setActivePage={setActivePage}
       />
       <MarketHeader
+        accountMode={accountMode}
         activePage={activePage}
         activeMarket={activeMarket}
         hasPerformanceData={hasPerformanceData}

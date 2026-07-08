@@ -91,8 +91,6 @@ export function SignalFunnelFlow({
     firstStageCount,
     hasEventSource,
     hasHoldingContext,
-    holdingSummary,
-    holdings,
   })
   const lossRows = getLossRows(visualStages)
 
@@ -168,7 +166,7 @@ export function SignalFunnelFlow({
                 </span>
               ))}
             </div>
-            <div className="flow-loss-ledger" aria-label={hasHoldingReplay ? '持仓状态变化' : '机会流失位置'}>
+            <div className="flow-loss-ledger" aria-label={hasHoldingContext ? '持仓状态变化' : '机会流失位置'}>
               {lossRows.map((row) => (
                 <span className={row.count > 0 ? 'has-loss' : ''} key={row.label}>
                   <em>{row.label}</em>
@@ -177,7 +175,7 @@ export function SignalFunnelFlow({
               ))}
             </div>
             <div className="flow-bottleneck">
-              <span>{hasHoldingReplay ? '持仓结果' : '筛选结果'}</span>
+              <span>{hasHoldingContext ? '持仓结果' : '筛选结果'}</span>
               <strong>{bottleneck}</strong>
             </div>
           </>
