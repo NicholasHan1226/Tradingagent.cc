@@ -1688,6 +1688,145 @@ button:not(:disabled) {
   gap: 0;
 }
 
+.home-brief-score {
+  display: grid;
+  gap: 7px;
+  padding: 13px 0 15px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.home-brief-score span,
+.home-brief-score em,
+.home-brief-facts em {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 680;
+}
+
+.home-brief-score strong {
+  color: var(--text-primary);
+  font: 740 27px/1 var(--font-number);
+}
+
+.home-brief-score em {
+  color: var(--text-muted);
+  font-weight: 560;
+}
+
+.home-brief-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.home-brief-facts span {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 10px 12px 0;
+}
+
+.home-brief-facts span + span {
+  padding-left: 10px;
+  border-left: 1px solid var(--border-hairline);
+}
+
+.home-brief-facts b {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font: 690 13px/1.25 var(--font-number);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.closure-proof-panel,
+.ashare-moneyflow-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.closure-proof-list,
+.moneyflow-list {
+  display: grid;
+  gap: 8px;
+}
+
+.closure-proof-row,
+.moneyflow-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.closure-proof-row:last-child,
+.moneyflow-row:last-child {
+  border-bottom: 0;
+}
+
+.closure-proof-row > div,
+.moneyflow-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.closure-proof-row span,
+.moneyflow-row span {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.closure-proof-row strong,
+.moneyflow-row strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.closure-proof-row em,
+.moneyflow-row em {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.closure-proof-row b {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font: 720 12px/1 var(--font-number);
+}
+
+.closure-proof-row.normal strong {
+  color: var(--accent-cyan);
+}
+
+.closure-proof-row.strategy_wait strong {
+  color: var(--accent-amber);
+}
+
+.closure-proof-row.needs_attention strong {
+  color: var(--accent-red);
+}
+
+.moneyflow-row em {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-family: var(--font-number);
+}
+
 .ashare-evidence-panel {
   display: grid;
   gap: 14px;

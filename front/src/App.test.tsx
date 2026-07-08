@@ -234,6 +234,11 @@ describe('App navigation and result-first dashboard', () => {
                 reason: '等待确认',
                 next: '继续观察',
                 steps: 3,
+                capitalEvidence: {
+                  score: 0.82,
+                  netInflow: 12800000,
+                  source: 'signal_scores',
+                },
               },
               {
                 symbol: 'BTC-USD',
@@ -253,6 +258,31 @@ describe('App navigation and result-first dashboard', () => {
             ],
             funnelEvents: [],
             marketSummaries: [
+              {
+                market: 'A-share',
+                status: 'ready',
+                runtimeState: 'strategy_wait',
+                executionFault: false,
+                holdingCount: 1,
+                signalCount: 1,
+                tradeCount: 0,
+                styleCount: 4,
+                activeStyleCount: 3,
+                noTradeEvidence: {
+                  category: 'capital_plan_defensive',
+                  evidenceStatus: 'ready',
+                  evidenceGaps: [],
+                  universeCount: 3213,
+                  candidateCount: 3,
+                  orderCount: 0,
+                  capitalPlanCapacity: 0,
+                  riskMode: 'defensive',
+                  allowedBuyCount: 0,
+                },
+                source: 'shared/runtime_test/sim_market_health_latest.json',
+                headline: 'A股模拟盘策略等待',
+                detail: '无交易：capital_plan_defensive',
+              },
               {
                 market: 'Crypto',
                 status: 'ready',
@@ -281,11 +311,15 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0))
+    expect(screen.getByLabelText('闭环证明')).toBeInTheDocument()
+    expect(screen.getByText('个股流向')).toBeInTheDocument()
+    expect(screen.getByText('资金分 82')).toBeInTheDocument()
+    expect(screen.getByText('净流入 +¥1280.00万')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '全市场' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /加密/ }))
 
-    expect(screen.getByText('策略等待')).toBeInTheDocument()
-    expect(screen.getByText('加密已有 1 笔模拟成交')).toBeInTheDocument()
+    expect(screen.getAllByText('等待机会').length).toBeGreaterThan(0)
+    expect(screen.getByText('加密正在等更好的入场条件')).toBeInTheDocument()
     expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
   })

@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-08 (A股 no-trade 证据链、资金维度别名、资金流向 dashboard 边界)
+> 最后更新：2026-07-08 (A股闭环证明看板、成交来源验收、个股资金流证据)
 
 ---
 
@@ -45,7 +45,7 @@
 - **服务端**：阿里云华南3/广州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
-- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。首页以实时收益、机会管道和下一步关注为核心，避免在右栏重复展示收益/账户/风险数字；机会管道优先读取 `funnelEvents`，展示“机会进入 → 初筛 → 研究 → 风控 → 待执行 → 成交/观察/复盘/放弃”的动态流动，没有事件时才回退到信号阶段推导，避免把已成交账本回放误当成当前筛选转化率。收益页的累计收益曲线支持“今日/7日/30日/全部”切换，图表只负责走势和事件点，当前收益、目标差、回撤等权威数字由页面摘要板/实时收益卡承载，不在同一面板重复展示。收益曲线优先读取模拟账本权益快照 `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl`，该快照由 `shared/runtime_test/write_equity_snapshots.py` 追加写入，字段包含本金、权益、已实现/未实现收益、回撤、交易数、价格缺失状态、原始币种、`fx_to_cny` 与 CNY 折算字段；前端 API 会按 5 分钟 bucket 汇总为整盘收益，最多保留 360 个点，支撑今日/7日/30日曲线查看，默认全部按 RMB 展示，避免跨 US/USDT/USDC/CNY 直接混合；持仓面板同时读取 `signals/positions/*.json`，已兼容 CNFutures `positions[]` 快照；信号表展示策略来源列，优先显示账本中的 `strategy_name` 与 `signal_source`，市场摘要读取 30 分钟内的 `shared/runtime_test/sim_market_health_latest.json`，把 Crypto/PM 的“策略等待”和执行故障分开；健康 latest 过期时回退到账本/风格证据，避免旧健康结论覆盖当前看板。市场摘要仍会读取当天 `shared/logs/ashare_no_trade_explanations.jsonl` 并展示 A股无交易原因和下一步检查方向；缺少快照时才回退到日复盘 return 字段或按日 style performance。默认本地 fallback 不再展示暂停的 HK 样例，改用 CNFutures simulated-only 样例；真实 sim ledger 默认也跳过 HK，只有显式 `TRADINGAGENT_HK_SIM_ENABLED=1` 才读取港股旧账本。
+- **前端/看板入口**：唯一活跃生产前端是本仓库 `front/`，生产服务 `tradingagent-front-api.service` 指向 `/opt/investment/tradingagent/front`；快照 API 同时支持 `/healthz` 与 `/health` 运维探针。独立 `TradingAgentDashboard` 原型不再作为开发、部署或文档入口。首页以实时收益、机会管道和下一步关注为核心，避免在右栏重复展示收益/账户/风险数字；机会管道优先读取 `funnelEvents`，展示“机会进入 → 初筛 → 研究 → 风控 → 待执行 → 成交/观察/复盘/放弃”的动态流动，没有事件时才回退到信号阶段推导，避免把已成交账本回放误当成当前筛选转化率。收益页的累计收益曲线支持“今日/7日/30日/全部”切换，图表只负责走势和事件点，当前收益、目标差、回撤等权威数字由页面摘要板/实时收益卡承载，不在同一面板重复展示。收益曲线优先读取模拟账本权益快照 `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl`，该快照由 `shared/runtime_test/write_equity_snapshots.py` 追加写入，字段包含本金、权益、已实现/未实现收益、回撤、交易数、价格缺失状态、原始币种、`fx_to_cny` 与 CNY 折算字段；前端 API 会按 5 分钟 bucket 汇总为整盘收益，最多保留 360 个点，支撑今日/7日/30日曲线查看，默认全部按 RMB 展示，避免跨 US/USDT/USDC/CNY 直接混合；持仓面板同时读取 `signals/positions/*.json`，已兼容 CNFutures `positions[]` 快照；信号表展示策略来源列，优先显示账本中的 `strategy_name` 与 `signal_source`，市场摘要读取 30 分钟内的 `shared/runtime_test/sim_market_health_latest.json`，把 Crypto/PM 的“策略等待”和执行故障分开；健康 latest 过期时回退到账本/风格证据，避免旧健康结论覆盖当前看板。市场摘要仍会读取当天 `shared/logs/ashare_no_trade_explanations.jsonl` 并展示 A股无交易原因和下一步检查方向；首页右栏新增闭环证明面板，按市场展示运行态、信号/成交/持仓计数和 A股 no-trade 结构化证据，区分“等待机会”和“需要处理”；A股个股资金流面板只展示信号自身携带的 `capital/moneyflow` 真实评分或净流入字段，没有真实字段时显示等待，不使用样例或视频数据。缺少快照时才回退到日复盘 return 字段或按日 style performance。默认本地 fallback 不再展示暂停的 HK 样例，改用 CNFutures simulated-only 样例；真实 sim ledger 默认也跳过 HK，只有显式 `TRADINGAGENT_HK_SIM_ENABLED=1` 才读取港股旧账本。
 - **A股收益看板口径**：A股权益快照只接受 canonical `ashare/ashare_sim`，由 server-local `shared/logs/local_sim` 账本生成；旧 `ashare/<style>` 多风格测试账本不再进入 dashboard 汇总，避免 20k/16.6k 历史样本污染当前 200,000 元模拟盘口径。
 - **A股复盘样本口径**：A股日报/周报/归因默认只读取 server-local `shared/logs/local_sim/local_sim_trades.jsonl`；旧 `shared/logs/sim_ledger/ashare/<style>/trade_journal.jsonl` 风格账本视为退役历史样本，不再进入默认复盘输入。
 - **A股开盘验收与无交易分层**：`ashare_opening_validator` 的 first-sample 报告已把 5分钟 bar、信号状态、服务器本地模拟成交、签名回执、复盘行数和 no-trade 分类汇总到同一报告；若当天没有交易，会优先读取最新 `shared/logs/ashare_no_trade_explanations.jsonl`，把无候选、无信号卡、风控全拒、资金/组合构建阻塞、重复幂等、执行跳过、执行失败、回执缺失和复盘待生成区分开。缺回执只在当天已经出现服务器本地模拟成交后才告警，避免把“尚无成交”误报成“成交后缺回执”。`opening_acceptance.py` 短文本同步展示 bar/信号/成交/回执/复盘计数。
@@ -132,6 +132,13 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-08 A股闭环证明看板与成交来源验收
+
+- [x] `front/` snapshot 在 A股 `MarketSummary` 上透传 `noTradeEvidence`，包含 no-trade 分类、候选数、订单数、证据完整性、资金计划容量、目标持仓、风险模式和组合允许买入数；首页新增“闭环证明”面板，按市场展示运行态、信号/成交/持仓和 A股 no-trade 证据。
+- [x] `front/` 信号行新增只读 `capitalEvidence`，从信号卡的 `scores.capital` / `scores.moneyflow` / `net_mf_amount` 等字段读取个股资金证据；首页新增“A股资金/个股流向”面板，没有真实资金字段时显示等待，不展示样例资金流。
+- [x] `shared/runtime_test/ashare_no_trade_summary.py` 新增 `trade_source_check`：当天 A股有 filled 成交时，买入必须有 `execution_source` 且来自 `candidate_pool_layer=candidate`，卖出必须来自 `ashare_rebalance_sell`；`full_acceptance --profile prod` 会把成交来源缺失判为 warn，避免“有成交但不可追溯”被误当作闭环完成。
+- [x] 验证：`tests/test_ashare_no_trade_summary.py` 7 passed；`front` 相关 48 tests passed；`npm run lint`、`npm run build`、`npm run build:api` passed；`full_acceptance --profile quick` 123 passed。本机 `--profile prod` 因本机缺生产 cron/runtime 数据失败，需以服务器生产验收为准。
 
 ### 2026-07-08 A股 no-trade 证据链与资金维度别名
 

@@ -71,6 +71,10 @@ def _status_from_json_output(name: str, text: str, returncode: int) -> tuple[str
         if name == "ashare_no_trade_summary" and parsed.get("evidence_status") == "incomplete":
             gaps = parsed.get("evidence_gaps") or []
             return "warn", f"incomplete evidence: {','.join(map(str, gaps))}"
+        if name == "ashare_no_trade_summary":
+            trade_source = parsed.get("trade_source_check") if isinstance(parsed.get("trade_source_check"), dict) else {}
+            if trade_source.get("status") == "incomplete":
+                return "warn", "incomplete trade source evidence"
     return "pass", "ok"
 
 

@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
-import type { AShareResearchEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow, SignalStatus } from '../types/dashboard.ts'
+import type { AShareNoTradeEvidence, AShareResearchEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
 
 type SnapshotOptions = {
   workspaceRoot: string
@@ -84,6 +84,9 @@ type AShareNoTradeExplanation = {
   category?: string
   action?: string
   counts?: Record<string, unknown>
+  candidate_decision_trace?: unknown[]
+  capital_plan_decision?: Record<string, unknown>
+  portfolio_decision?: Record<string, unknown>
 }
 
 type AShareNoTradeLogRow = {
@@ -133,6 +136,16 @@ type SignalFile = {
   side?: string
   status?: string
   confidence?: string | number
+  score?: Record<string, unknown>
+  scores?: Record<string, unknown>
+  dimension_scores?: Record<string, unknown>
+  factor_scores?: Record<string, unknown>
+  capital_score?: number | string
+  moneyflow_score?: number | string
+  net_mf_amount?: number | string
+  main_net_inflow?: number | string
+  large_order_net_inflow?: number | string
+  super_large_order_net_inflow?: number | string
   reason?: string
   expected_alpha_bps?: number
   alpha_bps?: number
@@ -689,6 +702,7 @@ async function buildMarketSummaries({
         runtimeState,
         executionFault: healthSummary?.executionFault ?? runtimeState === 'needs_attention',
         runtimeReason: healthSummary?.reasons[0],
+        noTradeEvidence: isAshare && tradeCount <= 0 ? buildAShareNoTradeEvidence(ashareNoTradeExplanation) : undefined,
         holdingCount,
       signalCount: marketSignals.length,
       tradeCount,
@@ -1121,6 +1135,41 @@ function buildMarketSummaryDetail({
   if (filledCount !== undefined) facts.push(`成交 ${filledCount}`)
   if (errorCount) facts.push(`失败 ${errorCount}`)
   return facts.length ? facts.join(' · ') : '等待该市场写入模拟成交、持仓或风格收益。'
+}
+
+function buildAShareNoTradeEvidence(explanation?: AShareNoTradeExplanation): AShareNoTradeEvidence | undefined {
+  if (!explanation?.category) return undefined
+  const counts = asRecord(explanation.counts)
+  const candidateCount = firstParsedNumber(counts.candidates)
+  const orderCount = firstParsedNumber(counts.orders)
+  const candidateTrace = Array.isArray(explanation.candidate_decision_trace) ? explanation.candidate_decision_trace : []
+  const capitalPlan = asRecord(explanation.capital_plan_decision)
+  const portfolioDecision = asRecord(explanation.portfolio_decision)
+  const evidenceGaps: string[] = []
+
+  if ((candidateCount ?? 0) > 0 && (orderCount ?? 0) <= 0) {
+    if (!candidateTrace.length) evidenceGaps.push('candidate_decision_trace_missing')
+    if (!Object.keys(capitalPlan).length) evidenceGaps.push('capital_plan_decision_missing')
+    if (!Object.keys(portfolioDecision).length) evidenceGaps.push('portfolio_decision_missing')
+  }
+
+  return {
+    category: explanation.category,
+    action: explanation.action,
+    evidenceStatus: evidenceGaps.length ? 'incomplete' : 'ready',
+    evidenceGaps,
+    universeCount: firstParsedNumber(counts.universe),
+    candidateCount,
+    orderCount,
+    riskRejectionCount: firstParsedNumber(counts.risk_rejections),
+    skippedCandidateCount: firstParsedNumber(counts.skipped_candidates),
+    executionSkipCount: firstParsedNumber(counts.execution_skips),
+    candidateTraceCount: candidateTrace.length,
+    capitalPlanCapacity: firstParsedNumber(capitalPlan.position_capacity),
+    targetPositions: firstParsedNumber(capitalPlan.target_positions),
+    riskMode: optionalString(capitalPlan.risk_mode),
+    allowedBuyCount: firstParsedNumber(portfolioDecision.allowed_buy_count),
+  }
 }
 
 function formatAShareNoTradeExplanation(explanation?: AShareNoTradeExplanation) {
@@ -2212,9 +2261,36 @@ async function readSignalFile(path: string, bucket: string, now: Date): Promise<
       stageTimes,
       stageLatencyMinutes: calculateStageLatency(raw),
       stageEvidence: getStageEvidence(stageTimes, raw),
+      capitalEvidence: extractSignalCapitalEvidence(raw),
     }
   } catch {
     return null
+  }
+}
+
+function extractSignalCapitalEvidence(raw: SignalFile): SignalCapitalEvidence | undefined {
+  const scores = firstRecord(raw.scores, raw.score, raw.dimension_scores, raw.factor_scores)
+  const score = firstParsedNumber(raw.capital_score, raw.moneyflow_score, scores.capital, scores.moneyflow)
+  const netInflow = firstParsedNumber(raw.net_mf_amount, raw.main_net_inflow, scores.net_mf_amount, scores.main_net_inflow, scores.moneyflow)
+  const largeOrderNetInflow = firstParsedNumber(raw.large_order_net_inflow, scores.large_order_net_inflow, scores.buy_lg_amount, scores.net_lg_amount)
+  const superLargeOrderNetInflow = firstParsedNumber(raw.super_large_order_net_inflow, scores.super_large_order_net_inflow, scores.buy_elg_amount, scores.net_elg_amount)
+
+  if (
+    score === undefined &&
+    netInflow === undefined &&
+    largeOrderNetInflow === undefined &&
+    superLargeOrderNetInflow === undefined
+  ) {
+    return undefined
+  }
+
+  return {
+    score: score === undefined ? undefined : roundMetric(score),
+    netInflow,
+    mainNetInflow: netInflow,
+    largeOrderNetInflow,
+    superLargeOrderNetInflow,
+    source: 'signal_scores',
   }
 }
 
@@ -2566,12 +2642,16 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
+function firstRecord(...values: unknown[]): Record<string, unknown> {
+  return values.map(asRecord).find((value) => Object.keys(value).length > 0) ?? {}
+}
+
 function optionalString(value: unknown) {
   return value === undefined || value === null || value === '' ? undefined : String(value)
 }
 
-function firstParsedNumber(...values: Array<number | string | undefined>) {
-  return values.map(parseFiniteNumber).find((value): value is number => value !== undefined)
+function firstParsedNumber(...values: unknown[]) {
+  return values.map((value) => parseFiniteNumber(value as number | string | undefined)).find((value): value is number => value !== undefined)
 }
 
 function boolish(value: unknown) {

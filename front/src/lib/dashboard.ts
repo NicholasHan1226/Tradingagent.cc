@@ -1,4 +1,4 @@
-import type { HoldingRow, Market, MarketSummary, PerformancePoint, PerformanceRange, SignalRow } from '../types/dashboard'
+import type { HoldingRow, Market, MarketSummary, PerformancePoint, PerformanceRange, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DomainHealth } from '../types/status'
 
 export function getActionableSignals(rows: SignalRow[]) {
@@ -22,6 +22,77 @@ export function getVisibleHoldings(rows: HoldingRow[], activeMarket: Market) {
 export function getSelectedMarketSummary(rows: MarketSummary[], activeMarket: Market) {
   if (activeMarket === 'All Markets') return undefined
   return rows.find((summary) => summary.market === activeMarket)
+}
+
+export function getPortfolioForView({
+  activeMarket,
+  marketSummaries,
+  portfolio,
+}: {
+  activeMarket: Market
+  marketSummaries: MarketSummary[]
+  portfolio: PortfolioSummary | null
+}) {
+  if (activeMarket === 'All Markets') {
+    return getAllMarketPortfolio(portfolio, marketSummaries)
+  }
+
+  if (activeMarket === 'A-share') return portfolio
+
+  const summary = marketSummaries.find((row) => row.market === activeMarket)
+  if (!summary) return null
+
+  return marketSummaryToPortfolio(summary, portfolio?.targetPct ?? 8)
+}
+
+function getAllMarketPortfolio(portfolio: PortfolioSummary | null, marketSummaries: MarketSummary[]) {
+  if (!marketSummaries.length) return portfolio
+
+  const capitalRows = marketSummaries.filter((row) => typeof row.capitalBase === 'number' && row.capitalBase > 0)
+  const pnlRows = marketSummaries.filter((row) => typeof row.pnlAmount === 'number')
+  const capitalBase = capitalRows.reduce((sum, row) => sum + (row.capitalBase ?? 0), 0)
+  const pnlAmount = pnlRows.reduce((sum, row) => sum + (row.pnlAmount ?? 0), 0)
+
+  if (capitalBase <= 0 && !portfolio) return null
+
+  const maxDrawdownPct = Math.max(
+    portfolio?.maxDrawdownPct ?? 0,
+    ...marketSummaries.map((row) => Math.abs(row.maxDrawdownPct ?? 0)),
+  )
+
+  return {
+    pnlAmount: pnlRows.length ? pnlAmount : portfolio?.pnlAmount ?? 0,
+    returnPct: capitalBase > 0 ? Number(((pnlAmount / capitalBase) * 100).toFixed(2)) : portfolio?.returnPct ?? 0,
+    capitalBase: capitalBase || portfolio?.capitalBase || 0,
+    targetPct: portfolio?.targetPct ?? 8,
+    maxDrawdownPct,
+    tradeCount: marketSummaries.reduce((sum, row) => sum + row.tradeCount, 0),
+    pointCount: marketSummaries.length,
+    source: 'marketSummaries aggregate',
+    pnlSource: portfolio?.pnlSource ?? 'market_summary_aggregate',
+    pnlCurrency: 'CNY' as const,
+    realizedPnl: marketSummaries.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0),
+    unrealizedPnl: marketSummaries.reduce((sum, row) => sum + (row.unrealizedPnl ?? 0), 0),
+    updatedAt: portfolio?.updatedAt ?? new Date().toISOString(),
+  }
+}
+
+function marketSummaryToPortfolio(summary: MarketSummary, targetPct: number): PortfolioSummary {
+  return {
+    pnlAmount: summary.pnlAmount ?? 0,
+    returnPct: summary.returnPct ?? 0,
+    capitalBase: summary.capitalBase ?? 0,
+    targetPct,
+    maxDrawdownPct: Math.abs(summary.maxDrawdownPct ?? 0),
+    tradeCount: summary.tradeCount,
+    pointCount: 1,
+    source: summary.source,
+    pnlSource: 'market_summary',
+    pnlCurrency: summary.pnlCurrency ?? 'CNY',
+    realizedPnl: summary.realizedPnl,
+    unrealizedPnl: summary.unrealizedPnl,
+    updatedAt: summary.latestAt ?? new Date().toISOString(),
+  }
 }
 
 export function getLivePerformanceData(now: Date, rows: PerformancePoint[], animateLatest = false) {

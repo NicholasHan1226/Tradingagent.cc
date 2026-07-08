@@ -2,6 +2,8 @@ import { PerformanceChart } from '../components/charts/PerformanceChart'
 import { ChartSkeleton } from '../components/Skeleton'
 import { StatusBoundary } from '../components/StatusBoundary'
 import { AShareEvidencePanel } from '../components/panels/AShareEvidencePanel'
+import { AShareMoneyflowPanel } from '../components/panels/AShareMoneyflowPanel'
+import { ClosedLoopProofPanel } from '../components/panels/ClosedLoopProofPanel'
 import { HoldingsCompact } from '../components/panels/HoldingsCompact'
 import { HomeResultBrief } from '../components/panels/HomeResultBrief'
 import { MarketSummaryPanel } from '../components/panels/MarketSummaryPanel'
@@ -24,6 +26,7 @@ export function HomeDashboard({
   hasSignalData,
   holdings,
   marketSummary,
+  marketSummaries,
   now,
   portfolio,
   domainStatus,
@@ -44,6 +47,7 @@ export function HomeDashboard({
   hasSignalData: boolean
   holdings: HoldingRow[]
   marketSummary?: MarketSummary
+  marketSummaries: MarketSummary[]
   latestPoint: PerformancePoint
   now: Date
   portfolio: PortfolioSummary | null
@@ -70,7 +74,7 @@ export function HomeDashboard({
       <section className="home-main">
         <section className="panel performance-panel hero-performance">
           <div className="performance-headline">
-            <SignalFunnelFlow events={funnelEvents} hasSignalData={hasSignalData} signals={signals} />
+            <SignalFunnelFlow events={funnelEvents} hasSignalData={hasSignalData} holdings={holdings} signals={signals} />
             <RealtimeReturnCard
               accountMode={accountMode}
               executedCount={signalFunnel.executed.length}
@@ -122,6 +126,8 @@ export function HomeDashboard({
 
       <aside className="home-rail">
         <MarketSummaryPanel activeMarket={activeMarket} summary={marketSummary} />
+        <ClosedLoopProofPanel summaries={marketSummaries} />
+        <AShareMoneyflowPanel activeMarket={activeMarket} signals={signals} />
         <HomeResultBrief hasHoldingData={hasHoldingData} hasPerformanceData={hasPerformanceData} hasSignalData={hasSignalData} holdings={holdings} portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
         {(activeMarket === 'All Markets' || activeMarket === 'A-share') && <AShareEvidencePanel evidence={ashareResearchEvidence} />}
       </aside>

@@ -1,8 +1,9 @@
 import type { CSSProperties } from 'react'
 import { getSignalFunnel } from '../../lib/dashboard'
-import type { FunnelEvent, SignalRow } from '../../types/dashboard'
+import type { FunnelEvent, HoldingRow, SignalRow } from '../../types/dashboard'
 
 const OUTCOME_LABELS = ['成交', '观察中', '复盘', '放弃']
+const HOLDING_OUTCOME_LABELS = ['持仓', '观察', '复盘', '放弃']
 const MAX_ANIMATED_SIGNALS = 64
 const MAX_VISIBLE_LABELS = 6
 const FLOW_STAGES = [
@@ -13,22 +14,34 @@ const FLOW_STAGES = [
   { label: '进入队列', fallbackIndex: 3 },
 ] as const
 
-export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: FunnelEvent[]; hasSignalData: boolean; signals: SignalRow[] }) {
+export function SignalFunnelFlow({
+  events,
+  hasSignalData,
+  holdings,
+  signals,
+}: {
+  events: FunnelEvent[]
+  hasSignalData: boolean
+  holdings: HoldingRow[]
+  signals: SignalRow[]
+}) {
   const funnel = getSignalFunnel(signals)
   const eventFlow = getEventFlow(events)
-  const visualStages = getVisualStages(funnel, eventFlow)
+  const hasHoldingReplay = !events.length && !signals.length && holdings.length > 0
+  const visualStages = hasHoldingReplay ? getHoldingStages(holdings) : getVisualStages(funnel, eventFlow)
   const maxStageCount = Math.max(1, ...visualStages.map((stage) => stage.count))
   const stageWidths = visualStages.map((stage) => Math.max(12, Math.round((stage.count / maxStageCount) * 100)))
   const executedSignals = funnel.executed
   const pendingSignals = funnel.pending
   const missedSignals = funnel.missed
   const blockedSignals = [...funnel.blocked, ...funnel.cancelled]
-  const outcomeRows = getOutcomeRows(eventFlow, {
+  const outcomeRows = hasHoldingReplay ? getHoldingOutcomeRows(holdings) : getOutcomeRows(eventFlow, {
     executed: executedSignals.length,
     pending: pendingSignals.length,
     missed: missedSignals.length,
     abandoned: blockedSignals.length,
   })
+  const outcomeLabels = hasHoldingReplay ? HOLDING_OUTCOME_LABELS : OUTCOME_LABELS
   const passRate = Math.round((funnel.executed.length / Math.max(1, signals.length)) * 100)
   const visualStageDrops = visualStages.map((stage) => stage.dropped)
   const hasStageDrop = visualStageDrops.some((drop) => drop > 0)
@@ -40,6 +53,8 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
     : '等待新机会'
   const caption = hasEventSource
     ? eventCaption
+    : hasHoldingReplay
+      ? `${holdings.length} 个持仓在跟踪 · 暂无新信号进入`
     : hasSignalData
     ? funnel.mode === 'screening' || hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
       ? `${signals.length} 个进入 · ${funnel.tradeSignals.length} 个留下 · ${funnel.executed.length} 个成交`
@@ -47,6 +62,8 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
     : '等待新机会'
   const modeLabel = hasEventSource
     ? '实时'
+    : hasHoldingReplay
+      ? '持仓中'
     : funnel.mode === 'screening'
     ? '筛选中'
     : funnel.mode === 'partial'
@@ -56,6 +73,8 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
         : '等待数据'
   const particles = hasEventSource
     ? buildEventParticles(events)
+    : hasHoldingReplay
+      ? buildHoldingParticles(holdings)
     : buildParticles(hasSignalData ? signals : placeholderSignals(), funnel.mode)
   const latestEvents = events.slice(-4).reverse()
   const firstStageCount = Math.max(1, visualStages[0]?.count ?? signals.length)
@@ -115,8 +134,8 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
         </div>
         <div className="flow-outcome-strip">
           {outcomeRows.map((count, index) => (
-            <span key={OUTCOME_LABELS[index]}>
-              <b>{count}</b> {OUTCOME_LABELS[index]}
+            <span key={outcomeLabels[index]}>
+              <b>{count}</b> {outcomeLabels[index]}
             </span>
           ))}
         </div>
@@ -139,6 +158,24 @@ export function SignalFunnelFlow({ events, hasSignalData, signals }: { events: F
       </div>
     </section>
   )
+}
+
+function getHoldingStages(holdings: HoldingRow[]) {
+  const observing = holdings.filter((holding) => holding.risk === '观察' || holding.risk === '偏高').length
+  const normal = holdings.length - observing
+
+  return [
+    { count: holdings.length, dropped: 0, hint: '账户内', label: '已有仓位', width: 100 },
+    { count: holdings.length, dropped: 0, hint: '已建仓', label: '入仓结果', width: 100 },
+    { count: holdings.length, dropped: 0, hint: '跟踪中', label: '持仓跟踪', width: 100 },
+    { count: observing, dropped: Math.max(0, normal), hint: observing ? '需观察' : '正常', label: '风险观察', width: observing ? 56 : 16 },
+    { count: holdings.length, dropped: 0, hint: '待复盘', label: '复盘归因', width: 100 },
+  ]
+}
+
+function getHoldingOutcomeRows(holdings: HoldingRow[]) {
+  const watching = holdings.filter((holding) => holding.risk === '观察' || holding.risk === '偏高').length
+  return [holdings.length, watching, holdings.length, 0]
 }
 
 type EventFlow = {
@@ -299,6 +336,23 @@ function buildEventParticles(events: FunnelEvent[]) {
       showLabel: labelIndexes.has(index),
       symbol: compactSymbol(event.symbol),
       stopLeft: `${Math.min(93, stopStage * 20 - 8)}%`,
+      tone,
+    }
+  })
+}
+
+function buildHoldingParticles(holdings: HoldingRow[]) {
+  return holdings.slice(0, MAX_ANIMATED_SIGNALS).map((holding, index) => {
+    const tone = holding.risk === '偏高' ? 'red' : holding.risk === '观察' ? 'amber' : 'cyan'
+
+    return {
+      begin: `${-(index * 0.58)}s`,
+      duration: `${6.2 + (index % 5) * 0.4}s`,
+      label: `${holding.symbol}-holding`,
+      lane: index % 8,
+      showLabel: true,
+      symbol: compactSymbol(holding.symbol),
+      stopLeft: holding.risk === '正常' ? '88%' : '68%',
       tone,
     }
   })

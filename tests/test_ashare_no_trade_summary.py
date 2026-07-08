@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from shared.runtime_test import ashare_no_trade_summary
-from shared.runtime_test.ashare_no_trade_summary import summarize_no_trade_log
+from shared.runtime_test.ashare_no_trade_summary import summarize_no_trade_log, summarize_trade_source_check
 
 
 class AshareNoTradeSummaryTest(unittest.TestCase):
@@ -15,6 +15,13 @@ class AshareNoTradeSummaryTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         path = Path(tmp.name) / "ashare_no_trade_explanations.jsonl"
+        path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+        return path
+
+    def _trade_log(self, rows: list[dict[str, object]]) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "local_sim_trades.jsonl"
         path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
         return path
 
@@ -151,6 +158,62 @@ class AshareNoTradeSummaryTest(unittest.TestCase):
         self.assertEqual(report["report_type"], "ashare_no_trade_summary")
         self.assertTrue(report["read_only"])
         self.assertFalse(report["real_trading_enabled"])
+
+    def test_trade_source_check_accepts_traceable_candidate_buy_and_rebalance_sell(self) -> None:
+        path = self._trade_log(
+            [
+                {
+                    "filled_at": "2026-07-08T10:05:00+08:00",
+                    "status": "filled",
+                    "side": "buy",
+                    "symbol": "600000.SH",
+                    "execution_source": "ashare_sim_loop",
+                    "candidate_pool_layer": "candidate",
+                },
+                {
+                    "filled_at": "2026-07-08T10:15:00+08:00",
+                    "status": "filled",
+                    "side": "sell",
+                    "symbol": "600010.SH",
+                    "execution_source": "ashare_rebalance_sell",
+                    "candidate_pool_layer": "ashare_rebalance_sell",
+                },
+            ]
+        )
+
+        report = summarize_trade_source_check(path, "20260708")
+
+        self.assertEqual(report["status"], "ready")
+        self.assertEqual(report["filled_count"], 2)
+        self.assertEqual(report["invalid_rows"], [])
+
+    def test_trade_source_check_flags_missing_or_invalid_source_evidence(self) -> None:
+        path = self._trade_log(
+            [
+                {
+                    "filled_at": "2026-07-08T10:05:00+08:00",
+                    "status": "filled",
+                    "side": "buy",
+                    "symbol": "600000.SH",
+                    "candidate_pool_layer": "watch",
+                },
+                {
+                    "filled_at": "2026-07-08T10:15:00+08:00",
+                    "status": "filled",
+                    "side": "sell",
+                    "symbol": "600010.SH",
+                    "execution_source": "manual",
+                    "candidate_pool_layer": "candidate",
+                },
+            ]
+        )
+
+        report = summarize_trade_source_check(path, "20260708")
+
+        self.assertEqual(report["status"], "incomplete")
+        self.assertEqual(report["filled_count"], 2)
+        self.assertEqual(report["missing_source_count"], 1)
+        self.assertEqual(report["invalid_layer_count"], 2)
 
 
 if __name__ == "__main__":

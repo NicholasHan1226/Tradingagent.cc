@@ -13,6 +13,7 @@ from typing import Any
 CN_TZ = timezone(timedelta(hours=8))
 ROOT = Path(__file__).resolve().parents[2]
 NO_TRADE_LOG = ROOT / "shared/logs/ashare_no_trade_explanations.jsonl"
+TRADE_LOG = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
 LATEST_REPORT = ROOT / "shared/runtime_test/ashare_no_trade_summary_latest.json"
 
 
@@ -46,7 +47,7 @@ def _compact_date(payload: dict[str, Any]) -> str:
         value = str(payload.get(key) or "").replace("-", "")[:8]
         if len(value) == 8 and value.isdigit():
             return value
-    generated_at = str(payload.get("generated_at") or payload.get("timestamp") or "")
+    generated_at = str(payload.get("generated_at") or payload.get("timestamp") or payload.get("filled_at") or payload.get("created_at") or "")
     if len(generated_at) >= 10:
         value = generated_at[:10].replace("-", "")
         if len(value) == 8 and value.isdigit():
@@ -107,9 +108,57 @@ def summarize_no_trade_log(path: Path = NO_TRADE_LOG, trade_date: str | None = N
         },
         "evidence_status": "incomplete" if evidence_gaps else ("ready" if rows else "no_rows"),
         "evidence_gaps": evidence_gaps,
+        "trade_source_check": summarize_trade_source_check(TRADE_LOG, target_date),
         "read_only": True,
         "real_trading_enabled": False,
     }
+
+
+def summarize_trade_source_check(path: Path = TRADE_LOG, trade_date: str | None = None) -> dict[str, Any]:
+    target_date = (trade_date or _today_compact()).replace("-", "")[:8]
+    rows = [row for row in _read_jsonl(path) if _compact_date(row) == target_date]
+    filled_rows = [row for row in rows if _is_filled_trade(row)]
+    invalid_rows: list[dict[str, Any]] = []
+    missing_source_count = 0
+    invalid_layer_count = 0
+
+    for index, row in enumerate(filled_rows):
+        source = str(row.get("execution_source") or "").strip()
+        side = str(row.get("side") or "").strip().lower()
+        layer = str(row.get("candidate_pool_layer") or "").strip().lower()
+        issue: list[str] = []
+        if not source:
+            missing_source_count += 1
+            issue.append("execution_source_missing")
+        if side == "buy" and layer != "candidate":
+            invalid_layer_count += 1
+            issue.append("buy_candidate_layer_invalid")
+        if side == "sell" and source != "ashare_rebalance_sell" and layer != "ashare_rebalance_sell":
+            invalid_layer_count += 1
+            issue.append("sell_source_invalid")
+        if issue:
+            invalid_rows.append({
+                "index": index,
+                "symbol": row.get("ts_code") or row.get("symbol"),
+                "side": side or None,
+                "execution_source": source or None,
+                "candidate_pool_layer": layer or None,
+                "issues": issue,
+            })
+
+    status = "no_rows" if not filled_rows else ("incomplete" if invalid_rows else "ready")
+    return {
+        "status": status,
+        "filled_count": len(filled_rows),
+        "missing_source_count": missing_source_count,
+        "invalid_layer_count": invalid_layer_count,
+        "invalid_rows": invalid_rows[:5],
+    }
+
+
+def _is_filled_trade(row: dict[str, Any]) -> bool:
+    status = str(row.get("status") or "").lower()
+    return status in {"filled", "executed"} or bool(row.get("filled_at"))
 
 
 def main() -> int:

@@ -23,8 +23,8 @@ export function MarketSummaryPanel({
       </div>
       <div className={`market-summary-status ${summary?.status ?? 'empty'} ${runtimeState}`}>
         <span>{status}</span>
-        <strong>{summary?.headline ?? `${marketLabels[activeMarket]}暂无模拟记录`}</strong>
-        <em>{summary?.detail ?? '等待该市场写入模拟成交、持仓或风格收益。'}</em>
+        <strong>{summary ? formatHeadline(summary, activeMarket) : `${marketLabels[activeMarket]}暂无模拟记录`}</strong>
+        <em>{summary ? formatDetail(summary) : '等待该市场写入模拟成交、持仓或收益。'}</em>
       </div>
       <div className="market-summary-grid">
         <SummaryMetric label="信号" value={String(summary?.signalCount ?? 0)} />
@@ -42,9 +42,31 @@ export function MarketSummaryPanel({
 
 function formatRuntimeState(state: MarketSummary['runtimeState']) {
   if (state === 'normal') return '运行中'
-  if (state === 'strategy_wait') return '策略等待'
+  if (state === 'strategy_wait') return '等待机会'
   if (state === 'needs_attention') return '需要处理'
   return '等待数据'
+}
+
+function formatHeadline(summary: MarketSummary, activeMarket: Market) {
+  if (summary.runtimeState === 'strategy_wait') return `${marketLabels[activeMarket]}正在等更好的入场条件`
+  if (summary.runtimeState === 'needs_attention' || summary.executionFault) return `${marketLabels[activeMarket]}需要先处理风险`
+  if (summary.holdingCount > 0) return `${marketLabels[activeMarket]}已有 ${summary.holdingCount} 个仓位`
+  if (summary.tradeCount > 0) return `${marketLabels[activeMarket]}已有 ${summary.tradeCount} 次模拟成交`
+  return `${marketLabels[activeMarket]}暂无新机会`
+}
+
+function formatDetail(summary: MarketSummary) {
+  const parts = [
+    summary.pnlAmount === undefined ? null : `收益 ${summary.pnlCurrency === 'CNY' ? formatSignedCnyCompact(summary.pnlAmount) : formatCurrency(summary.pnlAmount)}`,
+    summary.returnPct === undefined ? null : `收益率 ${summary.returnPct >= 0 ? '+' : ''}${summary.returnPct.toFixed(2)}%`,
+    summary.capitalBase === undefined ? null : `资金 ${summary.pnlCurrency === 'CNY' ? formatSignedCnyCompact(summary.capitalBase).replace('+', '') : formatCurrency(summary.capitalBase)}`,
+    summary.activeStyleCount === undefined ? null : `策略 ${summary.activeStyleCount}/${summary.styleCount}`,
+    summary.tradeCount ? `成交 ${summary.tradeCount}` : null,
+  ].filter(Boolean)
+
+  if (parts.length) return parts.join(' · ')
+  if (summary.runtimeReason?.includes('waiting')) return '没有符合条件的新入场，继续观察。'
+  return '等待该市场写入可展示结果。'
 }
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {

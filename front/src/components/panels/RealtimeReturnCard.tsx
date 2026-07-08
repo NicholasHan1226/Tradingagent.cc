@@ -41,14 +41,16 @@ export function RealtimeReturnCard({
       : formatCurrency(liveProfit)
     : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
   const resultCaption = hasAmount
-    ? `当前收益率 ${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
+    ? `当前收益率 ${formatSignedPct(liveReturn)}`
     : '等待金额'
   const activityLabel = portfolio
     ? `${portfolio.tradeCount} 次成交 · ${portfolio.pointCount} 个收益点`
     : `兑现 ${executedCount} · 推进 ${pendingCount} · 复盘 ${missedCount}`
   const accountLine = ashareAccount
     ? `总资产 ${formatCnyCompact(ashareAccount.accountEquity)} · 现金 ${formatCnyCompact(ashareAccount.cashAvailable)} · 持仓 ${formatCnyCompact(ashareAccount.marketValue)}`
-    : activityLabel
+    : portfolio
+      ? `组合资金 ${formatCapital(portfolio)} · 成交 ${portfolio.tradeCount} · 收益点 ${portfolio.pointCount}`
+      : activityLabel
   const strategyPnl = ashareAccount?.strategyTotalPnl
   const validSampleLabel = ashareAccount
     ? ashareAccount.totalSampleCount > 0
@@ -96,7 +98,7 @@ export function RealtimeReturnCard({
           <div className="return-facts" aria-label="收益关键指标">
             <span>
               <em>目标差</em>
-              <b>{`${targetGap >= 0 ? '+' : ''}${targetGap.toFixed(2)}%`}</b>
+              <b>{formatSignedPct(targetGap)}</b>
             </span>
             <span>
               <em>风险距离</em>
@@ -145,4 +147,13 @@ export function RealtimeReturnCard({
       <button onClick={() => setActivePage('收益')} type="button">收益详情</button>
     </aside>
   )
+}
+
+function formatSignedPct(value: number) {
+  const cleanValue = Math.abs(value) < 0.005 ? 0 : value
+  return `${cleanValue > 0 ? '+' : ''}${cleanValue.toFixed(2)}%`
+}
+
+function formatCapital(portfolio: PortfolioSummary) {
+  return portfolio.pnlCurrency === 'CNY' ? formatCnyCompact(portfolio.capitalBase) : formatCurrency(portfolio.capitalBase)
 }

@@ -49,6 +49,7 @@ export type MarketSummary = {
   runtimeState?: MarketRuntimeState
   executionFault?: boolean
   runtimeReason?: string
+  noTradeEvidence?: AShareNoTradeEvidence
   holdingCount: number
   signalCount: number
   tradeCount: number
@@ -69,6 +70,24 @@ export type MarketSummary = {
   source: string
   headline: string
   detail: string
+}
+
+export type AShareNoTradeEvidence = {
+  category?: string
+  action?: string
+  evidenceStatus: 'ready' | 'incomplete' | 'no_rows'
+  evidenceGaps: string[]
+  universeCount?: number
+  candidateCount?: number
+  orderCount?: number
+  riskRejectionCount?: number
+  skippedCandidateCount?: number
+  executionSkipCount?: number
+  candidateTraceCount?: number
+  capitalPlanCapacity?: number
+  targetPositions?: number
+  riskMode?: string
+  allowedBuyCount?: number
 }
 
 export type AShareAccountSummary = {
@@ -113,6 +132,16 @@ export type SignalRow = {
   stageTimes?: Partial<Record<'discovered' | 'scored' | 'debated' | 'riskChecked' | 'triggered', string>>
   stageLatencyMinutes?: number
   stageEvidence?: 'full' | 'partial' | 'replay'
+  capitalEvidence?: SignalCapitalEvidence
+}
+
+export type SignalCapitalEvidence = {
+  score?: number
+  netInflow?: number
+  mainNetInflow?: number
+  largeOrderNetInflow?: number
+  superLargeOrderNetInflow?: number
+  source: string
 }
 
 export type FunnelEventStage = '发现' | '研判' | '风控' | '队列' | '结果'

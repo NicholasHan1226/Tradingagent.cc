@@ -19,6 +19,7 @@ export const tradingAgentReadModelSources = {
   performanceTracker: 'shared/review/*/style_performance.jsonl',
   styleComparison: 'shared/review/*/style_comparison.json',
   simMarketHealth: 'shared/runtime_test/sim_market_health_latest.json',
+  capitalFlow: 'SharedSignals /capital_flow via TradingAgent signal scores',
   cnFuturesReview: 'shared/review/data/cn_futures_sim_reviews.jsonl',
   ashareResearchEvidence: 'shared/review/ashare/research_evidence_latest.json',
 } as const

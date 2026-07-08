@@ -6,7 +6,7 @@ import { MarketHeader } from './components/MarketHeader'
 import { TopNav } from './components/TopNav'
 import { holdings as mockHoldings, mockDashboardApiResponse, performanceData, signals as mockSignals } from './data/dashboard'
 import { deriveChartEvents } from './lib/chartEvents'
-import { getLivePerformanceData, getSelectedMarketSummary, getSignalFunnel, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
+import { getLivePerformanceData, getPortfolioForView, getSelectedMarketSummary, getSignalFunnel, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
 import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
@@ -92,7 +92,10 @@ function App() {
     : selectedMarketSummary?.returnPct !== undefined || selectedMarketSummary?.pnlAmount !== undefined
   const hasSignalData = activeMarket === 'All Markets' ? hasGlobalSignalData : visibleSignals.length > 0
   const hasHoldingData = activeMarket === 'All Markets' ? hasGlobalHoldingData : visibleHoldings.length > 0
-  const visiblePortfolio = activeMarket === 'All Markets' || activeMarket === 'A-share' ? portfolioSummary : null
+  const visiblePortfolio = useMemo(
+    () => getPortfolioForView({ activeMarket, marketSummaries, portfolio: portfolioSummary }),
+    [activeMarket, marketSummaries, portfolioSummary],
+  )
   const latestPoint = visiblePerformanceData[visiblePerformanceData.length - 1] ?? {
     day: '现在',
     simulated: 0,
@@ -120,10 +123,10 @@ function App() {
         activePage={activePage}
         activeMarket={activeMarket}
         hasPerformanceData={hasPerformanceData}
-        isCnyAccount={activeMarket === 'A-share' || portfolioSummary?.pnlCurrency === 'CNY'}
-        liveProfit={activeMarket === 'All Markets' ? portfolioSummary?.pnlAmount ?? null : selectedMarketSummary?.pnlAmount ?? null}
-        liveReturn={activeMarket === 'All Markets' ? portfolioSummary?.returnPct ?? latestPoint.simulated : selectedMarketSummary?.returnPct ?? latestPoint.simulated}
-        maxDrawdown={activeMarket === 'All Markets' ? portfolioSummary?.maxDrawdownPct ?? null : selectedMarketSummary?.maxDrawdownPct ?? null}
+        isCnyAccount={visiblePortfolio?.pnlCurrency === 'CNY'}
+        liveProfit={visiblePortfolio?.pnlAmount ?? null}
+        liveReturn={visiblePortfolio?.returnPct ?? latestPoint.simulated}
+        maxDrawdown={visiblePortfolio?.maxDrawdownPct ?? null}
         signalCount={visibleSignals.length}
         snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
         setActiveMarket={setActiveMarket}
@@ -144,6 +147,7 @@ function App() {
             holdings={visibleHoldings}
             latestPoint={latestPoint}
             marketSummary={selectedMarketSummary}
+            marketSummaries={marketSummaries}
             now={now}
             portfolio={visiblePortfolio}
             domainStatus={domainStatus}

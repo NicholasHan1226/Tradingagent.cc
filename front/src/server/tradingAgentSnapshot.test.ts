@@ -77,6 +77,10 @@ describe('TradingAgent snapshot reader', () => {
         ts_code: '600519.SH',
         market: 'cn',
         status: 'pending',
+        scores: {
+          capital: 0.82,
+          net_mf_amount: 12800000,
+        },
       }),
     )
 
@@ -86,7 +90,11 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: '600519.SH', market: 'A-share' }))
-    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: '600519.SH', status: 'pending' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({
+      symbol: '600519.SH',
+      status: 'pending',
+      capitalEvidence: expect.objectContaining({ score: 0.82, netInflow: 12800000 }),
+    }))
   })
 
   it('keeps mixed signal outcomes visible and normalizes backend market labels', async () => {
@@ -1185,6 +1193,7 @@ describe('TradingAgent snapshot reader', () => {
           no_trade_explanation: {
             category: 'no_candidates',
             action: 'check_candidate_pool_thresholds_and_universe_filter',
+            counts: { universe: 3213, candidates: 0, orders: 0 },
           },
         }),
       ].join('\n') + '\n',
@@ -1199,6 +1208,12 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'A-share',
       detail: expect.stringContaining('无交易：候选池暂无达标机会，检查候选池阈值'),
+      noTradeEvidence: expect.objectContaining({
+        category: 'no_candidates',
+        evidenceStatus: 'ready',
+        candidateCount: 0,
+        orderCount: 0,
+      }),
     }))
   })
 
