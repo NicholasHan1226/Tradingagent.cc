@@ -141,6 +141,24 @@ def check_sharedsignals(base_url: str, health_url: str) -> dict:
 
 
 def check_sim_output(root: Path, max_age: int) -> dict:
+    health_path = root / "shared" / "runtime_test" / "sim_market_health_latest.json"
+    health_age = file_age_minutes(health_path)
+    if health_path.exists() and health_age is not None and health_age <= max_age:
+        try:
+            payload = json.loads(health_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            payload = {"overall_status": "warn", "error": f"{exc.__class__.__name__}: {exc}"}
+        overall_status = str(payload.get("overall_status") or payload.get("status") or "warn").lower()
+        status = "ok" if overall_status in {"pass", "ok"} else ("critical" if overall_status in {"fail", "critical"} else "degraded")
+        return {
+            "status": status,
+            "source": "sim_market_health_latest",
+            "latest_file": str(health_path),
+            "age_minutes": health_age,
+            "max_age_minutes": max_age,
+            "overall_status": overall_status,
+            "summary": payload.get("summary", {}),
+        }
     candidates = sorted((root / "shared" / "review").glob("*/style_comparison.json"))
     if not candidates:
         return {"status": "critical", "reason": "style_comparison_missing", "latest_file": "", "age_minutes": None}
