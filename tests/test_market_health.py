@@ -633,6 +633,8 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "warn")
         self.assertIn("server_local_sim_has_no_production_trades_yet", check.details["warn_reasons"])
         self.assertNotIn("ashare_waiting_for_portfolio_or_strategy_signal", check.details["warn_reasons"])
+        self.assertEqual(check.details["no_trade_explanation"]["evidence_status"], "incomplete")
+        self.assertIn("candidate_decision_trace_missing", check.details["no_trade_explanation"]["evidence_gaps"])
 
     def test_ashare_sim_loop_warns_when_risk_rejection_gap_lacks_trace_evidence(self) -> None:
         log_path = self.root / "shared/logs/ashare_no_trade_explanations.jsonl"
@@ -659,6 +661,8 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "warn")
         self.assertIn("server_local_sim_has_no_production_trades_yet", check.details["warn_reasons"])
         self.assertNotIn("ashare_waiting_for_portfolio_or_strategy_signal", check.details["warn_reasons"])
+        self.assertEqual(check.details["no_trade_explanation"]["evidence_status"], "incomplete")
+        self.assertIn("candidate_decision_trace_missing", check.details["no_trade_explanation"]["evidence_gaps"])
 
     def test_ashare_sim_loop_uses_today_trade_rows_not_historical_total(self) -> None:
         local_sim = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
@@ -696,6 +700,7 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["ledger"]["today_trade_rows"], 0)
         self.assertEqual(check.status, "warn")
         self.assertIn("server_local_sim_has_no_production_trades_yet", check.details["warn_reasons"])
+        self.assertEqual(check.details["no_trade_explanation"]["evidence_status"], "incomplete")
 
     def test_ashare_sim_loop_passes_without_sample_before_session(self) -> None:
         with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):

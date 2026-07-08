@@ -834,6 +834,9 @@ def _latest_ashare_no_trade_explanation(path: Path | None = None) -> dict[str, A
         latest = dict(explanation)
         latest.setdefault("generated_at", payload.get("generated_at"))
         latest.setdefault("state", payload.get("state"))
+        evidence_gaps = _ashare_candidate_order_gap_evidence_gaps(latest)
+        latest.setdefault("evidence_status", "incomplete" if evidence_gaps else "ready")
+        latest.setdefault("evidence_gaps", evidence_gaps)
         break
     return latest
 
@@ -853,12 +856,23 @@ def _ashare_scientific_no_trade(explanation: dict[str, Any]) -> bool:
 
 
 def _ashare_candidate_order_gap_has_evidence(explanation: dict[str, Any]) -> bool:
+    return not _ashare_candidate_order_gap_evidence_gaps(explanation)
+
+
+def _ashare_candidate_order_gap_evidence_gaps(explanation: dict[str, Any]) -> list[str]:
     counts = explanation.get("counts") if isinstance(explanation.get("counts"), dict) else {}
     candidates = _int_value(counts.get("candidates"), _int_value(counts.get("candidate_count"), 0))
     orders = _int_value(counts.get("orders"), _int_value(counts.get("order_count"), 0))
     if candidates <= 0 or orders > 0:
-        return True
-    return bool(explanation.get("candidate_decision_trace")) and bool(explanation.get("capital_plan_decision")) and bool(explanation.get("portfolio_decision"))
+        return []
+    gaps: list[str] = []
+    if not explanation.get("candidate_decision_trace"):
+        gaps.append("candidate_decision_trace_missing")
+    if not explanation.get("capital_plan_decision"):
+        gaps.append("capital_plan_decision_missing")
+    if not explanation.get("portfolio_decision"):
+        gaps.append("portfolio_decision_missing")
+    return gaps
 
 
 def _int_value(value: Any, default: int = 0) -> int:
