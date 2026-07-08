@@ -702,7 +702,7 @@ async function buildMarketSummaries({
         runtimeState,
         executionFault: healthSummary?.executionFault ?? runtimeState === 'needs_attention',
         runtimeReason: healthSummary?.reasons[0],
-        noTradeEvidence: isAshare && tradeCount <= 0 ? buildAShareNoTradeEvidence(ashareNoTradeExplanation) : undefined,
+        noTradeEvidence: isAshare ? buildAShareNoTradeEvidence(ashareNoTradeExplanation) : undefined,
         holdingCount,
       signalCount: marketSignals.length,
       tradeCount,
@@ -783,6 +783,7 @@ function runtimeStateFromHealth(health: SimMarketHealthSummary, fallback: Market
   if (health.status === 'fail' || health.executionFault || health.diagnosticClass === 'execution_fault') return 'needs_attention'
   if (health.diagnosticClass === 'strategy_wait') return 'strategy_wait'
   if (health.diagnosticClass === 'market_data_wait') return 'empty'
+  if (health.reasons.some((reason) => reason.includes('_waiting_') || reason === 'server_local_sim_has_no_production_trades_yet')) return 'strategy_wait'
   if (health.status === 'pass') return 'normal'
   return fallback
 }

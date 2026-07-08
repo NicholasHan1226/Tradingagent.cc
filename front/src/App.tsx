@@ -16,7 +16,7 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
-const DASHBOARD_BUILD_ID = '20260706-cache-resync'
+const DASHBOARD_BUILD_ID = '20260708-result-funnel'
 
 function App() {
   const [activePage, setActivePage] = useState<Page>('主页')
@@ -130,7 +130,7 @@ function App() {
         signalCount={visibleSignals.length}
         snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
         setActiveMarket={setActiveMarket}
-        targetReturn={portfolioSummary?.targetPct ?? latestPoint.target}
+        targetReturn={visiblePortfolio?.targetPct ?? latestPoint.target}
         tradeSignalCount={signalFunnel.tradeSignals.length}
       />
 

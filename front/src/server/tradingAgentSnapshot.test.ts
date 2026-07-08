@@ -1217,6 +1217,56 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
+  it('keeps same-day A-share no-trade evidence visible when historical trades exist', async () => {
+    const root = await createWorkspace()
+    const logRoot = join(root, 'TradingAgent/shared/logs')
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
+    await mkdir(logRoot, { recursive: true })
+    await mkdir(ledgerRoot, { recursive: true })
+    await writeFile(
+      join(logRoot, 'ashare_no_trade_explanations.jsonl'),
+      JSON.stringify({
+        date: '20260708',
+        generated_at: '2026-07-08T14:57:00+08:00',
+        no_trade_explanation: {
+          category: 'capital_plan_defensive',
+          action: 'check_position_sizing_and_portfolio_constructor',
+          counts: { universe: 3213, candidates: 3, orders: 0 },
+          candidate_decision_trace: [{ symbol: '600000.SH', drop_reason: 'capital_plan_capacity_zero' }],
+          capital_plan_decision: { position_capacity: 0, target_positions: 0, risk_mode: 'defensive' },
+          portfolio_decision: { allowed_buy_count: 0 },
+        },
+      }) + '\n',
+    )
+    await writeFile(
+      join(ledgerRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        timestamp: '2026-07-07T15:00:00+08:00',
+        market: 'ashare',
+        capital_base: 200000,
+        total_pnl: 120,
+        trade_count: 2,
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-08T07:30:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'A-share',
+      tradeCount: 2,
+      noTradeEvidence: expect.objectContaining({
+        category: 'capital_plan_defensive',
+        evidenceStatus: 'ready',
+        candidateCount: 3,
+        orderCount: 0,
+      }),
+    }))
+  })
+
   it('keeps performance empty with a clear message when only trade logs exist', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
