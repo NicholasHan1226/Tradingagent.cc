@@ -16,16 +16,20 @@ export function ClosedLoopProofPanel({ summaries }: { summaries: MarketSummary[]
     <section className="panel rail-panel closure-proof-panel" aria-label="市场运行状态">
       <PanelTitle kicker="运行证据" title="市场状态" />
       <div className="closure-proof-list">
-        {rows.length ? rows.map((summary) => (
-          <div className={`closure-proof-row ${summary.runtimeState ?? 'empty'}`} key={summary.market}>
-            <div>
-              <span>{MARKET_LABELS[summary.market] ?? summary.market}</span>
-              <strong>{formatState(summary)}</strong>
-              <em>{formatEvidence(summary)}</em>
+        {rows.length ? rows.map((summary) => {
+          const counts = formatCounts(summary)
+
+          return (
+            <div className={`closure-proof-row ${summary.runtimeState ?? 'empty'}`} key={summary.market}>
+              <div>
+                <span>{MARKET_LABELS[summary.market] ?? summary.market}</span>
+                <strong>{formatState(summary)}</strong>
+                <em>{formatEvidence(summary)}</em>
+              </div>
+              {counts && <b>{counts}</b>}
             </div>
-            <b>{formatCounts(summary)}</b>
-          </div>
-        )) : (
+          )
+        }) : (
           <div className="empty-panel-copy compact-copy">
             <strong>等待运行证据</strong>
             <span>模拟盘写入后会显示信号、成交和归因。</span>
@@ -58,7 +62,7 @@ function formatEvidence(summary: MarketSummary) {
 }
 
 function formatCounts(summary: MarketSummary) {
-  if (!summary.signalCount && !summary.tradeCount && !summary.holdingCount) return '无记录'
+  if (!summary.signalCount && !summary.tradeCount && !summary.holdingCount) return ''
   return `信号 ${summary.signalCount} · 成交 ${summary.tradeCount} · 持仓 ${summary.holdingCount}`
 }
 

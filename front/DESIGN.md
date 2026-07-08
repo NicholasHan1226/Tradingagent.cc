@@ -282,9 +282,9 @@ The homepage now uses three outcome-first modules:
   trade signals. This follows the Sankey-style pattern more than a decorative
   static funnel, because the user needs to see movement and drop-off, not only
   stage totals. When no live opportunity or signal data is present but holdings
-  exist, the same surface switches to `持仓状态`: it shows account holdings,
-  positive contribution, risk checks, and continue-hold/review state without
-  showing a misleading opportunity conversion rate.
+  exist, the surface stays as `机会管道`, shows `暂无新机会`, and only adds a
+  compact holding-tracking strip. This avoids presenting holdings as a real
+  trading funnel.
 - `RealtimeReturnCard`: one return card combines amount and percentage. Amount
   is the primary value, percentage is secondary, and simulated/live wording is
   controlled by the shared account mode. The copy now uses `当前收益` and
@@ -331,10 +331,10 @@ The homepage flow panel now separates three states:
   ledger, moving labels, and outcome strip.
 - Derived signal rows: rendered as a screening pipeline only when signal stage
   evidence exists.
-- Holdings only: rendered as `持仓状态`, with no opportunity conversion rate.
-  It summarizes account holdings, positive contribution, watch items, and risk
-  checks, so the user does not mistake a holding replay for a real opportunity
-  funnel.
+- Holdings only: rendered as an idle `机会管道`, with no opportunity conversion
+  rate. It summarizes account holdings, positive contribution, and watch items
+  as a secondary strip, so the user does not mistake a holding replay for a real
+  opportunity funnel.
 
 Visual changes in this pass:
 
@@ -346,6 +346,8 @@ Visual changes in this pass:
   dark material restrained.
 - Renamed the live-account placeholder to `实盘待接入` and the primary return
   label to `当前收益`.
+- Reduced performance chart x-axis ticks to key dates only, so long production
+  history no longer crowds the chart footer.
 
 Updated score after this pass:
 

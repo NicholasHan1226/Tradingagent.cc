@@ -166,7 +166,7 @@ export function SignalFunnelFlow({
                 </span>
               ))}
             </div>
-            <div className="flow-loss-ledger" aria-label={hasHoldingContext ? '持仓状态变化' : '机会流失位置'}>
+            <div className="flow-loss-ledger" aria-label={hasHoldingContext ? '持仓跟踪变化' : '机会流失位置'}>
               {lossRows.map((row) => (
                 <span className={row.count > 0 ? 'has-loss' : ''} key={row.label}>
                   <em>{row.label}</em>

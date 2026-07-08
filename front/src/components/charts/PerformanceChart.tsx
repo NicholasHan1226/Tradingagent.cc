@@ -79,6 +79,7 @@ export function PerformanceChart({
     benchmarkPlot: projectIntoDomain(point.benchmark, visualDomain),
     opportunityPlot: projectIntoDomain(point.opportunity, visualDomain),
   }))
+  const xAxisTicks = getXAxisTicks(plotData)
   const eventPoints = events
     .map((event) => {
       const point = chartData.find((item) => item.day === event.day)
@@ -113,7 +114,8 @@ export function PerformanceChart({
             <CartesianGrid stroke={chartColors.grid} vertical={false} />
             <XAxis
               dataKey="day"
-              interval={4}
+              interval={0}
+              ticks={xAxisTicks}
               tick={{ fill: 'var(--text-faint)', fontSize: 10 }}
               tickLine={false}
               axisLine={{ stroke: chartColors.axis }}
@@ -198,6 +200,19 @@ export function PerformanceChart({
       )}
     </div>
   )
+}
+
+function getXAxisTicks(data: Array<{ day: string }>) {
+  if (data.length <= 6) return data.map((point) => point.day)
+  const lastIndex = data.length - 1
+  const step = Math.max(1, Math.ceil(lastIndex / 5))
+  const ticks = data
+    .filter((_, index) => index === 0 || index % step === 0)
+    .map((point) => point.day)
+    .slice(0, 6)
+  ticks.push(data[lastIndex].day)
+
+  return Array.from(new Set(ticks))
 }
 
 function ChartTooltip({ active, payload, label }: any) {
