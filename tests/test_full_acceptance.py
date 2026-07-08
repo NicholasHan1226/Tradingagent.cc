@@ -55,6 +55,29 @@ class FullAcceptanceTest(unittest.TestCase):
         self.assertEqual(report["checks"][0]["returncode"], 2)
         self.assertIn("boom", report["checks"][0]["tail"])
 
+    def test_json_warn_status_is_preserved(self) -> None:
+        args = full_acceptance.parse_args(["--profile", "prod"])
+
+        with patch.object(
+            full_acceptance.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(["unit"], 0, stdout='{"overall_status":"warn"}', stderr=""),
+        ):
+            report = full_acceptance.run_acceptance(args)
+
+        self.assertEqual(report["overall_status"], "warn")
+        self.assertTrue(all(check["status"] == "warn" for check in report["checks"]))
+
+    def test_no_trade_incomplete_evidence_is_warn(self) -> None:
+        status, summary = full_acceptance._status_from_json_output(
+            "ashare_no_trade_summary",
+            '{"evidence_status":"incomplete","evidence_gaps":["candidate_decision_trace_missing"]}',
+            0,
+        )
+
+        self.assertEqual(status, "warn")
+        self.assertIn("candidate_decision_trace_missing", summary)
+
 
 if __name__ == "__main__":
     unittest.main()

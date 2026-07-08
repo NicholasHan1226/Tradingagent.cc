@@ -135,7 +135,7 @@
 
 ### 2026-07-08 TradingAgent simplified acceptance + A股当日证据过滤
 
-- [x] 新增 `shared/runtime_test/full_acceptance.py` 作为 TradingAgent 项目内只读验收快捷入口；`--profile quick` 只跑关键本地测试，`--profile prod` 跑生产运行态只读健康检查，`--profile all` 组合关键测试、生产运行态、全量 pytest 和前端构建；该入口不发送邮件、不创建订单、不写账本、不安装 cron。
+- [x] 新增 `shared/runtime_test/full_acceptance.py` 作为 TradingAgent 项目内只读验收快捷入口；`--profile quick` 只跑关键本地测试，`--profile prod` 跑生产运行态只读健康检查，`--profile all` 组合关键测试、生产运行态、全量 pytest 和前端构建；该入口会解析 JSON 内的 `overall_status` / A股 evidence 状态，保留 warn，不发送邮件、不创建订单、不写账本、不安装 cron。
 - [x] A股模拟盘健康检查读取 `shared/logs/ashare_no_trade_explanations.jsonl` 时按当前交易日过滤，不再把昨日或更早的完整 no-trade 证据误当作今日科学空跑依据；若今天没有对应证据，继续提示 `server_local_sim_has_no_production_trades_yet`。
 - [x] 新增 `tests/test_full_acceptance.py` 和 A股旧日期证据污染回归测试；本地全量 `pytest` 与 `front` 构建已通过。
 - [x] 生产侧全量审计发现 `front/dist/assets` 权限属于错误用户会阻断服务器前端构建；该项归入生产同步修复，不是前端代码错误。

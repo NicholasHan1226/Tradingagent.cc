@@ -57,6 +57,23 @@ def _tail(text: str, limit: int = 2400) -> str:
     return text[-limit:]
 
 
+def _status_from_json_output(name: str, text: str, returncode: int) -> tuple[str, str]:
+    if returncode != 0:
+        return "fail", f"exit={returncode}"
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return "pass", "ok"
+    if isinstance(parsed, dict):
+        overall = str(parsed.get("overall_status") or "").lower()
+        if overall in {"pass", "warn", "fail"}:
+            return overall, overall
+        if name == "ashare_no_trade_summary" and parsed.get("evidence_status") == "incomplete":
+            gaps = parsed.get("evidence_gaps") or []
+            return "warn", f"incomplete evidence: {','.join(map(str, gaps))}"
+    return "pass", "ok"
+
+
 def _run(name: str, command: list[str], *, cwd: Path = ROOT, timeout: int = 180) -> AcceptanceCheck:
     started = time.monotonic()
     try:
@@ -70,8 +87,7 @@ def _run(name: str, command: list[str], *, cwd: Path = ROOT, timeout: int = 180)
             check=False,
         )
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
-        status = "pass" if result.returncode == 0 else "fail"
-        summary = "ok" if status == "pass" else f"exit={result.returncode}"
+        status, summary = _status_from_json_output(name, output, result.returncode)
         return AcceptanceCheck(
             name=name,
             status=status,
@@ -119,7 +135,7 @@ def _profiles(args: argparse.Namespace) -> list[tuple[str, list[str], Path, int]
 
 def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
     checks = [_run(name, command, cwd=cwd, timeout=timeout) for name, command, cwd, timeout in _profiles(args)]
-    overall = "fail" if any(check.status == "fail" for check in checks) else "pass"
+    overall = "fail" if any(check.status == "fail" for check in checks) else ("warn" if any(check.status == "warn" for check in checks) else "pass")
     return {
         "overall_status": overall,
         "profile": args.profile,
