@@ -81,6 +81,15 @@ def _compact_date(value: Any) -> str:
     return str(value or "").strip()[:10].replace("-", "")
 
 
+def _reader_daily_start(trade_date: str, *, lookback_days: int = 30) -> str:
+    compact = _compact_date(trade_date)
+    try:
+        parsed = datetime.strptime(compact, "%Y%m%d")
+    except ValueError:
+        return ""
+    return (parsed - timedelta(days=max(1, int(lookback_days)))).strftime("%Y%m%d")
+
+
 def _reader_symbols(reader: Any | None, *, limit: int = 80, as_of: str = "") -> list[str]:
     if reader is None:
         return []
@@ -170,9 +179,10 @@ def _query_daily_bars_via_reader(reader: Any | None, trade_date: str, *, min_sym
     latest_dates: list[str] = []
     daily_bar_count = 0
     priced_symbols: list[str] = []
+    start_date = _reader_daily_start(trade_date)
     for symbol in symbols:
         try:
-            rows = get_bars_daily(READER_MARKET, symbol, "", trade_date)
+            rows = get_bars_daily(READER_MARKET, symbol, start_date, trade_date)
         except Exception:
             rows = []
         priced_rows = [
@@ -198,6 +208,7 @@ def _query_daily_bars_via_reader(reader: Any | None, trade_date: str, *, min_sym
 def _query_daily_bars_sqlite(db_path: Path, trade_date: str) -> dict[str, Any]:
     if not db_path.exists():
         return {"error": f"sqlite database not found: {db_path}", "symbol_count": 0}
+    start_date = _reader_daily_start(trade_date)
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -206,11 +217,12 @@ def _query_daily_bars_sqlite(db_path: Path, trade_date: str) -> dict[str, Any]:
             SELECT symbol, COUNT(*) AS bar_count, MIN(trade_date), MAX(trade_date)
             FROM market_bars_daily
             WHERE market='Futures'
+              AND (? = '' OR trade_date >= ?)
               AND trade_date <= ?
               AND close > 0
             GROUP BY symbol
             """,
-            (trade_date,),
+            (start_date, start_date, trade_date),
         ).fetchall()
     except Exception as exc:  # noqa: BLE001
         return {"error": f"{exc.__class__.__name__}: {exc}", "symbol_count": 0}

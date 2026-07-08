@@ -7,7 +7,13 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from CNFutures.opening_validator import _reader_symbols, first_sample_alerts, validate_opening, validate_pre_open
+from CNFutures.opening_validator import (
+    _query_daily_bars_via_reader,
+    _reader_symbols,
+    first_sample_alerts,
+    validate_opening,
+    validate_pre_open,
+)
 
 
 class CNFuturesOpeningValidatorTest(unittest.TestCase):
@@ -187,6 +193,34 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
         self.assertTrue(report["intraday_readiness"]["reachable"])
         self.assertFalse(report["real_trading_enabled"])
 
+    def test_pre_open_reader_daily_query_uses_recent_window(self) -> None:
+        class Reader:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str, str, str]] = []
+
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                self.market = market
+                return [
+                    {"symbol": "IF2609.CFX", "list_date": "20250901", "expiry_date": "20260918", "last_trade_date": "20260918"},
+                    {"symbol": "IH2609.CFX", "list_date": "20250901", "expiry_date": "20260918", "last_trade_date": "20260918"},
+                    {"symbol": "IC2609.CFX", "list_date": "20250901", "expiry_date": "20260918", "last_trade_date": "20260918"},
+                    {"symbol": "IM2609.CFX", "list_date": "20250901", "expiry_date": "20260918", "last_trade_date": "20260918"},
+                ]
+
+            def get_bars_daily(self, market: str, symbol: str, start: str, end: str) -> list[dict[str, object]]:
+                self.calls.append((market, symbol, start, end))
+                if start == end:
+                    return []
+                return [{"trade_date": "20260707", "close": 3500.0}]
+
+        reader = Reader()
+        report = _query_daily_bars_via_reader(reader, "20260708", min_symbols=4)
+
+        self.assertEqual(report["query_source"], "TradingagentDataReader")
+        self.assertEqual(report["symbol_count"], 4)
+        self.assertEqual(reader.market, "Futures")
+        self.assertTrue(all(call[2] == "20260608" and call[3] == "20260708" for call in reader.calls))
+
     def test_pre_open_warns_when_daily_bars_are_missing(self) -> None:
         db_path = self._db_with_daily([])
 
@@ -198,6 +232,26 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
 
         self.assertEqual(report["status"], "warn")
         self.assertEqual(report["reason"], "pre_open_executable_daily_bars_missing")
+
+    def test_pre_open_warns_when_daily_bars_are_stale(self) -> None:
+        db_path = self._db_with_daily(
+            [
+                ("IF2609.CFX", "20200101", 3500.0),
+                ("IH2609.CFX", "20200101", 2400.0),
+                ("IC2609.CFX", "20200101", 5200.0),
+                ("IM2609.CFX", "20200101", 6200.0),
+            ]
+        )
+
+        report = validate_pre_open(
+            sqlite_db=db_path,
+            now=datetime.fromisoformat("2026-07-06T08:55:00+08:00"),
+            min_symbols=4,
+        )
+
+        self.assertEqual(report["status"], "warn")
+        self.assertEqual(report["reason"], "pre_open_executable_daily_bars_missing")
+        self.assertEqual(report["symbol_count"], 0)
 
     def test_pre_open_filters_generic_contracts_before_acceptance(self) -> None:
         db_path = self._db_with_daily(

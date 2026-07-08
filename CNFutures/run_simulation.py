@@ -154,7 +154,11 @@ def main() -> int:
             f"styles={output['style_count']} universe={output['universe_count']} "
             f"real_trading_enabled={output['real_trading_enabled']}"
         )
-    return 0 if output["state"] == "ok" else 2
+    if output["state"] == "ok":
+        return 0
+    if output["state"] == "market_closed" and int(output.get("error_count") or 0) == 0:
+        return 0
+    return 2
 
 
 if __name__ == "__main__":

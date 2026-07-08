@@ -1019,6 +1019,85 @@ class CNFuturesAutomationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--max-intraday-bar-age-minutes", result.stdout)
 
+    def test_run_simulation_cli_treats_market_closed_as_normal(self) -> None:
+        from CNFutures import run_simulation
+
+        class Args:
+            date = "20260703"
+            signals_dir = Path("/tmp/cn_futures_signals")
+            review_path = Path("/tmp/cn_futures_reviews.jsonl")
+            max_symbols = None
+            cadence = "5min"
+            max_intraday_bar_age_minutes = 10.0
+            json = True
+
+        with (
+            patch("CNFutures.run_simulation._parse_args", return_value=Args()),
+            patch("CNFutures.run_simulation.CNFuturesAdapter") as adapter_class,
+            patch("CNFutures.run_simulation.run_multi_style_simulation") as run_sim,
+        ):
+            adapter = adapter_class.return_value
+            adapter.reader = object()
+            run_sim.return_value = {
+                "market": "cn_futures",
+                "reader_market": "Futures",
+                "date": "20260703",
+                "cadence": "5min",
+                "state": "market_closed",
+                "capital_layer": "simulated",
+                "account_type": "simulated",
+                "universe_count": 1,
+                "style_count": 1,
+                "record_count": 0,
+                "filled_count": 0,
+                "hold_count": 0,
+                "errors": [],
+                "records": [],
+                "max_intraday_bar_age_minutes": 10.0,
+            }
+
+            self.assertEqual(run_simulation.main(), 0)
+
+    def test_run_simulation_cli_does_not_hide_market_closed_errors(self) -> None:
+        from CNFutures import run_simulation
+
+        class Args:
+            date = "20260703"
+            signals_dir = Path("/tmp/cn_futures_signals")
+            review_path = Path("/tmp/cn_futures_reviews.jsonl")
+            max_symbols = None
+            cadence = "5min"
+            max_intraday_bar_age_minutes = 10.0
+            json = True
+
+        with (
+            patch("CNFutures.run_simulation._parse_args", return_value=Args()),
+            patch("CNFutures.run_simulation.CNFuturesAdapter") as adapter_class,
+            patch("CNFutures.run_simulation.run_multi_style_simulation") as run_sim,
+        ):
+            adapter = adapter_class.return_value
+            adapter.reader = object()
+            run_sim.return_value = {
+                "market": "cn_futures",
+                "reader_market": "Futures",
+                "date": "20260703",
+                "cadence": "5min",
+                "state": "market_closed",
+                "capital_layer": "simulated",
+                "account_type": "simulated",
+                "universe_count": 1,
+                "style_count": 1,
+                "record_count": 0,
+                "filled_count": 0,
+                "hold_count": 0,
+                "error_count": 1,
+                "errors": [{"stage": "clock", "error": "bad_session_state"}],
+                "records": [],
+                "max_intraday_bar_age_minutes": 10.0,
+            }
+
+            self.assertEqual(run_simulation.main(), 2)
+
     def test_adapter_prefers_contracts_with_available_daily_bars(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 
