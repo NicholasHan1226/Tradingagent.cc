@@ -3,9 +3,14 @@
 This document records the Cloudflare migration shape for the TradingAgent front
 layer. It is a deployment preparation note, not a trading runtime change.
 
-## Current Result
+## Current Status
 
-As of 2026-07-05, the static dashboard has been deployed to Cloudflare Pages:
+The active browser-facing dashboard is served from the TradingAgent production
+host through `/opt/investment/tradingagent/front`. Cloudflare Pages is a tested
+historical deployment and rollback option, not the active production source of
+truth.
+
+The last recorded Cloudflare Pages shape was:
 
 | Item | Value |
 | --- | --- |
@@ -13,21 +18,20 @@ As of 2026-07-05, the static dashboard has been deployed to Cloudflare Pages:
 | Production URL | `https://tradingagent-front.pages.dev` |
 | First deployment URL | `https://d29e260e.tradingagent-front.pages.dev` |
 | Latest checked deployment URL | `https://30a39766.tradingagent-front.pages.dev` |
-| Custom dashboard domain | `https://dashboard.tradingagent.cc` |
-| DNS status | `dashboard.tradingagent.cc` is a proxied CNAME to `tradingagent-front.pages.dev` |
+| Historical custom dashboard domain | `https://dashboard.tradingagent.cc` |
+| Historical DNS status | `dashboard.tradingagent.cc` was tested as a proxied CNAME to `tradingagent-front.pages.dev` |
 | Tunnel | `tradingagent-front-api` (`88b5a0af-35fe-438d-b294-2d1b441631ca`) |
 | API domain | `https://api.tradingagent.cc/api/trading-agent/snapshot` |
 
-The dashboard page is public on Cloudflare. The live snapshot API is connected
-through Cloudflare Tunnel to the TradingAgent server's local read-only snapshot
-service on `127.0.0.1:8787`.
+When the Cloudflare path is re-enabled, the dashboard page is public on
+Cloudflare and the snapshot API connects through Cloudflare Tunnel to the
+TradingAgent server's local read-only snapshot service on `127.0.0.1:8787`.
 
-The Pages Function at `/api/trading-agent/snapshot` is the same-origin
-read-only proxy. It uses the Cloudflare Pages server-side variable
-`TRADING_AGENT_SNAPSHOT_UPSTREAM_URL` and currently forwards to
-`https://api.tradingagent.cc/api/trading-agent/snapshot`.
+The Pages Function at `/api/trading-agent/snapshot` remains the same-origin
+read-only proxy shape for that rollback path. It uses the Cloudflare Pages
+server-side variable `TRADING_AGENT_SNAPSHOT_UPSTREAM_URL`.
 
-## Target Result
+## Cloudflare Target Shape
 
 Move the browser-facing dashboard away from the mainland Alibaba Cloud Nginx
 public entry and onto Cloudflare:

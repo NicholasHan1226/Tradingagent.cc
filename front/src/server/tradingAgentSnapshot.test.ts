@@ -128,6 +128,12 @@ describe('TradingAgent snapshot reader', () => {
 
     expect(snapshot.signals.length).toBeLessThanOrEqual(240)
     expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'BTC-USD', market: 'Crypto', status: 'missed' }))
+    expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
+      symbol: 'BTC-USD',
+      stage: '结果',
+      status: '复盘',
+      terminal: true,
+    }))
     expect(snapshot.signals[0]).toMatchObject({ market: 'PM' })
   })
 
@@ -1504,6 +1510,7 @@ describe('TradingAgent snapshot reader', () => {
     }))
     expect(snapshot.signals).toContainEqual(expect.objectContaining({
       symbol: 'BTC-USD',
+      opportunityId: 'SIM-2026-07-04-BTCUSDT-buy-grid',
       status: 'executed',
       method: 'Grid · 买入',
       stage: '成交',
@@ -1512,6 +1519,7 @@ describe('TradingAgent snapshot reader', () => {
     }))
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
       symbol: 'BTC-USD',
+      opportunityId: 'SIM-2026-07-04-BTCUSDT-buy-grid',
       stage: '结果',
       status: '成交',
       source: 'sim_ledger',
@@ -1519,6 +1527,48 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.performance).toEqual([])
     expect(snapshot.domains.holdings.status).toBe('ready')
     expect(snapshot.domains.signals.status).toBe('ready')
+  })
+
+  it('keeps queue and simulated result events in the same opportunity funnel', async () => {
+    const root = await createWorkspace()
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(ledgerRoot, { recursive: true })
+
+    await writeFile(
+      join(root, 'signals/pending/BTCUSDT.json'),
+      JSON.stringify({
+        order_id: 'opp-btc-grid-001',
+        ts_code: 'BTCUSDT',
+        market: 'crypto',
+        status: 'pending',
+        discovered_at: '2026-07-04T09:30:00.000+08:00',
+        scored_at: '2026-07-04T09:34:00.000+08:00',
+        risk_checked_at: '2026-07-04T09:38:00.000+08:00',
+      }),
+    )
+    await writeFile(
+      join(ledgerRoot, 'trade_journal.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        fill_price: 62699.99,
+        fill_qty: 0.0106,
+        notional: 666.67,
+        order_id: 'opp-btc-grid-001',
+        side: 'buy',
+        symbol: 'BTCUSDT',
+        timestamp: '2026-07-04T02:00:00.000Z',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T03:00:00.000Z'),
+    })
+
+    const sameOpportunityEvents = snapshot.funnelEvents.filter((event) => event.opportunityId === 'opp-btc-grid-001')
+    expect(sameOpportunityEvents).toContainEqual(expect.objectContaining({ source: 'signal_queue', stage: '发现' }))
+    expect(sameOpportunityEvents).toContainEqual(expect.objectContaining({ source: 'sim_ledger', stage: '结果', status: '成交', terminal: true }))
   })
 
   it('merges signal queue rows with non-A-share simulated ledger rows', async () => {
