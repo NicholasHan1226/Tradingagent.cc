@@ -299,14 +299,14 @@
 
 ### 2026-07-04 email route residual fixes
 
-- [x] `.env.example` 的 `CLOUDFLARE_EMAIL_FROM` 已从旧 `notice@agentspaces.cc` 改为 `notice@tradingagent.cc`。
+- [x] `.env.example` 的 `CLOUDFLARE_EMAIL_FROM` 使用 `notice@tradingagent.cc`。
 - [x] `shared/notify/alert_router.py` 文档注释已同步为交易通道 `notice@tradingagent.cc -> tradingadviser@coze.email`。
 - [x] simulated evolution circuit breaker 的系统告警不再硬发 `tradingadviser@coze.email`；`send_template_email()` 已改为显式 `channel` 优先解析默认收件人。
 
 ### 2026-07-04 system email smoke verification
 
 - [x] 主服务器实测 TradingAgent 系统邮件：Cloudflare Email Service 从 `notice@tradingagent.cc` 发往 `soc@coze.email` 成功，主题含 `[SMOKE][TradingAgent][系统]`。
-- [x] 邮件边界保持不变：交易类发 `tradingadviser@coze.email`，系统类发 `soc@coze.email`；`notice@agentspaces.cc` 不作为三系统交易发件邮箱。
+- [x] 邮件边界保持不变：交易类发 `tradingadviser@coze.email`，系统类发 `soc@coze.email`，发件邮箱使用 `notice@tradingagent.cc`。
 
 ### 2026-07-04 CNFutures 5-minute simulated trading cadence
 
