@@ -35,7 +35,7 @@ export function MarketHeader({
   const meta = pageMeta[activePage]
   const [showMarkets, setShowMarkets] = useState(false)
   const freshness = snapshotGeneratedAt ? '实时更新' : '预览数据'
-  const accountLabel = accountMode === 'live' ? '实盘' : '模拟盘'
+  const accountLabel = accountMode === 'live' ? '真实账户预留' : '模拟盘'
   const returnValue = hasPerformanceData
     ? liveProfit !== null
       ? isCnyAccount ? formatSignedCnyCompact(liveProfit) : formatCurrency(liveProfit)
@@ -58,7 +58,7 @@ export function MarketHeader({
         <Stat detail={returnDetail} label="当前收益" value={returnValue} cyan={hasPerformanceData} />
         <Stat label="目标差" value={hasPerformanceData ? formatSignedPct(liveReturn - targetReturn) : '等待'} />
         <Stat detail="机会池" label="机会" value={`${signalCount}`} />
-        <Stat detail="可处理" label="信号" value={`${tradeSignalCount}`} cyan />
+        <Stat detail="通过筛选" label="可跟进" value={`${tradeSignalCount}`} cyan />
         <Stat label="最大回撤" value={hasPerformanceData ? formatDrawdown(drawdown) : '等待'} red={hasPerformanceData && drawdown > 0} />
       </div>
       <div className="market-tools">

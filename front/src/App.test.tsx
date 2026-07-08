@@ -27,7 +27,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByLabelText('机会管道')).toBeInTheDocument()
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
     expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
-    expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
+    expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '真实账户' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
     expect(screen.getAllByText('信号').length).toBeGreaterThan(0)
@@ -198,12 +198,12 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('机会管道').length).toBeGreaterThan(0)
     expect(screen.getAllByText('持仓跟踪').length).toBeGreaterThan(0)
     expect(screen.getAllByText('继续跟进').length).toBeGreaterThan(0)
-    expect(screen.queryByText('暂无新机会')).not.toBeInTheDocument()
+    expect(screen.getAllByText('暂无新机会').length).toBeGreaterThan(0)
     expect(screen.queryByText(/0 个新机会 · 1 个持仓在跟踪 · 转化/)).not.toBeInTheDocument()
     expect(screen.queryByText(/暂无新信号进入/)).not.toBeInTheDocument()
     expect(screen.getAllByText('¥19.99万').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('可复盘收益').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('有效样本').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('复盘收益').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/可复盘/).length).toBeGreaterThan(0)
     expect(screen.getAllByText('0/13').length).toBeGreaterThan(0)
     expect(screen.queryByText(/可复盘 0\/13 · 链路验证 13/)).not.toBeInTheDocument()
   })
@@ -343,14 +343,14 @@ describe('App navigation and result-first dashboard', () => {
     click(screen.getByRole('button', { name: '全市场' }))
     click(screen.getByRole('menuitem', { name: /A股/ }))
 
-    expect(screen.getByLabelText('A股策略资金口径')).toBeInTheDocument()
-    expect(screen.getByText('策略资金')).toBeInTheDocument()
+    expect(screen.getByLabelText('A股资金状态')).toBeInTheDocument()
+    expect(screen.getByText('可用资金')).toBeInTheDocument()
     expect(screen.getByText('¥20.00万')).toBeInTheDocument()
-    expect(screen.getByText('账户事实')).toBeInTheDocument()
+    expect(screen.getByText('账户现金')).toBeInTheDocument()
     expect(screen.getByText('¥8.27万')).toBeInTheDocument()
-    expect(screen.getByText('策略/账户持仓')).toBeInTheDocument()
+    expect(screen.getByText('复盘/账户持仓')).toBeInTheDocument()
     expect(screen.getByText('0/2')).toBeInTheDocument()
-    expect(screen.getByText('隔离样本')).toBeInTheDocument()
+    expect(screen.getByText('不计入复盘')).toBeInTheDocument()
 
     click(screen.getByRole('button', { name: 'A股' }))
     click(screen.getByRole('menuitem', { name: /加密/ }))
@@ -441,11 +441,11 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    click(within(card).getByRole('tab', { name: '实盘' }))
+    click(within(card).getByRole('tab', { name: '真实账户' }))
 
-    expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
+    expect(within(card).getByRole('tab', { name: '真实账户' })).toHaveAttribute('aria-selected', 'true')
     expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
-    expect(within(card).getAllByText('等待接入').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('实盘未接入').length).toBeGreaterThan(0)
     expect(within(card).getByText('接入真实账户后，会在这里切换为实盘收益和风险边界。')).toBeInTheDocument()
   })
 
@@ -465,9 +465,9 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    click(within(card).getByRole('tab', { name: '实盘' }))
+    click(within(card).getByRole('tab', { name: '真实账户' }))
 
-    expect(within(card).getAllByText('等待接入').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('实盘未接入').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 
@@ -485,8 +485,8 @@ describe('App navigation and result-first dashboard', () => {
 
     click(screen.getByRole('button', { name: '决策' }))
 
-    expect(screen.getByText('漏斗留存')).toBeInTheDocument()
-    expect(screen.getByText('流失 33.3%')).toBeInTheDocument()
+    expect(screen.getAllByText('机会通过').length).toBeGreaterThan(0)
+    expect(screen.getByText('未通过 33.3%')).toBeInTheDocument()
     expect(screen.getByText('33% 已兑现')).toBeInTheDocument()
   })
 })

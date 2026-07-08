@@ -33,8 +33,8 @@ export function AShareMoneyflowPanel({
         </div>
       ) : (
         <div className="empty-panel-copy compact-copy">
-          <strong>等待资金流评分</strong>
-          <span>信号写入资金因子后展示个股流向。</span>
+          <strong>暂无资金流信号</strong>
+          <span>A股机会带有资金流数据后，会显示净流入和强弱。</span>
         </div>
       )}
     </section>

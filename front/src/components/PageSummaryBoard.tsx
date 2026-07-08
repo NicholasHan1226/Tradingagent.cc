@@ -104,10 +104,10 @@ function getPageMetrics(
   const validSampleLabel = ashareAccount
     ? ashareAccount.totalSampleCount > 0
       ? `${ashareAccount.strategySampleValidCount}/${ashareAccount.totalSampleCount}`
-      : '等待样本'
+      : '等待复盘'
     : ''
   const strategyMetricValue = ashareAccount?.strategySampleValidCount === 0
-    ? '暂无有效'
+    ? '暂无复盘'
     : ashareAccount?.strategyTotalPnl === undefined
       ? validSampleLabel
       : formatCnyCompact(ashareAccount.strategyTotalPnl)
@@ -117,7 +117,7 @@ function getPageMetrics(
       { label: '当前收益', value: formatReturnMetric({ currentReturn, isCnyPortfolio: isCnyPortfolio || activeMarket === 'A-share', marketSummary, portfolio }), detail: formatPercent(currentReturn), tone: currentReturn >= 0 ? 'cyan' : 'red' },
       { label: '目标差', value: formatPercent(gap), detail: `目标 ${formatPercent(target)}`, tone: gap >= 0 ? 'cyan' : 'amber' },
       ashareAccount
-        ? { label: '可复盘收益', value: strategyMetricValue, detail: `有效样本 ${validSampleLabel}` }
+        ? { label: '复盘收益', value: strategyMetricValue, detail: `可复盘 ${validSampleLabel}` }
         : { label: '成交次数', value: String(marketSummary?.tradeCount ?? portfolio?.tradeCount ?? executedCount), detail: `${portfolio?.pointCount ?? performance.length} 个收益点` },
       { label: '最大回撤', value: formatDrawdown(drawdown), detail: `限制 ${drawdownLimit}%`, tone: drawdown > drawdownLimit * 0.8 ? 'red' : 'cyan' },
     ]
@@ -139,7 +139,7 @@ function getPageMetrics(
         ? { label: '账户总资产', value: formatCnyCompact(ashareAccount.accountEquity), detail: `现金 ${formatCnyCompact(ashareAccount.cashAvailable)}` }
         : { label: exposureSummary.label, value: exposureSummary.value, detail: exposureSummary.detail },
       { label: '最大贡献', value: topHolding?.symbol ?? '等待持仓', detail: topHolding?.pnl ?? '暂无收益', tone: topHolding?.pnl.startsWith('-') ? 'red' : 'cyan' },
-      { label: '风险偏高', value: String(highRiskCount), detail: highRiskCount ? '需要优先查看' : ashareAccount ? `有效样本 ${validSampleLabel}` : '暂无偏高', tone: highRiskCount ? 'red' : 'cyan' },
+      { label: '风险偏高', value: String(highRiskCount), detail: highRiskCount ? '需要优先查看' : ashareAccount ? `可复盘 ${validSampleLabel}` : '暂无偏高', tone: highRiskCount ? 'red' : 'cyan' },
     ]
   }
 

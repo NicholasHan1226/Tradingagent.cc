@@ -17,9 +17,9 @@ describe('TradingAgent capability map', () => {
     const execution = tradingAgentCapabilities.find((capability) => capability.id === 'execution-readiness')
 
     expect(execution).toMatchObject({
-      display: '实盘接入准备',
+      display: '真实账户预留',
       status: 'gated',
-      dashboardSurface: '实盘入口',
+      dashboardSurface: '真实账户入口',
     })
   })
 })

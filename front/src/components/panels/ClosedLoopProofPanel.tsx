@@ -14,7 +14,7 @@ export function ClosedLoopProofPanel({ summaries }: { summaries: MarketSummary[]
 
   return (
     <section className="panel rail-panel closure-proof-panel" aria-label="市场运行状态">
-      <PanelTitle kicker="运行证据" title="市场状态" />
+      <PanelTitle kicker="市场概览" title="各市场状态" />
       <div className="closure-proof-list">
         {rows.length ? rows.map((summary) => {
           const counts = formatCounts(summary)
@@ -31,8 +31,8 @@ export function ClosedLoopProofPanel({ summaries }: { summaries: MarketSummary[]
           )
         }) : (
           <div className="empty-panel-copy compact-copy">
-            <strong>等待运行证据</strong>
-            <span>模拟盘写入后会显示信号、成交和归因。</span>
+            <strong>暂无市场记录</strong>
+            <span>有新信号、成交或持仓后会在这里出现。</span>
           </div>
         )}
       </div>
@@ -42,7 +42,7 @@ export function ClosedLoopProofPanel({ summaries }: { summaries: MarketSummary[]
 
 function formatState(summary: MarketSummary) {
   if (summary.executionFault || summary.runtimeState === 'needs_attention') return '需要处理'
-  if (summary.runtimeState === 'normal') return '闭环中'
+  if (summary.runtimeState === 'normal') return '状态正常'
   if (summary.runtimeState === 'strategy_wait') return '等待机会'
   return '等待数据'
 }
@@ -50,10 +50,10 @@ function formatState(summary: MarketSummary) {
 function formatEvidence(summary: MarketSummary) {
   if (summary.noTradeEvidence) {
     const evidence = summary.noTradeEvidence
-    const status = evidence.evidenceStatus === 'ready' ? '证据完整' : evidence.evidenceStatus === 'incomplete' ? '证据缺口' : '无记录'
+    const status = evidence.evidenceStatus === 'ready' ? '已说明原因' : evidence.evidenceStatus === 'incomplete' ? '原因不完整' : '暂无原因'
     const candidates = evidence.candidateCount === undefined ? '-' : String(evidence.candidateCount)
     const orders = evidence.orderCount === undefined ? '-' : String(evidence.orderCount)
-    return `${status} · 候选 ${candidates} · 订单 ${orders}`
+    return `${status} · 机会 ${candidates} · 结果 ${orders}`
   }
   if (summary.tradeCount > 0) return `成交 ${summary.tradeCount} · 可复盘`
   if (summary.holdingCount > 0) return `持仓 ${summary.holdingCount} · 持续盯市`

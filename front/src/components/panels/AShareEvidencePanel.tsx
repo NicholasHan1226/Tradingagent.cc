@@ -8,8 +8,8 @@ export function AShareEvidencePanel({ evidence }: { evidence?: AShareResearchEvi
       <section className="panel rail-panel ashare-evidence-panel">
         <PanelTitle kicker="A股研究" title="开盘准备" />
         <div className="empty-panel-copy compact-copy">
-          <strong>等待研究证据</strong>
-          <span>集合竞价、尾盘和风格预算写入后会自动显示。</span>
+          <strong>等待研究记录</strong>
+          <span>集合竞价、尾盘观察和资金分配写入后会自动显示。</span>
         </div>
       </section>
     )
@@ -25,12 +25,12 @@ export function AShareEvidencePanel({ evidence }: { evidence?: AShareResearchEvi
       <PanelTitle kicker="A股研究" title="开盘准备" />
       <div className="summary-list">
         <SummaryRow label="集合竞价" value={openingLabel} tone={evidence.openingAuction.anomalyCount > 0 ? 'amber' : undefined} />
-        <SummaryRow label="尾盘候选" value={closingLabel} tone={evidence.closingMomentum.candidateCount > 0 ? 'cyan' : undefined} />
+        <SummaryRow label="尾盘观察" value={closingLabel} tone={evidence.closingMomentum.candidateCount > 0 ? 'cyan' : undefined} />
         <SummaryRow label="逆回购" value={`${formatMoney(evidence.reverseRepo.amount)} / ${formatPercent(evidence.reverseRepo.annualizedYield)}`} />
-        <SummaryRow label="风格资金" value={`${formatMoney(allocated)} / ${formatMoney(budget)}`} tone="cyan" />
+        <SummaryRow label="资金分配" value={`${formatMoney(allocated)} / ${formatMoney(budget)}`} tone="cyan" />
       </div>
       {evidence.closingMomentum.candidates.length > 0 && (
-        <div className="ashare-evidence-list" aria-label="尾盘候选">
+        <div className="ashare-evidence-list" aria-label="尾盘观察">
           {evidence.closingMomentum.candidates.slice(0, 3).map((candidate) => (
             <div key={candidate.symbol}>
               <span>{candidate.symbol}</span>
@@ -46,15 +46,15 @@ export function AShareEvidencePanel({ evidence }: { evidence?: AShareResearchEvi
 
 function formatOpeningState(opening: AShareResearchEvidence['openingAuction']) {
   if (opening.anomalyCount > 0) return `${opening.anomalyCount} 个异动`
-  if (opening.dataMode === 'first_5m_proxy') return `代理样本 ${opening.proxySymbolsWithBars ?? 0}`
+  if (opening.dataMode === 'first_5m_proxy') return `开盘样本 ${opening.proxySymbolsWithBars ?? 0}`
   if (opening.symbolsWithBars > 0) return '无明显异动'
   return '等待数据'
 }
 
 function formatClosingState(evidence: AShareResearchEvidence) {
   const count = evidence.closingMomentum.candidateCount
-  if (count > 0) return `${count} 个候选`
-  if (evidence.closingMomentum.symbolsWithBars > 0) return '暂无候选'
+  if (count > 0) return `${count} 个观察`
+  if (evidence.closingMomentum.symbolsWithBars > 0) return '暂无观察'
   return '等待5分钟线'
 }
 

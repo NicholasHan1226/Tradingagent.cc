@@ -18,7 +18,7 @@ export function DecisionFormation({ portfolio, signals }: { portfolio: Portfolio
   return (
     <div className="formation-flow">
       <div className="formation-header">
-        <span>漏斗留存</span>
+        <span>机会通过</span>
         <strong>{rows[0].value.toLocaleString('en-US')} → {rows[rows.length - 1].value.toLocaleString('en-US')}</strong>
       </div>
       <div className="formation-funnel" aria-label="决策形成漏斗">
@@ -33,9 +33,9 @@ export function DecisionFormation({ portfolio, signals }: { portfolio: Portfolio
         <OutcomePill label={`${ratio(funnel.cancelled.length, signals.length)} 已放弃`} tone="muted" value={String(funnel.cancelled.length)} />
       </div>
       <div className="formation-notes">
-        <SummaryRow label="机会转化" value={ratio(funnel.tradeSignals.length, signals.length)} />
+        <SummaryRow label="机会通过" value={ratio(funnel.tradeSignals.length, signals.length)} />
         <SummaryRow label="平均耗时" value={averageLatency ? `${averageLatency}分钟` : '等待记录'} />
-        <SummaryRow label="兑现率" value={ratio(funnel.executed.length, Math.max(1, funnel.tradeSignals.length))} tone="cyan" />
+        <SummaryRow label="成交率" value={ratio(funnel.executed.length, Math.max(1, funnel.tradeSignals.length))} tone="cyan" />
         <SummaryRow label="当前收益" value={portfolio ? `${portfolio.returnPct >= 0 ? '+' : ''}${portfolio.returnPct.toFixed(2)}%` : '等待收益'} tone={portfolio && portfolio.returnPct >= 0 ? 'cyan' : undefined} />
       </div>
     </div>
@@ -74,7 +74,7 @@ function FunnelRow({
       <div className="funnel-meter" aria-hidden="true">
         <i style={{ width: `${retain}%` }} />
       </div>
-      <b>{previousValue ? `流失 ${drop.toFixed(1)}%` : '基准'}</b>
+      <b>{previousValue ? `未通过 ${drop.toFixed(1)}%` : '起点'}</b>
     </div>
   )
 }

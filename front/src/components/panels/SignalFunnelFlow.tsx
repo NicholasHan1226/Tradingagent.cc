@@ -71,7 +71,7 @@ export function SignalFunnelFlow({
       : funnel.mode === 'replay'
         ? '已完成'
         : hasHoldingContext
-          ? '空闲'
+          ? '暂无新机会'
           : '等待'
   const particles = hasEventSource
     ? buildEventParticles(events)
@@ -169,7 +169,7 @@ export function SignalFunnelFlow({
                 </span>
               ))}
             </div>
-            <div className="flow-loss-ledger" aria-label={hasHoldingContext ? '持仓跟踪变化' : '机会流失位置'}>
+            <div className="flow-loss-ledger" aria-label={hasHoldingContext ? '持仓跟踪变化' : '机会未通过位置'}>
               {lossRows.map((row) => (
                 <span className={row.count > 0 ? 'has-loss' : ''} key={row.label}>
                   <em>{row.label}</em>
@@ -234,7 +234,7 @@ function getFlowSummary({
     return {
       detail: '等待下一条机会进入',
       label: '管道状态',
-      value: '空闲',
+      value: '持仓跟踪',
     }
   }
 

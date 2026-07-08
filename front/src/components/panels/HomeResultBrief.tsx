@@ -1,5 +1,4 @@
 import { getHomeOutcome } from '../../lib/dashboard'
-import { formatCurrency, formatSignedCnyCompact } from '../../lib/format'
 import type { HoldingRow, Page, PortfolioSummary, SignalRow } from '../../types/dashboard'
 import { PanelTitle } from '../PanelTitle'
 
@@ -24,9 +23,6 @@ export function HomeResultBrief({
   const targetGap = hasResult ? portfolio.returnPct - portfolio.targetPct : null
   const leadingHoldingText = leadingHolding ? `${leadingHolding.symbol} · ${leadingHolding.pnl}` : '暂无持仓'
   const resultTone = !hasResult ? '等待收益' : portfolio.pnlAmount < 0 ? '承压' : portfolio.pnlAmount > 0 ? '领先' : '平稳'
-  const resultLine = hasResult
-    ? `${formatAmount(portfolio)} / ${formatSignedPct(portfolio.returnPct)}`
-    : '等待收益'
   const attentionLine = hasSignalData
     ? leadSignal?.symbol ?? reviewSignal?.symbol ?? '有信号待查看'
     : holdings.length
@@ -35,23 +31,28 @@ export function HomeResultBrief({
   const riskLine = hasResult
     ? `距离 7% 限制 ${Math.max(0, 7 - Math.abs(portfolio.maxDrawdownPct)).toFixed(2)}%`
     : '等待风控结果'
+  const targetLine = targetGap === null
+    ? '收益写入后自动更新'
+    : targetGap >= 0
+      ? '高于目标'
+      : '低于目标'
 
   return (
     <section className="panel rail-panel home-result-brief">
       <PanelTitle action="看机会" kicker="首页摘要" onAction={() => setActivePage('机会')} title="现在要看" />
       <div className="home-brief-score">
-        <span>{resultTone}</span>
-        <strong>{resultLine}</strong>
-        <em>{targetGap === null ? '收益写入后自动更新' : `目标差 ${formatSignedPct(targetGap)}`}</em>
+        <span>当前焦点</span>
+        <strong>{attentionLine}</strong>
+        <em>{riskLine}</em>
       </div>
       <div className="home-brief-facts">
         <span>
-          <em>当前焦点</em>
-          <b>{attentionLine}</b>
+          <em>收益状态</em>
+          <b>{resultTone}</b>
         </span>
         <span>
-          <em>风险边界</em>
-          <b>{riskLine}</b>
+          <em>目标状态</em>
+          <b>{targetLine}</b>
         </span>
       </div>
       <div className="home-brief-section brief-action-section">
@@ -105,15 +106,4 @@ export function HomeResultBrief({
       </button>
     </section>
   )
-}
-
-function formatSignedPct(value: number) {
-  const cleanValue = Math.abs(value) < 0.005 ? 0 : value
-  return `${cleanValue > 0 ? '+' : ''}${cleanValue.toFixed(2)}%`
-}
-
-function formatAmount(portfolio: PortfolioSummary) {
-  return portfolio.pnlCurrency === 'CNY'
-    ? formatSignedCnyCompact(portfolio.pnlAmount)
-    : formatCurrency(portfolio.pnlAmount)
 }

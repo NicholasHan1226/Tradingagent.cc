@@ -37,10 +37,10 @@ export function MarketSummaryPanel({
         <SummaryMetric label="信号" value={String(summary?.signalCount ?? 0)} />
         <SummaryMetric label="持仓" value={String(summary?.holdingCount ?? 0)} />
         <SummaryMetric label="成交" value={String(summary?.tradeCount ?? 0)} />
-        <SummaryMetric label="风格" value={formatStyleValue(summary)} />
+        <SummaryMetric label="模式" value={formatStyleValue(summary)} />
       </div>
       <div className="market-summary-return">
-        <span>收益口径</span>
+        <span>当前收益</span>
         <strong>{hasReturn && summary ? formatSummaryReturn(summary) : '等待收益'}</strong>
       </div>
       {summary?.market === 'A-share' && summary.noTradeEvidence ? (
@@ -70,7 +70,7 @@ function formatDetail(summary: MarketSummary) {
     summary.pnlAmount === undefined ? null : `收益 ${summary.pnlCurrency === 'CNY' ? formatSignedCnyCompact(summary.pnlAmount) : formatCurrency(summary.pnlAmount)}`,
     summary.returnPct === undefined ? null : `收益率 ${summary.returnPct >= 0 ? '+' : ''}${summary.returnPct.toFixed(2)}%`,
     summary.capitalBase === undefined ? null : `资金 ${summary.pnlCurrency === 'CNY' ? formatSignedCnyCompact(summary.capitalBase).replace('+', '') : formatCurrency(summary.capitalBase)}`,
-    summary.activeStyleCount === undefined ? null : `策略 ${summary.activeStyleCount}/${summary.styleCount}`,
+    summary.activeStyleCount === undefined ? null : `模式 ${summary.activeStyleCount}/${summary.styleCount}`,
     summary.tradeCount ? `成交 ${summary.tradeCount}` : null,
   ].filter(Boolean)
 
@@ -108,18 +108,18 @@ function AshareCapitalTrace({ summary }: { summary: MarketSummary }) {
   const evidence = summary.noTradeEvidence
   if (!evidence) return null
   const rows = [
-    evidence.strategyCashAvailable === undefined ? null : ['策略资金', formatSignedCnyCompact(evidence.strategyCashAvailable).replace('+', '')],
-    evidence.accountCashAvailable === undefined ? null : ['账户事实', formatSignedCnyCompact(evidence.accountCashAvailable).replace('+', '')],
+    evidence.strategyCashAvailable === undefined ? null : ['可用资金', formatSignedCnyCompact(evidence.strategyCashAvailable).replace('+', '')],
+    evidence.accountCashAvailable === undefined ? null : ['账户现金', formatSignedCnyCompact(evidence.accountCashAvailable).replace('+', '')],
     evidence.strategyPositionCount === undefined && evidence.accountPositionCount === undefined
       ? null
-      : ['策略/账户持仓', `${evidence.strategyPositionCount ?? 0}/${evidence.accountPositionCount ?? 0}`],
+      : ['复盘/账户持仓', `${evidence.strategyPositionCount ?? 0}/${evidence.accountPositionCount ?? 0}`],
     evidence.ignoredValidationSampleCount === undefined
       ? null
-      : ['隔离样本', `${evidence.ignoredValidationSampleCount}`],
+      : ['不计入复盘', `${evidence.ignoredValidationSampleCount}`],
   ].filter((row): row is [string, string] => Boolean(row))
   if (!rows.length) return null
   return (
-    <div className="ashare-capital-trace" aria-label="A股策略资金口径">
+    <div className="ashare-capital-trace" aria-label="A股资金状态">
       {rows.map(([label, value]) => (
         <div key={label}>
           <span>{label}</span>

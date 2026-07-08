@@ -55,9 +55,9 @@ export const tradingAgentCapabilities: TradingAgentCapability[] = [
   },
   {
     id: 'execution-readiness',
-    display: '实盘接入准备',
+    display: '真实账户预留',
     status: 'gated',
-    dashboardSurface: '实盘入口',
+    dashboardSurface: '真实账户入口',
     readableSources: ['shared/execution/signal_card_schema.json', 'shared/execution/fill_card_schema.json', 'signals/filled/*.json'],
     note: '只能展示接入状态；不得从 Dashboard 触发实盘执行。',
   },

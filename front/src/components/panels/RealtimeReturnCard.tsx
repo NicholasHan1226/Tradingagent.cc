@@ -54,10 +54,10 @@ export function RealtimeReturnCard({
   const validSampleLabel = ashareAccount
     ? ashareAccount.totalSampleCount > 0
       ? `${ashareAccount.strategySampleValidCount}/${ashareAccount.totalSampleCount}`
-      : '等待样本'
+      : '等待复盘'
     : `${portfolio?.tradeCount ?? executedCount}`
   const strategyLabel = ashareAccount?.strategySampleValidCount === 0
-    ? '暂无有效'
+    ? '暂无复盘'
     : strategyPnl === undefined
       ? validSampleLabel
       : formatCnyCompact(strategyPnl)
@@ -67,7 +67,7 @@ export function RealtimeReturnCard({
   return (
     <aside className="realtime-return-card" aria-label="实时收益">
       <div className="return-card-head">
-        <span>{isLive ? '实盘收益' : '模拟盘收益'}</span>
+        <span>{isLive ? '真实账户预留' : '模拟盘收益'}</span>
         <div className="return-mode-switch" aria-label="账户层切换" role="tablist">
           <button
             aria-selected={!isLive}
@@ -85,14 +85,14 @@ export function RealtimeReturnCard({
             role="tab"
             type="button"
           >
-            实盘
+            真实账户
           </button>
         </div>
       </div>
-      <span className="return-kicker">{isLive ? '接口预留' : '当前账户'} · 金额为主</span>
+      <span className="return-kicker">{isLive ? '未来接入' : '当前账户'} · 金额为主</span>
       {isLive ? (
         <div className="return-placeholder">
-          <strong>等待接入</strong>
+          <strong>实盘未接入</strong>
           <p>接入真实账户后，会在这里切换为实盘收益和风险边界。</p>
         </div>
       ) : !hasPerformanceData ? (
@@ -116,7 +116,7 @@ export function RealtimeReturnCard({
               <b>{drawdownLabel}</b>
             </span>
             <span>
-              <em>{ashareAccount ? '有效样本' : '成交'}</em>
+              <em>{ashareAccount ? '可复盘' : '成交'}</em>
               <b>{validSampleLabel}</b>
             </span>
           </div>
@@ -124,7 +124,7 @@ export function RealtimeReturnCard({
             <div
               className="return-account-grid"
               aria-label="A股模拟账户"
-              title="有效样本可进入策略复盘和自我进化；验证样本只用于确认历史成交链路，不计入策略收益。"
+              title="可复盘记录会进入收益分析；历史验证记录只用于确认账户链路。"
             >
               <span>
                 <em>总资产</em>
@@ -143,7 +143,7 @@ export function RealtimeReturnCard({
                 <b>{formatSignedCnyCompact(ashareAccount.accountTotalPnl)}</b>
               </span>
               <span>
-                <em>可复盘收益</em>
+                <em>复盘收益</em>
                 <b>{strategyLabel}</b>
               </span>
               <span>
