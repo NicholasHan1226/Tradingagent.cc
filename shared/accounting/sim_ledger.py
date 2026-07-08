@@ -402,6 +402,7 @@ class SimLedger:
         }
         if extra_fields:
             payload.update(extra_fields)
+        _copy_audit_scope_fields(payload, state)
         _add_cny_fields(payload)
         _append_jsonl(self.mtm_path, payload)
         return payload

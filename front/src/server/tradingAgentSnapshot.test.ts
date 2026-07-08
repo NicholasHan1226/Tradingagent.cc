@@ -986,6 +986,30 @@ describe('TradingAgent snapshot reader', () => {
         },
       }),
     )
+    await writeFile(
+      join(ledgerRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-08T06:35:02+00:00',
+        date: '20260708',
+        capital_base: 10_000,
+        total_pnl: -250,
+        trade_count: 7,
+        pnl_source: 'sim_ledger_mark_to_market',
+      }) + '\n',
+    )
+    await writeFile(
+      join(ledgerRoot, 'trade_journal.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-08T06:35:02+00:00',
+        symbol: 'BTCUSDT',
+        side: 'buy',
+        fill_qty: 1,
+        fill_price: 100,
+        notional: 100,
+      }) + '\n',
+    )
 
     const snapshot = await readTradingAgentSnapshot({
       workspaceRoot: root,
@@ -994,10 +1018,13 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.holdings.some((holding) => holding.market === 'Crypto')).toBe(false)
+    expect(snapshot.signals.some((signal) => signal.market === 'Crypto')).toBe(false)
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'Crypto',
       holdingCount: 0,
       capitalBase: 72_000,
+      tradeCount: 0,
+      pnlAmount: undefined,
     }))
   })
 

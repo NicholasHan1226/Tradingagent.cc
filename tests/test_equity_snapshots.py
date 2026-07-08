@@ -71,6 +71,19 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(payload["missing_mark_count"], 1)
             self.assertEqual(payload["total_pnl"], 0.0)
 
+    def test_daily_mark_to_market_inherits_dashboard_exclusion_from_positions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = self._seed_ledger(Path(tmp) / "crypto" / "balanced")
+            state = json.loads(ledger.positions_path.read_text(encoding="utf-8"))
+            state["exclude_from_dashboard"] = True
+            state["run_context"] = "legacy_usd_capital_quarantine"
+            ledger.positions_path.write_text(json.dumps(state), encoding="utf-8")
+
+            payload = ledger.daily_mark_to_market({"BTCUSDT": 120.0}, date="20260705")
+
+            self.assertTrue(payload["exclude_from_dashboard"])
+            self.assertEqual(payload["run_context"], "legacy_usd_capital_quarantine")
+
     def test_daily_mark_to_market_uses_cash_ledger_capital_after_deposit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = self._seed_ledger(Path(tmp) / "crypto" / "balanced")

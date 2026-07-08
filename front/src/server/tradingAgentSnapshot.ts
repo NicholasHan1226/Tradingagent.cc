@@ -2152,7 +2152,9 @@ async function listSimLedgerFiles(root: string, targetName: 'positions.json' | '
       for (const strategy of strategies) {
         if (!strategy.isDirectory()) continue
         if (market.name.toLowerCase() === 'ashare' && strategy.name !== 'ashare_sim') continue
-        const path = join(marketRoot, strategy.name, targetName)
+        const strategyRoot = join(marketRoot, strategy.name)
+        if (targetName !== 'positions.json' && await isSimLedgerStrategyExcluded(strategyRoot)) continue
+        const path = join(strategyRoot, targetName)
         if (await fileExists(path)) files.push({ path, market: market.name, strategy: strategy.name })
       }
     }
@@ -2160,6 +2162,12 @@ async function listSimLedgerFiles(root: string, targetName: 'positions.json' | '
     return []
   }
   return files
+}
+
+async function isSimLedgerStrategyExcluded(strategyRoot: string) {
+  const payload = asRecord(await readOptionalJson(join(strategyRoot, 'positions.json')))
+  if (!Object.keys(payload).length) return false
+  return isDashboardExcluded(payload)
 }
 
 async function readSignalFile(path: string, bucket: string, now: Date): Promise<SignalRow | null> {
