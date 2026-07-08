@@ -15,8 +15,8 @@ from urllib import error, request
 
 from .email_templates import CHANNELS, get_channel
 
-DEFAULT_ENV_FILE = Path(os.environ.get("MARKETGRAPH_ENV_FILE", "/opt/marketgraph/.env"))
-FALLBACK_ENV_FILES = (DEFAULT_ENV_FILE, Path("/opt/investment/MarketGraph/deploy/marketgraph_cron.env"))
+DEFAULT_ENV_FILE = Path(os.environ.get("TRADINGAGENT_ENV_FILE", "/opt/tradingagent/.env"))
+FALLBACK_ENV_FILES = (DEFAULT_ENV_FILE, Path("/opt/investment/tradingagent/.env"))
 EMAIL_LOG = Path(__file__).resolve().parent / "logs" / "emails_sent.jsonl"
 LOCAL_FALLBACK_DIR = Path(__file__).resolve().parent / "logs" / "email_fallback"
 REQUEST_TIMEOUT = 20

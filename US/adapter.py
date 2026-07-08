@@ -204,21 +204,6 @@ class USAdapter(MarketAdapter):
                 rows = get_assets(market=market)
                 if rows:
                     return list(rows)
-
-        shared = getattr(self.reader, "shared", None)
-        connect = getattr(shared, "_connect", None)
-        if callable(connect):
-            for market in READER_MARKETS:
-                try:
-                    rows = connect().execute(
-                        "SELECT * FROM market_assets WHERE market=? ORDER BY symbol ASC",
-                        (market,),
-                    ).fetchall()
-                except Exception:
-                    continue
-                assets = [dict(row) for row in rows]
-                if assets:
-                    return assets
         return []
 
     def _load_strategies(self) -> dict[str, Any]:

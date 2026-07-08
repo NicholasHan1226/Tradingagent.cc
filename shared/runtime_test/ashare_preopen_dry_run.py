@@ -53,6 +53,12 @@ ASHARE_STOCK_SQL_FILTER = """
 """
 
 
+def _allow_sqlite_diagnostic(sqlite_db: Path) -> bool:
+    if not sqlite_db.exists():
+        return False
+    return str(os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")).lower() in {"1", "true", "yes", "on"}
+
+
 def _now_cn(value: str | None = None) -> datetime:
     if not value:
         return datetime.now(CN_TZ)
@@ -107,6 +113,8 @@ def _latest_liquid_universe_from_read_model(
     *,
     limit: int,
 ) -> list[str]:
+    if not _allow_sqlite_diagnostic(sqlite_db):
+        return []
     if not sqlite_db.exists():
         return []
     conn: sqlite3.Connection | None = None
@@ -180,6 +188,38 @@ def _latest_liquid_universe_from_read_model(
     return symbols
 
 
+def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]:
+    get_assets = getattr(reader, "get_assets", None)
+    if not callable(get_assets):
+        return []
+    try:
+        rows = get_assets(market="Ashare")
+    except TypeError:
+        try:
+            rows = get_assets("Ashare")
+        except Exception:
+            return []
+    except Exception:
+        return []
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper()
+        if not symbol or symbol in seen or not _is_supported_ashare_code(symbol):
+            continue
+        name = str(row.get("name") or "").upper()
+        status = str(row.get("status") or "").lower()
+        if "ST" in name or "退" in name or status in {"suspended", "halted", "delisted", "inactive"}:
+            continue
+        seen.add(symbol)
+        symbols.append(symbol)
+        if len(symbols) >= max(1, int(limit)):
+            break
+    return symbols
+
+
 def _build_candidate_pool(
     *,
     reader: Any,
@@ -187,7 +227,11 @@ def _build_candidate_pool(
     date: str,
     score_limit: int,
 ) -> dict[str, Any]:
-    universe = _latest_liquid_universe_from_read_model(sqlite_db, date, limit=score_limit)
+    universe = _latest_liquid_universe_from_reader(reader, limit=score_limit)
+    universe_source = "sharedsignals_api_assets"
+    if not universe:
+        universe = _latest_liquid_universe_from_read_model(sqlite_db, date, limit=score_limit)
+        universe_source = "sharedsignals_read_model_explicit_diagnostic" if universe else "none"
     limited = universe[: max(1, int(score_limit))]
     scored = score_universe(date=date, universe=limited, data_reader=reader, market="ashare")
     scores_by_symbol = {symbol: scores for symbol, scores in scored}
@@ -216,7 +260,7 @@ def _build_candidate_pool(
     return {
         "status": "pass" if candidates else "warn",
         "reason": "candidate_layer_ready" if candidates else "no_candidate_layer_after_scoring",
-        "universe_source": "sharedsignals_read_model_latest_liquid_daily",
+        "universe_source": universe_source,
         "universe_count": len(universe),
         "scored_count": len(scored),
         "score_universe_limit": max(1, int(score_limit)),
@@ -270,6 +314,8 @@ def _build_capital_plan(adapter: AshareAdapter, candidates: list[dict[str, Any]]
 
 
 def _latest_close_from_read_model(sqlite_db: Path, symbol: str, date: str) -> float:
+    if not _allow_sqlite_diagnostic(sqlite_db):
+        return 0.0
     if not sqlite_db.exists():
         return 0.0
     conn: sqlite3.Connection | None = None

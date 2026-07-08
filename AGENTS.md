@@ -129,7 +129,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - 交易通道：`notice@tradingagent.cc → tradingadviser@coze.email`
 - 系统通道：`notice@tradingagent.cc → soc@coze.email`
 - 发送方式：Cloudflare Email Service REST endpoint
-- 生产 env 入口：`/opt/marketgraph/.env` 保存 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_EMAIL_API_TOKEN` 和 `EMAIL_FROM_/EMAIL_TO_`；loader 会兼容旧 `CF_EMAIL_*` 与 `EMAIL_*_FROM/TO` 命名，但文档和新增配置必须使用规范名。
+- 生产 env 入口：`/opt/tradingagent/.env` 或仓库内 `/opt/investment/tradingagent/.env` 保存 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_EMAIL_API_TOKEN` 和 `EMAIL_FROM_/EMAIL_TO_`；loader 会兼容旧 `CF_EMAIL_*` 与 `EMAIL_*_FROM/TO` 命名，但文档和新增配置必须使用规范名。
 
 ## 服务器
 

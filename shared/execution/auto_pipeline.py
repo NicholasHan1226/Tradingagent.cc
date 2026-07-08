@@ -375,9 +375,6 @@ class AutoPipeline:
                 raw = pm_method(limit=self.max_candidates)
         if not raw:
             assets_method = getattr(self.reader, "get_assets", None)
-            if not callable(assets_method):
-                shared = getattr(self.reader, "shared", None)
-                assets_method = getattr(shared, "get_assets", None)
             if callable(assets_method):
                 for market_name in (market, market.capitalize(), market.upper(), "Ashare" if market == "ashare" else market):
                     raw = assets_method(market_name)

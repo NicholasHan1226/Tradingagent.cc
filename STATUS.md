@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-08 (A股策略资金视图隔离验证样本、TradingAgent 自主机会发现边界、dashboard 资金口径展示)
+> 最后更新：2026-07-08 (A股策略资金视图隔离验证样本、TradingAgent 自主机会发现边界、dashboard 资金口径展示、市场适配器 SharedSignals API-only 读数收口)
 
 ---
 
@@ -13,6 +13,8 @@
 - **A 股多风格模拟盘**：完整闭环运行（信号生成 → server-local paper fill → sim 账簿 → 复盘）；旧层已完全退役（0 文件、0 cron）；A股资产入口已通过 SharedSignals `/tushare?api_name=stock_basic` 恢复；2026-07-06 已修复候选池/执行门禁退化问题：auto pipeline 的 A股入口改走 `AshareAdapter` 过滤后的 universe 与真实分钟/日线价格，不再从资产表顺序取样或使用 `price=1.0`，`run_sim_loop` 的 A股 simulated 新买入只允许 candidate 层，watch/空池/candidate pool 异常均 fail-closed 为无交易，缺名称/缺日线/缺流动性证据标的不进入可执行候选；A股 simulated 订单必须写入 `candidate_pool_layer` 与 `execution_source`，`sim_broker` 与本地模拟账本双层拒绝缺来源买入/卖出，signal card 会持久化同一来源字段，复盘可直接确认买入来自 candidate 层或卖出来自 rebalance；缺少来源字段的历史 A股 simulated 成交只保留在隔离备份中作事故复盘，不进入当前模拟账户、策略有效胜率、方向命中、归因、策略 PnL 或自我进化；2026-07-07 起 A股评分覆盖扩到 500 个 universe 样本，候选池仍坚持 `combined >= 0.55` 的 candidate 门禁，若候选为 0，会在 `no_trade_explanation.score_diagnostics` 写出已评分数量、阈值、Top 分数、各维度 0.5 中性默认计数、缺失计数、全维度 0.5 样本数和样本列表，并新增 `evidence_reason_summary`、`missing_and_default_like_dimension_counts`、`evidence_coverage_distribution` 和 reason sample；2026-07-08 起 A股 candidate 额外要求证据元数据支持：最低 evidence coverage 且 event/fundamental/sentiment 至少一个研究维度有真实证据，避免纯技术/资金高分叠加缺失维度 0.5 中性默认分进入可执行候选；不满足证据门禁但分数较高的标的留在 watch。盘前 dry-run 已改为复用 `candidate_pool.build_pool`，与模拟主循环、开盘验收共用同一候选池口径；已传入预计算 scores 的 5 分钟/盘前高频入口默认跳过低频 fundamental 全量观察池，避免候选池验收被长期基本面池拖慢；诊断会区分“分数过阈值但实际 candidate 为空”的分层/证据门禁拦截。
 - **A 股模拟盘**：默认走服务器本地闭环，不依赖 Mac Mini Hermes；Hermes/同花顺 GUI 路径已降级为第二选择，只在 `ASHARE_SIM_HERMES_ENABLED=1` 时启用并投递 `signals/pending`；A股 simulated signal card 显式固定 `real_trading_enabled=false`；2026-07-05 已修复 A股 sim account 字符串阻断 server-local fill 的问题，隔离真实数据 smoke 验证 9/9 本地成交、local_sim 账本与 `signals/positions/simulated_ashare_positions.json` 持仓快照均可生成；A股 simulated capital 已显式固定为 200,000 元，`job_ashare_sim_exec` 会在开盘前/盘中首轮保证空账本快照存在，尚无成交时输出 `bootstrap_state=no_trades_yet`、现金与空持仓，避免 dashboard/验收等待第一笔成交；2026-07-06 已统一 A股 server-local 执行器和本地模拟账本默认资金为 200,000 元，本地账本会从成交回放写出 `cash_available`，资金计划优先读取账户快照现金而不是用本金倒推；`pending`/未成交回执不会写入 server-local filled 账本；2026-07-07 起 `Ashare/sim_executor.py` 自身按 A股交易日历与连续竞价时段拒绝非交易时段 server-local fill 与 Hermes pending，避免绕过 wrapper 的手工/验收调用在收盘后产生模拟成交；修复前已发生的非连续竞价 simulated 成交保留为账户事实，但复盘/看板统一归类为 `outside_ashare_regular_session` 链路验证样本，不进入策略胜率、方向命中、策略 PnL 或自我演化样本；2026-07-08 起新的 server-local 成交会在 raw response、local_sim 账本和签名回执中保留 `market_snapshot`、`fill_price_source`、`fill_price_source_class` 与 `fill_evidence`；A股样本质量门禁要求候选来源和成交价来源同时存在，缺成交价来源的历史/手工样本只作链路验证样本，不进入策略 PnL/胜率/演化；A股资金计划已从固定集中升级为动态闸门：按候选质量、风控拒绝率、数据异常率和近期表现决定 0/1/2/3 只，强信号集中，弱信号留现金/逆回购，并把 `capital_plan` 写入模拟主循环结果、portfolio 和 `shared/review/ashare/capital_plan_YYYYMMDD.jsonl`；旧/分批持仓按唯一标的计数，模拟主循环已能生成 simulated sell 压缩单，优先处理止损、低分、机会成本和超目标持仓压缩，止损/压缩/机会成本释放资金会写入 `capital_plan.replacement_budget` 并允许同轮替换买入；新增 `shared/runtime_test/ashare_preopen_dry_run.py` 作为 08:35 盘前只读预演入口，提前验证日线覆盖、最新高流动性普通 A 股小样本的候选池、动态资金计划和执行门禁，默认样本上限 10 只且 wrapper 90 秒超时，避免盘前检查拖慢开盘，只写 runtime_test 报告，不写 `signals/`、账本、pending 或 review，异常时走系统邮件
 - **TradingAgent 分析边界**：A股和 CNFutures 的短周期机会发现、候选池、交易门禁、资金计划、模拟撮合、复盘和演化由 TradingAgent 自身负责；MarketGraph 作为外部宏观、事件、图谱和中长线研究补充，不替代 TradingAgent 的执行前判断。A股当前核心维度为六维评分（macro/event/fundamental/capital/technical/sentiment）、五层候选池、盘前集合竞价异常、尾盘动能、动态资金计划和机会成本换仓；CNFutures 当前核心维度为分钟动量、均线偏离、量能确认、开盘/跳空冷却、波动/噪声过滤、方向一致性、追高过滤、手续费/保证金和前向标签校准。外部研究缺失时必须作为证据债/中性默认/安全空跑处理，不能绕过本地候选与执行门禁。
+- **数据入口收口**：Ashare/Crypto/US/HK 通用市场适配器与 `auto_pipeline` 不再直接访问 `reader.shared` 或同机 SharedSignals SQLite 兜底；生产取数只能通过 `TradingagentDataReader` 暴露的 SharedSignals API/read-model facade。API 返回空时进入空池、数据等待或策略等待，不从旧路径补数。CNFutures 仍仅保留显式诊断开关下的只读 SQLite 排障路径；本地 sim ledger SQLite 属交易账本，不是市场数据源。
+- **旧 cron 清单清理**：`shared/automation_tasks.md`、`shared/cron_inventory.csv`、`shared/cron_migration.md` 已删除；这些文件记录的是 6 月底 MarketGraph wrapper 迁移期清单，包含已退役路径。当前任务入口以 `AGENTS.md`、`STATUS.md`、`cron/`、`shared/wrappers/` 和生产 crontab 验收为准。
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 仍保留为 GUI 执行桥，只执行和回写，不做买卖判断；当前 A 股服务器本地模拟闭环不要求 mini 在线；A股健康检查已把 Hermes 降为 `mini_hermes_optional`，默认未启用时不影响主链路健康结论
 - **PM（预测市场）**：多风格 simulated 扫描每 10 分钟运行；checked-in config 使用 USDC；PM sim/style 输出写入 `shared/review/pm/style_comparison.json`；`PM/probability_model.py` 是 PM 研究概率消费/融合入口，优先读取 `TRADINGAGENT_PM_MODEL_PROBABILITY_FILE` / `PM_MODEL_PROBABILITY_FILE` 或默认 `shared/review/pm/model_probabilities.jsonl` 的研究概率；没有独立研究概率时只写入 `pm_market_consensus_baseline`，即模型概率等于市场概率、`model_confidence=0`，用于说明“暂无独立 edge”，不会制造交易。2026-07-07 起 `PM/research_probability.py` 和 `job_pm_research_probability` 每 10 分钟错峰通过 MarketGraph 统一 API `GET /pm/research-probabilities` / MCP `read_pm_research_probabilities` 读取 PM 独立研究概率，再与 SharedSignals `/pm_markets` 市场元数据和 `/pm_prices` 价格快照合并写入 `shared/review/pm/model_probabilities.jsonl` 与 summary；SharedSignals 只供市场/价格数据，行内判断概率字段会被忽略。MarketGraph API 不可用、无研究概率或缺少 SharedSignals 市场价时会清空旧概率文件，避免历史 edge 残留并安全空跑；若 `/pm_markets` 市场行缺价，会读取 `/pm_prices` 最近价格补齐，但不会从 MarketGraph research row 的 `price/market_probability` 兜底。2026-07-07 生产确认 MarketGraph PM producer 正常运行但 `record_count=0`，主因是 PM 研究证据仍有样本债/方向证据不足/部分缺市场价格，TradingAgent 因此安全空跑；这不是执行器故障，也不能通过放宽阈值解决。`run_sim.py` 在无 PM 交易信号时输出结构化诊断（市场行数、可定价行数、模型概率行数、显式方向行数、策略候选数、edge 阈值和原因），用于区分 `pm_market_rows_empty`、`pm_prices_missing`、`pm_model_probability_missing` 与 `pm_model_edge_below_threshold`；`market_health` 对 PM 缺 MarketGraph 研究概率或模型 edge 不足标记为 pass/策略等待观察态，缺 SharedSignals 市场行或价格仍标记为 warn/数据等待，只有应成交却无账本才算执行故障。
 - **多市场**：PM/Crypto/US/HK sim executor 和 config schema 已加真实执行拒绝；US/HK simulator 入口已拒绝真实 order/account payload，fill 结果不回显 account payload；共享安全扫描递归覆盖 `direct_execution`/`real_execution`/`live` 别名；Crypto/US/HK Phase D P0 工具已独立实现；US/HK P1 report/validation/promotion 工具已补齐；Crypto/PM P1 report/validation/promotion 工具已补齐；Crypto/US/PM/HK P2 risk/portfolio/replay 工具已本地模块级实现；Crypto/PM/US 的 JSON 驱动多风格 simulated 已扩展为绩效追踪、权重调节、paused/deprecated 状态和 variant 生成闭环；HK 工具与 styles 仅保留为预留能力，默认 fail-closed，不纳入 production sim / health / evolution；基础 `styles/*.json` 已恢复为只读配置，运行态权重/状态写入 `shared/review/<market>/style_weights.json`，自动生成风格写入 `shared/review/<market>/generated_styles/`；新增 evolution guard 防止全风格亏损、组合回撤和连续多市场亏损时继续自演化；新增 `shared/execution/auto_pipeline.py` 将 universe、研究、DecisionEngine、StyleRunner 和 daily evolution 串成 simulated 自动管线；本地 production sim 层已补齐 `sim_engine`、`risk_manager`、`sim_ledger` 并接入 auto pipeline；当前生产模拟盘范围为 A股/Crypto/PM/US/CNFutures，HK 暂不接入生产调度
@@ -75,7 +77,7 @@
 1. [x] **P2：Crypto/US/PM/HK 多市场工具独立实现** — Crypto risk/portfolio/replay、US portfolio/replay、PM risk、HK portfolio 已补齐；HK 工具保留但暂不接入生产模拟调度
 2. [ ] **P2：多市场模拟盘生产闭环** — 服务器侧 A股/Crypto/PM/US simulated cron、SharedSignals reader/API-first、统一账本、日报/周报复盘读取和健康检查已完成首轮验证；剩余为 A股下一个交易日生产样本、promotion/权重演化/guard halt-thaw 的持续运行验证
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
-4. [x] **P2：SharedSignals HTTP API 消费迁移** — 15/15 端点客户端已完成；`TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` / `get_bars_intraday` 接入 API-first 访问；SQLite 只读回退保留
+4. [x] **P2：SharedSignals HTTP API 消费迁移** — 15/15 端点客户端已完成；`TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` / `get_bars_intraday` 接入 API-first 访问；SQLite 只读路径仅保留为显式测试/应急诊断
 5. [ ] **A股/CNFutures 下一个真实交易时段开盘验收** — A股新增 `shared/runtime_test/ashare_opening_validator.py` 与三个 wrapper（pre_open / opening / first_sample_alert），并已写入生产 crontab；只读验证 SharedSignals 日线/5分钟数据、本地模拟成交、签名回执、复盘日志和 filled signals，异常才发系统告警；CNFutures `opening_validator.py` 已增强 filled/receipt/review 样本告警；聚合验收已修复午休/闭市窗口误报，等待下一交易窗口生产样本验证。
 
 ### 2026-07-05 opening validation residual fixes
@@ -270,7 +272,7 @@
 - [x] A股 server-local 执行器会从本地模拟账本补齐 `cash_available` 与 T+1 `sellable_qty`，覆盖字符串 account 路径；同日卖出和现金不足已有集成测试。
 - [x] `auto_pipeline` 已从 SharedSignals reader 的 5分钟/日线 bars 生成 `market_snapshot`，`StyleRunner` 会透传盘口、bar volume、previous_close、现金/可卖量和对手盘环境字段。
 - [x] `auto_pipeline` 已兼容当前 `DecisionEngine` 旧接口，新增 all-stage smoke；A股基础 styles 已全部通过统一 `TradeStyle` 校验，`closing_momentum` 保持 paused。
-- [x] `TradingagentDataReader.get_bars_intraday()` 已改为 SharedSignals API-first，通过 `/realtime_5min?market=...` 读取 A股/期货 5 分钟 read model；API 不可用或返回空壳时仍回退本机 SQLite。
+- [x] `TradingagentDataReader.get_bars_intraday()` 已改为 SharedSignals API-first，通过 `/realtime_5min?market=...` 读取 A股/期货 5 分钟 read model；API 不可用或返回空壳时生产 fail-closed，仅显式诊断开关允许本机 SQLite 只读排障。
 - [x] `market_health` 对 A股/CNFutures 首样本状态加入交易时段判断：闭市等待不再形成系统 warn；交易时段应有样本但缺失时仍保持 warn，避免周末误报和开盘漏报。
 
 ### 2026-07-05 Ashare health bootstrap receipts
@@ -308,7 +310,7 @@
 ### 2026-07-04 CNFutures 5-minute simulated trading cadence
 
 - [x] `CNFutures/adapter.py` 已支持读取 SharedSignals `market_bars_intraday`，使用 `market="Futures"`、`interval="5min"` 作为期货 5 分钟模拟交易输入。
-- [x] `CNFutures/adapter.py` 默认读取器已修正为 `TradingagentDataReader`，保证默认路径走 SharedSignals API-first；SQLite 直接读只保留为显式降级/测试回退。
+- [x] `CNFutures/adapter.py` 默认读取器已修正为 `TradingagentDataReader`，保证默认路径走 SharedSignals API-first；SQLite 直接读只保留为显式诊断/测试，不再因 `SHARED_SIGNALS_DB` 自动启用。
 - [x] `CNFutures/run_simulation.py` 默认 `--cadence 5min`；`CNFutures/sim_runner.py` 会优先读取分钟线，订单幂等键包含最新 `bar_time`，避免 5 分钟调度被同日幂等挡住。
 - [x] 5 分钟 runner 已加入 `--max-intraday-bar-age-minutes` / `CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES`，默认最新 bar 超过 10 分钟则拒绝模拟下单并记录 `stale_intraday_bar`。
 - [x] 同一交易日、同一风格、同一合约的连续同方向模拟信号会被标记为 `repeated_same_side_exposure`，避免每 5 分钟重复加同方向风险；反向信号仍允许形成新模拟成交。
@@ -326,7 +328,7 @@
 
 ### 2026-07-04 SharedSignals-only data-source audit
 
-- [x] 主服务器 `/opt/investment/tradingagent` 已确认：TradingAgent 生产模拟盘、影子盘、健康检查和研究路径不直接采集外部市场数据；市场数据入口是 SharedSignals API-first reader，SQLite read model 只作只读回退。
+- [x] 主服务器 `/opt/investment/tradingagent` 已确认：TradingAgent 生产模拟盘、影子盘、健康检查和研究路径不直接采集外部市场数据；市场数据入口是 SharedSignals API-first reader，SQLite read model 只作显式诊断读取。
 - [x] 服务器误拷贝的 untracked `Users/` 目录含 7 个过期文件，落后于当前 `shared/wrappers/tradings_cron_entry.py`、`shared/execution/local_sim_ledger.py`、A股节假日/T+1 修复等生产代码；已删除并在 `.gitignore` 中忽略 `Users/` 防止复发。
 - [x] `crontab.txt` 与 `shared/crontab.txt` 已改为 2026-07-04 生产快照/边界说明；旧 2026-07-03 模板不再作为当前生产事实。
 - [x] 服务器运行状态：A股本地模拟、Crypto、US、PM、健康检查、复盘、CNFutures 模拟入口均在 `marketgraph` 用户 crontab 中；HK 按 Nicholas 决策继续停用。
@@ -377,7 +379,7 @@
 ### 2026-07-04 A股 API-first 与邮件通道对齐
 
 - [x] `shared/env_loader.sh` 已默认注入 `SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`，A股 `job_ashare_sim_exec` 运行时通过 SharedSignals/ShareChannel API 优先取数。
-- [x] Cloudflare 邮件凭据加载入口从不存在的 `/opt/investment/MarketGraph/.env` 改为 `/opt/marketgraph/.env`，并兼容 `CF_EMAIL_*` alias。
+- [x] Cloudflare 邮件凭据加载入口已收口到 TradingAgent 自有 `/opt/tradingagent/.env` 或 `/opt/investment/tradingagent/.env`，不再读取 MarketGraph env；继续兼容 `CF_EMAIL_*` alias。
 - [x] `/opt/investment/.env` 的旧邮件地址漂移已修正；交易通道和系统通道按 `AGENTS.md` 分流。
 
 ### 2026-07-04 测试状态泄漏修复
@@ -490,7 +492,7 @@
 ### SharedSignals API 15/15 端点迁移对齐（2026-07-03；2026-07-08 事件过滤补齐）
 
 - [x] `SharedSignalsAPIClient` 已覆盖 15 个数据端点：trading day、market data、fundamentals、reference、macro、capital flow、events、sentiment、crypto、PM、associations、impacts、industry、realtime 5min、tushare。
-- [x] `TradingagentDataReader` 已接入 API-first 访问核心读取路径；API 不可用时回退 SQLite 只读路径并打 degraded 状态。
+- [x] `TradingagentDataReader` 已接入 API-first 访问核心读取路径；API 不可用时生产 fail-closed，只有显式诊断开关会读取 SQLite 并打 degraded 状态。
 - [x] `get_events()` 现在向 SharedSignals `/events` 透传 `market`、`symbol` 和 `subject_code`；API 返回空壳或空候选时会再检查 SQLite 只读 `market_events` fallback，避免把候选层为空误判为正式事件证据也为空。
 - [x] TradingAgent 侧不再把 15/15 客户端视为孤儿代码；MarketGraph 当前生产采集边界已切到 SharedSignals-owned collectors，研究图谱读取仍保留只读文件/DB 兼容路径。
 
@@ -522,7 +524,7 @@
 ### SharedSignals HTTP API 消费迁移（2026-07-02）
 
 - [x] `TradingagentDataReader` 新增 `api_client` 参数；配置 `SHAREDSIGNALS_API_URL` 时自动创建 `SharedSignalsAPIClient`。
-- [x] `get_market_data` / `get_events` / `is_trading_day` 优先走 SharedSignals HTTP API；API 不可用时回退 SQLite 只读路径并设置 `degraded=True`。
+- [x] `get_market_data` / `get_events` / `is_trading_day` 优先走 SharedSignals HTTP API；API 不可用时生产 fail-closed，显式诊断读取 SQLite 时设置 `degraded=True`。
 - [x] `SharedSignalsAPIClient` 移除 deprecated 状态，校准 15 个当前 API server 端点，补充 timeout / retry / backoff 配置，去除 `X-API-Key` 双重暴露。
 - [x] `.env.example` 的 `SHAREDSIGNALS_API_URL` 默认指向 `http://127.0.0.1:8082`；SQLite 只保留为显式本机诊断路径，不再配置默认 DB。
 - [x] 验证：`py_compile`、导入 smoke、`tests/test_data_reader.py` 通过。
@@ -608,10 +610,10 @@
 
 **TradingAgent 历史发现（CRITICAL/HIGH，当前状态见上方 2026-07-04/07-05 条目）：**
 - **MarketGraphCSVReader 路径错误：** `intake` 路径缺少 `data/` 目录，`get_regime()` 路径错误 — 导致体制信号、事件候选、情绪信号三个关键 CSV 静默加载失败（已修复）
-- **SharedSignalsAPIClient 孤儿代码：** 已修复；`TradingagentDataReader` 默认 API-first，SQLite 只保留只读回退
+- **SharedSignalsAPIClient 孤儿代码：** 已修复；`TradingagentDataReader` 默认 API-first，SQLite 只保留显式只读诊断
 - **TradingagentDataReader 无数据新鲜度检查：** 已补健康检查、错误告警和市场 loop 巡检
 - **N+1 查询扇出：** 评分管线对每只股票做 5-6 次独立查询，20 只股票 > 100 次调用，无批量接口
-- **直接 SQLite 读取绕过了 API 鉴权：** 已修复为 SharedSignals API-first，SQLite 仅为生产本机只读降级路径
+- **直接 SQLite 读取绕过了 API 鉴权：** 已修复为 SharedSignals API-first，SQLite 仅为显式测试/应急诊断路径
 - **无死人手刹：** 已补连续错误日志告警
 
 **已应用修复（Round 3，影响 TradingAgent）：**

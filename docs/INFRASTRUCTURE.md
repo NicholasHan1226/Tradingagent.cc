@@ -17,7 +17,7 @@
 - 系统类: notice@tradingagent.cc → soc@coze.email
 
 ## 环境
-- Python: 3.12.3 (venv /opt/marketgraph/venv)
+- Python: 3.12.3 (venv /opt/tradingagent/venv)
 - OS: Ubuntu 24.04
 - 当前生产以 SharedSignals API + TradingAgent 自有运行态为主；DuckDB/Redis 仍为后续扩展项，不作为当前运行依赖。
 - SQLite read model 仅在显式诊断模式下读取 SharedSignals runtime；TradingAgent 不再从 MarketGraph runtime 取行情。

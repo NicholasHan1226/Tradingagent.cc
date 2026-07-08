@@ -3,9 +3,6 @@
 
 from __future__ import annotations
 
-import csv
-import os
-from pathlib import Path
 from typing import Any
 
 from shared.data.reader import TradingagentDataReader
@@ -13,14 +10,7 @@ from shared.markets.base import MarketAdapter
 from shared.markets.config_schema import MarketToolConfig
 from HK.common import HKConfig
 
-
 READER_MARKETS = ("hk", "HK")
-DEFAULT_HK_MASTER = Path(
-    os.environ.get(
-        "HK_STOCK_MASTER_PATH",
-        str(Path(__file__).resolve().parents[2] / "SharedSignals" / "reference" / "hk_stock_master.csv"),
-    )
-)
 
 
 class HKAdapter(MarketAdapter):
@@ -30,11 +20,11 @@ class HKAdapter(MarketAdapter):
         self,
         config: MarketToolConfig | None = None,
         reader: Any | None = None,
-        master_path: Path | str | None = None,
+        master_path: str | None = None,
     ) -> None:
         self.config = config or HKConfig()
         self.reader = reader if reader is not None else TradingagentDataReader()
-        self.master_path = Path(master_path) if master_path is not None else DEFAULT_HK_MASTER
+        del master_path
 
     def get_market(self) -> str:
         return "hk"
@@ -58,7 +48,7 @@ class HKAdapter(MarketAdapter):
 
     def get_universe(self, date: str) -> list[str]:
         del date
-        rows = self._reader_assets() or self._master_assets()
+        rows = self._reader_assets()
         symbols: list[str] = []
         seen: set[str] = set()
         for row in rows:
@@ -101,21 +91,7 @@ class HKAdapter(MarketAdapter):
                 rows = get_assets(market=market)
                 if rows:
                     return [dict(row) for row in rows]
-        shared = getattr(self.reader, "shared", None)
-        get_assets = getattr(shared, "get_assets", None)
-        if callable(get_assets):
-            for market in READER_MARKETS:
-                rows = get_assets(market)
-                if rows:
-                    return [dict(row) for row in rows]
         return []
-
-    def _master_assets(self) -> list[dict[str, Any]]:
-        if not self.master_path.exists():
-            return []
-        with self.master_path.open(encoding="utf-8-sig", newline="") as fh:
-            return [dict(row) for row in csv.DictReader(fh)]
-
 
 def _is_active(asset: dict[str, Any]) -> bool:
     status = str(asset.get("status") or asset.get("list_status") or "").strip().lower()

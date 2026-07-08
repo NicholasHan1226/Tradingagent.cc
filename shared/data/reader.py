@@ -28,11 +28,7 @@ def _default_shared_signals_db() -> Path:
     configured = os.environ.get("SHARED_SIGNALS_DB")
     if configured:
         return Path(configured)
-    for key in ("SHAREDSIGNALS_RUNTIME_ROOT", "SHAREDSIGNALS_ROOT"):
-        runtime_root = os.environ.get(key, "").strip()
-        if runtime_root:
-            return Path(runtime_root) / "read_model" / "marketdata.sqlite"
-    return Path("/opt/investment/SharedSignals/runtime/read_model/marketdata.sqlite")
+    return Path("/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite")
 
 
 DEFAULT_SHARED_SIGNALS_DB = _default_shared_signals_db()
@@ -597,6 +593,19 @@ class TradingagentDataReader:
         return normalized
 
     @staticmethod
+    def _asset_api_name_for_market(market: str | None) -> str:
+        key = str(market or "").strip().lower()
+        if key in {"futures", "cn_futures", "cnfutures", "期货"}:
+            return "fut_basic"
+        if key in {"us", "usa", "usstock", "美股"}:
+            return "us_basic"
+        if key in {"hk", "hongkong", "港股"}:
+            return "hk_basic"
+        if key in {"etf"}:
+            return "etf_basic"
+        return ""
+
+    @staticmethod
     def _is_ashare_market(market: str | None) -> bool:
         key = str(market or "").strip().lower()
         return key in {"", "ashare", "a_share", "a-share", "a股", "cn", "china"}
@@ -614,7 +623,16 @@ class TradingagentDataReader:
                 self._record_shared_error("get_assets")
                 return self._normalize_asset_rows(result, "Ashare")
 
-            result = self.shared.get_assets(market)
+            api_name = self._asset_api_name_for_market(market)
+            if api_name:
+                def fallback() -> list[dict[str, Any]]:
+                    return self.shared.get_assets(market)
+
+                result = self._api_call("get_tushare", fallback, api_name=api_name, market=market)
+            elif self._can_use_sqlite_fallback():
+                result = self.shared.get_assets(market)
+            else:
+                result = []
             self._record_shared_error("get_assets")
             return self._normalize_asset_rows(result, market)
         except Exception as e:
@@ -625,9 +643,12 @@ class TradingagentDataReader:
 
     def get_asset(self, market: str, symbol: str) -> dict[str, Any] | None:
         try:
-            result = self.shared.get_asset(market, symbol)
-            self._record_shared_error("get_asset")
-            return result
+            symbol_key = str(symbol or "").strip().upper()
+            for row in self.get_assets(market):
+                row_symbol = str(row.get("symbol") or row.get("ts_code") or "").strip().upper()
+                if row_symbol == symbol_key:
+                    return row
+            return None
         except Exception as e:
             self.errors.append(f"get_asset: {e}")
             self.stale = True
@@ -660,11 +681,12 @@ class TradingagentDataReader:
             )
             normalized = self._normalize_market_rows(result, market_name, ts_code)
             if not self._has_priced_market_rows(normalized):
-                fallback_rows = fallback()
-                if fallback_rows:
-                    self._last_api_used = False
-                    self._record_shared_error("get_bars_daily")
-                    return self._normalize_market_rows(fallback_rows, market_name, ts_code)
+                if self._can_use_sqlite_fallback():
+                    fallback_rows = fallback()
+                    if fallback_rows:
+                        self._last_api_used = False
+                        self._record_shared_error("get_bars_daily")
+                        return self._normalize_market_rows(fallback_rows, market_name, ts_code)
                 return []
             self._record_shared_error("get_bars_daily")
             return normalized
@@ -707,11 +729,12 @@ class TradingagentDataReader:
             )
             normalized = self._normalize_market_rows(result, market_name, symbol)
             if not self._has_priced_market_rows(normalized):
-                fallback_rows = fallback()
-                if fallback_rows:
-                    self._last_api_used = False
-                    self._record_shared_error("get_market_data")
-                    return self._normalize_market_rows(fallback_rows, market_name, symbol)
+                if self._can_use_sqlite_fallback():
+                    fallback_rows = fallback()
+                    if fallback_rows:
+                        self._last_api_used = False
+                        self._record_shared_error("get_market_data")
+                        return self._normalize_market_rows(fallback_rows, market_name, symbol)
                 return []
             self._record_shared_error("get_market_data")
             return normalized
@@ -761,11 +784,14 @@ class TradingagentDataReader:
                 subject_code=self._to_ts_code(market or "", symbol) if symbol else None,
             )
             if isinstance(result, list) and (not result or not self._has_event_payload(result)):
-                fallback_rows = fallback()
-                if fallback_rows:
-                    self._last_api_used = False
-                    self._record_shared_error("get_events")
-                    result = fallback_rows
+                if self._can_use_sqlite_fallback():
+                    fallback_rows = fallback()
+                    if fallback_rows:
+                        self._last_api_used = False
+                        self._record_shared_error("get_events")
+                        result = fallback_rows
+                else:
+                    result = []
             if market:
                 result = [r for r in result if not r.get("market") or r.get("market") == market]
             if symbol:
@@ -788,36 +814,58 @@ class TradingagentDataReader:
         try:
             market_name = self._canonical_market(market)
             ts_code = self._to_ts_code(market_name, symbol) if symbol else ""
-            stripped_symbol = str(symbol or "").split(".", 1)[0]
-            stripped_ts_code = str(ts_code or "").split(".", 1)[0]
-            symbols = [item for item in (symbol, ts_code, stripped_symbol, stripped_ts_code) if item]
-            seen_symbols: set[str] = set()
-            normalized_symbols: list[str] = []
-            for item in symbols:
-                if item not in seen_symbols:
-                    normalized_symbols.append(item)
-                    seen_symbols.add(item)
-
-            markets = [market_name]
-            raw_market = str(market or "").strip()
-            if raw_market and raw_market not in markets:
-                markets.append(raw_market)
-
             result: list[dict[str, Any]] = []
-            for market_candidate in markets:
-                for symbol_candidate in normalized_symbols or [""]:
-                    result = self.shared.get_factors(market=market_candidate, symbol=symbol_candidate)
-                    if result:
-                        break
-                if result:
-                    break
-            self._record_shared_error("get_factors")
+            if ts_code:
+                result.extend(self._factor_rows_from_api(self.get_fundamentals(ts_code)))
+                result.extend(self._factor_rows_from_api(self.get_capital_flow(ts_code=ts_code)))
             return result
         except Exception as e:
             self.errors.append(f"get_factors: {e}")
             self.stale = True
             self._maybe_alert()
             return []
+
+    @staticmethod
+    def _factor_rows_from_api(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        passthrough_keys = {
+            "market",
+            "symbol",
+            "ts_code",
+            "trade_date",
+            "event_time",
+            "end_date",
+            "provider",
+            "source",
+            "source_file",
+            "collected_at",
+        }
+        metric_keys = {"factor_name", "metric", "metric_name", "name"}
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            metric = next((str(row.get(key) or "").strip() for key in metric_keys if row.get(key)), "")
+            if metric:
+                item = dict(row)
+                item["factor_name"] = metric
+                item.setdefault("value", row.get("value", row.get("factor_value", row.get("metric_value"))))
+                normalized.append(item)
+                continue
+            base = {key: row.get(key) for key in passthrough_keys if key in row}
+            for key, value in row.items():
+                if key in passthrough_keys or key in metric_keys:
+                    continue
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if numeric != numeric:
+                    continue
+                item = dict(base)
+                item["factor_name"] = str(key)
+                item["value"] = numeric
+                normalized.append(item)
+        return normalized
 
     def get_sentiment(
         self, start: str | None = None, end: str | None = None,
@@ -861,11 +909,12 @@ class TradingagentDataReader:
             )
             normalized = self._normalize_market_rows(result, market, symbol)
             if not self._has_priced_market_rows(normalized):
-                fallback_rows = fallback()
-                if fallback_rows:
-                    self._last_api_used = False
-                    self._record_shared_error("get_bars_intraday")
-                    return self._normalize_market_rows(fallback_rows, market, symbol)
+                if self._can_use_sqlite_fallback():
+                    fallback_rows = fallback()
+                    if fallback_rows:
+                        self._last_api_used = False
+                        self._record_shared_error("get_bars_intraday")
+                        return self._normalize_market_rows(fallback_rows, market, symbol)
                 return []
             self._record_shared_error("get_bars_intraday")
             return normalized

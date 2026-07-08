@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="${TRADINGAGENT_ROOT:-/opt/investment/tradingagent}"
-PYTHON_BIN="${TRADINGAGENT_PYTHON:-/opt/marketgraph/venv/bin/python3}"
+PYTHON_BIN="${TRADINGAGENT_PYTHON:-/opt/tradingagent/venv/bin/python3}"
 TIMEOUT="${TRADINGAGENT_SIM_HEALTH_TIMEOUT:-120}"
 LOG_DIR="${ROOT}/shared/logs/cron"
 LOCK_DIR="${ROOT}/shared/logs/locks"

@@ -84,9 +84,9 @@ def _load_5m_bars(market_data: dict[str, Any], reader: Any = None) -> list[dict[
 
     if reader is None:
         try:
-            from shared.data.reader import SharedSignalsReader
+            from shared.data.reader import TradingagentDataReader
 
-            reader = SharedSignalsReader()
+            reader = TradingagentDataReader()
         except Exception:
             return []
 

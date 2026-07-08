@@ -69,11 +69,6 @@ class CryptoMarketData(BaseMarketData):
         rows: list[dict[str, Any]] = []
         if callable(get_assets):
             rows = list(get_assets(SHAREDSIGNALS_MARKET) or [])
-        if not rows:
-            shared = getattr(self.reader, "shared", None)
-            shared_get_assets = getattr(shared, "get_assets", None)
-            if callable(shared_get_assets):
-                rows = list(shared_get_assets(SHAREDSIGNALS_MARKET) or [])
 
         symbols: list[str] = []
         for row in rows:
@@ -88,19 +83,8 @@ class CryptoMarketData(BaseMarketData):
         return sorted(dict.fromkeys(symbols))
 
     def _daily_bar_universe(self, date: str) -> list[str]:
-        shared = getattr(self.reader, "shared", None)
-        query = getattr(shared, "_query", None)
-        if not callable(query):
-            return []
-
-        sql = "SELECT DISTINCT symbol FROM market_bars_daily WHERE market=?"
-        params: list[Any] = [SHAREDSIGNALS_MARKET]
-        if date:
-            sql += " AND trade_date <= ?"
-            params.append(date)
-        sql += " ORDER BY symbol"
-        rows = query(sql, tuple(params))
-        return [self._normalize_symbol(row.get("symbol")) for row in rows if isinstance(row, dict) and row.get("symbol")]
+        del date
+        return []
 
     @staticmethod
     def _normalize_symbol(symbol: Any) -> str:

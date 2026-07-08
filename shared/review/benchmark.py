@@ -21,10 +21,10 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, SharedSignalsReader
+    from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, TradingagentDataReader
 except Exception:  # pragma: no cover - optional diagnostic reader unavailable
     DEFAULT_SHARED_SIGNALS_DB = Path("")
-    SharedSignalsReader = None  # type: ignore[assignment]
+    TradingagentDataReader = None  # type: ignore[assignment]
 
 REVIEW_DIR = Path(__file__).resolve().parent
 BENCHMARK_STORE = REVIEW_DIR / "data" / "benchmark_history.json"
@@ -144,14 +144,13 @@ def _history_buy_hold_return(date_key: str) -> float:
 
 
 def _rows_from_reader(symbol: str, target_date: str) -> list[dict[str, Any]]:
-    if SharedSignalsReader is None or not _allow_sqlite_diagnostic():
+    if TradingagentDataReader is None:
         return []
     start = (_to_trade_date(target_date) - timedelta(days=BENCHMARK_LOOKBACK_DAYS)).strftime("%Y%m%d")
-    reader = SharedSignalsReader(_shared_signals_db_path())
     try:
-        return reader.get_bars_daily("Ashare", symbol, start=start, end=target_date)
-    finally:
-        reader.close()
+        return TradingagentDataReader().get_bars_daily("Ashare", symbol, start=start, end=target_date)
+    except Exception:
+        return []
 
 
 def _rows_from_sqlite(symbol: str, target_date: str) -> list[dict[str, Any]]:

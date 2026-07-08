@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ class FakeAshareReader:
     def get_assets(self, market: str | None = None) -> list[dict]:
         return [
             {"market": market or "ashare", "symbol": "600000.SH", "name": "浦发银行", "exchange": "SH", "status": "active", "list_date": "19991110"},
+            {"market": market or "ashare", "symbol": "600001.SH", "name": "邯郸钢铁", "exchange": "SH", "status": "active", "list_date": "19980218"},
             {"market": market or "ashare", "symbol": "000001.SZ", "name": "平安银行", "exchange": "SZ", "status": "active", "list_date": "19910403"},
         ]
 
@@ -47,6 +49,9 @@ class FakeAshareReader:
     def get_events(self, market: str | None = None, symbol: str = "", start_date: str = "", end_date: str = "") -> list[dict]:
         return []
 
+    def get_event_candidates(self) -> list[dict]:
+        return []
+
     def get_factors(self, market: str | None = None, symbol: str = "") -> list[dict]:
         return [
             {"factor_name": "value", "value": 0.8},
@@ -58,6 +63,17 @@ class FakeAshareReader:
 
 
 class AsharePreopenDryRunTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
+        os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
+        self.addCleanup(self._restore_diag_env)
+
+    def _restore_diag_env(self) -> None:
+        if self._old_diag is None:
+            os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
+        else:
+            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = self._old_diag
+
     def _db(self, latest_date: str = "20260706", count: int = 1000) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

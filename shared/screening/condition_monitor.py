@@ -68,11 +68,11 @@ def _normalize_intraday_bar(row: dict[str, Any], ts_code: str) -> dict[str, Any]
 
 
 def _get_5min_bars(ts_code: str, date: str) -> list[dict[str, Any]]:
-    """获取5分钟K线 (从 SharedSignals marketdata.sqlite 读)。"""
+    """Load 5-minute bars through the TradingAgent data facade."""
     try:
-        from shared.data.reader import SharedSignalsReader
+        from shared.data.reader import TradingagentDataReader
 
-        reader = SharedSignalsReader()
+        reader = TradingagentDataReader()
         symbol = _normalize_symbol(ts_code)
         if not symbol:
             return []
@@ -91,9 +91,9 @@ def _get_5min_bars(ts_code: str, date: str) -> list[dict[str, Any]]:
 
 def _get_condition_bars(condition: dict[str, Any], date: str) -> list[dict[str, Any]]:
     try:
-        from shared.data.reader import SharedSignalsReader
+        from shared.data.reader import TradingagentDataReader
 
-        reader = SharedSignalsReader()
+        reader = TradingagentDataReader()
         market = _condition_market(condition)
         ts_code = str(condition.get("ts_code") or "").strip()
         symbol = _normalize_symbol(ts_code)

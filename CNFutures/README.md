@@ -82,6 +82,14 @@ SharedSignals CN futures 5-minute collection defaults to the commodity products
 must continue reading those bars through SharedSignals/read-model APIs rather
 than adding a separate TradingAgent data download path.
 
+Production readers use `SHAREDSIGNALS_API_URL` first for Futures assets,
+daily bars, and 5-minute bars. Direct SQLite read-model access is only a
+diagnostic/test path and must be explicitly enabled with
+`TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1`,
+or `CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK=1`. `SHARED_SIGNALS_DB` only
+selects the diagnostic database after one of those explicit switches is set; it
+does not enable fallback by itself.
+
 Intraday simulation candidates must be executable contracts from the latest
 current-day 5-minute bar batch in SharedSignals. Generic product symbols such
 as `CU.SHF` and expired, stale, or earlier-batch contracts are not valid

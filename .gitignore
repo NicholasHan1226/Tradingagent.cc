@@ -43,6 +43,7 @@ Thumbs.db
 Users/
 
 # Trading runtime state
+runtime/
 signals/
 shared/logs/
 shared/accounting/position_plan.jsonl

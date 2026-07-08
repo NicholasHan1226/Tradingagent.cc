@@ -341,21 +341,6 @@ class AshareAdapter(MarketAdapter):
             rows = get_assets(market="Ashare")
             if rows:
                 return list(rows)
-
-        shared = getattr(self.reader, "shared", None)
-        connect = getattr(shared, "_connect", None)
-        if callable(connect):
-            for market in (MARKET, "Ashare"):
-                try:
-                    rows = connect().execute(
-                        "SELECT * FROM market_assets WHERE market=? ORDER BY symbol ASC",
-                        (market,),
-                    ).fetchall()
-                except Exception:
-                    continue
-                assets = [dict(row) for row in rows]
-                if assets:
-                    return assets
         return []
 
     def _coverage_by_symbol(self, date: str) -> dict[str, str]:

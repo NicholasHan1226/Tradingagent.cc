@@ -22,7 +22,7 @@ from shared.notify import email_sender
 try:
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB
 except Exception:  # pragma: no cover
-    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/SharedSignals/runtime/read_model/marketdata.sqlite")
+    DEFAULT_SHARED_SIGNALS_DB = Path("/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite")
 
 CN_TZ = timezone(timedelta(hours=8))
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"

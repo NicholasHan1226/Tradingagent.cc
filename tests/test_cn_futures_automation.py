@@ -254,12 +254,27 @@ class CNFuturesAutomationTest(unittest.TestCase):
             )
             conn.commit()
             conn.close()
-            adapter = CNFuturesAdapter(
-                reader=ReadModelIntradayReader(db_path),
-                universe_filter={"max_symbols": 4, "products": ("cu", "rb")},
-            )
+            old_db = os.environ.get("SHARED_SIGNALS_DB")
+            old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
+            os.environ["SHARED_SIGNALS_DB"] = str(db_path)
+            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
+            try:
+                with patch("CNFutures.adapter.TradingagentDataReader", None):
+                    adapter = CNFuturesAdapter(
+                        reader=None,
+                        universe_filter={"max_symbols": 4, "products": ("cu", "rb")},
+                    )
 
-            self.assertEqual(adapter.get_intraday_universe("20260707"), ["RB2607.SHF", "RB2608.SHF"])
+                self.assertEqual(adapter.get_intraday_universe("20260707"), ["RB2607.SHF", "RB2608.SHF"])
+            finally:
+                if old_db is None:
+                    os.environ.pop("SHARED_SIGNALS_DB", None)
+                else:
+                    os.environ["SHARED_SIGNALS_DB"] = old_db
+                if old_diag is None:
+                    os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
+                else:
+                    os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
 
     def test_multi_style_runner_executes_only_simulated_lanes_and_writes_review(self) -> None:
         import CNFutures.sim_executor  # noqa: F401
@@ -1035,7 +1050,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             )
             conn.commit()
             old_db = os.environ.get("SHARED_SIGNALS_DB")
+            old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
             os.environ["SHARED_SIGNALS_DB"] = str(db_path)
+            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
             try:
                 adapter = CNFuturesAdapter(reader=object(), universe_filter={"max_symbols": 1})
                 self.assertEqual(adapter.get_universe("20260703"), ["RB2601.SHF"])
@@ -1044,6 +1061,10 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     os.environ.pop("SHARED_SIGNALS_DB", None)
                 else:
                     os.environ["SHARED_SIGNALS_DB"] = old_db
+                if old_diag is None:
+                    os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
+                else:
+                    os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
 
     def test_run_simulation_script_can_be_executed_directly(self) -> None:
         result = subprocess.run(
@@ -1183,7 +1204,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             )
             conn.commit()
             old_db = os.environ.get("SHARED_SIGNALS_DB")
+            old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
             os.environ["SHARED_SIGNALS_DB"] = str(db_path)
+            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
             try:
                 with patch("CNFutures.adapter.TradingagentDataReader", None):
                     adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 2})
@@ -1195,6 +1218,10 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     os.environ.pop("SHARED_SIGNALS_DB", None)
                 else:
                     os.environ["SHARED_SIGNALS_DB"] = old_db
+                if old_diag is None:
+                    os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
+                else:
+                    os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
 
     def test_adapter_prefers_contracts_with_available_intraday_bars(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -1240,7 +1267,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             )
             conn.commit()
             old_db = os.environ.get("SHARED_SIGNALS_DB")
+            old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
             os.environ["SHARED_SIGNALS_DB"] = str(db_path)
+            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
             try:
                 with patch("CNFutures.adapter.TradingagentDataReader", None):
                     adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 2})
@@ -1253,6 +1282,10 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     os.environ.pop("SHARED_SIGNALS_DB", None)
                 else:
                     os.environ["SHARED_SIGNALS_DB"] = old_db
+                if old_diag is None:
+                    os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
+                else:
+                    os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
 
     def test_review_scoring_marks_small_open_only_samples_insufficient(self) -> None:
         from CNFutures.review import score_records

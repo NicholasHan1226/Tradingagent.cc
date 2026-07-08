@@ -75,13 +75,6 @@ class USMarketData(BaseMarketData):
                 rows = get_assets(market=market)
                 if rows:
                     return [dict(row) for row in rows]
-        shared = getattr(self.reader, "shared", None)
-        get_assets = getattr(shared, "get_assets", None)
-        if callable(get_assets):
-            for market in READER_MARKETS:
-                rows = get_assets(market)
-                if rows:
-                    return [dict(row) for row in rows]
         return []
 
 

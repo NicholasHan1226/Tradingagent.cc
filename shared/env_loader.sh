@@ -13,7 +13,7 @@ export TRADINGAGENT_WRAPPERS_ROOT="${TRADINGAGENT_WRAPPERS_ROOT:-${TRADINGAGENT_
 export SHAREDSIGNALS_RUNTIME_ROOT="${SHAREDSIGNALS_RUNTIME_ROOT:-/opt/investment/SharedSignals/runtime}"
 
 export TRADINGAGENT_ENV_FILE="${TRADINGAGENT_ENV_FILE:-${TRADINGAGENT_ROOT}/.env}"
-export FINANCE_SHARED_ENV_FILE="${FINANCE_SHARED_ENV_FILE:-/opt/marketgraph/.env}"
+export FINANCE_SHARED_ENV_FILE="${FINANCE_SHARED_ENV_FILE:-/opt/tradingagent/.env}"
 
 # Load TradingAgent-owned env first, then the shared finance env for common
 # credentials. Do not source MarketGraph deploy env; the three systems must be
@@ -57,7 +57,7 @@ if [[ -z "${PYTHON_VENV_ROOT:-}" ]]; then
     if [[ -d "${TRADINGAGENT_VENV_ROOT}" ]]; then
         export PYTHON_VENV_ROOT="${TRADINGAGENT_VENV_ROOT}"
     else
-        export PYTHON_VENV_ROOT="/opt/marketgraph/venv"
+        export PYTHON_VENV_ROOT="${TRADINGAGENT_VENV_ROOT}"
     fi
 fi
 if [[ -z "${VIRTUAL_ENV:-}" && -d "${PYTHON_VENV_ROOT}" ]]; then

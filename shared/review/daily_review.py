@@ -25,9 +25,9 @@ from typing import Any
 from shared.accounting import position_ledger
 
 try:
-    from shared.data.reader import SharedSignalsReader
+    from shared.data.reader import TradingagentDataReader
 except Exception:  # pragma: no cover - optional upstream dependency
-    SharedSignalsReader = None  # type: ignore[assignment]
+    TradingagentDataReader = None  # type: ignore[assignment]
 
 from .attribution import attribute, attribute_pct
 from .benchmark import compare_to_benchmark, get_benchmark, record_last_period
@@ -585,10 +585,10 @@ def _load_close_price(market: str, symbol: str, trade_date: str, reader: Any = N
     if not symbol:
         return 0.0
     if reader is None:
-        if SharedSignalsReader is None:
+        if TradingagentDataReader is None:
             return 0.0
         try:
-            reader = SharedSignalsReader()
+            reader = TradingagentDataReader()
         except Exception:
             return 0.0
     get_bars = getattr(reader, "get_bars_daily", None)

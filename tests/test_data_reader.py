@@ -299,7 +299,12 @@ class TestSharedSignalsReader(unittest.TestCase):
         self.assertGreaterEqual(len(missing_reader.errors), 1)
 
     def test_tradings_get_factors_canonicalizes_ashare_market_and_symbol(self) -> None:
+        api = FakeAPIClient()
+        api.get_tushare = lambda *args, **kwargs: []  # type: ignore[method-assign]
+        api.get_fundamentals = lambda ts_code, **kwargs: [{"metric": "value", "value": 1.2, "symbol": ts_code}]  # type: ignore[attr-defined]
+        api.get_capital_flow = lambda *args, **kwargs: []  # type: ignore[attr-defined]
         trading_reader = TradingagentDataReader(
+            api_client=api,
             shared=self.reader,
             marketgraph=MarketGraphCSVReader(Path(self.tmp.name) / "missing_marketgraph"),
         )
@@ -308,11 +313,11 @@ class TestSharedSignalsReader(unittest.TestCase):
 
         self.assertEqual(rows[0]["factor_name"], "value")
 
-    def test_default_sqlite_fallback_uses_runtime_read_model(self) -> None:
+    def test_default_sqlite_fallback_is_nonexistent_until_explicitly_configured(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(
                 _default_shared_signals_db(),
-                Path("/opt/investment/SharedSignals/runtime/read_model/marketdata.sqlite"),
+                Path("/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite"),
             )
 
 
@@ -342,6 +347,17 @@ class FakeAPIClient:
                     "exchange": "SZSE",
                     "industry": "银行",
                     "list_date": "19910403",
+                }
+            ]
+        if api_name == "fut_basic":
+            return [
+                {
+                    "symbol": "RB2609.SHF",
+                    "name": "螺纹钢2609",
+                    "market": kwargs.get("market") or "Futures",
+                    "exchange": "SHFE",
+                    "asset_type": "future",
+                    "status": "listed",
                 }
             ]
         return []
@@ -469,6 +485,28 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(rows[0]["symbol"], "000001.SZ")
         self.assertEqual(rows[0]["sector"], "银行")
         self.assertEqual(api.tushare_calls[0]["api_name"], "stock_basic")
+
+    def test_get_assets_uses_sharedsignals_fut_basic_for_futures(self) -> None:
+        api = FakeAPIClient()
+        reader = TradingagentDataReader(api_client=api)
+
+        rows = reader.get_assets("Futures")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["symbol"], "RB2609.SHF")
+        self.assertEqual(rows[0]["market"], "Futures")
+        self.assertEqual(api.tushare_calls[0]["api_name"], "fut_basic")
+        self.assertEqual(api.tushare_calls[0]["market"], "Futures")
+        self.assertEqual(reader.errors, [])
+
+    def test_empty_api_result_does_not_trigger_sqlite_diagnostic_read(self) -> None:
+        api = EmptyShellAPIClient()
+        reader = TradingagentDataReader(api_client=api)
+
+        rows = reader.get_bars_intraday("Futures", "RB2609.SHF", "5min", "", "20260703")
+
+        self.assertEqual(rows, [])
+        self.assertFalse(any("SQLite diagnostic read" in error for error in reader.errors))
 
     def test_get_bars_daily_single_end_date_uses_same_start_date(self) -> None:
         api = FakeAPIClient()

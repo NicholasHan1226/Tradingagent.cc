@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -19,12 +20,18 @@ from typing import Any
 try:
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB
 except Exception:  # pragma: no cover
-    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/SharedSignals/runtime/read_model/marketdata.sqlite")
+    DEFAULT_SHARED_SIGNALS_DB = Path("/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite")
 
 DEFAULT_SQLITE_DB = DEFAULT_SHARED_SIGNALS_DB
 CN_TZ = timezone(timedelta(hours=8))
 NO_TRADE_LOG = Path(__file__).resolve().parents[1] / "logs" / "ashare_no_trade_explanations.jsonl"
 MAX_PRE_OPEN_DAILY_AGE_DAYS = 5
+
+
+def _allow_sqlite_diagnostic(db_path: Path) -> bool:
+    if not db_path.exists():
+        return False
+    return str(os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")).lower() in {"1", "true", "yes", "on"}
 
 
 def _now_cn() -> datetime:
@@ -59,6 +66,13 @@ def _pre_open_session(now: datetime) -> tuple[str, datetime | None]:
 
 
 def _query_daily_bars(db_path: Path, trade_date: str) -> dict[str, Any]:
+    if not _allow_sqlite_diagnostic(db_path):
+        return {
+            "error": "sqlite_diagnostic_disabled",
+            "symbol_count": 0,
+            "daily_bar_count": 0,
+            "sqlite_db": str(db_path),
+        }
     if not db_path.exists():
         return {"error": f"sqlite database not found: {db_path}", "symbol_count": 0}
     conn: sqlite3.Connection | None = None
@@ -105,6 +119,13 @@ def _daily_age_days(latest_trade_date: Any, current: datetime) -> int | None:
 
 
 def _query_session_bars(db_path: Path, start: datetime, now: datetime) -> dict[str, Any]:
+    if not _allow_sqlite_diagnostic(db_path):
+        return {
+            "error": "sqlite_diagnostic_disabled",
+            "symbol_count": 0,
+            "bar_count": 0,
+            "sqlite_db": str(db_path),
+        }
     if not db_path.exists():
         return {"error": f"sqlite database not found: {db_path}", "symbol_count": 0, "bar_count": 0}
     start_text = start.strftime("%Y-%m-%d %H:%M:%S")
@@ -602,7 +623,7 @@ def validate_pre_open(
         "report_type": "pre_open_acceptance",
         "checked_at": current.isoformat(timespec="seconds"),
         "sqlite_db": str(sqlite_db),
-        "data_source": "SharedSignals read_model",
+        "data_source": "SharedSignals API; SQLite read model only for explicit diagnostics",
         "read_only": True,
         "session": session_name,
         "session_start": start.isoformat(timespec="seconds") if start else None,
@@ -616,7 +637,10 @@ def validate_pre_open(
     daily_age = _daily_age_days(bars.get("latest_trade_date"), current)
     result["latest_daily_age_days"] = daily_age
     result["max_daily_age_days"] = MAX_PRE_OPEN_DAILY_AGE_DAYS
-    if bars.get("error"):
+    if bars.get("error") == "sqlite_diagnostic_disabled":
+        result["status"] = "warn"
+        result["reason"] = "sqlite_diagnostic_disabled"
+    elif bars.get("error"):
         result["status"] = "fail"
         result["reason"] = "pre_open_daily_query_failed"
     elif int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
@@ -648,7 +672,7 @@ def validate_opening(
         "report_type": "opening_validation",
         "checked_at": current.isoformat(timespec="seconds"),
         "sqlite_db": str(sqlite_db),
-        "data_source": "SharedSignals read_model",
+        "data_source": "SharedSignals API; SQLite read model only for explicit diagnostics",
         "read_only": True,
         "session": session_name,
         "session_start": start.isoformat(timespec="seconds") if start else None,
@@ -659,7 +683,10 @@ def validate_opening(
         return {**result, "status": "warn", "reason": "outside_ashare_session"}
     bars = _query_session_bars(sqlite_db, start, current)
     result.update(bars)
-    if bars.get("error"):
+    if bars.get("error") == "sqlite_diagnostic_disabled":
+        result["status"] = "warn"
+        result["reason"] = "sqlite_diagnostic_disabled"
+    elif bars.get("error"):
         result["status"] = "fail"
         result["reason"] = "opening_validation_query_failed"
     elif int(bars.get("bar_count") or 0) <= 0:
@@ -706,7 +733,7 @@ def first_sample_alerts(
         "report_type": "first_sample_alert",
         "checked_at": current.isoformat(timespec="seconds"),
         "sqlite_db": str(sqlite_db),
-        "data_source": "SharedSignals read_model",
+        "data_source": "SharedSignals API; SQLite read model only for explicit diagnostics",
         "read_only": True,
         "session": session_name,
         "session_start": start.isoformat(timespec="seconds") if start else None,
@@ -724,7 +751,9 @@ def first_sample_alerts(
     bars = _query_session_bars(sqlite_db, start, current)
     result.update(bars)
     alerts: list[dict[str, Any]] = []
-    if bars.get("error"):
+    if bars.get("error") == "sqlite_diagnostic_disabled":
+        alerts.append({"severity": "warn", "code": "ashare_sqlite_diagnostic_disabled", "message": "A股本地 SQLite 诊断未启用；以 SharedSignals API 健康检查为准。"})
+    elif bars.get("error"):
         alerts.append({"severity": "error", "code": "ashare_5min_check_failed", "message": "A股5分钟首样本检查无法读取 SharedSignals read model。"})
     elif int(bars.get("bar_count") or 0) <= 0 or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
         alerts.append({"severity": "warn", "code": "ashare_5min_missing_in_session", "message": "A股交易时段开始后仍缺少足够的5分钟数据。"})

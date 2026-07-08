@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-# DeepSeek API 配置 (与 MarketGraph/deploy/mg_agent/deepseek_client.py 一致)
+# DeepSeek API 配置
 _DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 _MODEL = "deepseek-v4-pro"  # 推理用 pro
 _TIMEOUT = int(os.environ.get("TRADINGS_DEEPSEEK_TIMEOUT", "90"))
@@ -29,14 +29,13 @@ _DIMENSIONS = ["macro", "event", "fundamental", "capital", "technical", "sentime
 
 
 def _get_key() -> str:
-    """读取 DeepSeek API key。优先 env, 其次 cron env 文件。"""
+    """读取 DeepSeek API key。优先 env, 其次 TradingAgent env 文件。"""
     key = (os.environ.get("TRADINGS_DEEPSEEK_API_KEY", "") or os.environ.get("DEEPSEEK_API_KEY", "")).strip()
     if key:
         return key
-    # 回退: 从 marketgraph_cron.env 读取
     for path in (
-        "/opt/investment/MarketGraph/deploy/marketgraph_cron.env",
-        "/opt/investment/.env",
+        "/opt/tradingagent/.env",
+        "/opt/investment/tradingagent/.env",
     ):
         try:
             with open(path, encoding="utf-8") as f:

@@ -53,7 +53,7 @@ class HKMarketData(BaseMarketData):
         return {
             "market": "hk",
             "source": "SharedSignals",
-            "tables": ["market_bars_daily", "hk_daily", "hk_stock_master.csv"],
+            "tables": ["market_bars_daily", "hk_daily", "market_assets"],
             "status": "ok" if universe else "degraded",
             "universe_count": len(universe),
             "real_execution": False,

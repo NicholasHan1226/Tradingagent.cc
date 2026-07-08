@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover - direct script execution fallback
 try:
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, TradingagentDataReader
 except Exception:  # pragma: no cover
-    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/SharedSignals/runtime/read_model/marketdata.sqlite")
+    DEFAULT_SHARED_SIGNALS_DB = Path("/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite")
     TradingagentDataReader = None  # type: ignore[assignment]
 
 DEFAULT_SQLITE_DB = DEFAULT_SHARED_SIGNALS_DB
@@ -400,10 +400,13 @@ def _query_session_bars_via_reader(
 
 
 def _allow_sqlite_fallback(sqlite_db: Path) -> bool:
-    value = sqlite_db.exists()
-    env_value = os.environ.get("CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK", "")
-    env_disabled = env_value.strip().lower() in {"0", "false", "no", "off"}
-    return (value and not env_disabled) or env_value.strip().lower() in {"1", "true", "yes", "on"}
+    if not sqlite_db.exists():
+        return False
+    values = (
+        os.environ.get("CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK", ""),
+        os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", ""),
+    )
+    return any(str(value).strip().lower() in {"1", "true", "yes", "on"} for value in values)
 
 
 def _query_daily_bars(db_path: Path, trade_date: str, *, reader: Any | None = None, min_symbols: int = 4) -> dict[str, Any]:
@@ -610,7 +613,14 @@ def validate_pre_open(
     if start is None:
         return {**result, "status": "warn", "reason": "not_in_pre_open_window"}
     bars = _query_daily_bars(sqlite_db, start.strftime("%Y%m%d"))
-    intraday_readiness = _query_intraday_readiness_sqlite(sqlite_db, start.strftime("%Y%m%d"))
+    if _allow_sqlite_fallback(sqlite_db):
+        intraday_readiness = _query_intraday_readiness_sqlite(sqlite_db, start.strftime("%Y%m%d"))
+    else:
+        intraday_readiness = {
+            "reachable": False,
+            "reason": "sqlite_diagnostic_disabled",
+            "sqlite_db": str(sqlite_db),
+        }
     style_state = _style_state_summary()
     warnings: list[str] = []
     if not intraday_readiness.get("reachable"):

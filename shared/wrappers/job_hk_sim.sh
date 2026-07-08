@@ -7,4 +7,5 @@ if [[ "${TRADINGAGENT_HK_SIM_ENABLED:-0}" != "1" ]]; then
 fi
 export SIM_MARKET=hk
 cd /opt/investment/tradingagent
-PYTHONPATH=/opt/investment/tradingagent /opt/marketgraph/venv/bin/python3 shared/wrappers/run_sim.py
+PYTHON_BIN="${TRADINGAGENT_PYTHON:-/opt/tradingagent/venv/bin/python3}"
+PYTHONPATH=/opt/investment/tradingagent "${PYTHON_BIN}" shared/wrappers/run_sim.py

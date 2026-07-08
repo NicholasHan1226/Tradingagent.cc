@@ -16,8 +16,6 @@
 | [write_end_contract.md](write_end_contract.md) | 写端单一真相源合同 |
 | [INFRASTRUCTURE.md](INFRASTRUCTURE.md) | 基础设施说明 |
 | [repo_structure.md](repo_structure.md) | 仓库结构说明 |
-| [../shared/automation_tasks.md](../shared/automation_tasks.md) | Cron 自动化任务计划（36 任务） |
-| [../shared/cron_migration.md](../shared/cron_migration.md) | Cron 迁移记录（含 tradingagent/MarketGraph 任务归属） |
 | [../shared/orchestrator_design.md](../shared/orchestrator_design.md) | 调度编排器设计 |
 
 ### 已归档（历史，仅供参考）
