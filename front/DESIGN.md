@@ -281,10 +281,14 @@ The homepage now uses three outcome-first modules:
   conditions/risk, which branch is protected or missed, and how many become
   trade signals. This follows the Sankey-style pattern more than a decorative
   static funnel, because the user needs to see movement and drop-off, not only
-  stage totals.
+  stage totals. When no live opportunity or signal data is present but holdings
+  exist, the same surface switches to `持仓状态`: it shows account holdings,
+  positive contribution, risk checks, and continue-hold/review state without
+  showing a misleading opportunity conversion rate.
 - `RealtimeReturnCard`: one return card combines amount and percentage. Amount
   is the primary value, percentage is secondary, and simulated/live wording is
-  controlled by the shared account mode.
+  controlled by the shared account mode. The copy now uses `当前收益` and
+  `实盘待接入` rather than internal or system-state phrasing.
 - `HomeResultBrief`: renamed from judgement language to `当前结论`, with
   business-readable rows such as `收益主要来自`, `错过原因`, `风险已挡住`, and
   `实盘`.
@@ -318,3 +322,43 @@ funnel is now data-shaped, the real-time return card has one job, and old
 system phrases are removed from the visible UI. Remaining gap: desktop visual
 regression tests and richer real signal-volume data before the funnel can show
 large-market density naturally.
+
+## July 8 Flow Polish
+
+The homepage flow panel now separates three states:
+
+- Real `funnelEvents[]`: rendered as `机会管道` with conversion rate, drop-off
+  ledger, moving labels, and outcome strip.
+- Derived signal rows: rendered as a screening pipeline only when signal stage
+  evidence exists.
+- Holdings only: rendered as `持仓状态`, with no opportunity conversion rate.
+  It summarizes account holdings, positive contribution, watch items, and risk
+  checks, so the user does not mistake a holding replay for a real opportunity
+  funnel.
+
+Visual changes in this pass:
+
+- Added a compact result banner above the flow so the panel answers the result
+  before the user reads stage cards.
+- Added a low-contrast loss ledger for the exact step where opportunities or
+  holdings narrow.
+- Reduced teal glow in the funnel and return card to keep the Hyperliquid-like
+  dark material restrained.
+- Renamed the live-account placeholder to `实盘待接入` and the primary return
+  label to `当前收益`.
+
+Updated score after this pass:
+
+- Visual hierarchy: 19/20
+- Typography quality: 14/15
+- Color semantics: 15/15
+- Spacing rhythm: 15/15
+- Interaction feedback: 9/10
+- Accessibility baseline: 8/10
+- Originality / brand fit: 9/10
+- Responsive integrity: 4/5
+
+Total: 93/100. The flow panel is clearer and less misleading in no-signal
+production states. Remaining gap: the backend should continue improving
+complete per-opportunity `funnelEvents[]` so the page can show a true live
+opportunity funnel during active trading windows.
