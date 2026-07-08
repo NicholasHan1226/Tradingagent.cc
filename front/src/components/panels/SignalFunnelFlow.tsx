@@ -112,7 +112,41 @@ export function SignalFunnelFlow({
           <span>{moduleTitle} <b>{modeLabel}</b></span>
           <strong>{captionText}</strong>
         </div>
-        {hasFlowVolume ? (
+        {hasHoldingContext && holdingSummary ? (
+          <div className="holding-flow-monitor" role="img" aria-label="当前持仓跟踪状态">
+            <div className="holding-monitor-head">
+              <span>当前没有新机会进入</span>
+              <strong>{holdings.length} 个持仓继续跟踪</strong>
+            </div>
+            <div className="holding-monitor-metrics">
+              <span>
+                <em>正贡献</em>
+                <b>{holdingSummary.positive}</b>
+              </span>
+              <span>
+                <em>需观察</em>
+                <b>{holdingSummary.watching}</b>
+              </span>
+              <span>
+                <em>当前状态</em>
+                <b>{getHoldingStateLabel(holdings, holdingSummary)}</b>
+              </span>
+            </div>
+            <div className="holding-monitor-list" aria-label="持仓跟踪列表">
+              {getHoldingMonitorRows(holdings).map((holding) => (
+                <span className={holding.className} key={holding.symbol}>
+                  <strong>{holding.symbol}</strong>
+                  <em>{holding.name}</em>
+                  <b>{holding.pnl}</b>
+                </span>
+              ))}
+            </div>
+            <div className="holding-monitor-note">
+              <span>{flowSummary.value}</span>
+              <strong>{flowSummary.detail}</strong>
+            </div>
+          </div>
+        ) : hasFlowVolume ? (
           <>
             <div className="real-funnel-body" role="img" aria-label="机会从发现到交易结果的动态筛选漏斗">
               <div className="real-funnel-rulers" aria-hidden="true">
@@ -279,6 +313,23 @@ function getHoldingBottleneck(holdings: HoldingRow[], summary: ReturnType<typeof
   if (summary.positive > 0) return `${summary.positive} 个持仓正贡献`
   if (negative > 0) return '当前持仓承压'
   return '持仓状态平稳'
+}
+
+function getHoldingStateLabel(holdings: HoldingRow[], summary: ReturnType<typeof getHoldingSummary>) {
+  const negative = holdings.filter((holding) => !isPositivePnl(holding.pnl)).length
+  if (summary.watching > 0) return '需要观察'
+  if (negative > 0) return '承压'
+  if (summary.positive > 0) return '正贡献'
+  return '平稳'
+}
+
+function getHoldingMonitorRows(holdings: HoldingRow[]) {
+  return holdings.slice(0, 4).map((holding) => ({
+    className: holdingTapeClass(holding),
+    name: holding.name,
+    pnl: holding.pnl,
+    symbol: holding.symbol,
+  }))
 }
 
 function getHoldingLossRows(holdings: HoldingRow[]) {
