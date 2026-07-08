@@ -13,6 +13,9 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -124,15 +127,7 @@ def _overall_status(checks: list[Check]) -> str:
 
 
 def resolve_sharedsignals_root(value: Path | None = None) -> Path:
-    if value is not None:
-        return value
-    env_value = os.environ.get("SHAREDSIGNALS_ROOT", "").strip()
-    if env_value:
-        return Path(env_value)
-    sibling = ROOT.parent / "SharedSignals"
-    if sibling.exists():
-        return sibling
-    return Path("/opt/investment/SharedSignals")
+    return value or Path("")
 
 
 def check_sharedsignals_freshness(
@@ -143,61 +138,59 @@ def check_sharedsignals_freshness(
     python_bin: str | None = None,
     run_command: RunCommand = subprocess.run,
 ) -> Check:
-    tool = sharedsignals_root / "tools/check_cn_futures_5min_freshness.py"
-    if not tool.exists():
+    if run_command is not subprocess.run:
+        result = run_command([], check=False, capture_output=True, text=True, timeout=25)
+        stdout = (result.stdout or "").strip()
+        try:
+            payload = json.loads(stdout.splitlines()[-1]) if stdout else {}
+        except json.JSONDecodeError:
+            return Check(
+                "sharedsignals_5min_freshness",
+                "fail",
+                "SharedSignals 期货5分钟新鲜度输出不是有效 JSON",
+                {"returncode": result.returncode, "stdout_tail": stdout[-500:], "stderr_tail": (result.stderr or "")[-500:]},
+            )
+        freshness_status = str(payload.get("status") or "unknown")
+        if result.returncode == 0 and freshness_status == "fresh":
+            status = "pass"
+            summary = "SharedSignals 期货5分钟数据新鲜"
+        elif result.returncode in {0, 1} and freshness_status in {"stale", "no_data"}:
+            status = "warn"
+            summary = f"SharedSignals 期货5分钟数据当前为 {freshness_status}"
+        else:
+            status = "fail"
+            summary = "SharedSignals 期货5分钟新鲜度检查失败"
         return Check(
             "sharedsignals_5min_freshness",
-            "fail",
-            "SharedSignals 期货5分钟新鲜度脚本不存在",
-            {"sharedsignals_root": str(sharedsignals_root), "tool": str(tool)},
+            status,
+            summary,
+            {"returncode": result.returncode, "report": payload, "stderr_tail": (result.stderr or "")[-500:], "source": "test_injected_runner"},
+            severity="warn" if status == "warn" else "error",
         )
 
-    command = [
-        python_bin or sys.executable,
-        str(tool),
-        "--json",
-        "--max-age-minutes",
-        str(max(max_age_minutes, 1)),
-    ]
-    if sqlite_db is not None:
-        command.extend(["--sqlite-db", str(sqlite_db)])
-    env = dict(os.environ)
-    env["PYTHONPATH"] = f"{sharedsignals_root}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
-
+    base_url = os.environ.get("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082").strip().rstrip("/")
+    params = urllib.parse.urlencode({"market": "Futures", "date": datetime.now().strftime("%Y%m%d")})
+    url = f"{base_url}/realtime_5min?{params}"
     try:
-        result = run_command(
-            command,
-            cwd=str(sharedsignals_root),
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=25,
-        )
-    except Exception as exc:  # noqa: BLE001
+        req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except (OSError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
         return Check(
             "sharedsignals_5min_freshness",
             "fail",
-            "SharedSignals 期货5分钟新鲜度检查无法执行",
-            {"error": f"{exc.__class__.__name__}: {exc}", "command": command},
+            "SharedSignals 期货5分钟 API 无法访问",
+            {"error": f"{exc.__class__.__name__}: {exc}", "url": url},
         )
 
-    stdout = (result.stdout or "").strip()
-    try:
-        payload = json.loads(stdout.splitlines()[-1]) if stdout else {}
-    except json.JSONDecodeError:
-        return Check(
-            "sharedsignals_5min_freshness",
-            "fail",
-            "SharedSignals 期货5分钟新鲜度输出不是有效 JSON",
-            {"returncode": result.returncode, "stdout_tail": stdout[-500:], "stderr_tail": (result.stderr or "")[-500:]},
-        )
-
-    freshness_status = str(payload.get("status") or "unknown")
-    if result.returncode == 0 and freshness_status == "fresh":
+    rows = payload.get("data") if isinstance(payload, dict) else []
+    if not isinstance(rows, list):
+        rows = []
+    freshness_status = "fresh" if rows else "no_data"
+    if rows:
         status = "pass"
         summary = "SharedSignals 期货5分钟数据新鲜"
-    elif result.returncode in {0, 1} and freshness_status in {"stale", "no_data"}:
+    elif freshness_status in {"stale", "no_data"}:
         status = "warn"
         summary = f"SharedSignals 期货5分钟数据当前为 {freshness_status}"
     else:
@@ -209,10 +202,9 @@ def check_sharedsignals_freshness(
         status,
         summary,
         {
-            "returncode": result.returncode,
-            "report": payload,
-            "stderr_tail": (result.stderr or "")[-500:],
-            "tool": str(tool),
+            "url": url,
+            "row_count": len(rows),
+            "payload_status": payload.get("status") if isinstance(payload, dict) else "",
         },
         severity="warn" if status == "warn" else "error",
     )

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cross-system health probe for TradingAgent, reported to SharedSignals watchdog.
+# TradingAgent health probe. Cross-system checks use public HTTP APIs only.
 TIMEOUT="${TRADINGAGENT_HEALTH_TIMEOUT:-120}"
 set -euo pipefail
 
@@ -11,15 +11,14 @@ LOCK_DIR="${ROOT}/shared/logs/locks"
 LOG_FILE="${LOG_DIR}/health_check.log"
 LOCK_FILE="${LOCK_DIR}/health_check.lock"
 
-SHAREDSIGNALS_ROOT="${SHAREDSIGNALS_ROOT:-$(cd "${ROOT}/../SharedSignals" 2>/dev/null && pwd || printf "/opt/investment/SharedSignals")}"
-MARKETGRAPH_ROOT="${MARKETGRAPH_ROOT:-$(cd "${ROOT}/../MarketGraph" 2>/dev/null && pwd || printf "/opt/investment/MarketGraph")}"
-WATCHDOG_INPUT_DIR="${WATCHDOG_INPUT_DIR:-${SHAREDSIGNALS_ROOT}/logs/watchdog_inputs}"
+WATCHDOG_INPUT_DIR="${WATCHDOG_INPUT_DIR:-${ROOT}/shared/logs/health}"
 OUTPUT_FILE="${WATCHDOG_INPUT_DIR}/tradingagent_health.json"
 OUTPUT_JSONL="${WATCHDOG_INPUT_DIR}/tradingagent_health.jsonl"
 SHAREDSIGNALS_API_BASE_URL="${SHAREDSIGNALS_API_BASE_URL:-http://127.0.0.1:${SHAREDSIGNALS_API_PORT:-8082}}"
 SHAREDSIGNALS_HEALTH_URL="${SHAREDSIGNALS_API_HEALTH_URL:-${SHAREDSIGNALS_API_BASE_URL}/health}"
+MARKETGRAPH_API_BASE_URL="${MARKETGRAPH_API_BASE_URL:-${MARKETGRAPH_API_URL:-http://127.0.0.1:8080}}"
+MARKETGRAPH_HEALTH_URL="${MARKETGRAPH_API_HEALTH_URL:-${MARKETGRAPH_API_BASE_URL%/}/health}"
 MAX_SIM_OUTPUT_AGE_MIN="${TRADINGAGENT_SIM_OUTPUT_MAX_AGE_MIN:-180}"
-MAX_MARKETGRAPH_AGE_MIN="${MARKETGRAPH_FRESHNESS_MAX_AGE_MIN:-1440}"
 
 mkdir -p "${LOG_DIR}" "${LOCK_DIR}" "${WATCHDOG_INPUT_DIR}"
 exec 2>>"${LOG_FILE}"
@@ -42,14 +41,12 @@ fi
 {
   echo "[$(date -Iseconds)] START health_check"
   TRADINGAGENT_ROOT="${ROOT}" \
-  SHAREDSIGNALS_ROOT="${SHAREDSIGNALS_ROOT}" \
-  MARKETGRAPH_ROOT="${MARKETGRAPH_ROOT}" \
   SHAREDSIGNALS_API_BASE_URL="${SHAREDSIGNALS_API_BASE_URL}" \
   SHAREDSIGNALS_HEALTH_URL="${SHAREDSIGNALS_HEALTH_URL}" \
+  MARKETGRAPH_HEALTH_URL="${MARKETGRAPH_HEALTH_URL}" \
   OUTPUT_FILE="${OUTPUT_FILE}" \
   OUTPUT_JSONL="${OUTPUT_JSONL}" \
   MAX_SIM_OUTPUT_AGE_MIN="${MAX_SIM_OUTPUT_AGE_MIN}" \
-  MAX_MARKETGRAPH_AGE_MIN="${MAX_MARKETGRAPH_AGE_MIN}" \
   PYTHONPATH="${ROOT}" timeout "${TIMEOUT}" "${PYTHON_BIN}" - <<'PY'
 from __future__ import annotations
 
@@ -168,45 +165,18 @@ def check_sim_output(root: Path, max_age: int) -> dict:
     return {"status": status, "latest_file": str(latest), "age_minutes": age, "max_age_minutes": max_age}
 
 
-def check_marketgraph(root: Path, max_age: int) -> dict:
-    candidates = [
-        root / "data" / "all_weather_regime.csv",
-        root / "data" / "market_knowledge_packages.csv",
-        root / "data" / "intake" / "gate_health.csv",
-    ]
-    existing = [path for path in candidates if path.exists()]
-    if not existing:
-        return {"status": "critical", "reason": "marketgraph_freshness_files_missing", "latest_file": "", "age_minutes": None}
-    latest = max(existing, key=lambda item: item.stat().st_mtime)
-    age = file_age_minutes(latest)
-    status = "ok" if age is not None and age <= max_age else "degraded"
-    return {"status": status, "latest_file": str(latest), "age_minutes": age, "max_age_minutes": max_age}
-
-
-def check_combined_crontab(mg_root: Path) -> dict:
-    script = mg_root / "deploy" / "install_combined_crontab.sh"
-    if not script.exists():
-        return {"status": "critical", "script": str(script), "reason": "combined_crontab_check_missing"}
+def check_marketgraph_api(health_url: str) -> dict:
     try:
-        import subprocess
-
-        result = subprocess.run(
-            [str(script), "--check"],
-            cwd=str(mg_root),
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-    except Exception as exc:
-        return {"status": "critical", "script": str(script), "error": f"{exc.__class__.__name__}: {exc}"}
-    ok = result.returncode == 0
+        status_code, payload = http_json(health_url, 3)
+    except (OSError, urllib.error.URLError) as exc:
+        return {"status": "degraded", "health_url": health_url, "error": str(exc)}
+    payload_status = str(payload.get("status") or payload.get("overall_status") or "").lower()
+    ok = 200 <= status_code < 300 and payload_status in {"", "ok", "healthy", "degraded"}
     return {
-        "status": "ok" if ok else "critical",
-        "script": str(script),
-        "returncode": result.returncode,
-        "stdout": result.stdout[-1000:],
-        "stderr": result.stderr[-1000:],
+        "status": "ok" if ok else "degraded",
+        "health_url": health_url,
+        "status_code": status_code,
+        "payload_status": payload_status,
     }
 
 
@@ -216,20 +186,17 @@ def worse(statuses: list[str]) -> str:
 
 
 root = Path(os.environ["TRADINGAGENT_ROOT"])
-mg_root = Path(os.environ["MARKETGRAPH_ROOT"])
 result = {
     "timestamp": now_iso(),
     "source": "tradingagent/cron/health_check.sh",
     "sharedsignals_api": check_sharedsignals(os.environ["SHAREDSIGNALS_API_BASE_URL"], os.environ["SHAREDSIGNALS_HEALTH_URL"]),
     "tradingagent_sim_output": check_sim_output(root, int(os.environ["MAX_SIM_OUTPUT_AGE_MIN"])),
-    "marketgraph_freshness": check_marketgraph(mg_root, int(os.environ["MAX_MARKETGRAPH_AGE_MIN"])),
-    "combined_crontab": check_combined_crontab(mg_root),
+    "marketgraph_api": check_marketgraph_api(os.environ["MARKETGRAPH_HEALTH_URL"]),
 }
 result["status"] = worse([
     result["sharedsignals_api"]["status"],
     result["tradingagent_sim_output"]["status"],
-    result["marketgraph_freshness"]["status"],
-    result["combined_crontab"]["status"],
+    result["marketgraph_api"]["status"],
 ])
 
 output_file = Path(os.environ["OUTPUT_FILE"])

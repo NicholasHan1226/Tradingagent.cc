@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Unified data readers bridging SharedSignals SQLite and MarketGraph CSV outputs.
+"""Unified data readers for TradingAgent market and research inputs.
 
-SharedSignalsReader reads the read-model SQLite database (marketdata.sqlite).
-MarketGraphCSVReader reads MarketGraph CSV outputs (regime, events, sentiment).
-TradingagentDataReader composes both into a fail-safe unified interface.
+TradingagentDataReader uses SharedSignals API as the production data entry.
+Direct SQLite read-model access is allowed only for explicitly injected test
+readers or explicit emergency/local-read configuration.
 """
 
 from __future__ import annotations
 
-import csv
-import importlib.util
+import json
 import logging
 import os
 import sqlite3
-import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -27,77 +28,14 @@ def _default_shared_signals_db() -> Path:
     configured = os.environ.get("SHARED_SIGNALS_DB")
     if configured:
         return Path(configured)
-    candidates: list[Path] = []
-    for key in ("SHAREDSIGNALS_RUNTIME_ROOT", "SHAREDSIGNALS_ROOT", "MARKETGRAPH_RUNTIME_ROOT"):
+    for key in ("SHAREDSIGNALS_RUNTIME_ROOT", "SHAREDSIGNALS_ROOT"):
         runtime_root = os.environ.get(key, "").strip()
         if runtime_root:
-            candidates.append(Path(runtime_root) / "read_model" / "marketdata.sqlite")
-    candidates.extend(
-        [
-            Path("/opt/investment/SharedSignals/read_model/marketdata.sqlite"),
-            Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite"),
-        ]
-    )
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[-1]
+            return Path(runtime_root) / "read_model" / "marketdata.sqlite"
+    return Path("/opt/investment/SharedSignals/runtime/read_model/marketdata.sqlite")
 
 
 DEFAULT_SHARED_SIGNALS_DB = _default_shared_signals_db()
-
-
-def _marketgraph_root_candidates() -> list[Path]:
-    candidates: list[Path] = []
-    for key in ("MARKETGRAPH_ROOT", "MARKETGRAPH_DATA"):
-        configured = os.environ.get(key, "").strip()
-        if configured:
-            candidates.append(Path(configured))
-    candidates.extend(
-        [
-            Path("/opt/investment/MarketGraph"),
-            Path(__file__).resolve().parents[3] / "MarketGraph",
-        ]
-    )
-    return candidates
-
-
-def _looks_like_marketgraph_root(path: Path) -> bool:
-    return (
-        (path / "08-Market-Interfaces" / "tools" / "marketgraph_interface_gateway.py").exists()
-        and (path / "08-Market-Interfaces" / "contracts").exists()
-    )
-
-
-def _resolve_marketgraph_root() -> Path | None:
-    for candidate in _marketgraph_root_candidates():
-        root = candidate.expanduser().resolve()
-        if _looks_like_marketgraph_root(root):
-            return root
-    return None
-
-
-_MARKETGRAPH_GATEWAY: Any | None = None
-
-
-def _load_marketgraph_gateway() -> Any | None:
-    global _MARKETGRAPH_GATEWAY
-    if _MARKETGRAPH_GATEWAY is not None:
-        return _MARKETGRAPH_GATEWAY
-    root = _resolve_marketgraph_root()
-    if root is None:
-        return None
-    tools_dir = root / "08-Market-Interfaces" / "tools"
-    gateway_path = tools_dir / "marketgraph_interface_gateway.py"
-    if str(tools_dir) not in sys.path:
-        sys.path.insert(0, str(tools_dir))
-    spec = importlib.util.spec_from_file_location("tradingagent_marketgraph_interface_gateway", gateway_path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _MARKETGRAPH_GATEWAY = module
-    return module
 
 
 # -- SharedSignals SQLite Reader ---------------------------------------------
@@ -261,7 +199,12 @@ class SharedSignalsReader:
 
 
 class MarketGraphCSVReader:
-    """Read from MarketGraph CSV outputs (regime, event_candidates, sentiment)."""
+    """API-only MarketGraph/SharedSignals-facing reader.
+
+    The class name is retained for compatibility with existing call sites, but
+    it no longer reads MarketGraph CSV files. MarketGraph research data must
+    come from a public API/client boundary.
+    """
 
     def __init__(
         self,
@@ -277,10 +220,7 @@ class MarketGraphCSVReader:
         self._logger = logging.getLogger("tradingagent.data")
 
     def _read_csv(self, path: Path) -> list[dict[str, str]]:
-        if not path.exists():
-            return []
-        with path.open(encoding="utf-8-sig") as f:
-            return list(csv.DictReader(f))
+        return []
 
     @staticmethod
     def _unwrap_api_rows(rows: Any) -> list[dict[str, Any]]:
@@ -313,9 +253,9 @@ class MarketGraphCSVReader:
         self,
         csv_name: str,
         operations: list[tuple[str, tuple[Any, ...], dict[str, Any]]],
-    ) -> list[dict[str, Any]] | None:
+    ) -> list[dict[str, Any]]:
         if not self._api_enabled or self._api_client is None:
-            return None
+            return []
 
         before_error_count = len(getattr(self._api_client, "errors", []))
         for method_name, args, kwargs in operations:
@@ -326,22 +266,22 @@ class MarketGraphCSVReader:
                 rows = self._unwrap_api_rows(method(*args, **kwargs))
             except Exception as exc:  # pragma: no cover - defensive API boundary
                 self._logger.warning(
-                    "MarketGraphCSVReader %s API call %s failed; using CSV fallback: %s",
+                    "MarketGraphCSVReader %s API call %s failed; fail-closed: %s",
                     csv_name,
                     method_name,
                     exc,
                 )
-                return None
+                return []
 
             api_errors = getattr(self._api_client, "errors", [])
             if len(api_errors) > before_error_count:
                 self._logger.warning(
-                    "MarketGraphCSVReader %s API call %s reported error; using CSV fallback: %s",
+                    "MarketGraphCSVReader %s API call %s reported error; fail-closed: %s",
                     csv_name,
                     method_name,
                     api_errors[-1],
                 )
-                return None
+                return []
             if self._has_meaningful_rows(rows):
                 self._logger.info(
                     "MarketGraphCSVReader %s loaded via SharedSignals API (%s)",
@@ -351,20 +291,13 @@ class MarketGraphCSVReader:
                 return rows
 
         self._logger.info(
-            "MarketGraphCSVReader %s unavailable from SharedSignals API; using CSV fallback",
+            "MarketGraphCSVReader %s unavailable from API; fail-closed",
             csv_name,
         )
-        return None
+        return []
 
     def _read_csv_with_log(self, csv_name: str, path: Path) -> list[dict[str, str]]:
-        rows = self._read_csv(path)
-        if self._api_client is not None:
-            self._logger.info(
-                "MarketGraphCSVReader %s loaded via CSV fallback (%s)",
-                csv_name,
-                path,
-            )
-        return rows
+        return []
 
     def get_regime(self) -> dict[str, Any] | None:
         api_rows = self._api_rows(
@@ -374,22 +307,11 @@ class MarketGraphCSVReader:
                 ("get_macro_factors", (), {}),
             ],
         )
-        if api_rows is not None:
+        if api_rows:
             regime_rows = [row for row in api_rows if row.get("regime")]
             if regime_rows:
                 return dict(regime_rows[-1])
-            self._logger.info(
-                "MarketGraphCSVReader all_weather_regime.csv API rows did not include regime; using CSV fallback",
-            )
-
-        candidates = [
-            self.root / "data" / "all_weather_regime.csv",
-            self.root / "all_weather_regime.csv",
-        ]
-        for path in candidates:
-            rows = self._read_csv_with_log("all_weather_regime.csv", path)
-            if rows:
-                return dict(rows[-1])
+            self._logger.info("MarketGraphCSVReader all_weather_regime.csv API rows did not include regime")
         return None
 
     def get_event_candidates(self) -> list[dict[str, str]]:
@@ -400,9 +322,9 @@ class MarketGraphCSVReader:
                 ("get_events", (), {}),
             ],
         )
-        if api_rows is not None:
+        if api_rows:
             return api_rows
-        return self._read_csv_with_log("event_candidates.csv", self.intake / "event_candidates.csv")
+        return []
 
     def get_sentiment_signals(self) -> list[dict[str, str]]:
         api_rows = self._api_rows(
@@ -412,16 +334,16 @@ class MarketGraphCSVReader:
                 ("get_sentiment", (), {}),
             ],
         )
-        if api_rows is not None:
+        if api_rows:
             return api_rows
-        return self._read_csv_with_log("sentiment_signals.csv", self.intake / "sentiment_signals.csv")
+        return []
 
     def get_sentiment(self) -> list[dict[str, str]]:
         return self.get_sentiment_signals()
 
     def health_check(self) -> dict[str, Any]:
         if not self._api_enabled or self._api_client is None:
-            return {"api_enabled": False, "status": "disabled", "source": "csv"}
+            return {"api_enabled": False, "status": "disabled", "source": "api"}
         try:
             health = self._api_client.get_health()
         except Exception as exc:  # pragma: no cover - defensive API boundary
@@ -435,10 +357,11 @@ class MarketGraphCSVReader:
 
 
 class TradingagentDataReader:
-    """Fail-safe unified reader: SharedSignals API + SQLite + MarketGraph CSV.
+    """Fail-safe unified reader: SharedSignals API + explicit local read model.
 
-    Uses SharedSignals HTTP API first, falls back to direct SQLite reads.
-    MarketGraph data is read from CSV (same-machine file access).
+    Uses SharedSignals HTTP API first. Direct SQLite reads are allowed only when
+    a caller injects a SharedSignalsReader or explicitly enables local read-model
+    fallback for tests/emergency diagnostics.
 
     All methods are safe to call regardless of whether the underlying data
     sources are available — missing data returns empty lists / None rather
@@ -463,6 +386,16 @@ class TradingagentDataReader:
         self._error_count_at_last_log = 0
         self._last_api_used = False
 
+    def _can_use_sqlite_fallback(self) -> bool:
+        if self._shared is not None:
+            return True
+        return str(os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
     def _maybe_alert(self) -> None:
         """Log a warning when errors accumulate beyond threshold — dead-man switch."""
         if len(self.errors) > self._error_count_at_last_log and len(self.errors) % 10 == 0:
@@ -476,7 +409,7 @@ class TradingagentDataReader:
     def _record_api_fallback(self, op: str, reason: str) -> None:
         self.degraded = True
         self.stale = True
-        message = f"{op}: API unavailable, using SQLite fallback ({reason})"
+        message = f"{op}: API unavailable, using explicit SQLite diagnostic read ({reason})"
         if not self.errors or self.errors[-1] != message:
             self.errors.append(message)
         self._maybe_alert()
@@ -488,8 +421,15 @@ class TradingagentDataReader:
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        """Prefer SharedSignals API and fall back to direct SQLite on API failure."""
+        """Prefer SharedSignals API and only use explicit local read-model diagnostics."""
         if self._api_client is None:
+            if not self._can_use_sqlite_fallback():
+                message = f"{op}: SharedSignals API unavailable and SQLite diagnostic read disabled"
+                if not self.errors or self.errors[-1] != message:
+                    self.errors.append(message)
+                self.stale = True
+                self._maybe_alert()
+                return False if op == "is_trading_day" else []
             return fallback()
 
         before_error_count = len(getattr(self._api_client, "errors", []))
@@ -499,13 +439,23 @@ class TradingagentDataReader:
             result = method(*args, **kwargs)
             self._last_api_used = True
         except Exception as exc:  # pragma: no cover - defensive API boundary
-            self._record_api_fallback(op, str(exc))
-            return fallback()
+            if self._can_use_sqlite_fallback():
+                self._record_api_fallback(op, str(exc))
+                return fallback()
+            self.errors.append(f"{op}: SharedSignals API failed ({exc}); SQLite diagnostic read disabled")
+            self.stale = True
+            self._maybe_alert()
+            return False if op == "is_trading_day" else []
 
         api_errors = getattr(self._api_client, "errors", [])
         if len(api_errors) > before_error_count:
-            self._record_api_fallback(op, api_errors[-1])
-            return fallback()
+            if self._can_use_sqlite_fallback():
+                self._record_api_fallback(op, api_errors[-1])
+                return fallback()
+            self.errors.append(f"{op}: SharedSignals API error ({api_errors[-1]}); SQLite diagnostic read disabled")
+            self.stale = True
+            self._maybe_alert()
+            return False if op == "is_trading_day" else []
         return result
 
     def _record_shared_error(self, op: str) -> None:
@@ -524,6 +474,8 @@ class TradingagentDataReader:
     @property
     def shared(self) -> SharedSignalsReader:
         if self._shared is None:
+            if not self._can_use_sqlite_fallback():
+                raise RuntimeError("SharedSignals SQLite diagnostic read is disabled; use SHAREDSIGNALS_API_URL")
             try:
                 self._shared = SharedSignalsReader()
             except Exception as e:
@@ -548,7 +500,7 @@ class TradingagentDataReader:
         if self._marketgraph is None:
             marketgraph_data = os.environ.get("MARKETGRAPH_DATA", "").strip()
             self._marketgraph = MarketGraphCSVReader(
-                Path(marketgraph_data) if marketgraph_data else Path("/nonexistent/tradingagent/marketgraph_csv_disabled"),
+                Path(marketgraph_data) if marketgraph_data else Path("/nonexistent/tradingagent/marketgraph_api_only"),
                 api_client=self._api_client,
             )
         return self._marketgraph
@@ -1195,48 +1147,58 @@ class TradingagentDataReader:
         include_rows: bool = False,
         limit: int | None = None,
     ) -> dict[str, Any]:
-        """Read MarketGraph 08 stable interface through its gateway.
+        """Read MarketGraph 08 stable interface through its public API.
 
-        This is read-only research context. Missing gateway/data degrades to an
+        This is read-only research context. Missing API/data degrades to an
         empty snapshot and must never relax market gates.
         """
+        def degraded(reason: str) -> dict[str, Any]:
+            return {
+                "market": market,
+                "contract_status": "missing_api",
+                "tables": {},
+                "readiness_summary": {},
+                "degraded": True,
+                "degrade_reason": reason,
+                "is_trading_permission": False,
+                "can_affect_real_money": False,
+            }
+
+        base_url = os.environ.get("MARKETGRAPH_API_URL", "").strip().rstrip("/")
+        if not base_url:
+            return degraded("marketgraph_api_url_missing")
+
         try:
-            gateway = _load_marketgraph_gateway()
-            if gateway is None:
-                return {
-                    "market": market,
-                    "contract_status": "missing_gateway",
-                    "tables": {},
-                    "readiness_summary": {},
-                    "degraded": True,
-                    "degrade_reason": "marketgraph_interface_gateway_missing",
-                    "is_trading_permission": False,
-                    "can_affect_real_money": False,
-                }
-            return dict(
-                gateway.read_market_interface_snapshot(
-                    market=market,
-                    table_ids=table_ids,
-                    include_rows=include_rows,
-                    limit=limit,
-                    caller_context="TradingAgent.shared.data.reader",
-                    record_usage=False,
-                )
+            params: dict[str, str] = {
+                "market": market,
+                "include_rows": "1" if include_rows else "0",
+            }
+            if table_ids:
+                params["table_ids"] = ",".join(table_ids)
+            if limit is not None:
+                params["limit"] = str(limit)
+            query = urllib.parse.urlencode(params)
+            req = urllib.request.Request(
+                f"{base_url}/market/interface?{query}",
+                headers={"Accept": "application/json"},
+                method="GET",
             )
+            timeout = float(os.environ.get("MARKETGRAPH_API_TIMEOUT", "10"))
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+            if isinstance(payload, dict):
+                data = payload.get("data")
+                if isinstance(data, dict):
+                    return data
+                return payload
+            return degraded("marketgraph_api_unexpected_payload")
+        except (OSError, TimeoutError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+            return degraded(f"marketgraph_api_unavailable:{exc}")
         except Exception as e:
             self.errors.append(f"get_market_interface_snapshot: {e}")
             self.stale = True
             self._maybe_alert()
-            return {
-                "market": market,
-                "contract_status": "error",
-                "tables": {},
-                "readiness_summary": {},
-                "degraded": True,
-                "degrade_reason": str(e),
-                "is_trading_permission": False,
-                "can_affect_real_money": False,
-            }
+            return degraded(str(e))
 
     def get_market_readiness_summary(self, market: str = "Ashare") -> dict[str, Any]:
         snapshot = self.get_market_interface_snapshot(market=market, include_rows=False)

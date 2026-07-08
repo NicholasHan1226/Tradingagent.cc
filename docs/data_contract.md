@@ -2,40 +2,40 @@
 
 ## Scope
 
-TradingAgent consumes SharedSignals and MarketGraph as read-only upstream data.
-This contract covers the data access layer used by screening and A-share T+1
-calendar logic. It does not change execution, accounting, risk, or portfolio
+TradingAgent consumes SharedSignals and MarketGraph as read-only upstream APIs.
+This contract covers the data access layer used by screening and market
+validation logic. It does not change execution, accounting, risk, or portfolio
 write paths.
 
 ## Canonical SharedSignals Inputs
 
-- SQLite read model:
-  `SHARED_SIGNALS_DB` or the active SharedSignals runtime read model. Some
-  production hosts still keep the physical SQLite file under the historical
-  `/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite` path; treat
-  that file as the SharedSignals read model, not as a MarketGraph execution
-  dependency.
+- SharedSignals API:
+  `SHAREDSIGNALS_API_URL` is the production data entry. It reads the
+  SharedSignals database/read model behind the service boundary.
+- Optional local read model:
+  `SHARED_SIGNALS_DB` may be used only when
+  `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` is explicitly set for tests or
+  emergency diagnostics. It must point to the SharedSignals runtime read model,
+  not to a MarketGraph runtime path.
 - Schema reference:
   `sharedsignals_schema.py` documents the 11 canonical tables:
   `market_assets`, `market_bars_daily`, `market_bars_intraday`,
   `market_events`, `market_pm_markets`, `market_pm_prices`,
   `market_factors`, `market_ingest_runs`, `market_coverage_status`,
   `market_backfill_status`, `provider_interface_matrix`.
-- Trading calendar:
-  `SharedSignals/reference/market_calendar.py`.
-
-TradingAgent opens SQLite with `mode=ro`. It must not write to SharedSignals,
-MarketGraph, or legacy Ashare data directories.
+TradingAgent must not import SharedSignals modules, scan SharedSignals
+directories, or write to SharedSignals, MarketGraph, or legacy Ashare data
+directories.
 
 ## Reader API
 
 `shared.data.reader.TradingagentDataReader` is the consumer-facing facade. It
 uses SharedSignals HTTP API first; production cron/env defaults set
-`SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`,
-then falls back to the read-only SQLite reader on API failure or empty API
-shells.
+`SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`. If the API is missing or fails,
+production fail-closes instead of silently reading a sibling-system file.
 
-`shared.data.reader.SharedSignalsReader` exposes the SQLite fallback methods:
+`shared.data.reader.SharedSignalsReader` exposes explicit local read-model
+methods for tests/emergency diagnostics:
 
 - `get_bars_daily(market, symbol, start, end)`
 - `get_bars_intraday(market, symbol, interval, start, end)`
@@ -50,11 +50,12 @@ Rows are returned as dictionaries. Missing rows return `[]` or `None` through
 Event reads use:
 
 - API-first path: SharedSignals `/events?market=<market>&symbol=<symbol>&subject_code=<ts_code>&start=<YYYYMMDD>&end=<YYYYMMDD>`.
-- SQLite fallback: `market_events` filtered by `market`, `symbol`, and
-  `trade_date`.
-- If the HTTP API returns an empty shell or no filtered event candidates,
-  TradingAgent checks the SQLite fallback before concluding no formal event
-  evidence exists.
+- Optional diagnostic read model: `market_events` filtered by `market`,
+  `symbol`, and `trade_date`, only when
+  `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` is explicitly set.
+- If the HTTP API returns an empty shell or no filtered event candidates in
+  production, TradingAgent treats evidence as missing/degraded instead of
+  silently reading a sibling-system file.
 - A-share code matching accepts `600276.SH`, `SH600276`, and `600276` shapes on
   the upstream event side; this is only a read-side matching guard and does not
   create, promote, or reinterpret events.
@@ -62,8 +63,9 @@ Event reads use:
 5-minute intraday reads use:
 
 - API-first path: SharedSignals `/realtime_5min?market=<market>&ts_code=<symbol>&date=<YYYYMMDD>`.
-- SQLite fallback: `market_bars_intraday` filtered by `market`, `symbol`, and
-  `interval`.
+- Optional diagnostic read model: `market_bars_intraday` filtered by `market`,
+  `symbol`, and `interval`, only when the explicit SQLite diagnostic switch is
+  enabled.
 - A-share research evidence first asks SharedSignals for same-day `rt_min` /
   `stk_mins` symbols through `get_tushare()` and only falls back to the asset
   list when no intraday rows are indexed yet.
@@ -105,9 +107,11 @@ unreachable or returns no PM research probability, TradingAgent clears the
 local PM model-probability file and PM simulated trading safely has no
 independent edge to consume.
 
-## MarketGraph CSV Inputs
+## MarketGraph Research Inputs
 
-`shared.data.reader.MarketGraphCSVReader` reads these read-only CSV outputs:
+`shared.data.reader.MarketGraphCSVReader` is a compatibility class name only.
+Current MarketGraph research evidence must come through a public API/read-model
+boundary, not direct CSV files:
 
 - `all_weather_regime.csv`
 - `intake/event_candidates.csv`
@@ -137,21 +141,10 @@ forced into per-stock scores.
 
 ## Environment Variables
 
-- `SHARED_SIGNALS_DB`: overrides the SQLite path.
-  Default: `shared.data.reader.DEFAULT_SHARED_SIGNALS_DB`, which prefers
-  `SHAREDSIGNALS_RUNTIME_ROOT` / `SHAREDSIGNALS_ROOT` / `MARKETGRAPH_RUNTIME_ROOT`
-  if configured and falls back to the historical same-host read-model path only
-  for compatibility.
-- `MARKETGRAPH_DATA`: overrides the MarketGraph CSV root.
-  Default: unset, which disables local CSV fallback. Configure it only in a
-  same-host deployment or for an explicitly mounted MarketGraph export
-  directory. The value must point to the repo/export root, not the `data/`
-  subdirectory.
-- `SHARED_SIGNALS_ROOT`: overrides SharedSignals root for importing
-  `reference/market_calendar.py`.
-  Default: `/opt/investment/SharedSignals`.
-- `SHARED_SIGNALS_CALENDAR_ROOT`: optional override for A-share trading
-  calendar file discovery. Default: same as `SHARED_SIGNALS_ROOT`.
+- `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE`: set to `1` only for local
+  read-model tests or emergency diagnostics.
+- `SHARED_SIGNALS_DB`: explicit local read-model path when the diagnostic switch
+  above is enabled.
 - `MARKETGRAPH_API_URL`: MarketGraph read-only REST API. Default:
   `http://127.0.0.1:8080` on the combined host.
 - `MARKETGRAPH_API_TOKEN`: optional bearer token loaded from the environment;
@@ -198,7 +191,8 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
 - 5-minute bars: `market_bars_intraday` with `market="Futures"` and
   `interval="5min"`.
 - API path: SharedSignals `/realtime_5min?market=Futures&ts_code=<contract>`;
-  SQLite remains a same-host read-only fallback.
+  SQLite remains a same-host read-only diagnostic path only with the explicit
+  diagnostic switch.
 - Optional L1 and lifecycle fields from SharedSignals are preserved through the
   CNFutures runner into simulated order receipts: `bid_price`, `ask_price`,
   `bid_size`, `ask_size`, `last_trade_date`, and `expiry_date`.
@@ -206,10 +200,10 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
   market remains `Futures`.
 - Current cadence assumption: intraday CNFutures simulation must use
   5-minute rows already collected by SharedSignals. The preferred upstream is
-  Tushare/QuickSync `rt_fut_min`; if that provider lacks permission,
-  SharedSignals may fill the same read model from its AKShare/Sina fallback with
-  `provider="akshare_sina_rt_fut_min"`. `fut_daily` remains a daily
-  fallback/review input and must not be described as 5-minute execution data.
+  Tushare/QuickSync `rt_fut_min`; if that provider lacks permission, the
+  5-minute chain must fail/degrade visibly until a separately governed
+  collector is added. `fut_daily` remains a daily review input and must not be
+  described as 5-minute execution data.
 - API health is not trading eligibility. A degraded SharedSignals API response
   may still leave a usable SQLite read model, and a healthy API response does
   not prove real-time, tradable, or account-authorized data.
@@ -217,8 +211,7 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
   go through `signals/` only. CNFutures does not write back into SharedSignals
   or MarketGraph.
 - The live-chain checker reads the actual wrapper cron log
-  `shared/logs/cron/job_cn_futures_sim.log`, with legacy
-  `cn_futures_sim.log` kept only as a fallback. The simulation entrypoint must
+  `shared/logs/cron/job_cn_futures_sim.log`. The simulation entrypoint must
   emit a structured JSON result even on unexpected simulated-run errors so
   health checks can surface the cause instead of reporting an unreadable log.
 - CNFutures review rows may include `hold_count` and `hold_reason_summary` for

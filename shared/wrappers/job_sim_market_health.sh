@@ -28,16 +28,7 @@ if [ -r "${ROOT}/.env" ]; then
 fi
 
 export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
-if [ -z "${SHARED_SIGNALS_DB:-}" ]; then
-  if [ -n "${SHAREDSIGNALS_RUNTIME_ROOT:-}" ] && [ -f "${SHAREDSIGNALS_RUNTIME_ROOT}/read_model/marketdata.sqlite" ]; then
-    export SHARED_SIGNALS_DB="${SHAREDSIGNALS_RUNTIME_ROOT}/read_model/marketdata.sqlite"
-  elif [ -n "${SHAREDSIGNALS_ROOT:-}" ] && [ -f "${SHAREDSIGNALS_ROOT}/read_model/marketdata.sqlite" ]; then
-    export SHARED_SIGNALS_DB="${SHAREDSIGNALS_ROOT}/read_model/marketdata.sqlite"
-  else
-    export SHARED_SIGNALS_DB="${MARKETGRAPH_RUNTIME_ROOT:-/opt/investment/MarketGraphRuntime}/read_model/marketdata.sqlite"
-  fi
-fi
-export PYTHONPATH="${ROOT}:/opt/investment/SharedSignals:${PYTHONPATH:-}"
+export PYTHONPATH="${ROOT}:${PYTHONPATH:-}"
 
 {
   echo "[$(date -Iseconds)] START sim_market_health"

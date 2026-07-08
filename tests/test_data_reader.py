@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import json
 from unittest.mock import patch
 from pathlib import Path
 
@@ -311,7 +312,7 @@ class TestSharedSignalsReader(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(
                 _default_shared_signals_db(),
-                Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite"),
+                Path("/opt/investment/SharedSignals/runtime/read_model/marketdata.sqlite"),
             )
 
 
@@ -565,42 +566,43 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
             ("HK", "00700.HK"),
         )
 
-    def test_marketgraph_interface_gateway_is_read_through_stable_wrapper(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            finance_root = Path(temp_dir)
-            mg = finance_root / "MarketGraph"
-            tools = mg / "08-Market-Interfaces" / "tools"
-            contracts = mg / "08-Market-Interfaces" / "contracts"
-            tools.mkdir(parents=True)
-            contracts.mkdir(parents=True)
-            (mg / "data").mkdir()
-            (mg / "AGENTS.md").write_text("# test\n", encoding="utf-8")
-            (tools / "marketgraph_interface_gateway.py").write_text(
-                "def read_market_interface_snapshot(**kwargs):\n"
-                "    return {\n"
-                "        'market': kwargs.get('market'),\n"
-                "        'contract_status': 'ok',\n"
-                "        'readiness_summary': {'readiness_status': 'weak_evidence'},\n"
-                "        'tables': {'market_knowledge_edges': {'rows': [{'market': 'Ashare', 'impact_score': '0.7'}]}},\n"
-                "        'is_trading_permission': False,\n"
-                "        'can_affect_real_money': False,\n"
-                "    }\n",
-                encoding="utf-8",
-            )
-            (contracts / "ashare_marketgraph_contract.json").write_text("{}", encoding="utf-8")
+    def test_marketgraph_interface_is_read_through_api(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
 
-            import shared.data.reader as reader_module
+            def __exit__(self, exc_type, exc, tb):
+                return False
 
-            reader_module._MARKETGRAPH_GATEWAY = None
-            with patch.dict("os.environ", {"MARKETGRAPH_ROOT": str(mg)}):
-                reader = TradingagentDataReader()
-                self.assertEqual(reader.get_market_readiness_summary("Ashare")["readiness_status"], "weak_evidence")
-                self.assertEqual(reader.get_market_knowledge_edges("Ashare")[0]["impact_score"], "0.7")
-            reader_module._MARKETGRAPH_GATEWAY = None
+            def read(self):
+                return json.dumps(
+                    {
+                        "data": {
+                            "market": "Ashare",
+                            "contract_status": "ok",
+                            "readiness_summary": {"readiness_status": "weak_evidence"},
+                            "tables": {
+                                "market_knowledge_edges": {
+                                    "rows": [{"market": "Ashare", "impact_score": "0.7"}]
+                                }
+                            },
+                            "is_trading_permission": False,
+                            "can_affect_real_money": False,
+                        }
+                    }
+                ).encode("utf-8")
+
+        with patch.dict("os.environ", {"MARKETGRAPH_API_URL": "http://marketgraph.test"}), patch(
+            "shared.data.reader.urllib.request.urlopen",
+            return_value=FakeResponse(),
+        ):
+            reader = TradingagentDataReader()
+            self.assertEqual(reader.get_market_readiness_summary("Ashare")["readiness_status"], "weak_evidence")
+            self.assertEqual(reader.get_market_knowledge_edges("Ashare")[0]["impact_score"], "0.7")
 
 
 class TestMarketGraphCSVReader(unittest.TestCase):
-    def test_csv_reader_methods(self) -> None:
+    def test_csv_reader_no_longer_reads_local_csv(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             intake = root / "intake"
@@ -623,9 +625,9 @@ class TestMarketGraphCSVReader(unittest.TestCase):
             )
 
             reader = MarketGraphCSVReader(root)
-            self.assertEqual(reader.get_regime()["regime"], "growth")
-            self.assertEqual(len(reader.get_event_candidates()), 1)
-            self.assertEqual(reader.get_sentiment()[0]["status"], "sentiment_signal")
+            self.assertIsNone(reader.get_regime())
+            self.assertEqual(reader.get_event_candidates(), [])
+            self.assertEqual(reader.get_sentiment(), [])
 
 
 class FakeScoringReader:

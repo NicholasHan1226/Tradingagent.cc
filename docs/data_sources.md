@@ -2,17 +2,18 @@
 
 > Status: active. Last reviewed: 2026-07-05.
 
-TradingAgent does not collect market data directly. It consumes prepared data
-from SharedSignals API first, then falls back to the local read-only read model
-when configured on the same host.
+TradingAgent does not collect market data directly. Production consumes
+prepared data from SharedSignals API and fails closed when the API is
+unavailable. Local read-model access is reserved for explicit tests or
+emergency diagnostics.
 
 ## Current Sources
 
 | Source | Owner | TradingAgent use |
 |---|---|---|
 | SharedSignals HTTP API | SharedSignals | preferred market data, events, assets, 5-minute bars |
-| `marketdata.sqlite` read model | SharedSignals | same-host read-only fallback |
-| MarketGraph research exports/API | MarketGraph | optional regime/event context and PM independent research probabilities |
+| `marketdata.sqlite` read model | SharedSignals | explicit local test/diagnostic fallback only |
+| MarketGraph API | MarketGraph | optional regime/event context and PM independent research probabilities |
 | TradingAgent `signals/` and `shared/logs/` | TradingAgent | simulated execution, receipts, positions, review evidence |
 
 ## Canonical TradingAgent Reader
@@ -21,13 +22,13 @@ Use `shared.data.reader.TradingagentDataReader` for strategy, screening,
 simulation and review code.
 
 - `SHAREDSIGNALS_API_URL` should point to the SharedSignals service.
-- `SHARED_SIGNALS_DB` may point to the same-host read-only SQLite model.
-- `MARKETGRAPH_DATA` is optional. Leave it unset unless a MarketGraph CSV export
-  is explicitly mounted for same-host operation.
+- `SHARED_SIGNALS_DB` is only used when
+  `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` is explicitly set.
+- `MARKETGRAPH_DATA` is retired for production use; use `MARKETGRAPH_API_URL`.
 - `MARKETGRAPH_API_URL` points to the MarketGraph read-only REST service for
   API/read-model research evidence such as PM research probabilities.
-- `SHARED_SIGNALS_ROOT` / `SHARED_SIGNALS_CALENDAR_ROOT` are only for calendar
-  compatibility imports and discovery.
+- Trading calendar checks use `TradingagentDataReader.is_trading_day`; do not
+  scan SharedSignals directories for calendar files.
 
 ## Retired Inputs
 
@@ -37,7 +38,8 @@ dependencies:
 - `/opt/investment/Ashare/data/backtest_cache/`
 - `/opt/investment/Ashare/tools/`
 - `/Users/nicholashan/Desktop/Investment`
-- TradingAgent writes to `MarketGraph/outputs/`
+- TradingAgent writes to its own `signals/`, `shared/logs/` and
+  `shared/review/` paths only.
 
 Historical incident logs may mention these paths for audit context. New code,
 cron templates and active documents should use the current sources above.

@@ -38,8 +38,8 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 
 ### 数据流
 
-- SharedSignals 是独立供数层：定时采集/维护先沉淀数据，TradingAgent 通过 reader/read model 按需读取。
-- 生产运行时必须设置 `SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`；`TradingagentDataReader` 默认通过 SharedSignals/ShareChannel API 取数，SQLite 仅是只读降级路径。
+- SharedSignals 是独立供数层：定时采集/维护先沉淀数据，TradingAgent 生产默认只通过 SharedSignals/ShareChannel API 取数。
+- 生产运行时必须设置 `SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`；SQLite read model 只允许在测试或紧急诊断中显式设置 `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` 与 `SHARED_SIGNALS_DB` 后只读使用，不能自动回退到兄弟系统目录。
 - TradingAgent 不应在每次交易判断时重新现场采集 Tushare。
 - 跨系统写入必须走明确数据契约，不把一个系统目录当作另一个系统的内部模块直接改写。
 
@@ -143,7 +143,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - 两次主复盘：11:45 午盘复盘、15:30 收盘复盘
 - 22:00 夜间校准（汇总研究、归因、回测、尾盘候选和次日计划）
 - 07:30 晨报（不计为复盘迭代）
-- 尾盘候选扫描：14:40/14:50/14:56 生成 `MarketGraph/outputs/ashare_closing_buy_candidates.json`（仅观察，不入实盘）
+- 尾盘候选扫描：14:40/14:50/14:56 生成 TradingAgent 自有 review/候选输出（仅观察，不入实盘）；如需 MarketGraph 研究证据，只读调用 MarketGraph API。
 
 ## 关键命令入口
 

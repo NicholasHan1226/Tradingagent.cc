@@ -713,9 +713,6 @@ def _check_failure_receipts() -> Check:
     sample_quality = _ashare_local_sample_quality(local_trades_path)
     outside_session_only = _ashare_outside_session_only_samples(sample_quality)
     receipt_paths = [ROOT / "signals/sim_execution_receipts.jsonl"]
-    legacy_receipts = ROOT.parent / "MarketGraph/outputs/sim_execution_receipts.jsonl"
-    if legacy_receipts.exists():
-        receipt_paths.append(legacy_receipts)
     latest_receipts = []
     existing_paths = []
     for receipts in receipt_paths:

@@ -19,7 +19,7 @@ from typing import Any
 try:
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB
 except Exception:  # pragma: no cover
-    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/SharedSignals/runtime/read_model/marketdata.sqlite")
 
 DEFAULT_SQLITE_DB = DEFAULT_SHARED_SIGNALS_DB
 CN_TZ = timezone(timedelta(hours=8))

@@ -29,7 +29,7 @@ if [ -r "${ROOT}/.env" ]; then
 fi
 
 export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
-export PYTHONPATH="${ROOT}:/opt/investment/SharedSignals:${PYTHONPATH:-}"
+export PYTHONPATH="${ROOT}:${PYTHONPATH:-}"
 
 {
   echo "[$(date -Iseconds)] START equity_snapshots"

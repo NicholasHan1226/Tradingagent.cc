@@ -27,8 +27,8 @@
 - **CNFutures 模拟盘**：国内期货只跑模拟盘，无单独影子盘；多风格模拟会写 `shared/review/data/cn_futures_sim_reviews.jsonl`，并同步输出 `shared/review/cn_futures/style_comparison.json`、`style_performance.jsonl`、`observation_report.json` 与盘后 `win_rate_calibration_report.{json,md}` 供现有看板/巡检接入；观察报告已提供 `dashboard` 和 `next_validation` 顶层字段，便于看板直接展示 readiness、下一交易时段验收步骤和是否继续累计样本；`signals/positions/cn_futures_sim_positions.json` 的模拟持仓快照已接入生产前端 holdings 解析；`score_summary`、`error_summary`、`style_health`、`hold_count`、`hold_reason_summary`、`forward_label_summary` 和 `dynamic_threshold_candidates` 标记样本不足、手续费、保证金占用、名义金额、可用 PnL 样本、风格状态、风控拒绝原因、主动不交易原因、前向标签和动态阈值候选；`CNFutures/live_gateway.py` 为未来 CTP/期货公司接入预留 fail-closed 占位，当前拒绝全部真实期货订单；2026-07-08 起盘前 TradingagentDataReader 日线验收改查最近 30 天窗口，避免开盘前只查当天而漏掉上一交易日收盘数据；生产 crontab 已改为期货日盘/夜盘 5 分钟级运行 `job_cn_futures_sim.sh`，并读取 SharedSignals `market_bars_intraday` 的 Futures 5 分钟数据；5 分钟 runner 已加入 10 分钟默认数据新鲜度闸门、同风格/同合约连续同方向重复暴露限制、tick/slippage 成交价、静态涨跌幅边界、bar volume 部分成交、模拟持仓快照、风格保证金 cap、不过夜强制平仓、换月保护和反向平仓 PnL 估算；2026-07-08 起换月保护按合约月开始日前后配置窗口禁止新开仓，已进入合约月后的临近交割合约也会被拦截；2026-07-08 起午休 11:30-13:00 被 5 分钟 runner 视为闭市，写正常 `market_closed` 复盘行，不再用上午最后一根 bar 触发 `stale_intraday_bar`；夜盘若全部风格因 `style_session_not_allowed` / `night_session_not_allowed` 主动 hold，首样本验收标记为 pass/观察而非系统 warn；开盘验收的 TradingagentDataReader 路径会跳过泛合约、过期合约、未上市合约和不支持产品，优先用当前可执行合约验证 SharedSignals API/read model，避免被资产表历史合约挤成 `reader_shortfall` 后直接依赖 SQLite 汇总兜底；2026-07-07 起 5 分钟 runner 调用 `get_bars_intraday` 时显式传入交易日 start/end，并且 intraday universe 优先读取 SharedSignals 当日 `market_bars_intraday` 最新一批 5分钟 bar 中的可执行合约，拒绝 `CU.SHF` 这类泛合约、仅有历史 bar 的旧合约和早一批已滞后的合约，避免开盘后把非目标交易日分钟线、过期合约或 stale 合约误当作可交易候选；盘前验收已复用同一可执行合约过滤并报告 raw/executable symbol、产品覆盖、5分钟 read model 可达性和运行时风格状态；闭市时段的盘中 runner 会写正常 `market_closed` 复盘行，不再把收盘后的最后一根有效 5 分钟 bar 误报为 `stale_intraday_bar`，但交易时段内真正滞后的分钟线仍会 fail/warn；手续费模型已显式区分 `rate` 与 `fixed_per_lot`，不再靠费率数值大小推断；非指数基础风格默认拒绝夜盘 bar，只有显式 `night_session_allowed=true` 才允许夜盘模拟；`CN_FUTURES_SIM_DISABLED=1` 可临时暂停模拟任务但保留观察报告；`index_intraday_directional` 已加日盘-only、趋势一致、成交量确认、开盘冷却、跳空冷却、低波动、方向连续性、最新 bar 反转、信号噪声比、bar gap、K线实体质量、连续同向 bars 和 late-chase 过滤，并输出场景标签与模拟出场计划，演化器按 `win_rate_first_risk_adjusted` 目标生成小型候选族群；force-flatten 平仓现在按已有持仓成本和实际成交价写 realized PnL，`score_records` 增加 `pnl_attribution`，可区分 `no_closed_pnl`、样本不足和真实已实现收益。
 - **CNFutures 冷启动样本保护**：2026-07-06 修复样本不足导致全部风格被 runtime overlay 标记为 `paused/enabled=false` 后模拟器永久空跑的问题；`sample_insufficient` 现在保持 `active/observe`，继续在 simulated-only 层积累样本，不允许晋升为真实交易。真正 `blocked/deprecated/disabled` 或会话不允许的风格会写入 `hold_reason_summary`（如 `style_paused`、`style_session_not_allowed`），避免以后出现“cron 正常但无成交、无原因”的假正常状态。
 - **cron 解耦入口**：Crypto/US/PM 5 分钟模拟 cron 已安装；PM 独立研究概率 `job_pm_research_probability` 按 `2-59/10` 每 10 分钟错峰刷新，先于后续 PM 5 分钟 sim 使用，不写交易队列；A股工作日交易时段 5 分钟级模拟 cron 已安装且默认服务器本地执行，A股开盘验收 cron 已安装：08:35 盘前 dry-run 预演数据→候选池→资金计划→执行门禁、08:55 盘前数据验收、09:35/13:05 数据验收、09:45/13:10 首样本告警；A股只读研究证据 cron 已加入 09:26/14:56/15:10，生成集合竞价、尾盘动能、204001 逆回购估算和风格证据面板输入，不写交易队列；CNFutures 5 分钟模拟 cron 已安装并相对 SharedSignals 采集错后 1 分钟，闭市/午休/夜盘收盘后 `market_closed` 视为正常观察状态不触发失败重试，观察报告错后 2 分钟刷新，风格演化按日盘/夜盘 30 分钟级运行，盘后胜率校准报告在 15:45 与 02:45 触发，开盘前只读验收在 08:55/12:55/20:55 触发，开盘后数据验收在 09:05/13:05/21:05 与 00:35 触发，首样本告警在 09:10/13:10/21:10 与 00:40 触发；`job_opening_acceptance.sh` 作为 A股+CNFutures+SharedSignals+模拟盘总验收入口，08:56、09:06/09:45、13:06/13:45、20:56、21:06/21:45、00:41 只读运行并输出短文本结论；HK 5 分钟模拟 cron 已按 Nicholas 最新决策停用且 wrapper 默认需要 `TRADINGAGENT_HK_SIM_ENABLED=1` 才能运行；`shared/wrappers/job_sim_market_health.sh` 每 10 分钟只读巡检 A股/Crypto/PM/US/CNFutures 模拟闭环，并写出 `shared/runtime_test/sim_market_health_latest.json` 供看板读取当前运行状态；`shared/wrappers/job_equity_snapshots.sh` 每 5 分钟追加模拟账本权益快照，供前端实时收益曲线使用，不写交易队列；`job_style_evolution` 模板每 4 小时只跑 Crypto/PM/US simulated 演化；`cron/daily_review.sh` 16:00 做复盘与演化摘要；`cron/health_check.sh` 上报 SharedSignals/TradingAgent/MarketGraph 统一健康，优先使用 `sim_market_health_latest.json` 判断模拟盘整体新鲜度，不再用单个闭市市场的 `style_comparison.json` 代表全市场健康，并调用 MarketGraph `deploy/install_combined_crontab.sh --check` 验证 SharedSignals/TradingAgent/MarketGraph 三系统 live crontab 覆盖；关键 wrapper 的 early setup stderr 已进入各自 `shared/logs/cron/*.log`，便于定位 env/source 启动失败；均带 flock 与独立日志；2026-07-08 起 cron/wrapper 只在 `.env` 可读时 source，生产密钥文件若为 root-only 权限不会再导致只读健康检查、模拟巡检、权益快照、复盘或演化入口直接退出。
-- **生产运行用户**：TradingAgent cron 由 `marketgraph` 用户运行；2026-07-07 已修复 root 手动烟测造成的 `job_pm_research_probability` 日志、PM research probability 输出和 `/opt/investment/MarketGraphRuntime/tradings/state` lock 文件归属漂移。后续生产烟测若必须用 root 发起，应立即用 `marketgraph` 身份复跑或恢复运行态目录归属，避免 cron 触发但写入失败。
-- **SharedSignals API 消费**：`SharedSignalsAPIClient` 已覆盖核心 16 个数据消费端点；`TradingagentDataReader` 已对核心读取路径启用 API-first，SQLite 只读回退保留；A股 `get_assets()` 走 SharedSignals `stock_basic` read model，单日 `get_bars_daily()` 会补齐 start=end；`get_bars_intraday()` 已优先走 SharedSignals `/realtime_5min?market=...` 并保留 SQLite 回退，期货/A股 5 分钟行情与可选 bid/ask 字段可走同一消费入口；PM `get_pm_prices()` 已接入 SharedSignals `/pm_prices` 作为 `/pm_markets` 缺价时的价格快照补充；SQLite 回退兼容 SharedSignals read model 中 `interval=5min` 与调用侧 `5m` 的差异，并支持 `YYYYMMDD` 日期读取 `YYYY-MM-DD HH:MM:SS` 的 bar_time；5 分钟 `run_sim.py` 已从直接 SQLite 读取改为 SharedSignals reader/API-first，2026-07-04 已验证 crypto=5、PM=10、US=9 条模拟信号；HK 数据与模拟入口保留但暂不进入生产调度
+- **生产运行用户**：TradingAgent cron 由 `marketgraph` 用户运行；生产运行态归 TradingAgent 自有 `runtime/`、`shared/logs/`、`signals/` 和 `shared/review/` 管理。后续生产烟测若必须用 root 发起，应立即用 `marketgraph` 身份复跑或恢复运行态目录归属，避免 cron 触发但写入失败。
+- **SharedSignals API 消费**：`SharedSignalsAPIClient` 已覆盖核心数据消费端点；`TradingagentDataReader` 生产默认通过 SharedSignals API 取数，API 不可用时 fail-closed。SQLite read model 只允许在显式设置 `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` 与 `SHARED_SIGNALS_DB` 后作为本地测试/紧急诊断只读路径。A股、期货、Crypto、PM、US 的 5 分钟模拟入口不得自动回退到兄弟系统目录；MarketGraph 研究证据通过 `MARKETGRAPH_API_URL` 获取。
 - **数据源边界复核**：2026-07-04 主服务器生产路径审计未发现 TradingAgent 活动代码直接调用 Tushare/Binance/Polymarket/Alpaca/Yahoo 等行情源；HTTP 调用保留在 SharedSignals API 客户端、健康检查、邮件/webhook 和研究 LLM 路径。误拷贝的 untracked `Users/` 旧目录已从服务器删除，`.gitignore` 已防止再次出现。
 - **旧市场工具目录退役口径**：2026-07-05 开盘前复核已修正 `US/AGENTS.md` 与 `PM/AGENTS.md`；旧 `/opt/investment/US/tools/`、`/opt/investment/PredictionMarkets/tools/` 只保留为历史迁移线索，不是现役生产代码、采集或执行入口。
 - **旧 cron 迁移快照退役**：根目录 `cron_gap.md` 已移入 `docs/archive/cron_gap_20260629.md`，只作历史参考；当前 cron 依据为 `STATUS.md`、仓库 `crontab.txt`、`shared/wrappers/` 和服务器 live crontab。
@@ -224,7 +224,7 @@
 - [x] A股文档已明确候选池样本不能过小，扩大评分覆盖只解决“看得太少”的问题，不改变“无科学候选就留现金/逆回购”的资金门禁。
 - [x] CNFutures 继续由 TradingAgent 只读 SharedSignals `market_bars_intraday`；Tushare 5 分钟期货接口空返回的备源修复在 SharedSignals 完成，TradingAgent 不新增独立采集。
 - [x] CNFutures adapter 的 universe/合约发现已改为 `TradingagentDataReader` reader 优先，开盘验收也优先通过 reader 查询 Futures 日线/5分钟线；直接 SQLite 只保留为显式临时库或 `CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK=1` 的兼容兜底，不再是生产默认路径。
-- [x] 2026-07-08 追加清理 CNFutures/A股验收和模拟 wrapper 的 read-model 默认路径：统一通过 `shared.data.reader.DEFAULT_SHARED_SIGNALS_DB` 或 `SHARED_SIGNALS_DB` / `SHAREDSIGNALS_RUNTIME_ROOT` 选择 SharedSignals read model，历史 `/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite` 只作为生产兼容 fallback，不再在 CNFutures adapter 内硬编码为事实源。
+- [x] 2026-07-08 追加清理 CNFutures/A股验收和模拟 wrapper 的数据入口：统一通过 SharedSignals API；本地 SQLite 只允许显式诊断开关，不再把 MarketGraph runtime 当事实源或兼容 fallback。
 - [x] CNFutures 5 分钟 runner 已修正闭市口径：收盘后再次运行返回 `market_closed` 并写正常复盘行，不再把闭市后的最后一根有效 bar 误报为 stale；交易时段内真实 stale 仍保持拦截。
 - [x] CNFutures 开盘/首样本验收已区分 5分钟数据缺失、首模拟样本缺失、策略主动 hold 和夜盘未授权风格不交易；该修复只读复盘 `hold_reason_summary`，不改变模拟成交策略。
 - [x] CNFutures 开盘验收的 read-model SQLite 兜底放宽到 `5min`/`5m`/`5` interval 统一口径，不再锁死 `rt_fut_min` provider；reader 短缺时仍标记 `reader_shortfall`，TradingAgent 不新增独立采集。
@@ -250,11 +250,11 @@
 
 ### 2026-07-05 cross-repo path and stale docs cleanup
 
-- [x] TradingAgent 模拟回执默认写入 `signals/sim_execution_receipts.jsonl`；旧 `MarketGraph/outputs/sim_execution_receipts.jsonl` 只在历史文件存在时作为兼容读取，不再作为默认写入面。
-- [x] `TradingagentDataReader` 不再默认读取同机 `/opt/investment/MarketGraph`；MarketGraph CSV fallback 必须显式设置 `MARKETGRAPH_DATA`，便于未来三系统分服务器独立运行。
-- [x] A股 T+1 日历查找移除默认 MarketGraph 数据目录，改为 SharedSignals root / calendar root。
+- [x] TradingAgent 模拟回执只读取/写入 `signals/sim_execution_receipts.jsonl`；旧跨系统输出路径不再作为兼容读取面。
+- [x] `TradingagentDataReader` 不再默认读取同机 MarketGraph 仓库，也不再读取 MarketGraph CSV；MarketGraph 研究证据通过 API 读取，便于未来三系统分服务器独立运行。
+- [x] A股 T+1 日历不再扫描 SharedSignals 目录，改为通过 `TradingagentDataReader.is_trading_day` API 判断；API 缺失时使用内置节假日保守回退。
 - [x] `shared/env_loader.sh` 不再 source MarketGraph deploy env，也不再把 MarketGraph 仓库加入 `PYTHONPATH`；TradingAgent env 优先，公共 finance env 仅作为兼容密钥来源。
-- [x] TradingAgent cron 模板移除 MarketGraph 观察任务；MarketGraph 任务归属 `MarketGraph/deploy/crontab.txt`，日志写入 MarketGraphRuntime。
+- [x] TradingAgent cron 模板移除 MarketGraph 观察任务；MarketGraph 任务归属 MarketGraph 自有调度，TradingAgent 只通过 API 健康检查读取其状态。
 - [x] 删除 2026-06-30 过期 handoff 文档，重写 `docs/data_sources.md`，修正 `docs/AGENTS.md` 中过期/不存在入口。
 
 ### 2026-07-05 simulated matching residual risk fixes
@@ -314,7 +314,7 @@
 - [x] 同一交易日、同一风格、同一合约的连续同方向模拟信号会被标记为 `repeated_same_side_exposure`，避免每 5 分钟重复加同方向风险；反向信号仍允许形成新模拟成交。
 - [x] `shared/wrappers/job_cn_futures_sim.sh` 显式以 `--cadence 5min` 运行，仍只写 simulated signal/review，不写实盘队列。
 - [x] 生产 crontab 模板已改为期货日盘/夜盘每 5 分钟运行，并相对 SharedSignals 采集错后 1 分钟读取最新 bar。
-- [x] 生产已确认 Tushare/QuickSync `rt_fut_min` 权限不足；SharedSignals 已启用 AKShare/Sina 5 分钟模拟盘备源并写入同一 `market_bars_intraday`，provider 为 `akshare_sina_rt_fut_min`。TradingAgent 继续只读 SharedSignals read model，不直接调用 AKShare/Tushare。
+- [x] 生产已确认 Tushare/QuickSync `rt_fut_min` 权限不足；SharedSignals 已退役 AKShare/Sina 隐式备源，CNFutures 5 分钟链路在主 provider 无权限时必须显式 degraded/failed。TradingAgent 继续只读 SharedSignals API/read model，不直接调用 AKShare/Tushare。
 
 ### 2026-07-04 CNFutures review scoring + fail-closed live reserve
 
@@ -371,7 +371,7 @@
 
 - [x] `position_ledger.py`、`capital_ledger.py`、`signal_state_machine.py`、`local_sim_ledger.py`、`shadow_broker.py` 的阻塞 `flock(LOCK_EX)` 已改为 `LOCK_EX | LOCK_NB`，并加 3 次递增等待重试；拿不到锁时显式 `TimeoutError`，不假成功。
 - [x] `webhook_sender.py` 的 `time.sleep(0)` 已替换为指数退避，避免 Mini webhook 异常时忙等。
-- [x] `shared/review/benchmark.py` 的 SQLite fallback 查询已移除列上的 `LOWER()` / `REPLACE()`，改为市场值枚举和日期格式范围查询，保留只读 fallback 行为。
+- [x] `shared/review/benchmark.py` 的 SQLite 直接读取已改为显式诊断模式；未设置 `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` 时不直接打开 SharedSignals read model。
 - [x] 验证：目标 Python `py_compile` 通过；受影响 TradingAgent pytest 集合 54 项 + 6 subtests 通过；2026-07-07 已将 `WEBHOOK_SECRET` 空值告警改为仅在实际发送 Mini webhook 时触发，普通模拟盘/研究/健康检查导入路径不再刷生产日志。
 
 ### 2026-07-04 A股 API-first 与邮件通道对齐
@@ -524,7 +524,7 @@
 - [x] `TradingagentDataReader` 新增 `api_client` 参数；配置 `SHAREDSIGNALS_API_URL` 时自动创建 `SharedSignalsAPIClient`。
 - [x] `get_market_data` / `get_events` / `is_trading_day` 优先走 SharedSignals HTTP API；API 不可用时回退 SQLite 只读路径并设置 `degraded=True`。
 - [x] `SharedSignalsAPIClient` 移除 deprecated 状态，校准 15 个当前 API server 端点，补充 timeout / retry / backoff 配置，去除 `X-API-Key` 双重暴露。
-- [x] `.env.example` 的 `SHAREDSIGNALS_API_URL` 默认指向 `http://127.0.0.1:8082`；SQLite 只保留为本机只读降级路径，默认 DB 指向 `/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite`。
+- [x] `.env.example` 的 `SHAREDSIGNALS_API_URL` 默认指向 `http://127.0.0.1:8082`；SQLite 只保留为显式本机诊断路径，不再配置默认 DB。
 - [x] 验证：`py_compile`、导入 smoke、`tests/test_data_reader.py` 通过。
 
 ### 多市场 P1 Codex review 修复（2026-07-02）
@@ -596,7 +596,7 @@
 
 **已应用修复（10 项）：**
 1. [x] `SharedSignals/.gitignore`：添加 `config/api_tokens.json` + `.env.*`
-2. [x] `.env.example`：`SHAREDSIGNALS_ROOT` 修正（MarketGraphRuntime → SharedSignals）
+2. [x] `.env.example`：移除 `SHAREDSIGNALS_ROOT`/默认 SQLite 路径，生产默认 API-only
 3. [x] `.env.example`：`MARKETGRAPH_ENV_FILE` 修正（MarketGraph/.env → marketgraph/.env）
 4. [x] `SharedSignals/tools/api_server.py`：端口默认值 8900 → 8082（docstring + env.get）
 5. [x] `shared_signals_api.py`：移除 X-API-Key 双重暴露（服务器仅检查 Authorization）
@@ -659,7 +659,7 @@
 ### Goal 1 退役清理
 
 - [x] Ashare 依赖迁移：`execution_router.py` sim_broker 通道从旧 `/opt/investment/Ashare/tools/a_share_simulated_trade_executor` 迁移到 `tradingagent/Ashare/sim_executor.py`
-- [x] Tushare API 包装器迁移：`a_share_tushare_api.py` + `a_share_common.py` 已迁至 `/opt/investment/SharedSignals/collectors/tushare/`，服务器保留兼容性 symlink
+- [x] Tushare API 包装器迁移：旧 A股直连包装器已迁出 TradingAgent，生产数据入口改为 SharedSignals API；服务器历史兼容 symlink 不再作为现役开发入口
 - [x] Ashare/tools 全面退役：142 文件归档至 `_archive/Ashare_tools_20260702/`，目录仅剩 3 个 compat symlink
 - [x] `Ashare/AGENTS.md` 添加迁移注释
 - [x] 旧系统残留清理：删除 61 个死 symlink（PM 20 + Crypto 21 + US 20）

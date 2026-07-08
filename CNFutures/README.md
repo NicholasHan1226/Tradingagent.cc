@@ -198,9 +198,8 @@ python -m CNFutures.observation_report --pretty
 On production, point it at the SharedSignals runtime:
 
 ```bash
-python -m CNFutures.observation_report \
-  --sharedsignals-root /opt/investment/SharedSignals \
-  --pretty
+SHAREDSIGNALS_API_URL=http://127.0.0.1:8082 \
+python -m CNFutures.observation_report --pretty
 ```
 
 The report summarizes:
@@ -373,9 +372,8 @@ On production, point it at the SharedSignals runtime if the sibling directory is
 not available:
 
 ```bash
-python shared/runtime_test/cn_futures_live_check.py \
-  --sharedsignals-root /opt/investment/SharedSignals \
-  --pretty
+SHAREDSIGNALS_API_URL=http://127.0.0.1:8082 \
+python shared/runtime_test/cn_futures_live_check.py --pretty
 ```
 
 The report joins:

@@ -7,9 +7,6 @@ ENV_LOADER="${ROOT_DIR}/shared/env_loader.sh"
 export TRADINGAGENT_ROOT="${ROOT_DIR}"
 export TRADINGAGENT_SHARED_ROOT="${ROOT_DIR}/shared"
 export TRADINGS_WRAPPERS_ROOT="${ROOT_DIR}/shared/wrappers"
-export SHARED_SIGNALS_ROOT="${ROOT_DIR}/signals"
-export MARKETGRAPH_ROOT="${ROOT_DIR}/mini"
-export MARKETGRAPH_RUNTIME_ROOT="${ROOT_DIR}/shared/runtime_test"
 
 # shellcheck disable=SC1090
 source "${ENV_LOADER}"
@@ -18,9 +15,6 @@ required_vars=(
     TRADINGAGENT_ROOT
     TRADINGAGENT_SHARED_ROOT
     TRADINGS_WRAPPERS_ROOT
-    SHARED_SIGNALS_ROOT
-    MARKETGRAPH_ROOT
-    MARKETGRAPH_RUNTIME_ROOT
     PYTHON_BIN
     TRADINGS_RUNTIME_ROOT
     TRADINGS_LOG_ROOT
@@ -48,8 +42,6 @@ TRADINGAGENT_ENV_FILE="${blocked_env}" \
 FINANCE_SHARED_ENV_FILE="${tmp_dir}/missing.env" \
 TRADINGAGENT_ROOT="${ROOT_DIR}" \
 TRADINGAGENT_SHARED_ROOT="${tmp_dir}/shared" \
-SHARED_SIGNALS_ROOT="${tmp_dir}/signals" \
-MARKETGRAPH_RUNTIME_ROOT="${tmp_dir}/runtime" \
 bash -c "source '${ENV_LOADER}'; [[ -z \"\${TRADINGAGENT_BLOCKED_ENV_SHOULD_NOT_LOAD:-}\" ]]"
 
 echo "env_loader unreadable env skip ok"

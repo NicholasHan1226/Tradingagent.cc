@@ -14,8 +14,6 @@ PHASE="review"
 LEVEL3_TARGET="cn_futures_5min_observation"
 ENTRYPOINT="CNFutures.observation_report"
 OUTPUT_PATH="${CN_FUTURES_OBSERVATION_REPORT_PATH:-${SHARED_DIR}/review/cn_futures/observation_report.json}"
-SHAREDSIGNALS_ROOT_ARG="${SHAREDSIGNALS_ROOT:-/opt/investment/SharedSignals}"
 
 run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" "${PYTHON_BIN}" -m "${ENTRYPOINT}" \
-  --sharedsignals-root "${SHAREDSIGNALS_ROOT_ARG}" \
   --write-json "${OUTPUT_PATH}"

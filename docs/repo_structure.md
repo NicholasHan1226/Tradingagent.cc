@@ -29,7 +29,7 @@
 
 ## 1. SharedSignals — 数据采集与存储
 **地址**: https://github.com/NicholasHan1226/SharedSignals.git
-**本地路径**: /opt/investment/SharedSignals/
+**上游入口**: SharedSignals/ShareChannel API (`SHAREDSIGNALS_API_URL`)
 
 ### 职责
 统一采集所有外部数据源, 去重入库, 供研究线和交易线共享读取。

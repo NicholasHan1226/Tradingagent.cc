@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import csv
-import json
-import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from functools import lru_cache
@@ -12,14 +9,11 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 try:
-    from shared.data import reader as shared_data_reader
-except Exception:  # pragma: no cover - optional SharedSignals integration
-    shared_data_reader = None  # type: ignore[assignment]
+    from shared.data.reader import TradingagentDataReader
+except Exception:  # pragma: no cover - optional reader integration
+    TradingagentDataReader = None  # type: ignore[assignment]
 
-TRADE_CALENDAR_SEARCH_ROOTS = (
-    Path(os.environ.get("SHARED_SIGNALS_ROOT", "/opt/investment/SharedSignals")),
-    Path(os.environ.get("SHARED_SIGNALS_CALENDAR_ROOT", "/opt/investment/SharedSignals")),
-)
+TRADE_CALENDAR_SEARCH_ROOTS: tuple[Path, ...] = ()
 TRADE_CALENDAR_PATTERNS = (
     "trade_cal.csv",
     "trade_cal.json",
@@ -236,49 +230,57 @@ def _fallback_is_trading_day(trading_day: date) -> bool:
     )
 
 
-def _load_shared_calendar_module():
-    if shared_data_reader is None:
+@lru_cache(maxsize=1)
+def _calendar_reader():
+    if TradingagentDataReader is None:
         return None
     try:
-        return shared_data_reader._import_shared_calendar()
+        return TradingagentDataReader()
     except Exception:
         return None
 
 
 def _shared_calendar_is_trading_day(trading_day: date) -> bool | None:
-    module = _load_shared_calendar_module()
-    if module is None or not hasattr(module, "is_trading_day"):
+    reader = _calendar_reader()
+    if reader is None:
         return None
     try:
-        return bool(module.is_trading_day(trading_day))
+        result = bool(reader.is_trading_day(trading_day.strftime("%Y%m%d")))
+        if getattr(reader, "stale", False) or getattr(reader, "errors", []):
+            return None
+        return result
     except Exception:
         return None
 
 
 def _shared_calendar_trading_days(start_d: date, end_d: date) -> list[date] | None:
-    module = _load_shared_calendar_module()
-    if module is None:
+    reader = _calendar_reader()
+    if reader is None:
         return None
     try:
-        if hasattr(module, "get_trading_days"):
-            return [_to_date(day) for day in module.get_trading_days(start_d, end_d)]
-        if hasattr(module, "get_trading_calendar"):
-            return [_to_date(day) for day in module.get_trading_calendar(start_d, end_d)]
+        days: list[date] = []
+        current = start_d
+        while current <= end_d:
+            if bool(reader.is_trading_day(current.strftime("%Y%m%d"))):
+                days.append(current)
+            current += timedelta(days=1)
+        if not days and (getattr(reader, "stale", False) or getattr(reader, "errors", [])):
+            return None
+        return days
     except Exception:
         return None
-    return None
 
 
 def _shared_calendar_next_trading_day(trading_day: date) -> date | None:
-    module = _load_shared_calendar_module()
-    if module is None:
+    reader = _calendar_reader()
+    if reader is None:
         return None
     try:
-        if hasattr(module, "get_next_trading_day"):
-            next_day = module.get_next_trading_day(trading_day)
-            return _to_date(next_day) if next_day is not None else None
-        if hasattr(module, "next_trading_day"):
-            return _to_date(module.next_trading_day(trading_day))
+        current = trading_day + timedelta(days=1)
+        for _ in range(20):
+            if bool(reader.is_trading_day(current.strftime("%Y%m%d"))):
+                return current
+            current += timedelta(days=1)
     except Exception:
         return None
     return None
@@ -360,3 +362,5 @@ def filter_sellable(
         if can_sell(pos.get(date_field), curr_d):
             result.append(pos)
     return result
+import csv
+import json

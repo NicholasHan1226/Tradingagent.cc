@@ -22,11 +22,11 @@ from shared.notify import email_sender
 try:
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB
 except Exception:  # pragma: no cover
-    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/SharedSignals/runtime/read_model/marketdata.sqlite")
 
 CN_TZ = timezone(timedelta(hours=8))
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
-DEFAULT_SHAREDSIGNALS_ROOT = Path(os.environ.get("SHAREDSIGNALS_ROOT", "/opt/investment/SharedSignals"))
+DEFAULT_HEALTH_INPUT_ROOT = ROOT / "shared" / "logs" / "health"
 DEFAULT_SQLITE_DB = DEFAULT_SHARED_SIGNALS_DB
 LATEST = ROOT / "shared/runtime_test/opening_acceptance_latest.json"
 HISTORY = ROOT / "shared/runtime_test/opening_acceptance_history.jsonl"
@@ -148,12 +148,10 @@ def check_sharedsignals(api_url: str) -> AcceptanceCheck:
     )
 
 
-def check_watchdog_inputs(sharedsignals_root: Path, max_age_minutes: int = 20) -> AcceptanceCheck:
-    input_dir = sharedsignals_root / "logs" / "watchdog_inputs"
+def check_watchdog_inputs(health_input_root: Path = DEFAULT_HEALTH_INPUT_ROOT, max_age_minutes: int = 20) -> AcceptanceCheck:
+    input_dir = health_input_root
     expected = {
-        "proxy_relay": input_dir / "proxy_relay.json",
         "tradingagent_health": input_dir / "tradingagent_health.json",
-        "health_sla": input_dir / "health_sla.json",
     }
     reports: dict[str, Any] = {}
     statuses: list[str] = []
@@ -181,9 +179,8 @@ def check_watchdog_inputs(sharedsignals_root: Path, max_age_minutes: int = 20) -
     )
 
 
-def check_halt_files(sharedsignals_root: Path) -> AcceptanceCheck:
+def check_halt_files() -> AcceptanceCheck:
     candidates = {
-        "sharedsignals_watchdog_halt": sharedsignals_root / "logs" / "WATCHDOG_HALT.json",
         "tradingagent_executor_halt": ROOT / "signals" / "executor_halt.json",
     }
     existing = {name: str(path) for name, path in candidates.items() if path.exists()}
@@ -339,15 +336,15 @@ def check_cn_futures_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
 def run_acceptance(
     *,
     now: datetime | None = None,
-    sharedsignals_root: Path = DEFAULT_SHAREDSIGNALS_ROOT,
+    health_input_root: Path = DEFAULT_HEALTH_INPUT_ROOT,
     sharedsignals_api_url: str = DEFAULT_SHAREDSIGNALS_API_URL,
     sqlite_db: Path = DEFAULT_SQLITE_DB,
 ) -> dict[str, Any]:
     current = now or _now_cn()
     checks = [
         check_sharedsignals(sharedsignals_api_url),
-        check_watchdog_inputs(sharedsignals_root),
-        check_halt_files(sharedsignals_root),
+        check_watchdog_inputs(health_input_root),
+        check_halt_files(),
         check_sim_health(),
         check_ashare_opening(current, sqlite_db),
         check_cn_futures_opening(current, sqlite_db),
@@ -473,7 +470,8 @@ def render_text(report: dict[str, Any]) -> str:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Read-only opening acceptance summary.")
     parser.add_argument("--now", default=None)
-    parser.add_argument("--sharedsignals-root", type=Path, default=DEFAULT_SHAREDSIGNALS_ROOT)
+    parser.add_argument("--health-input-root", type=Path, default=DEFAULT_HEALTH_INPUT_ROOT)
+    parser.add_argument("--sharedsignals-root", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--sharedsignals-api-url", default=os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL))
     parser.add_argument("--sqlite-db", type=Path, default=DEFAULT_SQLITE_DB)
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON instead of concise text.")
@@ -487,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     report = run_acceptance(
         now=_now_cn(args.now) if args.now else None,
-        sharedsignals_root=args.sharedsignals_root,
+        health_input_root=args.health_input_root,
         sharedsignals_api_url=args.sharedsignals_api_url,
         sqlite_db=args.sqlite_db,
     )

@@ -22,8 +22,8 @@ from typing import Any
 
 try:
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, SharedSignalsReader
-except Exception:  # pragma: no cover - benchmark falls back to direct sqlite reads
-    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+except Exception:  # pragma: no cover - optional diagnostic reader unavailable
+    DEFAULT_SHARED_SIGNALS_DB = Path("")
     SharedSignalsReader = None  # type: ignore[assignment]
 
 REVIEW_DIR = Path(__file__).resolve().parent
@@ -108,6 +108,15 @@ def _shared_signals_db_path() -> Path:
     return Path(env_value).expanduser() if env_value else Path(DEFAULT_SHARED_SIGNALS_DB)
 
 
+def _allow_sqlite_diagnostic() -> bool:
+    return str(os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _sqlite_uri(path: Path) -> str:
     return "file:" + str(path) + "?mode=ro"
 
@@ -135,7 +144,7 @@ def _history_buy_hold_return(date_key: str) -> float:
 
 
 def _rows_from_reader(symbol: str, target_date: str) -> list[dict[str, Any]]:
-    if SharedSignalsReader is None:
+    if SharedSignalsReader is None or not _allow_sqlite_diagnostic():
         return []
     start = (_to_trade_date(target_date) - timedelta(days=BENCHMARK_LOOKBACK_DAYS)).strftime("%Y%m%d")
     reader = SharedSignalsReader(_shared_signals_db_path())
@@ -146,6 +155,8 @@ def _rows_from_reader(symbol: str, target_date: str) -> list[dict[str, Any]]:
 
 
 def _rows_from_sqlite(symbol: str, target_date: str) -> list[dict[str, Any]]:
+    if not _allow_sqlite_diagnostic():
+        return []
     db_path = _shared_signals_db_path()
     if not db_path.exists():
         return []
@@ -224,8 +235,8 @@ def get_benchmark(date: str) -> dict[str, Any]:
         }
 
     Notes:
-        - 优先通过 SharedSignalsReader 读取 SharedSignals 日线, 若 reader 不可用则
-          直接只读打开 marketdata.sqlite 计算最近两个交易日收益.
+        - 只在显式诊断开关允许时读取 SharedSignals 本地 read model；
+          生产默认不直接打开 SharedSignals SQLite。
         - last_period_return 从本地 store 读取, 由本模块在每次复盘后写入.
     """
     date_key = _date_key(date)

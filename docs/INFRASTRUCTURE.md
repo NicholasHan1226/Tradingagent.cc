@@ -19,8 +19,8 @@
 ## 环境
 - Python: 3.12.3 (venv /opt/marketgraph/venv)
 - OS: Ubuntu 24.04
-- 当前生产以内存内 API cache + SQLite read model 为主；DuckDB/Redis 仍为后续扩展项，不作为当前运行依赖。
-- SQLite: marketdata.sqlite(75MB) + reference_index.sqlite(5MB)；`rss_collector.db` 仍在旧 `/opt/investment/MarketGraphRuntime/` 路径，迁移前只按残留资产处理
+- 当前生产以 SharedSignals API + TradingAgent 自有运行态为主；DuckDB/Redis 仍为后续扩展项，不作为当前运行依赖。
+- SQLite read model 仅在显式诊断模式下读取 SharedSignals runtime；TradingAgent 不再从 MarketGraph runtime 取行情。
 
 ## 网络
 - Nginx :80 → 127.0.0.1:8080 (API server)
