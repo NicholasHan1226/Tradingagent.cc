@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tradingAgentReadModelSources } from './api/tradingAgentReadModel'
 import App from './App'
@@ -12,6 +12,12 @@ describe('App navigation and result-first dashboard', () => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
+
+  function click(element: HTMLElement) {
+    act(() => {
+      fireEvent.click(element)
+    })
+  }
 
   it('renders the homepage around return, funnel, and chart without system wording', () => {
     render(<App />)
@@ -188,6 +194,9 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getAllByText('总资产')).not.toHaveLength(0))
+    expect(screen.getByText('持仓流')).toBeInTheDocument()
+    expect(screen.getByText(/1 个持仓 · 0 个正贡献 · 0 个需观察/)).toBeInTheDocument()
+    expect(screen.queryByText(/暂无新信号进入/)).not.toBeInTheDocument()
     expect(screen.getAllByText('¥19.99万').length).toBeGreaterThan(0)
     expect(screen.getAllByText('可复盘收益').length).toBeGreaterThan(0)
     expect(screen.getAllByText('有效样本').length).toBeGreaterThan(0)
@@ -199,7 +208,7 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     expect(screen.queryByRole('tablist', { name: '收益区间' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '收益' }))
+    click(screen.getByRole('button', { name: '收益' }))
 
     const rangeSwitch = screen.getByRole('tablist', { name: '收益区间' })
     expect(within(rangeSwitch).getByRole('tab', { name: '今日' })).toBeInTheDocument()
@@ -322,8 +331,8 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByText('个股流向')).toBeInTheDocument()
     expect(screen.getByText('资金分 82')).toBeInTheDocument()
     expect(screen.getByText('净流入 +¥1280.00万')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '全市场' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /加密/ }))
+    click(screen.getByRole('button', { name: '全市场' }))
+    click(screen.getByRole('menuitem', { name: /加密/ }))
 
     expect(screen.getAllByText('等待机会').length).toBeGreaterThan(0)
     expect(screen.getByText('加密正在等更好的入场条件')).toBeInTheDocument()
@@ -411,7 +420,7 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    fireEvent.click(within(card).getByRole('tab', { name: '实盘' }))
+    click(within(card).getByRole('tab', { name: '实盘' }))
 
     expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
@@ -422,7 +431,7 @@ describe('App navigation and result-first dashboard', () => {
   it('shows actionable opportunity summary before the opportunity table', () => {
     render(<App />)
 
-    fireEvent.click(screen.getByRole('button', { name: '机会' }))
+    click(screen.getByRole('button', { name: '机会' }))
 
     expect(screen.getByRole('heading', { name: '当前可处理机会' })).toBeInTheDocument()
     expect(screen.getByText('可处理机会')).toBeInTheDocument()
@@ -435,7 +444,7 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    fireEvent.click(within(card).getByRole('tab', { name: '实盘' }))
+    click(within(card).getByRole('tab', { name: '实盘' }))
 
     expect(within(card).getAllByText('实盘准备中').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
@@ -444,7 +453,7 @@ describe('App navigation and result-first dashboard', () => {
   it('links a chart event marker to the related decision view', () => {
     render(<App />)
 
-    fireEvent.click(screen.getByRole('button', { name: '查看 5月28日 决策' }))
+    click(screen.getByRole('button', { name: '查看 5月28日 决策' }))
 
     expect(screen.getByText('决策影响收益')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '从机会到结果' })).toBeInTheDocument()
@@ -453,7 +462,7 @@ describe('App navigation and result-first dashboard', () => {
   it('renders decision formation as a funnel with drop-off rates', () => {
     render(<App />)
 
-    fireEvent.click(screen.getByRole('button', { name: '决策' }))
+    click(screen.getByRole('button', { name: '决策' }))
 
     expect(screen.getByText('漏斗留存')).toBeInTheDocument()
     expect(screen.getByText('流失 33.3%')).toBeInTheDocument()

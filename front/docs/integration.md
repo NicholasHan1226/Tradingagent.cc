@@ -164,10 +164,12 @@ Display-ready fields used by the homepage:
   opportunity with its latest `status`, current `stage`, and available stage
   timestamps before execution.
 - If `funnelEvents[]` and `signals[]` are both empty but `holdings[]` exists,
-  the homepage renders a holding replay (`已有仓位 / 入仓结果 / 持仓跟踪 / 风险观察 /
-  复盘归因`). This is deliberately not labeled as a new-opportunity funnel. It
+  the homepage renders a holding flow (`当前持仓 / 收益贡献 / 风险检查 / 继续持有 /
+  复盘记录`). This is deliberately not labeled as a new-opportunity funnel. It
   answers what is happening to the current account while preserving the fact
-  that no new trade signal is available.
+  that no new trade signal is available. The holding flow should summarize
+  position count, positive contributors, watch items, and risk state instead
+  of showing internal system wording.
 - `holdings[]`: `symbol`, `market`, `weight`, `pnl`, `risk`, and `role`.
   `weight` may be a percentage such as `12.8%` or a formatted exposure amount
   such as `$1,022` / `¥7,207`; frontend summaries must parse the unit before
@@ -198,6 +200,12 @@ prefer `funnelEvents[]` from the read model, and may fall back to
 upstream records do not include real screening stages, the frontend must label
 the view as a completed-signal replay or waiting state rather than claiming a
 full opportunity funnel.
+
+When the view falls back to holdings, the frontend must show it as a holding
+flow, not as a trade-signal funnel. The visual style should stay close to the
+Hyperliquid-inspired surface: dark base, hairline borders, restrained cyan for
+healthy state, amber/red only for watch or blocked states, and no decorative
+glow blocks.
 
 ## Same-Server Production Deployment
 
