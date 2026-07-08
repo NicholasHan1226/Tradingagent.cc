@@ -21,6 +21,7 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from CNFutures.review import latest_actionable_review
 
 CN_FUTURES_REVIEW = ROOT / "shared/review/data/cn_futures_sim_reviews.jsonl"
 CN_FUTURES_STYLE_COMPARISON = ROOT / "shared/review/cn_futures/style_comparison.json"
@@ -278,7 +279,7 @@ def check_sim_log(log_path: Path | None = None) -> Check:
 def check_review(review_path: Path | None = None) -> Check:
     review_path = review_path or CN_FUTURES_REVIEW
     rows = _read_jsonl(review_path)
-    latest = rows[-1] if rows else {}
+    latest = latest_actionable_review(rows)
     hold_summary = latest.get("hold_reason_summary") if isinstance(latest.get("hold_reason_summary"), dict) else {}
     hold_by_reason = hold_summary.get("by_reason") if isinstance(hold_summary.get("by_reason"), dict) else {}
     latest_hold_count = int(latest.get("hold_count") or hold_summary.get("total") or 0) if latest else 0

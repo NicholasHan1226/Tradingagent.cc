@@ -74,6 +74,7 @@ export function MarketHeader({
             <div className="market-menu" role="menu">
               {markets.map((market) => (
                 <button
+                  aria-current={activeMarket === market ? 'true' : undefined}
                   className={activeMarket === market ? 'selected' : ''}
                   key={market}
                   onClick={() => {

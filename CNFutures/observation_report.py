@@ -11,7 +11,7 @@ from typing import Any
 from shared.runtime_test.cn_futures_live_check import run_live_check
 
 from .evolution import DEFAULT_REVIEW_ROOT, evolution_plan_path, style_weights_path
-from .review import DEFAULT_REVIEW_PATH, STYLE_REVIEW_MARKET
+from .review import DEFAULT_REVIEW_PATH, STYLE_REVIEW_MARKET, latest_actionable_review
 
 
 def _read_json(path: Path) -> Any:
@@ -49,7 +49,7 @@ def _check(report: dict[str, Any], name: str) -> dict[str, Any]:
 
 def _latest_review(review_path: Path) -> dict[str, Any]:
     rows = _read_jsonl(review_path)
-    return rows[-1] if rows else {}
+    return latest_actionable_review(rows)
 
 
 def _style_rows(review_root: Path) -> list[dict[str, Any]]:

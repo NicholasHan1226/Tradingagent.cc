@@ -219,6 +219,37 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         self.assertEqual(check.details["latest_top_hold_reason"], "below_threshold")
         self.assertIn("主动 hold", check.summary)
 
+    def test_review_uses_latest_actionable_row_before_empty_close_rows(self) -> None:
+        self._write_jsonl(
+            "shared/review/data/cn_futures_sim_reviews.jsonl",
+            [
+                {
+                    "state": "ok",
+                    "cadence": "5min",
+                    "latest_bar_time": "2026-07-08 14:56:00",
+                    "filled_count": 0,
+                    "hold_count": 1,
+                    "hold_reason_summary": {"total": 1, "by_reason": {"session_close_guard": 1}},
+                },
+                {
+                    "state": "ok",
+                    "cadence": "",
+                    "latest_bar_time": "",
+                    "filled_count": 0,
+                    "hold_count": 0,
+                    "record_count": 0,
+                    "error_count": 0,
+                    "hold_reason_summary": {"total": 0, "by_reason": {}},
+                },
+            ],
+        )
+
+        check = live_check.check_review()
+
+        self.assertEqual(check.details["latest_sample_phase"], "strategy_hold")
+        self.assertEqual(check.details["latest_top_hold_reason"], "session_close_guard")
+        self.assertEqual(check.details["latest_bar_time"], "2026-07-08 14:56:00")
+
     def test_review_distinguishes_no_night_session_from_missing_sim_sample(self) -> None:
         self._write_jsonl(
             "shared/review/data/cn_futures_sim_reviews.jsonl",

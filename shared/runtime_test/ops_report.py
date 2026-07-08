@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from CNFutures.review import latest_actionable_review
+
 ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "shared"
 SIGNALS = ROOT / "signals"
@@ -270,7 +272,7 @@ def cn_futures_review_summary(path: Path | None = None) -> dict[str, Any]:
 
     review_path = path or (SHARED / "review" / "data" / "cn_futures_sim_reviews.jsonl")
     rows = read_jsonl(review_path)
-    latest = rows[-1] if rows else {}
+    latest = latest_actionable_review(rows)
     style_totals: dict[str, dict[str, Any]] = defaultdict(lambda: {"filled_count": 0, "error_count": 0})
     error_counter: Counter[str] = Counter()
     for row in rows:

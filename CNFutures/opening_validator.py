@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from .review import DEFAULT_REVIEW_PATH
+    from .review import DEFAULT_REVIEW_PATH, latest_actionable_review
     from .contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
 except ImportError:  # pragma: no cover - direct script execution fallback
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from CNFutures.review import DEFAULT_REVIEW_PATH
+    from CNFutures.review import DEFAULT_REVIEW_PATH, latest_actionable_review
     from CNFutures.contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
 
 try:
@@ -443,6 +443,7 @@ def _query_session_bars(db_path: Path, start: datetime, now: datetime, *, reader
 
 
 def _read_latest_review(path: Path) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except FileNotFoundError:
@@ -456,8 +457,9 @@ def _read_latest_review(path: Path) -> dict[str, Any]:
         except json.JSONDecodeError:
             continue
         if isinstance(payload, dict):
-            return payload
-    return {}
+            rows.append(payload)
+    rows.reverse()
+    return latest_actionable_review(rows)
 
 
 def _count_jsonl_rows(path: Path) -> int:

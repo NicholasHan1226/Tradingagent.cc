@@ -20,6 +20,31 @@ DEFAULT_REVIEW_PATH = (
 STYLE_REVIEW_MARKET = "cn_futures"
 
 
+def is_actionable_review(payload: dict[str, Any]) -> bool:
+    """Return whether a review row contains in-session evidence worth surfacing."""
+
+    if not payload:
+        return False
+    for key in ("record_count", "filled_count", "hold_count", "error_count"):
+        try:
+            if int(payload.get(key) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    if str(payload.get("latest_bar_time") or payload.get("bar_time") or "").strip():
+        return True
+    return False
+
+
+def latest_actionable_review(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Prefer the newest review with hold/fill/error/bar evidence over empty close rows."""
+
+    for row in reversed(rows):
+        if is_actionable_review(row):
+            return row
+    return rows[-1] if rows else {}
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 

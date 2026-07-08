@@ -70,10 +70,22 @@ export function RealtimeReturnCard({
       <div className="return-card-head">
         <span>{modeLabel}收益</span>
         <div className="return-mode-switch" aria-label="账户层切换" role="tablist">
-          <button className={!isLive ? 'selected' : ''} onClick={() => selectAccountMode('simulated')} type="button">
+          <button
+            aria-selected={!isLive}
+            className={!isLive ? 'selected' : ''}
+            onClick={() => selectAccountMode('simulated')}
+            role="tab"
+            type="button"
+          >
             模拟盘
           </button>
-          <button className={isLive ? 'selected' : ''} onClick={() => selectAccountMode('live')} type="button">
+          <button
+            aria-selected={isLive}
+            className={isLive ? 'selected' : ''}
+            onClick={() => selectAccountMode('live')}
+            role="tab"
+            type="button"
+          >
             实盘
           </button>
         </div>

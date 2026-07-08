@@ -21,6 +21,7 @@ from urllib import request
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from CNFutures.review import latest_actionable_review
 LATEST_BY_MARKET = {
     "ashare": ROOT / "shared/runtime_test/ashare_market_health_latest.json",
     "cn_futures": ROOT / "shared/runtime_test/cn_futures_market_health_latest.json",
@@ -999,7 +1000,7 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
                     continue
                 if isinstance(payload, dict):
                     rows.append(payload)
-        latest = rows[-1] if rows else {}
+        latest = latest_actionable_review(rows)
         return {
             "type": "cn_futures_append_only_review",
             "trade_rows": sum(int(row.get("filled_count") or 0) for row in rows),
