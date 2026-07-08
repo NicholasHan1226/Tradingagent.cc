@@ -1628,6 +1628,48 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
+  it('excludes style performance rows when their sim ledger positions are quarantined', async () => {
+    const root = await createWorkspace()
+    const reviewRoot = join(root, 'TradingAgent/shared/review/us')
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/us/swing')
+    await mkdir(reviewRoot, { recursive: true })
+    await mkdir(ledgerRoot, { recursive: true })
+    await writeFile(
+      join(ledgerRoot, 'positions.json'),
+      JSON.stringify({
+        cash: 10_000,
+        exclude_from_dashboard: true,
+        run_context: 'legacy_usd_capital_quarantine',
+        positions: {},
+      }),
+    )
+    await writeFile(
+      join(reviewRoot, 'style_performance.jsonl'),
+      JSON.stringify({
+        style_name: 'swing',
+        market: 'us',
+        date: '20260708',
+        capital_layer: 'simulated',
+        account_type: 'simulated',
+        real_execution: false,
+        pnl: -12.5,
+        trades: 9,
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T12:40:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'US',
+      pnlAmount: undefined,
+      tradeCount: 0,
+    }))
+  })
+
   it('marks a market with active styles but no trades as strategy wait', async () => {
     const root = await createWorkspace()
     const reviewRoot = join(root, 'TradingAgent/shared/review/pm')

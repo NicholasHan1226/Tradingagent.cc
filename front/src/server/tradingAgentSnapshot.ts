@@ -218,6 +218,7 @@ type StylePerformanceRow = {
   unrealized_pnl?: number | string
   max_dd?: number | string
   market?: string
+  style?: string
   style_name?: string
   trades?: number | string
   pnl_source?: string
@@ -882,6 +883,7 @@ async function readStyleComparisonMarketSummaries(root: string): Promise<Map<Mar
 
 async function readStylePerformanceMarketSummaries(root: string): Promise<Map<Market, MarketPerformanceSummary>> {
   const files = await listStylePerformanceFiles(root)
+  const ledgerRoot = join(root, '..', 'logs', 'sim_ledger')
   const summaries = new Map<Market, MarketPerformanceSummary>()
 
   for (const file of files) {
@@ -895,6 +897,7 @@ async function readStylePerformanceMarketSummaries(root: string): Promise<Map<Ma
           if (row.real_execution === true) continue
           if (normalizeCapitalLayer(row) !== 'simulated') continue
           if (isDashboardExcluded(row as Record<string, unknown>)) continue
+          if (await isStylePerformanceRowLedgerExcluded(ledgerRoot, file.market, row)) continue
           const pnl = parseFiniteNumber(row.pnl)
           const timestamp = row.as_of ?? row.date ?? row.trade_date
           if (pnl === undefined && parseFiniteNumber(row.realized_pnl) === undefined && parseFiniteNumber(row.unrealized_pnl) === undefined) continue
@@ -916,6 +919,12 @@ async function readStylePerformanceMarketSummaries(root: string): Promise<Map<Ma
   }
 
   return summaries
+}
+
+async function isStylePerformanceRowLedgerExcluded(ledgerRoot: string, market: string, row: StylePerformanceRow) {
+  const styleName = String(row.style_name ?? row.style ?? '').trim()
+  if (!styleName) return false
+  return isSimLedgerStrategyExcluded(join(ledgerRoot, market, styleName))
 }
 
 async function readEquitySnapshotMarketSummaries(root: string): Promise<Map<Market, MarketPerformanceSummary>> {
