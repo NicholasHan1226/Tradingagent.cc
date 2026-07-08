@@ -15,7 +15,7 @@ export function OpportunityFocus({
 
   return (
     <section className="panel rail-panel">
-      <PanelTitle action="全部机会" kicker="当前机会" onAction={() => setActivePage('机会')} title="正在推进" />
+      <PanelTitle action="全部机会" kicker="当前机会" onAction={() => setActivePage('机会')} title={hasSignalData ? '正在推进' : '等待机会'} />
       <div className="focus-list">
         {hasSignalData ? (
           topSignals.map((signal, index) => (

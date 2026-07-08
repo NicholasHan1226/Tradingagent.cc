@@ -125,6 +125,13 @@ Display-ready fields used by the homepage:
   simulated ledger. Each event carries `symbol`, `market`, `stage`, `status`,
   `source`, and optional `at` / `reason`, allowing the homepage funnel to
   animate real pipeline movement without writing to queues or inventing stages.
+- Homepage view portfolio: the browser derives the visible portfolio from the
+  active market. `All Markets` aggregates `marketSummaries[]` capital and PnL
+  when the top-level `portfolio` only represents one local account fallback.
+  `A-share` may show `portfolio.ashareAccount`; selected non-A-share markets
+  derive a compact portfolio view from their own `marketSummaries[]` row. This
+  keeps the header, realtime return panel, and summary rail on one result
+  number.
 - `ashareResearchEvidence`: optional read-only homepage rail input from
   `shared/review/ashare/research_evidence_latest.json`. It summarizes opening
   auction or `first_5m_proxy` evidence, closing momentum candidates and
@@ -137,6 +144,11 @@ Display-ready fields used by the homepage:
   a true screening funnel, upstream records should include one row per
   opportunity with its latest `status`, current `stage`, and available stage
   timestamps before execution.
+- If `funnelEvents[]` and `signals[]` are both empty but `holdings[]` exists,
+  the homepage renders a holding replay (`已有仓位 / 入仓结果 / 持仓跟踪 / 风险观察 /
+  复盘归因`). This is deliberately not labeled as a new-opportunity funnel. It
+  answers what is happening to the current account while preserving the fact
+  that no new trade signal is available.
 - `holdings[]`: `symbol`, `market`, `weight`, `pnl`, `risk`, and `role`.
   `weight` may be a percentage such as `12.8%` or a formatted exposure amount
   such as `$1,022` / `¥7,207`; frontend summaries must parse the unit before

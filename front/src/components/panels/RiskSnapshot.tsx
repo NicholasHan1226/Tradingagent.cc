@@ -23,7 +23,7 @@ export function RiskSnapshot({
       <div className="risk-cards">
         <button className="risk-card red" onClick={() => setActivePage('风险')} type="button">
           <span>最大回撤</span>
-          <strong>-{drawdown.toFixed(2)}%</strong>
+          <strong>{formatDrawdown(drawdown)}</strong>
           <em>{distance > 1 ? `距离 ${drawdownLimit}% 限制 ${distance.toFixed(2)}%` : `接近 ${drawdownLimit}% 限制`}</em>
         </button>
         <button className="risk-card cyan" onClick={() => setActivePage('风险')} type="button">
@@ -34,4 +34,9 @@ export function RiskSnapshot({
       </div>
     </section>
   )
+}
+
+function formatDrawdown(value: number) {
+  const cleanValue = Math.abs(value) < 0.005 ? 0 : Math.abs(value)
+  return cleanValue === 0 ? '0.00%' : `-${cleanValue.toFixed(2)}%`
 }

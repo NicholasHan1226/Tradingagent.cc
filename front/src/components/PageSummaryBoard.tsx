@@ -119,7 +119,7 @@ function getPageMetrics(
       ashareAccount
         ? { label: '可复盘收益', value: strategyMetricValue, detail: `有效样本 ${validSampleLabel}` }
         : { label: '成交次数', value: String(marketSummary?.tradeCount ?? portfolio?.tradeCount ?? executedCount), detail: `${portfolio?.pointCount ?? performance.length} 个收益点` },
-      { label: '最大回撤', value: `-${drawdown.toFixed(2)}%`, detail: `限制 ${drawdownLimit}%`, tone: drawdown > drawdownLimit * 0.8 ? 'red' : 'cyan' },
+      { label: '最大回撤', value: formatDrawdown(drawdown), detail: `限制 ${drawdownLimit}%`, tone: drawdown > drawdownLimit * 0.8 ? 'red' : 'cyan' },
     ]
   }
 
@@ -154,7 +154,7 @@ function getPageMetrics(
 
   if (page === '风险') {
     return [
-      { label: '当前回撤', value: `-${drawdown.toFixed(2)}%`, detail: `距离限制 ${(drawdownLimit - drawdown).toFixed(2)}%`, tone: drawdown > drawdownLimit * 0.8 ? 'red' : 'cyan' },
+      { label: '当前回撤', value: formatDrawdown(drawdown), detail: `距离限制 ${(drawdownLimit - drawdown).toFixed(2)}%`, tone: drawdown > drawdownLimit * 0.8 ? 'red' : 'cyan' },
       { label: '限制线', value: `${drawdownLimit}%`, detail: '模拟盘边界' },
       { label: '风险拦截', value: String(blockedCount), detail: blockedCount ? '已挡住' : '暂无拦截', tone: blockedCount ? 'red' : 'cyan' },
       { label: '需要复盘', value: String(missedCount), detail: missedCount ? '窗口或条件问题' : '暂无错过', tone: missedCount ? 'amber' : undefined },
@@ -167,6 +167,11 @@ function getPageMetrics(
     { label: '未兑现', value: String(missedCount), detail: missedCount ? '需要复盘' : '暂无', tone: missedCount ? 'amber' : undefined },
     { label: '主要市场', value: topMarket(signals), detail: '关闭记录来源' },
   ]
+}
+
+function formatDrawdown(value: number) {
+  const cleanValue = Math.abs(value) < 0.005 ? 0 : Math.abs(value)
+  return cleanValue === 0 ? '0.00%' : `-${cleanValue.toFixed(2)}%`
 }
 
 function conversion(value: number, total: number) {
