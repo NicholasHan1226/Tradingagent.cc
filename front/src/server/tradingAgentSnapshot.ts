@@ -439,7 +439,8 @@ export async function readTradingAgentSnapshot({
   const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt)
   const ashareNoTradeExplanation = await readLatestAShareNoTradeExplanation(projectRoot, now)
   const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
-  const performance = annotatePerformanceQuality(firstNonEmpty(equityPortfolio.performance, reviewPerformance, trackerPortfolio.performance))
+  const equityPerformance = ashareAccount && isAShareLegacyEquitySummary(equityPortfolio.summary) ? [] : equityPortfolio.performance
+  const performance = annotatePerformanceQuality(firstNonEmpty(equityPerformance, reviewPerformance, trackerPortfolio.performance))
   const portfolio = attachAShareAccountSummary(equityPortfolio.summary ?? trackerPortfolio.summary, ashareAccount, generatedAt)
   const marketSummaries = await buildMarketSummaries({
     generatedAt,
@@ -556,7 +557,7 @@ function attachAShareAccountSummary(
   generatedAt: string,
 ): PortfolioSummary | undefined {
   if (!ashareAccount) return summary
-  if (summary) return { ...summary, ashareAccount }
+  if (summary && !isAShareLegacyEquitySummary(summary)) return { ...summary, ashareAccount }
   return {
     pnlAmount: ashareAccount.accountTotalPnl,
     returnPct: ashareAccount.accountReturnPct,
@@ -573,6 +574,10 @@ function attachAShareAccountSummary(
     ashareAccount,
     updatedAt: generatedAt,
   }
+}
+
+function isAShareLegacyEquitySummary(summary: PortfolioSummary | undefined) {
+  return summary?.pnlSource === 'ashare_local_sim_mark_to_market'
 }
 
 function mergeHoldings(...sources: HoldingRow[][]): HoldingRow[] {
@@ -1714,6 +1719,7 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
     if (row.real_execution === true) continue
     if (normalizeCapitalLayer(row) !== 'simulated') continue
     if (isDashboardExcluded(row as Record<string, unknown>)) continue
+    if (await isStylePerformanceRowLedgerExcluded(simLedgerRoot, row.market ?? row.marketHint ?? '', row)) continue
     const dayKey = compactDate(row.date ?? row.trade_date ?? row.as_of)
     const pnl = parseFiniteNumber(row.pnl)
     if (!dayKey || pnl === undefined) continue

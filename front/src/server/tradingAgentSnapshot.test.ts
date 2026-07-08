@@ -1068,6 +1068,23 @@ describe('TradingAgent snapshot reader', () => {
         ],
       }),
     )
+    const ashareLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
+    await mkdir(ashareLedgerRoot, { recursive: true })
+    await writeFile(
+      join(ashareLedgerRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        date: '20260708',
+        timestamp: '2026-07-08T07:15:02+00:00',
+        capital_layer: 'simulated',
+        real_execution: false,
+        capital_base: 200000,
+        total_equity: 195921.89,
+        total_pnl: -4078.11,
+        return_pct: -2.04,
+        trade_count: 2,
+        pnl_source: 'ashare_local_sim_mark_to_market',
+      }) + '\n',
+    )
 
     const snapshot = await readTradingAgentSnapshot({
       workspaceRoot: root,
@@ -1663,6 +1680,7 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-06T12:40:00.000Z'),
     })
 
+    expect(snapshot.portfolio).toBeUndefined()
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'US',
       pnlAmount: undefined,
