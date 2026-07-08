@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from shared.runtime_test import opening_acceptance
 
@@ -76,6 +77,40 @@ def test_render_text_includes_ashare_loop_counts():
     assert "无交易分类=all_rejected_by_risk" in text
 
 
+def test_render_text_skips_empty_closed_window_sample_counts():
+    report = {
+        "overall_status": "pass",
+        "generated_at": datetime(2026, 7, 8, tzinfo=timezone.utc).isoformat(),
+        "summary": {"pass": 1, "warn": 0, "fail": 0},
+        "checks": [
+            {
+                "name": "cn_futures_opening_acceptance",
+                "status": "pass",
+                "summary": "中国期货开盘验收通过",
+                "details": {
+                    "report_type": "opening_acceptance_window",
+                    "reason": "outside_cn_futures_opening_acceptance_window",
+                    "session": "closed",
+                    "sample_summary": {
+                        "bar_count": None,
+                        "signals": {},
+                        "local_sim_trades": None,
+                        "sim_execution_receipts": None,
+                        "daily_reviews": None,
+                    },
+                },
+            }
+        ],
+        "next_actions": ["当前可接受"],
+    }
+
+    text = opening_acceptance.render_text(report)
+
+    assert "outside_cn_futures_opening_acceptance_window" in text
+    assert "bar=0" not in text
+    assert "成交=0" not in text
+
+
 def test_sharedsignals_core_ok_health_degraded_is_warn(monkeypatch):
     def fake_http_json(url, timeout=8.0):
         if url.endswith("/cache/status"):
@@ -139,3 +174,84 @@ def test_send_alert_uses_system_channel(monkeypatch):
     assert sent["to"] == opening_acceptance.email_sender.CHANNELS["system"]["to"]
     assert sent["channel"] == "system"
     assert sent["rate_limit_type"] == "opening_acceptance:fail"
+
+
+def test_ashare_lunch_routes_to_afternoon_pre_open(monkeypatch):
+    from shared.runtime_test import ashare_opening_validator
+
+    called = {}
+
+    def fake_pre_open(*, sqlite_db, now, min_symbols):
+        called.update({"sqlite_db": sqlite_db, "now": now, "min_symbols": min_symbols})
+        return {
+            "market": "ashare",
+            "report_type": "pre_open_acceptance",
+            "status": "pass",
+            "reason": "pre_open_acceptance_passed",
+            "session": "afternoon",
+            "real_trading_enabled": False,
+        }
+
+    monkeypatch.setattr(ashare_opening_validator, "validate_pre_open", fake_pre_open)
+
+    report = opening_acceptance._ashare_opening_report(
+        datetime.fromisoformat("2026-07-08T12:15:00+08:00"),
+        Path("/tmp/nonexistent-marketdata.sqlite"),
+    )
+
+    assert report["status"] == "pass"
+    assert report["report_type"] == "pre_open_acceptance"
+    assert report["session"] == "afternoon"
+    assert called["min_symbols"] == 1000
+
+
+def test_ashare_closed_window_is_observation_not_warning():
+    check = opening_acceptance.check_ashare_opening(
+        datetime.fromisoformat("2026-07-08T16:05:00+08:00"),
+        Path("/tmp/nonexistent-marketdata.sqlite"),
+    )
+
+    assert check.status == "pass"
+    assert check.details["reason"] == "outside_ashare_opening_acceptance_window"
+    assert check.details["raw_status"] == "pass"
+
+
+def test_cn_futures_lunch_gap_is_observation_not_missing_trade():
+    check = opening_acceptance.check_cn_futures_opening(
+        datetime.fromisoformat("2026-07-08T11:52:00+08:00"),
+        Path("/tmp/nonexistent-marketdata.sqlite"),
+    )
+
+    assert check.status == "pass"
+    assert check.details["reason"] == "outside_cn_futures_opening_acceptance_window"
+    assert check.details["raw_status"] == "pass"
+    assert check.details["alerts"] == []
+
+
+def test_cn_futures_midday_pre_open_routes_to_pre_open(monkeypatch):
+    from CNFutures import opening_validator
+
+    called = {}
+
+    def fake_pre_open(*, sqlite_db, now, min_symbols):
+        called.update({"sqlite_db": sqlite_db, "now": now, "min_symbols": min_symbols})
+        return {
+            "market": "cn_futures",
+            "report_type": "pre_open_acceptance",
+            "status": "pass",
+            "reason": "pre_open_acceptance_passed",
+            "session": "afternoon",
+            "real_trading_enabled": False,
+        }
+
+    monkeypatch.setattr(opening_validator, "validate_pre_open", fake_pre_open)
+
+    report = opening_acceptance._cn_futures_opening_report(
+        datetime.fromisoformat("2026-07-08T12:30:00+08:00"),
+        Path("/tmp/nonexistent-marketdata.sqlite"),
+    )
+
+    assert report["status"] == "pass"
+    assert report["report_type"] == "pre_open_acceptance"
+    assert report["session"] == "afternoon"
+    assert called["min_symbols"] == 4

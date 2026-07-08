@@ -221,7 +221,7 @@ def _ashare_opening_report(now: datetime, sqlite_db: Path) -> dict[str, Any]:
     from shared.runtime_test import ashare_opening_validator as validator
 
     minutes = now.hour * 60 + now.minute
-    if 8 * 60 <= minutes < 9 * 60 + 30:
+    if (8 * 60 <= minutes < 9 * 60 + 30) or (11 * 60 + 30 < minutes < 13 * 60):
         return validator.validate_pre_open(sqlite_db=sqlite_db, now=now, min_symbols=1000)
     if (9 * 60 + 30 <= minutes <= 11 * 60 + 30) or (13 * 60 <= minutes <= 15 * 60):
         session_start = now.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -231,7 +231,7 @@ def _ashare_opening_report(now: datetime, sqlite_db: Path) -> dict[str, Any]:
         if elapsed >= 10:
             return validator.first_sample_alerts(sqlite_db=sqlite_db, now=now, min_symbols=10, wait_minutes=10)
         return validator.validate_opening(sqlite_db=sqlite_db, now=now, min_symbols=10)
-    return validator.validate_opening(sqlite_db=sqlite_db, now=now, min_symbols=10)
+    return _closed_window_report("ashare", now, "outside_ashare_opening_acceptance_window")
 
 
 def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
@@ -278,10 +278,14 @@ def _cn_futures_opening_report(now: datetime, sqlite_db: Path) -> dict[str, Any]
     minutes = now.hour * 60 + now.minute
     if (8 * 60 <= minutes < 9 * 60) or (12 * 60 <= minutes < 13 * 60) or (20 * 60 <= minutes < 21 * 60):
         return validator.validate_pre_open(sqlite_db=sqlite_db, now=now, min_symbols=4)
-    in_session = (9 * 60 <= minutes <= 15 * 60) or (21 * 60 <= minutes <= 23 * 60 + 59) or (0 <= minutes <= 2 * 60 + 30)
+    in_day_session = (9 * 60 <= minutes <= 11 * 60 + 30) or (13 * 60 <= minutes <= 15 * 60)
+    in_night_session = (21 * 60 <= minutes <= 23 * 60 + 59) or (0 <= minutes <= 2 * 60 + 30)
+    in_session = in_day_session or in_night_session
     if in_session:
-        if 9 * 60 <= minutes <= 15 * 60:
+        if in_day_session:
             start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+            if minutes >= 13 * 60:
+                start = now.replace(hour=13, minute=0, second=0, microsecond=0)
         elif minutes >= 21 * 60:
             start = now.replace(hour=21, minute=0, second=0, microsecond=0)
         else:
@@ -290,7 +294,20 @@ def _cn_futures_opening_report(now: datetime, sqlite_db: Path) -> dict[str, Any]
         if elapsed >= 10:
             return validator.first_sample_alerts(sqlite_db=sqlite_db, now=now, min_symbols=4, wait_minutes=10)
         return validator.validate_opening(sqlite_db=sqlite_db, now=now, min_symbols=4)
-    return validator.validate_opening(sqlite_db=sqlite_db, now=now, min_symbols=4)
+    return _closed_window_report("cn_futures", now, "outside_cn_futures_opening_acceptance_window")
+
+
+def _closed_window_report(market: str, now: datetime, reason: str) -> dict[str, Any]:
+    return {
+        "market": market,
+        "report_type": "opening_acceptance_window",
+        "checked_at": now.isoformat(timespec="seconds"),
+        "read_only": True,
+        "session": "closed",
+        "status": "pass",
+        "reason": reason,
+        "real_trading_enabled": False,
+    }
 
 
 def check_cn_futures_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
@@ -416,24 +433,27 @@ def render_text(report: dict[str, Any]) -> str:
     for check in report.get("checks", []):
         label = {"pass": "通过", "warn": "警告", "fail": "失败"}.get(str(check.get("status")), str(check.get("status")))
         line = f"- {check.get('name')}: {label}；{check.get('summary')}"
-        reason = (check.get("details") or {}).get("reason")
+        details = check.get("details") or {}
+        reason = details.get("reason")
         if reason:
             line += f"；原因={reason}"
-        latest_bar = (check.get("details") or {}).get("latest_bar_time")
+        latest_bar = details.get("latest_bar_time")
         if latest_bar:
             line += f"；最新bar={latest_bar}"
-        samples = (check.get("details") or {}).get("sample_summary")
+        samples = details.get("sample_summary")
         if isinstance(samples, dict):
-            signals = samples.get("signals") if isinstance(samples.get("signals"), dict) else {}
-            signal_total = sum(int(value or 0) for value in signals.values())
-            line += (
-                f"；bar={samples.get('bar_count') or 0}"
-                f"；信号={signal_total}"
-                f"；成交={samples.get('local_sim_trades') or 0}"
-                f"；回执={samples.get('sim_execution_receipts') or 0}"
-                f"；复盘={samples.get('daily_reviews') or 0}"
-            )
-        no_trade_category = (check.get("details") or {}).get("no_trade_category")
+            has_sample_value = any(value is not None and value != "" and value != {} for value in samples.values())
+            if has_sample_value:
+                signals = samples.get("signals") if isinstance(samples.get("signals"), dict) else {}
+                signal_total = sum(int(value or 0) for value in signals.values())
+                line += (
+                    f"；bar={samples.get('bar_count') or 0}"
+                    f"；信号={signal_total}"
+                    f"；成交={samples.get('local_sim_trades') or 0}"
+                    f"；回执={samples.get('sim_execution_receipts') or 0}"
+                    f"；复盘={samples.get('daily_reviews') or 0}"
+                )
+        no_trade_category = details.get("no_trade_category")
         if no_trade_category:
             line += f"；无交易分类={no_trade_category}"
         lines.append(line)
