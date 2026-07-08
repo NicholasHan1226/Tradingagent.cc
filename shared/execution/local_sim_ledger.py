@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
+from shared.markets.sim_capital import default_sim_capital
+
 LOCAL_SIM_DIR = Path(__file__).resolve().parent.parent / "logs" / "local_sim"
 LOCAL_SIM_TRADES = LOCAL_SIM_DIR / "local_sim_trades.jsonl"
 LOCAL_SIM_POSITIONS = LOCAL_SIM_DIR / "local_sim_positions.json"
@@ -26,7 +28,7 @@ LOCAL_SIM_LOCK = LOCAL_SIM_DIR / ".local_sim.lock"
 LOCAL_SIM_POSITIONS_SNAPSHOT = Path(__file__).resolve().parents[2] / "signals" / "positions" / "simulated_ashare_positions.json"
 LOCAL_SIM_RECEIPTS = Path(__file__).resolve().parents[2] / "signals" / "sim_execution_receipts.jsonl"
 DEFAULT_ACCOUNT = "ashare_server_sim"
-ASHARE_SIM_DEFAULT_CASH = 200_000.0
+ASHARE_SIM_DEFAULT_CASH = default_sim_capital("ashare")
 LOCK_RETRY_ATTEMPTS = 3
 LOCK_RETRY_DELAY_SECONDS = 0.1
 CHECKSUM_KEYS = {"payload_sha256", "receipt_sha256", "checksum", "sha256"}

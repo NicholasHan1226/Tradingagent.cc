@@ -680,14 +680,14 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月3日 10:00', timestamp: '2026-07-03T10:00:05+08:00', simulated: 0, target: 2.67, benchmark: 0, opportunity: 0 },
-      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:09+08:00', simulated: 0.01, target: 5.33, benchmark: 0, opportunity: 0 },
-      { day: '现在', timestamp: '2026-07-04T10:06:10+08:00', simulated: 0.02, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '7月3日 10:00', timestamp: '2026-07-03T10:00:05+08:00', simulated: 0.03, target: 2.67, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:09+08:00', simulated: 0.07, target: 5.33, benchmark: 0, opportunity: 0 },
+      { day: '现在', timestamp: '2026-07-04T10:06:10+08:00', simulated: 0.1, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 151.2,
-      returnPct: 0.02,
-      capitalBase: 1000000,
+      returnPct: 0.1,
+      capitalBase: 144000,
       maxDrawdownPct: 1.4,
       tradeCount: 8,
       pointCount: 3,
@@ -772,19 +772,19 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:05+08:00', simulated: 0, target: 2.67, benchmark: 0, opportunity: 0 },
-      { day: '7月4日 10:06', timestamp: '2026-07-04T10:06:01+08:00', simulated: 0.01, target: 5.33, benchmark: 0, opportunity: 0 },
-      { day: '现在', timestamp: '2026-07-04T10:12:10+08:00', simulated: 0.02, target: 8, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:05+08:00', simulated: 0.03, target: 2.67, benchmark: 0, opportunity: 0 },
+      { day: '7月4日 10:06', timestamp: '2026-07-04T10:06:01+08:00', simulated: 0.08, target: 5.33, benchmark: 0, opportunity: 0 },
+      { day: '现在', timestamp: '2026-07-04T10:12:10+08:00', simulated: 0.1, target: 8, benchmark: 0, opportunity: 0 },
     ])
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 151.2,
-      returnPct: 0.02,
-      capitalBase: 1000000,
+      returnPct: 0.1,
+      capitalBase: 144000,
       tradeCount: 5,
     })
   })
 
-  it('keeps capital-base rebase history normal after applying the 200k market floor', async () => {
+  it('keeps capital-base rebase history normal with the market-aware default floor', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
     await mkdir(ledgerRoot, { recursive: true })
@@ -822,12 +822,12 @@ describe('TradingAgent snapshot reader', () => {
 
     expect(snapshot.performance.map((point) => point.quality ?? 'normal')).toEqual(Array(8).fill('normal'))
     expect(snapshot.performance[1]).toMatchObject({
-      simulated: 0.65,
+      simulated: 9,
       target: 2,
     })
     expect(snapshot.performance.at(-1)).toMatchObject({
       day: '现在',
-      simulated: 0.21,
+      simulated: 2.94,
       target: 8,
     })
   })
@@ -871,7 +871,7 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.portfolio).toMatchObject({
-      capitalBase: 1000000,
+      capitalBase: 200000,
       pnlAmount: 0,
       pnlSource: 'ashare_local_sim_mark_to_market',
       returnPct: 0,
@@ -951,11 +951,11 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.portfolio).toMatchObject({
       pnlAmount: 72,
       tradeCount: 1,
-      capitalBase: 1000000,
+      capitalBase: 72000,
     })
     expect(snapshot.performance).toHaveLength(1)
     expect(snapshot.performance[0]).toMatchObject({
-      simulated: 0.01,
+      simulated: 0.1,
     })
     expect(snapshot.signals.some((signal) => signal.symbol === 'ETHUSDT')).toBe(false)
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
@@ -1694,5 +1694,136 @@ describe('TradingAgent snapshot reader', () => {
       runtimeState: 'normal',
       runtimeReason: undefined,
     }))
+  })
+
+  it('uses market-aware default capital when no ledger capital is provided', async () => {
+    const root = await createWorkspace()
+    const usReviewRoot = join(root, 'TradingAgent/shared/review/us')
+    const cryptoReviewRoot = join(root, 'TradingAgent/shared/review/crypto')
+    const cnFuturesReviewRoot = join(root, 'TradingAgent/shared/review/cn_futures')
+    await mkdir(usReviewRoot, { recursive: true })
+    await mkdir(cryptoReviewRoot, { recursive: true })
+    await mkdir(cnFuturesReviewRoot, { recursive: true })
+
+    for (const [reviewRoot, market] of [
+      [usReviewRoot, 'us'],
+      [cryptoReviewRoot, 'crypto'],
+      [cnFuturesReviewRoot, 'cn_futures'],
+    ] as const) {
+      await writeFile(
+        join(reviewRoot, 'style_comparison.json'),
+        JSON.stringify({
+          market,
+          capital_layer: 'simulated',
+          account_type: 'simulated',
+          real_execution: false,
+          styles_total: 1,
+          styles_loaded: 1,
+          style_states: [{ style_name: 'momentum', status: 'active' }],
+          filled_count: 0,
+          error_count: 0,
+          generated_at: '2026-07-06T12:35:00.000Z',
+        }),
+      )
+    }
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T12:40:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'US',
+      capitalBase: 72_000,
+    }))
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'Crypto',
+      capitalBase: 72_000,
+    }))
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'CNFutures',
+      capitalBase: 200_000,
+    }))
+  })
+
+  it('preserves positive ledger capitalBase instead of flooring to the market default', async () => {
+    const root = await createWorkspace()
+    const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(cryptoLedgerRoot, { recursive: true })
+
+    await writeFile(
+      join(cryptoLedgerRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-04T10:00:00+08:00',
+        date: '20260704',
+        capital_base: 5_000,
+        total_pnl: 500,
+        target_return_pct: 8,
+        trade_count: 1,
+        pnl_source: 'sim_ledger_mark_to_market',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'Crypto',
+      capitalBase: 36_000,
+      pnlAmount: 3_600,
+      returnPct: 10,
+    }))
+  })
+
+  it('uses the sum of market defaults for the all-markets portfolio floor', async () => {
+    const root = await createWorkspace()
+    const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    const usLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/us/momentum')
+    await mkdir(cryptoLedgerRoot, { recursive: true })
+    await mkdir(usLedgerRoot, { recursive: true })
+
+    await writeFile(
+      join(cryptoLedgerRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-04T10:00:00+08:00',
+        date: '20260704',
+        capital_base: 1_000,
+        total_pnl: 10,
+        target_return_pct: 8,
+        trade_count: 1,
+        pnl_source: 'sim_ledger_mark_to_market',
+      }) + '\n',
+    )
+    await writeFile(
+      join(usLedgerRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-04T10:00:00+08:00',
+        date: '20260704',
+        capital_base: 2_000,
+        total_pnl: -5,
+        target_return_pct: 8,
+        trade_count: 1,
+        pnl_source: 'sim_ledger_mark_to_market',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.portfolio).toMatchObject({
+      capitalBase: 144_000,
+      pnlAmount: 36,
+      returnPct: 0.03,
+    })
   })
 })

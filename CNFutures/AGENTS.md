@@ -14,6 +14,7 @@
 ## 执行
 
 - 模拟盘: 本模块 `sim_executor.py` 只生成模拟成交回执和资金占用估算。
+- 资金: 默认模拟本金为 200,000 CNY；可通过 `CN_FUTURES_SIM_CAPITAL_TIER=50000|100000|200000` 或 `default_sim_capital("cn_futures", capital_cny=...)` 使用 50,000 / 100,000 / 200,000 三档。非法档位回退 200,000 CNY。
 - 多风格验证: 通过独立模拟账户/策略风格并行记录, 不使用 `shadow_broker.py`。
 - 实盘: 未来通过 `shared/execution/` 下的受控网关抽象接入, 默认关闭。
 

@@ -15,12 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from shared.accounting.sim_ledger import SimLedger
+from shared.markets.sim_capital import default_sim_capital
 from shared.review.pnl_summary import DEFAULT_SIM_LEDGER_ROOT, load_mark_prices_for_positions
 
 
 DEFAULT_MARKETS = ("ashare", "crypto", "pm", "us", "cn_futures")
 DEFAULT_LOCAL_SIM_DIR = DEFAULT_SIM_LEDGER_ROOT.parent / "local_sim"
-DEFAULT_ASHARE_SIM_CAPITAL = 200_000.0
+DEFAULT_ASHARE_SIM_CAPITAL = default_sim_capital("ashare")
 DEFAULT_USD_CNY = 7.2
 DEFAULT_HKD_CNY = 0.92
 

@@ -12,6 +12,7 @@ from typing import Any
 
 from shared.data.reader import TradingagentDataReader
 from shared.markets.base import MarketAdapter
+from shared.markets.sim_capital import default_sim_capital
 from Ashare import sim_executor as _sim_executor  # noqa: F401
 
 
@@ -155,8 +156,8 @@ class AshareAdapter(MarketAdapter):
         strategies = self._load_strategies()
         return {
             "market": MARKET,
-            "sim_capital": 200_000.0,
-            "shadow_capital": 200_000.0,
+            "sim_capital": default_sim_capital(MARKET),
+            "shadow_capital": default_sim_capital(MARKET),
             "portfolio_method": "conviction_weighted",
             "regime": "ashare_default",
             "score_universe_limit": 500,
@@ -193,10 +194,11 @@ class AshareAdapter(MarketAdapter):
 
     def get_sim_account(self) -> dict[str, Any]:
         account = "ashare_sim"
+        default_capital = default_sim_capital(MARKET)
         fallback = {
             "account": account,
-            "sim_capital": 200_000.0,
-            "cash_available": 200_000.0,
+            "sim_capital": default_capital,
+            "cash_available": default_capital,
             "positions": [],
             "source": "ashare_adapter_empty_sim_account",
         }
@@ -231,11 +233,11 @@ class AshareAdapter(MarketAdapter):
         account_pnl = pnl.get(account) if isinstance(pnl.get(account), dict) else {}
         cash_available = _safe_float(
             account_pnl.get("cash_available", payload.get("cash_available")),
-            200_000.0,
+            default_capital,
         )
         return {
             "account": account,
-            "sim_capital": 200_000.0,
+            "sim_capital": default_capital,
             "cash_available": cash_available,
             "available_cash": cash_available,
             "positions": positions,

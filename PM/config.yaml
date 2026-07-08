@@ -2,7 +2,7 @@ market: pm
 capital:
   default_layer: shadow
   allowed_layers: [shadow, simulated]
-  initial_capital: 27777.777778
+  initial_capital: 10000.0
   currency: USDC
 safety:
   real_money_enabled: false

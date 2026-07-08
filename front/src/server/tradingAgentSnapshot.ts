@@ -401,6 +401,7 @@ const MAX_SIGNALS_PER_BUCKET = 80
 const MAX_SIM_LEDGER_SIGNALS = 120
 const DEFAULT_TARGET_RETURN_PCT = 8
 const DEFAULT_SIM_CAPITAL_CNY = 200_000
+const DEFAULT_USD_CAPITAL = 10_000
 const SIM_LEDGER_EQUITY_BUCKET_MS = 5 * 60 * 1000
 const MAX_EQUITY_PERFORMANCE_POINTS = 360
 const MAX_SIM_MARKET_HEALTH_AGE_MS = 30 * 60 * 1000
@@ -1640,15 +1641,23 @@ function parseEquitySnapshotRecord(row: EquitySnapshotRecord): ParsedEquitySnaps
   }
 }
 
+function marketDefaultCapitalBase(market: Market): number {
+  if (market === 'A-share' || market === 'CNFutures') return DEFAULT_SIM_CAPITAL_CNY
+  if (market === 'US' || market === 'Crypto' || market === 'PM') return DEFAULT_USD_CAPITAL * DEFAULT_USD_CNY
+  return 0
+}
+
 function defaultMarketCapitalBase(market: Market, current?: number) {
   if (market === 'All Markets' || market === 'HK') return current
-  return Math.max(current ?? 0, DEFAULT_SIM_CAPITAL_CNY)
+  if (current !== undefined && current > 0) return current
+  return marketDefaultCapitalBase(market)
 }
 
 function normalizedCapitalBaseForMarkets(current: number, markets: Set<Market>) {
   const activeMarkets = [...markets].filter((market) => market !== 'All Markets' && market !== 'HK')
   if (!activeMarkets.length) return current
-  return Math.max(current, DASHBOARD_MARKETS.length * DEFAULT_SIM_CAPITAL_CNY)
+  const floor = activeMarkets.reduce((sum, market) => sum + marketDefaultCapitalBase(market), 0)
+  return Math.max(current, floor)
 }
 
 function marketFromEquitySourcePath(sourcePath: string): Market {

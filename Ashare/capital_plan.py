@@ -3,7 +3,8 @@
 Produces a structured capital allocation plan each trading day:
 
 * Allocate to 2-3 positions (50 000 - 70 000 RMB each).
-* Reserve 30 000 - 50 000 RMB as cash buffer.
+* Dynamic cash buffer by risk mode (aggressive ~17.5%, balanced 25% capped at
+  50 000, cautious 45%, defensive 100% for weak-candidate / high-risk).
 * Suggest 204001 (GC-001) reverse repo for idle funds at close.
 
 Functions
@@ -136,20 +137,24 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
             "target_positions": 0,
             "cash_reserve_pct": 1.0,
             "max_single_position_pct": 0.0,
+            "max_cash_reserve": None,
             "reasons": reasons,
         }
+
+    max_cash_reserve = None
 
     if top >= 0.75 and avg_top3 >= 0.65 and risk_rejection_rate <= 0.25 and trend not in {"bearish", "risk_off"}:
         risk_mode = "aggressive"
         target_positions = 3
-        cash_reserve_pct = 0.20
+        cash_reserve_pct = 0.175
         max_single_position_pct = 0.35
         reasons.append("strong_candidate_cluster")
     elif top >= 0.65:
         risk_mode = "balanced"
         target_positions = 2
-        cash_reserve_pct = 0.30
+        cash_reserve_pct = 0.25
         max_single_position_pct = 0.30
+        max_cash_reserve = 50000
         reasons.append("qualified_candidate_quality")
     else:
         risk_mode = "cautious"
@@ -172,6 +177,7 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
         "target_positions": target_positions,
         "cash_reserve_pct": cash_reserve_pct,
         "max_single_position_pct": max_single_position_pct,
+        "max_cash_reserve": max_cash_reserve,
         "reasons": reasons,
     }
 
@@ -220,6 +226,7 @@ def plan_capital(
         max_single_position_pct = float(profile["max_single_position_pct"])
         risk_mode = str(profile["risk_mode"])
         reasons = list(profile.get("reasons", []))
+        max_cash_reserve = profile.get("max_cash_reserve")
 
     max_new = target_positions - n_holdings
     if max_new < 0:
@@ -230,6 +237,8 @@ def plan_capital(
         cash_reserve = min(float(available_cash), max(0.0, float(total_capital) * cash_reserve_pct))
         if target_positions > 0:
             cash_reserve = max(min(float(available_cash), MIN_CASH_RESERVE), cash_reserve)
+            if max_cash_reserve is not None:
+                cash_reserve = min(cash_reserve, float(max_cash_reserve))
         else:
             cash_reserve = float(available_cash)
     else:

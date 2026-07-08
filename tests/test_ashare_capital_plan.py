@@ -80,6 +80,140 @@ class AshareCapitalPlanTest(unittest.TestCase):
         self.assertEqual(data["max_new_positions"], 2)
         self.assertEqual(len(data["suggested_buys"]), 2)
 
+    # --- New tests for dynamic cash buffer with caps ---
+
+    def test_balanced_mode_reserve_not_exceeding_50000_on_200k_account(self) -> None:
+        """均衡模式下 200k 账户储备金不应超过 50000，避免因 30% 固定比例锁死 60000."""
+        plan = plan_capital(
+            [],
+            200000.0,
+            candidates=[
+                {"ts_code": "600000.SH", "combined": 0.70},
+                {"ts_code": "000001.SZ", "combined": 0.68},
+            ],
+            dynamic=True,
+            market_context={
+                "trend": "neutral",
+                "risk_rejection_rate": 0.10,
+                "data_issue_rate": 0.0,
+                "recent_win_rate": 0.55,
+            },
+        )
+
+        data = plan.to_dict()
+
+        self.assertEqual(data["risk_mode"], "balanced")
+        self.assertLessEqual(data["cash_reserve"], 50000.0,
+                            "Balanced mode must cap cash reserve at 50000")
+        # Reserve should be in 20-25% range, i.e. 40000-50000 on a 200k account
+        self.assertGreaterEqual(data["cash_reserve"], 40000.0)
+        self.assertLessEqual(data["cash_reserve_pct"], 0.25)
+        self.assertGreaterEqual(data["cash_reserve_pct"], 0.20)
+
+    def test_balanced_mode_reserve_capped_on_larger_account(self) -> None:
+        """均衡模式在大账户上储备金仍应封顶 50000."""
+        plan = plan_capital(
+            [],
+            500000.0,
+            candidates=[
+                {"ts_code": "600000.SH", "combined": 0.72},
+                {"ts_code": "000001.SZ", "combined": 0.66},
+            ],
+            dynamic=True,
+            total_capital=500000.0,
+            market_context={
+                "trend": "neutral",
+                "risk_rejection_rate": 0.10,
+                "data_issue_rate": 0.0,
+                "recent_win_rate": 0.55,
+            },
+        )
+
+        data = plan.to_dict()
+
+        self.assertEqual(data["risk_mode"], "balanced")
+        self.assertLessEqual(data["cash_reserve"], 50000.0,
+                            "Balanced reserve cap must hold even on larger accounts")
+
+    def test_aggressive_mode_reserve_in_15_to_20_pct_range(self) -> None:
+        """强机会模式下储备金应在 15-20% 之间."""
+        plan = plan_capital(
+            [],
+            200000.0,
+            candidates=[
+                {"ts_code": "600000.SH", "combined": 0.88},
+                {"ts_code": "000001.SZ", "combined": 0.82},
+                {"ts_code": "300750.SZ", "combined": 0.76},
+            ],
+            dynamic=True,
+            market_context={
+                "trend": "bullish",
+                "risk_rejection_rate": 0.05,
+                "data_issue_rate": 0.0,
+                "recent_win_rate": 0.65,
+            },
+        )
+
+        data = plan.to_dict()
+
+        self.assertEqual(data["risk_mode"], "aggressive")
+        self.assertGreaterEqual(data["cash_reserve_pct"], 0.15,
+                                "Aggressive reserve should be at least 15%")
+        self.assertLessEqual(data["cash_reserve_pct"], 0.20,
+                            "Aggressive reserve should be at most 20%")
+
+    def test_cautious_mode_has_explicit_reason_and_reserve_range(self) -> None:
+        """谨慎模式下储备金 35-50% 且必须有明确原因."""
+        plan = plan_capital(
+            [],
+            200000.0,
+            candidates=[
+                {"ts_code": "600000.SH", "combined": 0.60},
+            ],
+            dynamic=True,
+            market_context={
+                "trend": "neutral",
+                "risk_rejection_rate": 0.20,
+                "data_issue_rate": 0.0,
+                "recent_win_rate": 0.52,
+            },
+        )
+
+        data = plan.to_dict()
+
+        self.assertEqual(data["risk_mode"], "cautious")
+        self.assertGreaterEqual(data["cash_reserve_pct"], 0.35,
+                                "Cautious reserve should be at least 35%")
+        self.assertLessEqual(data["cash_reserve_pct"], 0.50,
+                            "Cautious reserve should be at most 50%")
+        self.assertIn("thin_candidate_quality", data["reasons"],
+                      "Cautious mode must record explicit reason")
+
+    def test_weak_candidates_stay_full_cash_defensive(self) -> None:
+        """弱候选/高风险场景仍应保留全现金防守逻辑（已有行为回归测试）."""
+        plan = plan_capital(
+            [],
+            200000.0,
+            candidates=[
+                {"ts_code": "600000.SH", "combined": 0.48},
+            ],
+            dynamic=True,
+            market_context={
+                "trend": "bearish",
+                "risk_rejection_rate": 0.65,
+                "data_issue_rate": 0.10,
+                "recent_win_rate": 0.40,
+            },
+        )
+
+        data = plan.to_dict()
+
+        self.assertEqual(data["risk_mode"], "defensive")
+        self.assertEqual(data["target_positions"], 0)
+        self.assertGreaterEqual(data["cash_reserve_pct"], 0.99,
+                                "Defensive mode should be near full cash")
+        self.assertEqual(data["suggested_buys"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
