@@ -224,6 +224,15 @@
   background: rgba(1, 7, 7, 0.86);
 }
 
+.mode-holding-context .flow-event-tape {
+  bottom: 14px;
+  grid-template-columns: 78px repeat(2, minmax(0, 1fr));
+}
+
+.mode-holding-context .flow-event-tape span:nth-of-type(n + 3) {
+  display: none;
+}
+
 .flow-event-tape > .event-tape-label {
   display: grid;
   place-items: center;

@@ -445,7 +445,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
     expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
-    expect(within(card).getByText('接入后可在这里切换真实账户结果；当前以模拟盘为准。')).toBeInTheDocument()
+    expect(within(card).getByText('当前先看模拟盘结果。实盘接入后在这里切换。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
