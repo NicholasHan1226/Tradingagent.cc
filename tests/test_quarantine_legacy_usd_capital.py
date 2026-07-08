@@ -466,6 +466,66 @@ class QuarantineLegacyUsdCapitalTest(unittest.TestCase):
         for row in saved_trades:
             self.assertNotEqual(row.get("exclude_from_dashboard"), True)
 
+    def test_positions_json_quarantine_in_pre_cutover_directory(self) -> None:
+        mtm_path = self.ledger_root / "crypto" / "balanced" / "daily_mark_to_market.jsonl"
+        self._write_jsonl(mtm_path, [
+            _make_mtm_row(
+                capital_base=4629.62963,
+                capital_base_cny=33333.33,
+                market="crypto",
+                timestamp="2026-07-08T05:00:00+00:00",
+            ),
+        ])
+        positions_path = self.ledger_root / "crypto" / "balanced" / "positions.json"
+        positions_path.write_text(
+            json.dumps({"cash": 3240.74, "positions": {"BTCUSDT": {"quantity": 1, "avg_cost": 100}}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        result = quarantine_legacy_usd_capital(
+            ledger_root=self.ledger_root,
+            review_root=self.review_root,
+            apply=True,
+            before="2026-07-08T05:10:59Z",
+        )
+
+        self.assertGreaterEqual(result["quarantined_count"], 2)
+        payload = json.loads(positions_path.read_text(encoding="utf-8"))
+        self.assertTrue(payload.get("exclude_from_dashboard"))
+        self.assertEqual(payload.get("run_context"), "legacy_usd_capital_quarantine")
+        self.assertIn("quarantine_reason", payload)
+
+    def test_style_comparison_top_level_quarantine_before_cutoff(self) -> None:
+        style_path = self.review_root / "us" / "style_comparison.json"
+        style_path.parent.mkdir(parents=True, exist_ok=True)
+        style_path.write_text(
+            json.dumps(
+                {
+                    "market": "us",
+                    "date": "2026-07-08",
+                    "capital_layer": "simulated",
+                    "account_type": "simulated",
+                    "real_execution": False,
+                    "styles_total": 6,
+                    "filled_count": 34,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        result = quarantine_legacy_usd_capital(
+            ledger_root=self.ledger_root,
+            review_root=self.review_root,
+            apply=True,
+            before="2026-07-08T05:10:59Z",
+        )
+
+        self.assertEqual(result["quarantined_count"], 1)
+        payload = json.loads(style_path.read_text(encoding="utf-8"))
+        self.assertTrue(payload.get("exclude_from_dashboard"))
+        self.assertEqual(payload.get("run_context"), "legacy_usd_capital_quarantine")
+
     # -- idempotency ---------------------------------------------------------
 
     def test_idempotent_double_apply(self) -> None:

@@ -980,6 +980,7 @@ async function readSimLedgerCapitalBaseByMarket(root: string): Promise<Map<Marke
       const market = normalizeMarketFolder(file.market)
       if (market === 'All Markets' || market === 'HK') continue
       const payload = JSON.parse(await readFile(file.path, 'utf8')) as SimLedgerPositionsFile
+      if (isDashboardExcluded(payload as Record<string, unknown>)) continue
       let capitalBase = parseFiniteNumber(payload.cash) ?? 0
       for (const position of Object.values(payload.positions ?? {})) {
         capitalBase += (parseFiniteNumber(position.avg_cost) ?? 0) * (parseFiniteNumber(position.quantity) ?? 0)
@@ -1874,6 +1875,7 @@ async function readSimLedgerHoldings(root: string): Promise<HoldingRow[]> {
   const rows = await Promise.all(files.map(async (file) => {
     try {
       const payload = JSON.parse(await readFile(file.path, 'utf8')) as SimLedgerPositionsFile
+      if (isDashboardExcluded(payload as Record<string, unknown>)) return []
       return Object.entries(payload.positions ?? {}).map(([symbol, position]) => parseSimLedgerPosition(symbol, position, file.market, file.strategy))
     } catch {
       return []
@@ -1890,6 +1892,7 @@ async function readSimLedgerCapitalBase(root: string): Promise<number> {
   for (const file of files) {
     try {
       const payload = JSON.parse(await readFile(file.path, 'utf8')) as SimLedgerPositionsFile
+      if (isDashboardExcluded(payload as Record<string, unknown>)) continue
       capitalBase += parseFiniteNumber(payload.cash) ?? 0
       for (const position of Object.values(payload.positions ?? {})) {
         capitalBase += (parseFiniteNumber(position.avg_cost) ?? 0) * (parseFiniteNumber(position.quantity) ?? 0)

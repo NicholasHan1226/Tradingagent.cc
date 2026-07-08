@@ -4,8 +4,9 @@
 Background: US/Crypto/PM starting capital changed from ~200,000 CNY
 (≈27,778 USD) to 10,000 original-currency units (= 72,000 CNY).
 Historical ``daily_mark_to_market.jsonl``, ``trade_journal.jsonl``,
-``style_performance.jsonl``, and ``style_comparison.json`` may still
-contain rows with the old capital_base, polluting dashboard PnL.
+``positions.json``, ``style_performance.jsonl``, and
+``style_comparison.json`` may still contain rows or state snapshots with
+the old capital_base, polluting dashboard PnL.
 
 This tool detects those rows and adds quarantine markers:
   ``exclude_from_dashboard=true``,
@@ -49,9 +50,10 @@ QUARANTINE_FIELDS: dict[str, Any] = {
     "run_context": "legacy_usd_capital_quarantine",
 }
 
-# JSONL file names to scan under each style directory
+# File names to scan under each style directory
 MTM_FILENAME = "daily_mark_to_market.jsonl"
 TRADE_JOURNAL_FILENAME = "trade_journal.jsonl"
+POSITIONS_FILENAME = "positions.json"
 STYLE_PERFORMANCE_FILENAME = "style_performance.jsonl"
 STYLE_COMPARISON_FILENAME = "style_comparison.json"
 
@@ -334,13 +336,31 @@ def _process_style_comparison(
     if not data:
         return {"path": str(path), "entries": 0, "quarantined": 0, "already_quarantined": 0, "skipped": 0, "modified": False}
 
-    # style_comparison.json typically is a dict of style_name -> performance_data
     quarantined = 0
     already = 0
     skipped = 0
     file_changed = False
 
     modified_data = dict(data)
+    row_market = str(data.get("market") or market).lower().strip()
+    if _is_target_market(row_market) and data.get("real_execution") is not True:
+        if _already_quarantined(data):
+            already += 1
+        else:
+            reason = "legacy_capital_base"
+            should_quarantine = _detect_old_capital_row(data, row_market)
+            if not should_quarantine and _is_before_cutoff_row(data, before):
+                should_quarantine = True
+                reason = "pre_cutover"
+            if should_quarantine:
+                modified_data, _ = _quarantine_row(data, row_market, reason=reason)
+                quarantined += 1
+                file_changed = True
+            else:
+                skipped += 1
+    else:
+        skipped += 1
+
     for key, value in data.items():
         if not isinstance(value, dict):
             continue
@@ -379,6 +399,47 @@ def _process_style_comparison(
         "skipped": skipped,
         "modified": file_changed,
     }
+
+
+def _process_positions_file(
+    path: Path,
+    market: str,
+    *,
+    apply: bool,
+    is_old_capital_dir: bool = False,
+    before: datetime | None = None,
+) -> dict[str, Any]:
+    """Quarantine stale positions when the parent style directory is old-capital.
+
+    ``positions.json`` usually does not carry its own ``capital_base`` field, so
+    it inherits the decision from the same style directory's MTM rows or an
+    explicit cutover timestamp on the positions payload itself.
+    """
+    data = _read_json(path)
+    if not data:
+        return {"path": str(path), "entries": 0, "quarantined": 0, "already_quarantined": 0, "skipped": 0, "modified": False}
+    row_market = str(data.get("market") or market).lower().strip()
+    if not _is_target_market(row_market) or data.get("real_execution") is True:
+        return {"path": str(path), "entries": 1, "quarantined": 0, "already_quarantined": 0, "skipped": 1, "modified": False}
+    if _already_quarantined(data):
+        return {"path": str(path), "entries": 1, "quarantined": 0, "already_quarantined": 1, "skipped": 0, "modified": False}
+
+    reason = "legacy_capital_base"
+    should_quarantine = is_old_capital_dir
+    if not should_quarantine and _is_before_cutoff_row(data, before):
+        should_quarantine = True
+        reason = "pre_cutover"
+    elif should_quarantine and _is_before_cutoff_row(data, before):
+        reason = "pre_cutover"
+
+    if not should_quarantine:
+        return {"path": str(path), "entries": 1, "quarantined": 0, "already_quarantined": 0, "skipped": 1, "modified": False}
+
+    modified, _ = _quarantine_row(data, row_market, reason=reason)
+    if apply:
+        _backup_file(path)
+        _write_json(path, modified)
+    return {"path": str(path), "entries": 1, "quarantined": 1, "already_quarantined": 0, "skipped": 0, "modified": True}
 
 
 def _detect_directory_old_capital(style_dir: Path, market: str, before: datetime | None = None) -> bool:
@@ -473,6 +534,22 @@ def quarantine_legacy_usd_capital(
             totals["skipped_count"] += detail["skipped"]
             totals["total_rows_scanned"] += detail["total_rows"]
             if detail["modified"]:
+                files_modified.append(detail)
+        positions_path = style_dir / POSITIONS_FILENAME
+        if positions_path.exists():
+            detail = _process_positions_file(
+                positions_path,
+                market,
+                apply=apply,
+                is_old_capital_dir=is_old_capital,
+                before=before_dt,
+            )
+            all_file_details.append(detail)
+            totals["quarantined_count"] += detail.get("quarantined", 0)
+            totals["already_quarantined_count"] += detail.get("already_quarantined", 0)
+            totals["skipped_count"] += detail.get("skipped", 0)
+            totals["total_rows_scanned"] += detail.get("entries", 0)
+            if detail.get("modified"):
                 files_modified.append(detail)
 
     # --- Scan review performance files ---

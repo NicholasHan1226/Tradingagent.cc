@@ -965,6 +965,42 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
+  it('excludes quarantined sim ledger positions from holdings and capital base', async () => {
+    const root = await createWorkspace()
+    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(ledgerRoot, { recursive: true })
+
+    await writeFile(
+      join(ledgerRoot, 'positions.json'),
+      JSON.stringify({
+        cash: 10_000,
+        exclude_from_dashboard: true,
+        run_context: 'legacy_usd_capital_quarantine',
+        positions: {
+          BTCUSDT: {
+            quantity: 1,
+            avg_cost: 100,
+            market_id: 'BTC-USD',
+            unrealized_pnl: 12,
+          },
+        },
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.holdings.some((holding) => holding.market === 'Crypto')).toBe(false)
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'Crypto',
+      holdingCount: 0,
+      capitalBase: 72_000,
+    }))
+  })
+
   it('adds A-share local account cash, holdings and sample quality to the portfolio summary', async () => {
     const root = await createWorkspace()
     const localSimRoot = join(root, 'TradingAgent/shared/logs/local_sim')
@@ -1522,6 +1558,47 @@ describe('TradingAgent snapshot reader', () => {
       filledCount: 3,
       errorCount: 1,
     }))
+  })
+
+  it('excludes quarantined style comparison reports from market summaries', async () => {
+    const root = await createWorkspace()
+    const reviewRoot = join(root, 'TradingAgent/shared/review/crypto')
+    await mkdir(reviewRoot, { recursive: true })
+    await writeFile(
+      join(reviewRoot, 'style_comparison.json'),
+      JSON.stringify({
+        market: 'crypto',
+        capital_layer: 'simulated',
+        account_type: 'simulated',
+        real_execution: false,
+        exclude_from_dashboard: true,
+        run_context: 'legacy_usd_capital_quarantine',
+        styles_total: 2,
+        styles_loaded: 2,
+        style_states: [
+          { style_name: 'grid', status: 'active' },
+          { style_name: 'momentum', status: 'degraded' },
+        ],
+        filled_count: 3,
+        error_count: 1,
+        signal_count: 4,
+        generated_at: '2026-07-06T12:35:00.000Z',
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-06T12:40:00.000Z'),
+    })
+
+    const cryptoSummary = (snapshot.marketSummaries ?? []).find((summary) => summary.market === 'Crypto')
+    expect(cryptoSummary).toBeDefined()
+    expect(cryptoSummary).not.toMatchObject({
+      styleCount: 2,
+      filledCount: 3,
+      errorCount: 1,
+    })
   })
 
   it('marks a market with active styles but no trades as strategy wait', async () => {
