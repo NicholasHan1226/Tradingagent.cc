@@ -267,6 +267,16 @@ def _latest_no_trade_explanation(path: Path, date: str) -> dict[str, Any]:
             if not isinstance(score_diagnostics, dict):
                 score_diagnostics = {}
             diagnostic_summary = _score_diagnostic_summary(score_diagnostics)
+            candidate_trace = explanation.get("candidate_decision_trace", [])
+            capital_decision = explanation.get("capital_plan_decision", {})
+            portfolio_decision = explanation.get("portfolio_decision", {})
+            evidence_gaps = _candidate_order_gap_evidence_gaps(
+                explanation.get("category"),
+                explanation.get("counts", {}),
+                candidate_trace,
+                capital_decision,
+                portfolio_decision,
+            )
             return {
                 "path": str(path),
                 "generated_at": payload.get("generated_at"),
@@ -285,8 +295,43 @@ def _latest_no_trade_explanation(path: Path, date: str) -> dict[str, Any]:
                 "candidate_above_threshold_count": score_diagnostics.get("candidate_above_threshold_count"),
                 "watch_above_threshold_count": score_diagnostics.get("watch_above_threshold_count"),
                 "diagnostic_summary": diagnostic_summary,
+                "candidate_layer_breakdown": explanation.get("candidate_layer_breakdown", {}),
+                "candidate_decision_trace": candidate_trace[:10] if isinstance(candidate_trace, list) else [],
+                "capital_plan_decision": capital_decision if isinstance(capital_decision, dict) else {},
+                "portfolio_decision": portfolio_decision if isinstance(portfolio_decision, dict) else {},
+                "evidence_status": "incomplete" if evidence_gaps else "ready",
+                "evidence_gaps": evidence_gaps,
             }
     return {}
+
+
+def _candidate_order_gap_evidence_gaps(
+    category: Any,
+    counts: Any,
+    candidate_trace: Any,
+    capital_decision: Any,
+    portfolio_decision: Any,
+) -> list[str]:
+    counts_dict = counts if isinstance(counts, dict) else {}
+    candidates = _int_value(counts_dict.get("candidates"), _int_value(counts_dict.get("candidate_count"), 0))
+    orders = _int_value(counts_dict.get("orders"), _int_value(counts_dict.get("order_count"), 0))
+    if candidates <= 0 or orders > 0:
+        return []
+    gaps: list[str] = []
+    if not candidate_trace:
+        gaps.append("candidate_decision_trace_missing")
+    if not capital_decision:
+        gaps.append("capital_plan_decision_missing")
+    if not portfolio_decision:
+        gaps.append("portfolio_decision_missing")
+    return gaps
+
+
+def _int_value(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _score_diagnostic_summary(score_diagnostics: dict[str, Any]) -> dict[str, Any]:
@@ -503,6 +548,8 @@ def _expected_scientific_no_trade(explanation: dict[str, Any]) -> bool:
     category = str(explanation.get("category") or "")
     latest_log = explanation.get("latest_no_trade_log")
     if not isinstance(latest_log, dict) or not latest_log:
+        return False
+    if latest_log.get("evidence_status") == "incomplete":
         return False
     if category in {
         "no_portfolio_orders",

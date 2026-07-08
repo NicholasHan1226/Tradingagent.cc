@@ -840,6 +840,8 @@ def _latest_ashare_no_trade_explanation(path: Path | None = None) -> dict[str, A
 
 def _ashare_scientific_no_trade(explanation: dict[str, Any]) -> bool:
     category = str(explanation.get("category") or "")
+    if not _ashare_candidate_order_gap_has_evidence(explanation):
+        return False
     return category in {
         "no_portfolio_orders",
         "all_rejected_by_risk",
@@ -848,6 +850,22 @@ def _ashare_scientific_no_trade(explanation: dict[str, Any]) -> bool:
         "no_signal_cards_created",
         "no_trade_signal_or_all_rejected",
     }
+
+
+def _ashare_candidate_order_gap_has_evidence(explanation: dict[str, Any]) -> bool:
+    counts = explanation.get("counts") if isinstance(explanation.get("counts"), dict) else {}
+    candidates = _int_value(counts.get("candidates"), _int_value(counts.get("candidate_count"), 0))
+    orders = _int_value(counts.get("orders"), _int_value(counts.get("order_count"), 0))
+    if candidates <= 0 or orders > 0:
+        return True
+    return bool(explanation.get("candidate_decision_trace")) and bool(explanation.get("capital_plan_decision")) and bool(explanation.get("portfolio_decision"))
+
+
+def _int_value(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _ashare_local_sim_trade_rows(path: Path | None = None) -> list[dict[str, Any]]:

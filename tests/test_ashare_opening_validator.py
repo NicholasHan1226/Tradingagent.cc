@@ -295,7 +295,10 @@ class AshareOpeningValidatorTest(unittest.TestCase):
                     "no_trade_explanation": {
                         "category": "no_portfolio_orders",
                         "action": "continue_monitoring_capital_plan",
-                        "counts": {"candidate_count": 3, "risk_rejections": 0},
+                        "counts": {"candidate_count": 3, "orders": 0, "risk_rejections": 0},
+                        "candidate_decision_trace": [{"symbol": "600000.SH", "drop_reason": "capital_plan_capacity_zero"}],
+                        "capital_plan_decision": {"position_capacity": 0},
+                        "portfolio_decision": {"allowed_buy_count": 0},
                     },
                 }
             )
@@ -324,7 +327,109 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["reason"], "first_sample_no_trade_explained")
         self.assertEqual(report["no_trade_explanation"]["category"], "no_portfolio_orders")
+        self.assertEqual(report["no_trade_explanation"]["latest_no_trade_log"]["evidence_status"], "ready")
         self.assertNotIn("ashare_first_sim_trade_missing", {alert["code"] for alert in report["alerts"]})
+
+    def test_first_sample_warns_when_no_portfolio_orders_lacks_trace_evidence(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        no_trade_log = root / "ashare_no_trade_explanations.jsonl"
+        no_trade_log.write_text(
+            json.dumps(
+                {
+                    "date": "20260706",
+                    "generated_at": "2026-07-06T09:41:00+08:00",
+                    "state": "ok",
+                    "no_trade_explanation": {
+                        "category": "no_portfolio_orders",
+                        "action": "continue_monitoring_capital_plan",
+                        "counts": {"candidate_count": 3, "orders": 0},
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        db_path = self._db(
+            [
+                ("600000.SH", "2026-07-06 09:35:00"),
+                ("000001.SZ", "2026-07-06 09:35:00"),
+            ]
+        )
+
+        report = ashare_opening_validator.first_sample_alerts(
+            sqlite_db=db_path,
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            no_trade_log_path=no_trade_log,
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+
+        self.assertEqual(report["status"], "warn")
+        self.assertEqual(report["reason"], "first_sample_alerts_present")
+        self.assertIn("ashare_first_sim_trade_missing", {alert["code"] for alert in report["alerts"]})
+        latest_log = report["no_trade_explanation"]["latest_no_trade_log"]
+        self.assertEqual(latest_log["evidence_status"], "incomplete")
+        self.assertEqual(
+            latest_log["evidence_gaps"],
+            [
+                "candidate_decision_trace_missing",
+                "capital_plan_decision_missing",
+                "portfolio_decision_missing",
+            ],
+        )
+
+    def test_first_sample_warns_when_risk_rejections_lack_trace_evidence(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        no_trade_log = root / "ashare_no_trade_explanations.jsonl"
+        no_trade_log.write_text(
+            json.dumps(
+                {
+                    "date": "20260706",
+                    "generated_at": "2026-07-06T09:41:00+08:00",
+                    "state": "ok",
+                    "no_trade_explanation": {
+                        "category": "all_rejected_by_risk",
+                        "action": "review_risk_rejections",
+                        "counts": {"candidates": 3, "orders": 0, "risk_rejections": 3},
+                        "sample_risk_rejections": [{"symbol": "600000.SH", "reasons": ["unit risk"]}],
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        db_path = self._db(
+            [
+                ("600000.SH", "2026-07-06 09:35:00"),
+                ("000001.SZ", "2026-07-06 09:35:00"),
+            ]
+        )
+
+        report = ashare_opening_validator.first_sample_alerts(
+            sqlite_db=db_path,
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            no_trade_log_path=no_trade_log,
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+
+        self.assertEqual(report["status"], "warn")
+        self.assertIn("ashare_first_sim_trade_missing", {alert["code"] for alert in report["alerts"]})
+        latest_log = report["no_trade_explanation"]["latest_no_trade_log"]
+        self.assertEqual(latest_log["evidence_status"], "incomplete")
+        self.assertIn("candidate_decision_trace_missing", latest_log["evidence_gaps"])
 
     def test_first_sample_surfaces_score_diagnostics_for_no_trade(self) -> None:
         tmp = tempfile.TemporaryDirectory()
