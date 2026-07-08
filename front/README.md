@@ -72,19 +72,17 @@ TradingAgent signals / positions / review / risk
 
 ## 生产形态
 
-当前用户访问入口已经切到 Cloudflare：
+当前用户访问入口已经切到 Cloudflare Tunnel + 生产服务器 Nginx：
 
 ```text
 dashboard.tradingagent.cc
-  Cloudflare Pages
-    /                         -> front/dist
-    /api/trading-agent/snapshot -> Pages Function
-      -> api.tradingagent.cc
-      -> Cloudflare Tunnel
-      -> 127.0.0.1:8787 on TradingAgent server
+  Cloudflare Tunnel
+    -> Nginx on TradingAgent server
+      /                         -> front/dist
+      /api/trading-agent/snapshot -> 127.0.0.1:8787
 ```
 
-TradingAgent 服务器仍保留旧 Nginx 入口，作为回滚路径：
+TradingAgent 服务器 Nginx 是当前生产入口：
 
 ```text
 8.138.181.177
@@ -116,17 +114,15 @@ VITE_TRADING_AGENT_SNAPSHOT_URL=/api/trading-agent/snapshot
 
 Cloudflare 部署说明见 [docs/cloudflare.md](docs/cloudflare.md)。当前形态是：
 
-- 前端静态页面部署到 Cloudflare Pages。
-- 只读 snapshot API 继续运行在 TradingAgent 服务器内侧，并通过 Cloudflare Tunnel 接入。
+- 前端静态页面由 TradingAgent 服务器 `front/dist` 通过 Cloudflare Tunnel 对外提供。
+- 只读 snapshot API 运行在 TradingAgent 服务器内侧 `127.0.0.1:8787`，同样通过 Cloudflare Tunnel/Nginx 接入。
 - API 仍只读，不暴露交易执行、队列写入、账户、回调或密钥。
 
 当前域名说明：
 
-- `dashboard.tradingagent.cc` 已切到 Cloudflare Pages 项目 `tradingagent-front`。
-- `api.tradingagent.cc` 已通过 Cloudflare Tunnel 指向 TradingAgent 生产服务器内侧 `127.0.0.1:8787`。
-- `dashboard.tradingagent.cc/api/trading-agent/snapshot` 已通过 Pages Function 代理到实时快照 API。
-- `tradingagent.cc` 和 `www.tradingagent.cc` 暂时仍保留生产服务器 Nginx A 记录，作为旧入口和回滚路径。
-- 生产服务器 Nginx 入口继续保留，便于在 Cloudflare 路由异常时回退。
+- `dashboard.tradingagent.cc`、`tradingagent.cc` 和 `www.tradingagent.cc` 已通过 Cloudflare Tunnel 指向 TradingAgent 生产服务器 Nginx。
+- `api.tradingagent.cc` 已通过同一 Cloudflare Tunnel 指向 TradingAgent 生产服务器内侧 `127.0.0.1:8787`。
+- Cloudflare Pages 项目 `tradingagent-front` 是历史/回滚入口；若重新启用 Pages，必须先完成最新构建部署并重新绑定自定义域，避免公开域名继续服务旧静态资源。
 
 ## 本地运行
 
@@ -157,12 +153,13 @@ npm run build:api
 - 模拟盘持仓和已成交信号已接入 `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}`。
 - 收益曲线现在优先读取显式权益快照：`shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl`
   或 `shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl`。如果后端尚未写入权益快照，snapshot 才回退到 `shared/review/daily/daily_brief.jsonl` 的明确 return 字段，再回退到 `shared/review/*/style_performance.jsonl` 的真实 simulated PnL，并用模拟账本本金换算为收益率；当同市场/同策略/同日期存在模拟账本成交时间戳时，snapshot 会把日级 PnL 展开成交易时间线曲线。若只存在成交日志或持仓成本，snapshot 会保持收益为空并给出缺口说明，前端不得用成交额或成本冒充收益。
+- `style_performance.jsonl` 作为回退收益来源时，US/Crypto/PM 的 `pnl`、`realized_pnl`、`unrealized_pnl` 和 `max_dd` 默认按 10,000 USD/USDT/USDC 原币账户折算成人民币后再进入 `marketSummaries[]` 与全市场收益曲线；若行内已有 `*_cny` 或 `fx_to_cny`，优先使用行内字段。不得用原币 PnL 除以人民币本金，也不得让旧账本本金覆盖规范本金。
 - 维护、回补、烟测或修复重跑样本不得进入用户收益和交易量口径。只读 snapshot 会跳过带 `exclude_from_dashboard=true`、`dashboard_excluded=true`、`excluded_from_dashboard=true`，或 `run_context/run_mode/run_source/sample_type` 包含 `maintenance/backfill/smoke/repair/bootstrap/dry-run` 的模拟账本、权益快照、风格绩效和风格对比记录。
 - A股研究证据卡片读取 `shared/review/ashare/research_evidence_latest.json`，只展示集合竞价/09:30 代理、尾盘候选、204001 逆回购估算和风格虚拟预算；该卡片不写队列、不触发交易、不发送邮件。
-- A股服务器本地模拟账本读取 `shared/logs/local_sim/local_sim_pnl.json` 和 `shared/logs/local_sim/local_sim_trades.jsonl`，首页收益和持仓摘要会展示账户事实、现金、持仓市值、账户盈亏、可复盘样本和链路验证样本。缺少来源字段的历史成交只作账户事实和链路验证，不计入策略收益、自我进化或胜率归因。
+- A股服务器本地模拟账本读取 `shared/logs/local_sim/local_sim_pnl.json` 和 `shared/logs/local_sim/local_sim_trades.jsonl`，首页收益和持仓摘要会展示账户事实、现金、持仓市值、账户盈亏、可复盘样本和链路验证样本。缺少候选层来源或成交价来源字段的历史成交只作账户事实和链路验证，不计入策略收益、自我进化或胜率归因。新的 A股 server-local 成交会在账本和签名回执中保留 `fill_price_source`、`fill_price_source_class` 与 `fill_evidence`，用于证明模拟成交价来自市场快照而不是信号卡兜底价格。
 - 后端已预留并提供权益快照生成入口：`shared/runtime_test/write_equity_snapshots.py`。生产运行时应由服务器定时或手动调用该入口，把模拟账本的已实现收益、未实现收益、本金、回撤、持仓数和价格缺失状态写入 `daily_mark_to_market.jsonl`，供首页实时收益主面板优先读取。
 - 机会管道已能从 signal 状态和模拟账本成交路径派生 `发现 / 评分 / 风控 / 待执行 / 成交 / 继续观察 / 拒绝` 阶段，并在只读快照中额外输出 `funnelEvents[]`，供首页动态机会管道按真实事件展示。更精确的阶段时间线仍需要后端在每个机会上写入完整 stage timestamps。
-- 首页机会管道优先展示真实事件流；没有实时事件时，只显示等待态或已有信号推导，不用静态样例伪装成真实筛选。
+- 首页机会管道优先展示真实事件流；没有实时事件时，只显示等待态、已有信号推导或持仓回放，不用静态样例或占位粒子伪装成真实筛选。
 - 首页右栏只保留下一步关注，不再重复展示实时收益卡已有的账户、收益和风险数字；收益页曲线只展示走势、事件和区间切换，当前收益/目标差/回撤由页面摘要板承载。
 - 多市场收益曲线按账本来源逐条前向补齐最新权益快照，避免某个市场短暂没有 5 分钟快照时把总本金缩小、导致收益曲线出现不真实跳变。
 - 午盘复盘、策略归因和风险限额文件已列为可用来源，但仍需补充到 snapshot 构建后才能作为完整面板展示。

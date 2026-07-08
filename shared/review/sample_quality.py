@@ -46,6 +46,40 @@ def _is_ashare_regular_session(row: dict[str, Any]) -> bool:
     return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(14, 57))
 
 
+def _fill_price_source_class(row: dict[str, Any]) -> str:
+    evidence = row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    return _normalize(
+        row.get("fill_price_source_class")
+        or evidence.get("fill_price_source_class")
+        or row.get("price_source_class")
+    )
+
+
+def _has_market_data_fill_price(row: dict[str, Any]) -> bool:
+    source_class = _fill_price_source_class(row)
+    if source_class == "market_data":
+        return True
+    evidence = row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    source = _normalize(
+        row.get("fill_price_source")
+        or evidence.get("fill_price_source")
+        or row.get("price_source")
+    )
+    if not source or source in {"signal_card.price", "unknown", "requested_order_price"}:
+        return False
+    return any(
+        marker in source
+        for marker in (
+            "market_snapshot",
+            ".ask_price",
+            ".bid_price",
+            ".last_price",
+            ".close",
+            ".latest_price",
+        )
+    )
+
+
 def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
     """Return strategy-sample validity for one normalized trade row."""
 
@@ -70,6 +104,12 @@ def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
         }
 
     if side == "buy" and execution_source == "ashare_candidate_layer" and candidate_layer == "candidate":
+        if not _has_market_data_fill_price(row):
+            return {
+                "strategy_sample_valid": False,
+                "sample_classification": "chain_validation",
+                "sample_quality_reason": "missing_fill_price_provenance",
+            }
         return {
             "strategy_sample_valid": True,
             "sample_classification": "strategy_sample",
@@ -77,6 +117,12 @@ def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
         }
 
     if side == "sell" and execution_source == "ashare_rebalance_sell":
+        if not _has_market_data_fill_price(row):
+            return {
+                "strategy_sample_valid": False,
+                "sample_classification": "chain_validation",
+                "sample_quality_reason": "missing_fill_price_provenance",
+            }
         return {
             "strategy_sample_valid": True,
             "sample_classification": "strategy_sample",

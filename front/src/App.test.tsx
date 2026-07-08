@@ -118,6 +118,7 @@ describe('App navigation and result-first dashboard', () => {
     await waitFor(() => expect(screen.getByText('等待收益结果')).toBeInTheDocument())
     expect(screen.getAllByText('暂无机会结果').length).toBeGreaterThan(0)
     expect(screen.getByRole('heading', { name: '等待机会' })).toBeInTheDocument()
+    expect(screen.queryByText(/等待新机会 · 转化 0%/)).not.toBeInTheDocument()
     expect(screen.getByText('暂无持仓记录')).toBeInTheDocument()
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
   })

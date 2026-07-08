@@ -227,9 +227,19 @@ type StylePerformanceRow = {
   trade_date?: string
   as_of?: string
   pnl?: number | string
+  pnl_cny?: number | string
+  total_pnl_cny?: number | string
+  net_pnl_cny?: number | string
   realized_pnl?: number | string
+  realized_pnl_cny?: number | string
   unrealized_pnl?: number | string
+  unrealized_pnl_cny?: number | string
+  fx_to_cny?: number | string
+  exchange_rate_to_cny?: number | string
+  currency?: string
+  pnl_currency?: string
   max_dd?: number | string
+  max_dd_cny?: number | string
   market?: string
   style?: string
   style_name?: string
@@ -918,14 +928,16 @@ async function readStylePerformanceMarketSummaries(root: string): Promise<Map<Ma
           if (normalizeCapitalLayer(row) !== 'simulated') continue
           if (isDashboardExcluded(row as Record<string, unknown>)) continue
           if (await isStylePerformanceRowLedgerExcluded(ledgerRoot, file.market, row)) continue
-          const pnl = parseFiniteNumber(row.pnl)
+          const pnl = stylePerformanceMoneyCny(row, market, 'pnl')
           const timestamp = row.as_of ?? row.date ?? row.trade_date
-          if (pnl === undefined && parseFiniteNumber(row.realized_pnl) === undefined && parseFiniteNumber(row.unrealized_pnl) === undefined) continue
+          const realizedPnl = stylePerformanceMoneyCny(row, market, 'realized')
+          const unrealizedPnl = stylePerformanceMoneyCny(row, market, 'unrealized')
+          if (pnl === undefined && realizedPnl === undefined && unrealizedPnl === undefined) continue
           const current = summaries.get(market) ?? { maxDrawdown: 0, pnl: 0, realizedPnl: 0, trades: 0, unrealizedPnl: 0 }
           current.pnl += pnl ?? 0
-          current.realizedPnl += parseFiniteNumber(row.realized_pnl) ?? 0
-          current.unrealizedPnl += parseFiniteNumber(row.unrealized_pnl) ?? 0
-          current.maxDrawdown = Math.max(current.maxDrawdown, Math.abs(parseFiniteNumber(row.max_dd) ?? 0))
+          current.realizedPnl += realizedPnl ?? 0
+          current.unrealizedPnl += unrealizedPnl ?? 0
+          current.maxDrawdown = Math.max(current.maxDrawdown, Math.abs(stylePerformanceMaxDrawdownCny(row, market)))
           current.trades += Math.max(0, Math.trunc(parseFiniteNumber(row.trades) ?? 0))
           current.latestAt = latestIso(current.latestAt, timestamp)
           summaries.set(market, current)
@@ -1764,21 +1776,25 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
 
   const tradeTimeline = await readSimLedgerTradeTimeline(simLedgerRoot)
   const timelineContributions: TimelineContribution[] = []
-  const byDay = new Map<string, { pnl: number; realizedPnl: number; unrealizedPnl: number; maxDrawdown: number; trades: number; pnlSources: Set<string> }>()
+  const byDay = new Map<string, { pnl: number; realizedPnl: number; unrealizedPnl: number; maxDrawdown: number; markets: Set<Market>; trades: number; pnlSources: Set<string> }>()
+  const markets = new Set<Market>()
   for (const row of rows) {
     if (row.real_execution === true) continue
     if (normalizeCapitalLayer(row) !== 'simulated') continue
     if (isDashboardExcluded(row as Record<string, unknown>)) continue
     if (await isStylePerformanceRowLedgerExcluded(simLedgerRoot, row.market ?? row.marketHint ?? '', row)) continue
     const dayKey = compactDate(row.date ?? row.trade_date ?? row.as_of)
-    const pnl = parseFiniteNumber(row.pnl)
+    const market = normalizeMarketFolder(row.market ?? row.marketHint)
+    const pnl = stylePerformanceMoneyCny(row, market, 'pnl')
     if (!dayKey || pnl === undefined) continue
-    const current = byDay.get(dayKey) ?? { pnl: 0, realizedPnl: 0, unrealizedPnl: 0, maxDrawdown: 0, trades: 0, pnlSources: new Set<string>() }
-    const maxDrawdown = parseFiniteNumber(row.max_dd) ?? 0
+    const current = byDay.get(dayKey) ?? { pnl: 0, realizedPnl: 0, unrealizedPnl: 0, maxDrawdown: 0, markets: new Set<Market>(), trades: 0, pnlSources: new Set<string>() }
+    const maxDrawdown = stylePerformanceMaxDrawdownCny(row, market)
     current.pnl += pnl
-    current.realizedPnl += parseFiniteNumber(row.realized_pnl) ?? 0
-    current.unrealizedPnl += parseFiniteNumber(row.unrealized_pnl) ?? 0
+    current.realizedPnl += stylePerformanceMoneyCny(row, market, 'realized') ?? 0
+    current.unrealizedPnl += stylePerformanceMoneyCny(row, market, 'unrealized') ?? 0
     current.maxDrawdown = Math.max(current.maxDrawdown, maxDrawdown)
+    current.markets.add(market)
+    markets.add(market)
     current.trades += Math.max(0, Math.trunc(parseFiniteNumber(row.trades) ?? 0))
     if (row.pnl_source) current.pnlSources.add(String(row.pnl_source))
     byDay.set(dayKey, current)
@@ -1801,7 +1817,7 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
 
   if (!byDay.size) return { performance: [] }
 
-  const capitalBase = await readSimLedgerCapitalBase(simLedgerRoot)
+  const capitalBase = normalizedCapitalBaseForMarkets(await readSimLedgerCapitalBase(simLedgerRoot), markets)
   const dates = [...byDay.keys()].sort()
   let cumulativePnl = 0
   const dailyPerformance = dates.map((day, index) => {
@@ -2725,6 +2741,38 @@ function marketFxToCny(market: Market) {
   if (market === 'US' || market === 'Crypto' || market === 'PM') return DEFAULT_USD_CNY
   if (market === 'HK') return DEFAULT_HKD_CNY
   return 1
+}
+
+function stylePerformanceFxToCny(row: StylePerformanceRow, market: Market) {
+  const explicit = firstParsedNumber(row.fx_to_cny, row.exchange_rate_to_cny)
+  if (explicit !== undefined && explicit > 0) return explicit
+  const currency = String(row.pnl_currency ?? row.currency ?? '').trim().toUpperCase()
+  if (currency === 'CNY') return 1
+  if (currency === 'HKD') return DEFAULT_HKD_CNY
+  if (currency === 'USD' || currency === 'USDC' || currency === 'USDT') return DEFAULT_USD_CNY
+  return marketFxToCny(market)
+}
+
+function stylePerformanceMoneyCny(row: StylePerformanceRow, market: Market, field: 'pnl' | 'realized' | 'unrealized') {
+  const explicit = field === 'pnl'
+    ? firstParsedNumber(row.pnl_cny, row.total_pnl_cny, row.net_pnl_cny)
+    : field === 'realized'
+      ? parseFiniteNumber(row.realized_pnl_cny)
+      : parseFiniteNumber(row.unrealized_pnl_cny)
+  if (explicit !== undefined) return explicit
+  const raw = field === 'pnl'
+    ? parseFiniteNumber(row.pnl)
+    : field === 'realized'
+      ? parseFiniteNumber(row.realized_pnl)
+      : parseFiniteNumber(row.unrealized_pnl)
+  return raw === undefined ? undefined : roundMoney(raw * stylePerformanceFxToCny(row, market))
+}
+
+function stylePerformanceMaxDrawdownCny(row: StylePerformanceRow, market: Market) {
+  const explicit = parseFiniteNumber(row.max_dd_cny)
+  if (explicit !== undefined) return explicit
+  const raw = parseFiniteNumber(row.max_dd) ?? 0
+  return roundMoney(raw * stylePerformanceFxToCny(row, market))
 }
 
 function toCny(value: number, market: Market) {

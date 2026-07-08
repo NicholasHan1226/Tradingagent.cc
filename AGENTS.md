@@ -59,7 +59,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - A股 simulated 新买入只允许来自 candidate 层；watch 只能观察，holdings 只参与持仓/卖出/换仓评估，候选池为空或 candidate pool 异常时必须 fail-closed 为无交易，不能回退到顺序 universe 或资产表样本。
 - A股候选池分层必须复用同一轮六维预计算评分；空池时先用 `score_diagnostics` 区分样本覆盖、研究维度中性、策略阈值未过或候选池分层异常，不得回退硬买。
 - A股 simulated 订单必须携带来源字段：买入为 `candidate_pool_layer=candidate`、`execution_source=ashare_candidate_layer`；卖出/压缩为 `execution_source=ashare_rebalance_sell`，便于复盘确认成交来源。
-- A股 server-local simulated 账本和签名回执必须持久化 `candidate_pool_layer` 与 `execution_source`。已发生但缺少这两个来源字段的 A股 simulated 成交保留为账户事实和链路验证样本，不作为策略有效样本参与胜率、方向命中、归因、策略 PnL 或自我进化。
+- A股 server-local simulated 账本和签名回执必须持久化 `candidate_pool_layer`、`execution_source`、`fill_price_source`、`fill_price_source_class` 与 `fill_evidence`。已发生但缺少候选来源或成交价来源字段的 A股 simulated 成交保留为账户事实和链路验证样本，不作为策略有效样本参与胜率、方向命中、归因、策略 PnL 或自我进化。
 - A股 auto pipeline 不得用 `price=1.0` 作为候选或执行信号兜底；缺真实分钟/日线价格时跳过该候选或信号。
 - 组合构建前过滤 `price <= 0`，记录到 `skipped_candidates`。
 - Tushare daily `amount` 按千元口径存储，流动性比较前必须换算为元。
@@ -92,6 +92,11 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - `REAL_TRADING_ENABLED` 默认关闭；任何实盘订单、实盘队列提交或人工确认流程在开关未显式启用时必须拒绝。
 - 实盘订单必须先通过手工确认 token、单笔/单日资金硬上限、A股交易时段、T+1、emergency halt 文件检查；任一失败必须抛 `SafetyViolation`，不能降级为 simulated/shadow。
 - `signals/real/pending` 仍是人工确认后的隔离队列；不得被视为自动下单、自动点击或已成交证明。成交状态只接受带 `receipt_sha256`/`checksum`/`sha256` 校验的回执。
+
+### 看板收益口径
+
+- 前端只读快照统一以人民币展示跨市场收益；US/Crypto/PM 的原币 PnL、realized/unrealized PnL、max drawdown 在进入 `marketSummaries[]`、全市场收益曲线和首页汇总前必须折算为 CNY。
+- `style_performance.jsonl` 若提供 `*_cny` 或 `fx_to_cny`，优先使用行内字段；否则 US/Crypto/PM 按 10,000 USD/USDT/USDC 原币本金对应的规范汇率折算。不得用原币 PnL 除以人民币本金，也不得让旧账本本金覆盖规范本金。
 
 ### LLM/DeepSeek 使用边界
 

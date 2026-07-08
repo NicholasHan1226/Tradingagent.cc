@@ -143,6 +143,58 @@ def _first_value(*values: Any, default: Any = None) -> Any:
     return default
 
 
+def _snapshot_field_source(
+    field: str,
+    order: dict[str, Any],
+    config: dict[str, Any],
+    card: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> str:
+    for owner_name, owner in (("order", order), ("config", config)):
+        source_snapshot = owner.get("market_snapshot")
+        if isinstance(source_snapshot, dict) and source_snapshot.get(field) not in (None, ""):
+            return f"{owner_name}.market_snapshot.{field}"
+    if order.get(field) not in (None, ""):
+        return f"order.{field}"
+    if config.get(field) not in (None, ""):
+        return f"config.{field}"
+    if field in {"ask_price", "bid_price", "last_price"} and card.get("price") not in (None, ""):
+        if snapshot.get(field) == card.get("price"):
+            return "signal_card.price"
+    if snapshot.get(field) not in (None, ""):
+        return f"snapshot.{field}"
+    return ""
+
+
+def _fill_evidence_from_snapshot(
+    order: dict[str, Any],
+    config: dict[str, Any],
+    card: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    side = str(card.get("side") or order.get("side") or "buy").lower()
+    quote_field = "ask_price" if side == "buy" else "bid_price"
+    quote_source = _snapshot_field_source(quote_field, order, config, card, snapshot)
+    last_source = _snapshot_field_source("last_price", order, config, card, snapshot)
+    volume_source = (
+        _snapshot_field_source("bar_volume", order, config, card, snapshot)
+        or _snapshot_field_source("volume", order, config, card, snapshot)
+        or _snapshot_field_source("vol", order, config, card, snapshot)
+    )
+    source_class = "market_data" if quote_source and quote_source != "signal_card.price" else "signal_card_price"
+    return {
+        "fill_price_field": quote_field,
+        "fill_price_source": quote_source or last_source or "unknown",
+        "fill_price_source_class": source_class,
+        "quote_price": snapshot.get(quote_field),
+        "last_price": snapshot.get("last_price"),
+        "last_price_source": last_source,
+        "bar_volume": _first_value(snapshot.get("bar_volume"), snapshot.get("volume"), snapshot.get("vol")),
+        "bar_volume_source": volume_source,
+        "bar_time": _first_value(order.get("bar_time"), order.get("trade_time"), config.get("bar_time"), config.get("trade_time"), snapshot.get("bar_time"), snapshot.get("trade_time")),
+    }
+
+
 def _date_iso(value: Any, fallback: str) -> str:
     raw = str(value or "").strip()
     if len(raw) == 8 and raw.isdigit():
@@ -259,6 +311,11 @@ def _execute_server_local(
     safe_card = dict(card)
     safe_card["direct_execution"] = False
     safe_metadata["signal_card"] = safe_card
+    market_snapshot = _snapshot_from_payload(order, account, config, card)
+    fill_evidence = _fill_evidence_from_snapshot(order, config, card, market_snapshot)
+    safe_metadata["fill_evidence"] = fill_evidence
+    safe_metadata["fill_price_source"] = fill_evidence["fill_price_source"]
+    safe_metadata["fill_price_source_class"] = fill_evidence["fill_price_source_class"]
     sim_order = SimOrder(
         symbol=str(card["ts_code"]),
         side=str(card.get("side") or "buy"),
@@ -271,7 +328,7 @@ def _execute_server_local(
         metadata=safe_metadata,
     )
     engine = SimExecutionEngine(MARKET, profile=config.get("sim_engine_profile"))
-    record = engine.submit_order(sim_order, _snapshot_from_payload(order, account, config, card))
+    record = engine.submit_order(sim_order, market_snapshot)
     status = "pending" if record.state == "open" else record.state
     fee = float((record.fees or {}).get("total", 0.0) or 0.0)
     reason_suffix = f": {record.reason}" if getattr(record, "reason", "") else ""
@@ -287,6 +344,8 @@ def _execute_server_local(
             "mode": "server_local_sim_engine",
             "hermes_enabled": False,
             "signal_card": card,
+            "market_snapshot": market_snapshot,
+            "fill_evidence": fill_evidence,
             "engine_record": record.as_dict(),
         },
     )

@@ -295,20 +295,20 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月3日', timestamp: '20260703', simulated: 1, target: 4, benchmark: 0, opportunity: -4 },
-      { day: '现在', timestamp: '20260704', simulated: 1.73, target: 8, benchmark: 0, opportunity: -2 },
+      { day: '7月3日', timestamp: '20260703', simulated: 0.1, target: 4, benchmark: 0, opportunity: -0.4 },
+      { day: '现在', timestamp: '20260704', simulated: 0.17, target: 8, benchmark: 0, opportunity: -0.2 },
     ])
     expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 17.25,
-      returnPct: 1.73,
-      capitalBase: 1000,
+      pnlAmount: 124.2,
+      returnPct: 0.17,
+      capitalBase: 72000,
       targetPct: 8,
-      maxDrawdownPct: 4,
+      maxDrawdownPct: 0.4,
       tradeCount: 2,
       pointCount: 2,
       pnlSource: 'sim_ledger_mark_to_market',
-      realizedPnl: 0.5,
-      unrealizedPnl: 16.75,
+      realizedPnl: 3.6,
+      unrealizedPnl: 120.6,
     })
     expect(snapshot.domains.performance.status).toBe('ready')
     expect(snapshot.sourceRefs.performanceTracker).toBe('shared/review/*/style_performance.jsonl')
@@ -481,13 +481,13 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.performance).toEqual([
-      { day: '7月3日 09:00', timestamp: '2026-07-03T01:00:00+00:00', simulated: 0.5, target: 2.67, benchmark: 0, opportunity: -1 },
-      { day: '7月3日 10:00', timestamp: '2026-07-03T02:00:00+00:00', simulated: 1, target: 5.33, benchmark: 0, opportunity: -1 },
-      { day: '现在', timestamp: '2026-07-04T01:30:00+00:00', simulated: 3, target: 8, benchmark: 0, opportunity: -1 },
+      { day: '7月3日 09:00', timestamp: '2026-07-03T01:00:00+00:00', simulated: 0.05, target: 2.67, benchmark: 0, opportunity: -0.1 },
+      { day: '7月3日 10:00', timestamp: '2026-07-03T02:00:00+00:00', simulated: 0.1, target: 5.33, benchmark: 0, opportunity: -0.1 },
+      { day: '现在', timestamp: '2026-07-04T01:30:00+00:00', simulated: 0.3, target: 8, benchmark: 0, opportunity: -0.1 },
     ])
     expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 30,
-      returnPct: 3,
+      pnlAmount: 216,
+      returnPct: 0.3,
       pointCount: 3,
     })
   })

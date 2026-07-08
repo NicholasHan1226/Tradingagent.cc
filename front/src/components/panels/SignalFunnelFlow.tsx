@@ -75,18 +75,21 @@ export function SignalFunnelFlow({
     ? buildEventParticles(events)
     : hasHoldingReplay
       ? buildHoldingParticles(holdings)
-    : buildParticles(hasSignalData ? signals : placeholderSignals(), funnel.mode)
+      : hasSignalData
+        ? buildParticles(signals, funnel.mode)
+        : []
   const latestEvents = events.slice(-4).reverse()
   const firstStageCount = Math.max(1, visualStages[0]?.count ?? signals.length)
   const finalStageCount = visualStages.at(-1)?.count ?? 0
   const conversionRate = Math.round((finalStageCount / firstStageCount) * 100)
+  const hasFlowVolume = hasEventSource || hasHoldingReplay || hasSignalData
 
   return (
     <section className="signal-flow-module" aria-label="机会管道">
       <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''}`}>
         <div className="flow-caption">
           <span>机会管道 <b>{modeLabel}</b></span>
-          <strong>{caption} · 转化 {conversionRate}%</strong>
+          <strong>{hasFlowVolume ? `${caption} · 转化 ${conversionRate}%` : caption}</strong>
         </div>
         <div className="real-funnel-stage-grid" aria-hidden="true">
           {visualStages.map((stage, index) => (
@@ -431,22 +434,6 @@ function isReadableLabel(label: string) {
 function compactSymbol(symbol: string) {
   if (symbol.length <= 8) return symbol
   return symbol.replace(/(\.US|\.SH|\.SZ|\.CFFEX|\.SHFE|\.DCE|\.CZCE|\.INE|\.GFEX|-USD|-PERP)$/i, '').slice(0, 8)
-}
-
-function placeholderSignals(): SignalRow[] {
-  return Array.from({ length: 12 }, (_, index) => ({
-    symbol: '',
-    name: '',
-    market: 'All Markets',
-    method: '',
-    status: 'pending',
-    impact: '',
-    confidence: '',
-    age: '',
-    reason: '',
-    next: '',
-    steps: 1 + (index % 4),
-  }))
 }
 
 function getStopStage(signal: SignalRow) {

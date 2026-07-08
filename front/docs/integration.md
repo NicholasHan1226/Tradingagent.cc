@@ -64,6 +64,13 @@ Display-ready fields used by the homepage:
   simulated return series from `shared/review/*/style_performance.jsonl` by
   summing `pnl` per date and normalizing it against the simulated ledger
   capital base from `shared/logs/sim_ledger/*/*/positions.json`.
+- `style_performance.jsonl` money fields are normalized to dashboard CNY. Rows
+  may provide explicit `pnl_cny`, `total_pnl_cny`, `net_pnl_cny`,
+  `realized_pnl_cny`, `unrealized_pnl_cny`, and `max_dd_cny`. If explicit CNY
+  fields are absent, the reader uses `fx_to_cny` / `exchange_rate_to_cny`,
+  then `pnl_currency` / `currency`, then the market default FX rule. This keeps
+  US, Crypto, PM, HK, A-share, and CNFutures summaries comparable on the
+  dashboard.
 - When matching simulated `trade_journal.jsonl` timestamps are available for
   the same market/style/date, the reader expands style-level daily PnL into a
   trade-timed return curve. This preserves the style performance PnL total while
@@ -87,6 +94,12 @@ Display-ready fields used by the homepage:
   `execution_source=ashare_rebalance_sell` for sells, remain visible as account
   facts and chain-validation samples, but do not count toward strategy PnL,
   win rate, attribution, or self-evolution.
+- Strategy-valid A-share buy/sell samples must also carry fill price
+  provenance from market data, such as `fill_price_source_class=market_data`
+  or a `fill_evidence.fill_price_source` pointing to an order/config market
+  snapshot price. Rows filled only from a signal-card/requested price remain
+  account facts and chain-validation samples until market-data provenance is
+  present.
 - A-share account display may use `pnlSource` values
   `ashare_local_sim_account`, `ashare_local_sim_mark_to_market`, and
   `ashare_local_sim_trade_price_fallback`. These are read-only display labels;
@@ -107,6 +120,12 @@ Display-ready fields used by the homepage:
   `style_performance.jsonl`, and `style_comparison.json`. This lets the front
   show why a selected market has data, partial data, or no data without
   inventing trades.
+- When `style_performance.jsonl` is used as a fallback performance source,
+  US/Crypto/PM money fields are normalized to CNY before aggregation. Rows may
+  provide explicit `pnl_cny` / `realized_pnl_cny` / `unrealized_pnl_cny` /
+  `max_dd_cny` or `fx_to_cny`; otherwise USD/USDT/USDC markets use the standard
+  dashboard FX rate and the normalized 10,000 original-currency capital base.
+  The reader must not divide original-currency PnL by a CNY capital base.
 - Market switching is strict. Selecting `A-share`, `US`, `Crypto`, `PM`, or
   `CNFutures` filters signals and holdings to that market. It must not fall
   back to all-market rows when the selected market has no records.
@@ -155,6 +174,11 @@ Display-ready fields used by the homepage:
   aggregating. Mixed amount/percentage batches should show a waiting or
   normalization state instead of pretending both units share one allocation
   scale.
+- A-share server-local simulated trades are valid strategy samples only when
+  both candidate provenance and fill-price provenance exist. The local ledger
+  and signed receipts should carry `candidate_pool_layer`, `execution_source`,
+  `fill_price_source`, `fill_price_source_class`, and `fill_evidence`; missing
+  fill provenance is a chain-validation sample, not strategy PnL.
 
 ## Result-First Panel Rules
 

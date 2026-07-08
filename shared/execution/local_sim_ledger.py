@@ -68,6 +68,9 @@ class LocalSimTrade:
     source: str = "server_local_sim_backup"
     candidate_pool_layer: str = ""
     execution_source: str = ""
+    fill_price_source: str = ""
+    fill_price_source_class: str = ""
+    fill_evidence: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
     trade_timestamp_bj: str = ""
     ashare_session_valid: bool = True
@@ -244,6 +247,9 @@ def _build_signed_receipt(
                 "commission": trade.commission,
                 "stamp_duty": trade.stamp_duty,
                 "net_amount": trade.net_amount,
+                "fill_price_source": trade.fill_price_source,
+                "fill_price_source_class": trade.fill_price_source_class,
+                "fill_evidence": trade.fill_evidence,
             }
         )
     if extra:
@@ -612,18 +618,35 @@ def record_local_sim_order(
     order_id = str(order.get("order_id") or f"LSIM-ASHARE-{datetime.now().strftime('%Y%m%d%H%M%S')}")
     idempotency_key = str(order.get("idempotency_key") or order_id)
     account_name = _account_name(account or order.get("account") or DEFAULT_ACCOUNT)
+    linked_status = str(getattr(receipt, "status", "") or (receipt.get("status") if isinstance(receipt, dict) else "") or "")
+    linked_avg_price = _safe_float(getattr(receipt, "avg_price", None) or (receipt.get("avg_price") if isinstance(receipt, dict) else None), 0.0)
+    raw_response = getattr(receipt, "raw_response", None)
+    if raw_response is None and isinstance(receipt, dict):
+        raw_response = receipt.get("raw_response")
+    if not isinstance(raw_response, dict):
+        raw_response = {}
+    metadata = order.get("metadata") if isinstance(order.get("metadata"), dict) else {}
+    fill_evidence = raw_response.get("fill_evidence") if isinstance(raw_response.get("fill_evidence"), dict) else metadata.get("fill_evidence")
+    if not isinstance(fill_evidence, dict):
+        fill_evidence = {}
+    fill_price_source = str(order.get("fill_price_source") or metadata.get("fill_price_source") or fill_evidence.get("fill_price_source") or "")
+    fill_price_source_class = str(order.get("fill_price_source_class") or metadata.get("fill_price_source_class") or fill_evidence.get("fill_price_source_class") or "")
     if 'local_sim_slippage_bps' in config:
         slippage_bps = _safe_float(config.get('local_sim_slippage_bps'), 5.0)
     else:
         slippage_bps = _safe_float(os.environ.get('ASHARE_LOCAL_SIM_SLIPPAGE_BPS'), 5.0)
-    filled_price = requested_price * (1.0 + slippage_bps / 10000.0) if side == "buy" else requested_price * (1.0 - slippage_bps / 10000.0)
+    if linked_avg_price > 0:
+        filled_price = linked_avg_price
+        if requested_price > 0:
+            direction = 1.0 if side == "buy" else -1.0
+            slippage_bps = round(((filled_price / requested_price) - 1.0) * 10000.0 * direction, 6)
+    else:
+        filled_price = requested_price * (1.0 + slippage_bps / 10000.0) if side == "buy" else requested_price * (1.0 - slippage_bps / 10000.0)
     filled_price = round(filled_price, 4)
     amount = round(quantity * filled_price, 2)
     commission = round(max(amount * 0.00025, 5.0), 2)
     stamp_duty = round(amount * 0.0005, 2) if side == "sell" else 0.0
     net_amount = round(amount + commission + stamp_duty, 2) if side == "buy" else round(amount - commission - stamp_duty, 2)
-    linked_status = str(getattr(receipt, "status", "") or (receipt.get("status") if isinstance(receipt, dict) else "") or "")
-    metadata = order.get("metadata") if isinstance(order.get("metadata"), dict) else {}
     candidate_pool_layer = str(order.get("candidate_pool_layer") or metadata.get("candidate_pool_layer") or "")
     execution_source = str(order.get("execution_source") or metadata.get("execution_source") or "")
     if linked_status and linked_status not in {"filled", "partial"}:
@@ -665,6 +688,9 @@ def record_local_sim_order(
         net_amount=net_amount,
         candidate_pool_layer=candidate_pool_layer,
         execution_source=execution_source,
+        fill_price_source=fill_price_source,
+        fill_price_source_class=fill_price_source_class,
+        fill_evidence=fill_evidence,
         created_at=created_at,
         trade_timestamp_bj=str(session_metadata["trade_timestamp_bj"]),
         ashare_session_valid=bool(session_metadata["ashare_session_valid"]),
@@ -694,6 +720,9 @@ def record_local_sim_order(
                 extra={
                     "candidate_pool_layer": candidate_pool_layer,
                     "execution_source": execution_source,
+                    "fill_price_source": fill_price_source,
+                    "fill_price_source_class": fill_price_source_class,
+                    "fill_evidence": fill_evidence,
                 },
             )
         )
@@ -706,6 +735,8 @@ def record_local_sim_order(
         "account": account_name,
         "filled_qty": quantity,
         "avg_price": filled_price,
+        "fill_price_source": fill_price_source,
+        "fill_price_source_class": fill_price_source_class,
         "net_amount": net_amount,
         "ledger": "server_local_sim_backup",
         "receipt_path": str(LOCAL_SIM_RECEIPTS),
