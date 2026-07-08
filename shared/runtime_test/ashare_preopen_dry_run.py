@@ -358,7 +358,7 @@ def _execution_gate(
     if no_budget_by_plan and "missing_or_non_positive_price" in blockers:
         blockers = [item for item in blockers if item != "missing_or_non_positive_price"]
     return {
-        "status": "pass" if not blockers and not no_budget_by_plan else ("warn" if no_budget_by_plan and not blockers else "fail"),
+        "status": "pass" if not blockers else "fail",
         "ready": not blockers and not no_budget_by_plan,
         "reason": "capital_plan_no_new_buy_budget" if no_budget_by_plan and not blockers else ("synthetic_order_gate_ready" if not blockers else "synthetic_order_gate_blocked"),
         "blockers": blockers,

@@ -1189,7 +1189,6 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     if crontab_error and not crontab_text:
         warn_reasons.append("crontab_unreadable")
 
-    status = "fail" if hard_fail_reasons else ("warn" if warn_reasons else "pass")
     strategy_wait = (
         not hard_fail_reasons
         and any(
@@ -1201,6 +1200,7 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
             )
         )
     )
+    status = "fail" if hard_fail_reasons else ("pass" if strategy_wait else ("warn" if warn_reasons else "pass"))
     market_data_wait = (
         not hard_fail_reasons
         and not strategy_wait
@@ -1222,7 +1222,7 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
         else "normal"
     )
     execution_fault = bool(hard_fail_reasons)
-    state_label = "正常" if status == "pass" else ("策略等待" if strategy_wait else "数据等待" if market_data_wait else "需要处理")
+    state_label = "策略等待" if strategy_wait else ("正常" if status == "pass" else ("数据等待" if market_data_wait else "需要处理"))
     return Check(
         f"{market}_sim_loop",
         status,

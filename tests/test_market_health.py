@@ -486,7 +486,7 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["diagnostic_class"], "market_data_wait")
         self.assertEqual(check.details["execution_fault"], False)
 
-    def test_pm_sim_market_loop_warns_when_model_probability_is_missing(self) -> None:
+    def test_pm_sim_market_loop_observes_when_model_probability_is_missing(self) -> None:
         with patch.object(
             market_health,
             "_probe_market_data",
@@ -494,13 +494,13 @@ class MarketHealthTest(unittest.TestCase):
         ):
             check = market_health._check_sim_market_loop("pm", "job_pm_sim.sh")
 
-        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["fail_reasons"], [])
         self.assertIn("pm_waiting_for_marketgraph_probability", check.details["warn_reasons"])
         self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
         self.assertEqual(check.details["execution_fault"], False)
 
-    def test_pm_sim_market_loop_warns_when_model_edge_is_below_threshold(self) -> None:
+    def test_pm_sim_market_loop_observes_when_model_edge_is_below_threshold(self) -> None:
         with patch.object(
             market_health,
             "_probe_market_data",
@@ -508,13 +508,13 @@ class MarketHealthTest(unittest.TestCase):
         ):
             check = market_health._check_sim_market_loop("pm", "job_pm_sim.sh")
 
-        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["fail_reasons"], [])
         self.assertIn("pm_waiting_for_model_edge", check.details["warn_reasons"])
         self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
         self.assertEqual(check.details["execution_fault"], False)
 
-    def test_crypto_sim_market_loop_warns_when_momentum_threshold_not_met(self) -> None:
+    def test_crypto_sim_market_loop_observes_when_momentum_threshold_not_met(self) -> None:
         with patch.object(
             market_health,
             "_probe_market_data",
@@ -527,7 +527,7 @@ class MarketHealthTest(unittest.TestCase):
         ):
             check = market_health._check_sim_market_loop("crypto", "job_crypto_sim.sh")
 
-        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["fail_reasons"], [])
         self.assertIn("crypto_waiting_for_momentum_signal", check.details["warn_reasons"])
         self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
@@ -550,7 +550,7 @@ class MarketHealthTest(unittest.TestCase):
         ):
             check = market_health._check_sim_market_loop("crypto", "job_crypto_sim.sh")
 
-        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["ledger"]["trade_rows"], 1)
         self.assertIn("crypto_waiting_for_momentum_signal", check.details["warn_reasons"])
         self.assertEqual(check.details["diagnostic_class"], "strategy_wait")

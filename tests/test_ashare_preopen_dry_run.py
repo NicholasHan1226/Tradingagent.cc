@@ -177,7 +177,7 @@ class AsharePreopenDryRunTest(unittest.TestCase):
 
         self.assertEqual(universe, ["600000.SH", "600001.SH"])
 
-    def test_execution_gate_warns_not_fails_when_capital_plan_has_no_new_budget(self) -> None:
+    def test_execution_gate_observes_when_capital_plan_has_no_new_budget(self) -> None:
         db_path = self._db(latest_date="20260706", count=1)
         gate = ashare_preopen_dry_run._execution_gate(
             reader=object(),
@@ -188,7 +188,7 @@ class AsharePreopenDryRunTest(unittest.TestCase):
             now=datetime.fromisoformat("2026-07-08T08:35:00+08:00"),
         )
 
-        self.assertEqual(gate["status"], "warn")
+        self.assertEqual(gate["status"], "pass")
         self.assertEqual(gate["reason"], "capital_plan_no_new_buy_budget")
         self.assertFalse(gate["ready"])
         self.assertEqual(gate["blockers"], [])
