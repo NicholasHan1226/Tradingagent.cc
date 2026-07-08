@@ -138,8 +138,8 @@ Display-ready fields used by the homepage:
   market labels such as `cn_futures` map to `CNFutures`.
 - Signal stage timestamps can be supplied as `discovered_at`, `scored_at`,
   `debated_at`, `risk_checked_at`, and `triggered_at`. The reader maps existing
-  status and timestamps into `发现 / 评分 / 风控 / 待执行 / 成交 / 错过 / 拒绝`
-  so the animated funnel reflects only real read-only file state.
+  status and timestamps into `发现 / 研判 / 风控 / 待确认 / 结果` so the animated
+  funnel reflects only real read-only file state.
 - `funnelEvents[]`: read-only display events derived from `signals[]` and the
   simulated ledger. Each event carries `symbol`, `market`, `stage`, `status`,
   `source`, and optional `opportunityId`, `sequence`, `at`, `reason`,
@@ -153,9 +153,16 @@ Display-ready fields used by the homepage:
   otherwise the read model derives a stable id from market, symbol, queue
   bucket, and filename without exposing server paths.
 - `sequence` should increase from discovery to result. The current event stages
-  map to `1=发现`, `2=研判`, `3=风控`, `4=队列`, `5=结果`. `terminal=true`
+  map to `1=发现`, `2=研判`, `3=风控`, `4=待确认`, `5=结果`. `terminal=true`
   marks the event that ends the current path, such as a fill, block, review, or
   final result.
+- Simulated ledger rows may provide `opportunity_id`, `signal_id`, `trace_id`,
+  `order_id`, or `card_id`. When one of these matches the queue row, the reader
+  keeps discovery, risk, and final result in one visible funnel path instead of
+  showing duplicate opportunities.
+- Missed, expired, failed, and cancelled rows are terminal review outcomes.
+  They should be shown as review/abandoned results, not counted as current
+  pending opportunities.
 - The homepage treats `signal_queue` events as the source of a true opportunity
   funnel. A matching `sim_ledger` result for the same market and symbol may
   complete the final outcome stage, but simulated-ledger rows alone are only a
@@ -210,6 +217,12 @@ Panel numbers must be derived from the snapshot fields passed into the React
 page, not from production-looking constants in component files. If a source is
 missing, show a clear empty or waiting state instead of substituting sample
 return, opportunity, position, attribution, or risk values.
+
+Sample dashboard data is allowed only for local development or explicit
+`VITE_TRADING_AGENT_DEMO_PREVIEW=1` review. Production builds must show a
+waiting/unavailable state when the snapshot API is unavailable; they must not
+display sample money, opportunities, holdings, or funnel events as if they were
+live results.
 
 The homepage funnel is a live result view, not a decorative flow. It should
 prefer `funnelEvents[]` from the read model, and may fall back to

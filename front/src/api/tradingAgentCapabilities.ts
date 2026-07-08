@@ -31,7 +31,7 @@ export const tradingAgentCapabilities: TradingAgentCapability[] = [
   },
   {
     id: 'performance',
-    display: '实时收益',
+    display: '收益结果',
     status: 'partial',
     dashboardSurface: '主页收益曲线 / 收益页',
     readableSources: ['shared/review/daily/daily_brief.jsonl', 'shared/review/daily/midday_review.jsonl', 'signals/filled/*.json', 'shared/accounting/position_plan.jsonl'],

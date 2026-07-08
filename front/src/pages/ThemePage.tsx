@@ -51,7 +51,7 @@ export function ThemePage({
         <section className="theme-main">
           <PageSummaryBoard activeMarket={activeMarket} holdings={holdings} marketSummary={marketSummary} page="收益" performance={data} portfolio={portfolio} signals={signals} />
           <section className="panel tall-panel">
-            <PanelTitle kicker="实时收益" title="模拟盘收益走势" />
+            <PanelTitle kicker="收益结果" title="模拟盘收益走势" />
             <StatusBoundary loading={<ChartSkeleton height={430} />} onRetry={onRetry} status={domainStatus('performance')}>
               <PerformanceChart data={data} events={events} height={430} latestPoint={latestPoint} onSelectEvent={setActivePage} showRangeControls />
             </StatusBoundary>

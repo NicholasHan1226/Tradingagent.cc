@@ -65,7 +65,7 @@ export function RealtimeReturnCard({
   const drawdownLabel = drawdownDistance !== null ? `${drawdownDistance.toFixed(2)}%` : '等待'
 
   return (
-    <aside className="realtime-return-card" aria-label="实时收益">
+    <aside className="realtime-return-card" aria-label="收益结果">
       <div className="return-card-head">
         <span>{isLive ? '实盘预留' : '模拟盘最新结果'}</span>
         <div className="return-mode-switch" aria-label="账户层切换" role="tablist">

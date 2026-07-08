@@ -11,7 +11,7 @@ export const pageMeta: Record<Page, PageMeta> = {
     mode: '全市场',
   },
   收益: {
-    title: '实时收益与目标',
+    title: '收益结果与目标',
     copy: '看清收益是否持续、主要靠什么、离目标和回撤边界还有多远。',
     mode: '收益',
   },

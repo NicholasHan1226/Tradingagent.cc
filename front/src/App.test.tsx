@@ -24,11 +24,11 @@ describe('App navigation and result-first dashboard', () => {
   it('renders the homepage around return, funnel, and chart without system wording', () => {
     render(<App />)
 
-    expect(screen.getByLabelText('实时收益')).toBeInTheDocument()
+    expect(screen.getByLabelText('收益结果')).toBeInTheDocument()
     expect(screen.getByLabelText('机会漏斗')).toBeInTheDocument()
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
-    expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
-    expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
+    expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
+    expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
     expect(screen.getAllByText('待确认').length).toBeGreaterThan(0)
@@ -460,7 +460,7 @@ describe('App navigation and result-first dashboard', () => {
   it('switches the return card between simulated and reserved live mode in place', () => {
     render(<App />)
 
-    const card = screen.getByLabelText('实时收益')
+    const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
     expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
@@ -484,7 +484,7 @@ describe('App navigation and result-first dashboard', () => {
   it('keeps the reserved live state inside the return card', () => {
     render(<App />)
 
-    const card = screen.getByLabelText('实时收益')
+    const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
     expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
