@@ -16,10 +16,13 @@ sys.path.insert(0, os.environ.get("TRADINGAGENT_ROOT", "/opt/investment/tradinga
 sys.path.insert(0, os.environ.get("SHARED_SIGNALS_ROOT", "/opt/investment/SharedSignals"))
 
 os.environ.setdefault("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082")
-os.environ.setdefault(
-    "SHARED_SIGNALS_DB",
-    "/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite",
-)
+if "SHARED_SIGNALS_DB" not in os.environ:
+    runtime_root = os.environ.get("SHAREDSIGNALS_RUNTIME_ROOT") or os.environ.get("SHAREDSIGNALS_ROOT")
+    if runtime_root and (Path(runtime_root) / "read_model" / "marketdata.sqlite").exists():
+        os.environ["SHARED_SIGNALS_DB"] = str(Path(runtime_root) / "read_model" / "marketdata.sqlite")
+    else:
+        fallback_root = os.environ.get("MARKETGRAPH_RUNTIME_ROOT", "/opt/investment/MarketGraphRuntime")
+        os.environ["SHARED_SIGNALS_DB"] = str(Path(fallback_root) / "read_model" / "marketdata.sqlite")
 
 from shared.data.reader import TradingagentDataReader
 from shared.markets.style_runner import StyleRunner

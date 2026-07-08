@@ -43,6 +43,9 @@ export function MarketSummaryPanel({
         <span>收益口径</span>
         <strong>{hasReturn && summary ? formatSummaryReturn(summary) : '等待收益'}</strong>
       </div>
+      {summary?.market === 'A-share' && summary.noTradeEvidence ? (
+        <AshareCapitalTrace summary={summary} />
+      ) : null}
     </section>
   )
 }
@@ -99,4 +102,30 @@ function formatSummaryReturn(summary: MarketSummary) {
       ? formatSignedCnyCompact(summary.pnlAmount)
       : formatCurrency(summary.pnlAmount)
   return [amountPart, returnPart].filter(Boolean).join(' · ')
+}
+
+function AshareCapitalTrace({ summary }: { summary: MarketSummary }) {
+  const evidence = summary.noTradeEvidence
+  if (!evidence) return null
+  const rows = [
+    evidence.strategyCashAvailable === undefined ? null : ['策略资金', formatSignedCnyCompact(evidence.strategyCashAvailable).replace('+', '')],
+    evidence.accountCashAvailable === undefined ? null : ['账户事实', formatSignedCnyCompact(evidence.accountCashAvailable).replace('+', '')],
+    evidence.strategyPositionCount === undefined && evidence.accountPositionCount === undefined
+      ? null
+      : ['策略/账户持仓', `${evidence.strategyPositionCount ?? 0}/${evidence.accountPositionCount ?? 0}`],
+    evidence.ignoredValidationSampleCount === undefined
+      ? null
+      : ['隔离样本', `${evidence.ignoredValidationSampleCount}`],
+  ].filter((row): row is [string, string] => Boolean(row))
+  if (!rows.length) return null
+  return (
+    <div className="ashare-capital-trace" aria-label="A股策略资金口径">
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </div>
+  )
 }

@@ -12,7 +12,7 @@ sentiment: 0.10
 # 各维度内部参数
 dimensions:
   macro:
-    # 数据源: regime detection (Dalio 4-quadrant)
+    # 数据源: SharedSignals/read model 优先；MarketGraph regime 作为可选宏观增强。
     source: regime
     # regime 对应的宏观倾向分 (0-1)
     regime_scores:
@@ -22,7 +22,7 @@ dimensions:
       recovery: 0.55     # 复苏
 
   event:
-    # 数据源: raw_events / news_brief / query_event_impact
+    # 数据源: SharedSignals events 优先；MarketGraph event graph 作为可选催化增强。
     source: raw_events
     # 事件影响方向: positive / negative / neutral
     # 每个事件有 direction + confidence
@@ -56,7 +56,7 @@ dimensions:
     ma_long: 20
 
   sentiment:
-    # 数据源: signals (市场情绪信号)
+    # 数据源: SharedSignals sentiment/market breadth 优先；MarketGraph sentiment signals 作为可选增强。
     source: signals
     # 情绪指标: 涨跌停比 / 换手率 / 北向
     # 极端情绪降权

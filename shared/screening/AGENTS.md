@@ -4,6 +4,7 @@
 
 ## 目标
 六维加权打分，不设硬门禁。维度：宏观/事件/基本面/资金/技术/情绪。主动发现机会。
+TradingAgent 自身负责短周期机会发现；MarketGraph 只作为宏观、事件、情绪和中长线图谱研究补充，不作为 A股/CNFutures 的执行信号入口。
 
 ## 文件
 - `six_dimension_scorer.py` — 六维打分: macro/event/fundamental/capital/technical/sentiment → combined score。
@@ -38,5 +39,6 @@ from screening.patrol import patrol
 
 ## 依赖
 - weights.yaml (本目录)
-- MarketGraph MCP (regime/event/news/impact)
+- SharedSignals / ShareChannel read model (assets, bars, factors, moneyflow, events, sentiment)
+- MarketGraph read model (regime/event/news/impact) 为可选增强；缺失时必须记录 evidence debt 或回到中性/安全空跑，不得绕过 candidate/执行门禁。
 - Ashare data (moneyflow/scores/signals/forecasts)

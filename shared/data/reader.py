@@ -27,10 +27,21 @@ def _default_shared_signals_db() -> Path:
     configured = os.environ.get("SHARED_SIGNALS_DB")
     if configured:
         return Path(configured)
-    runtime_root = Path(
-        os.environ.get("MARKETGRAPH_RUNTIME_ROOT", "/opt/investment/MarketGraphRuntime")
+    candidates: list[Path] = []
+    for key in ("SHAREDSIGNALS_RUNTIME_ROOT", "SHAREDSIGNALS_ROOT", "MARKETGRAPH_RUNTIME_ROOT"):
+        runtime_root = os.environ.get(key, "").strip()
+        if runtime_root:
+            candidates.append(Path(runtime_root) / "read_model" / "marketdata.sqlite")
+    candidates.extend(
+        [
+            Path("/opt/investment/SharedSignals/read_model/marketdata.sqlite"),
+            Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite"),
+        ]
     )
-    return runtime_root / "read_model" / "marketdata.sqlite"
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[-1]
 
 
 DEFAULT_SHARED_SIGNALS_DB = _default_shared_signals_db()

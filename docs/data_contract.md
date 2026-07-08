@@ -10,7 +10,11 @@ write paths.
 ## Canonical SharedSignals Inputs
 
 - SQLite read model:
-  `/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite`
+  `SHARED_SIGNALS_DB` or the active SharedSignals runtime read model. Some
+  production hosts still keep the physical SQLite file under the historical
+  `/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite` path; treat
+  that file as the SharedSignals read model, not as a MarketGraph execution
+  dependency.
 - Schema reference:
   `sharedsignals_schema.py` documents the 11 canonical tables:
   `market_assets`, `market_bars_daily`, `market_bars_intraday`,
@@ -134,7 +138,10 @@ forced into per-stock scores.
 ## Environment Variables
 
 - `SHARED_SIGNALS_DB`: overrides the SQLite path.
-  Default: `/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite`.
+  Default: `shared.data.reader.DEFAULT_SHARED_SIGNALS_DB`, which prefers
+  `SHAREDSIGNALS_RUNTIME_ROOT` / `SHAREDSIGNALS_ROOT` / `MARKETGRAPH_RUNTIME_ROOT`
+  if configured and falls back to the historical same-host read-model path only
+  for compatibility.
 - `MARKETGRAPH_DATA`: overrides the MarketGraph CSV root.
   Default: unset, which disables local CSV fallback. Configure it only in a
   same-host deployment or for an explicitly mounted MarketGraph export

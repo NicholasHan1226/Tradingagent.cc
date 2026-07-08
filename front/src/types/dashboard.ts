@@ -88,6 +88,12 @@ export type AShareNoTradeEvidence = {
   targetPositions?: number
   riskMode?: string
   allowedBuyCount?: number
+  accountCashAvailable?: number
+  strategyCashAvailable?: number
+  accountPositionCount?: number
+  strategyPositionCount?: number
+  ignoredValidationSampleCount?: number
+  strategySampleValidCount?: number
 }
 
 export type AShareAccountSummary = {

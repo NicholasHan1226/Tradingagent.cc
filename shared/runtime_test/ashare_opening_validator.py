@@ -16,7 +16,12 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+try:
+    from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB
+except Exception:  # pragma: no cover
+    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+
+DEFAULT_SQLITE_DB = DEFAULT_SHARED_SIGNALS_DB
 CN_TZ = timezone(timedelta(hours=8))
 NO_TRADE_LOG = Path(__file__).resolve().parents[1] / "logs" / "ashare_no_trade_explanations.jsonl"
 MAX_PRE_OPEN_DAILY_AGE_DAYS = 5

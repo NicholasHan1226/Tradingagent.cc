@@ -16,15 +16,15 @@ from . import MARKET
 from .contract_rules import is_executable_contract_symbol, normalize_product
 
 try:  # Optional in partial local checkouts.
-    from shared.data.reader import TradingagentDataReader
+    from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, TradingagentDataReader
 except Exception:  # pragma: no cover
+    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
     TradingagentDataReader = None  # type: ignore[assignment]
 
 
 READER_MARKET = "Futures"
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
 DEFAULT_REVIEW_ROOT = Path(__file__).resolve().parents[1] / "shared" / "review"
-DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
 
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "active_only": True,

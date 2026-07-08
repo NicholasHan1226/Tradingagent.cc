@@ -21,11 +21,12 @@ except ImportError:  # pragma: no cover - direct script execution fallback
     from CNFutures.contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
 
 try:
-    from shared.data.reader import TradingagentDataReader
+    from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, TradingagentDataReader
 except Exception:  # pragma: no cover
+    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
     TradingagentDataReader = None  # type: ignore[assignment]
 
-DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+DEFAULT_SQLITE_DB = DEFAULT_SHARED_SIGNALS_DB
 DEFAULT_SIGNALS_DIR = Path(__file__).resolve().parents[1] / "signals"
 DEFAULT_RECEIPT_PATH = Path(__file__).resolve().parents[1] / "signals" / "sim_execution_receipts.jsonl"
 DEFAULT_STYLE_WEIGHTS_PATH = Path(__file__).resolve().parents[1] / "shared" / "review" / "cn_futures" / "style_weights.json"

@@ -1157,6 +1157,7 @@ function buildAShareNoTradeEvidence(explanation?: AShareNoTradeExplanation): ASh
   const orderCount = firstParsedNumber(counts.orders)
   const candidateTrace = Array.isArray(explanation.candidate_decision_trace) ? explanation.candidate_decision_trace : []
   const capitalPlan = asRecord(explanation.capital_plan_decision)
+  const sampleAdjustment = asRecord(capitalPlan.sample_adjustment)
   const portfolioDecision = asRecord(explanation.portfolio_decision)
   const evidenceGaps: string[] = []
 
@@ -1182,6 +1183,12 @@ function buildAShareNoTradeEvidence(explanation?: AShareNoTradeExplanation): ASh
     targetPositions: firstParsedNumber(capitalPlan.target_positions),
     riskMode: optionalString(capitalPlan.risk_mode),
     allowedBuyCount: firstParsedNumber(portfolioDecision.allowed_buy_count),
+    accountCashAvailable: firstParsedNumber(capitalPlan.account_cash_available, sampleAdjustment.account_cash_available),
+    strategyCashAvailable: firstParsedNumber(capitalPlan.strategy_cash_available, capitalPlan.available_cash, sampleAdjustment.strategy_cash_available),
+    accountPositionCount: firstParsedNumber(sampleAdjustment.account_position_count),
+    strategyPositionCount: firstParsedNumber(sampleAdjustment.strategy_position_count),
+    ignoredValidationSampleCount: firstParsedNumber(sampleAdjustment.ignored_validation_sample_count),
+    strategySampleValidCount: firstParsedNumber(sampleAdjustment.strategy_sample_valid_count),
   }
 }
 

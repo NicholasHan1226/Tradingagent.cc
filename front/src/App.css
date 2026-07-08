@@ -2116,6 +2116,38 @@ button:not(:disabled) {
   font: 680 15px/1.2 var(--font-number);
 }
 
+.ashare-capital-trace {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--border-hairline);
+  border-left: 1px solid var(--border-hairline);
+}
+
+.ashare-capital-trace div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px 8px;
+  border-right: 1px solid var(--border-hairline);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.ashare-capital-trace span {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ashare-capital-trace strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font: 680 13px/1 var(--font-number);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ashare-evidence-list {
   display: grid;
   gap: 0;

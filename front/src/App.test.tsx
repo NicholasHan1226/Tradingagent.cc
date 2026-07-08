@@ -296,6 +296,11 @@ describe('App navigation and result-first dashboard', () => {
                   capitalPlanCapacity: 0,
                   riskMode: 'defensive',
                   allowedBuyCount: 0,
+                  strategyCashAvailable: 200000,
+                  accountCashAvailable: 82683.89,
+                  strategyPositionCount: 0,
+                  accountPositionCount: 2,
+                  ignoredValidationSampleCount: 2,
                 },
                 source: 'shared/runtime_test/sim_market_health_latest.json',
                 headline: 'A股模拟盘策略等待',
@@ -334,6 +339,18 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByText('资金分 82')).toBeInTheDocument()
     expect(screen.getByText('净流入 +¥1280.00万')).toBeInTheDocument()
     click(screen.getByRole('button', { name: '全市场' }))
+    click(screen.getByRole('menuitem', { name: /A股/ }))
+
+    expect(screen.getByLabelText('A股策略资金口径')).toBeInTheDocument()
+    expect(screen.getByText('策略资金')).toBeInTheDocument()
+    expect(screen.getByText('¥20.00万')).toBeInTheDocument()
+    expect(screen.getByText('账户事实')).toBeInTheDocument()
+    expect(screen.getByText('¥8.27万')).toBeInTheDocument()
+    expect(screen.getByText('策略/账户持仓')).toBeInTheDocument()
+    expect(screen.getByText('0/2')).toBeInTheDocument()
+    expect(screen.getByText('隔离样本')).toBeInTheDocument()
+
+    click(screen.getByRole('button', { name: 'A股' }))
     click(screen.getByRole('menuitem', { name: /加密/ }))
 
     expect(screen.getAllByText('等待机会').length).toBeGreaterThan(0)

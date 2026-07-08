@@ -19,11 +19,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from shared.notify import email_sender
+try:
+    from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB
+except Exception:  # pragma: no cover
+    DEFAULT_SHARED_SIGNALS_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
 
 CN_TZ = timezone(timedelta(hours=8))
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
 DEFAULT_SHAREDSIGNALS_ROOT = Path(os.environ.get("SHAREDSIGNALS_ROOT", "/opt/investment/SharedSignals"))
-DEFAULT_SQLITE_DB = Path("/opt/investment/MarketGraphRuntime/read_model/marketdata.sqlite")
+DEFAULT_SQLITE_DB = DEFAULT_SHARED_SIGNALS_DB
 LATEST = ROOT / "shared/runtime_test/opening_acceptance_latest.json"
 HISTORY = ROOT / "shared/runtime_test/opening_acceptance_history.jsonl"
 

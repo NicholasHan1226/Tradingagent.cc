@@ -1233,7 +1233,19 @@ describe('TradingAgent snapshot reader', () => {
           action: 'check_position_sizing_and_portfolio_constructor',
           counts: { universe: 3213, candidates: 3, orders: 0 },
           candidate_decision_trace: [{ symbol: '600000.SH', drop_reason: 'capital_plan_capacity_zero' }],
-          capital_plan_decision: { position_capacity: 0, target_positions: 0, risk_mode: 'defensive' },
+          capital_plan_decision: {
+            position_capacity: 0,
+            target_positions: 0,
+            risk_mode: 'defensive',
+            available_cash: 200000,
+            account_cash_available: 82683.89,
+            sample_adjustment: {
+              ignored_validation_sample_count: 2,
+              strategy_sample_valid_count: 0,
+              account_position_count: 2,
+              strategy_position_count: 0,
+            },
+          },
           portfolio_decision: { allowed_buy_count: 0 },
         },
       }) + '\n',
@@ -1263,6 +1275,11 @@ describe('TradingAgent snapshot reader', () => {
         evidenceStatus: 'ready',
         candidateCount: 3,
         orderCount: 0,
+        strategyCashAvailable: 200000,
+        accountCashAvailable: 82683.89,
+        ignoredValidationSampleCount: 2,
+        strategyPositionCount: 0,
+        accountPositionCount: 2,
       }),
     }))
   })
