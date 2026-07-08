@@ -10,6 +10,7 @@ describe('App navigation and result-first dashboard', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
