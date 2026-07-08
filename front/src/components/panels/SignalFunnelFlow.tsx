@@ -25,7 +25,9 @@ export function SignalFunnelFlow({
   signals: SignalRow[]
 }) {
   const funnel = getSignalFunnel(signals)
-  const eventFlow = getEventFlow(events)
+  const queueEvents = events.filter((event) => event.source === 'signal_queue')
+  const pipelineEvents = getPipelineEvents(events, queueEvents)
+  const eventFlow = getEventFlow(pipelineEvents)
   const hasHoldingContext = !events.length && !signals.length && holdings.length > 0
   const holdingSummary = hasHoldingContext ? getHoldingSummary(holdings) : null
   const visualStages = hasHoldingContext ? getHoldingVisualStages(holdings) : getVisualStages(funnel, eventFlow)
@@ -49,7 +51,7 @@ export function SignalFunnelFlow({
   const bottleneck = hasHoldingContext && holdingSummary
     ? getHoldingBottleneck(holdings, holdingSummary)
     : getBottleneck(visualStages.map((stage) => ({ label: stage.label, count: stage.count })))
-  const hasEventSource = events.length > 0
+  const hasEventSource = queueEvents.length > 0
   const eventCaption = eventFlow
     ? `${eventFlow.total} 个机会进入 · ${eventFlow.outcomes.executed} 个成交 · ${eventFlow.outcomes.abandoned} 个放弃`
     : '等待新机会'
@@ -74,13 +76,17 @@ export function SignalFunnelFlow({
           ? '暂无新机会'
           : '等待'
   const particles = hasEventSource
-    ? buildEventParticles(events)
+    ? buildEventParticles(pipelineEvents)
       : hasSignalData
         ? buildParticles(signals, funnel.mode)
         : hasHoldingContext
           ? buildHoldingParticles(holdings)
-        : []
-  const latestTapeItems = hasHoldingContext ? getHoldingTape(holdings) : []
+          : []
+  const latestTapeItems = hasHoldingContext
+    ? getHoldingTape(holdings)
+    : hasEventSource
+      ? getEventTape(pipelineEvents)
+      : getSignalTape(signals)
   const firstStageCount = Math.max(1, visualStages[0]?.count ?? signals.length)
   const finalStageCount = visualStages.at(-1)?.count ?? 0
   const conversionRate = Math.round((finalStageCount / firstStageCount) * 100)
@@ -338,6 +344,13 @@ type FlowTapeItem = {
   symbol: string
 }
 
+function getPipelineEvents(events: FunnelEvent[], queueEvents: FunnelEvent[]) {
+  if (!queueEvents.length) return []
+  const queueSymbols = new Set(queueEvents.map((event) => `${event.market}:${event.symbol}`))
+  const matchedResultEvents = events.filter((event) => event.source === 'sim_ledger' && event.stage === '结果' && queueSymbols.has(`${event.market}:${event.symbol}`))
+  return [...queueEvents, ...matchedResultEvents]
+}
+
 function getEventFlow(events: FunnelEvent[]): EventFlow | null {
   if (!events.length) return null
 
@@ -529,6 +542,39 @@ function buildHoldingParticles(holdings: HoldingRow[]) {
   })
 }
 
+function getEventTape(events: FunnelEvent[]): FlowTapeItem[] {
+  const seen = new Set<string>()
+  return events
+    .slice()
+    .reverse()
+    .filter((event) => {
+      const key = `${event.market}:${event.symbol}:${event.stage}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, 4)
+    .map((event, index) => ({
+      className: eventTapeClass(event),
+      id: `event-${event.id}-${index}`,
+      label: `${event.status}${event.at ? ` · ${event.at}` : ''}`,
+      stage: event.stage,
+      symbol: event.symbol,
+    }))
+}
+
+function getSignalTape(signals: SignalRow[]): FlowTapeItem[] {
+  return signals.slice(0, 4).map((signal, index) => ({
+    className: signalTapeClass(signal),
+    id: `signal-${signal.symbol}-${index}`,
+    label: signal.stageEvidence === 'replay'
+      ? '成交回放'
+      : `${signal.stage ?? '发现'} · ${signal.confidence}`,
+    stage: signal.status === 'executed' ? '结果' : signal.status === 'pending' ? '队列' : '复盘',
+    symbol: signal.symbol,
+  }))
+}
+
 function getHoldingTape(holdings: HoldingRow[]): FlowTapeItem[] {
   return holdings.slice(0, 4).map((holding, index) => {
     const label = holding.risk === '正常' ? `${holding.pnl} · 正常` : `${holding.pnl} · ${holding.risk}`
@@ -540,6 +586,22 @@ function getHoldingTape(holdings: HoldingRow[]): FlowTapeItem[] {
       symbol: holding.symbol,
     }
   })
+}
+
+function eventTapeClass(event: FunnelEvent) {
+  if (event.status === '拦截') return 'event-block'
+  if (event.status === '复盘') return 'event-review'
+  if (event.status === '等待' || event.status === '机会') return 'event-watch'
+  if (event.status === '成交') return 'event-filled'
+  return 'event-opportunity'
+}
+
+function signalTapeClass(signal: SignalRow) {
+  if (signal.status === 'blocked') return 'event-block'
+  if (signal.status === 'missed' || signal.status === 'cancelled') return 'event-review'
+  if (signal.status === 'pending') return 'event-watch'
+  if (signal.status === 'executed') return 'event-filled'
+  return 'event-opportunity'
 }
 
 function holdingTapeClass(holding: HoldingRow) {

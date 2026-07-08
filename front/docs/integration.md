@@ -144,6 +144,11 @@ Display-ready fields used by the homepage:
   simulated ledger. Each event carries `symbol`, `market`, `stage`, `status`,
   `source`, and optional `at` / `reason`, allowing the homepage funnel to
   animate real pipeline movement without writing to queues or inventing stages.
+- The homepage treats `signal_queue` events as the source of a true opportunity
+  funnel. A matching `sim_ledger` result for the same market and symbol may
+  complete the final outcome stage, but simulated-ledger rows alone are only a
+  completed-trade replay. This prevents old fills from pretending to be a live
+  screening funnel.
 - Homepage view portfolio: the browser derives the visible portfolio from the
   active market. `All Markets` aggregates `marketSummaries[]` capital and PnL
   when the top-level `portfolio` only represents one local account fallback.

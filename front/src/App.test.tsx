@@ -435,6 +435,8 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('信号').length).toBeGreaterThan(0)
     expect(screen.getAllByText('成交').length).toBeGreaterThan(0)
     expect(screen.getAllByText('放弃').length).toBeGreaterThan(0)
+    expect(screen.getByLabelText('最近管道事件')).toBeInTheDocument()
+    expect(screen.getAllByText('600519.SH').length).toBeGreaterThan(0)
   })
 
   it('switches the return card between simulated and reserved live mode in place', () => {
