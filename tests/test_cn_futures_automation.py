@@ -166,6 +166,34 @@ class DateScopedUniverseReader(FakeFuturesReader):
         return []
 
 
+class ApiPreferredUniverseReader(FakeFuturesReader):
+    def get_assets(self, market: str) -> list[dict[str, object]]:
+        if market != "Futures":
+            return []
+        return [
+            {"symbol": "CU2607.SHF", "name": "沪铜2607", "exchange": "SHFE", "status": "listed"},
+            {"symbol": "RB2607.SHF", "name": "螺纹钢2607", "exchange": "SHFE", "status": "listed"},
+        ]
+
+    def get_bars_intraday(
+        self,
+        market: str,
+        symbol: str,
+        interval: str = "5min",
+        start: object = None,
+        end: object = None,
+    ) -> list[dict[str, object]]:
+        if (
+            market == "Futures"
+            and interval == "5min"
+            and start == "20260707"
+            and end == "20260707"
+            and symbol == "CU2607.SHF"
+        ):
+            return [{"trade_date": "20260707", "bar_time": "2026-07-07 14:35:00", "close": 71000, "volume": 1200}]
+        return []
+
+
 class SQLiteSharedQuery:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -266,6 +294,51 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     )
 
                 self.assertEqual(adapter.get_intraday_universe("20260707"), ["RB2607.SHF", "RB2608.SHF"])
+            finally:
+                if old_db is None:
+                    os.environ.pop("SHARED_SIGNALS_DB", None)
+                else:
+                    os.environ["SHARED_SIGNALS_DB"] = old_db
+                if old_diag is None:
+                    os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
+                else:
+                    os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
+
+    def test_intraday_universe_prefers_api_before_diagnostic_sqlite(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "marketdata.sqlite"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE market_bars_intraday (
+                    market TEXT,
+                    symbol TEXT,
+                    bar_time TEXT,
+                    trade_date TEXT,
+                    interval TEXT,
+                    close REAL
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?, ?)",
+                ("Futures", "RB2607.SHF", "2026-07-07 14:35:00", "20260707", "5min", 3500.0),
+            )
+            conn.commit()
+            conn.close()
+            old_db = os.environ.get("SHARED_SIGNALS_DB")
+            old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
+            os.environ["SHARED_SIGNALS_DB"] = str(db_path)
+            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
+            try:
+                adapter = CNFuturesAdapter(
+                    reader=ApiPreferredUniverseReader(),
+                    universe_filter={"max_symbols": 2, "products": ("cu", "rb")},
+                )
+
+                self.assertEqual(adapter.get_intraday_universe("20260707"), ["CU2607.SHF"])
             finally:
                 if old_db is None:
                     os.environ.pop("SHARED_SIGNALS_DB", None)

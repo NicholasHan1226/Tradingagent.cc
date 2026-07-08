@@ -79,14 +79,13 @@ orders while duplicate reruns of the same bar remain idempotent.
 
 SharedSignals CN futures 5-minute collection defaults to the commodity products
 `rb/cu/i/m` plus stock-index futures `IF/IH/IC/IM`. The index-direction style
-must continue reading those bars through SharedSignals/read-model APIs rather
+must continue reading those bars through SharedSignals APIs rather
 than adding a separate TradingAgent data download path.
 
 Production readers use `SHAREDSIGNALS_API_URL` first for Futures assets,
 daily bars, and 5-minute bars. Direct SQLite read-model access is only a
 diagnostic/test path and must be explicitly enabled with
-`TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1`,
-or `CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK=1`. `SHARED_SIGNALS_DB` only
+`TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1`. `SHARED_SIGNALS_DB` only
 selects the diagnostic database after one of those explicit switches is set; it
 does not enable fallback by itself.
 

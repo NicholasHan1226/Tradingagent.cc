@@ -124,9 +124,11 @@ export type SignalRow = {
   symbol: string
   name: string
   market: Market
+  opportunityId?: string
   method: string
   strategyName?: string
   signalSource?: string
+  queueBucket?: string
   status: SignalStatus
   impact: string
   confidence: string
@@ -157,12 +159,16 @@ export type FunnelEvent = {
   id: string
   symbol: string
   market: Market
+  opportunityId?: string
+  sequence?: number
   stage: FunnelEventStage
   status: FunnelEventStatus
   label: string
   at?: string
   source: 'signal_queue' | 'sim_ledger'
   reason?: string
+  latencyMinutes?: number
+  terminal?: boolean
 }
 
 export type HoldingRow = {

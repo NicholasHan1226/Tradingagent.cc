@@ -10,7 +10,7 @@ const FLOW_STAGES = [
   { label: '初筛', fallbackIndex: 1 },
   { label: '研究', fallbackIndex: 1 },
   { label: '风控', fallbackIndex: 2 },
-  { label: '信号', fallbackIndex: 3 },
+  { label: '待确认', fallbackIndex: 3 },
 ] as const
 
 export function SignalFunnelFlow({
@@ -53,19 +53,19 @@ export function SignalFunnelFlow({
     : getBottleneck(visualStages.map((stage) => ({ label: stage.label, count: stage.count })))
   const hasEventSource = queueEvents.length > 0
   const eventCaption = eventFlow
-    ? `${eventFlow.total} 个机会进入 · ${eventFlow.outcomes.executed} 个成交 · ${eventFlow.outcomes.abandoned} 个放弃`
+      ? `${eventFlow.total} 个机会进入 · ${eventFlow.outcomes.executed} 个成交 · ${eventFlow.outcomes.abandoned} 个放弃`
     : '等待新机会'
   const caption = hasEventSource
     ? eventCaption
     : hasSignalData
     ? funnel.mode === 'screening' || hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
       ? `${signals.length} 个进入 · ${funnel.tradeSignals.length} 个留下 · ${funnel.executed.length} 个成交`
-      : `${signals.length} 条成交回放 · 转化 ${passRate}%`
+      : `${signals.length} 条历史结果 · 转化 ${passRate}%`
     : holdings.length > 0
       ? `0 个新机会 · ${holdings.length} 个持仓在跟踪`
       : '等待新机会'
   const modeLabel = hasEventSource
-    ? '实时'
+    ? '最新流动'
     : funnel.mode === 'screening'
     ? '筛选中'
     : funnel.mode === 'partial'
@@ -91,7 +91,7 @@ export function SignalFunnelFlow({
   const finalStageCount = visualStages.at(-1)?.count ?? 0
   const conversionRate = Math.round((finalStageCount / firstStageCount) * 100)
   const hasFlowVolume = hasEventSource || hasSignalData || hasHoldingContext
-  const moduleTitle = '机会管道'
+  const moduleTitle = '机会漏斗'
   const captionText = hasHoldingContext ? caption : hasFlowVolume ? `${caption} · 转化 ${conversionRate}%` : caption
   const flowSummary = getFlowSummary({
     bottleneck,
@@ -148,6 +148,15 @@ export function SignalFunnelFlow({
           </div>
         ) : hasFlowVolume ? (
           <>
+            <div className="flow-stage-strip" aria-label="机会筛选阶段摘要">
+              {visualStages.map((stage, index) => (
+                <span className={stage.dropped > 0 ? 'has-drop' : ''} key={`${stage.label}-summary`}>
+                  <em>{stage.label}</em>
+                  <strong>{stage.count}</strong>
+                  <b>{index === 0 ? '进入' : stage.dropped > 0 ? `减少 ${stage.dropped}` : '通过'}</b>
+                </span>
+              ))}
+            </div>
             <div className="real-funnel-body" role="img" aria-label="机会从发现到交易结果的动态筛选漏斗">
               <div className="real-funnel-rulers" aria-hidden="true">
                 {visualStages.map((stage, index) => (
@@ -224,9 +233,9 @@ export function SignalFunnelFlow({
           </>
         ) : (
           <div className="real-funnel-empty" role="status">
-            <span>机会管道</span>
+            <span>机会漏斗</span>
             <strong>{hasHoldingContext ? '暂无新机会' : '等待机会进入'}</strong>
-            <p>{hasHoldingContext ? `${holdings.length} 个持仓仍在跟踪，未生成新的可处理信号。` : '有机会进入后，这里会显示发现、研究、风控和队列流动。'}</p>
+            <p>{hasHoldingContext ? `${holdings.length} 个持仓仍在跟踪，未生成新的可处理机会。` : '有机会进入后，这里会显示发现、研究、风控和待确认变化。'}</p>
             {hasHoldingContext && holdingSummary && (
               <div className="holding-context-strip" aria-label="持仓跟踪状态">
                 <span><b>{holdings.length}</b>持仓</span>
@@ -397,8 +406,13 @@ type FlowTapeItem = {
 
 function getPipelineEvents(events: FunnelEvent[], queueEvents: FunnelEvent[]) {
   if (!queueEvents.length) return []
+  const queueKeys = new Set(queueEvents.map(eventGroupKey))
   const queueSymbols = new Set(queueEvents.map((event) => `${event.market}:${event.symbol}`))
-  const matchedResultEvents = events.filter((event) => event.source === 'sim_ledger' && event.stage === '结果' && queueSymbols.has(`${event.market}:${event.symbol}`))
+  const matchedResultEvents = events.filter((event) =>
+    event.source === 'sim_ledger' &&
+    event.stage === '结果' &&
+    (queueKeys.has(eventGroupKey(event)) || queueSymbols.has(`${event.market}:${event.symbol}`))
+  )
   return [...queueEvents, ...matchedResultEvents]
 }
 
@@ -406,7 +420,7 @@ function getEventFlow(events: FunnelEvent[]): EventFlow | null {
   if (!events.length) return null
 
   const bySignal = events.reduce<Record<string, FunnelEvent[]>>((groups, event) => {
-    const key = `${event.market}:${event.symbol}`
+    const key = eventGroupKey(event)
     groups[key] = [...(groups[key] ?? []), event]
     return groups
   }, {})
@@ -414,8 +428,8 @@ function getEventFlow(events: FunnelEvent[]): EventFlow | null {
   const signals = Object.values(bySignal)
   const hasStage = (rows: FunnelEvent[], stage: FunnelEvent['stage']) => rows.some((event) => event.stage === stage)
   const hasAnyStage = (rows: FunnelEvent[], stages: FunnelEvent['stage'][]) => stages.some((stage) => hasStage(rows, stage))
-  const resultRows = signals
-    .map((rows) => rows.find((event) => event.stage === '结果'))
+  const terminalRows = signals
+    .map((rows) => getLatestEvent(rows, (event) => event.stage === '结果' || event.terminal === true))
     .filter((row): row is FunnelEvent => Boolean(row))
 
   return {
@@ -425,13 +439,13 @@ function getEventFlow(events: FunnelEvent[]): EventFlow | null {
       初筛: signals.filter((rows) => hasAnyStage(rows, ['研判', '风控', '队列', '结果'])).length,
       研究: signals.filter((rows) => hasStage(rows, '研判')).length,
       风控: signals.filter((rows) => hasStage(rows, '风控')).length,
-      信号: signals.filter((rows) => hasStage(rows, '队列')).length,
+      待确认: signals.filter((rows) => hasStage(rows, '队列')).length,
     },
     outcomes: {
-      executed: resultRows.filter((event) => event.status === '成交').length,
-      pending: resultRows.filter((event) => event.status === '等待' || event.status === '机会').length,
-      review: resultRows.filter((event) => event.status === '复盘').length,
-      abandoned: resultRows.filter((event) => event.status === '拦截').length,
+      executed: terminalRows.filter((event) => event.status === '成交').length,
+      pending: signals.length - terminalRows.length + terminalRows.filter((event) => event.status === '等待' || event.status === '机会').length,
+      review: terminalRows.filter((event) => event.status === '复盘').length,
+      abandoned: terminalRows.filter((event) => event.status === '拦截').length,
     },
   }
 }
@@ -475,7 +489,7 @@ function eventStageWidth(count = 0, total: number) {
 function getEventStageHint(label: string, count: number, total: number, dropped: number) {
   if (count <= 0) return '等待'
   if (label === '发现') return '进入'
-  if (label === '信号') return '准备'
+  if (label === '待确认') return '准备'
   if (dropped > 0) return `留下 ${count}`
   return `${Math.round((count / Math.max(1, total)) * 100)}%`
 }
@@ -544,11 +558,12 @@ function buildParticles(rows: SignalRow[], mode: ReturnType<typeof getSignalFunn
 }
 
 function buildEventParticles(events: FunnelEvent[]) {
-  const visibleEvents = events.slice(-MAX_ANIMATED_SIGNALS)
-  const labelIndexes = pickEventLabelIndexes(visibleEvents)
+  const groups = getOpportunityEventGroups(events).slice(-MAX_ANIMATED_SIGNALS)
+  const labelIndexes = pickEventGroupLabelIndexes(groups)
 
-  return visibleEvents.map((event, index) => {
-    const stopStage = eventStageToStop(event.stage)
+  return groups.map((rows, index) => {
+    const event = getLatestEvent(rows) ?? rows[0]
+    const stopStage = Math.max(...rows.map((row) => eventStageToStop(row.stage)))
     const tone = event.status === '拦截' || event.status === '复盘'
       ? 'red'
       : event.status === '机会'
@@ -599,7 +614,7 @@ function getEventTape(events: FunnelEvent[]): FlowTapeItem[] {
     .slice()
     .reverse()
     .filter((event) => {
-      const key = `${event.market}:${event.symbol}:${event.stage}`
+      const key = `${eventGroupKey(event)}:${event.stage}`
       if (seen.has(key)) return false
       seen.add(key)
       return true
@@ -608,7 +623,7 @@ function getEventTape(events: FunnelEvent[]): FlowTapeItem[] {
     .map((event, index) => ({
       className: eventTapeClass(event),
       id: `event-${event.id}-${index}`,
-      label: `${event.status}${event.at ? ` · ${event.at}` : ''}`,
+      label: `${event.status}${event.at ? ` · ${event.at}` : ''}${event.latencyMinutes ? ` · ${event.latencyMinutes}m` : ''}`,
       stage: event.stage,
       symbol: event.symbol,
     }))
@@ -619,9 +634,9 @@ function getSignalTape(signals: SignalRow[]): FlowTapeItem[] {
     className: signalTapeClass(signal),
     id: `signal-${signal.symbol}-${index}`,
     label: signal.stageEvidence === 'replay'
-      ? '成交回放'
+      ? '历史结果'
       : `${signal.stage ?? '发现'} · ${signal.confidence}`,
-    stage: signal.status === 'executed' ? '结果' : signal.status === 'pending' ? '队列' : '复盘',
+    stage: signal.status === 'executed' ? '结果' : signal.status === 'pending' ? '待确认' : '复盘',
     symbol: signal.symbol,
   }))
 }
@@ -665,10 +680,13 @@ function isPositivePnl(value: string) {
   return /^\s*\+/.test(value)
 }
 
-function pickEventLabelIndexes(events: FunnelEvent[]) {
+function pickEventGroupLabelIndexes(groups: FunnelEvent[][]) {
   const seen = new Set<string>()
-  const selected = events
-    .map((event, index) => ({ index, label: compactSymbol(event.symbol), priority: eventPriority(event) }))
+  const selected = groups
+    .map((events, index) => {
+      const event = getLatestEvent(events) ?? events[0]
+      return { index, label: compactSymbol(event.symbol), priority: eventPriority(event) }
+    })
     .filter((row) => isReadableLabel(row.label))
     .sort((a, b) => b.priority - a.priority || b.index - a.index)
     .filter((row) => {
@@ -680,6 +698,34 @@ function pickEventLabelIndexes(events: FunnelEvent[]) {
     .map((row) => row.index)
 
   return new Set(selected)
+}
+
+function getOpportunityEventGroups(events: FunnelEvent[]) {
+  const groups = new Map<string, FunnelEvent[]>()
+  for (const event of events) {
+    const key = eventGroupKey(event)
+    groups.set(key, [...(groups.get(key) ?? []), event])
+  }
+
+  return Array.from(groups.values())
+    .map((rows) => rows.slice().sort(compareEvents))
+    .sort((a, b) => compareEvents(getLatestEvent(a) ?? a[0], getLatestEvent(b) ?? b[0]))
+}
+
+function getLatestEvent(events: FunnelEvent[], predicate: (event: FunnelEvent) => boolean = () => true) {
+  return events
+    .filter(predicate)
+    .slice()
+    .sort(compareEvents)
+    .at(-1)
+}
+
+function compareEvents(a: FunnelEvent, b: FunnelEvent) {
+  return (a.sequence ?? eventStageToStop(a.stage)) - (b.sequence ?? eventStageToStop(b.stage))
+}
+
+function eventGroupKey(event: FunnelEvent) {
+  return event.opportunityId ?? `${event.market}:${event.symbol}`
 }
 
 function eventPriority(event: FunnelEvent) {

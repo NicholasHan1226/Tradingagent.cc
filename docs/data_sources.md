@@ -26,7 +26,7 @@ simulation and review code.
   `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` is explicitly set.
 - `MARKETGRAPH_DATA` is retired for production use; use `MARKETGRAPH_API_URL`.
 - `MARKETGRAPH_API_URL` points to the MarketGraph read-only REST service for
-  API/read-model research evidence such as PM research probabilities.
+  research evidence such as PM research probabilities.
 - Trading calendar checks use `TradingagentDataReader.is_trading_day`; do not
   scan SharedSignals directories for calendar files.
 
@@ -51,7 +51,7 @@ cron templates and active documents should use the current sources above.
   under `signals/`.
 - Crypto / US: SharedSignals feeds the five-minute simulated loops;
   TradingAgent keeps simulated ledgers and style review outputs locally.
-- PM: SharedSignals feeds market/prices; MarketGraph unified API/read model
+- PM: SharedSignals feeds market/prices; MarketGraph unified API
   feeds independent research probabilities; TradingAgent combines them locally
   for simulated edge gating and ignores PM judgment fields embedded in
   SharedSignals rows.

@@ -13,12 +13,12 @@
 
 ## 特点
 - 交易时段: 21:30-04:00 (北京时间)
-- Alpaca API 只作为未来实盘/纸面券商适配器预留；当前生产模拟盘仍由 TradingAgent 本地模拟账本闭环，行情数据走 SharedSignals API/read model。
+- Alpaca API 只作为未来实盘/纸面券商适配器预留；当前生产模拟盘仍由 TradingAgent 本地模拟账本闭环，行情数据走 SharedSignals API。
 
 ## 工具清单 (TradingAgent tool references)
 
 - 源目录: `tradingagent/US/`。
-- 数据入口: SharedSignals API/read model 优先；Alpaca 仅作为未来受控券商/行情适配器，不替代 SharedSignals 供数层。
+- 数据入口: SharedSignals API 优先；Alpaca 仅作为未来受控券商/行情适配器，不替代 SharedSignals 供数层。
 - 历史迁移线索: `/opt/investment/US/tools/`；如服务器仍有残留，默认按退役资产处理。
 - 关键工具:
   - us_workflow.py — Daily workflow: collect → plan → scan → review

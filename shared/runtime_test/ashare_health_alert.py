@@ -43,7 +43,7 @@ def _send_alert(result: dict[str, Any]) -> dict[str, Any]:
         "summary": _plain_summary(result),
         "collection": {
             "status": "ok",
-            "sources": "SharedSignals / MarketGraph read model / Hermes health",
+            "sources": "SharedSignals API / MarketGraph API / Hermes health",
             "last_update": result.get("generated_at", "--"),
             "gaps": ", ".join(c.get("name", "") for c in failed + warned) or "无",
         },

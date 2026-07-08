@@ -1376,6 +1376,7 @@ describe('TradingAgent snapshot reader', () => {
       JSON.stringify({
         ts_code: '0700.HK',
         market: 'HK',
+        opportunity_id: 'opp-hk-0700-001',
         status: 'pending',
         expected_alpha_bps: 18.6,
         discovered_at: '2026-07-04T09:41:00.000+08:00',
@@ -1426,6 +1427,7 @@ describe('TradingAgent snapshot reader', () => {
 
     expect(snapshot.signals).toContainEqual(expect.objectContaining({
       symbol: '0700.HK',
+      opportunityId: 'opp-hk-0700-001',
       stage: '风控',
       impact: '+18.6 bps',
       stageTimes: expect.objectContaining({ discovered: '09:41', scored: '09:44', riskChecked: '09:49' }),
@@ -1445,6 +1447,8 @@ describe('TradingAgent snapshot reader', () => {
     }))
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
       symbol: '0700.HK',
+      opportunityId: 'opp-hk-0700-001',
+      sequence: 3,
       stage: '风控',
       status: '通过',
       source: 'signal_queue',
@@ -1454,6 +1458,7 @@ describe('TradingAgent snapshot reader', () => {
       stage: '风控',
       status: '拦截',
       source: 'signal_queue',
+      terminal: true,
     }))
   })
 

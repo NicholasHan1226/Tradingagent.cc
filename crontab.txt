@@ -2,20 +2,20 @@
 #
 # Source of truth: on 8.138.181.177, inspect with:
 #   sudo -u marketgraph crontab -l
-# Production uses one combined marketgraph user crontab for SharedSignals,
-# TradingAgent, and MarketGraph. Do not install this single-system file directly
-# over live crontab; merge it with the other two system crontab references.
+# Production ops may compose one marketgraph user crontab from the three repos.
+# This repo file only owns TradingAgent entries; never install it directly over
+# live crontab or use it to overwrite SharedSignals/MarketGraph entries.
 #
 # TradingAgent owns judgment, queues, simulated/shadow accounting, review, and
 # notifications. It must not collect market data directly; market data comes
-# from SharedSignals API/read model. HK remains disabled by Nicholas' current
+# from SharedSignals API. HK remains disabled by Nicholas' current
 # decision.
 
 SHELL=/bin/bash
 BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
-# A-share observation/real-review signal digest belongs to MarketGraph crontab.
-# See MarketGraph/deploy/crontab.txt; TradingAgent does not own those jobs/logs.
+# A-share observation/real-review signal digest belongs to MarketGraph-owned
+# entries in the ops-composed crontab. TradingAgent does not own those jobs/logs.
 
 # A-share server-local simulated execution. Hermes/Mini is reserved as second
 # path only when explicitly enabled by environment.

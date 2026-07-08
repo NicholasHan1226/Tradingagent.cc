@@ -115,7 +115,7 @@ export function HomeDashboard({
         <section className="home-drilldown" aria-label="当前机会和持仓结果">
           <div className="drilldown-header">
             <span>机会和持仓</span>
-            <strong>只显示真实记录</strong>
+            <strong>已接入快照时只显示真实记录</strong>
           </div>
           <div className="home-support-grid">
             <OpportunityFocus hasSignalData={hasSignalData} setActivePage={setActivePage} signals={signals} />

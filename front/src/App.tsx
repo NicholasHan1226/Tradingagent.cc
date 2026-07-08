@@ -19,10 +19,11 @@ import './styles/page-summary.css'
 const DASHBOARD_BUILD_ID = '20260708-result-funnel'
 
 function App() {
+  const demoPreviewEnabled = isDemoPreviewEnabled()
   const [activePage, setActivePage] = useState<Page>('主页')
   const [activeMarket, setActiveMarket] = useState<Market>('All Markets')
   const [accountMode, setAccountMode] = useState<AccountMode>('simulated')
-  const [dashboardState, setDashboardState] = useState(() => toDashboardState(mockDashboardApiResponse('ready')))
+  const [dashboardState, setDashboardState] = useState(() => toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
   const [readModelSnapshot, setReadModelSnapshot] = useState<TradingAgentReadModelSnapshot | null>(null)
   const [now, setNow] = useState(() => new Date())
 
@@ -47,7 +48,10 @@ function App() {
           })
         }
       } catch {
-        if (mounted) setReadModelSnapshot(null)
+        if (mounted) {
+          setReadModelSnapshot(null)
+          if (!demoPreviewEnabled) setDashboardState(toDashboardState(mockDashboardApiResponse('error')))
+        }
       }
     }
 
@@ -57,15 +61,15 @@ function App() {
       mounted = false
       window.clearInterval(timer)
     }
-  }, [])
+  }, [demoPreviewEnabled])
 
-  const performanceRows = useMemo(() => getSnapshotPerformance(readModelSnapshot, performanceData), [readModelSnapshot])
-  const signalRows = useMemo(() => getSnapshotSignals(readModelSnapshot, mockSignals), [readModelSnapshot])
-  const holdingRows = useMemo(() => getSnapshotHoldings(readModelSnapshot, mockHoldings), [readModelSnapshot])
+  const performanceRows = useMemo(() => getSnapshotPerformance(readModelSnapshot, demoPreviewEnabled ? performanceData : []), [demoPreviewEnabled, readModelSnapshot])
+  const signalRows = useMemo(() => getSnapshotSignals(readModelSnapshot, demoPreviewEnabled ? mockSignals : []), [demoPreviewEnabled, readModelSnapshot])
+  const holdingRows = useMemo(() => getSnapshotHoldings(readModelSnapshot, demoPreviewEnabled ? mockHoldings : []), [demoPreviewEnabled, readModelSnapshot])
   const funnelEvents = useMemo(() => getSnapshotFunnelEvents(readModelSnapshot, []), [readModelSnapshot])
   const marketSummaries = useMemo(() => readModelSnapshot?.marketSummaries ?? [], [readModelSnapshot])
   const portfolioSummary = readModelSnapshot?.portfolio ?? null
-  const isUsingDemoSnapshot = readModelSnapshot === null
+  const isUsingDemoSnapshot = readModelSnapshot === null && demoPreviewEnabled
   const hasGlobalPerformanceData = isUsingDemoSnapshot || hasMeaningfulPerformanceRows(readModelSnapshot?.performance ?? []) || hasPortfolioResult(portfolioSummary)
   const hasGlobalSignalData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'signals')
   const hasGlobalHoldingData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'holdings')
@@ -110,7 +114,7 @@ function App() {
   const signalFunnel = useMemo(() => getSignalFunnel(visibleSignals), [visibleSignals])
   const chartEvents = useMemo(() => deriveChartEvents(visiblePerformanceData, visibleSignals), [visiblePerformanceData, visibleSignals])
   const domainStatus = (domain: DataDomain) => dashboardState.domains[domain]?.status ?? dashboardState.status
-  const handleRetry = () => setDashboardState(toDashboardState(mockDashboardApiResponse('ready')))
+  const handleRetry = () => setDashboardState(toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
   const selectAccountMode = (mode: AccountMode) => setAccountMode(mode)
 
   return (
@@ -124,6 +128,7 @@ function App() {
         activePage={activePage}
         activeMarket={activeMarket}
         hasPerformanceData={hasPerformanceData}
+        isDemoPreview={isUsingDemoSnapshot}
         isCnyAccount={visiblePortfolio?.pnlCurrency === 'CNY'}
         liveProfit={visiblePortfolio?.pnlAmount ?? null}
         liveReturn={visiblePortfolio?.returnPct ?? latestPoint.simulated}
@@ -204,4 +209,10 @@ function hasMarketPerformanceResult(summary?: MarketSummary) {
   if (!summary || summary.status === 'empty') return false
   if (summary.tradeCount > 0 || (summary.filledCount ?? 0) > 0) return true
   return Math.abs(summary.pnlAmount ?? 0) > 0.005 || Math.abs(summary.returnPct ?? 0) > 0.005
+}
+
+function isDemoPreviewEnabled() {
+  const meta = import.meta as ImportMeta & { env?: { DEV?: boolean; VITE_TRADING_AGENT_DEMO_PREVIEW?: string } }
+  if (meta.env?.VITE_TRADING_AGENT_DEMO_PREVIEW === '0') return false
+  return meta.env?.VITE_TRADING_AGENT_DEMO_PREVIEW === '1' || meta.env?.DEV === true
 }

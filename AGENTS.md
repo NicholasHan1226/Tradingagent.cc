@@ -107,7 +107,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 ### PM 调度
 
 - PM shadow scan 每 10 分钟运行；`run_job` 锁防止并发。
-- PM 独立研究概率由 `job_pm_research_probability` 通过 MarketGraph 统一 API/read model 读取，写入 `shared/review/pm/model_probabilities.jsonl` 和 `model_probabilities_summary.json`；SharedSignals 只提供 PM 市场/价格行，不提供判断概率。
+- PM 独立研究概率由 `job_pm_research_probability` 通过 MarketGraph 统一 API 读取，写入 `shared/review/pm/model_probabilities.jsonl` 和 `model_probabilities_summary.json`；SharedSignals 只提供 PM 市场/价格行，不提供判断概率。
 - `PM/research_probability.py` 必须忽略 SharedSignals 行内的 `research_probability` / `marketgraph_probability` 等判断字段；可触发交易 edge 的研究概率只能来自 MarketGraph `GET /pm/research-probabilities` 或 MCP `read_pm_research_probabilities`。MarketGraph API 不可用或无研究概率时必须清空本地模型概率文件并安全空跑，不写 SharedSignals、不写交易队列。
 - `job_pm_optimize` 运行产物写入 `shared/review/pm/`，不写入 Git 跟踪路径。
 

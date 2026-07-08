@@ -127,6 +127,12 @@ type SimMarketHealthSummary = {
 }
 
 type SignalFile = {
+  id?: string | number
+  signal_id?: string | number
+  opportunity_id?: string | number
+  trace_id?: string | number
+  order_id?: string | number
+  card_id?: string | number
   ts_code?: string
   symbol?: string
   market?: string
@@ -185,6 +191,7 @@ type SignalFile = {
 type SimLedgerTradeRow = {
   account_type?: string
   capital_layer?: string
+  card_id?: string
   dashboard_excluded?: boolean | string
   exclude_from_dashboard?: boolean | string
   excluded_from_dashboard?: boolean | string
@@ -195,6 +202,7 @@ type SimLedgerTradeRow = {
   notional?: number
   order_id?: string
   outcome?: string
+  opportunity_id?: string
   realized_pnl?: number
   reason?: string
   run_context?: string
@@ -202,9 +210,11 @@ type SimLedgerTradeRow = {
   run_source?: string
   sample_type?: string
   side?: string
+  signal_id?: string
   signal_source?: string
   source?: string
   strategy_name?: string
+  trace_id?: string
   conviction?: number | string
   symbol?: string
   timestamp?: string
@@ -455,7 +465,7 @@ export async function readTradingAgentSnapshot({
   const queueSignals = await readSignalQueue(queueRoot, now)
   const simLedgerSignals = await readSimLedgerSignals(simLedgerRoot, now)
   const signals = mergeSignals(queueSignals, simLedgerSignals)
-  const funnelEvents = buildFunnelEvents(signals)
+  const funnelEvents = buildFunnelEvents([...queueSignals, ...simLedgerSignals])
   const reviewPerformance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
@@ -618,7 +628,9 @@ function mergeSignals(...sources: SignalRow[][]): SignalRow[] {
   const rows = new Map<string, SignalRow>()
   for (const source of sources) {
     for (const signal of source) {
-      const key = `${signal.market}:${signal.symbol}:${signal.method}:${signal.status}:${signal.stage ?? ''}:${signal.age}`
+      const key = signal.opportunityId
+        ? `opportunity:${signal.opportunityId}`
+        : `${signal.market}:${signal.symbol}:${signal.method}:${signal.status}:${signal.stage ?? ''}:${signal.age}`
       if (!rows.has(key)) rows.set(key, signal)
     }
   }
@@ -2114,7 +2126,9 @@ async function readSimLedgerSignals(root: string, now: Date): Promise<SignalRow[
 function dedupeSimLedgerSignal() {
   const seen = new Set<string>()
   return (row: SignalRow) => {
-    const key = `${row.market}:${row.symbol}:${row.status}:${row.stage}`
+    const key = row.opportunityId
+      ? `opportunity:${row.opportunityId}`
+      : `${row.market}:${row.symbol}:${row.status}:${row.stage}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
@@ -2169,12 +2183,16 @@ function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strateg
   const market = normalizeMarket(marketHint, row.symbol)
   const symbol = normalizeSymbol(row.symbol, market)
   const timestamp = row.timestamp
+  const canonicalStrategy = row.strategy_name || strategy
+  const opportunityId = getSimLedgerOpportunityId(row, symbol, market, canonicalStrategy, timestamp)
 
   return {
     symbol,
     name: symbol,
     market,
-    method: `${formatStrategyName(row.strategy_name || strategy)} · ${row.side === 'sell' ? '卖出' : '买入'}`,
+    opportunityId,
+    queueBucket: 'filled',
+    method: `${formatStrategyName(canonicalStrategy)} · ${row.side === 'sell' ? '卖出' : '买入'}`,
     strategyName: row.strategy_name,
     signalSource: row.signal_source,
     status: 'executed',
@@ -2195,6 +2213,20 @@ function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strateg
     stageLatencyMinutes: 0,
     stageEvidence: 'replay',
   }
+}
+
+function getSimLedgerOpportunityId(row: SimLedgerTradeRow, symbol: string, market: string, strategy: string, timestamp?: string) {
+  return firstString(
+    row.opportunity_id,
+    row.signal_id,
+    row.trace_id,
+    row.order_id,
+    row.card_id,
+    row.metadata?.opportunity_id,
+    row.metadata?.signal_id,
+    row.metadata?.trace_id,
+    row.metadata?.order_id,
+  ) ?? `sim_ledger:${market}:${symbol}:${strategy}:${timestamp ?? 'unknown'}`
 }
 
 function formatConviction(value: number | string | undefined) {
@@ -2268,11 +2300,14 @@ async function readSignalFile(path: string, bucket: string, now: Date): Promise<
     const status = mapSignalStatus(raw.status ?? bucket, raw)
     const stage = inferSignalStage(raw, bucket)
     const stageTimes = formatStageTimes(raw)
+    const opportunityId = getSignalOpportunityId(raw, symbol, market, bucket, path)
 
     return {
       symbol,
       name: symbol,
       market,
+      opportunityId,
+      queueBucket: bucket,
       method: raw.direction ? `${raw.direction}` : '待确认',
       status,
       impact: formatAlphaBps(raw.alpha_bps ?? raw.expected_alpha_bps),
@@ -2290,6 +2325,20 @@ async function readSignalFile(path: string, bucket: string, now: Date): Promise<
   } catch {
     return null
   }
+}
+
+function getSignalOpportunityId(signal: SignalFile, symbol: string, market: Market, bucket: string, path: string) {
+  const explicitId = firstString(
+    signal.opportunity_id,
+    signal.signal_id,
+    signal.trace_id,
+    signal.id,
+    signal.card_id,
+    signal.order_id,
+  )
+  if (explicitId) return explicitId
+  const fileId = basename(path, '.json') || symbol
+  return `${market}:${symbol}:${bucket}:${fileId}`
 }
 
 function extractSignalCapitalEvidence(raw: SignalFile): SignalCapitalEvidence | undefined {
@@ -2460,76 +2509,81 @@ function getStageEvidence(stageTimes: SignalRow['stageTimes'], signal: SignalFil
 
 function buildFunnelEvents(signals: SignalRow[]): FunnelEvent[] {
   return signals.flatMap((signal, index) => {
-    const source = signal.stageEvidence === 'replay' ? 'sim_ledger' : 'signal_queue'
+    const source: FunnelEvent['source'] = signal.stageEvidence === 'replay' ? 'sim_ledger' : 'signal_queue'
     const rank = eventStageRank(signal)
-    const baseId = `${source}-${signal.symbol}-${index}`
+    const opportunityId = signal.opportunityId ?? `${source}:${signal.market}:${signal.symbol}:${index}`
+    const baseId = `${source}-${opportunityId}`
+    const eventBase = {
+      latencyMinutes: signal.stageLatencyMinutes,
+      market: signal.market,
+      opportunityId,
+      source,
+      symbol: signal.symbol,
+    }
     const events: FunnelEvent[] = [
       {
+        ...eventBase,
         id: `${baseId}-discover`,
-        symbol: signal.symbol,
-        market: signal.market,
+        sequence: 1,
         stage: '发现',
         status: '进入',
         label: '发现机会',
         at: signal.stageTimes?.discovered,
-        source,
         reason: signal.reason,
       },
     ]
 
     if (rank >= 1 || signal.stageTimes?.scored || signal.stageTimes?.debated) {
       events.push({
+        ...eventBase,
         id: `${baseId}-research`,
-        symbol: signal.symbol,
-        market: signal.market,
+        sequence: 2,
         stage: '研判',
         status: '通过',
         label: '形成判断',
         at: signal.stageTimes?.debated ?? signal.stageTimes?.scored,
-        source,
         reason: signal.method,
       })
     }
 
     if (rank >= 2 || signal.status === 'blocked') {
       events.push({
+        ...eventBase,
         id: `${baseId}-risk`,
-        symbol: signal.symbol,
-        market: signal.market,
+        sequence: 3,
         stage: '风控',
         status: signal.status === 'blocked' ? '拦截' : '通过',
         label: signal.status === 'blocked' ? '风险拦截' : '风控通过',
         at: signal.stageTimes?.riskChecked,
-        source,
         reason: signal.reason,
+        terminal: signal.status === 'blocked',
       })
     }
 
     if (rank >= 3 && signal.status !== 'blocked') {
       events.push({
+        ...eventBase,
         id: `${baseId}-queue`,
-        symbol: signal.symbol,
-        market: signal.market,
+        sequence: 4,
         stage: '队列',
         status: signal.status === 'pending' ? '等待' : '通过',
         label: signal.status === 'pending' ? '等待触发' : '进入结果',
         at: signal.stageTimes?.triggered,
-        source,
         reason: signal.next,
       })
     }
 
     if (rank >= 4 || signal.status !== 'pending') {
       events.push({
+        ...eventBase,
         id: `${baseId}-result`,
-        symbol: signal.symbol,
-        market: signal.market,
+        sequence: 5,
         stage: '结果',
         status: eventResultStatus(signal),
         label: eventResultLabel(signal),
         at: signal.stageTimes?.triggered,
-        source,
         reason: signal.impact,
+        terminal: true,
       })
     }
 
@@ -2551,7 +2605,7 @@ function eventStageRank(signal: SignalRow) {
 
 function eventResultStatus(signal: SignalRow): FunnelEventStatus {
   if (signal.status === 'executed') return '成交'
-  if (signal.status === 'missed') return '机会'
+  if (signal.status === 'missed') return '复盘'
   if (signal.status === 'blocked') return '拦截'
   if (signal.status === 'cancelled') return '复盘'
   return '等待'
@@ -2559,7 +2613,7 @@ function eventResultStatus(signal: SignalRow): FunnelEventStatus {
 
 function eventResultLabel(signal: SignalRow) {
   if (signal.status === 'executed') return '已兑现'
-  if (signal.status === 'missed') return '继续观察'
+  if (signal.status === 'missed') return '纳入复盘'
   if (signal.status === 'blocked') return '风险挡住'
   if (signal.status === 'cancelled') return '已取消'
   return '等待结果'
@@ -2602,6 +2656,14 @@ function formatAlphaBps(value: number | undefined) {
 
 function firstNumber(...values: Array<number | undefined>) {
   return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value))
+}
+
+function firstString(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  }
+  return undefined
 }
 
 function firstNonEmpty<T>(...values: T[][]) {

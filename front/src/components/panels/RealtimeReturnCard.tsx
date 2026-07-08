@@ -40,8 +40,8 @@ export function RealtimeReturnCard({
       : formatCurrency(liveProfit)
     : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
   const resultCaption = hasAmount
-    ? `当前收益率 ${formatSignedPct(liveReturn)}`
-    : '等待金额'
+    ? `${formatSignedPct(liveReturn)} · 目标差 ${formatSignedPct(targetGap)}`
+    : `${formatSignedPct(liveReturn)} · 等待金额`
   const activityLabel = portfolio
     ? `${portfolio.tradeCount} 次成交 · ${portfolio.pointCount} 个收益点`
     : `兑现 ${executedCount} · 推进 ${pendingCount} · 复盘 ${missedCount}`
@@ -67,7 +67,7 @@ export function RealtimeReturnCard({
   return (
     <aside className="realtime-return-card" aria-label="实时收益">
       <div className="return-card-head">
-        <span>{isLive ? '真实账户预留' : '模拟盘收益'}</span>
+        <span>{isLive ? '实盘预留' : '模拟盘最新结果'}</span>
         <div className="return-mode-switch" aria-label="账户层切换" role="tablist">
           <button
             aria-selected={!isLive}
@@ -85,15 +85,15 @@ export function RealtimeReturnCard({
             role="tab"
             type="button"
           >
-            真实账户
+            实盘
           </button>
         </div>
       </div>
-      <span className="return-kicker">{isLive ? '未来接入' : '当前账户'} · 金额为主</span>
+      <span className="return-kicker">{isLive ? '待接入' : '最新快照'} · 金额为主，收益率同步显示</span>
       {isLive ? (
         <div className="return-placeholder">
-          <strong>实盘未接入</strong>
-          <p>接入真实账户后，会在这里切换为实盘收益和风险边界。</p>
+          <strong>实盘待接入</strong>
+          <p>完成授权、风控和回执验证前，不展示真实资金结果。</p>
         </div>
       ) : !hasPerformanceData ? (
         <div className="return-placeholder">

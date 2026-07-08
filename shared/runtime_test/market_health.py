@@ -1275,8 +1275,9 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     cron_installed = bool(wrapper and wrapper in crontab_text)
     session_state = _market_session_state(market)
     samples_expected = bool(session_state.get("samples_expected_today"))
-    current_trade_date = _compact_date(session_state.get("local_time")) or datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
-    no_trade_explanation = _latest_ashare_no_trade_explanation(trade_date=current_trade_date) if market == "ashare" else {}
+    session_trade_date = _compact_date(session_state.get("local_time"))
+    current_trade_date = session_trade_date or datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
+    no_trade_explanation = _latest_ashare_no_trade_explanation(trade_date=session_trade_date or None) if market == "ashare" else {}
     if market == "ashare":
         ledger["today_trade_rows"] = _ashare_local_sim_trade_count_for_date(current_trade_date)
 

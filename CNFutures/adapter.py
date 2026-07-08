@@ -284,24 +284,22 @@ class CNFuturesAdapter(MarketAdapter):
     def _get_symbols_with_intraday_bars_from_reader(self, date: str, interval: str) -> list[str]:
         if self.reader is None:
             return []
-        direct = self._get_intraday_symbols_from_reader_read_model(date, interval)
-        if direct:
-            return direct
         get_bars_intraday = getattr(self.reader, "get_bars_intraday", None)
-        if not callable(get_bars_intraday):
-            return []
-        selected: list[str] = []
-        max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
-        for symbol in self._scan_candidate_symbols():
-            try:
-                rows = get_bars_intraday(READER_MARKET, symbol, interval, str(date or ""), str(date or ""))
-            except Exception:
-                rows = []
-            if rows:
-                selected.append(symbol)
-                if len(selected) >= max_symbols:
-                    break
-        return selected
+        if callable(get_bars_intraday):
+            selected: list[str] = []
+            max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
+            for symbol in self._scan_candidate_symbols():
+                try:
+                    rows = get_bars_intraday(READER_MARKET, symbol, interval, str(date or ""), str(date or ""))
+                except Exception:
+                    rows = []
+                if rows:
+                    selected.append(symbol)
+                    if len(selected) >= max_symbols:
+                        break
+            if selected:
+                return selected
+        return self._get_intraday_symbols_from_reader_read_model(date, interval)
 
     def _get_intraday_symbols_from_reader_read_model(self, date: str, interval: str) -> list[str]:
         if not self._allow_direct_sqlite_fallback():
@@ -505,7 +503,7 @@ class CNFuturesAdapter(MarketAdapter):
         start: Any = None,
         end: Any = None,
     ) -> list[dict[str, Any]]:
-        """Read daily bars from SharedSignals SQLite when no reader facade exists."""
+        """Read daily bars from SharedSignals SQLite only in explicit diagnostics."""
 
         del start
         if not self._allow_direct_sqlite_fallback():
@@ -541,7 +539,7 @@ class CNFuturesAdapter(MarketAdapter):
         start: Any = None,
         end: Any = None,
     ) -> list[dict[str, Any]]:
-        """Read 5-minute futures bars from SharedSignals SQLite."""
+        """Read 5-minute futures bars from SharedSignals SQLite only in explicit diagnostics."""
 
         if not self._allow_direct_sqlite_fallback():
             return []
@@ -620,11 +618,8 @@ class CNFuturesAdapter(MarketAdapter):
         return Path(os.environ.get("SHARED_SIGNALS_DB") or DEFAULT_SHARED_SIGNALS_DB)
 
     def _allow_direct_sqlite_fallback(self) -> bool:
-        values = (
-            os.environ.get("CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK", ""),
-            os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", ""),
-        )
-        return any(str(value).strip().lower() in {"1", "true", "yes", "on"} for value in values)
+        value = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
     def _get_assets_from_sqlite(self) -> list[dict[str, Any]]:
         db_path = self._shared_signals_db_path()

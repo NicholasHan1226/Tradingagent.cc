@@ -12,7 +12,7 @@ sentiment: 0.10
 # 各维度内部参数
 dimensions:
   macro:
-    # 数据源: SharedSignals/read model 优先；MarketGraph regime 作为可选宏观增强。
+    # 数据源: SharedSignals API 优先；MarketGraph regime 作为可选宏观增强。
     source: regime
     # regime 对应的宏观倾向分 (0-1)
     regime_scores:

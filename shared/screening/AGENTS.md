@@ -39,6 +39,6 @@ from screening.patrol import patrol
 
 ## 依赖
 - weights.yaml (本目录)
-- SharedSignals / ShareChannel read model (assets, bars, factors, moneyflow, events, sentiment)
-- MarketGraph read model (regime/event/news/impact) 为可选增强；缺失时必须记录 evidence debt 或回到中性/安全空跑，不得绕过 candidate/执行门禁。
+- SharedSignals / ShareChannel API (assets, bars, factors, moneyflow, events, sentiment)
+- MarketGraph API (regime/event/news/impact) 为可选增强；缺失时必须记录 evidence debt 或回到中性/安全空跑，不得绕过 candidate/执行门禁。
 - Ashare data (moneyflow/scores/signals/forecasts)

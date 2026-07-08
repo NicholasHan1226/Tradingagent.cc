@@ -1,8 +1,8 @@
 export function LiveGate({ onDismiss }: { onDismiss: () => void }) {
   return (
     <div className="live-gate-overlay" role="dialog" aria-label="实盘接入状态">
-      <strong>真实账户结果暂不展示</strong>
-      <p>这里先展示模拟盘结果。账户、风控和成交回执确认完成后，再切换到真实账户。</p>
+      <strong>实盘待接入</strong>
+      <p>当前先展示模拟盘结果。实盘完成授权、风控和成交回执确认后再切换。</p>
       <button onClick={onDismiss} type="button">知道了</button>
     </div>
   )

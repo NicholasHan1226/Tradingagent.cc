@@ -11,6 +11,7 @@ export function MarketHeader({
   liveReturn,
   maxDrawdown,
   hasPerformanceData,
+  isDemoPreview,
   isCnyAccount,
   signalCount,
   setActiveMarket,
@@ -22,6 +23,7 @@ export function MarketHeader({
   activePage: Page
   activeMarket: Market
   hasPerformanceData: boolean
+  isDemoPreview: boolean
   isCnyAccount: boolean
   liveProfit: number | null
   liveReturn: number
@@ -34,8 +36,8 @@ export function MarketHeader({
 }) {
   const meta = pageMeta[activePage]
   const [showMarkets, setShowMarkets] = useState(false)
-  const freshness = snapshotGeneratedAt ? '实时更新' : '预览数据'
-  const accountLabel = accountMode === 'live' ? '真实账户预留' : '模拟盘'
+  const freshness = snapshotGeneratedAt ? '最新快照' : isDemoPreview ? '演示数据' : '等待接口'
+  const accountLabel = accountMode === 'live' ? '实盘待接入' : '模拟盘'
   const returnValue = hasPerformanceData
     ? liveProfit !== null
       ? isCnyAccount ? formatSignedCnyCompact(liveProfit) : formatCurrency(liveProfit)

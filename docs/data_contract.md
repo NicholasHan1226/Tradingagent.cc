@@ -110,7 +110,7 @@ independent edge to consume.
 ## MarketGraph Research Inputs
 
 `shared.data.reader.MarketGraphCSVReader` is a compatibility class name only.
-Current MarketGraph research evidence must come through a public API/read-model
+Current MarketGraph research evidence must come through a public API
 boundary, not direct CSV files:
 
 - `all_weather_regime.csv`

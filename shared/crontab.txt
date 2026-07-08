@@ -5,14 +5,14 @@
 #
 # TradingAgent owns judgment, queues, simulated/shadow accounting, review, and
 # notifications. It must not collect market data directly; market data comes
-# from SharedSignals API/read model. HK remains disabled by Nicholas' current
+# from SharedSignals API. HK remains disabled by Nicholas' current
 # decision.
 
 SHELL=/bin/bash
 BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
-# A-share observation/real-review signal digest belongs to MarketGraph crontab.
-# See MarketGraph/deploy/crontab.txt; TradingAgent does not own those jobs/logs.
+# A-share observation/real-review signal digest belongs to MarketGraph-owned
+# entries in the ops-composed crontab. TradingAgent does not own those jobs/logs.
 
 # A-share server-local simulated execution. Hermes/Mini is reserved as second
 # path only when explicitly enabled by environment.

@@ -402,11 +402,8 @@ def _query_session_bars_via_reader(
 def _allow_sqlite_fallback(sqlite_db: Path) -> bool:
     if not sqlite_db.exists():
         return False
-    values = (
-        os.environ.get("CN_FUTURES_ALLOW_DIRECT_SQLITE_FALLBACK", ""),
-        os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", ""),
-    )
-    return any(str(value).strip().lower() in {"1", "true", "yes", "on"} for value in values)
+    value = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _query_daily_bars(db_path: Path, trade_date: str, *, reader: Any | None = None, min_symbols: int = 4) -> dict[str, Any]:

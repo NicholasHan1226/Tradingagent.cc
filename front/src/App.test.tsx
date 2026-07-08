@@ -24,13 +24,13 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     expect(screen.getByLabelText('实时收益')).toBeInTheDocument()
-    expect(screen.getByLabelText('机会管道')).toBeInTheDocument()
+    expect(screen.getByLabelText('机会漏斗')).toBeInTheDocument()
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
     expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
-    expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '真实账户' })).toHaveAttribute('aria-selected', 'false')
+    expect(within(screen.getByLabelText('实时收益')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('信号').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('待确认').length).toBeGreaterThan(0)
     expect(screen.queryByRole('tablist', { name: '收益区间' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '机会从全市场进入，只把可执行结果留在首页。' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '正在推进' })).toBeInTheDocument()
@@ -135,6 +135,21 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
   })
 
+  it('does not show demo data when production snapshot is unavailable', async () => {
+    vi.stubEnv('VITE_TRADING_AGENT_DEMO_PREVIEW', '0')
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('snapshot unavailable')
+    }))
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByText('等待收益结果')).toBeInTheDocument())
+    expect(screen.getByText('等待接口')).toBeInTheDocument()
+    expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
+    expect(screen.queryByText('600519.SH')).not.toBeInTheDocument()
+    expect(screen.queryByText('+9.42%')).not.toBeInTheDocument()
+  })
+
   it('shows A-share account facts and strategy sample quality in the return cards', async () => {
     vi.stubGlobal(
       'fetch',
@@ -195,7 +210,7 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getAllByText('总资产')).not.toHaveLength(0))
-    expect(screen.getAllByText('机会管道').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('机会漏斗').length).toBeGreaterThan(0)
     expect(screen.getAllByText('持仓跟踪').length).toBeGreaterThan(0)
     expect(screen.getAllByText('当前没有新机会进入').length).toBeGreaterThan(0)
     expect(screen.getAllByText('1 个持仓继续跟踪').length).toBeGreaterThan(0)
@@ -429,12 +444,12 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('实时')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText('600519.SH').length).toBeGreaterThan(0))
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
     expect(screen.getAllByText('初筛').length).toBeGreaterThan(0)
     expect(screen.getAllByText('研究').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('信号').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('待确认').length).toBeGreaterThan(0)
     expect(screen.getAllByText('成交').length).toBeGreaterThan(0)
     expect(screen.getAllByText('放弃').length).toBeGreaterThan(0)
     expect(screen.getByLabelText('最近管道事件')).toBeInTheDocument()
@@ -445,12 +460,12 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    click(within(card).getByRole('tab', { name: '真实账户' }))
+    click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getByRole('tab', { name: '真实账户' })).toHaveAttribute('aria-selected', 'true')
+    expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
-    expect(within(card).getAllByText('实盘未接入').length).toBeGreaterThan(0)
-    expect(within(card).getByText('接入真实账户后，会在这里切换为实盘收益和风险边界。')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
+    expect(within(card).getByText('完成授权、风控和回执验证前，不展示真实资金结果。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -469,9 +484,9 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     const card = screen.getByLabelText('实时收益')
-    click(within(card).getByRole('tab', { name: '真实账户' }))
+    click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘未接入').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

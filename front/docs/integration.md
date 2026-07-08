@@ -142,8 +142,20 @@ Display-ready fields used by the homepage:
   so the animated funnel reflects only real read-only file state.
 - `funnelEvents[]`: read-only display events derived from `signals[]` and the
   simulated ledger. Each event carries `symbol`, `market`, `stage`, `status`,
-  `source`, and optional `at` / `reason`, allowing the homepage funnel to
-  animate real pipeline movement without writing to queues or inventing stages.
+  `source`, and optional `opportunityId`, `sequence`, `at`, `reason`,
+  `latencyMinutes`, and `terminal`, allowing the homepage funnel to animate one
+  real opportunity through the pipeline without writing to queues or inventing
+  stages.
+- `opportunityId` is the stable display key for one opportunity. The front
+  groups funnel particles by this id first, then falls back to market + symbol
+  only when older records do not provide it. Upstream signal rows may provide
+  `opportunity_id`, `signal_id`, `trace_id`, `id`, `card_id`, or `order_id`;
+  otherwise the read model derives a stable id from market, symbol, queue
+  bucket, and filename without exposing server paths.
+- `sequence` should increase from discovery to result. The current event stages
+  map to `1=发现`, `2=研判`, `3=风控`, `4=队列`, `5=结果`. `terminal=true`
+  marks the event that ends the current path, such as a fill, block, review, or
+  final result.
 - The homepage treats `signal_queue` events as the source of a true opportunity
   funnel. A matching `sim_ledger` result for the same market and symbol may
   complete the final outcome stage, but simulated-ledger rows alone are only a

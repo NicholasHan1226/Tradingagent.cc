@@ -8,7 +8,7 @@
 ## 现有代码
 - `tradingagent/Crypto/` 内为现役实体代码，不再依赖 `/opt/investment/Crypto/tools/` 旧目录。
 - shadow/sim/strategy/validation 完整。
-- 数据源只读 SharedSignals API/read model；Crypto 上游 Binance 采集归 SharedSignals。
+- 数据源只读 SharedSignals API；Crypto 上游 Binance 采集归 SharedSignals。
 
 ## 特点
 - 24/7交易, 无休市

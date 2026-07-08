@@ -7,7 +7,7 @@ us_daily_report.py,report,Nicholas-facing daily Markdown report for US simulated
 us_daily_runner.py,orchestration,US Daily Runner — single entry point for automated scheduled tasks.
 us_forward_validation.py,validation,US Stock Forward Validation — out-of-sample performance tracking.
 us_historical_replay.py,replay,US Historical Replay — backtest strategy variants against historical data.
-us_market_data.py,data,Legacy US market-data collector reference; production reads SharedSignals API/read model.
+us_market_data.py,data,Legacy US market-data collector reference; production reads SharedSignals API.
 us_marketgraph_consumer.py,bridge,US MarketGraph Consumer — read-only bridge for US stock data.
 us_marketgraph_reader.py,bridge,US MarketGraph Reader — read-only bridge for MarketGraph causal/association data.
 us_opportunity_funnel.py,funnel,Opportunity funnel for US simulated training.
