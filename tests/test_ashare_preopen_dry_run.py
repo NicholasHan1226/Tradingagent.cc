@@ -117,6 +117,51 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertTrue(report["read_only"])
         self.assertIn("outside_regular_session_now_expected_for_preopen", report["warnings"])
 
+    def test_uses_strategy_account_view_when_validation_samples_occupy_snapshot(self) -> None:
+        reader = FakeAshareReader()
+        account = {
+            "account": "ashare_sim",
+            "sim_capital": 200_000.0,
+            "cash_available": 82_683.89,
+            "available_cash": 82_683.89,
+            "positions": [
+                {"ts_code": "000101.SZ", "quantity": 100, "market_value": 50_000.0},
+                {"ts_code": "000102.SZ", "quantity": 100, "market_value": 60_000.0},
+            ],
+            "strategy_cash_available": 200_000.0,
+            "strategy_positions": [],
+            "capital_plan_sample_adjustment": {
+                "view": "strategy_valid_samples_only",
+                "ignored_validation_sample_count": 2,
+                "reason": "chain_validation_samples_do_not_consume_strategy_capital",
+            },
+            "source": "test",
+        }
+        with (
+            mock.patch.object(ashare_preopen_dry_run.AshareAdapter, "get_sim_account", return_value=account),
+            mock.patch(
+                "shared.runtime_test.ashare_preopen_dry_run.score_universe",
+                return_value=[
+                    ("600000.SH", {"combined": 0.8, "macro": 0.5, "event": 0.5, "fundamental": 0.8, "capital": 0.6, "technical": 0.7, "sentiment": 0.5}),
+                    ("600001.SH", {"combined": 0.7, "macro": 0.5, "event": 0.5, "fundamental": 0.7, "capital": 0.6, "technical": 0.7, "sentiment": 0.5}),
+                ],
+            ),
+        ):
+            report = ashare_preopen_dry_run.run_preopen_dry_run(
+                now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
+                sqlite_db=self._db(),
+                reader=reader,
+                score_limit=2,
+            )
+
+        self.assertEqual(report["capital_plan"]["cash_available"], 200000.0)
+        self.assertEqual(report["capital_plan"]["account_cash_available"], 82683.89)
+        self.assertEqual(report["capital_plan"]["existing_position_count"], 0)
+        self.assertEqual(report["capital_plan"]["account_position_count"], 2)
+        self.assertEqual(report["capital_plan"]["sample_adjustment"]["ignored_validation_sample_count"], 2)
+        self.assertTrue(report["execution_gate"]["ready"])
+        self.assertIn("timings_seconds", report)
+
     def test_warns_and_safe_empty_when_no_candidate_passes_threshold(self) -> None:
         reader = FakeAshareReader()
         with (

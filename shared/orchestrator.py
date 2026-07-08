@@ -1319,6 +1319,40 @@ def _account_available_cash(account: Any, config: dict[str, Any], capital: float
     return max(0.0, capital - sum(_position_value(position, capital) for position in existing_positions if isinstance(position, dict)))
 
 
+def _ashare_strategy_account_view(
+    account: Any,
+    existing_positions: list[dict[str, Any]],
+    available_cash: float,
+) -> tuple[list[dict[str, Any]], float, dict[str, Any]]:
+    if not isinstance(account, dict):
+        return existing_positions, available_cash, {}
+    strategy_positions = account.get("strategy_positions")
+    strategy_cash = _safe_float(account.get("strategy_cash_available"), -1.0)
+    adjustment = account.get("capital_plan_sample_adjustment") if isinstance(account.get("capital_plan_sample_adjustment"), dict) else {}
+    if isinstance(strategy_positions, list):
+        positions = [dict(row) for row in strategy_positions if isinstance(row, dict)]
+    else:
+        positions = existing_positions
+    if strategy_cash < 0:
+        strategy_cash = available_cash
+    if not adjustment:
+        return positions, strategy_cash, {}
+    adjusted = dict(adjustment)
+    adjusted["account_position_count"] = len({
+        _position_symbol(position)
+        for position in existing_positions
+        if isinstance(position, dict) and _position_symbol(position)
+    })
+    adjusted["strategy_position_count"] = len({
+        _position_symbol(position)
+        for position in positions
+        if isinstance(position, dict) and _position_symbol(position)
+    })
+    adjusted["account_cash_available"] = round(available_cash, 2)
+    adjusted["strategy_cash_available"] = round(strategy_cash, 2)
+    return positions, strategy_cash, adjusted
+
+
 def _run_review_for_layer(
     deps: OrchestratorDeps,
     date: str,
@@ -2210,6 +2244,15 @@ def run_sim_loop(
     existing_positions = _account_positions(account_obj, config)
     capital = _account_capital(account_obj, config)
     account_cash_available = _account_available_cash(account_obj, config, capital, existing_positions)
+    strategy_positions = existing_positions
+    strategy_cash_available = account_cash_available
+    capital_plan_sample_adjustment: dict[str, Any] = {}
+    if str(market).lower() == "ashare":
+        strategy_positions, strategy_cash_available, capital_plan_sample_adjustment = _ashare_strategy_account_view(
+            account_obj,
+            existing_positions,
+            account_cash_available,
+        )
     method = str(config.get("portfolio_method", "conviction_weighted"))
     regime = str(config.get("regime", "unknown"))
     max_candidates = max(1, int(config.get("max_candidates", 20)))
@@ -2283,8 +2326,8 @@ def run_sim_loop(
     execution_skips: list[dict[str, Any]] = []
     signal_audit_by_symbol = {audit["ts_code"]: audit for audit in audits if audit.get("stage") == "signal"}
     risk_portfolio = {
-        "positions": list(existing_positions),
-        "total_exposure": sum(_safe_float(position.get("weight"), 0.0) for position in existing_positions),
+        "positions": list(strategy_positions),
+        "total_exposure": sum(_safe_float(position.get("weight"), 0.0) for position in strategy_positions),
         "capital_layer": capital_layer,
         "account_type": account_type,
     }
@@ -2428,19 +2471,21 @@ def run_sim_loop(
     capital_plan = _ashare_dynamic_capital_plan(
         market=market,
         capital=capital,
-        existing_positions=existing_positions,
-        available_cash=account_cash_available,
+        existing_positions=strategy_positions,
+        available_cash=strategy_cash_available,
         orders=orders_for_portfolio,
         scores_by_symbol=scores_by_symbol,
         skipped_candidates=skipped_candidates,
         risk_rejections=risk_rejections,
     )
+    if capital_plan_sample_adjustment:
+        capital_plan["sample_adjustment"] = capital_plan_sample_adjustment
     stage_calls.append("portfolio.capital_plan")
     rebalance = _ashare_rebalance_plan(
         market=market,
         date=date,
         reader=reader,
-        existing_positions=existing_positions,
+        existing_positions=strategy_positions,
         capital_plan=capital_plan,
         scores_by_symbol=scores_by_symbol,
         max_portfolio_positions=max_portfolio_positions,
@@ -2455,11 +2500,13 @@ def run_sim_loop(
         if isinstance(row, dict)
     }
     base_position_capacity = _max_new_positions(existing_positions, max_portfolio_positions)
+    if str(market).lower() == "ashare":
+        base_position_capacity = _max_new_positions(strategy_positions, max_portfolio_positions)
     if capital_plan.get("enabled"):
         base_position_capacity = min(base_position_capacity, _safe_int(capital_plan.get("max_new_positions"), 0))
     replacement_capacity = _ashare_post_sell_buy_capacity(
         market=market,
-        existing_positions=existing_positions,
+        existing_positions=strategy_positions,
         capital_plan=capital_plan,
         rebalance=rebalance,
         max_portfolio_positions=max_portfolio_positions,
@@ -2513,7 +2560,9 @@ def run_sim_loop(
         portfolio = {"positions": [], "total_weight": 0.0, "cash_weight": 1.0}
     portfolio["capital_layer"] = capital_layer
     portfolio["account_type"] = account_type
-    portfolio["existing_positions"] = existing_positions
+    portfolio["existing_positions"] = strategy_positions
+    if strategy_positions != existing_positions:
+        portfolio["account_positions"] = existing_positions
     portfolio["capital_plan"] = capital_plan
 
     order_meta = {order["ts_code"]: order for order in orders_for_portfolio}
@@ -2553,10 +2602,13 @@ def run_sim_loop(
         "position_capacity": position_capacity,
         "base_position_capacity": base_position_capacity,
         "replacement_capacity": replacement_capacity,
-        "available_cash": round(account_cash_available, 2),
+        "available_cash": round(strategy_cash_available, 2),
+        "account_cash_available": round(account_cash_available, 2),
         "reasons": capital_plan.get("reasons", []),
         "notes": capital_plan.get("notes", []),
     }
+    if capital_plan_sample_adjustment:
+        capital_plan_decision["sample_adjustment"] = capital_plan_sample_adjustment
     portfolio_decision = {
         "risk_approved_candidates": len(orders_for_portfolio),
         "ranked_risk_approved_candidates": len(ranked_orders_for_portfolio),

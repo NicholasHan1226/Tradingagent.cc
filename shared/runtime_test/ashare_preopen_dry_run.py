@@ -8,6 +8,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,14 @@ from Ashare.capital_plan import TOTAL_CAPITAL, plan_capital
 from Ashare.sim_executor import _is_supported_ashare_code, _market_session_rejection
 from shared.data.reader import TradingagentDataReader
 from shared.notify import email_sender
-from shared.orchestrator import _account_available_cash, _account_capital, _account_positions, _latest_price, _score_diagnostics
+from shared.orchestrator import (
+    _account_available_cash,
+    _account_capital,
+    _account_positions,
+    _ashare_strategy_account_view,
+    _latest_price,
+    _score_diagnostics,
+)
 from shared.runtime_test.ashare_opening_validator import DEFAULT_SQLITE_DB, validate_pre_open
 from shared.screening.candidate_pool import build_pool
 from shared.screening.six_dimension_scorer import score_universe
@@ -229,9 +237,10 @@ def _build_capital_plan(adapter: AshareAdapter, candidates: list[dict[str, Any]]
     capital = _account_capital(account, config)
     if capital <= 0:
         capital = float(TOTAL_CAPITAL)
-    cash = _account_available_cash(account, config, capital, positions)
+    account_cash = _account_available_cash(account, config, capital, positions)
+    strategy_positions, cash, sample_adjustment = _ashare_strategy_account_view(account, positions, account_cash)
     plan = plan_capital(
-        positions,
+        strategy_positions,
         cash,
         candidates=candidates,
         dynamic=True,
@@ -244,12 +253,16 @@ def _build_capital_plan(adapter: AshareAdapter, candidates: list[dict[str, Any]]
             "account": account.get("account") if isinstance(account, dict) else "ashare_sim",
             "total_capital": round(capital, 2),
             "cash_available": round(cash, 2),
-            "existing_position_count": len({str(row.get("ts_code") or row.get("symbol") or "") for row in positions if isinstance(row, dict)} - {""}),
+            "account_cash_available": round(account_cash, 2),
+            "existing_position_count": len({str(row.get("ts_code") or row.get("symbol") or "") for row in strategy_positions if isinstance(row, dict)} - {""}),
+            "account_position_count": len({str(row.get("ts_code") or row.get("symbol") or "") for row in positions if isinstance(row, dict)} - {""}),
             "source": account.get("source") if isinstance(account, dict) else "",
             "snapshot_synced_at": account.get("snapshot_synced_at") if isinstance(account, dict) else "",
         }
     )
-    if int(plan.get("target_positions") or 0) <= 0 and not positions:
+    if sample_adjustment:
+        plan["sample_adjustment"] = sample_adjustment
+    if int(plan.get("target_positions") or 0) <= 0 and not strategy_positions:
         plan["reason"] = "capital_plan_defensive_no_new_buy"
     else:
         plan["reason"] = "capital_plan_ready"
@@ -378,6 +391,12 @@ def run_preopen_dry_run(
     reader: Any | None = None,
     score_limit: int | None = None,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
+    timings: dict[str, float] = {}
+
+    def _mark(name: str, section_start: float) -> None:
+        timings[name] = round(time.perf_counter() - section_start, 3)
+
     current = now or _now_cn()
     date = _trade_date(current)
     data_reader = reader or TradingagentDataReader()
@@ -388,7 +407,9 @@ def run_preopen_dry_run(
         or DEFAULT_SCORE_LIMIT
     )
 
+    section_started = time.perf_counter()
     data = validate_pre_open(sqlite_db=sqlite_db, now=current, min_symbols=MIN_SYMBOLS)
+    _mark("data_seconds", section_started)
     data_status = str(data.get("status") or "warn").lower()
     if data.get("reason") in {"pre_open_daily_bars_missing", "pre_open_daily_bars_stale"}:
         data_status = "fail"
@@ -401,14 +422,19 @@ def run_preopen_dry_run(
         "max_daily_age_days": data.get("max_daily_age_days"),
     }
 
+    section_started = time.perf_counter()
     candidate_pool = _build_candidate_pool(
         reader=data_reader,
         sqlite_db=sqlite_db,
         date=date,
         score_limit=resolved_score_limit,
     )
+    _mark("candidate_pool_seconds", section_started)
+    section_started = time.perf_counter()
     capital_plan = _build_capital_plan(adapter, candidate_pool["candidates_for_plan"])
+    _mark("capital_plan_seconds", section_started)
     top_candidate = candidate_pool["candidates_for_plan"][0] if candidate_pool["candidates_for_plan"] else None
+    section_started = time.perf_counter()
     execution_gate = _execution_gate(
         reader=data_reader,
         sqlite_db=sqlite_db,
@@ -417,6 +443,7 @@ def run_preopen_dry_run(
         capital_plan=capital_plan,
         now=current,
     )
+    _mark("execution_gate_seconds", section_started)
 
     sections = [data_section, candidate_pool, capital_plan, execution_gate]
     blockers: list[str] = []
@@ -453,6 +480,8 @@ def run_preopen_dry_run(
         "warnings": warnings,
         "next_actions": _next_actions(blockers, warnings),
     }
+    timings["total_seconds"] = round(time.perf_counter() - started, 3)
+    report["timings_seconds"] = timings
     return report
 
 

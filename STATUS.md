@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-08 (A股 no-trade 空候选证据门、盘前 dry-run no-write 验收、dashboard 测试治理)
+> 最后更新：2026-07-08 (A股策略资金视图隔离验证样本、盘前 dry-run 耗时观测、dashboard 测试治理)
 
 ---
 
@@ -132,6 +132,13 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-08 A股策略资金视图隔离验证样本
+
+- [x] `AshareAdapter.get_sim_account()` 从 server-local 模拟账本额外生成 `strategy_positions`、`strategy_cash_available` 和 `strategy_sample_quality`，只统计候选来源、成交价来源和交易时段都合格的策略有效样本。
+- [x] `shared/orchestrator.py` 的 A股资金计划、机会成本换仓、买入容量和 portfolio existing positions 改用策略有效样本视图；账户事实持仓仍保留在 `account_positions` 与快照中，便于看板/复盘追溯链路验证样本。
+- [x] `shared/runtime_test/ashare_preopen_dry_run.py` 同步使用策略资金视图，并输出 data/candidate_pool/capital_plan/execution_gate/total 各段耗时，避免开盘前检查慢时无法定位瓶颈。
+- [x] 文档规则已明确：链路验证样本、非连续竞价样本、缺候选来源或缺成交价来源样本不得占用策略现金、目标持仓数、新买入容量或机会成本换仓判断。
 
 ### 2026-07-08 A股 no-trade 空候选证据门与 dry-run 验收加固
 

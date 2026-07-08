@@ -197,6 +197,7 @@ describe('App navigation and result-first dashboard', () => {
     await waitFor(() => expect(screen.getAllByText('总资产')).not.toHaveLength(0))
     expect(screen.getByText('持仓流')).toBeInTheDocument()
     expect(screen.getByText(/1 个持仓 · 0 个正贡献 · 0 个需观察/)).toBeInTheDocument()
+    expect(screen.queryByText(/1 个持仓 · 0 个正贡献 · 0 个需观察 · 转化/)).not.toBeInTheDocument()
     expect(screen.queryByText(/暂无新信号进入/)).not.toBeInTheDocument()
     expect(screen.getAllByText('¥19.99万').length).toBeGreaterThan(0)
     expect(screen.getAllByText('可复盘收益').length).toBeGreaterThan(0)
@@ -425,8 +426,8 @@ describe('App navigation and result-first dashboard', () => {
 
     expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
-    expect(within(card).getAllByText('实盘准备中').length).toBeGreaterThan(0)
-    expect(within(card).getByText('接入后会在这里切换真实账户结果；当前先看模拟盘。')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
+    expect(within(card).getByText('接入后可在这里切换真实账户结果；当前以模拟盘为准。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -447,7 +448,7 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘准备中').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

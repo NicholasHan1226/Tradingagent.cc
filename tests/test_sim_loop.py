@@ -60,6 +60,9 @@ class MultiCandidateSimAdapter(StubSimAdapter):
         max_portfolio_positions: int = 3,
         positions: list[dict[str, object]] | None = None,
         cash_available: float | None = None,
+        strategy_positions: list[dict[str, object]] | None = None,
+        strategy_cash_available: float | None = None,
+        sample_adjustment: dict[str, object] | None = None,
     ) -> None:
         self.symbols = symbols
         self.max_candidates = max_candidates
@@ -67,6 +70,9 @@ class MultiCandidateSimAdapter(StubSimAdapter):
         self.max_portfolio_positions = max_portfolio_positions
         self.positions = positions or []
         self.cash_available = cash_available
+        self.strategy_positions = strategy_positions
+        self.strategy_cash_available = strategy_cash_available
+        self.sample_adjustment = sample_adjustment
 
     def get_universe(self, date: str) -> list[str]:
         return list(self.symbols)
@@ -89,6 +95,12 @@ class MultiCandidateSimAdapter(StubSimAdapter):
         payload: dict[str, object] = {"account": "ashare_sim", "sim_capital": 200000.0, "positions": list(self.positions)}
         if self.cash_available is not None:
             payload["cash_available"] = self.cash_available
+        if self.strategy_positions is not None:
+            payload["strategy_positions"] = list(self.strategy_positions)
+        if self.strategy_cash_available is not None:
+            payload["strategy_cash_available"] = self.strategy_cash_available
+        if self.sample_adjustment is not None:
+            payload["capital_plan_sample_adjustment"] = dict(self.sample_adjustment)
         return payload
 
 
@@ -813,6 +825,50 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["capital_plan"]["cash_source"], "account_snapshot")
         self.assertEqual(result["capital_plan"]["max_new_positions"], 0)
         self.assertEqual(result["filled_count"], 0)
+
+    def test_run_sim_loop_excludes_validation_samples_from_ashare_capital_plan(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.82 - index * 0.02, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for index, symbol in enumerate(universe)
+            ]
+
+        deps.score_universe = score_universe
+        validation_positions = [
+            {"ts_code": "000101.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 10.0, "last_price": 10.0, "market_value": 10000.0},
+            {"ts_code": "000102.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 10.0, "last_price": 10.0, "market_value": 10000.0},
+            {"ts_code": "000103.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 10.0, "last_price": 10.0, "market_value": 10000.0},
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(
+                ["AAA", "BBB", "CCC"],
+                max_candidates=3,
+                score_universe_limit=3,
+                max_portfolio_positions=3,
+                positions=validation_positions,
+                cash_available=82683.89,
+                strategy_positions=[],
+                strategy_cash_available=200000.0,
+                sample_adjustment={
+                    "view": "strategy_valid_samples_only",
+                    "ignored_validation_sample_count": 3,
+                    "reason": "chain_validation_samples_do_not_consume_strategy_capital",
+                },
+            ),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_validation_capital_view",
+        )
+
+        self.assertEqual(result["capital_plan"]["available_cash"], 200000.0)
+        self.assertEqual(result["capital_plan"]["existing_position_count"], 0)
+        self.assertEqual(result["capital_plan"]["sample_adjustment"]["ignored_validation_sample_count"], 3)
+        self.assertEqual(result["capital_plan_decision"]["account_cash_available"], 82683.89)
+        self.assertGreater(result["capital_plan_decision"]["position_capacity"], 0)
 
     def test_run_sim_loop_compresses_excess_ashare_positions_and_logs_capital_plan(self) -> None:
         deps = self._multi_candidate_deps()

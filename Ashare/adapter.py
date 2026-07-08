@@ -111,6 +111,91 @@ def _is_regular_a_share_symbol(symbol: Any) -> bool:
     return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
 
 
+def _read_jsonl_dicts(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    item = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(item, dict):
+                    rows.append(item)
+    except OSError:
+        return []
+    return rows
+
+
+def _positions_from_pnl(account: str, positions: Any) -> list[dict[str, Any]]:
+    if not isinstance(positions, dict):
+        return []
+    rows: list[dict[str, Any]] = []
+    for symbol, position in positions.items():
+        if not isinstance(position, dict):
+            continue
+        row = dict(position)
+        row["account"] = account
+        row["ts_code"] = str(symbol)
+        row.setdefault("sellable_quantity", row.get("quantity", 0))
+        row.setdefault("value", row.get("market_value", row.get("cost_basis", 0.0)))
+        row.setdefault("capital_layer", "simulated")
+        row.setdefault("account_type", "simulated")
+        row.setdefault("source", "server_local_sim_strategy_view")
+        row.setdefault("sample_classification", "strategy_sample")
+        rows.append(row)
+    return rows
+
+
+def _strategy_view_from_local_sim_trades(account: str, default_capital: float) -> dict[str, Any]:
+    try:
+        from shared.execution import local_sim_ledger
+        from shared.review.sample_quality import classify_trade_sample, summarize_sample_quality
+    except Exception:
+        return {}
+
+    rows = _read_jsonl_dicts(local_sim_ledger.LOCAL_SIM_TRADES)
+    if not rows:
+        return {}
+    account_rows = [row for row in rows if str(row.get("account") or account) == account]
+    if not account_rows:
+        return {}
+
+    def _valid_strategy_row(row: dict[str, Any]) -> bool:
+        if str(row.get("account") or account) != account:
+            return False
+        return bool(classify_trade_sample(row).get("strategy_sample_valid"))
+
+    try:
+        strategy_pnl = local_sim_ledger.get_local_sim_pnl(
+            account=None,
+            trade_filter=_valid_strategy_row,
+        )
+    except Exception:
+        return {}
+
+    sample_quality = summarize_sample_quality(account_rows)
+    strategy_positions = _positions_from_pnl(account, strategy_pnl.get("positions"))
+    strategy_cash_available = _safe_float(strategy_pnl.get("cash_available"), default_capital)
+    validation_count = int(sample_quality.get("validation_sample_count") or 0)
+    strategy_count = int(sample_quality.get("strategy_sample_valid_count") or 0)
+    return {
+        "strategy_positions": strategy_positions,
+        "strategy_cash_available": strategy_cash_available,
+        "strategy_sample_quality": sample_quality,
+        "capital_plan_sample_adjustment": {
+            "view": "strategy_valid_samples_only",
+            "ignored_validation_sample_count": validation_count,
+            "strategy_sample_valid_count": strategy_count,
+            "account_trade_count": len(account_rows),
+            "reason": "chain_validation_samples_do_not_consume_strategy_capital",
+        },
+    }
+
+
 class AshareAdapter(MarketAdapter):
     """Market-specific adapter for A-share shadow screening and execution."""
 
@@ -244,6 +329,7 @@ class AshareAdapter(MarketAdapter):
             "pnl": account_pnl,
             "source": str(payload.get("source") or "server_local_sim_backup"),
             "snapshot_synced_at": str(payload.get("synced_at") or ""),
+            **_strategy_view_from_local_sim_trades(account, default_capital),
         }
 
     def _get_assets(self) -> list[dict[str, Any]]:

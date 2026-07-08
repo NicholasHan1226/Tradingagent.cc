@@ -262,6 +262,71 @@ class AshareAdapterTest(unittest.TestCase):
         self.assertEqual(account["positions"][0]["sellable_quantity"], 700)
         self.assertEqual(account["positions"][0]["value"], 7140.0)
 
+    def test_sim_account_exposes_strategy_view_excluding_validation_samples(self) -> None:
+        from shared.execution import local_sim_ledger
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snapshot = root / "simulated_ashare_positions.json"
+            trades = root / "local_sim_trades.jsonl"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "source": "server_local_sim_backup",
+                        "synced_at": "2026-07-07T08:26:30+00:00",
+                        "positions": [
+                            {
+                                "account": "ashare_sim",
+                                "ts_code": "000001.SZ",
+                                "quantity": 1000,
+                                "avg_price": 10.0,
+                                "last_price": 10.0,
+                                "market_value": 10000.0,
+                            }
+                        ],
+                        "pnl": {"ashare_sim": {"cash_available": 190000.0}},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            trades.write_text(
+                json.dumps(
+                    {
+                        "order_id": "validation-after-hours",
+                        "idempotency_key": "validation-after-hours",
+                        "market": "ashare",
+                        "account": "ashare_sim",
+                        "trade_date": "2026-07-07",
+                        "ts_code": "000001.SZ",
+                        "side": "buy",
+                        "quantity": 1000,
+                        "filled_price": 10.0,
+                        "net_amount": 10000.0,
+                        "status": "filled",
+                        "candidate_pool_layer": "candidate",
+                        "execution_source": "ashare_candidate_layer",
+                        "fill_price_source_class": "market_data",
+                        "created_at": "2026-07-07T00:26:30+00:00",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with (
+                patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot),
+                patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", trades),
+            ):
+                account = AshareAdapter(reader=FakeAshareReader()).get_sim_account()
+
+        self.assertEqual(account["cash_available"], 190000.0)
+        self.assertEqual(len(account["positions"]), 1)
+        self.assertEqual(account["strategy_cash_available"], 200000.0)
+        self.assertEqual(account["strategy_positions"], [])
+        self.assertEqual(account["strategy_sample_quality"]["validation_sample_count"], 1)
+        self.assertEqual(account["capital_plan_sample_adjustment"]["ignored_validation_sample_count"], 1)
+
     def test_strategy_config_loads_eight_strategies_and_market_rules(self) -> None:
         adapter = AshareAdapter(reader=FakeAshareReader())
 
