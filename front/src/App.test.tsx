@@ -196,8 +196,9 @@ describe('App navigation and result-first dashboard', () => {
 
     await waitFor(() => expect(screen.getAllByText('总资产')).not.toHaveLength(0))
     expect(screen.getAllByText('机会管道').length).toBeGreaterThan(0)
-    expect(screen.getByText('暂无新机会')).toBeInTheDocument()
-    expect(screen.getByLabelText('持仓跟踪状态')).toBeInTheDocument()
+    expect(screen.getAllByText('持仓跟踪').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('继续跟进').length).toBeGreaterThan(0)
+    expect(screen.queryByText('暂无新机会')).not.toBeInTheDocument()
     expect(screen.queryByText(/0 个新机会 · 1 个持仓在跟踪 · 转化/)).not.toBeInTheDocument()
     expect(screen.queryByText(/暂无新信号进入/)).not.toBeInTheDocument()
     expect(screen.getAllByText('¥19.99万').length).toBeGreaterThan(0)
@@ -444,8 +445,8 @@ describe('App navigation and result-first dashboard', () => {
 
     expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
-    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
-    expect(within(card).getByText('当前先看模拟盘结果。实盘接入后在这里切换。')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘入口保留').length).toBeGreaterThan(0)
+    expect(within(card).getByText('当前以模拟盘为准。真实账户接入后，收益会在同一位置切换。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -466,7 +467,7 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('实时收益')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('实盘入口保留').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

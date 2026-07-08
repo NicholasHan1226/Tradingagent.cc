@@ -287,8 +287,8 @@ The homepage now uses three outcome-first modules:
   trading funnel.
 - `RealtimeReturnCard`: one return card combines amount and percentage. Amount
   is the primary value, percentage is secondary, and simulated/live wording is
-  controlled by the shared account mode. The copy now uses `当前收益` and
-  `实盘待接入` rather than internal or system-state phrasing.
+  controlled by the shared account mode. The copy now uses `实时收益` and
+  `实盘入口保留` rather than internal or system-state phrasing.
 - `HomeResultBrief`: renamed from judgement language to `当前结论`, with
   business-readable rows such as `收益主要来自`, `错过原因`, `风险已挡住`, and
   `实盘`.
@@ -331,10 +331,10 @@ The homepage flow panel now separates three states:
   ledger, moving labels, and outcome strip.
 - Derived signal rows: rendered as a screening pipeline only when signal stage
   evidence exists.
-- Holdings only: rendered as an idle `机会管道`, with no opportunity conversion
-  rate. It summarizes account holdings, positive contribution, and watch items
-  as a secondary strip, so the user does not mistake a holding replay for a real
-  opportunity funnel.
+- Holdings only: rendered as a live `持仓跟踪` flow inside `机会管道`, with no
+  opportunity conversion rate. It animates existing positions through state,
+  contribution, watch, and follow-up stages so the homepage does not collapse
+  into a static empty panel during quiet market windows.
 
 Visual changes in this pass:
 
@@ -344,8 +344,8 @@ Visual changes in this pass:
   holdings narrow.
 - Reduced teal glow in the funnel and return card to keep the Hyperliquid-like
   dark material restrained.
-- Renamed the live-account placeholder to `实盘待接入` and the primary return
-  label to `当前收益`.
+- Renamed the live-account placeholder to `实盘入口保留` and the primary return
+  block to `实时收益`.
 - Reduced performance chart x-axis ticks to key dates only, so long production
   history no longer crowds the chart footer.
 
@@ -364,3 +364,38 @@ Total: 93/100. The flow panel is clearer and less misleading in no-signal
 production states. Remaining gap: the backend should continue improving
 complete per-opportunity `funnelEvents[]` so the page can show a true live
 opportunity funnel during active trading windows.
+
+## July 8 Hyperliquid Alignment Polish
+
+This pass tightens the dashboard toward a Hyperliquid-like workbench rather
+than a conventional card dashboard:
+
+- Reduced the market header from 148px to 130px and moved freshness out of the
+  metric strip, so the first screen has less chrome and more actual result
+  surface.
+- Darkened the global background and reduced contour opacity; cyan is now used
+  mostly for selected state, live state, and positive result emphasis.
+- Rebalanced the homepage grid: the right rail is narrower, the return card is
+  lighter, and the main funnel/chart area reads as embedded terminal panels
+  instead of separate floating blocks.
+- Changed the holdings-only homepage state from a static empty panel into a
+  dynamic `持仓跟踪` flow. It is clearly labeled as holding context and does not
+  display opportunity conversion.
+- Updated tests to protect the new live-account copy and the dynamic holding
+  flow behavior.
+
+Updated score after this pass:
+
+- Visual hierarchy: 19/20
+- Typography quality: 14/15
+- Color semantics: 15/15
+- Spacing rhythm: 15/15
+- Interaction feedback: 9/10
+- Accessibility baseline: 8/10
+- Originality / brand fit: 9/10
+- Responsive integrity: 4/5
+
+Total: 93/100. The page is closer to Hyperliquid in density, color restraint,
+and embedded panel treatment. Remaining gap: complete backend `funnelEvents[]`
+coverage is still needed for the funnel to show real high-volume market flow
+instead of holding-context motion during quiet periods.

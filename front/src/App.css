@@ -3,7 +3,8 @@
   isolation: isolate;
   min-height: 100vh;
   background:
-    linear-gradient(180deg, #020303 0%, #020605 34%, #020806 70%, #00110c 100%);
+    radial-gradient(ellipse 88% 64% at 78% 80%, rgba(0, 44, 33, 0.14), transparent 66%),
+    linear-gradient(180deg, #010202 0%, #020403 38%, #010303 72%, #000d09 100%);
   color: var(--text-primary);
   overflow: hidden;
 }
@@ -20,7 +21,7 @@
       ellipse 56% 42% at 86% 32%,
       transparent 0,
       transparent 42px,
-      rgba(105, 228, 215, 0.04) 43px,
+      rgba(105, 228, 215, 0.032) 43px,
       transparent 44px,
       transparent 84px
     ),
@@ -28,7 +29,7 @@
       ellipse 50% 38% at 9% 96%,
       transparent 0,
       transparent 46px,
-      rgba(105, 228, 215, 0.034) 47px,
+      rgba(105, 228, 215, 0.028) 47px,
       transparent 48px,
       transparent 92px
     );
@@ -41,14 +42,14 @@
   inset: 56px 0 0;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.18;
+  opacity: 0.105;
   background:
-    linear-gradient(180deg, rgba(0, 24, 18, 0) 0%, rgba(0, 28, 21, 0.1) 48%, rgba(0, 42, 30, 0.18) 100%),
+    linear-gradient(180deg, rgba(0, 24, 18, 0) 0%, rgba(0, 28, 21, 0.08) 48%, rgba(0, 36, 26, 0.14) 100%),
     repeating-radial-gradient(
       ellipse 64% 50% at 82% 82%,
       transparent 0,
       transparent 42px,
-      rgba(105, 228, 215, 0.044) 43px,
+      rgba(105, 228, 215, 0.036) 43px,
       transparent 44px,
       transparent 84px
     ),
@@ -56,7 +57,7 @@
       ellipse 54% 42% at 8% 94%,
       transparent 0,
       transparent 46px,
-      rgba(105, 228, 215, 0.036) 47px,
+      rgba(105, 228, 215, 0.03) 47px,
       transparent 48px,
       transparent 92px
     );
@@ -387,16 +388,16 @@ button:not(:disabled) {
   position: relative;
   z-index: 8;
   overflow: visible;
-  height: 148px;
+  height: 130px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto 44px;
+  grid-template-rows: auto 46px;
   align-items: start;
   column-gap: 28px;
-  row-gap: 14px;
-  padding: 22px 48px 14px;
+  row-gap: 10px;
+  padding: 17px 48px 12px;
   background:
-    linear-gradient(180deg, rgba(4, 11, 11, 0.96), rgba(1, 14, 11, 0.78));
+    linear-gradient(180deg, rgba(3, 8, 8, 0.96), rgba(1, 10, 8, 0.84));
   border-bottom: 1px solid var(--border-hairline);
 }
 
@@ -406,13 +407,13 @@ button:not(:disabled) {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.18;
+  opacity: 0.11;
   background:
     repeating-radial-gradient(
       ellipse 54% 52% at 82% 74%,
       transparent 0,
       transparent 38px,
-      rgba(105, 228, 215, 0.06) 39px,
+      rgba(105, 228, 215, 0.042) 39px,
       transparent 40px,
       transparent 76px
     );
@@ -434,14 +435,14 @@ button:not(:disabled) {
 .market-symbol strong {
   display: block;
   color: var(--text-primary);
-  font-size: 31px;
+  font-size: 28px;
   line-height: 1.08;
   font-weight: 640;
 }
 
 .market-symbol span {
   display: block;
-  margin-top: 9px;
+  margin-top: 7px;
   color: color-mix(in srgb, var(--text-muted) 92%, var(--text-primary));
   font-size: 12px;
 }
@@ -456,11 +457,11 @@ button:not(:disabled) {
   grid-row: 2;
   width: fit-content;
   max-width: 100%;
-  height: 50px;
+  height: 46px;
   min-width: 0;
   border: 1px solid var(--border-workbench);
   border-radius: 4px;
-  background: rgba(2, 7, 7, 0.62);
+  background: rgba(1, 5, 5, 0.68);
   box-shadow: inset 0 1px 0 rgba(240, 246, 244, 0.018);
   overflow: hidden;
 }
@@ -469,14 +470,14 @@ button:not(:disabled) {
   position: relative;
   display: grid;
   align-content: center;
-  gap: 4px;
-  min-width: 126px;
+  gap: 2px;
+  min-width: 120px;
   height: 100%;
-  padding: 0 16px;
+  padding: 0 14px;
 }
 
 .market-stats span:first-child {
-  min-width: 190px;
+  min-width: 176px;
 }
 
 .market-tools {
@@ -539,19 +540,19 @@ button:not(:disabled) {
 .market-stats em {
   width: fit-content;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 10.5px;
   font-style: normal;
 }
 
 .market-stats strong {
   color: var(--text-primary);
-  font: 700 16px/1 var(--font-number);
+  font: 700 14.5px/1 var(--font-number);
   white-space: nowrap;
 }
 
 .market-stats b {
   color: var(--accent-cyan);
-  font: 670 11px/1 var(--font-number);
+  font: 670 10px/1 var(--font-number);
 }
 
 .market-stats .cyan strong {
@@ -611,7 +612,7 @@ button:not(:disabled) {
 .workspace {
   position: relative;
   z-index: 1;
-  height: calc(100vh - 211px);
+  height: calc(100vh - 186px);
   overflow: auto;
   scrollbar-width: thin;
 }
@@ -620,20 +621,20 @@ button:not(:disabled) {
 .theme-layout {
   display: grid;
   gap: 0;
-  margin: 12px 40px 34px;
-  min-height: calc(100% - 56px);
+  margin: 10px 40px 30px;
+  min-height: calc(100% - 42px);
   border: 1px solid rgba(240, 246, 244, 0.052);
   border-radius: 4px;
   background:
-    linear-gradient(180deg, rgba(5, 12, 12, 0.82), rgba(2, 7, 7, 0.94)),
-    linear-gradient(90deg, rgba(109, 224, 213, 0.035), transparent 22%, transparent 78%, rgba(109, 224, 213, 0.025)),
+    linear-gradient(180deg, rgba(4, 10, 10, 0.72), rgba(1, 5, 5, 0.94)),
+    linear-gradient(90deg, rgba(109, 224, 213, 0.018), transparent 24%, transparent 78%, rgba(109, 224, 213, 0.014)),
     var(--surface-workbench);
   box-shadow: none;
   overflow: hidden;
 }
 
 .home-layout {
-  grid-template-columns: minmax(0, 1fr) 316px;
+  grid-template-columns: minmax(0, 1fr) 304px;
 }
 
 .theme-layout {
@@ -669,7 +670,7 @@ button:not(:disabled) {
 .home-rail {
   gap: 0;
   border-left: 1px solid var(--border-hairline);
-  background: rgba(4, 10, 10, 0.26);
+  background: rgba(1, 5, 5, 0.28);
 }
 
 .panel {
@@ -685,14 +686,14 @@ button:not(:disabled) {
 }
 
 .hero-performance {
-  min-height: 466px;
-  padding: 18px 20px 0;
+  min-height: 438px;
+  padding: 16px 18px 0;
 }
 
 .performance-headline {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 344px;
+  gap: 12px;
   align-items: start;
   margin-bottom: 14px;
 }
@@ -708,7 +709,7 @@ button:not(:disabled) {
   max-width: 900px;
   margin: 10px 0 10px;
   color: var(--text-primary);
-  font-size: 27px;
+  font-size: 25px;
   line-height: 1.04;
   font-weight: 660;
 }
@@ -730,21 +731,21 @@ button:not(:disabled) {
   position: relative;
   min-width: 0;
   min-height: 286px;
-  border: 1px solid rgba(224, 246, 240, 0.064);
+  border: 1px solid rgba(224, 246, 240, 0.052);
   border-radius: 4px;
   background:
-    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 46%),
-    rgba(1, 5, 5, 0.46);
+    linear-gradient(180deg, rgba(240, 246, 244, 0.008), transparent 50%),
+    rgba(1, 4, 4, 0.58);
   overflow: hidden;
 }
 
 .real-funnel-board {
-  min-height: 386px;
-  padding: 46px 12px 116px;
+  min-height: 360px;
+  padding: 42px 12px 106px;
   background:
-    radial-gradient(ellipse 88% 62% at 50% 46%, rgba(105, 228, 215, 0.026), transparent 58%),
-    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 54%),
-    rgba(1, 5, 5, 0.82);
+    radial-gradient(ellipse 88% 62% at 50% 46%, rgba(105, 228, 215, 0.014), transparent 60%),
+    linear-gradient(180deg, rgba(240, 246, 244, 0.008), transparent 56%),
+    rgba(1, 5, 5, 0.86);
 }
 
 .real-funnel-board.is-empty-flow {
@@ -766,11 +767,11 @@ button:not(:disabled) {
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(90deg, rgba(109, 224, 213, 0.03), transparent 20%, transparent 80%, rgba(109, 224, 213, 0.018)),
-    linear-gradient(90deg, transparent 19.9%, rgba(240, 246, 244, 0.04) 20%, transparent 20.12%),
-    linear-gradient(90deg, transparent 39.9%, rgba(240, 246, 244, 0.04) 40%, transparent 40.12%),
-    linear-gradient(90deg, transparent 59.9%, rgba(240, 246, 244, 0.04) 60%, transparent 60.12%),
-    linear-gradient(90deg, transparent 79.9%, rgba(240, 246, 244, 0.04) 80%, transparent 80.12%);
+    linear-gradient(90deg, rgba(109, 224, 213, 0.018), transparent 22%, transparent 80%, rgba(109, 224, 213, 0.012)),
+    linear-gradient(90deg, transparent 19.9%, rgba(240, 246, 244, 0.032) 20%, transparent 20.12%),
+    linear-gradient(90deg, transparent 39.9%, rgba(240, 246, 244, 0.032) 40%, transparent 40.12%),
+    linear-gradient(90deg, transparent 59.9%, rgba(240, 246, 244, 0.032) 60%, transparent 60.12%),
+    linear-gradient(90deg, transparent 79.9%, rgba(240, 246, 244, 0.032) 80%, transparent 80.12%);
 }
 
 .real-funnel-board.is-empty-flow::before {
@@ -784,9 +785,9 @@ button:not(:disabled) {
 
 .flow-caption {
   position: absolute;
-  top: 12px;
-  left: 14px;
-  right: 14px;
+  top: 10px;
+  left: 12px;
+  right: 12px;
   z-index: 2;
   display: flex;
   align-items: center;
@@ -808,10 +809,10 @@ button:not(:disabled) {
   align-items: center;
   min-height: 18px;
   padding: 0 7px;
-  border: 1px solid rgba(105, 228, 215, 0.14);
+  border: 1px solid rgba(105, 228, 215, 0.12);
   border-radius: 999px;
   color: var(--accent-cyan);
-  background: rgba(105, 228, 215, 0.02);
+  background: rgba(105, 228, 215, 0.014);
   font-size: 10px;
   font-weight: 700;
 }
@@ -829,14 +830,14 @@ button:not(:disabled) {
   grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  min-height: 36px;
-  margin-bottom: 10px;
+  min-height: 34px;
+  margin-bottom: 9px;
   padding: 0 10px;
-  border: 1px solid rgba(240, 246, 244, 0.046);
+  border: 1px solid rgba(240, 246, 244, 0.04);
   border-radius: 4px;
   background:
-    linear-gradient(90deg, rgba(105, 228, 215, 0.032), transparent 32%),
-    rgba(1, 6, 6, 0.58);
+    linear-gradient(90deg, rgba(105, 228, 215, 0.018), transparent 34%),
+    rgba(1, 5, 5, 0.68);
 }
 
 .flow-result-banner span {
@@ -867,23 +868,23 @@ button:not(:disabled) {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   overflow: hidden;
-  border: 1px solid rgba(240, 246, 244, 0.052);
+  border: 1px solid rgba(240, 246, 244, 0.046);
   border-radius: 4px;
-  background: linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent), rgba(1, 6, 6, 0.48);
+  background: linear-gradient(180deg, rgba(240, 246, 244, 0.008), transparent), rgba(1, 5, 5, 0.62);
 }
 
 .real-funnel-stage-card {
   min-width: 0;
   display: grid;
   gap: 4px;
-  min-height: 68px;
-  padding: 10px 11px;
-  border-left: 1px solid rgba(240, 246, 244, 0.045);
+  min-height: 62px;
+  padding: 9px 10px;
+  border-left: 1px solid rgba(240, 246, 244, 0.038);
 }
 
 .real-funnel-stage-card.has-loss {
   background:
-    linear-gradient(180deg, rgba(226, 180, 91, 0.024), transparent 58%),
+    linear-gradient(180deg, rgba(226, 180, 91, 0.014), transparent 58%),
     rgba(240, 246, 244, 0.006);
 }
 
@@ -904,7 +905,7 @@ button:not(:disabled) {
 
 .real-funnel-stage-card strong {
   color: var(--text-primary);
-  font: 730 22px/1 var(--font-number);
+  font: 730 20px/1 var(--font-number);
 }
 
 .real-funnel-stage-card em {
@@ -914,15 +915,15 @@ button:not(:disabled) {
 .real-funnel-body {
   position: relative;
   z-index: 2;
-  height: 142px;
-  margin-top: 12px;
+  height: 136px;
+  margin-top: 10px;
   overflow: hidden;
-  border: 1px solid rgba(240, 246, 244, 0.046);
+  border: 1px solid rgba(240, 246, 244, 0.04);
   border-radius: 4px;
   background:
-    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 70%),
-    linear-gradient(90deg, rgba(105, 228, 215, 0.018), transparent 24%, transparent 76%, rgba(105, 228, 215, 0.012)),
-    rgba(1, 5, 5, 0.44);
+    linear-gradient(180deg, rgba(240, 246, 244, 0.008), transparent 70%),
+    linear-gradient(90deg, rgba(105, 228, 215, 0.012), transparent 24%, transparent 76%, rgba(105, 228, 215, 0.008)),
+    rgba(1, 5, 5, 0.5);
 }
 
 .real-funnel-empty {
@@ -1568,15 +1569,15 @@ button:not(:disabled) {
   display: grid;
   align-content: start;
   justify-items: start;
-  gap: 10px;
-  min-height: 318px;
-  padding: 18px 18px 16px;
-  border: 1px solid rgba(224, 246, 240, 0.052);
+  gap: 9px;
+  min-height: 304px;
+  padding: 16px 16px 14px;
+  border: 1px solid rgba(224, 246, 240, 0.046);
   border-radius: 4px;
   background:
-    linear-gradient(180deg, rgba(240, 246, 244, 0.014), transparent 54%),
-    rgba(1, 5, 5, 0.82);
-  box-shadow: inset 0 1px 0 rgba(240, 246, 244, 0.018);
+    linear-gradient(180deg, rgba(240, 246, 244, 0.008), transparent 56%),
+    rgba(1, 5, 5, 0.86);
+  box-shadow: none;
 }
 
 .return-card-head {
@@ -1599,7 +1600,7 @@ button:not(:disabled) {
 }
 
 .return-card-head > span {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-weight: 680;
 }
 
@@ -1608,18 +1609,18 @@ button:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 0;
-  padding: 2px;
-  border: 1px solid rgba(210, 225, 220, 0.07);
+  padding: 1px;
+  border: 1px solid rgba(210, 225, 220, 0.06);
   border-radius: 4px;
-  background: rgba(1, 5, 5, 0.58);
+  background: rgba(1, 5, 5, 0.72);
 }
 
 .realtime-return-card .return-mode-switch button {
   position: relative;
   z-index: 1;
-  height: 25px;
+  height: 24px;
   margin: 0;
-  padding: 0 10px;
+  padding: 0 9px;
   border: 0;
   border-radius: 3px;
   background: transparent;
@@ -1630,8 +1631,8 @@ button:not(:disabled) {
 
 .realtime-return-card .return-mode-switch button.selected {
   color: var(--accent-cyan);
-  background: rgba(105, 228, 215, 0.045);
-  box-shadow: inset 0 -1px 0 rgba(105, 228, 215, 0.86);
+  background: rgba(105, 228, 215, 0.034);
+  box-shadow: inset 0 -1px 0 rgba(105, 228, 215, 0.72);
 }
 
 .return-primary {
@@ -1643,7 +1644,7 @@ button:not(:disabled) {
 .return-primary strong,
 .realtime-return-card > strong {
   color: var(--accent-cyan);
-  font: 760 38px/1.02 var(--font-number);
+  font: 760 34px/1.02 var(--font-number);
 }
 
 .return-primary span {
@@ -1666,16 +1667,16 @@ button:not(:disabled) {
   width: 100%;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  border: 1px solid rgba(240, 246, 244, 0.044);
-  background: rgba(1, 5, 5, 0.58);
+  border: 1px solid rgba(240, 246, 244, 0.038);
+  background: rgba(1, 5, 5, 0.62);
 }
 
 .return-facts span {
   min-width: 0;
   display: grid;
   gap: 5px;
-  padding: 9px 10px;
-  border-left: 1px solid rgba(240, 246, 244, 0.04);
+  padding: 8px 9px;
+  border-left: 1px solid rgba(240, 246, 244, 0.034);
 }
 
 .return-facts span:first-child {
@@ -1700,18 +1701,18 @@ button:not(:disabled) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   width: 100%;
-  border: 1px solid rgba(240, 246, 244, 0.04);
-  background: rgba(6, 13, 13, 0.42);
+  border: 1px solid rgba(240, 246, 244, 0.036);
+  background: rgba(1, 5, 5, 0.44);
 }
 
 .return-account-grid span {
   display: grid;
   gap: 4px;
   min-width: 0;
-  min-height: 48px;
-  padding: 8px 10px;
-  border-right: 1px solid rgba(240, 246, 244, 0.035);
-  border-bottom: 1px solid rgba(240, 246, 244, 0.035);
+  min-height: 44px;
+  padding: 7px 9px;
+  border-right: 1px solid rgba(240, 246, 244, 0.03);
+  border-bottom: 1px solid rgba(240, 246, 244, 0.03);
 }
 
 .return-account-grid span:nth-child(2n) {
@@ -1762,13 +1763,13 @@ button:not(:disabled) {
 }
 
 .realtime-return-card button {
-  height: 30px;
+  height: 28px;
   margin-top: auto;
   padding: 0 12px;
-  border: 1px solid rgba(240, 246, 244, 0.07);
+  border: 1px solid rgba(240, 246, 244, 0.058);
   border-radius: 4px;
   color: var(--text-secondary);
-  background: rgba(8, 16, 16, 0.78);
+  background: rgba(5, 11, 11, 0.72);
   font-size: 11px;
 }
 
@@ -1894,7 +1895,7 @@ button:not(:disabled) {
 }
 
 .rail-panel {
-  padding: 16px;
+  padding: 14px;
 }
 
 .home-rail .rail-panel {
@@ -1916,7 +1917,7 @@ button:not(:disabled) {
 .home-brief-score {
   display: grid;
   gap: 7px;
-  padding: 13px 0 15px;
+  padding: 12px 0 14px;
   border-bottom: 1px solid var(--border-hairline);
 }
 
@@ -1931,7 +1932,7 @@ button:not(:disabled) {
 
 .home-brief-score strong {
   color: var(--text-primary);
-  font: 740 27px/1 var(--font-number);
+  font: 740 24px/1 var(--font-number);
 }
 
 .home-brief-score em {
@@ -1949,7 +1950,7 @@ button:not(:disabled) {
   display: grid;
   gap: 6px;
   min-width: 0;
-  padding: 12px 10px 12px 0;
+  padding: 10px 10px 10px 0;
 }
 
 .home-brief-facts span + span {
@@ -1968,13 +1969,13 @@ button:not(:disabled) {
 .closure-proof-panel,
 .ashare-moneyflow-panel {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .closure-proof-list,
 .moneyflow-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .closure-proof-row,
@@ -1984,7 +1985,7 @@ button:not(:disabled) {
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
-  padding: 10px 0;
+  padding: 8px 0;
   border-bottom: 1px solid var(--border-hairline);
 }
 
@@ -2351,12 +2352,12 @@ button:not(:disabled) {
 
 .hyper-chart-panel {
   overflow: hidden;
-  border: 1px solid rgba(224, 246, 240, 0.052);
+  border: 1px solid rgba(224, 246, 240, 0.046);
   border-radius: 4px;
   background:
-    linear-gradient(180deg, rgba(240, 246, 244, 0.014), transparent 52%),
-    linear-gradient(90deg, rgba(94, 234, 223, 0.018), transparent 34%, rgba(201, 168, 90, 0.012)),
-    rgba(1, 5, 5, 0.74);
+    linear-gradient(180deg, rgba(240, 246, 244, 0.008), transparent 54%),
+    linear-gradient(90deg, rgba(94, 234, 223, 0.01), transparent 34%, rgba(201, 168, 90, 0.008)),
+    rgba(1, 5, 5, 0.8);
 }
 
 .chart-panel-toolbar {
@@ -2370,9 +2371,9 @@ button:not(:disabled) {
   gap: 10px;
   min-height: 34px;
   padding: 5px 6px 5px 10px;
-  border: 1px solid rgba(224, 246, 240, 0.05);
+  border: 1px solid rgba(224, 246, 240, 0.042);
   border-radius: 4px;
-  background: rgba(1, 6, 6, 0.68);
+  background: rgba(1, 5, 5, 0.72);
   backdrop-filter: blur(8px);
 }
 

@@ -28,25 +28,27 @@ export function SignalFunnelFlow({
   const eventFlow = getEventFlow(events)
   const hasHoldingContext = !events.length && !signals.length && holdings.length > 0
   const holdingSummary = hasHoldingContext ? getHoldingSummary(holdings) : null
-  const visualStages = getVisualStages(funnel, eventFlow)
+  const visualStages = hasHoldingContext ? getHoldingVisualStages(holdings) : getVisualStages(funnel, eventFlow)
   const maxStageCount = Math.max(1, ...visualStages.map((stage) => stage.count))
   const stageWidths = visualStages.map((stage) => Math.max(12, stage.width ?? Math.round((stage.count / maxStageCount) * 100)))
   const executedSignals = funnel.executed
   const pendingSignals = funnel.pending
   const missedSignals = funnel.missed
   const blockedSignals = [...funnel.blocked, ...funnel.cancelled]
-  const outcomeRows = getOutcomeRows(eventFlow, {
+  const outcomeRows = hasHoldingContext ? getHoldingOutcomeRows(holdings) : getOutcomeRows(eventFlow, {
     executed: executedSignals.length,
     pending: pendingSignals.length,
     missed: missedSignals.length,
     abandoned: blockedSignals.length,
   })
-  const outcomeLabels = OUTCOME_LABELS
+  const outcomeLabels = hasHoldingContext ? ['正贡献', '平稳', '观察', '离场'] : OUTCOME_LABELS
   const passRate = Math.round((funnel.executed.length / Math.max(1, signals.length)) * 100)
   const visualStageDrops = visualStages.map((stage) => stage.dropped)
   const hasStageDrop = visualStageDrops.some((drop) => drop > 0)
   const hasTimingEvidence = signals.some((signal) => signal.stageLatencyMinutes && signal.stageLatencyMinutes > 0)
-  const bottleneck = getBottleneck(visualStages.map((stage) => ({ label: stage.label, count: stage.count })))
+  const bottleneck = hasHoldingContext && holdingSummary
+    ? getHoldingBottleneck(holdings, holdingSummary)
+    : getBottleneck(visualStages.map((stage) => ({ label: stage.label, count: stage.count })))
   const hasEventSource = events.length > 0
   const eventCaption = eventFlow
     ? `${eventFlow.total} 个机会进入 · ${eventFlow.outcomes.executed} 个成交 · ${eventFlow.outcomes.abandoned} 个放弃`
@@ -75,14 +77,16 @@ export function SignalFunnelFlow({
     ? buildEventParticles(events)
       : hasSignalData
         ? buildParticles(signals, funnel.mode)
+        : hasHoldingContext
+          ? buildHoldingParticles(holdings)
         : []
   const latestTapeItems = hasEventSource ? events.slice(-4).reverse().map(eventToTapeItem) : hasHoldingContext ? getHoldingTape(holdings) : []
   const firstStageCount = Math.max(1, visualStages[0]?.count ?? signals.length)
   const finalStageCount = visualStages.at(-1)?.count ?? 0
   const conversionRate = Math.round((finalStageCount / firstStageCount) * 100)
-  const hasFlowVolume = hasEventSource || hasSignalData
+  const hasFlowVolume = hasEventSource || hasSignalData || hasHoldingContext
   const moduleTitle = '机会管道'
-  const captionText = hasFlowVolume ? `${caption} · 转化 ${conversionRate}%` : caption
+  const captionText = hasHoldingContext ? caption : hasFlowVolume ? `${caption} · 转化 ${conversionRate}%` : caption
   const flowSummary = getFlowSummary({
     bottleneck,
     conversionRate,
@@ -92,11 +96,11 @@ export function SignalFunnelFlow({
     hasEventSource,
     hasHoldingContext,
   })
-  const lossRows = getLossRows(visualStages)
+  const lossRows = hasHoldingContext ? getHoldingLossRows(holdings) : getLossRows(visualStages)
 
   return (
     <section className="signal-flow-module" aria-label={moduleTitle}>
-      <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''} ${hasHoldingContext ? 'mode-holding-context' : ''} ${hasFlowVolume ? '' : 'is-empty-flow'}`}>
+      <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''} ${hasHoldingContext ? 'mode-holding-context mode-holding-flow' : ''} ${hasFlowVolume ? '' : 'is-empty-flow'}`}>
         <div className="flow-caption">
           <span>{moduleTitle} <b>{modeLabel}</b></span>
           <strong>{captionText}</strong>
@@ -262,6 +266,58 @@ function getHoldingSummary(holdings: HoldingRow[]) {
     positive: holdings.filter((holding) => isPositivePnl(holding.pnl)).length,
     watching: holdings.filter((holding) => holding.risk === '观察' || holding.risk === '偏高').length,
   }
+}
+
+function getHoldingBottleneck(holdings: HoldingRow[], summary: ReturnType<typeof getHoldingSummary>) {
+  const negative = holdings.filter((holding) => !isPositivePnl(holding.pnl)).length
+  if (summary.watching > 0) return `${summary.watching} 个持仓需要观察`
+  if (summary.positive > 0) return `${summary.positive} 个持仓正贡献`
+  if (negative > 0) return '当前持仓承压'
+  return '持仓状态平稳'
+}
+
+function getHoldingLossRows(holdings: HoldingRow[]) {
+  const watching = holdings.filter((holding) => holding.risk === '观察' || holding.risk === '偏高').length
+  const negative = holdings.filter((holding) => !isPositivePnl(holding.pnl)).length
+  return [
+    { count: negative, label: '负贡献' },
+    { count: watching, label: '需观察' },
+  ]
+}
+
+function getHoldingVisualStages(holdings: HoldingRow[]) {
+  const total = holdings.length
+  const positive = holdings.filter((holding) => isPositivePnl(holding.pnl)).length
+  const normal = holdings.filter((holding) => holding.risk === '正常').length
+  const watching = holdings.filter((holding) => holding.risk === '观察' || holding.risk === '偏高').length
+  const contributing = Math.max(positive, total - watching)
+  const queue = Math.max(1, contributing)
+  const stages = [
+    { count: total, label: '持仓跟踪' },
+    { count: normal, label: '状态正常' },
+    { count: positive, label: '正贡献' },
+    { count: watching, label: '需要观察' },
+    { count: queue, label: '继续跟进' },
+  ]
+
+  return stages.map((stage, index) => {
+    const previousCount = index === 0 ? stage.count : stages[index - 1].count
+    const dropped = index === 0 ? 0 : Math.max(0, previousCount - stage.count)
+    return {
+      count: stage.count,
+      dropped,
+      hint: index === 0 ? '当前' : stage.count > 0 ? '保留' : '等待',
+      label: stage.label,
+      width: Math.max(18, Math.round((stage.count / Math.max(1, total)) * 100)),
+    }
+  })
+}
+
+function getHoldingOutcomeRows(holdings: HoldingRow[]) {
+  const positive = holdings.filter((holding) => isPositivePnl(holding.pnl)).length
+  const watching = holdings.filter((holding) => holding.risk === '观察' || holding.risk === '偏高').length
+  const neutral = Math.max(0, holdings.length - positive - watching)
+  return [positive, neutral, watching, 0]
 }
 
 type EventFlow = {
@@ -435,6 +491,29 @@ function buildEventParticles(events: FunnelEvent[]) {
       showLabel: labelIndexes.has(index),
       symbol: compactSymbol(event.symbol),
       stopLeft: `${Math.min(93, stopStage * 20 - 8)}%`,
+      tone,
+    }
+  })
+}
+
+function buildHoldingParticles(holdings: HoldingRow[]) {
+  return holdings.slice(0, MAX_ANIMATED_SIGNALS).map((holding, index) => {
+    const tone = holding.risk === '偏高'
+      ? 'red'
+      : holding.risk === '观察'
+        ? 'amber'
+        : isPositivePnl(holding.pnl)
+          ? 'cyan'
+          : 'muted'
+
+    return {
+      begin: `${-(index * 0.74)}s`,
+      duration: `${6.6 + (index % 5) * 0.48}s`,
+      label: holding.symbol,
+      lane: index % 8,
+      showLabel: true,
+      symbol: compactSymbol(holding.symbol),
+      stopLeft: holding.risk === '偏高' ? '68%' : '92%',
       tone,
     }
   })
