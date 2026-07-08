@@ -810,11 +810,22 @@ def _count_jsonl_rows(path: Path) -> int:
         return 0
 
 
-def _latest_ashare_no_trade_explanation(path: Path | None = None) -> dict[str, Any]:
+def _ashare_no_trade_payload_date(payload: dict[str, Any], explanation: dict[str, Any]) -> str:
+    for source in (explanation, payload):
+        for key in ("trade_date", "date", "local_date", "generated_at", "created_at", "timestamp"):
+            value = source.get(key)
+            compact = _compact_date(value)
+            if compact:
+                return compact
+    return ""
+
+
+def _latest_ashare_no_trade_explanation(path: Path | None = None, trade_date: str | None = None) -> dict[str, Any]:
     target = path or (ROOT / "shared/logs/ashare_no_trade_explanations.jsonl")
     if not target.exists():
         return {}
     latest: dict[str, Any] = {}
+    target_date = _compact_date(trade_date)
     try:
         lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -831,9 +842,16 @@ def _latest_ashare_no_trade_explanation(path: Path | None = None) -> dict[str, A
         explanation = payload.get("no_trade_explanation")
         if not isinstance(explanation, dict):
             continue
+        payload_date = _ashare_no_trade_payload_date(payload, explanation)
+        if target_date and payload_date and payload_date != target_date:
+            continue
+        if target_date and not payload_date:
+            continue
         latest = dict(explanation)
         latest.setdefault("generated_at", payload.get("generated_at"))
         latest.setdefault("state", payload.get("state"))
+        if payload_date:
+            latest.setdefault("trade_date", payload_date)
         evidence_gaps = _ashare_candidate_order_gap_evidence_gaps(latest)
         latest.setdefault("evidence_status", "incomplete" if evidence_gaps else "ready")
         latest.setdefault("evidence_gaps", evidence_gaps)
@@ -1255,8 +1273,8 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     cron_installed = bool(wrapper and wrapper in crontab_text)
     session_state = _market_session_state(market)
     samples_expected = bool(session_state.get("samples_expected_today"))
-    no_trade_explanation = _latest_ashare_no_trade_explanation() if market == "ashare" else {}
     current_trade_date = _compact_date(session_state.get("local_time")) or datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
+    no_trade_explanation = _latest_ashare_no_trade_explanation(trade_date=current_trade_date) if market == "ashare" else {}
     if market == "ashare":
         ledger["today_trade_rows"] = _ashare_local_sim_trade_count_for_date(current_trade_date)
 

@@ -141,6 +141,9 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 
 ## 关键命令入口
 
+- TradingAgent 本地快速验收：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.full_acceptance --profile quick --pretty`
+- TradingAgent 生产只读验收：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.full_acceptance --profile prod --pretty`
+- TradingAgent 发布前全量验收：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.full_acceptance --profile all --pretty`
 - A股盘前 dry-run：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.ashare_preopen_dry_run --json --pretty --send-on never`
 - A股市场健康检查：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/market_health.py --market ashare --pretty`
 - 运维报告：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/ops_report.py --send-on never --pretty`
