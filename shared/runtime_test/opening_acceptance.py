@@ -442,7 +442,11 @@ def render_text(report: dict[str, Any]) -> str:
             line += f"；最新bar={latest_bar}"
         samples = details.get("sample_summary")
         if isinstance(samples, dict):
-            has_sample_value = any(value is not None and value != "" and value != {} for value in samples.values())
+            rendered_sample_keys = ("bar_count", "signals", "local_sim_trades", "sim_execution_receipts", "daily_reviews")
+            has_sample_value = any(
+                samples.get(key) is not None and samples.get(key) != "" and samples.get(key) != {}
+                for key in rendered_sample_keys
+            )
             if has_sample_value:
                 signals = samples.get("signals") if isinstance(samples.get("signals"), dict) else {}
                 signal_total = sum(int(value or 0) for value in signals.values())

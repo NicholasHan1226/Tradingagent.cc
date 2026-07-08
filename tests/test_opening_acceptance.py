@@ -111,6 +111,41 @@ def test_render_text_skips_empty_closed_window_sample_counts():
     assert "成交=0" not in text
 
 
+def test_render_text_skips_pre_open_symbol_only_sample_counts():
+    report = {
+        "overall_status": "pass",
+        "generated_at": datetime(2026, 7, 8, tzinfo=timezone.utc).isoformat(),
+        "summary": {"pass": 1, "warn": 0, "fail": 0},
+        "checks": [
+            {
+                "name": "ashare_opening_acceptance",
+                "status": "pass",
+                "summary": "A股开盘验收通过",
+                "details": {
+                    "report_type": "pre_open_acceptance",
+                    "reason": "pre_open_acceptance_passed",
+                    "session": "afternoon",
+                    "sample_summary": {
+                        "bar_count": None,
+                        "symbol_count": 5200,
+                        "signals": {},
+                        "local_sim_trades": None,
+                        "sim_execution_receipts": None,
+                        "daily_reviews": None,
+                    },
+                },
+            }
+        ],
+        "next_actions": ["当前可接受"],
+    }
+
+    text = opening_acceptance.render_text(report)
+
+    assert "pre_open_acceptance_passed" in text
+    assert "bar=0" not in text
+    assert "成交=0" not in text
+
+
 def test_sharedsignals_core_ok_health_degraded_is_warn(monkeypatch):
     def fake_http_json(url, timeout=8.0):
         if url.endswith("/cache/status"):
