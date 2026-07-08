@@ -13,8 +13,8 @@ export function ClosedLoopProofPanel({ summaries }: { summaries: MarketSummary[]
   const rows = summaries.filter((summary) => summary.market !== 'HK')
 
   return (
-    <section className="panel rail-panel closure-proof-panel" aria-label="闭环证明">
-      <PanelTitle kicker="闭环证明" title="运行证据" />
+    <section className="panel rail-panel closure-proof-panel" aria-label="市场运行状态">
+      <PanelTitle kicker="运行证据" title="市场状态" />
       <div className="closure-proof-list">
         {rows.length ? rows.map((summary) => (
           <div className={`closure-proof-row ${summary.runtimeState ?? 'empty'}`} key={summary.market}>
@@ -58,7 +58,8 @@ function formatEvidence(summary: MarketSummary) {
 }
 
 function formatCounts(summary: MarketSummary) {
-  return `${summary.signalCount}/${summary.tradeCount}/${summary.holdingCount}`
+  if (!summary.signalCount && !summary.tradeCount && !summary.holdingCount) return '无记录'
+  return `信号 ${summary.signalCount} · 成交 ${summary.tradeCount} · 持仓 ${summary.holdingCount}`
 }
 
 function normalizeReason(reason: string) {

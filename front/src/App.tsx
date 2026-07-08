@@ -11,7 +11,7 @@ import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, g
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
 import type { DataDomain } from './types/status'
-import type { AccountMode, Market, Page } from './types/dashboard'
+import type { AccountMode, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary } from './types/dashboard'
 import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
@@ -66,7 +66,7 @@ function App() {
   const marketSummaries = useMemo(() => readModelSnapshot?.marketSummaries ?? [], [readModelSnapshot])
   const portfolioSummary = readModelSnapshot?.portfolio ?? null
   const isUsingDemoSnapshot = readModelSnapshot === null
-  const hasGlobalPerformanceData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'performance') || Boolean(portfolioSummary)
+  const hasGlobalPerformanceData = isUsingDemoSnapshot || hasMeaningfulPerformanceRows(readModelSnapshot?.performance ?? []) || hasPortfolioResult(portfolioSummary)
   const hasGlobalSignalData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'signals')
   const hasGlobalHoldingData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'holdings')
   const livePerformanceData = useMemo(
@@ -89,7 +89,7 @@ function App() {
   }, [activeMarket, livePerformanceData, portfolioSummary?.targetPct, selectedMarketSummary])
   const hasPerformanceData = activeMarket === 'All Markets'
     ? hasGlobalPerformanceData
-    : selectedMarketSummary?.returnPct !== undefined || selectedMarketSummary?.pnlAmount !== undefined
+    : hasMarketPerformanceResult(selectedMarketSummary)
   const hasSignalData = activeMarket === 'All Markets' ? hasGlobalSignalData : visibleSignals.length > 0
   const hasHoldingData = activeMarket === 'All Markets' ? hasGlobalHoldingData : visibleHoldings.length > 0
   const visiblePortfolio = useMemo(
@@ -180,3 +180,27 @@ function App() {
 }
 
 export default App
+
+function hasMeaningfulPerformanceRows(rows: PerformancePoint[]) {
+  if (rows.length > 1) return true
+  return rows.some((point) =>
+    Math.abs(point.simulated) > 0.005 ||
+    Math.abs(point.benchmark) > 0.005 ||
+    Math.abs(point.opportunity) > 0.005
+  )
+}
+
+function hasPortfolioResult(portfolio: PortfolioSummary | null) {
+  if (!portfolio) return false
+  if (portfolio.tradeCount > 0 || portfolio.pointCount > 1) return true
+  if (Math.abs(portfolio.pnlAmount) > 0.005 || Math.abs(portfolio.returnPct) > 0.005) return true
+  const account = portfolio.ashareAccount
+  if (!account) return false
+  return account.openPositionCount > 0 || account.totalSampleCount > 0 || Math.abs(account.accountTotalPnl) > 0.005
+}
+
+function hasMarketPerformanceResult(summary?: MarketSummary) {
+  if (!summary || summary.status === 'empty') return false
+  if (summary.tradeCount > 0 || (summary.filledCount ?? 0) > 0) return true
+  return Math.abs(summary.pnlAmount ?? 0) > 0.005 || Math.abs(summary.returnPct ?? 0) > 0.005
+}

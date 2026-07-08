@@ -797,15 +797,7 @@ def run_multi_style_simulation(
     if not styles:
         errors.append({"stage": "strategy", "market": MARKET, "error": "empty_strategy_styles"})
     if cadence_value != "daily" and session_bucket == "closed":
-        review = append_review(
-            date=date,
-            market=MARKET,
-            records=[],
-            errors=[],
-            holds=[],
-            path=review_path,
-            position_pnl_summary=_compute_position_pnl_summary(signals_dir),
-        )
+        position_pnl_summary = _compute_position_pnl_summary(signals_dir)
         return {
             "market": MARKET,
             "reader_market": READER_MARKET,
@@ -823,8 +815,13 @@ def run_multi_style_simulation(
             "errors": [],
             "holds": [],
             "hold_count": 0,
-            "hold_reason_summary": review.get("hold_reason_summary", {}),
-            "review": {**review, "state": "market_closed"},
+            "hold_reason_summary": {},
+            "review": {
+                "state": "market_closed",
+                "append_skipped": True,
+                "reason": "closed_session_empty_review_not_persisted",
+                "position_pnl_summary": position_pnl_summary,
+            },
             "real_trading_enabled": False,
             "generated_at": _now_iso(),
             "max_intraday_bar_age_minutes": max_intraday_bar_age_minutes,

@@ -447,6 +447,48 @@ class CNFuturesAutomationTest(unittest.TestCase):
             ]
             self.assertEqual(review_rows[0]["hold_reason_summary"]["by_reason"]["below_threshold"], 1)
 
+    def test_multi_style_runner_does_not_append_empty_review_when_market_closed(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            review_path = tmp_path / "cn_futures_reviews.jsonl"
+            review_path.write_text(
+                json.dumps(
+                    {
+                        "date": "20260703",
+                        "market": "cn_futures",
+                        "state": "ok",
+                        "hold_count": 1,
+                        "hold_reason_summary": {"total": 1, "by_reason": {"below_threshold": 1}},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            adapter = CNFuturesAdapter(
+                reader=FakeFuturesReader(),
+                universe_filter={"max_symbols": 1},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.50}},
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                FakeFuturesReader(),
+                signals_dir=tmp_path / "signals",
+                review_path=review_path,
+                now=datetime.fromisoformat("2026-07-03 19:00:00"),
+            )
+
+            self.assertEqual(result["state"], "market_closed")
+            self.assertTrue(result["review"]["append_skipped"])
+            review_rows = [line for line in review_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(review_rows), 1)
+            self.assertIn("below_threshold", review_rows[0])
+
     def test_multi_style_runner_skips_paused_evolved_styles(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation

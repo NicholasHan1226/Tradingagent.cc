@@ -171,6 +171,9 @@ The review payload includes `score_summary` by style:
 - `hold_count` and `hold_reason_summary`, so styles that correctly refuse weak
   setups can be reviewed by reason, style, symbol, and session without treating
   every no-trade cycle as missing data
+- Closed-session 5-minute cron runs return `market_closed` without appending an
+  empty review row, so the latest actionable review keeps the last in-session
+  hold/fill evidence instead of being overwritten after the close.
 - `forward_label_summary`, which counts pending or labeled forward outcomes by
   style and scenario. Live 5-minute runs start as `pending_future_bars`;
   historical/replay rows with future bars can be labeled with direction

@@ -11,7 +11,14 @@ export function MarketSummaryPanel({
 }) {
   if (activeMarket === 'All Markets') return null
 
-  const hasReturn = summary?.pnlAmount !== undefined || summary?.returnPct !== undefined
+  const hasReturn = Boolean(
+    summary &&
+    summary.status !== 'empty' &&
+    (summary.tradeCount > 0 ||
+      (summary.filledCount ?? 0) > 0 ||
+      Math.abs(summary.pnlAmount ?? 0) > 0.005 ||
+      Math.abs(summary.returnPct ?? 0) > 0.005),
+  )
   const runtimeState = summary?.runtimeState ?? (summary?.status === 'ready' ? 'normal' : summary?.status === 'partial' ? 'strategy_wait' : 'empty')
   const status = formatRuntimeState(runtimeState)
 
@@ -34,7 +41,7 @@ export function MarketSummaryPanel({
       </div>
       <div className="market-summary-return">
         <span>收益口径</span>
-        <strong>{hasReturn ? formatSummaryReturn(summary!) : '等待收益'}</strong>
+        <strong>{hasReturn && summary ? formatSummaryReturn(summary) : '等待收益'}</strong>
       </div>
     </section>
   )

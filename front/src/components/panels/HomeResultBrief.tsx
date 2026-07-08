@@ -5,6 +5,7 @@ import { PanelTitle } from '../PanelTitle'
 
 export function HomeResultBrief({
   hasSignalData,
+  hasPerformanceData,
   portfolio,
   holdings,
   setActivePage,
@@ -19,10 +20,11 @@ export function HomeResultBrief({
   signals: SignalRow[]
 }) {
   const { blockedSignal, leadSignal, leadingHolding, reviewSignal } = getHomeOutcome(signals, holdings)
-  const targetGap = portfolio ? portfolio.returnPct - portfolio.targetPct : null
+  const hasResult = hasPerformanceData && portfolio !== null
+  const targetGap = hasResult ? portfolio.returnPct - portfolio.targetPct : null
   const leadingHoldingText = leadingHolding ? `${leadingHolding.symbol} · ${leadingHolding.pnl}` : '暂无持仓'
-  const resultTone = portfolio && portfolio.pnlAmount < 0 ? '承压' : portfolio && portfolio.pnlAmount > 0 ? '领先' : '平稳'
-  const resultLine = portfolio
+  const resultTone = !hasResult ? '等待收益' : portfolio.pnlAmount < 0 ? '承压' : portfolio.pnlAmount > 0 ? '领先' : '平稳'
+  const resultLine = hasResult
     ? `${formatAmount(portfolio)} / ${formatSignedPct(portfolio.returnPct)}`
     : '等待收益'
   const attentionLine = hasSignalData
@@ -30,7 +32,7 @@ export function HomeResultBrief({
     : holdings.length
       ? leadingHoldingText
       : '暂无新机会'
-  const riskLine = portfolio
+  const riskLine = hasResult
     ? `距离 7% 限制 ${Math.max(0, 7 - Math.abs(portfolio.maxDrawdownPct)).toFixed(2)}%`
     : '等待风控结果'
 

@@ -86,66 +86,76 @@ export function SignalFunnelFlow({
 
   return (
     <section className="signal-flow-module" aria-label="机会管道">
-      <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''}`}>
+      <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''} ${hasFlowVolume ? '' : 'is-empty-flow'}`}>
         <div className="flow-caption">
           <span>机会管道 <b>{modeLabel}</b></span>
           <strong>{hasFlowVolume ? `${caption} · 转化 ${conversionRate}%` : caption}</strong>
         </div>
-        <div className="real-funnel-stage-grid" aria-hidden="true">
-          {visualStages.map((stage, index) => (
-            <div className="real-funnel-stage-card" key={stage.label}>
-              <span>{stage.label}</span>
-              <strong>{stage.count}</strong>
-              <em>{index === 0 ? '进入' : stage.dropped > 0 ? `减少 ${stage.dropped}` : stage.hint}</em>
+        {hasFlowVolume ? (
+          <>
+            <div className="real-funnel-stage-grid" aria-hidden="true">
+              {visualStages.map((stage, index) => (
+                <div className="real-funnel-stage-card" key={stage.label}>
+                  <span>{stage.label}</span>
+                  <strong>{stage.count}</strong>
+                  <em>{index === 0 ? '进入' : stage.dropped > 0 ? `减少 ${stage.dropped}` : stage.hint}</em>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className="real-funnel-body" role="img" aria-label="机会从发现到交易结果的动态筛选漏斗">
-          <div className="real-funnel-rulers" aria-hidden="true">
-            {visualStages.map((stage, index) => (
-              <i key={stage.label} style={{ left: `${index * 20}%` }} />
-            ))}
+            <div className="real-funnel-body" role="img" aria-label="机会从发现到交易结果的动态筛选漏斗">
+              <div className="real-funnel-rulers" aria-hidden="true">
+                {visualStages.map((stage, index) => (
+                  <i key={stage.label} style={{ left: `${index * 20}%` }} />
+                ))}
+              </div>
+              <div className="real-funnel-channel" aria-hidden="true">
+                {visualStages.map((stage, index) => (
+                  <span
+                    className="real-funnel-segment"
+                    key={stage.label}
+                    style={{
+                      '--segment-left': `${index * 20}%`,
+                      '--segment-width': `${Math.max(10, stageWidths[index] * 0.56)}%`,
+                    } as CSSProperties}
+                  />
+                ))}
+              </div>
+              {particles.map((particle, index) => (
+                <i
+                  className={`funnel-particle ${particle.tone} ${particle.showLabel ? 'labeled' : 'quiet'}`}
+                  key={`${particle.label}-${index}`}
+                  style={{
+                    '--delay': particle.begin,
+                    '--duration': particle.duration,
+                    '--lane': particle.lane,
+                    '--to-left': particle.stopLeft,
+                  } as CSSProperties}
+                  data-symbol={particle.showLabel ? particle.symbol : undefined}
+                  title={particle.label}
+                >
+                  <b />
+                </i>
+              ))}
+            </div>
+            <div className="flow-outcome-strip">
+              {outcomeRows.map((count, index) => (
+                <span key={outcomeLabels[index]}>
+                  <b>{count}</b> {outcomeLabels[index]}
+                </span>
+              ))}
+            </div>
+            <div className="flow-bottleneck">
+              <span>筛选结果</span>
+              <strong>{bottleneck}</strong>
+            </div>
+          </>
+        ) : (
+          <div className="real-funnel-empty" role="status">
+            <span>等待真实机会</span>
+            <strong>管道空闲</strong>
+            <p>有机会进入后，这里会显示发现、研究、风控和队列流动。</p>
           </div>
-          <div className="real-funnel-channel" aria-hidden="true">
-            {visualStages.map((stage, index) => (
-              <span
-                className="real-funnel-segment"
-                key={stage.label}
-                style={{
-                  '--segment-left': `${index * 20}%`,
-                  '--segment-width': `${Math.max(10, stageWidths[index] * 0.56)}%`,
-                } as CSSProperties}
-              />
-            ))}
-          </div>
-          {particles.map((particle, index) => (
-            <i
-              className={`funnel-particle ${particle.tone} ${particle.showLabel ? 'labeled' : 'quiet'}`}
-              key={`${particle.label}-${index}`}
-              style={{
-                '--delay': particle.begin,
-                '--duration': particle.duration,
-                '--lane': particle.lane,
-                '--to-left': particle.stopLeft,
-              } as CSSProperties}
-              data-symbol={particle.showLabel ? particle.symbol : undefined}
-              title={particle.label}
-            >
-              <b />
-            </i>
-          ))}
-        </div>
-        <div className="flow-outcome-strip">
-          {outcomeRows.map((count, index) => (
-            <span key={outcomeLabels[index]}>
-              <b>{count}</b> {outcomeLabels[index]}
-            </span>
-          ))}
-        </div>
-        <div className="flow-bottleneck">
-          <span>筛选结果</span>
-          <strong>{bottleneck}</strong>
-        </div>
+        )}
         {latestEvents.length > 0 && (
           <div className="flow-event-tape" aria-label="最近管道事件">
             <b className="event-tape-label">最新流动</b>

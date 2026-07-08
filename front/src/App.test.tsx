@@ -313,7 +313,7 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0))
-    expect(screen.getByLabelText('闭环证明')).toBeInTheDocument()
+    expect(screen.getByLabelText('市场运行状态')).toBeInTheDocument()
     expect(screen.getByText('个股流向')).toBeInTheDocument()
     expect(screen.getByText('资金分 82')).toBeInTheDocument()
     expect(screen.getByText('净流入 +¥1280.00万')).toBeInTheDocument()
