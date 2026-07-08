@@ -609,6 +609,7 @@ def score_stock(
         combined = missing_default
 
     scores["combined"] = _clamp(combined)
+    scores["moneyflow"] = scores["capital"]
     evidence = dict(config.get("_dimension_evidence") or {})
     missing_evidence = [
         dim for dim in _DEFAULT_WEIGHTS

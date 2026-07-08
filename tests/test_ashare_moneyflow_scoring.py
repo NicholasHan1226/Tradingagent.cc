@@ -2,7 +2,7 @@ import pytest
 
 from shared.screening.candidate_pool import _load_fundamental_pool
 from shared.screening.condition_generator import _gen_rotation
-from shared.screening.six_dimension_scorer import _score_capital
+from shared.screening.six_dimension_scorer import _score_capital, score_stock
 
 
 class CapitalReader:
@@ -43,6 +43,17 @@ def test_capital_score_prefers_capital_flow_rows_over_factor_duplicates() -> Non
     )
 
     assert score == pytest.approx(0.7)
+
+
+def test_score_stock_exposes_moneyflow_alias_for_capital_dimension() -> None:
+    score = score_stock(
+        "ashare",
+        "000001.SZ",
+        reader=CapitalReader([{"factor_name": "moneyflow:net_mf_amount", "event_time": "20260707", "value": 10000}]),
+        date="20260707",
+    )
+
+    assert score["moneyflow"] == pytest.approx(score["capital"])
 
 
 def test_rotation_condition_accepts_prefixed_moneyflow_factor_names() -> None:

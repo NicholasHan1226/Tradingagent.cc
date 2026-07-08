@@ -156,6 +156,23 @@ class CronHandlersV2Test(unittest.TestCase):
         for row in rows:
             self._append_jsonl(self.shadow_dir / "shadow_trades.jsonl", row)
 
+    def test_ashare_no_trade_log_hydrates_top_level_decision_evidence(self) -> None:
+        result = {
+            "no_trade_explanation": {
+                "category": "no_portfolio_orders",
+                "counts": {"candidates": 3, "orders": 0},
+            },
+            "candidate_decision_trace": [{"symbol": "AAA", "drop_reason": "capital_plan_capacity_zero"}],
+            "capital_plan_decision": {"risk_mode": "defensive", "position_capacity": 0},
+            "portfolio_decision": {"allowed_buy_count": 0},
+        }
+
+        explanation = cron._hydrate_ashare_no_trade_explanation(result)
+
+        self.assertEqual(explanation["candidate_decision_trace"][0]["symbol"], "AAA")
+        self.assertEqual(explanation["capital_plan_decision"]["risk_mode"], "defensive")
+        self.assertEqual(explanation["portfolio_decision"]["allowed_buy_count"], 0)
+
     def test_run_weekly_review_renders_weekly_report_and_sends(self) -> None:
         self._seed_week_trades()
         self._write_json(

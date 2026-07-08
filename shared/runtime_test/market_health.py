@@ -866,6 +866,7 @@ def _ashare_scientific_no_trade(explanation: dict[str, Any]) -> bool:
     return category in {
         "no_portfolio_orders",
         "all_rejected_by_risk",
+        "capital_plan_defensive",
         "duplicate_existing_signal",
         "no_candidates",
         "no_signal_cards_created",

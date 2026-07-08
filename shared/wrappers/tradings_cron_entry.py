@@ -1281,6 +1281,25 @@ def run_shadow_orchestrator(job_name: str, market: str) -> dict[str, Any]:
     return result
 
 
+def _hydrate_ashare_no_trade_explanation(result: dict[str, Any]) -> dict[str, Any]:
+    explanation = result.get("no_trade_explanation") if isinstance(result.get("no_trade_explanation"), dict) else {}
+    hydrated = dict(explanation)
+    for key, fallback in (
+        ("candidate_decision_trace", []),
+        ("capital_plan_decision", {}),
+        ("portfolio_decision", {}),
+    ):
+        value = hydrated.get(key)
+        missing = not value
+        if missing:
+            top_level = result.get(key)
+            if top_level:
+                hydrated[key] = top_level
+            else:
+                hydrated.setdefault(key, fallback)
+    return hydrated
+
+
 def run_sim_orchestrator(job_name: str, market: str) -> dict[str, Any]:
     from shared.data.reader import TradingagentDataReader
     from shared.orchestrator import run_sim_loop
@@ -1300,6 +1319,7 @@ def run_sim_orchestrator(job_name: str, market: str) -> dict[str, Any]:
     result.update({"job": job_name, "state": result.get("state", "ok"), "generated_at": now_iso()})
     append_jsonl(SHARED / "logs/orchestrator_sim_runs.jsonl", result)
     if str(market).lower() == "ashare" and int(result.get("filled_count") or 0) <= 0:
+        no_trade_explanation = _hydrate_ashare_no_trade_explanation(result)
         append_jsonl(
             SHARED / "logs/ashare_no_trade_explanations.jsonl",
             {
@@ -1308,7 +1328,7 @@ def run_sim_orchestrator(job_name: str, market: str) -> dict[str, Any]:
                 "date": result.get("date"),
                 "generated_at": result.get("generated_at"),
                 "state": result.get("state"),
-                "no_trade_explanation": result.get("no_trade_explanation", {}),
+                "no_trade_explanation": no_trade_explanation,
             },
         )
     return result

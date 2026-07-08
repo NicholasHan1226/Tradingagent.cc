@@ -562,6 +562,7 @@ def _trading_signal_email_data(
     price = _safe_float(order.get("price"), 0.0)
     weight = _safe_float(position.get("weight"), _safe_float(risk.get("adjusted_weight"), 0.0))
     total_score = score.get("total", score.get("combined", score.get("belief_score", "--")))
+    moneyflow_score = score.get("moneyflow", score.get("capital", "--"))
     reasons = risk.get("reasons") if isinstance(risk.get("reasons"), list) else []
     condition = "; ".join(str(item) for item in reasons if item) or f"{market} shadow signal generated"
     return {
@@ -574,7 +575,8 @@ def _trading_signal_email_data(
             "macro": score.get("macro", "--"),
             "event": score.get("event", "--"),
             "fundamental": score.get("fundamental", "--"),
-            "moneyflow": score.get("moneyflow", "--"),
+            "moneyflow": moneyflow_score,
+            "capital": moneyflow_score,
             "technical": score.get("technical", "--"),
             "sentiment": score.get("sentiment", "--"),
             "total": total_score,
@@ -1638,6 +1640,17 @@ def _sim_no_trade_explanation(
     elif order_count <= 0 and risk_rejections:
         category = "all_rejected_by_risk"
         action = "review_risk_rejections"
+    elif (
+        order_count <= 0
+        and candidate_count > 0
+        and isinstance(capital_plan_decision, dict)
+        and (
+            _safe_int(capital_plan_decision.get("position_capacity"), 0) <= 0
+            or _safe_int(capital_plan_decision.get("target_positions"), 0) <= 0
+        )
+    ):
+        category = "capital_plan_defensive"
+        action = "review_capital_plan_dynamic_profile"
     elif order_count <= 0:
         category = "no_portfolio_orders"
         action = "check_position_sizing_and_portfolio_constructor"

@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-DEFAULT_DIMENSIONS = ["macro", "event", "fundamental", "moneyflow", "technical", "sentiment"]
+DEFAULT_DIMENSIONS = ["macro", "event", "fundamental", "capital", "moneyflow", "technical", "sentiment"]
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:

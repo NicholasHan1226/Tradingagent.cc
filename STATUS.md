@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-08 (全量验收快捷入口、A股当日 no-trade 证据过滤、PM/Crypto 策略等待分类)
+> 最后更新：2026-07-08 (A股 no-trade 证据链、资金维度别名、资金流向 dashboard 边界)
 
 ---
 
@@ -132,6 +132,13 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-08 A股 no-trade 证据链与资金维度别名
+
+- [x] A股 `candidate > 0 && orders = 0` 若由动态资金计划防御/容量为 0 导致，`no_trade_explanation.category` 改为 `capital_plan_defensive`，不再笼统归为 `no_portfolio_orders`；健康检查仍把它视为有证据时的策略等待/观察态。
+- [x] A股无交易日志写入前会从 run result 顶层回填 `candidate_decision_trace`、`capital_plan_decision`、`portfolio_decision`，避免日志层丢失三段证据导致 dashboard/健康检查误报 incomplete。
+- [x] 六维资金维度继续以 `capital` 为规范字段，并补 `moneyflow` 兼容别名；交易信号邮件/旧展示读取 `moneyflow` 时不再显示空值。
+- [x] 抖音视频 `7月08日午盘板块资金流向，算力站起来了...` 已能打开并确认发布时间 2026-07-08 11:40；视频观点只作为资金流向分析方法启发，不作为系统事实源。Dashboard 后续可展示系统自己从 SharedSignals `/capital_flow` 复现的个股资金分、近 N 日主力净流入和大单/特大单净买入，板块资金榜需先补 SharedSignals sector 聚合/read model。
 
 ### 2026-07-08 TradingAgent simplified acceptance + A股当日证据过滤
 
