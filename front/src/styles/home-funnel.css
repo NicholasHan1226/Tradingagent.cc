@@ -145,7 +145,58 @@
 }
 
 .mode-real-flow .flow-drop-track {
-  bottom: 126px;
+  bottom: 12px;
+}
+
+.mode-holding-flow {
+  background:
+    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 58%),
+    rgba(1, 5, 5, 0.76);
+}
+
+.mode-holding-flow::before {
+  opacity: 0.76;
+  background:
+    linear-gradient(90deg, rgba(105, 228, 215, 0.028), transparent 23%, transparent 77%, rgba(226, 180, 91, 0.018)),
+    linear-gradient(90deg, transparent 19.9%, rgba(240, 246, 244, 0.045) 20%, transparent 20.12%),
+    linear-gradient(90deg, transparent 39.9%, rgba(240, 246, 244, 0.045) 40%, transparent 40.12%),
+    linear-gradient(90deg, transparent 59.9%, rgba(240, 246, 244, 0.045) 60%, transparent 60.12%),
+    linear-gradient(90deg, transparent 79.9%, rgba(240, 246, 244, 0.045) 80%, transparent 80.12%);
+}
+
+.mode-holding-flow .real-funnel-stage-card strong {
+  color: var(--text-primary);
+}
+
+.mode-holding-flow .real-funnel-stage-card:nth-child(2) strong,
+.mode-holding-flow .flow-outcome-strip span:nth-child(1) b {
+  color: var(--accent-cyan);
+}
+
+.mode-holding-flow .real-funnel-stage-card:nth-child(3) strong,
+.mode-holding-flow .flow-outcome-strip span:nth-child(2) b {
+  color: var(--state-amber);
+}
+
+.mode-holding-flow .real-funnel-body .flow-drop-track {
+  bottom: 12px;
+}
+
+.real-funnel-body .flow-drop-track {
+  left: 20%;
+  right: 20%;
+  bottom: 12px;
+  height: 38px;
+}
+
+.real-funnel-body .flow-drop-track i {
+  width: 2px;
+  background: rgba(105, 228, 215, 0.26);
+}
+
+.real-funnel-body .flow-drop-track .has-drop i {
+  background: rgba(226, 180, 91, 0.74);
+  opacity: 0.84;
 }
 
 .flow-event-tape {

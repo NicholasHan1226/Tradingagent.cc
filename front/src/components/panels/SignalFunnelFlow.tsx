@@ -3,7 +3,7 @@ import { getSignalFunnel } from '../../lib/dashboard'
 import type { FunnelEvent, HoldingRow, SignalRow } from '../../types/dashboard'
 
 const OUTCOME_LABELS = ['成交', '观察中', '复盘', '放弃']
-const HOLDING_OUTCOME_LABELS = ['持仓', '观察', '复盘', '放弃']
+const HOLDING_OUTCOME_LABELS = ['正贡献', '需观察', '持仓中', '退出']
 const MAX_ANIMATED_SIGNALS = 64
 const MAX_VISIBLE_LABELS = 6
 const FLOW_STAGES = [
@@ -28,6 +28,7 @@ export function SignalFunnelFlow({
   const funnel = getSignalFunnel(signals)
   const eventFlow = getEventFlow(events)
   const hasHoldingReplay = !events.length && !signals.length && holdings.length > 0
+  const holdingSummary = hasHoldingReplay ? getHoldingSummary(holdings) : null
   const visualStages = hasHoldingReplay ? getHoldingStages(holdings) : getVisualStages(funnel, eventFlow)
   const maxStageCount = Math.max(1, ...visualStages.map((stage) => stage.count))
   const stageWidths = visualStages.map((stage) => Math.max(12, Math.round((stage.count / maxStageCount) * 100)))
@@ -46,7 +47,7 @@ export function SignalFunnelFlow({
   const visualStageDrops = visualStages.map((stage) => stage.dropped)
   const hasStageDrop = visualStageDrops.some((drop) => drop > 0)
   const hasTimingEvidence = signals.some((signal) => signal.stageLatencyMinutes && signal.stageLatencyMinutes > 0)
-  const bottleneck = getBottleneck(visualStages.map((stage) => ({ label: stage.label, count: stage.count })))
+  const bottleneck = hasHoldingReplay ? getHoldingBottleneck(holdings) : getBottleneck(visualStages.map((stage) => ({ label: stage.label, count: stage.count })))
   const hasEventSource = events.length > 0
   const eventCaption = eventFlow
     ? `${eventFlow.total} 个机会进入 · ${eventFlow.outcomes.executed} 个成交 · ${eventFlow.outcomes.abandoned} 个放弃`
@@ -54,7 +55,7 @@ export function SignalFunnelFlow({
   const caption = hasEventSource
     ? eventCaption
     : hasHoldingReplay
-      ? `${holdings.length} 个持仓在跟踪 · 暂无新信号进入`
+      ? `${holdings.length} 个持仓 · ${holdingSummary?.positive ?? 0} 个正贡献 · ${holdingSummary?.watching ?? 0} 个需观察`
     : hasSignalData
     ? funnel.mode === 'screening' || hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
       ? `${signals.length} 个进入 · ${funnel.tradeSignals.length} 个留下 · ${funnel.executed.length} 个成交`
@@ -63,7 +64,7 @@ export function SignalFunnelFlow({
   const modeLabel = hasEventSource
     ? '实时'
     : hasHoldingReplay
-      ? '持仓中'
+      ? '持仓流'
     : funnel.mode === 'screening'
     ? '筛选中'
     : funnel.mode === 'partial'
@@ -78,7 +79,7 @@ export function SignalFunnelFlow({
       : hasSignalData
         ? buildParticles(signals, funnel.mode)
         : []
-  const latestEvents = events.slice(-4).reverse()
+  const latestTapeItems = hasEventSource ? events.slice(-4).reverse().map(eventToTapeItem) : hasHoldingReplay ? getHoldingTape(holdings) : []
   const firstStageCount = Math.max(1, visualStages[0]?.count ?? signals.length)
   const finalStageCount = visualStages.at(-1)?.count ?? 0
   const conversionRate = Math.round((finalStageCount / firstStageCount) * 100)
@@ -86,7 +87,7 @@ export function SignalFunnelFlow({
 
   return (
     <section className="signal-flow-module" aria-label="机会管道">
-      <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''} ${hasFlowVolume ? '' : 'is-empty-flow'}`}>
+      <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''} ${hasHoldingReplay ? 'mode-holding-flow' : ''} ${hasFlowVolume ? '' : 'is-empty-flow'}`}>
         <div className="flow-caption">
           <span>机会管道 <b>{modeLabel}</b></span>
           <strong>{hasFlowVolume ? `${caption} · 转化 ${conversionRate}%` : caption}</strong>
@@ -118,6 +119,13 @@ export function SignalFunnelFlow({
                       '--segment-width': `${Math.max(10, stageWidths[index] * 0.56)}%`,
                     } as CSSProperties}
                   />
+                ))}
+              </div>
+              <div className="flow-drop-track" aria-hidden="true">
+                {visualStages.slice(1).map((stage) => (
+                  <span className={stage.dropped > 0 ? 'has-drop' : ''} key={`drop-${stage.label}`}>
+                    <i style={{ height: `${getDropHeight(stage.dropped, visualStages[0]?.count ?? 0)}%` }} />
+                  </span>
                 ))}
               </div>
               {particles.map((particle, index) => (
@@ -156,14 +164,14 @@ export function SignalFunnelFlow({
             <p>有机会进入后，这里会显示发现、研究、风控和队列流动。</p>
           </div>
         )}
-        {latestEvents.length > 0 && (
+        {latestTapeItems.length > 0 && (
           <div className="flow-event-tape" aria-label="最近管道事件">
-            <b className="event-tape-label">最新流动</b>
-            {latestEvents.map((event) => (
-              <span className={eventStatusClass(event.status)} key={event.id}>
-                <b>{event.stage}</b>
-                <strong>{event.symbol}</strong>
-                <em>{event.label}</em>
+            <b className="event-tape-label">{hasHoldingReplay ? '持仓流动' : '最新流动'}</b>
+            {latestTapeItems.map((item) => (
+              <span className={item.className} key={item.id}>
+                <b>{item.stage}</b>
+                <strong>{item.symbol}</strong>
+                <em>{item.label}</em>
               </span>
             ))}
           </div>
@@ -175,20 +183,36 @@ export function SignalFunnelFlow({
 
 function getHoldingStages(holdings: HoldingRow[]) {
   const observing = holdings.filter((holding) => holding.risk === '观察' || holding.risk === '偏高').length
+  const positive = holdings.filter((holding) => isPositivePnl(holding.pnl)).length
   const normal = holdings.length - observing
 
   return [
-    { count: holdings.length, dropped: 0, hint: '账户内', label: '已有仓位', width: 100 },
-    { count: holdings.length, dropped: 0, hint: '已建仓', label: '入仓结果', width: 100 },
-    { count: holdings.length, dropped: 0, hint: '跟踪中', label: '持仓跟踪', width: 100 },
-    { count: observing, dropped: Math.max(0, normal), hint: observing ? '需观察' : '正常', label: '风险观察', width: observing ? 56 : 16 },
-    { count: holdings.length, dropped: 0, hint: '待复盘', label: '复盘归因', width: 100 },
+    { count: holdings.length, dropped: 0, hint: '账户内', label: '当前持仓', width: 100 },
+    { count: positive, dropped: Math.max(0, holdings.length - positive), hint: positive ? '正贡献' : '待改善', label: '收益贡献', width: positive ? 86 : 18 },
+    { count: normal, dropped: observing, hint: observing ? `${observing} 个观察` : '正常', label: '风险检查', width: normal ? 82 : 18 },
+    { count: normal, dropped: 0, hint: normal ? '继续持有' : '等待处理', label: '继续持有', width: normal ? 82 : 18 },
+    { count: holdings.length, dropped: 0, hint: '可复盘', label: '复盘记录', width: 100 },
   ]
 }
 
 function getHoldingOutcomeRows(holdings: HoldingRow[]) {
+  const positive = holdings.filter((holding) => isPositivePnl(holding.pnl)).length
   const watching = holdings.filter((holding) => holding.risk === '观察' || holding.risk === '偏高').length
-  return [holdings.length, watching, holdings.length, 0]
+  return [positive, watching, holdings.length, 0]
+}
+
+function getHoldingSummary(holdings: HoldingRow[]) {
+  return {
+    positive: holdings.filter((holding) => isPositivePnl(holding.pnl)).length,
+    watching: holdings.filter((holding) => holding.risk === '观察' || holding.risk === '偏高').length,
+  }
+}
+
+function getHoldingBottleneck(holdings: HoldingRow[]) {
+  const watching = holdings.filter((holding) => holding.risk === '观察' || holding.risk === '偏高').length
+  if (!holdings.length) return '等待持仓进入'
+  if (watching > 0) return `${watching} 个持仓需要观察`
+  return '风险正常，继续跟踪'
 }
 
 type EventFlow = {
@@ -200,6 +224,14 @@ type EventFlow = {
     review: number
     abandoned: number
   }
+}
+
+type FlowTapeItem = {
+  className: string
+  id: string
+  label: string
+  stage: string
+  symbol: string
 }
 
 function getEventFlow(events: FunnelEvent[]): EventFlow | null {
@@ -292,6 +324,11 @@ function getBottleneck(stages: { label: string; count: number }[]) {
   return `${biggest.from}→${biggest.to} 筛掉 ${biggest.drop} 条`
 }
 
+function getDropHeight(drop: number, total: number) {
+  if (drop <= 0 || total <= 0) return 7
+  return Math.min(100, Math.max(12, Math.round((drop / total) * 100)))
+}
+
 function getStageHint(index: number, count: number, total: number, dropped: number) {
   if (index === 0) return '进入'
   if (total <= 0) return '等待'
@@ -369,6 +406,39 @@ function buildHoldingParticles(holdings: HoldingRow[]) {
       tone,
     }
   })
+}
+
+function eventToTapeItem(event: FunnelEvent): FlowTapeItem {
+  return {
+    className: eventStatusClass(event.status),
+    id: event.id,
+    label: event.label,
+    stage: event.stage,
+    symbol: event.symbol,
+  }
+}
+
+function getHoldingTape(holdings: HoldingRow[]): FlowTapeItem[] {
+  return holdings.slice(0, 4).map((holding, index) => {
+    const label = holding.risk === '正常' ? `${holding.pnl} · 正常` : `${holding.pnl} · ${holding.risk}`
+    return {
+      className: holdingTapeClass(holding),
+      id: `holding-${holding.symbol}-${index}`,
+      label,
+      stage: '持仓',
+      symbol: holding.symbol,
+    }
+  })
+}
+
+function holdingTapeClass(holding: HoldingRow) {
+  if (holding.risk === '偏高') return 'event-block'
+  if (holding.risk === '观察') return 'event-watch'
+  return isPositivePnl(holding.pnl) ? 'event-filled' : 'event-review'
+}
+
+function isPositivePnl(value: string) {
+  return /^\s*\+/.test(value)
 }
 
 function pickEventLabelIndexes(events: FunnelEvent[]) {
