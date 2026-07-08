@@ -810,6 +810,46 @@ def _count_jsonl_rows(path: Path) -> int:
         return 0
 
 
+def _latest_ashare_no_trade_explanation(path: Path | None = None) -> dict[str, Any]:
+    target = path or (ROOT / "shared/logs/ashare_no_trade_explanations.jsonl")
+    if not target.exists():
+        return {}
+    latest: dict[str, Any] = {}
+    try:
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        explanation = payload.get("no_trade_explanation")
+        if not isinstance(explanation, dict):
+            continue
+        latest = dict(explanation)
+        latest.setdefault("generated_at", payload.get("generated_at"))
+        latest.setdefault("state", payload.get("state"))
+        break
+    return latest
+
+
+def _ashare_scientific_no_trade(explanation: dict[str, Any]) -> bool:
+    category = str(explanation.get("category") or "")
+    return category in {
+        "no_portfolio_orders",
+        "all_rejected_by_risk",
+        "duplicate_existing_signal",
+        "no_candidates",
+        "no_signal_cards_created",
+        "no_trade_signal_or_all_rejected",
+    }
+
+
 def _ashare_local_sim_trade_rows(path: Path | None = None) -> list[dict[str, Any]]:
     target = path or (ROOT / "shared/logs/local_sim/local_sim_trades.jsonl")
     rows: list[dict[str, Any]] = []
@@ -1156,6 +1196,7 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     cron_installed = bool(wrapper and wrapper in crontab_text)
     session_state = _market_session_state(market)
     samples_expected = bool(session_state.get("samples_expected_today"))
+    no_trade_explanation = _latest_ashare_no_trade_explanation() if market == "ashare" else {}
 
     hard_fail_reasons: list[str] = []
     warn_reasons: list[str] = []
@@ -1175,7 +1216,10 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
         if not _sim_market_wait_reason(market, str(data.get("reason") or "")):
             hard_fail_reasons.append("sim_trade_ledger_empty")
     if market == "ashare" and int(ledger.get("trade_rows") or 0) <= 0 and samples_expected:
-        warn_reasons.append("server_local_sim_has_no_production_trades_yet")
+        if _ashare_scientific_no_trade(no_trade_explanation):
+            warn_reasons.append("ashare_waiting_for_portfolio_or_strategy_signal")
+        else:
+            warn_reasons.append("server_local_sim_has_no_production_trades_yet")
     if market == "cn_futures" and int(ledger.get("review_rows") or 0) <= 0 and samples_expected:
         warn_reasons.append("cn_futures_review_has_no_samples_yet")
     payload = cron_result.get("payload") or {}
@@ -1197,6 +1241,7 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
                 "pm_waiting_for_marketgraph_probability",
                 "pm_waiting_for_model_edge",
                 "crypto_waiting_for_momentum_signal",
+                "ashare_waiting_for_portfolio_or_strategy_signal",
             )
         )
     )
@@ -1236,6 +1281,7 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
             "ledger": ledger,
             "latest_cron_result": cron_result,
             "market_session": session_state,
+            "no_trade_explanation": no_trade_explanation,
             "fail_reasons": hard_fail_reasons,
             "warn_reasons": warn_reasons,
             "diagnostic_class": diagnostic_class,

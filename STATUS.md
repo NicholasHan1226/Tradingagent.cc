@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-08 (A股 cron env、CNFutures 盘前窗口与闭市状态口径修复)
+> 最后更新：2026-07-08 (A股科学空跑验收分类与模拟收益自动盯市修复)
 
 ---
 
@@ -41,6 +41,7 @@
 - **CNFutures 验收入口兼容**：2026-07-05 复核发现 `CNFutures/opening_validator.py` 直接脚本启动会被相对导入阻断；已补兼容，`python -m CNFutures.opening_validator` 与 `python CNFutures/opening_validator.py` 均可用于只读验收。生产 wrapper 仍使用模块启动。
 - **多市场绩效去重**：Crypto/PM/US/CNFutures 共用的 `style_performance.jsonl` 已从 5 分钟 append-only 改为按 `(market, style_name, date)` 幂等写入，历史读取也会取同键最新值，避免 5 分钟任务把 runs/trades/PnL 重复放大并污染风格演化。
 - **多市场收益口径**：新增 `shared/review/pnl_summary.py` 统一摘要层，按 `realized_pnl + mark-to-market unrealized_pnl` 聚合 Ashare/Crypto/PM/US/CNFutures 模拟账本；Ashare 用 SharedSignals 日收盘价做 mark-to-market（缺失则回退成交价），其他市场用 `SimLedger` journal 重放盯市；PM 持仓 now 按 `market_id + outcome` 区分 YES/NO，NO 持仓按显式 `no_price` 或 `1 - yes_price` 估值，避免把 NO 成本与 YES 市价相减造成虚假高浮盈；PM 模拟成交层在 price history 缺失时会从 SharedSignals `/pm_markets` 当前行取 YES/NO 价格，不再统一按 0.5 熵值兜底成交；日报、周报、运维报告、`market_health` 和 `metrics_dashboard` 均输出 `ledger_realized_pnl` / `ledger_unrealized_pnl` / `ledger_total_pnl` / `ledger_market_value` / `ledger_open_position_count` / `ledger_missing_mark_count` / `ledger_pnl_source`；A股额外输出 `strategy_total_pnl`、`strategy_market_value`、`strategy_open_position_count` 与 `sample_quality`，用于区分真实账户账本结果和可用于策略评价的样本；Crypto/PM/US 的 `StyleRunner` 主收益口径同样基于统一模拟账本；CNFutures `sim_runner.py` 和 `review.py` 已补 unrealized 输出；HK 仍暂停，不纳入本口径。
+- **A股收益自动盯市**：2026-07-08 起 `sim_ledger_pnl_summary(markets=("ashare",))` 在未显式传入 `ashare_mark_prices` 时，会先从 A股 server-local 本地模拟账本读取持仓，再通过 SharedSignals reader 自动加载最近可用日线收盘价做 mark-to-market。健康检查、日报、周报、运维报告和看板摘要不再默认停留在 `ashare_local_sim_trade_price_fallback`；只有 SharedSignals 价格不可用时才保守回退成交价，并通过 `missing_mark_count` / `pnl_source` 暴露。
 - **服务端**：阿里云华南3/广州 `8.138.181.177`，生产路径 `/opt/investment/tradingagent/`
 - **运行监控**：每小时运维报告（`ops_report.py`），覆盖执行队列、sim 队列、回执完整性、PnL 摘要
 - **邮件模板**：11 类 TradingAgent 邮件已统一为移动端 30 秒决策版，顶部决策条、交易执行边界、三张摘要卡和日报/周报 inline SVG 图表已补齐；通道映射未变
@@ -48,6 +49,7 @@
 - **A股收益看板口径**：A股权益快照只接受 canonical `ashare/ashare_sim`，由 server-local `shared/logs/local_sim` 账本生成；旧 `ashare/<style>` 多风格测试账本不再进入 dashboard 汇总，避免 20k/16.6k 历史样本污染当前 200,000 元模拟盘口径。
 - **A股复盘样本口径**：A股日报/周报/归因默认只读取 server-local `shared/logs/local_sim/local_sim_trades.jsonl`；旧 `shared/logs/sim_ledger/ashare/<style>/trade_journal.jsonl` 风格账本视为退役历史样本，不再进入默认复盘输入。
 - **A股开盘验收与无交易分层**：`ashare_opening_validator` 的 first-sample 报告已把 5分钟 bar、信号状态、服务器本地模拟成交、签名回执、复盘行数和 no-trade 分类汇总到同一报告；若当天没有交易，会优先读取最新 `shared/logs/ashare_no_trade_explanations.jsonl`，把无候选、无信号卡、风控全拒、资金/组合构建阻塞、重复幂等、执行跳过、执行失败、回执缺失和复盘待生成区分开。缺回执只在当天已经出现服务器本地模拟成交后才告警，避免把“尚无成交”误报成“成交后缺回执”。`opening_acceptance.py` 短文本同步展示 bar/信号/成交/回执/复盘计数。
+- **A股科学空跑分类**：2026-07-08 起，A股首样本验收与模拟盘总巡检会把带有最新 no-trade 日志解释的 `no_portfolio_orders`、风控全拒、重复幂等、无候选/无信号等科学空跑归为 pass/策略等待观察态，并保留 info 级原因；没有 no-trade 日志解释、数据缺失、执行失败或已成交后缺回执仍保持 warn/fail，避免告警噪音掩盖真实故障。
 - **盘前验收修复**：2026-07-07 已修复 `job_opening_acceptance` 生产 cron 依赖当前工作目录导致寻找 `/home/marketgraph/shared/...` 失败的问题，wrapper 会强制切到 `TRADINGAGENT_ROOT` 并使用绝对脚本路径；统一开盘验收会写 `shared/runtime_test/opening_acceptance_latest.json` 与 history，并在 warn/fail 时走系统通道邮件，cron 使用 `--exit-zero` 避免同一异常重试三次刷屏。SharedSignals 盘前核心 API 探针改用轻量 `/cache/status` + `/capabilities`，`/health` 超时只作为降级项；A股盘前日线检查新增 `latest_daily_age_days`，日线过旧会提前 warn，不再只因历史日线数量足够而误判通过。
 - **A股旧测试账本归档**：新增 `shared/runtime_test/archive_ashare_legacy_ledgers.py`，只归档 `shared/logs/sim_ledger/ashare/*` 中非 canonical `ashare_sim` 的旧风格账本，默认 dry run，`--apply` 时移动到 `shared/logs/archive/ashare_legacy_style_ledgers/<batch>` 并写 manifest；不得删除或归档 `ashare_sim`。旧样本不再作为活跃输入，确认归档 manifest 后可按批次永久删除归档副本。
 - **A股只读研究证据**：`Ashare/research_evidence.py` 与 `job_ashare_research_evidence.sh` 统一输出 opening auction 异常、closing momentum 候选、204001 逆回购预估收益和 A股风格证据；集合竞价缺少 09:15-09:25 数据时会显式标记 `first_5m_proxy`，标的选择会优先读取 SharedSignals 当日 `rt_min/stk_mins` 已有分钟线的样本，再回退资产表，避免把“扫错无分钟线样本”误判为全市场无数据；204001 优先读取 SharedSignals `/market_data` 日线收益率，尾盘候选带 `next_trading_day` 与 open/high/close 兑现标签（数据未到时 `pending_next_day_bar`），风格资金按 `shared/review/ashare/style_weights.json` 运行时 active 权重切分 200,000 元虚拟预算；结果写入 `shared/review/ashare/research_evidence_latest.json` 与 append-only `research_evidence.jsonl`，固定 `read_only=true`、`real_trading_enabled=false`，不进入 simulated/real 执行队列。

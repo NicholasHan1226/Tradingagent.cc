@@ -499,6 +499,40 @@ def _explain_no_trade(
     }
 
 
+def _expected_scientific_no_trade(explanation: dict[str, Any]) -> bool:
+    category = str(explanation.get("category") or "")
+    latest_log = explanation.get("latest_no_trade_log")
+    if not isinstance(latest_log, dict) or not latest_log:
+        return False
+    if category in {
+        "no_portfolio_orders",
+        "all_rejected_by_risk",
+        "duplicate_existing_signal",
+        "no_signal_cards_created",
+        "no_trade_signal_or_all_rejected",
+    }:
+        return True
+    if category == "no_candidates":
+        diagnostics = explanation.get("diagnostic_summary")
+        latest = explanation.get("latest_no_trade_log")
+        if isinstance(latest, dict):
+            data_quality = str(latest.get("data_quality_status") or "")
+        else:
+            data_quality = ""
+        if data_quality.startswith("missing_"):
+            return False
+        if isinstance(diagnostics, dict):
+            reason = str(diagnostics.get("reason") or "")
+            if reason in {"research_dimensions_neutral", "strategy_threshold_not_met"}:
+                return True
+        return True
+    return False
+
+
+def _has_warning_alerts(alerts: list[dict[str, Any]]) -> bool:
+    return any(str(alert.get("severity") or "").lower() in {"warn", "warning", "error", "critical"} for alert in alerts)
+
+
 def validate_pre_open(
     *,
     sqlite_db: Path = DEFAULT_SQLITE_DB,
@@ -671,16 +705,30 @@ def first_sample_alerts(
         wait_minutes=wait_minutes,
         min_symbols=min_symbols,
     )
+    expected_no_trade = local_sim_count <= 0 and _expected_scientific_no_trade(result["no_trade_explanation"])
     if local_sim_count <= 0:
-        alerts.append({"severity": "warn", "code": "ashare_first_sim_trade_missing", "message": "A股5分钟数据已进入会话窗口，但服务器本地模拟盘尚无成交样本。"})
+        if expected_no_trade:
+            alerts.append({
+                "severity": "info",
+                "code": "ashare_first_sim_trade_not_expected",
+                "message": "A股5分钟数据已就绪，但当前资金计划、候选池或风控结果不要求新增模拟成交。",
+            })
+        else:
+            alerts.append({"severity": "warn", "code": "ashare_first_sim_trade_missing", "message": "A股5分钟数据已进入会话窗口，但服务器本地模拟盘尚无成交样本。"})
     if local_sim_count > 0 and receipt_count <= 0:
         alerts.append({"severity": "warn", "code": "ashare_first_receipt_missing", "message": "A股已有本地模拟成交，但签名回执尚未生成。"})
     if review_count <= 0:
         alerts.append({"severity": "info", "code": "ashare_review_not_yet_run", "message": "A股复盘日志尚未生成，等待日终复盘任务。"})
 
     result["alerts"] = alerts
-    result["status"] = "warn" if alerts else "pass"
-    result["reason"] = "first_sample_alerts_present" if alerts else "first_sample_ready"
+    has_warning_alerts = _has_warning_alerts(alerts)
+    result["status"] = "warn" if has_warning_alerts else "pass"
+    if has_warning_alerts:
+        result["reason"] = "first_sample_alerts_present"
+    elif expected_no_trade:
+        result["reason"] = "first_sample_no_trade_explained"
+    else:
+        result["reason"] = "first_sample_ready"
     return result
 
 

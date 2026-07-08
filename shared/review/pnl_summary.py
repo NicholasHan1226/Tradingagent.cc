@@ -365,10 +365,30 @@ def sim_ledger_pnl_summary(
     for market in target_markets:
         market_key = str(market).lower().strip()
         if market_key == "ashare":
-            result[market_key] = _ashare_local_sim_summary(local_path, ashare_mark_prices)
+            mark_prices = ashare_mark_prices
+            if mark_prices is None:
+                positions = _ashare_local_positions(local_path)
+                mark_prices = load_mark_prices_for_positions(positions, "ashare") if positions else None
+            result[market_key] = _ashare_local_sim_summary(local_path, mark_prices)
         else:
             result[market_key] = _aggregate_style_ledgers(market_key, root)
     return result
+
+
+def _ashare_local_positions(local_trades_path: Path) -> dict[str, dict[str, Any]]:
+    try:
+        from shared.execution import local_sim_ledger
+
+        original_local_sim_trades = local_sim_ledger.LOCAL_SIM_TRADES
+        local_sim_ledger.LOCAL_SIM_TRADES = local_trades_path
+        try:
+            pnl = local_sim_ledger.get_local_sim_pnl(account=None, mark_prices=None)
+        finally:
+            local_sim_ledger.LOCAL_SIM_TRADES = original_local_sim_trades
+    except Exception:  # noqa: BLE001
+        return {}
+    positions = pnl.get("positions") if isinstance(pnl, dict) else {}
+    return positions if isinstance(positions, dict) else {}
 
 
 def load_mark_prices_for_positions(

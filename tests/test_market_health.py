@@ -575,6 +575,32 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "warn")
         self.assertIn("server_local_sim_has_no_production_trades_yet", check.details["warn_reasons"])
 
+    def test_ashare_sim_loop_observes_when_no_portfolio_orders_explains_no_trade(self) -> None:
+        log_path = self.root / "shared/logs/ashare_no_trade_explanations.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            json.dumps(
+                {
+                    "generated_at": "2026-07-08T10:25:00+08:00",
+                    "no_trade_explanation": {
+                        "category": "no_portfolio_orders",
+                        "action": "continue_monitoring_capital_plan",
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):
+            with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):
+                check = market_health._check_sim_market_loop("ashare", "job_ashare_sim_exec.sh")
+
+        self.assertEqual(check.status, "pass")
+        self.assertIn("ashare_waiting_for_portfolio_or_strategy_signal", check.details["warn_reasons"])
+        self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
+        self.assertEqual(check.details["no_trade_explanation"]["category"], "no_portfolio_orders")
+
     def test_ashare_sim_loop_passes_without_sample_before_session(self) -> None:
         with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):
             with patch.object(market_health, "_market_session_state", return_value={"in_session": False, "samples_expected_today": False}):

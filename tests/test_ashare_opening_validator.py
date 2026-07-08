@@ -281,6 +281,51 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["no_trade_explanation"]["latest_no_trade_log"]["score_diagnostics"]["scored_count"], 500)
         self.assertEqual(report["no_trade_explanation"]["latest_no_trade_log"]["score_diagnostics"]["top_scores"][0]["symbol"], "000623.SZ")
 
+    def test_first_sample_no_portfolio_orders_is_observation_not_missing_execution(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        no_trade_log = root / "ashare_no_trade_explanations.jsonl"
+        no_trade_log.write_text(
+            json.dumps(
+                {
+                    "date": "20260706",
+                    "generated_at": "2026-07-06T09:41:00+08:00",
+                    "state": "ok",
+                    "no_trade_explanation": {
+                        "category": "no_portfolio_orders",
+                        "action": "continue_monitoring_capital_plan",
+                        "counts": {"candidate_count": 3, "risk_rejections": 0},
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        db_path = self._db(
+            [
+                ("600000.SH", "2026-07-06 09:35:00"),
+                ("000001.SZ", "2026-07-06 09:35:00"),
+            ]
+        )
+
+        report = ashare_opening_validator.first_sample_alerts(
+            sqlite_db=db_path,
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            no_trade_log_path=no_trade_log,
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["reason"], "first_sample_no_trade_explained")
+        self.assertEqual(report["no_trade_explanation"]["category"], "no_portfolio_orders")
+        self.assertNotIn("ashare_first_sim_trade_missing", {alert["code"] for alert in report["alerts"]})
+
     def test_first_sample_surfaces_score_diagnostics_for_no_trade(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
