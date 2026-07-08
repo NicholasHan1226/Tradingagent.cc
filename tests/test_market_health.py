@@ -660,6 +660,43 @@ class MarketHealthTest(unittest.TestCase):
         self.assertIn("server_local_sim_has_no_production_trades_yet", check.details["warn_reasons"])
         self.assertNotIn("ashare_waiting_for_portfolio_or_strategy_signal", check.details["warn_reasons"])
 
+    def test_ashare_sim_loop_uses_today_trade_rows_not_historical_total(self) -> None:
+        local_sim = self.root / "shared/logs/local_sim/local_sim_trades.jsonl"
+        local_sim.parent.mkdir(parents=True, exist_ok=True)
+        local_sim.write_text(
+            json.dumps({"trade_date": "20260707", "ts_code": "600000.SH", "status": "filled"}) + "\n",
+            encoding="utf-8",
+        )
+        log_path = self.root / "shared/logs/ashare_no_trade_explanations.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            json.dumps(
+                {
+                    "date": "20260708",
+                    "generated_at": "2026-07-08T14:57:00+08:00",
+                    "no_trade_explanation": {
+                        "category": "no_portfolio_orders",
+                        "counts": {"candidates": 3, "orders": 0},
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):
+            with patch.object(
+                market_health,
+                "_market_session_state",
+                return_value={"in_session": False, "samples_expected_today": True, "local_time": "2026-07-08T15:30:00+08:00"},
+            ):
+                check = market_health._check_sim_market_loop("ashare", "job_ashare_sim_exec.sh")
+
+        self.assertEqual(check.details["ledger"]["trade_rows"], 1)
+        self.assertEqual(check.details["ledger"]["today_trade_rows"], 0)
+        self.assertEqual(check.status, "warn")
+        self.assertIn("server_local_sim_has_no_production_trades_yet", check.details["warn_reasons"])
+
     def test_ashare_sim_loop_passes_without_sample_before_session(self) -> None:
         with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "asset_count": 10}):
             with patch.object(market_health, "_market_session_state", return_value={"in_session": False, "samples_expected_today": False}):

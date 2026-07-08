@@ -885,6 +885,33 @@ def _ashare_local_sim_trade_rows(path: Path | None = None) -> list[dict[str, Any
     return rows
 
 
+def _compact_date(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if len(raw) >= 10 and raw[4:5] == "-" and raw[7:8] == "-":
+        raw = raw[:10].replace("-", "")
+    else:
+        raw = raw.replace("-", "")[:8]
+    return raw if len(raw) == 8 and raw.isdigit() else ""
+
+
+def _ashare_local_sim_trade_count_for_date(trade_date: str, path: Path | None = None) -> int:
+    target_date = _compact_date(trade_date)
+    if not target_date:
+        return 0
+    count = 0
+    for row in _ashare_local_sim_trade_rows(path):
+        row_date = ""
+        for key in ("trade_date", "date", "fill_time", "created_at", "timestamp", "receipt_at"):
+            row_date = _compact_date(row.get(key))
+            if row_date:
+                break
+        if row_date == target_date:
+            count += 1
+    return count
+
+
 def _ashare_local_sample_quality(path: Path | None = None) -> dict[str, Any]:
     from shared.review.sample_quality import summarize_sample_quality
 
@@ -1215,6 +1242,9 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     session_state = _market_session_state(market)
     samples_expected = bool(session_state.get("samples_expected_today"))
     no_trade_explanation = _latest_ashare_no_trade_explanation() if market == "ashare" else {}
+    current_trade_date = _compact_date(session_state.get("local_time")) or datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
+    if market == "ashare":
+        ledger["today_trade_rows"] = _ashare_local_sim_trade_count_for_date(current_trade_date)
 
     hard_fail_reasons: list[str] = []
     warn_reasons: list[str] = []
@@ -1234,7 +1264,7 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     if market not in {"ashare", "cn_futures"} and int(ledger.get("trade_rows") or 0) <= 0:
         if not _sim_market_wait_reason(market, str(data.get("reason") or "")):
             hard_fail_reasons.append("sim_trade_ledger_empty")
-    if market == "ashare" and int(ledger.get("trade_rows") or 0) <= 0 and samples_expected:
+    if market == "ashare" and int(ledger.get("today_trade_rows") or 0) <= 0 and samples_expected:
         if _ashare_scientific_no_trade(no_trade_explanation):
             warn_reasons.append("ashare_waiting_for_portfolio_or_strategy_signal")
         else:
