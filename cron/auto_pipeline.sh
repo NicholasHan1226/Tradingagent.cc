@@ -32,7 +32,7 @@ if [ -f "${ENV_LOADER}" ]; then
   source "${ENV_LOADER}"
 fi
 
-if [ -r "${ROOT}/.env" ]; then
+if [ -f "${ROOT}/.env" ] && head -c 0 "${ROOT}/.env" >/dev/null 2>&1; then
   set -a
   # shellcheck disable=SC1091
   source "${ROOT}/.env"
