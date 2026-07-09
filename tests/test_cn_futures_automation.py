@@ -239,6 +239,29 @@ class ReadModelIntradayReader(FakeFuturesReader):
 
 
 class CNFuturesAutomationTest(unittest.TestCase):
+    def test_active_trade_date_rolls_night_session_to_next_calendar_day(self) -> None:
+        from CNFutures.session import active_trade_date, cn_futures_session_state
+
+        self.assertEqual(active_trade_date(datetime.fromisoformat("2026-07-09T10:00:00+08:00")), "20260709")
+        self.assertEqual(active_trade_date(datetime.fromisoformat("2026-07-09T21:30:00+08:00")), "20260710")
+        self.assertEqual(active_trade_date(datetime.fromisoformat("2026-07-10T01:15:00+08:00")), "20260710")
+
+        state = cn_futures_session_state(datetime.fromisoformat("2026-07-09T21:30:00+08:00"))
+        self.assertEqual(state["active_trade_date"], "20260710")
+
+    def test_latest_actionable_review_filters_current_trade_date(self) -> None:
+        from CNFutures.review import latest_actionable_review
+
+        rows = [
+            {"date": "20260709", "state": "degraded", "error_count": 1, "error_summary": {"by_error": {"stale_intraday_bar": 1}}},
+            {"date": "20260710", "state": "ok", "hold_count": 1, "hold_reason_summary": {"by_reason": {"below_threshold": 1}}},
+        ]
+
+        latest = latest_actionable_review(rows, trade_date="20260710")
+
+        self.assertEqual(latest["date"], "20260710")
+        self.assertEqual(latest["state"], "ok")
+
     def test_adapter_default_reader_uses_tradingagent_data_reader(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from shared.data.reader import TradingagentDataReader
@@ -539,6 +562,54 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["state"], "degraded")
             self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["errors"][0]["error"], "stale_intraday_bar")
+
+    def test_multi_style_runner_treats_product_night_close_as_hold(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class CopperNightCloseReader(FakeFuturesReader):
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                if market != "Futures":
+                    return []
+                return [{"symbol": "cu2608", "name": "沪铜2608", "exchange": "SHFE", "status": "listed"}]
+
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
+                if market != "Futures" or interval != "5min":
+                    return []
+                return [
+                    {"trade_date": "20260710", "bar_time": "2026-07-10 00:55:00", "close": 103980, "volume": 10},
+                    {"trade_date": "20260710", "bar_time": "2026-07-10 01:00:00", "close": 103940, "volume": 21},
+                ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reader = CopperNightCloseReader()
+            adapter = CNFuturesAdapter(
+                reader=reader,
+                universe_filter={"max_symbols": 1},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.01}},
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260710",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-10 01:15:00"),
+                max_intraday_bar_age_minutes=10,
+            )
+
+            self.assertEqual(result["state"], "ok")
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["holds"][0]["reason"], "product_night_session_closed")
 
     def test_multi_style_runner_records_hold_reason_summary(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter

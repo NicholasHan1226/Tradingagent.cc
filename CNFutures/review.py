@@ -36,9 +36,27 @@ def is_actionable_review(payload: dict[str, Any]) -> bool:
     return False
 
 
-def latest_actionable_review(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _compact_date(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    first_part = raw[:10]
+    digits = "".join(ch for ch in first_part if ch.isdigit())
+    if len(digits) >= 8:
+        return digits[:8]
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    return digits[:8] if len(digits) >= 8 else ""
+
+
+def latest_actionable_review(rows: list[dict[str, Any]], *, trade_date: str | None = None) -> dict[str, Any]:
     """Prefer the newest review with hold/fill/error/bar evidence over empty close rows."""
 
+    target_date = _compact_date(trade_date)
+    if target_date:
+        rows = [
+            row for row in rows
+            if _compact_date(row.get("date") or row.get("trade_date") or row.get("generated_at")) == target_date
+        ]
     for row in reversed(rows):
         if is_actionable_review(row):
             return row

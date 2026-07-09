@@ -21,7 +21,8 @@ def cn_futures_session_state(now: datetime | None = None) -> dict[str, Any]:
     concrete contract can trade at night.
     """
 
-    current = (now or datetime.now(timezone.utc)).astimezone(CN_TZ)
+    raw_now = now or datetime.now(timezone.utc)
+    current = raw_now.astimezone(CN_TZ) if raw_now.tzinfo is not None else raw_now.replace(tzinfo=CN_TZ)
     weekday = current.weekday()
     minutes = _minutes(current)
     windows = {
@@ -65,9 +66,21 @@ def cn_futures_session_state(now: datetime | None = None) -> dict[str, Any]:
         "local_time": current.isoformat(timespec="seconds"),
         "session": session,
         "session_start": session_start.isoformat(timespec="seconds") if session_start else "",
+        "active_trade_date": active_trade_date(current),
         "in_session": in_session,
         "samples_expected_today": samples_expected_today,
     }
 
 
-__all__ = ["cn_futures_session_state"]
+def active_trade_date(now: datetime | None = None) -> str:
+    """Return the China futures trading date for the current exchange session."""
+
+    raw_now = now or datetime.now(timezone.utc)
+    current = raw_now.astimezone(CN_TZ) if raw_now.tzinfo is not None else raw_now.replace(tzinfo=CN_TZ)
+    minutes = _minutes(current)
+    if current.weekday() < 5 and minutes >= 21 * 60:
+        return (current + timedelta(days=1)).strftime("%Y%m%d")
+    return current.strftime("%Y%m%d")
+
+
+__all__ = ["active_trade_date", "cn_futures_session_state"]

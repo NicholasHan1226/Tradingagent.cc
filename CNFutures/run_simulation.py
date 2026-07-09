@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +14,11 @@ if __package__ in (None, ""):
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from CNFutures.adapter import CNFuturesAdapter
+    from CNFutures.session import active_trade_date
     from CNFutures.sim_runner import DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES, run_multi_style_simulation
 else:
     from .adapter import CNFuturesAdapter
+    from .session import active_trade_date
     from .sim_runner import DEFAULT_MAX_INTRADAY_BAR_AGE_MINUTES, run_multi_style_simulation
 
 
@@ -28,7 +29,7 @@ DEFAULT_REVIEW_PATH = ROOT / "shared" / "review" / "data" / "cn_futures_sim_revi
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run China futures multi-style simulation.")
-    parser.add_argument("--date", default=datetime.now().strftime("%Y%m%d"), help="Trading date, default: today as YYYYMMDD.")
+    parser.add_argument("--date", default=active_trade_date(), help="Trading date, default: active China futures trading date.")
     parser.add_argument("--signals-dir", type=Path, default=DEFAULT_SIGNALS_DIR, help="Tradings signal state directory.")
     parser.add_argument("--review-path", type=Path, default=DEFAULT_REVIEW_PATH, help="Append-only review JSONL path.")
     parser.add_argument("--max-symbols", type=int, default=None, help="Optional cap for futures universe size.")

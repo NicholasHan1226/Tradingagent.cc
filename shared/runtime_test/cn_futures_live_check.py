@@ -169,7 +169,13 @@ def check_sharedsignals_freshness(
         )
 
     base_url = os.environ.get("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082").strip().rstrip("/")
-    params = urllib.parse.urlencode({"market": "Futures", "date": datetime.now().strftime("%Y%m%d")})
+    try:
+        from CNFutures.session import active_trade_date
+
+        trade_date = active_trade_date()
+    except Exception:
+        trade_date = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d")
+    params = urllib.parse.urlencode({"market": "Futures", "date": trade_date})
     url = f"{base_url}/realtime_5min?{params}"
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
@@ -272,7 +278,13 @@ def check_sim_log(log_path: Path | None = None) -> Check:
 def check_review(review_path: Path | None = None) -> Check:
     review_path = review_path or CN_FUTURES_REVIEW
     rows = _read_jsonl(review_path)
-    latest = latest_actionable_review(rows)
+    try:
+        from CNFutures.session import active_trade_date
+
+        target_trade_date = active_trade_date()
+    except Exception:
+        target_trade_date = ""
+    latest = latest_actionable_review(rows, trade_date=target_trade_date or None)
     hold_summary = latest.get("hold_reason_summary") if isinstance(latest.get("hold_reason_summary"), dict) else {}
     hold_by_reason = hold_summary.get("by_reason") if isinstance(hold_summary.get("by_reason"), dict) else {}
     latest_hold_count = int(latest.get("hold_count") or hold_summary.get("total") or 0) if latest else 0
@@ -291,6 +303,7 @@ def check_review(review_path: Path | None = None) -> Check:
         "exists": review_path.exists(),
         "age_minutes": _file_age_minutes(review_path),
         "review_rows": len(rows),
+        "current_trade_date": target_trade_date,
         "latest_generated_at": latest.get("generated_at", ""),
         "latest_state": latest.get("state", ""),
         "latest_cadence": latest.get("cadence", ""),

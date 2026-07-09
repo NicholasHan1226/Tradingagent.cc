@@ -13,7 +13,7 @@ from shared.execution.sim_broker import execute_sim_order
 
 from . import MARKET
 from .adapter import CNFuturesAdapter, READER_MARKET
-from .contract_rules import get_contract_rule, normalize_product
+from .contract_rules import get_contract_rule, night_session_end_minute, normalize_product
 from .margin_model import estimate_order_cost
 from .review import append_review
 from .signal_engine import generate_style_signal
@@ -167,6 +167,36 @@ def _is_intraday_bar_fresh(latest_bar_time: str, *, now: datetime | None, max_ag
     if age is None:
         return False, None
     return age <= max_age_minutes, age
+
+
+def _local_naive_dt(value: datetime) -> datetime:
+    return value.astimezone(CN_TZ).replace(tzinfo=None) if value.tzinfo is not None else value
+
+
+def _minute_of_day(value: datetime) -> int:
+    return value.hour * 60 + value.minute
+
+
+def _is_after_product_night_close(symbol: str, latest_bar_time: str, now: datetime | None) -> bool:
+    """Return true when a stale-looking night bar is actually the product close."""
+
+    if now is None:
+        return False
+    close_minute = night_session_end_minute(symbol)
+    if close_minute is None:
+        return False
+    bar_dt = _parse_dt(latest_bar_time)
+    if bar_dt is None:
+        return False
+    now_dt = _local_naive_dt(now)
+    bar_minute = _minute_of_day(bar_dt)
+    now_minute = _minute_of_day(now_dt)
+    bar_at_close = close_minute - 5 <= bar_minute <= close_minute
+    if not bar_at_close:
+        return False
+    if close_minute <= 3 * 60:
+        return now_dt.date() == bar_dt.date() and now_minute > close_minute
+    return (now_dt.date() == bar_dt.date() and now_minute > close_minute) or now_dt.date() > bar_dt.date()
 
 
 def _read_daily_bars(reader: Any, symbol: str, date: str) -> list[dict[str, Any]]:
@@ -887,6 +917,19 @@ def run_multi_style_simulation(
                     max_age_minutes=max_intraday_bar_age_minutes,
                 )
                 if not fresh and not force_flatten:
+                    if _is_after_product_night_close(symbol, latest_bar_time, now):
+                        holds.append({
+                            "stage": "data",
+                            "symbol": symbol,
+                            "style": style_name,
+                            "cadence": cadence_value,
+                            "bar_time": latest_bar_time,
+                            "bar_age_minutes": age_minutes,
+                            "max_age_minutes": max_intraday_bar_age_minutes,
+                            "session": session_bucket,
+                            "reason": "product_night_session_closed",
+                        })
+                        continue
                     errors.append({
                         "stage": "data",
                         "symbol": symbol,

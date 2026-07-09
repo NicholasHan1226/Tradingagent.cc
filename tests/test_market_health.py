@@ -883,6 +883,7 @@ class MarketHealthTest(unittest.TestCase):
         review.write_text(
             json.dumps(
                 {
+                    "date": "20260710",
                     "state": "ok",
                     "filled_count": 2,
                     "error_count": 0,
@@ -894,9 +895,10 @@ class MarketHealthTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        with patch.object(market_health, "_probe_market_data", return_value={"status": "warn", "priced_signal_count": 0}):
-            with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):
-                check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh")
+        with patch("CNFutures.session.active_trade_date", return_value="20260710"):
+            with patch.object(market_health, "_probe_market_data", return_value={"status": "warn", "priced_signal_count": 0}):
+                with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):
+                    check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh")
 
         self.assertEqual(check.status, "warn")
         self.assertEqual(check.details["ledger"]["trade_rows"], 2)

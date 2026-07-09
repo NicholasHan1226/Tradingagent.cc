@@ -1019,12 +1019,19 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
                     continue
                 if isinstance(payload, dict):
                     rows.append(payload)
-        latest = latest_actionable_review(rows)
+        try:
+            from CNFutures.session import active_trade_date
+
+            target_trade_date = active_trade_date()
+        except Exception:
+            target_trade_date = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
+        latest = latest_actionable_review(rows, trade_date=target_trade_date)
         return {
             "type": "cn_futures_append_only_review",
             "trade_rows": sum(int(row.get("filled_count") or 0) for row in rows),
             "ledger_count": 1 if review_path.exists() else 0,
             "review_rows": len(rows),
+            "current_trade_date": target_trade_date,
             "latest_file": str(review_path.relative_to(ROOT)),
             "latest_age_minutes": _file_age_minutes(review_path),
             "latest_state": latest.get("state", ""),
@@ -1242,7 +1249,12 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                     }
         elif market == "cn_futures":
             api_base = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip().rstrip("/")
-            trade_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+            try:
+                from CNFutures.session import active_trade_date
+
+                trade_date = active_trade_date()
+            except Exception:
+                trade_date = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
             api_url = f"{api_base}/realtime_5min?{parse.urlencode({'market': 'Futures', 'date': trade_date})}"
             try:
                 req = request.Request(api_url, headers={"Accept": "application/json"})

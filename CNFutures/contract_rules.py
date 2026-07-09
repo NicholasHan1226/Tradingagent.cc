@@ -8,6 +8,7 @@ trading must source live exchange / futures-company contract metadata.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class ContractRule:
     open_fee_type: str = "rate"
     close_fee_type: str = "rate"
     night_session: bool = False
+    night_session_end_minute: Optional[int] = None
 
 
 _PRODUCT_RULES: dict[str, ContractRule] = {
@@ -38,6 +40,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         close_fee_rate=0.0001,
         price_limit_rate=0.07,
         night_session=True,
+        night_session_end_minute=23 * 60,
     ),
     "cu": ContractRule(
         product="cu",
@@ -49,6 +52,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         close_fee_rate=0.00005,
         price_limit_rate=0.06,
         night_session=True,
+        night_session_end_minute=60,
     ),
     "i": ContractRule(
         product="i",
@@ -60,6 +64,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         close_fee_rate=0.0001,
         price_limit_rate=0.11,
         night_session=True,
+        night_session_end_minute=23 * 60,
     ),
     "m": ContractRule(
         product="m",
@@ -73,6 +78,7 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         open_fee_type="fixed_per_lot",
         close_fee_type="fixed_per_lot",
         night_session=True,
+        night_session_end_minute=23 * 60,
     ),
     "if": ContractRule(
         product="if",
@@ -159,4 +165,19 @@ def get_contract_rule(symbol: str) -> ContractRule:
         raise ValueError(f"unsupported China futures product: {product}") from exc
 
 
-__all__ = ["ContractRule", "get_contract_rule", "is_executable_contract_symbol", "normalize_product"]
+def night_session_end_minute(symbol: str) -> int | None:
+    """Return the product-specific night-session close minute, if known."""
+
+    rule = get_contract_rule(symbol)
+    if not rule.night_session:
+        return None
+    return rule.night_session_end_minute
+
+
+__all__ = [
+    "ContractRule",
+    "get_contract_rule",
+    "is_executable_contract_symbol",
+    "night_session_end_minute",
+    "normalize_product",
+]
