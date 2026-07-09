@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Any
 
 
-DEFAULT_API_URL = os.environ.get("SHAREDSIGNALS_API_URL", "")
+DEFAULT_API_URL = os.environ.get("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082")
 DEFAULT_API_KEY = os.environ.get("SHAREDSIGNALS_API_KEY", "")
 DEFAULT_TIMEOUT = float(os.environ.get("SHAREDSIGNALS_API_TIMEOUT", "10"))
 DEFAULT_RETRIES = int(os.environ.get("SHAREDSIGNALS_API_RETRIES", os.environ.get("SHAREDSIGNALS_API_MAX_RETRIES", "1")))

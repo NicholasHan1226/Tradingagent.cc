@@ -21,6 +21,7 @@ from typing import Any, Callable
 
 from .marketgraph_api import DEFAULT_API_URL as DEFAULT_MARKETGRAPH_API_URL
 from .marketgraph_api import MarketGraphAPIClient
+from .shared_signals_api import DEFAULT_API_URL as DEFAULT_SHARED_SIGNALS_API_URL
 from .shared_signals_api import SharedSignalsAPIClient
 
 
@@ -433,7 +434,7 @@ class TradingagentDataReader:
     ):
         self._shared = shared
         self._marketgraph = marketgraph
-        api_url = os.environ.get("SHAREDSIGNALS_API_URL", "").strip()
+        api_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHARED_SIGNALS_API_URL).strip()
         marketgraph_api_url = os.environ.get("MARKETGRAPH_API_URL", DEFAULT_MARKETGRAPH_API_URL).strip()
         self._api_client = api_client
         if self._api_client is None and api_url:
