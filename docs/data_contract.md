@@ -130,11 +130,19 @@ Current MarketGraph research evidence must come through a public API
 boundary, not direct CSV files:
 
 - `all_weather_regime.csv`
-- `intake/event_candidates.csv`
+- REST `/contract?table_id=association_impact_relations` / MCP
+  `read_contract_table(table_id="association_impact_relations")`
 - `intake/sentiment_signals.csv`
 
 These remain MarketGraph-derived context, not TradingAgent facts. TradingAgent uses
 them only for scoring and confidence weighting.
+
+A-share event scoring uses formal MarketGraph impact relations first. Raw
+SharedSignals event rows are source announcements and are not directional
+impact evidence unless they already carry explicit impact direction fields.
+`association_impact_relations` rows are normalized to stock-scoped event rows
+with `subject_code=target_id`, `subject_type=stock`, `status=verified`, and
+`proposed_impact_hint=polarity`.
 
 A-share event scoring accepts MarketGraph rows with
 `status=needs_review|verified|promoted|approved`. `verified` is a reviewed

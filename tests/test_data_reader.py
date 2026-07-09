@@ -31,6 +31,41 @@ class FakeMarketGraphAPIClient:
         return {"regime": "growth", "regime_confidence": 0.8}
 
 
+class FakeMarketGraphImpactAPIClient:
+    errors: list[str] = []
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def get_contract_table(self, table_id, **kwargs):
+        self.calls.append({"table_id": table_id, **kwargs})
+        return {
+            "id": table_id,
+            "exists": True,
+            "row_count": 2,
+            "rows": [
+                {
+                    "event_id": "evt-1",
+                    "target_type": "stock",
+                    "target_id": "600000.SH",
+                    "target_name": "Pufa Bank",
+                    "polarity": "positive",
+                    "strength": "0.7",
+                    "confidence": "0.8",
+                    "valid_from": "20260709",
+                },
+                {
+                    "event_id": "evt-2",
+                    "target_type": "industry",
+                    "target_id": "bank",
+                    "polarity": "positive",
+                    "strength": "0.7",
+                    "confidence": "0.8",
+                },
+            ],
+        }
+
+
 class TestSharedSignalsReader(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -684,6 +719,27 @@ class TestMarketGraphCSVReader(unittest.TestCase):
             self.assertEqual(reader.get_event_candidates(), [])
             self.assertEqual(reader.get_sentiment(), [])
 
+    def test_event_candidates_read_formal_marketgraph_impact_relations(self) -> None:
+        client = FakeMarketGraphImpactAPIClient()
+        reader = MarketGraphCSVReader(
+            Path("/nonexistent"),
+            api_client=None,
+            marketgraph_client=client,
+            api_enabled=False,
+        )
+
+        rows = reader.get_event_candidates()
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["subject_code"], "600000.SH")
+        self.assertEqual(rows[0]["subject_type"], "stock")
+        self.assertEqual(rows[0]["status"], "verified")
+        self.assertEqual(rows[0]["proposed_impact_hint"], "positive")
+        self.assertEqual(rows[0]["event_time"], "20260709")
+        self.assertEqual(client.calls[0]["table_id"], "association_impact_relations")
+        self.assertEqual(client.calls[0]["include_rows"], True)
+        self.assertEqual(client.calls[0]["record_usage"], False)
+
 
 class FakeScoringReader:
     def get_regime(self):
@@ -799,6 +855,27 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
 
         self.assertNotIn("macro", scores["missing_evidence_dimensions"])
         self.assertGreater(scores["macro"], 0.5)
+
+    def test_marketgraph_impact_relations_feed_event_dimension(self) -> None:
+        reader = TradingagentDataReader(
+            api_client=None,
+            marketgraph=MarketGraphCSVReader(
+                Path("/nonexistent"),
+                api_client=None,
+                marketgraph_client=FakeMarketGraphImpactAPIClient(),
+                api_enabled=False,
+            ),
+        )
+
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260709",
+            data_reader=reader,
+        )
+
+        self.assertNotIn("event", scores["missing_evidence_dimensions"])
+        self.assertGreater(scores["event"], 0.5)
+        self.assertEqual(scores["evidence_sources"]["event"]["source"], "MarketGraph event candidates")
 
     def test_scoring_uses_reader_and_preserves_formula(self) -> None:
         scores = six_dimension_scorer.score_stock(

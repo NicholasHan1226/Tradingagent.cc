@@ -324,16 +324,63 @@ class MarketGraphCSVReader:
         return None
 
     def get_event_candidates(self) -> list[dict[str, str]]:
-        api_rows = self._api_rows(
-            "event_candidates.csv",
-            [
-                ("get_event_candidates", (), {}),
-                ("get_events", (), {}),
-            ],
-        )
-        if api_rows:
-            return api_rows
+        if self._marketgraph_client is not None:
+            before_error_count = len(getattr(self._marketgraph_client, "errors", []))
+            get_contract_table = getattr(self._marketgraph_client, "get_contract_table", None)
+            if callable(get_contract_table):
+                payload = get_contract_table(
+                    "association_impact_relations",
+                    market="Ashare",
+                    include_rows=True,
+                    limit=int(os.environ.get("MARKETGRAPH_EVENT_IMPACT_LIMIT", "50000")),
+                    record_usage=False,
+                )
+                if payload and not payload.get("error"):
+                    rows = self._normalize_impact_relation_rows(payload.get("rows") or [])
+                    if rows:
+                        return rows
+                if len(getattr(self._marketgraph_client, "errors", [])) > before_error_count:
+                    self._logger.warning(
+                        "MarketGraphCSVReader association_impact_relations MarketGraph API call failed; fail-closed: %s",
+                        self._marketgraph_client.errors[-1],
+                    )
         return []
+
+    @staticmethod
+    def _normalize_impact_relation_rows(rows: Any) -> list[dict[str, Any]]:
+        if not isinstance(rows, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            target_type = str(row.get("target_type") or "").strip().lower()
+            if target_type and target_type not in {"stock", "equity", "asset"}:
+                continue
+            target_id = str(row.get("target_id") or row.get("subject_code") or "").strip()
+            if not target_id:
+                continue
+            polarity = str(row.get("polarity") or row.get("proposed_impact_hint") or "").strip().lower()
+            direction = {
+                "+": "positive",
+                "bullish": "positive",
+                "positive": "positive",
+                "-": "negative",
+                "bearish": "negative",
+                "negative": "negative",
+                "mixed": "mixed",
+                "neutral": "neutral",
+            }.get(polarity.split(":", 1)[0], "neutral")
+            item = dict(row)
+            item["subject_code"] = target_id
+            item["subject_type"] = "stock"
+            item.setdefault("status", "verified")
+            item["proposed_impact_hint"] = direction
+            item.setdefault("confidence", row.get("strength") or 0.5)
+            item.setdefault("event_time", row.get("valid_from") or row.get("event_date") or "")
+            item.setdefault("source", "MarketGraph association_impact_relations")
+            normalized.append(item)
+        return normalized
 
     def get_sentiment_signals(self) -> list[dict[str, str]]:
         api_rows = self._api_rows(

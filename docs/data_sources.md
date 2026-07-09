@@ -61,10 +61,13 @@ cron templates and active documents should use the current sources above.
   for simulated edge gating and ignores PM judgment fields embedded in
   SharedSignals rows.
 - A-share research evidence: SharedSignals supplies market bars, factors,
-  capital flow and raw events; MarketGraph supplies optional regime/research
-  context through its API. Missing MarketGraph regime/event/sentiment evidence
-  is evidence debt and must not bypass TradingAgent candidate or execution
-  gates.
+  capital flow and raw events; MarketGraph supplies optional regime and formal
+  event-impact research through its API. A-share event scoring reads
+  MarketGraph `/contract` table `association_impact_relations`; raw
+  SharedSignals events are announcements, not directional impact evidence
+  unless explicit direction fields are present. Missing MarketGraph
+  regime/event/sentiment evidence is evidence debt and must not bypass
+  TradingAgent candidate or execution gates.
 - CNFutures: SharedSignals owns futures data collection; TradingAgent consumes
   Futures 5-minute bars for simulated-only execution and review.
 - HK: currently paused for production scheduling. Code remains fail-closed and
