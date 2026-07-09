@@ -601,9 +601,14 @@ def _opening_30m_review(
         phase = "data_query_failed"
         action = "check_sharedsignals_futures_read_model"
     elif bar_count <= 0 or symbol_count < max(1, int(min_symbols)):
-        status = "warn"
-        phase = "insufficient_5min_data"
-        action = "check_cn_futures_5min_collector"
+        if hold_count > 0 and top_hold_reason in {"style_session_not_allowed", "night_session_not_allowed"}:
+            status = "pass"
+            phase = "no_night_session"
+            action = "enable_only_explicit_night_session_styles_or_wait_for_day_session"
+        else:
+            status = "warn"
+            phase = "insufficient_5min_data"
+            action = "check_cn_futures_5min_collector"
     elif int(latest_review.get("filled_count") or 0) <= 0 and filled_signal_count <= 0 and hold_count > 0:
         if top_hold_reason in {"style_session_not_allowed", "night_session_not_allowed"}:
             status = "pass"
@@ -752,11 +757,6 @@ def first_sample_alerts(
         bars = fallback
     result.update(bars)
     alerts: list[dict[str, Any]] = []
-    if bars.get("error"):
-        alerts.append({"severity": "error", "code": "futures_5min_check_failed", "message": "期货5分钟首样本检查无法读取 SharedSignals API。"})
-    elif int(bars.get("bar_count") or 0) <= 0 or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
-        alerts.append({"severity": "warn", "code": "futures_5min_missing_in_session", "message": "期货交易时段开始后仍缺少足够的 Futures 5分钟数据。"})
-
     latest_review = _read_latest_review(review_path)
     latest_filled_count = int(latest_review.get("filled_count") or 0) if latest_review else 0
     trade_date = current.strftime("%Y%m%d")
@@ -782,6 +782,14 @@ def first_sample_alerts(
         elapsed_minutes=elapsed_minutes,
         min_symbols=min_symbols,
     )
+    opening_phase = str(result["opening_30m_review"].get("phase") or "")
+    if bars.get("error"):
+        alerts.append({"severity": "error", "code": "futures_5min_check_failed", "message": "期货5分钟首样本检查无法读取 SharedSignals API。"})
+    elif (
+        opening_phase != "no_night_session"
+        and (int(bars.get("bar_count") or 0) <= 0 or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)))
+    ):
+        alerts.append({"severity": "warn", "code": "futures_5min_missing_in_session", "message": "期货交易时段开始后仍缺少足够的 Futures 5分钟数据。"})
     if result["opening_30m_review"]["status"] == "warn":
         alerts.append({
             "severity": "warn",
@@ -790,7 +798,6 @@ def first_sample_alerts(
         })
     if result["latest_review"]["real_trading_enabled"]:
         alerts.append({"severity": "error", "code": "cn_futures_real_trading_flag_enabled", "message": "CNFutures 复盘样本错误带有实盘启用标记。"})
-    opening_phase = str(result["opening_30m_review"].get("phase") or "")
     if latest_filled_count <= 0 and filled_signal_count <= 0 and opening_phase not in {"strategy_hold", "no_night_session"}:
         alerts.append({"severity": "warn", "code": "cn_futures_first_sim_sample_missing", "message": "期货5分钟数据已进入会话窗口，但 TradingAgent 尚无首个模拟成交样本。"})
     if filled_signal_count > 0 and receipt_count <= 0:

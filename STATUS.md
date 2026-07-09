@@ -174,6 +174,7 @@
 - [x] 2026-07-09 追加修复 CNFutures 风控分类：`margin_cap_exceeded` 现在作为 `hold_reason_summary` 中的正常风险拒单/空跑归因，不再进入 `errors` 导致 5 分钟模拟任务 `degraded`。CLI 摘要同步输出 `hold_reason_summary` 和真实 `error_sample`，便于区分“有候选但保证金门禁拒绝”和“系统/数据异常”。
 - [x] 2026-07-09 追加修复 A股 server-local 账本最终视图：`local_sim_ledger` 默认写出策略有效账户视图，链路验证样本隔离到 audit 视图；A股策略口径当前为 2 笔有效成交、2 个持仓，样本质量、持仓快照、资金计划和失败/回执健康检查均通过。
 - [x] 2026-07-09 追加修复 CNFutures 开盘/健康验收：`opening_validator` 与 `market_health` 优先通过 SharedSignals `/realtime_5min?market=Futures` 验证当日 5 分钟条线；`cn_futures_live_check` 将策略主动 hold、无夜盘风格等科学空跑归为 pass/info，只有数据缺失、实盘开关、成交缺 bar time、异常错误或应成交无账本才报警。生产验收确认 Futures 5 分钟 API 返回 20 个合约、最新条线 11:30，live chain 与市场健康均为 pass。
+- [x] 2026-07-09 追加修复 CNFutures 夜盘首样本误报：当最新 5 分钟 review 明确全部风格因 `style_session_not_allowed` / `night_session_not_allowed` 主动 hold 时，即使夜盘当前 API 只返回少量合约，`first_sample_alerts` 也归类为 `no_night_session` 的科学空跑，不再触发 `futures_5min_missing_in_session` 或 `cn_futures_first_sim_sample_missing`；真实 API error、日盘覆盖不足、非会话限制 hold 仍保持 warn/fail。
 - [x] 文档规则已明确：链路验证样本、非连续竞价样本、缺候选来源或缺成交价来源样本不得占用策略现金、目标持仓数、新买入容量或机会成本换仓判断。
 
 ### 2026-07-08 A股 no-trade 空候选证据门与 dry-run 验收加固
