@@ -192,7 +192,9 @@ The home page answers the user-facing questions first:
   cyan accent, negative results use the risk red, and flat/zero results stay
   neutral.
 - Live return chart is the homepage's main panel and must be visible on the
-  first 1280x720 viewport.
+  first 1280x720 viewport. On the homepage, the chart's latest point follows
+  the current portfolio return so the curve, header stat, and `实时收益` card do
+  not show conflicting current results.
 - Right rail is a single result explanation module on the homepage, not a stack of
   separate alert cards or an action/order panel.
 - Tables are dense and result-oriented, with Chinese-first copy, real ticker

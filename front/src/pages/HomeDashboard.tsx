@@ -1,4 +1,5 @@
 import { PerformanceChart } from '../components/charts/PerformanceChart'
+import { useMemo } from 'react'
 import { ChartSkeleton } from '../components/Skeleton'
 import { StatusBoundary } from '../components/StatusBoundary'
 import { AShareEvidencePanel } from '../components/panels/AShareEvidencePanel'
@@ -65,6 +66,17 @@ export function HomeDashboard({
   const liveReturn = portfolio?.returnPct ?? latestPoint.simulated
   const targetReturn = portfolio?.targetPct ?? latestPoint.target
   const targetGap = liveReturn - targetReturn
+  const returnChartData = useMemo(() => {
+    if (!portfolio || data.length === 0) return data
+    return data.map((point, index) => index === data.length - 1
+      ? {
+          ...point,
+          simulated: portfolio.returnPct,
+          target: portfolio.targetPct,
+        }
+      : point)
+  }, [data, portfolio])
+  const returnChartLatestPoint = returnChartData[returnChartData.length - 1] ?? latestPoint
   const headline = hasPerformanceData
     ? targetGap >= 0
       ? '当前收益领先目标，回撤仍在边界内。'
@@ -98,7 +110,7 @@ export function HomeDashboard({
           </div>
           <StatusBoundary loading={<ChartSkeleton height={236} />} onRetry={onRetry} status={hasPerformanceData ? domainStatus('performance') : 'ready'}>
             {hasPerformanceData ? (
-              <PerformanceChart data={data} events={events} height={236} latestPoint={latestPoint} onSelectEvent={setActivePage} />
+              <PerformanceChart data={returnChartData} events={events} height={236} latestPoint={returnChartLatestPoint} onSelectEvent={setActivePage} />
             ) : (
               <div className="chart-empty-state" style={{ height: 236 }}>
                 <span>等待收益序列</span>
@@ -110,7 +122,7 @@ export function HomeDashboard({
           <div className="chart-meta">
             <span>{formatTime(now)} (UTC+8)</span>
             <b>{hasPerformanceData ? '已更新' : '等待数据'}</b>
-            <em>{hasPerformanceData ? `机会差 ${latestPoint.opportunity.toFixed(2)}%` : '未显示样例收益'}</em>
+            <em>{hasPerformanceData ? `机会差 ${returnChartLatestPoint.opportunity.toFixed(2)}%` : '未显示样例收益'}</em>
           </div>
         </section>
 
