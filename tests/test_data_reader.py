@@ -983,6 +983,33 @@ class SharedSignalsEventScoringReader(EmptyScoringReader):
         raise AssertionError("MarketGraph event candidates should not be required when SharedSignals events exist")
 
 
+class SharedSignalsRawEventScoringReader(EmptyScoringReader):
+    def get_events(self, market=None, symbol="", start="", end=""):
+        return [
+            {
+                "market": market,
+                "symbol": "600000.SH",
+                "event_type": "anns_d",
+                "title": "浦发银行发布业绩预增公告",
+                "content": "公司净利润增长，经营质量改善。",
+                "source": "sharedsignals:events",
+            }
+        ]
+
+
+class SharedSignalsMarketOnlyEventScoringReader(EmptyScoringReader):
+    def get_events(self, market=None, symbol="", start="", end=""):
+        return [
+            {
+                "market": market,
+                "event_type": "news",
+                "title": "A股硬科技板块迎来重大利好",
+                "content": "市场级新闻，不带个股代码。",
+                "source": "sharedsignals:events",
+            }
+        ]
+
+
 class APIOnlyScoringReader(EmptyScoringReader):
     def get_fundamentals(self, ts_code, end_date=None):
         return [
@@ -1086,6 +1113,29 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
         self.assertNotIn("event", scores["missing_evidence_dimensions"])
         self.assertGreater(scores["event"], 0.5)
         self.assertEqual(scores["evidence_sources"]["event"]["source"], "SharedSignals events")
+
+    def test_sharedsignals_raw_stock_event_text_feeds_weak_event_dimension(self) -> None:
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260629",
+            data_reader=SharedSignalsRawEventScoringReader(),
+            config={"dimensions": {"event": {"min_confidence": 0.2}}},
+        )
+
+        self.assertNotIn("event", scores["missing_evidence_dimensions"])
+        self.assertGreater(scores["event"], 0.5)
+        self.assertEqual(scores["evidence_sources"]["event"]["source"], "SharedSignals events")
+
+    def test_sharedsignals_market_only_event_does_not_feed_stock_event_dimension(self) -> None:
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260629",
+            data_reader=SharedSignalsMarketOnlyEventScoringReader(),
+            config={"dimensions": {"event": {"min_confidence": 0.2}}},
+        )
+
+        self.assertIn("event", scores["missing_evidence_dimensions"])
+        self.assertEqual(scores["event"], 0.5)
 
     def test_sharedsignals_sentiment_feeds_sentiment_dimension(self) -> None:
         reader = SharedSignalsSentimentScoringReader()

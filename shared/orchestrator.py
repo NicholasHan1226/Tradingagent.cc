@@ -532,6 +532,10 @@ def _build_signal_card(
         "idempotency_key": idempotency_key,
         "evidence_refs": [audit_id],
     }
+    if order.get("hypothesis_id"):
+        card["hypothesis_id"] = order.get("hypothesis_id")
+    if isinstance(order.get("research_hypothesis"), dict):
+        card["research_hypothesis"] = order.get("research_hypothesis")
     if str(market).lower() == "ashare":
         sellable_date = _ashare_sellable_date(date, side)
         card["t_plus_1"] = {
@@ -3072,6 +3076,31 @@ def run_sim_loop(
                 else "orchestrator_sim_loop"
             ),
         }
+        if str(market).lower() == "ashare":
+            score_snapshot = dict(scores_by_symbol.get(symbol, {}))
+            sample_intent = "strategy_trade"
+            if "daily_strategy_sample_target_not_met" in (capital_plan.get("reasons") or []):
+                sample_intent = "daily_sample_collection"
+            elif "sample_collection_before_min_samples" in (capital_plan.get("reasons") or []):
+                sample_intent = "cumulative_sample_collection"
+            try:
+                from Ashare.sample_learning import build_research_hypothesis
+
+                research_hypothesis = build_research_hypothesis(
+                    trade_date=date,
+                    symbol=symbol,
+                    side=side,
+                    execution_source=str(order.get("execution_source") or ""),
+                    candidate_pool_layer=str(order.get("candidate_pool_layer") or ""),
+                    score_snapshot=score_snapshot,
+                    sample_intent=sample_intent,
+                    capital_plan=capital_plan,
+                )
+                order["hypothesis_id"] = research_hypothesis["hypothesis_id"]
+                order["research_hypothesis"] = research_hypothesis
+                order["factor_snapshot"] = research_hypothesis.get("factor_snapshot", {})
+            except Exception:
+                order["research_hypothesis"] = {"status": "degraded", "sample_intent": sample_intent}
         if order["quantity"] <= 0 or order["price"] <= 0:
             skip = {"stage": "execution.sim_broker", "status": "skipped", "symbol": symbol, "reason": "non-positive quantity or price", "capital_layer": capital_layer}
             execution_skips.append(skip)

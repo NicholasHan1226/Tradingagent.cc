@@ -53,7 +53,8 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - `evolution_controller.py` 将 `portfolio_evolution.py` 的样本数、当日样本、收益和档位实验证据转成 `evolution_decision_latest.json`；主模拟循环和盘前 dry-run 可读取该决策来调整 `sample_collection` 门槛，但最终是否生成订单仍由候选池、资金计划、执行门禁和 server-local 账本共同决定。
 - `evolution_controller.py` 是 A股自动进化决策入口；只读消费 `portfolio_evolution_latest.json` / 三账户 ranking / 样本质量 / PnL，写 `evolution_decision_latest.json` 与 append-only log。它只输出 simulated-only 的下一步动作（`force_sample_collection`、`observe`、`tighten_risk`、`expand_risk_candidate`），不写订单、不启用实盘、不直接修改成交事实。
 - `sample_target_monitor.py` 是 A股每日样本目标盘中验收入口；读取组合演化、演化决策和 no-trade 解释，输出 pass/warn/fail、欠样本原因和 blocker，并可刷新 `evolution_decision_latest.json` 继续受控样本收集。生产入口为 `shared/wrappers/job_ashare_sample_target_monitor.sh`，只写 review 证据和演化决策，不写执行队列或成交事实。
+- `sample_learning.py` 是 A股收盘学习报告入口；读取策略成交、forward validation、样本目标监控、no-trade 解释和三账户实验，写 `sample_learning_latest.json` / log。它负责样本质量分层、交易假设 ID 汇总、收盘 blocker 归因、动态探索仓建议、三账户目标拆分和因子研究状态；只读/只写 review，不写订单、不改账本、不启用实盘。当前 A股已有六维评分/因子消费，但因子研究必须以 `sample_learning.factor_research` 的样本数、forward return 和稳定性为准；样本不足时只能标记 `sample_debt`，不得把评分因子当成已验证 alpha。
 
 ## 现有代码
-- 当前 A-share 代码位于本目录：`adapter.py`、`capital_plan.py`、`evolution_controller.py`、`sample_target_monitor.py`、`portfolio_evolution.py`、`research_evidence.py`、`sim_executor.py`、`t_plus_1.py` 和 `market_phases/`。
+- 当前 A-share 代码位于本目录：`adapter.py`、`capital_plan.py`、`evolution_controller.py`、`sample_target_monitor.py`、`sample_learning.py`、`portfolio_evolution.py`、`research_evidence.py`、`sim_executor.py`、`t_plus_1.py` 和 `market_phases/`。
 - 旧 `/opt/investment/Ashare/tools/a_share_*.py` 已退役/归档，不得作为新的执行或依赖入口。

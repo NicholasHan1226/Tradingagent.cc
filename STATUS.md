@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-10 (A股每日样本目标盘中监控)
+> 最后更新：2026-07-10 (A股样本学习与因子研究闭环)
 
 ---
 
@@ -140,6 +140,14 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-10 A股样本学习、交易假设与因子研究闭环
+
+- [x] 新增 `Ashare/sample_learning.py` 收盘学习报告：读取策略成交、forward validation、样本目标监控、no-trade 解释和三账户实验，输出样本质量分层、交易假设汇总、收盘 blocker 归因、动态探索仓建议、三账户目标拆分和因子研究状态。
+- [x] A股 simulated 订单新增 `hypothesis_id` 与 `research_hypothesis`，记录本次交易验证的假设、因子快照、样本意图和失败条件；本地模拟账本会保留这些字段，旧账本无需迁移。
+- [x] 样本收集探索仓从固定 20,000-35,000 升级为候选质量动态预算：候选越接近 0.75，建议越靠近 35,000；低质量但过门槛候选靠近 20,000；弱候选、高风险和数据异常仍防守。
+- [x] 因子研究当前定位为“已消费因子，未证明因子”：`sample_learning.factor_research` 只有在因子快照和 forward return 样本数达到阈值后才可标为 ready；样本不足时保持 `sample_debt`，不得把六维评分直接当作已验证 alpha。
+- [x] 新增 `shared/wrappers/job_ashare_sample_learning.sh` 与 15:40 cron 模板；`cron_coverage` 已纳入新任务和 `sample_learning_latest/log` 权限候选。
 
 ### 2026-07-10 A股每日样本目标盘中监控
 

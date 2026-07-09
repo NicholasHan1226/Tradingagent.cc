@@ -54,6 +54,12 @@ class CronCoverageTest(unittest.TestCase):
             for line in expected:
                 self.assertIn(line, text)
 
+    def test_ashare_sample_learning_runs_after_close(self) -> None:
+        expected = "40 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_learning.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_learning.log 2>&1"
+
+        for path in (cron_coverage.ROOT / "crontab.txt", cron_coverage.ROOT / "shared/crontab.txt"):
+            self.assertIn(expected, path.read_text())
+
     def test_fails_when_installed_crontab_misses_template_entry(self) -> None:
         report = cron_coverage.check_cron_coverage(
             crontabs={
@@ -121,6 +127,8 @@ class CronCoverageTest(unittest.TestCase):
         self.assertIn("shared/review/ashare/portfolio_evolution_latest.json", candidates)
         self.assertIn("shared/review/ashare/sample_target_monitor_latest.json", candidates)
         self.assertIn("shared/review/ashare/sample_target_monitor_log.jsonl", candidates)
+        self.assertIn("shared/review/ashare/sample_learning_latest.json", candidates)
+        self.assertIn("shared/review/ashare/sample_learning_log.jsonl", candidates)
         self.assertIn("shared/logs/local_sim_tiers", candidates)
         self.assertIn("shared/logs/trade_audit_trail.jsonl", candidates)
 

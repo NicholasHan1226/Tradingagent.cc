@@ -374,13 +374,17 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
                     or row.get("direction")
                     or row.get("sentiment")
                 )
+                text_inferred = False
+                if impact is None and _row_matches_ts_code(row, ts_code):
+                    impact = _text_direction_hint(row)
+                    text_inferred = bool(impact)
                 if impact is None:
                     continue
                 conf = _safe_float(row.get("confidence"), 0.0)
                 if conf <= 0.0:
                     conf = _safe_float(row.get("score"), 0.0)
                 if conf <= 0.0:
-                    conf = 0.5
+                    conf = 0.25 if text_inferred else 0.5
                 if conf < min_conf:
                     continue
                 candidate_rows += 1

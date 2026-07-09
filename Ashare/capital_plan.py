@@ -69,9 +69,10 @@ class CapitalPlan:
     reverse_repo: dict | None = None
     notes: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
+    dynamic_probe_budget: dict[str, float] | None = None
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "available_cash": self.available_cash,
             "deployed_capital": self.deployed_capital,
             "cash_reserve": self.cash_reserve,
@@ -88,6 +89,9 @@ class CapitalPlan:
             "notes": self.notes,
             "reasons": self.reasons,
         }
+        if self.dynamic_probe_budget is not None:
+            payload["dynamic_probe_budget"] = self.dynamic_probe_budget
+        return payload
 
 
 def _candidate_score(candidate: dict[str, Any]) -> float:
@@ -105,6 +109,14 @@ def _context_float(context: dict[str, Any], key: str, default: float = 0.0) -> f
     try:
         value = float(context.get(key, default))
         return value if value == value else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+        return parsed if parsed == parsed else default
     except (TypeError, ValueError):
         return default
 
@@ -138,6 +150,8 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
     today_strategy_sample_count = _context_float(context, "today_strategy_sample_count", 0.0)
     daily_strategy_sample_target = _context_float(context, "daily_strategy_sample_target", 0.0)
     sample_collection_min_score = _context_float(context, "sample_collection_min_score", 0.55)
+    probe_allocation_min = _context_float(context, "probe_allocation_min", 20_000.0)
+    probe_allocation_max = _context_float(context, "probe_allocation_max", 35_000.0)
     daily_sample_hard_gate = bool(context.get("daily_sample_hard_gate"))
     trend = str(context.get("trend") or context.get("market_trend") or "").strip().lower()
     reasons: list[str] = []
@@ -184,6 +198,14 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
         and trend not in {"bearish", "risk_off"}
     )
     if sample_collection:
+        denominator = max(0.01, 0.75 - sample_collection_min_score)
+        quality_ratio = max(0.0, min(1.0, (top - sample_collection_min_score) / denominator))
+        risk_drag = max(risk_rejection_rate, data_issue_rate) * 0.5
+        win_rate_drag = 0.10 if recent_win_rate < 0.50 else 0.0
+        recommended_probe = probe_allocation_min + (probe_allocation_max - probe_allocation_min) * quality_ratio
+        recommended_probe *= max(0.50, 1.0 - risk_drag - win_rate_drag)
+        recommended_probe = max(probe_allocation_min, min(probe_allocation_max, recommended_probe))
+        recommended_probe = round(recommended_probe // 100 * 100, 2)
         sample_reasons: list[str] = []
         if cumulative_sample_debt:
             sample_reasons.append("sample_collection_before_min_samples")
@@ -196,6 +218,13 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
             "max_single_position_pct": 0.175,
             "max_cash_reserve": 30000,
             "reasons": sample_reasons or ["sample_collection"],
+            "dynamic_probe_budget": {
+                "min": round(probe_allocation_min, 2),
+                "max": round(probe_allocation_max, 2),
+                "recommended": recommended_probe,
+                "quality_ratio": round(quality_ratio, 4),
+                "top_candidate_score": round(top, 4),
+            },
         }
 
     max_cash_reserve = None
@@ -289,9 +318,24 @@ def plan_capital(
         risk_mode = str(profile["risk_mode"])
         reasons = list(profile.get("reasons", []))
         max_cash_reserve = profile.get("max_cash_reserve")
+        dynamic_probe_budget = profile.get("dynamic_probe_budget") if isinstance(profile.get("dynamic_probe_budget"), dict) else None
         if risk_mode == "sample_collection":
-            min_position_value = max(5_000.0, min(20_000.0, float(total_capital) * 0.10))
-            max_position_value = max(min_position_value, min(35_000.0, float(total_capital) * 0.175))
+            capital_scale = max(0.25, min(1.0, float(total_capital) / TOTAL_CAPITAL))
+            default_min = max(5_000.0, min(20_000.0 * capital_scale, float(total_capital) * 0.10))
+            default_max = max(default_min, min(35_000.0 * capital_scale, float(total_capital) * 0.175))
+            if dynamic_probe_budget:
+                min_position_value = max(5_000.0, min(_safe_float(dynamic_probe_budget.get("min"), default_min) * capital_scale, default_min))
+                max_position_value = max(
+                    min_position_value,
+                    min(_safe_float(dynamic_probe_budget.get("recommended"), default_max) * capital_scale, default_max),
+                )
+                dynamic_probe_budget = dict(dynamic_probe_budget)
+                dynamic_probe_budget["scaled_recommended"] = round(max_position_value, 2)
+            else:
+                min_position_value = default_min
+                max_position_value = default_max
+    else:
+        dynamic_probe_budget = None
 
     max_new = target_positions - n_holdings
     if max_new < 0:
@@ -390,6 +434,7 @@ def plan_capital(
         reverse_repo=reverse_repo,
         notes=notes,
         reasons=reasons,
+        dynamic_probe_budget=dynamic_probe_budget,
     )
 
 

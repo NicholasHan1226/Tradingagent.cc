@@ -995,6 +995,9 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["capital_plan"]["evolution_decision"]["recommended_action"], "force_sample_collection")
         self.assertEqual(result["order_count"], 1)
         self.assertEqual(result["filled_count"], 1)
+        self.assertIn("hypothesis_id", self.executed_orders[0])
+        self.assertTrue(self.executed_orders[0]["hypothesis_id"].startswith("ashare-20260710-buy-300418.SZ-candidate-"))
+        self.assertEqual(self.executed_orders[0]["research_hypothesis"]["sample_intent"], "daily_sample_collection")
 
     def test_run_sim_loop_compresses_excess_ashare_positions_and_logs_capital_plan(self) -> None:
         deps = self._multi_candidate_deps()

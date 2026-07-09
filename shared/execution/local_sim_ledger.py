@@ -71,6 +71,9 @@ class LocalSimTrade:
     fill_price_source: str = ""
     fill_price_source_class: str = ""
     fill_evidence: dict[str, Any] = field(default_factory=dict)
+    hypothesis_id: str = ""
+    research_hypothesis: dict[str, Any] = field(default_factory=dict)
+    factor_snapshot: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
     trade_timestamp_bj: str = ""
     ashare_session_valid: bool = True
@@ -708,6 +711,10 @@ def record_local_sim_order(
     if not isinstance(raw_response, dict):
         raw_response = {}
     metadata = order.get("metadata") if isinstance(order.get("metadata"), dict) else {}
+    research_hypothesis = order.get("research_hypothesis") if isinstance(order.get("research_hypothesis"), dict) else {}
+    factor_snapshot = order.get("factor_snapshot") if isinstance(order.get("factor_snapshot"), dict) else research_hypothesis.get("factor_snapshot")
+    if not isinstance(factor_snapshot, dict):
+        factor_snapshot = {}
     fill_evidence = raw_response.get("fill_evidence") if isinstance(raw_response.get("fill_evidence"), dict) else metadata.get("fill_evidence")
     if not isinstance(fill_evidence, dict):
         fill_evidence = {}
@@ -773,6 +780,9 @@ def record_local_sim_order(
         fill_price_source=fill_price_source,
         fill_price_source_class=fill_price_source_class,
         fill_evidence=fill_evidence,
+        hypothesis_id=str(order.get("hypothesis_id") or research_hypothesis.get("hypothesis_id") or ""),
+        research_hypothesis=research_hypothesis,
+        factor_snapshot=factor_snapshot,
         created_at=created_at,
         trade_timestamp_bj=str(session_metadata["trade_timestamp_bj"]),
         ashare_session_valid=bool(session_metadata["ashare_session_valid"]),
@@ -828,6 +838,8 @@ def record_local_sim_order(
                     "fill_price_source": fill_price_source,
                     "fill_price_source_class": fill_price_source_class,
                     "fill_evidence": fill_evidence,
+                    "hypothesis_id": trade.hypothesis_id,
+                    "research_hypothesis": research_hypothesis,
                 },
             )
         )
