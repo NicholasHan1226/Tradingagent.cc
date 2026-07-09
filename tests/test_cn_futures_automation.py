@@ -194,6 +194,32 @@ class ApiPreferredUniverseReader(FakeFuturesReader):
         return []
 
 
+class RealtimeBatchUniverseReader(FakeFuturesReader):
+    def get_assets(self, market: str) -> list[dict[str, object]]:
+        if market != "Futures":
+            return []
+        return [
+            {"symbol": "CU.SHF", "name": "沪铜主力", "exchange": "SHFE", "status": "listed"},
+            {"symbol": "RB.SHF", "name": "螺纹钢主力", "exchange": "SHFE", "status": "listed"},
+        ]
+
+    def get_realtime_5min_batch(
+        self,
+        market: str,
+        date: str | None = None,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        if market != "Futures" or date != "20260709":
+            return []
+        rows: list[dict[str, object]] = [
+            {"symbol": "CU2607.SHF", "trade_date": "20260709", "bar_time": "2026-07-09 09:05:00", "interval": "5min", "close": 102320.0},
+            {"symbol": "RB2608.SHF", "trade_date": "20260709", "bar_time": "2026-07-09 09:05:00", "interval": "5min", "close": 3052.0},
+            {"symbol": "CU.SHF", "trade_date": "20260709", "bar_time": "2026-07-09 09:05:00", "interval": "5min", "close": 102320.0},
+        ]
+        return rows[: limit or len(rows)]
+
+
 class SQLiteSharedQuery:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -348,6 +374,16 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
                 else:
                     os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
+
+    def test_intraday_universe_uses_realtime_batch_contracts_before_assets_scan(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+
+        adapter = CNFuturesAdapter(
+            reader=RealtimeBatchUniverseReader(),
+            universe_filter={"max_symbols": 4, "products": ("cu", "rb")},
+        )
+
+        self.assertEqual(adapter.get_intraday_universe("20260709"), ["CU2607.SHF", "RB2608.SHF"])
 
     def test_multi_style_runner_executes_only_simulated_lanes_and_writes_review(self) -> None:
         import CNFutures.sim_executor  # noqa: F401

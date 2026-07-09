@@ -284,6 +284,9 @@ class CNFuturesAdapter(MarketAdapter):
     def _get_symbols_with_intraday_bars_from_reader(self, date: str, interval: str) -> list[str]:
         if self.reader is None:
             return []
+        selected = self._get_symbols_from_realtime_batch(date, interval)
+        if selected:
+            return selected
         get_bars_intraday = getattr(self.reader, "get_bars_intraday", None)
         if callable(get_bars_intraday):
             selected: list[str] = []
@@ -300,6 +303,43 @@ class CNFuturesAdapter(MarketAdapter):
             if selected:
                 return selected
         return self._get_intraday_symbols_from_reader_read_model(date, interval)
+
+    def _get_symbols_from_realtime_batch(self, date: str, interval: str) -> list[str]:
+        get_realtime_5min_batch = getattr(self.reader, "get_realtime_5min_batch", None)
+        if not callable(get_realtime_5min_batch):
+            return []
+        try:
+            rows = get_realtime_5min_batch(
+                READER_MARKET,
+                str(date or "") or None,
+                limit=max(1, int(self.universe_filter.get("max_symbols", 30))) * 4,
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            return []
+        interval_values = {"5m", "5min"} if interval in {"5m", "5min"} else {str(interval)}
+        asset_by_symbol = {
+            str(asset.get("symbol") or asset.get("ts_code") or "").strip().lower(): asset
+            for asset in self._get_assets()
+            if isinstance(asset, dict) and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+        }
+        allowed_products = {
+            str(item).strip().lower()
+            for item in self.universe_filter.get("products", ())
+            if str(item).strip()
+        }
+        return self._select_symbols(
+            [
+                str(row.get("symbol") or row.get("ts_code") or "").strip()
+                for row in rows
+                if isinstance(row, dict)
+                and str(row.get("interval") or "5min").strip().lower() in interval_values
+            ],
+            asset_by_symbol=asset_by_symbol,
+            allowed_products=allowed_products,
+            max_symbols=max(1, int(self.universe_filter.get("max_symbols", 30))),
+        )
 
     def _get_intraday_symbols_from_reader_read_model(self, date: str, interval: str) -> list[str]:
         if not self._allow_direct_sqlite_fallback():

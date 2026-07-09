@@ -83,8 +83,10 @@ must continue reading those bars through SharedSignals APIs rather
 than adding a separate TradingAgent data download path.
 
 Production readers use `SHAREDSIGNALS_API_URL` first for Futures assets,
-daily bars, and 5-minute bars. Direct SQLite read-model access is only a
-diagnostic/test path and must be explicitly enabled with
+daily bars, and 5-minute bars. The intraday tradable universe is built from the
+latest SharedSignals `/realtime_5min?market=Futures` batch; `fut_basic` is
+metadata only and can include generic product rows or stale contracts. Direct
+SQLite read-model access is only a diagnostic/test path and must be explicitly enabled with
 `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1`. `SHARED_SIGNALS_DB` only
 selects the diagnostic database after one of those explicit switches is set; it
 does not enable fallback by itself.

@@ -499,6 +499,16 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(api.tushare_calls[0]["market"], "Futures")
         self.assertEqual(reader.errors, [])
 
+    def test_get_realtime_5min_batch_uses_market_level_api(self) -> None:
+        api = FakeAPIClient()
+        reader = TradingagentDataReader(api_client=api)
+
+        rows = reader.get_realtime_5min_batch("Futures", "20260709")
+
+        self.assertEqual(rows[0]["symbol"], "")
+        self.assertEqual(rows[0]["market"], "Futures")
+        self.assertEqual(api.realtime_calls[0], {"ts_code": "", "date": "20260709", "market": "Futures"})
+
     def test_empty_api_result_does_not_trigger_sqlite_diagnostic_read(self) -> None:
         api = EmptyShellAPIClient()
         reader = TradingagentDataReader(api_client=api)

@@ -23,3 +23,4 @@
 - SharedSignals 负责行情、合约和日历输入。
 - MarketGraph 负责商品、宏观、跨市场研究证据。
 - CNFutures 只消费上述输入, 负责期货市场内的订单语义、模拟成交、风控前置和执行状态。
+- 盘中可交易合约池必须来自 SharedSignals API 的最新 `Futures` 5分钟批次；`fut_basic` 只作为合约元数据，不得作为盘中主 universe。

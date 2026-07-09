@@ -924,6 +924,43 @@ class TradingagentDataReader:
             self._maybe_alert()
             return []
 
+    def get_realtime_5min_batch(
+        self,
+        market: str,
+        date: str | None = None,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the latest 5-minute batch for a market through SharedSignals API."""
+
+        def fallback() -> list[dict[str, Any]]:
+            return []
+
+        try:
+            if self._api_client is None:
+                message = "get_realtime_5min: SharedSignals API unavailable; batch read disabled"
+                if not self.errors or self.errors[-1] != message:
+                    self.errors.append(message)
+                self.stale = True
+                self._maybe_alert()
+                return []
+            rows = self._api_call(
+                "get_realtime_5min",
+                fallback,
+                ts_code="",
+                date=date,
+                market=market,
+            )
+            normalized = self._normalize_market_rows(rows, market, "")
+            if limit is not None:
+                return normalized[: max(1, int(limit))]
+            return normalized
+        except Exception as e:
+            self.errors.append(f"get_realtime_5min_batch: {e}")
+            self.stale = True
+            self._maybe_alert()
+            return []
+
     def is_trading_day(self, date: str | None = None) -> bool:
         date_value = date or datetime.now(timezone.utc).strftime("%Y%m%d")
 
