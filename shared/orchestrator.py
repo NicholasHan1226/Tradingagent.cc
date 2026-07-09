@@ -11,8 +11,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from shared.execution import local_sim_ledger
 from shared.markets.base import MarketAdapter
 from shared.notify import email_sender
+from shared.review import sample_quality
 
 ROOT = Path(__file__).resolve().parent.parent
 SIGNALS_DIR = ROOT / "signals"
@@ -998,6 +1000,258 @@ def _ashare_best_replacement_candidate(
     return best
 
 
+def _read_json_dict(path: Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except (FileNotFoundError, OSError):
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_jsonl_rows(path: Path | None) -> list[dict[str, Any]]:
+    if not path:
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except (FileNotFoundError, OSError):
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in lines:
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            rows.append(payload)
+    return rows
+
+
+def _within_lookback(date_value: str, lookback_start: str) -> bool:
+    compact = _compact_date_key(date_value)
+    if not compact or not lookback_start:
+        return False
+    try:
+        return int(compact) >= int(lookback_start)
+    except ValueError:
+        return False
+
+
+def _forward_validation_win_rates(labels: list[dict[str, Any]], date: str, lookback_days: int) -> dict[str, Any]:
+    if not labels or lookback_days <= 0:
+        return {"labeled_count": 0}
+    try:
+        base = datetime.strptime(_compact_date_key(date), "%Y%m%d")
+    except ValueError:
+        return {"labeled_count": 0}
+    lookback_start = (base - timedelta(days=lookback_days)).strftime("%Y%m%d")
+
+    metrics = ("m30", "m60", "close", "next_day_open", "next_day_high", "next_day_close")
+    wins: dict[str, int] = {key: 0 for key in metrics}
+    counts: dict[str, int] = {key: 0 for key in metrics}
+
+    for label in labels:
+        if not isinstance(label, dict):
+            continue
+        if str(label.get("status")) != "labeled":
+            continue
+        if not bool(label.get("strategy_sample_valid")):
+            continue
+        if not _within_lookback(label.get("trade_date"), lookback_start):
+            continue
+
+        label_labels = label.get("labels") if isinstance(label.get("labels"), dict) else {}
+        for key in ("m30", "m60", "close"):
+            item = label_labels.get(key) if isinstance(label_labels.get(key), dict) else {}
+            if str(item.get("status")) == "labeled":
+                pct = _safe_float(item.get("return_pct"), 0.0)
+                counts[key] += 1
+                if pct > 0:
+                    wins[key] += 1
+        next_day = label_labels.get("next_day") if isinstance(label_labels.get("next_day"), dict) else {}
+        if str(next_day.get("status")) == "labeled":
+            for source, target in (
+                ("open_return_pct", "next_day_open"),
+                ("high_return_pct", "next_day_high"),
+                ("close_return_pct", "next_day_close"),
+            ):
+                pct = _safe_float(next_day.get(source), 0.0)
+                counts[target] += 1
+                if pct > 0:
+                    wins[target] += 1
+
+    result: dict[str, Any] = {"labeled_count": sum(1 for label in labels if isinstance(label, dict) and _within_lookback(label.get("trade_date"), lookback_start) and str(label.get("status")) == "labeled")}
+    for key in metrics:
+        result[f"{key}_win_rate"] = round(wins[key] / max(1, counts[key]), 4) if counts[key] else None
+        result[f"{key}_count"] = counts[key]
+    return result
+
+
+def _recent_sample_quality_summary(trades: list[dict[str, Any]], date: str, lookback_days: int) -> dict[str, Any]:
+    if not trades or lookback_days <= 0:
+        return {"total_count": 0}
+    try:
+        base = datetime.strptime(_compact_date_key(date), "%Y%m%d")
+    except ValueError:
+        return {"total_count": 0}
+    lookback_start = (base - timedelta(days=lookback_days)).strftime("%Y%m%d")
+
+    filtered: list[dict[str, Any]] = []
+    for row in trades:
+        if not isinstance(row, dict):
+            continue
+        if _within_lookback(row.get("trade_date"), lookback_start):
+            filtered.append(row)
+
+    if not filtered:
+        return {"total_count": 0}
+
+    summary = sample_quality.summarize_sample_quality(filtered)
+    return {
+        "total_count": summary.get("total_count", 0),
+        "strategy_sample_valid_count": summary.get("strategy_sample_valid_count", 0),
+        "validation_sample_count": summary.get("validation_sample_count", 0),
+        "invalid_strategy_sample_count": summary.get("invalid_strategy_sample_count", 0),
+        "valid_ratio": round(summary.get("strategy_sample_valid_count", 0) / max(1, summary.get("total_count", 0)), 4),
+    }
+
+
+def _ashare_opportunity_cost_thresholds(
+    *,
+    market: str,
+    date: str,
+    min_entry_score: float,
+    min_score_gap: float,
+    existing_positions: list[dict[str, Any]],
+    scores_by_symbol: dict[str, dict[str, Any]],
+    forward_validation_path: Path | None = None,
+    local_trades_path: Path | None = None,
+    lookback_days: int = 30,
+) -> dict[str, Any]:
+    """Return dynamic opportunity-cost thresholds for A-share rebalancing.
+
+    The hard floor for min_score_gap is preserved (0.12).  Recent forward-
+    validation performance, sample quality and the average score of existing
+    positions can widen the required gap, but never narrow it below the floor.
+    """
+    if str(market).lower() != "ashare":
+        return {
+            "enabled": False,
+            "market": market,
+            "min_entry_score": min_entry_score,
+            "min_score_gap": min_score_gap,
+            "action": "disabled",
+            "reasons": ["non_ashare_market"],
+        }
+
+    effective_min_entry_score = min_entry_score
+    effective_min_score_gap = min_score_gap
+    reasons: list[str] = []
+
+    fv_report = _read_json_dict(forward_validation_path or (ROOT / "shared" / "review" / "ashare" / "forward_validation_latest.json"))
+    fv_summary = _forward_validation_win_rates(fv_report.get("labels", []), date, lookback_days)
+
+    trades = _read_jsonl_rows(local_trades_path or local_sim_ledger.LOCAL_SIM_TRADES)
+    sample_summary = _recent_sample_quality_summary(trades, date, lookback_days)
+
+    adjustment = 0.0
+
+    # 1. Recent forward-validation performance.
+    if fv_summary.get("labeled_count", 0) >= 3:
+        win_rates = [
+            fv_summary.get("m30_win_rate"),
+            fv_summary.get("m60_win_rate"),
+            fv_summary.get("close_win_rate"),
+        ]
+        win_rates = [rate for rate in win_rates if rate is not None]
+        if win_rates:
+            min_win_rate = min(win_rates)
+            if min_win_rate < 0.30:
+                adjustment += 0.05
+                reasons.append("poor_recent_forward_validation")
+            elif min_win_rate < 0.50:
+                adjustment += 0.03
+                reasons.append("poor_recent_forward_validation")
+            elif min_win_rate < 0.60:
+                adjustment += 0.01
+                reasons.append("weak_recent_forward_validation")
+
+    # 2. Recent sample quality.
+    if sample_summary.get("total_count", 0) >= 3:
+        valid_ratio = _safe_float(sample_summary.get("valid_ratio"), 1.0)
+        if valid_ratio < 0.50:
+            adjustment += 0.05
+            reasons.append("poor_sample_quality")
+        elif valid_ratio < 0.70:
+            adjustment += 0.03
+            reasons.append("poor_sample_quality")
+        elif valid_ratio < 0.80:
+            adjustment += 0.01
+            reasons.append("weak_sample_quality")
+
+    # 3. Quality of existing holdings.
+    position_scores: list[float] = []
+    for position in existing_positions:
+        if not isinstance(position, dict):
+            continue
+        symbol = _position_symbol(position)
+        score = scores_by_symbol.get(symbol) or {}
+        combined = _safe_float(
+            score.get("combined", score.get("score", position.get("combined", position.get("score")))),
+            0.0,
+        )
+        if combined > 0:
+            position_scores.append(combined)
+    avg_position_score = sum(position_scores) / len(position_scores) if position_scores else 0.0
+
+    if 0 < avg_position_score < 0.60:
+        adjustment += 0.04
+        reasons.append("low_position_score")
+    elif 0 < avg_position_score < 0.65:
+        adjustment += 0.03
+        reasons.append("low_position_score")
+    elif 0 < avg_position_score < 0.70:
+        adjustment += 0.02
+        reasons.append("low_position_score")
+    elif 0 < avg_position_score < 0.75:
+        adjustment += 0.01
+        reasons.append("moderate_position_score")
+
+    # Cap the widening to avoid over-engineering; hard floor is preserved below.
+    adjustment = min(adjustment, 0.10)
+    effective_min_score_gap = round(min_score_gap + adjustment, 4)
+
+    if adjustment >= 0.08:
+        action = "paused_opportunity_cost"
+    elif adjustment > 0:
+        action = "widened_gap"
+    else:
+        action = "standard_gap"
+
+    return {
+        "enabled": True,
+        "market": market,
+        "min_entry_score": effective_min_entry_score,
+        "min_score_gap": effective_min_score_gap,
+        "base_min_score_gap": min_score_gap,
+        "gap_adjustment": round(adjustment, 4),
+        "action": action,
+        "reasons": reasons,
+        "lookback_days": lookback_days,
+        "average_position_score": round(avg_position_score, 4),
+        "forward_validation_summary": fv_summary,
+        "sample_quality_summary": sample_summary,
+    }
+
+
 def _ashare_rebalance_plan(
     *,
     market: str,
@@ -1013,6 +1267,18 @@ def _ashare_rebalance_plan(
 ) -> dict[str, Any]:
     if str(market).lower() != "ashare":
         return {"enabled": False, "planned_sell_count": 0, "sells": []}
+
+    dynamic_thresholds = _ashare_opportunity_cost_thresholds(
+        market=market,
+        date=date,
+        min_entry_score=ASHARE_OPPORTUNITY_COST_MIN_ENTRY_SCORE,
+        min_score_gap=ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP,
+        existing_positions=existing_positions,
+        scores_by_symbol=scores_by_symbol,
+    )
+    effective_min_entry_score = _safe_float(dynamic_thresholds.get("min_entry_score"), ASHARE_OPPORTUNITY_COST_MIN_ENTRY_SCORE)
+    effective_min_score_gap = _safe_float(dynamic_thresholds.get("min_score_gap"), ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP)
+    opportunity_cost_paused = dynamic_thresholds.get("action") == "paused_opportunity_cost"
 
     target_positions = _safe_int(capital_plan.get("target_positions"), max_portfolio_positions)
     if target_positions < 0:
@@ -1055,12 +1321,13 @@ def _ashare_rebalance_plan(
         opportunity_score = _safe_float(opportunity_candidate.get("combined"), 0.0)
         opportunity_gap = opportunity_score - combined
         if (
-            has_score
+            not opportunity_cost_paused
+            and has_score
             and not reasons
             and effective_target > 0
             and existing_count >= effective_target
-            and opportunity_score >= ASHARE_OPPORTUNITY_COST_MIN_ENTRY_SCORE
-            and opportunity_gap >= ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP
+            and opportunity_score >= effective_min_entry_score
+            and opportunity_gap >= effective_min_score_gap
         ):
             reasons.append("opportunity_cost")
         sellable.append(
@@ -1082,7 +1349,9 @@ def _ashare_rebalance_plan(
                     "candidate": opportunity_candidate.get("ts_code", ""),
                     "candidate_score": round(opportunity_score, 4),
                     "score_gap": round(opportunity_gap, 4),
-                    "min_score_gap": ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP,
+                    "min_score_gap": effective_min_score_gap,
+                    "base_min_score_gap": ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP,
+                    "action": dynamic_thresholds.get("action"),
                 } if "opportunity_cost" in reasons else {},
                 "risk_audit_id": "",
             }
@@ -1132,6 +1401,7 @@ def _ashare_rebalance_plan(
         "existing_position_count": existing_count,
         "planned_sell_count": len(sells),
         "sells": sells,
+        "dynamic_thresholds": dynamic_thresholds,
     }
 
 

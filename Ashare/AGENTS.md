@@ -34,7 +34,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - 样本隔离: 已发生的非连续竞价时段 A股 simulated 成交保留为账户事实和链路验证样本，但必须归类为 `outside_ashare_regular_session`，不得进入策略胜率、方向命中、策略 PnL 或自我演化样本。
 - 活跃账户视图: A股 server-local 模拟盘默认读取 `strategy_samples_only`，只把交易时段内、来自 `candidate` 层、带成交价来源的策略样本计入现金、持仓、市值和收益；链路验证/盘外/缺来源样本仅作为 audit 视图展示，不得影响资金计划、目标持仓、机会成本换仓和看板累计收益。
 - 健康检查口径: 单纯已归类的 `outside_ashare_regular_session` 链路验证样本不视为运行故障，应作为 pass/info advisory 展示；这类样本不要求策略成交回执，但真实策略成交、失败订单、缺来源字段、非普通 A股代码、账本/快照不一致、真实策略样本后的资金计划滞后仍必须 warn/fail。
-- 卖出/换仓: `shared/orchestrator.py` 会在 A股模拟主循环中生成 simulated sell 压缩单；只卖可卖数量，优先处理止损、低分、超目标持仓压缩和轻量机会成本换仓，不触碰实盘。止损/压缩/机会成本换仓释放的资金可作为同轮替换买入预算，并写入 `capital_plan.replacement_budget`。机会成本只比较已通过风控候选与现有持仓的 `combined` 分数，默认候选分数至少 0.70 且分差至少 0.12 才触发，避免小分差频繁换仓，同时减少明显强候选被过度保守门禁错过。
+- 卖出/换仓: `shared/orchestrator.py` 会在 A股模拟主循环中生成 simulated sell 压缩单；只卖可卖数量，优先处理止损、低分、超目标持仓压缩和轻量机会成本换仓，不触碰实盘。止损/压缩/机会成本换仓释放的资金可作为同轮替换买入预算，并写入 `capital_plan.replacement_budget`。机会成本只比较已通过风控候选与现有持仓的 `combined` 分数，默认候选分数至少 0.70 且分差至少 0.12 才触发，避免小分差频繁换仓，同时减少明显强候选被过度保守门禁错过。`shared/orchestrator.py` 进一步依据近期 forward validation 胜率、样本质量（`shared/review/sample_quality.py`）和现有持仓平均分数动态加宽机会成本分差（ hard floor 保持 0.12，仅可 widening/pause，不可收窄），并将 `dynamic_thresholds` 写入换仓计划日志供复盘。
 - 成交后资金刷新: A股模拟主循环若出现 server-local filled，会追加一条 `refresh_phase=post_execution` 的资金计划日志，重新记录策略有效现金、持仓数和样本隔离状态；该刷新只用于复盘/看板证明成交后账户状态，不生成新订单、不改变同轮交易。
 - Hermes 备用路径: 只有显式设置 `ASHARE_SIM_HERMES_ENABLED=1` 时，服务器才把模拟信号卡投递给 Mac Mini live executor `~/.hermes/scripts/sim-signal-executor.py`，由同花顺模拟盘执行并回写。
 - 实盘: 仅人工确认与只读同步；不得自动点击真实账户委托
