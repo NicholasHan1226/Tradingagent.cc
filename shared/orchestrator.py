@@ -17,7 +17,7 @@ from shared.notify import email_sender
 ROOT = Path(__file__).resolve().parent.parent
 SIGNALS_DIR = ROOT / "signals"
 ASHARE_OPPORTUNITY_COST_MIN_ENTRY_SCORE = 0.70
-ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP = 0.18
+ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP = 0.12
 
 StageFn = Callable[..., Any]
 

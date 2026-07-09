@@ -88,6 +88,10 @@ def _performance_summary(review_dir: Path) -> dict[str, Any]:
     }
 
 
+def _ashare_portfolio_evolution(review_dir: Path) -> dict[str, Any]:
+    return _read_json(review_dir / "portfolio_evolution_latest.json")
+
+
 def _cn_futures_weight_mismatches(evolution: dict[str, Any]) -> list[dict[str, Any]]:
     weights = _weights_map(evolution)
     mismatches: list[dict[str, Any]] = []
@@ -126,13 +130,19 @@ def evaluate_self_evolution_health(
     for market in target_markets:
         review_dir = root / market
         latest_evolution = _latest(_read_jsonl(review_dir / "evolution_log.jsonl"))
+        portfolio_evolution = _ashare_portfolio_evolution(review_dir) if market == "ashare" else {}
+        evolution_for_samples = portfolio_evolution if portfolio_evolution else latest_evolution
         rankings = latest_evolution.get("rankings") if isinstance(latest_evolution.get("rankings"), list) else []
+        sample_rankings = evolution_for_samples.get("rankings") if isinstance(evolution_for_samples.get("rankings"), list) else rankings
         actions = latest_evolution.get("actions") if isinstance(latest_evolution.get("actions"), list) else []
+        sample_actions = evolution_for_samples.get("actions") if isinstance(evolution_for_samples.get("actions"), list) else actions
         weights = _weights_map(latest_evolution) or _weights_map(_read_json(review_dir / "style_weights.json"))
+        if market == "ashare":
+            weights = _weights_map(portfolio_evolution) or weights
         market_pnl = pnl.get(market, {}) if isinstance(pnl, dict) else {}
         sample_quality = market_pnl.get("sample_quality") if isinstance(market_pnl.get("sample_quality"), dict) else {}
         strategy_sample_count = _safe_int(sample_quality.get("strategy_sample_valid_count"))
-        ranking_trade_sum = _sum_rank_trades(rankings)
+        ranking_trade_sum = _sum_rank_trades(sample_rankings)
         issues: list[str] = []
 
         if strategy_sample_count > 0 and ranking_trade_sum <= 0:
@@ -153,14 +163,20 @@ def evaluate_self_evolution_health(
             "market": market,
             "status": "warn" if issues else "pass",
             "issues": issues,
-            "latest_evolution_at": latest_evolution.get("generated_at", ""),
-            "latest_evolution_state": latest_evolution.get("state", "missing") if latest_evolution else "missing",
-            "action_count": len(actions),
-            "non_observe_action_count": sum(1 for item in actions if isinstance(item, dict) and item.get("action") not in {"observe", None, ""}),
-            "generated_variant_count": len(latest_evolution.get("generated_variants") or []),
+            "latest_evolution_at": evolution_for_samples.get("generated_at", ""),
+            "latest_evolution_state": evolution_for_samples.get("state", "missing") if evolution_for_samples else "missing",
+            "evolution_source": "ashare_portfolio_evolution" if market == "ashare" and portfolio_evolution else "style_evolution",
+            "action_count": len(sample_actions),
+            "non_observe_action_count": sum(1 for item in sample_actions if isinstance(item, dict) and item.get("action") not in {"observe", None, ""}),
+            "generated_variant_count": len(evolution_for_samples.get("generated_variants") or []),
             "ranking_trade_sum": ranking_trade_sum,
-            "ranking_pnl_sum": _sum_rank_metric(rankings, "pnl"),
+            "ranking_pnl_sum": _sum_rank_metric(sample_rankings, "pnl"),
             "style_weight_count": len(weights),
+            "portfolio_evolution": {
+                "state": portfolio_evolution.get("state", "missing") if portfolio_evolution else "missing",
+                "strategy_sample_count": portfolio_evolution.get("strategy_sample_count", 0) if portfolio_evolution else 0,
+                "today_strategy_sample_count": portfolio_evolution.get("today_strategy_sample_count", 0) if portfolio_evolution else 0,
+            } if market == "ashare" else {},
             "performance": _performance_summary(review_dir),
             "pnl": {
                 "total_pnl": market_pnl.get("total_pnl", 0.0),
@@ -172,8 +188,8 @@ def evaluate_self_evolution_health(
             "weight_mismatches": mismatches,
             "positive_evolution_proven": bool(
                 ranking_trade_sum > 0
-                and _sum_rank_metric(rankings, "pnl") > 0
-                and any(isinstance(item, dict) and item.get("action") in {"promote", "promoted", "variant_generated"} for item in actions)
+                and _sum_rank_metric(sample_rankings, "pnl") > 0
+                and any(isinstance(item, dict) and item.get("action") in {"promote", "promoted", "variant_generated", "expand_risk"} for item in sample_actions)
             ),
         })
 

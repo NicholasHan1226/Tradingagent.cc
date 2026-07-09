@@ -42,6 +42,41 @@ class SelfEvolutionHealthTest(unittest.TestCase):
             self.assertEqual(report["overall_status"], "warn")
             self.assertEqual(report["issues"], [{"market": "ashare", "issue": "strategy_samples_not_seen_by_evolution"}])
 
+    def test_ashare_portfolio_evolution_satisfies_strategy_sample_visibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ashare").mkdir(parents=True, exist_ok=True)
+            (root / "ashare" / "portfolio_evolution_latest.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-07-09T02:00:00+00:00",
+                        "state": "sample_insufficient",
+                        "actions": [{"action": "observe", "reason": "sample_insufficient"}],
+                        "rankings": [{"style_name": "ashare_portfolio", "trades": 2, "pnl": -149.13}],
+                        "weights": {"ashare_portfolio": {"status": "active", "weight": 1.0}},
+                        "strategy_sample_count": 2,
+                        "today_strategy_sample_count": 2,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = evaluate_self_evolution_health(
+                review_root=root,
+                markets=["ashare"],
+                pnl_summary={
+                    "ashare": {
+                        "total_pnl": -149.13,
+                        "sample_quality": {"strategy_sample_valid_count": 2},
+                    }
+                },
+            )
+
+            self.assertEqual(report["overall_status"], "pass")
+            self.assertEqual(report["markets"][0]["evolution_source"], "ashare_portfolio_evolution")
+            self.assertEqual(report["markets"][0]["ranking_trade_sum"], 2)
+            self.assertEqual(report["markets"][0]["portfolio_evolution"]["strategy_sample_count"], 2)
+
     def test_flags_cn_futures_action_after_weight_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

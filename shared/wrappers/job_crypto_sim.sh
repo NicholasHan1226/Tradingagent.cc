@@ -1,5 +1,15 @@
 #!/bin/bash
+set -euo pipefail
+
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SHARED_DIR="$(cd "${WRAPPER_DIR}/.." && pwd)"
+
+# shellcheck disable=SC1091
+source "${SHARED_DIR}/env_loader.sh"
+# shellcheck disable=SC1091
+source "${WRAPPER_DIR}/_common.sh"
+
 export SIM_MARKET=crypto
-cd /opt/investment/tradingagent
-PYTHON_BIN="${TRADINGAGENT_PYTHON:-/opt/tradingagent/venv/bin/python3}"
-PYTHONPATH=/opt/investment/tradingagent "${PYTHON_BIN}" shared/wrappers/run_sim.py
+sharedsignals_source_gate "crypto_sim" "intraday" "crypto"
+cd "${TRADINGAGENT_ROOT}"
+PYTHONPATH="${TRADINGAGENT_ROOT}" "${PYTHON_BIN}" shared/wrappers/run_sim.py

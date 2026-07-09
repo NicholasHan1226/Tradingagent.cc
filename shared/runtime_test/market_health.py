@@ -998,6 +998,12 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
             "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
             "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
             "total_pnl": round(_safe_float(pnl.get("total_pnl")), 6),
+            "strategy_total_pnl": round(_safe_float(pnl.get("strategy_total_pnl")), 6),
+            "audit_total_pnl": round(_safe_float(pnl.get("audit_total_pnl")), 6),
+            "cash": pnl.get("cash"),
+            "equity": pnl.get("equity"),
+            "market_value": round(_safe_float(pnl.get("market_value")), 6),
+            "missing_mark_count": int(pnl.get("missing_mark_count") or 0),
             "pnl_source": pnl.get("pnl_source", ""),
         }
     if market == "cn_futures":

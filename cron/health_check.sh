@@ -16,6 +16,7 @@ OUTPUT_FILE="${WATCHDOG_INPUT_DIR}/tradingagent_health.json"
 OUTPUT_JSONL="${WATCHDOG_INPUT_DIR}/tradingagent_health.jsonl"
 SHAREDSIGNALS_API_BASE_URL="${SHAREDSIGNALS_API_BASE_URL:-http://127.0.0.1:${SHAREDSIGNALS_API_PORT:-8082}}"
 SHAREDSIGNALS_HEALTH_URL="${SHAREDSIGNALS_API_HEALTH_URL:-${SHAREDSIGNALS_API_BASE_URL}/health}"
+SHAREDSIGNALS_SOURCE_STATUS_URL="${SHAREDSIGNALS_SOURCE_STATUS_URL:-${SHAREDSIGNALS_API_BASE_URL}/source_status}"
 MARKETGRAPH_API_BASE_URL="${MARKETGRAPH_API_BASE_URL:-${MARKETGRAPH_API_URL:-http://127.0.0.1:8080}}"
 MARKETGRAPH_HEALTH_URL="${MARKETGRAPH_API_HEALTH_URL:-${MARKETGRAPH_API_BASE_URL%/}/health}"
 MAX_SIM_OUTPUT_AGE_MIN="${TRADINGAGENT_SIM_OUTPUT_MAX_AGE_MIN:-180}"
@@ -43,6 +44,7 @@ fi
   TRADINGAGENT_ROOT="${ROOT}" \
   SHAREDSIGNALS_API_BASE_URL="${SHAREDSIGNALS_API_BASE_URL}" \
   SHAREDSIGNALS_HEALTH_URL="${SHAREDSIGNALS_HEALTH_URL}" \
+  SHAREDSIGNALS_SOURCE_STATUS_URL="${SHAREDSIGNALS_SOURCE_STATUS_URL}" \
   MARKETGRAPH_HEALTH_URL="${MARKETGRAPH_HEALTH_URL}" \
   OUTPUT_FILE="${OUTPUT_FILE}" \
   OUTPUT_JSONL="${OUTPUT_JSONL}" \
@@ -57,6 +59,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+from shared.runtime_test.sharedsignals_source_status import check_source_status
 
 
 def now_iso() -> str:
@@ -122,8 +126,14 @@ def check_sharedsignals(base_url: str, health_url: str) -> dict:
         health_error = str(exc)
     health_payload_status = str(health_payload.get("status") or "")
     health_ok = 200 <= health_status_code < 300 and health_payload_status in {"ok", "degraded", "healthy"}
+    source_status = check_source_status(base, timeout_seconds=3)
+    overall_status = "ok" if health_ok else "degraded"
+    if source_status["status"] == "critical":
+        overall_status = "critical"
+    elif source_status["status"] == "degraded" and overall_status == "ok":
+        overall_status = "degraded"
     return {
-        "status": "ok" if health_ok else "degraded",
+        "status": overall_status,
         "cache_url": cache_url,
         "cache_status_code": cache_status_code,
         "functions_registered": cache_payload.get("functions_registered"),
@@ -134,6 +144,7 @@ def check_sharedsignals(base_url: str, health_url: str) -> dict:
         "health_status_code": health_status_code,
         "health_payload_status": health_payload_status,
         "health_error": health_error,
+        "source_status": source_status,
     }
 
 

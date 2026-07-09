@@ -64,6 +64,13 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - A股 auto pipeline 不得用 `price=1.0` 作为候选或执行信号兜底；缺真实分钟/日线价格时跳过该候选或信号。
 - 组合构建前过滤 `price <= 0`，记录到 `skipped_candidates`。
 - Tushare daily `amount` 按千元口径存储，流动性比较前必须换算为元。
+- A股机会成本换仓保持保守但必须可触发：候选 `combined >= 0.70` 且相对可卖弱持仓分差至少 `0.12` 才允许生成 `ashare_rebalance_sell`；T+1、可卖数量、风险门禁和资金计划仍是硬约束。
+- A股自我演化走组合级证据，不套用 Crypto/PM/US 的多风格账本。`Ashare/portfolio_evolution.py` 读取 server-local 策略有效成交、组合 PnL 和样本质量，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`；它只证明组合样本进入演化层，不伪造 aggressive/balanced 等风格归因。
+
+### SharedSignals 源状态门禁
+
+- 模拟交易 wrapper 可读取 SharedSignals `/source_status` 做数据源治理门禁；红灯或不可达默认 fail-closed，但必须按市场隔离判断。A股不能因为 Crypto/PM 新鲜度红灯停摆；Crypto/PM 自身红灯仍应阻断对应市场任务；接口清单、cron、能力注册等无法归属市场的全局红灯才阻断所有市场。
+- 健康检查可以展示全局 `/source_status` 红黄绿状态，但交易任务判断必须使用市场参数，避免跨市场数据债互相误伤。
 
 ### Mini/Hermes 健康门
 

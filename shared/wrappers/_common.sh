@@ -27,6 +27,34 @@ record_level3_queue() {
         "$(timestamp)" "${job_name}" "${phase}" "${fallback_target}" "${exit_code}" >> "${TRADINGS_REPAIR_QUEUE}"
 }
 
+sharedsignals_source_gate() {
+    local job_name="${1:-trading_job}"
+    local phase="${2:-intraday}"
+    local market="${3:-}"
+    local gate_enabled="${TRADINGAGENT_SOURCE_STATUS_GATE:-1}"
+    if [[ "${gate_enabled}" == "0" ]]; then
+        return 0
+    fi
+
+    ensure_cron_paths
+    local log_file="${TRADINGS_CRON_LOG_ROOT}/${job_name}.log"
+    local api_url="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
+    local output=""
+    local exit_code=0
+    set +e
+    output="$(PYTHONPATH="${TRADINGAGENT_ROOT}" "${PYTHON_BIN}" -m shared.runtime_test.sharedsignals_source_status --base-url "${api_url}" --market "${market}" --require-not-red --json 2>&1)"
+    exit_code=$?
+    set -e
+    if (( exit_code != 0 )); then
+        printf '[%s] %s blocked=sharedsignals_source_status phase=%s market=%s detail=%q\n' \
+            "$(timestamp)" "${job_name}" "${phase}" "${market}" "${output}" >> "${log_file}"
+        return "${exit_code}"
+    fi
+    printf '[%s] %s sharedsignals_source_status=%q phase=%s market=%s action=continue\n' \
+        "$(timestamp)" "${job_name}" "${output}" "${phase}" "${market}" >> "${log_file}"
+    return 0
+}
+
 run_job() {
     local job_name="$1"
     local phase="$2"

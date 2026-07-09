@@ -39,6 +39,7 @@
 
 ## 自我演化健康检查
 - `shared.runtime_test.self_evolution_health` 是只读验收入口, 用于检查各市场账本策略样本是否进入演化层、`evolution_log` action 是否和最终 `style_weights` 一致、是否存在可证明的正向演化。
+- A股 server-local 模拟盘使用组合级演化证据：`Ashare/portfolio_evolution.py` 写入 `shared/review/ashare/portfolio_evolution_latest.json` 和 `portfolio_evolution_log.jsonl`，`self_evolution_health` 应优先用该文件判断 A股策略样本是否被演化层看到。不要把 A股同一组合成交拆成 aggressive/balanced/conservative 多风格账本来制造归因。
 - 机械闭环 pass 不等于正向自我演化。只有有效样本进入演化输入、产生可解释的权重/门禁/变体动作, 且后续样本改善时, 才能称为正向演化。
 - 样本不足、闭市、策略等待可以是 pass/info; 有策略样本但演化层 `trades=0`、权重日志前后矛盾、或旧隔离样本进入演化, 必须至少 warn。
 
