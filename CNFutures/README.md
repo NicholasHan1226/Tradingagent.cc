@@ -203,6 +203,13 @@ health/metrics surfaces. They do not create a standalone dashboard, do not grant
 live trading permission, and do not automatically promote a style into real
 trading.
 
+CNFutures evolution keeps sample-insufficient styles in observation mode. When
+there are not enough filled samples, `actions[].after.weight` must match the
+final normalized runtime overlay in `style_weights.json`; it must not show a
+temporary pre-normalization weight that was never applied. Use
+`python -m shared.runtime_test.self_evolution_health --market cn_futures --pretty`
+to check for action/weight drift.
+
 ## Historical Replay
 
 Use the read-only 5-minute replay to check whether current styles would have

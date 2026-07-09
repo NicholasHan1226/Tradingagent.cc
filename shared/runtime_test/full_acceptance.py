@@ -128,6 +128,7 @@ def _profiles(args: argparse.Namespace) -> list[tuple[str, list[str], Path, int]
         profiles.append(("sharedsignals_evidence_contract", [python, "-m", "shared.runtime_test.sharedsignals_evidence_contract", "--pretty"], ROOT, 30))
         profiles.append(("sim_market_health", [python, "-m", "shared.runtime_test.market_health", "--market", "sim", "--pretty"], ROOT, 120))
         profiles.append(("ashare_no_trade_summary", [python, "-m", "shared.runtime_test.ashare_no_trade_summary", "--pretty"], ROOT, 60))
+        profiles.append(("self_evolution_health", [python, "-m", "shared.runtime_test.self_evolution_health", "--pretty"], ROOT, 60))
         profiles.append(("opening_acceptance", [python, "-m", "shared.runtime_test.opening_acceptance", "--json", "--pretty", "--send-on", "never"], ROOT, 120))
     if args.profile in {"full", "all"}:
         profiles.append(("full_pytest", [python, "-m", "pytest", "-q"], ROOT, args.test_timeout))

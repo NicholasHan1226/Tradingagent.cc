@@ -32,8 +32,15 @@
 - `load_shadow_trades()` 保持旧兼容: 仅读旧 shadow trade log / filled signals fallback。
 - `load_review_trades()` 是日报、周报、归因和邮件报告的默认入口: 合并 legacy shadow fills、`shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl` 和 A股 `shared/logs/local_sim/local_sim_trades.jsonl`。
 - A股 server-local simulated 账本是账户事实; 非连续竞价时段成交必须保留在账户/持仓/回执里, 但由 `sample_quality.py` 标为 `outside_ashare_regular_session` 链路验证样本, 不得进入策略 PnL、胜率、方向命中、周度升降级或自我演化。
+- A股 local_sim 成交进入复盘时必须保留样本判断字段: `filled_price/avg_price`、`trade_timestamp_bj`、`ashare_session_valid`、`fill_price_source`、`fill_price_source_class`、`fill_evidence`、`candidate_pool_layer`、`execution_source`。复盘 normalizer 不得只保留展示字段后重新分类, 否则会把有效策略成交误判为链路验证样本。
+- `fill_price_source=signal_card.price` 且有真实 `filled_price/avg_price` 的 A股 server-local 成交是明确成交价来源; 只有缺成交价、缺候选来源、缺执行来源或非交易时段样本才进入链路验证样本。
 - HK 暂不进入默认生产复盘输入; 如未来恢复 HK, 必须显式把 HK 放回生产市场范围并同步健康检查。
 - 报告必须同时保留 `review_trade_count`、`shadow_trade_count`、`simulated_trade_count`，避免把模拟盘样本误判为 0。
+
+## 自我演化健康检查
+- `shared.runtime_test.self_evolution_health` 是只读验收入口, 用于检查各市场账本策略样本是否进入演化层、`evolution_log` action 是否和最终 `style_weights` 一致、是否存在可证明的正向演化。
+- 机械闭环 pass 不等于正向自我演化。只有有效样本进入演化输入、产生可解释的权重/门禁/变体动作, 且后续样本改善时, 才能称为正向演化。
+- 样本不足、闭市、策略等待可以是 pass/info; 有策略样本但演化层 `trades=0`、权重日志前后矛盾、或旧隔离样本进入演化, 必须至少 warn。
 
 ## 自愈闭环
 巡逻(patrol)检出 → 修复(heal)处置 → 写入记忆(memory) → 复盘(review)迭代规则。

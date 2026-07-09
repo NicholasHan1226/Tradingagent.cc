@@ -362,7 +362,7 @@ def evaluate_styles(
             action = "observe"
             reason = f"sample_insufficient: trades={trades}, min_trades={min_trades}"
             status = "active"
-            weight = MIN_WEIGHT
+            weight = current_weight
         elif name == top_name and pnl > 0 and trend != "declining":
             action = "promote"
             reason = "top_rank_positive_sample"
@@ -395,6 +395,10 @@ def evaluate_styles(
         })
 
     _normalize_active_weights(weights)
+    for action_item in actions:
+        style_weight = weights.get(str(action_item.get("style_name")) or "")
+        if isinstance(style_weight, dict) and isinstance(action_item.get("after"), dict):
+            action_item["after"]["weight"] = style_weight.get("weight", action_item["after"].get("weight"))
     variant_actions: list[dict[str, Any]] = []
     top_metric = ranking_by_style.get(top_name, {})
     if top_name and top_name in styles and _safe_int(top_metric.get("trades"), 0) >= min_trades and top_metric.get("trend") == "improving" and _safe_float(top_metric.get("pnl"), 0.0) > 0:
@@ -415,6 +419,10 @@ def evaluate_styles(
                 "last_modified": _now_iso(),
             }
         _normalize_active_weights(weights)
+        for action_item in actions:
+            style_weight = weights.get(str(action_item.get("style_name")) or "")
+            if isinstance(style_weight, dict) and isinstance(action_item.get("after"), dict):
+                action_item["after"]["weight"] = style_weight.get("weight", action_item["after"].get("weight"))
 
     state = "no_performance_history" if not rankings else ("adjusted" if any(action["action"] not in {"observe"} for action in actions) else "observed")
     result = {

@@ -123,6 +123,8 @@ class CNFuturesEvolutionTest(unittest.TestCase):
             self.assertEqual(result["weights"]["trend"]["weight"], 1.0)
             self.assertEqual(result["weights"]["trend"]["evolution_action"], "observe")
             self.assertIn("sample_insufficient", result["weights"]["trend"]["evolution_reason"])
+            self.assertEqual(result["actions"][0]["action"], "observe")
+            self.assertEqual(result["actions"][0]["after"]["weight"], result["weights"]["trend"]["weight"])
 
     def test_evolution_carries_dynamic_threshold_candidates_into_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

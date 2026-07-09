@@ -91,7 +91,13 @@ def _has_strategy_fill_price(row: dict[str, Any]) -> bool:
     if _has_market_data_fill_price(row):
         return True
     source_class = _fill_price_source_class(row)
-    if source_class != "signal_card_price":
+    evidence = row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    source = _normalize(
+        row.get("fill_price_source")
+        or evidence.get("fill_price_source")
+        or row.get("price_source")
+    )
+    if source_class != "signal_card_price" and source != "signal_card.price":
         return False
     try:
         return float(row.get("filled_price") or row.get("avg_price") or 0.0) > 0

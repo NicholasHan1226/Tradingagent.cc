@@ -256,6 +256,51 @@ class DailyReviewDriverTest(unittest.TestCase):
         self.assertEqual(ashare_review["trades"], 1)
         self.assertEqual(ashare_review["strategy_trades"], 0)
 
+    def test_daily_review_counts_regular_session_local_sim_trade_as_strategy_sample(self) -> None:
+        self._write_jsonl(
+            self.local_sim_trades,
+            {
+                "trade_id": "LSIM-REGULAR",
+                "order_id": "SIM-REGULAR",
+                "idempotency_key": "regular-session",
+                "market": "ashare",
+                "account": "ashare_server_sim",
+                "trade_date": "2026-07-09",
+                "ts_code": "300759.SZ",
+                "side": "buy",
+                "quantity": 1900,
+                "requested_price": 30.31,
+                "filled_price": 30.34,
+                "amount": 57646,
+                "commission": 14.41,
+                "stamp_duty": 0,
+                "net_amount": 57660.41,
+                "status": "filled",
+                "source": "server_local_sim_backup",
+                "candidate_pool_layer": "candidate",
+                "execution_source": "ashare_candidate_layer",
+                "fill_price_source": "signal_card.price",
+                "fill_evidence": {
+                    "fill_price_source": "signal_card.price",
+                },
+                "created_at": "2026-07-09T01:34:12+00:00",
+                "trade_timestamp_bj": "2026-07-09T09:34:12+08:00",
+                "ashare_session_valid": True,
+                "ashare_session_rejection": "",
+            },
+        )
+
+        close = daily_review.run_daily_review("20260709", session="close")
+
+        quality = close["source_trade_counts"]["sample_quality"]
+        self.assertEqual(quality["validation_sample_count"], 0)
+        self.assertEqual(quality["strategy_sample_valid_count"], 1)
+        self.assertEqual(quality["by_reason"], {"ashare_candidate_layer_buy": 1})
+        ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"]["ashare"]
+        self.assertEqual(ashare_review["trades"], 1)
+        self.assertEqual(ashare_review["strategy_trades"], 1)
+        self.assertEqual(ashare_review["sample_quality"]["by_reason"], {"ashare_candidate_layer_buy": 1})
+
 
 if __name__ == "__main__":
     unittest.main()
