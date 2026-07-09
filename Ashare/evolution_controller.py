@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REVIEW_DIR = ROOT / "shared" / "review" / "ashare"
 LATEST_DECISION = DEFAULT_REVIEW_DIR / "evolution_decision_latest.json"
 DECISION_LOG = DEFAULT_REVIEW_DIR / "evolution_decision_log.jsonl"
+CN_TZ = timezone(timedelta(hours=8))
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -43,9 +44,21 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _compact_date(value: Any) -> str:
+    raw = str(value or "").strip()
+    if len(raw) >= 10 and raw[4] == "-" and raw[7] == "-":
+        return raw[:10].replace("-", "")
+    return raw[:8] if raw else ""
+
+
+def _today_cn_compact() -> str:
+    return datetime.now(CN_TZ).strftime("%Y%m%d")
+
+
 def build_evolution_decision(
     portfolio_evolution: dict[str, Any],
     *,
+    target_trade_date: str | None = None,
     daily_strategy_sample_target: int = 1,
     min_strategy_samples: int = 5,
 ) -> dict[str, Any]:
@@ -53,6 +66,8 @@ def build_evolution_decision(
 
     target = max(1, int(daily_strategy_sample_target))
     min_samples = max(1, int(min_strategy_samples))
+    target_date = _compact_date(target_trade_date) or _today_cn_compact()
+    evidence_date = _compact_date(portfolio_evolution.get("trade_date"))
     strategy_sample_count = _safe_int(portfolio_evolution.get("strategy_sample_count"))
     today_strategy_sample_count = _safe_int(portfolio_evolution.get("today_strategy_sample_count"))
     pnl = portfolio_evolution.get("pnl") if isinstance(portfolio_evolution.get("pnl"), dict) else {}
@@ -61,6 +76,9 @@ def build_evolution_decision(
     pnl_pct = round(total_pnl / equity, 6) if equity > 0 else 0.0
     rankings = portfolio_evolution.get("rankings") if isinstance(portfolio_evolution.get("rankings"), list) else []
     reasons: list[str] = []
+    if evidence_date and evidence_date != target_date:
+        today_strategy_sample_count = 0
+        reasons.append("portfolio_evolution_trade_date_stale")
 
     if today_strategy_sample_count < target:
         state = "sample_debt"
@@ -99,7 +117,8 @@ def build_evolution_decision(
         "report_type": "ashare_evolution_decision",
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "market": "ashare",
-        "trade_date": portfolio_evolution.get("trade_date", ""),
+        "trade_date": target_date,
+        "evidence_trade_date": evidence_date,
         "state": state,
         "recommended_action": action,
         "reasons": reasons,
@@ -134,6 +153,7 @@ def write_evolution_decision(
     portfolio_evolution: dict[str, Any],
     *,
     review_dir: Path | str | None = None,
+    target_trade_date: str | None = None,
     daily_strategy_sample_target: int = 1,
     min_strategy_samples: int = 5,
 ) -> dict[str, Any]:
@@ -141,6 +161,7 @@ def write_evolution_decision(
     review_path.mkdir(parents=True, exist_ok=True)
     decision = build_evolution_decision(
         portfolio_evolution,
+        target_trade_date=target_trade_date,
         daily_strategy_sample_target=daily_strategy_sample_target,
         min_strategy_samples=min_strategy_samples,
     )
@@ -180,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--portfolio-evolution", type=Path, default=DEFAULT_REVIEW_DIR / "portfolio_evolution_latest.json")
     parser.add_argument("--review-dir", type=Path, default=DEFAULT_REVIEW_DIR)
+    parser.add_argument("--trade-date", default="")
     parser.add_argument("--daily-strategy-sample-target", type=int, default=1)
     parser.add_argument("--min-strategy-samples", type=int, default=5)
     parser.add_argument("--pretty", action="store_true")
@@ -187,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     decision = write_evolution_decision(
         _read_json(args.portfolio_evolution),
         review_dir=args.review_dir,
+        target_trade_date=args.trade_date or None,
         daily_strategy_sample_target=args.daily_strategy_sample_target,
         min_strategy_samples=args.min_strategy_samples,
     )

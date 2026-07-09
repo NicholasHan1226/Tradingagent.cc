@@ -255,6 +255,7 @@ def write_portfolio_evolution(
         report["evolution_decision"] = write_evolution_decision(
             report,
             review_dir=review_path,
+            target_trade_date=report.get("trade_date"),
             daily_strategy_sample_target=1,
             min_strategy_samples=min_samples,
         )

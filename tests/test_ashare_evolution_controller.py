@@ -44,6 +44,28 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         self.assertFalse(decision["real_trading_enabled"])
         self.assertIn("candidate_layer_required", decision["guardrails"])
 
+    def test_stale_portfolio_date_resets_today_sample_count(self) -> None:
+        portfolio = {
+            "market": "ashare",
+            "trade_date": "20260709",
+            "state": "sample_insufficient",
+            "strategy_sample_count": 2,
+            "today_strategy_sample_count": 2,
+            "pnl": {"total_pnl": -149.13, "equity": 199850.87},
+        }
+
+        decision = build_evolution_decision(
+            portfolio,
+            target_trade_date="20260710",
+            daily_strategy_sample_target=1,
+            min_strategy_samples=5,
+        )
+
+        self.assertEqual(decision["state"], "sample_debt")
+        self.assertEqual(decision["recommended_action"], "force_sample_collection")
+        self.assertEqual(decision["policy"]["today_strategy_sample_count"], 0)
+        self.assertIn("portfolio_evolution_trade_date_stale", decision["reasons"])
+
     def test_decision_market_context_exposes_capital_plan_inputs(self) -> None:
         decision = {
             "recommended_action": "force_sample_collection",
