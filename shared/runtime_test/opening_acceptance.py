@@ -280,6 +280,8 @@ def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
     reason = str(report.get("reason") or "")
     samples = report.get("samples", {}) if isinstance(report.get("samples"), dict) else {}
     no_trade = report.get("no_trade_explanation", {}) if isinstance(report.get("no_trade_explanation"), dict) else {}
+    alerts = report.get("alerts", []) if isinstance(report.get("alerts"), list) else []
+    alert_codes = {str(alert.get("code") or "") for alert in alerts if isinstance(alert, dict)}
     details = {
         "report_type": report.get("report_type"),
         "reason": reason,
@@ -301,13 +303,21 @@ def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
         "no_trade_explanation": no_trade,
         "no_trade_category": no_trade.get("category"),
         "no_trade_next_action": no_trade.get("next_action"),
-        "alerts": report.get("alerts", []),
+        "alerts": alerts,
         "raw_status": raw_status,
     }
+    api_reason = reason
+    if (
+        status == "warn"
+        and "ashare_sqlite_diagnostic_disabled" in alert_codes
+        and alert_codes.issubset({"ashare_sqlite_diagnostic_disabled"})
+    ):
+        details["original_reason"] = reason
+        api_reason = "sqlite_diagnostic_disabled"
     status, details = _accept_with_api_health_if_ready(
         market="ashare",
         status=status,
-        reason=reason,
+        reason=api_reason,
         details=details,
         api_only_reasons={"sqlite_diagnostic_disabled"},
     )

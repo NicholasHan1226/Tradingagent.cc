@@ -610,9 +610,9 @@ def _opening_30m_review(
             phase = "no_night_session"
             action = "enable_only_explicit_night_session_styles_or_wait_for_day_session"
         else:
-            status = "warn"
+            status = "pass"
             phase = "strategy_hold"
-            action = "review_hold_reasons_and_strategy_filters"
+            action = "continue_observation"
     elif int(latest_review.get("filled_count") or 0) <= 0 and filled_signal_count <= 0:
         status = "warn"
         phase = "no_simulated_trade"
@@ -745,11 +745,15 @@ def first_sample_alerts(
     if elapsed_minutes is not None and elapsed_minutes < max(1, int(wait_minutes)):
         return {**result, "status": "pass", "reason": "first_sample_check_not_due"}
 
-    bars = _query_session_bars(sqlite_db, start, current)
+    bars = _query_session_bars_via_api(start, current, min_symbols=min_symbols)
+    if (bars.get("error") or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols))) and _allow_sqlite_fallback(sqlite_db):
+        fallback = _query_session_bars(sqlite_db, start, current)
+        fallback["primary_api_result"] = bars
+        bars = fallback
     result.update(bars)
     alerts: list[dict[str, Any]] = []
     if bars.get("error"):
-        alerts.append({"severity": "error", "code": "futures_5min_check_failed", "message": "期货5分钟首样本检查无法读取 SharedSignals read model。"})
+        alerts.append({"severity": "error", "code": "futures_5min_check_failed", "message": "期货5分钟首样本检查无法读取 SharedSignals API。"})
     elif int(bars.get("bar_count") or 0) <= 0 or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
         alerts.append({"severity": "warn", "code": "futures_5min_missing_in_session", "message": "期货交易时段开始后仍缺少足够的 Futures 5分钟数据。"})
 

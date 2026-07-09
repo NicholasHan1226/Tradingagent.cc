@@ -146,6 +146,10 @@
 - [x] `shared/runtime_test/opening_acceptance.py` 聚合验收已补 API 健康复核：当旧 SQLite 诊断不可用或日线诊断失败，但对应市场 `market_health` 已通过 SharedSignals API、cron、账本/复盘检查时，聚合层保留原始诊断原因并判为 pass，避免午休/盘前窗口误报；生产 `full_acceptance --profile prod` 已恢复 pass。
 - [x] 看板只读快照已接入 A股 `forward_validation_latest.json` 与 CNFutures `replay_latest.json`：A股面板展示成交验证/待确认，期货市场摘要展示 replay 候选、可执行数量、主原因和合约/风格覆盖。
 - [x] 生产 crontab 已安全追加 A股前向验证和 CNFutures replay 固定任务，先备份现有 crontab，再只追加缺失行，不用单仓模板覆盖生产。
+- [x] CNFutures 运维复盘摘要已拆分 `current` 与 `historical`：当前健康只看最新 actionable review，历史累计 `missing_intraday_bars` / `stale_intraday_bar` / 旧风控分类保留为复盘背景，不再与当前 live health 并列展示成今天故障。
+- [x] CNFutures 首样本验收改为生产 API-first：优先读取 SharedSignals `/realtime_5min?market=Futures`，只有显式测试/诊断 SQLite 才走本地 read model；有数据且策略主动 hold 归为正常观察，不再要求为了通过验收而产生模拟成交。
+- [x] A股开盘验收聚合层已识别“SQLite 诊断未启用但 API 健康通过”的纯旧诊断告警：仅该告警存在时降为 pass；若同时存在真实样本/执行/回执告警，仍保持 warn/fail。
+- [x] TradingAgent front 快照已修复 CNFutures 当前状态来源：最新 review 行优先，`style_comparison.json` 不再与最新 review 计数相加，避免 filled/error/hold 被翻倍或被旧运行污染。
 
 ### 2026-07-08 A股策略资金视图隔离验证样本
 

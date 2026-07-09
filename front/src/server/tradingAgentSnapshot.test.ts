@@ -1818,6 +1818,55 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
+  it('uses CNFutures latest review as the current runtime source instead of adding style comparison counts', async () => {
+    const root = await createWorkspace()
+    const reviewRoot = join(root, 'TradingAgent/shared/review/cn_futures')
+    await mkdir(reviewRoot, { recursive: true })
+    await mkdir(join(root, 'TradingAgent/shared/review/data'), { recursive: true })
+    await writeFile(
+      join(reviewRoot, 'style_comparison.json'),
+      JSON.stringify({
+        market: 'cn_futures',
+        capital_layer: 'simulated',
+        account_type: 'simulated',
+        real_execution: false,
+        styles_total: 4,
+        styles_loaded: 4,
+        filled_count: 2,
+        error_count: 3,
+        hold_count: 5,
+        generated_at: '2026-07-06T09:30:00.000Z',
+      }),
+    )
+    await writeFile(
+      join(root, 'TradingAgent/shared/review/data/cn_futures_sim_reviews.jsonl'),
+      JSON.stringify({
+        generated_at: '2026-07-09T05:40:00.000Z',
+        state: 'ok',
+        cadence: '5min',
+        filled_count: 0,
+        hold_count: 8,
+        error_count: 0,
+        record_count: 8,
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-09T05:45:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'CNFutures',
+      runtimeState: 'strategy_wait',
+      source: 'shared/review/data/cn_futures_sim_reviews.jsonl',
+      styleCount: 1,
+      filledCount: 0,
+      errorCount: 0,
+    }))
+  })
+
   it('excludes quarantined style comparison reports from market summaries', async () => {
     const root = await createWorkspace()
     const reviewRoot = join(root, 'TradingAgent/shared/review/crypto')

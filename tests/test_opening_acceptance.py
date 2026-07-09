@@ -275,6 +275,59 @@ def test_ashare_sqlite_diagnostic_warning_uses_api_health_review(monkeypatch):
     assert check.details["original_opening_status"] == "warn"
 
 
+def test_ashare_nested_sqlite_diagnostic_warning_uses_api_health_review(monkeypatch):
+    def fake_report(now, sqlite_db):
+        return {
+            "market": "ashare",
+            "report_type": "first_sample_alert",
+            "status": "warn",
+            "reason": "first_sample_alerts_present",
+            "session": "afternoon",
+            "alerts": [{"severity": "warn", "code": "ashare_sqlite_diagnostic_disabled"}],
+            "no_trade_explanation": {"category": "data_query_failed", "next_action": "check_sharedsignals_read_model"},
+            "real_trading_enabled": False,
+        }
+
+    monkeypatch.setattr(opening_acceptance, "_ashare_opening_report", fake_report)
+    monkeypatch.setattr(opening_acceptance, "_api_health_review", lambda market: {"overall_status": "pass"})
+
+    check = opening_acceptance.check_ashare_opening(
+        datetime.fromisoformat("2026-07-09T13:35:00+08:00"),
+        Path("/tmp/nonexistent-marketdata.sqlite"),
+    )
+
+    assert check.status == "pass"
+    assert check.details["reason"] == "api_health_pass_after_sqlite_diagnostic_disabled"
+    assert check.details["original_reason"] == "first_sample_alerts_present"
+
+
+def test_ashare_nested_sqlite_diagnostic_does_not_hide_other_alerts(monkeypatch):
+    def fake_report(now, sqlite_db):
+        return {
+            "market": "ashare",
+            "report_type": "first_sample_alert",
+            "status": "warn",
+            "reason": "first_sample_alerts_present",
+            "session": "afternoon",
+            "alerts": [
+                {"severity": "warn", "code": "ashare_sqlite_diagnostic_disabled"},
+                {"severity": "warn", "code": "ashare_first_sim_sample_missing"},
+            ],
+            "real_trading_enabled": False,
+        }
+
+    monkeypatch.setattr(opening_acceptance, "_ashare_opening_report", fake_report)
+    monkeypatch.setattr(opening_acceptance, "_api_health_review", lambda market: {"overall_status": "pass"})
+
+    check = opening_acceptance.check_ashare_opening(
+        datetime.fromisoformat("2026-07-09T13:35:00+08:00"),
+        Path("/tmp/nonexistent-marketdata.sqlite"),
+    )
+
+    assert check.status == "warn"
+    assert check.details["reason"] == "first_sample_alerts_present"
+
+
 def test_ashare_closed_window_is_observation_not_warning():
     check = opening_acceptance.check_ashare_opening(
         datetime.fromisoformat("2026-07-08T16:05:00+08:00"),

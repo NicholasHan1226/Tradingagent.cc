@@ -722,9 +722,11 @@ async function buildMarketSummaries({
     const executedCount = marketSignals.filter((signal) => signal.status === 'executed').length
     const baseStyleSummary = styleSummaries.get(market)
     const reviewStyleSummary = market === 'CNFutures' ? cnFuturesReviewSummary : undefined
-    const styleSummary = baseStyleSummary && reviewStyleSummary
-      ? mergeMarketStyleSummary(baseStyleSummary, reviewStyleSummary)
-      : baseStyleSummary ?? reviewStyleSummary
+    const styleSummary = market === 'CNFutures'
+      ? reviewStyleSummary ?? baseStyleSummary
+      : baseStyleSummary && reviewStyleSummary
+        ? mergeMarketStyleSummary(baseStyleSummary, reviewStyleSummary)
+        : baseStyleSummary ?? reviewStyleSummary
     const performanceSummary = equitySummaries.get(market) ?? performanceSummaries.get(market)
     const isAshare = market === 'A-share'
     const ashareAccount = isAshare ? portfolio?.ashareAccount : undefined

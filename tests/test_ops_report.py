@@ -120,11 +120,46 @@ class OpsReportTest(unittest.TestCase):
         summary = ops_report.cn_futures_review_summary()
 
         self.assertEqual(summary["review_rows"], 2)
-        self.assertEqual(summary["latest_date"], "20260706")
-        self.assertEqual(summary["latest_filled_count"], 2)
-        self.assertEqual(summary["style_totals"]["trend"]["filled_count"], 2)
-        self.assertEqual(summary["style_totals"]["trend"]["error_count"], 1)
-        self.assertEqual(summary["top_errors"]["stale_intraday_bar"], 1)
+        self.assertEqual(summary["current"]["date"], "20260706")
+        self.assertEqual(summary["current"]["filled_count"], 2)
+        self.assertEqual(summary["current"]["error_count"], 0)
+        self.assertEqual(summary["historical"]["scope"], "append_only_history")
+        self.assertEqual(summary["historical"]["style_totals"]["trend"]["filled_count"], 2)
+        self.assertEqual(summary["historical"]["style_totals"]["trend"]["error_count"], 1)
+        self.assertEqual(summary["historical"]["top_errors"]["stale_intraday_bar"], 1)
+        self.assertNotIn("top_errors", summary)
+        self.assertNotIn("style_totals", summary)
+
+    def test_cn_futures_review_summary_keeps_old_errors_out_of_current_status(self) -> None:
+        review = self.root / "shared/review/data/cn_futures_sim_reviews.jsonl"
+        review.parent.mkdir(parents=True)
+        rows = [
+            {
+                "date": "20260703",
+                "state": "degraded",
+                "error_count": 7,
+                "error_summary": {"by_error": {"missing_intraday_bars": 7}},
+            },
+            {
+                "date": "20260709",
+                "state": "ok",
+                "filled_count": 0,
+                "hold_count": 4,
+                "error_count": 0,
+                "hold_reason_summary": {"total": 4, "by_reason": {"below_threshold": 4}},
+                "error_summary": {"by_error": {}},
+            },
+        ]
+        review.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+        summary = ops_report.cn_futures_review_summary()
+
+        self.assertEqual(summary["current"]["date"], "20260709")
+        self.assertEqual(summary["current"]["state"], "ok")
+        self.assertEqual(summary["current"]["error_count"], 0)
+        self.assertEqual(summary["current"]["hold_count"], 4)
+        self.assertEqual(summary["historical"]["error_count"], 7)
+        self.assertEqual(summary["historical"]["top_errors"], {"missing_intraday_bars": 7})
 
     def test_metrics_dashboard_reads_cn_futures_style_performance(self) -> None:
         perf = self.root / "shared/review/cn_futures/style_performance.jsonl"

@@ -6,6 +6,7 @@ import unittest
 import json
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from CNFutures.opening_validator import (
     _query_daily_bars_via_reader,
@@ -278,11 +279,12 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
     def test_first_sample_alerts_when_opening_bars_are_missing(self) -> None:
         db_path = self._db([])
 
-        report = first_sample_alerts(
-            sqlite_db=db_path,
-            now=datetime.fromisoformat("2026-07-06T09:10:00+08:00"),
-            min_symbols=4,
-        )
+        with patch("CNFutures.opening_validator._query_session_bars_via_api", return_value={"bar_count": 0, "symbol_count": 0, "query_source": "SharedSignals API"}):
+            report = first_sample_alerts(
+                sqlite_db=db_path,
+                now=datetime.fromisoformat("2026-07-06T09:10:00+08:00"),
+                min_symbols=4,
+            )
 
         self.assertEqual(report["status"], "warn")
         codes = {alert["code"] for alert in report["alerts"]}
@@ -298,12 +300,13 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
             ]
         )
 
-        report = first_sample_alerts(
-            sqlite_db=db_path,
-            now=datetime.fromisoformat("2026-07-06T09:10:00+08:00"),
-            min_symbols=4,
-            review_path=Path("/tmp/nonexistent-cn-futures-review.jsonl"),
-        )
+        with patch("CNFutures.opening_validator._query_session_bars_via_api", return_value={"bar_count": 4, "symbol_count": 4, "query_source": "SharedSignals API"}):
+            report = first_sample_alerts(
+                sqlite_db=db_path,
+                now=datetime.fromisoformat("2026-07-06T09:10:00+08:00"),
+                min_symbols=4,
+                review_path=Path("/tmp/nonexistent-cn-futures-review.jsonl"),
+            )
 
         self.assertEqual(report["status"], "warn")
         codes = {alert["code"] for alert in report["alerts"]}
@@ -321,12 +324,13 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
             ]
         )
 
-        report = first_sample_alerts(
-            sqlite_db=db_path,
-            now=datetime.fromisoformat("2026-07-06T09:35:00+08:00"),
-            min_symbols=4,
-            review_path=Path("/tmp/nonexistent-cn-futures-review.jsonl"),
-        )
+        with patch("CNFutures.opening_validator._query_session_bars_via_api", return_value={"bar_count": 4, "symbol_count": 4, "query_source": "SharedSignals API"}):
+            report = first_sample_alerts(
+                sqlite_db=db_path,
+                now=datetime.fromisoformat("2026-07-06T09:35:00+08:00"),
+                min_symbols=4,
+                review_path=Path("/tmp/nonexistent-cn-futures-review.jsonl"),
+            )
 
         self.assertEqual(report["opening_30m_review"]["status"], "warn")
         self.assertEqual(report["opening_30m_review"]["phase"], "no_simulated_trade")
@@ -358,18 +362,19 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        report = first_sample_alerts(
-            sqlite_db=db_path,
-            now=datetime.fromisoformat("2026-07-06T09:35:00+08:00"),
-            min_symbols=4,
-            review_path=review,
-        )
+        with patch("CNFutures.opening_validator._query_session_bars_via_api", return_value={"bar_count": 4, "symbol_count": 4, "query_source": "SharedSignals API"}):
+            report = first_sample_alerts(
+                sqlite_db=db_path,
+                now=datetime.fromisoformat("2026-07-06T09:35:00+08:00"),
+                min_symbols=4,
+                review_path=review,
+            )
 
-        self.assertEqual(report["opening_30m_review"]["status"], "warn")
+        self.assertEqual(report["opening_30m_review"]["status"], "pass")
         self.assertEqual(report["opening_30m_review"]["phase"], "strategy_hold")
         self.assertEqual(report["opening_30m_review"]["top_hold_reason"], "below_threshold")
         codes = {alert["code"] for alert in report["alerts"]}
-        self.assertIn("cn_futures_opening_30m_strategy_hold", codes)
+        self.assertNotIn("cn_futures_opening_30m_strategy_hold", codes)
         self.assertNotIn("cn_futures_first_sim_sample_missing", codes)
 
     def test_opening_30m_review_distinguishes_no_night_session_from_missing_sample(self) -> None:
@@ -397,12 +402,13 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        report = first_sample_alerts(
-            sqlite_db=db_path,
-            now=datetime.fromisoformat("2026-07-06T21:35:00+08:00"),
-            min_symbols=4,
-            review_path=review,
-        )
+        with patch("CNFutures.opening_validator._query_session_bars_via_api", return_value={"bar_count": 4, "symbol_count": 4, "query_source": "SharedSignals API"}):
+            report = first_sample_alerts(
+                sqlite_db=db_path,
+                now=datetime.fromisoformat("2026-07-06T21:35:00+08:00"),
+                min_symbols=4,
+                review_path=review,
+            )
 
         self.assertEqual(report["opening_30m_review"]["status"], "pass")
         self.assertEqual(report["opening_30m_review"]["phase"], "no_night_session")
@@ -410,6 +416,23 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
         codes = {alert["code"] for alert in report["alerts"]}
         self.assertNotIn("cn_futures_opening_30m_no_night_session", codes)
         self.assertNotIn("cn_futures_first_sim_sample_missing", codes)
+
+    def test_first_sample_alerts_uses_sharedsignals_api_before_sqlite(self) -> None:
+        db_path = self._db([])
+
+        with patch(
+            "CNFutures.opening_validator._query_session_bars_via_api",
+            return_value={"bar_count": 4, "symbol_count": 4, "query_source": "SharedSignals API"},
+        ):
+            report = first_sample_alerts(
+                sqlite_db=db_path,
+                now=datetime.fromisoformat("2026-07-06T09:35:00+08:00"),
+                min_symbols=4,
+                review_path=Path("/tmp/nonexistent-cn-futures-review.jsonl"),
+            )
+
+        self.assertEqual(report["query_source"], "SharedSignals API")
+        self.assertNotIn("futures_5min_check_failed", {alert["code"] for alert in report["alerts"]})
 
 
 if __name__ == "__main__":

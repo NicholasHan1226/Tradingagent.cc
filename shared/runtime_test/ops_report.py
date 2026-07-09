@@ -273,35 +273,53 @@ def cn_futures_review_summary(path: Path | None = None) -> dict[str, Any]:
     review_path = path or (SHARED / "review" / "data" / "cn_futures_sim_reviews.jsonl")
     rows = read_jsonl(review_path)
     latest = latest_actionable_review(rows)
-    style_totals: dict[str, dict[str, Any]] = defaultdict(lambda: {"filled_count": 0, "error_count": 0})
-    error_counter: Counter[str] = Counter()
+    historical_style_totals: dict[str, dict[str, Any]] = defaultdict(lambda: {"filled_count": 0, "error_count": 0})
+    historical_error_counter: Counter[str] = Counter()
     for row in rows:
         styles = row.get("styles") if isinstance(row.get("styles"), dict) else {}
         for style, values in styles.items():
             if isinstance(values, dict):
-                style_totals[str(style)]["filled_count"] += int(values.get("filled_count") or 0)
+                historical_style_totals[str(style)]["filled_count"] += int(values.get("filled_count") or 0)
         error_summary = row.get("error_summary") if isinstance(row.get("error_summary"), dict) else {}
         by_error = error_summary.get("by_error") if isinstance(error_summary.get("by_error"), dict) else {}
         for name, count in by_error.items():
-            error_counter[str(name)] += int(count or 0)
+            historical_error_counter[str(name)] += int(count or 0)
         by_style = error_summary.get("by_style") if isinstance(error_summary.get("by_style"), dict) else {}
         for style, values in by_style.items():
             if isinstance(values, dict):
-                style_totals[str(style)]["error_count"] += int(values.get("error_count") or 0)
+                historical_style_totals[str(style)]["error_count"] += int(values.get("error_count") or 0)
+    latest_styles = latest.get("styles") if isinstance(latest.get("styles"), dict) else {}
+    latest_hold_summary = latest.get("hold_reason_summary") if isinstance(latest.get("hold_reason_summary"), dict) else {}
+    latest_error_summary = latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {}
+    latest_style_health = latest.get("style_health") if isinstance(latest.get("style_health"), dict) else {}
+    current = {
+        "generated_at": latest.get("generated_at", ""),
+        "state": latest.get("state", ""),
+        "date": latest.get("date", ""),
+        "record_count": int(latest.get("record_count") or 0) if latest else 0,
+        "filled_count": int(latest.get("filled_count") or 0) if latest else 0,
+        "hold_count": int(latest.get("hold_count") or latest_hold_summary.get("total") or 0) if latest else 0,
+        "error_count": int(latest.get("error_count") or 0) if latest else 0,
+        "error_summary": latest_error_summary,
+        "style_health": latest_style_health,
+        "hold_reason_summary": latest_hold_summary,
+        "styles": latest_styles,
+    }
+    historical_error_count = sum(int(count or 0) for count in historical_error_counter.values())
+    historical_filled_count = sum(int(values.get("filled_count") or 0) for values in historical_style_totals.values())
     return {
         "path": str(review_path),
         "exists": review_path.exists(),
         "review_rows": len(rows),
-        "latest_generated_at": latest.get("generated_at", ""),
-        "latest_state": latest.get("state", ""),
-        "latest_date": latest.get("date", ""),
-        "latest_record_count": int(latest.get("record_count") or 0) if latest else 0,
-        "latest_filled_count": int(latest.get("filled_count") or 0) if latest else 0,
-        "latest_error_count": int(latest.get("error_count") or 0) if latest else 0,
-        "latest_error_summary": latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {},
-        "latest_style_health": latest.get("style_health") if isinstance(latest.get("style_health"), dict) else {},
-        "style_totals": {style: dict(values) for style, values in style_totals.items()},
-        "top_errors": dict(error_counter.most_common(10)),
+        "current": current,
+        "historical": {
+            "scope": "append_only_history",
+            "note": "Historical totals include retired data gaps and old risk classifications; use current for live health.",
+            "filled_count": historical_filled_count,
+            "error_count": historical_error_count,
+            "style_totals": {style: dict(values) for style, values in historical_style_totals.items()},
+            "top_errors": dict(historical_error_counter.most_common(10)),
+        },
     }
 
 

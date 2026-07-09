@@ -123,6 +123,11 @@ Display-ready fields used by the homepage:
   `style_performance.jsonl`, and `style_comparison.json`. This lets the front
   show why a selected market has data, partial data, or no data without
   inventing trades.
+- CNFutures current runtime status uses the latest actionable row from
+  `shared/review/data/cn_futures_sim_reviews.jsonl` as the authoritative
+  source. `shared/review/cn_futures/style_comparison.json` is review context for
+  style readiness and must not be added to the latest review counts, otherwise
+  filled/error/hold numbers can be doubled or contaminated by an older run.
 - CNFutures market summaries may attach `cnFuturesReplayEvidence` from
   `shared/review/cn_futures/replay_latest.json`. This object is display-only
   and separates historical actionable replay counts from currently executable

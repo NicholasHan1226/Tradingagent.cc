@@ -183,6 +183,11 @@ The review payload includes `score_summary` by style:
 - Expected risk rejections such as `margin_cap_exceeded` are hold reasons, not
   system errors. They mean the simulator found a candidate but the style's
   capital or leverage guard correctly blocked a new position.
+- Ops summaries split review evidence into `current` and `historical`.
+  `current` describes the latest actionable review and is the live-health
+  source. `historical` is append-only review context and can include old data
+  gaps, stale-bar incidents, or retired risk classifications. Do not read
+  historical `top_errors` as current trading failure.
 - Closed-session 5-minute cron runs return `market_closed` without appending an
   empty review row, so the latest actionable review keeps the last in-session
   hold/fill evidence instead of being overwritten after the close.
