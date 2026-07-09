@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from Ashare.adapter import AshareAdapter
 from Ashare.capital_plan import TOTAL_CAPITAL, plan_capital
+from Ashare.evolution_controller import decision_market_context, load_latest_decision
 from Ashare.sim_executor import _is_supported_ashare_code, _market_session_rejection
 from shared.data.reader import TradingagentDataReader
 from shared.notify import email_sender
@@ -433,12 +434,28 @@ def _build_capital_plan(adapter: AshareAdapter, candidates: list[dict[str, Any]]
         capital = float(TOTAL_CAPITAL)
     account_cash = _account_available_cash(account, config, capital, positions)
     strategy_positions, cash, sample_adjustment = _ashare_strategy_account_view(account, positions, account_cash)
+    sample_context = sample_adjustment if isinstance(sample_adjustment, dict) else {}
+    min_strategy_samples = _safe_float(sample_context.get("min_strategy_samples"), 5.0)
+    if min_strategy_samples <= 0:
+        min_strategy_samples = 5.0
+    evolution_decision = load_latest_decision()
+    evolution_context = decision_market_context(evolution_decision)
+    market_context = {
+        "risk_rejection_rate": 0.0,
+        "data_issue_rate": 0.0,
+        "strategy_sample_valid_count": _safe_float(
+            sample_context.get("strategy_sample_valid_count"),
+            min_strategy_samples,
+        ),
+        "min_strategy_samples": min_strategy_samples,
+    }
+    market_context.update(evolution_context)
     plan = plan_capital(
         strategy_positions,
         cash,
         candidates=candidates,
         dynamic=True,
-        market_context={"risk_rejection_rate": 0.0, "data_issue_rate": 0.0},
+        market_context=market_context,
         total_capital=capital,
     ).to_dict()
     plan.update(
@@ -456,6 +473,13 @@ def _build_capital_plan(adapter: AshareAdapter, candidates: list[dict[str, Any]]
     )
     if sample_adjustment:
         plan["sample_adjustment"] = sample_adjustment
+    if evolution_decision:
+        plan["evolution_decision"] = {
+            "state": evolution_decision.get("state"),
+            "recommended_action": evolution_decision.get("recommended_action"),
+            "reasons": evolution_decision.get("reasons", []),
+            "policy": evolution_decision.get("policy", {}),
+        }
     if int(plan.get("target_positions") or 0) <= 0 and not strategy_positions:
         plan["reason"] = "capital_plan_defensive_no_new_buy"
     else:

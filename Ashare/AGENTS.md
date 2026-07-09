@@ -16,7 +16,8 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - 主模拟盘初始 200,000 元；`capital_plan.py` 按候选质量、风控拒绝率、数据异常率和近期表现动态决定 0/1/2/3 只。强信号可集中 2-3 只，弱信号或高拒绝率时优先留现金/逆回购，不为凑仓位硬买。
 - 50,000 / 100,000 元不是普通配置值，而是资金档位实验账户。`Ashare/tier_experiments.py` 读取主账户策略有效成交，按各自本金、现金、100 股手数和手续费重放，写入 `shared/logs/local_sim_tiers/ashare_50000/`、`shared/logs/local_sim_tiers/ashare_100000/` 独立账本；`portfolio_evolution.py` 会把这些账户纳入组合级演化 `rankings`。
 - 动态现金缓冲（替代原固定 30%）：激进约 17.5%，均衡 25% 且不超过 50,000，谨慎 45%，防守（弱候选/高风险/无候选/强制防守）全现金。均衡模式硬上限 50,000 避免 200,000 账户因百分比锁死 60,000。
-- 样本收集模式：当策略有效样本数低于 `min_strategy_samples`，且数据异常率、风控拒绝率和近期胜率都未触发防守时，`capital_plan.py` 可以把风险模式切到 `sample_collection`，只开放 1 笔 20,000-35,000 元探索仓用于积累有效样本；弱候选、高风险或数据异常仍保持防守/谨慎，不得为了样本量硬买。
+- 样本收集模式：当策略有效样本数低于 `min_strategy_samples`，或组合演化决策提出当日样本目标未达标，且数据异常率、风控拒绝率和近期胜率都未触发防守时，`capital_plan.py` 可以把风险模式切到 `sample_collection`，只开放 1 笔 20,000-35,000 元探索仓用于积累有效样本；弱候选、高风险或数据异常仍保持防守/谨慎，不得为了样本量硬买。`Ashare/evolution_controller.py` 只能生成 simulated-only 资金计划上下文，不得下单、不得启用实盘、不得绕过 candidate 层、现金/手数、T+1、交易时段和风控门禁。
+- 每日有效交易样本是硬门槛：`Ashare/evolution_controller.py` 每次组合演化后写 `evolution_decision_latest.json`，默认要求当天至少形成 1 笔策略有效样本；未达标时输出 `force_sample_collection`，盘前 dry-run 和盘中资金计划必须读取该决策并尽最大努力开放受控探索仓。该硬门槛只适用于 simulated 层，仍不得绕过 candidate 层、真实成交价、风控、现金、100 股整手、T+1 和交易时段。
 - 资金计划使用“策略有效样本账户视图”：链路验证样本、非连续竞价样本、缺候选来源或完全缺成交价的样本仍保留为账户事实和复盘证据，但不得占用 `capital_plan` 的策略现金、目标持仓数、新买入容量或机会成本换仓判断。常规交易时段内来自 `candidate` 层、`execution_source=ashare_candidate_layer` 且有正成交价的 server-local 策略成交必须占用策略资金，即使价格来源标记为 `signal_card_price`，也只能在复盘里标为较弱价格证据，不能被当成验证样本排除。
 - 账本资金门禁是最后防线：A股 server-local 模拟买入写账前必须按本地模拟账本完整回放同账户全部已记录成交事实，若会突破 200,000 元本金或导致负现金，订单必须拒绝且不得写入成交/回执；上游资金计划不得依赖过期账户快照放行。`strategy_samples_only` 只用于资金计划、复盘、看板和演化口径，不得用于放松写账前现金/可卖持仓硬门禁。
 - 候选池打分样本不得过小；生产 `score_universe_limit` 应覆盖足够多的流动性过滤后股票，避免只看 universe 前几十只导致科学候选为 0。扩大样本不等于放松 candidate 阈值，未进入 candidate 层仍不得买入。
@@ -49,7 +50,9 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - `closing_momentum` 保持 research/paused，只有尾盘候选扫描、次日 open/high 兑现回测和样本阈值达标后，才能讨论进入 simulated。
 - `forward_validation.py` 是 A股 server-local 策略成交的只读前向标签入口；只给策略有效成交标注 30/60 分钟、当日收盘、次交易日 open/high/close，不写执行队列，不改资金计划，链路验证/盘外/缺来源样本必须跳过。生产入口为 `shared/wrappers/job_ashare_forward_validation.sh`，只刷新 `shared/review/ashare/forward_validation_latest.json` 与历史验证文件，供复盘和看板读取。
 - `portfolio_evolution.py` 是 A股组合级自我演化证据入口；读取 server-local 策略有效成交、资金档位实验账本、样本质量和盯市 PnL，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`。写入生产复盘前会用同一批 SharedSignals 盯市价刷新 `local_sim_pnl.json` 与持仓快照，成交事实仍只保存在 append-only `local_sim_trades.jsonl`。A股不复用 Crypto/PM/US 的 style ledger 作为真实归因，避免把同一组合成交伪造成多个风格收益。
+- `evolution_controller.py` 将 `portfolio_evolution.py` 的样本数、当日样本、收益和档位实验证据转成 `evolution_decision_latest.json`；主模拟循环和盘前 dry-run 可读取该决策来调整 `sample_collection` 门槛，但最终是否生成订单仍由候选池、资金计划、执行门禁和 server-local 账本共同决定。
+- `evolution_controller.py` 是 A股自动进化决策入口；只读消费 `portfolio_evolution_latest.json` / 三账户 ranking / 样本质量 / PnL，写 `evolution_decision_latest.json` 与 append-only log。它只输出 simulated-only 的下一步动作（`force_sample_collection`、`observe`、`tighten_risk`、`expand_risk_candidate`），不写订单、不启用实盘、不直接修改成交事实。
 
 ## 现有代码
-- 当前 A-share 代码位于本目录：`adapter.py`、`capital_plan.py`、`research_evidence.py`、`sim_executor.py`、`t_plus_1.py` 和 `market_phases/`。
+- 当前 A-share 代码位于本目录：`adapter.py`、`capital_plan.py`、`evolution_controller.py`、`portfolio_evolution.py`、`research_evidence.py`、`sim_executor.py`、`t_plus_1.py` 和 `market_phases/`。
 - 旧 `/opt/investment/Ashare/tools/a_share_*.py` 已退役/归档，不得作为新的执行或依赖入口。

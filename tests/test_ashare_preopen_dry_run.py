@@ -243,6 +243,101 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertTrue(report["execution_gate"]["ready"])
         self.assertIn("timings_seconds", report)
 
+    def test_preopen_dry_run_uses_sample_count_for_probe_position(self) -> None:
+        reader = FakeAshareReader()
+        strategy_positions = [
+            {"ts_code": "300759.SZ", "quantity": 1900, "market_value": 57589.0},
+            {"ts_code": "600030.SH", "quantity": 2100, "market_value": 58800.0},
+        ]
+        account = {
+            "account": "ashare_sim",
+            "sim_capital": 200_000.0,
+            "cash_available": 83_461.87,
+            "available_cash": 83_461.87,
+            "positions": strategy_positions,
+            "strategy_cash_available": 83_461.87,
+            "strategy_positions": strategy_positions,
+            "capital_plan_sample_adjustment": {
+                "view": "strategy_valid_samples_only",
+                "strategy_sample_valid_count": 2,
+                "min_strategy_samples": 5,
+            },
+            "source": "test",
+        }
+        with (
+            mock.patch.object(ashare_preopen_dry_run.AshareAdapter, "get_sim_account", return_value=account),
+            mock.patch(
+                "shared.runtime_test.ashare_preopen_dry_run.score_universe",
+                return_value=[
+                    ("600000.SH", {"combined": 0.60, "macro": 0.5, "event": 0.5, "fundamental": 0.8, "capital": 0.7, "technical": 0.7, "sentiment": 0.6}),
+                ],
+            ),
+        ):
+            report = ashare_preopen_dry_run.run_preopen_dry_run(
+                now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
+                sqlite_db=self._db(),
+                reader=reader,
+                score_limit=1,
+            )
+
+        self.assertEqual(report["capital_plan"]["risk_mode"], "sample_collection")
+        self.assertEqual(report["capital_plan"]["max_new_positions"], 1)
+        self.assertEqual(report["execution_gate"]["reason"], "synthetic_order_gate_ready")
+        self.assertEqual(report["execution_gate"]["synthetic_order"]["ts_code"], "600000.SH")
+
+    def test_preopen_dry_run_uses_evolution_decision_daily_sample_gate(self) -> None:
+        reader = FakeAshareReader()
+        strategy_positions = [
+            {"ts_code": "300759.SZ", "quantity": 1900, "market_value": 57589.0},
+            {"ts_code": "600030.SH", "quantity": 2100, "market_value": 58800.0},
+        ]
+        account = {
+            "account": "ashare_sim",
+            "sim_capital": 200_000.0,
+            "cash_available": 83_461.87,
+            "available_cash": 83_461.87,
+            "positions": strategy_positions,
+            "strategy_cash_available": 83_461.87,
+            "strategy_positions": strategy_positions,
+            "capital_plan_sample_adjustment": {
+                "view": "strategy_valid_samples_only",
+                "strategy_sample_valid_count": 8,
+                "min_strategy_samples": 5,
+            },
+            "source": "test",
+        }
+        decision = {
+            "recommended_action": "force_sample_collection",
+            "policy": {
+                "daily_sample_hard_gate": True,
+                "daily_strategy_sample_target": 1,
+                "today_strategy_sample_count": 0,
+                "strategy_sample_count": 8,
+                "min_strategy_samples": 5,
+                "sample_collection_min_score": 0.55,
+            },
+        }
+        with (
+            mock.patch.object(ashare_preopen_dry_run.AshareAdapter, "get_sim_account", return_value=account),
+            mock.patch.object(ashare_preopen_dry_run, "load_latest_decision", return_value=decision),
+            mock.patch(
+                "shared.runtime_test.ashare_preopen_dry_run.score_universe",
+                return_value=[
+                    ("600000.SH", {"combined": 0.60, "macro": 0.5, "event": 0.5, "fundamental": 0.8, "capital": 0.7, "technical": 0.7, "sentiment": 0.6}),
+                ],
+            ),
+        ):
+            report = ashare_preopen_dry_run.run_preopen_dry_run(
+                now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
+                sqlite_db=self._db(),
+                reader=reader,
+                score_limit=1,
+            )
+
+        self.assertEqual(report["capital_plan"]["risk_mode"], "sample_collection")
+        self.assertIn("daily_strategy_sample_target_not_met", report["capital_plan"]["reasons"])
+        self.assertEqual(report["capital_plan"]["evolution_decision"]["recommended_action"], "force_sample_collection")
+
     def test_data_section_prefers_sharedsignals_api_daily_batch(self) -> None:
         reader = APICoverageReader()
         with (

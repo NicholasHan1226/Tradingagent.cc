@@ -796,21 +796,33 @@ def _ashare_dynamic_capital_plan(
     min_strategy_samples = _safe_float(sample_context.get("min_strategy_samples"), 5.0)
     if min_strategy_samples <= 0:
         min_strategy_samples = 5.0
+    evolution_decision: dict[str, Any] = {}
+    evolution_context: dict[str, Any] = {}
+    try:
+        from Ashare.evolution_controller import decision_market_context, load_latest_decision
+
+        evolution_decision = load_latest_decision()
+        evolution_context = decision_market_context(evolution_decision)
+    except Exception:
+        evolution_decision = {}
+        evolution_context = {}
+    market_context = {
+        "risk_rejection_rate": len(risk_rejections) / total_checked,
+        "data_issue_rate": len(skipped_candidates) / total_checked,
+        "strategy_sample_valid_count": _safe_float(
+            sample_context.get("strategy_sample_valid_count"),
+            min_strategy_samples,
+        ),
+        "min_strategy_samples": min_strategy_samples,
+    }
+    market_context.update(evolution_context)
     plan = plan_capital(
         holdings,
         cash_value,
         candidates=candidates,
         dynamic=True,
         total_capital=capital,
-        market_context={
-            "risk_rejection_rate": len(risk_rejections) / total_checked,
-            "data_issue_rate": len(skipped_candidates) / total_checked,
-            "strategy_sample_valid_count": _safe_float(
-                sample_context.get("strategy_sample_valid_count"),
-                min_strategy_samples,
-            ),
-            "min_strategy_samples": min_strategy_samples,
-        },
+        market_context=market_context,
     ).to_dict()
     plan["enabled"] = True
     plan["market"] = market
@@ -819,6 +831,13 @@ def _ashare_dynamic_capital_plan(
         for position in existing_positions
         if isinstance(position, dict) and _position_symbol(position)
     })
+    if evolution_decision:
+        plan["evolution_decision"] = {
+            "state": evolution_decision.get("state"),
+            "recommended_action": evolution_decision.get("recommended_action"),
+            "reasons": evolution_decision.get("reasons", []),
+            "policy": evolution_decision.get("policy", {}),
+        }
     plan["cash_source"] = "account_snapshot" if available_cash is not None and _safe_float(available_cash, -1.0) >= 0 else "capital_minus_positions"
     return plan
 

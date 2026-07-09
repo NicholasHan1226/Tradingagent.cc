@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""A-share automated evolution controller.
+
+This module turns portfolio/tier evidence into the next simulated-only action.
+It does not place orders and never enables real trading.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_REVIEW_DIR = ROOT / "shared" / "review" / "ashare"
+LATEST_DECISION = DEFAULT_REVIEW_DIR / "evolution_decision_latest.json"
+DECISION_LOG = DEFAULT_REVIEW_DIR / "evolution_decision_log.jsonl"
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed == parsed else default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def build_evolution_decision(
+    portfolio_evolution: dict[str, Any],
+    *,
+    daily_strategy_sample_target: int = 1,
+    min_strategy_samples: int = 5,
+) -> dict[str, Any]:
+    """Build a simulated-only evolution decision from portfolio evidence."""
+
+    target = max(1, int(daily_strategy_sample_target))
+    min_samples = max(1, int(min_strategy_samples))
+    strategy_sample_count = _safe_int(portfolio_evolution.get("strategy_sample_count"))
+    today_strategy_sample_count = _safe_int(portfolio_evolution.get("today_strategy_sample_count"))
+    pnl = portfolio_evolution.get("pnl") if isinstance(portfolio_evolution.get("pnl"), dict) else {}
+    total_pnl = _safe_float(pnl.get("total_pnl"), _safe_float(portfolio_evolution.get("total_pnl")))
+    equity = _safe_float(pnl.get("equity"), 0.0)
+    pnl_pct = round(total_pnl / equity, 6) if equity > 0 else 0.0
+    rankings = portfolio_evolution.get("rankings") if isinstance(portfolio_evolution.get("rankings"), list) else []
+    reasons: list[str] = []
+
+    if today_strategy_sample_count < target:
+        state = "sample_debt"
+        action = "force_sample_collection"
+        reasons.append("daily_strategy_sample_target_not_met")
+    elif strategy_sample_count < min_samples:
+        state = "sample_insufficient"
+        action = "observe"
+        reasons.append("cumulative_strategy_samples_below_minimum")
+    elif total_pnl < 0:
+        state = "risk_tightening"
+        action = "tighten_risk"
+        reasons.append("negative_mark_to_market_pnl")
+    else:
+        state = "expansion_candidate"
+        action = "expand_risk_candidate"
+        reasons.append("positive_mark_to_market_pnl_after_min_samples")
+
+    policy = {
+        "daily_sample_hard_gate": True,
+        "daily_strategy_sample_target": target,
+        "today_strategy_sample_count": today_strategy_sample_count,
+        "min_strategy_samples": min_samples,
+        "strategy_sample_count": strategy_sample_count,
+        "sample_collection_min_score": 0.55,
+        "max_probe_positions": 1,
+        "probe_allocation_min": 20_000.0,
+        "probe_allocation_max": 35_000.0,
+        "real_trading_enabled": False,
+    }
+    if action == "tighten_risk":
+        policy["sample_collection_min_score"] = 0.60
+        policy["probe_allocation_max"] = 25_000.0
+
+    return {
+        "report_type": "ashare_evolution_decision",
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "market": "ashare",
+        "trade_date": portfolio_evolution.get("trade_date", ""),
+        "state": state,
+        "recommended_action": action,
+        "reasons": reasons,
+        "policy": policy,
+        "metrics": {
+            "strategy_sample_count": strategy_sample_count,
+            "today_strategy_sample_count": today_strategy_sample_count,
+            "daily_strategy_sample_target": target,
+            "min_strategy_samples": min_samples,
+            "total_pnl": round(total_pnl, 6),
+            "pnl_pct": pnl_pct,
+            "ranking_count": len(rankings),
+            "tier_account_count": _safe_int((portfolio_evolution.get("tier_experiments") or {}).get("account_count"))
+            if isinstance(portfolio_evolution.get("tier_experiments"), dict)
+            else 0,
+        },
+        "guardrails": [
+            "simulated_only",
+            "candidate_layer_required",
+            "positive_fill_price_required",
+            "risk_check_required",
+            "cash_and_lot_size_required",
+            "t_plus_1_required",
+            "market_session_required",
+        ],
+        "real_trading_enabled": False,
+        "read_only_decision": True,
+    }
+
+
+def write_evolution_decision(
+    portfolio_evolution: dict[str, Any],
+    *,
+    review_dir: Path | str | None = None,
+    daily_strategy_sample_target: int = 1,
+    min_strategy_samples: int = 5,
+) -> dict[str, Any]:
+    review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
+    review_path.mkdir(parents=True, exist_ok=True)
+    decision = build_evolution_decision(
+        portfolio_evolution,
+        daily_strategy_sample_target=daily_strategy_sample_target,
+        min_strategy_samples=min_strategy_samples,
+    )
+    latest = review_path / LATEST_DECISION.name
+    log = review_path / DECISION_LOG.name
+    latest.write_text(json.dumps(decision, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(decision, ensure_ascii=False, sort_keys=True) + "\n")
+    return decision
+
+
+def load_latest_decision(path: Path | str | None = None, *, review_dir: Path | str | None = None) -> dict[str, Any]:
+    if path is not None:
+        return _read_json(Path(path))
+    review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
+    return _read_json(review_path / LATEST_DECISION.name)
+
+
+def decision_market_context(decision: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(decision, dict):
+        return {}
+    policy = decision.get("policy") if isinstance(decision.get("policy"), dict) else {}
+    if not policy:
+        return {}
+    return {
+        "daily_sample_hard_gate": bool(policy.get("daily_sample_hard_gate")),
+        "daily_strategy_sample_target": _safe_float(policy.get("daily_strategy_sample_target"), 1.0),
+        "today_strategy_sample_count": _safe_float(policy.get("today_strategy_sample_count"), 0.0),
+        "min_strategy_samples": _safe_float(policy.get("min_strategy_samples"), 5.0),
+        "strategy_sample_valid_count": _safe_float(policy.get("strategy_sample_count"), 0.0),
+        "sample_collection_min_score": _safe_float(policy.get("sample_collection_min_score"), 0.55),
+        "evolution_recommended_action": str(decision.get("recommended_action") or ""),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--portfolio-evolution", type=Path, default=DEFAULT_REVIEW_DIR / "portfolio_evolution_latest.json")
+    parser.add_argument("--review-dir", type=Path, default=DEFAULT_REVIEW_DIR)
+    parser.add_argument("--daily-strategy-sample-target", type=int, default=1)
+    parser.add_argument("--min-strategy-samples", type=int, default=5)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args(argv)
+    decision = write_evolution_decision(
+        _read_json(args.portfolio_evolution),
+        review_dir=args.review_dir,
+        daily_strategy_sample_target=args.daily_strategy_sample_target,
+        min_strategy_samples=args.min_strategy_samples,
+    )
+    print(json.dumps(decision, ensure_ascii=False, indent=2 if args.pretty else None))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

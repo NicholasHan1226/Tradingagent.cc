@@ -249,6 +249,22 @@ def write_portfolio_evolution(
         min_samples=min_samples,
     )
     report["local_sim_snapshot_refresh"] = refresh_result
+    try:
+        from Ashare.evolution_controller import write_evolution_decision
+
+        report["evolution_decision"] = write_evolution_decision(
+            report,
+            review_dir=review_path,
+            daily_strategy_sample_target=1,
+            min_strategy_samples=min_samples,
+        )
+    except Exception as exc:  # noqa: BLE001
+        report["evolution_decision"] = {
+            "state": "degraded",
+            "recommended_action": "observe",
+            "error": f"{exc.__class__.__name__}: {exc}",
+            "real_trading_enabled": False,
+        }
     latest = review_path / LATEST_PATH.name
     log = review_path / LOG_PATH.name
     latest.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

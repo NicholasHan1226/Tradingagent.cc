@@ -97,6 +97,10 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
         self.assertTrue(log.exists())
         self.assertEqual(json.loads(latest.read_text(encoding="utf-8"))["state"], report["state"])
         self.assertEqual(len(log.read_text(encoding="utf-8").splitlines()), 1)
+        decision = json.loads((self.review_dir / "evolution_decision_latest.json").read_text(encoding="utf-8"))
+        self.assertEqual(decision["recommended_action"], "observe")
+        self.assertEqual(decision["state"], "sample_insufficient")
+        self.assertTrue(decision["policy"]["daily_sample_hard_gate"])
         tier_accounts = {row["account"] for row in report["tier_experiments"]["accounts"]}
         self.assertEqual(tier_accounts, {"ashare_50000", "ashare_100000"})
         ranking_names = {row["style_name"] for row in report["rankings"]}
