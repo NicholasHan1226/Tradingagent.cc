@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
-import type { AShareNoTradeEvidence, AShareResearchEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
+import type { AShareForwardValidation, AShareNoTradeEvidence, AShareResearchEvidence, CNFuturesReplayEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
 
 type SnapshotOptions = {
   workspaceRoot: string
@@ -103,6 +103,19 @@ type CNFuturesReviewRow = {
   record_count?: number | string
   signal_count?: number | string
   state?: string
+}
+
+type CNFuturesReplayPayload = {
+  action_counts?: Record<string, number | string>
+  actionable_examples?: unknown[]
+  date?: string
+  generated_at?: string
+  read_only?: boolean
+  real_trading_enabled?: boolean
+  style_count?: number | string
+  style_summary?: Record<string, unknown>
+  symbol_count?: number | string
+  window_count?: number | string
 }
 
 type SimMarketHealthCheck = {
@@ -472,6 +485,8 @@ export async function readTradingAgentSnapshot({
   const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt)
   const ashareNoTradeExplanation = await readLatestAShareNoTradeExplanation(projectRoot, now)
   const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
+  const ashareForwardValidation = await readAShareForwardValidation(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareForwardValidation))
+  const cnFuturesReplayEvidence = await readCNFuturesReplayEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.cnFuturesReplay))
   const equityPerformance = ashareAccount && isAShareLegacyEquitySummary(equityPortfolio.summary) ? [] : equityPortfolio.performance
   const performance = annotatePerformanceQuality(firstNonEmpty(equityPerformance, reviewPerformance, trackerPortfolio.performance))
   const portfolio = attachAShareAccountSummary(equityPortfolio.summary ?? trackerPortfolio.summary, ashareAccount, generatedAt)
@@ -484,6 +499,7 @@ export async function readTradingAgentSnapshot({
     portfolio,
     signals,
     simLedgerRoot,
+    cnFuturesReplayEvidence,
     now,
   })
   const hasOrders = await directoryHasJson(filledSignalsPath)
@@ -514,6 +530,7 @@ export async function readTradingAgentSnapshot({
     funnelEvents,
     marketSummaries,
     ashareResearchEvidence,
+    ashareForwardValidation,
     sourceRefs: tradingAgentReadModelSources,
   }
 }
@@ -646,6 +663,7 @@ async function buildMarketSummaries({
   portfolio,
   signals,
   simLedgerRoot,
+  cnFuturesReplayEvidence,
   now,
 }: {
   generatedAt: string
@@ -656,6 +674,7 @@ async function buildMarketSummaries({
   portfolio?: PortfolioSummary
   signals: SignalRow[]
   simLedgerRoot: string
+  cnFuturesReplayEvidence?: CNFuturesReplayEvidence
   now: Date
 }): Promise<MarketSummary[]> {
   const styleSummaries = await readStyleComparisonMarketSummaries(performanceRoot)
@@ -725,6 +744,7 @@ async function buildMarketSummaries({
         executionFault: healthSummary?.executionFault ?? runtimeState === 'needs_attention',
         runtimeReason: healthSummary?.reasons[0],
         noTradeEvidence: isAshare ? buildAShareNoTradeEvidence(ashareNoTradeExplanation) : undefined,
+        cnFuturesReplayEvidence: market === 'CNFutures' ? cnFuturesReplayEvidence : undefined,
         holdingCount,
       signalCount: marketSignals.length,
       tradeCount,
@@ -1415,7 +1435,7 @@ async function readAShareResearchEvidence(path: string): Promise<AShareResearchE
       generatedAt: String(payload.generated_at ?? ''),
       tradeDate: String(payload.trade_date ?? ''),
       readOnly: payload.read_only === true,
-      realTradingEnabled: payload.real_trading_enabled === true,
+      realTradingEnabled: false,
       openingAuction: {
         state: String(opening.state ?? 'unknown'),
         phase: String(opening.phase ?? 'unknown'),
@@ -1459,6 +1479,78 @@ async function readAShareResearchEvidence(path: string): Promise<AShareResearchE
           unallocatedCapital: parseFiniteNumber(styleSummary.unallocated_capital as number | string | undefined),
         },
       },
+    }
+  } catch {
+    return undefined
+  }
+}
+
+async function readAShareForwardValidation(path: string): Promise<AShareForwardValidation | undefined> {
+  try {
+    const payload = asRecord(await readOptionalJson(path))
+    if (!Object.keys(payload).length) return undefined
+    if (payload.real_trading_enabled === true) return undefined
+    return {
+      generatedAt: String(payload.generated_at ?? ''),
+      date: String(payload.date ?? ''),
+      readOnly: payload.read_only === true,
+      realTradingEnabled: false,
+      tradeCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.trade_count as number | string | undefined) ?? 0)),
+      strategyLabelCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.strategy_label_count as number | string | undefined) ?? 0)),
+      pendingCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.pending_count as number | string | undefined) ?? 0)),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+async function readCNFuturesReplayEvidence(path: string): Promise<CNFuturesReplayEvidence | undefined> {
+  try {
+    const payload = asRecord(await readOptionalJson(path)) as CNFuturesReplayPayload
+    if (!Object.keys(payload).length) return undefined
+    if (payload.real_trading_enabled === true) return undefined
+    const summary = asRecord(payload.style_summary)
+    let buyCount = 0
+    let sellCount = 0
+    let holdCount = 0
+    const reasons = new Map<string, number>()
+    for (const rawStyle of Object.values(summary)) {
+      const style = asRecord(rawStyle)
+      const actionCounts = asRecord(style.action_counts)
+      buyCount += Math.max(0, Math.trunc(parseFiniteNumber(actionCounts.buy as number | string | undefined) ?? 0))
+      sellCount += Math.max(0, Math.trunc(parseFiniteNumber(actionCounts.sell as number | string | undefined) ?? 0))
+      holdCount += Math.max(0, Math.trunc(parseFiniteNumber(actionCounts.hold as number | string | undefined) ?? 0))
+      const topReasons = asRecord(style.top_reasons)
+      for (const [reason, value] of Object.entries(topReasons)) {
+        reasons.set(reason, (reasons.get(reason) ?? 0) + Math.max(0, Math.trunc(parseFiniteNumber(value as number | string | undefined) ?? 0)))
+      }
+    }
+    const examples = Array.isArray(payload.actionable_examples) ? payload.actionable_examples : []
+    const firstExample = asRecord(examples[0])
+    const executableCount = examples.filter((example) => asRecord(example).execution_eligible === true).length
+    const nonExecutableReasons = new Map<string, number>()
+    for (const example of examples) {
+      const row = asRecord(example)
+      if (row.execution_eligible === true) continue
+      const reason = optionalString(row.execution_reason) ?? 'not_executable'
+      nonExecutableReasons.set(reason, (nonExecutableReasons.get(reason) ?? 0) + 1)
+    }
+    return {
+      generatedAt: String(payload.generated_at ?? ''),
+      date: String(payload.date ?? ''),
+      readOnly: payload.read_only === true,
+      realTradingEnabled: false,
+      symbolCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.symbol_count) ?? 0)),
+      styleCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.style_count) ?? 0)),
+      windowCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.window_count) ?? 0)),
+      buyCount,
+      sellCount,
+      holdCount,
+      actionableCount: buyCount + sellCount,
+      executableCount,
+      nonExecutableReason: [...nonExecutableReasons.entries()].sort((left, right) => right[1] - left[1])[0]?.[0],
+      topReason: [...reasons.entries()].sort((left, right) => right[1] - left[1])[0]?.[0],
+      topSymbol: optionalString(firstExample.symbol),
     }
   } catch {
     return undefined

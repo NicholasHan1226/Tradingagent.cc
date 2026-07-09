@@ -330,6 +330,13 @@ def _forward_outcome_label(bars: list[dict[str, Any]], signal: dict[str, Any], e
     }
 
 
+def _latest_hold_bar_time(holds: list[dict[str, Any]]) -> str:
+    for hold in reversed(holds):
+        if isinstance(hold, dict) and hold.get("bar_time"):
+            return str(hold.get("bar_time"))
+    return ""
+
+
 def _positions_path(signals_dir: Path) -> Path:
     return signals_dir / "positions" / POSITIONS_FILENAME
 
@@ -893,13 +900,13 @@ def run_multi_style_simulation(
                     continue
             rollover_blocked, days_to_contract_month = _contract_inside_rollover_guard(symbol, date, style)
             if rollover_blocked and not existing_position:
-                errors.append({
+                holds.append({
                     "stage": "risk",
                     "symbol": symbol,
                     "style": style_name,
                     "cadence": cadence_value,
                     "days_to_contract_month_start": days_to_contract_month,
-                    "error": "contract_rollover_guard",
+                    "reason": "contract_rollover_guard",
                 })
                 continue
             if force_flatten and existing_position:
@@ -970,14 +977,14 @@ def run_multi_style_simulation(
                 symbol=symbol,
                 side=str(order["side"]),
             ):
-                errors.append({
+                holds.append({
                     "stage": "risk",
                     "symbol": symbol,
                     "style": style_name,
                     "cadence": bar_cadence,
                     "bar_time": latest_bar_time,
                     "side": order["side"],
-                    "error": "repeated_same_side_exposure",
+                    "reason": "repeated_same_side_exposure",
                 })
                 continue
             existing_qty = _safe_int((existing_position or {}).get("net_qty"), 0)
@@ -1112,6 +1119,7 @@ def run_multi_style_simulation(
         "errors": errors,
         "holds": holds,
         "hold_count": len(holds),
+        "latest_hold_bar_time": _latest_hold_bar_time(holds),
         "hold_reason_summary": review.get("hold_reason_summary", {}),
         "review": review,
         "real_trading_enabled": False,

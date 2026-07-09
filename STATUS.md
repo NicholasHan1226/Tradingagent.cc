@@ -142,8 +142,10 @@
 - [x] A股模拟主循环在出现 server-local filled 后追加 `post_execution` 资金计划刷新行，重新读取策略有效账户视图并写入 `shared/review/ashare/capital_plan_YYYYMMDD.jsonl`；该行只记录成交后的现金/持仓状态，不生成新买入，不改变同轮订单。
 - [x] 新增 `Ashare/forward_validation.py` 只读前向验证入口，对策略有效成交打 30/60 分钟、当日收盘、次交易日 open/high/close 标签；链路验证、盘外或缺来源样本只标记 skipped，不进入胜率、PnL 或自我演化。
 - [x] 新增 `CNFutures/session.py` 统一日盘、午休、夜盘和凌晨夜盘时段判断；午休 `11:30-13:00` 是正常观察态，不应被健康检查或开盘验收误判为数据故障。
-- [x] 新增 `CNFutures/replay.py` 只读历史 5分钟 replay：从 SharedSignals API/read model 读取 Futures 5分钟 bars，对现有风格逐窗口回放，统计 buy/sell/hold 与原因，不写订单、不写持仓、不接实盘。生产 dry-run 已验证 20260709 可回放 20 个合约、4 个风格、1720 个窗口。
+- [x] 新增 `CNFutures/replay.py` 只读历史 5分钟 replay：从 SharedSignals API/read model 读取 Futures 5分钟 bars，对现有风格逐窗口回放，统计 buy/sell/hold 与原因，不写订单、不写持仓、不接实盘。replay 已复用 live 风格产品过滤，并为历史触发样本标注 `execution_eligible`、保证金门禁、午休/闭市边界和不可执行原因，避免把历史 buy/sell 误读为当前可成交信号。生产验证 20260709 可回放 20 个合约、4 个风格、834 个过滤后窗口。
 - [x] `shared/runtime_test/opening_acceptance.py` 聚合验收已补 API 健康复核：当旧 SQLite 诊断不可用或日线诊断失败，但对应市场 `market_health` 已通过 SharedSignals API、cron、账本/复盘检查时，聚合层保留原始诊断原因并判为 pass，避免午休/盘前窗口误报；生产 `full_acceptance --profile prod` 已恢复 pass。
+- [x] 看板只读快照已接入 A股 `forward_validation_latest.json` 与 CNFutures `replay_latest.json`：A股面板展示成交验证/待确认，期货市场摘要展示 replay 候选、可执行数量、主原因和合约/风格覆盖。
+- [x] 生产 crontab 已安全追加 A股前向验证和 CNFutures replay 固定任务，先备份现有 crontab，再只追加缺失行，不用单仓模板覆盖生产。
 
 ### 2026-07-08 A股策略资金视图隔离验证样本
 

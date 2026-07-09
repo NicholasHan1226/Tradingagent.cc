@@ -15,8 +15,10 @@ from typing import Any
 
 from . import MARKET
 from .adapter import CNFuturesAdapter, READER_MARKET
-from .contract_rules import is_executable_contract_symbol
+from .contract_rules import get_contract_rule, is_executable_contract_symbol
+from .margin_model import estimate_order_cost
 from .signal_engine import generate_style_signal
+from .sim_runner import _style_allows_symbol
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "shared" / "review" / "cn_futures" / "replay_latest.json"
@@ -116,6 +118,49 @@ def _styles(adapter: CNFuturesAdapter, styles: list[dict[str, Any]] | None = Non
     return [dict(style) for style in raw or [] if isinstance(style, dict)]
 
 
+def _bar_time(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _is_lunch_boundary_bar(value: Any) -> bool:
+    raw = _bar_time(value)
+    return raw.endswith(" 11:30:00") or raw.endswith("T11:30:00") or raw.endswith(" 11:30") or raw.endswith("T11:30")
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+        return parsed if parsed == parsed else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _execution_annotation(*, symbol: str, style: dict[str, Any], action: str, price: Any, bar_time: Any) -> dict[str, Any]:
+    if action not in {"buy", "sell"}:
+        return {"execution_eligible": False, "execution_reason": "not_actionable"}
+    if not _style_allows_symbol(style, symbol):
+        return {"execution_eligible": False, "execution_reason": "product_not_allowed"}
+    if _is_lunch_boundary_bar(bar_time):
+        return {"execution_eligible": False, "execution_reason": "session_boundary_not_executable"}
+    parsed_price = _safe_float(price, 0.0)
+    if parsed_price <= 0:
+        return {"execution_eligible": False, "execution_reason": "invalid_price"}
+    try:
+        get_contract_rule(symbol)
+        cost = estimate_order_cost(symbol=symbol, side=action, quantity=1, price=parsed_price)
+    except Exception as exc:  # noqa: BLE001
+        return {"execution_eligible": False, "execution_reason": f"contract_rule_unavailable:{exc.__class__.__name__}"}
+    capital = _safe_float(style.get("capital"), 200_000.0)
+    margin_cap = capital * min(max(_safe_float(style.get("max_margin_usage"), 0.20), 0.01), 0.80)
+    eligible = cost.margin_required <= margin_cap
+    return {
+        "execution_eligible": bool(eligible),
+        "execution_reason": "execution_eligible" if eligible else "margin_cap_exceeded",
+        "projected_margin_required": round(cost.margin_required, 6),
+        "margin_cap": round(margin_cap, 6),
+    }
+
+
 def build_replay_report(
     *,
     date: str,
@@ -148,8 +193,12 @@ def build_replay_report(
         style_name = str(style.get("name") or style.get("style_name") or "unknown")
         action_counts: Counter[str] = Counter()
         reason_counts: Counter[str] = Counter()
+        non_executable_counts: Counter[str] = Counter()
         symbol_counts: Counter[str] = Counter()
         for symbol in selected_symbols:
+            if not _style_allows_symbol(style, symbol):
+                non_executable_counts["product_not_allowed"] += 1
+                continue
             bars = _read_intraday_bars(active_reader, symbol, date)
             if len(bars) < min_bars:
                 reason_counts["insufficient_bars"] += 1
@@ -163,20 +212,26 @@ def build_replay_report(
                 symbol_counts[symbol] += 1
                 total_windows += 1
                 if action in {"buy", "sell"} and len(examples) < 20:
+                    bar_time = bars[end - 1].get("bar_time") or bars[end - 1].get("time")
+                    annotation = _execution_annotation(symbol=symbol, style=style, action=action, price=signal.get("price"), bar_time=bar_time)
+                    if not annotation.get("execution_eligible"):
+                        non_executable_counts[str(annotation.get("execution_reason") or "not_executable")] += 1
                     examples.append(
                         {
                             "style": style_name,
                             "symbol": symbol,
                             "action": action,
                             "reason": reason,
-                            "bar_time": bars[end - 1].get("bar_time") or bars[end - 1].get("time"),
+                            "bar_time": bar_time,
                             "price": signal.get("price"),
                             "confidence": signal.get("confidence"),
+                            **annotation,
                         }
                     )
         style_summary[style_name] = {
             "action_counts": dict(action_counts),
             "top_reasons": dict(reason_counts.most_common(10)),
+            "non_executable_reasons": dict(non_executable_counts.most_common(10)),
             "symbols_seen": len(symbol_counts),
             "window_count": sum(action_counts.values()),
         }

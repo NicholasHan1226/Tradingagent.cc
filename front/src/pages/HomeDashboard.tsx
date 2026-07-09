@@ -12,11 +12,12 @@ import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
-import type { AShareResearchEvidence, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
+import type { AShareForwardValidation, AShareResearchEvidence, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
 export function HomeDashboard({
   accountMode,
+  ashareForwardValidation,
   activeMarket,
   ashareResearchEvidence,
   data,
@@ -39,6 +40,7 @@ export function HomeDashboard({
 }: {
   accountMode: AccountMode
   activeMarket: Market
+  ashareForwardValidation?: AShareForwardValidation
   ashareResearchEvidence?: AShareResearchEvidence
   data: PerformancePoint[]
   events: ChartEvent[]
@@ -129,7 +131,7 @@ export function HomeDashboard({
         <ClosedLoopProofPanel summaries={marketSummaries} />
         <AShareMoneyflowPanel activeMarket={activeMarket} signals={signals} />
         <HomeResultBrief hasHoldingData={hasHoldingData} hasPerformanceData={hasPerformanceData} hasSignalData={hasSignalData} holdings={holdings} portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
-        {(activeMarket === 'All Markets' || activeMarket === 'A-share') && <AShareEvidencePanel evidence={ashareResearchEvidence} />}
+        {(activeMarket === 'All Markets' || activeMarket === 'A-share') && <AShareEvidencePanel evidence={ashareResearchEvidence} forwardValidation={ashareForwardValidation} />}
       </aside>
     </div>
   )

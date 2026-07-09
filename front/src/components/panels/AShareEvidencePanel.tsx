@@ -1,8 +1,8 @@
-import type { AShareResearchEvidence } from '../../types/dashboard'
+import type { AShareForwardValidation, AShareResearchEvidence } from '../../types/dashboard'
 import { PanelTitle } from '../PanelTitle'
 import { SummaryRow } from '../SummaryRow'
 
-export function AShareEvidencePanel({ evidence }: { evidence?: AShareResearchEvidence }) {
+export function AShareEvidencePanel({ evidence, forwardValidation }: { evidence?: AShareResearchEvidence; forwardValidation?: AShareForwardValidation }) {
   if (!evidence) {
     return (
       <section className="panel rail-panel ashare-evidence-panel">
@@ -11,6 +11,7 @@ export function AShareEvidencePanel({ evidence }: { evidence?: AShareResearchEvi
           <strong>等待研究记录</strong>
           <span>集合竞价、尾盘观察和资金分配写入后会自动显示。</span>
         </div>
+        {forwardValidation ? <ForwardValidationRows validation={forwardValidation} /> : null}
       </section>
     )
   }
@@ -29,6 +30,7 @@ export function AShareEvidencePanel({ evidence }: { evidence?: AShareResearchEvi
         <SummaryRow label="逆回购" value={`${formatMoney(evidence.reverseRepo.amount)} / ${formatPercent(evidence.reverseRepo.annualizedYield)}`} />
         <SummaryRow label="资金分配" value={`${formatMoney(allocated)} / ${formatMoney(budget)}`} tone="cyan" />
       </div>
+      {forwardValidation ? <ForwardValidationRows validation={forwardValidation} /> : null}
       {evidence.closingMomentum.candidates.length > 0 && (
         <div className="ashare-evidence-list" aria-label="尾盘观察">
           {evidence.closingMomentum.candidates.slice(0, 3).map((candidate) => (
@@ -41,6 +43,15 @@ export function AShareEvidencePanel({ evidence }: { evidence?: AShareResearchEvi
         </div>
       )}
     </section>
+  )
+}
+
+function ForwardValidationRows({ validation }: { validation: AShareForwardValidation }) {
+  return (
+    <div className="summary-list compact-summary-list" aria-label="A股成交验证">
+      <SummaryRow label="成交验证" value={`${validation.strategyLabelCount}/${validation.tradeCount}`} tone={validation.strategyLabelCount > 0 ? 'cyan' : undefined} />
+      <SummaryRow label="待确认" value={String(validation.pendingCount)} tone={validation.pendingCount > 0 ? 'amber' : undefined} />
+    </div>
   )
 }
 

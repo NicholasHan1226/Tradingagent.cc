@@ -145,6 +145,7 @@ function App() {
           <HomeDashboard
             accountMode={accountMode}
             activeMarket={activeMarket}
+            ashareForwardValidation={readModelSnapshot?.ashareForwardValidation}
             ashareResearchEvidence={readModelSnapshot?.ashareResearchEvidence}
             data={visiblePerformanceData}
             hasHoldingData={hasHoldingData}

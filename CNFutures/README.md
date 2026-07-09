@@ -213,6 +213,14 @@ plus append-only history unless `--no-write` is set. It is for threshold
 diagnostics and sample review only: it does not create orders, positions,
 receipts, live broker requests, or execution queue items.
 
+Replay uses the same style-to-product filter as the live 5-minute runner. For
+example, the index style only reviews IF/IH/IC/IM contracts and will not count
+commodity products as index candidates. Action examples carry
+`execution_eligible` plus an `execution_reason` such as margin cap, session
+boundary, invalid price, or missing contract rule. A replay buy/sell therefore
+means "the style would have triggered on a historical bar"; it is not proof that
+the current live runner should open a position.
+
 ## Observation Report
 
 Use the read-only observation report as the dashboard-ready summary of the

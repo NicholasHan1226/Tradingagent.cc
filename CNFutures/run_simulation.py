@@ -54,6 +54,8 @@ def _summary(result: dict[str, Any]) -> dict[str, Any]:
         if isinstance(record, dict) and record.get("bar_time"):
             latest_bar_time = str(record.get("bar_time"))
             break
+    if not latest_bar_time:
+        latest_bar_time = str(result.get("latest_hold_bar_time") or "")
     return {
         "market": result.get("market"),
         "reader_market": result.get("reader_market"),

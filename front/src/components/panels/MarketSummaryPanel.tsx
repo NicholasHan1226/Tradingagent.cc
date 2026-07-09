@@ -46,6 +46,9 @@ export function MarketSummaryPanel({
       {summary?.market === 'A-share' && summary.noTradeEvidence ? (
         <AshareCapitalTrace summary={summary} />
       ) : null}
+      {summary?.market === 'CNFutures' && summary.cnFuturesReplayEvidence ? (
+        <CNFuturesReplayTrace summary={summary} />
+      ) : null}
     </section>
   )
 }
@@ -120,6 +123,27 @@ function AshareCapitalTrace({ summary }: { summary: MarketSummary }) {
   if (!rows.length) return null
   return (
     <div className="ashare-capital-trace" aria-label="A股资金状态">
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function CNFuturesReplayTrace({ summary }: { summary: MarketSummary }) {
+  const evidence = summary.cnFuturesReplayEvidence
+  if (!evidence) return null
+  const rows: Array<[string, string]> = [
+    ['回放窗口', `${evidence.windowCount}`],
+    ['可执行/候选', `${evidence.executableCount}/${evidence.actionableCount}`],
+    ['合约/模式', `${evidence.symbolCount}/${evidence.styleCount}`],
+    evidence.nonExecutableReason ? ['未执行原因', evidence.nonExecutableReason] : evidence.topReason ? ['主要原因', evidence.topReason] : ['状态', evidence.actionableCount > 0 ? '有候选' : '继续等待'],
+  ]
+  return (
+    <div className="ashare-capital-trace" aria-label="中国期货回放状态">
       {rows.map(([label, value]) => (
         <div key={label}>
           <span>{label}</span>

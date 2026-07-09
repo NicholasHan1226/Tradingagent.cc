@@ -756,7 +756,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
             self.assertEqual(first["filled_count"], 1)
             self.assertEqual(second["filled_count"], 0)
-            self.assertEqual(second["errors"][0]["error"], "repeated_same_side_exposure")
+            self.assertEqual(second["errors"], [])
+            self.assertEqual(second["holds"][0]["reason"], "repeated_same_side_exposure")
+            self.assertEqual(second["state"], "ok")
 
     def test_multi_style_runner_estimates_realized_pnl_on_reversal(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -1030,7 +1032,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             )
 
             self.assertEqual(result["filled_count"], 0)
-            self.assertEqual(result["errors"][0]["error"], "contract_rollover_guard")
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["holds"][0]["reason"], "contract_rollover_guard")
+            self.assertEqual(result["state"], "ok")
 
     def test_multi_style_runner_passes_order_book_fields_to_executor(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter

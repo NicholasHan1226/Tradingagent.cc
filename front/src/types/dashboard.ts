@@ -50,6 +50,7 @@ export type MarketSummary = {
   executionFault?: boolean
   runtimeReason?: string
   noTradeEvidence?: AShareNoTradeEvidence
+  cnFuturesReplayEvidence?: CNFuturesReplayEvidence
   holdingCount: number
   signalCount: number
   tradeCount: number
@@ -70,6 +71,24 @@ export type MarketSummary = {
   source: string
   headline: string
   detail: string
+}
+
+export type CNFuturesReplayEvidence = {
+  generatedAt: string
+  date: string
+  readOnly: boolean
+  realTradingEnabled: boolean
+  symbolCount: number
+  styleCount: number
+  windowCount: number
+  buyCount: number
+  sellCount: number
+  holdCount: number
+  actionableCount: number
+  executableCount: number
+  nonExecutableReason?: string
+  topReason?: string
+  topSymbol?: string
 }
 
 export type AShareNoTradeEvidence = {
@@ -111,6 +130,16 @@ export type AShareAccountSummary = {
   strategyOpenPositionCount?: number
   source: string
   updatedAt: string
+}
+
+export type AShareForwardValidation = {
+  generatedAt: string
+  date: string
+  readOnly: boolean
+  realTradingEnabled: boolean
+  tradeCount: number
+  strategyLabelCount: number
+  pendingCount: number
 }
 
 export type ChartEvent = {

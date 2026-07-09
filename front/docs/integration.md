@@ -21,6 +21,8 @@ gated and must not trigger execution from the front layer.
 | Performance | `shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl` or `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl` | `shared/review/daily/daily_brief.jsonl` return fields, then `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
 | Market summaries | `shared/review/*/style_comparison.json` | `shared/review/*/style_performance.jsonl`, `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}` | Ready |
 | A-share research evidence | `shared/review/ashare/research_evidence_latest.json` | omitted from snapshot when missing or malformed | Ready |
+| A-share forward validation | `shared/review/ashare/forward_validation_latest.json` | omitted from snapshot when missing or malformed | Ready |
+| CNFutures replay evidence | `shared/review/cn_futures/replay_latest.json` | omitted from market summary when missing or malformed | Ready |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
 | Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
 | Live readiness | execution schemas and filled signal writeback | manual authorization state | Gated |
@@ -120,6 +122,10 @@ Display-ready fields used by the homepage:
   `style_performance.jsonl`, and `style_comparison.json`. This lets the front
   show why a selected market has data, partial data, or no data without
   inventing trades.
+- CNFutures market summaries may attach `cnFuturesReplayEvidence` from
+  `shared/review/cn_futures/replay_latest.json`. This object is display-only
+  and separates historical actionable replay counts from currently executable
+  candidates with `execution_eligible` and non-executable reasons.
 - When `style_performance.jsonl` is used as a fallback performance source,
   US/Crypto/PM money fields are normalized to CNY before aggregation. Rows may
   provide explicit `pnl_cny` / `realized_pnl_cny` / `unrealized_pnl_cny` /
@@ -181,6 +187,11 @@ Display-ready fields used by the homepage:
   next-day labels, 204001 reverse repo estimate, and the 200,000 CNY virtual
   style budget allocation. The front layer must treat it as display evidence
   only and must never turn it into orders, queue writes, emails, or callbacks.
+- `ashareForwardValidation`: optional read-only homepage rail input from
+  `shared/review/ashare/forward_validation_latest.json`. It summarizes how many
+  strategy-valid A-share fills have forward labels, how many remain pending,
+  and which validation horizons are available. It is evidence for review and
+  strategy learning only; it must not trigger queue writes or execution.
 - The homepage trading funnel is designed to animate real stage movement. If
   the API only exposes completed simulated-ledger trade journals, the UI will
   show a completed-trade replay instead of inventing upstream drop-off. To show
