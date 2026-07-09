@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -28,7 +29,10 @@ def _run_crontab(command: list[str]) -> tuple[str, str]:
 
 def _read_installed_crontabs() -> dict[str, str]:
     marketgraph_text, marketgraph_error = _run_crontab(["crontab", "-u", "marketgraph", "-l"])
-    root_text, root_error = _run_crontab(["crontab", "-l"])
+    if os.geteuid() == ROOT_UID:
+        root_text, root_error = _run_crontab(["crontab", "-l"])
+    else:
+        root_text, root_error = "", "root crontab unchecked: run cron_coverage as root for residual audit"
     return {
         "marketgraph_text": marketgraph_text,
         "marketgraph_error": marketgraph_error,

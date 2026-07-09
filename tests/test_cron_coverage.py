@@ -70,6 +70,18 @@ class CronCoverageTest(unittest.TestCase):
         self.assertIn("root_tradingagent_residual", report["failures"])
         self.assertEqual(report["root_residual_count"], 1)
 
+    def test_non_root_runtime_does_not_reuse_current_user_crontab_as_root(self) -> None:
+        with (
+            patch.object(cron_coverage.os, "geteuid", return_value=1000),
+            patch.object(cron_coverage, "_run_crontab", return_value=("MARKETGRAPH_CRON", "")) as run_crontab,
+        ):
+            details = cron_coverage._read_installed_crontabs()
+
+        self.assertEqual(details["marketgraph_text"], "MARKETGRAPH_CRON")
+        self.assertEqual(details["root_text"], "")
+        self.assertIn("root crontab unchecked", details["root_error"])
+        run_crontab.assert_called_once_with(["crontab", "-u", "marketgraph", "-l"])
+
     def test_fails_when_runtime_permission_blockers_exist(self) -> None:
         installed = "\n".join(cron_coverage.tradingagent_entries((cron_coverage.ROOT / "shared/crontab.txt").read_text()))
         with patch.object(cron_coverage, "_runtime_permission_blockers", return_value=["runtime/state/job_unit.lock"]):
