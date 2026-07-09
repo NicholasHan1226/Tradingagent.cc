@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-09 (A股六维评分 SS-first/MG-enhanced 边界修正)
+> 最后更新：2026-07-09 (SharedSignals 证据 API 消费契约验收)
 
 ---
 
@@ -16,6 +16,7 @@
 - **MarketGraph 研究 API 接入**：2026-07-09 起 `TradingagentDataReader` 增加独立 MarketGraph 只读 HTTP client；A股六维评分基础证据按 SharedSignals-first：宏观优先 `/macro`，事件优先 `/events`，情绪优先 `/sentiment`，基本面/资金/技术分别优先 SharedSignals fundamentals/capital_flow/market_data；MarketGraph `/regime`、`/contract` 的 `association_impact_relations` 等只作为增强证据。`MARKETGRAPH_API_TOKEN` 由 TradingAgent 自己的生产 env 提供，TradingAgent cron 不 source MarketGraph deploy env，保持三系统可独立部署。若 MarketGraph regime/event/sentiment 缺失或未授权，A股记录 evidence debt 并按 SharedSignals 证据或中性/降级评分处理，不把研究缺失当成执行故障，也不绕过 candidate/资金/风控门禁。
 - **数据入口收口**：Ashare/Crypto/US/HK 通用市场适配器与 `auto_pipeline` 不再直接访问 `reader.shared` 或同机 SharedSignals SQLite 兜底；生产取数只能通过 `TradingagentDataReader` 暴露的 SharedSignals API facade。API 返回空时进入空池、数据等待或策略等待，不从旧路径补数。CNFutures 仍仅保留显式诊断开关下的只读 SQLite 排障路径；本地 sim ledger SQLite 属交易账本，不是市场数据源。
 - **生产取数口径**：TradingAgent runtime 以 SharedSignals HTTP API 为唯一市场数据入口；本地 SQLite 只允许保存模拟交易账本、看板快照和明确诊断输出，不允许作为 SharedSignals API 失败时的市场行情兜底。
+- **SharedSignals 证据 API 消费契约**：2026-07-09 新增 `shared.runtime_test.sharedsignals_evidence_contract`，只读检查 TradingAgent 依赖的 `/macro`、`/events`、`/sentiment`、`/capital_flow` 是否可通过 SharedSignals API 返回 list 结构和最小 schema；接口不可达或 schema 缺关键字段为 fail，端点可达但当前空行记录为 `evidence_debts`，默认不阻断 TA 模拟闭环，`--strict-empty` 才将空证据升为 warn。该检查已接入 `full_acceptance --profile prod` 与 quick 关键测试集，不修改 SharedSignals 采集/API 实现，避免和 SharedSignals 独立改造冲突。
 - **旧 cron 清单清理**：`shared/automation_tasks.md`、`shared/cron_inventory.csv`、`shared/cron_migration.md` 已删除；这些文件记录的是 6 月底 MarketGraph wrapper 迁移期清单，包含已退役路径。当前任务入口以 `AGENTS.md`、`STATUS.md`、`cron/`、`shared/wrappers/` 和生产 crontab 验收为准。
 - **执行桥**：Mac Mini `~/.hermes/` 下 Hermes 仍保留为 GUI 执行桥，只执行和回写，不做买卖判断；当前 A 股服务器本地模拟闭环不要求 mini 在线；A股健康检查已把 Hermes 降为 `mini_hermes_optional`，默认未启用时不影响主链路健康结论
 - **PM（预测市场）**：多风格 simulated 扫描每 30 分钟运行；checked-in config 使用 USDC；PM sim/style 输出写入 `shared/review/pm/style_comparison.json`；`PM/probability_model.py` 是 PM 研究概率消费/融合入口，优先读取 `TRADINGAGENT_PM_MODEL_PROBABILITY_FILE` / `PM_MODEL_PROBABILITY_FILE` 或默认 `shared/review/pm/model_probabilities.jsonl` 的研究概率；没有独立研究概率时只写入 `pm_market_consensus_baseline`，即模型概率等于市场概率、`model_confidence=0`，用于说明“暂无独立 edge”，不会制造交易。2026-07-07 起 `PM/research_probability.py` 和 `job_pm_research_probability` 通过 MarketGraph 统一 API `GET /pm/research-probabilities` / MCP `read_pm_research_probabilities` 读取 PM 独立研究概率，再与 SharedSignals `/pm_markets` 市场元数据和 `/pm_prices` 价格快照合并写入 `shared/review/pm/model_probabilities.jsonl` 与 summary；2026-07-09 起该入口改为每 30 分钟错峰运行，并在 SharedSignals PM 市场/价格采集后触发。SharedSignals 只供市场/价格数据，行内判断概率字段会被忽略。MarketGraph API 不可用、无研究概率或缺少 SharedSignals 市场价时会清空旧概率文件，避免历史 edge 残留并安全空跑；若 `/pm_markets` 市场行缺价，会读取 `/pm_prices` 最近价格补齐，但不会从 MarketGraph research row 的 `price/market_probability` 兜底。2026-07-07 生产确认 MarketGraph PM producer 正常运行但 `record_count=0`，主因是 PM 研究证据仍有样本债/方向证据不足/部分缺市场价格，TradingAgent 因此安全空跑；这不是执行器故障，也不能通过放宽阈值解决。`run_sim.py` 在无 PM 交易信号时输出结构化诊断（市场行数、可定价行数、模型概率行数、显式方向行数、策略候选数、edge 阈值和原因），用于区分 `pm_market_rows_empty`、`pm_prices_missing`、`pm_model_probability_missing` 与 `pm_model_edge_below_threshold`；`market_health` 对 PM 缺 MarketGraph 研究概率或模型 edge 不足标记为 pass/策略等待观察态，缺 SharedSignals 市场行或价格仍标记为 warn/数据等待，只有应成交却无账本才算执行故障。

@@ -36,11 +36,13 @@ class FullAcceptanceTest(unittest.TestCase):
 
         self.assertEqual([check["name"] for check in report["checks"]], [
             "cron_coverage",
+            "sharedsignals_evidence_contract",
             "sim_market_health",
             "ashare_no_trade_summary",
             "opening_acceptance",
         ])
         self.assertTrue(any("shared.runtime_test.cron_coverage" in part for command in calls for part in command))
+        self.assertTrue(any("shared.runtime_test.sharedsignals_evidence_contract" in part for command in calls for part in command))
         self.assertTrue(any("shared.runtime_test.market_health" in part for command in calls for part in command))
 
     def test_failed_command_fails_report(self) -> None:

@@ -41,6 +41,13 @@ must not bypass local candidate, funding, risk, or execution gates.
   crypto, associations, impacts, industry, and tushare passthrough read models.
   These inputs are consumed through the API facade; TradingAgent must not
   collect directly from providers.
+- Evidence API contract check:
+  `python -m shared.runtime_test.sharedsignals_evidence_contract --pretty`
+  verifies the TradingAgent-facing `/macro`, `/events`, `/sentiment`, and
+  `/capital_flow` endpoints. Endpoint/API/schema failures are hard failures.
+  Empty but reachable evidence endpoints are recorded as `evidence_debts` by
+  default because TradingAgent can degrade those dimensions to neutral scoring;
+  use `--strict-empty` when validating a completed SharedSignals backfill.
 - Optional local read model:
   `SHARED_SIGNALS_DB` may be used only when
   `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` is explicitly set for tests or

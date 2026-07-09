@@ -32,6 +32,7 @@ KEY_TESTS = [
     "tests/test_capital_layer_isolation.py",
     "tests/test_cron_coverage.py",
     "tests/test_opportunity_funnel_cron.py",
+    "tests/test_sharedsignals_evidence_contract.py",
 ]
 
 
@@ -124,6 +125,7 @@ def _profiles(args: argparse.Namespace) -> list[tuple[str, list[str], Path, int]
         profiles.append(("key_pytest", [python, "-m", "pytest", "-q", *KEY_TESTS], ROOT, args.test_timeout))
     if args.profile in {"prod", "all"}:
         profiles.append(("cron_coverage", [python, "-m", "shared.runtime_test.cron_coverage", "--pretty"], ROOT, 30))
+        profiles.append(("sharedsignals_evidence_contract", [python, "-m", "shared.runtime_test.sharedsignals_evidence_contract", "--pretty"], ROOT, 30))
         profiles.append(("sim_market_health", [python, "-m", "shared.runtime_test.market_health", "--market", "sim", "--pretty"], ROOT, 120))
         profiles.append(("ashare_no_trade_summary", [python, "-m", "shared.runtime_test.ashare_no_trade_summary", "--pretty"], ROOT, 60))
         profiles.append(("opening_acceptance", [python, "-m", "shared.runtime_test.opening_acceptance", "--json", "--pretty", "--send-on", "never"], ROOT, 120))
