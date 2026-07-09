@@ -606,23 +606,24 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(
             {row["symbol"]: row["drop_reason"] for row in result["no_trade_explanation"]["candidate_decision_trace"]},
             {
-                "AAA": "capital_plan_capacity_zero",
-                "BBB": "capital_plan_capacity_zero",
-                "CCC": "capital_plan_capacity_zero",
+                "AAA": "defensive_no_target_positions",
+                "BBB": "defensive_no_target_positions",
+                "CCC": "defensive_no_target_positions",
             },
         )
         self.assertEqual(result["candidate_layer_breakdown"]["candidate"], 3)
         self.assertEqual(result["capital_plan_decision"]["risk_mode"], "defensive")
         self.assertEqual(result["capital_plan_decision"]["target_positions"], 0)
         self.assertEqual(result["capital_plan_decision"]["position_capacity"], 0)
+        self.assertEqual(result["capital_plan_decision"]["capacity_reason"], "defensive_no_target_positions")
         self.assertEqual(result["portfolio_decision"]["ranked_risk_approved_candidates"], 3)
         self.assertEqual(result["portfolio_decision"]["allowed_buy_count"], 0)
         self.assertEqual(
             {row["symbol"]: row["drop_reason"] for row in result["candidate_decision_trace"]},
             {
-                "AAA": "capital_plan_capacity_zero",
-                "BBB": "capital_plan_capacity_zero",
-                "CCC": "capital_plan_capacity_zero",
+                "AAA": "defensive_no_target_positions",
+                "BBB": "defensive_no_target_positions",
+                "CCC": "defensive_no_target_positions",
             },
         )
 

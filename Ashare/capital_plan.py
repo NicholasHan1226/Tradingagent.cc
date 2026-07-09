@@ -41,6 +41,8 @@ class CapitalPlan:
     cash_reserve: float
     target_positions: int = TARGET_POSITIONS[1]
     max_new_positions: int = 0
+    existing_position_count: int = 0
+    capacity_reason: str = ""
     cash_reserve_pct: float = 0.0
     max_single_position_pct: float = 0.0
     risk_mode: str = "static"
@@ -57,6 +59,8 @@ class CapitalPlan:
             "cash_reserve": self.cash_reserve,
             "target_positions": self.target_positions,
             "max_new_positions": self.max_new_positions,
+            "existing_position_count": self.existing_position_count,
+            "capacity_reason": self.capacity_reason,
             "cash_reserve_pct": self.cash_reserve_pct,
             "max_single_position_pct": self.max_single_position_pct,
             "risk_mode": self.risk_mode,
@@ -231,6 +235,13 @@ def plan_capital(
     max_new = target_positions - n_holdings
     if max_new < 0:
         max_new = 0
+    capacity_reason = "new_position_capacity_available" if max_new > 0 else "target_positions_reached"
+    if target_positions <= 0:
+        capacity_reason = "defensive_no_target_positions"
+    elif n_holdings >= target_positions:
+        notes.append(
+            f"Target positions reached ({n_holdings}/{target_positions}); skip new buys unless replacement sell frees capacity."
+        )
 
     # cash needed for reserve
     if dynamic:
@@ -250,6 +261,8 @@ def plan_capital(
             f"Insufficient investable cash ({investable:.0f} RMB) after "
             f"reserve ({cash_reserve:.0f} RMB); skip new buys."
         )
+        if max_new > 0:
+            capacity_reason = "insufficient_investable_cash"
         max_new = 0
 
     # --- allocate to candidates -----------------------------------------
@@ -306,6 +319,8 @@ def plan_capital(
         cash_reserve=round(cash_reserve, 2),
         target_positions=target_positions,
         max_new_positions=max_new,
+        existing_position_count=n_holdings,
+        capacity_reason=capacity_reason,
         cash_reserve_pct=round(cash_reserve_pct, 4),
         max_single_position_pct=round(max_single_position_pct, 4),
         risk_mode=risk_mode,

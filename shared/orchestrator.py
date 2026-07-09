@@ -2579,6 +2579,16 @@ def run_sim_loop(
         max_portfolio_positions=max_portfolio_positions,
     )
     position_capacity = max(base_position_capacity, replacement_capacity)
+    capacity_reason = str(capital_plan.get("capacity_reason") or "")
+    if not capacity_reason and position_capacity <= 0:
+        target_positions_for_reason = _safe_int(capital_plan.get("target_positions"), 0)
+        existing_for_reason = len(strategy_positions if str(market).lower() == "ashare" else existing_positions)
+        if target_positions_for_reason > 0 and existing_for_reason >= target_positions_for_reason:
+            capacity_reason = "target_positions_reached"
+        elif _safe_float(capital_plan.get("available_cash"), 0.0) <= _safe_float(capital_plan.get("cash_reserve"), 0.0):
+            capacity_reason = "insufficient_investable_cash"
+        else:
+            capacity_reason = "capital_plan_capacity_zero"
     allowed_buy_symbols = {
         str(order.get("ts_code") or "")
         for order in [
@@ -2597,7 +2607,7 @@ def run_sim_loop(
         elif symbol not in allowed_buy_symbols:
             candidate_decisions[symbol]["status"] = "dropped"
             candidate_decisions[symbol]["drop_reason"] = (
-                "capital_plan_capacity_zero" if position_capacity <= 0 else "position_capacity_limit"
+                capacity_reason if position_capacity <= 0 and capacity_reason else "position_capacity_limit"
             )
         else:
             candidate_decisions[symbol]["status"] = "portfolio_input"
@@ -2669,6 +2679,8 @@ def run_sim_loop(
         "position_capacity": position_capacity,
         "base_position_capacity": base_position_capacity,
         "replacement_capacity": replacement_capacity,
+        "existing_position_count": len(strategy_positions if str(market).lower() == "ashare" else existing_positions),
+        "capacity_reason": capacity_reason,
         "available_cash": round(strategy_cash_available, 2),
         "account_cash_available": round(account_cash_available, 2),
         "reasons": capital_plan.get("reasons", []),
