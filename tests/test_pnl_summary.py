@@ -68,20 +68,35 @@ class PnlSummaryTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-        local_sim_ledger.record_local_sim_order(
-            {
-                "order_id": "SIM-1",
-                "idempotency_key": "idem-1",
-                "ts_code": "600000.SH",
-                "side": "buy",
-                "quantity": 100,
-                "price": 10.0,
-                "candidate_pool_layer": "candidate",
-                "execution_source": "ashare_candidate_layer",
-            },
-            "ashare",
-            {"account": "acct"},
-            {"local_sim_slippage_bps": 0},
+        local_sim_ledger.LOCAL_SIM_TRADES.parent.mkdir(parents=True)
+        local_sim_ledger.LOCAL_SIM_TRADES.write_text(
+            json.dumps(
+                {
+                    "trade_id": "LSIM-STRATEGY",
+                    "order_id": "SIM-1",
+                    "idempotency_key": "idem-1",
+                    "market": "ashare",
+                    "account": "acct",
+                    "trade_date": "2026-07-06",
+                    "ts_code": "600000.SH",
+                    "side": "buy",
+                    "quantity": 100,
+                    "requested_price": 10.0,
+                    "filled_price": 10.0,
+                    "amount": 1000.0,
+                    "commission": 5.0,
+                    "stamp_duty": 0.0,
+                    "net_amount": 1005.0,
+                    "status": "filled",
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
+                    "fill_price_source": "order.market_snapshot.ask_price",
+                    "fill_price_source_class": "market_data",
+                    "trade_timestamp_bj": "2026-07-06T10:00:00+08:00",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
         )
 
         result = pnl_summary.sim_ledger_pnl_summary(
@@ -116,20 +131,35 @@ class PnlSummaryTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-        local_sim_ledger.record_local_sim_order(
-            {
-                "order_id": "SIM-1",
-                "idempotency_key": "idem-1",
-                "ts_code": "600000.SH",
-                "side": "buy",
-                "quantity": 100,
-                "price": 10.0,
-                "candidate_pool_layer": "candidate",
-                "execution_source": "ashare_candidate_layer",
-            },
-            "ashare",
-            {"account": "acct"},
-            {"local_sim_slippage_bps": 0},
+        local_sim_ledger.LOCAL_SIM_TRADES.parent.mkdir(parents=True)
+        local_sim_ledger.LOCAL_SIM_TRADES.write_text(
+            json.dumps(
+                {
+                    "trade_id": "LSIM-STRATEGY",
+                    "order_id": "SIM-1",
+                    "idempotency_key": "idem-1",
+                    "market": "ashare",
+                    "account": "acct",
+                    "trade_date": "2026-07-06",
+                    "ts_code": "600000.SH",
+                    "side": "buy",
+                    "quantity": 100,
+                    "requested_price": 10.0,
+                    "filled_price": 10.0,
+                    "amount": 1000.0,
+                    "commission": 5.0,
+                    "stamp_duty": 0.0,
+                    "net_amount": 1005.0,
+                    "status": "filled",
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
+                    "fill_price_source": "order.market_snapshot.ask_price",
+                    "fill_price_source_class": "market_data",
+                    "trade_timestamp_bj": "2026-07-06T10:00:00+08:00",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
         )
 
         with patch("shared.review.pnl_summary.load_mark_prices_for_positions", return_value={"600000.SH": 12.0}) as loader:
@@ -189,12 +219,15 @@ class PnlSummaryTest(unittest.TestCase):
         )
 
         ashare = result["ashare"]
-        self.assertEqual(ashare["total_pnl"], -5.0)
-        self.assertEqual(ashare["market_value"], 1000.0)
-        self.assertEqual(ashare["open_position_count"], 1)
+        self.assertEqual(ashare["total_pnl"], 0.0)
+        self.assertEqual(ashare["market_value"], 0.0)
+        self.assertEqual(ashare["open_position_count"], 0)
         self.assertEqual(ashare["strategy_total_pnl"], 0.0)
         self.assertEqual(ashare["strategy_market_value"], 0.0)
         self.assertEqual(ashare["strategy_open_position_count"], 0)
+        self.assertEqual(ashare["audit_total_pnl"], -5.0)
+        self.assertEqual(ashare["audit_market_value"], 1000.0)
+        self.assertEqual(ashare["audit_open_position_count"], 1)
         self.assertEqual(ashare["sample_quality"]["validation_sample_count"], 1)
         self.assertEqual(ashare["sample_quality"]["strategy_sample_valid_count"], 0)
 
@@ -239,6 +272,7 @@ class PnlSummaryTest(unittest.TestCase):
         ashare = result["ashare"]
         self.assertEqual(ashare["total_pnl"], -5.0)
         self.assertEqual(ashare["strategy_total_pnl"], -5.0)
+        self.assertEqual(ashare["audit_total_pnl"], -5.0)
         self.assertEqual(ashare["sample_quality"]["validation_sample_count"], 0)
         self.assertEqual(ashare["sample_quality"]["strategy_sample_valid_count"], 1)
 
@@ -324,6 +358,7 @@ class PnlSummaryTest(unittest.TestCase):
 
         ashare = result["ashare"]
         self.assertEqual(ashare["strategy_total_pnl"], 0.0)
+        self.assertEqual(ashare["audit_total_pnl"], -5.0)
         self.assertEqual(ashare["sample_quality"]["validation_sample_count"], 1)
         self.assertEqual(ashare["sample_quality"]["strategy_sample_valid_count"], 0)
         self.assertEqual(ashare["sample_quality"]["by_reason"], {"missing_fill_price_provenance": 1})
@@ -366,8 +401,9 @@ class PnlSummaryTest(unittest.TestCase):
         )
 
         ashare = result["ashare"]
-        self.assertEqual(ashare["total_pnl"], -5.0)
+        self.assertEqual(ashare["total_pnl"], 0.0)
         self.assertEqual(ashare["strategy_total_pnl"], 0.0)
+        self.assertEqual(ashare["audit_total_pnl"], -5.0)
         self.assertEqual(ashare["sample_quality"]["validation_sample_count"], 1)
         self.assertEqual(ashare["sample_quality"]["strategy_sample_valid_count"], 0)
         self.assertEqual(ashare["sample_quality"]["by_reason"], {"outside_ashare_regular_session": 1})

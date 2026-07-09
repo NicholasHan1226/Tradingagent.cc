@@ -261,7 +261,8 @@ def check_sim_log(log_path: Path | None = None) -> Check:
     if payload and cadence == "5min" and filled_count > 0 and not latest_bar_time:
         latest["reason"] = "missing_5min_bar_time"
         return Check("cn_futures_sim_log", "warn", "CNFutures 5分钟模拟盘日志有成交但缺少 bar_time", latest, severity="warn")
-    if payload and payload.get("status") in {"ok", "market_closed"}:
+    state = str(payload.get("state") or payload.get("status") or "").lower().strip() if payload else ""
+    if payload and state in {"ok", "market_closed"}:
         return Check("cn_futures_sim_log", "pass", "CNFutures 模拟盘最近一次日志正常", latest, severity="info")
     if payload:
         return Check("cn_futures_sim_log", "warn", "CNFutures 模拟盘最近一次日志需要复核", latest, severity="warn")
@@ -314,9 +315,9 @@ def check_review(review_path: Path | None = None) -> Check:
     if details["latest_filled_count"] > 0:
         return Check("cn_futures_review", "pass", "CNFutures 最近复盘已有模拟成交样本", details, severity="info")
     if sample_phase == "no_night_session":
-        return Check("cn_futures_review", "warn", "CNFutures 最近复盘显示夜盘未授权风格主动不交易", details, severity="warn")
+        return Check("cn_futures_review", "pass", "CNFutures 最近复盘显示夜盘未授权风格主动不交易", details, severity="info")
     if sample_phase == "strategy_hold":
-        return Check("cn_futures_review", "warn", "CNFutures 最近复盘显示策略主动 hold，尚无模拟成交样本", details, severity="warn")
+        return Check("cn_futures_review", "pass", "CNFutures 最近复盘显示策略主动 hold，尚无模拟成交样本", details, severity="info")
     return Check("cn_futures_review", "warn", "CNFutures 最近复盘存在但尚无模拟成交样本", details, severity="warn")
 
 

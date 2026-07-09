@@ -16,7 +16,14 @@ def _normalize(value: Any) -> str:
 
 
 def _parse_trade_timestamp(row: dict[str, Any]) -> datetime | None:
-    raw = str(row.get("created_at") or row.get("timestamp") or row.get("filled_at") or "").strip()
+    raw = str(
+        row.get("trade_timestamp_bj")
+        or row.get("timestamp_bj")
+        or row.get("created_at")
+        or row.get("timestamp")
+        or row.get("filled_at")
+        or ""
+    ).strip()
     if not raw:
         return None
     try:

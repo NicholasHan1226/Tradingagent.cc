@@ -27,6 +27,17 @@ class LocalSimLedgerTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
+    def _valid_session(self):
+        return patch.object(
+            local_sim_ledger,
+            "_ashare_session_metadata",
+            return_value={
+                "trade_timestamp_bj": "2026-07-08T10:00:00+08:00",
+                "ashare_session_valid": True,
+                "ashare_session_rejection": "",
+            },
+        )
+
     def test_records_ashare_backup_fill_once_by_idempotency_key(self) -> None:
         order = {
             "order_id": "SIM-1",
@@ -37,9 +48,11 @@ class LocalSimLedgerTest(unittest.TestCase):
             "price": 10,
             "candidate_pool_layer": "candidate",
             "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "signal_card_price",
         }
-        first = local_sim_ledger.record_local_sim_order(order, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
-        second = local_sim_ledger.record_local_sim_order(order, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
+        with self._valid_session():
+            first = local_sim_ledger.record_local_sim_order(order, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
+            second = local_sim_ledger.record_local_sim_order(order, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
 
         self.assertEqual(first["status"], "filled")
         self.assertTrue(first["recorded"])
@@ -82,6 +95,7 @@ class LocalSimLedgerTest(unittest.TestCase):
             "price": 10,
             "candidate_pool_layer": "candidate",
             "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "signal_card_price",
         }
         second = {
             "order_id": "SIM-CASH-2",
@@ -92,10 +106,12 @@ class LocalSimLedgerTest(unittest.TestCase):
             "price": 10,
             "candidate_pool_layer": "candidate",
             "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "signal_card_price",
         }
 
-        filled = local_sim_ledger.record_local_sim_order(first, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
-        rejected = local_sim_ledger.record_local_sim_order(second, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
+        with self._valid_session():
+            filled = local_sim_ledger.record_local_sim_order(first, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
+            rejected = local_sim_ledger.record_local_sim_order(second, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
 
         self.assertEqual(filled["status"], "filled")
         self.assertEqual(rejected["status"], "rejected")
@@ -106,8 +122,77 @@ class LocalSimLedgerTest(unittest.TestCase):
             if line.strip()
         ]
         self.assertEqual(len(trades), 1)
-        pnl = local_sim_ledger.get_local_sim_pnl("acct")
+        pnl_payload = json.loads(local_sim_ledger.LOCAL_SIM_PNL.read_text(encoding="utf-8"))
+        pnl = pnl_payload["acct"]
         self.assertGreaterEqual(pnl["cash_available"], 0)
+
+    def test_validation_samples_do_not_consume_strategy_account_cash(self) -> None:
+        validation_order = {
+            "order_id": "SIM-VALIDATION",
+            "idempotency_key": "SIM:ashare:acct:20260701:600000.SH:buy:validation",
+            "ts_code": "600000.SH",
+            "side": "buy",
+            "quantity": 100,
+            "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+        }
+        strategy_order = {
+            "order_id": "SIM-STRATEGY",
+            "idempotency_key": "SIM:ashare:acct:20260702:600001.SH:buy:strategy",
+            "ts_code": "600001.SH",
+            "side": "buy",
+            "quantity": 100,
+            "price": 20,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "signal_card_price",
+        }
+
+        with patch.object(
+            local_sim_ledger,
+            "_ashare_session_metadata",
+            return_value={
+                "trade_timestamp_bj": "2026-07-07T16:26:00+08:00",
+                "ashare_session_valid": False,
+                "ashare_session_rejection": "outside_regular_session_09:30-11:30_13:00-14:57",
+            },
+        ):
+            validation = local_sim_ledger.record_local_sim_order(
+                validation_order,
+                "ashare",
+                {"account": "acct"},
+                {"local_sim_slippage_bps": 0},
+            )
+        with patch.object(
+            local_sim_ledger,
+            "_ashare_session_metadata",
+            return_value={
+                "trade_timestamp_bj": "2026-07-08T10:00:00+08:00",
+                "ashare_session_valid": True,
+                "ashare_session_rejection": "",
+            },
+        ):
+            strategy = local_sim_ledger.record_local_sim_order(
+                strategy_order,
+                "ashare",
+                {"account": "acct"},
+                {"local_sim_slippage_bps": 0},
+            )
+
+        self.assertEqual(validation["status"], "filled")
+        self.assertEqual(strategy["status"], "filled")
+        pnl = local_sim_ledger.get_local_sim_pnl("acct")
+        self.assertEqual(set(pnl["positions"]), {"600001.SH"})
+        self.assertEqual(pnl["cash_available"], 197995.0)
+        audit_pnl = local_sim_ledger.get_local_sim_pnl("acct", include_validation_samples=True)
+        self.assertEqual(set(audit_pnl["positions"]), {"600000.SH", "600001.SH"})
+        self.assertEqual(audit_pnl["cash_available"], 196990.0)
+        snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
+        self.assertEqual(snapshot["account_view"], "strategy_samples_only")
+        self.assertEqual(set(snapshot["positions_by_account"]["acct"]), {"600001.SH"})
+        self.assertEqual(set(snapshot["audit_positions_by_account"]["acct"]), {"600000.SH", "600001.SH"})
+        self.assertEqual(snapshot["audit_pnl"]["acct"]["cash_available"], 196990.0)
 
     def test_records_ashare_session_metadata_on_trade(self) -> None:
         order = {

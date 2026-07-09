@@ -214,7 +214,7 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
 
         check = live_check.check_review()
 
-        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["latest_sample_phase"], "strategy_hold")
         self.assertEqual(check.details["latest_top_hold_reason"], "below_threshold")
         self.assertIn("主动 hold", check.summary)
@@ -266,7 +266,7 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
 
         check = live_check.check_review()
 
-        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["latest_sample_phase"], "no_night_session")
         self.assertEqual(check.details["latest_top_hold_reason"], "style_session_not_allowed")
         self.assertIn("夜盘", check.summary)

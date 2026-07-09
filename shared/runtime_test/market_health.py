@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib import request
+from urllib import parse, request
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -556,6 +556,10 @@ def _check_local_sim_ledger() -> Check:
         snapshot = _load_json(snapshot_path, {}) if snapshot_path.exists() else {}
         position_count = _position_count_from_positions_payload(positions_payload if isinstance(positions_payload, dict) else {})
         snapshot_position_count = _position_count_from_snapshot(snapshot if isinstance(snapshot, dict) else {})
+        account_view = str(snapshot.get("account_view") or "") if isinstance(snapshot, dict) else ""
+        audit_position_count = _position_count_from_positions_payload(
+            snapshot.get("audit_positions_by_account") if isinstance(snapshot, dict) and isinstance(snapshot.get("audit_positions_by_account"), dict) else {}
+        )
         consistency_errors: list[str] = []
         if trades_path.exists() and snapshot_path.exists() and position_count != snapshot_position_count:
             consistency_errors.append("position_count_mismatch")
@@ -580,6 +584,8 @@ def _check_local_sim_ledger() -> Check:
             consistency_errors.append("cash_available_mismatch")
         invalid_strategy_samples = int(sample_quality.get("invalid_strategy_sample_count", 0) or 0)
         outside_session_only = _ashare_outside_session_only_samples(sample_quality)
+        if invalid_strategy_samples > 0 and position_count != snapshot_position_count and account_view != "strategy_samples_only":
+            consistency_errors.append("strategy_account_view_missing")
         ok = invalid_matches == 0 and not consistency_errors and (invalid_strategy_samples == 0 or outside_session_only)
         status = _status(ok)
         severity = "error"
@@ -606,8 +612,10 @@ def _check_local_sim_ledger() -> Check:
                 "accounts": sorted(pnl.keys()) if isinstance(pnl, dict) else [],
                 "invalid_code_matches": invalid_matches,
                 "sample_quality": sample_quality,
+                "account_view": account_view,
                 "position_count": position_count,
                 "snapshot_position_count": snapshot_position_count,
+                "audit_position_count": audit_position_count,
                 "consistency_errors": consistency_errors,
                 "missing_cash_accounts": missing_cash_accounts,
                 "cash_mismatch_accounts": cash_mismatch_accounts,
@@ -959,10 +967,10 @@ def _ashare_local_sample_quality(path: Path | None = None) -> dict[str, Any]:
 
 def _ashare_outside_session_only_samples(sample_quality: dict[str, Any]) -> bool:
     total = int(sample_quality.get("total_count", 0) or 0)
-    valid_count = int(sample_quality.get("strategy_sample_valid_count", 0) or 0)
+    invalid_count = int(sample_quality.get("invalid_strategy_sample_count", 0) or 0)
     by_reason = sample_quality.get("by_reason") if isinstance(sample_quality.get("by_reason"), dict) else {}
     outside_count = int(by_reason.get("outside_ashare_regular_session", 0) or 0)
-    return total > 0 and outside_count == total and valid_count == 0
+    return total > 0 and invalid_count > 0 and outside_count == invalid_count
 
 
 def _sim_ledger_summary(market: str) -> dict[str, Any]:
@@ -1222,6 +1230,49 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                         "reader_errors": reader.errors[-5:],
                     }
         elif market == "cn_futures":
+            api_base = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip().rstrip("/")
+            trade_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+            api_url = f"{api_base}/realtime_5min?{parse.urlencode({'market': 'Futures', 'date': trade_date})}"
+            try:
+                req = request.Request(api_url, headers={"Accept": "application/json"})
+                with request.urlopen(req, timeout=8) as resp:
+                    payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+                rows = payload.get("data") if isinstance(payload, dict) else payload
+            except Exception as exc:  # noqa: BLE001
+                rows = []
+                api_error = f"{exc.__class__.__name__}: {exc}"
+            else:
+                api_error = ""
+            if isinstance(rows, list):
+                priced_rows = []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    try:
+                        price = float(row.get("close") or row.get("price") or 0.0)
+                    except (TypeError, ValueError):
+                        price = 0.0
+                    symbol = str(row.get("symbol") or row.get("ts_code") or "").strip()
+                    if price > 0 and symbol:
+                        priced_rows.append(row)
+                if priced_rows:
+                    latest_bar_time = max(str(row.get("bar_time") or row.get("time") or "") for row in priced_rows)
+                    return {
+                        "status": "ok",
+                        "asset_count": len({str(row.get("symbol") or row.get("ts_code") or "") for row in priced_rows}),
+                        "priced_signal_count": len(priced_rows),
+                        "latest_bar_time": latest_bar_time,
+                        "reason": "",
+                        "market_session": _market_session_state(market),
+                        "sample": [
+                            {key: row.get(key) for key in ("symbol", "ts_code", "market", "trade_date", "bar_time", "close", "price", "provider")}
+                            for row in priced_rows[:5]
+                        ],
+                        "reader_degraded": False,
+                        "reader_errors": [],
+                        "query_source": "SharedSignals API",
+                        "url": api_url,
+                    }
             from CNFutures.adapter import CNFuturesAdapter, READER_MARKET
 
             adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 5})
@@ -1249,7 +1300,7 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                     for row in priced_rows[:5]
                 ],
                 "reader_degraded": False,
-                "reader_errors": [],
+                "reader_errors": [api_error] if api_error else [],
             }
         ok = bool(priced_rows) and not reader.degraded
         return {

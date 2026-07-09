@@ -31,6 +31,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - 盘前 dry-run: `shared/runtime_test/ashare_preopen_dry_run.py` 只读预演日线覆盖、最新高流动性普通 A 股小样本的候选池、资金计划和执行门禁；默认样本上限 10 只，wrapper 默认 90 秒超时，避免盘前检查全市场逐票扫描；只允许写 runtime_test 最新/历史报告，不得写 `signals/`、账本、pending、review 或实盘队列。
 - 盘前 dry-run 报告必须输出各段耗时，用于区分 SharedSignals 数据、候选池评分、资金计划和执行门禁哪一段拖慢开盘前检查。
 - 样本隔离: 已发生的非连续竞价时段 A股 simulated 成交保留为账户事实和链路验证样本，但必须归类为 `outside_ashare_regular_session`，不得进入策略胜率、方向命中、策略 PnL 或自我演化样本。
+- 活跃账户视图: A股 server-local 模拟盘默认读取 `strategy_samples_only`，只把交易时段内、来自 `candidate` 层、带成交价来源的策略样本计入现金、持仓、市值和收益；链路验证/盘外/缺来源样本仅作为 audit 视图展示，不得影响资金计划、目标持仓、机会成本换仓和看板累计收益。
 - 健康检查口径: 单纯已归类的 `outside_ashare_regular_session` 链路验证样本不视为运行故障，应作为 pass/info advisory 展示；这类样本不要求策略成交回执，但真实策略成交、失败订单、缺来源字段、非普通 A股代码、账本/快照不一致、真实策略样本后的资金计划滞后仍必须 warn/fail。
 - 卖出/换仓: `shared/orchestrator.py` 会在 A股模拟主循环中生成 simulated sell 压缩单；只卖可卖数量，优先处理止损、低分、超目标持仓压缩和轻量机会成本换仓，不触碰实盘。止损/压缩/机会成本换仓释放的资金可作为同轮替换买入预算，并写入 `capital_plan.replacement_budget`。机会成本只比较已通过风控候选与现有持仓的 `combined` 分数，默认候选分数至少 0.70 且分差至少 0.18 才触发，避免小分差频繁换仓。
 - Hermes 备用路径: 只有显式设置 `ASHARE_SIM_HERMES_ENABLED=1` 时，服务器才把模拟信号卡投递给 Mac Mini live executor `~/.hermes/scripts/sim-signal-executor.py`，由同花顺模拟盘执行并回写。

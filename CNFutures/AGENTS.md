@@ -25,3 +25,5 @@
 - MarketGraph 负责商品、宏观、跨市场研究证据。
 - CNFutures 只消费上述输入, 负责期货市场内的订单语义、模拟成交、风控前置和执行状态。
 - 盘中可交易合约池必须来自 SharedSignals API 的最新 `Futures` 5分钟批次；`fut_basic` 只作为合约元数据，不得作为盘中主 universe。
+- 开盘验收、实时健康和模拟盘巡检必须优先使用 SharedSignals API `/realtime_5min?market=Futures` 验证当前 5 分钟条线；SQLite read model 只允许显式诊断/测试开关下只读使用，不能作为生产自动兜底。
+- 策略主动 `hold`、全部风格因夜盘不允许而空跑、保证金 cap 或换月保护等预期内门禁，应进入 pass/info 的可解释空跑；只有数据缺失、实盘开关误启、成交缺 bar time、异常错误或应成交但无账本时才报警。

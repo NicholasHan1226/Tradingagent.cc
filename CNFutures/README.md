@@ -272,22 +272,25 @@ If not enough future 5-minute bars exist yet, labels remain
 `pending_future_bars` and the report recommends observation instead of
 parameter changes.
 
-Opening validation is also read-only:
+Opening validation is also read-only and API-first:
 
 ```bash
 python -m CNFutures.opening_validator --pretty
 ```
 
 It checks whether the current day/night session has started receiving Futures
-5-minute bars and whether symbol coverage is above the minimum threshold.
+5-minute bars and whether symbol coverage is above the minimum threshold. In
+production this check reads SharedSignals
+`/realtime_5min?market=Futures` first; direct SQLite read-model access is only
+for explicit diagnostic or test mode and must not become an automatic fallback.
 Optional wrapper:
 
 ```bash
 shared/wrappers/job_cn_futures_opening_validation.sh
 ```
 
-Its output explicitly reports `data_source="SharedSignals read_model"` and
-`read_only=true`; it does not collect futures data from TradingAgent.
+Its output explicitly reports the query source and `read_only=true`; it does
+not collect futures data from TradingAgent.
 
 Two additional read-only checks are available for opening-day operations:
 
@@ -389,6 +392,13 @@ python shared/runtime_test/cn_futures_live_check.py --pretty
 ```
 
 The report joins:
+
+Expected no-trade states such as strategy `hold`, no eligible night-session
+style, margin cap, rollover protection, or other documented risk gates are
+reported as pass/info observation states. They are not execution faults. Data
+missing, real trading unexpectedly enabled, filled 5-minute samples without a
+bar timestamp, runtime errors, or actionable fills missing from the ledger must
+remain warn/fail.
 
 - SharedSignals Futures 5-minute freshness from `tools/check_cn_futures_5min_freshness.py`
 - SharedSignals and TradingAgent cron entries

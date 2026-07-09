@@ -384,13 +384,17 @@ def get_local_sim_account_snapshot(
     symbol: str = "",
     trade_date: str = "",
     starting_cash: Any = ASHARE_SIM_DEFAULT_CASH,
+    include_validation_samples: bool = False,
 ) -> dict[str, Any]:
     """Return server-local simulated cash and T+1 sellable quantity snapshot."""
 
     account_name = _account_name(account or DEFAULT_ACCOUNT)
     with _lock():
+        trades = _load_trades_unlocked()
+        if not include_validation_samples:
+            trades = _strategy_trades_only(trades)
         return _sim_account_snapshot_unlocked(
-            _load_trades_unlocked(),
+            trades,
             account=account_name,
             symbol=symbol,
             trade_date=trade_date,
@@ -402,6 +406,23 @@ def _append_trade_unlocked(trade: LocalSimTrade) -> None:
     LOCAL_SIM_TRADES.parent.mkdir(parents=True, exist_ok=True)
     with LOCAL_SIM_TRADES.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(asdict(trade), ensure_ascii=False) + "\n")
+
+
+def _is_strategy_sample_trade(trade: dict[str, Any]) -> bool:
+    """Return whether a trade may consume active A-share strategy capital."""
+
+    try:
+        from shared.review.sample_quality import classify_trade_sample
+    except Exception:
+        return True
+    try:
+        return bool(classify_trade_sample(trade).get("strategy_sample_valid"))
+    except Exception:
+        return True
+
+
+def _strategy_trades_only(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [trade for trade in trades if _is_strategy_sample_trade(trade)]
 
 
 def _replay_account(
@@ -493,11 +514,14 @@ def _replay_account(
 
 def _persist_unlocked(trades: list[dict[str, Any]]) -> None:
     accounts = sorted({str(t.get("account") or DEFAULT_ACCOUNT) for t in trades if t.get("account")})
-    positions = {account: _replay_account(trades, account)["positions"] for account in accounts}
-    pnl = {account: _replay_account(trades, account) for account in accounts}
+    strategy_trades = _strategy_trades_only(trades)
+    positions = {account: _replay_account(strategy_trades, account)["positions"] for account in accounts}
+    pnl = {account: _replay_account(strategy_trades, account) for account in accounts}
+    audit_positions = {account: _replay_account(trades, account)["positions"] for account in accounts}
+    audit_pnl = {account: _replay_account(trades, account) for account in accounts}
     LOCAL_SIM_POSITIONS.write_text(json.dumps(positions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     LOCAL_SIM_PNL.write_text(json.dumps(pnl, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    _write_positions_snapshot(positions, pnl)
+    _write_positions_snapshot(positions, pnl, audit_positions=audit_positions, audit_pnl=audit_pnl)
 
 
 def _write_positions_snapshot(
@@ -505,6 +529,8 @@ def _write_positions_snapshot(
     pnl: dict[str, dict[str, Any]],
     *,
     bootstrap: dict[str, Any] | None = None,
+    audit_positions: dict[str, dict[str, Any]] | None = None,
+    audit_pnl: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     flat_positions: list[dict[str, Any]] = []
     for account, account_positions in positions.items():
@@ -531,6 +557,9 @@ def _write_positions_snapshot(
         "positions": flat_positions,
         "positions_by_account": positions,
         "pnl": pnl,
+        "account_view": "strategy_samples_only",
+        "audit_positions_by_account": audit_positions or positions,
+        "audit_pnl": audit_pnl or pnl,
     }
     if bootstrap:
         payload.update(bootstrap)
@@ -711,7 +740,7 @@ def record_local_sim_order(
             or ASHARE_SIM_DEFAULT_CASH
         )
         if side == "buy":
-            current = _replay_account(trades, account_name, starting_cash=starting_cash)
+            current = _replay_account(_strategy_trades_only(trades), account_name, starting_cash=starting_cash)
             cash_available = _safe_float(current.get("cash_available"), 0.0)
             if cash_available + 1e-9 < net_amount:
                 return {
@@ -725,7 +754,7 @@ def record_local_sim_order(
                     "required_cash": round(net_amount, 2),
                 }
         if side == "sell":
-            current = _replay_account(trades, account_name, starting_cash=starting_cash)["positions"].get(code, {})
+            current = _replay_account(_strategy_trades_only(trades), account_name, starting_cash=starting_cash)["positions"].get(code, {})
             if quantity > _safe_int(current.get("quantity"), 0):
                 return {"status": "rejected", "recorded": False, "reason": f"sell quantity {quantity} exceeds local simulated position {current.get('quantity', 0)} for {code}", "account": account_name}
         _append_trade_unlocked(trade)
@@ -768,9 +797,12 @@ def get_local_sim_pnl(
     account: str | None = None,
     mark_prices: dict[str, float] | None = None,
     trade_filter: Any | None = None,
+    include_validation_samples: bool = False,
 ) -> dict[str, Any]:
     with _lock():
         trades = _load_trades_unlocked()
         if callable(trade_filter):
             trades = [trade for trade in trades if trade_filter(trade)]
+        elif not include_validation_samples:
+            trades = _strategy_trades_only(trades)
         return _replay_account(trades, account, mark_prices=mark_prices)

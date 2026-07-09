@@ -269,6 +269,11 @@ def _ashare_local_sim_summary(
             local_sim_ledger.LOCAL_SIM_TRADES = local_trades_path
         try:
             pnl = local_sim_ledger.get_local_sim_pnl(account=None, mark_prices=mark_prices)
+            audit_pnl = local_sim_ledger.get_local_sim_pnl(
+                account=None,
+                mark_prices=mark_prices,
+                include_validation_samples=True,
+            )
             strategy_pnl = local_sim_ledger.get_local_sim_pnl(
                 account=None,
                 mark_prices=mark_prices,
@@ -285,10 +290,15 @@ def _ashare_local_sim_summary(
             "strategy_realized_pnl": 0.0,
             "strategy_unrealized_pnl": 0.0,
             "strategy_total_pnl": 0.0,
+            "audit_realized_pnl": 0.0,
+            "audit_unrealized_pnl": 0.0,
+            "audit_total_pnl": 0.0,
             "market_value": 0.0,
             "strategy_market_value": 0.0,
+            "audit_market_value": 0.0,
             "open_position_count": 0,
             "strategy_open_position_count": 0,
+            "audit_open_position_count": 0,
             "missing_mark_count": 0,
             "sample_quality": {
                 "total_count": 0,
@@ -321,14 +331,19 @@ def _ashare_local_sim_summary(
         "strategy_realized_pnl": round(_safe_float(strategy_pnl.get("realized_pnl")), 6),
         "strategy_unrealized_pnl": round(_safe_float(strategy_pnl.get("unrealized_pnl")), 6),
         "strategy_total_pnl": round(_safe_float(strategy_pnl.get("total_pnl")), 6),
+        "audit_realized_pnl": round(_safe_float(audit_pnl.get("realized_pnl")), 6),
+        "audit_unrealized_pnl": round(_safe_float(audit_pnl.get("unrealized_pnl")), 6),
+        "audit_total_pnl": round(_safe_float(audit_pnl.get("total_pnl")), 6),
         "market_value": round(_safe_float(pnl.get("market_value")), 6),
         "strategy_market_value": round(_safe_float(strategy_pnl.get("market_value")), 6),
+        "audit_market_value": round(_safe_float(audit_pnl.get("market_value")), 6),
         "equity": round(_safe_float(pnl.get("equity")), 6)
         if "equity" in pnl
         else None,
         "cash": round(_safe_float(pnl.get("cash")), 6) if "cash" in pnl else None,
         "open_position_count": len(positions),
         "strategy_open_position_count": len(strategy_pnl.get("positions") or {}),
+        "audit_open_position_count": len(audit_pnl.get("positions") or {}),
         "missing_mark_count": missing_mark_count,
         "sample_quality": sample_quality,
         "pnl_source": pnl_source,

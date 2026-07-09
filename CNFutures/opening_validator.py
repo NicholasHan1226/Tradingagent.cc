@@ -8,6 +8,9 @@ import json
 import os
 import sqlite3
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -32,6 +35,7 @@ DEFAULT_RECEIPT_PATH = Path(__file__).resolve().parents[1] / "signals" / "sim_ex
 DEFAULT_STYLE_WEIGHTS_PATH = Path(__file__).resolve().parents[1] / "shared" / "review" / "cn_futures" / "style_weights.json"
 CN_TZ = timezone(timedelta(hours=8))
 READER_MARKET = "Futures"
+DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
 
 
 def _now_cn() -> datetime:
@@ -399,6 +403,51 @@ def _query_session_bars_via_reader(
     }
 
 
+def _query_session_bars_via_api(start: datetime, now: datetime, *, min_symbols: int) -> dict[str, Any]:
+    base_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip().rstrip("/")
+    trade_date = now.strftime("%Y%m%d")
+    url = f"{base_url}/realtime_5min?{urllib.parse.urlencode({'market': READER_MARKET, 'date': trade_date})}"
+    try:
+        req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except (OSError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+        return {"error": f"sharedsignals_api_error:{exc.__class__.__name__}: {exc}", "symbol_count": 0, "bar_count": 0, "query_source": "SharedSignals API", "url": url}
+    rows = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return {"error": "sharedsignals_api_invalid_payload", "symbol_count": 0, "bar_count": 0, "query_source": "SharedSignals API", "url": url}
+    start_text = start.strftime("%Y-%m-%d %H:%M:%S")
+    now_text = now.strftime("%Y-%m-%d %H:%M:%S")
+    priced: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        bar_time = str(row.get("bar_time") or row.get("time") or "")
+        if bar_time and (bar_time < start_text or bar_time > now_text):
+            continue
+        try:
+            close = float(row.get("close") or row.get("price") or 0.0)
+        except (TypeError, ValueError):
+            close = 0.0
+        if close <= 0:
+            continue
+        symbol = str(row.get("symbol") or row.get("ts_code") or "").strip().upper()
+        if not is_executable_contract_symbol(symbol):
+            continue
+        priced.append(row)
+    symbols = sorted({str(row.get("symbol") or row.get("ts_code") or "").strip().upper() for row in priced})
+    times = [str(row.get("bar_time") or row.get("time") or "") for row in priced if row.get("bar_time") or row.get("time")]
+    return {
+        "bar_count": len(priced),
+        "symbol_count": len(symbols),
+        "first_bar_time": min(times) if times else None,
+        "latest_bar_time": max(times) if times else None,
+        "query_source": "SharedSignals API",
+        "url": url,
+        "api_row_count": len(rows),
+    }
+
+
 def _allow_sqlite_fallback(sqlite_db: Path) -> bool:
     if not sqlite_db.exists():
         return False
@@ -428,6 +477,13 @@ def _query_daily_bars(db_path: Path, trade_date: str, *, reader: Any | None = No
 
 
 def _query_session_bars(db_path: Path, start: datetime, now: datetime, *, reader: Any | None = None, min_symbols: int = 4) -> dict[str, Any]:
+    api_payload = _query_session_bars_via_api(start, now, min_symbols=min_symbols)
+    if (
+        not api_payload.get("error")
+        and int(api_payload.get("bar_count") or 0) > 0
+        and int(api_payload.get("symbol_count") or 0) >= max(1, int(min_symbols))
+    ):
+        return api_payload
     payload = _query_session_bars_via_reader(_reader_for_db(db_path, reader), start, now, min_symbols=min_symbols)
     if (
         not payload.get("error")
