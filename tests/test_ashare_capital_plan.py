@@ -189,6 +189,37 @@ class AshareCapitalPlanTest(unittest.TestCase):
         self.assertIn("thin_candidate_quality", data["reasons"],
                       "Cautious mode must record explicit reason")
 
+    def test_sample_collection_allows_probe_position_before_min_samples(self) -> None:
+        plan = plan_capital(
+            [
+                {"ts_code": "300759.SZ", "value": 57589.0},
+                {"ts_code": "600030.SH", "value": 58800.0},
+            ],
+            83461.87,
+            candidates=[
+                {"ts_code": "300418.SZ", "combined": 0.60},
+            ],
+            dynamic=True,
+            market_context={
+                "trend": "neutral",
+                "risk_rejection_rate": 0.0,
+                "data_issue_rate": 0.0,
+                "recent_win_rate": 0.50,
+                "strategy_sample_valid_count": 2,
+                "min_strategy_samples": 5,
+            },
+        )
+
+        data = plan.to_dict()
+
+        self.assertEqual(data["risk_mode"], "sample_collection")
+        self.assertEqual(data["target_positions"], 3)
+        self.assertEqual(data["max_new_positions"], 1)
+        self.assertEqual(len(data["suggested_buys"]), 1)
+        self.assertGreaterEqual(data["suggested_buys"][0]["allocation"], 20000.0)
+        self.assertLessEqual(data["suggested_buys"][0]["allocation"], 35000.0)
+        self.assertIn("sample_collection_before_min_samples", data["reasons"])
+
     def test_weak_candidates_stay_full_cash_defensive(self) -> None:
         """弱候选/高风险场景仍应保留全现金防守逻辑（已有行为回归测试）."""
         plan = plan_capital(

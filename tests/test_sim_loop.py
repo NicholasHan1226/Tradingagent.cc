@@ -899,6 +899,49 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["capital_plan_decision"]["account_cash_available"], 82683.89)
         self.assertGreater(result["capital_plan_decision"]["position_capacity"], 0)
 
+    def test_run_sim_loop_uses_sample_count_for_ashare_probe_position(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                (symbol, {"combined": 0.60, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        strategy_positions = [
+            {"ts_code": "300759.SZ", "quantity": 1900, "sellable_quantity": 0, "avg_price": 30.34, "last_price": 30.31, "market_value": 57589.0},
+            {"ts_code": "600030.SH", "quantity": 2100, "sellable_quantity": 0, "avg_price": 28.03, "last_price": 28.00, "market_value": 58800.0},
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(
+                ["300418.SZ"],
+                max_candidates=1,
+                score_universe_limit=1,
+                max_portfolio_positions=3,
+                positions=strategy_positions,
+                cash_available=83461.87,
+                strategy_positions=strategy_positions,
+                strategy_cash_available=83461.87,
+                sample_adjustment={
+                    "strategy_sample_valid_count": 2,
+                    "min_strategy_samples": 5,
+                },
+            ),
+            "20260709",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_sample_collection",
+        )
+
+        self.assertEqual(result["capital_plan"]["risk_mode"], "sample_collection")
+        self.assertEqual(result["capital_plan"]["max_new_positions"], 1)
+        self.assertEqual(result["capital_plan_decision"]["position_capacity"], 1)
+        self.assertEqual(result["order_count"], 1)
+        self.assertEqual(result["filled_count"], 1)
+        self.assertEqual(self.executed_orders[0]["ts_code"], "300418.SZ")
+
     def test_run_sim_loop_compresses_excess_ashare_positions_and_logs_capital_plan(self) -> None:
         deps = self._multi_candidate_deps()
 

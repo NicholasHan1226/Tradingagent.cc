@@ -757,6 +757,7 @@ def _ashare_dynamic_capital_plan(
     scores_by_symbol: dict[str, dict[str, Any]],
     skipped_candidates: list[dict[str, Any]],
     risk_rejections: list[dict[str, Any]],
+    sample_adjustment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if str(market).lower() != "ashare":
         return {"enabled": False, "market": market}
@@ -791,6 +792,10 @@ def _ashare_dynamic_capital_plan(
         score["belief_score"] = _safe_float(order.get("belief_score"), score.get("belief_score", 0.0))
         candidates.append(score)
 
+    sample_context = sample_adjustment if isinstance(sample_adjustment, dict) else {}
+    min_strategy_samples = _safe_float(sample_context.get("min_strategy_samples"), 5.0)
+    if min_strategy_samples <= 0:
+        min_strategy_samples = 5.0
     plan = plan_capital(
         holdings,
         cash_value,
@@ -800,6 +805,11 @@ def _ashare_dynamic_capital_plan(
         market_context={
             "risk_rejection_rate": len(risk_rejections) / total_checked,
             "data_issue_rate": len(skipped_candidates) / total_checked,
+            "strategy_sample_valid_count": _safe_float(
+                sample_context.get("strategy_sample_valid_count"),
+                min_strategy_samples,
+            ),
+            "min_strategy_samples": min_strategy_samples,
         },
     ).to_dict()
     plan["enabled"] = True
@@ -2833,6 +2843,7 @@ def run_sim_loop(
         scores_by_symbol=scores_by_symbol,
         skipped_candidates=skipped_candidates,
         risk_rejections=risk_rejections,
+        sample_adjustment=capital_plan_sample_adjustment,
     )
     if capital_plan_sample_adjustment:
         capital_plan["sample_adjustment"] = capital_plan_sample_adjustment

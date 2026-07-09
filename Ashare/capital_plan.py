@@ -5,6 +5,8 @@ Produces a structured capital allocation plan each trading day:
 * Allocate to 2-3 positions (50 000 - 70 000 RMB each).
 * Dynamic cash buffer by risk mode (aggressive ~17.5%, balanced 25% capped at
   50 000, cautious 45%, defensive 100% for weak-candidate / high-risk).
+* Before enough valid strategy samples exist, allow one smaller probe position
+  only when data/risk gates are clean and candidate quality is acceptable.
 * Suggest 204001 (GC-001) reverse repo for idle funds at close.
 
 Functions
@@ -131,6 +133,8 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
     risk_rejection_rate = _context_float(context, "risk_rejection_rate")
     data_issue_rate = _context_float(context, "data_issue_rate")
     recent_win_rate = _context_float(context, "recent_win_rate", 0.5)
+    strategy_sample_valid_count = _context_float(context, "strategy_sample_valid_count", 0.0)
+    min_strategy_samples = _context_float(context, "min_strategy_samples", 0.0)
     trend = str(context.get("trend") or context.get("market_trend") or "").strip().lower()
     reasons: list[str] = []
 
@@ -159,6 +163,25 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
             "max_single_position_pct": 0.0,
             "max_cash_reserve": None,
             "reasons": reasons,
+        }
+
+    sample_collection = (
+        min_strategy_samples > 0
+        and strategy_sample_valid_count < min_strategy_samples
+        and 0.55 <= top < 0.65
+        and risk_rejection_rate <= 0.25
+        and data_issue_rate <= 0.25
+        and recent_win_rate >= 0.45
+        and trend not in {"bearish", "risk_off"}
+    )
+    if sample_collection:
+        return {
+            "risk_mode": "sample_collection",
+            "target_positions": 3,
+            "cash_reserve_pct": 0.15,
+            "max_single_position_pct": 0.175,
+            "max_cash_reserve": 30000,
+            "reasons": ["sample_collection_before_min_samples"],
         }
 
     max_cash_reserve = None
@@ -252,6 +275,9 @@ def plan_capital(
         risk_mode = str(profile["risk_mode"])
         reasons = list(profile.get("reasons", []))
         max_cash_reserve = profile.get("max_cash_reserve")
+        if risk_mode == "sample_collection":
+            min_position_value = max(5_000.0, min(20_000.0, float(total_capital) * 0.10))
+            max_position_value = max(min_position_value, min(35_000.0, float(total_capital) * 0.175))
 
     max_new = target_positions - n_holdings
     if max_new < 0:
