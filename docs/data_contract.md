@@ -7,6 +7,22 @@ This contract covers the data access layer used by screening and market
 validation logic. It does not change execution, accounting, risk, or portfolio
 write paths.
 
+## MarketGraph Research Inputs
+
+MarketGraph is an optional research-evidence provider, not a market-data
+collector or execution path for TradingAgent. TradingAgent may call
+`MARKETGRAPH_API_URL` for read-only research evidence such as A-share regime
+context and PM independent research probabilities. If the API requires
+authorization, `MARKETGRAPH_API_TOKEN` must be provided by TradingAgent's own
+runtime environment. TradingAgent cron must not source MarketGraph deploy env
+files, so the three systems remain independently deployable.
+
+When MarketGraph regime, event impact, or sentiment research rows are missing
+or unauthorized, A-share scoring records the dimension as missing evidence and
+falls back to neutral/degraded scoring. It must not treat missing research
+evidence as an execution failure, and it must not bypass local candidate,
+funding, risk, or execution gates.
+
 ## Canonical SharedSignals Inputs
 
 - SharedSignals API:

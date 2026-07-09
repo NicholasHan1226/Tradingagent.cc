@@ -24,6 +24,13 @@ from shared.data.reader import (  # noqa: E402
 from shared.screening import six_dimension_scorer  # noqa: E402
 
 
+class FakeMarketGraphAPIClient:
+    errors: list[str] = []
+
+    def get_regime(self):
+        return {"regime": "growth", "regime_confidence": 0.8}
+
+
 class TestSharedSignalsReader(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -773,6 +780,26 @@ class APIOnlyScoringReader(EmptyScoringReader):
 
 
 class TestSixDimensionScorerWithReader(unittest.TestCase):
+    def test_marketgraph_api_regime_feeds_macro_dimension(self) -> None:
+        reader = TradingagentDataReader(
+            api_client=None,
+            marketgraph=MarketGraphCSVReader(
+                Path("/nonexistent"),
+                api_client=None,
+                marketgraph_client=FakeMarketGraphAPIClient(),
+                api_enabled=False,
+            ),
+        )
+
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260629",
+            data_reader=reader,
+        )
+
+        self.assertNotIn("macro", scores["missing_evidence_dimensions"])
+        self.assertGreater(scores["macro"], 0.5)
+
     def test_scoring_uses_reader_and_preserves_formula(self) -> None:
         scores = six_dimension_scorer.score_stock(
             "600000.SH",

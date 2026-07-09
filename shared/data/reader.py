@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .marketgraph_api import MarketGraphAPIClient
 from .shared_signals_api import SharedSignalsAPIClient
 
 
@@ -206,12 +207,14 @@ class MarketGraphCSVReader:
         self,
         root: Path | str,
         api_client: SharedSignalsAPIClient | None = None,
+        marketgraph_client: MarketGraphAPIClient | None = None,
         api_enabled: bool | None = None,
     ):
         self.root = Path(root)
         data_intake = self.root / "data" / "intake"
         self.intake = data_intake if data_intake.exists() else self.root / "intake"
         self._api_client = api_client
+        self._marketgraph_client = marketgraph_client
         self._api_enabled = bool(api_client) if api_enabled is None else bool(api_enabled)
         self._logger = logging.getLogger("tradingagent.data")
 
@@ -296,6 +299,16 @@ class MarketGraphCSVReader:
         return []
 
     def get_regime(self) -> dict[str, Any] | None:
+        if self._marketgraph_client is not None:
+            before_error_count = len(getattr(self._marketgraph_client, "errors", []))
+            row = self._marketgraph_client.get_regime()
+            if row:
+                return row
+            if len(getattr(self._marketgraph_client, "errors", [])) > before_error_count:
+                self._logger.warning(
+                    "MarketGraphCSVReader all_weather_regime.csv MarketGraph API call failed; fail-closed: %s",
+                    self._marketgraph_client.errors[-1],
+                )
         api_rows = self._api_rows(
             "all_weather_regime.csv",
             [
@@ -373,9 +386,11 @@ class TradingagentDataReader:
         self._shared = shared
         self._marketgraph = marketgraph
         api_url = os.environ.get("SHAREDSIGNALS_API_URL", "").strip()
+        marketgraph_api_url = os.environ.get("MARKETGRAPH_API_URL", "").strip()
         self._api_client = api_client
         if self._api_client is None and api_url:
             self._api_client = SharedSignalsAPIClient(base_url=api_url)
+        self._marketgraph_api_client = MarketGraphAPIClient(base_url=marketgraph_api_url) if marketgraph_api_url else None
         self.errors: list[str] = []
         self.stale = False
         self.degraded = False
@@ -498,6 +513,7 @@ class TradingagentDataReader:
             self._marketgraph = MarketGraphCSVReader(
                 Path(marketgraph_data) if marketgraph_data else Path("/nonexistent/tradingagent/marketgraph_api_only"),
                 api_client=self._api_client,
+                marketgraph_client=self._marketgraph_api_client,
             )
         return self._marketgraph
 
