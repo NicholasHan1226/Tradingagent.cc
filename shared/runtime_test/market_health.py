@@ -51,7 +51,7 @@ SIM_LOG_NAMES = {
     "pm": "pm_sim.log",
     "us": "us_sim.log",
     "hk": "hk_sim.log",
-    "cn_futures": "cn_futures_sim.log",
+    "cn_futures": "job_cn_futures_sim.log",
 }
 SIM_WRAPPERS = {
     "ashare": "job_ashare_sim_exec.sh",

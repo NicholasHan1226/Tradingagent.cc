@@ -468,6 +468,18 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["ledger"]["trade_rows"], 1)
         self.assertEqual(check.details["latest_cron_result"]["payload"]["signals"], 5)
 
+    def test_cn_futures_sim_market_loop_reads_governed_wrapper_log(self) -> None:
+        log = self.root / "shared/logs/cron/job_cn_futures_sim.log"
+        log.parent.mkdir(parents=True)
+        log.write_text('noise\n{"market":"cn_futures","status":"ok","hold_count":3}\n', encoding="utf-8")
+
+        with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "priced_signal_count": 5}):
+            with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):
+                check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh")
+
+        self.assertEqual(check.details["latest_cron_result"]["path"], "shared/logs/cron/job_cn_futures_sim.log")
+        self.assertEqual(check.details["latest_cron_result"]["payload"]["hold_count"], 3)
+
     def test_sim_market_loop_fails_when_hk_has_no_data(self) -> None:
         with patch.object(market_health, "_probe_market_data", return_value={"status": "fail", "priced_signal_count": 0}):
             check = market_health._check_sim_market_loop("hk", "job_hk_sim.sh")
