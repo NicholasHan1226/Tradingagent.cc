@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-09 (A股成交后资金刷新/前向验证与 CNFutures 5分钟 replay)
+> 最后更新：2026-07-09 (前端机会漏斗事件源 + 后端机会事件写入器)
 
 ---
 
@@ -136,6 +136,12 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-09 后端机会漏斗事件写入器
+
+- [x] 新增 `shared/review/opportunity_funnel.py`，统一规范机会事件 JSONL：`发现 → 研判 → 风控 → 待确认 → 结果`，状态统一为 `进入/通过/等待/成交/机会/拦截/复盘`，默认写入前端只读路径 `shared/review/opportunities/funnel_events.jsonl`。
+- [x] 新增 `shared/runtime_test/sync_opportunity_funnel_events.py`，可从 `signals/{pending,claimed,running,filled,partial,failed,expired,cancelled}` 信号状态目录同步机会事件，支持 dry-run，`--apply` 写入时用稳定 `event_id` 去重；该工具只生成复盘/看板事件，不移动信号、不触发成交、不修改队列状态。
+- [x] 覆盖测试 `tests/test_opportunity_funnel_events.py` 与 `tests/test_sync_opportunity_funnel_events.py`，验证阶段/状态规范化、前端读取路径、坏 JSONL 容错、从信号卡生成阶段路径，以及重复运行幂等。
 
 ### 2026-07-09 A股成交后资金刷新 + 前向验证；CNFutures 5分钟 replay
 

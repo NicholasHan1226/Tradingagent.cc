@@ -14,6 +14,7 @@
 - attribution.py — 收益归因到维度/策略/条件
 - benchmark.py — 基准追踪(沪深300/创业板/买入持有/上一周期)
 - goals.yaml — 阶段目标(stage_1_sim → stage_4_scaled)
+- opportunity_funnel.py — 机会漏斗事件写入规范; 只写 `shared/review/opportunities/funnel_events.jsonl`, 供前端动态漏斗播放, 不改变信号/订单状态
 - self_heal_loop.py — 闭环自愈系统(巡逻→修复→记忆→复盘→迭代)
 
 ## 三组对比框架
