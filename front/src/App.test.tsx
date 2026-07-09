@@ -31,7 +31,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('待确认').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('确认').length).toBeGreaterThan(0)
     expect(screen.queryByRole('tablist', { name: '收益区间' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '机会从全市场进入，只把可执行结果留在首页。' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '正在推进' })).toBeInTheDocument()
@@ -447,10 +447,9 @@ describe('App navigation and result-first dashboard', () => {
 
     await waitFor(() => expect(screen.getAllByText('600519.SH').length).toBeGreaterThan(0))
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('初筛').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('研究').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('研判').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('待确认').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('确认').length).toBeGreaterThan(0)
     expect(screen.getAllByText('成交').length).toBeGreaterThan(0)
     expect(screen.getAllByText('放弃').length).toBeGreaterThan(0)
     expect(screen.getByLabelText('最近管道事件')).toBeInTheDocument()
@@ -465,8 +464,8 @@ describe('App navigation and result-first dashboard', () => {
 
     expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
-    expect(within(card).getAllByText('实盘未连接').length).toBeGreaterThan(0)
-    expect(within(card).getByText('实盘接口已预留。完成授权、风控和回执验证后再展示真实资金。')).toBeInTheDocument()
+    expect(within(card).getAllByText('等待接入').length).toBeGreaterThan(0)
+    expect(within(card).getByText('接入完成后，这里会切换为真实账户的收益、回撤和持仓结果。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -487,7 +486,7 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘未连接').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('等待接入').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

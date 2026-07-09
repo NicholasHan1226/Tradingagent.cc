@@ -6,11 +6,11 @@ const OUTCOME_LABELS = ['成交', '观察中', '复盘', '放弃']
 const MAX_ANIMATED_SIGNALS = 64
 const MAX_VISIBLE_LABELS = 3
 const FLOW_STAGES = [
-  { label: '发现', fallbackIndex: 0 },
-  { label: '初筛', fallbackIndex: 1 },
-  { label: '研究', fallbackIndex: 1 },
-  { label: '风控', fallbackIndex: 2 },
-  { label: '待确认', fallbackIndex: 3 },
+  { eventStage: '发现', fallbackIndex: 0, label: '发现' },
+  { eventStage: '研判', fallbackIndex: 1, label: '研判' },
+  { eventStage: '风控', fallbackIndex: 2, label: '风控' },
+  { eventStage: '待确认', fallbackIndex: 3, label: '确认' },
+  { eventStage: '结果', fallbackIndex: 4, label: '成交' },
 ] as const
 
 export function SignalFunnelFlow({
@@ -82,6 +82,7 @@ export function SignalFunnelFlow({
         : hasHoldingContext
           ? buildHoldingParticles(holdings)
           : []
+  const signalLanes = hasEventSource ? getSignalLaneRows(pipelineEvents) : []
   const latestTapeItems = hasHoldingContext
     ? getHoldingTape(holdings)
     : hasEventSource
@@ -107,7 +108,7 @@ export function SignalFunnelFlow({
 
   return (
     <section className="signal-flow-module" aria-label={moduleTitle}>
-      <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow' : ''} ${hasHoldingContext ? 'mode-holding-context mode-holding-flow' : ''} ${hasFlowVolume ? '' : 'is-empty-flow'}`}>
+      <div className={`signal-flow-board real-funnel-board mode-${funnel.mode} ${hasEventSource ? 'mode-real-flow has-signal-lanes' : ''} ${hasHoldingContext ? 'mode-holding-context mode-holding-flow' : ''} ${hasFlowVolume ? '' : 'is-empty-flow'}`}>
         <div className="flow-caption">
           <span>{moduleTitle} <b>{modeLabel}</b></span>
           <strong>{captionText}</strong>
@@ -201,6 +202,32 @@ export function SignalFunnelFlow({
                   <b />
                 </i>
               ))}
+              {signalLanes.length > 0 && (
+                <div className="event-lane-field" aria-hidden="true">
+                  {signalLanes.map((lane, laneIndex) => (
+                    <span
+                      className={`event-lane-row ${lane.tone}`}
+                      key={lane.id}
+                      style={{
+                        '--lane-delay': `${laneIndex * 0.32}s`,
+                        '--lane-y': `${18 + laneIndex * 24}px`,
+                      } as CSSProperties}
+                    >
+                      <b>{lane.symbol}</b>
+                      <i>
+                        {FLOW_STAGES.map((stage, stageIndex) => (
+                          <em
+                            className={lane.stageKeys.has(stage.eventStage) ? 'passed' : 'waiting'}
+                            key={`${lane.id}-${stage.eventStage}`}
+                            style={{ '--dot-delay': `${laneIndex * 0.22 + stageIndex * 0.18}s` } as CSSProperties}
+                          />
+                        ))}
+                      </i>
+                      <strong>{lane.result}</strong>
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="flow-stage-axis" aria-hidden="true">
                 {visualStages.map((stage, index) => (
                   <span className={stage.dropped > 0 ? 'has-loss' : ''} key={`${stage.label}-axis`}>
@@ -439,7 +466,6 @@ function getEventFlow(events: FunnelEvent[]): EventFlow | null {
 
   const signals = Object.values(bySignal)
   const hasStage = (rows: FunnelEvent[], stage: FunnelEvent['stage']) => rows.some((event) => event.stage === stage)
-  const hasAnyStage = (rows: FunnelEvent[], stages: FunnelEvent['stage'][]) => stages.some((stage) => hasStage(rows, stage))
   const terminalRows = signals
     .map((rows) => getLatestEvent(rows, (event) => event.stage === '结果' || event.terminal === true))
     .filter((row): row is FunnelEvent => Boolean(row))
@@ -448,10 +474,10 @@ function getEventFlow(events: FunnelEvent[]): EventFlow | null {
     total: signals.length,
     stages: {
       发现: signals.filter((rows) => hasStage(rows, '发现')).length,
-      初筛: signals.filter((rows) => hasAnyStage(rows, ['研判', '风控', '待确认', '结果'])).length,
-      研究: signals.filter((rows) => hasStage(rows, '研判')).length,
+      研判: signals.filter((rows) => hasStage(rows, '研判')).length,
       风控: signals.filter((rows) => hasStage(rows, '风控')).length,
-      待确认: signals.filter((rows) => hasStage(rows, '待确认')).length,
+      确认: signals.filter((rows) => hasStage(rows, '待确认')).length,
+      成交: terminalRows.filter((event) => event.status === '成交').length,
     },
     outcomes: {
       executed: terminalRows.filter((event) => event.status === '成交').length,
@@ -501,7 +527,8 @@ function eventStageWidth(count = 0, total: number) {
 function getEventStageHint(label: string, count: number, total: number, dropped: number) {
   if (count <= 0) return '等待'
   if (label === '发现') return '进入'
-  if (label === '待确认') return '准备'
+  if (label === '确认') return '准备'
+  if (label === '成交') return '兑现'
   if (dropped > 0) return `留下 ${count}`
   return `${Math.round((count / Math.max(1, total)) * 100)}%`
 }
@@ -595,6 +622,38 @@ function buildEventParticles(events: FunnelEvent[]) {
       tone,
     }
   })
+}
+
+function getSignalLaneRows(events: FunnelEvent[]) {
+  return getOpportunityEventGroups(events)
+    .slice(-5)
+    .map((rows, index) => {
+      const latest = getLatestEvent(rows) ?? rows[0]
+      const stageKeys = new Set(rows.map((row) => row.stage))
+      const result = latest.status === '成交'
+        ? '成交'
+        : latest.status === '拦截'
+          ? '拦截'
+          : latest.status === '复盘'
+            ? '复盘'
+            : latest.status === '等待'
+              ? '等待'
+              : '推进'
+
+      return {
+        id: `lane-${eventGroupKey(latest)}-${index}`,
+        result,
+        stageKeys,
+        symbol: compactSymbol(latest.symbol),
+        tone: latest.status === '成交'
+          ? 'cyan'
+          : latest.status === '拦截' || latest.status === '复盘'
+            ? 'red'
+            : latest.status === '等待'
+              ? 'muted'
+              : 'amber',
+      }
+    })
 }
 
 function buildHoldingParticles(holdings: HoldingRow[]) {

@@ -86,6 +86,14 @@ card. The empty funnel no longer appears as a generic waiting card; it uses a
 five-stage pipeline skeleton so the space always reads as a funnel surface.
 When production `funnelEvents[]` exist, the same surface becomes a moving
 opportunity pipeline driven by real stage events.
+The latest real-funnel pass moves this one step closer to production data:
+`funnelEvents[]` are grouped by opportunity id, the visible stages are
+`发现 -> 研判 -> 风控 -> 确认 -> 成交`, and each opportunity renders as its own
+animated lane with stage dots and a final outcome. This replaces the previous
+decorative moving channel with a real trading funnel: users can see how many
+opportunities entered, which stages they reached, and what became a trade.
+The return card is now titled `实时收益`; `模拟盘` and `实盘` are only the
+account toggle, with live mode shown as a quiet reserved state.
 
 The home page answers the user-facing questions first:
 
@@ -177,9 +185,10 @@ The home page answers the user-facing questions first:
 - Homepage signal funnel empty state should still look like a funnel surface,
   not a centered message box. Use a quiet five-stage pipeline skeleton and
   minimal text until real events arrive.
-- Homepage return card should be user-facing: `模拟盘` is the default result
-  surface, `实盘` is a reserved toggle, and the primary number combines amount
-  with percentage instead of splitting them across separate panels.
+- Homepage return card should be user-facing: `实时收益` is the card title,
+  `模拟盘` is the default result mode, `实盘` is a reserved toggle, and the
+  primary number combines amount with percentage instead of splitting them
+  across separate panels.
 - Live return chart is the homepage's main panel and must be visible on the
   first 1280x720 viewport.
 - Right rail is a single result explanation module on the homepage, not a stack of

@@ -63,12 +63,12 @@ export function RealtimeReturnCard({
       : formatCnyCompact(strategyPnl)
   const drawdownDistance = portfolio ? Math.max(0, DRAWDOWN_LIMIT_PCT - Math.abs(portfolio.maxDrawdownPct)) : null
   const drawdownLabel = drawdownDistance !== null ? `${drawdownDistance.toFixed(2)}%` : '等待'
-  const cardTitle = isLive ? '实盘预留' : '模拟盘'
+  const cardTitle = '实时收益'
   const cardKicker = isLive
-    ? '完成接入后展示真实资金'
+    ? '实盘 · 接入后展示真实资金'
     : hasPerformanceData
-      ? '当前结果'
-      : '等待快照更新'
+      ? '模拟盘 · 当前净收益'
+      : '模拟盘 · 等待快照更新'
 
   return (
     <aside className="realtime-return-card" aria-label="收益结果">
@@ -98,8 +98,8 @@ export function RealtimeReturnCard({
       <span className="return-kicker">{cardKicker}</span>
       {isLive ? (
         <div className="return-placeholder">
-          <strong>实盘未连接</strong>
-          <p>实盘接口已预留。完成授权、风控和回执验证后再展示真实资金。</p>
+          <strong>等待接入</strong>
+          <p>接入完成后，这里会切换为真实账户的收益、回撤和持仓结果。</p>
         </div>
       ) : !hasPerformanceData ? (
         <div className="return-placeholder">
@@ -114,7 +114,7 @@ export function RealtimeReturnCard({
           </div>
           <div className="return-facts" aria-label="收益关键指标">
             <span>
-              <em>领先目标</em>
+              <em>目标差</em>
               <b>{formatSignedPct(targetGap)}</b>
             </span>
             <span>
@@ -161,7 +161,7 @@ export function RealtimeReturnCard({
           <small>{accountLine}</small>
         </>
       )}
-      <button onClick={() => setActivePage('收益')} type="button">查看收益原因</button>
+      <button onClick={() => setActivePage('收益')} type="button">收益来源</button>
     </aside>
   )
 }
