@@ -12,8 +12,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
+from Ashare.capital_plan import plan_capital
 from shared.execution import local_sim_ledger
 from shared.markets.sim_capital import DEFAULT_SIM_CAPITAL_CNY
 from shared.review.sample_quality import strategy_valid_trades
@@ -134,6 +135,39 @@ def _trade_row(source: dict[str, Any], *, account: str, quantity: int, side: str
     return row
 
 
+def _build_tier_capital_plan(
+    ledger: dict[str, Any],
+    candidates: Sequence[dict[str, Any]] | None = None,
+    market_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Generate an independent capital plan for a single tier account.
+
+    Uses the tier's own replayed cash and positions, not the 200k account's
+    plan.  The plan is scaled to the tier's total capital.
+    """
+    pnl = ledger.get("pnl") or {}
+    positions = pnl.get("positions") or {}
+    holdings = [
+        {"ts_code": code, "value": _safe_float(pos.get("market_value"), 0.0)}
+        for code, pos in positions.items()
+    ]
+    cash_available = _safe_float(pnl.get("cash_available"), ledger["capital"])
+    capital = float(ledger["capital"])
+    plan = plan_capital(
+        holdings,
+        cash_available,
+        candidates=candidates,
+        dynamic=True,
+        market_context=market_context or {},
+        total_capital=capital,
+    )
+    plan_dict = plan.to_dict()
+    plan_dict["total_capital"] = round(capital, 2)
+    plan_dict["account"] = ledger["account"]
+    plan_dict["cash_available"] = round(cash_available, 2)
+    return plan_dict
+
+
 def build_tier_ledger(source_trades: list[dict[str, Any]], *, capital: float) -> dict[str, Any]:
     account = _tier_account(capital)
     cash = float(capital)
@@ -181,6 +215,8 @@ def write_tier_ledgers(
     tier_root: Path | str | None = None,
     review_dir: Path | str | None = None,
     tiers: tuple[float, ...] = EXPERIMENT_TIERS,
+    candidates: Sequence[dict[str, Any]] | None = None,
+    market_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     source_path = Path(source_trades_path) if source_trades_path is not None else DEFAULT_SOURCE_TRADES
     output_root = Path(tier_root) if tier_root is not None else DEFAULT_TIER_ROOT
@@ -189,6 +225,7 @@ def write_tier_ledgers(
     accounts: list[dict[str, Any]] = []
     for capital in tiers:
         ledger = build_tier_ledger(source_trades, capital=float(capital))
+        capital_plan = _build_tier_capital_plan(ledger, candidates=candidates, market_context=market_context)
         account_dir = output_root / ledger["account"]
         account_dir.mkdir(parents=True, exist_ok=True)
         trades_path = account_dir / "local_sim_trades.jsonl"
@@ -198,6 +235,7 @@ def write_tier_ledgers(
         )
         (account_dir / "local_sim_pnl.json").write_text(json.dumps({ledger["account"]: ledger["pnl"]}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         (account_dir / "local_sim_positions.json").write_text(json.dumps({ledger["account"]: ledger["pnl"].get("positions", {})}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        (account_dir / "capital_plan.json").write_text(json.dumps({ledger["account"]: capital_plan}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         accounts.append(
             {
                 "account": ledger["account"],
@@ -205,6 +243,7 @@ def write_tier_ledgers(
                 "trade_count": ledger["trade_count"],
                 "skipped_count": ledger["skipped_count"],
                 "pnl": ledger["pnl"],
+                "capital_plan": capital_plan,
                 "ledger_dir": str(account_dir.relative_to(ROOT)) if str(account_dir).startswith(str(ROOT)) else str(account_dir),
             }
         )
@@ -221,17 +260,60 @@ def write_tier_ledgers(
     return manifest
 
 
+def _read_candidates(path: Path | str | None) -> list[dict[str, Any]] | None:
+    if path is None:
+        return None
+    candidate_path = Path(path)
+    if not candidate_path.exists():
+        return None
+    try:
+        text = candidate_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if text.startswith("["):
+        try:
+            payload = json.loads(text)
+            return [item for item in payload if isinstance(item, dict)]
+        except json.JSONDecodeError:
+            return None
+    rows: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows or None
+
+
+def _read_market_context(raw: str | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-trades-path", type=Path, default=DEFAULT_SOURCE_TRADES)
     parser.add_argument("--tier-root", type=Path, default=DEFAULT_TIER_ROOT)
     parser.add_argument("--review-dir", type=Path, default=DEFAULT_REVIEW_DIR)
+    parser.add_argument("--candidates-path", type=Path, default=None)
+    parser.add_argument("--market-context", type=str, default="")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args(argv)
     report = write_tier_ledgers(
         source_trades_path=args.source_trades_path,
         tier_root=args.tier_root,
         review_dir=args.review_dir,
+        candidates=_read_candidates(args.candidates_path),
+        market_context=_read_market_context(args.market_context),
     )
     print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
     return 0

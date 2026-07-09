@@ -68,6 +68,7 @@ def _tier_rankings(tier_manifest: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(account, dict):
             continue
         pnl = account.get("pnl") if isinstance(account.get("pnl"), dict) else {}
+        capital_plan = account.get("capital_plan") if isinstance(account.get("capital_plan"), dict) else {}
         rankings.append(
             {
                 "style_name": str(account.get("account") or ""),
@@ -76,6 +77,7 @@ def _tier_rankings(tier_manifest: dict[str, Any]) -> list[dict[str, Any]]:
                 "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
                 "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
                 "capital": _safe_float(account.get("capital")),
+                "capital_plan": capital_plan,
                 "pnl_source": "ashare_capital_tier_experiment",
             }
         )
@@ -179,9 +181,14 @@ def build_portfolio_evolution(
                     "capital": row.get("capital"),
                     "trades": row.get("trades"),
                     "pnl": row.get("pnl"),
+                    "capital_plan": row.get("capital_plan"),
                 }
                 for row in tier_rankings
             ],
+            "capital_plans": {
+                str(row.get("style_name")): row.get("capital_plan")
+                for row in tier_rankings
+            },
         },
         "pnl": {
             "total_pnl": round(_safe_float(pnl.get("total_pnl")), 6),

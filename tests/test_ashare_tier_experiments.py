@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from Ashare.portfolio_evolution import _tier_rankings
 from Ashare.tier_experiments import build_tier_ledger, write_tier_ledgers
 
 
@@ -67,6 +68,100 @@ class AshareTierExperimentsTest(unittest.TestCase):
             self.assertTrue((root / "tiers" / "ashare_100000" / "local_sim_pnl.json").exists())
             manifest = json.loads((root / "review" / "tier_experiments_latest.json").read_text(encoding="utf-8"))
             self.assertEqual(len(manifest["accounts"]), 2)
+
+    def test_tiers_have_independent_cash_and_positions(self) -> None:
+        ledger_50k = build_tier_ledger([self._strategy_trade(quantity=1000, price=10.0)], capital=50_000.0)
+        ledger_100k = build_tier_ledger([self._strategy_trade(quantity=1000, price=10.0)], capital=100_000.0)
+
+        self.assertNotEqual(
+            ledger_50k["pnl"]["cash_available"],
+            ledger_100k["pnl"]["cash_available"],
+        )
+        self.assertNotEqual(
+            ledger_50k["pnl"]["positions"]["600000.SH"]["quantity"],
+            ledger_100k["pnl"]["positions"]["600000.SH"]["quantity"],
+        )
+        self.assertEqual(ledger_50k["pnl"]["positions"]["600000.SH"]["quantity"], 200)
+        self.assertEqual(ledger_100k["pnl"]["positions"]["600000.SH"]["quantity"], 500)
+
+    def test_each_tier_has_independent_capital_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "local_sim_trades.jsonl"
+            source.write_text(json.dumps(self._strategy_trade(), ensure_ascii=False) + "\n", encoding="utf-8")
+            candidates = [
+                {"ts_code": "600000.SH", "combined": 0.86},
+                {"ts_code": "000001.SZ", "combined": 0.78},
+            ]
+
+            report = write_tier_ledgers(
+                source_trades_path=source,
+                tier_root=root / "tiers",
+                review_dir=root / "review",
+                candidates=candidates,
+                market_context={
+                    "trend": "bullish",
+                    "risk_rejection_rate": 0.0,
+                    "data_issue_rate": 0.0,
+                    "recent_win_rate": 0.62,
+                },
+            )
+
+            for account in report["accounts"]:
+                self.assertIn("capital_plan", account)
+                plan = account["capital_plan"]
+                self.assertEqual(plan["risk_mode"], "aggressive")
+                self.assertEqual(plan["max_new_positions"], 2)
+                self.assertTrue(len(plan["suggested_buys"]) > 0)
+                max_alloc = max(b["allocation"] for b in plan["suggested_buys"])
+                self.assertLessEqual(max_alloc, account["capital"] * 0.35 + 1e-6)
+                self.assertTrue((root / "tiers" / account["account"] / "capital_plan.json").exists())
+
+    def test_tier_capital_plans_differ_by_capital(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "local_sim_trades.jsonl"
+            source.write_text(json.dumps(self._strategy_trade(), ensure_ascii=False) + "\n", encoding="utf-8")
+            candidates = [
+                {"ts_code": "600000.SH", "combined": 0.86},
+                {"ts_code": "000001.SZ", "combined": 0.78},
+            ]
+
+            report = write_tier_ledgers(
+                source_trades_path=source,
+                tier_root=root / "tiers",
+                review_dir=root / "review",
+                candidates=candidates,
+                market_context={
+                    "trend": "bullish",
+                    "risk_rejection_rate": 0.0,
+                    "data_issue_rate": 0.0,
+                    "recent_win_rate": 0.62,
+                },
+            )
+
+            plan_50k = next(a for a in report["accounts"] if a["account"] == "ashare_50000")["capital_plan"]
+            plan_100k = next(a for a in report["accounts"] if a["account"] == "ashare_100000")["capital_plan"]
+            self.assertNotEqual(plan_50k["cash_reserve"], plan_100k["cash_reserve"])
+            self.assertNotEqual(plan_50k["position_budget_by_symbol"], plan_100k["position_budget_by_symbol"])
+
+    def test_no_fake_style_attribution_in_tier_rankings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "local_sim_trades.jsonl"
+            source.write_text(json.dumps(self._strategy_trade(), ensure_ascii=False) + "\n", encoding="utf-8")
+
+            report = write_tier_ledgers(
+                source_trades_path=source,
+                tier_root=root / "tiers",
+                review_dir=root / "review",
+            )
+
+            rankings = _tier_rankings(report)
+            style_names = {r["style_name"] for r in rankings}
+            self.assertEqual(style_names, {"ashare_50000", "ashare_100000"})
+            for fake in {"aggressive", "balanced", "conservative", "cautious", "defensive"}:
+                self.assertNotIn(fake, style_names)
 
 
 if __name__ == "__main__":

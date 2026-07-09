@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 # ---------------------------------------------------------------------------
-# Account constants (200 000 RMB simulated account)
+# Account constants (default 200 000 RMB simulated account)
 # ---------------------------------------------------------------------------
 TOTAL_CAPITAL = 200_000         # total account capital in RMB
 MIN_POSITION_VALUE = 50_000     # minimum allocation per position
@@ -30,6 +30,22 @@ MIN_CASH_RESERVE = 30_000       # minimum cash buffer to keep
 MAX_CASH_RESERVE = 50_000       # maximum cash buffer to keep
 TARGET_POSITIONS = (2, 3)       # target 2-3 positions
 REVERSE_REPO_CODE = "204001"    # GC-001 1-day reverse repo
+
+
+def _scale_plan_constants(total_capital: float) -> dict[str, float]:
+    """Scale position-budget constants to the account size.
+
+    Keeps the 200k primary account behaviour unchanged while letting
+    50k/100k experiment accounts produce meaningful independent plans.
+    """
+    min_position_value = max(10_000.0, min(MIN_POSITION_VALUE, total_capital * 0.25))
+    max_position_value = min(MAX_POSITION_VALUE, max(min_position_value, total_capital * 0.35))
+    min_cash_reserve = max(5_000.0, min(MIN_CASH_RESERVE, total_capital * 0.15))
+    return {
+        "min_position_value": min_position_value,
+        "max_position_value": max_position_value,
+        "min_cash_reserve": min_cash_reserve,
+    }
 
 
 @dataclass
@@ -213,6 +229,11 @@ def plan_capital(
     -------
     CapitalPlan
     """
+    scaled = _scale_plan_constants(total_capital)
+    min_position_value = scaled["min_position_value"]
+    max_position_value = scaled["max_position_value"]
+    min_cash_reserve = scaled["min_cash_reserve"]
+
     deployed = sum(h.get("value", 0.0) for h in holdings)
     n_holdings = _count_unique_positions(holdings)
     notes: list[str] = []
@@ -220,8 +241,8 @@ def plan_capital(
 
     # --- decide how many new positions we can / should open -------------
     target_positions = TARGET_POSITIONS[1]
-    cash_reserve_pct = MIN_CASH_RESERVE / max(float(total_capital), 1.0)
-    max_single_position_pct = MAX_POSITION_VALUE / max(float(total_capital), 1.0)
+    cash_reserve_pct = min_cash_reserve / max(float(total_capital), 1.0)
+    max_single_position_pct = max_position_value / max(float(total_capital), 1.0)
     risk_mode = "static"
     if dynamic:
         profile = _dynamic_profile(candidates or [], market_context)
@@ -247,16 +268,16 @@ def plan_capital(
     if dynamic:
         cash_reserve = min(float(available_cash), max(0.0, float(total_capital) * cash_reserve_pct))
         if target_positions > 0:
-            cash_reserve = max(min(float(available_cash), MIN_CASH_RESERVE), cash_reserve)
+            cash_reserve = max(min(float(available_cash), min_cash_reserve), cash_reserve)
             if max_cash_reserve is not None:
                 cash_reserve = min(cash_reserve, float(max_cash_reserve))
         else:
             cash_reserve = float(available_cash)
     else:
-        cash_reserve = max(MIN_CASH_RESERVE, min(available_cash, MAX_CASH_RESERVE))
+        cash_reserve = max(min_cash_reserve, min(available_cash, MAX_CASH_RESERVE))
     investable = available_cash - cash_reserve
 
-    if investable < MIN_POSITION_VALUE:
+    if investable < min_position_value:
         notes.append(
             f"Insufficient investable cash ({investable:.0f} RMB) after "
             f"reserve ({cash_reserve:.0f} RMB); skip new buys."
@@ -268,18 +289,18 @@ def plan_capital(
     # --- allocate to candidates -----------------------------------------
     suggested_buys: list[dict] = []
     position_budget_by_symbol: dict[str, float] = {}
-    if candidates and max_new > 0 and investable >= MIN_POSITION_VALUE:
+    if candidates and max_new > 0 and investable >= min_position_value:
         remaining = investable
         slots = min(max_new, len(candidates))
-        max_single_value = MAX_POSITION_VALUE
+        max_single_value = max_position_value
         if dynamic and max_single_position_pct > 0:
-            max_single_value = min(MAX_POSITION_VALUE, float(total_capital) * max_single_position_pct)
+            max_single_value = min(max_position_value, float(total_capital) * max_single_position_pct)
 
         for i, cand in enumerate(candidates[:slots]):
-            if remaining < MIN_POSITION_VALUE:
+            if remaining < min_position_value:
                 notes.append(
                     f"Stopped after {i} buys — remaining cash "
-                    f"{remaining:.0f} below min {MIN_POSITION_VALUE}."
+                    f"{remaining:.0f} below min {min_position_value}."
                 )
                 break
             remaining_slots = max(1, slots - i)
@@ -287,8 +308,8 @@ def plan_capital(
                 remaining / remaining_slots,
                 max_single_value,
             )
-            alloc = max(MIN_POSITION_VALUE, min(alloc, remaining))
-            if alloc < MIN_POSITION_VALUE:
+            alloc = max(min_position_value, min(alloc, remaining))
+            if alloc < min_position_value:
                 break
             code = cand.get("code", cand.get("ts_code", f"slot_{i}"))
             suggested_buys.append({
