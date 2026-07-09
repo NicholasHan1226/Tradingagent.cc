@@ -166,6 +166,49 @@ def _direction_score(impact_hint: Any) -> float:
     return {"positive": 1.0, "negative": 0.0, "mixed": 0.5, "neutral": 0.5}.get(direction, 0.5)
 
 
+def _text_direction_hint(row: dict[str, Any]) -> str:
+    text = " ".join(str(row.get(key) or "") for key in ("title", "content", "summary", "raw_json")).lower()
+    if not text:
+        return ""
+    positive_tokens = (
+        "positive",
+        "bullish",
+        "risk_on",
+        "利好",
+        "增持",
+        "回购",
+        "上调",
+        "中标",
+        "订单增长",
+        "净利润增长",
+        "业绩预增",
+        "涨停",
+        "上涨",
+    )
+    negative_tokens = (
+        "negative",
+        "bearish",
+        "risk_off",
+        "利空",
+        "减持",
+        "下调",
+        "亏损",
+        "处罚",
+        "调查",
+        "爆炸",
+        "停机",
+        "债务",
+        "违约",
+        "跌停",
+        "下跌",
+    )
+    if any(token in text for token in negative_tokens):
+        return "negative"
+    if any(token in text for token in positive_tokens):
+        return "positive"
+    return ""
+
+
 def _metric_name(row: dict[str, Any]) -> str:
     raw = str(row.get("factor_name") or row.get("name") or row.get("metric") or "").strip().lower()
     return raw.split(":", 1)[1] if ":" in raw else raw
@@ -233,6 +276,10 @@ def _macro_score_from_row(row: dict[str, Any], regime_scores: dict[str, Any]) ->
         if score > 1.0:
             score /= 100.0
         return _clamp(score)
+    if factor_name.startswith("cn_pmi:pmi") and row.get("value") not in ("", None):
+        value = _safe_float(row.get("value"), -1.0)
+        if 0.0 <= value <= 100.0:
+            return _score_high(value, 45.0, 55.0)
 
     regime = str(row.get("regime") or row.get("label") or row.get("name") or "").strip()
     if regime:
@@ -258,6 +305,16 @@ def _macro_score_from_row(row: dict[str, Any], regime_scores: dict[str, Any]) ->
     return None
 
 
+def _preferred_macro_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    preferred_names = {"cn_pmi:pmi010000", "cn_pmi:pmi020000"}
+    preferred = [
+        row
+        for row in rows
+        if str(row.get("factor_name") or row.get("metric") or row.get("name") or "").strip().lower() in preferred_names
+    ]
+    return preferred or rows
+
+
 def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
     """宏观维度 — SharedSignals macro read model 优先，MarketGraph regime 只作增强。"""
     try:
@@ -274,7 +331,7 @@ def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
         )
         if not macro_rows:
             macro_rows = _rows_from_reader(getattr(data_reader, "get_macro_factors", None))
-        for row in reversed(macro_rows):
+        for row in reversed(_preferred_macro_rows(macro_rows)):
             score = _macro_score_from_row(row, regime_scores)
             if score is not None:
                 _mark_evidence(config, "macro", source="SharedSignals macro", rows=len(macro_rows))
@@ -534,17 +591,28 @@ def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float |
         if not sentiment_rows:
             sentiment_rows = _rows_from_reader(getattr(data_reader, "get_sentiment", None))
         for row in sentiment_rows:
-            if not any(row.get(key) for key in ("subject_code", "ts_code", "symbol", "code", "asset_code")):
-                continue
-            if not _row_matches_ts_code(row, ts_code):
-                continue
-            if row.get("status") not in allowed_status:
-                continue
+            has_subject = any(row.get(key) for key in ("subject_code", "ts_code", "symbol", "code", "asset_code"))
+            if has_subject:
+                if not _row_matches_ts_code(row, ts_code):
+                    continue
+                if row.get("status") not in allowed_status:
+                    continue
+                impact_hint = row.get("proposed_impact_hint")
+                default_conf = 0.0
+            else:
+                impact_hint = row.get("proposed_impact_hint") or row.get("direction") or row.get("sentiment") or _text_direction_hint(row)
+                if not impact_hint:
+                    continue
+                default_conf = 0.25
             conf = _safe_float(row.get("confidence"), 0.0)
+            if conf <= 0.0:
+                conf = _safe_float(row.get("score"), default_conf)
+            if conf <= 0.0:
+                conf = default_conf
             if conf < 0.20:
                 continue
             matched_rows += 1
-            weighted += _direction_score(row.get("proposed_impact_hint")) * conf
+            weighted += _direction_score(impact_hint) * conf
             total_weight += conf
         if total_weight <= 1e-9:
             _mark_evidence(config, "sentiment", source="SharedSignals sentiment", rows=0, reason="missing_sentiment_rows")

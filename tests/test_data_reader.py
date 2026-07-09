@@ -916,6 +916,30 @@ class SharedSignalsRawMacroScoringReader(EmptyScoringReader):
         ]
 
 
+class SharedSignalsPmiMacroScoringReader(EmptyScoringReader):
+    def get_macro_factors(self, start=None, end=None):
+        return [
+            {
+                "factor_name": "cn_pmi:ID",
+                "event_time": "20260707",
+                "value": 544.0,
+                "source": "sharedsignals:macro",
+            },
+            {
+                "factor_name": "cn_pmi:PMI010000",
+                "event_time": "20260707",
+                "value": 50.3,
+                "source": "sharedsignals:macro",
+            },
+            {
+                "factor_name": "cn_pmi:PMI020201",
+                "event_time": "20260707",
+                "value": 41.6,
+                "source": "sharedsignals:macro",
+            },
+        ]
+
+
 class SharedSignalsEventScoringReader(EmptyScoringReader):
     def get_events(self, market=None, symbol="", start="", end=""):
         return [
@@ -976,6 +1000,22 @@ class SharedSignalsSentimentScoringReader(EmptyScoringReader):
         ]
 
 
+class SharedSignalsMarketNewsSentimentReader(EmptyScoringReader):
+    def get_sentiment(self, start=None, end=None):
+        return [
+            {
+                "trade_date": "20260709",
+                "content": "市场消息：海外港口传出爆炸，风险偏好承压。",
+                "source": "sharedsignals:sentiment",
+            },
+            {
+                "trade_date": "20260709",
+                "content": "A股硬科技板块迎来重大利好。",
+                "source": "sharedsignals:sentiment",
+            },
+        ]
+
+
 class TestSixDimensionScorerWithReader(unittest.TestCase):
     def test_sharedsignals_macro_feeds_macro_dimension_before_marketgraph(self) -> None:
         scores = six_dimension_scorer.score_stock(
@@ -998,6 +1038,18 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
         self.assertNotIn("macro", scores["missing_evidence_dimensions"])
         self.assertGreater(scores["macro"], 0.5)
         self.assertLess(scores["macro"], 1.0)
+
+    def test_sharedsignals_macro_uses_raw_pmi_values(self) -> None:
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260709",
+            data_reader=SharedSignalsPmiMacroScoringReader(),
+        )
+
+        self.assertNotIn("macro", scores["missing_evidence_dimensions"])
+        self.assertGreater(scores["macro"], 0.5)
+        self.assertLess(scores["macro"], 0.6)
+        self.assertEqual(scores["evidence_sources"]["macro"]["source"], "SharedSignals macro")
 
     def test_sharedsignals_event_feeds_event_dimension_before_marketgraph(self) -> None:
         scores = six_dimension_scorer.score_stock(
@@ -1023,6 +1075,19 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
         self.assertGreater(scores["sentiment"], 0.5)
         self.assertEqual(scores["evidence_sources"]["sentiment"]["source"], "SharedSignals sentiment")
         self.assertEqual(reader.sentiment_calls[0], ("20260615", "20260629"))
+
+    def test_sharedsignals_market_news_feeds_weak_market_sentiment(self) -> None:
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260709",
+            data_reader=SharedSignalsMarketNewsSentimentReader(),
+        )
+
+        self.assertNotIn("sentiment", scores["missing_evidence_dimensions"])
+        self.assertEqual(scores["evidence_sources"]["sentiment"]["source"], "SharedSignals sentiment")
+        self.assertEqual(scores["evidence_sources"]["sentiment"]["row_count"], 2)
+        self.assertGreaterEqual(scores["sentiment"], 0.0)
+        self.assertLessEqual(scores["sentiment"], 1.0)
 
     def test_marketgraph_api_regime_feeds_macro_dimension(self) -> None:
         reader = TradingagentDataReader(
