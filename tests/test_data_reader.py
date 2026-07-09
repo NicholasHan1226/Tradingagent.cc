@@ -819,6 +819,18 @@ class TestMarketGraphCSVReader(unittest.TestCase):
         self.assertEqual(reader.get_event_candidates(), [])
         self.assertEqual(client.errors, [])
 
+    def test_regime_skips_marketgraph_api_without_token(self) -> None:
+        client = MarketGraphAPIClient(base_url="http://127.0.0.1:1", api_token="")
+        reader = MarketGraphCSVReader(
+            Path("/nonexistent"),
+            api_client=None,
+            marketgraph_client=client,
+            api_enabled=False,
+        )
+
+        self.assertIsNone(reader.get_regime())
+        self.assertEqual(client.errors, [])
+
 
 class FakeScoringReader:
     def get_regime(self):

@@ -302,15 +302,20 @@ class MarketGraphCSVReader:
 
     def get_regime(self) -> dict[str, Any] | None:
         if self._marketgraph_client is not None:
-            before_error_count = len(getattr(self._marketgraph_client, "errors", []))
-            row = self._marketgraph_client.get_regime()
-            if row:
-                return row
-            if len(getattr(self._marketgraph_client, "errors", [])) > before_error_count:
-                self._logger.warning(
-                    "MarketGraphCSVReader all_weather_regime.csv MarketGraph API call failed; fail-closed: %s",
-                    self._marketgraph_client.errors[-1],
+            if isinstance(self._marketgraph_client, MarketGraphAPIClient) and not self._marketgraph_client.api_token:
+                self._logger.info(
+                    "MarketGraphCSVReader all_weather_regime.csv skipped: MARKETGRAPH_API_TOKEN is not configured"
                 )
+            else:
+                before_error_count = len(getattr(self._marketgraph_client, "errors", []))
+                row = self._marketgraph_client.get_regime()
+                if row:
+                    return row
+                if len(getattr(self._marketgraph_client, "errors", [])) > before_error_count:
+                    self._logger.warning(
+                        "MarketGraphCSVReader all_weather_regime.csv MarketGraph API call failed; fail-closed: %s",
+                        self._marketgraph_client.errors[-1],
+                    )
         api_rows = self._api_rows(
             "all_weather_regime.csv",
             [
