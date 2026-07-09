@@ -75,15 +75,15 @@ Level 4: 人工介入 (escalate)
 | 2 | job_premarket_signals | 25 9 * * 1-5 | daily | Ashare | overnight_events + scores | premarket_signals.jsonl | signals/ |
 | 3 | job_ashare_sim_exec | */5 9-15 * * 1-5 | 5min | Ashare | active_conditions + quotes | sim_exec_log.jsonl | executions/sim/ |
 | 4 | job_us_premarket | 15 9 * * 1-5 | daily | US | US_daily + events | us_premarket_signals.jsonl | signals/us/ |
-| 5 | job_us_hourly | */30 10-14,22-23,0-4 * * 1-5 | 30min | US | US_quotes + scores | us_intraday_signals.jsonl | signals/us/ |
-| 6 | job_us_shadow_exec | */30 10-14,22-23,0-4 * * 1-5 | 30min | US | us_shadow_signals | us_shadow_trades.jsonl | executions/shadow/us/ |
+| 5 | job_us_hourly | 10,40 10-14,22-23,0-4 * * 1-5 | 30min | US | US_quotes + scores | us_intraday_signals.jsonl | signals/us/ |
+| 6 | job_us_shadow_exec | 10,40 10-14,22-23,0-4 * * 1-5 | 30min | US | us_shadow_signals | us_shadow_trades.jsonl | executions/shadow/us/ |
 | 7 | job_us_postclose | 35 16 * * 1-5 | daily | US | US_close_data | us_postclose.jsonl | review/us/ |
-| 8 | job_crypto_shadow_exec | */30 * * * * | 30min | Crypto | crypto_signals + klines | crypto_shadow_trades.jsonl | executions/shadow/crypto/ |
+| 8 | job_crypto_shadow_exec | 8,38 * * * * | 30min | Crypto | crypto_signals + klines | crypto_shadow_trades.jsonl | executions/shadow/crypto/ |
 | 9 | job_crypto_daily | 0 */4 * * * | 4x_daily | Crypto | crypto_klines + regime | crypto_daily_signals.jsonl | signals/crypto/ |
 | 10 | job_crypto_weekly | 0 */12 * * * | 2x_daily | Crypto | crypto_klines + events | crypto_weekly_signals.jsonl | signals/crypto/ |
-| 11 | job_pm_shadow | */30 * * * * | 30min | PM | pm_prices + pm_markets | pm_shadow_trades.jsonl | executions/shadow/pm/ |
-| 12 | job_pm_forward | */30 * * * * | 30min | PM | pm_prices + pm_shadow | pm_forward_signals.jsonl | signals/pm/ |
-| 12b | job_pm_research_probability | 2-59/10 * * * * | 10min | PM | SharedSignals /pm_markets + /pm_prices + MarketGraph PM research API | model_probabilities.jsonl | review/pm/ |
+| 11 | job_pm_shadow | 7,37 * * * * | 30min | PM | pm_prices + pm_markets | pm_shadow_trades.jsonl | executions/shadow/pm/ |
+| 12 | job_pm_forward | 7,37 * * * * | 30min | PM | pm_prices + pm_shadow | pm_forward_signals.jsonl | signals/pm/ |
+| 12b | job_pm_research_probability | 4,34 * * * * | 30min | PM | SharedSignals /pm_markets + /pm_prices + MarketGraph PM research API | model_probabilities.jsonl | review/pm/ |
 | 13 | job_pm_optimize | 0 * * * * | hourly | PM | pm_shadow + pm_forward | pm_optimize_params.json | strategies/pm/ |
 | 14 | job_pm_promote | */30 * * * * | 30min | PM | pm_signals + pm_review | pm_promotion.jsonl | review/pm/ |
 | 15 | job_auto_position | 45 * * * * | hourly | 全市场 | capital_ledger + positions | position_plan.jsonl | accounting/ |
