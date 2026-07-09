@@ -25,7 +25,7 @@ export function SignalFunnelFlow({
   signals: SignalRow[]
 }) {
   const funnel = getSignalFunnel(signals)
-  const queueEvents = events.filter((event) => event.source === 'signal_queue')
+  const queueEvents = events.filter(isOpportunityFlowEvent)
   const pipelineEvents = getPipelineEvents(events, queueEvents)
   const eventFlow = getEventFlow(pipelineEvents)
   const hasHoldingContext = !events.length && !signals.length && holdings.length > 0
@@ -416,6 +416,10 @@ function getPipelineEvents(events: FunnelEvent[], queueEvents: FunnelEvent[]) {
   return [...queueEvents, ...matchedResultEvents]
 }
 
+function isOpportunityFlowEvent(event: FunnelEvent) {
+  return event.source === 'signal_queue' || event.source === 'opportunity_log'
+}
+
 function getEventFlow(events: FunnelEvent[]): EventFlow | null {
   if (!events.length) return null
 
@@ -436,10 +440,10 @@ function getEventFlow(events: FunnelEvent[]): EventFlow | null {
     total: signals.length,
     stages: {
       发现: signals.filter((rows) => hasStage(rows, '发现')).length,
-      初筛: signals.filter((rows) => hasAnyStage(rows, ['研判', '风控', '队列', '结果'])).length,
+      初筛: signals.filter((rows) => hasAnyStage(rows, ['研判', '风控', '待确认', '结果'])).length,
       研究: signals.filter((rows) => hasStage(rows, '研判')).length,
       风控: signals.filter((rows) => hasStage(rows, '风控')).length,
-      待确认: signals.filter((rows) => hasStage(rows, '队列')).length,
+      待确认: signals.filter((rows) => hasStage(rows, '待确认')).length,
     },
     outcomes: {
       executed: terminalRows.filter((event) => event.status === '成交').length,
@@ -738,7 +742,7 @@ function eventPriority(event: FunnelEvent) {
 
 function eventStageToStop(stage: FunnelEvent['stage']) {
   if (stage === '结果') return 5
-  if (stage === '队列') return 4
+  if (stage === '待确认') return 4
   if (stage === '风控') return 3
   if (stage === '研判') return 2
   return 1

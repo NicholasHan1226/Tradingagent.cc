@@ -7,6 +7,7 @@ export const tradingAgentReadModelSources = {
   positions: 'signals/positions/*.json',
   filledSignals: 'signals/filled/*.json',
   signalQueue: 'signals/{pending,claimed,running,filled,expired,cancelled,failed,partial}',
+  opportunityEvents: 'shared/review/opportunities/funnel_events.jsonl or shared/logs/opportunities/funnel_events.jsonl',
   review: 'shared/review/daily/daily_brief.jsonl',
   middayReview: 'shared/review/daily/midday_review.jsonl',
   riskLimits: 'shared/risk/risk_limits.yaml',

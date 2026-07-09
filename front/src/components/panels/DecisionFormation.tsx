@@ -9,7 +9,7 @@ export function DecisionFormation({ portfolio, signals }: { portfolio: Portfolio
     { label: '发现机会', value: funnel.stages[0]?.rows.length ?? 0, detail: '全市场进入' },
     { label: '理由清楚', value: funnel.stages[1]?.rows.length ?? 0, detail: '有可解释原因' },
     { label: '风控检查', value: funnel.stages[2]?.rows.length ?? 0, detail: '先看风险' },
-    { label: '进入队列', value: funnel.stages[3]?.rows.length ?? 0, detail: '等待或准备执行' },
+    { label: '待确认', value: funnel.stages[3]?.rows.length ?? 0, detail: '等待或准备执行' },
     { label: '形成结果', value: funnel.stages[4]?.rows.length ?? 0, detail: '已兑现或已处理' },
   ]
   const maxValue = Math.max(1, rows[0].value)

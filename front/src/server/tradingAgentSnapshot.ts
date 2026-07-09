@@ -201,6 +201,35 @@ type SignalFile = {
   filled_at?: string
 }
 
+type OpportunityFunnelEventRow = {
+  at?: string
+  card_id?: string | number
+  created_at?: string
+  event_id?: string | number
+  id?: string | number
+  label?: string
+  latency_minutes?: number | string
+  latencyMinutes?: number | string
+  market?: string
+  metadata?: Record<string, unknown>
+  opportunity_id?: string | number
+  opportunityId?: string | number
+  order_id?: string | number
+  reason?: string
+  sequence?: number | string
+  signal_id?: string | number
+  source?: string
+  stage?: string
+  status?: string
+  symbol?: string
+  terminal?: boolean | string
+  timestamp?: string
+  trace_id?: string | number
+  ts?: string
+  ts_code?: string
+  updated_at?: string
+}
+
 type SimLedgerTradeRow = {
   account_type?: string
   capital_layer?: string
@@ -446,6 +475,7 @@ type PerformanceReviewRow = {
 const SIGNAL_BUCKETS = ['pending', 'claimed', 'running', 'filled', 'expired', 'cancelled', 'failed', 'partial']
 const MAX_SIGNALS_PER_BUCKET = 80
 const MAX_SIM_LEDGER_SIGNALS = 120
+const MAX_OPPORTUNITY_FUNNEL_EVENTS = 300
 const DEFAULT_TARGET_RETURN_PCT = 8
 const DEFAULT_SIM_CAPITAL_CNY = 200_000
 const DEFAULT_USD_CAPITAL = 10_000
@@ -478,7 +508,8 @@ export async function readTradingAgentSnapshot({
   const queueSignals = await readSignalQueue(queueRoot, now)
   const simLedgerSignals = await readSimLedgerSignals(simLedgerRoot, now)
   const signals = mergeSignals(queueSignals, simLedgerSignals)
-  const funnelEvents = buildFunnelEvents([...queueSignals, ...simLedgerSignals])
+  const opportunityFunnelEvents = await readOpportunityFunnelEvents(projectRoot)
+  const funnelEvents = mergeFunnelEvents(opportunityFunnelEvents, buildFunnelEvents([...queueSignals, ...simLedgerSignals]))
   const reviewPerformance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
@@ -506,6 +537,7 @@ export async function readTradingAgentSnapshot({
   const hasPlan = await fileExists(positionPlanPath)
   const hasReview = await fileExists(reviewPath) || await fileExists(reviewFallbackPath)
   const hasSimLedger = simLedgerHoldings.length > 0 || simLedgerSignals.length > 0
+  const hasOpportunityEvents = opportunityFunnelEvents.length > 0
   const hasPerformanceEvidence = hasReview || equityPortfolio.summary !== undefined || trackerPortfolio.summary !== undefined
   const performanceMessage = performance.length > 0
     ? undefined
@@ -518,10 +550,10 @@ export async function readTradingAgentSnapshot({
     generatedAt,
     domains: {
       performance: domainHealth(performance.length > 0 ? 'ready' : 'empty', generatedAt, performanceMessage),
-      signals: domainHealth(signals.length > 0 ? 'ready' : 'empty', generatedAt),
+      signals: domainHealth(signals.length > 0 || hasOpportunityEvents ? 'ready' : 'empty', generatedAt),
       holdings: domainHealth(fallbackHoldings.length > 0 ? 'ready' : 'empty', generatedAt),
       decisions: domainHealth(hasPerformanceEvidence ? 'ready' : 'empty', generatedAt),
-      risk: domainHealth(fallbackHoldings.length > 0 || signals.length > 0 ? 'ready' : 'empty', generatedAt),
+      risk: domainHealth(fallbackHoldings.length > 0 || signals.length > 0 || hasOpportunityEvents ? 'ready' : 'empty', generatedAt),
     },
     performance,
     portfolio,
@@ -2599,6 +2631,137 @@ function getStageEvidence(stageTimes: SignalRow['stageTimes'], signal: SignalFil
   return 'partial'
 }
 
+async function readOpportunityFunnelEvents(projectRoot: string): Promise<FunnelEvent[]> {
+  const candidatePaths = [
+    join(projectRoot, 'shared/review/opportunities/funnel_events.jsonl'),
+    join(projectRoot, 'shared/logs/opportunities/funnel_events.jsonl'),
+  ]
+  const events: FunnelEvent[] = []
+
+  for (const path of candidatePaths) {
+    try {
+      const lines = (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean)
+      lines.slice(-MAX_OPPORTUNITY_FUNNEL_EVENTS).forEach((line, index) => {
+        try {
+          const parsed = parseOpportunityFunnelEvent(JSON.parse(line) as OpportunityFunnelEventRow, index)
+          if (parsed) events.push(parsed)
+        } catch {
+          // Ignore malformed event rows; valid event rows remain usable.
+        }
+      })
+    } catch {
+      // Opportunity event logs are optional until backend writers are connected.
+    }
+  }
+
+  return events.sort((a, b) => (a.sequence ?? opportunityStageSequence(a.stage)) - (b.sequence ?? opportunityStageSequence(b.stage)))
+}
+
+function parseOpportunityFunnelEvent(row: OpportunityFunnelEventRow, index: number): FunnelEvent | null {
+  const metadata = asRecord(row.metadata)
+  const rawSymbol = firstString(row.ts_code, row.symbol, metadata.ts_code, metadata.symbol)
+  if (!rawSymbol) return null
+  const market = normalizeMarket(firstString(row.market, metadata.market), rawSymbol)
+  const symbol = normalizeSymbol(rawSymbol, market)
+  const stage = mapOpportunityFunnelStage(firstString(row.stage, metadata.stage, row.status, metadata.status))
+  const status = mapOpportunityFunnelStatus(firstString(row.status, metadata.status), stage)
+  const sequence = parseFiniteNumber(row.sequence) ?? parseFiniteNumber(metadata.sequence as number | string | undefined) ?? opportunityStageSequence(stage)
+  const timestamp = firstString(row.at, row.timestamp, row.ts, row.created_at, row.updated_at, metadata.at, metadata.timestamp, metadata.created_at, metadata.updated_at)
+  const opportunityId = firstString(
+    row.opportunity_id,
+    row.opportunityId,
+    row.signal_id,
+    row.trace_id,
+    row.order_id,
+    row.card_id,
+    metadata.opportunity_id,
+    metadata.opportunityId,
+    metadata.signal_id,
+    metadata.trace_id,
+    metadata.order_id,
+    metadata.card_id,
+  ) ?? `${market}:${symbol}:opportunity:${index}`
+  const label = firstString(row.label, metadata.label) ?? defaultOpportunityEventLabel(stage, status)
+  const explicitTerminal = row.terminal === undefined ? metadata.terminal : row.terminal
+
+  return {
+    id: firstString(row.event_id, row.id, metadata.event_id, metadata.id) ?? `opportunity_log:${opportunityId}:${sequence}:${index}`,
+    symbol,
+    market,
+    opportunityId,
+    sequence,
+    stage,
+    status,
+    label,
+    at: formatClock(timestamp),
+    source: 'opportunity_log',
+    reason: firstString(row.reason, metadata.reason),
+    latencyMinutes: parseFiniteNumber(row.latencyMinutes ?? row.latency_minutes) ?? parseFiniteNumber(metadata.latencyMinutes as number | string | undefined) ?? parseFiniteNumber(metadata.latency_minutes as number | string | undefined),
+    terminal: explicitTerminal === undefined ? stage === '结果' || status === '成交' || status === '拦截' || status === '复盘' : boolish(explicitTerminal),
+  }
+}
+
+function mergeFunnelEvents(primaryEvents: FunnelEvent[], derivedEvents: FunnelEvent[]) {
+  const rows = [...primaryEvents, ...derivedEvents]
+  const seen = new Set<string>()
+  return rows
+    .filter((event) => {
+      const key = `${event.source}:${event.opportunityId ?? event.id}:${event.stage}:${event.status}:${event.at ?? ''}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .sort((a, b) => {
+      const group = String(a.opportunityId ?? a.id).localeCompare(String(b.opportunityId ?? b.id))
+      if (group !== 0) return group
+      return (a.sequence ?? opportunityStageSequence(a.stage)) - (b.sequence ?? opportunityStageSequence(b.stage))
+    })
+}
+
+function mapOpportunityFunnelStage(value: string | undefined): FunnelEvent['stage'] {
+  const normalized = normalizeEventToken(value)
+  if (/result|outcome|filled|executed|done|missed|rejected|cancelled|canceled|blocked|expired|结果|成交|复盘|拦截/.test(normalized)) return '结果'
+  if (/pending|queue|queued|waiting|trigger|triggered|ready|confirm|待确认|待执行|等待/.test(normalized)) return '待确认'
+  if (/risk|gate|checked|风控/.test(normalized)) return '风控'
+  if (/research|score|scored|debate|debated|thesis|judge|研判|研究|评分/.test(normalized)) return '研判'
+  return '发现'
+}
+
+function mapOpportunityFunnelStatus(value: string | undefined, stage: FunnelEvent['stage']): FunnelEventStatus {
+  const normalized = normalizeEventToken(value)
+  if (/filled|executed|done|成交|已兑现/.test(normalized)) return '成交'
+  if (/blocked|rejected|risk|deny|denied|拦截|拒绝/.test(normalized)) return '拦截'
+  if (/missed|expired|cancelled|canceled|review|复盘|错过|取消/.test(normalized)) return '复盘'
+  if (/pending|queue|queued|waiting|trigger|confirm|待确认|等待/.test(normalized)) return '等待'
+  if (/discover|found|scan|opportunity|机会|发现/.test(normalized)) return '进入'
+  if (stage === '发现') return '进入'
+  if (stage === '待确认') return '等待'
+  return '通过'
+}
+
+function defaultOpportunityEventLabel(stage: FunnelEvent['stage'], status: FunnelEventStatus) {
+  if (status === '成交') return '结果兑现'
+  if (status === '拦截') return '风险挡住'
+  if (status === '复盘') return '进入复盘'
+  if (stage === '发现') return '发现机会'
+  if (stage === '研判') return '形成判断'
+  if (stage === '风控') return '风控检查'
+  if (stage === '待确认') return '等待确认'
+  return '结果更新'
+}
+
+function normalizeEventToken(value: string | undefined) {
+  return String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+}
+
+function opportunityStageSequence(stage: FunnelEvent['stage']) {
+  if (stage === '结果') return 5
+  if (stage === '待确认') return 4
+  if (stage === '风控') return 3
+  if (stage === '研判') return 2
+  return 1
+}
+
 function buildFunnelEvents(signals: SignalRow[]): FunnelEvent[] {
   return signals.flatMap((signal, index) => {
     const source: FunnelEvent['source'] = signal.stageEvidence === 'replay' ? 'sim_ledger' : 'signal_queue'
@@ -2657,7 +2820,7 @@ function buildFunnelEvents(signals: SignalRow[]): FunnelEvent[] {
         ...eventBase,
         id: `${baseId}-queue`,
         sequence: 4,
-        stage: '队列',
+        stage: '待确认',
         status: signal.status === 'pending' ? '等待' : '通过',
         label: signal.status === 'pending' ? '等待触发' : '进入结果',
         at: signal.stageTimes?.triggered,

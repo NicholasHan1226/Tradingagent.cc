@@ -432,7 +432,7 @@ describe('App navigation and result-first dashboard', () => {
               { id: 'a', symbol: '600519.SH', market: 'A-share', stage: '发现', status: '进入', label: '机会进入', source: 'signal_queue' },
               { id: 'b', symbol: '600519.SH', market: 'A-share', stage: '研判', status: '通过', label: '研究通过', source: 'signal_queue' },
               { id: 'c', symbol: '600519.SH', market: 'A-share', stage: '风控', status: '通过', label: '风控通过', source: 'signal_queue' },
-              { id: 'd', symbol: '600519.SH', market: 'A-share', stage: '队列', status: '等待', label: '待执行', source: 'signal_queue' },
+              { id: 'd', symbol: '600519.SH', market: 'A-share', stage: '待确认', status: '等待', label: '待执行', source: 'signal_queue' },
               { id: 'e', symbol: '600519.SH', market: 'A-share', stage: '结果', status: '成交', label: '成交', source: 'sim_ledger' },
               { id: 'f', symbol: 'BTC-USD', market: 'Crypto', stage: '结果', status: '拦截', label: '放弃', source: 'signal_queue' },
             ],

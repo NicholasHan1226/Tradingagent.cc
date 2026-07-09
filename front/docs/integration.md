@@ -15,6 +15,7 @@ gated and must not trigger execution from the front layer.
 | Front result | Preferred source | Fallback / supporting source | Status |
 | --- | --- | --- | --- |
 | Current opportunities | `signals/pending/*.json` | `signals/{claimed,running,filled,cancelled,expired,failed,partial}/*.json` | Ready |
+| Opportunity funnel | `shared/review/opportunities/funnel_events.jsonl` | `shared/logs/opportunities/funnel_events.jsonl`, then derived `signals[]` and `sim_ledger` result events | Ready |
 | Positions | `signals/positions/*.json` | `shared/accounting/position_plan.jsonl` | Partial |
 
 > **A股模拟盘默认走服务器本地闭环**：`Ashare/sim_executor.py` 生成 simulated fill 后直接进入 `signals/filled/` 与 `signals/positions/`；`signals/pending/` 仅在显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时用于 Hermes/同花顺 GUI 第二路径。
@@ -146,12 +147,21 @@ Display-ready fields used by the homepage:
   `debated_at`, `risk_checked_at`, and `triggered_at`. The reader maps existing
   status and timestamps into `发现 / 研判 / 风控 / 待确认 / 结果` so the animated
   funnel reflects only real read-only file state.
-- `funnelEvents[]`: read-only display events derived from `signals[]` and the
-  simulated ledger. Each event carries `symbol`, `market`, `stage`, `status`,
-  `source`, and optional `opportunityId`, `sequence`, `at`, `reason`,
-  `latencyMinutes`, and `terminal`, allowing the homepage funnel to animate one
-  real opportunity through the pipeline without writing to queues or inventing
-  stages.
+- `funnelEvents[]`: read-only display events. The preferred upstream source is
+  `shared/review/opportunities/funnel_events.jsonl`; the reader also accepts
+  `shared/logs/opportunities/funnel_events.jsonl`. When explicit event logs are
+  absent, the reader derives display events from `signals[]` and the simulated
+  ledger. Each event carries `symbol`, `market`, `stage`, `status`, `source`,
+  and optional `opportunityId`, `sequence`, `at`, `reason`, `latencyMinutes`,
+  and `terminal`, allowing the homepage funnel to animate one real opportunity
+  through the pipeline without writing to queues or inventing stages.
+- Explicit opportunity event rows may use either snake_case or camelCase:
+  `opportunity_id/opportunityId`, `event_id/id`, `symbol/ts_code`, `market`,
+  `stage`, `status`, `timestamp/at/ts/created_at/updated_at`,
+  `latency_minutes/latencyMinutes`, `terminal`, `label`, and `reason`.
+  English stage/status values such as `discovered`, `research`, `risk`,
+  `pending`, `filled`, `blocked`, `missed`, and `cancelled` are normalized to
+  the Chinese display stages and outcomes.
 - `opportunityId` is the stable display key for one opportunity. The front
   groups funnel particles by this id first, then falls back to market + symbol
   only when older records do not provide it. Upstream signal rows may provide
@@ -169,11 +179,11 @@ Display-ready fields used by the homepage:
 - Missed, expired, failed, and cancelled rows are terminal review outcomes.
   They should be shown as review/abandoned results, not counted as current
   pending opportunities.
-- The homepage treats `signal_queue` events as the source of a true opportunity
-  funnel. A matching `sim_ledger` result for the same market and symbol may
-  complete the final outcome stage, but simulated-ledger rows alone are only a
-  completed-trade replay. This prevents old fills from pretending to be a live
-  screening funnel.
+- The homepage treats `opportunity_log` and `signal_queue` events as the source
+  of a true opportunity funnel. A matching `sim_ledger` result for the same
+  market and symbol may complete the final outcome stage, but simulated-ledger
+  rows alone are only a completed-trade replay. This prevents old fills from
+  pretending to be a live screening funnel.
 - Homepage view portfolio: the browser derives the visible portfolio from the
   active market. `All Markets` aggregates `marketSummaries[]` capital and PnL
   when the top-level `portfolio` only represents one local account fallback.

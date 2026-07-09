@@ -8,6 +8,7 @@ async function createWorkspace() {
   const root = join(tmpdir(), `tad-read-model-${Date.now()}-${Math.random().toString(16).slice(2)}`)
   await mkdir(join(root, 'TradingAgent/shared/accounting'), { recursive: true })
   await mkdir(join(root, 'TradingAgent/shared/review/daily'), { recursive: true })
+  await mkdir(join(root, 'TradingAgent/shared/review/opportunities'), { recursive: true })
   await mkdir(join(root, 'signals/pending'), { recursive: true })
   await mkdir(join(root, 'signals/filled'), { recursive: true })
   await mkdir(join(root, 'TradingAgent/signals/positions'), { recursive: true })
@@ -1464,6 +1465,82 @@ describe('TradingAgent snapshot reader', () => {
       stage: '风控',
       status: '拦截',
       source: 'signal_queue',
+      terminal: true,
+    }))
+  })
+
+  it('reads explicit opportunity funnel event logs as the homepage funnel source', async () => {
+    const root = await createWorkspace()
+
+    await writeFile(
+      join(root, 'TradingAgent/shared/review/opportunities/funnel_events.jsonl'),
+      [
+        {
+          opportunity_id: 'opp-0700-breakout',
+          event_id: 'opp-0700-breakout-discover',
+          ts_code: '0700.HK',
+          market: 'hk',
+          stage: 'discovered',
+          status: 'entered',
+          label: '发现机会',
+          timestamp: '2026-07-04T09:41:00.000+08:00',
+        },
+        {
+          opportunity_id: 'opp-0700-breakout',
+          event_id: 'opp-0700-breakout-research',
+          ts_code: '0700.HK',
+          market: 'hk',
+          stage: 'research',
+          status: 'passed',
+          latency_minutes: 4,
+          timestamp: '2026-07-04T09:45:00.000+08:00',
+        },
+        {
+          opportunityId: 'opp-0700-breakout',
+          id: 'opp-0700-breakout-pending',
+          symbol: '0700.HK',
+          market: 'HK',
+          stage: 'pending',
+          status: 'waiting',
+          reason: '等待价格确认',
+          timestamp: '2026-07-04T09:51:00.000+08:00',
+        },
+        {
+          opportunity_id: 'opp-btc-volatility',
+          event_id: 'opp-btc-volatility-blocked',
+          ts_code: 'BTCUSDT',
+          market: 'crypto',
+          stage: 'blocked',
+          status: 'blocked',
+          label: '风险挡住',
+          terminal: true,
+          timestamp: '2026-07-04T09:58:00.000+08:00',
+        },
+      ].map((row) => JSON.stringify(row)).join('\n') + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T10:00:00.000Z'),
+    })
+
+    expect(snapshot.domains.signals.status).toBe('ready')
+    expect(snapshot.sourceRefs.opportunityEvents).toContain('shared/review/opportunities/funnel_events.jsonl')
+    expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
+      symbol: '0700.HK',
+      opportunityId: 'opp-0700-breakout',
+      stage: '待确认',
+      status: '等待',
+      source: 'opportunity_log',
+      reason: '等待价格确认',
+    }))
+    expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
+      symbol: 'BTC-USD',
+      opportunityId: 'opp-btc-volatility',
+      stage: '结果',
+      status: '拦截',
+      source: 'opportunity_log',
       terminal: true,
     }))
   })

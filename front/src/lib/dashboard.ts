@@ -150,7 +150,7 @@ export function getSignalFunnel(rows: SignalRow[]) {
     { label: '发现', rows: discovered },
     { label: '研判', rows: formed },
     { label: '风控', rows: conditioned },
-    { label: '队列', rows: riskPassed },
+    { label: '待确认', rows: riskPassed },
     { label: '结果', rows: tradeSignals },
   ]
   const stageDrops = stages.map((stage, index) => index === 0 ? 0 : Math.max(0, stages[index - 1].rows.length - stage.rows.length))

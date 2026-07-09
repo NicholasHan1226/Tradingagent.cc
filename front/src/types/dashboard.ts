@@ -181,7 +181,7 @@ export type SignalCapitalEvidence = {
   source: string
 }
 
-export type FunnelEventStage = '发现' | '研判' | '风控' | '队列' | '结果'
+export type FunnelEventStage = '发现' | '研判' | '风控' | '待确认' | '结果'
 export type FunnelEventStatus = '进入' | '通过' | '等待' | '成交' | '机会' | '拦截' | '复盘'
 
 export type FunnelEvent = {
@@ -194,7 +194,7 @@ export type FunnelEvent = {
   status: FunnelEventStatus
   label: string
   at?: string
-  source: 'signal_queue' | 'sim_ledger'
+  source: 'signal_queue' | 'sim_ledger' | 'opportunity_log'
   reason?: string
   latencyMinutes?: number
   terminal?: boolean
