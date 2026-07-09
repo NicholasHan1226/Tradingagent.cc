@@ -355,6 +355,20 @@ class TestSharedSignalsReader(unittest.TestCase):
 
         self.assertEqual(rows[0]["factor_name"], "value")
 
+    def test_latest_daily_batch_uses_sharedsignals_tushare_read_model(self) -> None:
+        api = FakeAPIClient()
+        trading_reader = TradingagentDataReader(
+            api_client=api,
+            shared=self.reader,
+            marketgraph=MarketGraphCSVReader(Path(self.tmp.name) / "missing_marketgraph"),
+        )
+
+        rows = trading_reader.get_latest_daily_batch("Ashare", limit=3000)
+
+        self.assertEqual(rows[0]["symbol"], "600000.SH")
+        self.assertEqual(api.tushare_calls[-1]["api_name"], "daily")
+        self.assertEqual(api.tushare_calls[-1]["limit"], 3000)
+
     def test_default_sqlite_fallback_is_nonexistent_until_explicitly_configured(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(
@@ -400,6 +414,16 @@ class FakeAPIClient:
                     "exchange": "SHFE",
                     "asset_type": "future",
                     "status": "listed",
+                }
+            ]
+        if api_name == "daily":
+            return [
+                {
+                    "symbol": "600000.SH",
+                    "trade_date": "20260708",
+                    "market": "Ashare",
+                    "close": 10.29,
+                    "amount": 888789.3933,
                 }
             ]
         return []

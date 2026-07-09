@@ -87,6 +87,46 @@ class LiquidityOrderedReader(FakeAshareReader):
         ]
 
 
+class BulkDailyReader(FakeAshareReader):
+    def get_assets(self, market: str | None = None) -> list[dict]:
+        return [
+            {"market": market or "ashare", "symbol": "000001.SZ", "name": "平安银行", "exchange": "SZ", "status": "active"},
+            {"market": market or "ashare", "symbol": "600000.SH", "name": "浦发银行", "exchange": "SH", "status": "active"},
+            {"market": market or "ashare", "symbol": "000002.SZ", "name": "万科A", "exchange": "SZ", "status": "active"},
+            {"market": market or "ashare", "symbol": "300750.SZ", "name": "宁德时代", "exchange": "SZ", "status": "active"},
+            {"market": market or "ashare", "symbol": "600519.SH", "name": "贵州茅台", "exchange": "SH", "status": "active"},
+        ]
+
+    def get_latest_daily_batch(self, market: str = "Ashare", *, limit: int = 5000) -> list[dict]:
+        return [
+            {"market": market, "symbol": "000001.SZ", "trade_date": "20260707", "close": 10.0, "amount": 999_999.0},
+            {"market": market, "symbol": "600000.SH", "trade_date": "20260708", "close": 10.0, "amount": 120_000.0},
+            {"market": market, "symbol": "000002.SZ", "trade_date": "20260708", "close": 10.0, "amount": 80_000.0},
+            {"market": market, "symbol": "300750.SZ", "trade_date": "20260708", "close": 10.0, "amount": 650_000.0},
+            {"market": market, "symbol": "600519.SH", "trade_date": "20260708", "close": 10.0, "amount": 45_000.0},
+        ]
+
+    def get_bars_daily(self, market: str, symbol: str, start_date: str = "", end_date: str = "") -> list[dict]:
+        raise AssertionError("batch daily rows should be used before per-symbol daily reads")
+
+
+class APICoverageReader(FakeAshareReader):
+    def get_latest_daily_batch(self, market: str = "Ashare", *, limit: int = 5000) -> list[dict]:
+        rows = [
+            {
+                "market": market,
+                "symbol": f"600{i:03d}.SH",
+                "trade_date": "20260706",
+                "close": 10.0,
+                "amount": 100_000.0,
+            }
+            for i in range(1000)
+        ]
+        rows[0]["symbol"] = "600000.SH"
+        rows[1]["symbol"] = "600001.SH"
+        return rows
+
+
 class AsharePreopenDryRunTest(unittest.TestCase):
     def setUp(self) -> None:
         self._old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
@@ -203,6 +243,28 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertTrue(report["execution_gate"]["ready"])
         self.assertIn("timings_seconds", report)
 
+    def test_data_section_prefers_sharedsignals_api_daily_batch(self) -> None:
+        reader = APICoverageReader()
+        with (
+            mock.patch.object(ashare_preopen_dry_run.AshareAdapter, "get_sim_account", return_value=self._account()),
+            mock.patch(
+                "shared.runtime_test.ashare_preopen_dry_run.score_universe",
+                return_value=[
+                    ("600000.SH", {"combined": 0.8, "macro": 0.5, "event": 0.5, "fundamental": 0.8, "capital": 0.6, "technical": 0.7, "sentiment": 0.5}),
+                ],
+            ),
+        ):
+            report = ashare_preopen_dry_run.run_preopen_dry_run(
+                now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
+                sqlite_db=Path("/tmp/nonexistent-sharedsignals.sqlite"),
+                reader=reader,
+                score_limit=2,
+            )
+
+        self.assertEqual(report["data"]["status"], "pass")
+        self.assertEqual(report["data"]["data_source"], "SharedSignals API /tushare daily read model")
+        self.assertEqual(report["data"]["symbol_count"], 1000)
+
     def test_warns_and_safe_empty_when_no_candidate_passes_threshold(self) -> None:
         reader = FakeAshareReader()
         with (
@@ -270,6 +332,14 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         )
 
         self.assertEqual(universe, ["600000.SH", "000002.SZ"])
+
+    def test_reader_universe_prefers_sharedsignals_batch_daily_amount(self) -> None:
+        universe = ashare_preopen_dry_run._latest_liquid_universe_from_reader(
+            BulkDailyReader(),
+            limit=3,
+        )
+
+        self.assertEqual(universe, ["300750.SZ", "600000.SH", "000002.SZ"])
 
     def test_execution_gate_observes_when_capital_plan_has_no_new_budget(self) -> None:
         db_path = self._db(latest_date="20260706", count=1)

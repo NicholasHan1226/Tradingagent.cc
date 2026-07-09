@@ -1269,6 +1269,7 @@ class TradingagentDataReader:
     def get_tushare(
         self, api_name: str, ts_code: str | None = None,
         start_date: str | None = None, end_date: str | None = None,
+        **params: Any,
     ) -> list[dict[str, Any]]:
         try:
             def fallback() -> list[dict[str, Any]]:
@@ -1281,6 +1282,7 @@ class TradingagentDataReader:
                 ts_code=ts_code,
                 start_date=start_date,
                 end_date=end_date,
+                **params,
             )
             self._record_shared_error("get_tushare")
             return result
@@ -1289,6 +1291,31 @@ class TradingagentDataReader:
             self.stale = True
             self._maybe_alert()
             return []
+
+    def get_latest_daily_batch(
+        self,
+        market: str = "Ashare",
+        *,
+        limit: int = 5000,
+    ) -> list[dict[str, Any]]:
+        """Return recent daily bars through SharedSignals API for market-level ranking."""
+        market_name = self._canonical_market(market)
+        api_name = {
+            "Ashare": "daily",
+            "US": "us_daily",
+            "HK": "hk_daily",
+            "Futures": "fut_daily",
+        }.get(market_name)
+        if not api_name:
+            return []
+        rows = self.get_tushare(api_name, limit=max(1, int(limit)))
+        normalized = self._normalize_market_rows(rows, market_name, "")
+        if market_name:
+            normalized = [
+                row for row in normalized
+                if not row.get("market") or str(row.get("market")).lower() == market_name.lower()
+            ]
+        return normalized
 
     def get_market_interface_snapshot(
         self,

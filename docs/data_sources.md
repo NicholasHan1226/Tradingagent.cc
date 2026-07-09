@@ -51,9 +51,11 @@ cron templates and active documents should use the current sources above.
 
 ## Market Responsibilities
 
-- A-share: SharedSignals `stock_basic`, daily bars and 5-minute bars feed
-  TradingAgent simulation; TradingAgent writes server-local simulated receipts
-  under `signals/`.
+- A-share: SharedSignals `stock_basic`, `/tushare?api_name=daily` daily read
+  model rows, single-symbol `/market_data` daily bars and 5-minute bars feed
+  TradingAgent simulation. Pre-open dry-run uses the batch daily read model to
+  prove coverage and rank liquid ordinary A-share symbols before scoring;
+  TradingAgent writes server-local simulated receipts under `signals/`.
 - Crypto / US: SharedSignals feeds the five-minute simulated loops;
   TradingAgent keeps simulated ledgers and style review outputs locally.
 - PM: SharedSignals feeds market/prices; MarketGraph unified API

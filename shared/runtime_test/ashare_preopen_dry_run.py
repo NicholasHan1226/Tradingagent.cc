@@ -201,7 +201,7 @@ def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]
             return []
     except Exception:
         return []
-    candidates: list[tuple[str, float]] = []
+    asset_symbols: list[str] = []
     seen: set[str] = set()
     for row in rows or []:
         if not isinstance(row, dict):
@@ -214,6 +214,20 @@ def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]
         if "ST" in name or "退" in name or status in {"suspended", "halted", "delisted", "inactive"}:
             continue
         seen.add(symbol)
+        asset_symbols.append(symbol)
+
+    batch_amounts = _latest_daily_amounts_from_reader(reader)
+    if batch_amounts:
+        candidates = [
+            (symbol, amount)
+            for symbol in asset_symbols
+            if (amount := batch_amounts.get(symbol, 0.0)) > 0 and amount * 1000.0 >= 50_000_000.0
+        ]
+        candidates.sort(key=lambda item: (-item[1], item[0]))
+        return [symbol for symbol, _ in candidates[: max(1, int(limit))]]
+
+    candidates: list[tuple[str, float]] = []
+    for symbol in asset_symbols:
         amount = _latest_daily_amount_from_reader(reader, symbol)
         if amount > 0 and amount * 1000.0 < 50_000_000.0:
             continue
@@ -222,6 +236,54 @@ def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]
             break
     candidates.sort(key=lambda item: -item[1])
     return [symbol for symbol, _ in candidates[: max(1, int(limit))]]
+
+
+def _latest_daily_amounts_from_reader(reader: Any) -> dict[str, float]:
+    get_latest_daily_batch = getattr(reader, "get_latest_daily_batch", None)
+    rows: list[dict[str, Any]] = []
+    if callable(get_latest_daily_batch):
+        try:
+            rows = list(get_latest_daily_batch("Ashare", limit=5000) or [])
+        except Exception:
+            rows = []
+    if not rows:
+        get_tushare = getattr(reader, "get_tushare", None)
+        if callable(get_tushare):
+            try:
+                rows = list(get_tushare("daily", limit=5000) or [])
+            except TypeError:
+                rows = []
+            except Exception:
+                rows = []
+    latest_date = ""
+    clean_rows: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper()
+        if not symbol or not _is_supported_ashare_code(symbol):
+            continue
+        if _safe_float(row.get("close"), 0.0) <= 0:
+            continue
+        trade_date = str(row.get("trade_date") or row.get("date") or "").replace("-", "")
+        if not trade_date:
+            continue
+        if trade_date > latest_date:
+            latest_date = trade_date
+        clean_rows.append(row)
+    if not latest_date:
+        return {}
+
+    amounts: dict[str, float] = {}
+    for row in clean_rows:
+        trade_date = str(row.get("trade_date") or row.get("date") or "").replace("-", "")
+        if trade_date != latest_date:
+            continue
+        symbol = str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper()
+        amount = _safe_float(row.get("amount"), 0.0)
+        if amount > amounts.get(symbol, 0.0):
+            amounts[symbol] = amount
+    return amounts
 
 
 def _latest_daily_amount_from_reader(reader: Any, symbol: str) -> float:
@@ -301,6 +363,64 @@ def _build_candidate_pool(
         "top_scored": _compact_scores(scored, limit=10),
         "score_diagnostics": _score_diagnostics(scores_by_symbol, actual_candidate_count=len(candidates)),
         "candidates_for_plan": candidates,
+    }
+
+
+def _api_daily_coverage_from_reader(reader: Any, *, now: datetime, min_symbols: int) -> dict[str, Any]:
+    amounts = _latest_daily_amounts_from_reader(reader)
+    if not amounts:
+        return {}
+    rows: list[dict[str, Any]] = []
+    get_latest_daily_batch = getattr(reader, "get_latest_daily_batch", None)
+    if callable(get_latest_daily_batch):
+        try:
+            rows = list(get_latest_daily_batch("Ashare", limit=5000) or [])
+        except Exception:
+            rows = []
+    latest_trade_date = ""
+    symbols: set[str] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper()
+        if not symbol or not _is_supported_ashare_code(symbol):
+            continue
+        if _safe_float(row.get("close"), 0.0) <= 0:
+            continue
+        trade_date = str(row.get("trade_date") or row.get("date") or "").replace("-", "")
+        if not trade_date:
+            continue
+        if trade_date > latest_trade_date:
+            latest_trade_date = trade_date
+            symbols = {symbol}
+        elif trade_date == latest_trade_date:
+            symbols.add(symbol)
+    if not latest_trade_date:
+        latest_trade_date = "unknown"
+        symbols = set(amounts)
+
+    age_days: int | None = None
+    if latest_trade_date != "unknown":
+        try:
+            age_days = (now.replace(tzinfo=None).date() - datetime.strptime(latest_trade_date, "%Y%m%d").date()).days
+        except ValueError:
+            age_days = None
+    status = "pass"
+    reason = "api_daily_bars_ready"
+    if len(symbols) < min_symbols:
+        status = "fail"
+        reason = "api_daily_bars_missing"
+    elif age_days is not None and age_days > 5:
+        status = "fail"
+        reason = "api_daily_bars_stale"
+    return {
+        "status": status,
+        "reason": reason,
+        "symbol_count": len(symbols),
+        "latest_trade_date": latest_trade_date,
+        "latest_daily_age_days": age_days,
+        "max_daily_age_days": 5,
+        "data_source": "SharedSignals API /tushare daily read model",
     }
 
 
@@ -484,7 +604,9 @@ def run_preopen_dry_run(
     )
 
     section_started = time.perf_counter()
-    data = validate_pre_open(sqlite_db=sqlite_db, now=current, min_symbols=MIN_SYMBOLS)
+    data = _api_daily_coverage_from_reader(data_reader, now=current, min_symbols=MIN_SYMBOLS)
+    if not data:
+        data = validate_pre_open(sqlite_db=sqlite_db, now=current, min_symbols=MIN_SYMBOLS)
     _mark("data_seconds", section_started)
     data_status = str(data.get("status") or "warn").lower()
     if data.get("reason") in {"pre_open_daily_bars_missing", "pre_open_daily_bars_stale"}:
@@ -496,6 +618,7 @@ def run_preopen_dry_run(
         "latest_trade_date": data.get("latest_trade_date"),
         "latest_daily_age_days": data.get("latest_daily_age_days"),
         "max_daily_age_days": data.get("max_daily_age_days"),
+        "data_source": data.get("data_source") or "SharedSignals explicit SQLite diagnostic read",
     }
 
     section_started = time.perf_counter()

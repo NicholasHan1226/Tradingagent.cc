@@ -90,6 +90,20 @@ Event reads use:
 - Optional futures contract lifecycle fields are passed through when
   SharedSignals has them: `last_trade_date`, `expiry_date`.
 
+A-share pre-open daily coverage and liquidity ranking use:
+
+- API-first path: SharedSignals `/tushare?api_name=daily&limit=<N>`, consumed
+  through `TradingagentDataReader.get_latest_daily_batch("Ashare")`.
+- This endpoint reads SharedSignals' existing `market_bars_daily` read model;
+  it must not call live Tushare from TradingAgent.
+- The pre-open dry-run uses the latest available ordinary A-share date from
+  those rows to count coverage and sort candidate universe by `amount`
+  (Tushare thousand-CNY units). It then uses single-symbol `/market_data` rows
+  only for detailed scoring and execution-gate prices.
+- If the batch API is unavailable, SQLite remains an explicit diagnostic path
+  only when `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1`; production must not
+  silently read sibling-system files.
+
 A-share reverse repo reads use SharedSignals `/market_data` for `204001.SH`.
 SharedSignals owns the `repo_daily` collection and projects those rows into
 `market_bars_daily`; TradingAgent treats `close` as annualized percentage yield
