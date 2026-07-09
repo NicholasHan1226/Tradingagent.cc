@@ -62,6 +62,31 @@ class FakeAshareReader:
         return []
 
 
+class LiquidityOrderedReader(FakeAshareReader):
+    def get_assets(self, market: str | None = None) -> list[dict]:
+        return [
+            {"market": market or "ashare", "symbol": "000001.SZ", "name": "平安银行", "exchange": "SZ", "status": "active"},
+            {"market": market or "ashare", "symbol": "600000.SH", "name": "浦发银行", "exchange": "SH", "status": "active"},
+            {"market": market or "ashare", "symbol": "000002.SZ", "name": "万科A", "exchange": "SZ", "status": "active"},
+        ]
+
+    def get_bars_daily(self, market: str, symbol: str, start_date: str = "", end_date: str = "") -> list[dict]:
+        amount_by_symbol = {
+            "000001.SZ": 60_000.0,
+            "600000.SH": 300_000.0,
+            "000002.SZ": 120_000.0,
+        }
+        return [
+            {
+                "market": market,
+                "symbol": symbol,
+                "trade_date": "20260708",
+                "close": 10.0,
+                "amount": amount_by_symbol.get(symbol, 0.0),
+            }
+        ]
+
+
 class AsharePreopenDryRunTest(unittest.TestCase):
     def setUp(self) -> None:
         self._old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
@@ -237,6 +262,14 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         universe = ashare_preopen_dry_run._latest_liquid_universe_from_read_model(path, "20260708", limit=2)
 
         self.assertEqual(universe, ["600000.SH", "600001.SH"])
+
+    def test_reader_universe_prefers_latest_liquid_daily_amount(self) -> None:
+        universe = ashare_preopen_dry_run._latest_liquid_universe_from_reader(
+            LiquidityOrderedReader(),
+            limit=2,
+        )
+
+        self.assertEqual(universe, ["600000.SH", "000002.SZ"])
 
     def test_execution_gate_observes_when_capital_plan_has_no_new_budget(self) -> None:
         db_path = self._db(latest_date="20260706", count=1)

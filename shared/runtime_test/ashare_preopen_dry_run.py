@@ -201,7 +201,7 @@ def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]
             return []
     except Exception:
         return []
-    symbols: list[str] = []
+    candidates: list[tuple[str, float]] = []
     seen: set[str] = set()
     for row in rows or []:
         if not isinstance(row, dict):
@@ -214,10 +214,40 @@ def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]
         if "ST" in name or "退" in name or status in {"suspended", "halted", "delisted", "inactive"}:
             continue
         seen.add(symbol)
-        symbols.append(symbol)
-        if len(symbols) >= max(1, int(limit)):
+        amount = _latest_daily_amount_from_reader(reader, symbol)
+        if amount > 0 and amount * 1000.0 < 50_000_000.0:
+            continue
+        candidates.append((symbol, amount))
+        if len(candidates) >= max(1, int(limit)) * 4:
             break
-    return symbols
+    candidates.sort(key=lambda item: -item[1])
+    return [symbol for symbol, _ in candidates[: max(1, int(limit))]]
+
+
+def _latest_daily_amount_from_reader(reader: Any, symbol: str) -> float:
+    get_bars_daily = getattr(reader, "get_bars_daily", None)
+    if not callable(get_bars_daily):
+        return 0.0
+    try:
+        rows = get_bars_daily("Ashare", symbol, "", "")
+    except TypeError:
+        try:
+            rows = get_bars_daily("ashare", symbol, "", "")
+        except Exception:
+            return 0.0
+    except Exception:
+        return 0.0
+    best: dict[str, Any] | None = None
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if _safe_float(row.get("close"), 0.0) <= 0:
+            continue
+        if best is None or str(row.get("trade_date") or "") > str(best.get("trade_date") or ""):
+            best = row
+    if best is None:
+        return 0.0
+    return _safe_float(best.get("amount"), 0.0)
 
 
 def _build_candidate_pool(
