@@ -739,9 +739,11 @@ def record_local_sim_order(
             or (account.get("sim_capital") if isinstance(account, dict) else None)
             or ASHARE_SIM_DEFAULT_CASH
         )
+        # Solvency and sellable-position checks must use all recorded account
+        # facts; strategy-only filtering is only for reporting/evolution views.
+        audit_account = _replay_account(trades, account_name, starting_cash=starting_cash)
         if side == "buy":
-            current = _replay_account(_strategy_trades_only(trades), account_name, starting_cash=starting_cash)
-            cash_available = _safe_float(current.get("cash_available"), 0.0)
+            cash_available = _safe_float(audit_account.get("cash_available"), 0.0)
             if cash_available + 1e-9 < net_amount:
                 return {
                     "status": "rejected",
@@ -754,7 +756,7 @@ def record_local_sim_order(
                     "required_cash": round(net_amount, 2),
                 }
         if side == "sell":
-            current = _replay_account(_strategy_trades_only(trades), account_name, starting_cash=starting_cash)["positions"].get(code, {})
+            current = audit_account["positions"].get(code, {})
             if quantity > _safe_int(current.get("quantity"), 0):
                 return {"status": "rejected", "recorded": False, "reason": f"sell quantity {quantity} exceeds local simulated position {current.get('quantity', 0)} for {code}", "account": account_name}
         _append_trade_unlocked(trade)
