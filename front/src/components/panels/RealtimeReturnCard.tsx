@@ -63,11 +63,17 @@ export function RealtimeReturnCard({
       : formatCnyCompact(strategyPnl)
   const drawdownDistance = portfolio ? Math.max(0, DRAWDOWN_LIMIT_PCT - Math.abs(portfolio.maxDrawdownPct)) : null
   const drawdownLabel = drawdownDistance !== null ? `${drawdownDistance.toFixed(2)}%` : '等待'
+  const cardTitle = isLive ? '实盘预留' : '模拟盘'
+  const cardKicker = isLive
+    ? '完成接入后展示真实资金'
+    : hasPerformanceData
+      ? '当前结果'
+      : '等待快照更新'
 
   return (
     <aside className="realtime-return-card" aria-label="收益结果">
       <div className="return-card-head">
-        <span>{isLive ? '实盘预留' : '模拟盘最新结果'}</span>
+        <span>{cardTitle}</span>
         <div className="return-mode-switch" aria-label="账户层切换" role="tablist">
           <button
             aria-selected={!isLive}
@@ -89,15 +95,15 @@ export function RealtimeReturnCard({
           </button>
         </div>
       </div>
-      <span className="return-kicker">{isLive ? '待接入' : '最新快照'} · 金额为主，收益率同步显示</span>
+      <span className="return-kicker">{cardKicker}</span>
       {isLive ? (
         <div className="return-placeholder">
-          <strong>实盘待接入</strong>
-          <p>完成授权、风控和回执验证前，不展示真实资金结果。</p>
+          <strong>实盘未连接</strong>
+          <p>实盘接口已预留。完成授权、风控和回执验证后再展示真实资金。</p>
         </div>
       ) : !hasPerformanceData ? (
         <div className="return-placeholder">
-          <strong>等待收益结果</strong>
+          <strong>等待收益写入</strong>
           <p>{headline}</p>
         </div>
       ) : (
@@ -108,11 +114,11 @@ export function RealtimeReturnCard({
           </div>
           <div className="return-facts" aria-label="收益关键指标">
             <span>
-              <em>目标差</em>
+              <em>领先目标</em>
               <b>{formatSignedPct(targetGap)}</b>
             </span>
             <span>
-              <em>风险距离</em>
+              <em>风控余量</em>
               <b>{drawdownLabel}</b>
             </span>
             <span>
@@ -155,7 +161,7 @@ export function RealtimeReturnCard({
           <small>{accountLine}</small>
         </>
       )}
-      <button onClick={() => setActivePage('收益')} type="button">收益详情</button>
+      <button onClick={() => setActivePage('收益')} type="button">查看收益原因</button>
     </aside>
   )
 }

@@ -496,6 +496,176 @@
   color: var(--state-amber);
 }
 
+.signal-flow-board {
+  background:
+    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 52%),
+    rgba(0, 4, 4, 0.88);
+}
+
+.signal-flow-board.is-empty-flow {
+  min-height: 338px;
+}
+
+.real-funnel-empty {
+  min-height: 246px;
+  place-content: initial;
+  justify-items: stretch;
+  align-content: center;
+  gap: 12px;
+  padding: 22px 24px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(240, 246, 244, 0.012), transparent 70%),
+    rgba(0, 4, 4, 0.66);
+}
+
+.real-funnel-empty::before {
+  inset: 82px 30px auto;
+  height: 1px;
+  border: 0;
+  background: linear-gradient(90deg, transparent, rgba(105, 228, 215, 0.32), rgba(240, 246, 244, 0.08), transparent);
+  opacity: 0.72;
+  transform: none;
+}
+
+.real-funnel-empty::after {
+  top: 79px;
+  left: 28px;
+  width: 9px;
+  height: 9px;
+  border-color: rgba(105, 228, 215, 0.72);
+  background: rgba(0, 4, 4, 0.94);
+  box-shadow: none;
+  animation: empty-funnel-travel 4.2s linear infinite;
+}
+
+.empty-flow-ghost {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: start;
+  margin-bottom: 18px;
+  border: 1px solid rgba(240, 246, 244, 0.05);
+  background: rgba(1, 5, 5, 0.54);
+}
+
+.empty-flow-ghost span {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px 8px 12px;
+  border-left: 1px solid rgba(240, 246, 244, 0.038);
+  color: var(--text-faint);
+}
+
+.empty-flow-ghost span:first-child {
+  border-left: 0;
+}
+
+.empty-flow-ghost i {
+  width: var(--ghost-width, 42px);
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(105, 228, 215, 0.13);
+}
+
+.empty-flow-ghost em {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 660;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.real-funnel-empty > span {
+  z-index: 2;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.real-funnel-empty > strong {
+  z-index: 2;
+  color: var(--text-primary);
+  font: 730 28px/1.08 var(--font-sans);
+}
+
+.real-funnel-empty > p {
+  z-index: 2;
+  max-width: 360px;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+@keyframes empty-funnel-travel {
+  0% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+  12% {
+    opacity: 1;
+  }
+  86% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(420px);
+  }
+}
+
+.realtime-return-card {
+  min-height: 338px;
+  padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(105, 228, 215, 0.018), transparent 44%),
+    rgba(0, 4, 4, 0.88);
+}
+
+.return-card-head > span {
+  color: var(--text-primary);
+}
+
+.return-kicker {
+  color: var(--text-faint);
+}
+
+.return-primary {
+  width: 100%;
+  padding: 8px 0 4px;
+}
+
+.return-primary strong {
+  font-size: 38px;
+}
+
+.return-primary span {
+  color: var(--accent-cyan);
+  font-size: 15px;
+}
+
+.return-facts,
+.return-account-grid {
+  border-color: rgba(240, 246, 244, 0.052);
+  background: rgba(0, 4, 4, 0.48);
+}
+
+.realtime-return-card > button {
+  min-width: 112px;
+}
+
+.chart-empty-state {
+  border-color: rgba(240, 246, 244, 0.044);
+  background:
+    linear-gradient(180deg, rgba(240, 246, 244, 0.01), transparent 70%),
+    linear-gradient(90deg, transparent, rgba(105, 228, 215, 0.08), transparent),
+    rgba(0, 4, 4, 0.58);
+}
+
 @media (max-width: 980px) {
   .signal-flow-board.mode-real-flow {
     min-height: 390px;

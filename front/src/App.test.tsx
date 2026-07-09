@@ -128,7 +128,7 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('等待收益结果')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('等待收益写入')).toBeInTheDocument())
     expect(screen.getAllByText('暂无机会结果').length).toBeGreaterThan(0)
     expect(screen.getByRole('heading', { name: '等待机会' })).toBeInTheDocument()
     expect(screen.queryByText(/等待新机会 · 转化 0%/)).not.toBeInTheDocument()
@@ -144,7 +144,7 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('等待收益结果')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('等待收益写入')).toBeInTheDocument())
     expect(screen.getByText('等待接口')).toBeInTheDocument()
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
     expect(screen.queryByText('600519.SH')).not.toBeInTheDocument()
@@ -465,8 +465,8 @@ describe('App navigation and result-first dashboard', () => {
 
     expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
-    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
-    expect(within(card).getByText('完成授权、风控和回执验证前，不展示真实资金结果。')).toBeInTheDocument()
+    expect(within(card).getAllByText('实盘未连接').length).toBeGreaterThan(0)
+    expect(within(card).getByText('实盘接口已预留。完成授权、风控和回执验证后再展示真实资金。')).toBeInTheDocument()
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -487,7 +487,7 @@ describe('App navigation and result-first dashboard', () => {
     const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getAllByText('实盘待接入').length).toBeGreaterThan(0)
+    expect(within(card).getAllByText('实盘未连接').length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

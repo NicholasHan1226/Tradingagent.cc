@@ -79,6 +79,13 @@ current signal rows. With the current mock signal rows this means `6 -> 6 -> 6
 executed, pending, and missed. When the read-only TradingAgent snapshot is
 mounted, this same component should update from real signal data without
 changing the visual layer.
+The latest homepage refinement pass tightens the first-screen standard again:
+the return module is labeled simply as `模拟盘`, uses amount and percentage as
+one result, and keeps `实盘` as a reserved switch instead of a separate status
+card. The empty funnel no longer appears as a generic waiting card; it uses a
+five-stage pipeline skeleton so the space always reads as a funnel surface.
+When production `funnelEvents[]` exist, the same surface becomes a moving
+opportunity pipeline driven by real stage events.
 
 The home page answers the user-facing questions first:
 
@@ -167,6 +174,12 @@ The home page answers the user-facing questions first:
   numbers. It should not need explanatory headline text by default. Motion must
   remain functional and restrained: no glowing icon backplates, no bright
   blocks, and no trading-terminal controls.
+- Homepage signal funnel empty state should still look like a funnel surface,
+  not a centered message box. Use a quiet five-stage pipeline skeleton and
+  minimal text until real events arrive.
+- Homepage return card should be user-facing: `模拟盘` is the default result
+  surface, `实盘` is a reserved toggle, and the primary number combines amount
+  with percentage instead of splitting them across separate panels.
 - Live return chart is the homepage's main panel and must be visible on the
   first 1280x720 viewport.
 - Right rail is a single result explanation module on the homepage, not a stack of

@@ -233,9 +233,17 @@ export function SignalFunnelFlow({
           </>
         ) : (
           <div className="real-funnel-empty" role="status">
-            <span>机会漏斗</span>
-            <strong>{hasHoldingContext ? '暂无新机会' : '等待机会进入'}</strong>
-            <p>{hasHoldingContext ? `${holdings.length} 个持仓仍在跟踪，未生成新的可处理机会。` : '有机会进入后，这里会显示发现、研究、风控和待确认变化。'}</p>
+            <div className="empty-flow-ghost" aria-hidden="true">
+              {FLOW_STAGES.map((stage, index) => (
+                <span key={`empty-${stage.label}`} style={{ '--ghost-width': `${72 - index * 9}px` } as CSSProperties}>
+                  <i />
+                  <em>{stage.label}</em>
+                </span>
+              ))}
+            </div>
+            <span>空闲状态</span>
+            <strong>{hasHoldingContext ? '持仓跟踪中' : '管道空闲'}</strong>
+            <p>{hasHoldingContext ? `${holdings.length} 个持仓继续跟踪，暂时没有新的可处理机会。` : '机会进入后，会按发现、研究、风控和待确认顺序流动。'}</p>
             {hasHoldingContext && holdingSummary && (
               <div className="holding-context-strip" aria-label="持仓跟踪状态">
                 <span><b>{holdings.length}</b>持仓</span>
