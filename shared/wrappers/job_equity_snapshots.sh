@@ -21,7 +21,7 @@ fi
 
 cd "${ROOT}"
 
-if [ -f "${ROOT}/.env" ] && head -c 0 "${ROOT}/.env" >/dev/null 2>&1; then
+if [ -r "${ROOT}/.env" ]; then
   set -a
   # shellcheck disable=SC1091
   source "${ROOT}/.env"

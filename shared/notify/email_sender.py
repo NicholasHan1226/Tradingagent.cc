@@ -180,7 +180,7 @@ def load_env_from_file(env_path: Path | None = None) -> list[str]:
     env_paths = [env_path] if env_path is not None else list(dict.fromkeys(FALLBACK_ENV_FILES))
     loaded: list[str] = []
     for current_path in env_paths:
-        if current_path is None or not current_path.exists():
+        if current_path is None or not current_path.exists() or not os.access(current_path, os.R_OK):
             continue
         for raw_line in current_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()

@@ -37,6 +37,8 @@ def _get_key() -> str:
         "/opt/tradingagent/.env",
         "/opt/investment/tradingagent/.env",
     ):
+        if not os.access(path, os.R_OK):
+            continue
         try:
             with open(path, encoding="utf-8") as f:
                 for line in f:
