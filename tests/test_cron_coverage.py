@@ -41,6 +41,19 @@ class CronCoverageTest(unittest.TestCase):
         self.assertEqual(report["template_drift_count"], 0)
         self.assertNotIn("template_drift", report["failures"])
 
+    def test_ashare_sample_target_monitor_has_required_checkpoints(self) -> None:
+        expected = {
+            "45 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1",
+            "45 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1",
+            "30 14 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1",
+            "30 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1",
+        }
+
+        for path in (cron_coverage.ROOT / "crontab.txt", cron_coverage.ROOT / "shared/crontab.txt"):
+            text = path.read_text()
+            for line in expected:
+                self.assertIn(line, text)
+
     def test_fails_when_installed_crontab_misses_template_entry(self) -> None:
         report = cron_coverage.check_cron_coverage(
             crontabs={
@@ -106,6 +119,8 @@ class CronCoverageTest(unittest.TestCase):
 
         self.assertIn("shared/review/ashare/forward_validation_latest.json", candidates)
         self.assertIn("shared/review/ashare/portfolio_evolution_latest.json", candidates)
+        self.assertIn("shared/review/ashare/sample_target_monitor_latest.json", candidates)
+        self.assertIn("shared/review/ashare/sample_target_monitor_log.jsonl", candidates)
         self.assertIn("shared/logs/local_sim_tiers", candidates)
         self.assertIn("shared/logs/trade_audit_trail.jsonl", candidates)
 

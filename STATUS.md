@@ -4,7 +4,7 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-09 (A股前向验证、盯市快照与 cron 权限守门)
+> 最后更新：2026-07-10 (A股每日样本目标盘中监控)
 
 ---
 
@@ -140,6 +140,13 @@
 （当前无活跃迁移任务）
 
 ## 五、最近完成
+
+### 2026-07-10 A股每日样本目标盘中监控
+
+- [x] 新增 `Ashare/sample_target_monitor.py`：按当日 `portfolio_evolution_latest.json`、`evolution_decision_latest.json` 和 no-trade 解释判断每日策略有效样本目标是否达成；09:45/11:45/14:30 未达标为 warn 并继续 `force_sample_collection`，15:30 后仍未达标为 fail。
+- [x] 监控只写 `shared/review/ashare/sample_target_monitor_latest.json` 与 append-only log，并在欠样本时刷新 `evolution_decision_latest.json`；不写订单、不写 pending、不绕过 candidate/价格/风控/现金/整手/T+1/交易时段门禁，仍保持 simulated-only。
+- [x] 新增 `shared/wrappers/job_ashare_sample_target_monitor.sh` 与 09:45、11:45、14:30、15:30 cron 模板；`cron_coverage` 已纳入新任务和新 review 输出权限候选。
+- [x] 覆盖测试 `tests/test_ashare_sample_target_monitor.py` 和 cron 覆盖测试，验证目标达成、盘中欠样本、收盘仍欠样本三种状态。
 
 ### 2026-07-09 后端机会漏斗事件写入器
 

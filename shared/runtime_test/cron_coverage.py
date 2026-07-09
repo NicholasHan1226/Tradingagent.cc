@@ -84,6 +84,8 @@ def _runtime_permission_candidate_paths() -> set[Path]:
         ROOT / "shared/review/ashare/forward_validation.jsonl",
         ROOT / "shared/review/ashare/portfolio_evolution_latest.json",
         ROOT / "shared/review/ashare/portfolio_evolution_log.jsonl",
+        ROOT / "shared/review/ashare/sample_target_monitor_latest.json",
+        ROOT / "shared/review/ashare/sample_target_monitor_log.jsonl",
         ROOT / "shared/review/ashare/tier_experiments_latest.json",
         ROOT / "shared/review/opportunities",
         ROOT / "shared/logs/local_sim_tiers",

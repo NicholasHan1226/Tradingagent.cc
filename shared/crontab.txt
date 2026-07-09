@@ -26,6 +26,10 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 5 13 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_opening_validation.log 2>&1
 45 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_first_sample_alert.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_first_sample_alert.log 2>&1
 10 13 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_first_sample_alert.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_first_sample_alert.log 2>&1
+45 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1
+45 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1
+30 14 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1
+30 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1
 26 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_research_evidence.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_research_evidence.log 2>&1
 56 14 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_research_evidence.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_research_evidence.log 2>&1
 10 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_research_evidence.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_research_evidence.log 2>&1
