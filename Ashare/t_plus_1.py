@@ -261,7 +261,10 @@ def _shared_calendar_trading_days(start_d: date, end_d: date) -> list[date] | No
         days: list[date] = []
         current = start_d
         while current <= end_d:
-            if bool(reader.is_trading_day(current.strftime("%Y%m%d"))):
+            if (
+                current not in KNOWN_A_SHARE_HOLIDAYS_2026
+                and bool(reader.is_trading_day(current.strftime("%Y%m%d")))
+            ):
                 days.append(current)
             current += timedelta(days=1)
         if not days and (getattr(reader, "stale", False) or getattr(reader, "errors", [])):
@@ -278,7 +281,10 @@ def _shared_calendar_next_trading_day(trading_day: date) -> date | None:
     try:
         current = trading_day + timedelta(days=1)
         for _ in range(20):
-            if bool(reader.is_trading_day(current.strftime("%Y%m%d"))):
+            if (
+                current not in KNOWN_A_SHARE_HOLIDAYS_2026
+                and bool(reader.is_trading_day(current.strftime("%Y%m%d")))
+            ):
                 return current
             current += timedelta(days=1)
     except Exception:
@@ -312,6 +318,8 @@ def get_trading_calendar(
 
 def is_trading_day(d: date | datetime | str) -> bool:
     trading_day = _to_date(d)
+    if trading_day in KNOWN_A_SHARE_HOLIDAYS_2026:
+        return False
     shared_result = _shared_calendar_is_trading_day(trading_day)
     if shared_result is not None:
         return shared_result
