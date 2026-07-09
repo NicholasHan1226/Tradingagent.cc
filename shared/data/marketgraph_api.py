@@ -12,7 +12,7 @@ import urllib.request
 from typing import Any
 
 
-DEFAULT_API_URL = os.environ.get("MARKETGRAPH_API_URL", "")
+DEFAULT_API_URL = os.environ.get("MARKETGRAPH_API_URL", "http://127.0.0.1:8080")
 DEFAULT_API_TOKEN = os.environ.get("MARKETGRAPH_API_TOKEN", "")
 DEFAULT_TIMEOUT = float(os.environ.get("MARKETGRAPH_API_TIMEOUT", "10"))
 DEFAULT_RETRIES = int(os.environ.get("MARKETGRAPH_API_RETRIES", "1"))
