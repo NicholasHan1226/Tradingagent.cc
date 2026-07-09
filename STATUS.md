@@ -142,6 +142,7 @@
 - [x] 新增 `shared/review/opportunity_funnel.py`，统一规范机会事件 JSONL：`发现 → 研判 → 风控 → 待确认 → 结果`，状态统一为 `进入/通过/等待/成交/机会/拦截/复盘`，默认写入前端只读路径 `shared/review/opportunities/funnel_events.jsonl`。
 - [x] 新增 `shared/runtime_test/sync_opportunity_funnel_events.py`，可从 `signals/{pending,claimed,running,filled,partial,failed,expired,cancelled}` 信号状态目录同步机会事件，支持 dry-run，`--apply` 写入时用稳定 `event_id` 去重；该工具只生成复盘/看板事件，不移动信号、不触发成交、不修改队列状态。
 - [x] 覆盖测试 `tests/test_opportunity_funnel_events.py` 与 `tests/test_sync_opportunity_funnel_events.py`，验证阶段/状态规范化、前端读取路径、坏 JSONL 容错、从信号卡生成阶段路径，以及重复运行幂等。
+- [x] 新增 `shared/wrappers/job_opportunity_funnel_sync.sh` 与 5 分钟 cron 模板，把信号状态目录同步为机会漏斗看板事件；该入口只写 `shared/review/opportunities/funnel_events.jsonl`，不移动信号、不触发交易、不改资金账本，并已纳入快速验收。
 
 ### 2026-07-09 A股成交后资金刷新 + 前向验证；CNFutures 5分钟 replay
 
@@ -151,7 +152,7 @@
 - [x] 新增 `CNFutures/replay.py` 只读历史 5分钟 replay：从 SharedSignals API/read model 读取 Futures 5分钟 bars，对现有风格逐窗口回放，统计 buy/sell/hold 与原因，不写订单、不写持仓、不接实盘。replay 已复用 live 风格产品过滤，并为历史触发样本标注 `execution_eligible`、保证金门禁、午休/闭市边界和不可执行原因，避免把历史 buy/sell 误读为当前可成交信号。生产验证 20260709 可回放 20 个合约、4 个风格、834 个过滤后窗口。
 - [x] `shared/runtime_test/opening_acceptance.py` 聚合验收已补 API 健康复核：当旧 SQLite 诊断不可用或日线诊断失败，但对应市场 `market_health` 已通过 SharedSignals API、cron、账本/复盘检查时，聚合层保留原始诊断原因并判为 pass，避免午休/盘前窗口误报；生产 `full_acceptance --profile prod` 已恢复 pass。
 - [x] 看板只读快照已接入 A股 `forward_validation_latest.json` 与 CNFutures `replay_latest.json`：A股面板展示成交验证/待确认，期货市场摘要展示 replay 候选、可执行数量、主原因和合约/风格覆盖。
-- [x] 生产 crontab 已安全追加 A股前向验证和 CNFutures replay 固定任务，先备份现有 crontab，再只追加缺失行，不用单仓模板覆盖生产。
+- [x] 生产 crontab 固定任务已收口到 `marketgraph` 用户合并表：A股前向验证与 CNFutures replay 必须出现在 `sudo -u marketgraph crontab -l`，root 用户不得保留 TradingAgent 残留条目。新增 `shared.runtime_test.cron_coverage` 只读守卫，检查 `crontab.txt` 与 `shared/crontab.txt` 是否一致、生产用户是否覆盖完整模板、root 是否残留 TradingAgent 任务；`full_acceptance --profile prod` 已接入该守卫，避免以后单仓模板或误装 root 表导致“测试通过但生产调度漏项”。
 - [x] CNFutures 运维复盘摘要已拆分 `current` 与 `historical`：当前健康只看最新 actionable review，历史累计 `missing_intraday_bars` / `stale_intraday_bar` / 旧风控分类保留为复盘背景，不再与当前 live health 并列展示成今天故障。
 - [x] CNFutures 首样本验收改为生产 API-first：优先读取 SharedSignals `/realtime_5min?market=Futures`，只有显式测试/诊断 SQLite 才走本地 read model；有数据且策略主动 hold 归为正常观察，不再要求为了通过验收而产生模拟成交。
 - [x] A股开盘验收聚合层已识别“SQLite 诊断未启用但 API 健康通过”的纯旧诊断告警：仅该告警存在时降为 pass；若同时存在真实样本/执行/回执告警，仍保持 warn/fail。
