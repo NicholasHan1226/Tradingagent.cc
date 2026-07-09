@@ -188,7 +188,9 @@ The home page answers the user-facing questions first:
 - Homepage return card should be user-facing: `实时收益` is the card title,
   `模拟盘` is the default result mode, `实盘` is a reserved toggle, and the
   primary number combines amount with percentage instead of splitting them
-  across separate panels.
+  across separate panels. Return color is semantic: positive results use the
+  cyan accent, negative results use the risk red, and flat/zero results stay
+  neutral.
 - Live return chart is the homepage's main panel and must be visible on the
   first 1280x720 viewport.
 - Right rail is a single result explanation module on the homepage, not a stack of
@@ -310,7 +312,9 @@ The homepage now uses three outcome-first modules:
 - `RealtimeReturnCard`: one return card combines amount and percentage. Amount
   is the primary value, percentage is secondary, and simulated/live wording is
   controlled by the shared account mode. The copy now uses `实时收益` and
-  `实盘入口保留` rather than internal or system-state phrasing.
+  `实盘入口保留` rather than internal or system-state phrasing. Profit/loss
+  tone is result-driven so a negative live snapshot cannot inherit the positive
+  cyan treatment.
 - `HomeResultBrief`: renamed from judgement language to `当前结论`, with
   business-readable rows such as `收益主要来自`, `错过原因`, `风险已挡住`, and
   `实盘`.

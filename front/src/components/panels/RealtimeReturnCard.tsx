@@ -63,6 +63,8 @@ export function RealtimeReturnCard({
       : formatCnyCompact(strategyPnl)
   const drawdownDistance = portfolio ? Math.max(0, DRAWDOWN_LIMIT_PCT - Math.abs(portfolio.maxDrawdownPct)) : null
   const drawdownLabel = drawdownDistance !== null ? `${drawdownDistance.toFixed(2)}%` : '等待'
+  const returnTone = getReturnTone(liveProfit, liveReturn)
+  const targetGapTone = getReturnTone(targetGap, targetGap)
   const cardTitle = '实时收益'
   const cardKicker = isLive
     ? '实盘 · 接入后展示真实资金'
@@ -71,7 +73,7 @@ export function RealtimeReturnCard({
       : '模拟盘 · 等待快照更新'
 
   return (
-    <aside className="realtime-return-card" aria-label="收益结果">
+    <aside className={`realtime-return-card return-${returnTone}`} aria-label="收益结果">
       <div className="return-card-head">
         <span>{cardTitle}</span>
         <div className="return-mode-switch" aria-label="账户层切换" role="tablist">
@@ -113,7 +115,7 @@ export function RealtimeReturnCard({
             <span>{resultCaption}</span>
           </div>
           <div className="return-facts" aria-label="收益关键指标">
-            <span>
+            <span className={`return-${targetGapTone}`}>
               <em>目标差</em>
               <b>{formatSignedPct(targetGap)}</b>
             </span>
@@ -169,6 +171,16 @@ export function RealtimeReturnCard({
 function formatSignedPct(value: number) {
   const cleanValue = Math.abs(value) < 0.005 ? 0 : value
   return `${cleanValue > 0 ? '+' : ''}${cleanValue.toFixed(2)}%`
+}
+
+function getReturnTone(amount: number, pct: number) {
+  if (amount < -0.005 || pct < -0.005) {
+    return 'negative'
+  }
+  if (amount > 0.005 || pct > 0.005) {
+    return 'positive'
+  }
+  return 'flat'
 }
 
 function formatCapital(portfolio: PortfolioSummary) {

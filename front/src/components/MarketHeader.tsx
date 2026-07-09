@@ -47,6 +47,7 @@ export function MarketHeader({
     ? formatSignedPct(liveReturn)
     : undefined
   const drawdown = Math.abs(maxDrawdown ?? 0)
+  const returnTone = getTone(liveProfit ?? liveReturn, liveReturn)
 
   return (
     <section className="market-header">
@@ -57,8 +58,19 @@ export function MarketHeader({
         </div>
       </div>
       <div className="market-stats">
-        <Stat detail={returnDetail} label="当前收益" value={returnValue} cyan={hasPerformanceData} />
-        <Stat label="目标差" value={hasPerformanceData ? formatSignedPct(liveReturn - targetReturn) : '等待'} />
+        <Stat
+          detail={returnDetail}
+          label="当前收益"
+          value={returnValue}
+          cyan={hasPerformanceData && returnTone === 'positive'}
+          red={hasPerformanceData && returnTone === 'negative'}
+        />
+        <Stat
+          label="目标差"
+          value={hasPerformanceData ? formatSignedPct(liveReturn - targetReturn) : '等待'}
+          cyan={hasPerformanceData && liveReturn - targetReturn > 0.005}
+          red={hasPerformanceData && liveReturn - targetReturn < -0.005}
+        />
         <Stat detail="机会池" label="机会" value={`${signalCount}`} />
         <Stat detail="通过筛选" label="可跟进" value={`${tradeSignalCount}`} cyan />
         <Stat label="最大回撤" value={hasPerformanceData ? formatDrawdown(drawdown) : '等待'} red={hasPerformanceData && drawdown > 0} />
@@ -109,6 +121,16 @@ function formatSignedPct(value: number) {
 function formatDrawdown(value: number) {
   const cleanValue = Math.abs(value) < 0.005 ? 0 : value
   return cleanValue === 0 ? '0.00%' : `-${cleanValue.toFixed(2)}%`
+}
+
+function getTone(amount: number, pct: number) {
+  if (amount < -0.005 || pct < -0.005) {
+    return 'negative'
+  }
+  if (amount > 0.005 || pct > 0.005) {
+    return 'positive'
+  }
+  return 'flat'
 }
 
 function Stat({
