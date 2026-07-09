@@ -17,6 +17,7 @@
 - 资金: 默认模拟本金为 200,000 CNY；可通过 `CN_FUTURES_SIM_CAPITAL_TIER=50000|100000|200000` 或 `default_sim_capital("cn_futures", capital_cny=...)` 使用 50,000 / 100,000 / 200,000 三档。非法档位回退 200,000 CNY。
 - 风控拒单: 保证金 cap、风格暂停、会话不允许、换月保护等预期内风控结果必须写入 hold/risk rejection 原因；不得作为系统 `errors` 导致模拟任务 degraded。只有数据缺失、执行异常、无效价格或代码异常才应进入 error。
 - 多风格验证: 通过独立模拟账户/策略风格并行记录, 不使用 `shadow_broker.py`。
+- 只读 replay: `CNFutures/replay.py` 只能读取 SharedSignals 5分钟 bars 并回放现有风格触发情况，用于解释阈值、hold 原因和历史窗口表现；不得写订单、持仓、账本或实盘接口。
 - 实盘: 未来通过 `shared/execution/` 下的受控网关抽象接入, 默认关闭。
 
 ## 边界
@@ -25,5 +26,6 @@
 - MarketGraph 负责商品、宏观、跨市场研究证据。
 - CNFutures 只消费上述输入, 负责期货市场内的订单语义、模拟成交、风控前置和执行状态。
 - 盘中可交易合约池必须来自 SharedSignals API 的最新 `Futures` 5分钟批次；`fut_basic` 只作为合约元数据，不得作为盘中主 universe。
+- 交易时段判断必须复用 `CNFutures/session.py`；午休 `11:30-13:00`、日盘后等待夜盘、非交易日等属于正常观察态，不能被开盘验收或健康检查误报为数据故障。
 - 开盘验收、实时健康和模拟盘巡检必须优先使用 SharedSignals API `/realtime_5min?market=Futures` 验证当前 5 分钟条线；SQLite read model 只允许显式诊断/测试开关下只读使用，不能作为生产自动兜底。
 - 策略主动 `hold`、全部风格因夜盘不允许而空跑、保证金 cap 或换月保护等预期内门禁，应进入 pass/info 的可解释空跑；只有数据缺失、实盘开关误启、成交缺 bar time、异常错误或应成交但无账本时才报警。

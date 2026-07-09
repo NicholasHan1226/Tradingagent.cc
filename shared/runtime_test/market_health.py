@@ -105,14 +105,19 @@ def _market_session_state(market: str, now: datetime | None = None) -> dict[str,
         in_session = trading_day and any(start <= minutes <= end for start, end in windows)
         samples_expected_today = trading_day and minutes >= 9 * 60 + 30
     elif market == "cn_futures":
-        day_session = weekday < 5 and 9 * 60 <= minutes <= 15 * 60
-        night_session = weekday < 5 and 21 * 60 <= minutes <= 23 * 60 + 59
-        early_session = 1 <= weekday <= 5 and 0 <= minutes <= 2 * 60 + 30
-        in_session = day_session or night_session or early_session
-        samples_expected_today = (
-            (weekday < 5 and minutes >= 9 * 60)
-            or (1 <= weekday <= 5 and minutes <= 2 * 60 + 30)
-        )
+        try:
+            from CNFutures.session import cn_futures_session_state
+
+            return cn_futures_session_state(current)
+        except Exception:
+            day_session = weekday < 5 and ((9 * 60 <= minutes <= 11 * 60 + 30) or (13 * 60 <= minutes <= 15 * 60))
+            night_session = weekday < 5 and 21 * 60 <= minutes <= 23 * 60 + 59
+            early_session = 1 <= weekday <= 5 and 0 <= minutes <= 2 * 60 + 30
+            in_session = day_session or night_session or early_session
+            samples_expected_today = (
+                (weekday < 5 and minutes >= 9 * 60)
+                or (1 <= weekday <= 5 and minutes <= 2 * 60 + 30)
+            )
     return {
         "timezone": "Asia/Shanghai",
         "local_time": current.isoformat(timespec="seconds"),

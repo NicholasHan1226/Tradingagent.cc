@@ -1177,6 +1177,73 @@ def _write_ashare_capital_plan_log(
     return {"status": "written", "path": str(path), "rows": 1}
 
 
+def _write_ashare_post_execution_capital_plan_refresh(
+    *,
+    adapter: MarketAdapter,
+    market: str,
+    date: str,
+    account: str,
+    capital_plan: dict[str, Any],
+    capital_layer: str,
+    account_type: str,
+    filled_count: int,
+    review_root: Path | None = None,
+) -> dict[str, Any]:
+    if str(market).lower() != "ashare":
+        return {"status": "skipped", "reason": "non_ashare_market"}
+    if filled_count <= 0:
+        return {"status": "skipped", "reason": "no_filled_orders"}
+    try:
+        refreshed_account = adapter.get_sim_account()
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "degraded", "reason": f"account_snapshot_unavailable:{exc.__class__.__name__}: {exc}"}
+    if not isinstance(refreshed_account, dict):
+        return {"status": "degraded", "reason": "account_snapshot_invalid"}
+    strategy_positions = refreshed_account.get("strategy_positions")
+    if not isinstance(strategy_positions, list):
+        strategy_positions = refreshed_account.get("positions") if isinstance(refreshed_account.get("positions"), list) else []
+    cash = _safe_float(
+        refreshed_account.get("strategy_cash_available", refreshed_account.get("cash_available", capital_plan.get("available_cash", 0.0))),
+        0.0,
+    )
+    position_count = len({str(row.get("ts_code") or row.get("code") or row.get("symbol") or "") for row in strategy_positions if isinstance(row, dict)})
+    sample_adjustment = refreshed_account.get("capital_plan_sample_adjustment") if isinstance(refreshed_account.get("capital_plan_sample_adjustment"), dict) else capital_plan.get("sample_adjustment", {})
+    refreshed_plan = {
+        "enabled": True,
+        "refresh_phase": "post_execution",
+        "refresh_reason": "filled_orders",
+        "available_cash": round(cash, 2),
+        "cash_source": "account_snapshot_post_execution",
+        "existing_position_count": position_count,
+        "target_positions": capital_plan.get("target_positions", position_count),
+        "max_new_positions": 0,
+        "risk_mode": "post_execution_observation",
+        "position_budget_by_symbol": {},
+        "suggested_buys": [],
+        "reasons": ["post_execution_refresh"],
+        "notes": ["latest row reflects account state after simulated fills; it does not create new orders"],
+    }
+    if sample_adjustment:
+        refreshed_plan["sample_adjustment"] = sample_adjustment
+    return _write_ashare_capital_plan_log(
+        market=market,
+        date=date,
+        account=account,
+        capital_plan=refreshed_plan,
+        rebalance={
+            "enabled": True,
+            "target_positions": refreshed_plan["target_positions"],
+            "existing_position_count": position_count,
+            "planned_sell_count": 0,
+            "sells": [],
+        },
+        planned_buy_count=0,
+        capital_layer=capital_layer,
+        account_type=account_type,
+        review_root=review_root,
+    )
+
+
 def _exclusion_rows(
     rows: list[dict[str, Any]],
     *,
@@ -2824,6 +2891,26 @@ def run_sim_loop(
     failed_count = sum(1 for record in records if record["signal_result"].get("status") == "failed")
     pending_count = sum(1 for record in records if record["signal_result"].get("status") == "pending")
     duplicate_count = sum(1 for record in records if record["signal_result"].get("status") == "duplicate")
+    post_execution_capital_plan_refresh = {"status": "skipped", "reason": "non_ashare_market"}
+    if str(market).lower() == "ashare":
+        post_execution_capital_plan_refresh = _safe_stage(
+            "review.post_execution_capital_plan_refresh",
+            errors,
+            lambda: _write_ashare_post_execution_capital_plan_refresh(
+                adapter=market_adapter,
+                market=market,
+                date=date,
+                account=account,
+                capital_plan=capital_plan,
+                capital_layer=capital_layer,
+                account_type=account_type,
+                filled_count=filled_count,
+                review_root=signals_dir.parent / "shared" / "review",
+            ),
+            default={"status": "degraded", "rows": 0},
+            capital_layer=capital_layer,
+        )
+        stage_calls.append("review.post_execution_capital_plan_refresh")
     planned_order_count = len(execution_positions)
     portfolio_positions = len([row for row in (portfolio.get("positions", []) or []) if isinstance(row, dict) and row.get("ts_code")])
     no_trade_explanation = _sim_no_trade_explanation(
@@ -2875,6 +2962,7 @@ def run_sim_loop(
         "portfolio_decision": portfolio_decision,
         "capital_plan": capital_plan,
         "capital_plan_log": capital_plan_log,
+        "post_execution_capital_plan_refresh": post_execution_capital_plan_refresh,
         "rebalance": rebalance,
         "portfolio": portfolio,
         "records": records,

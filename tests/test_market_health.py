@@ -34,6 +34,25 @@ class MarketHealthTest(unittest.TestCase):
         self.assertFalse(state["in_session"])
         self.assertFalse(state["samples_expected_today"])
 
+    def test_cn_futures_session_treats_lunch_break_as_not_in_session(self) -> None:
+        state = market_health._market_session_state(
+            "cn_futures",
+            now=datetime.fromisoformat("2026-07-09T11:55:00+08:00"),
+        )
+
+        self.assertFalse(state["in_session"])
+        self.assertEqual(state["session"], "lunch_break")
+        self.assertTrue(state["samples_expected_today"])
+
+    def test_cn_futures_session_detects_afternoon_trading(self) -> None:
+        state = market_health._market_session_state(
+            "cn_futures",
+            now=datetime.fromisoformat("2026-07-09T13:05:00+08:00"),
+        )
+
+        self.assertTrue(state["in_session"])
+        self.assertEqual(state["session"], "day_afternoon")
+
     def test_signal_queue_isolation_fails_when_shadow_leaks_into_execution_pending(self) -> None:
         self._write_json("signals/pending/SHADOW-ashare-000001.json", {"capital_layer": "shadow", "order_id": "SHADOW-1"})
 

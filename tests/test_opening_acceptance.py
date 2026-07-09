@@ -240,6 +240,41 @@ def test_ashare_lunch_routes_to_afternoon_pre_open(monkeypatch):
     assert called["min_symbols"] == 1000
 
 
+def test_ashare_sqlite_diagnostic_warning_uses_api_health_review(monkeypatch):
+    from shared.runtime_test import ashare_opening_validator
+    from shared.runtime_test import market_health
+
+    def fake_pre_open(*, sqlite_db, now, min_symbols):
+        return {
+            "market": "ashare",
+            "report_type": "pre_open_acceptance",
+            "status": "warn",
+            "reason": "sqlite_diagnostic_disabled",
+            "session": "afternoon",
+            "real_trading_enabled": False,
+        }
+
+    def fake_health(*, markets):
+        assert markets == ("ashare",)
+        return {
+            "overall_status": "pass",
+            "summary": {"pass": 1, "warn": 0, "fail": 0},
+            "checks": [{"name": "ashare_sim_loop", "status": "pass", "summary": "ok"}],
+        }
+
+    monkeypatch.setattr(ashare_opening_validator, "validate_pre_open", fake_pre_open)
+    monkeypatch.setattr(market_health, "run_sim_market_health", fake_health)
+
+    check = opening_acceptance.check_ashare_opening(
+        datetime.fromisoformat("2026-07-08T12:15:00+08:00"),
+        Path("/tmp/nonexistent-marketdata.sqlite"),
+    )
+
+    assert check.status == "pass"
+    assert check.details["reason"] == "api_health_pass_after_sqlite_diagnostic_disabled"
+    assert check.details["original_opening_status"] == "warn"
+
+
 def test_ashare_closed_window_is_observation_not_warning():
     check = opening_acceptance.check_ashare_opening(
         datetime.fromisoformat("2026-07-08T16:05:00+08:00"),
@@ -258,7 +293,7 @@ def test_cn_futures_lunch_gap_is_observation_not_missing_trade():
     )
 
     assert check.status == "pass"
-    assert check.details["reason"] == "outside_cn_futures_opening_acceptance_window"
+    assert check.details["reason"] == "outside_cn_futures_opening_acceptance_window:lunch_break"
     assert check.details["raw_status"] == "pass"
     assert check.details["alerts"] == []
 
@@ -290,3 +325,38 @@ def test_cn_futures_midday_pre_open_routes_to_pre_open(monkeypatch):
     assert report["report_type"] == "pre_open_acceptance"
     assert report["session"] == "afternoon"
     assert called["min_symbols"] == 4
+
+
+def test_cn_futures_pre_open_daily_failure_uses_api_health_review(monkeypatch):
+    from CNFutures import opening_validator
+    from shared.runtime_test import market_health
+
+    def fake_pre_open(*, sqlite_db, now, min_symbols):
+        return {
+            "market": "cn_futures",
+            "report_type": "pre_open_acceptance",
+            "status": "fail",
+            "reason": "pre_open_daily_query_failed",
+            "session": "afternoon",
+            "real_trading_enabled": False,
+        }
+
+    def fake_health(*, markets):
+        assert markets == ("cn_futures",)
+        return {
+            "overall_status": "pass",
+            "summary": {"pass": 1, "warn": 0, "fail": 0},
+            "checks": [{"name": "cn_futures_sim_loop", "status": "pass", "summary": "ok"}],
+        }
+
+    monkeypatch.setattr(opening_validator, "validate_pre_open", fake_pre_open)
+    monkeypatch.setattr(market_health, "run_sim_market_health", fake_health)
+
+    check = opening_acceptance.check_cn_futures_opening(
+        datetime.fromisoformat("2026-07-08T12:30:00+08:00"),
+        Path("/tmp/nonexistent-marketdata.sqlite"),
+    )
+
+    assert check.status == "pass"
+    assert check.details["reason"] == "api_health_pass_after_pre_open_daily_query_failed"
+    assert check.details["original_opening_status"] == "fail"

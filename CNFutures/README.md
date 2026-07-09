@@ -198,6 +198,21 @@ health/metrics surfaces. They do not create a standalone dashboard, do not grant
 live trading permission, and do not automatically promote a style into real
 trading.
 
+## Historical Replay
+
+Use the read-only 5-minute replay to check whether current styles would have
+triggered on historical SharedSignals Futures bars:
+
+```bash
+python -m CNFutures.replay --date YYYYMMDD --pretty
+```
+
+The replay reads SharedSignals API/read-model data, rolls each style over
+available 5-minute windows, and writes `shared/review/cn_futures/replay_latest.json`
+plus append-only history unless `--no-write` is set. It is for threshold
+diagnostics and sample review only: it does not create orders, positions,
+receipts, live broker requests, or execution queue items.
+
 ## Observation Report
 
 Use the read-only observation report as the dashboard-ready summary of the

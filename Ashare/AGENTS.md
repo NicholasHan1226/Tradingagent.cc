@@ -34,6 +34,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - 活跃账户视图: A股 server-local 模拟盘默认读取 `strategy_samples_only`，只把交易时段内、来自 `candidate` 层、带成交价来源的策略样本计入现金、持仓、市值和收益；链路验证/盘外/缺来源样本仅作为 audit 视图展示，不得影响资金计划、目标持仓、机会成本换仓和看板累计收益。
 - 健康检查口径: 单纯已归类的 `outside_ashare_regular_session` 链路验证样本不视为运行故障，应作为 pass/info advisory 展示；这类样本不要求策略成交回执，但真实策略成交、失败订单、缺来源字段、非普通 A股代码、账本/快照不一致、真实策略样本后的资金计划滞后仍必须 warn/fail。
 - 卖出/换仓: `shared/orchestrator.py` 会在 A股模拟主循环中生成 simulated sell 压缩单；只卖可卖数量，优先处理止损、低分、超目标持仓压缩和轻量机会成本换仓，不触碰实盘。止损/压缩/机会成本换仓释放的资金可作为同轮替换买入预算，并写入 `capital_plan.replacement_budget`。机会成本只比较已通过风控候选与现有持仓的 `combined` 分数，默认候选分数至少 0.70 且分差至少 0.18 才触发，避免小分差频繁换仓。
+- 成交后资金刷新: A股模拟主循环若出现 server-local filled，会追加一条 `refresh_phase=post_execution` 的资金计划日志，重新记录策略有效现金、持仓数和样本隔离状态；该刷新只用于复盘/看板证明成交后账户状态，不生成新订单、不改变同轮交易。
 - Hermes 备用路径: 只有显式设置 `ASHARE_SIM_HERMES_ENABLED=1` 时，服务器才把模拟信号卡投递给 Mac Mini live executor `~/.hermes/scripts/sim-signal-executor.py`，由同花顺模拟盘执行并回写。
 - 实盘: 仅人工确认与只读同步；不得自动点击真实账户委托
 - 5-10分钟级别自动化
@@ -44,6 +45,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - 逆回购 204001 估算优先读取 SharedSignals reader 日线价格/收益率，缺失时才回退环境变量或默认值，并必须保留 `yield_source`。
 - 风格预算优先读取 `shared/review/ashare/style_weights.json` 运行时权重，基础 `Ashare/styles/*.json` 只作配置兜底；paused/deprecated 风格不分配 200,000 元虚拟训练预算。
 - `closing_momentum` 保持 research/paused，只有尾盘候选扫描、次日 open/high 兑现回测和样本阈值达标后，才能讨论进入 simulated。
+- `forward_validation.py` 是 A股 server-local 策略成交的只读前向标签入口；只给策略有效成交标注 30/60 分钟、当日收盘、次交易日 open/high/close，不写执行队列，不改资金计划，链路验证/盘外/缺来源样本必须跳过。
 
 ## 现有代码
 - 当前 A-share 代码位于本目录：`adapter.py`、`capital_plan.py`、`research_evidence.py`、`sim_executor.py`、`t_plus_1.py` 和 `market_phases/`。

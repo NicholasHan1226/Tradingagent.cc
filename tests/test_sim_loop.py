@@ -904,10 +904,13 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(len(sell_orders), 2)
         self.assertEqual(result["order_count"], 2)
         self.assertEqual(result["capital_plan_log"]["status"], "written")
+        self.assertEqual(result["post_execution_capital_plan_refresh"]["status"], "written")
         log_path = Path(result["capital_plan_log"]["path"])
-        row = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
-        self.assertEqual(row["rebalance"]["planned_sell_count"], 2)
-        self.assertEqual(row["capital_plan"]["target_positions"], 3)
+        rows = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        self.assertEqual(rows[0]["rebalance"]["planned_sell_count"], 2)
+        self.assertEqual(rows[0]["capital_plan"]["target_positions"], 3)
+        self.assertEqual(rows[-1]["capital_plan"]["refresh_phase"], "post_execution")
+        self.assertEqual(rows[-1]["capital_plan"]["max_new_positions"], 0)
 
     def test_run_sim_loop_sells_stop_loss_ashare_position_even_within_target_count(self) -> None:
         deps = self._multi_candidate_deps()

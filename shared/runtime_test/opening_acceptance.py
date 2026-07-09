@@ -218,6 +218,44 @@ def check_sim_health() -> AcceptanceCheck:
     )
 
 
+def _api_health_review(market: str) -> dict[str, Any]:
+    from shared.runtime_test.market_health import run_sim_market_health
+
+    report = run_sim_market_health(markets=(market,))
+    checks = [item for item in report.get("checks", []) if isinstance(item, dict)]
+    return {
+        "overall_status": str(report.get("overall_status") or "warn").lower(),
+        "summary": report.get("summary", {}),
+        "checks": [
+            {
+                "name": item.get("name"),
+                "status": item.get("status"),
+                "summary": item.get("summary"),
+            }
+            for item in checks
+        ],
+    }
+
+
+def _accept_with_api_health_if_ready(
+    *,
+    market: str,
+    status: str,
+    reason: str,
+    details: dict[str, Any],
+    api_only_reasons: set[str],
+) -> tuple[str, dict[str, Any]]:
+    if reason not in api_only_reasons:
+        return status, details
+    health = _api_health_review(market)
+    updated = {**details, "api_health_review": health, "original_opening_status": status}
+    if health.get("overall_status") == "pass":
+        updated["reason"] = f"api_health_pass_after_{reason}"
+        updated["raw_status"] = "pass"
+        return "pass", updated
+    return status, updated
+
+
 def _ashare_opening_report(now: datetime, sqlite_db: Path) -> dict[str, Any]:
     from shared.runtime_test import ashare_opening_validator as validator
 
@@ -242,60 +280,61 @@ def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
     reason = str(report.get("reason") or "")
     samples = report.get("samples", {}) if isinstance(report.get("samples"), dict) else {}
     no_trade = report.get("no_trade_explanation", {}) if isinstance(report.get("no_trade_explanation"), dict) else {}
+    details = {
+        "report_type": report.get("report_type"),
+        "reason": reason,
+        "session": report.get("session"),
+        "bar_count": report.get("bar_count"),
+        "symbol_count": report.get("symbol_count"),
+        "latest_bar_time": report.get("latest_bar_time"),
+        "latest_trade_date": report.get("latest_trade_date"),
+        "latest_daily_age_days": report.get("latest_daily_age_days"),
+        "max_daily_age_days": report.get("max_daily_age_days"),
+        "sample_summary": {
+            "bar_count": report.get("bar_count") or samples.get("bar_count"),
+            "symbol_count": report.get("symbol_count") or samples.get("symbol_count"),
+            "signals": samples.get("signals", {}),
+            "local_sim_trades": samples.get("local_sim_trades"),
+            "sim_execution_receipts": samples.get("sim_execution_receipts"),
+            "daily_reviews": samples.get("daily_reviews"),
+        },
+        "no_trade_explanation": no_trade,
+        "no_trade_category": no_trade.get("category"),
+        "no_trade_next_action": no_trade.get("next_action"),
+        "alerts": report.get("alerts", []),
+        "raw_status": raw_status,
+    }
+    status, details = _accept_with_api_health_if_ready(
+        market="ashare",
+        status=status,
+        reason=reason,
+        details=details,
+        api_only_reasons={"sqlite_diagnostic_disabled"},
+    )
     return AcceptanceCheck(
         "ashare_opening_acceptance",
         status,
         "A股开盘验收通过" if status == "pass" else "A股开盘验收需要继续观察",
-        {
-            "report_type": report.get("report_type"),
-            "reason": reason,
-            "session": report.get("session"),
-            "bar_count": report.get("bar_count"),
-            "symbol_count": report.get("symbol_count"),
-            "latest_bar_time": report.get("latest_bar_time"),
-            "latest_trade_date": report.get("latest_trade_date"),
-            "latest_daily_age_days": report.get("latest_daily_age_days"),
-            "max_daily_age_days": report.get("max_daily_age_days"),
-            "sample_summary": {
-                "bar_count": report.get("bar_count") or samples.get("bar_count"),
-                "symbol_count": report.get("symbol_count") or samples.get("symbol_count"),
-                "signals": samples.get("signals", {}),
-                "local_sim_trades": samples.get("local_sim_trades"),
-                "sim_execution_receipts": samples.get("sim_execution_receipts"),
-                "daily_reviews": samples.get("daily_reviews"),
-            },
-            "no_trade_explanation": no_trade,
-            "no_trade_category": no_trade.get("category"),
-            "no_trade_next_action": no_trade.get("next_action"),
-            "alerts": report.get("alerts", []),
-            "raw_status": raw_status,
-        },
+        details,
     )
 
 
 def _cn_futures_opening_report(now: datetime, sqlite_db: Path) -> dict[str, Any]:
     from CNFutures import opening_validator as validator
+    from CNFutures.session import cn_futures_session_state
 
     minutes = now.hour * 60 + now.minute
     if (8 * 60 <= minutes < 9 * 60) or (12 * 60 <= minutes < 13 * 60) or (20 * 60 <= minutes < 21 * 60):
         return validator.validate_pre_open(sqlite_db=sqlite_db, now=now, min_symbols=4)
-    in_day_session = (9 * 60 <= minutes <= 11 * 60 + 30) or (13 * 60 <= minutes <= 15 * 60)
-    in_night_session = (21 * 60 <= minutes <= 23 * 60 + 59) or (0 <= minutes <= 2 * 60 + 30)
-    in_session = in_day_session or in_night_session
-    if in_session:
-        if in_day_session:
-            start = now.replace(hour=9, minute=0, second=0, microsecond=0)
-            if minutes >= 13 * 60:
-                start = now.replace(hour=13, minute=0, second=0, microsecond=0)
-        elif minutes >= 21 * 60:
-            start = now.replace(hour=21, minute=0, second=0, microsecond=0)
-        else:
-            start = (now - timedelta(days=1)).replace(hour=21, minute=0, second=0, microsecond=0)
+    session_state = cn_futures_session_state(now)
+    if bool(session_state.get("in_session")):
+        start_raw = str(session_state.get("session_start") or "")
+        start = datetime.fromisoformat(start_raw) if start_raw else now
         elapsed = int((now - start).total_seconds() // 60)
         if elapsed >= 10:
             return validator.first_sample_alerts(sqlite_db=sqlite_db, now=now, min_symbols=4, wait_minutes=10)
         return validator.validate_opening(sqlite_db=sqlite_db, now=now, min_symbols=4)
-    return _closed_window_report("cn_futures", now, "outside_cn_futures_opening_acceptance_window")
+    return _closed_window_report("cn_futures", now, f"outside_cn_futures_opening_acceptance_window:{session_state.get('session')}")
 
 
 def _closed_window_report(market: str, now: datetime, reason: str) -> dict[str, Any]:
@@ -315,21 +354,30 @@ def check_cn_futures_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
     report = _cn_futures_opening_report(now, sqlite_db)
     raw_status = str(report.get("status") or "warn").lower()
     status = "fail" if raw_status == "fail" else ("warn" if raw_status == "warn" else "pass")
+    reason = str(report.get("reason") or "")
+    details = {
+        "report_type": report.get("report_type"),
+        "reason": reason,
+        "session": report.get("session"),
+        "bar_count": report.get("bar_count"),
+        "symbol_count": report.get("symbol_count"),
+        "latest_bar_time": report.get("latest_bar_time"),
+        "opening_30m_review": report.get("opening_30m_review", {}),
+        "alerts": report.get("alerts", []),
+        "raw_status": raw_status,
+    }
+    status, details = _accept_with_api_health_if_ready(
+        market="cn_futures",
+        status=status,
+        reason=reason,
+        details=details,
+        api_only_reasons={"pre_open_daily_query_failed", "sqlite_diagnostic_disabled"},
+    )
     return AcceptanceCheck(
         "cn_futures_opening_acceptance",
         status,
         "中国期货开盘验收通过" if status == "pass" else "中国期货开盘验收需要继续观察",
-        {
-            "report_type": report.get("report_type"),
-            "reason": report.get("reason"),
-            "session": report.get("session"),
-            "bar_count": report.get("bar_count"),
-            "symbol_count": report.get("symbol_count"),
-            "latest_bar_time": report.get("latest_bar_time"),
-            "opening_30m_review": report.get("opening_30m_review", {}),
-            "alerts": report.get("alerts", []),
-            "raw_status": raw_status,
-        },
+        details,
     )
 
 
