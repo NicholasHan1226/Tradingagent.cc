@@ -2743,6 +2743,16 @@ button:not(:disabled) {
   border-color: rgba(105, 228, 215, 0.18);
 }
 
+.chart-live-labels .current.negative {
+  color: var(--state-red);
+  border-color: rgba(238, 99, 107, 0.18);
+}
+
+.chart-live-labels .current.flat {
+  color: var(--text-secondary);
+  border-color: rgba(219, 242, 236, 0.08);
+}
+
 .chart-live-labels .target {
   color: var(--state-amber);
 }

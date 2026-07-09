@@ -66,6 +66,7 @@ export function HomeDashboard({
   const liveReturn = portfolio?.returnPct ?? latestPoint.simulated
   const targetReturn = portfolio?.targetPct ?? latestPoint.target
   const targetGap = liveReturn - targetReturn
+  const returnTone = getReturnTone(liveProfit, liveReturn)
   const returnChartData = useMemo(() => {
     if (!portfolio || data.length === 0) return data
     return data.map((point, index) => index === data.length - 1
@@ -110,7 +111,14 @@ export function HomeDashboard({
           </div>
           <StatusBoundary loading={<ChartSkeleton height={236} />} onRetry={onRetry} status={hasPerformanceData ? domainStatus('performance') : 'ready'}>
             {hasPerformanceData ? (
-              <PerformanceChart data={returnChartData} events={events} height={236} latestPoint={returnChartLatestPoint} onSelectEvent={setActivePage} />
+              <PerformanceChart
+                currentTone={returnTone}
+                data={returnChartData}
+                events={events}
+                height={236}
+                latestPoint={returnChartLatestPoint}
+                onSelectEvent={setActivePage}
+              />
             ) : (
               <div className="chart-empty-state" style={{ height: 236 }}>
                 <span>等待收益序列</span>
@@ -147,4 +155,14 @@ export function HomeDashboard({
       </aside>
     </div>
   )
+}
+
+function getReturnTone(amount: number, pct: number) {
+  if (amount < -0.005 || pct < -0.005) {
+    return 'negative'
+  }
+  if (amount > 0.005 || pct > 0.005) {
+    return 'positive'
+  }
+  return 'flat'
 }

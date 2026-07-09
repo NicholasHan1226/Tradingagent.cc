@@ -53,6 +53,7 @@ function projectIntoDomain(value: number, [min, max]: [number, number]) {
 }
 
 export function PerformanceChart({
+  currentTone = 'positive',
   data,
   events = [],
   height,
@@ -60,6 +61,7 @@ export function PerformanceChart({
   onSelectEvent,
   showRangeControls = false,
 }: {
+  currentTone?: 'positive' | 'negative' | 'flat'
   data: PerformancePoint[]
   events?: ChartEvent[]
   height: number
@@ -73,6 +75,11 @@ export function PerformanceChart({
   const chartLatest = chartData[chartData.length - 1] ?? latestPoint
   const visualDomain = getFocusedPerformanceDomain(chartData, chartLatest)
   const hasOutlierSegment = chartData.some((point) => point.quality === 'outlier')
+  const currentColor = currentTone === 'negative'
+    ? chartColors.opportunity
+    : currentTone === 'flat'
+      ? chartColors.benchmark
+      : chartColors.simulated
   const plotData = chartData.map((point) => ({
     ...point,
     simulatedPlot: projectIntoDomain(point.simulated, visualDomain),
@@ -141,7 +148,7 @@ export function PerformanceChart({
               x={chartLatest.day}
               y={projectIntoDomain(chartLatest.simulated, visualDomain)}
               r={4}
-              fill={chartColors.simulated}
+              fill={currentColor}
               stroke="#050b0b"
               strokeWidth={2}
             />
@@ -183,7 +190,7 @@ export function PerformanceChart({
       </div>
       {hasOutlierSegment && <div className="chart-quality-note">异常区间已弱化</div>}
       <div className="chart-live-labels" aria-hidden="true">
-        <span className="current">{chartLatest.day} {chartLatest.simulated >= 0 ? '+' : ''}{chartLatest.simulated.toFixed(2)}%</span>
+        <span className={`current ${currentTone}`}>{chartLatest.day} {formatCurrentValue(chartLatest.simulated, currentTone)}</span>
       </div>
       {eventPoints.length > 0 && (
         <div className="chart-event-bar" aria-label="收益关键节点">
@@ -203,6 +210,12 @@ export function PerformanceChart({
       )}
     </div>
   )
+}
+
+function formatCurrentValue(value: number, tone: 'positive' | 'negative' | 'flat') {
+  if (Math.abs(value) < 0.005) return '0.00%'
+  if (tone === 'positive' && value > 0) return `+${value.toFixed(2)}%`
+  return `${value.toFixed(2)}%`
 }
 
 function getXAxisTicks(data: Array<{ day: string }>) {
