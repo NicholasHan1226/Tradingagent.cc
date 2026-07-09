@@ -86,6 +86,7 @@ def _runtime_permission_candidate_paths() -> set[Path]:
         ROOT / "shared/review/ashare/portfolio_evolution_log.jsonl",
         ROOT / "shared/review/ashare/tier_experiments_latest.json",
         ROOT / "shared/review/opportunities",
+        ROOT / "shared/logs/local_sim_tiers",
         ROOT / "shared/logs/cron/sim_market_health.log",
         ROOT / "shared/logs/cron/equity_snapshots.log",
     }
@@ -95,6 +96,7 @@ def _runtime_permission_candidate_paths() -> set[Path]:
         "shared/review/ashare/*.json",
         "shared/review/ashare/*.jsonl",
         "shared/review/opportunities/*.jsonl",
+        "shared/logs/local_sim_tiers/**/*",
         "shared/logs/cron/job_*.log",
     ):
         candidates.update(ROOT.glob(pattern))
