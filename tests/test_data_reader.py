@@ -856,6 +856,42 @@ class SharedSignalsMacroScoringReader(EmptyScoringReader):
         raise AssertionError("MarketGraph regime should not be required when SharedSignals macro exists")
 
 
+class SharedSignalsRawMacroScoringReader(EmptyScoringReader):
+    def get_macro_factors(self, start=None, end=None):
+        return [
+            {
+                "trade_date": "20260629",
+                "factor_name": "repo_daily:amount",
+                "value": 470611.2,
+                "source": "sharedsignals:macro",
+            },
+            {
+                "trade_date": "20260629",
+                "factor_name": "repo_daily:close",
+                "value": 1.4,
+                "source": "sharedsignals:macro",
+            },
+        ]
+
+
+class SharedSignalsEventScoringReader(EmptyScoringReader):
+    def get_events(self, market=None, symbol="", start="", end=""):
+        return [
+            {
+                "market": market,
+                "symbol": symbol,
+                "subject_code": "600000.SH",
+                "status": "verified",
+                "confidence": "0.6",
+                "proposed_impact_hint": "positive",
+                "source": "sharedsignals:events",
+            }
+        ]
+
+    def get_event_candidates(self):
+        raise AssertionError("MarketGraph event candidates should not be required when SharedSignals events exist")
+
+
 class APIOnlyScoringReader(EmptyScoringReader):
     def get_fundamentals(self, ts_code, end_date=None):
         return [
@@ -909,6 +945,28 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
         self.assertNotIn("macro", scores["missing_evidence_dimensions"])
         self.assertGreater(scores["macro"], 0.5)
         self.assertEqual(scores["evidence_sources"]["macro"]["source"], "SharedSignals macro")
+
+    def test_sharedsignals_macro_uses_supported_liquidity_factor_not_raw_amount(self) -> None:
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260629",
+            data_reader=SharedSignalsRawMacroScoringReader(),
+        )
+
+        self.assertNotIn("macro", scores["missing_evidence_dimensions"])
+        self.assertGreater(scores["macro"], 0.5)
+        self.assertLess(scores["macro"], 1.0)
+
+    def test_sharedsignals_event_feeds_event_dimension_before_marketgraph(self) -> None:
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260629",
+            data_reader=SharedSignalsEventScoringReader(),
+        )
+
+        self.assertNotIn("event", scores["missing_evidence_dimensions"])
+        self.assertGreater(scores["event"], 0.5)
+        self.assertEqual(scores["evidence_sources"]["event"]["source"], "SharedSignals events")
 
     def test_sharedsignals_sentiment_feeds_sentiment_dimension(self) -> None:
         reader = SharedSignalsSentimentScoringReader()

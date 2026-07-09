@@ -220,12 +220,19 @@ def _rows_from_reader(method: Any, *args: Any, **kwargs: Any) -> list[dict[str, 
 
 def _macro_score_from_row(row: dict[str, Any], regime_scores: dict[str, Any]) -> float | None:
     """Return a normalized macro score from one SharedSignals/MG macro row."""
-    for key in ("score", "macro_score", "risk_on_score", "value"):
+    for key in ("score", "macro_score", "risk_on_score"):
         if key in row and row.get(key) not in ("", None):
             score = _safe_float(row.get(key), 0.5)
             if score > 1.0:
                 score /= 100.0
             return _clamp(score)
+
+    factor_name = str(row.get("factor_name") or row.get("metric") or row.get("name") or "").strip().lower()
+    if "score" in factor_name and row.get("value") not in ("", None):
+        score = _safe_float(row.get("value"), 0.5)
+        if score > 1.0:
+            score /= 100.0
+        return _clamp(score)
 
     regime = str(row.get("regime") or row.get("label") or row.get("name") or "").strip()
     if regime:
@@ -237,6 +244,11 @@ def _macro_score_from_row(row: dict[str, Any], regime_scores: dict[str, Any]) ->
             regime_score = _safe_float(score_value, 0.5)
             confidence = _clamp(_safe_float(row.get("regime_confidence") or row.get("confidence"), 1.0))
             return _clamp(0.5 + (regime_score - 0.5) * confidence)
+
+    if factor_name in {"repo_daily:close", "repo_daily:weight", "shibor:on", "shibor:1w"}:
+        value = _safe_float(row.get("value"), -1.0)
+        if 0.0 <= value <= 20.0:
+            return _score_low(value, 1.0, 4.0)
 
     text = " ".join(str(value).lower() for value in row.values())
     if any(token in text for token in ("easing", "rate_down", "liquidity_up", "宽松", "降息", "流动性改善")):
