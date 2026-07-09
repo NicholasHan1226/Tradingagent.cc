@@ -66,6 +66,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - Tushare daily `amount` 按千元口径存储，流动性比较前必须换算为元。
 - A股机会成本换仓保持保守但必须可触发：候选 `combined >= 0.70` 且相对可卖弱持仓分差至少 `0.12` 才允许生成 `ashare_rebalance_sell`；T+1、可卖数量、风险门禁和资金计划仍是硬约束。
 - A股自我演化走组合级证据，不套用 Crypto/PM/US 的多风格账本。`Ashare/portfolio_evolution.py` 读取 server-local 策略有效成交、组合 PnL 和样本质量，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`；它只证明组合样本进入演化层，不伪造 aggressive/balanced 等风格归因。
+- A股 200,000 元账户是主模拟账户；50,000 / 100,000 元必须作为资金档位实验账户存在，不能只写在配置里。`Ashare/tier_experiments.py` 从同一策略有效成交按各自本金、现金约束和 100 股手数 replay，写 `shared/logs/local_sim_tiers/ashare_50000/`、`shared/logs/local_sim_tiers/ashare_100000/` 独立账本，并通过 `shared/review/ashare/tier_experiments_latest.json` 进入组合级演化排名。
 
 ### SharedSignals 源状态门禁
 

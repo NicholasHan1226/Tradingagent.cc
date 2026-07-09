@@ -62,6 +62,29 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
         self.assertEqual(report["actions"][0]["action"], "observe")
 
     def test_write_updates_latest_and_log(self) -> None:
+        self._write_trade(
+            {
+                "trade_id": "LSIM-A",
+                "order_id": "SIM-A",
+                "market": "ashare",
+                "account": "ashare_server_sim",
+                "trade_date": "2026-07-09",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 1000,
+                "requested_price": 10.0,
+                "filled_price": 10.0,
+                "amount": 10000.0,
+                "commission": 5.0,
+                "net_amount": 10005.0,
+                "status": "filled",
+                "candidate_pool_layer": "candidate",
+                "execution_source": "ashare_candidate_layer",
+                "fill_price_source": "signal_card.price",
+                "fill_price_source_class": "signal_card_price",
+                "trade_timestamp_bj": "2026-07-09T10:00:00+08:00",
+            }
+        )
         report = write_portfolio_evolution(
             trade_date="20260709",
             review_dir=self.review_dir,
@@ -74,6 +97,11 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
         self.assertTrue(log.exists())
         self.assertEqual(json.loads(latest.read_text(encoding="utf-8"))["state"], report["state"])
         self.assertEqual(len(log.read_text(encoding="utf-8").splitlines()), 1)
+        tier_accounts = {row["account"] for row in report["tier_experiments"]["accounts"]}
+        self.assertEqual(tier_accounts, {"ashare_50000", "ashare_100000"})
+        ranking_names = {row["style_name"] for row in report["rankings"]}
+        self.assertIn("ashare_50000", ranking_names)
+        self.assertIn("ashare_100000", ranking_names)
 
 
 if __name__ == "__main__":

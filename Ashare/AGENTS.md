@@ -13,7 +13,8 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - 涨跌停: 10%限制
 
 ## 资金
-- 模拟盘初始 200,000 元；`capital_plan.py` 按候选质量、风控拒绝率、数据异常率和近期表现动态决定 0/1/2/3 只。强信号可集中 2-3 只，弱信号或高拒绝率时优先留现金/逆回购，不为凑仓位硬买。
+- 主模拟盘初始 200,000 元；`capital_plan.py` 按候选质量、风控拒绝率、数据异常率和近期表现动态决定 0/1/2/3 只。强信号可集中 2-3 只，弱信号或高拒绝率时优先留现金/逆回购，不为凑仓位硬买。
+- 50,000 / 100,000 元不是普通配置值，而是资金档位实验账户。`Ashare/tier_experiments.py` 读取主账户策略有效成交，按各自本金、现金、100 股手数和手续费重放，写入 `shared/logs/local_sim_tiers/ashare_50000/`、`shared/logs/local_sim_tiers/ashare_100000/` 独立账本；`portfolio_evolution.py` 会把这些账户纳入组合级演化 `rankings`。
 - 动态现金缓冲（替代原固定 30%）：激进约 17.5%，均衡 25% 且不超过 50,000，谨慎 45%，防守（弱候选/高风险/无候选/强制防守）全现金。均衡模式硬上限 50,000 避免 200,000 账户因百分比锁死 60,000。
 - 资金计划使用“策略有效样本账户视图”：链路验证样本、非连续竞价样本、缺候选来源或完全缺成交价的样本仍保留为账户事实和复盘证据，但不得占用 `capital_plan` 的策略现金、目标持仓数、新买入容量或机会成本换仓判断。常规交易时段内来自 `candidate` 层、`execution_source=ashare_candidate_layer` 且有正成交价的 server-local 策略成交必须占用策略资金，即使价格来源标记为 `signal_card_price`，也只能在复盘里标为较弱价格证据，不能被当成验证样本排除。
 - 账本资金门禁是最后防线：A股 server-local 模拟买入写账前必须按本地模拟账本实时回放现金，若会突破 200,000 元本金或导致负现金，订单必须拒绝且不得写入成交/回执；上游资金计划不得依赖过期账户快照放行。
@@ -46,7 +47,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - 风格预算优先读取 `shared/review/ashare/style_weights.json` 运行时权重，基础 `Ashare/styles/*.json` 只作配置兜底；paused/deprecated 风格不分配 200,000 元虚拟训练预算。
 - `closing_momentum` 保持 research/paused，只有尾盘候选扫描、次日 open/high 兑现回测和样本阈值达标后，才能讨论进入 simulated。
 - `forward_validation.py` 是 A股 server-local 策略成交的只读前向标签入口；只给策略有效成交标注 30/60 分钟、当日收盘、次交易日 open/high/close，不写执行队列，不改资金计划，链路验证/盘外/缺来源样本必须跳过。生产入口为 `shared/wrappers/job_ashare_forward_validation.sh`，只刷新 `shared/review/ashare/forward_validation_latest.json` 与历史验证文件，供复盘和看板读取。
-- `portfolio_evolution.py` 是 A股组合级自我演化证据入口；只读取 server-local 策略有效成交、样本质量和盯市 PnL，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`。A股不复用 Crypto/PM/US 的 style ledger 作为真实归因，避免把同一组合成交伪造成多个风格收益。
+- `portfolio_evolution.py` 是 A股组合级自我演化证据入口；读取 server-local 策略有效成交、资金档位实验账本、样本质量和盯市 PnL，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`。A股不复用 Crypto/PM/US 的 style ledger 作为真实归因，避免把同一组合成交伪造成多个风格收益。
 
 ## 现有代码
 - 当前 A-share 代码位于本目录：`adapter.py`、`capital_plan.py`、`research_evidence.py`、`sim_executor.py`、`t_plus_1.py` 和 `market_phases/`。

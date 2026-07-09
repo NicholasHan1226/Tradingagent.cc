@@ -52,6 +52,36 @@ def _display_path(path: Path) -> str:
         return str(path)
 
 
+def _load_tier_manifest(review_dir: Path) -> dict[str, Any]:
+    path = review_dir / "tier_experiments_latest.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _tier_rankings(tier_manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    rankings: list[dict[str, Any]] = []
+    accounts = tier_manifest.get("accounts") if isinstance(tier_manifest.get("accounts"), list) else []
+    for account in accounts:
+        if not isinstance(account, dict):
+            continue
+        pnl = account.get("pnl") if isinstance(account.get("pnl"), dict) else {}
+        rankings.append(
+            {
+                "style_name": str(account.get("account") or ""),
+                "trades": _safe_int(account.get("trade_count")),
+                "pnl": round(_safe_float(pnl.get("total_pnl")), 6),
+                "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
+                "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
+                "capital": _safe_float(account.get("capital")),
+                "pnl_source": "ashare_capital_tier_experiment",
+            }
+        )
+    return rankings
+
+
 def _action_for_samples(
     *,
     strategy_sample_count: int,
@@ -90,6 +120,8 @@ def build_portfolio_evolution(
     cumulative_strategy_trades = strategy_valid_trades(all_trades)
     pnl_by_market = sim_ledger_pnl_summary(markets=("ashare",), local_trades_path=local_path)
     pnl = pnl_by_market.get("ashare", {})
+    tier_manifest = _load_tier_manifest(review_path)
+    tier_rankings = _tier_rankings(tier_manifest)
     strategy_sample_count = _safe_int(cumulative_quality.get("strategy_sample_valid_count"))
     action, reason = _action_for_samples(
         strategy_sample_count=strategy_sample_count,
@@ -123,7 +155,7 @@ def build_portfolio_evolution(
                 "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
                 "pnl_source": pnl.get("pnl_source", ""),
             }
-        ],
+        ] + tier_rankings,
         "weights": {
             "ashare_portfolio": {
                 "status": "active",
@@ -139,6 +171,18 @@ def build_portfolio_evolution(
         "today_strategy_sample_count": len(day_strategy_trades),
         "cumulative_strategy_sample_count": len(cumulative_strategy_trades),
         "validation_sample_count": _safe_int(cumulative_quality.get("validation_sample_count")),
+        "tier_experiments": {
+            "account_count": len(tier_rankings),
+            "accounts": [
+                {
+                    "account": row.get("style_name"),
+                    "capital": row.get("capital"),
+                    "trades": row.get("trades"),
+                    "pnl": row.get("pnl"),
+                }
+                for row in tier_rankings
+            ],
+        },
         "pnl": {
             "total_pnl": round(_safe_float(pnl.get("total_pnl")), 6),
             "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
@@ -168,6 +212,9 @@ def write_portfolio_evolution(
 ) -> dict[str, Any]:
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
     review_path.mkdir(parents=True, exist_ok=True)
+    from Ashare.tier_experiments import write_tier_ledgers
+
+    write_tier_ledgers(source_trades_path=local_trades_path, review_dir=review_path)
     report = build_portfolio_evolution(
         trade_date=trade_date,
         review_dir=review_path,
