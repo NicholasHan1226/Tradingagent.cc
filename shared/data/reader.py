@@ -327,6 +327,11 @@ class MarketGraphCSVReader:
 
     def get_event_candidates(self) -> list[dict[str, str]]:
         if self._marketgraph_client is not None:
+            if isinstance(self._marketgraph_client, MarketGraphAPIClient) and not self._marketgraph_client.api_token:
+                self._logger.info(
+                    "MarketGraphCSVReader association_impact_relations skipped: MARKETGRAPH_API_TOKEN is not configured"
+                )
+                return []
             before_error_count = len(getattr(self._marketgraph_client, "errors", []))
             get_contract_table = getattr(self._marketgraph_client, "get_contract_table", None)
             if callable(get_contract_table):

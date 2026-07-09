@@ -21,6 +21,7 @@ from shared.data.reader import (  # noqa: E402
     SharedSignalsReader,
     TradingagentDataReader,
 )
+from shared.data.marketgraph_api import MarketGraphAPIClient  # noqa: E402
 from shared.screening import six_dimension_scorer  # noqa: E402
 
 
@@ -805,6 +806,18 @@ class TestMarketGraphCSVReader(unittest.TestCase):
         self.assertEqual(client.calls[0]["table_id"], "association_impact_relations")
         self.assertEqual(client.calls[0]["include_rows"], True)
         self.assertEqual(client.calls[0]["record_usage"], False)
+
+    def test_event_candidates_skip_marketgraph_contract_without_token(self) -> None:
+        client = MarketGraphAPIClient(base_url="http://127.0.0.1:1", api_token="")
+        reader = MarketGraphCSVReader(
+            Path("/nonexistent"),
+            api_client=None,
+            marketgraph_client=client,
+            api_enabled=False,
+        )
+
+        self.assertEqual(reader.get_event_candidates(), [])
+        self.assertEqual(client.errors, [])
 
 
 class FakeScoringReader:
