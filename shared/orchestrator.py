@@ -35,6 +35,18 @@ def _date_iso(date_value: str) -> str:
     return raw
 
 
+def _ashare_sellable_date(date_value: str, side: str) -> str:
+    trade_date = _date_iso(date_value)
+    if side.lower() != "buy" or not trade_date:
+        return trade_date
+    try:
+        from Ashare.t_plus_1 import next_sellable_date
+
+        return next_sellable_date(trade_date).isoformat()
+    except Exception:
+        return trade_date
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         result = float(value)
@@ -492,7 +504,7 @@ def _build_signal_card(
         idempotency_key = order.get("idempotency_key") or _shadow_idempotency_key(market, account, symbol, date, side)
     else:
         idempotency_key = order.get("idempotency_key") or order_id
-    return {
+    card = {
         "order_id": order_id,
         "ts_code": symbol,
         "market": market,
@@ -520,6 +532,13 @@ def _build_signal_card(
         "idempotency_key": idempotency_key,
         "evidence_refs": [audit_id],
     }
+    if str(market).lower() == "ashare":
+        sellable_date = _ashare_sellable_date(date, side)
+        card["t_plus_1"] = {
+            "sellable_from": sellable_date,
+            "sellable_date": sellable_date,
+        }
+    return card
 
 
 def _send_template_email_now(

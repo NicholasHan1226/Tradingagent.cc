@@ -10,7 +10,7 @@ from shared.accounting import trade_audit_trail
 from shared.execution import shadow_broker, sim_executor_registry
 from shared.execution.signal_state_machine import read_json
 from shared.markets.base import MarketAdapter
-from shared.orchestrator import OrchestratorDeps, run_sim_loop
+from shared.orchestrator import OrchestratorDeps, _build_signal_card, run_sim_loop
 
 
 class StubSimAdapter(MarketAdapter):
@@ -48,6 +48,34 @@ class StubSimAdapter(MarketAdapter):
 class StubReader:
     def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, float]]:
         return [{"close": 9.8}, {"close": 10.0}, {"close": 10.2}]
+
+
+class SignalCardTPlusOneTest(unittest.TestCase):
+    def test_ashare_sim_buy_signal_card_uses_next_trading_day_sellable_date(self) -> None:
+        card = _build_signal_card(
+            market="ashare",
+            symbol="600030.SH",
+            account="ashare_sim",
+            date="20260709",
+            order={
+                "side": "buy",
+                "quantity": 100,
+                "price": 28.0,
+                "candidate_pool_layer": "candidate",
+                "execution_source": "ashare_candidate_layer",
+            },
+            risk={"approved": True},
+            trade={"trade_id": "T1"},
+            audit_id="AUDIT-T1",
+            order_id="SIM-ashare-600030.SH-20260709-test",
+            order_id_prefix="SIM-",
+            capital_layer="simulated",
+            account_type="simulated",
+            direct_execution=True,
+        )
+
+        self.assertEqual(card["t_plus_1"]["sellable_from"], "2026-07-10")
+        self.assertEqual(card["t_plus_1"]["sellable_date"], "2026-07-10")
 
 
 class MultiCandidateSimAdapter(StubSimAdapter):
