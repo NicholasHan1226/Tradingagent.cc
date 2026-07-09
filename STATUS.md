@@ -157,7 +157,7 @@
 - [x] CNFutures 首样本验收改为生产 API-first：优先读取 SharedSignals `/realtime_5min?market=Futures`，只有显式测试/诊断 SQLite 才走本地 read model；有数据且策略主动 hold 归为正常观察，不再要求为了通过验收而产生模拟成交。
 - [x] A股开盘验收聚合层已识别“SQLite 诊断未启用但 API 健康通过”的纯旧诊断告警：仅该告警存在时降为 pass；若同时存在真实样本/执行/回执告警，仍保持 warn/fail。
 - [x] TradingAgent front 快照已修复 CNFutures 当前状态来源：最新 review 行优先，`style_comparison.json` 不再与最新 review 计数相加，避免 filled/error/hold 被翻倍或被旧运行污染。
-- [x] CNFutures 模拟盘 cron 日志事实源统一为 `shared/logs/cron/job_cn_futures_sim.log`；`market_health` 与 cron 模板已改用该标准 wrapper 日志，旧 `cn_futures_sim.log` 仅保留为历史兼容读取，避免健康检查展示过期日志年龄。
+- [x] CNFutures 模拟盘 cron 日志事实源统一为 `shared/logs/cron/job_cn_futures_sim.log`；`market_health` 与 cron 模板已改用该标准 wrapper 日志，并兼容期货日志中的 `state=ok/market_closed` 状态字段；旧 `cn_futures_sim.log` 仅保留为历史兼容读取，避免健康检查展示过期日志年龄或 `latest_cron_status=None` 误报。
 
 ### 2026-07-08 A股策略资金视图隔离验证样本
 

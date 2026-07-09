@@ -1363,11 +1363,12 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     if market == "cn_futures" and int(ledger.get("review_rows") or 0) <= 0 and samples_expected:
         warn_reasons.append("cn_futures_review_has_no_samples_yet")
     payload = cron_result.get("payload") or {}
-    if payload and payload.get("status") not in {"ok", "market_closed"}:
-        if market == "hk" and payload.get("status") == "no_data":
+    cron_status = (payload.get("status") or payload.get("state") or "") if payload else ""
+    if payload and cron_status not in {"ok", "market_closed"}:
+        if market == "hk" and cron_status == "no_data":
             hard_fail_reasons.append("latest_cron_no_data")
         else:
-            warn_reasons.append(f"latest_cron_status={payload.get('status')}")
+            warn_reasons.append(f"latest_cron_status={cron_status}")
     elif not payload and market in {"crypto", "pm"}:
         warn_reasons.append("latest_cron_json_missing")
     if crontab_error and not crontab_text:

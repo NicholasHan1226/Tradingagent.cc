@@ -471,7 +471,7 @@ class MarketHealthTest(unittest.TestCase):
     def test_cn_futures_sim_market_loop_reads_governed_wrapper_log(self) -> None:
         log = self.root / "shared/logs/cron/job_cn_futures_sim.log"
         log.parent.mkdir(parents=True)
-        log.write_text('noise\n{"market":"cn_futures","status":"ok","hold_count":3}\n', encoding="utf-8")
+        log.write_text('noise\n{"market":"cn_futures","state":"ok","hold_count":3}\n', encoding="utf-8")
 
         with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "priced_signal_count": 5}):
             with patch.object(market_health, "_market_session_state", return_value={"in_session": True, "samples_expected_today": True}):
