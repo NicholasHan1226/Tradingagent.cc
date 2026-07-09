@@ -602,12 +602,80 @@ class TradingagentDataReader:
         normalized = []
         for row in rows:
             item = dict(row)
+            if not item.get("symbol"):
+                for key in ("ts_code", "code", "ticker", "contract", "contract_code"):
+                    if item.get(key):
+                        item["symbol"] = item.get(key)
+                        break
             item.setdefault("market", market)
             item.setdefault("symbol", symbol)
             if "volume" not in item and "vol" in item:
                 item["volume"] = item["vol"]
             normalized.append(item)
         return normalized
+
+    @staticmethod
+    def _symbol_aliases(symbol: str, market: str | None = None) -> set[str]:
+        raw = str(symbol or "").strip().upper()
+        if not raw:
+            return {""}
+        aliases = {raw}
+        ts_code = TradingagentDataReader._to_ts_code(market or "", raw).upper()
+        aliases.add(ts_code)
+        if "." in ts_code:
+            aliases.add(ts_code.split(".", 1)[0])
+        return aliases
+
+    @staticmethod
+    def _row_symbol_aliases(row: dict[str, Any], market: str | None = None) -> set[str]:
+        aliases: set[str] = set()
+        for key in ("symbol", "ts_code", "code", "ticker", "contract", "contract_code"):
+            value = str(row.get(key) or "").strip().upper()
+            if value:
+                aliases.update(TradingagentDataReader._symbol_aliases(value, market))
+        return aliases
+
+    @staticmethod
+    def _filter_rows_for_symbol(
+        rows: list[dict[str, Any]], market: str, requested_symbol: str, read_symbol: str | None = None
+    ) -> list[dict[str, Any]]:
+        target_aliases = TradingagentDataReader._symbol_aliases(requested_symbol, market)
+        if read_symbol:
+            target_aliases.update(TradingagentDataReader._symbol_aliases(read_symbol, market))
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            row_aliases = TradingagentDataReader._row_symbol_aliases(row, market)
+            if row_aliases and not (row_aliases & target_aliases):
+                continue
+            item = dict(row)
+            item["symbol"] = read_symbol or requested_symbol
+            filtered.append(item)
+        return filtered
+
+    @staticmethod
+    def _row_date_aliases(row: dict[str, Any]) -> set[str]:
+        aliases: set[str] = set()
+        for key in ("trade_date", "date", "bar_date"):
+            value = str(row.get(key) or "").strip()
+            if value:
+                aliases.add(value.replace("-", "")[:8])
+        bar_time = str(row.get("bar_time") or row.get("datetime") or row.get("timestamp") or "").strip()
+        if len(bar_time) >= 10:
+            aliases.add(bar_time[:10].replace("-", ""))
+        return {alias for alias in aliases if len(alias) == 8 and alias.isdigit()}
+
+    @staticmethod
+    def _filter_rows_for_date(rows: list[dict[str, Any]], date_value: str | None) -> list[dict[str, Any]]:
+        target = str(date_value or "").strip().replace("-", "")[:8]
+        if len(target) != 8 or not target.isdigit():
+            return rows
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            row_dates = TradingagentDataReader._row_date_aliases(row)
+            if row_dates and target not in row_dates:
+                continue
+            filtered.append(row)
+        return filtered
 
     @staticmethod
     def _has_event_payload(rows: list[dict[str, Any]]) -> bool:
@@ -973,13 +1041,17 @@ class TradingagentDataReader:
                 market=market,
             )
             normalized = self._normalize_market_rows(result, market, symbol)
+            normalized = self._filter_rows_for_symbol(normalized, market, symbol, read_symbol)
+            normalized = self._filter_rows_for_date(normalized, date_value)
             if not self._has_priced_market_rows(normalized):
                 if self._can_use_sqlite_fallback():
                     fallback_rows = fallback()
                     if fallback_rows:
                         self._last_api_used = False
                         self._record_shared_error("get_bars_intraday")
-                        return self._normalize_market_rows(fallback_rows, market, symbol)
+                        fallback_normalized = self._normalize_market_rows(fallback_rows, market, symbol)
+                        fallback_normalized = self._filter_rows_for_symbol(fallback_normalized, market, symbol, read_symbol)
+                        return self._filter_rows_for_date(fallback_normalized, date_value)
                 return []
             self._record_shared_error("get_bars_intraday")
             return normalized

@@ -15,6 +15,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.review.pnl_summary import load_mark_prices_for_positions
 from shared.review.pnl_summary import sim_ledger_pnl_summary
 from shared.review.sample_quality import strategy_valid_trades, summarize_sample_quality
 from shared.review.sim_ledger_reader import load_sim_trades_between, load_sim_trades_for_date
@@ -82,6 +83,24 @@ def _tier_rankings(tier_manifest: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return rankings
+
+
+def _refresh_local_sim_snapshot_for_review(local_trades_path: Path | None) -> dict[str, Any]:
+    """Refresh default local sim snapshot before writing production review output."""
+    if local_trades_path is not None:
+        return {"status": "skipped", "reason": "custom_local_trades_path"}
+    try:
+        from shared.execution import local_sim_ledger
+
+        positions = local_sim_ledger.get_local_sim_pnl(account=None, mark_prices=None).get("positions") or {}
+        if not isinstance(positions, dict) or not positions:
+            return {"status": "skipped", "reason": "no_open_positions"}
+        mark_prices = load_mark_prices_for_positions(positions, "ashare")
+        if not mark_prices:
+            return {"status": "skipped", "reason": "no_mark_prices"}
+        return local_sim_ledger.refresh_local_sim_snapshot(mark_prices=mark_prices)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "reason": f"{exc.__class__.__name__}: {exc}"}
 
 
 def _action_for_samples(
@@ -222,12 +241,14 @@ def write_portfolio_evolution(
     from Ashare.tier_experiments import write_tier_ledgers
 
     write_tier_ledgers(source_trades_path=local_trades_path, review_dir=review_path)
+    refresh_result = _refresh_local_sim_snapshot_for_review(Path(local_trades_path) if local_trades_path else None)
     report = build_portfolio_evolution(
         trade_date=trade_date,
         review_dir=review_path,
         local_trades_path=local_trades_path,
         min_samples=min_samples,
     )
+    report["local_sim_snapshot_refresh"] = refresh_result
     latest = review_path / LATEST_PATH.name
     log = review_path / LOG_PATH.name
     latest.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -47,7 +47,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - 风格预算优先读取 `shared/review/ashare/style_weights.json` 运行时权重，基础 `Ashare/styles/*.json` 只作配置兜底；paused/deprecated 风格不分配 200,000 元虚拟训练预算。
 - `closing_momentum` 保持 research/paused，只有尾盘候选扫描、次日 open/high 兑现回测和样本阈值达标后，才能讨论进入 simulated。
 - `forward_validation.py` 是 A股 server-local 策略成交的只读前向标签入口；只给策略有效成交标注 30/60 分钟、当日收盘、次交易日 open/high/close，不写执行队列，不改资金计划，链路验证/盘外/缺来源样本必须跳过。生产入口为 `shared/wrappers/job_ashare_forward_validation.sh`，只刷新 `shared/review/ashare/forward_validation_latest.json` 与历史验证文件，供复盘和看板读取。
-- `portfolio_evolution.py` 是 A股组合级自我演化证据入口；读取 server-local 策略有效成交、资金档位实验账本、样本质量和盯市 PnL，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`。A股不复用 Crypto/PM/US 的 style ledger 作为真实归因，避免把同一组合成交伪造成多个风格收益。
+- `portfolio_evolution.py` 是 A股组合级自我演化证据入口；读取 server-local 策略有效成交、资金档位实验账本、样本质量和盯市 PnL，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`。写入生产复盘前会用同一批 SharedSignals 盯市价刷新 `local_sim_pnl.json` 与持仓快照，成交事实仍只保存在 append-only `local_sim_trades.jsonl`。A股不复用 Crypto/PM/US 的 style ledger 作为真实归因，避免把同一组合成交伪造成多个风格收益。
 
 ## 现有代码
 - 当前 A-share 代码位于本目录：`adapter.py`、`capital_plan.py`、`research_evidence.py`、`sim_executor.py`、`t_plus_1.py` 和 `market_phases/`。

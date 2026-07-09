@@ -501,6 +501,37 @@ class EmptyEventsAPIClient(FakeAPIClient):
         return []
 
 
+class BatchRealtimeAPIClient(FakeAPIClient):
+    def get_realtime_5min(self, ts_code, date=None, market=None):
+        self.realtime_calls.append({"ts_code": ts_code, "date": date, "market": market})
+        return [
+            {
+                "market": "Ashare",
+                "symbol": "003015.SZ",
+                "bar_time": "2026-07-09T14:55:00+08:00",
+                "trade_date": "20260709",
+                "interval": "5min",
+                "close": 38.12,
+            },
+            {
+                "market": "Ashare",
+                "ts_code": "300759.SZ",
+                "bar_time": "2026-07-08T14:55:00+08:00",
+                "trade_date": "20260708",
+                "interval": "5min",
+                "close": 59.87,
+            },
+            {
+                "market": "Ashare",
+                "ts_code": "300759.SZ",
+                "bar_time": "2026-07-09T14:55:00+08:00",
+                "trade_date": "20260709",
+                "interval": "5min",
+                "close": 61.23,
+            },
+        ]
+
+
 class FakeSharedBars:
     last_error = None
 
@@ -632,6 +663,17 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(rows[0]["last_trade_date"], "20260915")
         self.assertEqual(rows[0]["expiry_date"], "20260930")
         self.assertEqual(api.realtime_calls[0], {"ts_code": "RB2609.SHF", "date": "20260703", "market": "Futures"})
+
+    def test_get_bars_intraday_filters_batch_realtime_rows_to_requested_symbol_and_date(self) -> None:
+        api = BatchRealtimeAPIClient()
+        reader = TradingagentDataReader(api_client=api)
+
+        rows = reader.get_bars_intraday("ashare", "300759.SZ", "5m", "20260709", "20260709")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["symbol"], "300759.SZ")
+        self.assertEqual(rows[0]["close"], 61.23)
+        self.assertEqual(api.realtime_calls[0], {"ts_code": "300759.SZ", "date": "20260709", "market": "ashare"})
 
     def test_get_bars_intraday_falls_back_when_api_returns_empty_shell(self) -> None:
         api = EmptyShellAPIClient()

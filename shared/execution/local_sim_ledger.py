@@ -524,6 +524,58 @@ def _persist_unlocked(trades: list[dict[str, Any]]) -> None:
     _write_positions_snapshot(positions, pnl, audit_positions=audit_positions, audit_pnl=audit_pnl)
 
 
+def refresh_local_sim_snapshot(
+    mark_prices: dict[str, float] | None = None,
+    *,
+    local_trades_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Rewrite reporting PnL/position snapshots with current mark prices.
+
+    Trade facts remain append-only in local_sim_trades.jsonl. This function is
+    for review/evolution jobs that need local_sim_pnl.json to match the same
+    mark-to-market price source they use for portfolio evidence.
+    """
+    original_local_sim_trades = LOCAL_SIM_TRADES
+    if local_trades_path is not None:
+        globals()["LOCAL_SIM_TRADES"] = Path(local_trades_path)
+    try:
+        with _lock():
+            trades = _load_trades_unlocked()
+            accounts = sorted({str(t.get("account") or DEFAULT_ACCOUNT) for t in trades if t.get("account")})
+            if not accounts:
+                accounts = [DEFAULT_ACCOUNT]
+            strategy_trades = _strategy_trades_only(trades)
+            positions = {
+                account: _replay_account(strategy_trades, account, mark_prices=mark_prices)["positions"]
+                for account in accounts
+            }
+            pnl = {
+                account: _replay_account(strategy_trades, account, mark_prices=mark_prices)
+                for account in accounts
+            }
+            audit_positions = {
+                account: _replay_account(trades, account, mark_prices=mark_prices)["positions"]
+                for account in accounts
+            }
+            audit_pnl = {
+                account: _replay_account(trades, account, mark_prices=mark_prices)
+                for account in accounts
+            }
+            LOCAL_SIM_POSITIONS.parent.mkdir(parents=True, exist_ok=True)
+            LOCAL_SIM_POSITIONS.write_text(json.dumps(positions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            LOCAL_SIM_PNL.write_text(json.dumps(pnl, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            _write_positions_snapshot(positions, pnl, audit_positions=audit_positions, audit_pnl=audit_pnl)
+    finally:
+        if local_trades_path is not None:
+            globals()["LOCAL_SIM_TRADES"] = original_local_sim_trades
+    return {
+        "status": "refreshed",
+        "trade_count": len(trades),
+        "account_count": len(accounts),
+        "mark_price_count": len(mark_prices or {}),
+    }
+
+
 def _write_positions_snapshot(
     positions: dict[str, dict[str, Any]],
     pnl: dict[str, dict[str, Any]],
@@ -541,6 +593,7 @@ def _write_positions_snapshot(
                 "quantity": position.get("quantity", 0),
                 "avg_price": position.get("avg_cost", 0.0),
                 "last_price": position.get("last_price", 0.0),
+                "mark_price": position.get("mark_price", position.get("last_price", 0.0)),
                 "market_value": position.get("market_value", 0.0),
                 "unrealized_pnl": position.get("unrealized_pnl", 0.0),
                 "capital_layer": "simulated",

@@ -98,7 +98,10 @@ Event reads use:
 
 5-minute intraday reads use:
 
-- API-first path: SharedSignals `/realtime_5min?market=<market>&ts_code=<symbol>&date=<YYYYMMDD>`.
+- API-first path: SharedSignals `/realtime_5min?market=<market>&ts_code=<symbol>&symbol=<symbol>&date=<YYYYMMDD>&trade_date=<YYYYMMDD>`.
+- TradingAgent must still filter returned rows by the requested symbol/ts_code
+  because SharedSignals may return a market-level batch when an endpoint version
+  does not support one of the symbol parameter aliases.
 - Optional diagnostic read model: `market_bars_intraday` filtered by `market`,
   `symbol`, and `interval`, only when the explicit SQLite diagnostic switch is
   enabled.
@@ -248,7 +251,7 @@ not call Tushare, CTP, SimNow, or exchange feeds directly from TradingAgent.
 - Daily bars: `market_bars_daily` with `market="Futures"`.
 - 5-minute bars: `market_bars_intraday` with `market="Futures"` and
   `interval="5min"`.
-- API path: SharedSignals `/realtime_5min?market=Futures&ts_code=<contract>`;
+- API path: SharedSignals `/realtime_5min?market=Futures&ts_code=<contract>&symbol=<contract>`;
   SQLite remains a same-host read-only diagnostic path only with the explicit
   diagnostic switch.
 - Optional L1 and lifecycle fields from SharedSignals are preserved through the

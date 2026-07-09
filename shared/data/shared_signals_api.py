@@ -242,7 +242,17 @@ class SharedSignalsAPIClient:
     def get_realtime_5min(
         self, ts_code: str = "", date: str | None = None, market: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._get("/realtime_5min", {"ts_code": ts_code, "date": date or "", "market": market or ""})
+        date_value = date or ""
+        return self._get(
+            "/realtime_5min",
+            {
+                "ts_code": ts_code,
+                "symbol": ts_code,
+                "date": date_value,
+                "trade_date": date_value,
+                "market": market or "",
+            },
+        )
 
     def get_tushare(
         self, api_name: str, ts_code: str | None = None,

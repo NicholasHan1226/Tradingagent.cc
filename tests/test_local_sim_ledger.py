@@ -85,6 +85,31 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(trades[0]["candidate_pool_layer"], "candidate")
         self.assertEqual(trades[0]["execution_source"], "ashare_candidate_layer")
 
+    def test_refresh_local_sim_snapshot_persists_mark_to_market_pnl(self) -> None:
+        order = {
+            "order_id": "SIM-MTM",
+            "idempotency_key": "SIM:ashare:acct:20260701:600000.SH:buy:mtm",
+            "ts_code": "600000.SH",
+            "side": "buy",
+            "quantity": 100,
+            "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "signal_card_price",
+        }
+        with self._valid_session():
+            local_sim_ledger.record_local_sim_order(order, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
+
+        result = local_sim_ledger.refresh_local_sim_snapshot(mark_prices={"600000.SH": 11.0})
+
+        self.assertEqual(result["status"], "refreshed")
+        pnl_payload = json.loads(local_sim_ledger.LOCAL_SIM_PNL.read_text(encoding="utf-8"))
+        self.assertEqual(pnl_payload["acct"]["market_value"], 1100.0)
+        self.assertEqual(pnl_payload["acct"]["total_pnl"], 95.0)
+        snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
+        self.assertEqual(snapshot["positions"][0]["mark_price"], 11.0)
+        self.assertEqual(snapshot["pnl"]["acct"]["total_pnl"], 95.0)
+
     def test_rejects_buy_that_would_make_local_cash_negative(self) -> None:
         first = {
             "order_id": "SIM-CASH-1",

@@ -71,17 +71,35 @@ def _template_log_targets(path: Path) -> list[Path]:
     return targets
 
 
-def _runtime_permission_blockers() -> list[str]:
-    """Return active runtime paths that a marketgraph cron cannot safely write."""
+def _runtime_permission_candidate_paths() -> set[Path]:
+    """Return active runtime paths that marketgraph cron needs to write."""
     candidates: set[Path] = {
         ROOT / "runtime/state",
+        ROOT / "shared/review/ashare",
+        ROOT / "shared/review/ashare/forward_validation_latest.json",
+        ROOT / "shared/review/ashare/forward_validation.jsonl",
+        ROOT / "shared/review/ashare/portfolio_evolution_latest.json",
+        ROOT / "shared/review/ashare/portfolio_evolution_log.jsonl",
+        ROOT / "shared/review/ashare/tier_experiments_latest.json",
         ROOT / "shared/review/opportunities",
         ROOT / "shared/logs/cron/sim_market_health.log",
         ROOT / "shared/logs/cron/equity_snapshots.log",
     }
     candidates.update(_template_log_targets(ROOT / "shared/crontab.txt"))
-    for pattern in ("runtime/state/*.lock", "shared/review/opportunities/*.jsonl", "shared/logs/cron/job_*.log"):
+    for pattern in (
+        "runtime/state/*.lock",
+        "shared/review/ashare/*.json",
+        "shared/review/ashare/*.jsonl",
+        "shared/review/opportunities/*.jsonl",
+        "shared/logs/cron/job_*.log",
+    ):
         candidates.update(ROOT.glob(pattern))
+    return candidates
+
+
+def _runtime_permission_blockers() -> list[str]:
+    """Return active runtime paths that a marketgraph cron cannot safely write."""
+    candidates = _runtime_permission_candidate_paths()
 
     blockers: list[str] = []
     for path in sorted(candidates):

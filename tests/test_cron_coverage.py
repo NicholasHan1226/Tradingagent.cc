@@ -86,6 +86,15 @@ class CronCoverageTest(unittest.TestCase):
         self.assertIn("runtime_permission_blocked", report["failures"])
         self.assertEqual(report["runtime_permission_blocker_count"], 1)
 
+    def test_runtime_permission_candidates_include_ashare_review_outputs(self) -> None:
+        candidates = {
+            str(path.relative_to(cron_coverage.ROOT))
+            for path in cron_coverage._runtime_permission_candidate_paths()
+        }
+
+        self.assertIn("shared/review/ashare/forward_validation_latest.json", candidates)
+        self.assertIn("shared/review/ashare/portfolio_evolution_latest.json", candidates)
+
 
 if __name__ == "__main__":
     unittest.main()
