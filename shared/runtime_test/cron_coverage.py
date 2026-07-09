@@ -12,6 +12,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 TRADING_PREFIX = "/opt/investment/tradingagent/"
+ROOT_UID = 0
+ROOT_GID = 0
 
 
 def _run_crontab(command: list[str]) -> tuple[str, str]:
@@ -58,6 +60,43 @@ def _template_entries(path: Path) -> list[str]:
     return tradingagent_entries(path.read_text(encoding="utf-8"))
 
 
+def _template_log_targets(path: Path) -> list[Path]:
+    targets: list[Path] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if TRADING_PREFIX not in line or ">>" not in line:
+            continue
+        raw = line.split(">>", 1)[1].strip().split()[0]
+        if raw.endswith(".log"):
+            targets.append(Path(raw.replace(TRADING_PREFIX, str(ROOT) + "/")))
+    return targets
+
+
+def _runtime_permission_blockers() -> list[str]:
+    """Return active runtime paths that a marketgraph cron cannot safely write."""
+    candidates: set[Path] = {
+        ROOT / "runtime/state",
+        ROOT / "shared/review/opportunities",
+        ROOT / "shared/logs/cron/sim_market_health.log",
+        ROOT / "shared/logs/cron/equity_snapshots.log",
+    }
+    candidates.update(_template_log_targets(ROOT / "shared/crontab.txt"))
+    for pattern in ("runtime/state/*.lock", "shared/review/opportunities/*.jsonl", "shared/logs/cron/job_*.log"):
+        candidates.update(ROOT.glob(pattern))
+
+    blockers: list[str] = []
+    for path in sorted(candidates):
+        if not path.exists():
+            continue
+        try:
+            stat_result = path.stat()
+        except OSError:
+            blockers.append(str(path.relative_to(ROOT)))
+            continue
+        if stat_result.st_uid == ROOT_UID or stat_result.st_gid == ROOT_GID:
+            blockers.append(str(path.relative_to(ROOT)))
+    return blockers
+
+
 def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, Any]:
     shared_template = ROOT / "shared/crontab.txt"
     root_template = ROOT / "crontab.txt"
@@ -76,6 +115,7 @@ def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, 
     root_residual_entries: list[str] = []
     if details.get("marketgraph_text"):
         root_residual_entries = tradingagent_entries(details.get("root_text") or "")
+    permission_blockers = _runtime_permission_blockers()
 
     failures: list[str] = []
     if template_drift or template_extra:
@@ -86,6 +126,8 @@ def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, 
         failures.append("installed_crontab_missing_entries")
     if root_residual_entries:
         failures.append("root_tradingagent_residual")
+    if permission_blockers:
+        failures.append("runtime_permission_blocked")
 
     return {
         "overall_status": "fail" if failures else "pass",
@@ -102,6 +144,8 @@ def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, 
         },
         "root_residual_count": len(root_residual_entries),
         "root_residual_entries": root_residual_entries,
+        "runtime_permission_blocker_count": len(permission_blockers),
+        "runtime_permission_blockers": permission_blockers,
         "crontab_errors": {
             "marketgraph": details.get("marketgraph_error", ""),
             "root": details.get("root_error", ""),

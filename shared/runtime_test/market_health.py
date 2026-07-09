@@ -46,7 +46,7 @@ SIM_MARKETS = tuple(
     if item.strip()
 )
 SIM_LOG_NAMES = {
-    "ashare": "ashare_sim.log",
+    "ashare": "job_ashare_sim_exec.log",
     "crypto": "crypto_sim.log",
     "pm": "pm_sim.log",
     "us": "us_sim.log",

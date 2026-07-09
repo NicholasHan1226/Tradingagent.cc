@@ -158,6 +158,7 @@
 - [x] A股开盘验收聚合层已识别“SQLite 诊断未启用但 API 健康通过”的纯旧诊断告警：仅该告警存在时降为 pass；若同时存在真实样本/执行/回执告警，仍保持 warn/fail。
 - [x] TradingAgent front 快照已修复 CNFutures 当前状态来源：最新 review 行优先，`style_comparison.json` 不再与最新 review 计数相加，避免 filled/error/hold 被翻倍或被旧运行污染。
 - [x] CNFutures 模拟盘 cron 日志事实源统一为 `shared/logs/cron/job_cn_futures_sim.log`；`market_health` 与 cron 模板已改用该标准 wrapper 日志，并兼容期货日志中的 `state=ok/market_closed` 状态字段；旧 `cn_futures_sim.log` 仅保留为历史兼容读取，避免健康检查展示过期日志年龄或 `latest_cron_status=None` 误报。
+- [x] 2026-07-09 追加收口 cron 日志事实源与权限守卫：`_common` wrapper 的 crontab 外层重定向统一到 `job_*.log`，`sim_market_health`/`equity_snapshots` 使用各自真实日志，A股健康检查读取 `job_ashare_sim_exec.log`；`cron_coverage` 同步检查 runtime lock、机会漏斗 review 和活跃 cron log 是否被 root 权限残留阻塞，避免 root 手工烟测后 `marketgraph` cron 无法写入。
 
 ### 2026-07-08 A股策略资金视图隔离验证样本
 
