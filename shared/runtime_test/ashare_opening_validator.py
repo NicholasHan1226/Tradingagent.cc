@@ -31,6 +31,12 @@ MAX_PRE_OPEN_DAILY_AGE_DAYS = 5
 def _allow_sqlite_diagnostic(db_path: Path) -> bool:
     if not db_path.exists():
         return False
+    try:
+        if db_path.resolve() != DEFAULT_SQLITE_DB.resolve():
+            return True
+    except OSError:
+        if str(db_path) != str(DEFAULT_SQLITE_DB):
+            return True
     return str(os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")).lower() in {"1", "true", "yes", "on"}
 
 

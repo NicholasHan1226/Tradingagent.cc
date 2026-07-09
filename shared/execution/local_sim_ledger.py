@@ -703,8 +703,29 @@ def record_local_sim_order(
         for existing in trades:
             if str(existing.get("idempotency_key") or "") == idempotency_key:
                 return {"status": "duplicate", "recorded": False, "trade_id": existing.get("trade_id", ""), "idempotency_key": idempotency_key, "account": account_name}
+        starting_cash = _starting_cash(
+            config.get("starting_cash")
+            or config.get("initial_capital")
+            or (account.get("initial_capital") if isinstance(account, dict) else None)
+            or (account.get("sim_capital") if isinstance(account, dict) else None)
+            or ASHARE_SIM_DEFAULT_CASH
+        )
+        if side == "buy":
+            current = _replay_account(trades, account_name, starting_cash=starting_cash)
+            cash_available = _safe_float(current.get("cash_available"), 0.0)
+            if cash_available + 1e-9 < net_amount:
+                return {
+                    "status": "rejected",
+                    "recorded": False,
+                    "reason": "insufficient_cash",
+                    "order_id": order_id,
+                    "idempotency_key": idempotency_key,
+                    "account": account_name,
+                    "cash_available": round(cash_available, 2),
+                    "required_cash": round(net_amount, 2),
+                }
         if side == "sell":
-            current = _replay_account(trades, account_name)["positions"].get(code, {})
+            current = _replay_account(trades, account_name, starting_cash=starting_cash)["positions"].get(code, {})
             if quantity > _safe_int(current.get("quantity"), 0):
                 return {"status": "rejected", "recorded": False, "reason": f"sell quantity {quantity} exceeds local simulated position {current.get('quantity', 0)} for {code}", "account": account_name}
         _append_trade_unlocked(trade)

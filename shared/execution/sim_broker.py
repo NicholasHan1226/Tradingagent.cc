@@ -243,6 +243,28 @@ def execute_sim_order(
         except Exception as exc:  # pragma: no cover - backup must not block Hermes dispatch
             backup = {"status": "failed", "recorded": False, "error": f"{exc.__class__.__name__}: {exc}"}
         sim_result.raw_response = {**dict(sim_result.raw_response or {}), "local_sim_backup": backup}
+        if backup.get("status") == "rejected" and backup.get("reason") == "insufficient_cash":
+            return SimResult(
+                status="rejected",
+                filled_qty=0,
+                avg_price=0.0,
+                fee=0.0,
+                message=(
+                    "A-share server-local simulated fill rejected by ledger: "
+                    f"insufficient cash ({backup.get('cash_available')} available, "
+                    f"{backup.get('required_cash')} required)"
+                ),
+                order_id=sim_result.order_id or str(order_payload.get("order_id", "")),
+                market=market_key,
+                raw_response={
+                    **dict(sim_result.raw_response or {}),
+                    "pre_ledger_result": {
+                        "status": sim_result.status,
+                        "filled_qty": sim_result.filled_qty,
+                        "avg_price": sim_result.avg_price,
+                    },
+                },
+            )
     return sim_result
 
 

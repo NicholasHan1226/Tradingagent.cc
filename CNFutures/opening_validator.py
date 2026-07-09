@@ -402,6 +402,12 @@ def _query_session_bars_via_reader(
 def _allow_sqlite_fallback(sqlite_db: Path) -> bool:
     if not sqlite_db.exists():
         return False
+    try:
+        if sqlite_db.resolve() != DEFAULT_SQLITE_DB.resolve():
+            return True
+    except OSError:
+        if str(sqlite_db) != str(DEFAULT_SQLITE_DB):
+            return True
     value = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 

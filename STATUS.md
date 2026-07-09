@@ -142,6 +142,8 @@
 - [x] `AshareAdapter.get_sim_account()` 从 server-local 模拟账本额外生成 `strategy_positions`、`strategy_cash_available` 和 `strategy_sample_quality`，只统计候选来源、成交价来源和交易时段都合格的策略有效样本。
 - [x] `shared/orchestrator.py` 的 A股资金计划、机会成本换仓、买入容量和 portfolio existing positions 改用策略有效样本视图；账户事实持仓仍保留在 `account_positions` 与快照中，便于看板/复盘追溯链路验证样本。
 - [x] `shared/runtime_test/ashare_preopen_dry_run.py` 同步使用策略资金视图，并输出 data/candidate_pool/capital_plan/execution_gate/total 各段耗时，避免开盘前检查慢时无法定位瓶颈。
+- [x] 2026-07-09 追加修复 A股策略资金视图与账本最终门禁：常规交易时段、候选层、server-local 策略成交即使价格来源为 `signal_card_price` 也会占用策略资金；完全缺价格来源或盘外样本仍隔离为链路验证。`local_sim_ledger` 写入成交前会按本地账本实时回放现金，现金不足返回 `insufficient_cash`，`sim_broker` 会把这类结果上抛为 rejected，防止过期账户快照或同轮多单把 200,000 元模拟本金打成负现金。A股信号卡 T+1 可卖日期同步改为下一交易日。
+- [x] 2026-07-09 追加修复开盘验证器测试诊断边界：生产默认 SharedSignals SQLite 诊断仍需显式环境开关；测试或人工显式传入的非默认 sqlite_db 允许只读诊断，避免 A股/CNFutures 开盘验收在全量测试中误报 `sqlite_diagnostic_disabled`。`daily_review` 保留 `SharedSignalsReader` 兼容别名，默认仍走 `TradingagentDataReader`。
 - [x] 文档规则已明确：链路验证样本、非连续竞价样本、缺候选来源或缺成交价来源样本不得占用策略现金、目标持仓数、新买入容量或机会成本换仓判断。
 
 ### 2026-07-08 A股 no-trade 空候选证据门与 dry-run 验收加固

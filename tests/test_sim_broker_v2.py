@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -212,6 +213,61 @@ class SimBrokerV2Test(unittest.TestCase):
             self.assertEqual(backup.get("account"), "ashare_sim")
             snapshot = local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8")
             self.assertIn("600000.SH", snapshot)
+
+    def test_ashare_builtin_executor_rejects_second_fill_when_ledger_cash_is_exhausted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            patches = [
+                patch.object(local_sim_ledger, "LOCAL_SIM_DIR", base),
+                patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", base / "local_sim_trades.jsonl"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", base / "local_sim_positions.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_PNL", base / "local_sim_pnl.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_LOCK", base / ".local_sim.lock"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", base / "simulated_ashare_positions.json"),
+                patch.object(local_sim_ledger, "LOCAL_SIM_RECEIPTS", base / "sim_execution_receipts.jsonl"),
+            ]
+            for p in patches:
+                p.start()
+                self.addCleanup(p.stop)
+
+            first = execute_sim_order(
+                order={
+                    "order_id": "SIM-ASHARE-CASH-1",
+                    "ts_code": "600000.SH",
+                    "side": "buy",
+                    "quantity": 15000,
+                    "price": 10.0,
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
+                },
+                market="ashare",
+                account={"account": "ashare_sim", "cash_available": 200000.0},
+                config={"local_sim_slippage_bps": 0, "market_session_now": "2026-07-07T10:00:00+08:00"},
+            )
+            second = execute_sim_order(
+                order={
+                    "order_id": "SIM-ASHARE-CASH-2",
+                    "ts_code": "600001.SH",
+                    "side": "buy",
+                    "quantity": 5000,
+                    "price": 10.0,
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
+                },
+                market="ashare",
+                account={"account": "ashare_sim", "cash_available": 200000.0},
+                config={"local_sim_slippage_bps": 0, "market_session_now": "2026-07-07T10:00:00+08:00"},
+            )
+
+            self.assertEqual(first.status, "filled")
+            self.assertEqual(second.status, "rejected")
+            self.assertEqual(second.raw_response["local_sim_backup"]["reason"], "insufficient_cash")
+            trades = [
+                json.loads(line)
+                for line in local_sim_ledger.LOCAL_SIM_TRADES.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(trades), 1)
 
     def test_ashare_builtin_executor_rejects_buy_without_candidate_provenance(self) -> None:
         calls: list[object] = []

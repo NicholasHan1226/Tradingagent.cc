@@ -72,6 +72,43 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(trades[0]["candidate_pool_layer"], "candidate")
         self.assertEqual(trades[0]["execution_source"], "ashare_candidate_layer")
 
+    def test_rejects_buy_that_would_make_local_cash_negative(self) -> None:
+        first = {
+            "order_id": "SIM-CASH-1",
+            "idempotency_key": "SIM:ashare:acct:20260701:600000.SH:buy:cash1",
+            "ts_code": "600000.SH",
+            "side": "buy",
+            "quantity": 15000,
+            "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+        }
+        second = {
+            "order_id": "SIM-CASH-2",
+            "idempotency_key": "SIM:ashare:acct:20260701:600001.SH:buy:cash2",
+            "ts_code": "600001.SH",
+            "side": "buy",
+            "quantity": 5000,
+            "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+        }
+
+        filled = local_sim_ledger.record_local_sim_order(first, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
+        rejected = local_sim_ledger.record_local_sim_order(second, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
+
+        self.assertEqual(filled["status"], "filled")
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(rejected["reason"], "insufficient_cash")
+        trades = [
+            json.loads(line)
+            for line in local_sim_ledger.LOCAL_SIM_TRADES.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(trades), 1)
+        pnl = local_sim_ledger.get_local_sim_pnl("acct")
+        self.assertGreaterEqual(pnl["cash_available"], 0)
+
     def test_records_ashare_session_metadata_on_trade(self) -> None:
         order = {
             "order_id": "SIM-SESSION",

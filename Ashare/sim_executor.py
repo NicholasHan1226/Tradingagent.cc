@@ -204,6 +204,15 @@ def _date_iso(value: Any, fallback: str) -> str:
     return fallback
 
 
+def _next_sellable_date_iso(trade_date: str) -> str:
+    try:
+        from Ashare.t_plus_1 import next_sellable_date
+
+        return next_sellable_date(trade_date).isoformat()
+    except Exception:
+        return trade_date
+
+
 def _snapshot_from_payload(
     order: dict[str, Any],
     account: dict[str, Any] | str | None,
@@ -363,6 +372,9 @@ def _signal_card(
     price = _coerce_float(order.get("price", order.get("limit_price", order.get("mid_price"))), 0.0)
     quantity = _coerce_int(order.get("quantity", order.get("qty", order.get("filled_qty"))), 0)
     side = str(order.get("side", order.get("direction", "buy"))).lower().strip() or "buy"
+    sellable_date = _date_iso(config.get("sellable_from") or config.get("sellable_date"), "")
+    if not sellable_date:
+        sellable_date = _next_sellable_date_iso(trade_date) if side == "buy" else trade_date
     return {
         "order_id": order_id,
         "market": MARKET,
@@ -387,8 +399,8 @@ def _signal_card(
         "source": "ashare_sim_executor_file_bridge",
         "bridge": "mini_hermes_file_bridge",
         "t_plus_1": {
-            "sellable_from": str(config.get("sellable_from") or trade_date),
-            "sellable_date": str(config.get("sellable_date") or trade_date),
+            "sellable_from": sellable_date,
+            "sellable_date": sellable_date,
         },
         "notes": "Hermes/Mac Mini bridge is reserved; server-local simulated execution is primary unless explicitly enabled.",
     }

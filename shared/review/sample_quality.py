@@ -80,6 +80,18 @@ def _has_market_data_fill_price(row: dict[str, Any]) -> bool:
     )
 
 
+def _has_strategy_fill_price(row: dict[str, Any]) -> bool:
+    if _has_market_data_fill_price(row):
+        return True
+    source_class = _fill_price_source_class(row)
+    if source_class != "signal_card_price":
+        return False
+    try:
+        return float(row.get("filled_price") or row.get("avg_price") or 0.0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
     """Return strategy-sample validity for one normalized trade row."""
 
@@ -104,7 +116,7 @@ def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
         }
 
     if side == "buy" and execution_source == "ashare_candidate_layer" and candidate_layer == "candidate":
-        if not _has_market_data_fill_price(row):
+        if not _has_strategy_fill_price(row):
             return {
                 "strategy_sample_valid": False,
                 "sample_classification": "chain_validation",
@@ -117,7 +129,7 @@ def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
         }
 
     if side == "sell" and execution_source == "ashare_rebalance_sell":
-        if not _has_market_data_fill_price(row):
+        if not _has_strategy_fill_price(row):
             return {
                 "strategy_sample_valid": False,
                 "sample_classification": "chain_validation",

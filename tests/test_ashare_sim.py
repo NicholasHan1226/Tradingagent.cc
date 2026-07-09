@@ -65,6 +65,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "quantity": 100,
                 "price": 10.5,
                 "side": "buy",
+                "trade_date": "2026-07-07",
             },
             account={"account_id": "ashare_sim"},
             config={"signals_dir": self.signals_dir, "hermes_enabled": True},
@@ -86,6 +87,8 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertFalse(card["real_trading_enabled"])
         self.assertEqual(card["quantity"], 100)
         self.assertEqual(card["price"], 10.5)
+        self.assertEqual(card["t_plus_1"]["sellable_from"], "2026-07-08")
+        self.assertEqual(card["t_plus_1"]["sellable_date"], "2026-07-08")
 
     def test_ashare_sim_execute_rejects_non_a_share_before_bridge(self) -> None:
         result = ashare_sim_execute(

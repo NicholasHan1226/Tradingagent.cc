@@ -68,6 +68,7 @@
 ## 2026-07-04 A股服务器本地模拟盘边界
 - `Ashare/sim_executor.py` 默认返回服务器本地 `server_local_sim_only` paper fill，不写 Hermes pending。
 - `shared/execution/local_sim_ledger.py` 和统一 `shared/logs/sim_ledger/ashare` 是 A 股服务器本地模拟盘的训练/复盘事实源；只记录 server paper fill，不等同于同花顺 GUI 成交；默认资金口径为 200,000 元，并从成交回放写出 `cash_available`。
+- A股 server-local 模拟账本必须在写入成交前按 append-only 本地账本实时回放现金；现金不足时返回 `insufficient_cash` 并阻断上游 filled 状态，防止过期账户快照或并发订单把模拟账户打成负现金。
 - 通用模拟 pipeline、风格模拟器和 fallback 适配器在 `market=ashare` 时必须使用 200,000 元默认资金；其它市场可继续使用各自配置或通用默认，不得把其它市场的 100,000 fallback 误认为 A股资金口径。
 - `shared/execution/sim_broker.py` 对 A 股 simulated 订单默认同步写本地模拟账本；只允许 `filled` / `partial` 回执入账，`pending` 或未成交回执不得写入本地 filled 账本；可用 `TRADINGS_LOCAL_SIM_BACKUP_ENABLED=0` 临时关闭本地备份记录。
 - Hermes/同花顺 GUI 模拟路径仍保留，但必须显式打开 `ASHARE_SIM_HERMES_ENABLED=1`，并以 mini 回执和截图作为 GUI 对照证据。

@@ -242,6 +242,50 @@ class PnlSummaryTest(unittest.TestCase):
         self.assertEqual(ashare["sample_quality"]["validation_sample_count"], 0)
         self.assertEqual(ashare["sample_quality"]["strategy_sample_valid_count"], 1)
 
+    def test_ashare_regular_session_signal_card_price_counts_as_strategy_pnl(self) -> None:
+        self.local_sim.parent.mkdir(parents=True)
+        self.local_sim.write_text(
+            json.dumps(
+                {
+                    "trade_id": "LSIM-SIGNAL-CARD",
+                    "order_id": "SIM-SIGNAL-CARD",
+                    "idempotency_key": "signal-card",
+                    "market": "ashare",
+                    "account": "ashare_server_sim",
+                    "trade_date": "2026-07-07",
+                    "ts_code": "600000.SH",
+                    "side": "buy",
+                    "quantity": 100,
+                    "requested_price": 10.0,
+                    "filled_price": 10.0,
+                    "amount": 1000.0,
+                    "commission": 5.0,
+                    "stamp_duty": 0.0,
+                    "net_amount": 1005.0,
+                    "status": "filled",
+                    "candidate_pool_layer": "candidate",
+                    "execution_source": "ashare_candidate_layer",
+                    "fill_price_source": "signal_card.price",
+                    "fill_price_source_class": "signal_card_price",
+                    "created_at": "2026-07-07T02:00:00+00:00",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = pnl_summary.sim_ledger_pnl_summary(
+            markets=("ashare",),
+            ledger_root=self.ledger_root,
+            local_trades_path=self.local_sim,
+            ashare_mark_prices={"600000.SH": 10.0},
+        )
+
+        ashare = result["ashare"]
+        self.assertEqual(ashare["strategy_total_pnl"], -5.0)
+        self.assertEqual(ashare["sample_quality"]["validation_sample_count"], 0)
+        self.assertEqual(ashare["sample_quality"]["strategy_sample_valid_count"], 1)
+
     def test_ashare_candidate_trade_without_price_provenance_is_validation_sample(self) -> None:
         self.local_sim.parent.mkdir(parents=True)
         self.local_sim.write_text(
