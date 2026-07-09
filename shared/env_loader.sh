@@ -17,7 +17,7 @@ export FINANCE_SHARED_ENV_FILE="${FINANCE_SHARED_ENV_FILE:-/opt/tradingagent/.en
 # Load TradingAgent-owned env first, then the shared finance env for common
 # credentials. Do not source MarketGraph deploy env; the three systems must be
 # able to run on separate hosts.
-if [[ -f "${TRADINGAGENT_ENV_FILE}" ]] && head -c 0 "${TRADINGAGENT_ENV_FILE}" >/dev/null 2>&1; then
+if [[ -r "${TRADINGAGENT_ENV_FILE}" ]]; then
     # shellcheck disable=SC1090
     source "${TRADINGAGENT_ENV_FILE}"
 fi
