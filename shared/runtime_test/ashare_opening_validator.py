@@ -287,6 +287,72 @@ def _count_market_receipts(receipt_path: Path, date: str) -> int:
     return count
 
 
+def _ashare_payload_date(payload: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        raw = str(payload.get(key) or "").strip()
+        if not raw:
+            continue
+        compact = raw[:10].replace("-", "")
+        if len(compact) >= 8 and compact[:8].isdigit():
+            return compact[:8]
+    return ""
+
+
+def _link_keys(payload: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for field in ("trade_id", "order_id", "idempotency_key"):
+        value = str(payload.get(field) or "").strip()
+        if value:
+            keys.add(f"{field}:{value}")
+    return keys
+
+
+def _audit_local_sim_receipts(local_sim_path: Path, receipt_path: Path, date: str) -> dict[str, Any]:
+    trades: list[dict[str, Any]] = []
+    for payload in _read_jsonl(local_sim_path):
+        market = str(payload.get("market") or payload.get("market_type") or "ashare").lower()
+        if market not in {"ashare", "a_share", "a-share"}:
+            continue
+        if _ashare_payload_date(payload, "trade_date", "created_at", "filled_at", "executed_at", "timestamp") != date:
+            continue
+        trades.append(payload)
+
+    receipt_keys: set[str] = set()
+    receipt_count = 0
+    for payload in _read_jsonl(receipt_path):
+        if str(payload.get("market") or "").lower() != "ashare":
+            continue
+        if _ashare_payload_date(payload, "trade_date", "receipt_at", "created_at") != date:
+            continue
+        receipt_count += 1
+        receipt_keys.update(_link_keys(payload))
+
+    missing: list[dict[str, Any]] = []
+    for trade in trades:
+        keys = _link_keys(trade)
+        if keys and keys & receipt_keys:
+            continue
+        missing.append(
+            {
+                "trade_id": str(trade.get("trade_id") or ""),
+                "order_id": str(trade.get("order_id") or ""),
+                "idempotency_key": str(trade.get("idempotency_key") or ""),
+                "ts_code": str(trade.get("ts_code") or trade.get("symbol") or ""),
+                "side": str(trade.get("side") or ""),
+                "quantity": trade.get("quantity"),
+                "trade_date": str(trade.get("trade_date") or ""),
+                "reason": "missing_link_key" if not keys else "matching_receipt_not_found",
+            }
+        )
+
+    return {
+        "trade_count": len(trades),
+        "receipt_count": receipt_count,
+        "missing_receipt_count": len(missing),
+        "missing_receipts": missing[:5],
+    }
+
+
 def _latest_no_trade_explanation(path: Path, date: str) -> dict[str, Any]:
     rows = _read_jsonl(path)
     for payload in reversed(rows):
@@ -767,6 +833,7 @@ def first_sample_alerts(
     trade_date = current.strftime("%Y%m%d")
     local_sim_count = _count_local_sim_trades(local_sim_path, trade_date)
     receipt_count = _count_market_receipts(receipt_path, trade_date)
+    receipt_audit = _audit_local_sim_receipts(local_sim_path, receipt_path, trade_date)
     review_count = _count_jsonl_rows(review_path)
     filled_signal_count = _count_filled_signals(signals_dir, trade_date)
     signal_counts = _signal_status_counts(signals_dir, trade_date)
@@ -779,6 +846,7 @@ def first_sample_alerts(
         "sim_execution_receipts": receipt_count,
         "daily_reviews": review_count,
         "filled_signals": filled_signal_count,
+        "receipt_audit": receipt_audit,
     }
     result["no_trade_explanation"] = _explain_no_trade(
         bars=bars,
@@ -804,6 +872,13 @@ def first_sample_alerts(
             alerts.append({"severity": "warn", "code": "ashare_first_sim_trade_missing", "message": "A股5分钟数据已进入会话窗口，但服务器本地模拟盘尚无成交样本。"})
     if local_sim_count > 0 and receipt_count <= 0:
         alerts.append({"severity": "warn", "code": "ashare_first_receipt_missing", "message": "A股已有本地模拟成交，但签名回执尚未生成。"})
+    elif int(receipt_audit.get("missing_receipt_count") or 0) > 0:
+        alerts.append({
+            "severity": "warn",
+            "code": "ashare_local_sim_orphan_trade",
+            "message": "A股本地模拟成交存在无法匹配签名回执的样本。",
+            "samples": receipt_audit.get("missing_receipts", []),
+        })
     if review_count <= 0:
         alerts.append({"severity": "info", "code": "ashare_review_not_yet_run", "message": "A股复盘日志尚未生成，等待日终复盘任务。"})
 

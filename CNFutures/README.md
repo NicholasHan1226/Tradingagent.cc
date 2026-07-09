@@ -180,6 +180,9 @@ The review payload includes `score_summary` by style:
 - `hold_count` and `hold_reason_summary`, so styles that correctly refuse weak
   setups can be reviewed by reason, style, symbol, and session without treating
   every no-trade cycle as missing data
+- Expected risk rejections such as `margin_cap_exceeded` are hold reasons, not
+  system errors. They mean the simulator found a candidate but the style's
+  capital or leverage guard correctly blocked a new position.
 - Closed-session 5-minute cron runs return `market_closed` without appending an
   empty review row, so the latest actionable review keeps the last in-session
   hold/fill evidence instead of being overwritten after the close.

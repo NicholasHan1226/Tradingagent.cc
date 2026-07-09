@@ -45,6 +45,7 @@ def _parse_args() -> argparse.Namespace:
 
 def _summary(result: dict[str, Any]) -> dict[str, Any]:
     records = result.get("records") if isinstance(result.get("records"), list) else []
+    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
     hold_summary = result.get("hold_reason_summary") if isinstance(result.get("hold_reason_summary"), dict) else {}
     by_reason = hold_summary.get("by_reason") if isinstance(hold_summary.get("by_reason"), dict) else {}
     top_hold_reason = max(by_reason.items(), key=lambda item: int(item[1] or 0))[0] if by_reason else ""
@@ -68,7 +69,9 @@ def _summary(result: dict[str, Any]) -> dict[str, Any]:
         "filled_count": result.get("filled_count"),
         "hold_count": result.get("hold_count", 0),
         "top_hold_reason": top_hold_reason,
-        "error_count": len(result.get("errors") or []),
+        "hold_reason_summary": hold_summary,
+        "error_count": len(errors),
+        "error_sample": errors[0] if errors else {},
         "review_path": str(DEFAULT_REVIEW_PATH),
         "real_trading_enabled": False,
         "max_intraday_bar_age_minutes": result.get("max_intraday_bar_age_minutes"),

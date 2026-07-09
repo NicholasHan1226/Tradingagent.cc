@@ -163,10 +163,13 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         local_sim = root / "local_sim_trades.jsonl"
-        local_sim.write_text(json.dumps({"trade_id": "t1", "trade_date": "20260706"}) + "\n", encoding="utf-8")
+        local_sim.write_text(
+            json.dumps({"trade_id": "t1", "order_id": "o1", "trade_date": "20260706"}) + "\n",
+            encoding="utf-8",
+        )
         receipts = root / "receipts.jsonl"
         receipts.write_text(
-            json.dumps({"market": "ashare", "trade_date": "20260706", "receipt_at": "2026-07-06T09:35:00+08:00"}) + "\n",
+            json.dumps({"market": "ashare", "trade_id": "t1", "order_id": "o1", "trade_date": "20260706", "receipt_at": "2026-07-06T09:35:00+08:00"}) + "\n",
             encoding="utf-8",
         )
         review = root / "daily_reviews.jsonl"
@@ -199,8 +202,56 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["reason"], "first_sample_ready")
         self.assertEqual(report["samples"]["local_sim_trades"], 1)
         self.assertEqual(report["samples"]["sim_execution_receipts"], 1)
+        self.assertEqual(report["samples"]["receipt_audit"]["missing_receipt_count"], 0)
         self.assertEqual(report["samples"]["filled_signals"], 1)
         self.assertEqual(report["no_trade_explanation"]["category"], "trade_loop_ready")
+
+    def test_first_sample_warns_when_trade_receipt_pair_is_missing(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        local_sim = root / "local_sim_trades.jsonl"
+        local_sim.write_text(
+            "\n".join(
+                [
+                    json.dumps({"trade_id": "t1", "order_id": "o1", "trade_date": "20260706", "ts_code": "600000.SH", "side": "buy", "quantity": 100}),
+                    json.dumps({"trade_id": "t2", "order_id": "o2", "trade_date": "20260706", "ts_code": "600001.SH", "side": "buy", "quantity": 100}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        receipts = root / "receipts.jsonl"
+        receipts.write_text(
+            json.dumps({"market": "ashare", "trade_id": "t1", "order_id": "o1", "trade_date": "20260706"}) + "\n",
+            encoding="utf-8",
+        )
+        review = root / "daily_reviews.jsonl"
+        review.write_text(json.dumps({"session": "close"}) + "\n", encoding="utf-8")
+
+        db_path = self._db(
+            [
+                ("600000.SH", "2026-07-06 09:35:00"),
+                ("000001.SZ", "2026-07-06 09:35:00"),
+            ]
+        )
+        report = ashare_opening_validator.first_sample_alerts(
+            sqlite_db=db_path,
+            local_sim_path=local_sim,
+            receipt_path=receipts,
+            review_path=review,
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            no_trade_log_path=Path("/tmp/nonexistent-ashare-no-trade.jsonl"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+
+        self.assertEqual(report["status"], "warn")
+        self.assertEqual(report["samples"]["receipt_audit"]["missing_receipt_count"], 1)
+        self.assertEqual(report["samples"]["receipt_audit"]["missing_receipts"][0]["trade_id"], "t2")
+        codes = {alert["code"] for alert in report["alerts"]}
+        self.assertIn("ashare_local_sim_orphan_trade", codes)
 
     def test_first_sample_ignores_old_local_sim_trades(self) -> None:
         tmp = tempfile.TemporaryDirectory()

@@ -987,7 +987,7 @@ def run_multi_style_simulation(
                 current_margin = _style_margin_used(position_snapshot, style_name)
                 margin_cap = capital * min(max(_safe_float(style.get("max_margin_usage"), 0.20), 0.01), 0.80)
                 if current_margin + projected_cost.margin_required > margin_cap:
-                    errors.append({
+                    holds.append({
                         "stage": "risk",
                         "symbol": symbol,
                         "style": style_name,
@@ -996,7 +996,7 @@ def run_multi_style_simulation(
                         "current_margin_required": round(current_margin, 6),
                         "projected_margin_required": round(projected_cost.margin_required, 6),
                         "margin_cap": round(margin_cap, 6),
-                        "error": "margin_cap_exceeded",
+                        "reason": "margin_cap_exceeded",
                     })
                     continue
             previous_opposite = _latest_opposite_fill(

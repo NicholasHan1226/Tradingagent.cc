@@ -918,7 +918,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             )
 
             self.assertEqual(result["filled_count"], 1)
-            self.assertEqual(result["errors"][0]["error"], "margin_cap_exceeded")
+            self.assertEqual(result["state"], "ok")
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["hold_reason_summary"]["by_reason"]["margin_cap_exceeded"], 1)
             snapshot_path = tmp_path / "signals" / "positions" / "cn_futures_sim_positions.json"
             snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
             self.assertEqual(snapshot["position_count"], 1)
