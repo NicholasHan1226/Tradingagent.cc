@@ -378,7 +378,7 @@ def _signal_card(
         "real_trading_enabled": False,
         "account": _account_name(account),
         "manual_confirm_required": False,
-        "direct_execution": True,
+        "direct_execution": False,
         "dry_run": bool(config.get("dry_run", False)),
         "strategy_name": str(order.get("strategy_name") or "ashare_sim_executor"),
         "timestamp": now.isoformat(timespec="seconds"),

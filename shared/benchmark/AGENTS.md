@@ -14,7 +14,7 @@
 - **Buy-Hold (买入持有)**: 等权买入并持有初始组合, 不调仓
 
 ## 数据来源
-- 基准行情数据通过 `update_benchmark(date)` 注入 (生产环境由 daily_runner 从 MarketGraph/Tushare 拉取后注入)
+- 基准行情数据通过 `update_benchmark(date)` 注入；生产环境必须从 SharedSignals API/read model 取基准价格后传入, 不直接调用 MarketGraph 或数据 provider。
 - 本地 CSV 存储, 每日一条记录
 
 ## 原则

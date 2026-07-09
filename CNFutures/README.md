@@ -375,8 +375,8 @@ loop is ready for observation:
 python shared/runtime_test/cn_futures_live_check.py --pretty
 ```
 
-On production, point it at the SharedSignals runtime if the sibling directory is
-not available:
+On production, point it at the SharedSignals API; do not read a sibling
+SharedSignals runtime directory:
 
 ```bash
 SHAREDSIGNALS_API_URL=http://127.0.0.1:8082 \

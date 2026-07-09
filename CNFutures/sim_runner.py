@@ -727,7 +727,7 @@ def _signal_card(
         "account": f"cn_futures_sim_{style_name}",
         "strategy_name": style_name,
         "manual_confirm_required": False,
-        "direct_execution": True,
+        "direct_execution": False,
         "real_trading_enabled": False,
         "valid_until": date,
         "timestamp": _now_iso(),

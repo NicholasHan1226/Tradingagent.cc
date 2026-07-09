@@ -12,8 +12,8 @@ the review module consumes.
 
 Data injection:
   In production, `update_benchmark(date)` is called by the daily runner
-  after fetching real index data from MarketGraph/Tushare. The caller
-  passes the closing values; this module stores and computes returns.
+  after fetching benchmark prices through the SharedSignals API/read model.
+  The caller passes the closing values; this module stores and computes returns.
 
 Benchmark codes:
   - CSI300:  000300.SH  (沪深300)

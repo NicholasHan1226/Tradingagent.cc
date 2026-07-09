@@ -3,7 +3,8 @@
 
 This module keeps the execution path simulation-only. Market data lookup is
 mockable via ``config["market_data_client"]`` or ``config["binance_client"]``
-and never performs a real Binance order placement in tests.
+for unit tests and local adapters; production simulated loops must use the
+SharedSignals-backed market data path and never place real Binance orders.
 """
 
 from __future__ import annotations

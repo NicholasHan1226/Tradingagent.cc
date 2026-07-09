@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Prediction Markets probability-domain scoring."""
+"""Prediction Markets probability-domain scoring.
+
+Production PM tradeable edge must come from ``PM.research_probability`` fed by
+the MarketGraph API. This scorer is a local diagnostic adapter and must not be
+used to promote SharedSignals inline probability fields into tradeable research
+probabilities.
+"""
 
 from __future__ import annotations
 

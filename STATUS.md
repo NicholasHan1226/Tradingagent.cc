@@ -63,8 +63,8 @@
 ## 二、已知问题
 
 - HK 按 Nicholas 最新决策暂不接入生产模拟盘；`hk_basic` 正常但 `hk_daily` 当前不作为生产模拟输入。HK 代码、wrapper 和数据诊断保留，默认不跑 cron、不纳入多市场健康/evolution 结论；手动运行也需要显式 `TRADINGAGENT_HK_SIM_ENABLED=1`，HSI 代理回退需要额外 `SIM_HK_PROXY_ENABLED=1`。
-- A股 2026-07-06 真实交易时段恢复验收已通过：SharedSignals 当日 5 分钟线已落入 read model；TradingAgent 修复了 `5m/5min`、日期格式、A股日线回看、盘中价格取值、买入整手和健康检查误报后，服务器本地模拟盘已产生 server-local filled、签名回执、持仓快照和成交回执邮件；后续已修正候选质量缺陷：先对 20 个候选打分，再按 combined score 排序进入 A股动态资金计划，`max_portfolio_positions=3` 作为上限而非硬买目标；同轮被价格、风控或执行跳过的候选会写 `shared/review/ashare/execution_exclusions_YYYYMMDD.jsonl` 并进入日报 `execution_quality`；同轮资金计划会写 `shared/review/ashare/capital_plan_YYYYMMDD.jsonl`，超目标旧持仓、止损持仓和轻量机会成本持仓会进入 `rebalance.sells` 并按 simulated sell 路径执行，计划卖出释放的资金会进入 `replacement_budget` 以避免满仓止损后只卖不换。
-- A股本地模拟回执链路已具备签名回执文件；生产环境仍需等待下一次真实交易时段产生真实生产样本，用于验证真实 cron 样本写入和收益复盘质量。健康检查已能区分“无首笔成交样本”和“有失败/有成交但缺回执”，后者才会告警。
+- A股 2026-07-06 真实市场开盘时段的模拟盘恢复验收已通过：SharedSignals 当日 5 分钟线已落入 read model；TradingAgent 修复了 `5m/5min`、日期格式、A股日线回看、盘中价格取值、买入整手和健康检查误报后，服务器本地模拟盘已产生 server-local filled、签名回执、持仓快照和成交回执邮件；后续已修正候选质量缺陷：先对 20 个候选打分，再按 combined score 排序进入 A股动态资金计划，`max_portfolio_positions=3` 作为上限而非硬买目标；同轮被价格、风控或执行跳过的候选会写 `shared/review/ashare/execution_exclusions_YYYYMMDD.jsonl` 并进入日报 `execution_quality`；同轮资金计划会写 `shared/review/ashare/capital_plan_YYYYMMDD.jsonl`，超目标旧持仓、止损持仓和轻量机会成本持仓会进入 `rebalance.sells` 并按 simulated sell 路径执行，计划卖出释放的资金会进入 `replacement_budget` 以避免满仓止损后只卖不换。
+- A股本地模拟回执链路已具备签名回执文件；生产环境仍需等待下一次真实市场开盘时段产生 cron 模拟盘生产样本，用于验证 cron 样本写入和收益复盘质量。健康检查已能区分“无首笔成交样本”和“有失败/有成交但缺回执”，后者才会告警。
 - Hermes/Mini GUI 路径已按 Nicholas 最新要求搁置为第二选择；只有未来显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时才需要重新验证 mini health、同花顺按钮识别、截图回执和账户同步。
 - 多市场旧系统 symlink 依赖已全部清除（61 个死 symlink）；工具独立实现已完成，剩余风险在 A股下一个交易日生产样本与晋降级/guard 的持续运行验证
 - 集合竞价已进入只读研究证据层；SharedSignals 若没有 09:15-09:25 竞价 bars，会输出 `no_auction_data` 而不是伪造信号。该层不接模拟/实盘执行。
@@ -79,7 +79,7 @@
 2. [ ] **P2：多市场模拟盘生产闭环** — 服务器侧 A股/Crypto/PM/US simulated cron、SharedSignals reader/API-first、统一账本、日报/周报复盘读取和健康检查已完成首轮验证；剩余为 A股下一个交易日生产样本、promotion/权重演化/guard halt-thaw 的持续运行验证
 3. [ ] **P2：A 股实盘路径设计** — 需先确认安全边界和人工确认环节
 4. [x] **P2：SharedSignals HTTP API 消费迁移** — 15/15 端点客户端已完成；`TradingagentDataReader` 已对 `get_market_data` / `get_events` / `is_trading_day` / `get_bars_intraday` 接入 API-first 访问；SQLite 只读路径仅保留为显式测试/应急诊断
-5. [ ] **A股/CNFutures 下一个真实交易时段开盘验收** — A股新增 `shared/runtime_test/ashare_opening_validator.py` 与三个 wrapper（pre_open / opening / first_sample_alert），并已写入生产 crontab；只读验证 SharedSignals 日线/5分钟数据、本地模拟成交、签名回执、复盘日志和 filled signals，异常才发系统告警；CNFutures `opening_validator.py` 已增强 filled/receipt/review 样本告警；聚合验收已修复午休/闭市窗口误报，等待下一交易窗口生产样本验证。
+5. [ ] **A股/CNFutures 下一个真实市场时段开盘验收** — A股新增 `shared/runtime_test/ashare_opening_validator.py` 与三个 wrapper（pre_open / opening / first_sample_alert），并已写入生产 crontab；只读验证 SharedSignals 日线/5分钟数据、本地模拟成交、签名回执、复盘日志和 filled signals，异常才发系统告警；CNFutures `opening_validator.py` 已增强 filled/receipt/review 样本告警；聚合验收已修复午休/闭市窗口误报，等待下一市场窗口生产样本验证。
 
 ### 2026-07-05 opening validation residual fixes
 
@@ -488,7 +488,7 @@
 - [x] HK 兼容入口已改跑 sim cycle，只写 sim 输出。
 - [x] 新增 `cron/daily_review.sh`：调用 `shared.review.daily_review.run_daily_review()`，按 sim 日志汇总多市场 review。
 - [x] 新增 `cron/AGENTS.md`：约束 cron wrapper 不内嵌 broker 凭据、实盘 payload 或审批捷径。
-- [x] 生产 crontab 已安装多市场模拟与健康检查脚本；真实交易保持 fail-closed，多市场生产闭环继续按真实交易时段积累样本。
+- [x] 生产 crontab 已安装多市场模拟与健康检查脚本；真实资金执行保持 fail-closed，多市场生产闭环继续按真实市场时段积累模拟样本。
 
 ### SharedSignals API 15/15 端点迁移对齐（2026-07-03；2026-07-08 事件过滤补齐）
 
