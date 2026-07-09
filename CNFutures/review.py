@@ -53,10 +53,15 @@ def latest_actionable_review(rows: list[dict[str, Any]], *, trade_date: str | No
 
     target_date = _compact_date(trade_date)
     if target_date:
-        rows = [
+        dated_rows = [
             row for row in rows
-            if _compact_date(row.get("date") or row.get("trade_date") or row.get("generated_at")) == target_date
+            if _compact_date(row.get("date") or row.get("trade_date") or row.get("generated_at"))
         ]
+        if dated_rows:
+            rows = [
+                row for row in dated_rows
+                if _compact_date(row.get("date") or row.get("trade_date") or row.get("generated_at")) == target_date
+            ]
     for row in reversed(rows):
         if is_actionable_review(row):
             return row

@@ -18,10 +18,12 @@ from typing import Any
 try:
     from .review import DEFAULT_REVIEW_PATH, latest_actionable_review
     from .contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
+    from .session import active_trade_date
 except ImportError:  # pragma: no cover - direct script execution fallback
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from CNFutures.review import DEFAULT_REVIEW_PATH, latest_actionable_review
     from CNFutures.contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
+    from CNFutures.session import active_trade_date
 
 try:
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, TradingagentDataReader
@@ -36,6 +38,8 @@ DEFAULT_STYLE_WEIGHTS_PATH = Path(__file__).resolve().parents[1] / "shared" / "r
 CN_TZ = timezone(timedelta(hours=8))
 READER_MARKET = "Futures"
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
+SESSION_WAIT_REASONS = {"style_session_not_allowed", "night_session_not_allowed", "product_night_session_closed"}
+STRATEGY_WAIT_REASONS = SESSION_WAIT_REASONS | {"style_paused", "style_disabled", "style_deprecated"}
 
 
 def _now_cn() -> datetime:
@@ -405,7 +409,7 @@ def _query_session_bars_via_reader(
 
 def _query_session_bars_via_api(start: datetime, now: datetime, *, min_symbols: int) -> dict[str, Any]:
     base_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip().rstrip("/")
-    trade_date = now.strftime("%Y%m%d")
+    trade_date = active_trade_date(now)
     url = f"{base_url}/realtime_5min?{urllib.parse.urlencode({'market': READER_MARKET, 'date': trade_date})}"
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
@@ -522,7 +526,7 @@ def _read_latest_review(path: Path) -> dict[str, Any]:
         if isinstance(payload, dict):
             rows.append(payload)
     rows.reverse()
-    return latest_actionable_review(rows)
+    return latest_actionable_review(rows, trade_date=active_trade_date())
 
 
 def _count_jsonl_rows(path: Path) -> int:
@@ -601,16 +605,20 @@ def _opening_30m_review(
         phase = "data_query_failed"
         action = "check_sharedsignals_futures_read_model"
     elif bar_count <= 0 or symbol_count < max(1, int(min_symbols)):
-        if hold_count > 0 and top_hold_reason in {"style_session_not_allowed", "night_session_not_allowed"}:
+        if hold_count > 0 and top_hold_reason in SESSION_WAIT_REASONS:
             status = "pass"
             phase = "no_night_session"
             action = "enable_only_explicit_night_session_styles_or_wait_for_day_session"
+        elif hold_count > 0 and top_hold_reason in STRATEGY_WAIT_REASONS:
+            status = "pass"
+            phase = "strategy_hold"
+            action = "continue_observation"
         else:
             status = "warn"
             phase = "insufficient_5min_data"
             action = "check_cn_futures_5min_collector"
     elif int(latest_review.get("filled_count") or 0) <= 0 and filled_signal_count <= 0 and hold_count > 0:
-        if top_hold_reason in {"style_session_not_allowed", "night_session_not_allowed"}:
+        if top_hold_reason in SESSION_WAIT_REASONS:
             status = "pass"
             phase = "no_night_session"
             action = "enable_only_explicit_night_session_styles_or_wait_for_day_session"
@@ -786,7 +794,7 @@ def first_sample_alerts(
     if bars.get("error"):
         alerts.append({"severity": "error", "code": "futures_5min_check_failed", "message": "期货5分钟首样本检查无法读取 SharedSignals API。"})
     elif (
-        opening_phase != "no_night_session"
+        opening_phase not in {"no_night_session", "strategy_hold"}
         and (int(bars.get("bar_count") or 0) <= 0 or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)))
     ):
         alerts.append({"severity": "warn", "code": "futures_5min_missing_in_session", "message": "期货交易时段开始后仍缺少足够的 Futures 5分钟数据。"})
