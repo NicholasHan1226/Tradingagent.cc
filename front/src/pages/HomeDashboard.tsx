@@ -4,6 +4,7 @@ import { ChartSkeleton } from '../components/Skeleton'
 import { StatusBoundary } from '../components/StatusBoundary'
 import { AShareEvidencePanel } from '../components/panels/AShareEvidencePanel'
 import { AShareMoneyflowPanel } from '../components/panels/AShareMoneyflowPanel'
+import { AShareTierComparisonPanel } from '../components/panels/AShareTierComparisonPanel'
 import { ClosedLoopProofPanel } from '../components/panels/ClosedLoopProofPanel'
 import { HoldingsCompact } from '../components/panels/HoldingsCompact'
 import { HomeResultBrief } from '../components/panels/HomeResultBrief'
@@ -13,7 +14,7 @@ import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
-import type { AShareForwardValidation, AShareResearchEvidence, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
+import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
 export function HomeDashboard({
@@ -21,6 +22,7 @@ export function HomeDashboard({
   ashareForwardValidation,
   activeMarket,
   ashareResearchEvidence,
+  ashareTierSummaries,
   data,
   latestPoint,
   hasHoldingData,
@@ -43,6 +45,7 @@ export function HomeDashboard({
   activeMarket: Market
   ashareForwardValidation?: AShareForwardValidation
   ashareResearchEvidence?: AShareResearchEvidence
+  ashareTierSummaries?: AShareTierSummary[]
   data: PerformancePoint[]
   events: ChartEvent[]
   hasHoldingData: boolean
@@ -151,7 +154,12 @@ export function HomeDashboard({
         <ClosedLoopProofPanel summaries={marketSummaries} />
         <AShareMoneyflowPanel activeMarket={activeMarket} signals={signals} />
         <HomeResultBrief hasHoldingData={hasHoldingData} hasPerformanceData={hasPerformanceData} hasSignalData={hasSignalData} holdings={holdings} portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
-        {(activeMarket === 'All Markets' || activeMarket === 'A-share') && <AShareEvidencePanel evidence={ashareResearchEvidence} forwardValidation={ashareForwardValidation} />}
+        {(activeMarket === 'All Markets' || activeMarket === 'A-share') && (
+          <>
+            <AShareEvidencePanel evidence={ashareResearchEvidence} forwardValidation={ashareForwardValidation} />
+            <AShareTierComparisonPanel activeMarket={activeMarket} summaries={ashareTierSummaries} />
+          </>
+        )}
       </aside>
     </div>
   )

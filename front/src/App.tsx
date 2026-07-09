@@ -147,6 +147,7 @@ function App() {
             activeMarket={activeMarket}
             ashareForwardValidation={readModelSnapshot?.ashareForwardValidation}
             ashareResearchEvidence={readModelSnapshot?.ashareResearchEvidence}
+            ashareTierSummaries={readModelSnapshot?.ashareTierSummaries}
             data={visiblePerformanceData}
             hasHoldingData={hasHoldingData}
             hasPerformanceData={hasPerformanceData}

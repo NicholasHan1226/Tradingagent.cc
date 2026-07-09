@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
-import type { AShareForwardValidation, AShareNoTradeEvidence, AShareResearchEvidence, CNFuturesReplayEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
+import type { AShareForwardValidation, AShareNoTradeEvidence, AShareResearchEvidence, AShareTierSummary, CNFuturesReplayEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
 
 type SnapshotOptions = {
   workspaceRoot: string
@@ -77,6 +77,7 @@ type LocalSimAccountPnl = {
   cash_available?: number | string
   market_value?: number | string
   total_pnl?: number | string
+  total_trades?: number | string
   positions?: Record<string, unknown>
 }
 
@@ -514,6 +515,7 @@ export async function readTradingAgentSnapshot({
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
   const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt)
+  const ashareTierSummaries = await readAShareTierSummaries(projectRoot, generatedAt, ashareAccount)
   const ashareNoTradeExplanation = await readLatestAShareNoTradeExplanation(projectRoot, now)
   const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
   const ashareForwardValidation = await readAShareForwardValidation(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareForwardValidation))
@@ -563,6 +565,7 @@ export async function readTradingAgentSnapshot({
     marketSummaries,
     ashareResearchEvidence,
     ashareForwardValidation,
+    ashareTierSummaries,
     sourceRefs: tradingAgentReadModelSources,
   }
 }
@@ -656,6 +659,61 @@ function attachAShareAccountSummary(
     ashareAccount,
     updatedAt: generatedAt,
   }
+}
+
+async function readAShareTierSummaries(
+  projectRoot: string,
+  generatedAt: string,
+  mainAccount?: PortfolioSummary['ashareAccount'],
+): Promise<AShareTierSummary[] | undefined> {
+  const summaries: AShareTierSummary[] = []
+  if (mainAccount) {
+    summaries.push({
+      account: 'ashare_server_sim',
+      label: '20万主账户',
+      capital: roundMoney(mainAccount.accountEquity - mainAccount.accountTotalPnl),
+      totalPnl: mainAccount.accountTotalPnl,
+      returnPct: mainAccount.accountReturnPct,
+      marketValue: mainAccount.marketValue,
+      cashAvailable: mainAccount.cashAvailable,
+      tradeCount: mainAccount.totalSampleCount,
+      source: tradingAgentReadModelSources.localSimLedger,
+      updatedAt: generatedAt,
+    })
+  }
+
+  const tierManifest = asRecord(await readOptionalJson(join(projectRoot, 'shared/review/ashare/tier_experiments_latest.json')))
+  const accounts = Array.isArray(tierManifest.accounts) ? tierManifest.accounts : []
+  for (const raw of accounts) {
+    const account = asRecord(raw)
+    const accountName = String(account.account ?? '')
+    const capital = parseFiniteNumber(account.capital as number | string | undefined) ?? 0
+    if (!accountName || capital <= 0) continue
+    const pnlPayload = asRecord(await readOptionalJson(join(projectRoot, 'shared/logs/local_sim_tiers', accountName, 'local_sim_pnl.json')))
+    const accountPnl = asRecord(pnlPayload[accountName]) as LocalSimAccountPnl | undefined
+    const totalPnl = parseFiniteNumber(accountPnl?.total_pnl) ?? 0
+    const marketValue = parseFiniteNumber(accountPnl?.market_value) ?? 0
+    const cashAvailable = parseFiniteNumber(accountPnl?.cash_available) ?? 0
+    const returnPct = capital > 0 ? roundMetric((totalPnl / capital) * 100) : 0
+    const tradeCount = Math.max(
+      0,
+      Math.trunc(parseFiniteNumber(accountPnl?.total_trades ?? account.trade_count as number | string | undefined) ?? 0),
+    )
+    summaries.push({
+      account: accountName,
+      label: `${Math.round(capital / 10_000)}万档位`,
+      capital,
+      totalPnl: roundMoney(totalPnl),
+      returnPct,
+      marketValue: roundMoney(marketValue),
+      cashAvailable: roundMoney(cashAvailable),
+      tradeCount,
+      source: tradingAgentReadModelSources.ashareTierExperiments,
+      updatedAt: generatedAt,
+    })
+  }
+
+  return summaries.length > 0 ? summaries : undefined
 }
 
 function isAShareLegacyEquitySummary(summary: PortfolioSummary | undefined) {

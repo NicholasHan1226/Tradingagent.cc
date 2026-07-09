@@ -1,5 +1,5 @@
 import type { ApiStatus, DashboardApiResponse } from './types.ts'
-import type { AShareForwardValidation, AShareResearchEvidence, FunnelEvent, HoldingRow, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
+import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, FunnelEvent, HoldingRow, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
 import type { DataDomain } from '../types/status.ts'
 
 export const tradingAgentReadModelSources = {
@@ -24,6 +24,7 @@ export const tradingAgentReadModelSources = {
   cnFuturesReview: 'shared/review/data/cn_futures_sim_reviews.jsonl',
   ashareResearchEvidence: 'shared/review/ashare/research_evidence_latest.json',
   ashareForwardValidation: 'shared/review/ashare/forward_validation_latest.json',
+  ashareTierExperiments: 'shared/review/ashare/tier_experiments_latest.json',
   cnFuturesReplay: 'shared/review/cn_futures/replay_latest.json',
 } as const
 
@@ -45,5 +46,6 @@ export type TradingAgentReadModelSnapshot = {
   marketSummaries?: MarketSummary[]
   ashareResearchEvidence?: AShareResearchEvidence
   ashareForwardValidation?: AShareForwardValidation
+  ashareTierSummaries?: AShareTierSummary[]
   sourceRefs: typeof tradingAgentReadModelSources
 }

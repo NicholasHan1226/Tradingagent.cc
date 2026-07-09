@@ -142,6 +142,19 @@ export type AShareForwardValidation = {
   pendingCount: number
 }
 
+export type AShareTierSummary = {
+  account: string
+  label: string
+  capital: number
+  totalPnl: number
+  returnPct: number
+  marketValue?: number
+  cashAvailable?: number
+  tradeCount: number
+  source: string
+  updatedAt: string
+}
+
 export type ChartEvent = {
   day: string
   title: string

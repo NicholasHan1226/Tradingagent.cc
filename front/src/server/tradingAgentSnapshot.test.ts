@@ -2253,4 +2253,105 @@ describe('TradingAgent snapshot reader', () => {
       returnPct: 0.03,
     })
   })
+
+  it('exposes A-share main and capital-tier summaries for dashboard comparison', async () => {
+    const root = await createWorkspace()
+    const ashareReview = join(root, 'TradingAgent/shared/review/ashare')
+    const tiersRoot = join(root, 'TradingAgent/shared/logs/local_sim_tiers')
+    const localSimDir = join(root, 'TradingAgent/shared/logs/local_sim')
+    await mkdir(ashareReview, { recursive: true })
+    await mkdir(join(tiersRoot, 'ashare_50000'), { recursive: true })
+    await mkdir(join(tiersRoot, 'ashare_100000'), { recursive: true })
+    await mkdir(localSimDir, { recursive: true })
+
+    await writeFile(
+      join(localSimDir, 'local_sim_pnl.json'),
+      JSON.stringify({
+        ashare_server_sim: {
+          cash_available: 50_200,
+          market_value: 151_000,
+          total_pnl: 1_200,
+        },
+      }),
+    )
+    await writeFile(
+      join(localSimDir, 'local_sim_trades.jsonl'),
+      Array.from({ length: 5 }, (_, index) =>
+        JSON.stringify({ market: 'ashare', status: 'filled', ts_code: `60000${index}.SH`, side: 'buy' }),
+      ).join('\n') + '\n',
+    )
+    await writeFile(
+      join(ashareReview, 'tier_experiments_latest.json'),
+      JSON.stringify({
+        market: 'ashare',
+        accounts: [
+          { account: 'ashare_50000', capital: 50_000, trade_count: 3 },
+          { account: 'ashare_100000', capital: 100_000, trade_count: 4 },
+        ],
+      }),
+    )
+    await writeFile(
+      join(tiersRoot, 'ashare_50000/local_sim_pnl.json'),
+      JSON.stringify({
+        ashare_50000: {
+          cash_available: 13_300,
+          market_value: 37_000,
+          total_pnl: 300,
+          total_trades: 3,
+        },
+      }),
+    )
+    await writeFile(
+      join(tiersRoot, 'ashare_100000/local_sim_pnl.json'),
+      JSON.stringify({
+        ashare_100000: {
+          cash_available: 27_700,
+          market_value: 76_000,
+          total_pnl: 700,
+          total_trades: 4,
+        },
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.ashareTierSummaries).toHaveLength(3)
+    expect(snapshot.ashareTierSummaries?.[0]).toMatchObject({
+      account: 'ashare_server_sim',
+      capital: 200_000,
+      totalPnl: 1_200,
+      returnPct: 0.6,
+      tradeCount: 5,
+    })
+    expect(snapshot.ashareTierSummaries?.[1]).toMatchObject({
+      account: 'ashare_50000',
+      capital: 50_000,
+      totalPnl: 300,
+      returnPct: 0.6,
+      tradeCount: 3,
+    })
+    expect(snapshot.ashareTierSummaries?.[2]).toMatchObject({
+      account: 'ashare_100000',
+      capital: 100_000,
+      totalPnl: 700,
+      returnPct: 0.7,
+      tradeCount: 4,
+    })
+  })
+
+  it('returns no A-share tier summaries when no main or tier ledgers exist', async () => {
+    const root = await createWorkspace()
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.ashareTierSummaries).toBeUndefined()
+  })
 })
