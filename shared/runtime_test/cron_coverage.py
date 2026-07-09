@@ -87,6 +87,7 @@ def _runtime_permission_candidate_paths() -> set[Path]:
         ROOT / "shared/review/ashare/tier_experiments_latest.json",
         ROOT / "shared/review/opportunities",
         ROOT / "shared/logs/local_sim_tiers",
+        ROOT / "shared/logs/trade_audit_trail.jsonl",
         ROOT / "shared/logs/cron/sim_market_health.log",
         ROOT / "shared/logs/cron/equity_snapshots.log",
     }

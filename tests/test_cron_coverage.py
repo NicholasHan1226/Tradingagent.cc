@@ -107,6 +107,7 @@ class CronCoverageTest(unittest.TestCase):
         self.assertIn("shared/review/ashare/forward_validation_latest.json", candidates)
         self.assertIn("shared/review/ashare/portfolio_evolution_latest.json", candidates)
         self.assertIn("shared/logs/local_sim_tiers", candidates)
+        self.assertIn("shared/logs/trade_audit_trail.jsonl", candidates)
 
 
 if __name__ == "__main__":
