@@ -841,6 +841,21 @@ class EmptyScoringReader:
         return []
 
 
+class SharedSignalsMacroScoringReader(EmptyScoringReader):
+    def get_macro_factors(self, start=None, end=None):
+        return [
+            {
+                "trade_date": "20260629",
+                "regime": "growth",
+                "regime_confidence": "0.75",
+                "source": "sharedsignals:macro",
+            }
+        ]
+
+    def get_regime(self):
+        raise AssertionError("MarketGraph regime should not be required when SharedSignals macro exists")
+
+
 class APIOnlyScoringReader(EmptyScoringReader):
     def get_fundamentals(self, ts_code, end_date=None):
         return [
@@ -859,7 +874,56 @@ class APIOnlyScoringReader(EmptyScoringReader):
         ]
 
 
+class SharedSignalsSentimentScoringReader(EmptyScoringReader):
+    def __init__(self) -> None:
+        self.sentiment_calls: list[tuple[str | None, str | None]] = []
+
+    def get_sentiment(self, start=None, end=None):
+        self.sentiment_calls.append((start, end))
+        return [
+            {
+                "subject_code": "600000.SH",
+                "status": "verified",
+                "confidence": "0.6",
+                "proposed_impact_hint": "positive",
+                "source": "sharedsignals:sentiment",
+            },
+            {
+                "subject_code": "600000.SH",
+                "status": "sentiment_signal",
+                "confidence": "0.6",
+                "proposed_impact_hint": "mixed",
+                "source": "sharedsignals:sentiment",
+            },
+        ]
+
+
 class TestSixDimensionScorerWithReader(unittest.TestCase):
+    def test_sharedsignals_macro_feeds_macro_dimension_before_marketgraph(self) -> None:
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260629",
+            data_reader=SharedSignalsMacroScoringReader(),
+        )
+
+        self.assertNotIn("macro", scores["missing_evidence_dimensions"])
+        self.assertGreater(scores["macro"], 0.5)
+        self.assertEqual(scores["evidence_sources"]["macro"]["source"], "SharedSignals macro")
+
+    def test_sharedsignals_sentiment_feeds_sentiment_dimension(self) -> None:
+        reader = SharedSignalsSentimentScoringReader()
+
+        scores = six_dimension_scorer.score_stock(
+            "600000.SH",
+            "20260629",
+            data_reader=reader,
+        )
+
+        self.assertNotIn("sentiment", scores["missing_evidence_dimensions"])
+        self.assertGreater(scores["sentiment"], 0.5)
+        self.assertEqual(scores["evidence_sources"]["sentiment"]["source"], "SharedSignals sentiment")
+        self.assertEqual(reader.sentiment_calls[0], ("20260615", "20260629"))
+
     def test_marketgraph_api_regime_feeds_macro_dimension(self) -> None:
         reader = TradingagentDataReader(
             api_client=None,

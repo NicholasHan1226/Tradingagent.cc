@@ -56,12 +56,12 @@ E: 基本面深度  — 周/季度财报更新
 
 ## 六维打分 (权重式, 不设门禁)
 ```
-宏观面(0.15) ← MarketGraph regime
-事件面(0.20) ← SharedSignals raw_events
-基本面(0.25) ← Tushare财务预计算
-资金面(0.15) ← moneyflow/北向/融资融券
-技术面(0.15) ← 行情计算(动量/弹性/突破)
-情绪面(0.10) ← 换手/涨跌比/温度
+宏观面(0.15) ← SharedSignals macro/read model 优先，MarketGraph regime 增强
+事件面(0.20) ← SharedSignals raw events 优先，MarketGraph event impact 增强
+基本面(0.25) ← SharedSignals fundamentals/factors
+资金面(0.15) ← SharedSignals moneyflow/capital_flow
+技术面(0.15) ← SharedSignals daily/5min 行情计算(动量/弹性/突破)
+情绪面(0.10) ← SharedSignals sentiment/read model
 → 综合分排序, 取Top N, 不排除任何股
 ```
 
@@ -93,15 +93,15 @@ E: 基本面深度  — 周/季度财报更新
 ```
 
 ## 与其他层的关系
-- ← SharedSignals: 只读行情+事件+基本面+资金
-- ← MarketGraph: 只读regime+event_impact+forward_calendar+scenario
+- ← SharedSignals: 只读行情+宏观+事件+基本面+资金+情绪，是 TradingAgent 的基础数据入口
+- ← MarketGraph: 只读regime+event_impact+forward_calendar+scenario，作为研究增强
 - → MarketGraph: 价格结果反馈(纯价格, 非交易, 用于因果验证)
 - → 不回传: 交易决策不回传(保持研究独立)
 
 ## 边界
 - 做: 选股/择时/风控/执行/复盘
 - 不做: 不采集数据（SharedSignals负责）
-- 不做: 不做宏观研究（MarketGraph负责）
+- 不做: 不采集宏观数据；基础宏观数据由 SharedSignals API/read model 提供，MarketGraph 只提供宏观研究增强
 - 不做: 不修改因果规则（只消费MarketGraph输出）
 
 ## 仓库

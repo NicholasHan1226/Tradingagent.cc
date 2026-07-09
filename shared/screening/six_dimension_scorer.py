@@ -218,31 +218,74 @@ def _rows_from_reader(method: Any, *args: Any, **kwargs: Any) -> list[dict[str, 
     return [dict(row) for row in rows if isinstance(row, dict)]
 
 
-def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
-    """宏观维度 — 从 MarketGraph all_weather_regime.csv 获取当前 regime。"""
-    try:
-        dim_cfg = config.get("dimensions", {}).get("macro", {})
-        regime_scores = dim_cfg.get("regime_scores", {})
-        row = _get_data_reader(config).get_regime()
-        if not row:
-            _mark_evidence(config, "macro", source="MarketGraph regime", rows=0, reason="missing_regime")
-            return 0.5
-        regime = str(row.get("regime") or "")
+def _macro_score_from_row(row: dict[str, Any], regime_scores: dict[str, Any]) -> float | None:
+    """Return a normalized macro score from one SharedSignals/MG macro row."""
+    for key in ("score", "macro_score", "risk_on_score", "value"):
+        if key in row and row.get(key) not in ("", None):
+            score = _safe_float(row.get(key), 0.5)
+            if score > 1.0:
+                score /= 100.0
+            return _clamp(score)
+
+    regime = str(row.get("regime") or row.get("label") or row.get("name") or "").strip()
+    if regime:
         score_value = regime_scores.get(regime)
         if score_value is None:
             prefix = regime.split("_", 1)[0]
-            score_value = regime_scores.get(prefix, 0.5)
-        regime_score = _safe_float(score_value, 0.5)
-        confidence = _clamp(_safe_float(row.get("regime_confidence"), 0.0))
+            score_value = regime_scores.get(prefix)
+        if score_value is not None:
+            regime_score = _safe_float(score_value, 0.5)
+            confidence = _clamp(_safe_float(row.get("regime_confidence") or row.get("confidence"), 1.0))
+            return _clamp(0.5 + (regime_score - 0.5) * confidence)
+
+    text = " ".join(str(value).lower() for value in row.values())
+    if any(token in text for token in ("easing", "rate_down", "liquidity_up", "宽松", "降息", "流动性改善")):
+        return 0.60
+    if any(token in text for token in ("tightening", "rate_up", "liquidity_down", "收紧", "加息", "流动性收缩")):
+        return 0.40
+    return None
+
+
+def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
+    """宏观维度 — SharedSignals macro read model 优先，MarketGraph regime 只作增强。"""
+    try:
+        dim_cfg = config.get("dimensions", {}).get("macro", {})
+        regime_scores = dim_cfg.get("regime_scores", {})
+        end_date = datetime.strptime(date, "%Y%m%d")
+        start_date = (end_date - timedelta(days=120)).strftime("%Y%m%d")
+        data_reader = _get_data_reader(config)
+
+        macro_rows = _rows_from_reader(
+            getattr(data_reader, "get_macro_factors", None),
+            start_date,
+            date,
+        )
+        if not macro_rows:
+            macro_rows = _rows_from_reader(getattr(data_reader, "get_macro_factors", None))
+        for row in reversed(macro_rows):
+            score = _macro_score_from_row(row, regime_scores)
+            if score is not None:
+                _mark_evidence(config, "macro", source="SharedSignals macro", rows=len(macro_rows))
+                return score
+
+        row = data_reader.get_regime()
+        if not row:
+            reason = "missing_macro_rows" if not macro_rows else "no_supported_macro_rows"
+            _mark_evidence(config, "macro", source="SharedSignals macro / MarketGraph regime", rows=0, reason=reason)
+            return 0.5
+        regime_score = _macro_score_from_row(row, regime_scores)
+        if regime_score is None:
+            _mark_evidence(config, "macro", source="MarketGraph regime", rows=0, reason="unsupported_regime")
+            return 0.5
         _mark_evidence(config, "macro", source="MarketGraph regime", rows=1)
-        return _clamp(0.5 + (regime_score - 0.5) * confidence)
+        return regime_score
     except Exception as exc:
         logger.error("macro scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
         return None
 
 
 def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
-    """事件维度 — 从 MarketGraph event_candidates.csv 聚合个股事件方向。"""
+    """事件维度 — SharedSignals events 优先，MarketGraph event graph 只作增强。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("event", {})
         min_conf = _safe_float(dim_cfg.get("min_confidence", 0.30), 0.30)
@@ -464,7 +507,7 @@ def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float |
 
 
 def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
-    """情绪维度 — 从 MarketGraph sentiment_signals.csv 聚合个股情绪信号。"""
+    """情绪维度 — 从 SharedSignals sentiment read model 聚合个股情绪信号。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("sentiment", {})
         extreme_threshold = _safe_float(dim_cfg.get("extreme_threshold", 0.85), 0.85)
@@ -472,7 +515,13 @@ def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float |
         weighted = 0.0
         allowed_status = {"sentiment_signal", "needs_review", "verified", "promoted"}
         matched_rows = 0
-        for row in _get_data_reader(config).get_sentiment():
+        end_date = datetime.strptime(date, "%Y%m%d")
+        start_date = (end_date - timedelta(days=14)).strftime("%Y%m%d")
+        data_reader = _get_data_reader(config)
+        sentiment_rows = _rows_from_reader(getattr(data_reader, "get_sentiment", None), start_date, date)
+        if not sentiment_rows:
+            sentiment_rows = _rows_from_reader(getattr(data_reader, "get_sentiment", None))
+        for row in sentiment_rows:
             if not any(row.get(key) for key in ("subject_code", "ts_code", "symbol", "code", "asset_code")):
                 continue
             if not _row_matches_ts_code(row, ts_code):
@@ -486,9 +535,9 @@ def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float |
             weighted += _direction_score(row.get("proposed_impact_hint")) * conf
             total_weight += conf
         if total_weight <= 1e-9:
-            _mark_evidence(config, "sentiment", source="SharedSignals/MarketGraph sentiment", rows=0, reason="missing_sentiment_rows")
+            _mark_evidence(config, "sentiment", source="SharedSignals sentiment", rows=0, reason="missing_sentiment_rows")
             return 0.5
-        _mark_evidence(config, "sentiment", source="SharedSignals/MarketGraph sentiment", rows=matched_rows)
+        _mark_evidence(config, "sentiment", source="SharedSignals sentiment", rows=matched_rows)
         raw = _clamp(weighted / total_weight)
         if raw > extreme_threshold:
             return _clamp(0.5 - (raw - extreme_threshold) * 2.0)

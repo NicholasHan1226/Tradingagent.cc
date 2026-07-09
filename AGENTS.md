@@ -10,7 +10,7 @@
 - TradingAgent 是交易判断和任务队列系统：读取 SharedSignals 的市场/事件数据与 MarketGraph 的研究证据，生成影子盘、模拟盘、实盘复核信号、日报和周报。
 - 三系统当前不是 MCP 互调，也不是强耦合单体；SharedSignals 供数，MarketGraph 供研究图谱，TradingAgent 做交易判断、队列、回执汇总和通知。
 - 未来系统间调用优先通过公开服务接口、只读 API/MCP read model 或明确数据契约完成；TradingAgent 不应直接依赖 MarketGraph 的内部实现细节，也不应把 MarketGraph 当执行入口。
-- TradingAgent 必须自有短周期机会发现能力：A股和 CNFutures 的候选、门禁、资金计划、模拟成交、复盘与演化由 TradingAgent 自身完成；MarketGraph 对 A股/CNFutures 只补充宏观、事件、图谱和中长线研究背景。缺少 MarketGraph 研究证据时应记录为 evidence debt 或保持中性/空跑，不能把外部图谱缺失当成执行器故障，也不能绕过 TradingAgent 自身门禁硬买。
+- TradingAgent 必须自有短周期机会发现能力：A股和 CNFutures 的候选、门禁、资金计划、模拟成交、复盘与演化由 TradingAgent 自身完成；SharedSignals API/read model 是基础数据入口，应最大化消费已开放的行情、宏观、事件、基本面、资金、情绪、行业和 5 分钟数据接口；MarketGraph 对 A股/CNFutures 只补充宏观研究、事件图谱和中长线研究背景。缺少 MarketGraph 研究证据时应记录为 evidence debt 或保持中性/空跑，不能把外部图谱缺失当成执行器故障，也不能绕过 TradingAgent 自身门禁硬买。
 
 ## 目标
 

@@ -2,32 +2,45 @@
 
 ## Scope
 
-TradingAgent consumes SharedSignals and MarketGraph as read-only upstream APIs.
-This contract covers the data access layer used by screening and market
-validation logic. It does not change execution, accounting, risk, or portfolio
-write paths.
+TradingAgent consumes SharedSignals as the canonical market-data API and
+MarketGraph as an optional read-only research-evidence API. This contract
+covers the data access layer used by screening and market validation logic. It
+does not change execution, accounting, risk, or portfolio write paths.
+
+TradingAgent must be able to complete its own simulated trading loop using
+SharedSignals only: market data -> candidates -> scoring -> risk/funding gates
+-> simulated fills -> ledger/review -> style evolution. MarketGraph may improve
+conviction, but missing MarketGraph rows must not block this base loop.
 
 ## MarketGraph Research Inputs
 
 MarketGraph is an optional research-evidence provider, not a market-data
 collector or execution path for TradingAgent. TradingAgent may call
 `MARKETGRAPH_API_URL` for read-only research evidence such as A-share regime
-context and PM independent research probabilities. If the API requires
-authorization, `MARKETGRAPH_API_TOKEN` must be provided by TradingAgent's own
-runtime environment. TradingAgent cron must not source MarketGraph deploy env
-files, so the three systems remain independently deployable.
+enhancement, event-impact graph context, and PM independent research
+probabilities. If the API requires authorization, `MARKETGRAPH_API_TOKEN` must
+be provided by TradingAgent's own runtime environment. TradingAgent cron must
+not source MarketGraph deploy env files, so the three systems remain
+independently deployable.
 
 When MarketGraph regime, event impact, or sentiment research rows are missing
-or unauthorized, A-share scoring records the dimension as missing evidence and
-falls back to neutral/degraded scoring. It must not treat missing research
-evidence as an execution failure, and it must not bypass local candidate,
-funding, risk, or execution gates.
+or unauthorized, A-share scoring records the enhanced research evidence as
+missing and falls back to SharedSignals evidence or neutral/degraded scoring.
+It must not treat missing research evidence as an execution failure, and it
+must not bypass local candidate, funding, risk, or execution gates.
 
 ## Canonical SharedSignals Inputs
 
 - SharedSignals API:
   `SHAREDSIGNALS_API_URL` is the production data entry. It reads the
   SharedSignals database/read model behind the service boundary.
+- Base analysis coverage:
+  TradingAgent should maximize the SharedSignals API surface already exposed by
+  `SharedSignalsAPIClient`: market data, realtime 5min, fundamentals,
+  reference, macro, capital flow, events, sentiment, PM markets/prices,
+  crypto, associations, impacts, industry, and tushare passthrough read models.
+  These inputs are consumed through the API facade; TradingAgent must not
+  collect directly from providers.
 - Optional local read model:
   `SHARED_SIGNALS_DB` may be used only when
   `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` is explicitly set for tests or
