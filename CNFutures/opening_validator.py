@@ -409,8 +409,7 @@ def _query_session_bars_via_reader(
 
 def _query_session_bars_via_api(start: datetime, now: datetime, *, min_symbols: int) -> dict[str, Any]:
     base_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip().rstrip("/")
-    trade_date = active_trade_date(now)
-    url = f"{base_url}/realtime_5min?{urllib.parse.urlencode({'market': READER_MARKET, 'date': trade_date})}"
+    url = f"{base_url}/realtime_5min?{urllib.parse.urlencode({'market': READER_MARKET})}"
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -767,7 +766,7 @@ def first_sample_alerts(
     alerts: list[dict[str, Any]] = []
     latest_review = _read_latest_review(review_path, now=current)
     latest_filled_count = int(latest_review.get("filled_count") or 0) if latest_review else 0
-    trade_date = current.strftime("%Y%m%d")
+    trade_date = active_trade_date(current)
     filled_signal_count = _count_filled_signals(signals_dir, trade_date)
     receipt_count = _count_market_receipts(receipt_path, trade_date)
     result["latest_review"] = {

@@ -16,6 +16,7 @@ from .adapter import CNFuturesAdapter, READER_MARKET
 from .contract_rules import get_contract_rule, night_session_end_minute, normalize_product
 from .margin_model import estimate_order_cost
 from .review import append_review
+from .session import parse_cn_datetime, session_bar_age_minutes
 from .signal_engine import generate_style_signal
 from . import sim_executor as _sim_executor  # noqa: F401  # Ensure registry side effect.
 
@@ -156,34 +157,21 @@ def _should_flatten_no_overnight(style: dict[str, Any], now: datetime | None) ->
 
 
 def _parse_dt(value: Any) -> datetime | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    normalized = raw.replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed
+    parsed = parse_cn_datetime(value)
+    return parsed.replace(tzinfo=None) if parsed is not None else None
 
 
 def _bar_age_minutes(latest_bar_time: str, now: datetime | None) -> float | None:
     if now is None:
         return None
-    bar_dt = _parse_dt(latest_bar_time)
-    if bar_dt is None:
-        return None
-    now_dt = now.astimezone(timezone.utc).replace(tzinfo=None) if now.tzinfo is not None else now
-    return (now_dt - bar_dt).total_seconds() / 60.0
+    return session_bar_age_minutes(latest_bar_time, now)
 
 
 def _is_intraday_bar_fresh(latest_bar_time: str, *, now: datetime | None, max_age_minutes: float) -> tuple[bool, float | None]:
     age = _bar_age_minutes(latest_bar_time, now)
     if age is None:
         return False, None
-    return age <= max_age_minutes, age
+    return -5.0 <= age <= max_age_minutes, age
 
 
 def _local_naive_dt(value: datetime) -> datetime:
@@ -832,6 +820,8 @@ def run_multi_style_simulation(
     cadence_value = "daily" if str(cadence or "").lower() in {"daily", "1d", "day"} else INTRADAY_INTERVAL
     if now is None:
         now = datetime.now()
+    cn_now = now.astimezone(CN_TZ) if now.tzinfo is not None else now.replace(tzinfo=CN_TZ)
+    market_data_date = cn_now.strftime("%Y%m%d")
     config = adapter.get_strategy_config()
     styles = config.get("styles") if isinstance(config.get("styles"), dict) else {}
     account = adapter.get_sim_account()
@@ -845,7 +835,7 @@ def run_multi_style_simulation(
         universe = adapter.get_universe(date)
     else:
         get_intraday_universe = getattr(adapter, "get_intraday_universe", None)
-        universe = get_intraday_universe(date, interval=INTRADAY_INTERVAL) if callable(get_intraday_universe) else adapter.get_universe(date)
+        universe = get_intraday_universe(market_data_date, interval=INTRADAY_INTERVAL) if callable(get_intraday_universe) else adapter.get_universe(date)
     if not universe:
         errors.append({"stage": "universe", "market": MARKET, "error": "empty_futures_universe"})
     if not styles:
@@ -970,7 +960,7 @@ def run_multi_style_simulation(
         for symbol in universe:
             if not _style_allows_symbol(style, symbol):
                 continue
-            bars, bar_cadence, latest_bar_time = _bars_for_cadence(reader, symbol, date, cadence_value)
+            bars, bar_cadence, latest_bar_time = _bars_for_cadence(reader, symbol, market_data_date, cadence_value)
             if not bars:
                 errors.append({
                     "stage": "data",

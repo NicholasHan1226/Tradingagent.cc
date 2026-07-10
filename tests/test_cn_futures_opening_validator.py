@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from CNFutures.opening_validator import (
     _query_daily_bars_via_reader,
+    _query_session_bars_via_api,
     _reader_symbols,
     first_sample_alerts,
     validate_opening,
@@ -607,6 +608,228 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
 
         self.assertEqual(report["query_source"], "SharedSignals API")
         self.assertNotIn("futures_5min_check_failed", {alert["code"] for alert in report["alerts"]})
+
+
+class QuerySessionBarsViaApiTest(unittest.TestCase):
+    """Tests for _query_session_bars_via_api — the fix ensures no date param."""
+
+    def _mock_response(self, data: list[dict[str, object]], code: int = 200) -> object:
+        class Resp:
+            def __init__(self, data: list[dict[str, object]], code: int):
+                self._data = data
+                self._code = code
+
+            def read(self):
+                return json.dumps({"data": self._data}).encode("utf-8")
+
+            def getcode(self):
+                return self._code
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args: object):
+                return None
+
+        return Resp(data, code)
+
+    def _executable_bars(self, symbols: list[str], bar_times: list[str], prices: list[float]) -> list[dict[str, object]]:
+        bars: list[dict[str, object]] = []
+        for symbol, bar_time, price in zip(symbols, bar_times, prices):
+            bars.append({"symbol": symbol, "bar_time": bar_time, "close": price, "market": "Futures"})
+        return bars
+
+    def test_night_session_21xx_uses_no_date_param(self) -> None:
+        """Night session at 22:35 — API URL must NOT include date param."""
+        start = datetime.fromisoformat("2026-07-10T21:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-10T22:35:00+08:00")
+        bars = self._executable_bars(
+            ["IF2609.CFX", "IH2609.CFX", "IC2609.CFX", "IM2609.CFX", "CU2609.SHF", "RB2610.SHF"],
+            ["2026-07-10 22:30:00"] * 6,
+            [3500.0, 2400.0, 5200.0, 6200.0, 80000.0, 3300.0],
+        )
+        with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
+            with patch("urllib.request.Request") as mock_req:
+                result = _query_session_bars_via_api(start, now, min_symbols=4)
+                call_args = mock_req.call_args
+                url = call_args[0][0] if call_args else ""
+                self.assertNotIn("date=", url, f"URL must not contain date param, got: {url}")
+        self.assertIsNone(result.get("error"))
+        self.assertEqual(result["symbol_count"], 6)
+        self.assertEqual(result["bar_count"], 6)
+        self.assertEqual(result["query_source"], "SharedSignals API")
+
+    def test_night_early_session_01xx_uses_no_date_param(self) -> None:
+        """Night-early session at 01:25 — API URL must NOT include date param."""
+        start = datetime.fromisoformat("2026-07-10T21:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-11T01:25:00+08:00")
+        bars = self._executable_bars(
+            ["CU2609.SHF", "RB2610.SHF", "I2609.DCE", "M2609.DCE"],
+            ["2026-07-11 01:00:00"] * 4,
+            [80000.0, 3300.0, 700.0, 3500.0],
+        )
+        with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
+            with patch("urllib.request.Request") as mock_req:
+                result = _query_session_bars_via_api(start, now, min_symbols=4)
+                call_args = mock_req.call_args
+                url = call_args[0][0] if call_args else ""
+                self.assertNotIn("date=", url, f"URL must not contain date param, got: {url}")
+        self.assertIsNone(result.get("error"))
+        self.assertEqual(result["symbol_count"], 4)
+
+    def test_day_session_filters_bars_within_range(self) -> None:
+        """Day session bars outside start..now range are excluded."""
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+        bars = [
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:05:00", "close": 3500.0},
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:10:00", "close": 3510.0},
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 08:55:00", "close": 3490.0},  # before start
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:20:00", "close": 3520.0},  # after now
+        ]
+        with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
+            result = _query_session_bars_via_api(start, now, min_symbols=2)
+        self.assertEqual(result["bar_count"], 2)  # only 09:05 and 09:10
+        self.assertEqual(result["first_bar_time"], "2026-07-06 09:05:00")
+        self.assertEqual(result["latest_bar_time"], "2026-07-06 09:10:00")
+
+    def test_filters_out_non_executable_contracts(self) -> None:
+        """Generic symbols like CU.SHF must be excluded."""
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+        bars = [
+            {"symbol": "CU.SHF", "bar_time": "2026-07-06 09:05:00", "close": 80000.0},
+            {"symbol": "CU2609.SHF", "bar_time": "2026-07-06 09:05:00", "close": 80000.0},
+        ]
+        with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
+            result = _query_session_bars_via_api(start, now, min_symbols=1)
+        self.assertEqual(result["symbol_count"], 1)
+
+    def test_filters_out_zero_or_negative_price(self) -> None:
+        """Bars with price <= 0 must be excluded."""
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+        bars = [
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:05:00", "close": 0.0},
+            {"symbol": "IH2609.CFX", "bar_time": "2026-07-06 09:05:00", "close": -1.0},
+            {"symbol": "IC2609.CFX", "bar_time": "2026-07-06 09:05:00", "close": 5200.0},
+        ]
+        with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
+            result = _query_session_bars_via_api(start, now, min_symbols=1)
+        self.assertEqual(result["symbol_count"], 1)
+        self.assertEqual(result["bar_count"], 1)
+
+    def test_api_http_error_returns_error_dict(self) -> None:
+        """HTTP error from API must return error with symbol_count=0."""
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+        with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
+            result = _query_session_bars_via_api(start, now, min_symbols=4)
+        self.assertIsNotNone(result.get("error"))
+        self.assertIn("sharedsignals_api_error", result["error"])
+        self.assertEqual(result["symbol_count"], 0)
+        self.assertEqual(result["bar_count"], 0)
+
+    def test_api_empty_response_fail_closed(self) -> None:
+        """Empty API response must fail-closed with bar_count=0."""
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+        with patch("urllib.request.urlopen", return_value=self._mock_response([])):
+            result = _query_session_bars_via_api(start, now, min_symbols=4)
+        self.assertIsNone(result.get("error"))
+        self.assertEqual(result["bar_count"], 0)
+        self.assertEqual(result["symbol_count"], 0)
+
+    def test_stale_bars_before_session_excluded(self) -> None:
+        """Bars with bar_time before session start are excluded."""
+        start = datetime.fromisoformat("2026-07-06T21:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T22:35:00+08:00")
+        bars = [
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 14:55:00", "close": 3500.0},
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 21:05:00", "close": 3510.0},
+        ]
+        with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
+            result = _query_session_bars_via_api(start, now, min_symbols=1)
+        self.assertEqual(result["bar_count"], 1)
+        self.assertEqual(result["latest_bar_time"], "2026-07-06 21:05:00")
+
+    def test_future_bars_excluded(self) -> None:
+        """Bars with bar_time after 'now' are excluded."""
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+        bars = [
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:20:00", "close": 3500.0},
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:10:00", "close": 3490.0},
+        ]
+        with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
+            result = _query_session_bars_via_api(start, now, min_symbols=1)
+        self.assertEqual(result["bar_count"], 1)
+
+    def test_min_symbols_not_met_but_bars_still_reported(self) -> None:
+        """When symbol_count < min_symbols, bars are still returned (caller decides)."""
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+        bars = [
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:05:00", "close": 3500.0},
+        ]
+        with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
+            result = _query_session_bars_via_api(start, now, min_symbols=4)
+        self.assertEqual(result["symbol_count"], 1)
+        self.assertIsNone(result.get("error"))
+
+    def test_json_decode_error_returns_error(self) -> None:
+        """Malformed JSON from API must return error."""
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+
+        class BadResp:
+            def read(self):
+                return b"not json"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args: object):
+                return None
+
+        with patch("urllib.request.urlopen", return_value=BadResp()):
+            result = _query_session_bars_via_api(start, now, min_symbols=4)
+        self.assertIsNotNone(result.get("error"))
+        self.assertEqual(result["bar_count"], 0)
+
+    def test_night_session_trade_date_uses_active_trade_date(self) -> None:
+        """Night-session signal and receipt lookups use the exchange trade date."""
+        now = datetime.fromisoformat("2026-07-10T22:35:00+08:00")
+        bars = {
+            "bar_count": 4,
+            "symbol_count": 4,
+            "latest_bar_time": "2026-07-10 22:35:00",
+            "query_source": "SharedSignals API",
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "CNFutures.opening_validator._query_session_bars_via_api",
+            return_value=bars,
+        ), patch(
+            "CNFutures.opening_validator._read_latest_review",
+            return_value={},
+        ), patch(
+            "CNFutures.opening_validator._count_filled_signals",
+            return_value=0,
+        ) as count_signals, patch(
+            "CNFutures.opening_validator._count_market_receipts",
+            return_value=0,
+        ) as count_receipts:
+            first_sample_alerts(
+                sqlite_db=Path(tmp) / "unused.db",
+                review_path=Path(tmp) / "review.jsonl",
+                signals_dir=Path(tmp) / "signals",
+                receipt_path=Path(tmp) / "receipts.jsonl",
+                now=now,
+                min_symbols=4,
+            )
+
+        self.assertEqual(count_signals.call_args.args[1], "20260711")
+        self.assertEqual(count_receipts.call_args.args[1], "20260711")
 
 
 if __name__ == "__main__":

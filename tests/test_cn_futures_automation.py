@@ -210,7 +210,11 @@ class RealtimeBatchUniverseReader(FakeFuturesReader):
         *,
         limit: int | None = None,
     ) -> list[dict[str, object]]:
-        if market != "Futures" or date != "20260709":
+        if market != "Futures":
+            return []
+        if date is None:
+            pass  # no date filter — return latest bars as production does now
+        elif date != "20260709":
             return []
         rows: list[dict[str, object]] = [
             {"symbol": "CU2607.SHF", "trade_date": "20260709", "bar_time": "2026-07-09 09:05:00", "interval": "5min", "close": 102320.0},
@@ -248,6 +252,28 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
         state = cn_futures_session_state(datetime.fromisoformat("2026-07-09T21:30:00+08:00"))
         self.assertEqual(state["active_trade_date"], "20260710")
+
+    def test_session_bar_freshness_treats_naive_bars_as_china_time(self) -> None:
+        from CNFutures.session import is_current_session_bar, session_bar_age_minutes
+
+        now = datetime.fromisoformat("2026-07-10T14:35:00+00:00")
+        self.assertEqual(session_bar_age_minutes("2026-07-10 22:30:00", now), 5.0)
+        self.assertTrue(
+            is_current_session_bar(
+                "2026-07-10 22:30:00",
+                session_start="2026-07-10T21:00:00+08:00",
+                now=now,
+                max_age_minutes=10,
+            )
+        )
+        self.assertFalse(
+            is_current_session_bar(
+                "2026-07-10 14:55:00",
+                session_start="2026-07-10T21:00:00+08:00",
+                now=now,
+                max_age_minutes=10,
+            )
+        )
 
     def test_latest_actionable_review_filters_current_trade_date(self) -> None:
         from CNFutures.review import latest_actionable_review

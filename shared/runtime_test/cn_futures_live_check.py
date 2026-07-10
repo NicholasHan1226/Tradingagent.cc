@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from CNFutures.review import latest_actionable_review
+from CNFutures.session import cn_futures_session_state, is_current_session_bar, parse_cn_datetime
 
 CN_FUTURES_REVIEW = ROOT / "shared/review/data/cn_futures_sim_reviews.jsonl"
 CN_FUTURES_STYLE_COMPARISON = ROOT / "shared/review/cn_futures/style_comparison.json"
@@ -169,13 +170,8 @@ def check_sharedsignals_freshness(
         )
 
     base_url = os.environ.get("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082").strip().rstrip("/")
-    try:
-        from CNFutures.session import active_trade_date
-
-        trade_date = active_trade_date()
-    except Exception:
-        trade_date = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d")
-    params = urllib.parse.urlencode({"market": "Futures", "date": trade_date})
+    session_state = cn_futures_session_state()
+    params = urllib.parse.urlencode({"market": "Futures"})
     url = f"{base_url}/realtime_5min?{params}"
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
@@ -192,8 +188,23 @@ def check_sharedsignals_freshness(
     rows = payload.get("data") if isinstance(payload, dict) else []
     if not isinstance(rows, list):
         rows = []
-    freshness_status = "fresh" if rows else "no_data"
-    if rows:
+    session_start = str(session_state.get("session_start") or "")
+    now_local = parse_cn_datetime(session_state.get("local_time")) or datetime.now(timezone.utc)
+    filtered_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        bar_time = str(row.get("bar_time") or row.get("time") or "")
+        if not is_current_session_bar(
+            bar_time,
+            session_start=session_start,
+            now=now_local,
+            max_age_minutes=max_age_minutes,
+        ):
+            continue
+        filtered_rows.append(row)
+    freshness_status = "fresh" if filtered_rows else "stale" if rows else "no_data"
+    if filtered_rows:
         status = "pass"
         summary = "SharedSignals 期货5分钟数据新鲜"
     elif freshness_status in {"stale", "no_data"}:
@@ -210,6 +221,12 @@ def check_sharedsignals_freshness(
         {
             "url": url,
             "row_count": len(rows),
+            "filtered_row_count": len(filtered_rows),
+            "session_start": session_start,
+            "latest_bar_time": max(
+                (str(row.get("bar_time") or row.get("time") or "") for row in filtered_rows),
+                default="",
+            ),
             "payload_status": payload.get("status") if isinstance(payload, dict) else "",
         },
         severity="warn" if status == "warn" else "error",

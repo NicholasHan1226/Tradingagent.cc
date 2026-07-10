@@ -312,7 +312,7 @@ class CNFuturesAdapter(MarketAdapter):
         try:
             rows = get_realtime_5min_batch(
                 READER_MARKET,
-                str(date or "") or None,
+                None,  # Don't filter by exchange active_trade_date; API stores by calendar date
                 limit=max(1, int(self.universe_filter.get("max_symbols", 30))) * 4,
             )
         except Exception:

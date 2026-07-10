@@ -13,6 +13,55 @@ def _minutes(dt: datetime) -> int:
     return dt.hour * 60 + dt.minute
 
 
+def parse_cn_datetime(value: Any) -> datetime | None:
+    """Parse an exchange timestamp, treating naive values as China local time."""
+
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=CN_TZ)
+    return parsed.astimezone(CN_TZ)
+
+
+def session_bar_age_minutes(bar_time: Any, now: datetime | None = None) -> float | None:
+    """Return bar age in minutes using China exchange-time semantics."""
+
+    bar_dt = parse_cn_datetime(bar_time)
+    now_dt = parse_cn_datetime(now or datetime.now(timezone.utc))
+    if bar_dt is None or now_dt is None:
+        return None
+    return (now_dt - bar_dt).total_seconds() / 60.0
+
+
+def is_current_session_bar(
+    bar_time: Any,
+    *,
+    session_start: Any = None,
+    now: datetime | None = None,
+    max_age_minutes: float = 10.0,
+    max_future_minutes: float = 5.0,
+) -> bool:
+    """Return whether a bar is recent and belongs to the current session."""
+
+    bar_dt = parse_cn_datetime(bar_time)
+    now_dt = parse_cn_datetime(now or datetime.now(timezone.utc))
+    start_dt = parse_cn_datetime(session_start)
+    if bar_dt is None or now_dt is None:
+        return False
+    if start_dt is not None and bar_dt < start_dt:
+        return False
+    age = (now_dt - bar_dt).total_seconds() / 60.0
+    return -max(0.0, float(max_future_minutes)) <= age <= max(0.0, float(max_age_minutes))
+
+
 def cn_futures_session_state(now: datetime | None = None) -> dict[str, Any]:
     """Return a consistent China futures session state.
 
@@ -83,4 +132,10 @@ def active_trade_date(now: datetime | None = None) -> str:
     return current.strftime("%Y%m%d")
 
 
-__all__ = ["active_trade_date", "cn_futures_session_state"]
+__all__ = [
+    "active_trade_date",
+    "cn_futures_session_state",
+    "is_current_session_bar",
+    "parse_cn_datetime",
+    "session_bar_age_minutes",
+]

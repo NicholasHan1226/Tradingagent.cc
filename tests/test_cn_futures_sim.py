@@ -738,6 +738,254 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(output["filled_count"], 0)
         self.assertFalse(output["real_trading_enabled"])
 
+    def test_night_session_22xx_reads_bars_with_natural_date(self) -> None:
+        """Night session at 22:xx: _read_intraday_bars receives natural calendar date, not active_trade_date."""
+        from datetime import datetime, timezone, timedelta
+        from CNFutures.sim_runner import _read_intraday_bars
+
+        class Recorder:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def get_bars_intraday(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+                self.calls.append(args)
+                market, symbol, interval, start, end = args[0], args[1], args[2], args[3], args[4]
+                # Return bars only when queried with natural date "20260710"
+                if start == "20260710":
+                    return [
+                        {"bar_time": "2026-07-10 22:30:00", "close": 3500.0, "volume": 100,
+                         "trade_date": "20260710"},
+                    ]
+                return []
+
+        reader = Recorder()
+        # natural_date = "20260710" (night at 22:xx on Jul 10)
+        bars = _read_intraday_bars(reader, "IF2609.CFX", "20260710")
+        self.assertEqual(len(bars), 1, "Natural date should return night bars")
+        self.assertEqual(bars[0]["close"], 3500.0)
+
+        # active_trade_date = "20260711" (next trading day) would return nothing
+        bars_wrong = _read_intraday_bars(reader, "IF2609.CFX", "20260711")
+        self.assertEqual(len(bars_wrong), 0, "Active trade date should return empty at night")
+
+    def test_night_early_session_01xx_reads_bars_with_natural_date(self) -> None:
+        """Night-early at 01:xx: natural calendar date is the next day, active_trade_date is the same day."""
+        from datetime import datetime, timezone, timedelta
+        from CNFutures.sim_runner import _read_intraday_bars
+
+        class Recorder:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def get_bars_intraday(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+                self.calls.append(args)
+                market, symbol, interval, start, end = args[0], args[1], args[2], args[3], args[4]
+                if start == "20260711":
+                    return [
+                        {"bar_time": "2026-07-11 01:00:00", "close": 3510.0, "volume": 100,
+                         "trade_date": "20260711"},
+                    ]
+                return []
+
+        reader = Recorder()
+        # natural_date = "20260711" (01:xx on Jul 11)
+        bars = _read_intraday_bars(reader, "CU2609.SHF", "20260711")
+        self.assertEqual(len(bars), 1, "Natural date should return early-morning bars")
+        self.assertEqual(bars[0]["close"], 3510.0)
+
+        # active_trade_date would also be "20260711" in this case, so both work
+        # but the key is that sim_runner derives market_data_date from now's natural date
+
+    def test_stale_bars_rejected_by_freshness_gate(self) -> None:
+        """Bars older than max_intraday_bar_age_minutes cause a hold, not a fill."""
+        from datetime import datetime, timezone, timedelta
+        from CNFutures.sim_runner import _is_intraday_bar_fresh
+
+        # now at 22:35 CN (= 14:35 UTC)
+        now = datetime(2026, 7, 10, 14, 35, tzinfo=timezone.utc)
+        old_bar_time = "2026-07-10 14:55:00"
+        fresh, age = _is_intraday_bar_fresh(old_bar_time, now=now, max_age_minutes=10.0)
+        self.assertFalse(fresh, "7+ hour old bar should NOT be fresh")
+        self.assertIsNotNone(age)
+        self.assertGreater(age, 10.0)
+
+        fresh_bar_time = "2026-07-10 22:25:00"
+        fresh2, age2 = _is_intraday_bar_fresh(fresh_bar_time, now=now, max_age_minutes=10.0)
+        self.assertTrue(fresh2, "10-minute old bar should be fresh")
+        self.assertIsNotNone(age2)
+        self.assertLessEqual(age2, 10.0)
+
+        future, future_age = _is_intraday_bar_fresh(
+            "2026-07-10 22:50:00",
+            now=now,
+            max_age_minutes=10.0,
+        )
+        self.assertFalse(future)
+        self.assertLess(future_age, -5.0)
+
+    def test_run_simulation_output_date_is_active_trade_date(self) -> None:
+        """run_multi_style_simulation output.date is the passed active_trade_date, not natural date."""
+        import tempfile
+        from datetime import datetime, timezone, timedelta
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class MockReader:
+            def __init__(self) -> None:
+                self.intraday_dates: list[str] = []
+
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return [
+                    {"symbol": "IF2609.CFX"},
+                    {"symbol": "IH2609.CFX"},
+                    {"symbol": "IC2609.CFX"},
+                    {"symbol": "IM2609.CFX"},
+                ]
+
+            def get_bars_intraday(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+                self.intraday_dates.append(str(args[3]))
+                return [
+                    {"bar_time": "2026-07-10 22:30:00", "close": 3500.0, "volume": 100, "trade_date": "20260710"},
+                ]
+
+            def get_realtime_5min_batch(self, market: str, date: object, **kwargs: object) -> list[dict[str, object]]:
+                return [
+                    {"symbol": "IF2609.CFX", "interval": "5min"},
+                    {"symbol": "IH2609.CFX", "interval": "5min"},
+                    {"symbol": "IC2609.CFX", "interval": "5min"},
+                    {"symbol": "IM2609.CFX", "interval": "5min"},
+                ]
+
+        reader = MockReader()
+
+        class MockAdapter:
+            universe_filter: dict[str, object] = {}
+
+            def __init__(self, reader: object) -> None:
+                self.reader = reader
+                self.universe_dates: list[str] = []
+
+            def get_strategy_config(self) -> dict[str, object]:
+                return {
+                    "styles": {
+                        "trend": {"name": "trend", "signal_threshold": 0.001, "risk_per_trade": 0.03,
+                                  "max_margin_usage": 0.30, "products": ("if", "ih", "ic", "im"),
+                                  "night_session_allowed": True},
+                    }
+                }
+
+            def get_sim_account(self) -> dict[str, object]:
+                return {"sim_capital": 200_000.0}
+
+            def get_intraday_universe(self, date: str, **kwargs: object) -> list[str]:
+                self.universe_dates.append(date)
+                return ["IF2609.CFX", "IH2609.CFX", "IC2609.CFX", "IM2609.CFX"]
+
+            def get_universe(self, date: str) -> list[str]:
+                return ["IF2609.CFX", "IH2609.CFX", "IC2609.CFX", "IM2609.CFX"]
+
+        adapter = MockAdapter(reader)
+        now = datetime(2026, 7, 10, 14, 35, tzinfo=timezone.utc)  # 22:35 CN
+        active_date = "20260711"  # active_trade_date at night
+
+        tmp_dir = Path(tempfile.mkdtemp())
+        signals_dir = tmp_dir / "signals"
+        signals_dir.mkdir(parents=True, exist_ok=True)
+        review_path = tmp_dir / "review.jsonl"
+
+        result = run_multi_style_simulation(
+            adapter, active_date, reader,
+            signals_dir=signals_dir,
+            review_path=review_path,
+            cadence="5min",
+            now=now,
+            max_intraday_bar_age_minutes=120.0,
+        )
+
+        self.assertEqual(result["date"], active_date,
+                         "Output date must be active_trade_date, not natural date")
+        self.assertEqual(adapter.universe_dates, ["20260710"])
+        self.assertTrue(reader.intraday_dates)
+        self.assertEqual(set(reader.intraday_dates), {"20260710"})
+
+    def test_stale_bars_do_not_produce_fills_in_simulation(self) -> None:
+        """When all bars are stale (beyond max_age), simulation produces no filled records."""
+        import tempfile
+        from datetime import datetime, timezone, timedelta
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class MockReader:
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return [
+                    {"symbol": "IF2609.CFX"},
+                    {"symbol": "IH2609.CFX"},
+                    {"symbol": "IC2609.CFX"},
+                    {"symbol": "IM2609.CFX"},
+                ]
+
+            def get_bars_intraday(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+                return [
+                    {"bar_time": "2026-07-10 14:55:00", "close": 3500.0, "volume": 100, "trade_date": "20260710"},
+                ]
+
+            def get_realtime_5min_batch(self, market: str, date: object, **kwargs: object) -> list[dict[str, object]]:
+                return [
+                    {"symbol": "IF2609.CFX", "interval": "5min"},
+                    {"symbol": "IH2609.CFX", "interval": "5min"},
+                    {"symbol": "IC2609.CFX", "interval": "5min"},
+                    {"symbol": "IM2609.CFX", "interval": "5min"},
+                ]
+
+        reader = MockReader()
+
+        class MockAdapter:
+            universe_filter: dict[str, object] = {}
+
+            def __init__(self, reader: object) -> None:
+                self.reader = reader
+
+            def get_strategy_config(self) -> dict[str, object]:
+                return {
+                    "styles": {
+                        "trend": {"name": "trend", "signal_threshold": 0.001, "risk_per_trade": 0.03,
+                                  "max_margin_usage": 0.30, "products": ("if", "ih", "ic", "im"),
+                                  "night_session_allowed": True},
+                    }
+                }
+
+            def get_sim_account(self) -> dict[str, object]:
+                return {"sim_capital": 200_000.0}
+
+            def get_intraday_universe(self, date: str, **kwargs: object) -> list[str]:
+                return ["IF2609.CFX", "IH2609.CFX", "IC2609.CFX", "IM2609.CFX"]
+
+            def get_universe(self, date: str) -> list[str]:
+                return ["IF2609.CFX", "IH2609.CFX", "IC2609.CFX", "IM2609.CFX"]
+
+        adapter = MockAdapter(reader)
+        now = datetime(2026, 7, 10, 14, 35, tzinfo=timezone.utc)  # 22:35 CN
+        active_date = "20260711"
+
+        tmp_dir = Path(tempfile.mkdtemp())
+        signals_dir = tmp_dir / "signals"
+        signals_dir.mkdir(parents=True, exist_ok=True)
+        review_path = tmp_dir / "review.jsonl"
+
+        result = run_multi_style_simulation(
+            adapter, active_date, reader,
+            signals_dir=signals_dir,
+            review_path=review_path,
+            cadence="5min",
+            now=now,
+            max_intraday_bar_age_minutes=10.0,  # strict: only 10 min window
+        )
+
+        # Stale bars should produce 0 filled records
+        self.assertEqual(result["filled_count"], 0,
+                         "Stale bars from day session must not produce fills at night")
+        # Should have stale_intraday_bar errors
+        stale_errors = [e for e in result.get("errors", []) if e.get("error") == "stale_intraday_bar"]
+        self.assertTrue(len(stale_errors) > 0, "Should have stale bar errors")
+
 
 if __name__ == "__main__":
     unittest.main()

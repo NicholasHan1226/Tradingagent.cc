@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from CNFutures.review import latest_actionable_review
+from CNFutures.session import is_current_session_bar, parse_cn_datetime
 LATEST_BY_MARKET = {
     "ashare": ROOT / "shared/runtime_test/ashare_market_health_latest.json",
     "cn_futures": ROOT / "shared/runtime_test/cn_futures_market_health_latest.json",
@@ -1249,13 +1250,7 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                     }
         elif market == "cn_futures":
             api_base = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip().rstrip("/")
-            try:
-                from CNFutures.session import active_trade_date
-
-                trade_date = active_trade_date()
-            except Exception:
-                trade_date = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
-            api_url = f"{api_base}/realtime_5min?{parse.urlencode({'market': 'Futures', 'date': trade_date})}"
+            api_url = f"{api_base}/realtime_5min?{parse.urlencode({'market': 'Futures'})}"
             try:
                 req = request.Request(api_url, headers={"Accept": "application/json"})
                 with request.urlopen(req, timeout=8) as resp:
@@ -1267,9 +1262,21 @@ def _probe_market_data(market: str) -> dict[str, Any]:
             else:
                 api_error = ""
             if isinstance(rows, list):
+                session_state = _market_session_state(market)
+                session_start = str(session_state.get("session_start") or "")
+                now_local = parse_cn_datetime(session_state.get("local_time")) or datetime.now(timezone.utc)
+                max_age_minutes = float(os.environ.get("CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES", "10"))
                 priced_rows = []
                 for row in rows:
                     if not isinstance(row, dict):
+                        continue
+                    bar_time = str(row.get("bar_time") or row.get("time") or "")
+                    if not is_current_session_bar(
+                        bar_time,
+                        session_start=session_start,
+                        now=now_local,
+                        max_age_minutes=max_age_minutes,
+                    ):
                         continue
                     try:
                         price = float(row.get("close") or row.get("price") or 0.0)
@@ -1286,7 +1293,7 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                         "priced_signal_count": len(priced_rows),
                         "latest_bar_time": latest_bar_time,
                         "reason": "",
-                        "market_session": _market_session_state(market),
+                        "market_session": session_state,
                         "sample": [
                             {key: row.get(key) for key in ("symbol", "ts_code", "market", "trade_date", "bar_time", "close", "price", "provider")}
                             for row in priced_rows[:5]
@@ -1296,31 +1303,44 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                         "query_source": "SharedSignals API",
                         "url": api_url,
                     }
+                # Fall through to the adapter probe when the batch has no fresh bars.
             from CNFutures.adapter import CNFuturesAdapter, READER_MARKET
 
             adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 5})
             symbols = adapter.get_intraday_universe(datetime.now(timezone.utc).strftime("%Y%m%d"))
-            priced_rows = []
+            priced_rows_fallback = []
             latest_bar_time = ""
+            session_state = _market_session_state(market)
+            session_start = str(session_state.get("session_start") or "")
+            now_local = parse_cn_datetime(session_state.get("local_time")) or datetime.now(timezone.utc)
+            max_age_minutes = float(os.environ.get("CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES", "10"))
             for symbol in symbols[:5]:
                 rows = adapter.get_bars_intraday(READER_MARKET, symbol, interval="5min")
-                priced = [row for row in rows if _price(row) > 0]
+                priced = [
+                    row for row in rows
+                    if _price(row) > 0
+                    and is_current_session_bar(
+                        row.get("bar_time") or row.get("time"),
+                        session_start=session_start,
+                        now=now_local,
+                        max_age_minutes=max_age_minutes,
+                    )
+                ]
                 if priced:
-                    priced_rows.append(priced[-1])
+                    priced_rows_fallback.append(priced[-1])
                     latest_bar_time = max(latest_bar_time, str(priced[-1].get("bar_time") or ""))
-            session_state = _market_session_state(market)
-            status = "ok" if priced_rows else ("warn" if symbols and session_state["samples_expected_today"] else "fail" if not symbols else "ok")
-            reason = "" if priced_rows else ("futures_intraday_bars_missing" if symbols and session_state["samples_expected_today"] else "futures_intraday_waiting_for_next_session" if symbols else "futures_universe_missing")
+            status = "ok" if priced_rows_fallback else ("warn" if symbols and session_state["samples_expected_today"] else "fail" if not symbols else "ok")
+            reason = "" if priced_rows_fallback else ("futures_intraday_bars_missing" if symbols and session_state["samples_expected_today"] else "futures_intraday_waiting_for_next_session" if symbols else "futures_universe_missing")
             return {
                 "status": status,
                 "asset_count": len(symbols),
-                "priced_signal_count": len(priced_rows),
+                "priced_signal_count": len(priced_rows_fallback),
                 "latest_bar_time": latest_bar_time,
                 "reason": reason,
                 "market_session": session_state,
                 "sample": [
                     {key: row.get(key) for key in ("symbol", "ts_code", "market", "trade_date", "bar_time", "close", "price")}
-                    for row in priced_rows[:5]
+                    for row in priced_rows_fallback[:5]
                 ],
                 "reader_degraded": False,
                 "reader_errors": [api_error] if api_error else [],

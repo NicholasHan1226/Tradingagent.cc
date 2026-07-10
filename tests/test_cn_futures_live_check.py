@@ -322,6 +322,52 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         self.assertEqual(insufficient_by_product.get("ih"), 1)
         self.assertEqual(insufficient_by_product.get("rb"), 1)
 
+    def test_freshness_api_url_has_no_date_param(self) -> None:
+        """The SharedSignals freshness check must NOT pass a date param to the API."""
+        base_url = "http://127.0.0.1:8082"
+        import urllib.parse
+        params = urllib.parse.urlencode({"market": "Futures"})
+        url = f"{base_url}/realtime_5min?{params}"
+        self.assertNotIn("date=", url, "API URL must not contain date param")
+
+    def test_freshness_rejects_stale_bars_directly(self) -> None:
+        """Direct test: check_sharedsignals_freshness filters out bars before session start."""
+        import subprocess as _subprocess_mod
+        from unittest.mock import patch
+        import io
+
+        # Build a proper HTTP response mock
+        mock_body = json.dumps({
+            "data": [
+                {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 08:55:00", "close": 3500.0},  # before session
+                {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:05:00", "close": 3510.0},  # in session
+            ]
+        }).encode("utf-8")
+
+        class MockResponse:
+            def read(self) -> bytes:
+                return mock_body
+
+            def __enter__(self) -> "MockResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                pass
+
+        with patch.object(live_check, "cn_futures_session_state", return_value={
+            "session_start": "2026-07-06 09:00:00+08:00",
+            "in_session": True,
+            "local_time": "2026-07-06 09:10:00+08:00",
+        }), patch("urllib.request.urlopen", return_value=MockResponse()), patch("urllib.request.Request"):
+            check = live_check.check_sharedsignals_freshness(
+                Path("/tmp"),
+                run_command=_subprocess_mod.run,
+            )
+
+        self.assertEqual(check.status, "pass", "Should pass with in-session bars after filtering stale ones")
+        self.assertEqual(check.details.get("filtered_row_count"), 1,
+                         "Only the in-session bar should remain after filtering")
+
 
 if __name__ == "__main__":
     unittest.main()
