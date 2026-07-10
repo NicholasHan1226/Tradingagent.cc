@@ -41,6 +41,7 @@ LATEST = ROOT / "shared/runtime_test/ashare_preopen_dry_run_latest.json"
 HISTORY = ROOT / "shared/runtime_test/ashare_preopen_dry_run_history.jsonl"
 CANDIDATE_THRESHOLD = 0.55
 MIN_SYMBOLS = 1000
+DEFAULT_DAILY_COVERAGE_RATIO = 0.90
 DEFAULT_SCORE_LIMIT = 50
 ASHARE_STOCK_SQL_FILTER = """
 (
@@ -367,7 +368,64 @@ def _build_candidate_pool(
     }
 
 
-def _api_daily_coverage_from_reader(reader: Any, *, now: datetime, min_symbols: int) -> dict[str, Any]:
+def _intraday_evidence_date(reader: Any) -> str | None:
+    """Extract latest trade_date from intraday 5-minute batch for Ashare."""
+    get_batch = getattr(reader, "get_realtime_5min_batch", None)
+    if not callable(get_batch):
+        return None
+    try:
+        rows = list(get_batch("Ashare") or [])
+    except Exception:
+        return None
+    if not rows:
+        return None
+    latest = ""
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        trade_date = str(row.get("trade_date") or row.get("bar_time") or "").replace("-", "")[:8]
+        if not trade_date:
+            continue
+        if trade_date > latest:
+            latest = trade_date
+    return latest or None
+
+
+def _is_daily_behind_intraday(
+    *, daily_date: str, intraday_date: str, now: datetime,
+) -> bool:
+    """Return True when daily bars are stale relative to intraday evidence.
+
+    Current-session intraday bars require the previous business-day daily bar.
+    Older intraday evidence represents the latest completed session and daily
+    bars must reach that date. Exchange holidays may make this conservative,
+    which is intentional for a fail-closed trading gate.
+    """
+    if not daily_date or not intraday_date:
+        return False
+    if intraday_date <= daily_date:
+        return False
+    try:
+        intraday_day = datetime.strptime(intraday_date, "%Y%m%d").date()
+        daily_day = datetime.strptime(daily_date, "%Y%m%d").date()
+    except ValueError:
+        return False
+    if intraday_day >= now.date():
+        expected_day = intraday_day - timedelta(days=1)
+        while expected_day.weekday() >= 5:
+            expected_day -= timedelta(days=1)
+    else:
+        expected_day = intraday_day
+    return daily_day < expected_day
+
+
+def _api_daily_coverage_from_reader(
+    reader: Any,
+    *,
+    now: datetime,
+    min_symbols: int,
+    min_coverage_ratio: float = DEFAULT_DAILY_COVERAGE_RATIO,
+) -> dict[str, Any]:
     amounts = _latest_daily_amounts_from_reader(reader)
     if not amounts:
         return {}
@@ -400,27 +458,72 @@ def _api_daily_coverage_from_reader(reader: Any, *, now: datetime, min_symbols: 
         latest_trade_date = "unknown"
         symbols = set(amounts)
 
+    # ---- asset count & coverage ratio ----
+    asset_count = 0
+    get_assets = getattr(reader, "get_assets", None)
+    if callable(get_assets):
+        try:
+            asset_rows = get_assets("Ashare")
+        except TypeError:
+            try:
+                asset_rows = get_assets()
+            except Exception:
+                asset_rows = None
+        except Exception:
+            asset_rows = None
+        if asset_rows:
+            asset_count = len(asset_rows)
+
+    symbol_count = len(symbols)
+    daily_coverage_ratio: float | None = None
+    if asset_count > 0:
+        daily_coverage_ratio = symbol_count / asset_count
+
+    # ---- intraday evidence date ----
+    intraday_date = _intraday_evidence_date(reader)
+    expected_evidence_date = intraday_date or latest_trade_date
+
+    # ---- age ----
     age_days: int | None = None
     if latest_trade_date != "unknown":
         try:
             age_days = (now.replace(tzinfo=None).date() - datetime.strptime(latest_trade_date, "%Y%m%d").date()).days
         except ValueError:
             age_days = None
+
+    # ---- gate evaluation ----
     status = "pass"
     reason = "api_daily_bars_ready"
-    if len(symbols) < min_symbols:
+    if symbol_count < min_symbols:
         status = "fail"
         reason = "api_daily_bars_missing"
     elif age_days is not None and age_days > 5:
         status = "fail"
         reason = "api_daily_bars_stale"
+    elif daily_coverage_ratio is not None and daily_coverage_ratio < min_coverage_ratio:
+        status = "fail"
+        reason = "api_daily_coverage_incomplete"
+    elif (
+        intraday_date
+        and latest_trade_date != "unknown"
+        and _is_daily_behind_intraday(
+            daily_date=latest_trade_date, intraday_date=intraday_date, now=now,
+        )
+    ):
+        status = "fail"
+        reason = "api_daily_bars_behind_intraday"
+
     return {
         "status": status,
         "reason": reason,
-        "symbol_count": len(symbols),
+        "symbol_count": symbol_count,
+        "asset_count": asset_count,
+        "daily_coverage_ratio": round(daily_coverage_ratio, 4) if daily_coverage_ratio is not None else None,
+        "expected_evidence_date": expected_evidence_date,
         "latest_trade_date": latest_trade_date,
         "latest_daily_age_days": age_days,
         "max_daily_age_days": 5,
+        "min_coverage_ratio": min_coverage_ratio,
         "data_source": "SharedSignals API /tushare daily read model",
     }
 
@@ -639,9 +742,13 @@ def run_preopen_dry_run(
         "status": data_status,
         "reason": data.get("reason"),
         "symbol_count": data.get("symbol_count"),
+        "asset_count": data.get("asset_count"),
+        "daily_coverage_ratio": data.get("daily_coverage_ratio"),
+        "expected_evidence_date": data.get("expected_evidence_date"),
         "latest_trade_date": data.get("latest_trade_date"),
         "latest_daily_age_days": data.get("latest_daily_age_days"),
         "max_daily_age_days": data.get("max_daily_age_days"),
+        "min_coverage_ratio": data.get("min_coverage_ratio"),
         "data_source": data.get("data_source") or "SharedSignals explicit SQLite diagnostic read",
     }
 
@@ -683,6 +790,13 @@ def run_preopen_dry_run(
         elif status == "warn":
             warnings.append(f"{section_name}:{section.get('reason') or 'warning'}")
     warnings.extend(str(item) for item in execution_gate.get("warnings", []) if item)
+
+    # Propagate upstream data failure into execution-gate readiness so that
+    # a stale/incomplete daily feed cannot produce a ready synthetic order.
+    if data_section["status"] == "fail" and execution_gate.get("ready"):
+        execution_gate["ready"] = False
+        if "execution_gate:api_data_failure" not in blockers:
+            blockers.append("execution_gate:api_data_failure")
 
     report = {
         "report_type": "ashare_preopen_dry_run",

@@ -127,6 +127,53 @@ class APICoverageReader(FakeAshareReader):
         return rows
 
 
+class PartialCoverageReader(FakeAshareReader):
+    """Reader with a large asset universe but only partial daily coverage."""
+    def __init__(self, asset_count: int = 5000, daily_count: int = 3266,
+                 daily_date: str = "20260708", intraday_rows: list[dict] | None = None) -> None:
+        super().__init__()
+        self._asset_count = asset_count
+        self._daily_count = daily_count
+        self._daily_date = daily_date
+        self._intraday_rows = intraday_rows or []
+
+    @staticmethod
+    def _symbol(index: int) -> str:
+        prefix = (600, 601, 603, 605, 688)[index // 1000]
+        return f"{prefix * 1000 + (index % 1000):06d}.SH"
+
+    def get_assets(self, market: str | None = None) -> list[dict]:
+        return [
+            {"market": "Ashare", "symbol": self._symbol(i), "name": f"测试{i:03d}",
+             "exchange": "SH", "status": "active", "list_date": "20000101"}
+            for i in range(self._asset_count)
+        ]
+
+    def get_latest_daily_batch(self, market: str = "Ashare", *, limit: int = 5000) -> list[dict]:
+        return [
+            {"market": "Ashare", "symbol": self._symbol(i),
+             "trade_date": self._daily_date, "close": 10.0, "amount": 100_000.0}
+            for i in range(self._daily_count)
+        ]
+
+    def get_realtime_5min_batch(self, market: str, date: str | None = None,
+                                *, limit: int | None = None) -> list[dict]:
+        return list(self._intraday_rows)
+
+
+class NoAssetsReader(FakeAshareReader):
+    """Reader that returns no assets but sufficient daily bars for min_symbols check."""
+    def get_assets(self, market: str | None = None) -> list[dict]:
+        return []
+
+    def get_latest_daily_batch(self, market: str = "Ashare", *, limit: int = 5000) -> list[dict]:
+        return [
+            {"market": "Ashare", "symbol": PartialCoverageReader._symbol(i),
+             "trade_date": "20260708", "close": 10.0, "amount": 100_000.0}
+            for i in range(1100)
+        ]
+
+
 class AsharePreopenDryRunTest(unittest.TestCase):
     def setUp(self) -> None:
         self._old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
@@ -468,6 +515,178 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(report["status"], "fail")
         self.assertEqual(report["data"]["status"], "fail")
         self.assertIn("data:pre_open_daily_bars_stale", report["blockers"])
+
+    # ------------------------------------------------------------------
+    # Daily-coverage-ratio gate
+    # ------------------------------------------------------------------
+
+    def test_coverage_ratio_below_threshold_fails_direct(self) -> None:
+        """3266/5000 = 0.6532 < 0.90 → api_daily_coverage_incomplete."""
+        reader = PartialCoverageReader(asset_count=5000, daily_count=3266, daily_date="20260708")
+        now = datetime.fromisoformat("2026-07-10T08:30:00+08:00")
+        data = ashare_preopen_dry_run._api_daily_coverage_from_reader(
+            reader, now=now, min_symbols=1000, min_coverage_ratio=0.90,
+        )
+        self.assertEqual(data["status"], "fail")
+        self.assertEqual(data["reason"], "api_daily_coverage_incomplete")
+        self.assertEqual(data["asset_count"], 5000)
+        self.assertEqual(data["symbol_count"], 3266)
+        self.assertAlmostEqual(data["daily_coverage_ratio"], 0.6532, places=4)
+        self.assertEqual(data["min_coverage_ratio"], 0.90)
+
+    def test_coverage_ratio_above_threshold_passes_direct(self) -> None:
+        """4800/5000 = 0.96 > 0.90 → pass when intraday evidence is coherent."""
+        reader = PartialCoverageReader(asset_count=5000, daily_count=4800, daily_date="20260708")
+        now = datetime.fromisoformat("2026-07-10T08:30:00+08:00")
+        data = ashare_preopen_dry_run._api_daily_coverage_from_reader(
+            reader, now=now, min_symbols=1000, min_coverage_ratio=0.90,
+        )
+        self.assertEqual(data["status"], "pass")
+        self.assertEqual(data["reason"], "api_daily_bars_ready")
+        self.assertEqual(data["asset_count"], 5000)
+        self.assertEqual(data["symbol_count"], 4800)
+        self.assertAlmostEqual(data["daily_coverage_ratio"], 0.96, places=4)
+
+    def test_coverage_ratio_missing_still_passes_when_assets_unavailable(self) -> None:
+        """No get_assets → ratio is None; fall back to absolute min_symbols."""
+        reader = NoAssetsReader()
+        now = datetime.fromisoformat("2026-07-10T08:30:00+08:00")
+        data = ashare_preopen_dry_run._api_daily_coverage_from_reader(
+            reader, now=now, min_symbols=1000, min_coverage_ratio=0.90,
+        )
+        self.assertEqual(data["status"], "pass")
+        self.assertEqual(data["reason"], "api_daily_bars_ready")
+        self.assertEqual(data["asset_count"], 0)
+        self.assertIsNone(data["daily_coverage_ratio"])
+        # Still governed by absolute min_symbols: 1100 >= 1000
+        self.assertGreaterEqual(data["symbol_count"], 1000)
+
+    def test_coverage_ratio_uses_explicit_parameter_not_env(self) -> None:
+        """min_coverage_ratio comes from explicit parameter, not env fallback."""
+        reader = PartialCoverageReader(asset_count=5000, daily_count=4200, daily_date="20260708")
+        now = datetime.fromisoformat("2026-07-10T08:30:00+08:00")
+        # 4200/5000 = 0.84, passes with threshold 0.80, fails with 0.90
+        data_strict = ashare_preopen_dry_run._api_daily_coverage_from_reader(
+            reader, now=now, min_symbols=1000, min_coverage_ratio=0.90,
+        )
+        self.assertEqual(data_strict["status"], "fail")
+        self.assertEqual(data_strict["reason"], "api_daily_coverage_incomplete")
+
+        data_relaxed = ashare_preopen_dry_run._api_daily_coverage_from_reader(
+            reader, now=now, min_symbols=1000, min_coverage_ratio=0.80,
+        )
+        self.assertEqual(data_relaxed["status"], "pass")
+
+    # ------------------------------------------------------------------
+    # Intraday-vs-daily evidence-date gate
+    # ------------------------------------------------------------------
+
+    def test_preopen_intraday_newer_than_daily_fails(self) -> None:
+        """At preopen (before 09:30), intraday date > daily date → fail."""
+        intraday = [
+            {"market": "Ashare", "symbol": "600000.SH",
+             "trade_date": "20260710", "bar_time": "2026-07-10 08:00:00",
+             "close": 10.0},
+        ]
+        reader = PartialCoverageReader(
+            asset_count=5000, daily_count=4800, daily_date="20260708",
+            intraday_rows=intraday,
+        )
+        now = datetime.fromisoformat("2026-07-10T08:30:00+08:00")
+        data = ashare_preopen_dry_run._api_daily_coverage_from_reader(
+            reader, now=now, min_symbols=1000, min_coverage_ratio=0.90,
+        )
+        self.assertEqual(data["status"], "fail")
+        self.assertEqual(data["reason"], "api_daily_bars_behind_intraday")
+        self.assertEqual(data["expected_evidence_date"], "20260710")
+        self.assertEqual(data["latest_trade_date"], "20260708")
+
+    def test_intraday_current_session_allows_previous_business_day_daily(self) -> None:
+        """After 09:30, the exact previous business-day daily bar is valid."""
+        intraday = [
+            {"market": "Ashare", "symbol": "600000.SH",
+             "trade_date": "20260710", "bar_time": "2026-07-10 10:00:00",
+             "close": 10.0},
+        ]
+        reader = PartialCoverageReader(
+            asset_count=5000, daily_count=4800, daily_date="20260709",
+            intraday_rows=intraday,
+        )
+        now = datetime.fromisoformat("2026-07-10T10:00:00+08:00")
+        data = ashare_preopen_dry_run._api_daily_coverage_from_reader(
+            reader, now=now, min_symbols=1000, min_coverage_ratio=0.90,
+        )
+        # Not behind because current session is in progress
+        self.assertEqual(data["status"], "pass")
+        self.assertEqual(data["reason"], "api_daily_bars_ready")
+
+    def test_intraday_current_session_rejects_daily_older_than_previous_business_day(self) -> None:
+        intraday = [
+            {"market": "Ashare", "symbol": "600000.SH",
+             "trade_date": "20260710", "bar_time": "2026-07-10 10:00:00",
+             "close": 10.0},
+        ]
+        reader = PartialCoverageReader(
+            asset_count=5000, daily_count=4800, daily_date="20260708",
+            intraday_rows=intraday,
+        )
+        data = ashare_preopen_dry_run._api_daily_coverage_from_reader(
+            reader,
+            now=datetime.fromisoformat("2026-07-10T10:00:00+08:00"),
+            min_symbols=1000,
+            min_coverage_ratio=0.90,
+        )
+
+        self.assertEqual(data["status"], "fail")
+        self.assertEqual(data["reason"], "api_daily_bars_behind_intraday")
+
+    def test_intraday_empty_does_not_trigger_date_check(self) -> None:
+        """Empty intraday batch → no intraday evidence, skip behind-intraday check."""
+        reader = PartialCoverageReader(
+            asset_count=5000, daily_count=4800, daily_date="20260708",
+            intraday_rows=[],
+        )
+        now = datetime.fromisoformat("2026-07-10T08:30:00+08:00")
+        data = ashare_preopen_dry_run._api_daily_coverage_from_reader(
+            reader, now=now, min_symbols=1000, min_coverage_ratio=0.90,
+        )
+        self.assertEqual(data["status"], "pass")
+        self.assertEqual(data["expected_evidence_date"], "20260708")
+
+    # ------------------------------------------------------------------
+    # Propagation into dry-run blockers / execution not-ready
+    # ------------------------------------------------------------------
+
+    def test_coverage_failure_propagates_to_blockers(self) -> None:
+        """Data coverage failure → blockers list and execution not-ready."""
+        reader = PartialCoverageReader(asset_count=5000, daily_count=3266, daily_date="20260708")
+        with (
+            mock.patch.object(ashare_preopen_dry_run.AshareAdapter, "get_sim_account", return_value=self._account()),
+            mock.patch(
+                "shared.runtime_test.ashare_preopen_dry_run.score_universe",
+                return_value=[
+                    ("600000.SH", {"combined": 0.8, "macro": 0.5, "event": 0.5, "fundamental": 0.8, "capital": 0.6, "technical": 0.7, "sentiment": 0.5}),
+                    ("600001.SH", {"combined": 0.7, "macro": 0.5, "event": 0.5, "fundamental": 0.7, "capital": 0.6, "technical": 0.7, "sentiment": 0.5}),
+                ],
+            ),
+        ):
+            report = ashare_preopen_dry_run.run_preopen_dry_run(
+                now=datetime.fromisoformat("2026-07-10T08:30:00+08:00"),
+                sqlite_db=self._db(),
+                reader=reader,
+                score_limit=2,
+            )
+
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("data:api_daily_coverage_incomplete", report["blockers"])
+        self.assertIn("asset_count", report["data"])
+        self.assertEqual(report["data"]["asset_count"], 5000)
+        self.assertIn("daily_coverage_ratio", report["data"])
+        self.assertAlmostEqual(report["data"]["daily_coverage_ratio"], 0.6532, places=4)
+        self.assertIn("expected_evidence_date", report["data"])
+        # Data failure should propagate: execution must not be ready
+        self.assertFalse(report["execution_gate"]["ready"])
+        self.assertIn("execution_gate:api_data_failure", report["blockers"])
 
     def test_write_outputs_does_not_touch_execution_or_review_paths(self) -> None:
         tmp = tempfile.TemporaryDirectory()
