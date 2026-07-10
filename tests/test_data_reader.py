@@ -331,10 +331,11 @@ class TestSharedSignalsReader(unittest.TestCase):
         )
 
     def test_tradings_reader_fail_safe_missing_data(self) -> None:
-        missing_reader = TradingagentDataReader(
-            shared=SharedSignalsReader(Path(self.tmp.name) / "missing.sqlite"),
-            marketgraph=MarketGraphCSVReader(Path(self.tmp.name) / "missing_marketgraph"),
-        )
+        with patch.dict(os.environ, {"SHAREDSIGNALS_API_URL": ""}):
+            missing_reader = TradingagentDataReader(
+                shared=SharedSignalsReader(Path(self.tmp.name) / "missing.sqlite"),
+                marketgraph=MarketGraphCSVReader(Path(self.tmp.name) / "missing_marketgraph"),
+            )
 
         self.assertEqual(missing_reader.get_bars_daily("Ashare", "600000"), [])
         self.assertIsNone(missing_reader.get_asset("Ashare", "600000"))
