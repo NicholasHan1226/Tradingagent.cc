@@ -108,7 +108,7 @@ export function ThemePage({
     <TerminalPageShell
       inspector={<ReviewInspector signals={completed} />}
       metrics={context}
-      primary={<section className="terminal-table-panel review-ledger"><TerminalPanelHeader eyebrow="AUTOMATIC REVIEW" meta={`${completed.length} 条`} title="结果与自动复盘" /><StatusBoundary emptyLabel="还没有已关闭过程" loading={<TableSkeleton rows={7} />} onRetry={onRetry} status={domainStatus('signals')}><SignalTable signals={completed} /></StatusBoundary></section>}
+      primary={<section className="terminal-table-panel review-ledger"><TerminalPanelHeader eyebrow="AUTOMATIC REVIEW" meta={`${completed.length} 条`} title="结果与自动复盘" /><StatusBoundary emptyLabel="还没有已关闭过程" loading={<TableSkeleton rows={7} />} onRetry={onRetry} status={domainStatus('signals')}><SignalTable showTools signals={completed} /></StatusBoundary></section>}
       title="复盘终端"
     />
   )

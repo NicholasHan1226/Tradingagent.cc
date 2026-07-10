@@ -21,7 +21,7 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
-const DASHBOARD_BUILD_ID = '20260711-automated-observatory'
+const DASHBOARD_BUILD_ID = '20260711-terminal-operations'
 
 function App() {
   const demoPreviewEnabled = isDemoPreviewEnabled()

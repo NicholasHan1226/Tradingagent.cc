@@ -19,6 +19,8 @@ The interface uses a Hyperliquid-inspired terminal grammar rather than a generic
 
 Hyperliquid structures are translated to the product boundary: its market ticker becomes the snapshot strip, chart remains a chart, order book becomes Process Book, order form becomes Automation Inspector, and positions/orders/history become read-only ledgers.
 
+The terminal operations layer adds a six-market tape and evidence-health block below the account header. It keeps return, holdings count, runtime truth, snapshot freshness and five data-domain states visible without introducing another card row.
+
 ## Shared page anatomy
 
 `TerminalPageShell` owns the secondary-page structure:
@@ -34,10 +36,10 @@ Secondary pages do not use `PageSummaryBoard`. Empty running state reveals recen
 
 - `总览`: return chart, runtime inspector, compact process strip and `运行中 / 持仓 / 已完成 / 自动复盘` blotter. If running is empty, the blotter opens the most relevant non-empty result tab.
 - `收益`: equity/target/benchmark chart as the primary surface; ranked contribution and realized/unrealized result in the inspector.
-- `过程`: Process Book with process, market, stage, state, evidence, latency, result and update time; compact stage distribution in the inspector.
-- `持仓`: Portfolio Ledger with market value, derived portfolio weight, floating PnL, contribution and risk; horizontal exposure bars replace the donut.
-- `风险`: drawdown chart with 5% warning and 7% hard-limit context, boundary distance inspector, and Risk Ledger for blocked/missed/cancelled records.
-- `复盘`: completed result ledger and automatic calibration field. User-facing copy is `自动校准`, never an instruction for manual action.
+- `过程`: Process Book with process, market, stage, state, evidence, latency, result and update time; the event ledger below it orders `funnelEvents[]` by timestamp/sequence and exposes source, reason and latency.
+- `持仓`: Portfolio Ledger with sourced quantity, average/mark price, cost, market value, derived portfolio weight, PnL, contribution and risk; absent optional evidence remains `—`.
+- `风险`: drawdown chart with 5% warning and 7% hard-limit context, market exposure inspector, and Risk Ledger for blocked/missed/cancelled records plus stale/error/live-gated evidence domains.
+- `复盘`: completed result ledger with confidence, impact, evidence and automatic calibration. User-facing copy is `自动校准`, never an instruction for manual action.
 
 ## Data trust rules
 
@@ -46,10 +48,14 @@ Secondary pages do not use `PageSummaryBoard`. Empty running state reveals recen
 - Suppress an asset name when it duplicates the ticker.
 - Terminal rows preserve result states such as partial fill, safety block, missed and cancelled; terminal records never return to the running queue.
 - Display timestamps and source health as observed. Never use the browser clock to disguise stale data.
+- The state resolver is authoritative: only `pending` is running; executed/partial are completed; blocked/missed/cancelled are review states. When a snapshot invalidates the active blotter tab, the next useful non-empty tab is selected without overriding deliberate empty-tab inspection.
 
 ## Interaction and accessibility
 
 - Navigation, market filtering, account-mode gate, time ranges and blotter tabs remain keyboard operable.
+- `Alt+1…6` opens the six pages, `Alt+←/→` moves through markets, and `/` focuses the visible ledger search unless focus is already in an editable control.
+- URL query keys `page`, `market` and `range` restore the same terminal view on reload/back-forward.
+- Process, event, portfolio and risk ledgers share local-only search, sort direction and native column visibility controls. These controls never mutate snapshot data.
 - Every terminal region, table, inspector and tab has an accessible name.
 - Focus-visible styling stays present and restrained.
 - Motion is functional, subtle and disabled under `prefers-reduced-motion`.
@@ -59,6 +65,9 @@ Secondary pages do not use `PageSummaryBoard`. Empty running state reveals recen
 
 - `src/components/terminal/`: shared terminal shell and ledgers.
 - `src/lib/terminalViewModels.ts`: currency-safe, read-only display models.
+- `src/lib/terminalStateResolver.ts`: authoritative running/completed/review resolution.
+- `src/lib/marketTapeViewModel.ts` and `src/lib/processEventViewModel.ts`: market/evidence strip and event-audit rows.
+- `src/hooks/useTerminalNavigation.ts`: URL and keyboard presentation state.
 - `src/components/workbench/`: overview workbench and result-tab selection.
 - `src/pages/ThemePage.tsx`: composition for the five secondary pages.
 - `src/App.css`: terminal tokens, canvas, grid and dense table rules.

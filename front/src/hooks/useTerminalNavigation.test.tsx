@@ -27,10 +27,18 @@ describe('terminal navigation', () => {
 
   it('focuses search with slash but ignores shortcuts inside editable fields', () => {
     render(<Harness />)
-    fireEvent.keyDown(window, { key: '/' })
+    fireEvent.keyUp(window, { key: '/' })
     expect(screen.getByRole('textbox', { name: '终端搜索' })).toHaveFocus()
 
     fireEvent.keyDown(screen.getByRole('textbox'), { key: '4', altKey: true })
     expect(screen.getByText(/^总览\|/)).toBeInTheDocument()
+  })
+
+  it('restores page, market and range from browser history state', () => {
+    render(<Harness />)
+    window.history.replaceState(null, '', '/?page=%E9%A3%8E%E9%99%A9&market=Crypto&range=7d')
+    fireEvent.popState(window)
+
+    expect(screen.getByText('风险|Crypto|7d')).toBeInTheDocument()
   })
 })

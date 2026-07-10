@@ -26,10 +26,12 @@ export function readTerminalNavigation(search = window.location.search): Navigat
 export function useTerminalNavigation({ page, market, range, setPage, setMarket, setRange }: NavigationState & NavigationSetters) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
+    const current = readTerminalNavigation(params.toString())
+    if (current.page === page && current.market === market && current.range === range) return
     params.set('page', page)
     params.set('market', market)
     params.set('range', range)
-    window.history.replaceState(window.history.state, '', `${window.location.pathname}?${params.toString()}${window.location.hash}`)
+    window.history.pushState(window.history.state, '', `${window.location.pathname}?${params.toString()}${window.location.hash}`)
   }, [market, page, range])
 
   useEffect(() => {
@@ -58,16 +60,20 @@ export function useTerminalNavigation({ page, market, range, setPage, setMarket,
         setMarket(markets[(current + offset + markets.length) % markets.length])
         return
       }
-      if (!event.altKey && event.key === '/') {
-        const search = document.querySelector<HTMLInputElement>('[data-terminal-search]')
-        if (search) {
-          event.preventDefault()
-          search.focus()
-        }
-      }
+    }
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (isEditable(event.target) || event.altKey || event.key !== '/') return
+      const search = document.querySelector<HTMLInputElement>('[data-terminal-search]')
+      if (!search) return
+      event.preventDefault()
+      search.focus()
     }
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
   }, [market, setMarket, setPage])
 }
 
