@@ -271,12 +271,15 @@ class AsharePreopenDryRunTest(unittest.TestCase):
                 score_limit=2,
             )
 
-        self.assertEqual(report["capital_plan"]["cash_available"], 200000.0)
+        self.assertEqual(report["capital_plan"]["cash_available"], 82683.89)
         self.assertEqual(report["capital_plan"]["account_cash_available"], 82683.89)
         self.assertEqual(report["capital_plan"]["existing_position_count"], 0)
         self.assertEqual(report["capital_plan"]["account_position_count"], 2)
         self.assertEqual(report["capital_plan"]["sample_adjustment"]["ignored_validation_sample_count"], 2)
-        self.assertTrue(report["execution_gate"]["ready"])
+        self.assertEqual(report["capital_plan"]["sample_adjustment"]["original_strategy_cash_available"], 200000.0)
+        self.assertTrue(report["capital_plan"]["sample_adjustment"]["strategy_cash_capped_to_account"])
+        self.assertFalse(report["execution_gate"]["ready"])
+        self.assertEqual(report["execution_gate"]["reason"], "capital_plan_no_new_buy_budget")
         self.assertIn("timings_seconds", report)
 
     def test_preopen_dry_run_uses_sample_count_for_probe_position(self) -> None:
