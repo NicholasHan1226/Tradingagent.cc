@@ -706,7 +706,7 @@ class QuerySessionBarsViaApiTest(unittest.TestCase):
             {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:05:00", "close": 3500.0},
             {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:10:00", "close": 3510.0},
             {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 08:55:00", "close": 3490.0},  # before start
-            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:20:00", "close": 3520.0},  # after now
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:21:00", "close": 3520.0},  # over future tolerance
         ]
         with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
             result = _query_session_bars_via_api(start, now, min_symbols=2)
@@ -779,12 +779,24 @@ class QuerySessionBarsViaApiTest(unittest.TestCase):
         start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
         now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
         bars = [
-            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:20:00", "close": 3500.0},
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:21:00", "close": 3500.0},
             {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:10:00", "close": 3490.0},
         ]
         with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
             result = _query_session_bars_via_api(start, now, min_symbols=1)
         self.assertEqual(result["bar_count"], 1)
+
+    def test_future_bar_within_provider_tolerance_is_included(self) -> None:
+        """Provider timestamps up to five minutes ahead remain session evidence."""
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+        bars = [
+            {"symbol": "IF2609.CFX", "bar_time": "2026-07-06 09:20:00", "close": 3500.0},
+        ]
+        with patch("urllib.request.urlopen", return_value=self._mock_response(bars)):
+            result = _query_session_bars_via_api(start, now, min_symbols=1)
+        self.assertEqual(result["bar_count"], 1)
+        self.assertEqual(result["latest_bar_time"], "2026-07-06 09:20:00")
 
     def test_min_symbols_not_met_but_bars_still_reported(self) -> None:
         """When symbol_count < min_symbols, bars are still returned (caller decides)."""

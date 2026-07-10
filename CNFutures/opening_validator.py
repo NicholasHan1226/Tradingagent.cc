@@ -18,12 +18,12 @@ from typing import Any
 try:
     from .review import DEFAULT_REVIEW_PATH, latest_actionable_review
     from .contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
-    from .session import active_trade_date
+    from .session import active_trade_date, is_current_session_bar
 except ImportError:  # pragma: no cover - direct script execution fallback
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from CNFutures.review import DEFAULT_REVIEW_PATH, latest_actionable_review
     from CNFutures.contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
-    from CNFutures.session import active_trade_date
+    from CNFutures.session import active_trade_date, is_current_session_bar
 
 try:
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, TradingagentDataReader
@@ -424,14 +424,19 @@ def _query_session_bars_via_api(start: datetime, now: datetime, *, min_symbols: 
     rows = payload.get("data") if isinstance(payload, dict) else payload
     if not isinstance(rows, list):
         return {"error": "sharedsignals_api_invalid_payload", "symbol_count": 0, "bar_count": 0, "query_source": "SharedSignals API", "url": url}
-    start_text = start.strftime("%Y-%m-%d %H:%M:%S")
-    now_text = now.strftime("%Y-%m-%d %H:%M:%S")
+    session_age_minutes = max(0.0, (now - start).total_seconds() / 60.0)
     priced: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
         bar_time = str(row.get("bar_time") or row.get("time") or "")
-        if bar_time and (bar_time < start_text or bar_time > now_text):
+        if not is_current_session_bar(
+            bar_time,
+            session_start=start,
+            now=now,
+            max_age_minutes=session_age_minutes,
+            max_future_minutes=5.0,
+        ):
             continue
         try:
             close = float(row.get("close") or row.get("price") or 0.0)
