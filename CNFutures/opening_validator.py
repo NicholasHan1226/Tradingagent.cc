@@ -509,7 +509,7 @@ def _query_session_bars(db_path: Path, start: datetime, now: datetime, *, reader
     return payload
 
 
-def _read_latest_review(path: Path) -> dict[str, Any]:
+def _read_latest_review(path: Path, *, now: datetime | None = None) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -526,7 +526,7 @@ def _read_latest_review(path: Path) -> dict[str, Any]:
         if isinstance(payload, dict):
             rows.append(payload)
     rows.reverse()
-    return latest_actionable_review(rows, trade_date=active_trade_date())
+    return latest_actionable_review(rows, trade_date=active_trade_date(now))
 
 
 def _count_jsonl_rows(path: Path) -> int:
@@ -765,7 +765,7 @@ def first_sample_alerts(
         bars = fallback
     result.update(bars)
     alerts: list[dict[str, Any]] = []
-    latest_review = _read_latest_review(review_path)
+    latest_review = _read_latest_review(review_path, now=current)
     latest_filled_count = int(latest_review.get("filled_count") or 0) if latest_review else 0
     trade_date = current.strftime("%Y%m%d")
     filled_signal_count = _count_filled_signals(signals_dir, trade_date)

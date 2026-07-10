@@ -515,6 +515,82 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
         self.assertNotIn("futures_5min_missing_in_session", codes)
         self.assertNotIn("cn_futures_first_sim_sample_missing", codes)
 
+    def test_first_sample_warns_when_review_date_does_not_match_trade_date(
+        self,
+    ) -> None:
+        db_path = self._db([("CU2609.SHF", "2026-07-10 01:00:00")])
+        review = Path(tempfile.NamedTemporaryFile(delete=False).name)
+        self.addCleanup(lambda: review.unlink(missing_ok=True))
+        review.write_text(
+            json.dumps(
+                {
+                    "date": "20260708",
+                    "state": "ok",
+                    "cadence": "5min",
+                    "filled_count": 0,
+                    "hold_count": 4,
+                    "hold_reason_summary": {"total": 4, "by_reason": {"style_paused": 3, "style_session_not_allowed": 1}},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with patch(
+            "CNFutures.opening_validator._query_session_bars_via_api",
+            return_value={"bar_count": 2, "symbol_count": 2, "query_source": "SharedSignals API"},
+        ):
+            report = first_sample_alerts(
+                sqlite_db=db_path,
+                now=datetime.fromisoformat("2026-07-10T01:27:00+08:00"),
+                min_symbols=4,
+                review_path=review,
+            )
+
+        self.assertEqual(report["status"], "warn")
+        self.assertEqual(report["opening_30m_review"]["phase"], "insufficient_5min_data")
+        codes = {alert["code"] for alert in report["alerts"]}
+        self.assertIn("futures_5min_missing_in_session", codes)
+        self.assertIn("cn_futures_first_sim_sample_missing", codes)
+
+    def test_first_sample_warns_when_hold_count_is_zero_despite_strategy_reasons(
+        self,
+    ) -> None:
+        db_path = self._db([("CU2609.SHF", "2026-07-10 01:00:00")])
+        review = Path(tempfile.NamedTemporaryFile(delete=False).name)
+        self.addCleanup(lambda: review.unlink(missing_ok=True))
+        review.write_text(
+            json.dumps(
+                {
+                    "date": "20260710",
+                    "state": "ok",
+                    "cadence": "5min",
+                    "filled_count": 0,
+                    "hold_count": 0,
+                    "hold_reason_summary": {"total": 0, "by_reason": {}},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with patch(
+            "CNFutures.opening_validator._query_session_bars_via_api",
+            return_value={"bar_count": 2, "symbol_count": 2, "query_source": "SharedSignals API"},
+        ):
+            report = first_sample_alerts(
+                sqlite_db=db_path,
+                now=datetime.fromisoformat("2026-07-10T01:27:00+08:00"),
+                min_symbols=4,
+                review_path=review,
+            )
+
+        self.assertEqual(report["status"], "warn")
+        self.assertEqual(report["opening_30m_review"]["phase"], "insufficient_5min_data")
+        codes = {alert["code"] for alert in report["alerts"]}
+        self.assertIn("futures_5min_missing_in_session", codes)
+        self.assertIn("cn_futures_first_sim_sample_missing", codes)
+
     def test_first_sample_alerts_uses_sharedsignals_api_before_sqlite(self) -> None:
         db_path = self._db([])
 
