@@ -18,13 +18,22 @@ export function WorkbenchBlotter({
   positions,
   completed,
   review,
+  selectedTab,
+  onTabChange,
 }: {
   active: SignalRow[]
   positions: HoldingRow[]
   completed: SignalRow[]
   review: SignalRow[]
+  selectedTab?: BlotterTab
+  onTabChange?: (tab: BlotterTab) => void
 }) {
-  const [tab, setTab] = useState<BlotterTab>('active')
+  const [internalTab, setInternalTab] = useState<BlotterTab>('active')
+  const tab = selectedTab ?? internalTab
+  const selectTab = (nextTab: BlotterTab) => {
+    setInternalTab(nextTab)
+    onTabChange?.(nextTab)
+  }
   const counts: Record<BlotterTab, number> = {
     active: active.length,
     positions: positions.length,
@@ -42,7 +51,7 @@ export function WorkbenchBlotter({
             className={tab === key ? 'selected' : ''}
             id={`blotter-tab-${key}`}
             key={key}
-            onClick={() => setTab(key)}
+            onClick={() => selectTab(key)}
             role="tab"
             type="button"
           >

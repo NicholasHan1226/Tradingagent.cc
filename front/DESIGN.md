@@ -471,3 +471,62 @@ Updated score after this pass:
 Total: 94/100. The biggest remaining design gap is richer real upstream signal
 volume. The frontend is ready to animate real `funnelEvents[]`, but production
 data currently has quiet windows with holdings/performance and no new signals.
+
+## July 11 Read-Only Workbench Refactor
+
+### Design Direction
+
+The current direction is restrained neo-industrial fintech. Hyperliquid is the
+reference for density, continuous panel geometry, compact market statistics,
+and the chart-plus-right-rail skeleton. TradingAgent remains distinct through
+its evidence-first, read-only workflow: the right rail is for review instead of
+order entry, and the bottom blotter separates active opportunities from terminal
+outcomes.
+
+### Token Decisions
+
+- Added semantic `surface-elevated` and `border-strong` aliases for selected
+  detail and gated states.
+- Standardized the 4/8/12/16/24/32px spacing scale and 120/180ms feedback timing.
+- Preserved cyan for selected/positive state, amber for waiting/review, and red
+  for negative/risk. Main workbench regions use hairlines and tonal separation,
+  not shadows or rounded card stacks.
+
+### Component Changes
+
+- `MarketHeader` is a compact two-row desktop strip with six canonical metrics.
+- `WorkbenchShell` owns one continuous chart, review rail, funnel context, and
+  blotter surface.
+- `ReviewRail` prioritizes risk/review, then active opportunity, then position.
+- `SignalFunnelFlow` has a compact 88px workbench mode; its full visualization
+  remains available for compatibility.
+- `WorkbenchBlotter` exposes active, position, completed, and review tabs with
+  truthful empty states.
+- `LiveGate` replaces the workbench result surface in live mode and offers only
+  a return-to-simulation control.
+
+### Scorecard
+
+- Visual hierarchy: 18/20
+- Typography quality: 13/15
+- Color semantics: 14/15
+- Spacing rhythm: 14/15
+- Interaction feedback: 9/10
+- Accessibility baseline: 9/10
+- Originality / brand fit: 9/10
+- Responsive integrity: 3/5
+
+Total: 89/100. This is a production candidate for the accepted desktop scope.
+Responsive integrity is intentionally capped because mobile and phone-specific
+work are deferred. Remaining risks are dense-data visual regression coverage,
+semantic conversion of legacy div tables, and validation against a larger real
+opportunity volume.
+
+### Next Iteration
+
+1. Add repeatable desktop visual regression fixtures for empty, populated, and
+   live-gated workbench states.
+2. Convert the legacy div-based terminal rows to semantic tables without losing
+   the compact geometry.
+3. Resume responsive work only when the mobile information architecture is
+   explicitly approved.

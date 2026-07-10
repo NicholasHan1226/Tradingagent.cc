@@ -546,12 +546,14 @@ describe('App navigation and result-first dashboard', () => {
   it('switches from the return card into the dedicated live gate and back', () => {
     render(<App />)
 
+    click(screen.getByRole('tab', { name: '已完成 4' }))
     const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
     expect(screen.getByRole('region', { name: '实盘接入状态' })).toHaveTextContent('实盘待接入')
     click(screen.getByRole('button', { name: '返回模拟盘' }))
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '已完成 4' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {

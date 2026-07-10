@@ -1,7 +1,6 @@
 import type { TradingAgentReadModelSnapshot } from './tradingAgentReadModel.ts'
 
 export const TRADING_AGENT_SNAPSHOT_ROUTE = '/api/trading-agent/snapshot'
-const TRADING_AGENT_SNAPSHOT_URL_ENV = 'VITE_TRADING_AGENT_SNAPSHOT_URL'
 
 type SnapshotClientOptions = {
   endpoint?: string
@@ -41,8 +40,7 @@ export function createTradingAgentSnapshotClient({
 }
 
 export function resolveTradingAgentSnapshotEndpoint() {
-  const meta = import.meta as ImportMeta & { env?: Record<string, string | undefined> }
-  const configuredEndpoint = meta.env?.[TRADING_AGENT_SNAPSHOT_URL_ENV]?.trim()
+  const configuredEndpoint = import.meta.env.VITE_TRADING_AGENT_SNAPSHOT_URL?.trim()
   return configuredEndpoint || TRADING_AGENT_SNAPSHOT_ROUTE
 }
 

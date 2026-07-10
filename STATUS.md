@@ -4,11 +4,13 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-10 (Crontab 合并安装器精简重构)
+> 最后更新：2026-07-11 (前端桌面只读工作台重构候选)
 
 ---
 
 ## 一、当前状态
+
+- **前端桌面只读工作台候选（2026-07-11）**：`front/` 已在隔离分支完成 Hyperliquid 启发的桌面主页重构，统一 `WorkbenchViewModel` 保证顶部收益与曲线末点使用同一所选市场/组合口径；当前机会严格只含 pending/blocked，成交、错过和取消进入已完成/待复盘；主页重组为紧凑市场条、收益图、当前审阅右轨、压缩机会漏斗和四标签 blotter。`实盘` 进入独立 `实盘待接入` 只读门禁，不暴露执行控件，返回模拟盘会保留原 blotter 标签；runtime code 已集中翻译，缺收益归因时不再绘制伪 0 柱图。修复了 Vite 环境变量经 `import.meta` 别名读取而无法替换的问题，开发演示开关和自定义快照 URL 现可真实生效并有构建契约测试。快照 API 契约未改，移动端明确延期。本地代码、测试、构建和浏览器候选验证完成后仍需单独决定是否合入主线；未推送、未部署、未同步生产文件或 runtime。
 
 - **Crontab 合并安装器（2026-07-10 精简重构）**：`tools/merge_tradingagent_crontab.py` 采用单文件最小实现，仅剥离当前 crontab 中 `/opt/investment/tradingagent/` schedule 行，追加模板 TA schedule 行，不动 env/注释/空行/跨仓条目。默认 dry-run；`--apply` 备份 → 安装 → readback + coverage 验证，失败自动 rollback 并 readback 确认原文本恢复。`--current-file`/`--output` 文件模式不碰系统。空模板 fail-closed。**严禁**直接 `crontab shared/crontab.txt`。已通过 12 项关键用例（`tests/test_merge_tradingagent_crontab.py`）。
 

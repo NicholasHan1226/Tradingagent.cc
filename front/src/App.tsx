@@ -17,7 +17,7 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
-const DASHBOARD_BUILD_ID = '20260708-result-funnel'
+const DASHBOARD_BUILD_ID = '20260711-readonly-workbench'
 
 function App() {
   const demoPreviewEnabled = isDemoPreviewEnabled()
@@ -226,7 +226,7 @@ function hasMarketPerformanceResult(summary?: MarketSummary) {
 }
 
 function isDemoPreviewEnabled() {
-  const meta = import.meta as ImportMeta & { env?: { DEV?: boolean; VITE_TRADING_AGENT_DEMO_PREVIEW?: string } }
-  if (meta.env?.VITE_TRADING_AGENT_DEMO_PREVIEW === '0') return false
-  return meta.env?.VITE_TRADING_AGENT_DEMO_PREVIEW === '1' || meta.env?.DEV === true
+  const configuredPreview = import.meta.env.VITE_TRADING_AGENT_DEMO_PREVIEW
+  if (configuredPreview === '0') return false
+  return configuredPreview === '1' || import.meta.env.DEV
 }

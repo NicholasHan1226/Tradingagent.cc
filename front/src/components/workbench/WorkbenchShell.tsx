@@ -1,8 +1,8 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { HoldingRow, Page, PortfolioSummary, SignalRow } from '../../types/dashboard'
 import { LiveGate } from '../LiveGate'
 import { ReviewRail } from './ReviewRail'
-import { WorkbenchBlotter } from './WorkbenchBlotter'
+import { WorkbenchBlotter, type BlotterTab } from './WorkbenchBlotter'
 
 export function WorkbenchShell({
   active,
@@ -29,6 +29,8 @@ export function WorkbenchShell({
   review: SignalRow[]
   setActivePage: (page: Page) => void
 }) {
+  const [blotterTab, setBlotterTab] = useState<BlotterTab>('active')
+
   return (
     <section className="workbench-shell" aria-label="交易工作台">
       {liveGate.gated ? (
@@ -50,7 +52,14 @@ export function WorkbenchShell({
             />
           </div>
           <div className="workbench-context-strip">{context}</div>
-          <WorkbenchBlotter active={active} completed={completed} positions={positions} review={review} />
+          <WorkbenchBlotter
+            active={active}
+            completed={completed}
+            onTabChange={setBlotterTab}
+            positions={positions}
+            review={review}
+            selectedTab={blotterTab}
+          />
           {evidence && <div className="workbench-evidence">{evidence}</div>}
         </>
       )}
