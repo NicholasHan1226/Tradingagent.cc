@@ -99,13 +99,24 @@ function fromSignal(signal: SignalRow, kind: Exclude<AutomationRuntimeKind, 'idl
     symbol: signal.symbol,
     name: signal.name,
     market: signal.market,
-    strategy: signal.strategyName ?? signal.method,
+    strategy: formatStrategy(signal.strategyName ?? signal.method),
     stage: formatStage(signal, kind),
     statusLabel: formatStatus(signal, kind),
     evidenceLabel: formatEvidence(signal.stageEvidence),
     updatedAtLabel: signal.age,
-    detail: signal.reason,
+    detail: formatDetail(signal.reason),
   }
+}
+
+function formatStrategy(value: string) {
+  if (value.toLowerCase() === 'buy') return '买入流程'
+  if (value.toLowerCase() === 'sell') return '卖出流程'
+  return value
+}
+
+function formatDetail(value: string) {
+  if (value === '等待下一次确认') return '等待自动确认'
+  return value
 }
 
 function formatStage(signal: SignalRow, kind: Exclude<AutomationRuntimeKind, 'idle'>) {

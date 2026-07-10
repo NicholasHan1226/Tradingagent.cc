@@ -105,6 +105,19 @@ describe('createAutomationObservatoryViewModel', () => {
     expect(JSON.stringify(model)).not.toMatch(/下一步|还差什么|待处理|需要复盘/)
   })
 
+  it('translates raw execution direction and confirmation copy into automated process language', () => {
+    const rawReview = {
+      ...blocked,
+      strategyName: undefined,
+      method: 'buy',
+      reason: '等待下一次确认',
+    }
+    const model = createAutomationObservatoryViewModel(workbench({ review: [rawReview] }))
+
+    expect(model.runtimeItem.strategy).toBe('买入流程')
+    expect(model.runtimeItem.detail).toBe('等待自动确认')
+  })
+
   it.each([
     ['主页', '总览'],
     ['机会', '过程'],

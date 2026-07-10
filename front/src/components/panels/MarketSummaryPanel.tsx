@@ -55,14 +55,14 @@ export function MarketSummaryPanel({
 
 function formatRuntimeState(state: MarketSummary['runtimeState']) {
   if (state === 'normal') return '运行中'
-  if (state === 'strategy_wait') return '等待机会'
-  if (state === 'needs_attention') return '需要处理'
+  if (state === 'strategy_wait') return '自动等待'
+  if (state === 'needs_attention') return '运行异常'
   return '等待数据'
 }
 
 function formatHeadline(summary: MarketSummary, activeMarket: Market) {
   if (summary.runtimeState === 'strategy_wait') return `${marketLabels[activeMarket]}正在等更好的入场条件`
-  if (summary.runtimeState === 'needs_attention' || summary.executionFault) return `${marketLabels[activeMarket]}需要先处理风险`
+  if (summary.runtimeState === 'needs_attention' || summary.executionFault) return `${marketLabels[activeMarket]}存在运行异常`
   if (summary.holdingCount > 0) return `${marketLabels[activeMarket]}已有 ${summary.holdingCount} 个仓位`
   if (summary.tradeCount > 0) return `${marketLabels[activeMarket]}已有 ${summary.tradeCount} 次模拟成交`
   return `${marketLabels[activeMarket]}暂无新机会`

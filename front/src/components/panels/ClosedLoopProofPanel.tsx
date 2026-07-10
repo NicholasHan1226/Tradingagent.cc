@@ -42,9 +42,9 @@ export function ClosedLoopProofPanel({ summaries }: { summaries: MarketSummary[]
 }
 
 function formatState(summary: MarketSummary) {
-  if (summary.executionFault || summary.runtimeState === 'needs_attention') return '需要处理'
+  if (summary.executionFault || summary.runtimeState === 'needs_attention') return '运行异常'
   if (summary.runtimeState === 'normal') return '状态正常'
-  if (summary.runtimeState === 'strategy_wait') return '等待机会'
+  if (summary.runtimeState === 'strategy_wait') return '自动等待'
   return '等待数据'
 }
 
