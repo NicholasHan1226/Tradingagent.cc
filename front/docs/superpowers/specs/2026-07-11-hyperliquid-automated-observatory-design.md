@@ -1,8 +1,8 @@
 # Hyperliquid-Inspired Automated Observatory Design
 
-**Date:** 2026-07-11  
+**Date:** 2026-07-11
 **Status:** Approved
-**Scope:** TradingAgent desktop frontend in `front/`  
+**Scope:** TradingAgent desktop frontend in `front/`
 **Reference:** Hyperliquid Trade desktop structure, translated to a read-only automated-system observatory
 
 ## 1. Product Position
