@@ -91,6 +91,13 @@ SQLite read-model access is only a diagnostic/test path and must be explicitly e
 selects the diagnostic database after one of those explicit switches is set; it
 does not enable fallback by itself.
 
+Night-session exchange dates and market-data calendar dates are separate. The
+exchange `active_trade_date` remains the attribution key for orders, receipts,
+positions, and reviews. Live `/realtime_5min?market=Futures` batch reads do not
+send that exchange date as an API filter; per-contract reads use the current
+China calendar date and then enforce the current session plus the configured
+bar-age limit. Naive `bar_time` values are interpreted as China local time.
+
 Intraday simulation candidates must be executable contracts from the latest
 current-day 5-minute bar batch in SharedSignals. Generic product symbols such
 as `CU.SHF` and expired, stale, or earlier-batch contracts are not valid
