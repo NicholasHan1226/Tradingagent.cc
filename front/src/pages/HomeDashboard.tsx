@@ -1,5 +1,4 @@
 import { PerformanceChart } from '../components/charts/PerformanceChart'
-import { useMemo } from 'react'
 import { ChartSkeleton } from '../components/Skeleton'
 import { StatusBoundary } from '../components/StatusBoundary'
 import { AShareEvidencePanel } from '../components/panels/AShareEvidencePanel'
@@ -70,17 +69,7 @@ export function HomeDashboard({
   const targetReturn = portfolio?.targetPct ?? latestPoint.target
   const targetGap = liveReturn - targetReturn
   const returnTone = getReturnTone(liveProfit, liveReturn)
-  const returnChartData = useMemo(() => {
-    if (!portfolio || data.length === 0) return data
-    return data.map((point, index) => index === data.length - 1
-      ? {
-          ...point,
-          simulated: portfolio.returnPct,
-          target: portfolio.targetPct,
-        }
-      : point)
-  }, [data, portfolio])
-  const returnChartLatestPoint = returnChartData[returnChartData.length - 1] ?? latestPoint
+  const returnChartLatestPoint = data[data.length - 1] ?? latestPoint
   const headline = hasPerformanceData
     ? targetGap >= 0
       ? '当前收益领先目标，回撤仍在边界内。'
@@ -116,7 +105,7 @@ export function HomeDashboard({
             {hasPerformanceData ? (
               <PerformanceChart
                 currentTone={returnTone}
-                data={returnChartData}
+                data={data}
                 events={events}
                 height={236}
                 latestPoint={returnChartLatestPoint}

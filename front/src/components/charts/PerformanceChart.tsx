@@ -14,6 +14,7 @@ import type { ChartEvent, Page, PerformancePoint, PerformanceRange } from '../..
 import { slicePerformanceData } from '../../lib/dashboard'
 import { DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT } from '../../lib/dashboardConstants'
 import { chartColors } from './chartConfig'
+import { ChartAccessibleSummary } from '../workbench/ChartAccessibleSummary'
 
 const RANGE_OPTIONS: Array<{ key: PerformanceRange; label: string }> = [
   { key: 'today', label: '今日' },
@@ -60,7 +61,9 @@ export function PerformanceChart({
   latestPoint,
   onSelectEvent,
   showRangeControls = false,
+  ariaLabel = '模拟盘收益曲线',
 }: {
+  ariaLabel?: string
   currentTone?: 'positive' | 'negative' | 'flat'
   data: PerformancePoint[]
   events?: ChartEvent[]
@@ -98,7 +101,13 @@ export function PerformanceChart({
     .filter((item): item is { event: ChartEvent; point: PerformancePoint } => item != null && item.point.quality !== 'outlier')
 
   return (
-    <div className={`chart-box hyper-chart-panel ${showRangeControls ? 'with-range-controls' : ''}`} style={{ height }}>
+    <div
+      aria-label={ariaLabel}
+      className={`chart-box hyper-chart-panel ${showRangeControls ? 'with-range-controls' : ''}`}
+      role="img"
+      style={{ height }}
+    >
+      <ChartAccessibleSummary latest={chartLatest} />
       {showRangeControls && (
         <div className="chart-panel-toolbar">
           <span>累计收益</span>

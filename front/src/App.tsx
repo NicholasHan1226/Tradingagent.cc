@@ -6,8 +6,9 @@ import { MarketHeader } from './components/MarketHeader'
 import { TopNav } from './components/TopNav'
 import { holdings as mockHoldings, mockDashboardApiResponse, performanceData, signals as mockSignals } from './data/dashboard'
 import { deriveChartEvents } from './lib/chartEvents'
-import { getLivePerformanceData, getPortfolioForView, getSelectedMarketSummary, getSignalFunnel, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
+import { getLivePerformanceData, getSelectedMarketSummary, getSignalFunnel, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
 import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
+import { createWorkbenchViewModel } from './lib/workbenchViewModel'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
 import type { DataDomain } from './types/status'
@@ -80,7 +81,7 @@ function App() {
   const selectedMarketSummary = useMemo(() => getSelectedMarketSummary(marketSummaries, activeMarket), [activeMarket, marketSummaries])
   const visibleSignals = useMemo(() => getVisibleSignals(signalRows, activeMarket), [activeMarket, signalRows])
   const visibleHoldings = useMemo(() => getVisibleHoldings(holdingRows, activeMarket), [activeMarket, holdingRows])
-  const visiblePerformanceData = useMemo(() => {
+  const marketPerformanceData = useMemo(() => {
     if (activeMarket === 'All Markets') return livePerformanceData
     if (selectedMarketSummary?.returnPct === undefined) return []
     return [{
@@ -96,10 +97,19 @@ function App() {
     : hasMarketPerformanceResult(selectedMarketSummary)
   const hasSignalData = activeMarket === 'All Markets' ? hasGlobalSignalData : visibleSignals.length > 0
   const hasHoldingData = activeMarket === 'All Markets' ? hasGlobalHoldingData : visibleHoldings.length > 0
-  const visiblePortfolio = useMemo(
-    () => getPortfolioForView({ activeMarket, marketSummaries, portfolio: portfolioSummary }),
-    [activeMarket, marketSummaries, portfolioSummary],
-  )
+  const workbench = useMemo(() => createWorkbenchViewModel({
+    accountMode,
+    activeMarket,
+    performance: marketPerformanceData,
+    portfolio: portfolioSummary,
+    marketSummaries,
+    signals: signalRows,
+    holdings: holdingRows,
+    funnelEvents,
+    generatedAt: readModelSnapshot?.generatedAt ?? null,
+  }), [accountMode, activeMarket, funnelEvents, holdingRows, marketPerformanceData, marketSummaries, portfolioSummary, readModelSnapshot?.generatedAt, signalRows])
+  const visiblePerformanceData = workbench.performance
+  const visiblePortfolio = workbench.portfolio
   const latestPoint = visiblePerformanceData[visiblePerformanceData.length - 1] ?? {
     day: '现在',
     simulated: 0,
@@ -107,10 +117,7 @@ function App() {
     benchmark: 0,
     opportunity: 0,
   }
-  const visibleFunnelEvents = useMemo(
-    () => funnelEvents.filter((event) => activeMarket === 'All Markets' || event.market === activeMarket),
-    [activeMarket, funnelEvents],
-  )
+  const visibleFunnelEvents = workbench.funnelEvents
   const signalFunnel = useMemo(() => getSignalFunnel(visibleSignals), [visibleSignals])
   const chartEvents = useMemo(() => deriveChartEvents(visiblePerformanceData, visibleSignals), [visiblePerformanceData, visibleSignals])
   const domainStatus = (domain: DataDomain) => dashboardState.domains[domain]?.status ?? dashboardState.status

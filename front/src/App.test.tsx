@@ -226,6 +226,71 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.queryByText(/可复盘 0\/13 · 链路验证 13/)).not.toBeInTheDocument()
   })
 
+  it('keeps the returns page chart summary aligned with the all-market headline', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            mode: 'simulated',
+            generatedAt: '2026-07-11T09:00:00.000Z',
+            domains: {
+              performance: { status: 'ready', updatedAt: '2026-07-11T09:00:00.000Z' },
+              signals: { status: 'empty', updatedAt: '2026-07-11T09:00:00.000Z' },
+              holdings: { status: 'empty', updatedAt: '2026-07-11T09:00:00.000Z' },
+              decisions: { status: 'empty', updatedAt: '2026-07-11T09:00:00.000Z' },
+              risk: { status: 'ready', updatedAt: '2026-07-11T09:00:00.000Z' },
+            },
+            performance: [{ day: '现在', simulated: -0.03, target: 8, benchmark: 0, opportunity: 0 }],
+            portfolio: {
+              pnlAmount: -65,
+              returnPct: -0.03,
+              capitalBase: 200000,
+              targetPct: 8,
+              maxDrawdownPct: 0,
+              tradeCount: 5,
+              pointCount: 1,
+              source: 'account',
+              pnlCurrency: 'CNY',
+              updatedAt: '2026-07-11T09:00:00.000Z',
+            },
+            marketSummaries: [{
+              market: 'A-share',
+              status: 'ready',
+              runtimeState: 'normal',
+              holdingCount: 3,
+              signalCount: 0,
+              tradeCount: 3,
+              styleCount: 1,
+              capitalBase: 200000,
+              pnlAmount: 6931,
+              pnlCurrency: 'CNY',
+              returnPct: 3.47,
+              maxDrawdownPct: 0,
+              source: 'market-summary',
+              headline: 'A股',
+              detail: 'A股结果',
+            }],
+            holdings: [],
+            signals: [],
+            funnelEvents: [],
+            sourceRefs: tradingAgentReadModelSources,
+          }),
+          { status: 200 },
+        ),
+      ),
+    )
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getAllByText('+3.47%').length).toBeGreaterThan(0))
+    click(screen.getByRole('button', { name: '收益' }))
+
+    expect(screen.getByRole('img', { name: '模拟盘收益曲线' })).toBeInTheDocument()
+    expect(screen.getByLabelText('收益曲线摘要')).toHaveTextContent('当前收益 +3.47%')
+    expect(screen.queryByText('当前收益 -0.03%')).not.toBeInTheDocument()
+  })
+
   it('shows return range controls on the returns page only', () => {
     render(<App />)
 
