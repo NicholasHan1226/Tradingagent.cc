@@ -140,6 +140,7 @@ function App() {
         liveProfit={visiblePortfolio?.pnlAmount ?? null}
         liveReturn={visiblePortfolio?.returnPct ?? latestPoint.simulated}
         maxDrawdown={visiblePortfolio?.maxDrawdownPct ?? null}
+        positionCount={visibleHoldings.length}
         signalCount={visibleSignals.length}
         snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
         setActiveMarket={setActiveMarket}

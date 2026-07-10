@@ -10,6 +10,7 @@ export function MarketHeader({
   liveProfit,
   liveReturn,
   maxDrawdown,
+  positionCount,
   hasPerformanceData,
   isDemoPreview,
   isCnyAccount,
@@ -28,6 +29,7 @@ export function MarketHeader({
   liveProfit: number | null
   liveReturn: number
   maxDrawdown: number | null
+  positionCount: number
   signalCount: number
   setActiveMarket: (market: Market) => void
   snapshotGeneratedAt: string | null
@@ -73,6 +75,7 @@ export function MarketHeader({
         />
         <Stat detail="机会池" label="机会" value={`${signalCount}`} />
         <Stat detail="通过筛选" label="可跟进" value={`${tradeSignalCount}`} cyan />
+        <Stat detail="模拟盘" label="持仓" value={`${positionCount}`} />
         <Stat label="最大回撤" value={hasPerformanceData ? formatDrawdown(drawdown) : '等待'} red={hasPerformanceData && drawdown > 0} />
       </div>
       <div className="market-tools">

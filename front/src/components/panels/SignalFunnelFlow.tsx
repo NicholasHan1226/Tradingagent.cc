@@ -14,11 +14,13 @@ const FLOW_STAGES = [
 ] as const
 
 export function SignalFunnelFlow({
+  compact = false,
   events,
   hasSignalData,
   holdings,
   signals,
 }: {
+  compact?: boolean
   events: FunnelEvent[]
   hasSignalData: boolean
   holdings: HoldingRow[]
@@ -105,6 +107,43 @@ export function SignalFunnelFlow({
   })
   const lossRows = hasHoldingContext ? getHoldingLossRows(holdings) : getLossRows(visualStages)
   const railRows = getRailRows(visualStages, outcomeRows)
+  const compactReviewLabel = hasHoldingContext ? '当前没有新机会进入' : flowSummary.label
+  const compactReviewValue = hasHoldingContext ? `${holdings.length} 个持仓继续跟踪` : flowSummary.value
+  const compactReviewDetail = hasHoldingContext && holdingSummary
+    ? getHoldingStateLabel(holdings, holdingSummary)
+    : flowSummary.detail
+
+  if (compact) {
+    return (
+      <section className="signal-flow-module compact-flow" aria-label={moduleTitle}>
+        <div className="compact-flow-head">
+          <span>{moduleTitle} <b>{modeLabel}</b></span>
+          <strong>{captionText}</strong>
+        </div>
+        <div className="compact-flow-stages" aria-label="机会筛选阶段摘要">
+          {visualStages.map((stage, index) => (
+            <span className={stage.dropped > 0 ? 'has-drop' : ''} key={`${stage.label}-compact`}>
+              <em>{stage.label}</em>
+              <strong>{stage.count}</strong>
+              <i style={{ '--stage-fill': `${stageWidths[index]}%` } as CSSProperties} />
+            </span>
+          ))}
+        </div>
+        <div className="compact-flow-review">
+          <span>{compactReviewLabel}</span>
+          <strong>{compactReviewValue}</strong>
+          <em>{compactReviewDetail}</em>
+          {latestTapeItems.length > 0 && (
+            <div aria-label="最近管道事件">
+              {latestTapeItems.slice(0, 2).map((item) => (
+                <b className={item.className} key={item.id}>{item.symbol} · {item.label}</b>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section className="signal-flow-module" aria-label={moduleTitle}>
