@@ -626,6 +626,16 @@ class AsharePreopenDryRunTest(unittest.TestCase):
                     ("600001.SH", {"combined": 0.7, "macro": 0.5, "event": 0.5, "fundamental": 0.7, "capital": 0.6, "technical": 0.7, "sentiment": 0.5}),
                 ],
             ),
+            mock.patch(
+                "shared.runtime_test.ashare_preopen_dry_run._build_capital_plan",
+                return_value={
+                    "status": "pass",
+                    "reason": "capital_plan_ready",
+                    "max_new_positions": 0,
+                    "position_budget_by_symbol": {},
+                    "suggested_buys": [],
+                },
+            ),
         ):
             report = ashare_preopen_dry_run.run_preopen_dry_run(
                 now=datetime.fromisoformat("2026-07-10T08:30:00+08:00"),
@@ -642,6 +652,9 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertIn("expected_evidence_date", report["data"])
         # Data failure should propagate: execution must not be ready
         self.assertFalse(report["execution_gate"]["ready"])
+        self.assertEqual(report["execution_gate"]["status"], "fail")
+        self.assertEqual(report["execution_gate"]["reason"], "api_data_failure")
+        self.assertIn("api_data_failure", report["execution_gate"]["blockers"])
         self.assertIn("execution_gate:api_data_failure", report["blockers"])
 
     def test_write_outputs_does_not_touch_execution_or_review_paths(self) -> None:

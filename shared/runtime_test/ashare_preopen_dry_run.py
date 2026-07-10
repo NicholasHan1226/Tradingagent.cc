@@ -651,10 +651,20 @@ def run_preopen_dry_run(
             warnings.append(f"{section_name}:{section.get('reason') or 'warning'}")
     warnings.extend(str(item) for item in execution_gate.get("warnings", []) if item)
 
-    # Propagate upstream data failure into execution-gate readiness so that
-    # a stale/incomplete daily feed cannot produce a ready synthetic order.
-    if data_section["status"] == "fail" and execution_gate.get("ready"):
+    # Propagate upstream data failure into the execution gate itself. A gate
+    # cannot be reported as passing when its price/universe evidence is invalid,
+    # even when the capital plan independently has no budget for a new order.
+    if data_section["status"] == "fail":
+        execution_gate["upstream_reason"] = execution_gate.get("reason")
+        execution_gate["status"] = "fail"
         execution_gate["ready"] = False
+        execution_gate["reason"] = "api_data_failure"
+        gate_blockers = execution_gate.get("blockers")
+        if not isinstance(gate_blockers, list):
+            gate_blockers = []
+            execution_gate["blockers"] = gate_blockers
+        if "api_data_failure" not in gate_blockers:
+            gate_blockers.append("api_data_failure")
         if "execution_gate:api_data_failure" not in blockers:
             blockers.append("execution_gate:api_data_failure")
 
