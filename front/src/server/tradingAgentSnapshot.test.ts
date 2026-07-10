@@ -2374,6 +2374,8 @@ describe('TradingAgent snapshot reader', () => {
       pnlAmount: 0,
       realizedPnl: 0,
       unrealizedPnl: 0,
+      tradeCount: 0,
+      source: 'shared/logs/local_sim/local_sim_trades.jsonl',
     })
   })
 

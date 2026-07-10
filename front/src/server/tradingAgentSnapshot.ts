@@ -773,7 +773,9 @@ async function buildMarketSummaries({
       : pnlAmount !== undefined && capitalBase && capitalBase > 0
         ? roundMetric((pnlAmount / capitalBase) * 100)
         : undefined
-    const tradeCount = executedCount > 0 ? executedCount : performanceSummary?.trades ?? styleSummary?.filledCount ?? 0
+    const tradeCount = ashareAccount
+      ? ashareAccount.totalSampleCount
+      : executedCount > 0 ? executedCount : performanceSummary?.trades ?? styleSummary?.filledCount ?? 0
     const styleCount = Math.max(styleSummary?.styleCount ?? 0, styleSummary?.activeStyleCount ?? 0)
     const hasMeaningfulPnl = pnlAmount !== undefined && (pnlAmount !== 0 || (capitalBase ?? 0) > 0 || (performanceSummary?.trades ?? 0) > 0)
       const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || hasMeaningfulPnl
@@ -835,7 +837,9 @@ async function buildMarketSummaries({
         ? ashareAccount.accountUnrealizedPnl ?? ashareAccount.accountTotalPnl
         : performanceSummary ? roundMoney(performanceSummary.unrealizedPnl) : undefined,
       latestAt,
-      source: styleSummary?.source ?? (performanceSummary ? tradingAgentReadModelSources.performanceTracker : isAshare && ashareAccount ? tradingAgentReadModelSources.localSimLedger : tradingAgentReadModelSources.simLedger),
+      source: isAshare && ashareAccount
+        ? tradingAgentReadModelSources.localSimLedger
+        : styleSummary?.source ?? (performanceSummary ? tradingAgentReadModelSources.performanceTracker : tradingAgentReadModelSources.simLedger),
       headline: healthSummary ? buildHealthAwareHeadline(market, healthSummary, baseHeadline) : baseHeadline,
       detail: healthSummary ? buildHealthAwareDetail(healthSummary, baseDetail) : baseDetail,
       }
