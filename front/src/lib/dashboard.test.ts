@@ -57,8 +57,16 @@ describe('dashboard view rules', () => {
     expect(getActionableSignals(rows).map((signal) => signal.symbol)).toEqual(['0700.HK', 'BTC-USD'])
   })
 
+  it('does not fall back to completed rows when there are no actionable signals', () => {
+    expect(getActionableSignals(rows.filter((row) => row.status === 'executed'))).toEqual([])
+  })
+
   it('keeps review pages focused on closed rows', () => {
     expect(getClosedSignals(rows).map((signal) => signal.symbol)).toEqual(['AAPL.US'])
+  })
+
+  it('does not fall back to active rows when there are no closed signals', () => {
+    expect(getClosedSignals(rows.filter((row) => row.status === 'pending'))).toEqual([])
   })
 
   it('keeps market filters strict when a market has no matching rows', () => {
