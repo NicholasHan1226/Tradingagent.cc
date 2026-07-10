@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from CNFutures.opening_validator import (
+    _opening_30m_review,
     _query_daily_bars_via_reader,
     _query_session_bars_via_api,
     _reader_symbols,
@@ -19,6 +20,26 @@ from CNFutures.opening_validator import (
 
 
 class CNFuturesOpeningValidatorTest(unittest.TestCase):
+    def test_sparse_night_bars_with_product_coverage_hold_are_strategy_hold(self) -> None:
+        report = _opening_30m_review(
+            bars={"bar_count": 2, "symbol_count": 2},
+            latest_review={
+                "filled_count": 0,
+                "hold_count": 1,
+                "hold_reason_summary": {
+                    "total": 1,
+                    "by_reason": {"insufficient_distinct_product_coverage": 1},
+                },
+            },
+            filled_signal_count=0,
+            receipt_count=0,
+            elapsed_minutes=60,
+            min_symbols=4,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["phase"], "strategy_hold")
+
     def _db(self, rows: list[tuple[str, str]]) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

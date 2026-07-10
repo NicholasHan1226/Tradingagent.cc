@@ -39,7 +39,12 @@ CN_TZ = timezone(timedelta(hours=8))
 READER_MARKET = "Futures"
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
 SESSION_WAIT_REASONS = {"style_session_not_allowed", "night_session_not_allowed", "product_night_session_closed"}
-STRATEGY_WAIT_REASONS = SESSION_WAIT_REASONS | {"style_paused", "style_disabled", "style_deprecated"}
+STRATEGY_WAIT_REASONS = SESSION_WAIT_REASONS | {
+    "insufficient_distinct_product_coverage",
+    "style_paused",
+    "style_disabled",
+    "style_deprecated",
+}
 
 
 def _now_cn() -> datetime:
