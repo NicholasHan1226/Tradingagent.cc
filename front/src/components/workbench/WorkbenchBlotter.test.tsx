@@ -54,11 +54,11 @@ describe('WorkbenchBlotter', () => {
     expect(within(panel).queryByText('AAPL.US')).not.toBeInTheDocument()
   })
 
-  it('shows a truthful idle state instead of completed rows', () => {
+  it('reveals completed outcomes when the running queue is empty', () => {
     render(<WorkbenchBlotter active={[]} positions={[holding]} completed={[executed]} review={[]} />)
 
-    expect(screen.getByText('当前没有运行中的自动过程')).toBeInTheDocument()
-    expect(screen.queryByText('AAPL.US')).not.toBeInTheDocument()
+    expect(screen.getByRole('tabpanel', { name: '已完成' })).toHaveTextContent('AAPL.US')
+    expect(screen.queryByText('当前没有运行中的自动过程')).not.toBeInTheDocument()
   })
 
   it('switches to completed outcomes', () => {
@@ -86,5 +86,12 @@ describe('WorkbenchBlotter', () => {
     expect(screen.getByRole('tab', { name: '运行中 1' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '自动复盘 1' })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: /当前机会|待复盘/ })).not.toBeInTheDocument()
+  })
+
+  it('labels the read-only next-step field as automatic calibration', () => {
+    render(<WorkbenchBlotter active={[]} positions={[]} completed={[executed]} review={[]} />)
+
+    expect(screen.getByRole('columnheader', { name: '自动校准' })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '下次规则' })).not.toBeInTheDocument()
   })
 })

@@ -3,6 +3,7 @@ import { HoldingsTable } from '../tables/HoldingsTable'
 import { RunningProcessTable } from '../tables/RunningProcessTable'
 import { SignalTable } from '../tables/SignalTable'
 import type { HoldingRow, SignalRow } from '../../types/dashboard'
+import { getPreferredTab } from './workbenchBlotterState'
 
 export type BlotterTab = 'active' | 'positions' | 'completed' | 'review'
 
@@ -28,7 +29,7 @@ export function WorkbenchBlotter({
   selectedTab?: BlotterTab
   onTabChange?: (tab: BlotterTab) => void
 }) {
-  const [internalTab, setInternalTab] = useState<BlotterTab>('active')
+  const [internalTab, setInternalTab] = useState<BlotterTab>(() => getPreferredTab({ active, positions, completed, review }))
   const tab = selectedTab ?? internalTab
   const selectTab = (nextTab: BlotterTab) => {
     setInternalTab(nextTab)

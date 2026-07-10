@@ -1,19 +1,15 @@
-import { AllocationPanel } from '../components/charts/AllocationPanel'
-import { ContributionPanel } from '../components/charts/ContributionPanel'
 import { PerformanceChart } from '../components/charts/PerformanceChart'
 import { RiskTimeline } from '../components/charts/RiskTimeline'
 import { ChartSkeleton, TableSkeleton } from '../components/Skeleton'
 import { StatusBoundary } from '../components/StatusBoundary'
-import { DecisionFormation } from '../components/panels/DecisionFormation'
-import { OpportunityFocus } from '../components/panels/OpportunityFocus'
-import { ResultSummary } from '../components/panels/ResultSummary'
-import { RiskSnapshot } from '../components/panels/RiskSnapshot'
-import { HoldingsTable } from '../components/tables/HoldingsTable'
-import { RunningProcessTable } from '../components/tables/RunningProcessTable'
 import { SignalTable } from '../components/tables/SignalTable'
-import { PanelTitle } from '../components/PanelTitle'
-import { PageSummaryBoard } from '../components/PageSummaryBoard'
-import { getActionableSignals, getClosedSignals } from '../lib/dashboard'
+import { PortfolioLedger } from '../components/terminal/PortfolioLedger'
+import { ProcessBook } from '../components/terminal/ProcessBook'
+import { RiskLedger } from '../components/terminal/RiskLedger'
+import { TerminalInspectorSection, TerminalPageShell, TerminalPanelHeader, type TerminalMetric } from '../components/terminal/TerminalPageShell'
+import { getActionableSignals, getClosedSignals, getSignalFunnel } from '../lib/dashboard'
+import { DRAWDOWN_LIMIT_PCT } from '../lib/dashboardConstants'
+import { createPortfolioLedgerRows, createProcessBookRows, createRiskLedgerRows, summarizePortfolioCurrency } from '../lib/terminalViewModels'
 import type { ChartEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
@@ -27,7 +23,6 @@ export function ThemePage({
   portfolio,
   domainStatus,
   onRetry,
-  setActivePage,
   signals,
   events,
 }: {
@@ -44,106 +39,109 @@ export function ThemePage({
   setActivePage: (page: Page) => void
   signals: SignalRow[]
 }) {
+  const context = createContextMetrics({ activeMarket, holdings, marketSummary, portfolio, signals })
+  const completed = getClosedSignals(signals)
+
   if (activePage === '收益') {
     return (
-      <div className="theme-layout">
-        <section className="theme-main">
-          <PageSummaryBoard activeMarket={activeMarket} holdings={holdings} marketSummary={marketSummary} page="收益" performance={data} portfolio={portfolio} signals={signals} />
-          <section className="panel tall-panel">
-            <PanelTitle kicker="收益结果" title="模拟盘收益走势" />
-            <StatusBoundary loading={<ChartSkeleton height={430} />} onRetry={onRetry} status={domainStatus('performance')}>
-              <PerformanceChart
-                currentTone={getPerformanceTone(latestPoint.simulated)}
-                data={data}
-                events={events}
-                height={430}
-                latestPoint={latestPoint}
-                onSelectEvent={setActivePage}
-                showRangeControls
-              />
-            </StatusBoundary>
-          </section>
-        </section>
-        <aside className="theme-rail">
-          <ContributionPanel signals={signals} />
-        </aside>
-      </div>
+      <TerminalPageShell
+        inspector={<ReturnInspector portfolio={portfolio} signals={signals} />}
+        metrics={context}
+        primary={<section className="terminal-chart-surface"><TerminalPanelHeader eyebrow="PERFORMANCE" meta={`${data.length} 个样本`} title="模拟盘收益 / 目标 / 基准" /><StatusBoundary loading={<ChartSkeleton height={430} />} onRetry={onRetry} status={domainStatus('performance')}><PerformanceChart currentTone={getPerformanceTone(latestPoint.simulated)} data={data} events={events} height={430} latestPoint={latestPoint} showRangeControls /></StatusBoundary></section>}
+        title="收益终端"
+      />
     )
   }
 
   if (activePage === '过程') {
+    const model = createProcessBookRows(getActionableSignals(signals), completed)
     return (
-      <div className="theme-layout single">
-        <PageSummaryBoard activeMarket={activeMarket} holdings={holdings} marketSummary={marketSummary} page="过程" performance={data} portfolio={portfolio} signals={signals} />
-        <section className="panel">
-          <PanelTitle kicker="运行阶段" title="自动化过程" />
-          <StatusBoundary emptyLabel="当前没有运行中的自动过程" loading={<TableSkeleton rows={4} />} onRetry={onRetry} status={domainStatus('signals')}>
-            <RunningProcessTable signals={getActionableSignals(signals)} />
-          </StatusBoundary>
-        </section>
-        <section className="panel">
-          <PanelTitle kicker="过程结果" title="从发现到结果写回" />
-          <DecisionFormation portfolio={portfolio} signals={signals} />
-        </section>
-      </div>
+      <TerminalPageShell
+        inspector={<ProcessInspector signals={signals} />}
+        metrics={context}
+        primary={<StatusBoundary emptyLabel="当前没有过程记录" loading={<TableSkeleton rows={7} />} onRetry={onRetry} status={domainStatus('signals')}><ProcessBook {...model} /></StatusBoundary>}
+        title="过程终端"
+      />
     )
   }
 
   if (activePage === '持仓') {
+    const rows = createPortfolioLedgerRows(holdings)
     return (
-      <div className="theme-layout">
-        <section className="theme-main">
-          <PageSummaryBoard activeMarket={activeMarket} holdings={holdings} marketSummary={marketSummary} page="持仓" performance={data} portfolio={portfolio} signals={signals} />
-          <section className="panel">
-            <PanelTitle kicker="持仓贡献" title="当前持仓结果" />
-            <StatusBoundary loading={<TableSkeleton rows={4} />} onRetry={onRetry} status={domainStatus('holdings')}>
-              <HoldingsTable holdings={holdings} />
-            </StatusBoundary>
-          </section>
-        </section>
-        <aside className="theme-rail">
-          <AllocationPanel holdings={holdings} />
-          <ResultSummary holdings={holdings} portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
-        </aside>
-      </div>
+      <TerminalPageShell
+        inspector={<PortfolioInspector holdings={holdings} rows={rows} />}
+        metrics={context}
+        primary={<StatusBoundary loading={<TableSkeleton rows={7} />} onRetry={onRetry} status={domainStatus('holdings')}><PortfolioLedger rows={rows} /></StatusBoundary>}
+        title="持仓终端"
+      />
     )
   }
 
   if (activePage === '风险') {
+    const riskRows = createRiskLedgerRows(signals)
     return (
-      <div className="theme-layout">
-        <section className="theme-main">
-          <PageSummaryBoard activeMarket={activeMarket} holdings={holdings} marketSummary={marketSummary} page="风险" performance={data} portfolio={portfolio} signals={signals} />
-          <section className="panel">
-            <PanelTitle kicker="风险变化" title="回撤与保护结果" />
-            <StatusBoundary loading={<ChartSkeleton height={320} />} onRetry={onRetry} status={domainStatus('risk')}>
-              <RiskTimeline data={data} portfolio={portfolio} />
-            </StatusBoundary>
-          </section>
-        </section>
-        <aside className="theme-rail">
-          <RiskSnapshot portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
-          <OpportunityFocus setActivePage={setActivePage} signals={signals} />
-        </aside>
-      </div>
+      <TerminalPageShell
+        inspector={<RiskInspector portfolio={portfolio} rows={riskRows} signals={signals} />}
+        ledger={<RiskLedger rows={riskRows} />}
+        metrics={context}
+        primary={<section className="terminal-chart-surface risk-chart-surface"><TerminalPanelHeader eyebrow="RISK ENVELOPE" meta={`硬限制 ${DRAWDOWN_LIMIT_PCT.toFixed(0)}%`} title="回撤与保护结果" /><div className="risk-threshold-legend"><span className="warning">预警 5%</span><span className="negative">限制 7%</span></div><StatusBoundary loading={<ChartSkeleton height={360} />} onRetry={onRetry} status={domainStatus('risk')}><RiskTimeline data={data} portfolio={portfolio} /></StatusBoundary></section>}
+        title="风险终端"
+      />
     )
   }
 
   return (
-    <div className="theme-layout single">
-      <PageSummaryBoard activeMarket={activeMarket} holdings={holdings} marketSummary={marketSummary} page="复盘" performance={data} portfolio={portfolio} signals={signals} />
-      <section className="panel">
-        <PanelTitle kicker="已关闭过程" title="自动复盘归因" />
-        <StatusBoundary emptyLabel="还没有已关闭机会" loading={<TableSkeleton rows={5} />} onRetry={onRetry} status={domainStatus('signals')}>
-          <SignalTable signals={getClosedSignals(signals)} />
-        </StatusBoundary>
-      </section>
-    </div>
+    <TerminalPageShell
+      inspector={<ReviewInspector signals={completed} />}
+      metrics={context}
+      primary={<section className="terminal-table-panel review-ledger"><TerminalPanelHeader eyebrow="AUTOMATIC REVIEW" meta={`${completed.length} 条`} title="结果与自动复盘" /><StatusBoundary emptyLabel="还没有已关闭过程" loading={<TableSkeleton rows={7} />} onRetry={onRetry} status={domainStatus('signals')}><SignalTable signals={completed} /></StatusBoundary></section>}
+      title="复盘终端"
+    />
   )
 }
 
-function getPerformanceTone(value: number) {
-  if (value < -0.005) return 'negative' as const
-  if (value > 0.005) return 'positive' as const
-  return 'flat' as const
+function createContextMetrics({ activeMarket, holdings, marketSummary, portfolio, signals }: { activeMarket: Market; holdings: HoldingRow[]; marketSummary?: MarketSummary; portfolio: PortfolioSummary | null; signals: SignalRow[] }): TerminalMetric[] {
+  const pending = signals.filter((row) => row.status === 'pending').length
+  const blocked = signals.filter((row) => row.status === 'blocked').length
+  const returnPct = portfolio?.returnPct
+  return [
+    { label: '市场', value: activeMarket === 'All Markets' ? '全市场' : activeMarket, detail: marketSummary?.runtimeState === 'needs_attention' ? '需要关注' : '只读观测' },
+    { label: '组合收益', value: returnPct === undefined ? '—' : `${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}%`, tone: returnPct === undefined ? 'muted' : returnPct >= 0 ? 'positive' : 'negative' },
+    { label: '最大回撤', value: portfolio ? `-${Math.abs(portfolio.maxDrawdownPct).toFixed(2)}%` : '—', tone: portfolio && Math.abs(portfolio.maxDrawdownPct) >= 5 ? 'negative' : 'muted' },
+    { label: '自动过程', value: pending ? `${pending} 运行中` : '运行空闲', detail: `${blocked} 安全拦截`, tone: pending ? 'warning' : 'muted' },
+    { label: '持仓', value: String(holdings.length), detail: summarizePortfolioCurrency(holdings).label },
+  ]
 }
+
+function ReturnInspector({ portfolio, signals }: { portfolio: PortfolioSummary | null; signals: SignalRow[] }) {
+  const ranked = [...signals].map((signal) => ({ label: signal.strategyName ?? signal.method, value: parseImpact(signal.impact) })).filter((row) => row.value !== null && row.value !== 0).sort((a, b) => Math.abs(b.value ?? 0) - Math.abs(a.value ?? 0)).slice(0, 5)
+  return <><TerminalInspectorSection title="收益状态"><InspectorRows rows={[['累计收益', portfolio ? signedPercent(portfolio.returnPct) : '—'], ['目标', portfolio ? `${portfolio.targetPct.toFixed(2)}%` : '—'], ['已实现', formatMoney(portfolio?.realizedPnl, portfolio?.pnlCurrency)], ['未实现', formatMoney(portfolio?.unrealizedPnl, portfolio?.pnlCurrency)]]} /></TerminalInspectorSection><TerminalInspectorSection title="贡献排名">{ranked.length ? <div className="terminal-ranking">{ranked.map((row) => <div key={row.label}><span>{row.label}</span><i style={{ width: `${Math.min(100, Math.abs(row.value ?? 0) * 8)}%` }} /><strong className={(row.value ?? 0) < 0 ? 'negative' : 'positive'}>{row.value! > 0 ? '+' : ''}{row.value}</strong></div>)}</div> : <p className="terminal-inspector-note">暂无可用收益归因。</p>}</TerminalInspectorSection></>
+}
+
+function ProcessInspector({ signals }: { signals: SignalRow[] }) {
+  const funnel = getSignalFunnel(signals)
+  const average = averageLatency(signals)
+  return <><TerminalInspectorSection title="过程分布"><div className="stage-distribution">{funnel.stages.map((stage) => <div key={stage.label}><span>{stage.label}</span><i style={{ width: `${Math.max(3, (stage.rows.length / Math.max(1, signals.length)) * 100)}%` }} /><strong>{stage.rows.length}</strong></div>)}</div></TerminalInspectorSection><TerminalInspectorSection title="运行质量"><InspectorRows rows={[['发现总数', String(signals.length)], ['结果写回', String(funnel.executed.length)], ['安全拦截', String(funnel.blocked.length)], ['平均耗时', average ? `${average}分钟` : '—']]} /></TerminalInspectorSection></>
+}
+
+function PortfolioInspector({ holdings, rows }: { holdings: HoldingRow[]; rows: ReturnType<typeof createPortfolioLedgerRows> }) {
+  const total = summarizePortfolioCurrency(holdings)
+  return <><TerminalInspectorSection title="组合敞口"><div className="exposure-ranking">{rows.map((row) => <div key={row.symbol}><span>{row.symbol}</span><i><b style={{ width: row.weight }} /></i><strong>{row.weight}</strong></div>)}</div></TerminalInspectorSection><TerminalInspectorSection title="组合状态"><InspectorRows rows={[['总市值', total.label], ['资产数', String(rows.length)], ['风险观察', String(rows.filter((row) => row.risk !== '正常').length)], ['计价', total.currency === 'mixed' ? '多币种' : total.currency]]} /></TerminalInspectorSection></>
+}
+
+function RiskInspector({ portfolio, rows, signals }: { portfolio: PortfolioSummary | null; rows: ReturnType<typeof createRiskLedgerRows>; signals: SignalRow[] }) {
+  const drawdown = Math.abs(portfolio?.maxDrawdownPct ?? 0)
+  const distance = Math.max(0, DRAWDOWN_LIMIT_PCT - drawdown)
+  return <><TerminalInspectorSection title="边界距离"><div className="risk-boundary"><strong className={drawdown >= 5 ? 'negative' : 'positive'}>{portfolio ? `-${drawdown.toFixed(2)}%` : '—'}</strong><span>当前最大回撤</span><i><b style={{ width: `${Math.min(100, (drawdown / DRAWDOWN_LIMIT_PCT) * 100)}%` }} /></i><small>距 {DRAWDOWN_LIMIT_PCT.toFixed(0)}% 限制 {portfolio ? `${distance.toFixed(2)}%` : '—'}</small></div></TerminalInspectorSection><TerminalInspectorSection title="保护结果"><InspectorRows rows={[['安全拦截', String(signals.filter((row) => row.status === 'blocked').length)], ['自动复盘', String(signals.filter((row) => row.status === 'missed').length)], ['事件账本', String(rows.length)], ['风险状态', drawdown >= 5 ? '接近边界' : '正常']]} /></TerminalInspectorSection></>
+}
+
+function ReviewInspector({ signals }: { signals: SignalRow[] }) {
+  return <><TerminalInspectorSection title="关闭结果"><InspectorRows rows={[['完成', String(signals.filter((row) => row.status === 'executed').length)], ['错过', String(signals.filter((row) => row.status === 'missed').length)], ['终止', String(signals.filter((row) => row.status === 'cancelled').length)], ['部分成交', String(signals.filter((row) => row.queueBucket?.toLowerCase() === 'partial').length)]]} /></TerminalInspectorSection><TerminalInspectorSection title="自动校准"><p className="terminal-inspector-note">系统按已关闭结果保留归因与下一轮规则；本页面只读，不提供人工下单或策略修改入口。</p></TerminalInspectorSection></>
+}
+
+function InspectorRows({ rows }: { rows: [string, string][] }) { return <dl className="terminal-inspector-rows">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl> }
+function getPerformanceTone(value: number) { return value < -0.005 ? 'negative' as const : value > 0.005 ? 'positive' as const : 'flat' as const }
+function signedPercent(value: number) { return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` }
+function formatMoney(value?: number, currency: 'USD' | 'CNY' = 'CNY') { return value === undefined ? '—' : `${value >= 0 ? '+' : '-'}${currency === 'USD' ? '$' : '¥'}${Math.abs(value).toLocaleString('en-US')}` }
+function parseImpact(value: string) { const parsed = Number(value.replace(/[+,%K¥$]/g, '').trim()); return Number.isFinite(parsed) ? parsed : null }
+function averageLatency(signals: SignalRow[]) { const rows = signals.map((row) => row.stageLatencyMinutes).filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0); return rows.length ? Math.round(rows.reduce((sum, value) => sum + value, 0) / rows.length) : 0 }

@@ -584,14 +584,14 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByRole('tab', { name: '已完成 4' })).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('shows the automated process summary before the running process table', () => {
+  it('shows the Process Book beside its automation inspector', () => {
     render(<App />)
 
     click(screen.getByRole('button', { name: '过程' }))
 
-    expect(screen.getByRole('heading', { name: '自动化过程' })).toBeInTheDocument()
-    expect(screen.getByLabelText('自动运行过程表')).toBeInTheDocument()
-    expect(within(screen.getByLabelText('过程摘要')).getByText('运行中')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '过程终端' })).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: '运行中过程账本' })).toBeInTheDocument()
+    expect(within(screen.getByLabelText('过程终端检查器')).getByRole('heading', { name: '过程分布' })).toBeInTheDocument()
     expect(screen.getByText('BTC-USD')).toBeInTheDocument()
     expect(screen.getByText('IF2601.CFFEX')).toBeInTheDocument()
   })
@@ -612,17 +612,18 @@ describe('App navigation and result-first dashboard', () => {
 
     click(screen.getByRole('button', { name: '查看 5月28日 过程' }))
 
-    expect(screen.getByLabelText('过程摘要')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '从发现到结果写回' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '过程终端' })).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: '运行中过程账本' })).toBeInTheDocument()
   })
 
-  it('renders automated process completion as a funnel with drop-off rates', () => {
+  it('renders compact process distribution and completion metrics', () => {
     render(<App />)
 
     click(screen.getByRole('button', { name: '过程' }))
 
-    expect(screen.getAllByText('过程完成').length).toBeGreaterThan(0)
-    expect(screen.getByText('未通过 33.3%')).toBeInTheDocument()
-    expect(screen.getByText('33% 已写回')).toBeInTheDocument()
+    const inspector = screen.getByLabelText('过程终端检查器')
+    expect(within(inspector).getByRole('heading', { name: '过程分布' })).toBeInTheDocument()
+    expect(within(inspector).getByText('结果写回')).toBeInTheDocument()
+    expect(within(inspector).getByText('安全拦截')).toBeInTheDocument()
   })
 })

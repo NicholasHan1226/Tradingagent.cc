@@ -4,6 +4,7 @@ import type { HoldingRow, SignalRow } from '../../types/dashboard'
 import { LiveGate } from '../LiveGate'
 import { RuntimeRail } from './RuntimeRail'
 import { WorkbenchBlotter, type BlotterTab } from './WorkbenchBlotter'
+import { getPreferredTab } from './workbenchBlotterState'
 
 export function WorkbenchShell({
   active,
@@ -30,7 +31,7 @@ export function WorkbenchShell({
   runningCount: number
   runtimeItem: AutomationRuntimeItem
 }) {
-  const [blotterTab, setBlotterTab] = useState<BlotterTab>('active')
+  const [blotterTab, setBlotterTab] = useState<BlotterTab>(() => getPreferredTab({ active, positions, completed, review }))
 
   return (
     <section className="workbench-shell" aria-label="交易工作台">

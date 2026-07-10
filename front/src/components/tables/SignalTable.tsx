@@ -16,7 +16,7 @@ export function SignalTable({ signals }: { signals: SignalRow[] }) {
         <span role="columnheader">为什么</span>
         <span role="columnheader">过程</span>
         <span role="columnheader">影响</span>
-        <span role="columnheader">下次规则</span>
+        <span role="columnheader">自动校准</span>
         <span role="columnheader">时间</span>
       </div>
       {signals.map((signal, index) => (

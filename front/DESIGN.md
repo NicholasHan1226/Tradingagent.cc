@@ -1,538 +1,67 @@
-# TradingAgentDashboard Design Notes
+# TradingAgent Front Design System
 
-## Design Direction
+## Product position
 
-The dashboard is now structured as a result-first automated trading command
-center: `主页` is the default overview, while `收益`、`机会`、`持仓`、`决策`、
-`风险`、`复盘` are theme pages for deeper result review.
+TradingAgent Front is a read-only observatory for an automated trading system. It explains what the system saw, how a process moved, what was written back, how the simulated portfolio changed, and where risk controls intervened. It never exposes order entry, queue mutation, capital controls, strategy editing, or account credentials.
 
-The visual language follows the restrained side of Hyperliquid, GitHub, and
-Linear: deep black base, thin lines, compact navigation, flat panels, tabular
-numbers, restrained teal as the primary action color, amber for target/review
-states, and red only for risk or negative impact. The page intentionally avoids
-exchange-only tools: no buy/sell box, no wallet connect workflow, no technical
-indicator toolbar, no drawing rail, and no decorative glow around icons.
-The latest polish pass removed radial background glow, removed exchange-like
-system codes from the visible header, and rebuilt the market header as a Hyperliquid-style
-page title band: large title, quiet subtitle, right-side market filters, and a
-single KPI strip beneath it. The title band now changes with the selected page,
-so `收益`、`机会`、`持仓`、`决策`、`风险`、`复盘` do not repeat a second large
-page header in the content area. The home hero is now unframed, with live return
-as the primary visual result and the right rail reserved for result explanations.
-The background now carries a clearer Hyperliquid-like contour texture: quiet
-black at the top, deeper green financial map lines across the title band and
-lower canvas, and panels sitting on that substrate instead of floating as
-generic dashboard cards. The homepage right rail has also been merged into one
-continuous result module so it reads less like stacked dashboard widgets.
-The latest Hyperliquid alignment pass further reduced visual noise: top
-navigation selected states no longer use boxed focus styling, panel borders and
-state pills are lower contrast, the content substrate is darker and less
-glowy, and dense tables use tighter rows. The intent is to feel like a
-financial product shell, not a colorful trading dashboard skin.
-The latest structure pass makes the live-return chart the homepage's primary
-module, with a compact conclusion band inside the same panel and a right rail
-reserved for the few actions the user should consider now. Cyan has been
-reduced to the live-return and primary-action role; the wordmark is now mostly
-white with a small cyan recognition line instead of a color-split text label.
-The latest production pass turns the homepage right rail into one `当前结论`
-module instead of three stacked sub-panels, adds explicit target and risk lines
-to the live-return chart, adds a compact opportunity summary strip above the
-opportunity table, and removes the repeated contribution panel from the
-decision page rail.
-The latest gap-repair pass adds result-linked event chips to the live-return
-chart and replaces the equal-width decision path with a decreasing funnel that
-shows where opportunities leave the channel. The UI now makes the relationship
-between return movement and opportunity/decision review explicit without adding
-trading-terminal controls.
-The latest integration-prep pass aligns the dashboard with the real
-TradingAgent project surfaces: signal queue files are treated as the first
-live opportunity source, `signals/positions` is the preferred future holdings
-source, `shared/accounting/position_plan.jsonl` is the current fallback, and
-`shared/review/daily/daily_brief.jsonl` plus attribution files are the first
-decision/review evidence sources. The reserved API endpoint is
-`/api/trading-agent/snapshot`; it is intentionally read-only and cannot trigger
-orders.
-The latest Hyperliquid workbench pass reduces the visible "dashboard card"
-language further: the page title band is shorter, the main homepage region is a
-single continuous workbench substrate, inner regions are separated by hairlines
-instead of floating card borders, corner radii are smaller, and the chart event
-bar plus result drilldown area are embedded in the same information surface.
-The chart now uses `机会缺口` as the user-facing opportunity line instead of
-negative/backstage wording.
-The latest browser-comment pass turns the top KPI strip into a more compact
-result summary: simulated profit amount and return percentage are merged with
-the amount as the primary value, market freshness moved out of the KPI strip,
-the ambiguous page-mode badge was removed, market selection became a default
-`全市场` drilldown menu, the simulated/live account control became a click
-switch, and the homepage now includes a compact trading-signal funnel before
-the live return chart.
-The latest dynamic-funnel pass makes the homepage triad explicit: dynamic
-signal funnel, real-time return, and the return curve are the three primary
-modules. The duplicated top profit KPI remains removed, simulated profit amount
-plus return percentage live in the home chart's primary result position, and
-the account mode stays a single click-toggle. The signal funnel is now a true
-screening funnel rather than a generic moving channel. The current pass removes
-hard-coded aggregate counts from the homepage funnel: stage counts, dropped
-counts, moving symbols, and the final `交易信号` output are derived from the
-current signal rows. With the current mock signal rows this means `6 -> 6 -> 6
--> 4 -> 4`, and the right live-return module summarizes how many signals are
-executed, pending, and missed. When the read-only TradingAgent snapshot is
-mounted, this same component should update from real signal data without
-changing the visual layer.
-The latest homepage refinement pass tightens the first-screen standard again:
-the return module is labeled simply as `模拟盘`, uses amount and percentage as
-one result, and keeps `实盘` as a reserved switch instead of a separate status
-card. The empty funnel no longer appears as a generic waiting card; it uses a
-five-stage pipeline skeleton so the space always reads as a funnel surface.
-When production `funnelEvents[]` exist, the same surface becomes a moving
-opportunity pipeline driven by real stage events.
-The latest real-funnel pass moves this one step closer to production data:
-`funnelEvents[]` are grouped by opportunity id, the visible stages are
-`发现 -> 研判 -> 风控 -> 确认 -> 成交`, and each opportunity renders as its own
-animated lane with stage dots and a final outcome. This replaces the previous
-decorative moving channel with a real trading funnel: users can see how many
-opportunities entered, which stages they reached, and what became a trade.
-The return card is now titled `实时收益`; `模拟盘` and `实盘` are only the
-account toggle, with live mode shown as a quiet reserved state.
+The active desktop information architecture is `总览 / 收益 / 过程 / 持仓 / 风险 / 复盘`. The supported design-QA viewports are 1280×720 and 1440×900; mobile is intentionally deferred.
 
-The home page answers the user-facing questions first:
+## Design language
 
-- Is the simulated account making money now?
-- How far is it from the target?
-- Which opportunities and positions drove the result?
-- Which risk needs attention?
-- Where can the user review more detail next?
+The interface uses a Hyperliquid-inspired terminal grammar rather than a generic dashboard skin:
 
-## Information Architecture
+- one continuous near-black canvas with internal hairline dividers;
+- compact market/account metrics instead of hero cards;
+- a primary data surface, 316px read-only inspector, and optional bottom ledger;
+- tabular mono numbers, 12px primary UI copy, and 11px only for metadata;
+- cyan for positive/live/selected, red for loss or risk, amber for waiting/review, muted gray for unavailable facts;
+- no decorative glow, gradients, large radii, floating cards, or artificial asset graphics.
 
-- `主页`: dynamic signal funnel, core live-return result, larger return curve,
-  current conclusion, action queue, risk state, key opportunities, and compact
-  holdings. Simulated profit amount and return percentage live together in the
-  home chart result position, not in the top KPI strip.
-- `收益`: page title band plus larger live return chart, contribution, and risk
-  context.
-- `机会`: page title band plus only currently actionable opportunities,
-  including current judgement, missing condition, valid window, expected impact,
-  and risk. A compact summary strip answers how many opportunities are
-  actionable, how much impact is visible, how many are waiting, and how many are
-  blocked by risk before the user reads the table.
-- `持仓`: page title band plus simulated positions, contribution role, weight,
-  P/L, and risk state.
-- `决策`: page title band plus a decreasing decision funnel and outcome
-  distribution, kept separate from the lifecycle log so it does not duplicate
-  signal rows.
-- `风险`: page title band plus drawdown boundary, risk saves, and opportunity
-  impact.
-- `复盘`: page title band plus closed-opportunity attribution for tracing why
-  an opportunity made money, why it was not used, what it affected, and what to
-  adjust next time.
+Hyperliquid structures are translated to the product boundary: its market ticker becomes the snapshot strip, chart remains a chart, order book becomes Process Book, order form becomes Automation Inspector, and positions/orders/history become read-only ledgers.
 
-## Token Decisions
+## Shared page anatomy
 
-- `--bg-*`: near-black surfaces, avoiding the earlier blue dashboard cast.
-- `--surface-*`: flat black/near-black panels; depth comes from hairlines,
-  spacing, text hierarchy, and a slight transparent green-black material. The
-  workbench material is intentionally more transparent than earlier card
-  surfaces so it sits inside the page substrate instead of floating above it.
-- `--text-*`: off-white primary text, muted labels, faint metadata.
-- `--accent-blue` / `--accent-cyan`: primary action, live return, and the
-  minimal brand recognition line. Profitable secondary values use lower visual
-  weight so cyan does not dominate every state.
-- `--state-target`: target and review states.
-- `--state-danger`: drawdown, risk, and negative opportunity impact.
-- `--font-number`: financial numbers, percentages, timestamps, and table
-  values.
+`TerminalPageShell` owns the secondary-page structure:
 
-## Component Rules
+1. compact context strip: selected market, return, drawdown, process state and holdings;
+2. primary data surface: chart or ledger;
+3. Automation Inspector: derived status, distribution and evidence, with no actions;
+4. optional bottom ledger for related events.
 
-- Top navigation is page-level: `主页` is active by default and all theme pages
-  are clickable.
-- Brand: use a wordmark-only logo until a stronger mark route is selected.
-  Rejected directions: forced `TA` monogram and abstract flow mark. The current
-  lockup makes `TradingAgent` itself the logo, using a pure white wordmark plus
-  one restrained cyan recognition line. It stays unboxed, unglowed, descriptor-free, and
-  readable at small navigation size so it matches the GitHub/Hyperliquid
-  restraint. This is a formalized in-product identity direction, not a final
-  legally cleared trademark.
-- Market header is the persistent page-title and KPI band: result overview
-  title, selected-page context, simulated account active, live account reserved,
-  market drilldown, simulated profit plus return percentage, target gap,
-  opportunities, and drawdown. It
-  should read like Hyperliquid's portfolio/staking page shell, not an exchange
-  order-entry header.
-- Top navigation follows the Hyperliquid restraint pattern: active text is
-  cyan, but no large active box or glowing icon treatment is allowed. Keyboard
-  focus remains visible but quiet.
-- Background texture is part of the page system. It must stay line-based and
-  restrained: no glowing icon backplates, no bokeh, no decorative blobs.
-- Main workbench surfaces should feel embedded, not stacked. Prefer one
-  continuous container with internal dividers over multiple repeated cards.
-- Home performance module is conclusion-first, not marketing copy. It gives the
-  immediate answer: simulated return is above target and drawdown is still
-  inside the risk boundary.
-- Home performance module avoids duplicate KPI content. The persistent header
-  owns target gap, opportunities, and drawdown; market freshness sits beside
-  the market drilldown; the chart module owns simulated profit plus return
-  percentage, trend, target line, risk line, and attribution entry.
-- Homepage signal funnel is a dynamic channel-health board, not a second
-  decision page and not a static KPI strip. It must visibly answer: how many
-  opportunities entered, how many survived each screening step, where
-  opportunities dropped out, and how many trading signals were generated. It
-  should be derived from signal data, not from decorative or fixed animation
-  numbers. It should not need explanatory headline text by default. Motion must
-  remain functional and restrained: no glowing icon backplates, no bright
-  blocks, and no trading-terminal controls.
-- Homepage signal funnel empty state should still look like a funnel surface,
-  not a centered message box. Use a quiet five-stage pipeline skeleton and
-  minimal text until real events arrive.
-- Homepage return card should be user-facing: `实时收益` is the card title,
-  `模拟盘` is the default result mode, `实盘` is a reserved toggle, and the
-  primary number combines amount with percentage instead of splitting them
-  across separate panels. Return color is semantic: positive results use the
-  cyan accent, negative results use the risk red, and flat/zero results stay
-  neutral.
-- Live return chart is the homepage's main panel and must be visible on the
-  first 1280x720 viewport. On the homepage, the chart's latest point follows
-  the current portfolio return so the curve, header stat, and `实时收益` card do
-  not show conflicting current results. The chart's current marker and label
-  also inherit the same positive/negative/neutral tone.
-- Right rail is a single result explanation module on the homepage, not a stack of
-  separate alert cards or an action/order panel.
-- Tables are dense and result-oriented, with Chinese-first copy, real ticker
-  symbols preserved, sticky headers, low-contrast row dividers, reduced row
-  height, and hover states that do not add extra color noise.
-- Decision formation uses a decreasing funnel plus outcome pills so it differs
-  from the opportunity record and immediately shows where opportunities drop
-  out.
-- Live return chart event chips are navigation, not trading controls. They
-  should link an inflection point to the related `机会`、`决策` or `风险` page
-  with restrained chip styling and no bright marker glow.
-- Visible copy follows a result-language rule: avoid backstage actions,
-  engineering field names, and exchange-terminal phrasing; prefer commercial
-  decision phrases such as `查看收益原因`、`实盘预留`、`实时`、
-  `等价格和成交量再走强`.
+Secondary pages do not use `PageSummaryBoard`. Empty running state reveals recent completed results when available instead of reserving a large blank panel.
 
-## Motion
+## Page content contract
 
-- Live return data updates every second.
-- Chart animation is subtle and functional.
-- No decorative scanlines, glowing nodes, or animated icon backplates.
-- Motion respects `prefers-reduced-motion`.
-- Homepage signal funnel uses multiple moving signal labels and a quiet lane
-  sweep to show channel movement. It should feel operational, not decorative,
-  and should stop under `prefers-reduced-motion`.
+- `总览`: return chart, runtime inspector, compact process strip and `运行中 / 持仓 / 已完成 / 自动复盘` blotter. If running is empty, the blotter opens the most relevant non-empty result tab.
+- `收益`: equity/target/benchmark chart as the primary surface; ranked contribution and realized/unrealized result in the inspector.
+- `过程`: Process Book with process, market, stage, state, evidence, latency, result and update time; compact stage distribution in the inspector.
+- `持仓`: Portfolio Ledger with market value, derived portfolio weight, floating PnL, contribution and risk; horizontal exposure bars replace the donut.
+- `风险`: drawdown chart with 5% warning and 7% hard-limit context, boundary distance inspector, and Risk Ledger for blocked/missed/cancelled records.
+- `复盘`: completed result ledger and automatic calibration field. User-facing copy is `自动校准`, never an instruction for manual action.
 
-## Production Readiness
+## Data trust rules
 
-The latest production-readiness pass split the dashboard into three clearer
-layers:
+- Use snapshot fields only. Missing facts display `—`, never synthetic zeroes.
+- Holdings totals are currency-aware: A-share-only exposure is CNY, USD-only exposure is USD, percentages remain percentages, and mixed currencies display `多币种` without a false sum.
+- Suppress an asset name when it duplicates the ticker.
+- Terminal rows preserve result states such as partial fill, safety block, missed and cancelled; terminal records never return to the running queue.
+- Display timestamps and source health as observed. Never use the browser clock to disguise stale data.
 
-- `src/types/dashboard.ts`: typed market, page, signal, holding, depth, and
-  performance contracts.
-- `src/data/dashboard.ts`: the current mock dataset and labels, kept outside
-  the React view.
-- `src/lib/dashboard.ts`: derived view rules for live performance updates,
-  market filtering, current opportunities, and review rows.
-- `src/types/status.ts` and `src/components/StatusBoundary.tsx`: shared
-  readiness states for loading, empty, stale, error, and live-account gated
-  surfaces.
-- `src/api/types.ts` and `src/adapters/dashboard.ts`: read-only API envelope
-  and adapter boundary. The mock state now enters the UI through the same
-  adapter path expected from the real simulated-account read model.
-- `src/api/tradingAgentReadModel.ts` and
-  `src/adapters/tradingAgentReadModel.ts`: production-shaped TradingAgent
-  snapshot boundary. It documents ledger, signal queue, review and router log
-  sources while keeping the browser UI read-only.
-- `src/server/tradingAgentSnapshot.ts`: first local read-only snapshot reader
-  for `signals/positions`, `shared/accounting/position_plan.jsonl`, signal
-  queue files, filled signal writeback and review evidence. It is not yet
-  mounted in a real server runtime.
-- `src/api/tradingAgentIntegration.ts`: reserved direct-connect endpoint,
-  browser fetch client, timeout handling and server response wrapper for
-  `/api/trading-agent/snapshot`.
-- `src/api/tradingAgentCapabilities.ts`: real TradingAgent capability map for
-  what can be displayed now, what is partially available, and what must stay
-  gated until account authorization and execution writeback are verified.
-- `src/lib/chartEvents.ts`: chart review anchors are derived from performance
-  movement and active opportunities instead of static mock event labels.
-- `src/pages/`, `src/components/charts/`, `src/components/tables/`, and
-  `src/components/panels/`: page and panel split. `App.tsx` is now the routing
-  and state shell only.
-- `vite.config.ts`: Recharts is separated into a `charts` chunk so the main
-  app bundle stays small.
-- `src/components/ErrorBoundary.tsx`: top-level crash recovery so a failed panel
-  does not become a blank page.
+## Interaction and accessibility
 
-This keeps `App.tsx` focused on page composition and makes the next integration
-step clearer: replace the mock API response with the real simulated-account read
-model, while keeping live-account surfaces gated until a separate
-execution/permission path is verified.
+- Navigation, market filtering, account-mode gate, time ranges and blotter tabs remain keyboard operable.
+- Every terminal region, table, inspector and tab has an accessible name.
+- Focus-visible styling stays present and restrained.
+- Motion is functional, subtle and disabled under `prefers-reduced-motion`.
+- The live-account surface stays a read-only readiness gate until authorization, risk checks and execution receipts are independently verified.
 
-## Design Taste Scorecard
+## Implementation map
 
-- Visual hierarchy: 19/20
-- Typography quality: 14/15
-- Color semantics: 14/15
-- Spacing rhythm: 15/15
-- Interaction feedback: 9/10
-- Accessibility baseline: 8/10
-- Originality / brand fit: 8/10
-- Responsive integrity: 4/5
+- `src/components/terminal/`: shared terminal shell and ledgers.
+- `src/lib/terminalViewModels.ts`: currency-safe, read-only display models.
+- `src/components/workbench/`: overview workbench and result-tab selection.
+- `src/pages/ThemePage.tsx`: composition for the five secondary pages.
+- `src/App.css`: terminal tokens, canvas, grid and dense table rules.
+- `src/api/` and `src/server/`: unchanged read-only snapshot contract.
 
-Total: 95/100. The page is now closer to the Hyperliquid/Linear/GitHub
-restraint target: live return is the true homepage anchor, opportunity and
-review pages have clearer jobs, the right rail reads as one judgement module,
-chart movement links to review surfaces, the workbench feels more embedded and
-less like floating dashboard cards, the headline result no longer duplicates
-the header KPI strip, the account mode is simpler, and the real read-model
-boundary is explicit. Remaining polish should focus on a proper logo route
-board, browser route-level tests, and mounting the reserved snapshot endpoint in
-the selected server runtime.
-
-## Next Iteration
-
-1. Mount `/api/trading-agent/snapshot` in the selected API/server runtime and
-   replace the mock response on the front end.
-2. Run a separate wordmark route board before committing any new symbol mark.
-3. Tune the homepage for the user's full Chrome viewport after more real data is
-   available.
-4. Add route-level browser tests and visual regression so the new readiness
-   states are exercised by real navigation, not only component tests.
-
-## July 4 Homepage Refactor
-
-The homepage now uses three outcome-first modules:
-
-- `SignalFunnelFlow`: a data-driven flow funnel based on the current visible
-  `SignalRow[]`. It shows how many opportunities are collected, how many pass
-  conditions/risk, which branch is protected or missed, and how many become
-  trade signals. This follows the Sankey-style pattern more than a decorative
-  static funnel, because the user needs to see movement and drop-off, not only
-  stage totals. When no live opportunity or signal data is present but holdings
-  exist, the surface stays as `机会管道`, shows `暂无新机会`, and only adds a
-  compact holding-tracking strip. This avoids presenting holdings as a real
-  trading funnel.
-- `RealtimeReturnCard`: one return card combines amount and percentage. Amount
-  is the primary value, percentage is secondary, and simulated/live wording is
-  controlled by the shared account mode. The copy now uses `实时收益` and
-  `实盘入口保留` rather than internal or system-state phrasing. Profit/loss
-  tone is result-driven so a negative live snapshot cannot inherit the positive
-  cyan treatment.
-- `HomeResultBrief`: renamed from judgement language to `当前结论`, with
-  business-readable rows such as `收益主要来自`, `错过原因`, `风险已挡住`, and
-  `实盘`.
-
-Navigation also moved from a single two-line system button to a compact
-segmented account switch: `模拟盘 / 实盘`, with `运行中 / 预留` as state labels.
-The market header moved freshness into a same-height status pill and keeps the
-market selector aligned beside it.
-
-Design references used in this pass:
-
-- Hyperliquid page shell: dark embedded workbench, low-card depth, concise nav,
-  and restrained cyan action color.
-- Funnel/Sankey data-viz pattern: use links and moving particles to show
-  real flow through a pipeline, with branches for protected and missed
-  opportunities.
-
-Updated score after this pass:
-
-- Visual hierarchy: 19/20
-- Typography quality: 14/15
-- Color semantics: 14/15
-- Spacing rhythm: 15/15
-- Interaction feedback: 9/10
-- Accessibility baseline: 8/10
-- Originality / brand fit: 9/10
-- Responsive integrity: 4/5
-
-Total: 92/100. The homepage is a stronger production candidate because the
-funnel is now data-shaped, the real-time return card has one job, and old
-system phrases are removed from the visible UI. Remaining gap: desktop visual
-regression tests and richer real signal-volume data before the funnel can show
-large-market density naturally.
-
-## July 8 Flow Polish
-
-The homepage flow panel now separates three states:
-
-- Real `funnelEvents[]`: rendered as `机会管道` with conversion rate, drop-off
-  ledger, moving labels, and outcome strip.
-- Derived signal rows: rendered as a screening pipeline only when signal stage
-  evidence exists.
-- Holdings only: rendered as a live `持仓跟踪` flow inside `机会管道`, with no
-  opportunity conversion rate. It animates existing positions through state,
-  contribution, watch, and follow-up stages so the homepage does not collapse
-  into a static empty panel during quiet market windows.
-
-Visual changes in this pass:
-
-- Added a compact result banner above the flow so the panel answers the result
-  before the user reads stage cards.
-- Added a low-contrast loss ledger for the exact step where opportunities or
-  holdings narrow.
-- Reduced teal glow in the funnel and return card to keep the Hyperliquid-like
-  dark material restrained.
-- Renamed the live-account placeholder to `实盘入口保留` and the primary return
-  block to `实时收益`.
-- Reduced performance chart x-axis ticks to key dates only, so long production
-  history no longer crowds the chart footer.
-
-Updated score after this pass:
-
-- Visual hierarchy: 19/20
-- Typography quality: 14/15
-- Color semantics: 15/15
-- Spacing rhythm: 15/15
-- Interaction feedback: 9/10
-- Accessibility baseline: 8/10
-- Originality / brand fit: 9/10
-- Responsive integrity: 4/5
-
-Total: 93/100. The flow panel is clearer and less misleading in no-signal
-production states. Remaining gap: the backend should continue improving
-complete per-opportunity `funnelEvents[]` so the page can show a true live
-opportunity funnel during active trading windows.
-
-## July 8 Hyperliquid Alignment Polish
-
-This pass tightens the dashboard toward a Hyperliquid-like workbench rather
-than a conventional card dashboard:
-
-- Reduced the market header from 148px to 130px and moved freshness out of the
-  metric strip, so the first screen has less chrome and more actual result
-  surface.
-- Darkened the global background and reduced contour opacity; cyan is now used
-  mostly for selected state, live state, and positive result emphasis.
-- Rebalanced the homepage grid: the right rail is narrower, the return card is
-  lighter, and the main funnel/chart area reads as embedded terminal panels
-  instead of separate floating blocks.
-- Changed the holdings-only homepage state from a static empty panel into a
-  dynamic `持仓跟踪` flow. It is clearly labeled as holding context and does not
-  display opportunity conversion.
-- Updated tests to protect the new live-account copy and the dynamic holding
-  flow behavior.
-
-Updated score after this pass:
-
-- Visual hierarchy: 19/20
-- Typography quality: 14/15
-- Color semantics: 15/15
-- Spacing rhythm: 15/15
-- Interaction feedback: 9/10
-- Accessibility baseline: 8/10
-- Originality / brand fit: 9/10
-- Responsive integrity: 4/5
-
-Total: 93/100. The page is closer to Hyperliquid in density, color restraint,
-and embedded panel treatment. Remaining gap: complete backend `funnelEvents[]`
-coverage is still needed for the funnel to show real high-volume market flow
-instead of holding-context motion during quiet periods.
-
-## July 8 Dynamic Funnel And Return Polish
-
-This pass makes the homepage funnel a live chart panel instead of a static
-explanation block.
-
-- `机会管道` now uses a single dark channel with five stage rails, animated
-  particles, stage totals, drop-off count, and a compact outcome strip.
-- The real-flow event tape is hidden because repeated text rows made the funnel
-  feel like a log table. The moving channel is the main explanation.
-- Stage language is compressed to `发现 / 初筛 / 研究 / 风控 / 信号`, so users can
-  quickly understand how opportunities become trade signals.
-- The return card keeps amount and percentage together. Amount is primary,
-  percentage is secondary, and `模拟盘 / 实盘` switches in place.
-- The live tab is now a quiet reserved state (`等待接入`) instead of a separate
-  system-style entry.
-- The performance chart uses a wider visual domain so strong returns do not
-  overpower the interface. Values are unchanged; only the plotted range is
-  calmer and more terminal-like.
-
-Verification notes:
-
-- Empty local snapshot: no invented opportunities; the funnel waits.
-- Controlled read-model snapshot with four opportunities: five rails, nineteen
-  animated particles, and visible narrowing from four discoveries to three
-  signal-stage opportunities.
-- Playwright screenshots were used because the in-app browser screenshot tool
-  was not exposed in this turn.
-
-Updated score after this pass:
-
-- Visual hierarchy: 19/20
-- Typography quality: 14/15
-- Color semantics: 15/15
-- Spacing rhythm: 15/15
-- Interaction feedback: 10/10
-- Accessibility baseline: 8/10
-- Originality / brand fit: 9/10
-- Responsive integrity: 4/5
-
-Total: 94/100. The biggest remaining design gap is richer real upstream signal
-volume. The frontend is ready to animate real `funnelEvents[]`, but production
-data currently has quiet windows with holdings/performance and no new signals.
-
-## July 11 Read-Only Workbench Refactor
-
-### Design Direction
-
-The current direction is restrained neo-industrial fintech. Hyperliquid is the
-reference for density, continuous panel geometry, compact market statistics,
-and the chart-plus-right-rail skeleton. TradingAgent remains distinct through
-its evidence-first, read-only workflow: the right rail is for review instead of
-order entry, and the bottom blotter separates active opportunities from terminal
-outcomes.
-
-### Token Decisions
-
-- Added semantic `surface-elevated` and `border-strong` aliases for selected
-  detail and gated states.
-- Standardized the 4/8/12/16/24/32px spacing scale and 120/180ms feedback timing.
-- Preserved cyan for selected/positive state, amber for waiting/review, and red
-  for negative/risk. Main workbench regions use hairlines and tonal separation,
-  not shadows or rounded card stacks.
-
-### Component Changes
-
-- `MarketHeader` is a compact two-row desktop strip with six canonical metrics.
-- `WorkbenchShell` owns one continuous chart, review rail, funnel context, and
-  blotter surface.
-- `ReviewRail` prioritizes risk/review, then active opportunity, then position.
-- `SignalFunnelFlow` has a compact 88px workbench mode; its full visualization
-  remains available for compatibility.
-- `WorkbenchBlotter` exposes active, position, completed, and review tabs with
-  truthful empty states.
-- `LiveGate` replaces the entire workspace result surface in live mode, remains
-  active across top-navigation changes, and offers only a return-to-simulation
-  control.
-- Chart descriptions are linked with `aria-describedby`; interactive range and
-  event controls remain outside the chart image role. Blotter grids expose table,
-  row, column-header, and cell semantics without changing the dense geometry.
-- At desktop heights up to 760px, the chart and compact funnel contract so the
-  active blotter header and first opportunity row remain visible at 1280x720.
-
-### Scorecard
-
-- Visual hierarchy: 18/20
-- Typography quality: 13/15
-- Color semantics: 14/15
-- Spacing rhythm: 14/15
-- Interaction feedback: 9/10
-- Accessibility baseline: 9/10
-- Originality / brand fit: 9/10
-- Responsive integrity: 3/5
-
-Total: 89/100. This is a production candidate for the accepted desktop scope.
-Responsive integrity is intentionally capped because mobile and phone-specific
-work are deferred. Remaining risks are dense-data visual regression coverage,
-native HTML-table migration beyond the current ARIA-compatible grid, and
-validation against a larger real opportunity volume.
-
-### Next Iteration
-
-1. Add repeatable desktop visual regression fixtures for empty, populated, and
-   live-gated workbench states.
-2. Consider native HTML-table markup if future assistive-technology testing
-   identifies a gap beyond the current table/row/header/cell semantics.
-3. Resume responsive work only when the mobile information architecture is
-   explicitly approved.
+The implementation is accepted only after unit/component tests, lint, frontend/API builds, real-browser desktop checks, no-horizontal-overflow checks and a reference/implementation visual comparison all pass.
