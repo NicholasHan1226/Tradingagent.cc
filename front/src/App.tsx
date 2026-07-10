@@ -162,6 +162,7 @@ function App() {
             hasSignalData={hasSignalData}
             holdings={visibleHoldings}
             latestPoint={latestPoint}
+            liveGate={workbench.liveGate}
             marketSummary={selectedMarketSummary}
             marketSummaries={marketSummaries}
             now={now}

@@ -51,6 +51,17 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByRole('region', { name: '交易工作台' })).toHaveLength(1)
   })
 
+  it('gates live mode without exposing execution controls', () => {
+    render(<App />)
+
+    click(screen.getByRole('tab', { name: '实盘' }))
+
+    expect(screen.getByRole('region', { name: '实盘接入状态' })).toHaveTextContent('实盘待接入')
+    expect(screen.getByText('模拟盘参考')).toBeInTheDocument()
+    expect(screen.queryByText('market_data_missing')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /买|卖|下单|确认交易/ })).not.toBeInTheDocument()
+  })
+
   it('replaces demo signals with TradingAgent snapshot signals when the local API is available', async () => {
     vi.stubGlobal(
       'fetch',
@@ -532,16 +543,15 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('600519.SH').length).toBeGreaterThan(0)
   })
 
-  it('switches the return card between simulated and reserved live mode in place', () => {
+  it('switches from the return card into the dedicated live gate and back', () => {
     render(<App />)
 
     const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
-    expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
-    expect(within(card).getAllByText('等待接入').length).toBeGreaterThan(0)
-    expect(within(card).getByText('接入完成后，这里会切换为真实账户的收益、回撤和持仓结果。')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '实盘接入状态' })).toHaveTextContent('实盘待接入')
+    click(screen.getByRole('button', { name: '返回模拟盘' }))
+    expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('shows actionable opportunity summary before the opportunity table', () => {
@@ -556,13 +566,14 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByText('IF2601.CFFEX')).toBeInTheDocument()
   })
 
-  it('keeps the reserved live state inside the return card', () => {
+  it('keeps the reserved live state inside the workbench rather than a dialog', () => {
     render(<App />)
 
     const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getAllByText('等待接入').length).toBeGreaterThan(0)
+    expect(screen.getByRole('region', { name: '实盘接入状态' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('收益结果')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 

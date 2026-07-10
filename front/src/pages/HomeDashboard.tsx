@@ -41,6 +41,7 @@ export function HomeDashboard({
   activeSignals,
   completedSignals,
   reviewItems,
+  liveGate,
 }: {
   accountMode: AccountMode
   activeMarket: Market
@@ -67,6 +68,7 @@ export function HomeDashboard({
   activeSignals: SignalRow[]
   completedSignals: SignalRow[]
   reviewItems: SignalRow[]
+  liveGate: { gated: boolean; title: string; detail: string }
 }) {
   const signalFunnel = getSignalFunnel(signals)
   const liveProfit = portfolio?.pnlAmount ?? 0
@@ -150,6 +152,8 @@ export function HomeDashboard({
       completed={completedSignals}
       context={<SignalFunnelFlow events={funnelEvents} hasSignalData={hasSignalData} holdings={holdings} signals={signals} />}
       evidence={evidence}
+      liveGate={liveGate}
+      onUseSimulation={() => selectAccountMode('simulated')}
       portfolio={portfolio}
       positions={holdings}
       review={reviewItems}

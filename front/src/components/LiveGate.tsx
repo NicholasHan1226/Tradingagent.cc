@@ -1,9 +1,24 @@
-export function LiveGate({ onDismiss }: { onDismiss: () => void }) {
+export function LiveGate({
+  detail,
+  onUseSimulation,
+  title,
+}: {
+  detail: string
+  onUseSimulation: () => void
+  title: string
+}) {
   return (
-    <div className="live-gate-overlay" role="dialog" aria-label="实盘接入状态">
-      <strong>实盘待接入</strong>
-      <p>当前先展示模拟盘结果。实盘完成授权、风控和成交回执确认后再切换。</p>
-      <button onClick={onDismiss} type="button">知道了</button>
-    </div>
+    <section className="live-gate" role="region" aria-label="实盘接入状态">
+      <span>模拟盘参考</span>
+      <strong>{title}</strong>
+      <p>{detail}</p>
+      <div className="live-gate-requirements" aria-label="实盘接入要求">
+        <span><b>01</b>账户授权</span>
+        <span><b>02</b>风险校验</span>
+        <span><b>03</b>成交回执</span>
+      </div>
+      <small>接入完成前不展示真实资金，也不提供下单或确认交易入口。</small>
+      <button onClick={onUseSimulation} type="button">返回模拟盘</button>
+    </section>
   )
 }
