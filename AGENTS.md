@@ -94,7 +94,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 
 ### 开盘验收证据
 
-- `opening_acceptance.py` 聚合验收不得只用泛化 API 健康兜底业务链路。A股旧 SQLite 诊断不可用时，必须嵌入 `ashare_preopen_dry_run` 的数据覆盖、候选池、资金计划和执行门禁摘要；CNFutures 旧日线诊断不可用时，必须嵌入 `cn_futures_live_check` 的 5 分钟数据、复盘和策略 hold 摘要。只有这些业务 runtime evidence 通过，才可把旧诊断 warn/fail 降级为 pass；否则保持 warn/fail。
+- `opening_acceptance.py` 聚合验收不得只用泛化 API 健康替代业务证据。A股验收通过 `TradingagentDataReader`/SharedSignals HTTP API 检查日线覆盖和 5 分钟数据新鲜度；API 不可用、数据为空、覆盖不足或过期时必须 fail-closed，不能通过再次调用同一 API、泛化健康状态或本地旧快照转绿。A股开盘验收不得读取兄弟 SharedSignals SQLite/read-model 文件；本地信号卡、local_sim 成交、签名回执、复盘日志和 no-trade 归因只用于验证 TradingAgent 自身闭环。CNFutures 旧日线诊断不可用时可嵌入 `cn_futures_live_check` 的 5 分钟数据、复盘和策略 hold 摘要，只有该业务 runtime evidence 通过才可降级为 pass。
 
 ### 影子盘隔离
 

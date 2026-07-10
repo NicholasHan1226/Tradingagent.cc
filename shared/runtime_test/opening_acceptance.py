@@ -237,47 +237,6 @@ def _api_health_review(market: str) -> dict[str, Any]:
     }
 
 
-def _ashare_preopen_runtime_evidence(now: datetime) -> dict[str, Any]:
-    try:
-        from shared.runtime_test.ashare_preopen_dry_run import run_preopen_dry_run
-
-        report = run_preopen_dry_run(now=now)
-    except Exception as exc:
-        return {
-            "status": "warn",
-            "reason": "ashare_preopen_dry_run_unavailable",
-            "error": f"{exc.__class__.__name__}: {exc}",
-        }
-    data = report.get("data") if isinstance(report.get("data"), dict) else {}
-    pool = report.get("candidate_pool") if isinstance(report.get("candidate_pool"), dict) else {}
-    capital = report.get("capital_plan") if isinstance(report.get("capital_plan"), dict) else {}
-    gate = report.get("execution_gate") if isinstance(report.get("execution_gate"), dict) else {}
-    synthetic_order = gate.get("synthetic_order") if isinstance(gate.get("synthetic_order"), dict) else {}
-    return {
-        "status": str(report.get("status") or "warn").lower(),
-        "trade_date": report.get("trade_date"),
-        "data_status": data.get("status"),
-        "symbol_count": data.get("symbol_count"),
-        "latest_trade_date": data.get("latest_trade_date"),
-        "candidate_status": pool.get("status"),
-        "candidate_count": pool.get("candidate_count"),
-        "scored_count": pool.get("scored_count"),
-        "capital_status": capital.get("status"),
-        "risk_mode": capital.get("risk_mode"),
-        "target_positions": capital.get("target_positions"),
-        "max_new_positions": capital.get("max_new_positions"),
-        "cash_reserve": capital.get("cash_reserve"),
-        "execution_status": gate.get("status"),
-        "execution_ready": bool(gate.get("ready")),
-        "execution_reason": gate.get("reason"),
-        "synthetic_symbol": synthetic_order.get("ts_code"),
-        "synthetic_quantity": synthetic_order.get("quantity"),
-        "synthetic_budget": synthetic_order.get("budget"),
-        "warnings": report.get("warnings", []),
-        "blockers": report.get("blockers", []),
-    }
-
-
 def _cn_futures_runtime_evidence() -> dict[str, Any]:
     try:
         from shared.runtime_test.cn_futures_live_check import run_live_check
@@ -328,32 +287,31 @@ def _accept_with_api_health_if_ready(
     return status, updated
 
 
-def _ashare_opening_report(now: datetime, sqlite_db: Path) -> dict[str, Any]:
+def _ashare_opening_report(now: datetime) -> dict[str, Any]:
     from shared.runtime_test import ashare_opening_validator as validator
 
     minutes = now.hour * 60 + now.minute
     if (8 * 60 <= minutes < 9 * 60 + 30) or (11 * 60 + 30 < minutes < 13 * 60):
-        return validator.validate_pre_open(sqlite_db=sqlite_db, now=now, min_symbols=1000)
+        return validator.validate_pre_open(now=now, min_symbols=1000)
     if (9 * 60 + 30 <= minutes <= 11 * 60 + 30) or (13 * 60 <= minutes <= 15 * 60):
         session_start = now.replace(hour=9, minute=30, second=0, microsecond=0)
         if minutes >= 13 * 60:
             session_start = now.replace(hour=13, minute=0, second=0, microsecond=0)
         elapsed = int((now - session_start).total_seconds() // 60)
         if elapsed >= 10:
-            return validator.first_sample_alerts(sqlite_db=sqlite_db, now=now, min_symbols=10, wait_minutes=10)
-        return validator.validate_opening(sqlite_db=sqlite_db, now=now, min_symbols=10)
+            return validator.first_sample_alerts(now=now, min_symbols=10, wait_minutes=10)
+        return validator.validate_opening(now=now, min_symbols=10)
     return _closed_window_report("ashare", now, "outside_ashare_opening_acceptance_window")
 
 
-def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
-    report = _ashare_opening_report(now, sqlite_db)
+def check_ashare_opening(now: datetime) -> AcceptanceCheck:
+    report = _ashare_opening_report(now)
     raw_status = str(report.get("status") or "warn").lower()
     status = "fail" if raw_status == "fail" else ("warn" if raw_status == "warn" else "pass")
     reason = str(report.get("reason") or "")
     samples = report.get("samples", {}) if isinstance(report.get("samples"), dict) else {}
     no_trade = report.get("no_trade_explanation", {}) if isinstance(report.get("no_trade_explanation"), dict) else {}
     alerts = report.get("alerts", []) if isinstance(report.get("alerts"), list) else []
-    alert_codes = {str(alert.get("code") or "") for alert in alerts if isinstance(alert, dict)}
     details = {
         "report_type": report.get("report_type"),
         "reason": reason,
@@ -361,6 +319,7 @@ def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
         "bar_count": report.get("bar_count"),
         "symbol_count": report.get("symbol_count"),
         "latest_bar_time": report.get("latest_bar_time"),
+        "latest_bar_age_minutes": report.get("latest_bar_age_minutes"),
         "latest_trade_date": report.get("latest_trade_date"),
         "latest_daily_age_days": report.get("latest_daily_age_days"),
         "max_daily_age_days": report.get("max_daily_age_days"),
@@ -378,35 +337,6 @@ def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
         "alerts": alerts,
         "raw_status": raw_status,
     }
-    api_reason = reason
-    if (
-        status == "warn"
-        and "ashare_sqlite_diagnostic_disabled" in alert_codes
-        and alert_codes.issubset({"ashare_sqlite_diagnostic_disabled"})
-    ):
-        details["original_reason"] = reason
-        api_reason = "sqlite_diagnostic_disabled"
-    if api_reason == "sqlite_diagnostic_disabled" and report.get("report_type") == "pre_open_acceptance":
-        evidence = _ashare_preopen_runtime_evidence(now)
-        details["runtime_evidence"] = evidence
-        details["original_opening_status"] = status
-        if evidence.get("status") == "pass":
-            details["reason"] = "ashare_preopen_dry_run_pass_after_sqlite_diagnostic_disabled"
-            details["raw_status"] = "pass"
-            details["sample_summary"]["symbol_count"] = evidence.get("symbol_count")
-            return AcceptanceCheck(
-                "ashare_opening_acceptance",
-                "pass",
-                "A股开盘验收通过",
-                details,
-            )
-    status, details = _accept_with_api_health_if_ready(
-        market="ashare",
-        status=status,
-        reason=api_reason,
-        details=details,
-        api_only_reasons={"sqlite_diagnostic_disabled"},
-    )
     return AcceptanceCheck(
         "ashare_opening_acceptance",
         status,
@@ -503,7 +433,7 @@ def run_acceptance(
         check_watchdog_inputs(health_input_root),
         check_halt_files(),
         check_sim_health(),
-        check_ashare_opening(current, sqlite_db),
+        check_ashare_opening(current),
         check_cn_futures_opening(current, sqlite_db),
     ]
     overall = _overall(checks)
@@ -630,7 +560,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--health-input-root", type=Path, default=DEFAULT_HEALTH_INPUT_ROOT)
     parser.add_argument("--sharedsignals-root", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--sharedsignals-api-url", default=os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL))
-    parser.add_argument("--sqlite-db", type=Path, default=DEFAULT_SQLITE_DB)
+    parser.add_argument("--sqlite-db", type=Path, default=DEFAULT_SQLITE_DB, help="Only for CNFutures SQLite diagnostic.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON instead of concise text.")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON when --json is used.")
     parser.add_argument("--send-on", choices=["warn", "fail", "never"], default="never")

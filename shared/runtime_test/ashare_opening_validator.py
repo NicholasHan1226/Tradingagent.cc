@@ -5,39 +5,27 @@ Validates SharedSignals 5-minute data, server-local simulated trade samples,
 receipts and review artifacts after the market opens. Alerts are produced only
 when anomalies are detected; the script never creates orders or writes ledger
 state.
+
+All market data checks use TradingagentDataReader (SharedSignals HTTP API).
+Direct SQLite reads from the sibling SharedSignals system are removed —
+production must use the API exclusively and fail closed.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
-import sqlite3
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-try:
-    from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB
-except Exception:  # pragma: no cover
-    DEFAULT_SHARED_SIGNALS_DB = Path("/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite")
+from Ashare.sim_executor import _is_supported_ashare_code
+from shared.data.reader import TradingagentDataReader
+from shared.runtime_test.ashare_preopen_dry_run import _api_daily_coverage_from_reader
 
-DEFAULT_SQLITE_DB = DEFAULT_SHARED_SIGNALS_DB
 CN_TZ = timezone(timedelta(hours=8))
 NO_TRADE_LOG = Path(__file__).resolve().parents[1] / "logs" / "ashare_no_trade_explanations.jsonl"
 MAX_PRE_OPEN_DAILY_AGE_DAYS = 5
-
-
-def _allow_sqlite_diagnostic(db_path: Path) -> bool:
-    if not db_path.exists():
-        return False
-    try:
-        if db_path.resolve() != DEFAULT_SQLITE_DB.resolve():
-            return True
-    except OSError:
-        if str(db_path) != str(DEFAULT_SQLITE_DB):
-            return True
-    return str(os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")).lower() in {"1", "true", "yes", "on"}
 
 
 def _now_cn() -> datetime:
@@ -71,96 +59,103 @@ def _pre_open_session(now: datetime) -> tuple[str, datetime | None]:
     return "closed", None
 
 
-def _query_daily_bars(db_path: Path, trade_date: str) -> dict[str, Any]:
-    if not _allow_sqlite_diagnostic(db_path):
+# ---------------------------------------------------------------------------
+# API-native data helpers
+# ---------------------------------------------------------------------------
+
+
+def _api_session_bars_summary(
+    reader: Any,
+    start: datetime,
+    now: datetime,
+) -> dict[str, Any]:
+    """Check 5-minute intraday bar coverage via SharedSignals API.
+
+    Only counts A-share-supported symbols. Uses parsed datetimes for
+    first/latest. Returns latest_bar_age_minutes. Fails on stale bars
+    (>10 min), missing rows, or insufficient Ashare coverage.
+    """
+    get_batch = getattr(reader, "get_realtime_5min_batch", None)
+    if not callable(get_batch):
         return {
-            "error": "sqlite_diagnostic_disabled",
-            "symbol_count": 0,
-            "daily_bar_count": 0,
-            "sqlite_db": str(db_path),
-        }
-    if not db_path.exists():
-        return {"error": f"sqlite database not found: {db_path}", "symbol_count": 0}
-    conn: sqlite3.Connection | None = None
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        row = conn.execute(
-            """
-            SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(trade_date), MAX(trade_date)
-            FROM market_bars_daily
-            WHERE market='Ashare'
-              AND trade_date <= ?
-              AND close > 0
-            """,
-            (trade_date,),
-        ).fetchone()
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"{exc.__class__.__name__}: {exc}", "symbol_count": 0}
-    finally:
-        if conn is not None:
-            conn.close()
-    return {
-        "daily_bar_count": int(row[0] or 0) if row else 0,
-        "symbol_count": int(row[1] or 0) if row else 0,
-        "first_trade_date": row[2] if row else None,
-        "latest_trade_date": row[3] if row else None,
-    }
-
-
-def _compact_date(value: str) -> date | None:
-    raw = str(value or "").strip().replace("-", "")[:8]
-    if len(raw) != 8 or not raw.isdigit():
-        return None
-    try:
-        return date(int(raw[:4]), int(raw[4:6]), int(raw[6:8]))
-    except ValueError:
-        return None
-
-
-def _daily_age_days(latest_trade_date: Any, current: datetime) -> int | None:
-    latest = _compact_date(str(latest_trade_date or ""))
-    if latest is None:
-        return None
-    return max(0, (current.date() - latest).days)
-
-
-def _query_session_bars(db_path: Path, start: datetime, now: datetime) -> dict[str, Any]:
-    if not _allow_sqlite_diagnostic(db_path):
-        return {
-            "error": "sqlite_diagnostic_disabled",
+            "error": "sharedsignals_api_unavailable",
             "symbol_count": 0,
             "bar_count": 0,
-            "sqlite_db": str(db_path),
+            "data_source": "SharedSignals API",
         }
-    if not db_path.exists():
-        return {"error": f"sqlite database not found: {db_path}", "symbol_count": 0, "bar_count": 0}
-    start_text = start.strftime("%Y-%m-%d %H:%M:%S")
-    now_text = now.strftime("%Y-%m-%d %H:%M:%S")
-    conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        row = conn.execute(
-            """
-            SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(bar_time), MAX(bar_time)
-            FROM market_bars_intraday
-            WHERE market='Ashare'
-              AND COALESCE(interval, '') IN ('5min', '5MIN', '5')
-              AND bar_time >= ?
-              AND bar_time <= ?
-            """,
-            (start_text, now_text),
-        ).fetchone()
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"{exc.__class__.__name__}: {exc}", "symbol_count": 0, "bar_count": 0}
-    finally:
-        if conn is not None:
-            conn.close()
+        rows = list(get_batch("Ashare") or [])
+    except Exception as exc:
+        return {
+            "error": f"{exc.__class__.__name__}: {exc}",
+            "symbol_count": 0,
+            "bar_count": 0,
+            "data_source": "SharedSignals API",
+        }
+
+    if not rows:
+        return {
+            "symbol_count": 0,
+            "bar_count": 0,
+            "data_source": "SharedSignals API",
+        }
+
+    symbols: set[str] = set()
+    bar_count = 0
+    first_bar_dt: datetime | None = None
+    latest_bar_dt: datetime | None = None
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        bar_time_str = str(row.get("bar_time") or row.get("datetime") or "")
+        bar_dt = _parse_bar_time(bar_time_str)
+        if bar_dt is None:
+            continue
+        if bar_dt < start or bar_dt > now:
+            continue
+        symbol = str(row.get("symbol") or row.get("ts_code") or "").strip().upper()
+        if not symbol or not _is_supported_ashare_code(symbol):
+            continue
+        bar_count += 1
+        if symbol:
+            symbols.add(symbol)
+        if first_bar_dt is None or bar_dt < first_bar_dt:
+            first_bar_dt = bar_dt
+        if latest_bar_dt is None or bar_dt > latest_bar_dt:
+            latest_bar_dt = bar_dt
+
+    latest_bar_age_minutes: float | None = None
+    if latest_bar_dt is not None:
+        latest_bar_age_minutes = round((now - latest_bar_dt).total_seconds() / 60.0, 2)
+
     return {
-        "bar_count": int(row[0] or 0) if row else 0,
-        "symbol_count": int(row[1] or 0) if row else 0,
-        "first_bar_time": row[2] if row else None,
-        "latest_bar_time": row[3] if row else None,
+        "bar_count": bar_count,
+        "symbol_count": len(symbols),
+        "first_bar_time": first_bar_dt.isoformat(timespec="seconds") if first_bar_dt else None,
+        "latest_bar_time": latest_bar_dt.isoformat(timespec="seconds") if latest_bar_dt else None,
+        "latest_bar_age_minutes": latest_bar_age_minutes,
+        "data_source": "SharedSignals API",
     }
+
+
+def _parse_bar_time(raw: str) -> datetime | None:
+    """Parse a bar_time string into a timezone-aware datetime in CN_TZ."""
+    if not raw:
+        return None
+    raw = raw.strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=CN_TZ)
+    return parsed.astimezone(CN_TZ)
+
+
+# ---------------------------------------------------------------------------
+# Local evidence helpers (unchanged from original — TradingAgent's own data)
+# ---------------------------------------------------------------------------
 
 
 def _count_jsonl_rows(path: Path) -> int:
@@ -185,7 +180,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _count_local_sim_trades(path: Path, date: str) -> int:
+def _count_local_sim_trades(path: Path, date_str: str) -> int:
     if not path.exists():
         return 0
     count = 0
@@ -209,16 +204,16 @@ def _count_local_sim_trades(path: Path, date: str) -> int:
             or payload.get("timestamp")
             or ""
         )[:10].replace("-", "")
-        if trade_date == date:
+        if trade_date == date_str:
             count += 1
     return count
 
 
-def _count_filled_signals(signals_dir: Path, date: str) -> int:
+def _count_filled_signals(signals_dir: Path, date_str: str) -> int:
     filled_dir = signals_dir / "filled"
     if not filled_dir.exists():
         return 0
-    trade_date = date.replace("-", "")
+    trade_date = date_str.replace("-", "")
     count = 0
     for path in filled_dir.glob("*.json"):
         try:
@@ -235,8 +230,8 @@ def _count_filled_signals(signals_dir: Path, date: str) -> int:
     return count
 
 
-def _signal_status_counts(signals_dir: Path, date: str) -> dict[str, int]:
-    trade_date = date.replace("-", "")
+def _signal_status_counts(signals_dir: Path, date_str: str) -> dict[str, int]:
+    trade_date = date_str.replace("-", "")
     counts = {
         "pending": 0,
         "claimed": 0,
@@ -266,7 +261,7 @@ def _signal_status_counts(signals_dir: Path, date: str) -> dict[str, int]:
     return counts
 
 
-def _count_market_receipts(receipt_path: Path, date: str) -> int:
+def _count_market_receipts(receipt_path: Path, date_str: str) -> int:
     if not receipt_path.exists():
         return 0
     count = 0
@@ -282,7 +277,7 @@ def _count_market_receipts(receipt_path: Path, date: str) -> int:
         if str(payload.get("market") or "").lower() != "ashare":
             continue
         receipt_date = str(payload.get("trade_date") or payload.get("receipt_at") or "")[:10].replace("-", "")
-        if receipt_date == date:
+        if receipt_date == date_str:
             count += 1
     return count
 
@@ -307,13 +302,13 @@ def _link_keys(payload: dict[str, Any]) -> set[str]:
     return keys
 
 
-def _audit_local_sim_receipts(local_sim_path: Path, receipt_path: Path, date: str) -> dict[str, Any]:
+def _audit_local_sim_receipts(local_sim_path: Path, receipt_path: Path, date_str: str) -> dict[str, Any]:
     trades: list[dict[str, Any]] = []
     for payload in _read_jsonl(local_sim_path):
         market = str(payload.get("market") or payload.get("market_type") or "ashare").lower()
         if market not in {"ashare", "a_share", "a-share"}:
             continue
-        if _ashare_payload_date(payload, "trade_date", "created_at", "filled_at", "executed_at", "timestamp") != date:
+        if _ashare_payload_date(payload, "trade_date", "created_at", "filled_at", "executed_at", "timestamp") != date_str:
             continue
         trades.append(payload)
 
@@ -322,7 +317,7 @@ def _audit_local_sim_receipts(local_sim_path: Path, receipt_path: Path, date: st
     for payload in _read_jsonl(receipt_path):
         if str(payload.get("market") or "").lower() != "ashare":
             continue
-        if _ashare_payload_date(payload, "trade_date", "receipt_at", "created_at") != date:
+        if _ashare_payload_date(payload, "trade_date", "receipt_at", "created_at") != date_str:
             continue
         receipt_count += 1
         receipt_keys.update(_link_keys(payload))
@@ -353,11 +348,16 @@ def _audit_local_sim_receipts(local_sim_path: Path, receipt_path: Path, date: st
     }
 
 
-def _latest_no_trade_explanation(path: Path, date: str) -> dict[str, Any]:
+# ---------------------------------------------------------------------------
+# No-trade explanation (unchanged)
+# ---------------------------------------------------------------------------
+
+
+def _latest_no_trade_explanation(path: Path, date_str: str) -> dict[str, Any]:
     rows = _read_jsonl(path)
     for payload in reversed(rows):
         raw_date = str(payload.get("date") or payload.get("trade_date") or payload.get("generated_at") or "")[:10].replace("-", "")
-        if raw_date and raw_date != date:
+        if raw_date and raw_date != date_str:
             continue
         explanation = payload.get("no_trade_explanation")
         if isinstance(explanation, dict):
@@ -592,7 +592,7 @@ def _explain_no_trade(
     latest_classification = _classify_from_latest_no_trade(latest_no_trade)
     if bars.get("error"):
         category = "data_query_failed"
-        action = "check_sharedsignals_read_model"
+        action = "check_sharedsignals_api"
     elif elapsed_minutes is not None and elapsed_minutes < max(1, int(wait_minutes)):
         category = "not_due_yet"
         action = "wait_until_first_sample_window"
@@ -678,12 +678,26 @@ def _has_warning_alerts(alerts: list[dict[str, Any]]) -> bool:
     return any(str(alert.get("severity") or "").lower() in {"warn", "warning", "error", "critical"} for alert in alerts)
 
 
+# ---------------------------------------------------------------------------
+# Public validation functions
+# ---------------------------------------------------------------------------
+
+
+def _resolve_reader(reader: Any | None) -> Any:
+    """Return the provided reader or create a new TradingagentDataReader."""
+    if reader is not None:
+        return reader
+    return TradingagentDataReader()
+
+
 def validate_pre_open(
     *,
-    sqlite_db: Path = DEFAULT_SQLITE_DB,
+    reader: Any | None = None,
     now: datetime | None = None,
     min_symbols: int = 1000,
+    min_coverage_ratio: float = 0.90,
 ) -> dict[str, Any]:
+    data_reader = _resolve_reader(reader)
     current = now or _now_cn()
     if current.tzinfo is None:
         current = current.replace(tzinfo=CN_TZ)
@@ -694,8 +708,7 @@ def validate_pre_open(
         "market": "ashare",
         "report_type": "pre_open_acceptance",
         "checked_at": current.isoformat(timespec="seconds"),
-        "sqlite_db": str(sqlite_db),
-        "data_source": "SharedSignals API; SQLite read model only for explicit diagnostics",
+        "data_source": "SharedSignals API",
         "read_only": True,
         "session": session_name,
         "session_start": start.isoformat(timespec="seconds") if start else None,
@@ -704,35 +717,35 @@ def validate_pre_open(
     }
     if start is None:
         return {**result, "status": "warn", "reason": "not_in_pre_open_window"}
-    bars = _query_daily_bars(sqlite_db, start.strftime("%Y%m%d"))
+
+    try:
+        bars = _api_daily_coverage_from_reader(
+            data_reader,
+            now=current,
+            min_symbols=max(1, int(min_symbols)),
+            min_coverage_ratio=min_coverage_ratio,
+        )
+    except Exception as exc:
+        bars = {
+            "status": "fail",
+            "reason": "api_daily_unavailable",
+            "symbol_count": 0,
+            "data_source": "SharedSignals API",
+            "error": f"{exc.__class__.__name__}: {exc}",
+        }
     result.update(bars)
-    daily_age = _daily_age_days(bars.get("latest_trade_date"), current)
-    result["latest_daily_age_days"] = daily_age
-    result["max_daily_age_days"] = MAX_PRE_OPEN_DAILY_AGE_DAYS
-    if bars.get("error") == "sqlite_diagnostic_disabled":
-        result["status"] = "warn"
-        result["reason"] = "sqlite_diagnostic_disabled"
-    elif bars.get("error"):
-        result["status"] = "fail"
-        result["reason"] = "pre_open_daily_query_failed"
-    elif int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
-        result["status"] = "warn"
-        result["reason"] = "pre_open_daily_bars_missing"
-    elif daily_age is None or daily_age > MAX_PRE_OPEN_DAILY_AGE_DAYS:
-        result["status"] = "warn"
-        result["reason"] = "pre_open_daily_bars_stale"
-    else:
-        result["status"] = "pass"
-        result["reason"] = "pre_open_acceptance_passed"
+    result["status"] = bars.get("status", "fail")
+    result["reason"] = bars.get("reason", "api_daily_unavailable")
     return result
 
 
 def validate_opening(
     *,
-    sqlite_db: Path = DEFAULT_SQLITE_DB,
+    reader: Any | None = None,
     now: datetime | None = None,
     min_symbols: int = 10,
 ) -> dict[str, Any]:
+    data_reader = _resolve_reader(reader)
     current = now or _now_cn()
     if current.tzinfo is None:
         current = current.replace(tzinfo=CN_TZ)
@@ -743,8 +756,7 @@ def validate_opening(
         "market": "ashare",
         "report_type": "opening_validation",
         "checked_at": current.isoformat(timespec="seconds"),
-        "sqlite_db": str(sqlite_db),
-        "data_source": "SharedSignals API; SQLite read model only for explicit diagnostics",
+        "data_source": "SharedSignals API",
         "read_only": True,
         "session": session_name,
         "session_start": start.isoformat(timespec="seconds") if start else None,
@@ -753,20 +765,24 @@ def validate_opening(
     }
     if start is None:
         return {**result, "status": "warn", "reason": "outside_ashare_session"}
-    bars = _query_session_bars(sqlite_db, start, current)
+
+    bars = _api_session_bars_summary(data_reader, start, current)
     result.update(bars)
-    if bars.get("error") == "sqlite_diagnostic_disabled":
-        result["status"] = "warn"
-        result["reason"] = "sqlite_diagnostic_disabled"
-    elif bars.get("error"):
+    if bars.get("error"):
         result["status"] = "fail"
-        result["reason"] = "opening_validation_query_failed"
+        result["reason"] = "opening_validation_api_unavailable"
     elif int(bars.get("bar_count") or 0) <= 0:
-        result["status"] = "warn"
+        result["status"] = "fail"
         result["reason"] = "opening_session_has_no_5min_bars"
     elif int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
-        result["status"] = "warn"
+        result["status"] = "fail"
         result["reason"] = "opening_session_symbol_coverage_low"
+    elif (
+        bars.get("latest_bar_age_minutes") is not None
+        and float(bars["latest_bar_age_minutes"]) > 10.0
+    ):
+        result["status"] = "fail"
+        result["reason"] = "opening_5min_bars_stale"
     else:
         result["status"] = "pass"
         result["reason"] = "opening_session_5min_data_ready"
@@ -775,7 +791,7 @@ def validate_opening(
 
 def first_sample_alerts(
     *,
-    sqlite_db: Path = DEFAULT_SQLITE_DB,
+    reader: Any | None = None,
     signals_dir: Path | None = None,
     local_sim_path: Path | None = None,
     receipt_path: Path | None = None,
@@ -785,6 +801,7 @@ def first_sample_alerts(
     min_symbols: int = 10,
     wait_minutes: int = 10,
 ) -> dict[str, Any]:
+    data_reader = _resolve_reader(reader)
     current = now or _now_cn()
     if current.tzinfo is None:
         current = current.replace(tzinfo=CN_TZ)
@@ -804,8 +821,7 @@ def first_sample_alerts(
         "market": "ashare",
         "report_type": "first_sample_alert",
         "checked_at": current.isoformat(timespec="seconds"),
-        "sqlite_db": str(sqlite_db),
-        "data_source": "SharedSignals API; SQLite read model only for explicit diagnostics",
+        "data_source": "SharedSignals API",
         "read_only": True,
         "session": session_name,
         "session_start": start.isoformat(timespec="seconds") if start else None,
@@ -820,15 +836,19 @@ def first_sample_alerts(
     if elapsed_minutes is not None and elapsed_minutes < max(1, int(wait_minutes)):
         return {**result, "status": "pass", "reason": "first_sample_check_not_due"}
 
-    bars = _query_session_bars(sqlite_db, start, current)
-    result.update(bars)
     alerts: list[dict[str, Any]] = []
-    if bars.get("error") == "sqlite_diagnostic_disabled":
-        alerts.append({"severity": "warn", "code": "ashare_sqlite_diagnostic_disabled", "message": "A股本地 SQLite 诊断未启用；以 SharedSignals API 健康检查为准。"})
-    elif bars.get("error"):
-        alerts.append({"severity": "error", "code": "ashare_5min_check_failed", "message": "A股5分钟首样本检查无法读取 SharedSignals read model。"})
-    elif int(bars.get("bar_count") or 0) <= 0 or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
-        alerts.append({"severity": "warn", "code": "ashare_5min_missing_in_session", "message": "A股交易时段开始后仍缺少足够的5分钟数据。"})
+
+    bars = _api_session_bars_summary(data_reader, start, current)
+    if bars.get("error"):
+        alerts.append({"severity": "error", "code": "ashare_5min_api_unavailable", "message": "A股5分钟首样本检查无法读取 SharedSignals API 数据。"})
+    elif int(bars.get("bar_count") or 0) <= 0:
+        alerts.append({"severity": "error", "code": "ashare_5min_missing_in_session", "message": "A股交易时段开始后仍无有效5分钟数据。"})
+    elif int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
+        alerts.append({"severity": "error", "code": "ashare_5min_coverage_low", "message": "A股交易时段开始后5分钟数据覆盖不足。"})
+    elif bars.get("latest_bar_age_minutes") is not None and float(bars["latest_bar_age_minutes"]) > 10.0:
+        alerts.append({"severity": "error", "code": "ashare_5min_stale_in_session", "message": "A股最新5分钟数据已超过10分钟。"})
+
+    result.update(bars)
 
     trade_date = current.strftime("%Y%m%d")
     local_sim_count = _count_local_sim_trades(local_sim_path, trade_date)
@@ -883,9 +903,18 @@ def first_sample_alerts(
         alerts.append({"severity": "info", "code": "ashare_review_not_yet_run", "message": "A股复盘日志尚未生成，等待日终复盘任务。"})
 
     result["alerts"] = alerts
+    fatal_data_alerts = {
+        "ashare_5min_api_unavailable",
+        "ashare_5min_missing_in_session",
+        "ashare_5min_coverage_low",
+        "ashare_5min_stale_in_session",
+    }
+    has_fatal_data_alert = any(str(alert.get("code") or "") in fatal_data_alerts for alert in alerts)
     has_warning_alerts = _has_warning_alerts(alerts)
-    result["status"] = "warn" if has_warning_alerts else "pass"
-    if has_warning_alerts:
+    result["status"] = "fail" if has_fatal_data_alert else ("warn" if has_warning_alerts else "pass")
+    if has_fatal_data_alert:
+        result["reason"] = "first_sample_5min_data_gate_failed"
+    elif has_warning_alerts:
         result["reason"] = "first_sample_alerts_present"
     elif expected_no_trade:
         result["reason"] = "first_sample_no_trade_explained"
@@ -894,9 +923,13 @@ def first_sample_alerts(
     return result
 
 
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Read-only A-share opening acceptance.")
-    parser.add_argument("--sqlite-db", type=Path, default=DEFAULT_SQLITE_DB)
+    parser = argparse.ArgumentParser(description="Read-only A-share opening acceptance via SharedSignals API.")
     parser.add_argument("--signals-dir", type=Path, default=None)
     parser.add_argument("--local-sim-path", type=Path, default=None)
     parser.add_argument("--receipt-path", type=Path, default=None)
@@ -915,10 +948,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     now = _parse_now(args.now)
     if args.pre_open:
-        report = validate_pre_open(sqlite_db=args.sqlite_db, now=now, min_symbols=args.min_symbols)
+        report = validate_pre_open(now=now, min_symbols=max(1, int(args.min_symbols)))
     elif args.first_sample:
         report = first_sample_alerts(
-            sqlite_db=args.sqlite_db,
             signals_dir=args.signals_dir,
             local_sim_path=args.local_sim_path,
             receipt_path=args.receipt_path,
@@ -929,7 +961,7 @@ def main(argv: list[str] | None = None) -> int:
             wait_minutes=args.wait_minutes,
         )
     else:
-        report = validate_opening(sqlite_db=args.sqlite_db, now=now, min_symbols=args.min_symbols)
+        report = validate_opening(now=now, min_symbols=args.min_symbols)
     print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
     return 2 if report.get("status") == "fail" else 0
 

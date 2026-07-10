@@ -1,119 +1,199 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from shared.runtime_test import ashare_opening_validator
 
 
+def _mock_reader(
+    *,
+    assets: list[dict] | None = None,
+    daily_rows: list[dict] | None = None,
+    intraday_rows: list[dict] | None = None,
+    api_available: bool = True,
+) -> MagicMock:
+    """Build a mock TradingagentDataReader with controlled API responses."""
+    reader = MagicMock()
+
+    if not api_available:
+        reader.get_assets.side_effect = ConnectionError("API unavailable")
+        reader.get_latest_daily_batch.side_effect = ConnectionError("API unavailable")
+        reader.get_realtime_5min_batch.side_effect = ConnectionError("API unavailable")
+        return reader
+
+    reader.get_assets.return_value = assets or []
+    reader.get_latest_daily_batch.return_value = daily_rows or []
+    reader.get_realtime_5min_batch.return_value = intraday_rows or []
+
+    return reader
+
+
+def _daily_row(symbol: str, trade_date: str, close: float, amount: float = 100_000.0) -> dict:
+    return {
+        "symbol": symbol,
+        "ts_code": symbol,
+        "trade_date": trade_date,
+        "close": close,
+        "amount": amount,
+    }
+
+
+def _asset_row(symbol: str) -> dict:
+    """Return an asset row. symbol should include suffix like '600000.SH'."""
+    return {"symbol": symbol, "ts_code": symbol, "name": f"Test{symbol.split('.')[0]}", "status": "active"}
+
+
+def _intraday_row(symbol: str, bar_time: str) -> dict:
+    return {"symbol": symbol, "ts_code": symbol, "bar_time": bar_time, "trade_date": bar_time[:10].replace("-", "")}
+
+
 class AshareOpeningValidatorTest(unittest.TestCase):
-    def _db(self, intraday_rows: list[tuple[str, str]], daily_rows: list[tuple[str, str, float]] | None = None) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        path = root / "marketdata.sqlite"
-        conn = sqlite3.connect(path)
-        conn.execute(
-            """
-            CREATE TABLE market_bars_intraday (
-                market TEXT,
-                symbol TEXT,
-                bar_time TEXT,
-                interval TEXT
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE market_bars_daily (
-                market TEXT,
-                symbol TEXT,
-                trade_date TEXT,
-                close REAL
-            )
-            """
-        )
-        conn.executemany(
-            "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?)",
-            [("Ashare", symbol, bar_time, "5min") for symbol, bar_time in intraday_rows],
-        )
-        for row in daily_rows or []:
-            conn.execute("INSERT INTO market_bars_daily VALUES (?, ?, ?, ?)", ("Ashare", row[0], row[1], row[2]))
-        conn.commit()
-        conn.close()
-        return path
+    # -- validate_pre_open tests --
 
     def test_pre_open_passes_when_daily_bars_ready(self) -> None:
-        db_path = self._db([], [("600000.SH", "20260706", 10.0), ("000001.SZ", "20260706", 12.0)])
+        reader = _mock_reader(
+            assets=[_asset_row("600000.SH"), _asset_row("000001.SZ")],
+            daily_rows=[
+                _daily_row("600000.SH", "20260706", 10.0),
+                _daily_row("000001.SZ", "20260706", 12.0),
+            ],
+        )
         report = ashare_opening_validator.validate_pre_open(
-            sqlite_db=db_path,
+            reader=reader,
             now=datetime.fromisoformat("2026-07-06T08:55:00+08:00"),
             min_symbols=2,
         )
         self.assertEqual(report["status"], "pass")
-        self.assertEqual(report["reason"], "pre_open_acceptance_passed")
+        self.assertIn("api_daily", report.get("reason", ""))
         self.assertFalse(report["real_trading_enabled"])
+        self.assertIn("SharedSignals API", report.get("data_source", ""))
 
-    def test_pre_open_warns_when_daily_bars_missing(self) -> None:
-        db_path = self._db([])
+    def test_pre_open_fails_when_daily_bars_missing(self) -> None:
+        reader = _mock_reader(assets=[_asset_row("600000.SH"), _asset_row("000001.SZ")], daily_rows=[])
         report = ashare_opening_validator.validate_pre_open(
-            sqlite_db=db_path,
+            reader=reader,
             now=datetime.fromisoformat("2026-07-06T08:55:00+08:00"),
             min_symbols=2,
         )
-        self.assertEqual(report["status"], "warn")
-        self.assertEqual(report["reason"], "pre_open_daily_bars_missing")
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["reason"], "api_daily_bars_missing")
 
-    def test_pre_open_warns_when_latest_daily_bars_are_stale(self) -> None:
-        db_path = self._db([], [("600000.SH", "20260625", 10.0), ("000001.SZ", "20260625", 12.0)])
+    def test_pre_open_fails_when_daily_bars_stale(self) -> None:
+        reader = _mock_reader(
+            assets=[_asset_row("600000.SH"), _asset_row("000001.SZ")],
+            daily_rows=[
+                _daily_row("600000.SH", "20260625", 10.0),
+                _daily_row("000001.SZ", "20260625", 12.0),
+            ],
+        )
         report = ashare_opening_validator.validate_pre_open(
-            sqlite_db=db_path,
+            reader=reader,
             now=datetime.fromisoformat("2026-07-06T08:55:00+08:00"),
             min_symbols=2,
         )
-        self.assertEqual(report["status"], "warn")
-        self.assertEqual(report["reason"], "pre_open_daily_bars_stale")
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("stale", report.get("reason", ""))
         self.assertGreater(report["latest_daily_age_days"], report["max_daily_age_days"])
 
+    def test_pre_open_fails_when_coverage_below_threshold(self) -> None:
+        reader = _mock_reader(
+            assets=[_asset_row(f"{600000 + i:06d}.SH") for i in range(100)],
+            daily_rows=[_daily_row(f"{600000 + i:06d}.SH", "20260706", 10.0) for i in range(44)],
+        )
+        report = ashare_opening_validator.validate_pre_open(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T08:55:00+08:00"),
+            min_symbols=2,
+            min_coverage_ratio=0.90,
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["reason"], "api_daily_coverage_incomplete")
+        self.assertLess(report["daily_coverage_ratio"], 0.90)
+
+    def test_pre_open_fails_when_api_unavailable(self) -> None:
+        reader = _mock_reader(api_available=False)
+        report = ashare_opening_validator.validate_pre_open(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T08:55:00+08:00"),
+            min_symbols=2,
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["reason"], "api_daily_unavailable")
+
+    def test_pre_open_outside_window_returns_closed(self) -> None:
+        reader = _mock_reader()
+        report = ashare_opening_validator.validate_pre_open(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T16:00:00+08:00"),
+        )
+        self.assertEqual(report["status"], "warn")
+        self.assertEqual(report["reason"], "not_in_pre_open_window")
+
+    # -- validate_opening tests --
+
     def test_opening_passes_with_5min_bars(self) -> None:
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
         report = ashare_opening_validator.validate_opening(
-            sqlite_db=db_path,
+            reader=reader,
             now=datetime.fromisoformat("2026-07-06T09:40:00+08:00"),
             min_symbols=2,
         )
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["reason"], "opening_session_5min_data_ready")
         self.assertEqual(report["symbol_count"], 2)
+        self.assertEqual(report["data_source"], "SharedSignals API")
 
     def test_opening_warns_outside_session(self) -> None:
-        db_path = self._db([])
+        reader = _mock_reader()
         report = ashare_opening_validator.validate_opening(
-            sqlite_db=db_path,
+            reader=reader,
             now=datetime.fromisoformat("2026-07-06T16:00:00+08:00"),
             min_symbols=2,
         )
         self.assertEqual(report["status"], "warn")
         self.assertEqual(report["reason"], "outside_ashare_session")
 
+    def test_opening_fails_when_no_5min_bars(self) -> None:
+        reader = _mock_reader(intraday_rows=[])
+        report = ashare_opening_validator.validate_opening(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T09:40:00+08:00"),
+            min_symbols=2,
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["reason"], "opening_session_has_no_5min_bars")
+
+    def test_opening_fails_when_api_unavailable(self) -> None:
+        reader = _mock_reader(api_available=False)
+        report = ashare_opening_validator.validate_opening(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T09:40:00+08:00"),
+            min_symbols=2,
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["reason"], "opening_validation_api_unavailable")
+
+    # -- first_sample_alerts tests --
+
     def test_first_sample_alerts_when_bars_exist_but_no_trade_sample(self) -> None:
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
             receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
             review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
@@ -137,14 +217,14 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         root = Path(tmp.name)
         local_sim = root / "local_sim_trades.jsonl"
         local_sim.write_text(json.dumps({"trade_id": "t1", "trade_date": "20260706"}) + "\n", encoding="utf-8")
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=local_sim,
             receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
             review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
@@ -181,14 +261,14 @@ class AshareOpeningValidatorTest(unittest.TestCase):
             json.dumps({"market": "ashare", "trade_date": "20260706"}), encoding="utf-8"
         )
 
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=local_sim,
             receipt_path=receipts,
             review_path=review,
@@ -229,14 +309,14 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         review = root / "daily_reviews.jsonl"
         review.write_text(json.dumps({"session": "close"}) + "\n", encoding="utf-8")
 
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=local_sim,
             receipt_path=receipts,
             review_path=review,
@@ -259,15 +339,15 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         root = Path(tmp.name)
         local_sim = root / "local_sim_trades.jsonl"
         local_sim.write_text(json.dumps({"trade_id": "old", "trade_date": "20260703"}) + "\n", encoding="utf-8")
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
 
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=local_sim,
             receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
             review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
@@ -307,15 +387,15 @@ class AshareOpeningValidatorTest(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
 
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
             receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
             review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
@@ -356,15 +436,15 @@ class AshareOpeningValidatorTest(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
 
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
             receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
             review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
@@ -402,15 +482,15 @@ class AshareOpeningValidatorTest(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
 
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
             receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
             review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
@@ -457,15 +537,15 @@ class AshareOpeningValidatorTest(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
 
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
             receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
             review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
@@ -481,6 +561,79 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         latest_log = report["no_trade_explanation"]["latest_no_trade_log"]
         self.assertEqual(latest_log["evidence_status"], "incomplete")
         self.assertIn("candidate_decision_trace_missing", latest_log["evidence_gaps"])
+
+    def test_first_sample_api_unavailable_fail_closed(self) -> None:
+        reader = _mock_reader(api_available=False)
+        report = ashare_opening_validator.first_sample_alerts(
+            reader=reader,
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            no_trade_log_path=Path("/tmp/nonexistent-ashare-no-trade.jsonl"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+        codes = {alert["code"] for alert in report["alerts"]}
+        self.assertIn("ashare_5min_api_unavailable", codes)
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["reason"], "first_sample_5min_data_gate_failed")
+        self.assertEqual(report["no_trade_explanation"]["category"], "data_query_failed")
+
+    def test_first_sample_fails_when_5min_rows_missing(self) -> None:
+        report = ashare_opening_validator.first_sample_alerts(
+            reader=_mock_reader(intraday_rows=[]),
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            no_trade_log_path=Path("/tmp/nonexistent-ashare-no-trade.jsonl"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["reason"], "first_sample_5min_data_gate_failed")
+        self.assertIn("ashare_5min_missing_in_session", {alert["code"] for alert in report["alerts"]})
+
+    def test_first_sample_fails_when_5min_coverage_low(self) -> None:
+        report = ashare_opening_validator.first_sample_alerts(
+            reader=_mock_reader(intraday_rows=[_intraday_row("600000.SH", "2026-07-06 09:40:00")]),
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            no_trade_log_path=Path("/tmp/nonexistent-ashare-no-trade.jsonl"),
+            now=datetime.fromisoformat("2026-07-06T09:45:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("ashare_5min_coverage_low", {alert["code"] for alert in report["alerts"]})
+
+    def test_first_sample_fails_when_latest_5min_bar_is_stale(self) -> None:
+        report = ashare_opening_validator.first_sample_alerts(
+            reader=_mock_reader(
+                intraday_rows=[
+                    _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                    _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
+                ]
+            ),
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            no_trade_log_path=Path("/tmp/nonexistent-ashare-no-trade.jsonl"),
+            now=datetime.fromisoformat("2026-07-06T09:50:00+08:00"),
+            min_symbols=2,
+            wait_minutes=5,
+        )
+
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("ashare_5min_stale_in_session", {alert["code"] for alert in report["alerts"]})
 
     def test_first_sample_surfaces_score_diagnostics_for_no_trade(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -512,15 +665,15 @@ class AshareOpeningValidatorTest(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
 
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
             receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
             review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
@@ -574,15 +727,15 @@ class AshareOpeningValidatorTest(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
-        db_path = self._db(
-            [
-                ("600000.SH", "2026-07-06 09:35:00"),
-                ("000001.SZ", "2026-07-06 09:35:00"),
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
             ]
         )
 
         report = ashare_opening_validator.first_sample_alerts(
-            sqlite_db=db_path,
+            reader=reader,
             local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
             receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
             review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
@@ -670,6 +823,127 @@ class AshareOpeningValidatorTest(unittest.TestCase):
                 summary = ashare_opening_validator._score_diagnostic_summary(diagnostics)
                 self.assertEqual(summary["reason"], reason)
                 self.assertEqual(summary["next_action"], next_action)
+
+    def test_first_sample_not_due_returns_pass(self) -> None:
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+            ]
+        )
+        report = ashare_opening_validator.first_sample_alerts(
+            reader=reader,
+            local_sim_path=Path("/tmp/nonexistent-ashare-local-sim.jsonl"),
+            receipt_path=Path("/tmp/nonexistent-ashare-receipts.jsonl"),
+            review_path=Path("/tmp/nonexistent-ashare-review.jsonl"),
+            signals_dir=Path("/tmp/nonexistent-signals"),
+            no_trade_log_path=Path("/tmp/nonexistent-ashare-no-trade.jsonl"),
+            now=datetime.fromisoformat("2026-07-06T09:35:00+08:00"),  # only 5min elapsed, wait_minutes=10
+            min_symbols=2,
+            wait_minutes=10,
+        )
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["reason"], "first_sample_check_not_due")
+
+    # -- asset universe fail-closed --
+
+    def test_pre_open_fails_when_asset_universe_empty(self) -> None:
+        """asset_count=0 with valid daily data → fail closed."""
+        reader = _mock_reader(
+            assets=[],
+            daily_rows=[
+                _daily_row("600000.SH", "20260706", 10.0),
+                _daily_row("000001.SZ", "20260706", 12.0),
+            ],
+        )
+        report = ashare_opening_validator.validate_pre_open(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T08:55:00+08:00"),
+            min_symbols=2,
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("asset_universe", report.get("reason", ""))
+
+    # -- 5-minute staleness & coverage --
+
+    def test_opening_fails_when_5min_bars_stale(self) -> None:
+        """Latest bar > 10 min ago → fail."""
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:40:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:40:00"),
+            ]
+        )
+        report = ashare_opening_validator.validate_opening(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T09:55:00+08:00"),
+            min_symbols=2,
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["reason"], "opening_5min_bars_stale")
+        self.assertGreater(report["latest_bar_age_minutes"], 10)
+
+    def test_opening_filters_non_ashare_symbols_from_5min(self) -> None:
+        """B-shares (200xxx) excluded from valid symbol count."""
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("200001.SZ", "2026-07-06 09:35:00"),
+                _intraday_row("200002.SZ", "2026-07-06 09:35:00"),
+                _intraday_row("900901.SH", "2026-07-06 09:35:00"),
+                _intraday_row("600000.SH", "2026-07-06 09:36:00"),
+            ]
+        )
+        report = ashare_opening_validator.validate_opening(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T09:40:00+08:00"),
+            min_symbols=1,
+        )
+        self.assertEqual(report["symbol_count"], 1)
+        self.assertEqual(report["bar_count"], 1)
+
+    def test_opening_returns_latest_bar_age_minutes(self) -> None:
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:30:00"),
+                _intraday_row("000001.SZ", "2026-07-06 09:35:00"),
+            ]
+        )
+        report = ashare_opening_validator.validate_opening(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T09:40:00+08:00"),
+            min_symbols=2,
+        )
+        self.assertIsNotNone(report.get("latest_bar_age_minutes"))
+        self.assertAlmostEqual(report["latest_bar_age_minutes"], 5.0, delta=0.1)
+
+    def test_opening_accepts_iso_bar_time_with_microseconds(self) -> None:
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06T09:35:00.123456+08:00"),
+            ]
+        )
+        report = ashare_opening_validator.validate_opening(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T09:40:00+08:00"),
+            min_symbols=1,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["latest_bar_time"], "2026-07-06T09:35:00+08:00")
+
+    def test_opening_fails_when_no_ashare_5min_symbols(self) -> None:
+        """Only one valid Ashare symbol but min_symbols=2 → fail on coverage."""
+        reader = _mock_reader(
+            intraday_rows=[
+                _intraday_row("600000.SH", "2026-07-06 09:35:00"),
+            ]
+        )
+        report = ashare_opening_validator.validate_opening(
+            reader=reader,
+            now=datetime.fromisoformat("2026-07-06T09:40:00+08:00"),
+            min_symbols=2,
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["reason"], "opening_session_symbol_coverage_low")
 
 
 if __name__ == "__main__":

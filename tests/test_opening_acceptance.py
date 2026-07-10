@@ -216,13 +216,13 @@ def test_ashare_lunch_routes_to_afternoon_pre_open(monkeypatch):
 
     called = {}
 
-    def fake_pre_open(*, sqlite_db, now, min_symbols):
-        called.update({"sqlite_db": sqlite_db, "now": now, "min_symbols": min_symbols})
+    def fake_pre_open(*, reader=None, now, min_symbols):
+        called.update({"reader": reader, "now": now, "min_symbols": min_symbols})
         return {
             "market": "ashare",
             "report_type": "pre_open_acceptance",
             "status": "pass",
-            "reason": "pre_open_acceptance_passed",
+            "reason": "api_daily_bars_ready",
             "session": "afternoon",
             "real_trading_enabled": False,
         }
@@ -231,7 +231,6 @@ def test_ashare_lunch_routes_to_afternoon_pre_open(monkeypatch):
 
     report = opening_acceptance._ashare_opening_report(
         datetime.fromisoformat("2026-07-08T12:15:00+08:00"),
-        Path("/tmp/nonexistent-marketdata.sqlite"),
     )
 
     assert report["status"] == "pass"
@@ -240,107 +239,43 @@ def test_ashare_lunch_routes_to_afternoon_pre_open(monkeypatch):
     assert called["min_symbols"] == 1000
 
 
-def test_ashare_sqlite_diagnostic_warning_uses_preopen_dry_run(monkeypatch):
+def test_ashare_api_daily_unavailable_fail_closed(monkeypatch):
+    """API unavailable → fail closed, no preopen dry-run semantic escape."""
     from shared.runtime_test import ashare_opening_validator
-    from shared.runtime_test import ashare_preopen_dry_run
 
-    def fake_pre_open(*, sqlite_db, now, min_symbols):
+    def fake_pre_open(*, reader=None, now, min_symbols):
         return {
             "market": "ashare",
             "report_type": "pre_open_acceptance",
-            "status": "warn",
-            "reason": "sqlite_diagnostic_disabled",
+            "status": "fail",
+            "reason": "api_daily_unavailable",
             "session": "afternoon",
             "real_trading_enabled": False,
-        }
-
-    def fake_dry_run(*, now):
-        return {
-            "status": "pass",
-            "trade_date": "20260708",
-            "data": {"status": "pass", "symbol_count": 3200, "latest_trade_date": "20260707"},
-            "candidate_pool": {"status": "pass", "candidate_count": 2, "scored_count": 10},
-            "capital_plan": {"status": "pass", "risk_mode": "sample_collection", "max_new_positions": 1},
-            "execution_gate": {"status": "pass", "ready": True, "reason": "synthetic_order_gate_ready"},
         }
 
     monkeypatch.setattr(ashare_opening_validator, "validate_pre_open", fake_pre_open)
-    monkeypatch.setattr(ashare_preopen_dry_run, "run_preopen_dry_run", fake_dry_run)
 
     check = opening_acceptance.check_ashare_opening(
         datetime.fromisoformat("2026-07-08T12:15:00+08:00"),
-        Path("/tmp/nonexistent-marketdata.sqlite"),
     )
 
-    assert check.status == "pass"
-    assert check.details["reason"] == "ashare_preopen_dry_run_pass_after_sqlite_diagnostic_disabled"
-    assert check.details["original_opening_status"] == "warn"
-    assert check.details["runtime_evidence"]["candidate_count"] == 2
-    assert check.details["runtime_evidence"]["execution_ready"] is True
-
-
-def test_ashare_nested_sqlite_diagnostic_warning_uses_api_health_review(monkeypatch):
-    def fake_report(now, sqlite_db):
-        return {
-            "market": "ashare",
-            "report_type": "first_sample_alert",
-            "status": "warn",
-            "reason": "first_sample_alerts_present",
-            "session": "afternoon",
-            "alerts": [{"severity": "warn", "code": "ashare_sqlite_diagnostic_disabled"}],
-            "no_trade_explanation": {"category": "data_query_failed", "next_action": "check_sharedsignals_read_model"},
-            "real_trading_enabled": False,
-        }
-
-    monkeypatch.setattr(opening_acceptance, "_ashare_opening_report", fake_report)
-    monkeypatch.setattr(opening_acceptance, "_api_health_review", lambda market: {"overall_status": "pass"})
-
-    check = opening_acceptance.check_ashare_opening(
-        datetime.fromisoformat("2026-07-09T13:35:00+08:00"),
-        Path("/tmp/nonexistent-marketdata.sqlite"),
-    )
-
-    assert check.status == "pass"
-    assert check.details["reason"] == "api_health_pass_after_sqlite_diagnostic_disabled"
-    assert check.details["original_reason"] == "first_sample_alerts_present"
-
-
-def test_ashare_nested_sqlite_diagnostic_does_not_hide_other_alerts(monkeypatch):
-    def fake_report(now, sqlite_db):
-        return {
-            "market": "ashare",
-            "report_type": "first_sample_alert",
-            "status": "warn",
-            "reason": "first_sample_alerts_present",
-            "session": "afternoon",
-            "alerts": [
-                {"severity": "warn", "code": "ashare_sqlite_diagnostic_disabled"},
-                {"severity": "warn", "code": "ashare_first_sim_sample_missing"},
-            ],
-            "real_trading_enabled": False,
-        }
-
-    monkeypatch.setattr(opening_acceptance, "_ashare_opening_report", fake_report)
-    monkeypatch.setattr(opening_acceptance, "_api_health_review", lambda market: {"overall_status": "pass"})
-
-    check = opening_acceptance.check_ashare_opening(
-        datetime.fromisoformat("2026-07-09T13:35:00+08:00"),
-        Path("/tmp/nonexistent-marketdata.sqlite"),
-    )
-
-    assert check.status == "warn"
-    assert check.details["reason"] == "first_sample_alerts_present"
+    assert check.status == "fail"
+    assert "api_daily_unavailable" in str(check.details.get("reason") or "")
 
 
 def test_ashare_closed_window_is_observation_not_warning():
     check = opening_acceptance.check_ashare_opening(
         datetime.fromisoformat("2026-07-08T16:05:00+08:00"),
-        Path("/tmp/nonexistent-marketdata.sqlite"),
     )
 
     assert check.status == "pass"
     assert check.details["reason"] == "outside_ashare_opening_acceptance_window"
     assert check.details["raw_status"] == "pass"
+
+
+def test_cli_sqlite_default_is_preserved_for_cn_futures():
+    args = opening_acceptance.parse_args([])
+    assert args.sqlite_db == opening_acceptance.DEFAULT_SQLITE_DB
 
 
 def test_cn_futures_lunch_gap_is_observation_not_missing_trade():

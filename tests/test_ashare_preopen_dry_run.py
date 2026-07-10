@@ -504,19 +504,16 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(data["symbol_count"], 4800)
         self.assertAlmostEqual(data["daily_coverage_ratio"], 0.96, places=4)
 
-    def test_coverage_ratio_missing_still_passes_when_assets_unavailable(self) -> None:
-        """No get_assets → ratio is None; fall back to absolute min_symbols."""
+    def test_asset_universe_unavailable_fails_closed(self) -> None:
+        """No get_assets → asset_count=0 → fail, not pass by symbol_count alone."""
         reader = NoAssetsReader()
         now = datetime.fromisoformat("2026-07-10T08:30:00+08:00")
         data = ashare_preopen_dry_run._api_daily_coverage_from_reader(
             reader, now=now, min_symbols=1000, min_coverage_ratio=0.90,
         )
-        self.assertEqual(data["status"], "pass")
-        self.assertEqual(data["reason"], "api_daily_bars_ready")
+        self.assertEqual(data["status"], "fail")
+        self.assertEqual(data["reason"], "api_asset_universe_unavailable")
         self.assertEqual(data["asset_count"], 0)
-        self.assertIsNone(data["daily_coverage_ratio"])
-        # Still governed by absolute min_symbols: 1100 >= 1000
-        self.assertGreaterEqual(data["symbol_count"], 1000)
 
     def test_coverage_ratio_uses_explicit_parameter_not_env(self) -> None:
         """min_coverage_ratio comes from explicit parameter, not env fallback."""

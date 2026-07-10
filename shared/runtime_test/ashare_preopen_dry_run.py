@@ -144,25 +144,33 @@ def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]
 def _latest_daily_rows_from_reader(reader: Any) -> list[dict[str, Any]]:
     get_latest_daily_batch = getattr(reader, "get_latest_daily_batch", None)
     rows: list[dict[str, Any]] = []
+    api_error: str | None = None
     if callable(get_latest_daily_batch):
         try:
             rows = list(get_latest_daily_batch("Ashare", limit=5000) or [])
-        except Exception:
+        except Exception as exc:
+            api_error = f"{exc.__class__.__name__}: {exc}"
             rows = []
-    if not rows:
+    if not rows and not api_error:
         get_tushare = getattr(reader, "get_tushare", None)
         if callable(get_tushare):
             try:
                 rows = list(get_tushare("daily", limit=5000) or [])
             except TypeError:
                 rows = []
-            except Exception:
+            except Exception as exc:
+                api_error = f"{exc.__class__.__name__}: {exc}"
                 rows = []
+    if api_error and not rows:
+        raise RuntimeError(api_error)
     return [row for row in rows if isinstance(row, dict)]
 
 
 def _latest_daily_amounts_from_reader(reader: Any) -> dict[str, float]:
-    rows = _latest_daily_rows_from_reader(reader)
+    try:
+        rows = _latest_daily_rows_from_reader(reader)
+    except RuntimeError:
+        return {}
     latest_date = ""
     clean_rows: list[dict[str, Any]] = []
     for row in rows or []:
@@ -350,7 +358,12 @@ def _api_daily_coverage_from_reader(
         elif trade_date == latest_trade_date:
             symbols.add(symbol)
     if not latest_trade_date:
-        return {}
+        return {
+            "status": "fail",
+            "reason": "api_daily_bars_missing",
+            "symbol_count": 0,
+            "data_source": "SharedSignals API /tushare daily read model",
+        }
 
     # ---- asset count & coverage ratio ----
     asset_count = 0
@@ -366,7 +379,13 @@ def _api_daily_coverage_from_reader(
         except Exception:
             asset_rows = None
         if asset_rows:
-            asset_count = len(asset_rows)
+            asset_count = len({
+                symbol
+                for row in asset_rows
+                if isinstance(row, dict)
+                and (symbol := str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper())
+                and _is_supported_ashare_code(symbol)
+            })
 
     symbol_count = len(symbols)
     daily_coverage_ratio: float | None = None
@@ -388,7 +407,10 @@ def _api_daily_coverage_from_reader(
     # ---- gate evaluation ----
     status = "pass"
     reason = "api_daily_bars_ready"
-    if symbol_count < min_symbols:
+    if asset_count <= 0:
+        status = "fail"
+        reason = "api_asset_universe_unavailable"
+    elif symbol_count < min_symbols:
         status = "fail"
         reason = "api_daily_bars_missing"
     elif age_days is not None and age_days > 5:
@@ -590,13 +612,15 @@ def run_preopen_dry_run(
     )
 
     section_started = time.perf_counter()
-    data = _api_daily_coverage_from_reader(data_reader, now=current, min_symbols=MIN_SYMBOLS)
-    if not data:
+    try:
+        data = _api_daily_coverage_from_reader(data_reader, now=current, min_symbols=MIN_SYMBOLS)
+    except Exception as exc:
         data = {
             "status": "fail",
             "reason": "sharedsignals_api_daily_unavailable",
             "symbol_count": 0,
             "data_source": "SharedSignals API",
+            "error": f"{exc.__class__.__name__}: {exc}",
         }
     _mark("data_seconds", section_started)
     data_status = str(data.get("status") or "warn").lower()
