@@ -34,11 +34,21 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('确认').length).toBeGreaterThan(0)
     expect(screen.queryByRole('tablist', { name: '收益区间' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '机会从全市场进入，只把可执行结果留在首页。' })).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '正在推进' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '需要复盘' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '本轮结果' })).not.toBeInTheDocument()
     expect(screen.queryByText('现在判断')).not.toBeInTheDocument()
     expect(screen.queryByText('看决策')).not.toBeInTheDocument()
     expect(screen.queryByText('总览')).not.toBeInTheDocument()
+  })
+
+  it('renders one continuous workbench with chart, review rail, and blotter', () => {
+    render(<App />)
+
+    const workbench = screen.getByRole('region', { name: '交易工作台' })
+    expect(within(workbench).getByRole('region', { name: '收益与目标' })).toBeInTheDocument()
+    expect(within(workbench).getByRole('complementary', { name: '当前审阅' })).toBeInTheDocument()
+    expect(within(workbench).getByRole('tablist', { name: '工作台明细' })).toBeInTheDocument()
+    expect(screen.getAllByRole('region', { name: '交易工作台' })).toHaveLength(1)
   })
 
   it('replaces demo signals with TradingAgent snapshot signals when the local API is available', async () => {
@@ -132,6 +142,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('暂无机会结果').length).toBeGreaterThan(0)
     expect(screen.getByRole('heading', { name: '等待机会' })).toBeInTheDocument()
     expect(screen.queryByText(/等待新机会 · 转化 0%/)).not.toBeInTheDocument()
+    click(screen.getByRole('tab', { name: '持仓 0' }))
     expect(screen.getByText('暂无持仓记录')).toBeInTheDocument()
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
   })

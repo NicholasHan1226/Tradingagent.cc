@@ -151,6 +151,7 @@ function App() {
         {activePage === '主页' ? (
           <HomeDashboard
             accountMode={accountMode}
+            activeSignals={workbench.opportunities.active}
             activeMarket={activeMarket}
             ashareForwardValidation={readModelSnapshot?.ashareForwardValidation}
             ashareResearchEvidence={readModelSnapshot?.ashareResearchEvidence}
@@ -165,11 +166,13 @@ function App() {
             marketSummaries={marketSummaries}
             now={now}
             portfolio={visiblePortfolio}
+            completedSignals={workbench.opportunities.completed}
             domainStatus={domainStatus}
             onRetry={handleRetry}
             selectAccountMode={selectAccountMode}
             setActivePage={setActivePage}
             signals={visibleSignals}
+            reviewItems={workbench.reviewItems}
             funnelEvents={visibleFunnelEvents}
             events={chartEvents}
           />

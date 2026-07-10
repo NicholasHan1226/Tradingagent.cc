@@ -5,12 +5,11 @@ import { AShareEvidencePanel } from '../components/panels/AShareEvidencePanel'
 import { AShareMoneyflowPanel } from '../components/panels/AShareMoneyflowPanel'
 import { AShareTierComparisonPanel } from '../components/panels/AShareTierComparisonPanel'
 import { ClosedLoopProofPanel } from '../components/panels/ClosedLoopProofPanel'
-import { HoldingsCompact } from '../components/panels/HoldingsCompact'
 import { HomeResultBrief } from '../components/panels/HomeResultBrief'
 import { MarketSummaryPanel } from '../components/panels/MarketSummaryPanel'
-import { OpportunityFocus } from '../components/panels/OpportunityFocus'
 import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
+import { WorkbenchShell } from '../components/workbench/WorkbenchShell'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
 import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
@@ -39,6 +38,9 @@ export function HomeDashboard({
   signals,
   funnelEvents,
   events,
+  activeSignals,
+  completedSignals,
+  reviewItems,
 }: {
   accountMode: AccountMode
   activeMarket: Market
@@ -62,6 +64,9 @@ export function HomeDashboard({
   setActivePage: (page: Page) => void
   signals: SignalRow[]
   funnelEvents: FunnelEvent[]
+  activeSignals: SignalRow[]
+  completedSignals: SignalRow[]
+  reviewItems: SignalRow[]
 }) {
   const signalFunnel = getSignalFunnel(signals)
   const liveProfit = portfolio?.pnlAmount ?? 0
@@ -76,12 +81,9 @@ export function HomeDashboard({
       : '收益暂时落后目标，先看机会质量和风险距离。'
     : '收益结果还没有写入，先看机会和持仓。'
 
-  return (
-    <div className="home-layout">
-      <section className="home-main">
-        <section className="panel performance-panel hero-performance">
+  const chart = (
+    <section className="panel performance-panel hero-performance">
           <div className="performance-headline">
-            <SignalFunnelFlow events={funnelEvents} hasSignalData={hasSignalData} holdings={holdings} signals={signals} />
             <RealtimeReturnCard
               accountMode={accountMode}
               executedCount={signalFunnel.executed.length}
@@ -124,21 +126,10 @@ export function HomeDashboard({
             <b>{hasPerformanceData ? '已更新' : '等待数据'}</b>
             <em>{hasPerformanceData ? `机会差 ${returnChartLatestPoint.opportunity.toFixed(2)}%` : '未显示样例收益'}</em>
           </div>
-        </section>
-
-        <section className="home-drilldown" aria-label="当前机会和持仓结果">
-          <div className="drilldown-header">
-            <span>机会和持仓</span>
-            <strong>已接入快照时只显示真实记录</strong>
-          </div>
-          <div className="home-support-grid">
-            <OpportunityFocus hasSignalData={hasSignalData} setActivePage={setActivePage} signals={signals} />
-            <HoldingsCompact hasHoldingData={hasHoldingData} holdings={holdings} setActivePage={setActivePage} />
-          </div>
-        </section>
-      </section>
-
-      <aside className="home-rail">
+    </section>
+  )
+  const evidence = (
+    <div className="home-rail">
         <MarketSummaryPanel activeMarket={activeMarket} summary={marketSummary} />
         <ClosedLoopProofPanel summaries={marketSummaries} />
         <AShareMoneyflowPanel activeMarket={activeMarket} signals={signals} />
@@ -149,8 +140,21 @@ export function HomeDashboard({
             <AShareTierComparisonPanel activeMarket={activeMarket} summaries={ashareTierSummaries} />
           </>
         )}
-      </aside>
     </div>
+  )
+
+  return (
+    <WorkbenchShell
+      active={activeSignals}
+      chart={chart}
+      completed={completedSignals}
+      context={<SignalFunnelFlow events={funnelEvents} hasSignalData={hasSignalData} holdings={holdings} signals={signals} />}
+      evidence={evidence}
+      portfolio={portfolio}
+      positions={holdings}
+      review={reviewItems}
+      setActivePage={setActivePage}
+    />
   )
 }
 
