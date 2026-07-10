@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { PortfolioLedgerRow, ProcessBookRow, RiskLedgerRow } from '../../lib/terminalViewModels'
 import { PortfolioLedger } from './PortfolioLedger'
 import { ProcessBook } from './ProcessBook'
+import { ProcessEventLedger } from './ProcessEventLedger'
 import { RiskLedger } from './RiskLedger'
 import { TerminalPageShell } from './TerminalPageShell'
 
@@ -68,6 +69,17 @@ describe('terminal components', () => {
     expect(within(table).getByRole('columnheader', { name: '证据' })).toBeInTheDocument()
     expect(within(table).getByRole('columnheader', { name: '耗时' })).toBeInTheDocument()
     expect(within(table).getByText('结果已写回')).toBeInTheDocument()
+  })
+
+  it('renders the process event audit trail', () => {
+    render(<ProcessEventLedger rows={[{
+      id: 'event-1', symbol: '600519.SH', market: 'A股', stage: '风控', result: '通过',
+      source: '信号队列', latency: '2分钟', reason: '风险检查通过', timestamp: '11:05',
+    }]} />)
+
+    const table = screen.getByRole('table', { name: '过程事件账本' })
+    expect(within(table).getByText('风险检查通过')).toBeInTheDocument()
+    expect(within(table).getByText('信号队列')).toBeInTheDocument()
   })
 
   it('renders portfolio currency and suppresses duplicate asset names', () => {

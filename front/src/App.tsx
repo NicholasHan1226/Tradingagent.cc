@@ -199,6 +199,7 @@ function App() {
             setActivePage={setActivePage}
             signals={visibleSignals}
             events={chartEvents}
+            funnelEvents={visibleFunnelEvents}
           />
         )}
       </section>

@@ -5,12 +5,14 @@ import { StatusBoundary } from '../components/StatusBoundary'
 import { SignalTable } from '../components/tables/SignalTable'
 import { PortfolioLedger } from '../components/terminal/PortfolioLedger'
 import { ProcessBook } from '../components/terminal/ProcessBook'
+import { ProcessEventLedger } from '../components/terminal/ProcessEventLedger'
 import { RiskLedger } from '../components/terminal/RiskLedger'
 import { TerminalInspectorSection, TerminalPageShell, TerminalPanelHeader, type TerminalMetric } from '../components/terminal/TerminalPageShell'
 import { getActionableSignals, getClosedSignals, getSignalFunnel } from '../lib/dashboard'
 import { DRAWDOWN_LIMIT_PCT } from '../lib/dashboardConstants'
 import { createPortfolioLedgerRows, createProcessBookRows, createRiskLedgerRows, summarizePortfolioCurrency } from '../lib/terminalViewModels'
-import type { ChartEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
+import { createProcessEventRows } from '../lib/processEventViewModel'
+import type { ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
 export function ThemePage({
@@ -25,11 +27,13 @@ export function ThemePage({
   onRetry,
   signals,
   events,
+  funnelEvents,
 }: {
   activePage: Exclude<Page, '总览'>
   activeMarket: Market
   data: PerformancePoint[]
   events: ChartEvent[]
+  funnelEvents: FunnelEvent[]
   holdings: HoldingRow[]
   latestPoint: PerformancePoint
   marketSummary?: MarketSummary
@@ -56,9 +60,11 @@ export function ThemePage({
 
   if (activePage === '过程') {
     const model = createProcessBookRows(getActionableSignals(signals).filter((signal) => signal.status === 'pending'), completed)
+    const eventRows = createProcessEventRows(funnelEvents)
     return (
       <TerminalPageShell
         inspector={<ProcessInspector signals={signals} />}
+        ledger={<ProcessEventLedger rows={eventRows} />}
         metrics={context}
         primary={<StatusBoundary emptyLabel="当前没有过程记录" loading={<TableSkeleton rows={7} />} onRetry={onRetry} status={domainStatus('signals')}><ProcessBook {...model} /></StatusBoundary>}
         title="过程终端"

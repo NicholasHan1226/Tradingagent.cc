@@ -4801,6 +4801,14 @@ button:not(:disabled) {
   min-height: 216px;
 }
 
+.process-event-ledger .terminal-table {
+  min-width: 980px;
+}
+
+.process-event-ledger .reason-cell {
+  max-width: 420px;
+}
+
 .stage-distribution,
 .terminal-ranking,
 .exposure-ranking {
