@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { HoldingsTable } from '../tables/HoldingsTable'
 import { RunningProcessTable } from '../tables/RunningProcessTable'
 import { SignalTable } from '../tables/SignalTable'
 import type { HoldingRow, SignalRow } from '../../types/dashboard'
-import { getAvailableTab, getPreferredTab } from './workbenchBlotterState'
+import { getAvailableTabByCounts, getPreferredTab } from './workbenchBlotterState'
 
 export type BlotterTab = 'active' | 'positions' | 'completed' | 'review'
 
@@ -31,23 +31,26 @@ export function WorkbenchBlotter({
 }) {
   const [internalTab, setInternalTab] = useState<BlotterTab>(() => getPreferredTab({ active, positions, completed, review }))
   const tab = selectedTab ?? internalTab
+  const tabRef = useRef(tab)
+  tabRef.current = tab
   const selectTab = (nextTab: BlotterTab) => {
     setInternalTab(nextTab)
     onTabChange?.(nextTab)
   }
-  const counts: Record<BlotterTab, number> = {
+  const counts = useMemo<Record<BlotterTab, number>>(() => ({
     active: active.length,
     positions: positions.length,
     completed: completed.length,
     review: review.length,
-  }
+  }), [active.length, completed.length, positions.length, review.length])
 
   useEffect(() => {
-    const nextTab = getAvailableTab(tab, { active, positions, completed, review })
-    if (nextTab === tab) return
+    const currentTab = tabRef.current
+    const nextTab = getAvailableTabByCounts(currentTab, counts)
+    if (nextTab === currentTab) return
     setInternalTab(nextTab)
     onTabChange?.(nextTab)
-  }, [active, completed, onTabChange, positions, review, tab])
+  }, [counts, onTabChange])
 
   return (
     <section className="workbench-blotter" aria-label="工作台明细区">

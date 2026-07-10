@@ -617,6 +617,75 @@ button:not(:disabled) {
   scrollbar-width: thin;
 }
 
+.market-tape {
+  position: relative;
+  z-index: 7;
+  height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  border-bottom: 1px solid var(--border-hairline);
+  background: #030808;
+}
+
+.market-tape-rows {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(108px, 1fr));
+  overflow: hidden;
+}
+
+.market-tape-rows button {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-content: center;
+  gap: 2px 8px;
+  padding: 5px 10px;
+  border-right: 1px solid var(--border-hairline);
+  color: var(--text-muted);
+  background: transparent;
+  text-align: left;
+}
+
+.market-tape-rows button:hover,
+.market-tape-rows button.selected { background: var(--surface-selected); }
+.market-tape-rows button.selected { box-shadow: inset 0 -2px var(--accent-cyan); }
+.market-tape-rows span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.market-tape-rows span i { width: 5px; height: 5px; display: inline-block; margin-right: 5px; border-radius: 50%; background: currentColor; }
+.market-tape-rows strong { color: var(--text-primary); font: 650 12px/1 var(--font-number); }
+.market-tape-rows small { grid-column: 1 / -1; overflow: hidden; color: var(--text-faint); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.market-tape-rows .positive span { color: var(--accent-cyan); }
+.market-tape-rows .negative span,
+.market-tape-rows .negative strong { color: var(--state-red); }
+.market-tape-rows .warning span { color: var(--state-amber); }
+
+.evidence-health {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-content: center;
+  gap: 3px 9px;
+  padding: 5px 12px;
+  border-left: 1px solid var(--border-hairline);
+  background: #071011;
+}
+.evidence-health header { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.evidence-health header span { color: var(--text-muted); }
+.evidence-health header strong { color: var(--text-secondary); }
+.evidence-health-domains { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.evidence-health-domains span { color: var(--text-muted); font-size: 10px; }
+.evidence-health-domains i { width: 4px; height: 4px; display: inline-block; margin-right: 3px; border-radius: 50%; background: currentColor; }
+.evidence-health-domains .positive { color: var(--accent-cyan); }
+.evidence-health-domains .warning { color: var(--state-amber); }
+.evidence-health-domains .negative { color: var(--state-red); }
+.evidence-health small { grid-column: 1 / -1; overflow: hidden; color: var(--text-faint); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+.market-tape + .workspace { height: calc(100vh - 234px); }
+
+@media (max-width: 1279px) {
+  .market-tape { grid-template-columns: minmax(0, 1fr) 218px; }
+  .market-tape-rows button { padding-right: 7px; padding-left: 7px; }
+}
+
 .home-layout,
 .theme-layout {
   display: grid;

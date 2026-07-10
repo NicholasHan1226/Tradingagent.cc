@@ -4,12 +4,14 @@ import type { TradingAgentReadModelSnapshot } from './api/tradingAgentReadModel'
 import { toDashboardState } from './adapters/dashboard'
 import { MarketHeader } from './components/MarketHeader'
 import { TopNav } from './components/TopNav'
+import { MarketTape } from './components/terminal/MarketTape'
 import { holdings as mockHoldings, mockDashboardApiResponse, performanceData, signals as mockSignals } from './data/dashboard'
 import { deriveChartEvents } from './lib/chartEvents'
 import { getLivePerformanceData, getSelectedMarketSummary, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
 import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
 import { createAutomationObservatoryViewModel } from './lib/automationObservatoryViewModel'
 import { createWorkbenchViewModel } from './lib/workbenchViewModel'
+import { createEvidenceHealth, createMarketTapeRows } from './lib/marketTapeViewModel'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
 import type { DataDomain } from './types/status'
@@ -122,6 +124,8 @@ function App() {
   const domainStatus = (domain: DataDomain) => dashboardState.domains[domain]?.status ?? dashboardState.status
   const handleRetry = () => setDashboardState(toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
   const selectAccountMode = (mode: AccountMode) => setAccountMode(mode)
+  const marketTapeRows = useMemo(() => createMarketTapeRows(marketSummaries, activeMarket, readModelSnapshot?.generatedAt ?? null), [activeMarket, marketSummaries, readModelSnapshot?.generatedAt])
+  const evidenceHealth = useMemo(() => createEvidenceHealth(dashboardState.domains, readModelSnapshot?.generatedAt ?? null, selectedMarketSummary), [dashboardState.domains, readModelSnapshot?.generatedAt, selectedMarketSummary])
 
   return (
     <main className="hyper-shell" data-build={DASHBOARD_BUILD_ID}>
@@ -147,6 +151,7 @@ function App() {
         setActiveMarket={setActiveMarket}
         targetReturn={visiblePortfolio?.targetPct ?? latestPoint.target}
       />
+      <MarketTape evidence={evidenceHealth} onSelect={setActiveMarket} rows={marketTapeRows} />
 
       <section className="workspace">
         {activePage === '总览' || workbench.liveGate.gated ? (

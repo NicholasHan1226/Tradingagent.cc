@@ -33,7 +33,9 @@ describe('App navigation and result-first dashboard', () => {
 
     const marketHeader = screen.getByRole('region', { name: '市场与账户' })
     expect(within(marketHeader).getByText('运行中').parentElement).toHaveTextContent('1')
-    expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('4')
+    expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('2')
+    expect(screen.getByRole('navigation', { name: '市场状态带' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '证据健康' })).toBeInTheDocument()
   })
 
   it('renders the homepage around return, automated process, and chart without decision wording', () => {
@@ -44,7 +46,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
     const marketHeader = screen.getByRole('region', { name: '市场与账户' })
     expect(within(marketHeader).getByText('运行中').parentElement).toHaveTextContent('1')
-    expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('4')
+    expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('2')
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
@@ -574,14 +576,14 @@ describe('App navigation and result-first dashboard', () => {
   it('switches from the return card into the dedicated live gate and back', () => {
     render(<App />)
 
-    click(screen.getByRole('tab', { name: '已完成 4' }))
+    click(screen.getByRole('tab', { name: '已完成 2' }))
     const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
     expect(screen.getByRole('region', { name: '实盘接入状态' })).toHaveTextContent('实盘待接入')
     click(screen.getByRole('button', { name: '返回模拟盘' }))
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: '已完成 4' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '已完成 2' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('shows the Process Book beside its automation inspector', () => {

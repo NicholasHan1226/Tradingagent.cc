@@ -1,5 +1,6 @@
 import type { HoldingRow, LegacyPage, Page, SignalRow } from '../types/dashboard'
 import type { WorkbenchViewModel } from './workbenchViewModel'
+import type { AutomationRuntimeItem } from './terminalStateResolver'
 import { resolveTerminalState } from './terminalStateResolver'
 export type { AutomationRuntimeItem, AutomationRuntimeKind } from './terminalStateResolver'
 
