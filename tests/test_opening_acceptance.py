@@ -240,9 +240,9 @@ def test_ashare_lunch_routes_to_afternoon_pre_open(monkeypatch):
     assert called["min_symbols"] == 1000
 
 
-def test_ashare_sqlite_diagnostic_warning_uses_api_health_review(monkeypatch):
+def test_ashare_sqlite_diagnostic_warning_uses_preopen_dry_run(monkeypatch):
     from shared.runtime_test import ashare_opening_validator
-    from shared.runtime_test import market_health
+    from shared.runtime_test import ashare_preopen_dry_run
 
     def fake_pre_open(*, sqlite_db, now, min_symbols):
         return {
@@ -254,16 +254,18 @@ def test_ashare_sqlite_diagnostic_warning_uses_api_health_review(monkeypatch):
             "real_trading_enabled": False,
         }
 
-    def fake_health(*, markets):
-        assert markets == ("ashare",)
+    def fake_dry_run(*, now, sqlite_db):
         return {
-            "overall_status": "pass",
-            "summary": {"pass": 1, "warn": 0, "fail": 0},
-            "checks": [{"name": "ashare_sim_loop", "status": "pass", "summary": "ok"}],
+            "status": "pass",
+            "trade_date": "20260708",
+            "data": {"status": "pass", "symbol_count": 3200, "latest_trade_date": "20260707"},
+            "candidate_pool": {"status": "pass", "candidate_count": 2, "scored_count": 10},
+            "capital_plan": {"status": "pass", "risk_mode": "sample_collection", "max_new_positions": 1},
+            "execution_gate": {"status": "pass", "ready": True, "reason": "synthetic_order_gate_ready"},
         }
 
     monkeypatch.setattr(ashare_opening_validator, "validate_pre_open", fake_pre_open)
-    monkeypatch.setattr(market_health, "run_sim_market_health", fake_health)
+    monkeypatch.setattr(ashare_preopen_dry_run, "run_preopen_dry_run", fake_dry_run)
 
     check = opening_acceptance.check_ashare_opening(
         datetime.fromisoformat("2026-07-08T12:15:00+08:00"),
@@ -271,8 +273,10 @@ def test_ashare_sqlite_diagnostic_warning_uses_api_health_review(monkeypatch):
     )
 
     assert check.status == "pass"
-    assert check.details["reason"] == "api_health_pass_after_sqlite_diagnostic_disabled"
+    assert check.details["reason"] == "ashare_preopen_dry_run_pass_after_sqlite_diagnostic_disabled"
     assert check.details["original_opening_status"] == "warn"
+    assert check.details["runtime_evidence"]["candidate_count"] == 2
+    assert check.details["runtime_evidence"]["execution_ready"] is True
 
 
 def test_ashare_nested_sqlite_diagnostic_warning_uses_api_health_review(monkeypatch):
@@ -380,9 +384,9 @@ def test_cn_futures_midday_pre_open_routes_to_pre_open(monkeypatch):
     assert called["min_symbols"] == 4
 
 
-def test_cn_futures_pre_open_daily_failure_uses_api_health_review(monkeypatch):
+def test_cn_futures_pre_open_daily_failure_uses_live_check(monkeypatch):
     from CNFutures import opening_validator
-    from shared.runtime_test import market_health
+    from shared.runtime_test import cn_futures_live_check
 
     def fake_pre_open(*, sqlite_db, now, min_symbols):
         return {
@@ -394,16 +398,16 @@ def test_cn_futures_pre_open_daily_failure_uses_api_health_review(monkeypatch):
             "real_trading_enabled": False,
         }
 
-    def fake_health(*, markets):
-        assert markets == ("cn_futures",)
+    def fake_live_check():
         return {
             "overall_status": "pass",
+            "observation_phase": "ready_to_observe",
             "summary": {"pass": 1, "warn": 0, "fail": 0},
-            "checks": [{"name": "cn_futures_sim_loop", "status": "pass", "summary": "ok"}],
+            "checks": [{"name": "cn_futures_review", "status": "pass", "summary": "strategy hold"}],
         }
 
     monkeypatch.setattr(opening_validator, "validate_pre_open", fake_pre_open)
-    monkeypatch.setattr(market_health, "run_sim_market_health", fake_health)
+    monkeypatch.setattr(cn_futures_live_check, "run_live_check", fake_live_check)
 
     check = opening_acceptance.check_cn_futures_opening(
         datetime.fromisoformat("2026-07-08T12:30:00+08:00"),
@@ -411,5 +415,6 @@ def test_cn_futures_pre_open_daily_failure_uses_api_health_review(monkeypatch):
     )
 
     assert check.status == "pass"
-    assert check.details["reason"] == "api_health_pass_after_pre_open_daily_query_failed"
+    assert check.details["reason"] == "cn_futures_live_check_pass_after_pre_open_daily_query_failed"
     assert check.details["original_opening_status"] == "fail"
+    assert check.details["runtime_evidence"]["observation_phase"] == "ready_to_observe"

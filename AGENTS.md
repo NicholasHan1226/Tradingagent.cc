@@ -87,6 +87,10 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 
 - A股模拟执行受交易时段保护：非工作日或非 `09:30-11:30` / `13:00-14:57` 直接 `skipped=market_closed`。
 
+### 开盘验收证据
+
+- `opening_acceptance.py` 聚合验收不得只用泛化 API 健康兜底业务链路。A股旧 SQLite 诊断不可用时，必须嵌入 `ashare_preopen_dry_run` 的数据覆盖、候选池、资金计划和执行门禁摘要；CNFutures 旧日线诊断不可用时，必须嵌入 `cn_futures_live_check` 的 5 分钟数据、复盘和策略 hold 摘要。只有这些业务 runtime evidence 通过，才可把旧诊断 warn/fail 降级为 pass；否则保持 warn/fail。
+
 ### 影子盘隔离
 
 - 影子信号只写入 `signals/shadow/pending`，不进入可执行队列。
