@@ -8,8 +8,8 @@ describe('MarketHeader freshness', () => {
       <MarketHeader
         accountMode="simulated"
         activeMarket="All Markets"
-        activeOpportunityCount={0}
-        activePage="主页"
+        activePage="总览"
+        completedCount={0}
         hasPerformanceData
         isCnyAccount={false}
         isDemoPreview={false}
@@ -18,7 +18,7 @@ describe('MarketHeader freshness', () => {
         maxDrawdown={0.5}
         performanceStatus="stale"
         positionCount={0}
-        reviewCount={0}
+        runningCount={0}
         setActiveMarket={vi.fn()}
         snapshotGeneratedAt="2026-07-04T10:00:00.000Z"
         targetReturn={8}

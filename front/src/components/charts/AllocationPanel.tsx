@@ -10,7 +10,7 @@ export function AllocationPanel({ holdings }: { holdings: HoldingRow[] }) {
 
   return (
     <section className="panel rail-panel">
-      <PanelTitle kicker="资金去向" title="现在投在哪里" />
+      <PanelTitle kicker="资金去向" title="持仓配置结果" />
       <div className="pie-box">
         <ResponsiveContainer width="100%" height={210}>
           <PieChart>

@@ -1,6 +1,6 @@
 import { DRAWDOWN_LIMIT_PCT } from '../../lib/dashboardConstants'
 import { formatCnyCompact, formatCurrency, formatSignedCnyCompact } from '../../lib/format'
-import type { AccountMode, Page, PortfolioSummary } from '../../types/dashboard'
+import type { AccountMode, PortfolioSummary } from '../../types/dashboard'
 
 export function RealtimeReturnCard({
   accountMode,
@@ -13,7 +13,6 @@ export function RealtimeReturnCard({
   pendingCount,
   portfolio,
   selectAccountMode,
-  setActivePage,
   targetReturn,
 }: {
   accountMode: AccountMode
@@ -26,7 +25,6 @@ export function RealtimeReturnCard({
   pendingCount: number
   portfolio: PortfolioSummary | null
   selectAccountMode: (mode: AccountMode) => void
-  setActivePage: (page: Page) => void
   targetReturn: number
 }) {
   const targetGap = liveReturn - targetReturn
@@ -163,7 +161,6 @@ export function RealtimeReturnCard({
           <small>{accountLine}</small>
         </>
       )}
-      <button onClick={() => setActivePage('收益')} type="button">收益来源</button>
     </aside>
   )
 }

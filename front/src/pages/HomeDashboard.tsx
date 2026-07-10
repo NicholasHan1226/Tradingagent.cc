@@ -5,13 +5,13 @@ import { AShareEvidencePanel } from '../components/panels/AShareEvidencePanel'
 import { AShareMoneyflowPanel } from '../components/panels/AShareMoneyflowPanel'
 import { AShareTierComparisonPanel } from '../components/panels/AShareTierComparisonPanel'
 import { ClosedLoopProofPanel } from '../components/panels/ClosedLoopProofPanel'
-import { HomeResultBrief } from '../components/panels/HomeResultBrief'
 import { MarketSummaryPanel } from '../components/panels/MarketSummaryPanel'
 import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
 import { WorkbenchShell } from '../components/workbench/WorkbenchShell'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
+import type { AutomationRuntimeItem } from '../lib/automationObservatoryViewModel'
 import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
@@ -23,7 +23,6 @@ export function HomeDashboard({
   ashareTierSummaries,
   data,
   latestPoint,
-  hasHoldingData,
   hasPerformanceData,
   hasSignalData,
   holdings,
@@ -43,6 +42,8 @@ export function HomeDashboard({
   reviewItems,
   liveGate,
   snapshotGeneratedAt,
+  runningCount,
+  runtimeItem,
 }: {
   accountMode: AccountMode
   activeMarket: Market
@@ -51,7 +52,6 @@ export function HomeDashboard({
   ashareTierSummaries?: AShareTierSummary[]
   data: PerformancePoint[]
   events: ChartEvent[]
-  hasHoldingData: boolean
   hasPerformanceData: boolean
   hasSignalData: boolean
   holdings: HoldingRow[]
@@ -71,6 +71,8 @@ export function HomeDashboard({
   reviewItems: SignalRow[]
   liveGate: { gated: boolean; title: string; detail: string }
   snapshotGeneratedAt: string | null
+  runningCount: number
+  runtimeItem: AutomationRuntimeItem
 }) {
   const signalFunnel = getSignalFunnel(signals)
   const liveProfit = portfolio?.pnlAmount ?? 0
@@ -84,8 +86,8 @@ export function HomeDashboard({
   const headline = hasPerformanceData
     ? targetGap >= 0
       ? '当前收益领先目标，回撤仍在边界内。'
-      : '收益暂时落后目标，先看机会质量和风险距离。'
-    : '收益结果还没有写入，先看机会和持仓。'
+      : '收益暂时落后目标，自动流程继续校准机会质量与风险距离。'
+    : '收益结果尚未写入，自动流程会持续运行并回写结果。'
 
   const chart = (
     <section className="panel performance-panel hero-performance">
@@ -101,7 +103,6 @@ export function HomeDashboard({
               pendingCount={signalFunnel.pending.length}
               portfolio={portfolio}
               selectAccountMode={selectAccountMode}
-              setActivePage={setActivePage}
               targetReturn={targetReturn}
             />
           </div>
@@ -139,7 +140,6 @@ export function HomeDashboard({
         <MarketSummaryPanel activeMarket={activeMarket} summary={marketSummary} />
         <ClosedLoopProofPanel summaries={marketSummaries} />
         <AShareMoneyflowPanel activeMarket={activeMarket} signals={signals} />
-        <HomeResultBrief hasHoldingData={hasHoldingData} hasPerformanceData={hasPerformanceData} hasSignalData={hasSignalData} holdings={holdings} portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
         {(activeMarket === 'All Markets' || activeMarket === 'A-share') && (
           <>
             <AShareEvidencePanel evidence={ashareResearchEvidence} forwardValidation={ashareForwardValidation} />
@@ -158,10 +158,10 @@ export function HomeDashboard({
       evidence={evidence}
       liveGate={liveGate}
       onUseSimulation={() => selectAccountMode('simulated')}
-      portfolio={portfolio}
       positions={holdings}
       review={reviewItems}
-      setActivePage={setActivePage}
+      runningCount={runningCount}
+      runtimeItem={runtimeItem}
     />
   )
 }

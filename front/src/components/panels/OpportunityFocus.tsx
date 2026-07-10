@@ -15,11 +15,11 @@ export function OpportunityFocus({
 
   return (
     <section className="panel rail-panel">
-      <PanelTitle action="全部机会" kicker="当前机会" onAction={() => setActivePage('机会')} title={hasSignalData ? '正在推进' : '等待机会'} />
+      <PanelTitle action="完整过程" kicker="自动化过程" onAction={() => setActivePage('过程')} title={hasSignalData ? '正在运行' : '运行空闲'} />
       <div className="focus-list">
         {hasSignalData ? (
           topSignals.map((signal, index) => (
-            <button className="focus-item" key={`${signal.symbol}-${signal.status}-${signal.age}-${index}`} onClick={() => setActivePage('机会')} type="button">
+            <button className="focus-item" key={`${signal.symbol}-${signal.status}-${signal.age}-${index}`} onClick={() => setActivePage('过程')} type="button">
               <span>
                 <strong>{signal.symbol}</strong>
                 <em>{signal.reason}</em>
@@ -29,8 +29,8 @@ export function OpportunityFocus({
           ))
         ) : (
           <div className="empty-panel-copy">
-            <strong>暂无机会结果</strong>
-            <span>机会进入通道后，这里按优先级显示。</span>
+            <strong>当前没有运行中的自动过程</strong>
+            <span>新一轮扫描启动后，这里会自动显示运行状态。</span>
           </div>
         )}
       </div>

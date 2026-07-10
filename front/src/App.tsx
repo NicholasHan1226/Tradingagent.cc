@@ -8,6 +8,7 @@ import { holdings as mockHoldings, mockDashboardApiResponse, performanceData, si
 import { deriveChartEvents } from './lib/chartEvents'
 import { getLivePerformanceData, getSelectedMarketSummary, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
 import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
+import { createAutomationObservatoryViewModel } from './lib/automationObservatoryViewModel'
 import { createWorkbenchViewModel } from './lib/workbenchViewModel'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
@@ -17,11 +18,11 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
-const DASHBOARD_BUILD_ID = '20260711-readonly-workbench'
+const DASHBOARD_BUILD_ID = '20260711-automated-observatory'
 
 function App() {
   const demoPreviewEnabled = isDemoPreviewEnabled()
-  const [activePage, setActivePage] = useState<Page>('主页')
+  const [activePage, setActivePage] = useState<Page>('总览')
   const [activeMarket, setActiveMarket] = useState<Market>('All Markets')
   const [accountMode, setAccountMode] = useState<AccountMode>('simulated')
   const [dashboardState, setDashboardState] = useState(() => toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
@@ -73,7 +74,6 @@ function App() {
   const isUsingDemoSnapshot = readModelSnapshot === null && demoPreviewEnabled
   const hasGlobalPerformanceData = isUsingDemoSnapshot || hasMeaningfulPerformanceRows(readModelSnapshot?.performance ?? []) || hasPortfolioResult(portfolioSummary)
   const hasGlobalSignalData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'signals')
-  const hasGlobalHoldingData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'holdings')
   const livePerformanceData = useMemo(
     () => getLivePerformanceData(now, performanceRows, isUsingDemoSnapshot),
     [isUsingDemoSnapshot, now, performanceRows],
@@ -96,7 +96,6 @@ function App() {
     ? hasGlobalPerformanceData
     : hasMarketPerformanceResult(selectedMarketSummary)
   const hasSignalData = activeMarket === 'All Markets' ? hasGlobalSignalData : visibleSignals.length > 0
-  const hasHoldingData = activeMarket === 'All Markets' ? hasGlobalHoldingData : visibleHoldings.length > 0
   const workbench = useMemo(() => createWorkbenchViewModel({
     accountMode,
     activeMarket,
@@ -108,6 +107,7 @@ function App() {
     funnelEvents,
     generatedAt: readModelSnapshot?.generatedAt ?? null,
   }), [accountMode, activeMarket, funnelEvents, holdingRows, marketPerformanceData, marketSummaries, portfolioSummary, readModelSnapshot?.generatedAt, signalRows])
+  const observatory = useMemo(() => createAutomationObservatoryViewModel(workbench), [workbench])
   const visiblePerformanceData = workbench.performance
   const visiblePortfolio = workbench.portfolio
   const latestPoint = visiblePerformanceData[visiblePerformanceData.length - 1] ?? {
@@ -131,7 +131,7 @@ function App() {
       />
       <MarketHeader
         accountMode={accountMode}
-        activeOpportunityCount={workbench.opportunities.active.length}
+        completedCount={observatory.summary.completedCount}
         activePage={activePage}
         activeMarket={activeMarket}
         hasPerformanceData={hasPerformanceData}
@@ -142,23 +142,22 @@ function App() {
         maxDrawdown={visiblePortfolio?.maxDrawdownPct ?? null}
         positionCount={visibleHoldings.length}
         performanceStatus={domainStatus('performance')}
-        reviewCount={workbench.reviewItems.length}
+        runningCount={observatory.summary.runningCount}
         snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
         setActiveMarket={setActiveMarket}
         targetReturn={visiblePortfolio?.targetPct ?? latestPoint.target}
       />
 
       <section className="workspace">
-        {activePage === '主页' || workbench.liveGate.gated ? (
+        {activePage === '总览' || workbench.liveGate.gated ? (
           <HomeDashboard
             accountMode={accountMode}
-            activeSignals={workbench.opportunities.active}
+            activeSignals={observatory.running}
             activeMarket={activeMarket}
             ashareForwardValidation={readModelSnapshot?.ashareForwardValidation}
             ashareResearchEvidence={readModelSnapshot?.ashareResearchEvidence}
             ashareTierSummaries={readModelSnapshot?.ashareTierSummaries}
             data={visiblePerformanceData}
-            hasHoldingData={hasHoldingData}
             hasPerformanceData={hasPerformanceData}
             hasSignalData={hasSignalData}
             holdings={visibleHoldings}
@@ -168,13 +167,15 @@ function App() {
             marketSummaries={marketSummaries}
             now={now}
             portfolio={visiblePortfolio}
-            completedSignals={workbench.opportunities.completed}
+            completedSignals={observatory.completed}
             domainStatus={domainStatus}
             onRetry={handleRetry}
             selectAccountMode={selectAccountMode}
             setActivePage={setActivePage}
             signals={visibleSignals}
-            reviewItems={workbench.reviewItems}
+            reviewItems={observatory.automaticReview}
+            runningCount={observatory.summary.runningCount}
+            runtimeItem={observatory.runtimeItem}
             snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
             funnelEvents={visibleFunnelEvents}
             events={chartEvents}

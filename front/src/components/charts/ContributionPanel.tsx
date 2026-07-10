@@ -8,7 +8,7 @@ export function ContributionPanel({ signals }: { signals: SignalRow[] }) {
 
   return (
     <section className="panel rail-panel">
-      <PanelTitle kicker="赚钱原因" title="哪类判断贡献最大" />
+      <PanelTitle kicker="收益来源" title="收益贡献分布" />
       {contributionData.length === 0 ? (
         <div className="empty-panel-copy" aria-label="收益归因状态">
           <strong>暂无可用收益归因</strong>

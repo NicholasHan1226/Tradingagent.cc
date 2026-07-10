@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react'
-import type { HoldingRow, Page, PortfolioSummary, SignalRow } from '../../types/dashboard'
+import type { AutomationRuntimeItem } from '../../lib/automationObservatoryViewModel'
+import type { HoldingRow, SignalRow } from '../../types/dashboard'
 import { LiveGate } from '../LiveGate'
-import { ReviewRail } from './ReviewRail'
+import { RuntimeRail } from './RuntimeRail'
 import { WorkbenchBlotter, type BlotterTab } from './WorkbenchBlotter'
 
 export function WorkbenchShell({
@@ -12,10 +13,10 @@ export function WorkbenchShell({
   evidence,
   liveGate,
   onUseSimulation,
-  portfolio,
   positions,
   review,
-  setActivePage,
+  runningCount,
+  runtimeItem,
 }: {
   active: SignalRow[]
   chart: ReactNode
@@ -24,10 +25,10 @@ export function WorkbenchShell({
   evidence?: ReactNode
   liveGate: { gated: boolean; title: string; detail: string }
   onUseSimulation: () => void
-  portfolio: PortfolioSummary | null
   positions: HoldingRow[]
   review: SignalRow[]
-  setActivePage: (page: Page) => void
+  runningCount: number
+  runtimeItem: AutomationRuntimeItem
 }) {
   const [blotterTab, setBlotterTab] = useState<BlotterTab>('active')
 
@@ -43,13 +44,7 @@ export function WorkbenchShell({
             <section className="workbench-chart-region" aria-label="收益与目标">
               {chart}
             </section>
-            <ReviewRail
-              active={active}
-              positions={positions}
-              portfolio={portfolio}
-              review={review}
-              setActivePage={setActivePage}
-            />
+            <RuntimeRail item={runtimeItem} runningCount={runningCount} />
           </div>
           <div className="workbench-context-strip">{context}</div>
           <WorkbenchBlotter

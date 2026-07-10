@@ -44,19 +44,20 @@ const holding: HoldingRow = {
 }
 
 describe('WorkbenchBlotter', () => {
-  it('starts on active opportunities without terminal rows', () => {
+  it('starts on running automation without terminal rows', () => {
     render(<WorkbenchBlotter active={[pending]} positions={[holding]} completed={[executed]} review={[]} />)
 
-    const panel = screen.getByRole('tabpanel', { name: '当前机会' })
-    expect(within(panel).getByRole('table', { name: '当前机会表' })).toBeInTheDocument()
+    const panel = screen.getByRole('tabpanel', { name: '运行中' })
+    expect(within(panel).getByRole('table', { name: '自动运行过程表' })).toBeInTheDocument()
+    expect(within(panel).getByRole('columnheader', { name: '当前阶段' })).toBeInTheDocument()
     expect(within(panel).getAllByText('0700.HK').length).toBeGreaterThan(0)
     expect(within(panel).queryByText('AAPL.US')).not.toBeInTheDocument()
   })
 
-  it('shows a truthful empty state instead of completed rows', () => {
+  it('shows a truthful idle state instead of completed rows', () => {
     render(<WorkbenchBlotter active={[]} positions={[holding]} completed={[executed]} review={[]} />)
 
-    expect(screen.getByText('当前没有待处理机会')).toBeInTheDocument()
+    expect(screen.getByText('当前没有运行中的自动过程')).toBeInTheDocument()
     expect(screen.queryByText('AAPL.US')).not.toBeInTheDocument()
   })
 
@@ -77,5 +78,13 @@ describe('WorkbenchBlotter', () => {
     expect(within(panel).getByRole('table', { name: '结果与复盘表' })).toBeInTheDocument()
     expect(within(panel).getByText('部分成交')).toBeInTheDocument()
     expect(within(panel).queryByText('已保护')).not.toBeInTheDocument()
+  })
+
+  it('uses process and result tabs without decision language', () => {
+    render(<WorkbenchBlotter active={[pending]} positions={[holding]} completed={[executed]} review={[executed]} />)
+
+    expect(screen.getByRole('tab', { name: '运行中 1' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '自动复盘 1' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /当前机会|待复盘/ })).not.toBeInTheDocument()
   })
 })

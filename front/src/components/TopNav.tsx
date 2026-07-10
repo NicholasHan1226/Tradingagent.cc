@@ -11,7 +11,7 @@ export function TopNav({
 }) {
   return (
     <header className="top-nav">
-      <button aria-label="回到主页" className="brand-lockup" onClick={() => setActivePage('主页')} type="button">
+      <button aria-label="回到总览" className="brand-lockup" onClick={() => setActivePage('总览')} type="button">
         <span className="brand-wordmark">
           <strong><span>Trading</span><b>Agent</b></strong>
         </span>
@@ -24,7 +24,7 @@ export function TopNav({
         ))}
       </nav>
       <div className="top-actions">
-        <span className="top-status"><i />模拟盘运行中</span>
+        <span className="top-status"><i />自动化运行中</span>
         <button className="icon-button" type="button" aria-label="提醒"><Bell size={16} /></button>
         <button className="icon-button" type="button" aria-label="设置"><Settings size={16} /></button>
       </div>

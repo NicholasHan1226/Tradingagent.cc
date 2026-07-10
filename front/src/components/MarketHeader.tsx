@@ -6,7 +6,7 @@ import type { DomainStatus } from '../types/status'
 
 export function MarketHeader({
   accountMode,
-  activeOpportunityCount,
+  completedCount,
   activePage,
   activeMarket,
   liveProfit,
@@ -17,13 +17,13 @@ export function MarketHeader({
   hasPerformanceData,
   isDemoPreview,
   isCnyAccount,
-  reviewCount,
+  runningCount,
   setActiveMarket,
   snapshotGeneratedAt,
   targetReturn,
 }: {
   accountMode: AccountMode
-  activeOpportunityCount: number
+  completedCount: number
   activePage: Page
   activeMarket: Market
   hasPerformanceData: boolean
@@ -34,7 +34,7 @@ export function MarketHeader({
   maxDrawdown: number | null
   positionCount: number
   performanceStatus: DomainStatus
-  reviewCount: number
+  runningCount: number
   setActiveMarket: (market: Market) => void
   snapshotGeneratedAt: string | null
   targetReturn: number
@@ -61,7 +61,7 @@ export function MarketHeader({
   const returnTone = getTone(liveProfit ?? liveReturn, liveReturn)
 
   return (
-    <section className="market-header" aria-label="市场概览">
+    <section className="market-header" aria-label="市场与账户">
       <div className="market-symbol">
         <div>
           <strong>{meta.title}</strong>
@@ -82,8 +82,8 @@ export function MarketHeader({
           cyan={showPerformanceData && liveReturn - targetReturn > 0.005}
           red={showPerformanceData && liveReturn - targetReturn < -0.005}
         />
-        <Stat detail="等待处理" label="当前机会" value={`${activeOpportunityCount}`} cyan={activeOpportunityCount > 0} />
-        <Stat detail="风险与错过" label="待复盘" value={`${reviewCount}`} red={reviewCount > 0} />
+        <Stat detail="自动流程" label="运行中" value={`${runningCount}`} cyan={runningCount > 0} />
+        <Stat detail="结果写回" label="已完成" value={`${completedCount}`} />
         <Stat detail="模拟盘" label="持仓" value={`${positionCount}`} />
         <Stat label="最大回撤" value={showPerformanceData ? formatDrawdown(drawdown) : isLive ? '待接入' : '等待'} red={showPerformanceData && drawdown > 0} />
       </div>

@@ -1,16 +1,16 @@
 import { useState } from 'react'
 import { HoldingsTable } from '../tables/HoldingsTable'
-import { OpportunityTable } from '../tables/OpportunityTable'
+import { RunningProcessTable } from '../tables/RunningProcessTable'
 import { SignalTable } from '../tables/SignalTable'
 import type { HoldingRow, SignalRow } from '../../types/dashboard'
 
 export type BlotterTab = 'active' | 'positions' | 'completed' | 'review'
 
 const TAB_LABELS: Record<BlotterTab, string> = {
-  active: '当前机会',
+  active: '运行中',
   positions: '持仓',
   completed: '已完成',
-  review: '待复盘',
+  review: '自动复盘',
 }
 
 export function WorkbenchBlotter({
@@ -77,8 +77,8 @@ function renderPanel(
 ) {
   if (tab === 'active') {
     return rows.active.length
-      ? <OpportunityTable signals={rows.active} />
-      : <EmptyState title="当前没有待处理机会" detail="新机会通过筛选后会出现在这里，已完成结果保留在复盘视图。" />
+      ? <RunningProcessTable signals={rows.active} />
+      : <EmptyState title="当前没有运行中的自动过程" detail="系统等待下一轮调度，持仓与历史结果继续保留。" />
   }
   if (tab === 'positions') {
     return rows.positions.length
@@ -92,7 +92,7 @@ function renderPanel(
   }
   return rows.review.length
     ? <SignalTable signals={rows.review} />
-    : <EmptyState title="当前没有待复盘事项" detail="风险拦截和错过原因会在这里集中查看。" />
+    : <EmptyState title="当前没有自动复盘记录" detail="风险拦截、异常和结果归因会在这里集中展示。" />
 }
 
 function EmptyState({ title, detail }: { title: string; detail: string }) {
