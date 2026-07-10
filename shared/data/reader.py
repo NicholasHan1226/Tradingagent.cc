@@ -931,7 +931,11 @@ class TradingagentDataReader:
                 else:
                     result = []
             if market:
-                result = [r for r in result if not r.get("market") or r.get("market") == market]
+                canonical = self._canonical_market(market)
+                result = [
+                    r for r in result
+                    if not r.get("market") or self._canonical_market(r.get("market")) == canonical
+                ]
             if symbol:
                 result = [
                     r for r in result

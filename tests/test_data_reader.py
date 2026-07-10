@@ -470,6 +470,59 @@ class FakeAPIClient:
         return [{"market": market, "symbol": symbol, "event_hash": "evt-api", "title": "api event"}]
 
 
+class AshareCapitalizedEventsAPIClient(FakeAPIClient):
+    """Simulates real SharedSignals API: returns market="Ashare" regardless of input."""
+
+    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
+        self.event_calls.append({
+            "start": start,
+            "end": end,
+            "market": market,
+            "symbol": symbol,
+            "subject_code": subject_code,
+            "event_type": event_type,
+        })
+        return [
+            {"market": "Ashare", "symbol": symbol, "event_hash": "evt-api", "title": "api event"},
+        ]
+
+
+class FixedSymbolEventsAPIClient(AshareCapitalizedEventsAPIClient):
+    """Returns one A-share event for a fixed symbol, ignoring the request."""
+
+    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
+        self.event_calls.append({
+            "start": start,
+            "end": end,
+            "market": market,
+            "symbol": symbol,
+            "subject_code": subject_code,
+            "event_type": event_type,
+        })
+        return [
+            {"market": "Ashare", "symbol": "600000", "event_hash": "evt-fixed", "title": "fixed symbol event"},
+        ]
+
+
+class MixedMarketEventsAPIClient(FakeAPIClient):
+    """Returns mixed-market event rows to test cross-market filtering."""
+
+    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
+        self.event_calls.append({
+            "start": start,
+            "end": end,
+            "market": market,
+            "symbol": symbol,
+            "subject_code": subject_code,
+            "event_type": event_type,
+        })
+        return [
+            {"market": "Ashare", "symbol": "600000", "event_hash": "evt-ashare", "title": "ashare event"},
+            {"market": "Crypto", "symbol": "BTCUSDT", "event_hash": "evt-crypto", "title": "crypto event"},
+            {"market": "HK", "symbol": "00700", "event_hash": "evt-hk", "title": "hk event"},
+        ]
+
+
 class EmptyShellAPIClient(FakeAPIClient):
     def get_market_data(self, ts_code, start=None, end=None, freq="daily"):
         self.market_data_calls.append({"ts_code": ts_code, "start": start, "end": end, "freq": freq})
@@ -714,6 +767,37 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(rows[0]["event_hash"], "evt-fallback")
         self.assertEqual(api.event_calls[0]["market"], "Ashare")
         self.assertEqual(api.event_calls[0]["symbol"], "600000")
+
+    def test_get_events_canonical_market_matches_api_ashare_capitalized(self) -> None:
+        """API returns market="Ashare", caller passes "ashare" — canonical match must keep rows."""
+        api = AshareCapitalizedEventsAPIClient()
+        reader = TradingagentDataReader(shared=FakeSharedBars(), api_client=api)
+
+        rows = reader.get_events("ashare", "600000", "20260708", "20260708")
+
+        self.assertEqual(len(rows), 1, "ashare should match Ashare via canonical normalization")
+        self.assertEqual(rows[0]["event_hash"], "evt-api")
+        self.assertEqual(api.event_calls[0]["market"], "ashare")
+
+    def test_get_events_canonical_market_filters_different_markets(self) -> None:
+        """Cross-market rows (Crypto, HK) must still be filtered out for ashare request."""
+        api = MixedMarketEventsAPIClient()
+        reader = TradingagentDataReader(shared=FakeSharedBars(), api_client=api)
+
+        rows = reader.get_events("ashare", "600000", "20260708", "20260708")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["event_hash"], "evt-ashare")
+        self.assertEqual(rows[0]["market"], "Ashare")
+
+    def test_get_events_symbol_mismatch_still_filters(self) -> None:
+        """Symbol mismatch must still filter — market normalization must not relax symbol filtering."""
+        api = FixedSymbolEventsAPIClient()
+        reader = TradingagentDataReader(shared=FakeSharedBars(), api_client=api)
+
+        rows = reader.get_events("ashare", "000001", "20260708", "20260708")
+
+        self.assertEqual(rows, [])
 
     def test_get_pm_prices_uses_sharedsignals_api(self) -> None:
         api = FakeAPIClient()
