@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { HoldingsTable } from '../tables/HoldingsTable'
 import { RunningProcessTable } from '../tables/RunningProcessTable'
 import { SignalTable } from '../tables/SignalTable'
 import type { HoldingRow, SignalRow } from '../../types/dashboard'
-import { getPreferredTab } from './workbenchBlotterState'
+import { getAvailableTab, getPreferredTab } from './workbenchBlotterState'
 
 export type BlotterTab = 'active' | 'positions' | 'completed' | 'review'
 
@@ -41,6 +41,13 @@ export function WorkbenchBlotter({
     completed: completed.length,
     review: review.length,
   }
+
+  useEffect(() => {
+    const nextTab = getAvailableTab(tab, { active, positions, completed, review })
+    if (nextTab === tab) return
+    setInternalTab(nextTab)
+    onTabChange?.(nextTab)
+  }, [active, completed, onTabChange, positions, review, tab])
 
   return (
     <section className="workbench-blotter" aria-label="工作台明细区">

@@ -94,4 +94,13 @@ describe('WorkbenchBlotter', () => {
     expect(screen.getByRole('columnheader', { name: '自动校准' })).toBeInTheDocument()
     expect(screen.queryByRole('columnheader', { name: '下次规则' })).not.toBeInTheDocument()
   })
+
+  it('moves to completed results when an async snapshot leaves running empty', () => {
+    const { rerender } = render(<WorkbenchBlotter active={[]} positions={[]} completed={[]} review={[]} />)
+
+    rerender(<WorkbenchBlotter active={[]} positions={[]} completed={[executed]} review={[]} />)
+
+    expect(screen.getByRole('tabpanel', { name: '已完成' })).toHaveTextContent('AAPL.US')
+    expect(screen.getByRole('tab', { name: '已完成 1' })).toHaveAttribute('aria-selected', 'true')
+  })
 })

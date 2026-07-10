@@ -5,6 +5,7 @@ import type { AutomationRuntimeItem } from '../../lib/automationObservatoryViewM
 
 const running: AutomationRuntimeItem = {
   kind: 'running',
+  contextLabel: '当前运行',
   symbol: 'IF2601.CFFEX',
   name: '沪深300期指',
   market: 'CNFutures',
@@ -32,6 +33,7 @@ describe('RuntimeRail', () => {
     render(<RuntimeRail item={{
       ...running,
       kind: 'idle',
+      contextLabel: '运行空闲',
       symbol: null,
       market: null,
       name: '当前没有运行中的自动任务',
@@ -39,6 +41,6 @@ describe('RuntimeRail', () => {
       statusLabel: '等待下一轮调度',
     }} runningCount={0} />)
 
-    expect(screen.getByRole('complementary', { name: '当前运行' })).toHaveTextContent('等待下一轮调度')
+    expect(screen.getByRole('complementary', { name: '运行空闲' })).toHaveTextContent('等待下一轮调度')
   })
 })

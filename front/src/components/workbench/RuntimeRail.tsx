@@ -9,9 +9,9 @@ export function RuntimeRail({
   runningCount: number
 }) {
   return (
-    <aside aria-label="当前运行" className={`runtime-rail ${item.kind}`}>
+    <aside aria-label={item.contextLabel} className={`runtime-rail ${item.kind}`}>
       <header>
-        <span>自动化状态</span>
+        <span>{item.contextLabel}</span>
         <b>运行中 {runningCount}</b>
       </header>
       <section>
