@@ -325,6 +325,101 @@ class AshareRebalancePlanDynamicThresholdTest(unittest.TestCase):
         self.assertEqual(len(opportunity_sells), 1)
         self.assertEqual(opportunity_sells[0]["ts_code"], "600000.SH")
 
+    def test_defensive_target_positions_zero_blocks_opportunity_cost_sells(self) -> None:
+        """Risk-1 regression: defensive target_positions=0 must not allow
+        opportunity_cost sells; stop_loss/score_drop risk sells are preserved."""
+        positions = [
+            {"ts_code": "600000.SH", "quantity": 100, "sellable_quantity": 100, "avg_price": 10.0, "last_price": 10.0},
+            {"ts_code": "000001.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 10.0, "last_price": 10.0},
+        ]
+        scores_by_symbol = {
+            "600000.SH": {"combined": 0.65},
+            "000001.SZ": {"combined": 0.65},
+            "300001.SZ": {"combined": 0.85},
+        }
+        capital_plan = {
+            "enabled": True,
+            "target_positions": 0,
+            "max_new_positions": 0,
+            "risk_mode": "defensive",
+        }
+        buy_candidates = [{"ts_code": "300001.SZ", "combined": 0.85}]
+
+        result = _ashare_rebalance_plan(
+            market="ashare",
+            date="20260709",
+            reader=StubReader(),
+            existing_positions=positions,
+            capital_plan=capital_plan,
+            scores_by_symbol=scores_by_symbol,
+            max_portfolio_positions=3,
+            default_price=10.0,
+            capital=200000.0,
+            buy_candidates=buy_candidates,
+        )
+
+        opportunity_sells = [
+            row for row in result["sells"]
+            if "opportunity_cost" in (row.get("rebalance_reasons") or [])
+        ]
+        self.assertEqual(len(opportunity_sells), 0,
+                         "opportunity_cost sells must not be generated when target_positions=0 (defensive)")
+
+    def test_defensive_mode_still_allows_stop_loss_and_score_drop(self) -> None:
+        """Risk-1 regression: defensive target_positions=0 preserves stop_loss
+        and score_drop risk sells."""
+        positions = [
+            {"ts_code": "600000.SH", "quantity": 100, "sellable_quantity": 100, "avg_price": 12.0, "last_price": 9.0},
+            {"ts_code": "000001.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 10.0, "last_price": 10.0},
+        ]
+        scores_by_symbol = {
+            "600000.SH": {"combined": 0.45},
+            "000001.SZ": {"combined": 0.65},
+            "300001.SZ": {"combined": 0.85},
+        }
+        capital_plan = {
+            "enabled": True,
+            "target_positions": 0,
+            "max_new_positions": 0,
+            "risk_mode": "defensive",
+        }
+        buy_candidates = [{"ts_code": "300001.SZ", "combined": 0.85}]
+
+        result = _ashare_rebalance_plan(
+            market="ashare",
+            date="20260709",
+            reader=StubReader(),
+            existing_positions=positions,
+            capital_plan=capital_plan,
+            scores_by_symbol=scores_by_symbol,
+            max_portfolio_positions=3,
+            default_price=10.0,
+            capital=200000.0,
+            buy_candidates=buy_candidates,
+        )
+
+        # stop_loss: 600000.SH avg_price=12, last_price=9 -> pnl_pct = -0.25 <= -0.08
+        stop_loss_sells = [
+            row for row in result["sells"]
+            if "stop_loss" in (row.get("rebalance_reasons") or [])
+        ]
+        # score_drop: 000001.SZ combined=0.45 < 0.55
+        score_drop_sells = [
+            row for row in result["sells"]
+            if "score_drop" in (row.get("rebalance_reasons") or [])
+        ]
+        # No opportunity_cost
+        opportunity_sells = [
+            row for row in result["sells"]
+            if "opportunity_cost" in (row.get("rebalance_reasons") or [])
+        ]
+        self.assertGreaterEqual(len(stop_loss_sells), 1,
+                                "stop_loss sells must be preserved in defensive mode")
+        self.assertGreaterEqual(len(score_drop_sells), 1,
+                                "score_drop sells must be preserved in defensive mode")
+        self.assertEqual(len(opportunity_sells), 0,
+                         "opportunity_cost sells must be blocked in defensive mode")
+
 
 if __name__ == "__main__":
     unittest.main()

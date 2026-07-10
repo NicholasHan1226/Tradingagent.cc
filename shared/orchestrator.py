@@ -1433,7 +1433,10 @@ def _ashare_rebalance_plan(
     planned_by_symbol: dict[str, dict[str, Any]] = {}
     candidates_for_replacement = list(buy_candidates or [])
     existing_count = len({_position_symbol(position) for position in existing_positions if isinstance(position, dict) and _position_symbol(position)})
-    effective_target = min(target_positions if target_positions > 0 else max_portfolio_positions, max_portfolio_positions)
+    # Defensive mode (target_positions=0) must not allow opportunity_cost
+    # rebalancing.  Stop-loss and score_drop risk sells are preserved because
+    # they are evaluated before the opportunity_cost gate below.
+    effective_target = 0 if target_positions == 0 else min(target_positions, max_portfolio_positions)
 
     for position in existing_positions:
         if not isinstance(position, dict):
@@ -1816,11 +1819,20 @@ def _ashare_strategy_account_view(
         positions = [dict(row) for row in strategy_positions if isinstance(row, dict)]
     else:
         positions = existing_positions
+    original_strategy_cash = strategy_cash
     if strategy_cash < 0:
         strategy_cash = available_cash
-    if not adjustment:
-        return positions, strategy_cash, {}
+    else:
+        # Cap strategy cash to real account cash so the capital plan does not
+        # budget beyond what the account can actually pay.  Keep original
+        # values for diagnostics.
+        strategy_cash = min(strategy_cash, available_cash)
     adjusted = dict(adjustment)
+    if original_strategy_cash >= 0 and original_strategy_cash > available_cash:
+        adjusted["original_strategy_cash_available"] = round(original_strategy_cash, 2)
+        adjusted["strategy_cash_capped_to_account"] = True
+    if not adjusted:
+        return positions, strategy_cash, {}
     adjusted["account_position_count"] = len({
         _position_symbol(position)
         for position in existing_positions
@@ -3156,6 +3168,10 @@ def run_sim_loop(
         quantity = _execution_quantity(market, side, position.get("shares"))
         order_id = _make_order_id("SIM-", market, symbol, date)
         idempotency_key = _sim_idempotency_key(market, account, symbol, date, side)
+        if side == "sell":
+            candidate_pool_layer = "ashare_rebalance_sell" if str(market).lower() == "ashare" else "rebalance"
+        else:
+            candidate_pool_layer = str(position.get("candidate_pool_layer") or candidate_layers.get(symbol) or "candidate")
         order = {
             "order_id": order_id,
             "idempotency_key": idempotency_key,
@@ -3172,7 +3188,7 @@ def run_sim_loop(
             "capital_layer": capital_layer,
             "account_type": account_type,
             "note": str(position.get("reason") or f"orchestrator sim loop {market} {date}"),
-            "candidate_pool_layer": str(position.get("candidate_pool_layer") or candidate_layers.get(symbol) or ("rebalance" if side == "sell" else "candidate")),
+            "candidate_pool_layer": candidate_pool_layer,
             "execution_source": (
                 "ashare_candidate_layer"
                 if str(market).lower() == "ashare" and side == "buy"

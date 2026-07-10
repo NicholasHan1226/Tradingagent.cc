@@ -958,7 +958,7 @@ class SimLoopTest(unittest.TestCase):
                 score_universe_limit=3,
                 max_portfolio_positions=3,
                 positions=validation_positions,
-                cash_available=82683.89,
+                cash_available=150000.0,  # Below strategy_cash to trigger cap, but enough for a buy
                 strategy_positions=[],
                 strategy_cash_available=200000.0,
                 sample_adjustment={
@@ -973,10 +973,14 @@ class SimLoopTest(unittest.TestCase):
             signals_dir=self.tmp_path / "signals_validation_capital_view",
         )
 
-        self.assertEqual(result["capital_plan"]["available_cash"], 200000.0)
+        # Strategy cash (200k) is capped to real account cash (150k) for
+        # budget safety; original uncapped value is preserved for diagnostics.
+        self.assertEqual(result["capital_plan"]["available_cash"], 150000.0)
         self.assertEqual(result["capital_plan"]["existing_position_count"], 0)
         self.assertEqual(result["capital_plan"]["sample_adjustment"]["ignored_validation_sample_count"], 3)
-        self.assertEqual(result["capital_plan_decision"]["account_cash_available"], 82683.89)
+        self.assertEqual(result["capital_plan"]["sample_adjustment"]["original_strategy_cash_available"], 200000.0)
+        self.assertTrue(result["capital_plan"]["sample_adjustment"]["strategy_cash_capped_to_account"])
+        self.assertEqual(result["capital_plan_decision"]["account_cash_available"], 150000.0)
         self.assertGreater(result["capital_plan_decision"]["position_capacity"], 0)
 
     def test_run_sim_loop_uses_sample_count_for_ashare_probe_position(self) -> None:
@@ -1436,6 +1440,94 @@ class SimLoopTest(unittest.TestCase):
         rows = [json.loads(line) for line in exclusion_path.read_text(encoding="utf-8").splitlines()]
         self.assertIn(rows[0]["kind"], {"skipped_candidate", "risk_rejection", "execution_skip"})
         self.assertEqual(rows[0]["symbol"], "BAD")
+
+    def test_strategy_cash_capped_to_account_cash_available(self) -> None:
+        """Risk-2 regression: strategy_cash_available must not exceed real
+        account cash_available for budget planning."""
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            return [
+                ("300418.SZ", {"combined": 0.80, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+            ]
+
+        deps.score_universe = score_universe
+
+        # Strategy reports 200,000 cash (clean strategy view), but the real
+        # account only has 12,000 available cash after existing positions.
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(
+                ["300418.SZ"],
+                max_candidates=1,
+                score_universe_limit=1,
+                max_portfolio_positions=3,
+                positions=[
+                    {"ts_code": "300759.SZ", "quantity": 1900, "sellable_quantity": 0, "avg_price": 30.34, "last_price": 30.31, "market_value": 57589.0},
+                    {"ts_code": "600030.SH", "quantity": 2100, "sellable_quantity": 0, "avg_price": 28.03, "last_price": 28.00, "market_value": 58800.0},
+                ],
+                cash_available=12_000.0,
+                strategy_positions=[],
+                strategy_cash_available=200_000.0,
+                sample_adjustment={
+                    "view": "strategy_valid_samples_only",
+                    "ignored_validation_sample_count": 0,
+                    "reason": "validation_samples_do_not_consume_strategy_capital",
+                },
+            ),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_strategy_cash_capped",
+        )
+
+        # The capital plan should see the capped cash (12,000), not 200,000
+        self.assertEqual(result["capital_plan"]["available_cash"], 12000.0)
+        self.assertEqual(result["capital_plan"]["cash_source"], "account_snapshot")
+        self.assertEqual(result["capital_plan"]["max_new_positions"], 0)
+        # Diagnostics should show the original uncapped value
+        sample_adj = result["capital_plan"].get("sample_adjustment", {})
+        self.assertEqual(sample_adj.get("original_strategy_cash_available"), 200000.0)
+        self.assertTrue(sample_adj.get("strategy_cash_capped_to_account"))
+        self.assertEqual(sample_adj.get("account_cash_available"), 12000.0)
+        self.assertEqual(sample_adj.get("strategy_cash_available"), 12000.0)
+
+    def test_ashare_sell_orders_use_ashare_rebalance_sell_candidate_pool_layer(self) -> None:
+        """Risk-3 regression: A-share sell orders must carry
+        candidate_pool_layer='ashare_rebalance_sell'."""
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
+            scores = {"000010.SZ": 0.60, "000013.SZ": 0.84}
+            return [
+                (symbol, {"combined": scores[symbol], "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"})
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        positions = [
+            {"ts_code": "000010.SZ", "quantity": 5000, "sellable_quantity": 5000, "avg_price": 10.0, "last_price": 10.0, "market_value": 200000.0}
+        ]
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(
+                ["000010.SZ", "000013.SZ"],
+                max_candidates=2,
+                score_universe_limit=2,
+                max_portfolio_positions=1,
+                positions=positions,
+            ),
+            "20260630",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_rebalance_naming",
+        )
+
+        sell_orders = [order for order in self.executed_orders if order["side"] == "sell"]
+        self.assertEqual(len(sell_orders), 1)
+        sell = sell_orders[0]
+        self.assertEqual(sell["candidate_pool_layer"], "ashare_rebalance_sell")
+        self.assertEqual(sell["execution_source"], "ashare_rebalance_sell")
+        self.assertIn("opportunity_cost", sell["note"])
 
 
 if __name__ == "__main__":
