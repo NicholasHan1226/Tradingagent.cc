@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.markets.sim_capital import default_sim_capital
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -22,7 +24,7 @@ SIGNALS_DIR = ROOT / "signals"
 NO_TRADE_LOG = ROOT / "shared" / "logs" / "ashare_no_trade_explanations.jsonl"
 REVERSE_REPO_CODE = "204001"
 CN_TZ = timezone(timedelta(hours=8))
-DEFAULT_STYLE_CAPITAL = 200_000.0
+DEFAULT_STYLE_CAPITAL = default_sim_capital("ashare")
 
 
 def _now_cn() -> datetime:

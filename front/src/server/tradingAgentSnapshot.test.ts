@@ -2170,7 +2170,7 @@ describe('TradingAgent snapshot reader', () => {
     }))
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'CNFutures',
-      capitalBase: 200_000,
+      capitalBase: 50_000,
     }))
   })
 

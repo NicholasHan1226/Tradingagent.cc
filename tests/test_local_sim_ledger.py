@@ -63,7 +63,7 @@ class LocalSimLedgerTest(unittest.TestCase):
         snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
         self.assertEqual(snapshot["positions"][0]["ts_code"], "600000.SH")
         self.assertEqual(snapshot["positions"][0]["account"], "acct")
-        self.assertEqual(snapshot["pnl"]["acct"]["cash_available"], 198995.0)
+        self.assertEqual(snapshot["pnl"]["acct"]["cash_available"], 48995.0)
         receipts = [
             json.loads(line)
             for line in local_sim_ledger.LOCAL_SIM_RECEIPTS.read_text(encoding="utf-8").splitlines()
@@ -126,7 +126,7 @@ class LocalSimLedgerTest(unittest.TestCase):
             local_sim_ledger.record_local_sim_order(order, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
         local_sim_ledger.refresh_local_sim_snapshot(mark_prices={"600000.SH": 11.0})
 
-        result = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=200000)
+        result = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=50000)
 
         self.assertEqual(result["status"], "existing_trades")
         pnl_payload = json.loads(local_sim_ledger.LOCAL_SIM_PNL.read_text(encoding="utf-8"))
@@ -174,8 +174,8 @@ class LocalSimLedgerTest(unittest.TestCase):
             "idempotency_key": "SIM:ashare:acct:20260701:600000.SH:buy:cash1",
             "ts_code": "600000.SH",
             "side": "buy",
-            "quantity": 15000,
-            "price": 10,
+            "quantity": 2000,
+            "price": 20,
             "candidate_pool_layer": "candidate",
             "execution_source": "ashare_candidate_layer",
             "fill_price_source_class": "signal_card_price",
@@ -185,8 +185,8 @@ class LocalSimLedgerTest(unittest.TestCase):
             "idempotency_key": "SIM:ashare:acct:20260701:600001.SH:buy:cash2",
             "ts_code": "600001.SH",
             "side": "buy",
-            "quantity": 5000,
-            "price": 10,
+            "quantity": 500,
+            "price": 20,
             "candidate_pool_layer": "candidate",
             "execution_source": "ashare_candidate_layer",
             "fill_price_source_class": "signal_card_price",
@@ -266,15 +266,15 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(strategy["status"], "filled")
         pnl = local_sim_ledger.get_local_sim_pnl("acct")
         self.assertEqual(set(pnl["positions"]), {"600001.SH"})
-        self.assertEqual(pnl["cash_available"], 197995.0)
+        self.assertEqual(pnl["cash_available"], 47995.0)
         audit_pnl = local_sim_ledger.get_local_sim_pnl("acct", include_validation_samples=True)
         self.assertEqual(set(audit_pnl["positions"]), {"600000.SH", "600001.SH"})
-        self.assertEqual(audit_pnl["cash_available"], 196990.0)
+        self.assertEqual(audit_pnl["cash_available"], 46990.0)
         snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
         self.assertEqual(snapshot["account_view"], "strategy_samples_only")
         self.assertEqual(set(snapshot["positions_by_account"]["acct"]), {"600001.SH"})
         self.assertEqual(set(snapshot["audit_positions_by_account"]["acct"]), {"600000.SH", "600001.SH"})
-        self.assertEqual(snapshot["audit_pnl"]["acct"]["cash_available"], 196990.0)
+        self.assertEqual(snapshot["audit_pnl"]["acct"]["cash_available"], 46990.0)
 
     def test_validation_scope_does_not_block_a_strategy_buy_with_strategy_cash(self) -> None:
         validation_order = {
@@ -282,8 +282,8 @@ class LocalSimLedgerTest(unittest.TestCase):
             "idempotency_key": "SIM:ashare:acct:20260701:000001.SZ:buy:validation-scope",
             "ts_code": "000001.SZ",
             "side": "buy",
-            "quantity": 500,
-            "price": 100,
+            "quantity": 200,
+            "price": 50,
             "candidate_pool_layer": "candidate",
             "execution_source": "ashare_candidate_layer",
             "fill_price_source_class": "signal_card_price",
@@ -293,8 +293,8 @@ class LocalSimLedgerTest(unittest.TestCase):
             "idempotency_key": "SIM:ashare:acct:20260702:600001.SH:buy:strategy-scope",
             "ts_code": "600001.SH",
             "side": "buy",
-            "quantity": 1600,
-            "price": 100,
+            "quantity": 400,
+            "price": 50,
             "candidate_pool_layer": "candidate",
             "execution_source": "ashare_candidate_layer",
             "fill_price_source_class": "signal_card_price",
@@ -304,7 +304,7 @@ class LocalSimLedgerTest(unittest.TestCase):
             "order_id": "SIM-VALIDATION-CASH-SCOPE-OVERFLOW",
             "idempotency_key": "SIM:ashare:acct:20260701:000002.SZ:buy:validation-scope-overflow",
             "ts_code": "000002.SZ",
-            "quantity": 1600,
+            "quantity": 800,
         }
 
         with patch.object(
@@ -341,7 +341,7 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(overflow_validation["reason"], "insufficient_cash")
         self.assertEqual(strategy["status"], "filled")
         strategy_pnl = local_sim_ledger.get_local_sim_pnl("acct")
-        self.assertEqual(strategy_pnl["cash_available"], 39960.0)
+        self.assertEqual(strategy_pnl["cash_available"], 29995.0)
         self.assertEqual(set(strategy_pnl["positions"]), {"600001.SH"})
         trades = [
             json.loads(line)
@@ -459,10 +459,10 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertFalse(result["recorded"])
         self.assertFalse(local_sim_ledger.LOCAL_SIM_TRADES.exists())
 
-    def test_default_starting_cash_is_ashare_200000(self) -> None:
+    def test_default_starting_cash_is_ashare_50000(self) -> None:
         snapshot = local_sim_ledger.get_local_sim_account_snapshot("acct")
 
-        self.assertEqual(snapshot["cash_available"], 200000.0)
+        self.assertEqual(snapshot["cash_available"], 50000.0)
 
     def test_rejects_non_regular_ashare_code(self) -> None:
         result = local_sim_ledger.record_local_sim_order({"ts_code": "200011.SZ", "side": "buy", "quantity": 100, "price": 1}, "ashare")
@@ -510,25 +510,56 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertFalse(local_sim_ledger.LOCAL_SIM_TRADES.exists())
 
     def test_bootstrap_snapshot_creates_empty_sim_state(self) -> None:
-        result = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=200000, trade_date="20260706")
+        result = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=50000, trade_date="20260706")
 
         self.assertEqual(result["status"], "bootstrapped")
         self.assertTrue(result["written"])
         snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
         self.assertEqual(snapshot["bootstrap_state"], "no_trades_yet")
-        self.assertEqual(snapshot["cash_available"], 200000.0)
+        self.assertEqual(snapshot["cash_available"], 50000.0)
         self.assertEqual(snapshot["positions"], [])
-        self.assertEqual(snapshot["pnl"]["ashare_sim"]["cash_available"], 200000.0)
+        self.assertEqual(snapshot["pnl"]["ashare_sim"]["cash_available"], 50000.0)
 
-        again = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=200000)
+        again = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=50000)
         self.assertEqual(again["status"], "snapshot_exists")
         snapshot_again = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
-        self.assertEqual(snapshot_again["cash_available"], 200000.0)
+        self.assertEqual(snapshot_again["cash_available"], 50000.0)
 
         updated = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=30000)
         self.assertEqual(updated["status"], "bootstrapped")
         snapshot_updated = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
         self.assertEqual(snapshot_updated["cash_available"], 30000.0)
+
+    def test_epoch_metadata_is_optional_for_ledger_operations(self) -> None:
+        """The ledger functions without .epoch_metadata.json (backward compat)."""
+        result = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=50000, trade_date="20260710")
+        self.assertEqual(result["status"], "bootstrapped")
+        self.assertEqual(result["cash_available"], 50000.0)
+
+        # Verify no .epoch_metadata.json was created by the ledger (it's an epoch concern)
+        epoch_meta_path = local_sim_ledger.LOCAL_SIM_DIR / ".epoch_metadata.json"
+        self.assertFalse(epoch_meta_path.exists(),
+                         "Ledger must not create .epoch_metadata.json; that is the epoch module's concern")
+
+    def test_starting_cash_defaults_to_50000_cny(self) -> None:
+        """Verifies ASHARE_SIM_DEFAULT_CASH is 50,000 CNY (the current epoch 2 value)."""
+        self.assertEqual(local_sim_ledger.ASHARE_SIM_DEFAULT_CASH, 50000.0)
+
+    def test_bootstrap_empty_ledger_after_cutover_has_zero_positions(self) -> None:
+        """After a fresh cutover, bootstrap creates zero positions with 50k cash."""
+        result = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(
+            starting_cash=50000,
+            trade_date="20260710",
+            force=True,
+        )
+        self.assertEqual(result["status"], "bootstrapped")
+
+        snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
+        self.assertEqual(snapshot["positions"], [])
+        self.assertEqual(snapshot["bootstrap_state"], "no_trades_yet")
+        self.assertEqual(snapshot["cash_available"], 50000.0)
+        self.assertEqual(snapshot["pnl"]["ashare_sim"]["total_trades"], 0)
+        self.assertEqual(snapshot["pnl"]["ashare_sim"]["cash_available"], 50000.0)
 
 
 if __name__ == "__main__":

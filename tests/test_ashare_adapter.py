@@ -322,7 +322,7 @@ class AshareAdapterTest(unittest.TestCase):
 
         self.assertEqual(account["cash_available"], 190000.0)
         self.assertEqual(len(account["positions"]), 1)
-        self.assertEqual(account["strategy_cash_available"], 200000.0)
+        self.assertEqual(account["strategy_cash_available"], 50000.0)
         self.assertEqual(account["strategy_positions"], [])
         self.assertEqual(account["strategy_sample_quality"]["validation_sample_count"], 1)
         self.assertEqual(account["capital_plan_sample_adjustment"]["ignored_validation_sample_count"], 1)
@@ -338,7 +338,7 @@ class AshareAdapterTest(unittest.TestCase):
         self.assertIn("trend_follow", config["strategies"])
         self.assertEqual(config["market_rules"]["settlement"], "T+1")
         self.assertIn("opening_auction", config["market_rules"]["sessions"])
-        self.assertEqual(config["sim_capital"], 200_000.0)
+        self.assertEqual(config["sim_capital"], 50_000.0)
         self.assertEqual(config["score_universe_limit"], 500)
         self.assertEqual(config["default_price"], 0.0)
         self.assertTrue(config["universe_filter"]["exclude_non_a_share"])

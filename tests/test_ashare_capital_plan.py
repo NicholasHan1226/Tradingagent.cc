@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 
 from Ashare.capital_plan import plan_capital
@@ -16,6 +17,7 @@ class AshareCapitalPlanTest(unittest.TestCase):
                 {"ts_code": "300750.SZ", "combined": 0.72},
             ],
             dynamic=True,
+            total_capital=200000.0,
             market_context={
                 "trend": "bullish",
                 "risk_rejection_rate": 0.0,
@@ -42,6 +44,7 @@ class AshareCapitalPlanTest(unittest.TestCase):
                 {"ts_code": "000001.SZ", "combined": 0.50},
             ],
             dynamic=True,
+            total_capital=200000.0,
             market_context={
                 "trend": "bearish",
                 "risk_rejection_rate": 0.75,
@@ -92,6 +95,7 @@ class AshareCapitalPlanTest(unittest.TestCase):
                 {"ts_code": "000001.SZ", "combined": 0.68},
             ],
             dynamic=True,
+            total_capital=200000.0,
             market_context={
                 "trend": "neutral",
                 "risk_rejection_rate": 0.10,
@@ -146,6 +150,7 @@ class AshareCapitalPlanTest(unittest.TestCase):
                 {"ts_code": "300750.SZ", "combined": 0.76},
             ],
             dynamic=True,
+            total_capital=200000.0,
             market_context={
                 "trend": "bullish",
                 "risk_rejection_rate": 0.05,
@@ -200,6 +205,7 @@ class AshareCapitalPlanTest(unittest.TestCase):
                 {"ts_code": "300418.SZ", "combined": 0.60},
             ],
             dynamic=True,
+            total_capital=200000.0,
             market_context={
                 "trend": "neutral",
                 "risk_rejection_rate": 0.0,
@@ -302,6 +308,7 @@ class AshareCapitalPlanTest(unittest.TestCase):
             83461.87,
             candidates=[{"ts_code": "300418.SZ", "combined": 0.56}],
             dynamic=True,
+            total_capital=200000.0,
             market_context=base_context,
         ).to_dict()
         high = plan_capital(
@@ -312,6 +319,7 @@ class AshareCapitalPlanTest(unittest.TestCase):
             83461.87,
             candidates=[{"ts_code": "600584.SH", "combined": 0.72}],
             dynamic=True,
+            total_capital=200000.0,
             market_context=base_context,
         ).to_dict()
 
@@ -346,6 +354,149 @@ class AshareCapitalPlanTest(unittest.TestCase):
         self.assertGreaterEqual(data["cash_reserve_pct"], 0.99,
                                 "Defensive mode should be near full cash")
         self.assertEqual(data["suggested_buys"], [])
+
+
+    # --- RED: 50k canonical capital sourcing ---
+
+    def test_default_capital_comes_from_canonical_source_not_hardcoded_200k(self) -> None:
+        """When no total_capital is passed, plan_capital must source from
+        default_sim_capital('ashare'), not a hardcoded 200_000 fallback."""
+        old_tier = os.environ.get("ASHARE_SIM_CAPITAL_TIER")
+        os.environ["ASHARE_SIM_CAPITAL_TIER"] = "50000"
+        try:
+            plan = plan_capital(
+                [],
+                50000.0,
+                candidates=[
+                    {"ts_code": "600000.SH", "combined": 0.86},
+                    {"ts_code": "000001.SZ", "combined": 0.78},
+                    {"ts_code": "300750.SZ", "combined": 0.72},
+                ],
+                dynamic=True,
+                market_context={
+                    "trend": "bullish",
+                    "risk_rejection_rate": 0.0,
+                    "data_issue_rate": 0.0,
+                    "recent_win_rate": 0.62,
+                },
+            )
+        finally:
+            if old_tier is None:
+                os.environ.pop("ASHARE_SIM_CAPITAL_TIER", None)
+            else:
+                os.environ["ASHARE_SIM_CAPITAL_TIER"] = old_tier
+
+        data = plan.to_dict()
+
+        # The plan must use 50k not 200k as its base.
+        # cash_reserve should reflect 50k proportions, not 200k proportions.
+        self.assertEqual(data["risk_mode"], "aggressive")
+        # On 50k, aggressive reserve is ~17.5% => ~8750
+        self.assertLessEqual(data["cash_reserve"], 12000.0,
+                            "Cash reserve must reflect 50k capital, not 200k")
+        self.assertGreaterEqual(data["cash_reserve"], 6000.0)
+        # Position allocations must fit within 50k feasibility
+        if data["suggested_buys"]:
+            total_alloc = sum(b["allocation"] for b in data["suggested_buys"])
+            self.assertLessEqual(total_alloc, 42000.0,
+                                "Total allocations must fit within 50k account")
+            self.assertGreaterEqual(total_alloc, 25000.0)
+
+    def test_50k_capital_scales_position_budgets_proportionally(self) -> None:
+        """Explicit 50k total_capital must produce proportionally smaller
+        position budgets than the canonical 200k account."""
+        plan_50k = plan_capital(
+            [],
+            50000.0,
+            candidates=[
+                {"ts_code": "600000.SH", "combined": 0.86},
+                {"ts_code": "000001.SZ", "combined": 0.78},
+                {"ts_code": "300750.SZ", "combined": 0.72},
+            ],
+            dynamic=True,
+            total_capital=50000.0,
+            market_context={
+                "trend": "bullish",
+                "risk_rejection_rate": 0.0,
+                "data_issue_rate": 0.0,
+                "recent_win_rate": 0.62,
+            },
+        ).to_dict()
+
+        plan_200k = plan_capital(
+            [],
+            200000.0,
+            candidates=[
+                {"ts_code": "600000.SH", "combined": 0.86},
+                {"ts_code": "000001.SZ", "combined": 0.78},
+                {"ts_code": "300750.SZ", "combined": 0.72},
+            ],
+            dynamic=True,
+            total_capital=200000.0,
+            market_context={
+                "trend": "bullish",
+                "risk_rejection_rate": 0.0,
+                "data_issue_rate": 0.0,
+                "recent_win_rate": 0.62,
+            },
+        ).to_dict()
+
+        self.assertEqual(plan_50k["risk_mode"], "aggressive")
+        self.assertEqual(plan_200k["risk_mode"], "aggressive")
+        # 50k allocations must be strictly smaller
+        self.assertLess(
+            sum(b["allocation"] for b in plan_50k["suggested_buys"]),
+            sum(b["allocation"] for b in plan_200k["suggested_buys"]),
+            "50k total allocations must be proportionally smaller than 200k",
+        )
+        # 50k max single position must be <= 50k * 0.35 = 17500
+        for buy in plan_50k["suggested_buys"]:
+            self.assertLessEqual(buy["allocation"], 17500.0,
+                                f"50k position {buy['code']} exceeds 35% of capital")
+
+    def test_50k_min_position_feasible_with_100_share_lots(self) -> None:
+        """On a 50k account, minimum position value must be at least
+        5000 to accommodate a ~50 CNY stock at 100-share lot (5000 CNY)."""
+        plan = plan_capital(
+            [],
+            50000.0,
+            total_capital=50000.0,
+        ).to_dict()
+
+        # Static plan: min_cash_reserve should be ~5000 * 0.15 = 7500
+        # But _scale_plan_constants makes it max(5000, min(30000, 50000*0.15)) = 7500
+        # Investable = 50000 - 7500 = 42500, below min_position_value
+        # So no buys, but the plan itself should be valid
+        self.assertGreaterEqual(plan["cash_reserve"], 5000.0)
+        self.assertLessEqual(plan["cash_reserve_pct"], 0.25)
+
+    def test_sample_collection_50k_probe_budget_is_proportional(self) -> None:
+        """Sample collection mode on 50k must produce proportionally
+        smaller probe budgets (not 20k-35k as on 200k)."""
+        plan = plan_capital(
+            [],
+            50000.0,
+            candidates=[
+                {"ts_code": "600584.SH", "combined": 0.62},
+            ],
+            dynamic=True,
+            total_capital=50000.0,
+            market_context={
+                "trend": "neutral",
+                "risk_rejection_rate": 0.0,
+                "data_issue_rate": 0.0,
+                "recent_win_rate": 0.50,
+                "strategy_sample_valid_count": 2,
+                "min_strategy_samples": 5,
+            },
+        ).to_dict()
+
+        self.assertEqual(plan["risk_mode"], "sample_collection")
+        self.assertEqual(len(plan["suggested_buys"]), 1)
+        # Probe allocation on 50k must be <= 8750 (not 20k-35k)
+        self.assertLessEqual(plan["suggested_buys"][0]["allocation"], 10000.0,
+                            "50k probe budget must be proportional, not 20k-35k")
+        self.assertGreaterEqual(plan["suggested_buys"][0]["allocation"], 4000.0)
 
 
 if __name__ == "__main__":

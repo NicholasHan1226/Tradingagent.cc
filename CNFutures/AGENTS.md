@@ -14,7 +14,7 @@
 ## 执行
 
 - 模拟盘: 本模块 `sim_executor.py` 只生成模拟成交回执和资金占用估算。
-- 资金: 默认模拟本金为 200,000 CNY；可通过 `CN_FUTURES_SIM_CAPITAL_TIER=50000|100000|200000` 或 `default_sim_capital("cn_futures", capital_cny=...)` 使用 50,000 / 100,000 / 200,000 三档。非法档位回退 200,000 CNY。
+- 资金: 当前生产默认模拟本金固定为 50,000 CNY，与 A股一致；环境变量不能切回 100,000/200,000。`default_sim_capital(..., capital_cny=...)` 或 `tier=` 只允许受控离线历史分析显式使用，非法档位回退 50,000 CNY。当前没有需迁移的活跃 CNFutures 旧账本时，不得伪造“已归档”记录。
 - 风控拒单: 保证金 cap、风格暂停、会话不允许、换月保护等预期内风控结果必须写入 hold/risk rejection 原因；不得作为系统 `errors` 导致模拟任务 degraded。只有数据缺失、执行异常、无效价格或代码异常才应进入 error。
 - 多风格验证: 通过独立模拟账户/策略风格并行记录, 不使用 `shadow_broker.py`。
 - 只读 replay: `CNFutures/replay.py` 只能读取 SharedSignals 5分钟 bars 并回放现有风格触发情况，用于解释阈值、hold 原因和历史窗口表现；不得写订单、持仓、账本或实盘接口。Replay 必须复用 live 风格产品过滤，并标注 `execution_eligible` 与不可执行原因，尤其是产品不匹配、午休/闭市边界、保证金 cap、价格/合约规则缺失；历史 buy/sell 只能代表“当时风格触发”，不能直接代表当前可成交。

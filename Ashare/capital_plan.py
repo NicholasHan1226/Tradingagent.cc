@@ -1,10 +1,10 @@
-"""Daily capital plan generator for a 200 000 RMB A-share account.
+"""Daily capital plan generator for the canonical A-share simulated account.
 
 Produces a structured capital allocation plan each trading day:
 
-* Allocate to 2-3 positions (50 000 - 70 000 RMB each).
-* Dynamic cash buffer by risk mode (aggressive ~17.5%, balanced 25% capped at
-  50 000, cautious 45%, defensive 100% for weak-candidate / high-risk).
+* Allocate dynamically across up to 2-3 positions within the active capital.
+* Dynamic cash buffer by risk mode (aggressive ~17.5%, balanced 25%, cautious
+  45%, defensive 100% for weak-candidate / high-risk).
 * Before enough valid strategy samples exist, allow one smaller probe position
   only when data/risk gates are clean and candidate quality is acceptable.
 * Suggest 204001 (GC-001) reverse repo for idle funds at close.
@@ -22,14 +22,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
+from shared.markets.sim_capital import default_sim_capital
+
 # ---------------------------------------------------------------------------
-# Account constants (default 200 000 RMB simulated account)
+# Account constants for the canonical simulated account.
 # ---------------------------------------------------------------------------
-TOTAL_CAPITAL = 200_000         # total account capital in RMB
-MIN_POSITION_VALUE = 50_000     # minimum allocation per position
-MAX_POSITION_VALUE = 70_000     # maximum allocation per position
-MIN_CASH_RESERVE = 30_000       # minimum cash buffer to keep
-MAX_CASH_RESERVE = 50_000       # maximum cash buffer to keep
+TOTAL_CAPITAL = int(default_sim_capital("ashare"))
+MIN_POSITION_VALUE = int(TOTAL_CAPITAL * 0.25)
+MAX_POSITION_VALUE = int(TOTAL_CAPITAL * 0.35)
+MIN_CASH_RESERVE = int(TOTAL_CAPITAL * 0.15)
+MAX_CASH_RESERVE = int(TOTAL_CAPITAL * 0.25)
 TARGET_POSITIONS = (2, 3)       # target 2-3 positions
 REVERSE_REPO_CODE = "204001"    # GC-001 1-day reverse repo
 
@@ -37,12 +39,11 @@ REVERSE_REPO_CODE = "204001"    # GC-001 1-day reverse repo
 def _scale_plan_constants(total_capital: float) -> dict[str, float]:
     """Scale position-budget constants to the account size.
 
-    Keeps the 200k primary account behaviour unchanged while letting
-    50k/100k experiment accounts produce meaningful independent plans.
+    The same percentages apply to explicit historical-capital evaluations.
     """
-    min_position_value = max(10_000.0, min(MIN_POSITION_VALUE, total_capital * 0.25))
-    max_position_value = min(MAX_POSITION_VALUE, max(min_position_value, total_capital * 0.35))
-    min_cash_reserve = max(5_000.0, min(MIN_CASH_RESERVE, total_capital * 0.15))
+    min_position_value = max(5_000.0, total_capital * 0.25)
+    max_position_value = max(min_position_value, total_capital * 0.35)
+    min_cash_reserve = max(5_000.0, total_capital * 0.15)
     return {
         "min_position_value": min_position_value,
         "max_position_value": max_position_value,
@@ -265,7 +266,7 @@ def plan_capital(
     *,
     dynamic: bool = False,
     market_context: dict[str, Any] | None = None,
-    total_capital: float = TOTAL_CAPITAL,
+    total_capital: float | None = None,
 ) -> CapitalPlan:
     """Generate a daily capital plan.
 
@@ -285,6 +286,8 @@ def plan_capital(
     -------
     CapitalPlan
     """
+    if total_capital is None:
+        total_capital = default_sim_capital("ashare")
     scaled = _scale_plan_constants(total_capital)
     min_position_value = scaled["min_position_value"]
     max_position_value = scaled["max_position_value"]

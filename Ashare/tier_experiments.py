@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """A-share capital-tier experiment ledgers.
 
-The production A-share simulator uses the 200k CNY account as the primary
-server-local paper account. The 50k/100k accounts are experiment accounts: they
-replay the same strategy-valid fills with their own capital, lot-size and cash
-constraints, then write independent ledgers for review/evolution.
+The active production account uses only the canonical capital. Historical
+capital experiments run only when callers explicitly pass ``tiers``; the
+default production refresh does not create parallel 100k/200k current books.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from typing import Any, Sequence
 
 from Ashare.capital_plan import plan_capital
 from shared.execution import local_sim_ledger
-from shared.markets.sim_capital import DEFAULT_SIM_CAPITAL_CNY
+from shared.markets.sim_capital import default_sim_capital
 from shared.review.sample_quality import strategy_valid_trades
 
 
@@ -24,7 +23,20 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE_TRADES = ROOT / "shared" / "logs" / "local_sim" / "local_sim_trades.jsonl"
 DEFAULT_TIER_ROOT = ROOT / "shared" / "logs" / "local_sim_tiers"
 DEFAULT_REVIEW_DIR = ROOT / "shared" / "review" / "ashare"
-EXPERIMENT_TIERS = (50_000.0, 100_000.0)
+
+
+def _primary_capital() -> float:
+    """Return the canonical A-share simulated capital in CNY."""
+    return round(default_sim_capital("ashare"), 6)
+
+
+def _experiment_tiers() -> tuple[float, ...]:
+    """Return active experiment tiers; production has none by default."""
+    return ()
+
+
+# Explicit historical analysis can still pass ``tiers=(100_000, 200_000)``.
+EXPERIMENT_TIERS = _experiment_tiers()
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -85,7 +97,8 @@ def _buy_quantity(source: dict[str, Any], capital: float, cash_available: float)
     if price <= 0:
         return 0
     source_amount = _safe_float(source.get("amount"), _safe_float(source.get("quantity")) * price)
-    target_amount = max(0.0, source_amount * capital / DEFAULT_SIM_CAPITAL_CNY)
+    canonical_capital = _primary_capital()
+    target_amount = max(0.0, source_amount * capital / canonical_capital) if canonical_capital > 0 else 0.0
     quantity = int(target_amount // price)
     quantity = (quantity // 100) * 100
     while quantity > 0:
@@ -101,7 +114,8 @@ def _sell_quantity(source: dict[str, Any], capital: float, position_qty: int) ->
     source_qty = _safe_int(source.get("quantity"))
     if source_qty <= 0 or position_qty <= 0:
         return 0
-    scaled = int(source_qty * capital / DEFAULT_SIM_CAPITAL_CNY)
+    canonical_capital = _primary_capital()
+    scaled = int(source_qty * capital / canonical_capital) if canonical_capital > 0 else 0
     scaled = (scaled // 100) * 100
     if scaled <= 0:
         scaled = min(position_qty, 100)
@@ -224,7 +238,7 @@ def write_tier_ledgers(
     source_trades_path: Path | str | None = None,
     tier_root: Path | str | None = None,
     review_dir: Path | str | None = None,
-    tiers: tuple[float, ...] = EXPERIMENT_TIERS,
+    tiers: tuple[float, ...] | None = None,
     candidates: Sequence[dict[str, Any]] | None = None,
     market_context: dict[str, Any] | None = None,
     mark_prices: dict[str, float] | None = None,
@@ -233,8 +247,9 @@ def write_tier_ledgers(
     output_root = Path(tier_root) if tier_root is not None else DEFAULT_TIER_ROOT
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
     source_trades = _read_jsonl(source_path)
+    experiment_tiers = tuple(tiers) if tiers is not None else _experiment_tiers()
     accounts: list[dict[str, Any]] = []
-    for capital in tiers:
+    for capital in experiment_tiers:
         ledger = build_tier_ledger(source_trades, capital=float(capital), mark_prices=mark_prices)
         capital_plan = _build_tier_capital_plan(ledger, candidates=candidates, market_context=market_context)
         account_dir = output_root / ledger["account"]
@@ -260,6 +275,7 @@ def write_tier_ledgers(
         )
     manifest = {
         "market": "ashare",
+        "primary_capital": round(_primary_capital(), 2),
         "source_trades": str(source_path.relative_to(ROOT)) if str(source_path).startswith(str(ROOT)) else str(source_path),
         "tier_root": str(output_root.relative_to(ROOT)) if str(output_root).startswith(str(ROOT)) else str(output_root),
         "accounts": accounts,

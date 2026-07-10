@@ -6,21 +6,11 @@ from __future__ import annotations
 import os
 from typing import Any
 
-DEFAULT_SIM_CAPITAL_CNY = 200_000.0
+DEFAULT_SIM_CAPITAL_CNY = 50_000.0
 DEFAULT_USD_BASE_CAPITAL = 10_000.0
 DEFAULT_USD_CNY = 7.2
 DEFAULT_HKD_CNY = 0.92
 ALLOWED_CNY_TIERS = (50_000.0, 100_000.0, 200_000.0)
-
-_MARKET_TIER_ENV = {
-    "ashare": "ASHARE_SIM_CAPITAL_TIER",
-    "a_share": "ASHARE_SIM_CAPITAL_TIER",
-    "cn": "CN_FUTURES_SIM_CAPITAL_TIER",
-    "cn_futures": "CN_FUTURES_SIM_CAPITAL_TIER",
-    "cnfutures": "CN_FUTURES_SIM_CAPITAL_TIER",
-    "futures": "CN_FUTURES_SIM_CAPITAL_TIER",
-}
-
 
 def _safe_float(value: Any | None, default: float) -> float:
     try:
@@ -50,7 +40,8 @@ def _resolve_cny_capital(
 ) -> float:
     """Resolve A-share/CN-futures simulated capital in CNY.
 
-    Priority: explicit ``capital_cny`` > explicit ``tier`` > per-market env tier > default.
+    Priority: explicit ``capital_cny`` > explicit ``tier`` > default.
+    Environment variables cannot override the production canonical capital.
     Illegal tier values fall back to ``DEFAULT_SIM_CAPITAL_CNY``.
     """
 
@@ -66,15 +57,6 @@ def _resolve_cny_capital(
             if _is_allowed_cny_tier(tier)
             else DEFAULT_SIM_CAPITAL_CNY
         )
-    env_name = _MARKET_TIER_ENV.get(market_key)
-    if env_name:
-        env_value = os.environ.get(env_name)
-        if env_value is not None and env_value != "":
-            return (
-                _safe_float(env_value, DEFAULT_SIM_CAPITAL_CNY)
-                if _is_allowed_cny_tier(env_value)
-                else DEFAULT_SIM_CAPITAL_CNY
-            )
     return DEFAULT_SIM_CAPITAL_CNY
 
 
@@ -103,7 +85,8 @@ def default_sim_capital(
 
     - US/Crypto/PM default to ``DEFAULT_USD_BASE_CAPITAL`` (USD/USDT/USDC).
     - A-share and CN futures default to ``DEFAULT_SIM_CAPITAL_CNY`` CNY, with
-      optional 50k/100k/200k tiers via ``capital_cny``, ``tier``, or per-market env.
+      optional 50k/100k/200k tiers only through explicit ``capital_cny`` or
+      ``tier`` arguments for controlled offline analysis.
     """
 
     key = _normalize_market(market)

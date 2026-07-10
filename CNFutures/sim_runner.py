@@ -10,6 +10,7 @@ from typing import Any
 
 from shared.execution.signal_state_machine import SignalStateConflict, SignalStateMachine
 from shared.execution.sim_broker import execute_sim_order
+from shared.markets.sim_capital import default_sim_capital
 
 from . import MARKET
 from .adapter import CNFuturesAdapter, READER_MARKET
@@ -825,7 +826,7 @@ def run_multi_style_simulation(
     config = adapter.get_strategy_config()
     styles = config.get("styles") if isinstance(config.get("styles"), dict) else {}
     account = adapter.get_sim_account()
-    capital = _safe_float(account.get("sim_capital") if isinstance(account, dict) else None, 200_000.0)
+    capital = _safe_float(account.get("sim_capital") if isinstance(account, dict) else None, default_sim_capital("cn_futures"))
     errors: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
     holds: list[dict[str, Any]] = []

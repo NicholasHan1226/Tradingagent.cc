@@ -19,6 +19,7 @@ from .contract_rules import get_contract_rule, is_executable_contract_symbol
 from .margin_model import estimate_order_cost
 from .signal_engine import generate_style_signal
 from .sim_runner import _style_allows_symbol
+from shared.markets.sim_capital import default_sim_capital
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "shared" / "review" / "cn_futures" / "replay_latest.json"
@@ -150,7 +151,7 @@ def _execution_annotation(*, symbol: str, style: dict[str, Any], action: str, pr
         cost = estimate_order_cost(symbol=symbol, side=action, quantity=1, price=parsed_price)
     except Exception as exc:  # noqa: BLE001
         return {"execution_eligible": False, "execution_reason": f"contract_rule_unavailable:{exc.__class__.__name__}"}
-    capital = _safe_float(style.get("capital"), 200_000.0)
+    capital = _safe_float(style.get("capital"), default_sim_capital("cn_futures"))
     margin_cap = capital * min(max(_safe_float(style.get("max_margin_usage"), 0.20), 0.01), 0.80)
     eligible = cost.margin_required <= margin_cap
     return {

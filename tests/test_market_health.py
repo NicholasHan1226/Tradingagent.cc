@@ -210,8 +210,8 @@ class MarketHealthTest(unittest.TestCase):
         )
         positions_path.write_text(json.dumps({"ashare_sim": {}}, ensure_ascii=False), encoding="utf-8")
         snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-        snapshot_path.write_text(json.dumps({"positions": [], "pnl": {"ashare_sim": {"cash_available": 200000}}}, ensure_ascii=False), encoding="utf-8")
-        pnl_path.write_text(json.dumps({"ashare_sim": {"cash_available": 200000, "positions": {}}}, ensure_ascii=False), encoding="utf-8")
+        snapshot_path.write_text(json.dumps({"positions": [], "pnl": {"ashare_sim": {"cash_available": 50000}}}, ensure_ascii=False), encoding="utf-8")
+        pnl_path.write_text(json.dumps({"ashare_sim": {"cash_available": 50000, "positions": {}}}, ensure_ascii=False), encoding="utf-8")
 
         with patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", trades_path):
             with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", positions_path):

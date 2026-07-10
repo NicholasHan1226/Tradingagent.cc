@@ -199,7 +199,7 @@ Display-ready fields used by the homepage:
 - `ashareResearchEvidence`: optional read-only homepage rail input from
   `shared/review/ashare/research_evidence_latest.json`. It summarizes opening
   auction or `first_5m_proxy` evidence, closing momentum candidates and
-  next-day labels, 204001 reverse repo estimate, and the 200,000 CNY virtual
+  next-day labels, 204001 reverse repo estimate, and the current 50,000 CNY virtual
   style budget allocation. The front layer must treat it as display evidence
   only and must never turn it into orders, queue writes, emails, or callbacks.
 - `ashareForwardValidation`: optional read-only homepage rail input from

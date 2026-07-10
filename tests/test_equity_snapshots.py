@@ -179,7 +179,7 @@ class EquitySnapshotTest(unittest.TestCase):
                 json.dumps(
                     {
                         "ashare_sim": {
-                            "cash_available": 200_000.0,
+                            "cash_available": 50_000.0,
                             "positions": {},
                             "total_pnl": 0.0,
                         }
@@ -198,7 +198,7 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(result["totals"]["ledger_count"], 1)
             self.assertEqual(result["totals"]["written_count"], 1)
             self.assertEqual(result["ledgers"][0]["style"], "ashare_sim")
-            self.assertEqual(result["ledgers"][0]["equity"], 200_000.0)
+            self.assertEqual(result["ledgers"][0]["equity"], 50_000.0)
             self.assertFalse((legacy_style / "daily_mark_to_market.jsonl").exists())
             self.assertTrue((root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").exists())
 
@@ -236,7 +236,7 @@ class EquitySnapshotTest(unittest.TestCase):
                 )
 
             self.assertEqual(result["ledgers"][0]["total_pnl"], 200.0)
-            self.assertEqual(result["ledgers"][0]["equity"], 200_200.0)
+            self.assertEqual(result["ledgers"][0]["equity"], 50_200.0)
             rows = [
                 json.loads(line)
                 for line in (root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").read_text(encoding="utf-8").splitlines()
@@ -290,16 +290,16 @@ class EquitySnapshotTest(unittest.TestCase):
                     trade_date="20260706",
                 )
 
-            self.assertEqual(result["ledgers"][0]["equity"], 200_200.0)
+            self.assertEqual(result["ledgers"][0]["equity"], 50_200.0)
             rows = [
                 json.loads(line)
                 for line in (root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
-            self.assertEqual(rows[-1]["capital_base"], 200_000.0)
-            self.assertEqual(rows[-1]["cash"], 199_000.0)
+            self.assertEqual(rows[-1]["capital_base"], 50_000.0)
+            self.assertEqual(rows[-1]["cash"], 49_000.0)
             self.assertEqual(rows[-1]["market_value"], 1_200.0)
-            self.assertEqual(rows[-1]["total_equity"], 200_200.0)
+            self.assertEqual(rows[-1]["total_equity"], 50_200.0)
 
     def test_load_mark_prices_uses_recent_daily_bar_for_weekend_snapshot(self) -> None:
         class FakeReader:

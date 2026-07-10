@@ -176,7 +176,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "price": 10.5,
                 "side": "buy",
             },
-            account={"account_id": "ashare_sim", "cash_available": 200_000},
+            account={"account_id": "ashare_sim", "cash_available": 50_000},
         )
 
         self.assertEqual(result.status, "rejected")
@@ -193,7 +193,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "side": "buy",
                 "bar_volume": 1500,
             },
-            account={"account_id": "ashare_sim", "cash_available": 200_000},
+            account={"account_id": "ashare_sim", "cash_available": 50_000},
         )
 
         self.assertEqual(result.status, "partial")
@@ -216,7 +216,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                     "provider": "sharedsignals_api_realtime_5min",
                 },
             },
-            account={"account_id": "ashare_sim", "cash_available": 200_000},
+            account={"account_id": "ashare_sim", "cash_available": 50_000},
         )
 
         evidence = result.raw_response["fill_evidence"]
@@ -241,7 +241,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                     "provider": "sharedsignals_api_realtime_5min",
                 },
             },
-            account={"account_id": "ashare_sim", "cash_available": 200_000},
+            account={"account_id": "ashare_sim", "cash_available": 50_000},
         )
 
         evidence = result.raw_response["fill_evidence"]

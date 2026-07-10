@@ -14,6 +14,8 @@ import re
 from datetime import datetime, time
 from pathlib import Path
 from typing import Any
+
+from shared.markets.sim_capital import default_sim_capital
 from zoneinfo import ZoneInfo
 
 from shared.execution.signal_state_machine import SignalStateMachine
@@ -350,7 +352,7 @@ def _snapshot_from_payload(
                     config.get("initial_capital"),
                     account.get("initial_capital") if isinstance(account, dict) else None,
                     account.get("cash") if isinstance(account, dict) else None,
-                    default=200_000.0,
+                    default=default_sim_capital(MARKET),
                 ),
             )
         except Exception:

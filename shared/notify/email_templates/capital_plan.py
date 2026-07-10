@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Email template 9: Capital plan (in pre-market).
-
-200k simulated-account allocation + reverse repo.
-"""
+"""Email template 9: Capital plan (in pre-market)."""
 
 from __future__ import annotations
 
 from typing import Any
+
+from shared.markets.sim_capital import default_sim_capital
 
 from . import (
     wrap_html,
@@ -25,7 +24,7 @@ def render(data: dict[str, Any]) -> str:
 
     Args:
         data: dict with keys:
-            - total_capital: total available capital (e.g. 200000)
+            - total_capital: total available capital
             - allocation: list of {strategy, amount, pct}
             - reverse_repo: {amount, rate, term, expected_return}
             - reserved: reserved amount
@@ -34,7 +33,7 @@ def render(data: dict[str, Any]) -> str:
     Returns:
         HTML string.
     """
-    total = data.get("total_capital", 200000)
+    total = data.get("total_capital", default_sim_capital("ashare"))
     allocation = data.get("allocation", [])
     repo = data.get("reverse_repo", {})
     reserved = data.get("reserved", 0)

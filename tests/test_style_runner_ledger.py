@@ -301,8 +301,8 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             runner.run([{"symbol": "600000.SH", "price": 10.0, "side": "buy", "conviction": 0.9}], date="20260704")
 
             by_style = {order["style_name"]: order for order in simulator.orders}
-            self.assertEqual(by_style["first"]["quantity"], 1300.0)
-            self.assertEqual(by_style["second"]["quantity"], 600.0)
+            self.assertEqual(by_style["first"]["quantity"], 300.0)
+            self.assertEqual(by_style["second"]["quantity"], 100.0)
 
 
 class SimLedgerTotalPnlTest(unittest.TestCase):

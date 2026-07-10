@@ -235,13 +235,13 @@ class SimBrokerV2Test(unittest.TestCase):
                     "order_id": "SIM-ASHARE-CASH-1",
                     "ts_code": "600000.SH",
                     "side": "buy",
-                    "quantity": 15000,
+                    "quantity": 4000,
                     "price": 10.0,
                     "candidate_pool_layer": "candidate",
                     "execution_source": "ashare_candidate_layer",
                 },
                 market="ashare",
-                account={"account": "ashare_sim", "cash_available": 200000.0},
+                account={"account": "ashare_sim", "cash_available": 50000.0},
                 config={"local_sim_slippage_bps": 0, "market_session_now": "2026-07-07T10:00:00+08:00"},
             )
             second = execute_sim_order(
@@ -249,13 +249,13 @@ class SimBrokerV2Test(unittest.TestCase):
                     "order_id": "SIM-ASHARE-CASH-2",
                     "ts_code": "600001.SH",
                     "side": "buy",
-                    "quantity": 5000,
+                    "quantity": 1000,
                     "price": 10.0,
                     "candidate_pool_layer": "candidate",
                     "execution_source": "ashare_candidate_layer",
                 },
                 market="ashare",
-                account={"account": "ashare_sim", "cash_available": 200000.0},
+                account={"account": "ashare_sim", "cash_available": 50000.0},
                 config={"local_sim_slippage_bps": 0, "market_session_now": "2026-07-07T10:00:00+08:00"},
             )
 

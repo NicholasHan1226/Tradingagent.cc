@@ -124,8 +124,9 @@ Post-close A-share valuation first runs at 17:40 and has one bounded retry at
 22:40 because SharedSignals EOD collection duration varies with provider volume.
 An already successful trade date is skipped idempotently.
 It requires an exact target-date daily close for every open position before it
-refreshes the 200,000 main account, 50,000/100,000 tier accounts, forward labels,
-portfolio evolution, or the close review.
+refreshes the current 50,000 main account, forward labels, portfolio evolution,
+or the close review. Archived 100,000/200,000 tier replays are not production
+inputs.
 
 A-share reverse repo reads use SharedSignals `/market_data` for `204001.SH`.
 SharedSignals owns the `repo_daily` collection and projects those rows into

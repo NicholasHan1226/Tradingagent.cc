@@ -20,7 +20,7 @@
 6. weekly_report.py (周五) — 策略统计+趋势+下周
 7. trade_receipt.py (成交后) — 确认
 8. emergency_alert.py (异常, 10min自愈) — 类型+影响+动作
-9. capital_plan.py (含盘前) — 200k模拟盘资金规划+逆回购
+9. capital_plan.py (含盘前) — 当前50k模拟盘资金规划+逆回购
 10. strategy_invalidation.py (regime变化) — 变化+影响+调整
 11. system_health.py (异常时) — 采集+管线+完整性
 

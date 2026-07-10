@@ -18,6 +18,7 @@ from typing import Any
 
 from shared.review.sample_quality import classify_trade_sample
 from shared.runtime_test.ashare_no_trade_summary import NO_TRADE_LOG, summarize_no_trade_log
+from shared.markets.sim_capital import default_sim_capital
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -294,18 +295,22 @@ def _postclose_attribution(sample_monitor: dict[str, Any], no_trade_summary: dic
     }
 
 
-def _dynamic_probe_budget(trades: list[dict[str, Any]], sample_monitor: dict[str, Any]) -> dict[str, Any]:
+def _dynamic_probe_budget(trades: list[dict[str, Any]], sample_monitor: dict[str, Any], capital: float | None = None) -> dict[str, Any]:
+    if capital is None:
+        capital = default_sim_capital("ashare")
     scores = [_safe_float(_factor_snapshot(trade).get("combined"), 0.0) for trade in trades]
     top = max(scores) if scores else 0.0
-    minimum = 20_000.0
-    maximum = 35_000.0
+    # Scale probe budget relative to 200k reference account
+    capital_scale = max(0.25, min(1.0, float(capital) / 200_000.0))
+    minimum = max(5_000.0, min(20_000.0 * capital_scale, float(capital) * 0.10))
+    maximum = max(minimum, min(35_000.0 * capital_scale, float(capital) * 0.175))
     ratio = max(0.0, min(1.0, (top - 0.55) / 0.20))
     recommended = minimum + (maximum - minimum) * ratio
     if sample_monitor.get("overall_status") == "fail":
         recommended *= 0.85
     return {
-        "min": minimum,
-        "max": maximum,
+        "min": round(minimum, 2),
+        "max": round(maximum, 2),
         "recommended_allocation": round(max(minimum, min(maximum, recommended)) // 100 * 100, 2),
         "top_candidate_score": round(top, 4),
         "source": "factor_snapshot_and_sample_target_state",
@@ -313,35 +318,54 @@ def _dynamic_probe_budget(trades: list[dict[str, Any]], sample_monitor: dict[str
 
 
 def _account_objectives(tier_manifest: dict[str, Any], portfolio: dict[str, Any]) -> dict[str, Any]:
-    objectives = {
+    primary_capital = round(default_sim_capital("ashare"), 6)
+    primary_account = f"ashare_{int(primary_capital)}"
+
+    # Base objectives keyed by account name — populated dynamically
+    objectives: dict[str, dict[str, Any]] = {}
+
+    # Primary account objective
+    objectives[primary_account] = {
+        "primary_goal": "drawdown_controlled_growth",
+        "guardrail": "max_drawdown_and_sample_quality",
+        "target_metric": "portfolio_level_risk_adjusted_pnl",
+    }
+
+    # Legacy experiment-tier objectives (only created for accounts present in the manifest)
+    known_tier_goals: dict[str, dict[str, Any]] = {
         "ashare_50000": {
             "primary_goal": "capital_efficiency",
             "guardrail": "lot_size_and_fee_drag",
             "target_metric": "cash_utilization_after_valid_samples",
+            "note": "historical_experiment_epoch",
         },
         "ashare_100000": {
             "primary_goal": "balanced_efficiency",
             "guardrail": "drawdown_and_position_capacity",
             "target_metric": "risk_adjusted_pnl",
-        },
-        "ashare_200000": {
-            "primary_goal": "drawdown_controlled_growth",
-            "guardrail": "max_drawdown_and_sample_quality",
-            "target_metric": "portfolio_level_risk_adjusted_pnl",
+            "note": "historical_experiment_epoch",
         },
     }
+
+    # Merge experiment tier manifest data
     accounts = tier_manifest.get("accounts") if isinstance(tier_manifest.get("accounts"), list) else []
     for account in accounts:
         if not isinstance(account, dict):
             continue
         name = str(account.get("account") or "")
-        if name in objectives:
+        if name == primary_account:
+            continue  # Primary account stats come from portfolio, not the experiment manifest
+        if name in known_tier_goals:
+            objectives.setdefault(name, {}).update(known_tier_goals[name])
             objectives[name]["trade_count"] = _safe_int(account.get("trade_count"))
             pnl = account.get("pnl") if isinstance(account.get("pnl"), dict) else {}
             objectives[name]["total_pnl"] = round(_safe_float(pnl.get("total_pnl")), 6)
+
+    # Attach portfolio-level stats to the primary account
     pnl = portfolio.get("pnl") if isinstance(portfolio.get("pnl"), dict) else {}
-    objectives["ashare_200000"]["trade_count"] = _safe_int(portfolio.get("strategy_sample_count"))
-    objectives["ashare_200000"]["total_pnl"] = round(_safe_float(pnl.get("total_pnl")), 6)
+    objectives[primary_account]["trade_count"] = _safe_int(portfolio.get("strategy_sample_count"))
+    objectives[primary_account]["total_pnl"] = round(_safe_float(pnl.get("total_pnl")), 6)
+
     return objectives
 
 

@@ -106,10 +106,9 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
         self.assertEqual(decision["state"], "evidence_pending")
         self.assertEqual(decision["policy"]["min_evolution_evidence_samples"], 20)
         tier_accounts = {row["account"] for row in report["tier_experiments"]["accounts"]}
-        self.assertEqual(tier_accounts, {"ashare_50000", "ashare_100000"})
+        self.assertEqual(tier_accounts, set())
         ranking_names = {row["style_name"] for row in report["rankings"]}
-        self.assertIn("ashare_50000", ranking_names)
-        self.assertIn("ashare_100000", ranking_names)
+        self.assertEqual(ranking_names, {"ashare_portfolio"})
 
     def test_write_uses_same_mark_prices_for_tier_ledgers_and_pnl_summary(self) -> None:
         self._write_trade(

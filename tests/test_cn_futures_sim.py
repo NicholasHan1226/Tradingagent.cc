@@ -874,7 +874,7 @@ class CNFuturesSimTest(unittest.TestCase):
                 }
 
             def get_sim_account(self) -> dict[str, object]:
-                return {"sim_capital": 200_000.0}
+                return {"sim_capital": 50_000.0}
 
             def get_intraday_universe(self, date: str, **kwargs: object) -> list[str]:
                 self.universe_dates.append(date)
@@ -953,7 +953,7 @@ class CNFuturesSimTest(unittest.TestCase):
                 }
 
             def get_sim_account(self) -> dict[str, object]:
-                return {"sim_capital": 200_000.0}
+                return {"sim_capital": 50_000.0}
 
             def get_intraday_universe(self, date: str, **kwargs: object) -> list[str]:
                 return ["IF2609.CFX", "IH2609.CFX", "IC2609.CFX", "IM2609.CFX"]

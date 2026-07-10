@@ -200,9 +200,9 @@ class AsharePreopenDryRunTest(unittest.TestCase):
     def _account(self) -> dict:
         return {
             "account": "ashare_sim",
-            "sim_capital": 200_000.0,
-            "cash_available": 200_000.0,
-            "available_cash": 200_000.0,
+            "sim_capital": 50_000.0,
+            "cash_available": 50_000.0,
+            "available_cash": 50_000.0,
             "positions": [],
             "source": "test",
         }
@@ -228,6 +228,7 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["data"]["status"], "pass")
         self.assertEqual(report["candidate_pool"]["candidate_count"], 2)
+        self.assertEqual(report["capital_plan"]["total_capital"], 50_000.0)
         self.assertTrue(report["execution_gate"]["ready"])
         self.assertEqual(report["execution_gate"]["synthetic_order"]["candidate_pool_layer"], "candidate")
         self.assertEqual(report["execution_gate"]["synthetic_order"]["execution_source"], "ashare_candidate_layer")

@@ -1345,11 +1345,11 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["rebalance"]["planned_sell_count"], 1)
         self.assertEqual(sell_orders[0]["ts_code"], "000010.SZ")
         self.assertEqual([order["ts_code"] for order in buy_orders], ["000013.SZ"])
-        self.assertEqual(
+        self.assertLessEqual(
             result["capital_plan"]["replacement_budget"]["allocated_cash"],
             result["capital_plan"]["replacement_budget"]["released_cash"],
         )
-        self.assertGreaterEqual(result["capital_plan"]["replacement_budget"]["allocated_cash"], 50000.0)
+        self.assertEqual(result["capital_plan"]["replacement_budget"]["allocated_cash"], 17500.0)
 
     def test_run_sim_loop_replaces_full_position_for_opportunity_cost_gap(self) -> None:
         deps = self._multi_candidate_deps()

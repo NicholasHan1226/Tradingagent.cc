@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -89,6 +90,61 @@ class CNFuturesReplayTest(unittest.TestCase):
         boundary_examples = [row for row in report["actionable_examples"] if row["bar_time"] == "2026-07-09 11:30:00"]
         self.assertTrue(boundary_examples)
         self.assertEqual(boundary_examples[0]["execution_reason"], "session_boundary_not_executable")
+
+
+    # --- RED: canonical capital sourcing ---
+
+    def test_replay_execution_annotation_uses_canonical_capital_not_hardcoded_200k(self) -> None:
+        """_execution_annotation fallback must use default_sim_capital('cn_futures'),
+        not a hardcoded 200_000."""
+        old_tier = os.environ.get("CN_FUTURES_SIM_CAPITAL_TIER")
+        os.environ["CN_FUTURES_SIM_CAPITAL_TIER"] = "50000"
+        try:
+            annotation = replay._execution_annotation(
+                symbol="cu2607",
+                style={"name": "trend", "max_margin_usage": 0.20, "products": ["cu"]},
+                action="buy",
+                price=18000.0,
+                bar_time="2026-07-09 09:30:00",
+            )
+        finally:
+            if old_tier is None:
+                os.environ.pop("CN_FUTURES_SIM_CAPITAL_TIER", None)
+            else:
+                os.environ["CN_FUTURES_SIM_CAPITAL_TIER"] = old_tier
+
+        # On 50k, margin cap = 50000 * 0.20 = 10000.
+        # CU at 18000 with multiplier 5, margin 0.12 → 10800 > 10000.
+        # So execution should be ineligible due to margin cap.
+        self.assertFalse(annotation["execution_eligible"])
+        self.assertEqual(annotation["execution_reason"], "margin_cap_exceeded")
+        # margin_cap must reflect 50k, not 200k (200k * 0.20 = 40000)
+        self.assertLessEqual(annotation["margin_cap"], 11000.0)
+
+    def test_replay_200k_style_capital_field_overrides_fallback(self) -> None:
+        """When style explicitly sets 'capital': 200000, that must be used
+        regardless of env tier. Historical fixtures retain explicit 200k."""
+        old_tier = os.environ.get("CN_FUTURES_SIM_CAPITAL_TIER")
+        os.environ["CN_FUTURES_SIM_CAPITAL_TIER"] = "50000"
+        try:
+            annotation = replay._execution_annotation(
+                symbol="cu2607",
+                style={"name": "trend", "capital": 200000.0, "max_margin_usage": 0.20, "products": ["cu"]},
+                action="buy",
+                price=18000.0,
+                bar_time="2026-07-09 09:30:00",
+            )
+        finally:
+            if old_tier is None:
+                os.environ.pop("CN_FUTURES_SIM_CAPITAL_TIER", None)
+            else:
+                os.environ["CN_FUTURES_SIM_CAPITAL_TIER"] = old_tier
+
+        # With explicit 200k capital, margin cap = 200000 * 0.20 = 40000.
+        # CU at 18000: margin = 18000 * 5 * 0.12 = 10800 < 40000.
+        # So execution should be eligible.
+        self.assertTrue(annotation["execution_eligible"])
+        self.assertEqual(annotation["execution_reason"], "execution_eligible")
 
 
 if __name__ == "__main__":

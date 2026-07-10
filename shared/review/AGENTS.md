@@ -39,7 +39,7 @@
 
 ## 自我演化健康检查
 - `shared.runtime_test.self_evolution_health` 是只读验收入口, 用于检查各市场账本策略样本是否进入演化层、`evolution_log` action 是否和最终 `style_weights` 一致、是否存在可证明的正向演化。
-- A股 server-local 模拟盘使用组合级演化证据：`Ashare/portfolio_evolution.py` 写入 `shared/review/ashare/portfolio_evolution_latest.json` 和 `portfolio_evolution_log.jsonl`，`self_evolution_health` 应优先用该文件判断 A股策略样本是否被演化层看到。A股 50,000 / 100,000 资金档位实验账户必须先由 `Ashare/tier_experiments.py` 生成独立账本和 `tier_experiments_latest.json`，再进入组合级 `rankings`；不要把 A股同一组合成交拆成 aggressive/balanced/conservative 多风格账本来制造归因。
+- A股 server-local 模拟盘使用当前 50,000 元主账户的组合级演化证据：`Ashare/portfolio_evolution.py` 写入 `shared/review/ashare/portfolio_evolution_latest.json` 和 `portfolio_evolution_log.jsonl`，`self_evolution_health` 应优先用该文件判断策略样本是否被演化层看到。旧资金档位账本只作离线历史分析，不进入当前组合级 `rankings`；不要把同一组合成交拆成 aggressive/balanced/conservative 多风格账本来制造归因。
 - A股演化样本不合格时必须同时保留总类 blocker `weak_fill_price_evidence` 和具体拒绝原因，例如缺成交证据类别、非市场报价、缺 bar time、零成交量、时间过旧或未来条线；不得用一个笼统原因覆盖所有失败，也不得因补充诊断而放宽演化门槛。
 - 机械闭环 pass 不等于正向自我演化。只有有效样本进入演化输入、产生可解释的权重/门禁/变体动作, 且后续样本改善时, 才能称为正向演化。
 - 样本不足、闭市、策略等待可以是 pass/info; 有策略样本但演化层 `trades=0`、权重日志前后矛盾、或旧隔离样本进入演化, 必须至少 warn。

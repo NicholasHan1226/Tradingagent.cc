@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from Ashare.sample_learning import (
+    _account_objectives,
     build_hypothesis_id,
     build_sample_learning_report,
     write_sample_learning_report,
@@ -156,14 +159,113 @@ class AshareSampleLearningTest(unittest.TestCase):
         self.assertEqual(report["sample_quality"]["tier_counts"]["chain_validation_sample"], 1)
         self.assertEqual(report["hypothesis_registry"]["hypothesis_count"], 1)
         self.assertEqual(report["postclose_attribution"]["primary_blocker"], "capital_plan_defensive")
-        self.assertGreater(report["dynamic_probe_budget"]["recommended_allocation"], 20000.0)
-        self.assertEqual(report["account_objectives"]["ashare_50000"]["primary_goal"], "capital_efficiency")
-        self.assertEqual(report["account_objectives"]["ashare_200000"]["primary_goal"], "drawdown_controlled_growth")
+        self.assertGreaterEqual(report["dynamic_probe_budget"]["recommended_allocation"], 5000.0)
+        self.assertLessEqual(report["dynamic_probe_budget"]["recommended_allocation"], 8750.0)
+        self.assertEqual(report["account_objectives"]["ashare_50000"]["primary_goal"], "drawdown_controlled_growth")
+        self.assertEqual(report["account_objectives"]["ashare_100000"]["note"], "historical_experiment_epoch")
+        self.assertNotIn("ashare_200000", report["account_objectives"])
         self.assertEqual(report["factor_research"]["status"], "sample_debt")
         self.assertIn("combined", report["factor_research"]["factors"])
         self.assertFalse(report["writes_orders"])
         self.assertTrue(latest_exists)
         self.assertEqual(written["latest_path"], str(review_dir / "sample_learning_latest.json"))
+
+    # -- RED: dynamic primary capital tests (currently failing) -----------------
+    def test_account_objectives_does_not_list_primary_as_experiment_when_50k(self) -> None:
+        """When primary capital is 50k, ashare_50000 is the PRIMARY, not an experiment tier."""
+        tier_manifest = {
+            "accounts": [
+                {"account": "ashare_100000", "capital": 100000, "trade_count": 1, "pnl": {"total_pnl": -5.0}},
+            ]
+        }
+        portfolio = {
+            "strategy_sample_count": 5,
+            "pnl": {"total_pnl": 120.0},
+        }
+        with patch.dict(os.environ, {"ASHARE_SIM_CAPITAL_TIER": "50000"}, clear=False):
+            objectives = _account_objectives(tier_manifest, portfolio)
+
+        # The primary account objective should reflect the canonical capital
+        self.assertIn("ashare_50000", objectives,
+            "ashare_50000 should appear as the primary account objective")
+        # Primary should have trade_count and total_pnl from the portfolio
+        self.assertEqual(objectives["ashare_50000"]["trade_count"], 5)
+        self.assertEqual(objectives["ashare_50000"]["total_pnl"], 120.0)
+        # Legacy 200k should NOT appear as current
+        self.assertNotIn("ashare_200000", objectives,
+            "ashare_200000 is a legacy epoch and must not appear as current")
+
+    def test_account_objectives_primary_derives_from_portfolio_not_hardcoded(self) -> None:
+        """The primary account (from canonical capital) gets portfolio-level stats."""
+        tier_manifest = {"accounts": []}
+        portfolio = {
+            "strategy_sample_count": 42,
+            "pnl": {"total_pnl": 999.0},
+        }
+        with patch.dict(os.environ, {"ASHARE_SIM_CAPITAL_TIER": "50000"}, clear=False):
+            objectives = _account_objectives(tier_manifest, portfolio)
+
+        self.assertIn("ashare_50000", objectives)
+        self.assertEqual(objectives["ashare_50000"]["trade_count"], 42)
+        self.assertEqual(objectives["ashare_50000"]["total_pnl"], 999.0)
+        self.assertNotIn("ashare_200000", objectives)
+
+    def test_account_objectives_ignore_legacy_env_override(self) -> None:
+        """Production primary capital remains 50k even if a legacy env value exists."""
+        tier_manifest = {
+            "accounts": [
+                {"account": "ashare_50000", "capital": 50000, "trade_count": 1, "pnl": {"total_pnl": 12.0}},
+                {"account": "ashare_100000", "capital": 100000, "trade_count": 1, "pnl": {"total_pnl": -5.0}},
+            ]
+        }
+        portfolio = {
+            "strategy_sample_count": 10,
+            "pnl": {"total_pnl": 200.0},
+        }
+        with patch.dict(os.environ, {"ASHARE_SIM_CAPITAL_TIER": "200000"}, clear=False):
+            objectives = _account_objectives(tier_manifest, portfolio)
+
+        self.assertNotIn("ashare_200000", objectives)
+        self.assertEqual(objectives["ashare_50000"]["trade_count"], 10)
+        self.assertEqual(objectives["ashare_50000"]["total_pnl"], 200.0)
+        self.assertIn("ashare_100000", objectives)
+
+
+    # --- RED: probe budget scales with canonical capital ---
+
+    def test_probe_budget_scales_with_50k_canonical_capital(self) -> None:
+        """Dynamic probe budget must scale proportionally with capital,
+        not stay hardcoded at 20k-35k."""
+        from Ashare.sample_learning import _dynamic_probe_budget
+
+        old_tier = os.environ.get("ASHARE_SIM_CAPITAL_TIER")
+        os.environ["ASHARE_SIM_CAPITAL_TIER"] = "50000"
+        try:
+            # Simulate some trades with scores to drive the budget calculation
+            trades: list[dict] = [
+                {
+                    "trade_id": "T1",
+                    "ts_code": "600584.SH",
+                    "research_hypothesis": {
+                        "factor_snapshot": {"combined": 0.65},
+                    },
+                },
+            ]
+            sample_monitor: dict = {"overall_status": "ok"}
+            budget = _dynamic_probe_budget(trades, sample_monitor)
+        finally:
+            if old_tier is None:
+                os.environ.pop("ASHARE_SIM_CAPITAL_TIER", None)
+            else:
+                os.environ["ASHARE_SIM_CAPITAL_TIER"] = old_tier
+
+        # On 50k, the probe budget must be proportionally smaller.
+        # Not 20k-35k (which is 40-70% of 50k account!)
+        self.assertLessEqual(budget["recommended_allocation"], 10000.0,
+                            "50k probe budget must be <= 10k, not 20k-35k")
+        self.assertGreaterEqual(budget["recommended_allocation"], 4000.0)
+        self.assertLessEqual(budget["min"], 7500.0)
+        self.assertLessEqual(budget["max"], 12000.0)
 
 
 if __name__ == "__main__":
