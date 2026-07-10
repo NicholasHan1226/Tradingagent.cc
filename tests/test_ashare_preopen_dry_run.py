@@ -196,6 +196,7 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(report["execution_gate"]["synthetic_order"]["candidate_pool_layer"], "candidate")
         self.assertEqual(report["execution_gate"]["synthetic_order"]["execution_source"], "ashare_candidate_layer")
         self.assertTrue(report["read_only"])
+        self.assertEqual(report["run_config"]["score_limit"], 2)
         self.assertIn("outside_regular_session_now_expected_for_preopen", report["warnings"])
 
     def test_uses_strategy_account_view_when_validation_samples_occupy_snapshot(self) -> None:
@@ -285,7 +286,7 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(report["execution_gate"]["reason"], "synthetic_order_gate_ready")
         self.assertEqual(report["execution_gate"]["synthetic_order"]["ts_code"], "600000.SH")
 
-    def test_preopen_dry_run_uses_evolution_decision_daily_sample_gate(self) -> None:
+    def test_preopen_dry_run_does_not_create_order_from_daily_sample_gate(self) -> None:
         reader = FakeAshareReader()
         strategy_positions = [
             {"ts_code": "300759.SZ", "quantity": 1900, "market_value": 57589.0},
@@ -307,10 +308,8 @@ class AsharePreopenDryRunTest(unittest.TestCase):
             "source": "test",
         }
         decision = {
-            "recommended_action": "force_sample_collection",
+            "recommended_action": "observe_and_label_candidates",
             "policy": {
-                "daily_sample_hard_gate": True,
-                "daily_strategy_sample_target": 1,
                 "today_strategy_sample_count": 0,
                 "strategy_sample_count": 8,
                 "min_strategy_samples": 5,
@@ -334,9 +333,10 @@ class AsharePreopenDryRunTest(unittest.TestCase):
                 score_limit=1,
             )
 
-        self.assertEqual(report["capital_plan"]["risk_mode"], "sample_collection")
-        self.assertIn("daily_strategy_sample_target_not_met", report["capital_plan"]["reasons"])
-        self.assertEqual(report["capital_plan"]["evolution_decision"]["recommended_action"], "force_sample_collection")
+        self.assertNotEqual(report["capital_plan"]["risk_mode"], "sample_collection")
+        self.assertEqual(report["capital_plan"]["max_new_positions"], 0)
+        self.assertFalse(report["execution_gate"]["ready"])
+        self.assertEqual(report["capital_plan"]["evolution_decision"]["recommended_action"], "observe_and_label_candidates")
 
     def test_data_section_prefers_sharedsignals_api_daily_batch(self) -> None:
         reader = APICoverageReader()

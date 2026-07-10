@@ -164,6 +164,8 @@ def main() -> int:
         return 0
     if output["state"] == "market_closed" and int(output.get("error_count") or 0) == 0:
         return 0
+    if output["state"] == "observation_only" and int(output.get("error_count") or 0) == 0:
+        return 0
     return 2
 
 

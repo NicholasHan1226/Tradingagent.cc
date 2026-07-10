@@ -14,7 +14,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.review_dir = Path(self.tmp.name)
 
-    def test_sample_debt_forces_daily_sample_collection_policy(self) -> None:
+    def test_missing_daily_fill_keeps_decision_in_observation_mode(self) -> None:
         portfolio = {
             "market": "ashare",
             "trade_date": "20260710",
@@ -31,16 +31,13 @@ class AshareEvolutionControllerTest(unittest.TestCase):
 
         decision = build_evolution_decision(
             portfolio,
-            daily_strategy_sample_target=1,
             min_strategy_samples=5,
         )
 
-        self.assertEqual(decision["state"], "sample_debt")
-        self.assertEqual(decision["recommended_action"], "force_sample_collection")
-        self.assertTrue(decision["policy"]["daily_sample_hard_gate"])
-        self.assertEqual(decision["policy"]["daily_strategy_sample_target"], 1)
+        self.assertEqual(decision["state"], "evidence_pending")
+        self.assertEqual(decision["recommended_action"], "observe_and_label_candidates")
         self.assertEqual(decision["policy"]["min_strategy_samples"], 5)
-        self.assertIn("daily_strategy_sample_target_not_met", decision["reasons"])
+        self.assertIn("daily_trade_target_removed", decision["reasons"])
         self.assertFalse(decision["real_trading_enabled"])
         self.assertIn("candidate_layer_required", decision["guardrails"])
 
@@ -57,21 +54,18 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         decision = build_evolution_decision(
             portfolio,
             target_trade_date="20260710",
-            daily_strategy_sample_target=1,
             min_strategy_samples=5,
         )
 
-        self.assertEqual(decision["state"], "sample_debt")
-        self.assertEqual(decision["recommended_action"], "force_sample_collection")
+        self.assertEqual(decision["state"], "evidence_pending")
+        self.assertEqual(decision["recommended_action"], "observe_and_label_candidates")
         self.assertEqual(decision["policy"]["today_strategy_sample_count"], 0)
         self.assertIn("portfolio_evolution_trade_date_stale", decision["reasons"])
 
     def test_decision_market_context_exposes_capital_plan_inputs(self) -> None:
         decision = {
-            "recommended_action": "force_sample_collection",
+            "recommended_action": "observe_and_label_candidates",
             "policy": {
-                "daily_sample_hard_gate": True,
-                "daily_strategy_sample_target": 1,
                 "today_strategy_sample_count": 0,
                 "min_strategy_samples": 5,
                 "strategy_sample_count": 8,
@@ -81,8 +75,6 @@ class AshareEvolutionControllerTest(unittest.TestCase):
 
         context = decision_market_context(decision)
 
-        self.assertTrue(context["daily_sample_hard_gate"])
-        self.assertEqual(context["daily_strategy_sample_target"], 1)
         self.assertEqual(context["today_strategy_sample_count"], 0)
         self.assertEqual(context["sample_collection_min_score"], 0.55)
 
@@ -99,7 +91,6 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         decision = write_evolution_decision(
             portfolio,
             review_dir=self.review_dir,
-            daily_strategy_sample_target=1,
             min_strategy_samples=5,
         )
 
@@ -109,6 +100,46 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         self.assertTrue(log.exists())
         self.assertEqual(json.loads(latest.read_text(encoding="utf-8"))["recommended_action"], decision["recommended_action"])
         self.assertEqual(len(log.read_text(encoding="utf-8").splitlines()), 1)
+
+    def test_positive_mark_to_market_cannot_expand_risk_without_verified_evidence(self) -> None:
+        portfolio = {
+            "market": "ashare",
+            "trade_date": "20260710",
+            "strategy_sample_count": 30,
+            "today_strategy_sample_count": 1,
+            "pnl": {"total_pnl": 1200.0, "realized_pnl": 800.0, "equity": 201200.0},
+            "evolution_evidence": {
+                "eligible_sample_count": 4,
+                "realized_round_trip_count": 1,
+                "forward_label_count": 4,
+            },
+        }
+
+        decision = build_evolution_decision(portfolio, min_strategy_samples=20)
+
+        self.assertEqual(decision["state"], "evidence_pending")
+        self.assertEqual(decision["recommended_action"], "observe_and_label_candidates")
+        self.assertIn("insufficient_verified_execution_evidence", decision["reasons"])
+
+    def test_small_verified_sample_set_cannot_expand_risk(self) -> None:
+        portfolio = {
+            "market": "ashare",
+            "trade_date": "20260710",
+            "strategy_sample_count": 24,
+            "pnl": {"total_pnl": 1200.0, "realized_pnl": 800.0, "equity": 201200.0},
+            "evolution_evidence": {
+                "eligible_sample_count": 5,
+                "realized_round_trip_count": 3,
+                "forward_label_count": 5,
+            },
+        }
+
+        decision = build_evolution_decision(portfolio, min_strategy_samples=5)
+
+        self.assertEqual(decision["state"], "evidence_pending")
+        self.assertEqual(decision["recommended_action"], "observe_and_label_candidates")
+        self.assertEqual(decision["policy"]["min_evolution_evidence_samples"], 20)
+        self.assertIn("insufficient_verified_execution_evidence", decision["reasons"])
 
 
 if __name__ == "__main__":

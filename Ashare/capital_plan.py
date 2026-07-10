@@ -147,12 +147,9 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
     recent_win_rate = _context_float(context, "recent_win_rate", 0.5)
     strategy_sample_valid_count = _context_float(context, "strategy_sample_valid_count", 0.0)
     min_strategy_samples = _context_float(context, "min_strategy_samples", 0.0)
-    today_strategy_sample_count = _context_float(context, "today_strategy_sample_count", 0.0)
-    daily_strategy_sample_target = _context_float(context, "daily_strategy_sample_target", 0.0)
     sample_collection_min_score = _context_float(context, "sample_collection_min_score", 0.55)
     probe_allocation_min = _context_float(context, "probe_allocation_min", 20_000.0)
     probe_allocation_max = _context_float(context, "probe_allocation_max", 35_000.0)
-    daily_sample_hard_gate = bool(context.get("daily_sample_hard_gate"))
     trend = str(context.get("trend") or context.get("market_trend") or "").strip().lower()
     reasons: list[str] = []
 
@@ -184,13 +181,8 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
         }
 
     cumulative_sample_debt = min_strategy_samples > 0 and strategy_sample_valid_count < min_strategy_samples
-    daily_sample_debt = (
-        daily_sample_hard_gate
-        and daily_strategy_sample_target > 0
-        and today_strategy_sample_count < daily_strategy_sample_target
-    )
     sample_collection = (
-        (cumulative_sample_debt or daily_sample_debt)
+        cumulative_sample_debt
         and sample_collection_min_score <= top < 0.75
         and risk_rejection_rate <= 0.25
         and data_issue_rate <= 0.25
@@ -209,8 +201,6 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
         sample_reasons: list[str] = []
         if cumulative_sample_debt:
             sample_reasons.append("sample_collection_before_min_samples")
-        if daily_sample_debt:
-            sample_reasons.append("daily_strategy_sample_target_not_met")
         return {
             "risk_mode": "sample_collection",
             "target_positions": 3,

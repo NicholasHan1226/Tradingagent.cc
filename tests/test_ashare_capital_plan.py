@@ -220,7 +220,7 @@ class AshareCapitalPlanTest(unittest.TestCase):
         self.assertLessEqual(data["suggested_buys"][0]["allocation"], 35000.0)
         self.assertIn("sample_collection_before_min_samples", data["reasons"])
 
-    def test_daily_sample_hard_gate_forces_probe_before_daily_target(self) -> None:
+    def test_daily_sample_target_does_not_create_probe_buy_capacity(self) -> None:
         plan = plan_capital(
             [
                 {"ts_code": "300759.SZ", "value": 57589.0},
@@ -247,9 +247,9 @@ class AshareCapitalPlanTest(unittest.TestCase):
 
         data = plan.to_dict()
 
-        self.assertEqual(data["risk_mode"], "sample_collection")
-        self.assertEqual(data["max_new_positions"], 1)
-        self.assertIn("daily_strategy_sample_target_not_met", data["reasons"])
+        self.assertNotEqual(data["risk_mode"], "sample_collection")
+        self.assertEqual(data["max_new_positions"], 0)
+        self.assertNotIn("daily_strategy_sample_target_not_met", data["reasons"])
 
     def test_sample_collection_respects_max_probe_positions_when_empty(self) -> None:
         plan = plan_capital(
@@ -285,7 +285,7 @@ class AshareCapitalPlanTest(unittest.TestCase):
             "risk_rejection_rate": 0.0,
             "data_issue_rate": 0.0,
             "recent_win_rate": 0.50,
-            "strategy_sample_valid_count": 8,
+            "strategy_sample_valid_count": 2,
             "min_strategy_samples": 5,
             "daily_sample_hard_gate": True,
             "today_strategy_sample_count": 0,

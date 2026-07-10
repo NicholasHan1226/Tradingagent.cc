@@ -268,7 +268,7 @@ def check_sim_log(log_path: Path | None = None) -> Check:
         latest["reason"] = "missing_5min_bar_time"
         return Check("cn_futures_sim_log", "warn", "CNFutures 5分钟模拟盘日志有成交但缺少 bar_time", latest, severity="warn")
     state = str(payload.get("state") or payload.get("status") or "").lower().strip() if payload else ""
-    if payload and state in {"ok", "market_closed"}:
+    if payload and state in {"ok", "market_closed", "observation_only"}:
         return Check("cn_futures_sim_log", "pass", "CNFutures 模拟盘最近一次日志正常", latest, severity="info")
     if payload:
         return Check("cn_futures_sim_log", "warn", "CNFutures 模拟盘最近一次日志需要复核", latest, severity="warn")

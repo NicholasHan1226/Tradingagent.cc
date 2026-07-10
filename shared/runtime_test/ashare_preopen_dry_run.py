@@ -695,6 +695,11 @@ def run_preopen_dry_run(
         "dry_run": True,
         "real_trading_enabled": False,
         "writes_excluded": ["signals", "ledger", "pending", "review"],
+        "run_config": {
+            "score_limit": resolved_score_limit,
+            "default_score_limit": DEFAULT_SCORE_LIMIT,
+            "candidate_threshold": CANDIDATE_THRESHOLD,
+        },
         "data": data_section,
         "candidate_pool": {key: value for key, value in candidate_pool.items() if key != "candidates_for_plan"},
         "capital_plan": capital_plan,

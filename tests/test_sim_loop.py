@@ -942,7 +942,7 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["filled_count"], 1)
         self.assertEqual(self.executed_orders[0]["ts_code"], "300418.SZ")
 
-    def test_run_sim_loop_uses_evolution_decision_daily_sample_gate(self) -> None:
+    def test_run_sim_loop_ignores_retired_daily_sample_gate_artifact(self) -> None:
         deps = self._multi_candidate_deps()
 
         def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
@@ -990,14 +990,13 @@ class SimLoopTest(unittest.TestCase):
                 signals_dir=self.tmp_path / "signals_daily_sample_gate",
             )
 
-        self.assertEqual(result["capital_plan"]["risk_mode"], "sample_collection")
-        self.assertIn("daily_strategy_sample_target_not_met", result["capital_plan"]["reasons"])
-        self.assertEqual(result["capital_plan"]["evolution_decision"]["recommended_action"], "force_sample_collection")
+        self.assertNotEqual(result["capital_plan"]["risk_mode"], "sample_collection")
+        self.assertNotIn("daily_strategy_sample_target_not_met", result["capital_plan"]["reasons"])
         self.assertEqual(result["order_count"], 1)
         self.assertEqual(result["filled_count"], 1)
         self.assertIn("hypothesis_id", self.executed_orders[0])
         self.assertTrue(self.executed_orders[0]["hypothesis_id"].startswith("ashare-20260710-buy-300418.SZ-candidate-"))
-        self.assertEqual(self.executed_orders[0]["research_hypothesis"]["sample_intent"], "daily_sample_collection")
+        self.assertEqual(self.executed_orders[0]["research_hypothesis"]["sample_intent"], "strategy_trade")
 
     def test_run_sim_loop_compresses_excess_ashare_positions_and_logs_capital_plan(self) -> None:
         deps = self._multi_candidate_deps()

@@ -25,7 +25,7 @@
 - SharedSignals 负责行情、合约和日历输入。
 - MarketGraph 负责商品、宏观、跨市场研究证据。
 - CNFutures 只消费上述输入, 负责期货市场内的订单语义、模拟成交、风控前置和执行状态。
-- 盘中可交易合约池必须来自 SharedSignals API 的最新 `Futures` 5分钟批次；`fut_basic` 只作为合约元数据，不得作为盘中主 universe。
+- 盘中可交易合约池必须来自 SharedSignals API 的最新 `Futures` 5分钟批次；`fut_basic` 只作为合约元数据，不得作为盘中主 universe。生产模拟执行默认要求至少 3 个独立底层品种；同一品种跨月合约只算 1 个品种。覆盖不足时写 `insufficient_distinct_product_coverage` 并进入 `observation_only`，不产生模拟成交。
 - 交易时段判断必须复用 `CNFutures/session.py`；午休 `11:30-13:00`、日盘后等待夜盘、非交易日等属于正常观察态，不能被开盘验收或健康检查误报为数据故障。
 - 期货交易日与日历日不能混用；夜盘 21:00 后的模拟和健康检查必须使用 `CNFutures/session.py` 的活跃交易日。品种夜盘已经正常收盘后的最后一根 5分钟 bar（如铜 01:00）属于等待下一交易段，不得误报为 `stale_intraday_bar`。
 - 开盘验收、实时健康和模拟盘巡检必须优先使用 SharedSignals API `/realtime_5min?market=Futures` 验证当前 5 分钟条线；SQLite read model 只允许显式诊断/测试开关下只读使用，不能作为生产自动兜底。

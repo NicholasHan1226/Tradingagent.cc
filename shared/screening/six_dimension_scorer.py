@@ -792,6 +792,38 @@ def score_universe(
         scores = score_stock(ts_code, date, data_reader=data_reader, market=market)
         results.append((ts_code, scores))
 
+    # Missing evidence must not become a neutral score that silently influences
+    # every rank. Deactivate a dimension only at batch level, never per symbol,
+    # so data availability cannot itself create a relative-ranking advantage.
+    availability: dict[str, float] = {}
+    inactive_dimensions: list[str] = []
+    for dim in _DEFAULT_WEIGHTS:
+        known = 0
+        present = 0
+        for _, scores in results:
+            sources = scores.get("evidence_sources") if isinstance(scores, dict) else {}
+            evidence = sources.get(dim) if isinstance(sources, dict) else None
+            if not isinstance(evidence, dict) or "has_evidence" not in evidence:
+                continue
+            known += 1
+            present += 1 if evidence.get("has_evidence") is True else 0
+        if known:
+            availability[dim] = round(present / known, 4)
+            if present == 0:
+                inactive_dimensions.append(dim)
+
+    if inactive_dimensions:
+        active_dimensions = [dim for dim in _DEFAULT_WEIGHTS if dim not in inactive_dimensions]
+        active_weight = sum(_DEFAULT_WEIGHTS[dim] for dim in active_dimensions)
+        for _, scores in results:
+            if active_weight > 0:
+                scores["combined"] = _clamp(
+                    sum(_safe_float(scores.get(dim), _DEFAULT_MISSING) * _DEFAULT_WEIGHTS[dim] for dim in active_dimensions)
+                    / active_weight
+                )
+            scores["batch_inactive_dimensions"] = list(inactive_dimensions)
+            scores["batch_evidence_availability"] = dict(availability)
+
     # 按 combined 降序
     results.sort(key=lambda x: x[1].get("combined", 0.0), reverse=True)
     return results

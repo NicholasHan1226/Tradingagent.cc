@@ -14,7 +14,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from Ashare.evolution_controller import write_evolution_decision
 from shared.runtime_test.ashare_no_trade_summary import NO_TRADE_LOG, summarize_no_trade_log
 
 
@@ -79,10 +78,9 @@ def _checkpoint(now: datetime) -> dict[str, Any]:
     }
 
 
-def _policy_target(decision: dict[str, Any], default: int) -> int:
-    policy = decision.get("policy") if isinstance(decision.get("policy"), dict) else {}
-    target = _safe_int(policy.get("daily_strategy_sample_target"), default)
-    return max(1, target)
+def _observation_target() -> int:
+    """Daily fill quotas are retired; monitoring is evidence-only."""
+    return 0
 
 
 def _no_trade_blockers(summary: dict[str, Any]) -> list[str]:
@@ -116,7 +114,6 @@ def build_sample_target_monitor(
     review_dir: Path | str | None = None,
     no_trade_log_path: Path | str | None = None,
     now: datetime | None = None,
-    daily_strategy_sample_target: int = 1,
     min_strategy_samples: int = 5,
 ) -> dict[str, Any]:
     """Build a read-only monitor report for today's A-share sample target."""
@@ -126,7 +123,7 @@ def build_sample_target_monitor(
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
     portfolio = _read_json(review_path / "portfolio_evolution_latest.json")
     decision = _read_json(review_path / "evolution_decision_latest.json")
-    target = _policy_target(decision, daily_strategy_sample_target)
+    target = _observation_target()
     portfolio_trade_date = _compact_date(portfolio.get("trade_date"))
     today_count = _safe_int(portfolio.get("today_strategy_sample_count"))
     strategy_count = _safe_int(portfolio.get("strategy_sample_count"))
@@ -140,8 +137,8 @@ def build_sample_target_monitor(
         reasons.append("portfolio_evolution_trade_date_stale")
         blockers.append("portfolio_evolution_stale")
 
-    if today_count < target:
-        reasons.append("daily_strategy_sample_target_not_met")
+    if target <= 0:
+        reasons.append("daily_trade_target_removed")
 
     no_trade_path = Path(no_trade_log_path) if no_trade_log_path is not None else NO_TRADE_LOG
     no_trade_summary = summarize_no_trade_log(no_trade_path, trade_date)
@@ -149,19 +146,15 @@ def build_sample_target_monitor(
     blockers = list(dict.fromkeys(blockers))
 
     checkpoint = _checkpoint(current)
-    target_met = today_count >= target
+    target_met = today_count > 0
     if target_met:
         status = "pass"
         state = "target_met"
         action = "observe"
-    elif checkpoint["name"] == "final":
-        status = "fail"
-        state = "daily_target_missed"
-        action = "force_sample_collection"
     else:
-        status = "warn"
-        state = "sample_debt"
-        action = "force_sample_collection"
+        status = "pass"
+        state = "observation_gap"
+        action = "observe_and_label_candidates"
 
     return {
         "report_type": "ashare_sample_target_monitor",
@@ -176,7 +169,6 @@ def build_sample_target_monitor(
         "blockers": blockers,
         "checkpoint": checkpoint,
         "daily_target": {
-            "daily_sample_hard_gate": True,
             "target": target,
             "today_strategy_sample_count": today_count,
             "strategy_sample_count": strategy_count,
@@ -215,7 +207,6 @@ def write_sample_target_monitor(
     review_dir: Path | str | None = None,
     no_trade_log_path: Path | str | None = None,
     now: datetime | None = None,
-    daily_strategy_sample_target: int = 1,
     min_strategy_samples: int = 5,
     refresh_decision: bool = True,
 ) -> dict[str, Any]:
@@ -227,26 +218,12 @@ def write_sample_target_monitor(
         review_dir=review_path,
         no_trade_log_path=no_trade_log_path,
         now=now,
-        daily_strategy_sample_target=daily_strategy_sample_target,
         min_strategy_samples=min_strategy_samples,
     )
-    if refresh_decision and report["recommended_action"] == "force_sample_collection":
-        portfolio = _read_json(review_path / "portfolio_evolution_latest.json")
-        refreshed = write_evolution_decision(
-            portfolio,
-            review_dir=review_path,
-            target_trade_date=report["trade_date"],
-            daily_strategy_sample_target=report["daily_target"]["target"],
-            min_strategy_samples=report["daily_target"]["min_strategy_samples"],
-        )
-        report["evolution_decision_refresh"] = {
-            "status": "written",
-            "state": refreshed.get("state"),
-            "recommended_action": refreshed.get("recommended_action"),
-            "reasons": refreshed.get("reasons") if isinstance(refreshed.get("reasons"), list) else [],
-        }
-    else:
-        report["evolution_decision_refresh"] = {"status": "skipped", "reason": "target_met_or_disabled"}
+    report["evolution_decision_refresh"] = {
+        "status": "not_needed",
+        "reason": "daily_trade_target_removed" if refresh_decision else "refresh_disabled",
+    }
 
     latest = review_path / LATEST_PATH.name
     log = review_path / LOG_PATH.name
@@ -260,7 +237,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--review-dir", type=Path, default=DEFAULT_REVIEW_DIR)
     parser.add_argument("--no-trade-log-path", type=Path, default=NO_TRADE_LOG)
-    parser.add_argument("--daily-strategy-sample-target", type=int, default=1)
     parser.add_argument("--min-strategy-samples", type=int, default=5)
     parser.add_argument("--no-refresh-decision", action="store_true")
     parser.add_argument("--pretty", action="store_true")
@@ -268,7 +244,6 @@ def main(argv: list[str] | None = None) -> int:
     report = write_sample_target_monitor(
         review_dir=args.review_dir,
         no_trade_log_path=args.no_trade_log_path,
-        daily_strategy_sample_target=args.daily_strategy_sample_target,
         min_strategy_samples=args.min_strategy_samples,
         refresh_decision=not args.no_refresh_decision,
     )

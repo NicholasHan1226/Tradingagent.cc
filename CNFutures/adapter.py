@@ -29,6 +29,7 @@ DEFAULT_REVIEW_ROOT = Path(__file__).resolve().parents[1] / "shared" / "review"
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "active_only": True,
     "max_symbols": 30,
+    "min_distinct_products": 3,
     "products": ("rb", "cu", "i", "m", "if", "ih", "ic", "im"),
 }
 

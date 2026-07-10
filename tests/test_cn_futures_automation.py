@@ -467,6 +467,45 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 "sample_insufficient",
             )
 
+    def test_multi_style_runner_observes_when_realtime_universe_has_one_distinct_product(self) -> None:
+        from CNFutures.adapter import CNFuturesAdapter
+        from CNFutures.sim_runner import run_multi_style_simulation
+
+        class SingleProductReader(FakeFuturesReader):
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return [
+                    {"symbol": "CU2608.SHF", "name": "沪铜2608", "exchange": "SHFE", "status": "listed"},
+                    {"symbol": "CU2609.SHF", "name": "沪铜2609", "exchange": "SHFE", "status": "listed"},
+                ]
+
+            def get_bars_intraday(self, market: str, symbol: str, interval: str = "5min", start: object = None, end: object = None) -> list[dict[str, object]]:
+                return [
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 70000, "volume": 1000},
+                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 70200, "volume": 1200},
+                ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = CNFuturesAdapter(
+                reader=SingleProductReader(),
+                universe_filter={"max_symbols": 10, "min_distinct_products": 3},
+                styles={"trend": {"name": "trend", "signal_threshold": 0.01, "products": ["cu"]}},
+            )
+
+            result = run_multi_style_simulation(
+                adapter,
+                "20260703",
+                SingleProductReader(),
+                signals_dir=root / "signals",
+                review_path=root / "review.jsonl",
+                now=datetime.fromisoformat("2026-07-03 14:56:00"),
+            )
+
+        self.assertEqual(result["state"], "observation_only")
+        self.assertEqual(result["distinct_product_count"], 1)
+        self.assertEqual(result["filled_count"], 0)
+        self.assertEqual(result["hold_reason_summary"]["by_reason"]["insufficient_distinct_product_coverage"], 1)
+
     def test_multi_style_runner_reports_market_closed_after_session(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
@@ -969,7 +1008,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
             reader = TwoContractReader()
             adapter = CNFuturesAdapter(
                 reader=reader,
-                universe_filter={"max_symbols": 2, "products": ("rb",)},
+                universe_filter={"max_symbols": 2, "min_distinct_products": 1, "products": ("rb",)},
                 styles={
                     "trend": {
                         "name": "trend",

@@ -3079,9 +3079,7 @@ def run_sim_loop(
         if str(market).lower() == "ashare":
             score_snapshot = dict(scores_by_symbol.get(symbol, {}))
             sample_intent = "strategy_trade"
-            if "daily_strategy_sample_target_not_met" in (capital_plan.get("reasons") or []):
-                sample_intent = "daily_sample_collection"
-            elif "sample_collection_before_min_samples" in (capital_plan.get("reasons") or []):
+            if "sample_collection_before_min_samples" in (capital_plan.get("reasons") or []):
                 sample_intent = "cumulative_sample_collection"
             try:
                 from Ashare.sample_learning import build_research_hypothesis

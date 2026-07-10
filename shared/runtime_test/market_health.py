@@ -1382,7 +1382,7 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
         warn_reasons.append("cn_futures_review_has_no_samples_yet")
     payload = cron_result.get("payload") or {}
     cron_status = (payload.get("status") or payload.get("state") or "") if payload else ""
-    if payload and cron_status not in {"ok", "market_closed"}:
+    if payload and cron_status not in {"ok", "market_closed", "observation_only"}:
         if market == "hk" and cron_status == "no_data":
             hard_fail_reasons.append("latest_cron_no_data")
         else:

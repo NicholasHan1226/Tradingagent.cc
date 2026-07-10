@@ -86,7 +86,9 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         )
 
     def test_warns_without_data_but_structure_is_readable(self) -> None:
-        with patch.object(live_check, "check_existing_health_surfaces", return_value=live_check.Check("cn_futures_existing_health_surfaces", "pass", "ok")):
+        with patch("CNFutures.session.active_trade_date", return_value="20260706"), patch.object(
+            live_check, "check_existing_health_surfaces", return_value=live_check.Check("cn_futures_existing_health_surfaces", "pass", "ok")
+        ):
             report = live_check.run_live_check(
                 sharedsignals_root=self.sharedsignals,
                 run_command=self._fake_runner({"status": "no_data", "error": "no bars"}, returncode=1),
@@ -105,7 +107,9 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
     def test_passes_when_freshness_cron_review_and_style_outputs_are_ready(self) -> None:
         self._write_ready_outputs()
 
-        with patch.object(live_check, "check_existing_health_surfaces", return_value=live_check.Check("cn_futures_existing_health_surfaces", "pass", "ok")):
+        with patch("CNFutures.session.active_trade_date", return_value="20260706"), patch.object(
+            live_check, "check_existing_health_surfaces", return_value=live_check.Check("cn_futures_existing_health_surfaces", "pass", "ok")
+        ):
             report = live_check.run_live_check(
                 sharedsignals_root=self.sharedsignals,
                 run_command=self._fake_runner({"status": "fresh", "latest_bar_time": "2026-07-06T09:05:00+08:00"}, returncode=0),
@@ -185,6 +189,19 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["path"], "shared/logs/cron/job_cn_futures_sim.log")
         self.assertEqual(check.details["payload"]["filled_count"], 1)
+
+    def test_sim_log_treats_coverage_observation_as_normal(self) -> None:
+        log = self.root / "shared/logs/cron/job_cn_futures_sim.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(
+            '{"market":"cn_futures","state":"observation_only","cadence":"5min","filled_count":0,"hold_reason_summary":{"by_reason":{"insufficient_distinct_product_coverage":1}}}\n',
+            encoding="utf-8",
+        )
+
+        check = live_check.check_sim_log(log)
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.details["payload"]["state"], "observation_only")
 
     def test_review_warns_when_filled_5min_sample_lacks_bar_time_or_real_flag_is_on(self) -> None:
         self._write_jsonl(

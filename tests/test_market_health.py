@@ -877,6 +877,21 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["warn_reasons"], [])
 
+    def test_cn_futures_sim_loop_accepts_coverage_observation_state(self) -> None:
+        cron_result = {
+            "payload": {
+                "state": "observation_only",
+                "hold_reason_summary": {"by_reason": {"insufficient_distinct_product_coverage": 1}},
+            }
+        }
+        with patch.object(market_health, "_probe_market_data", return_value={"status": "ok", "reason": ""}), patch.object(
+            market_health, "_market_session_state", return_value={"in_session": False, "samples_expected_today": False}
+        ), patch.object(market_health, "_latest_cron_result", return_value=cron_result):
+            check = market_health._check_sim_market_loop("cn_futures", "job_cn_futures_sim.sh", "")
+
+        self.assertEqual(check.status, "pass")
+        self.assertNotIn("latest_cron_status=observation_only", check.details["warn_reasons"])
+
     def test_cn_futures_sim_loop_reads_append_only_review_as_ledger(self) -> None:
         review = self.root / "shared/review/data/cn_futures_sim_reviews.jsonl"
         review.parent.mkdir(parents=True)

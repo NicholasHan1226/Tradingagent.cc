@@ -41,10 +41,7 @@ class AshareSampleTargetMonitorTest(unittest.TestCase):
                 {
                     "trade_date": "20260710",
                     "recommended_action": "observe",
-                    "policy": {
-                        "daily_strategy_sample_target": 1,
-                        "today_strategy_sample_count": 1,
-                    },
+                    "policy": {"today_strategy_sample_count": 1},
                 },
             )
 
@@ -59,7 +56,7 @@ class AshareSampleTargetMonitorTest(unittest.TestCase):
         self.assertTrue(report["daily_target"]["target_met"])
         self.assertFalse(report["real_trading_enabled"])
 
-    def test_writes_force_sample_collection_when_daily_target_not_met(self) -> None:
+    def test_missing_daily_fill_records_observation_gap_without_forcing_trade(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             review_dir = self._review_dir(tmp)
             self._write_json(
@@ -75,11 +72,8 @@ class AshareSampleTargetMonitorTest(unittest.TestCase):
                 review_dir / "evolution_decision_latest.json",
                 {
                     "trade_date": "20260710",
-                    "recommended_action": "force_sample_collection",
-                    "policy": {
-                        "daily_strategy_sample_target": 1,
-                        "today_strategy_sample_count": 0,
-                    },
+                    "recommended_action": "observe_and_label_candidates",
+                    "policy": {"today_strategy_sample_count": 0},
                 },
             )
 
@@ -91,16 +85,16 @@ class AshareSampleTargetMonitorTest(unittest.TestCase):
             latest_exists = (review_dir / "sample_target_monitor_latest.json").exists()
             log_exists = (review_dir / "sample_target_monitor_log.jsonl").exists()
 
-        self.assertEqual(report["overall_status"], "warn")
-        self.assertEqual(report["state"], "sample_debt")
-        self.assertEqual(report["recommended_action"], "force_sample_collection")
-        self.assertIn("daily_strategy_sample_target_not_met", report["reasons"])
-        self.assertEqual(refreshed_decision["recommended_action"], "force_sample_collection")
+        self.assertEqual(report["overall_status"], "pass")
+        self.assertEqual(report["state"], "observation_gap")
+        self.assertEqual(report["recommended_action"], "observe_and_label_candidates")
+        self.assertIn("daily_trade_target_removed", report["reasons"])
+        self.assertEqual(refreshed_decision["recommended_action"], "observe_and_label_candidates")
         self.assertEqual(refreshed_decision["policy"]["today_strategy_sample_count"], 0)
         self.assertTrue(latest_exists)
         self.assertTrue(log_exists)
 
-    def test_fails_after_final_checkpoint_when_daily_target_is_still_missing(self) -> None:
+    def test_final_checkpoint_without_fill_stays_observation_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             review_dir = self._review_dir(tmp)
             no_trade_log = Path(tmp) / "ashare_no_trade_explanations.jsonl"
@@ -135,12 +129,12 @@ class AshareSampleTargetMonitorTest(unittest.TestCase):
                 now=datetime(2026, 7, 10, 15, 31, tzinfo=CN_TZ),
             )
 
-        self.assertEqual(report["overall_status"], "fail")
-        self.assertEqual(report["state"], "daily_target_missed")
+        self.assertEqual(report["overall_status"], "pass")
+        self.assertEqual(report["state"], "observation_gap")
         self.assertEqual(report["checkpoint"]["name"], "final")
         self.assertIn("capital_plan_defensive", report["blockers"])
         self.assertIn("risk_rejections_present", report["blockers"])
-        self.assertEqual(report["recommended_action"], "force_sample_collection")
+        self.assertEqual(report["recommended_action"], "observe_and_label_candidates")
         self.assertFalse(report["writes_orders"])
 
 

@@ -19,6 +19,7 @@ DEFAULT_REVIEW_DIR = ROOT / "shared" / "review" / "ashare"
 LATEST_DECISION = DEFAULT_REVIEW_DIR / "evolution_decision_latest.json"
 DECISION_LOG = DEFAULT_REVIEW_DIR / "evolution_decision_log.jsonl"
 CN_TZ = timezone(timedelta(hours=8))
+MIN_EVOLUTION_EVIDENCE_SAMPLES = 20
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -59,13 +60,12 @@ def build_evolution_decision(
     portfolio_evolution: dict[str, Any],
     *,
     target_trade_date: str | None = None,
-    daily_strategy_sample_target: int = 1,
     min_strategy_samples: int = 5,
 ) -> dict[str, Any]:
     """Build a simulated-only evolution decision from portfolio evidence."""
 
-    target = max(1, int(daily_strategy_sample_target))
     min_samples = max(1, int(min_strategy_samples))
+    min_evolution_evidence_samples = max(MIN_EVOLUTION_EVIDENCE_SAMPLES, min_samples)
     target_date = _compact_date(target_trade_date) or _today_cn_compact()
     evidence_date = _compact_date(portfolio_evolution.get("trade_date"))
     strategy_sample_count = _safe_int(portfolio_evolution.get("strategy_sample_count"))
@@ -75,19 +75,28 @@ def build_evolution_decision(
     equity = _safe_float(pnl.get("equity"), 0.0)
     pnl_pct = round(total_pnl / equity, 6) if equity > 0 else 0.0
     rankings = portfolio_evolution.get("rankings") if isinstance(portfolio_evolution.get("rankings"), list) else []
+    evidence = portfolio_evolution.get("evolution_evidence") if isinstance(portfolio_evolution.get("evolution_evidence"), dict) else {}
+    eligible_sample_count = _safe_int(evidence.get("eligible_sample_count"))
+    realized_round_trip_count = _safe_int(evidence.get("realized_round_trip_count"))
+    forward_label_count = _safe_int(evidence.get("forward_label_count"))
     reasons: list[str] = []
     if evidence_date and evidence_date != target_date:
         today_strategy_sample_count = 0
         reasons.append("portfolio_evolution_trade_date_stale")
 
-    if today_strategy_sample_count < target:
-        state = "sample_debt"
-        action = "force_sample_collection"
-        reasons.append("daily_strategy_sample_target_not_met")
-    elif strategy_sample_count < min_samples:
-        state = "sample_insufficient"
-        action = "observe"
+    reasons.append("daily_trade_target_removed")
+    if strategy_sample_count < min_samples:
+        state = "evidence_pending"
+        action = "observe_and_label_candidates"
         reasons.append("cumulative_strategy_samples_below_minimum")
+    elif (
+        eligible_sample_count < min_evolution_evidence_samples
+        or realized_round_trip_count < max(1, min_evolution_evidence_samples // 2)
+        or forward_label_count < min_evolution_evidence_samples
+    ):
+        state = "evidence_pending"
+        action = "observe_and_label_candidates"
+        reasons.append("insufficient_verified_execution_evidence")
     elif total_pnl < 0:
         state = "risk_tightening"
         action = "tighten_risk"
@@ -98,10 +107,9 @@ def build_evolution_decision(
         reasons.append("positive_mark_to_market_pnl_after_min_samples")
 
     policy = {
-        "daily_sample_hard_gate": True,
-        "daily_strategy_sample_target": target,
         "today_strategy_sample_count": today_strategy_sample_count,
         "min_strategy_samples": min_samples,
+        "min_evolution_evidence_samples": min_evolution_evidence_samples,
         "strategy_sample_count": strategy_sample_count,
         "sample_collection_min_score": 0.55,
         "max_probe_positions": 1,
@@ -125,9 +133,12 @@ def build_evolution_decision(
         "policy": policy,
         "metrics": {
             "strategy_sample_count": strategy_sample_count,
+            "eligible_sample_count": eligible_sample_count,
+            "realized_round_trip_count": realized_round_trip_count,
+            "forward_label_count": forward_label_count,
             "today_strategy_sample_count": today_strategy_sample_count,
-            "daily_strategy_sample_target": target,
             "min_strategy_samples": min_samples,
+            "min_evolution_evidence_samples": min_evolution_evidence_samples,
             "total_pnl": round(total_pnl, 6),
             "pnl_pct": pnl_pct,
             "ranking_count": len(rankings),
@@ -154,7 +165,6 @@ def write_evolution_decision(
     *,
     review_dir: Path | str | None = None,
     target_trade_date: str | None = None,
-    daily_strategy_sample_target: int = 1,
     min_strategy_samples: int = 5,
 ) -> dict[str, Any]:
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
@@ -162,7 +172,6 @@ def write_evolution_decision(
     decision = build_evolution_decision(
         portfolio_evolution,
         target_trade_date=target_trade_date,
-        daily_strategy_sample_target=daily_strategy_sample_target,
         min_strategy_samples=min_strategy_samples,
     )
     latest = review_path / LATEST_DECISION.name
@@ -187,8 +196,6 @@ def decision_market_context(decision: dict[str, Any] | None) -> dict[str, Any]:
     if not policy:
         return {}
     return {
-        "daily_sample_hard_gate": bool(policy.get("daily_sample_hard_gate")),
-        "daily_strategy_sample_target": _safe_float(policy.get("daily_strategy_sample_target"), 1.0),
         "today_strategy_sample_count": _safe_float(policy.get("today_strategy_sample_count"), 0.0),
         "min_strategy_samples": _safe_float(policy.get("min_strategy_samples"), 5.0),
         "strategy_sample_valid_count": _safe_float(policy.get("strategy_sample_count"), 0.0),
@@ -202,7 +209,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--portfolio-evolution", type=Path, default=DEFAULT_REVIEW_DIR / "portfolio_evolution_latest.json")
     parser.add_argument("--review-dir", type=Path, default=DEFAULT_REVIEW_DIR)
     parser.add_argument("--trade-date", default="")
-    parser.add_argument("--daily-strategy-sample-target", type=int, default=1)
     parser.add_argument("--min-strategy-samples", type=int, default=5)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args(argv)
@@ -210,7 +216,6 @@ def main(argv: list[str] | None = None) -> int:
         _read_json(args.portfolio_evolution),
         review_dir=args.review_dir,
         target_trade_date=args.trade_date or None,
-        daily_strategy_sample_target=args.daily_strategy_sample_target,
         min_strategy_samples=args.min_strategy_samples,
     )
     print(json.dumps(decision, ensure_ascii=False, indent=2 if args.pretty else None))

@@ -45,6 +45,16 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _distinct_products(symbols: list[str]) -> list[str]:
+    products: set[str] = set()
+    for symbol in symbols:
+        try:
+            products.add(normalize_product(symbol))
+        except ValueError:
+            continue
+    return sorted(products)
+
+
 def _style_is_active(style: dict[str, Any]) -> bool:
     status = str(style.get("status") or "").strip().lower()
     if status in {"paused", "deprecated"}:
@@ -864,6 +874,59 @@ def run_multi_style_simulation(
             "max_intraday_bar_age_minutes": max_intraday_bar_age_minutes,
         }
 
+    configured_min_products = max(1, _safe_int(getattr(adapter, "universe_filter", {}).get("min_distinct_products"), 3))
+    max_symbols = max(1, _safe_int(getattr(adapter, "universe_filter", {}).get("max_symbols"), 30))
+    required_min_products = min(configured_min_products, max_symbols)
+    distinct_products = _distinct_products(universe)
+    if len(distinct_products) < required_min_products:
+        holds.append({
+            "stage": "universe",
+            "style": "",
+            "symbol": "",
+            "cadence": cadence_value,
+            "bar_time": "",
+            "session": session_bucket,
+            "reason": "insufficient_distinct_product_coverage",
+            "distinct_products": distinct_products,
+            "required_min_distinct_products": required_min_products,
+        })
+        position_pnl_summary = _compute_position_pnl_summary(signals_dir)
+        review = append_review(
+            date=date,
+            market=MARKET,
+            records=[],
+            errors=[],
+            holds=holds,
+            path=review_path,
+            position_pnl_summary=position_pnl_summary,
+        )
+        return {
+            "market": MARKET,
+            "reader_market": READER_MARKET,
+            "date": date,
+            "cadence": cadence_value,
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "state": "observation_only",
+            "universe_count": len(universe),
+            "distinct_products": distinct_products,
+            "distinct_product_count": len(distinct_products),
+            "required_min_distinct_products": required_min_products,
+            "style_count": len(styles),
+            "record_count": 0,
+            "filled_count": 0,
+            "records": [],
+            "errors": [],
+            "holds": holds,
+            "hold_count": len(holds),
+            "latest_hold_bar_time": "",
+            "hold_reason_summary": review.get("hold_reason_summary", {}),
+            "review": review,
+            "real_trading_enabled": False,
+            "generated_at": _now_iso(),
+            "max_intraday_bar_age_minutes": max_intraday_bar_age_minutes,
+        }
+
     for style_name, style_config in styles.items():
         style = dict(style_config or {})
         style.setdefault("name", style_name)
@@ -1155,6 +1218,9 @@ def run_multi_style_simulation(
         "account_type": "simulated",
         "state": "degraded" if errors else "ok",
         "universe_count": len(universe),
+        "distinct_products": distinct_products,
+        "distinct_product_count": len(distinct_products),
+        "required_min_distinct_products": required_min_products,
         "style_count": len(styles),
         "record_count": len(records),
         "filled_count": sum(1 for record in records if record["receipt"].get("status") == "filled"),

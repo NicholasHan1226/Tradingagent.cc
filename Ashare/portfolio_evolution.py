@@ -17,7 +17,7 @@ from typing import Any
 
 from shared.review.pnl_summary import load_mark_prices_for_positions
 from shared.review.pnl_summary import sim_ledger_pnl_summary
-from shared.review.sample_quality import strategy_valid_trades, summarize_sample_quality
+from shared.review.sample_quality import evolution_eligible_trades, strategy_valid_trades, summarize_sample_quality
 from shared.review.sim_ledger_reader import load_sim_trades_between, load_sim_trades_for_date
 
 
@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REVIEW_DIR = ROOT / "shared" / "review" / "ashare"
 LATEST_PATH = DEFAULT_REVIEW_DIR / "portfolio_evolution_latest.json"
 LOG_PATH = DEFAULT_REVIEW_DIR / "portfolio_evolution_log.jsonl"
+MIN_EVOLUTION_EVIDENCE_SAMPLES = 20
 
 
 def _today_compact() -> str:
@@ -106,19 +107,47 @@ def _refresh_local_sim_snapshot_for_review(local_trades_path: Path | None) -> di
 def _action_for_samples(
     *,
     strategy_sample_count: int,
+    eligible_sample_count: int,
+    realized_round_trip_count: int,
+    forward_label_count: int,
     pnl: dict[str, Any],
     min_samples: int,
+    min_evolution_evidence_samples: int,
 ) -> tuple[str, str]:
     if strategy_sample_count <= 0:
         return "wait_for_strategy_samples", "no_strategy_valid_samples"
     if strategy_sample_count < min_samples:
         return "observe", "sample_insufficient"
+    if eligible_sample_count < min_evolution_evidence_samples:
+        return "observe", "insufficient_verified_execution_evidence"
+    if realized_round_trip_count < max(1, min_evolution_evidence_samples // 2):
+        return "observe", "insufficient_realized_round_trips"
+    if forward_label_count < min_evolution_evidence_samples:
+        return "observe", "insufficient_forward_validation"
     total_pnl = _safe_float(pnl.get("total_pnl"))
+    realized_pnl = _safe_float(pnl.get("realized_pnl"))
     if total_pnl < 0:
         return "tighten_risk", "negative_mark_to_market_pnl"
+    if realized_pnl <= 0:
+        return "observe", "non_positive_realized_pnl"
     if total_pnl > 0:
         return "expand_risk", "positive_mark_to_market_pnl"
     return "observe", "flat_mark_to_market_pnl"
+
+
+def _forward_label_count(review_dir: Path) -> int:
+    try:
+        payload = json.loads((review_dir / "forward_validation_latest.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return 0
+    labels = payload.get("labels") if isinstance(payload, dict) else []
+    return sum(
+        1
+        for row in labels if isinstance(row, dict)
+        and isinstance(row.get("labels"), dict)
+        and isinstance(row["labels"].get("m60"), dict)
+        and row["labels"]["m60"].get("status") == "labeled"
+    )
 
 
 def build_portfolio_evolution(
@@ -139,19 +168,40 @@ def build_portfolio_evolution(
     cumulative_quality = summarize_sample_quality(all_trades)
     day_strategy_trades = strategy_valid_trades(day_trades)
     cumulative_strategy_trades = strategy_valid_trades(all_trades)
+    cumulative_evolution_trades = evolution_eligible_trades(all_trades)
     pnl_by_market = sim_ledger_pnl_summary(markets=("ashare",), local_trades_path=local_path)
     pnl = pnl_by_market.get("ashare", {})
     tier_manifest = _load_tier_manifest(review_path)
     tier_rankings = _tier_rankings(tier_manifest)
     strategy_sample_count = _safe_int(cumulative_quality.get("strategy_sample_valid_count"))
+    eligible_sample_count = len(cumulative_evolution_trades)
+    realized_round_trip_count = sum(1 for row in cumulative_evolution_trades if str(row.get("side") or "").lower() == "sell")
+    forward_label_count = _forward_label_count(review_path)
+    evidence_blockers: list[str] = []
+    if eligible_sample_count < strategy_sample_count:
+        evidence_blockers.append("weak_fill_price_evidence")
+    if realized_round_trip_count <= 0:
+        evidence_blockers.append("no_realized_round_trip")
+    if forward_label_count <= 0:
+        evidence_blockers.append("no_forward_validation_labels")
+    min_evolution_evidence_samples = max(MIN_EVOLUTION_EVIDENCE_SAMPLES, int(min_samples))
     action, reason = _action_for_samples(
         strategy_sample_count=strategy_sample_count,
+        eligible_sample_count=eligible_sample_count,
+        realized_round_trip_count=realized_round_trip_count,
+        forward_label_count=forward_label_count,
         pnl=pnl,
         min_samples=max(1, int(min_samples)),
+        min_evolution_evidence_samples=min_evolution_evidence_samples,
     )
     state = "observed" if strategy_sample_count > 0 else "waiting"
-    if reason == "sample_insufficient":
-        state = "sample_insufficient"
+    if reason in {
+        "sample_insufficient",
+        "insufficient_verified_execution_evidence",
+        "insufficient_realized_round_trips",
+        "insufficient_forward_validation",
+    }:
+        state = "evidence_pending"
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -187,6 +237,13 @@ def build_portfolio_evolution(
         "sample_quality": {
             "today": day_quality,
             "cumulative": cumulative_quality,
+        },
+        "evolution_evidence": {
+            "eligible_sample_count": eligible_sample_count,
+            "realized_round_trip_count": realized_round_trip_count,
+            "forward_label_count": forward_label_count,
+            "min_evolution_evidence_samples": min_evolution_evidence_samples,
+            "blockers": evidence_blockers,
         },
         "strategy_sample_count": strategy_sample_count,
         "today_strategy_sample_count": len(day_strategy_trades),
@@ -256,7 +313,6 @@ def write_portfolio_evolution(
             report,
             review_dir=review_path,
             target_trade_date=report.get("trade_date"),
-            daily_strategy_sample_target=1,
             min_strategy_samples=min_samples,
         )
     except Exception as exc:  # noqa: BLE001

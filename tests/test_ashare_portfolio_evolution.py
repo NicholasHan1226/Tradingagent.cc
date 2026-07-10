@@ -53,8 +53,10 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
         )
 
         self.assertEqual(report["market"], "ashare")
-        self.assertEqual(report["state"], "sample_insufficient")
+        self.assertEqual(report["state"], "evidence_pending")
         self.assertEqual(report["strategy_sample_count"], 1)
+        self.assertEqual(report["evolution_evidence"]["eligible_sample_count"], 0)
+        self.assertIn("weak_fill_price_evidence", report["evolution_evidence"]["blockers"])
         self.assertEqual(report["today_strategy_sample_count"], 1)
         self.assertEqual(report["rankings"][0]["style_name"], "ashare_portfolio")
         self.assertEqual(report["rankings"][0]["trades"], 1)
@@ -98,9 +100,9 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
         self.assertEqual(json.loads(latest.read_text(encoding="utf-8"))["state"], report["state"])
         self.assertEqual(len(log.read_text(encoding="utf-8").splitlines()), 1)
         decision = json.loads((self.review_dir / "evolution_decision_latest.json").read_text(encoding="utf-8"))
-        self.assertEqual(decision["recommended_action"], "observe")
-        self.assertEqual(decision["state"], "sample_insufficient")
-        self.assertTrue(decision["policy"]["daily_sample_hard_gate"])
+        self.assertEqual(decision["recommended_action"], "observe_and_label_candidates")
+        self.assertEqual(decision["state"], "evidence_pending")
+        self.assertEqual(decision["policy"]["min_evolution_evidence_samples"], 20)
         tier_accounts = {row["account"] for row in report["tier_experiments"]["accounts"]}
         self.assertEqual(tier_accounts, {"ashare_50000", "ashare_100000"})
         ranking_names = {row["style_name"] for row in report["rankings"]}

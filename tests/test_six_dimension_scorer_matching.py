@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest import mock
+
 from shared.screening import six_dimension_scorer as scorer
 
 
@@ -47,3 +49,31 @@ def test_sentiment_matches_bare_symbol_field():
     assert score is not None
     assert config["_dimension_evidence"]["sentiment"]["has_evidence"] is True
     assert config["_dimension_evidence"]["sentiment"]["row_count"] == 1
+
+
+def test_score_universe_removes_globally_missing_event_weight_from_all_symbols():
+    def score(symbol, *args, **kwargs):
+        return {
+            "macro": 0.5,
+            "event": 0.5,
+            "fundamental": 0.5,
+            "capital": 1.0,
+            "technical": 1.0,
+            "sentiment": 0.5,
+            "combined": 0.65,
+            "evidence_sources": {
+                "macro": {"has_evidence": True},
+                "event": {"has_evidence": False, "reason": "no_matched_event_evidence"},
+                "fundamental": {"has_evidence": True},
+                "capital": {"has_evidence": True},
+                "technical": {"has_evidence": True},
+                "sentiment": {"has_evidence": True},
+            },
+            "missing_evidence_dimensions": ["event"],
+        }
+
+    with mock.patch.object(scorer, "score_stock", side_effect=score):
+        rows = scorer.score_universe("20260710", ["600000.SH", "000001.SZ"], market="ashare")
+
+    assert all("event" in values["batch_inactive_dimensions"] for _, values in rows)
+    assert all(values["combined"] == 0.6875 for _, values in rows)
