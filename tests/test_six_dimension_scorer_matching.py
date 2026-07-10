@@ -32,6 +32,30 @@ class FakeEvidenceReader:
         ]
 
 
+class SharedSignalsEventsReader:
+    """Simulates SharedSignals /events API returning announcement/news events
+    WITHOUT explicit confidence or direction fields — only title/content text.
+    This is the real-world scenario for Tushare disclosure/news data."""
+
+    def get_events(self, market=None, symbol=None, start=None, end=None):
+        return [
+            {
+                "event_time": "2026-07-08",
+                "event_type": "announcement",
+                "symbol": "600519",
+                "market": "Ashare",
+                "title": "关于控股股东增持公司股份的公告",
+                "content": "控股股东计划在未来6个月内增持...",
+            }
+        ]
+
+    def get_event_candidates(self):
+        return []
+
+    def get_sentiment(self):
+        return []
+
+
 def test_marketgraph_event_candidates_match_exchange_prefixed_codes():
     config = {"_data_reader": FakeEvidenceReader(), "dimensions": {"event": {"min_confidence": 0.3}}}
 
@@ -110,3 +134,121 @@ def test_score_diagnostics_reports_batch_inactive_dimensions():
 
     assert diagnostics["batch_inactive_dimensions"] == ["event"]
     assert diagnostics["batch_evidence_availability"] == {"event": 0.0, "capital": 1.0}
+
+
+def test_text_inferred_event_not_discarded_by_min_confidence():
+    """Text-inferred events (no explicit confidence field) must pass the
+    min_confidence gate — regression test for the 0.25 < 0.30 silent discard."""
+    config = {
+        "_data_reader": SharedSignalsEventsReader(),
+        "dimensions": {"event": {"min_confidence": 0.30}},
+    }
+
+    score = scorer._score_event("600519.SH", "20260710", config)
+
+    assert score is not None
+    # Text-inferred confidence should be >= min_conf, so the event is used
+    assert score > 0.5, f"Expected score > 0.5 for positive text-inferred event, got {score}"
+    evidence = config.get("_dimension_evidence", {}).get("event", {})
+    assert evidence.get("has_evidence") is True, (
+        f"Expected SharedSignals events evidence, got {evidence}"
+    )
+    assert evidence.get("source") == "SharedSignals events"
+    assert evidence.get("row_count", 0) >= 1
+
+
+def test_text_inferred_event_with_custom_min_confidence():
+    """Raising the gate must not raise text-inferred confidence with it."""
+    config = {
+        "_data_reader": SharedSignalsEventsReader(),
+        "dimensions": {"event": {"min_confidence": 0.40}},
+    }
+
+    score = scorer._score_event("600519.SH", "20260710", config)
+
+    assert score == 0.5
+    evidence = config.get("_dimension_evidence", {}).get("event", {})
+    assert evidence.get("has_evidence") is False
+    assert "skipped_low_conf=1" in evidence.get("reason", "")
+
+
+def test_event_lookback_window_captures_recent_events():
+    """Short-cycle event lookback (default 3 days) must capture events
+    within the window, not just today's events."""
+    config = {
+        "_data_reader": SharedSignalsEventsReader(),
+        "dimensions": {"event": {"min_confidence": 0.30}},
+    }
+
+    # Event dated 2026-07-08, scoring on 2026-07-10 → within 3-day window
+    score = scorer._score_event("600519.SH", "20260710", config)
+
+    assert score is not None
+    assert score > 0.5
+
+
+def test_event_outside_lookback_window_returns_neutral():
+    """A stale row is ignored even if an upstream reader fails to filter it."""
+
+    class StaleEventsReader:
+        def get_events(self, market=None, symbol=None, start=None, end=None):
+            return [
+                {
+                    "event_time": "2026-07-01",
+                    "event_type": "announcement",
+                    "symbol": "600519",
+                    "market": "Ashare",
+                    "title": "关于控股股东增持公司股份的公告",
+                }
+            ]
+
+        def get_event_candidates(self):
+            return []
+
+    config = {
+        "_data_reader": StaleEventsReader(),
+        "dimensions": {"event": {"min_confidence": 0.30}},
+    }
+    assert scorer._score_event("600519.SH", "20260710", config) == 0.5
+    assert config["_dimension_evidence"]["event"]["has_evidence"] is False
+
+    # The scorer must also request the bounded window from SharedSignals.
+    captured_args = []
+
+    class CapturingReader:
+        def get_events(self, *args, **kwargs):
+            captured_args.append((args, kwargs))
+            return []
+
+        def get_event_candidates(self):
+            return []
+
+    config2 = {
+        "_data_reader": CapturingReader(),
+        "dimensions": {"event": {"min_confidence": 0.30}},
+    }
+    scorer._score_event("600519.SH", "20260710", config2)
+    assert len(captured_args) > 0
+    # First positional arg after market and symbol should be start_date
+    # get_events(market, symbol, start_date, date)
+    call_args = captured_args[0][0]
+    assert len(call_args) >= 3
+    start_date = str(call_args[2])
+    assert start_date == "20260708"
+
+
+def test_event_no_evidence_produces_diagnostic_reason():
+    """When no events match, the evidence marker must include diagnostic
+    detail about why (raw row count, skipped reasons)."""
+    config = {
+        "_data_reader": FakeEvidenceReader(),  # get_events returns []
+        "dimensions": {"event": {"min_confidence": 0.30}},
+    }
+
+    score = scorer._score_event("600519.SH", "20260710", config)
+
+    assert score == 0.5
+    evidence = config.get("_dimension_evidence", {}).get("event", {})
+    assert evidence.get("has_evidence") is False
+    reason = evidence.get("reason", "")
+    assert "no_matched_event_evidence" in reason

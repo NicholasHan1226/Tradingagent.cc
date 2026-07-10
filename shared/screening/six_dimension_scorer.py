@@ -354,7 +354,12 @@ def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
 
 
 def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
-    """事件维度 — SharedSignals events 优先，MarketGraph event graph 只作增强。"""
+    """事件维度 — SharedSignals events 优先，MarketGraph event graph 只作增强。
+
+    短周期事件维度使用 3 天回溯窗口，确保近期公告/新闻催化事件能被捕获。
+    Text-inferred 事件（从标题/正文推断方向的新闻/公告）使用固定的审慎
+    置信度，不能通过调整门槛反向抬高事件本身的可信度。
+    """
     try:
         dim_cfg = config.get("dimensions", {}).get("event", {})
         min_conf = _safe_float(dim_cfg.get("min_confidence", 0.30), 0.30)
@@ -363,11 +368,36 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
         allowed_status = {"needs_review", "verified", "promoted", "approved"}
         data_reader = _get_data_reader(config)
         market = _reader_market(config)
+
+        # 短周期事件回溯窗口：默认 3 天，可通过 dimensions.event.lookback_days 配置
+        lookback_days = max(1, int(dim_cfg.get("lookback_days", 3)))
+        end_date = datetime.strptime(date, "%Y%m%d")
+        start_date = (end_date - timedelta(days=lookback_days - 1)).strftime("%Y%m%d")
+
+        sharedsignals_raw_rows = 0
+        sharedsignals_skipped_no_impact = 0
+        sharedsignals_skipped_low_conf = 0
+        sharedsignals_seen: set[tuple[str, ...]] = set()
+
         for symbol in _symbol_variants(ts_code):
             get_events = getattr(data_reader, "get_events", None)
-            rows = get_events(market, symbol, None, date) if callable(get_events) else []
+            rows = get_events(market, symbol, start_date, date) if callable(get_events) else []
             candidate_rows = 0
             for row in rows:
+                event_key = (
+                    str(row.get("event_hash") or row.get("event_id") or ""),
+                    _date_from_row(row),
+                    str(row.get("event_type") or ""),
+                    str(row.get("title") or ""),
+                    str(row.get("subject_code") or row.get("symbol") or ""),
+                )
+                if event_key in sharedsignals_seen:
+                    continue
+                sharedsignals_seen.add(event_key)
+                sharedsignals_raw_rows += 1
+                row_date = _date_from_row(row)
+                if row_date and not (start_date <= row_date <= date):
+                    continue
                 impact = (
                     row.get("proposed_impact_hint")
                     or row.get("impact_hint")
@@ -379,13 +409,15 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
                     impact = _text_direction_hint(row)
                     text_inferred = bool(impact)
                 if impact is None:
+                    sharedsignals_skipped_no_impact += 1
                     continue
                 conf = _safe_float(row.get("confidence"), 0.0)
                 if conf <= 0.0:
                     conf = _safe_float(row.get("score"), 0.0)
                 if conf <= 0.0:
-                    conf = 0.25 if text_inferred else 0.5
+                    conf = 0.30 if text_inferred else 0.5
                 if conf < min_conf:
+                    sharedsignals_skipped_low_conf += 1
                     continue
                 candidate_rows += 1
                 weighted += _direction_score(impact) * conf
@@ -393,6 +425,7 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
             if total_weight > 1e-9:
                 _mark_evidence(config, "event", source="SharedSignals events", rows=candidate_rows)
                 return _clamp(weighted / total_weight)
+
         candidate_rows = 0
         for row in _get_data_reader(config).get_event_candidates():
             if not _row_matches_ts_code(row, ts_code):
@@ -408,7 +441,19 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
             weighted += _direction_score(row.get("proposed_impact_hint")) * conf
             total_weight += conf
         if total_weight <= 1e-9:
-            _mark_evidence(config, "event", source="MarketGraph event candidates", rows=0, reason="no_matched_event_evidence")
+            reason_parts = ["no_matched_event_evidence"]
+            if sharedsignals_raw_rows:
+                reason_parts.append(f"ss_rows={sharedsignals_raw_rows}")
+            if sharedsignals_skipped_no_impact:
+                reason_parts.append(f"skipped_no_impact={sharedsignals_skipped_no_impact}")
+            if sharedsignals_skipped_low_conf:
+                reason_parts.append(f"skipped_low_conf={sharedsignals_skipped_low_conf}")
+            _mark_evidence(
+                config, "event",
+                source="MarketGraph event candidates",
+                rows=0,
+                reason="; ".join(reason_parts),
+            )
             return 0.5
         _mark_evidence(config, "event", source="MarketGraph event candidates", rows=candidate_rows)
         return _clamp(weighted / total_weight)
