@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest import mock
 
 from shared.screening import six_dimension_scorer as scorer
+from shared.orchestrator import _score_diagnostics
 
 
 class FakeEvidenceReader:
@@ -77,3 +78,35 @@ def test_score_universe_removes_globally_missing_event_weight_from_all_symbols()
 
     assert all("event" in values["batch_inactive_dimensions"] for _, values in rows)
     assert all(values["combined"] == 0.6875 for _, values in rows)
+
+
+def test_score_diagnostics_reports_batch_inactive_dimensions():
+    scores = {
+        "600000.SH": {
+            "combined": 0.6875,
+            "macro": 0.5,
+            "event": 0.5,
+            "fundamental": 0.5,
+            "capital": 1.0,
+            "technical": 1.0,
+            "sentiment": 0.5,
+            "batch_inactive_dimensions": ["event"],
+            "batch_evidence_availability": {"event": 0.0, "capital": 1.0},
+        },
+        "000001.SZ": {
+            "combined": 0.6875,
+            "macro": 0.5,
+            "event": 0.5,
+            "fundamental": 0.5,
+            "capital": 1.0,
+            "technical": 1.0,
+            "sentiment": 0.5,
+            "batch_inactive_dimensions": ["event"],
+            "batch_evidence_availability": {"event": 0.0, "capital": 1.0},
+        },
+    }
+
+    diagnostics = _score_diagnostics(scores)
+
+    assert diagnostics["batch_inactive_dimensions"] == ["event"]
+    assert diagnostics["batch_evidence_availability"] == {"event": 0.0, "capital": 1.0}

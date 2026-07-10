@@ -365,7 +365,7 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(long_wick["action"], "hold")
         self.assertEqual(long_wick["reason"], "body_to_range_filter")
         self.assertEqual(not_consecutive["action"], "hold")
-        self.assertEqual(not_consecutive["reason"], "consecutive_alignment_filter")
+        self.assertEqual(not_consecutive["reason"], "insufficient_consecutive_5min_bars")
         self.assertEqual(chase["action"], "hold")
         self.assertEqual(chase["reason"], "late_chase_filter")
 
@@ -657,6 +657,66 @@ class CNFuturesSimTest(unittest.TestCase):
         allowed_signal = generate_style_signal("rb2601", night_bars, allowed_style)
         self.assertEqual(allowed_signal["action"], "buy")
         self.assertEqual(allowed_signal["reason"], "trend_confirmed")
+
+    def test_signal_hold_reason_explicitly_names_insufficient_consecutive_bars(self) -> None:
+        from CNFutures.signal_engine import generate_style_signal
+
+        style = {
+            "name": "index_intraday_directional",
+            "style_family": "index_intraday_directional",
+            "signal_threshold": 0.0005,
+            "momentum_lookback_bars": 4,
+            "moving_average_bars": 5,
+            "no_overnight": True,
+            "day_session_only": True,
+            "trend_alignment_required": True,
+            "min_volume_ratio": 1.0,
+            "min_recent_range_pct": 0.0001,
+            "min_directional_consistency": 0.0,
+            "max_intrabar_reversal_pct": 0.0,
+            "min_signal_to_range_ratio": 0.0,
+            "min_body_to_range_ratio": 0.0,
+            "min_consecutive_aligned_bars": 3,
+            "max_late_chase_pct": 0.0,
+        }
+        not_consecutive_bars = [
+            {"bar_time": "2026-07-06 14:00:00", "close": 3500, "volume": 1000},
+            {"bar_time": "2026-07-06 14:05:00", "close": 3510, "volume": 1000},
+            {"bar_time": "2026-07-06 14:10:00", "close": 3518, "volume": 1100},
+            {"bar_time": "2026-07-06 14:15:00", "close": 3512, "volume": 1200},
+            {"bar_time": "2026-07-06 14:20:00", "close": 3520, "volume": 1300},
+            {"bar_time": "2026-07-06 14:25:00", "close": 3528, "volume": 1600},
+        ]
+
+        signal = generate_style_signal("IF2601.CFFEX", not_consecutive_bars, style)
+
+        self.assertEqual(signal["action"], "hold")
+        self.assertEqual(signal["reason"], "insufficient_consecutive_5min_bars")
+        self.assertIn("consecutive_aligned_bars", signal)
+        self.assertIn("min_consecutive_aligned_bars", signal)
+        self.assertLess(signal["consecutive_aligned_bars"], signal["min_consecutive_aligned_bars"])
+
+    def test_summarize_holds_breaks_down_by_product(self) -> None:
+        from CNFutures.review import summarize_holds
+
+        holds = [
+            {"style": "index_intraday_directional", "symbol": "IF2601.CFFEX", "reason": "insufficient_consecutive_5min_bars", "session": "day"},
+            {"style": "index_intraday_directional", "symbol": "IH2601.CFFEX", "reason": "insufficient_consecutive_5min_bars", "session": "day"},
+            {"style": "trend", "symbol": "RB2601.SHF", "reason": "insufficient_consecutive_5min_bars", "session": "day"},
+            {"style": "trend", "symbol": "RB2605.SHF", "reason": "volume_confirmation_filter", "session": "day"},
+            {"style": "breakout", "symbol": "CU2607.SHF", "reason": "session_close_guard", "session": "day"},
+        ]
+
+        summary = summarize_holds(holds)
+
+        self.assertEqual(summary["by_reason"]["insufficient_consecutive_5min_bars"], 3)
+        self.assertEqual(summary["by_product"]["if"], 1)
+        self.assertEqual(summary["by_product"]["ih"], 1)
+        self.assertEqual(summary["by_product"]["rb"], 2)
+        self.assertEqual(summary["by_product"]["cu"], 1)
+        self.assertEqual(summary["by_product_by_reason"]["rb"]["insufficient_consecutive_5min_bars"], 1)
+        self.assertEqual(summary["by_product_by_reason"]["rb"]["volume_confirmation_filter"], 1)
+        self.assertEqual(summary["by_product_by_reason"]["if"]["insufficient_consecutive_5min_bars"], 1)
 
     def test_run_simulation_respects_kill_switch(self) -> None:
         import os

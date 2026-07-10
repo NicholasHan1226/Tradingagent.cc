@@ -288,6 +288,40 @@ class CNFuturesLiveCheckTest(unittest.TestCase):
         self.assertEqual(check.details["latest_top_hold_reason"], "style_session_not_allowed")
         self.assertIn("夜盘", check.summary)
 
+    def test_review_surfaces_per_product_insufficient_consecutive_bars(self) -> None:
+        self._write_jsonl(
+            "shared/review/data/cn_futures_sim_reviews.jsonl",
+            [
+                {
+                    "state": "ok",
+                    "cadence": "5min",
+                    "filled_count": 0,
+                    "hold_count": 4,
+                    "hold_reason_summary": {
+                        "total": 4,
+                        "by_reason": {"insufficient_consecutive_5min_bars": 3, "volume_confirmation_filter": 1},
+                        "by_product": {"if": 1, "ih": 1, "rb": 2},
+                        "by_product_by_reason": {
+                            "if": {"insufficient_consecutive_5min_bars": 1},
+                            "ih": {"insufficient_consecutive_5min_bars": 1},
+                            "rb": {"insufficient_consecutive_5min_bars": 1, "volume_confirmation_filter": 1},
+                        },
+                    },
+                }
+            ],
+        )
+
+        check = live_check.check_review()
+
+        self.assertEqual(check.status, "pass")
+        self.assertEqual(check.details["latest_sample_phase"], "strategy_hold")
+        self.assertEqual(check.details["latest_top_hold_reason"], "insufficient_consecutive_5min_bars")
+        self.assertEqual(check.details["latest_hold_reason_summary"]["by_product"]["rb"], 2)
+        insufficient_by_product = check.details.get("insufficient_consecutive_bars_by_product", {})
+        self.assertEqual(insufficient_by_product.get("if"), 1)
+        self.assertEqual(insufficient_by_product.get("ih"), 1)
+        self.assertEqual(insufficient_by_product.get("rb"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

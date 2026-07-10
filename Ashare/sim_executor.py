@@ -181,7 +181,21 @@ def _fill_evidence_from_snapshot(
         or _snapshot_field_source("volume", order, config, card, snapshot)
         or _snapshot_field_source("vol", order, config, card, snapshot)
     )
-    source_class = "market_data" if quote_source and quote_source != "signal_card.price" else "signal_card_price"
+    bar_time = _first_value(
+        order.get("bar_time"),
+        order.get("trade_time"),
+        config.get("bar_time"),
+        config.get("trade_time"),
+        snapshot.get("bar_time"),
+        snapshot.get("trade_time"),
+    )
+    bar_volume = _first_value(snapshot.get("bar_volume"), snapshot.get("volume"), snapshot.get("vol"))
+    verified_5min = (
+        quote_source.startswith(("order.market_snapshot.", "config.market_snapshot."))
+        and bool(str(bar_time or "").strip())
+        and _coerce_float(bar_volume, 0.0) > 0
+    )
+    source_class = "market_data" if verified_5min else "signal_card_price"
     return {
         "fill_price_field": quote_field,
         "fill_price_source": quote_source or last_source or "unknown",
@@ -189,9 +203,10 @@ def _fill_evidence_from_snapshot(
         "quote_price": snapshot.get(quote_field),
         "last_price": snapshot.get("last_price"),
         "last_price_source": last_source,
-        "bar_volume": _first_value(snapshot.get("bar_volume"), snapshot.get("volume"), snapshot.get("vol")),
+        "bar_volume": bar_volume,
         "bar_volume_source": volume_source,
-        "bar_time": _first_value(order.get("bar_time"), order.get("trade_time"), config.get("bar_time"), config.get("trade_time"), snapshot.get("bar_time"), snapshot.get("trade_time")),
+        "bar_time": bar_time,
+        "execution_evidence_class": "verified_5min_market_data" if verified_5min else "weak_price_only",
     }
 
 

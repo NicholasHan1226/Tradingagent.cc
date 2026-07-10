@@ -942,7 +942,35 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["filled_count"], 1)
         self.assertEqual(self.executed_orders[0]["ts_code"], "300418.SZ")
 
-    def test_run_sim_loop_ignores_retired_daily_sample_gate_artifact(self) -> None:
+    def test_run_sim_loop_attaches_latest_5min_bar_to_ashare_order(self) -> None:
+        class IntradayReader(StubReader):
+            def get_bars_intraday(self, market, symbol, interval="5m", start=None, end=None):
+                return [
+                    {
+                        "close": 10.6,
+                        "bar_time": "2026-06-30 10:05:00",
+                        "volume": 1800,
+                        "provider": "sharedsignals_api_realtime_5min",
+                    }
+                ]
+
+        deps = self._multi_candidate_deps()
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["600000.SH"], max_candidates=1, score_universe_limit=1, max_portfolio_positions=1),
+            "20260630",
+            IntradayReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_5min_evidence",
+        )
+
+        self.assertEqual(result["filled_count"], 1)
+        snapshot = self.executed_orders[0]["market_snapshot"]
+        self.assertEqual(snapshot["bar_time"], "2026-06-30 10:05:00")
+        self.assertEqual(snapshot["bar_volume"], 1800)
+        self.assertEqual(snapshot["provider"], "sharedsignals_api_realtime_5min")
+
+    def test_run_sim_loop_does_not_let_retired_daily_sample_gate_override_capacity(self) -> None:
         deps = self._multi_candidate_deps()
 
         def score_universe(date: str, universe: list[str], data_reader: object = None, market: str = "ashare") -> list[tuple[str, dict[str, object]]]:
@@ -992,11 +1020,11 @@ class SimLoopTest(unittest.TestCase):
 
         self.assertNotEqual(result["capital_plan"]["risk_mode"], "sample_collection")
         self.assertNotIn("daily_strategy_sample_target_not_met", result["capital_plan"]["reasons"])
-        self.assertEqual(result["order_count"], 1)
-        self.assertEqual(result["filled_count"], 1)
-        self.assertIn("hypothesis_id", self.executed_orders[0])
-        self.assertTrue(self.executed_orders[0]["hypothesis_id"].startswith("ashare-20260710-buy-300418.SZ-candidate-"))
-        self.assertEqual(self.executed_orders[0]["research_hypothesis"]["sample_intent"], "strategy_trade")
+        self.assertEqual(result["order_count"], 0)
+        self.assertEqual(result["filled_count"], 0)
+        self.assertEqual(result["capital_plan"]["capacity_reason"], "target_positions_reached")
+        self.assertEqual(result["candidate_decision_trace"][0]["drop_reason"], "target_positions_reached")
+        self.assertEqual(self.executed_orders, [])
 
     def test_run_sim_loop_compresses_excess_ashare_positions_and_logs_capital_plan(self) -> None:
         deps = self._multi_candidate_deps()

@@ -221,6 +221,40 @@ def _latest_price(reader: Any, market: str, symbol: str, date: str, default: flo
     return max(_safe_float(rows[-1].get("close"), default), 0.0) or default
 
 
+def _latest_execution_market_snapshot(
+    reader: Any,
+    market: str,
+    symbol: str,
+    date: str,
+    side: str,
+) -> dict[str, Any]:
+    """Return provenance for a real 5-minute execution reference, if available."""
+    get_intraday = getattr(reader, "get_bars_intraday", None)
+    if not callable(get_intraday):
+        return {}
+    try:
+        rows = get_intraday(market, symbol, "5m", date, date)
+    except Exception:
+        return {}
+    for row in reversed(rows or []):
+        if not isinstance(row, dict):
+            continue
+        price = _safe_float(row.get("close", row.get("last_price", row.get("price"))), 0.0)
+        bar_time = str(row.get("bar_time") or row.get("trade_time") or "").strip()
+        bar_volume = _safe_float(row.get("volume", row.get("vol", row.get("bar_volume"))), 0.0)
+        if price <= 0 or not bar_time or bar_volume <= 0:
+            continue
+        quote_field = "ask_price" if str(side).lower() == "buy" else "bid_price"
+        return {
+            quote_field: price,
+            "last_price": price,
+            "bar_time": bar_time,
+            "bar_volume": bar_volume,
+            "provider": str(row.get("provider") or "sharedsignals_api_realtime_5min"),
+        }
+    return {}
+
+
 def _latest_volatility(reader: Any, market: str, symbol: str, date: str, default: float) -> float:
     try:
         rows = reader.get_bars_daily(market, symbol, _lookback_start(date, 45), date)
@@ -2176,10 +2210,19 @@ def _score_diagnostics(
     all_missing_evidence_symbols: list[str] = []
     all_missing_evidence_symbol_reasons: list[dict[str, Any]] = []
     evidence_coverage_values: list[float] = []
+    batch_inactive_dimensions: set[str] = set()
+    batch_evidence_availability: dict[str, float] = {}
     for symbol, score in scores_by_symbol.items():
         if not isinstance(score, dict):
             continue
         combined = _safe_float(score.get("combined"), 0.0)
+        inactive_dimensions = score.get("batch_inactive_dimensions")
+        if isinstance(inactive_dimensions, (list, tuple, set)):
+            batch_inactive_dimensions.update(str(item) for item in inactive_dimensions if str(item))
+        availability = score.get("batch_evidence_availability")
+        if isinstance(availability, dict):
+            for name, value in availability.items():
+                batch_evidence_availability[str(name)] = round(_safe_float(value, 0.0), 4)
         neutral_dimensions = 0
         missing_evidence_dimensions = set(score.get("missing_evidence_dimensions") or [])
         evidence_sources = score.get("evidence_sources") if isinstance(score.get("evidence_sources"), dict) else {}
@@ -2301,6 +2344,8 @@ def _score_diagnostics(
         "missing_and_default_like_dimension_ratio": round(missing_default_like_ratio, 4),
         "evidence_reason_summary": {name: dict(counts) for name, counts in evidence_reason_summary.items() if counts},
         "evidence_source_summary": {name: dict(counts) for name, counts in evidence_source_summary.items() if counts},
+        "batch_inactive_dimensions": sorted(batch_inactive_dimensions),
+        "batch_evidence_availability": batch_evidence_availability,
     }
 
 
@@ -3077,6 +3122,9 @@ def run_sim_loop(
             ),
         }
         if str(market).lower() == "ashare":
+            market_snapshot = _latest_execution_market_snapshot(reader, mapped_market, mapped_symbol, date, side)
+            if market_snapshot:
+                order["market_snapshot"] = market_snapshot
             score_snapshot = dict(scores_by_symbol.get(symbol, {}))
             sample_intent = "strategy_trade"
             if "sample_collection_before_min_samples" in (capital_plan.get("reasons") or []):

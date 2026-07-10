@@ -251,6 +251,54 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertFalse(trades[0]["ashare_session_valid"])
         self.assertEqual(trades[0]["ashare_session_rejection"], "outside_regular_session_09:30-11:30_13:00-14:57")
 
+    def test_preserves_verified_5min_market_evidence_in_trade_and_receipt(self) -> None:
+        order = {
+            "order_id": "SIM-EVIDENCE",
+            "idempotency_key": "SIM:ashare:acct:20260708:600000.SH:buy:evidence",
+            "ts_code": "600000.SH",
+            "side": "buy",
+            "quantity": 100,
+            "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+        }
+        receipt = {
+            "status": "filled",
+            "avg_price": 10.02,
+            "raw_response": {
+                "fill_evidence": {
+                    "execution_evidence_class": "verified_5min_market_data",
+                    "fill_price_source": "sharedsignals_api_realtime_5min",
+                    "fill_price_source_class": "market_data",
+                    "bar_time": "2026-07-08T10:00:00+08:00",
+                    "bar_volume": 123456.0,
+                }
+            },
+        }
+
+        with self._valid_session():
+            result = local_sim_ledger.record_local_sim_order(
+                order,
+                "ashare",
+                {"account": "acct"},
+                {"local_sim_slippage_bps": 0},
+                receipt,
+            )
+
+        self.assertEqual(result["status"], "filled")
+        trades = [
+            json.loads(line)
+            for line in local_sim_ledger.LOCAL_SIM_TRADES.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        receipts = [
+            json.loads(line)
+            for line in local_sim_ledger.LOCAL_SIM_RECEIPTS.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(trades[0]["fill_evidence"]["execution_evidence_class"], "verified_5min_market_data")
+        self.assertEqual(receipts[0]["fill_evidence"]["execution_evidence_class"], "verified_5min_market_data")
+
     def test_pending_receipt_does_not_record_local_fill(self) -> None:
         order = {
             "order_id": "SIM-PENDING",

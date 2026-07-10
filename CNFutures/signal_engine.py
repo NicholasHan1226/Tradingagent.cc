@@ -479,7 +479,7 @@ def _index_intraday_directional_signal(
             "consecutive_aligned_bars": consecutive_aligned_bars,
             "min_consecutive_aligned_bars": min_consecutive_aligned_bars,
             "confidence": 0.0,
-            "reason": "consecutive_alignment_filter",
+            "reason": "insufficient_consecutive_5min_bars",
         }
 
     late_chase_pct = _late_chase_pct(bars, lookback, action)

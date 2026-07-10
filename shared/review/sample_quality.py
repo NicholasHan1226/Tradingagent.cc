@@ -107,9 +107,11 @@ def _has_strategy_fill_price(row: dict[str, Any]) -> bool:
 
 def _has_evolution_execution_evidence(row: dict[str, Any]) -> bool:
     """Require a time-and-liquidity-backed market quote before learning from a fill."""
+    evidence = row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    if evidence.get("execution_evidence_class") != "verified_5min_market_data":
+        return False
     if not _has_market_data_fill_price(row):
         return False
-    evidence = row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
     bar_time = row.get("bar_time") or evidence.get("bar_time")
     bar_volume = row.get("bar_volume") or evidence.get("bar_volume")
     try:

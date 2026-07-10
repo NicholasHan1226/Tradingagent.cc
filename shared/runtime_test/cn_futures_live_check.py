@@ -287,10 +287,17 @@ def check_review(review_path: Path | None = None) -> Check:
     latest = latest_actionable_review(rows, trade_date=target_trade_date or None)
     hold_summary = latest.get("hold_reason_summary") if isinstance(latest.get("hold_reason_summary"), dict) else {}
     hold_by_reason = hold_summary.get("by_reason") if isinstance(hold_summary.get("by_reason"), dict) else {}
+    by_product_by_reason = hold_summary.get("by_product_by_reason") if isinstance(hold_summary.get("by_product_by_reason"), dict) else {}
     latest_hold_count = int(latest.get("hold_count") or hold_summary.get("total") or 0) if latest else 0
     top_hold_reason = ""
     if hold_by_reason:
         top_hold_reason = max(hold_by_reason.items(), key=lambda item: int(item[1] or 0))[0]
+    insufficient_consecutive_bars_by_product: dict[str, int] = {}
+    for product, reasons in by_product_by_reason.items():
+        if isinstance(reasons, dict):
+            count = int(reasons.get("insufficient_consecutive_5min_bars") or 0)
+            if count:
+                insufficient_consecutive_bars_by_product[str(product)] = count
     sample_phase = "missing_sim_sample"
     if int(latest.get("filled_count") or 0) > 0:
         sample_phase = "filled_sample"
@@ -318,6 +325,7 @@ def check_review(review_path: Path | None = None) -> Check:
         "latest_error_summary": latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {},
         "latest_style_health": latest.get("style_health") if isinstance(latest.get("style_health"), dict) else {},
         "latest_hold_reason_summary": hold_summary,
+        "insufficient_consecutive_bars_by_product": insufficient_consecutive_bars_by_product,
     }
     if not rows:
         return Check("cn_futures_review", "warn", "CNFutures 复盘样本还未产生", details, severity="warn")

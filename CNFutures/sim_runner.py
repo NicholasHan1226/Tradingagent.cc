@@ -55,6 +55,13 @@ def _distinct_products(symbols: list[str]) -> list[str]:
     return sorted(products)
 
 
+def _product_or_empty(symbol: str) -> str:
+    try:
+        return normalize_product(symbol)
+    except ValueError:
+        return ""
+
+
 def _style_is_active(style: dict[str, Any]) -> bool:
     status = str(style.get("status") or "").strip().lower()
     if status in {"paused", "deprecated"}:
@@ -883,6 +890,7 @@ def run_multi_style_simulation(
             "stage": "universe",
             "style": "",
             "symbol": "",
+            "product": "",
             "cadence": cadence_value,
             "bar_time": "",
             "session": session_bucket,
@@ -936,6 +944,7 @@ def run_multi_style_simulation(
                 "stage": "style",
                 "style": style_name,
                 "symbol": "",
+                "product": "",
                 "cadence": cadence_value,
                 "bar_time": "",
                 "session": session_bucket,
@@ -950,6 +959,7 @@ def run_multi_style_simulation(
                 "stage": "style",
                 "style": style_name,
                 "symbol": "",
+                "product": "",
                 "cadence": cadence_value,
                 "bar_time": "",
                 "session": session_bucket,
@@ -984,6 +994,7 @@ def run_multi_style_simulation(
                         holds.append({
                             "stage": "data",
                             "symbol": symbol,
+                            "product": _product_or_empty(symbol),
                             "style": style_name,
                             "cadence": cadence_value,
                             "bar_time": latest_bar_time,
@@ -1009,6 +1020,7 @@ def run_multi_style_simulation(
                 holds.append({
                     "stage": "risk",
                     "symbol": symbol,
+                    "product": _product_or_empty(symbol),
                     "style": style_name,
                     "cadence": cadence_value,
                     "days_to_contract_month_start": days_to_contract_month,
@@ -1030,6 +1042,7 @@ def run_multi_style_simulation(
                     "stage": "signal",
                     "style": style_name,
                     "symbol": symbol,
+                    "product": _product_or_empty(symbol),
                     "cadence": bar_cadence,
                     "bar_time": latest_bar_time,
                     "session": session_bucket,
@@ -1086,6 +1099,7 @@ def run_multi_style_simulation(
                 holds.append({
                     "stage": "risk",
                     "symbol": symbol,
+                    "product": _product_or_empty(symbol),
                     "style": style_name,
                     "cadence": bar_cadence,
                     "bar_time": latest_bar_time,
@@ -1103,6 +1117,7 @@ def run_multi_style_simulation(
                     holds.append({
                         "stage": "risk",
                         "symbol": symbol,
+                        "product": _product_or_empty(symbol),
                         "style": style_name,
                         "cadence": bar_cadence,
                         "bar_time": latest_bar_time,

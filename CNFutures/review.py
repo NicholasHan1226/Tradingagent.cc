@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .contract_rules import normalize_product
+
 
 DEFAULT_REVIEW_PATH = (
     Path(__file__).resolve().parents[1]
@@ -249,6 +251,19 @@ def summarize_errors(errors: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _product_from_hold(hold: dict[str, Any]) -> str:
+    product = str(hold.get("product") or "").strip().lower()
+    if product:
+        return product
+    symbol = str(hold.get("symbol") or "").strip()
+    if not symbol or symbol in {"unknown", ""}:
+        return "unknown"
+    try:
+        return normalize_product(symbol)
+    except ValueError:
+        return "unknown"
+
+
 def summarize_holds(holds: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize non-trade hold reasons for dashboard and opening diagnostics."""
 
@@ -256,6 +271,8 @@ def summarize_holds(holds: list[dict[str, Any]]) -> dict[str, Any]:
     by_style: dict[str, dict[str, Any]] = defaultdict(lambda: {"hold_count": 0, "by_reason": defaultdict(int)})
     by_symbol: dict[str, int] = defaultdict(int)
     by_session: dict[str, int] = defaultdict(int)
+    by_product: dict[str, int] = defaultdict(int)
+    by_product_by_reason: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     examples: list[dict[str, Any]] = []
     for hold in holds:
         if not isinstance(hold, dict):
@@ -264,15 +281,18 @@ def summarize_holds(holds: list[dict[str, Any]]) -> dict[str, Any]:
         style = str(hold.get("style") or "unknown")
         symbol = str(hold.get("symbol") or "unknown")
         session = str(hold.get("session") or "unknown")
+        product = _product_from_hold(hold)
         by_reason[reason] += 1
         by_symbol[symbol] += 1
         by_session[session] += 1
+        by_product[product] += 1
+        by_product_by_reason[product][reason] += 1
         by_style[style]["hold_count"] += 1
         by_style[style]["by_reason"][reason] += 1
         if len(examples) < 12:
             examples.append({
                 key: hold.get(key)
-                for key in ("style", "symbol", "reason", "bar_time", "cadence", "session")
+                for key in ("style", "symbol", "product", "reason", "bar_time", "cadence", "session")
                 if key in hold
             })
     return {
@@ -287,6 +307,10 @@ def summarize_holds(holds: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "by_symbol": dict(by_symbol),
         "by_session": dict(by_session),
+        "by_product": dict(by_product),
+        "by_product_by_reason": {
+            product: dict(reasons) for product, reasons in by_product_by_reason.items()
+        },
         "examples": examples,
     }
 

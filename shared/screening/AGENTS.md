@@ -29,6 +29,7 @@ TradingAgent 自身负责短周期机会发现；SharedSignals API/read model �
 - `candidate_pool` 的 fundamental 层是低频观察池；A股 5 分钟执行链、盘前 dry-run 等已传入预计算 scores 的高频入口默认不得同步全量加载 fundamental 池，避免低频观察池拖慢 candidate/执行验收。需要长期基本面观察时由低频研究入口显式启用。
 - A股 `candidate` 层不能只靠技术/资金维度和缺失维度的 0.5 中性默认分穿过 `combined >= 0.55`；当六维评分带有证据元数据时，candidate 还必须满足最低证据覆盖，并且 event/fundamental/sentiment 至少一个研究维度有真实证据。不满足但分数较高的标的只能留在 `watch`，不得进入可执行 candidate。
 - 当某一维度在同一轮全部评分标的中都缺证据时，`score_universe` 必须对整批统一移除该维度权重并记录 `batch_inactive_dimensions` / `batch_evidence_availability`；不得让缺证据的中性默认分参与排名，也不得按个股缺失情况重加权。
+- A股 no-trade、盘前和看板诊断必须透出上述批次字段；看到 event/sentiment 为 0.5 时，应能确认它是被批次降权后的中性展示，而不是仍参与 `combined` 的伪证据。
 - A股盘前 dry-run、模拟主循环和开盘验收必须复用同一套 `candidate_pool.build_pool` 分层口径；不得在验收脚本里自行按 `combined >= 0.55` 拼 candidate。
 
 ## 接口
