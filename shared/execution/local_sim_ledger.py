@@ -71,6 +71,7 @@ class LocalSimTrade:
     fill_price_source: str = ""
     fill_price_source_class: str = ""
     fill_evidence: dict[str, Any] = field(default_factory=dict)
+    capital_scope: str = ""
     hypothesis_id: str = ""
     research_hypothesis: dict[str, Any] = field(default_factory=dict)
     factor_snapshot: dict[str, Any] = field(default_factory=dict)
@@ -426,6 +427,17 @@ def _is_strategy_sample_trade(trade: dict[str, Any]) -> bool:
 
 def _strategy_trades_only(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [trade for trade in trades if _is_strategy_sample_trade(trade)]
+
+
+def _capital_scope(trade: dict[str, Any]) -> str:
+    scope = str(trade.get("capital_scope") or "").strip().lower()
+    if scope in {"strategy", "validation"}:
+        return scope
+    return "strategy" if _is_strategy_sample_trade(trade) else "validation"
+
+
+def _trades_for_capital_scope(trades: list[dict[str, Any]], capital_scope: str) -> list[dict[str, Any]]:
+    return [trade for trade in trades if _capital_scope(trade) == capital_scope]
 
 
 def _replay_account(
@@ -790,6 +802,7 @@ def record_local_sim_order(
         linked_execution_status=linked_status,
         note=str(order.get("note") or "server backup fill for A-share simulated signal"),
     )
+    trade.capital_scope = _capital_scope(asdict(trade))
     with _lock():
         trades = _load_trades_unlocked()
         for existing in trades:
@@ -802,11 +815,15 @@ def record_local_sim_order(
             or (account.get("sim_capital") if isinstance(account, dict) else None)
             or ASHARE_SIM_DEFAULT_CASH
         )
-        # Solvency and sellable-position checks must use all recorded account
-        # facts; strategy-only filtering is only for reporting/evolution views.
-        audit_account = _replay_account(trades, account_name, starting_cash=starting_cash)
+        # Validation fills are independently capitalized chain checks. Replay the
+        # same logical scope as this order so they cannot consume strategy cash.
+        capital_account = _replay_account(
+            _trades_for_capital_scope(trades, trade.capital_scope),
+            account_name,
+            starting_cash=starting_cash,
+        )
         if side == "buy":
-            cash_available = _safe_float(audit_account.get("cash_available"), 0.0)
+            cash_available = _safe_float(capital_account.get("cash_available"), 0.0)
             if cash_available + 1e-9 < net_amount:
                 return {
                     "status": "rejected",
@@ -819,7 +836,7 @@ def record_local_sim_order(
                     "required_cash": round(net_amount, 2),
                 }
         if side == "sell":
-            current = audit_account["positions"].get(code, {})
+            current = capital_account["positions"].get(code, {})
             if quantity > _safe_int(current.get("quantity"), 0):
                 return {"status": "rejected", "recorded": False, "reason": f"sell quantity {quantity} exceeds local simulated position {current.get('quantity', 0)} for {code}", "account": account_name}
         _append_trade_unlocked(trade)
@@ -838,6 +855,7 @@ def record_local_sim_order(
                     "fill_price_source": fill_price_source,
                     "fill_price_source_class": fill_price_source_class,
                     "fill_evidence": fill_evidence,
+                    "capital_scope": trade.capital_scope,
                     "hypothesis_id": trade.hypothesis_id,
                     "research_hypothesis": research_hypothesis,
                 },

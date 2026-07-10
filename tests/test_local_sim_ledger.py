@@ -173,7 +173,6 @@ class LocalSimLedgerTest(unittest.TestCase):
             "execution_source": "ashare_candidate_layer",
             "fill_price_source_class": "signal_card_price",
         }
-
         with patch.object(
             local_sim_ledger,
             "_ashare_session_metadata",
@@ -218,6 +217,87 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(set(snapshot["positions_by_account"]["acct"]), {"600001.SH"})
         self.assertEqual(set(snapshot["audit_positions_by_account"]["acct"]), {"600000.SH", "600001.SH"})
         self.assertEqual(snapshot["audit_pnl"]["acct"]["cash_available"], 196990.0)
+
+    def test_validation_scope_does_not_block_a_strategy_buy_with_strategy_cash(self) -> None:
+        validation_order = {
+            "order_id": "SIM-VALIDATION-CASH-SCOPE",
+            "idempotency_key": "SIM:ashare:acct:20260701:000001.SZ:buy:validation-scope",
+            "ts_code": "000001.SZ",
+            "side": "buy",
+            "quantity": 500,
+            "price": 100,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "signal_card_price",
+        }
+        strategy_order = {
+            "order_id": "SIM-STRATEGY-CASH-SCOPE",
+            "idempotency_key": "SIM:ashare:acct:20260702:600001.SH:buy:strategy-scope",
+            "ts_code": "600001.SH",
+            "side": "buy",
+            "quantity": 1600,
+            "price": 100,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "signal_card_price",
+        }
+        overflow_validation_order = {
+            **validation_order,
+            "order_id": "SIM-VALIDATION-CASH-SCOPE-OVERFLOW",
+            "idempotency_key": "SIM:ashare:acct:20260701:000002.SZ:buy:validation-scope-overflow",
+            "ts_code": "000002.SZ",
+            "quantity": 1600,
+        }
+
+        with patch.object(
+            local_sim_ledger,
+            "_ashare_session_metadata",
+            return_value={
+                "trade_timestamp_bj": "2026-07-07T16:26:00+08:00",
+                "ashare_session_valid": False,
+                "ashare_session_rejection": "outside_regular_session_09:30-11:30_13:00-14:57",
+            },
+        ):
+            validation = local_sim_ledger.record_local_sim_order(
+                validation_order,
+                "ashare",
+                {"account": "acct"},
+                {"local_sim_slippage_bps": 0},
+            )
+            overflow_validation = local_sim_ledger.record_local_sim_order(
+                overflow_validation_order,
+                "ashare",
+                {"account": "acct"},
+                {"local_sim_slippage_bps": 0},
+            )
+        with self._valid_session():
+            strategy = local_sim_ledger.record_local_sim_order(
+                strategy_order,
+                "ashare",
+                {"account": "acct"},
+                {"local_sim_slippage_bps": 0},
+            )
+
+        self.assertEqual(validation["status"], "filled")
+        self.assertEqual(overflow_validation["status"], "rejected")
+        self.assertEqual(overflow_validation["reason"], "insufficient_cash")
+        self.assertEqual(strategy["status"], "filled")
+        strategy_pnl = local_sim_ledger.get_local_sim_pnl("acct")
+        self.assertEqual(strategy_pnl["cash_available"], 39960.0)
+        self.assertEqual(set(strategy_pnl["positions"]), {"600001.SH"})
+        trades = [
+            json.loads(line)
+            for line in local_sim_ledger.LOCAL_SIM_TRADES.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        receipts = [
+            json.loads(line)
+            for line in local_sim_ledger.LOCAL_SIM_RECEIPTS.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        scopes = {trade["ts_code"]: trade["capital_scope"] for trade in trades}
+        self.assertEqual(scopes, {"000001.SZ": "validation", "600001.SH": "strategy"})
+        self.assertEqual(receipts[-1]["capital_scope"], "strategy")
 
     def test_records_ashare_session_metadata_on_trade(self) -> None:
         order = {
