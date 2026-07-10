@@ -28,6 +28,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 
 ## 执行
 - 模拟盘: 默认由服务器通过 `Ashare/sim_executor.py` 和 `shared/execution/sim_broker.py` 完成本地 paper fill、账本和复盘闭环；不依赖 Mini/Hermes。
+- 同日幂等默认保留所有 terminal card；仅 `server_local_sim_engine` 的 `insufficient_cash` 失败可生成新的 simulated retry card，原失败卡保留，最多重试 2 次。数据、候选、风控、会话、真实资金或任何非本地模拟失败不得自动重试。
 - A股信号卡的 `t_plus_1.sellable_from/sellable_date` 必须写下一交易日；当天买入不得在同日进入可卖数量或换仓释放资金。
 - A股 simulated 调度入口必须是 `shared.wrappers.tradings_cron_entry --job job_ashare_sim_exec`；通用 legacy `shared/wrappers/run_sim.py` 不承载 A股 no-trade 三段证据链，已显式拒绝 A股调用。
 - 交易时段硬门禁: `Ashare/sim_executor.py` 自身会按 `Asia/Shanghai` 和 A股交易日历拒绝非连续竞价时段（09:30-11:30、13:00-14:57）的 server-local fill 与 Hermes pending；wrapper 只是第一层保护。`bypass_market_hours` / `mock_filled` 只能用于测试、回测或隔离烟测，不得用于生产模拟调度。

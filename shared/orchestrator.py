@@ -443,6 +443,38 @@ def _sim_idempotency_key(market: str, account: str, symbol: str, date: str, side
     return ":".join(str(part).replace("/", "-").replace(" ", "_") for part in parts)
 
 
+MAX_RECOVERABLE_ASHARE_SIM_RETRIES = 2
+
+
+def _recoverable_ashare_cash_failure(card: dict[str, Any], state: str) -> bool:
+    if state != "failed":
+        return False
+    if str(card.get("market") or "").lower() != "ashare":
+        return False
+    if str(card.get("capital_layer") or "").lower() != "simulated":
+        return False
+    details = card.get("failure_details") if isinstance(card.get("failure_details"), dict) else {}
+    if str(details.get("raw_mode") or "") != "server_local_sim_engine":
+        return False
+    reason = " ".join(
+        str(value or "")
+        for value in (card.get("failure_reason"), details.get("receipt_message"), details.get("receipt_reason"))
+    ).lower()
+    return "insufficient cash" in reason or "insufficient_cash" in reason
+
+
+def _recoverable_retry_context(card: dict[str, Any], state: str) -> dict[str, Any] | None:
+    if not _recoverable_ashare_cash_failure(card, state):
+        return None
+    retry_attempt = _safe_int(card.get("retry_attempt"), 0)
+    if retry_attempt >= MAX_RECOVERABLE_ASHARE_SIM_RETRIES:
+        return None
+    return {
+        "retry_of": str(card.get("order_id") or ""),
+        "retry_attempt": retry_attempt + 1,
+    }
+
+
 def _shadow_idempotency_key(market: str, account: str, symbol: str, date: str, side: str) -> str:
     date_key = _compact_date_key(date)
     parts = ("SHADOW", market.lower(), account, date_key, symbol.upper(), side.lower())
@@ -484,8 +516,13 @@ def _find_existing_sim_signal(
                 card = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 continue
+            retry_context = _recoverable_retry_context(card, state)
             if str(card.get("idempotency_key") or "") == idempotency_key:
-                return {"state": state, "path": str(path), "order_id": card.get("order_id"), "idempotency_key": idempotency_key}
+                result = {"state": state, "path": str(path), "order_id": card.get("order_id"), "idempotency_key": idempotency_key}
+                if retry_context:
+                    result.update(retry_context)
+                    result["retryable"] = True
+                return result
             card_symbol = str(card.get("ts_code") or card.get("symbol") or card.get("code") or "").upper()
             if card_symbol != target_symbol:
                 continue
@@ -505,7 +542,7 @@ def _find_existing_sim_signal(
                 continue
             if _signal_card_date_key(card, path.name) != target_date:
                 continue
-            return {
+            result = {
                 "state": state,
                 "path": str(path),
                 "order_id": card.get("order_id"),
@@ -513,6 +550,10 @@ def _find_existing_sim_signal(
                 "matched_by": "same_day_symbol_side",
                 "account": account,
             }
+            if retry_context:
+                result.update(retry_context)
+                result["retryable"] = True
+            return result
     return None
 
 
@@ -570,6 +611,9 @@ def _build_signal_card(
         card["hypothesis_id"] = order.get("hypothesis_id")
     if isinstance(order.get("research_hypothesis"), dict):
         card["research_hypothesis"] = order.get("research_hypothesis")
+    if order.get("retry_of"):
+        card["retry_of"] = str(order.get("retry_of"))
+        card["retry_attempt"] = _safe_int(order.get("retry_attempt"), 0)
     if str(market).lower() == "ashare":
         sellable_date = _ashare_sellable_date(date, side)
         card["t_plus_1"] = {
@@ -3163,6 +3207,12 @@ def run_sim_loop(
             account_type=account_type,
             idempotency_key=idempotency_key,
         )
+        if existing_signal and existing_signal.get("retryable"):
+            retry_attempt = _safe_int(existing_signal.get("retry_attempt"), 0)
+            order["retry_of"] = str(existing_signal.get("retry_of") or existing_signal.get("order_id") or "")
+            order["retry_attempt"] = retry_attempt
+            order["idempotency_key"] = f"{idempotency_key}:retry{retry_attempt}"
+            existing_signal = None
         if existing_signal:
             stage_calls.append("signals.sim_dedup")
             signal_result = {

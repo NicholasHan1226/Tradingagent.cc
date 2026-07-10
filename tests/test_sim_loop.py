@@ -441,6 +441,85 @@ class SimLoopTest(unittest.TestCase):
         self.assertIn("signals.sim_dedup", result["stage_calls"])
         self.assertEqual(len(list(filled_dir.glob("SIM-*.json"))), 1)
 
+    def test_run_sim_loop_retries_recoverable_ashare_cash_failure_once(self) -> None:
+        signals_dir = self.tmp_path / "signals_retryable_cash"
+        failed_dir = signals_dir / "failed"
+        failed_dir.mkdir(parents=True, exist_ok=True)
+        failed = {
+            "order_id": "SIM-ashare-300418.SZ-20260630-original",
+            "idempotency_key": "SIM:ashare:ashare_sim:20260630:300418.SZ:buy",
+            "ts_code": "300418.SZ",
+            "market": "ashare",
+            "direction": "buy",
+            "quantity": 100,
+            "price": 10.0,
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "valid_until": "2026-06-30",
+            "status": "failed",
+            "retry_attempt": 0,
+            "failure_reason": "A-share server-local simulated fill rejected by ledger: insufficient cash",
+            "failure_details": {
+                "raw_mode": "server_local_sim_engine",
+                "receipt_status": "rejected",
+                "receipt_message": "A-share server-local simulated fill rejected by ledger: insufficient cash",
+            },
+        }
+        (failed_dir / "SIM-ashare-300418.SZ-20260630-original.json").write_text(json.dumps(failed), encoding="utf-8")
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["300418.SZ"], max_candidates=1, score_universe_limit=1, max_portfolio_positions=1),
+            "20260630",
+            StubReader(),
+            deps=self._multi_candidate_deps(),
+            signals_dir=signals_dir,
+        )
+
+        self.assertEqual(result["filled_count"], 1)
+        self.assertEqual(len(self.executed_orders), 1)
+        self.assertEqual(self.executed_orders[0]["retry_of"], failed["order_id"])
+        self.assertEqual(self.executed_orders[0]["retry_attempt"], 1)
+        self.assertTrue(self.executed_orders[0]["idempotency_key"].endswith(":retry1"))
+        self.assertTrue((failed_dir / "SIM-ashare-300418.SZ-20260630-original.json").exists())
+
+    def test_run_sim_loop_stops_recoverable_ashare_retry_after_limit(self) -> None:
+        signals_dir = self.tmp_path / "signals_retry_limit"
+        failed_dir = signals_dir / "failed"
+        failed_dir.mkdir(parents=True, exist_ok=True)
+        failed = {
+            "order_id": "SIM-ashare-300418.SZ-20260630-retry2",
+            "idempotency_key": "SIM:ashare:ashare_sim:20260630:300418.SZ:buy:retry2",
+            "ts_code": "300418.SZ",
+            "market": "ashare",
+            "direction": "buy",
+            "quantity": 100,
+            "price": 10.0,
+            "capital_layer": "simulated",
+            "account_type": "simulated",
+            "valid_until": "2026-06-30",
+            "status": "failed",
+            "retry_attempt": 2,
+            "failure_reason": "A-share server-local simulated fill rejected by ledger: insufficient cash",
+            "failure_details": {
+                "raw_mode": "server_local_sim_engine",
+                "receipt_status": "rejected",
+                "receipt_message": "A-share server-local simulated fill rejected by ledger: insufficient cash",
+            },
+        }
+        (failed_dir / "SIM-ashare-300418.SZ-20260630-retry2.json").write_text(json.dumps(failed), encoding="utf-8")
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["300418.SZ"], max_candidates=1, score_universe_limit=1, max_portfolio_positions=1),
+            "20260630",
+            StubReader(),
+            deps=self._multi_candidate_deps(),
+            signals_dir=signals_dir,
+        )
+
+        self.assertEqual(result["filled_count"], 0)
+        self.assertEqual(self.executed_orders, [])
+        self.assertEqual(result["records"][0]["signal_result"]["status"], "duplicate")
+
     def test_run_sim_loop_with_real_ashare_sim_broker_fills_locally_by_default(self) -> None:
         from Ashare.sim_executor import ashare_sim_execute
 
