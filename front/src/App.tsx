@@ -12,10 +12,11 @@ import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, g
 import { createAutomationObservatoryViewModel } from './lib/automationObservatoryViewModel'
 import { createWorkbenchViewModel } from './lib/workbenchViewModel'
 import { createEvidenceHealth, createMarketTapeRows } from './lib/marketTapeViewModel'
+import { readTerminalNavigation, useTerminalNavigation } from './hooks/useTerminalNavigation'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
 import type { DataDomain } from './types/status'
-import type { AccountMode, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary } from './types/dashboard'
+import type { AccountMode, Market, MarketSummary, Page, PerformancePoint, PerformanceRange, PortfolioSummary } from './types/dashboard'
 import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
@@ -24,12 +25,15 @@ const DASHBOARD_BUILD_ID = '20260711-automated-observatory'
 
 function App() {
   const demoPreviewEnabled = isDemoPreviewEnabled()
-  const [activePage, setActivePage] = useState<Page>('总览')
-  const [activeMarket, setActiveMarket] = useState<Market>('All Markets')
+  const [initialNavigation] = useState(readTerminalNavigation)
+  const [activePage, setActivePage] = useState<Page>(initialNavigation.page)
+  const [activeMarket, setActiveMarket] = useState<Market>(initialNavigation.market)
+  const [performanceRange, setPerformanceRange] = useState<PerformanceRange>(initialNavigation.range)
   const [accountMode, setAccountMode] = useState<AccountMode>('simulated')
   const [dashboardState, setDashboardState] = useState(() => toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
   const [readModelSnapshot, setReadModelSnapshot] = useState<TradingAgentReadModelSnapshot | null>(null)
   const [now, setNow] = useState(() => new Date())
+  useTerminalNavigation({ page: activePage, market: activeMarket, range: performanceRange, setPage: setActivePage, setMarket: setActiveMarket, setRange: setPerformanceRange })
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000)
@@ -191,12 +195,14 @@ function App() {
             activeMarket={activeMarket}
             data={visiblePerformanceData}
             latestPoint={latestPoint}
+            performanceRange={performanceRange}
             holdings={visibleHoldings}
             marketSummary={selectedMarketSummary}
             portfolio={visiblePortfolio}
             domainStatus={domainStatus}
             onRetry={handleRetry}
             setActivePage={setActivePage}
+            setPerformanceRange={setPerformanceRange}
             signals={visibleSignals}
             events={chartEvents}
             funnelEvents={visibleFunnelEvents}

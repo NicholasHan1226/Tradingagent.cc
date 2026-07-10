@@ -5,6 +5,7 @@ import App from './App'
 
 describe('App navigation and result-first dashboard', () => {
   beforeEach(() => {
+    window.history.replaceState(null, '', '/')
     vi.spyOn(window, 'setInterval').mockImplementation(() => 0 as unknown as ReturnType<typeof window.setInterval>)
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
   })

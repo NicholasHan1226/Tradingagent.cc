@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import type { PortfolioLedgerRow, ProcessBookRow, RiskLedgerRow } from '../../lib/terminalViewModels'
 import { PortfolioLedger } from './PortfolioLedger'
@@ -76,6 +76,12 @@ describe('terminal components', () => {
     expect(within(table).getByRole('columnheader', { name: '证据' })).toBeInTheDocument()
     expect(within(table).getByRole('columnheader', { name: '耗时' })).toBeInTheDocument()
     expect(within(table).getByText('结果已写回')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索账本' }), { target: { value: 'BTC' } })
+    expect(screen.getByText('0 条结果')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('列'))
+    fireEvent.click(screen.getByRole('checkbox', { name: '证据' }))
+    expect(within(table).queryByRole('columnheader', { name: '证据' })).not.toBeInTheDocument()
   })
 
   it('renders the process event audit trail', () => {

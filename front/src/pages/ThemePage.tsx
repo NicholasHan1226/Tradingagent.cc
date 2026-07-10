@@ -12,7 +12,7 @@ import { getActionableSignals, getClosedSignals, getSignalFunnel } from '../lib/
 import { DRAWDOWN_LIMIT_PCT } from '../lib/dashboardConstants'
 import { createPortfolioLedgerRows, createProcessBookRows, createRiskLedgerRows, summarizePortfolioCurrency } from '../lib/terminalViewModels'
 import { createProcessEventRows } from '../lib/processEventViewModel'
-import type { ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
+import type { ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PerformanceRange, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
 export function ThemePage({
@@ -20,11 +20,13 @@ export function ThemePage({
   activeMarket,
   data,
   latestPoint,
+  performanceRange,
   holdings,
   marketSummary,
   portfolio,
   domainStatus,
   onRetry,
+  setPerformanceRange,
   signals,
   events,
   funnelEvents,
@@ -36,11 +38,13 @@ export function ThemePage({
   funnelEvents: FunnelEvent[]
   holdings: HoldingRow[]
   latestPoint: PerformancePoint
+  performanceRange: PerformanceRange
   marketSummary?: MarketSummary
   portfolio: PortfolioSummary | null
   domainStatus: (domain: DataDomain) => DomainStatus
   onRetry: () => void
   setActivePage: (page: Page) => void
+  setPerformanceRange: (range: PerformanceRange) => void
   signals: SignalRow[]
 }) {
   const drawdown = getCurrentDrawdown(data, portfolio)
@@ -52,7 +56,7 @@ export function ThemePage({
       <TerminalPageShell
         inspector={<ReturnInspector latestPoint={latestPoint} portfolio={portfolio} signals={signals} />}
         metrics={context}
-        primary={<section className="terminal-chart-surface"><TerminalPanelHeader eyebrow="PERFORMANCE" meta={`${data.length} 个样本`} title="模拟盘收益 / 目标 / 基准" /><StatusBoundary loading={<ChartSkeleton height={520} />} onRetry={onRetry} status={domainStatus('performance')}><PerformanceChart currentTone={getPerformanceTone(latestPoint.simulated)} data={data} events={events} height={520} latestPoint={latestPoint} showRangeControls /></StatusBoundary></section>}
+        primary={<section className="terminal-chart-surface"><TerminalPanelHeader eyebrow="PERFORMANCE" meta={`${data.length} 个样本`} title="模拟盘收益 / 目标 / 基准" /><StatusBoundary loading={<ChartSkeleton height={520} />} onRetry={onRetry} status={domainStatus('performance')}><PerformanceChart currentTone={getPerformanceTone(latestPoint.simulated)} data={data} events={events} height={520} latestPoint={latestPoint} onRangeChange={setPerformanceRange} range={performanceRange} showRangeControls /></StatusBoundary></section>}
         title="收益终端"
       />
     )

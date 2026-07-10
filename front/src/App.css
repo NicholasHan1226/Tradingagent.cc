@@ -4703,6 +4703,69 @@ button:not(:disabled) {
   overflow: auto;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.terminal-table-toolbar {
+  position: relative;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-hairline);
+  background: #050b0c;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.terminal-table-toolbar > label {
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.terminal-table-toolbar input[type='search'],
+.terminal-table-toolbar select,
+.terminal-table-toolbar button,
+.terminal-table-toolbar summary {
+  height: 26px;
+  border: 1px solid var(--border-soft);
+  border-radius: 2px;
+  color: var(--text-secondary);
+  background: var(--surface-chip);
+  font: 600 11px/1 var(--font-sans);
+}
+
+.terminal-table-toolbar input[type='search'] {
+  width: 100%;
+  padding: 0 8px;
+  outline: 0;
+}
+
+.terminal-table-toolbar input[type='search']:focus {
+  border-color: rgba(105, 228, 215, .42);
+  box-shadow: 0 0 0 1px rgba(105, 228, 215, .12);
+}
+
+.terminal-table-toolbar select { margin-left: auto; padding: 0 24px 0 8px; }
+.terminal-table-toolbar button { padding: 0 9px; }
+.terminal-table-toolbar button:disabled { opacity: .42; }
+.terminal-table-toolbar details { position: relative; }
+.terminal-table-toolbar summary { display: flex; align-items: center; gap: 5px; padding: 0 9px; cursor: pointer; list-style: none; }
+.terminal-table-toolbar details > div { position: absolute; z-index: 8; top: 31px; right: 0; width: 170px; display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border-soft); background: #071011; box-shadow: 0 12px 32px rgba(0, 0, 0, .38); }
+.terminal-table-toolbar details > div label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
+
 .terminal-table-panel .terminal-table {
   width: 100%;
   min-width: 860px;

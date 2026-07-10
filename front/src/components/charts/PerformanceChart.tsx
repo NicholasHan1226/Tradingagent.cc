@@ -60,6 +60,8 @@ export function PerformanceChart({
   height,
   latestPoint,
   onSelectEvent,
+  onRangeChange,
+  range,
   showRangeControls = false,
   ariaLabel = '模拟盘收益曲线',
 }: {
@@ -70,11 +72,15 @@ export function PerformanceChart({
   height: number
   latestPoint: PerformancePoint
   onSelectEvent?: (page: Page) => void
+  onRangeChange?: (range: PerformanceRange) => void
+  range?: PerformanceRange
   showRangeControls?: boolean
 }) {
-  const [range, setRange] = useState<PerformanceRange>('all')
+  const [internalRange, setInternalRange] = useState<PerformanceRange>('all')
+  const activeRange = range ?? internalRange
+  const setRange = onRangeChange ?? setInternalRange
   const summaryId = useId()
-  const visibleData = useMemo(() => (showRangeControls ? slicePerformanceData(data, range) : data), [data, range, showRangeControls])
+  const visibleData = useMemo(() => (showRangeControls ? slicePerformanceData(data, activeRange) : data), [activeRange, data, showRangeControls])
   const chartData = visibleData.length ? visibleData : data.slice(-1)
   const chartLatest = chartData[chartData.length - 1] ?? latestPoint
   const visualDomain = getFocusedPerformanceDomain(chartData, chartLatest)
@@ -113,8 +119,8 @@ export function PerformanceChart({
           <div className="chart-range-switch" aria-label="收益区间" role="tablist">
             {RANGE_OPTIONS.map((option) => (
               <button
-                aria-selected={range === option.key}
-                className={range === option.key ? 'selected' : ''}
+                aria-selected={activeRange === option.key}
+                className={activeRange === option.key ? 'selected' : ''}
                 key={option.key}
                 onClick={() => setRange(option.key)}
                 role="tab"

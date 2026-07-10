@@ -18,7 +18,7 @@ export function TopNav({
       </button>
       <nav aria-label="主导航">
         {pages.map((item) => (
-          <button className={activePage === item ? 'selected' : ''} key={item} onClick={() => setActivePage(item)} type="button">
+          <button aria-keyshortcuts={`Alt+${pages.indexOf(item) + 1}`} className={activePage === item ? 'selected' : ''} key={item} onClick={() => setActivePage(item)} type="button">
             {item}
           </button>
         ))}
