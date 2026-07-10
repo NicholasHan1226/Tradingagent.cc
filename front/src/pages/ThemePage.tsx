@@ -85,10 +85,13 @@ export function ThemePage({
   }
 
   if (activePage === '风险') {
-    const riskRows = createRiskLedgerRows(signals)
+    const riskRows = createRiskLedgerRows(signals, {
+      performance: domainStatus('performance'), signals: domainStatus('signals'), holdings: domainStatus('holdings'),
+      decisions: domainStatus('decisions'), risk: domainStatus('risk'),
+    })
     return (
       <TerminalPageShell
-        inspector={<RiskInspector drawdown={drawdown} hasRiskData={data.length > 0 || Boolean(portfolio)} rows={riskRows} signals={signals} />}
+        inspector={<RiskInspector drawdown={drawdown} hasRiskData={data.length > 0 || Boolean(portfolio)} holdings={holdings} rows={riskRows} signals={signals} />}
         ledger={<RiskLedger rows={riskRows} />}
         metrics={context}
         primary={<section className="terminal-chart-surface risk-chart-surface"><TerminalPanelHeader eyebrow="RISK ENVELOPE" meta={`硬限制 ${DRAWDOWN_LIMIT_PCT.toFixed(0)}%`} title="回撤与保护结果" /><div className="risk-threshold-legend"><span className="warning">预警 5%</span><span className="negative">限制 7%</span></div><StatusBoundary loading={<ChartSkeleton height={360} />} onRetry={onRetry} status={domainStatus('risk')}><RiskTimeline data={data} portfolio={portfolio} /></StatusBoundary></section>}
@@ -136,13 +139,23 @@ function PortfolioInspector({ holdings, rows }: { holdings: HoldingRow[]; rows: 
   return <><TerminalInspectorSection title="组合敞口"><div className="exposure-ranking">{rows.map((row) => <div key={row.symbol}><span>{row.symbol}</span><i><b style={{ width: row.weight }} /></i><strong>{row.weight}</strong></div>)}</div></TerminalInspectorSection><TerminalInspectorSection title="组合状态"><InspectorRows rows={[['总市值', total.label], ['资产数', String(rows.length)], ['风险观察', String(rows.filter((row) => row.risk !== '正常').length)], ['计价', total.currency === 'mixed' ? '多币种' : total.currency]]} /></TerminalInspectorSection></>
 }
 
-function RiskInspector({ drawdown, hasRiskData, rows, signals }: { drawdown: number; hasRiskData: boolean; rows: ReturnType<typeof createRiskLedgerRows>; signals: SignalRow[] }) {
+function RiskInspector({ drawdown, hasRiskData, holdings, rows, signals }: { drawdown: number; hasRiskData: boolean; holdings: HoldingRow[]; rows: ReturnType<typeof createRiskLedgerRows>; signals: SignalRow[] }) {
   const distance = Math.max(0, DRAWDOWN_LIMIT_PCT - drawdown)
-  return <><TerminalInspectorSection title="边界距离"><div className="risk-boundary"><strong className={drawdown >= 5 ? 'negative' : 'positive'}>{hasRiskData ? `-${drawdown.toFixed(2)}%` : '—'}</strong><span>当前最大回撤</span><i><b style={{ width: `${Math.min(100, (drawdown / DRAWDOWN_LIMIT_PCT) * 100)}%` }} /></i><small>距 {DRAWDOWN_LIMIT_PCT.toFixed(0)}% 限制 {hasRiskData ? `${distance.toFixed(2)}%` : '—'}</small></div></TerminalInspectorSection><TerminalInspectorSection title="保护结果"><InspectorRows rows={[['安全拦截', String(signals.filter((row) => row.status === 'blocked').length)], ['自动复盘', String(signals.filter((row) => row.status === 'missed').length)], ['事件账本', String(rows.length)], ['风险状态', drawdown >= 5 ? '接近边界' : '正常']]} /></TerminalInspectorSection></>
+  const exposure = summarizeMarketExposure(holdings)
+  return <><TerminalInspectorSection title="边界距离"><div className="risk-boundary"><strong className={drawdown >= 5 ? 'negative' : 'positive'}>{hasRiskData ? `-${drawdown.toFixed(2)}%` : '—'}</strong><span>当前最大回撤</span><i><b style={{ width: `${Math.min(100, (drawdown / DRAWDOWN_LIMIT_PCT) * 100)}%` }} /></i><small>距 {DRAWDOWN_LIMIT_PCT.toFixed(0)}% 限制 {hasRiskData ? `${distance.toFixed(2)}%` : '—'}</small></div></TerminalInspectorSection><TerminalInspectorSection title="市场敞口"><InspectorRows rows={exposure.length ? exposure : [['当前敞口', '—']]} /></TerminalInspectorSection><TerminalInspectorSection title="保护结果"><InspectorRows rows={[['安全拦截', String(signals.filter((row) => row.status === 'blocked').length)], ['自动复盘', String(signals.filter((row) => row.status === 'missed').length)], ['事件账本', String(rows.length)], ['风险状态', drawdown >= 5 ? '接近边界' : '正常']]} /></TerminalInspectorSection></>
 }
 
 function ReviewInspector({ signals }: { signals: SignalRow[] }) {
   return <><TerminalInspectorSection title="关闭结果"><InspectorRows rows={[['完成', String(signals.filter((row) => row.status === 'executed').length)], ['错过', String(signals.filter((row) => row.status === 'missed').length)], ['终止', String(signals.filter((row) => row.status === 'cancelled').length)], ['部分成交', String(signals.filter((row) => row.queueBucket?.toLowerCase() === 'partial').length)]]} /></TerminalInspectorSection><TerminalInspectorSection title="自动校准"><p className="terminal-inspector-note">系统按已关闭结果保留归因与下一轮规则；本页面只读，不提供人工下单或策略修改入口。</p></TerminalInspectorSection></>
+}
+
+function summarizeMarketExposure(holdings: HoldingRow[]): [string, string][] {
+  const grouped = new Map<Market, { count: number; value: number }>()
+  for (const holding of holdings) {
+    const current = grouped.get(holding.market) ?? { count: 0, value: 0 }
+    grouped.set(holding.market, { count: current.count + 1, value: current.value + (holding.marketValue ?? 0) })
+  }
+  return [...grouped.entries()].map(([market, item]) => [market, item.value > 0 ? `${item.count}项 · ¥${Math.round(item.value).toLocaleString('en-US')}` : `${item.count}项`])
 }
 
 function InspectorRows({ rows }: { rows: [string, string][] }) { return <dl className="terminal-inspector-rows">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl> }

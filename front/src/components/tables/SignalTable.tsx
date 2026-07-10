@@ -16,6 +16,8 @@ export function SignalTable({ signals }: { signals: SignalRow[] }) {
         <span role="columnheader">为什么</span>
         <span role="columnheader">过程</span>
         <span role="columnheader">影响</span>
+        <span role="columnheader">置信度</span>
+        <span role="columnheader">证据</span>
         <span role="columnheader">自动校准</span>
         <span role="columnheader">时间</span>
       </div>
@@ -28,10 +30,19 @@ export function SignalTable({ signals }: { signals: SignalRow[] }) {
           <span role="cell">{signal.reason}</span>
           <div role="cell"><Timeline steps={signal.steps} labels={stages} /></div>
           <span className={signal.impact.startsWith('-') ? 'red-text' : 'cyan-text'} role="cell">{signal.impact}</span>
+          <span role="cell">{signal.confidence}</span>
+          <span role="cell">{formatEvidence(signal.stageEvidence)}</span>
           <span role="cell">{signal.next}</span>
           <span role="cell">{signal.age}</span>
         </div>
       ))}
     </div>
   )
+}
+
+function formatEvidence(value?: SignalRow['stageEvidence']) {
+  if (value === 'full') return '完整'
+  if (value === 'partial') return '有限'
+  if (value === 'replay') return '回放'
+  return '—'
 }

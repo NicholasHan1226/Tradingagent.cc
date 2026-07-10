@@ -92,6 +92,8 @@ describe('WorkbenchBlotter', () => {
     render(<WorkbenchBlotter active={[]} positions={[]} completed={[executed]} review={[]} />)
 
     expect(screen.getByRole('columnheader', { name: '自动校准' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '置信度' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '证据' })).toBeInTheDocument()
     expect(screen.queryByRole('columnheader', { name: '下次规则' })).not.toBeInTheDocument()
   })
 

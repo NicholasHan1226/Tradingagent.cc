@@ -3527,7 +3527,7 @@ button:not(:disabled) {
 }
 
 .signal-table .terminal-row {
-  grid-template-columns: 160px 70px 88px 148px minmax(300px, 1fr) 86px 64px 56px 44px;
+  grid-template-columns: 160px 70px 88px 148px minmax(300px, 1fr) 86px 64px 64px 56px 110px 44px;
 }
 
 .holdings-table .terminal-row {
@@ -4809,6 +4809,10 @@ button:not(:disabled) {
   max-width: 420px;
 }
 
+.portfolio-ledger .terminal-table {
+  min-width: 1320px;
+}
+
 .stage-distribution,
 .terminal-ranking,
 .exposure-ranking {
@@ -4890,12 +4894,12 @@ button:not(:disabled) {
 .risk-boundary > small { color: var(--text-muted); font-size: 11px; }
 
 .review-ledger .signal-table {
-  min-width: 960px;
+  min-width: 1120px;
   border: 0;
 }
 
 .review-ledger .terminal-row {
-  grid-template-columns: 128px 54px 72px 112px minmax(180px, 1fr) 76px 54px 150px 48px;
+  grid-template-columns: 128px 54px 72px 112px minmax(180px, 1fr) 76px 54px 58px 50px 130px 48px;
   gap: 8px;
   font-size: 12px;
 }

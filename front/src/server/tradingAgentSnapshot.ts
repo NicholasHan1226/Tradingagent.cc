@@ -2148,7 +2148,7 @@ async function readPositionPlan(path: string): Promise<HoldingRow[]> {
   try {
     const lines = (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean)
     const latest = JSON.parse(lines.at(-1) ?? '{}') as PositionPlanFile
-    return (latest.positions ?? []).map(parsePositionRow).filter((row): row is HoldingRow => Boolean(row))
+    return (latest.positions ?? []).map((row) => parsePositionRow(row)).filter((row): row is HoldingRow => Boolean(row))
   } catch {
     return readLegacySimulatedPositions(path)
   }
@@ -2195,7 +2195,7 @@ function readLegacySimulatedPositions(path: string): HoldingRow[] {
     const rows = db.prepare('SELECT * FROM position_ledger_simulated').all() as PositionRow[]
     db.close()
 
-    return rows.map(parsePositionRow).filter((row): row is HoldingRow => Boolean(row))
+    return rows.map((row) => parsePositionRow(row, 'legacy_position_ledger')).filter((row): row is HoldingRow => Boolean(row))
   } catch {
     return []
   }
@@ -2206,6 +2206,7 @@ function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, mar
   const market = normalizeMarket(marketHint, symbol)
   const cost = toCny(Number(position.avg_cost ?? 0) * Number(position.quantity ?? 0), market)
   const realizedPnl = toCny(position.realized_pnl ?? 0, market)
+  const averagePrice = toCny(Number(position.avg_cost ?? 0), market)
 
   return {
     symbol: normalizeSymbol(symbol, market),
@@ -2215,12 +2216,19 @@ function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, mar
     pnl: formatCurrency(realizedPnl),
     risk: position.quantity > 0 ? '正常' : '观察',
     role: `${formatStrategyName(strategy)} 持仓`,
+    quantity: Number(position.quantity),
+    averagePrice,
+    costBasis: cost,
+    marketValue: cost,
+    dayPnl: realizedPnl,
+    currency: 'CNY',
+    source: 'sim_ledger',
   }
 }
 
 function parsePositionSnapshot(payload: unknown): HoldingRow[] {
   if (Array.isArray(payload)) {
-    return payload.map(parsePositionRow).filter((row): row is HoldingRow => Boolean(row))
+    return payload.map((row) => parsePositionRow(row)).filter((row): row is HoldingRow => Boolean(row))
   }
 
   const direct = parsePositionRow(payload)
@@ -2254,10 +2262,18 @@ function parseCNFuturesPositionRow(row: CNFuturesPositionRow): HoldingRow | null
     pnl: formatCurrency(realized + unrealized),
     risk: qty > 0 ? '正常' : '观察',
     role: `${style} 持仓`,
+    quantity: qty,
+    averagePrice: parseFiniteNumber(row.avg_price),
+    markPrice: parseFiniteNumber(row.mark_price),
+    costBasis: parseFiniteNumber(row.avg_price) === undefined ? undefined : Math.abs(qty) * Number(row.avg_price),
+    marketValue: margin,
+    dayPnl: realized + unrealized,
+    currency: 'CNY',
+    source: 'position_snapshot',
   }
 }
 
-function parsePositionRow(row: unknown): HoldingRow | null {
+function parsePositionRow(row: unknown, source: HoldingRow['source'] = 'position_snapshot'): HoldingRow | null {
   const position = row as PositionRow
   const symbol = position.ts_code
   if (!symbol) return null
@@ -2268,6 +2284,8 @@ function parsePositionRow(row: unknown): HoldingRow | null {
   const realizedPnl = parseFiniteNumber(position.realized_pnl) ?? 0
   const unrealizedPnl = parseFiniteNumber(position.unrealized_pnl)
   const pnl = firstParsedNumber(position.pnl, unrealizedPnl === undefined ? undefined : realizedPnl + unrealizedPnl, position.realized_pnl) ?? 0
+  const averagePrice = firstParsedNumber(position.avg_price, position.running_avg_price)
+  const markPrice = firstParsedNumber(position.price, marketValue !== undefined && quantity ? marketValue / quantity : undefined)
 
   return {
     symbol,
@@ -2277,6 +2295,15 @@ function parsePositionRow(row: unknown): HoldingRow | null {
     pnl: formatMarketCurrency(pnl, market),
     risk: '正常',
     role: position.thesis ?? (position.side ? `${position.side} 持仓` : '模拟盘持仓'),
+    quantity,
+    averagePrice,
+    markPrice,
+    costBasis: runningCost,
+    marketValue,
+    dayPnl: pnl,
+    currency: 'CNY',
+    updatedAt: position.entry_date,
+    source,
   }
 }
 

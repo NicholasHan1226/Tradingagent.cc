@@ -1584,6 +1584,12 @@ describe('TradingAgent snapshot reader', () => {
       symbol: 'BTC-USD',
       market: 'Crypto',
       role: 'Grid 持仓',
+      quantity: 0.0186,
+      averagePrice: 452_818.37,
+      costBasis: 8_422.42,
+      marketValue: 8_422.42,
+      currency: 'CNY',
+      source: 'sim_ledger',
     }))
     expect(snapshot.signals).toContainEqual(expect.objectContaining({
       symbol: 'BTC-USD',
@@ -1772,6 +1778,13 @@ describe('TradingAgent snapshot reader', () => {
       symbol: 'IF2607.CFE',
       market: 'CNFutures',
       role: 'Index Intraday Directional 持仓',
+      quantity: 1,
+      averagePrice: 4100,
+      markPrice: 4118,
+      marketValue: 123000,
+      dayPnl: 6200,
+      currency: 'CNY',
+      source: 'position_snapshot',
     }))
   })
 

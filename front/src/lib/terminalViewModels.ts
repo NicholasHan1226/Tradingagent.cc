@@ -1,5 +1,6 @@
 import { marketLabels, statusLabels } from '../data/dashboard'
 import type { HoldingRow, SignalRow } from '../types/dashboard'
+import type { DataDomain, DomainStatus } from '../types/status'
 import { parseHoldingExposure } from './holdings'
 
 export type ProcessBookRow = {
@@ -26,6 +27,13 @@ export type PortfolioLedgerRow = {
   pnl: string
   contribution: string
   risk: HoldingRow['risk']
+  quantity: string
+  averagePrice: string
+  markPrice: string
+  costBasis: string
+  dayPnl: string
+  source: string
+  updatedAt: string
 }
 
 export type RiskLedgerRow = {
@@ -60,11 +68,18 @@ export function createPortfolioLedgerRows(holdings: HoldingRow[]): PortfolioLedg
     assetName: normalizeAssetName(holding),
     market: marketLabels[holding.market],
     role: holding.role,
-    marketValue: holding.weight,
+    marketValue: holding.marketValue === undefined ? holding.weight : formatHoldingMoney(holding.marketValue, holding.currency),
     weight: total > 0 ? `${((values[index] / total) * 100).toFixed(1)}%` : '—',
     pnl: holding.pnl,
     contribution: totalAbsPnl > 0 ? `${pnlValues[index] >= 0 ? '+' : '-'}${((Math.abs(pnlValues[index]) / totalAbsPnl) * 100).toFixed(1)}%` : '—',
     risk: holding.risk,
+    quantity: formatQuantity(holding.quantity),
+    averagePrice: formatHoldingMoney(holding.averagePrice, holding.currency, 2),
+    markPrice: formatHoldingMoney(holding.markPrice, holding.currency, 2),
+    costBasis: formatHoldingMoney(holding.costBasis, holding.currency),
+    dayPnl: holding.dayPnl === undefined ? '—' : `${holding.dayPnl > 0 ? '+' : ''}${formatHoldingMoney(holding.dayPnl, holding.currency)}`,
+    source: holdingSourceLabel(holding.source),
+    updatedAt: holding.updatedAt ?? '—',
   }))
 }
 
@@ -80,8 +95,8 @@ export function summarizePortfolioCurrency(holdings: HoldingRow[]): { currency: 
   return { currency: 'empty', label: '—' }
 }
 
-export function createRiskLedgerRows(signals: SignalRow[]): RiskLedgerRow[] {
-  return signals
+export function createRiskLedgerRows(signals: SignalRow[], domains: Partial<Record<DataDomain, DomainStatus>> = {}): RiskLedgerRow[] {
+  const signalRows = signals
     .filter((signal) => signal.status === 'blocked' || signal.status === 'missed' || signal.status === 'cancelled')
     .map((signal) => ({
       symbol: signal.symbol,
@@ -92,6 +107,18 @@ export function createRiskLedgerRows(signals: SignalRow[]): RiskLedgerRow[] {
       reason: signal.reason,
       updatedAt: signal.age,
     }))
+  const domainRows = (Object.entries(domains) as [DataDomain, DomainStatus][])
+    .filter(([, status]) => status === 'stale' || status === 'error' || status === 'live-gated')
+    .map(([domain, status]) => ({
+      symbol: `DATA/${domain.toUpperCase()}`,
+      market: '证据域',
+      stage: domainLabel(domain),
+      gate: status === 'stale' ? '快照滞后' : status === 'live-gated' ? '实盘隔离' : '读取异常',
+      evidence: status === 'stale' ? '证据有限' : '证据不可用',
+      reason: status === 'stale' ? '该证据域更新时间落后于当前快照' : status === 'live-gated' ? '实盘数据保持隔离' : '该证据域读取失败',
+      updatedAt: '当前快照',
+    }))
+  return [...signalRows, ...domainRows]
 }
 
 function toProcessRow(signal: SignalRow): ProcessBookRow {
@@ -138,4 +165,26 @@ function currencyKind(value: string): 'CNY' | 'USD' | 'percent' | 'empty' {
 function parseSignedValue(value: string) {
   const numeric = Number(value.replace(/[^0-9.-]/g, '').replace(/,/g, ''))
   return Number.isFinite(numeric) ? numeric : 0
+}
+
+function formatQuantity(value?: number) {
+  return value === undefined ? '—' : value.toLocaleString('en-US', { maximumFractionDigits: 4 })
+}
+
+function formatHoldingMoney(value?: number, currency: HoldingRow['currency'] = 'CNY', decimals = 0) {
+  if (value === undefined) return '—'
+  const sign = value < 0 ? '-' : ''
+  const symbol = currency === 'USD' ? '$' : '¥'
+  return `${sign}${symbol}${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
+}
+
+function holdingSourceLabel(source?: HoldingRow['source']) {
+  if (source === 'sim_ledger') return '模拟账本'
+  if (source === 'position_snapshot') return '持仓快照'
+  if (source === 'legacy_position_ledger') return '旧持仓账本'
+  return '—'
+}
+
+function domainLabel(domain: DataDomain) {
+  return ({ performance: '收益证据', signals: '信号证据', holdings: '持仓证据', decisions: '复盘证据', risk: '风险证据' } as Record<DataDomain, string>)[domain]
 }

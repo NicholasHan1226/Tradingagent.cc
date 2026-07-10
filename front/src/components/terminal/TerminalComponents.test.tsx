@@ -31,6 +31,13 @@ const holdingRow: PortfolioLedgerRow = {
   pnl: '+¥6,826',
   contribution: '+82.8%',
   risk: '正常',
+  quantity: '100',
+  averagePrice: '¥580.20',
+  markPrice: '¥644.86',
+  costBasis: '¥58,020',
+  dayPnl: '+¥280',
+  source: '持仓快照',
+  updatedAt: '10:30',
 }
 
 const riskRow: RiskLedgerRow = {
@@ -88,6 +95,8 @@ describe('terminal components', () => {
     const table = screen.getByRole('table', { name: '持仓账本' })
     expect(within(table).getByText('¥64,486')).toBeInTheDocument()
     expect(within(table).getByText('42.3%')).toBeInTheDocument()
+    expect(within(table).getByRole('columnheader', { name: '均价' })).toBeInTheDocument()
+    expect(within(table).getByText('持仓快照')).toBeInTheDocument()
     expect(within(table).queryByText('300759.SZ', { selector: 'small' })).not.toBeInTheDocument()
   })
 

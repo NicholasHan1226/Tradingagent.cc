@@ -222,6 +222,15 @@ export type HoldingRow = {
   pnl: string
   risk: '正常' | '观察' | '偏高'
   role: string
+  quantity?: number
+  averagePrice?: number
+  markPrice?: number
+  costBasis?: number
+  marketValue?: number
+  dayPnl?: number
+  currency?: 'CNY' | 'USD'
+  updatedAt?: string
+  source?: 'sim_ledger' | 'position_snapshot' | 'legacy_position_ledger'
 }
 
 export type DepthRow = {
