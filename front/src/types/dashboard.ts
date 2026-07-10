@@ -1,5 +1,6 @@
 export type Market = 'All Markets' | 'A-share' | 'US' | 'Crypto' | 'HK' | 'PM' | 'CNFutures'
-export type Page = '主页' | '收益' | '机会' | '持仓' | '决策' | '风险' | '复盘'
+export type Page = '总览' | '收益' | '过程' | '持仓' | '风险' | '复盘'
+export type LegacyPage = '主页' | '机会' | '决策'
 export type AccountMode = 'simulated' | 'live'
 export type SignalStatus = 'executed' | 'missed' | 'blocked' | 'pending' | 'cancelled'
 export type BookTone = 'cyan' | 'red' | 'amber' | 'muted'
