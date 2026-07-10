@@ -502,8 +502,14 @@ outcomes.
   remains available for compatibility.
 - `WorkbenchBlotter` exposes active, position, completed, and review tabs with
   truthful empty states.
-- `LiveGate` replaces the workbench result surface in live mode and offers only
-  a return-to-simulation control.
+- `LiveGate` replaces the entire workspace result surface in live mode, remains
+  active across top-navigation changes, and offers only a return-to-simulation
+  control.
+- Chart descriptions are linked with `aria-describedby`; interactive range and
+  event controls remain outside the chart image role. Blotter grids expose table,
+  row, column-header, and cell semantics without changing the dense geometry.
+- At desktop heights up to 760px, the chart and compact funnel contract so the
+  active blotter header and first opportunity row remain visible at 1280x720.
 
 ### Scorecard
 
@@ -519,14 +525,14 @@ outcomes.
 Total: 89/100. This is a production candidate for the accepted desktop scope.
 Responsive integrity is intentionally capped because mobile and phone-specific
 work are deferred. Remaining risks are dense-data visual regression coverage,
-semantic conversion of legacy div tables, and validation against a larger real
-opportunity volume.
+native HTML-table migration beyond the current ARIA-compatible grid, and
+validation against a larger real opportunity volume.
 
 ### Next Iteration
 
 1. Add repeatable desktop visual regression fixtures for empty, populated, and
    live-gated workbench states.
-2. Convert the legacy div-based terminal rows to semantic tables without losing
-   the compact geometry.
+2. Consider native HTML-table markup if future assistive-technology testing
+   identifies a gap beyond the current table/row/header/cell semantics.
 3. Resume responsive work only when the mobile information architecture is
    explicitly approved.

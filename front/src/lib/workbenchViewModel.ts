@@ -1,4 +1,4 @@
-import { getPortfolioForView, getVisibleHoldings, getVisibleSignals } from './dashboard'
+import { getActionableSignals, getClosedSignals, getPortfolioForView, getVisibleHoldings, getVisibleSignals } from './dashboard'
 import type {
   AccountMode,
   FunnelEvent,
@@ -82,8 +82,8 @@ export function createWorkbenchViewModel({
       generatedAt,
     },
     opportunities: {
-      active: visibleSignals.filter(isActiveSignal),
-      completed: visibleSignals.filter(isCompletedSignal),
+      active: getActionableSignals(visibleSignals),
+      completed: getClosedSignals(visibleSignals),
     },
     positions,
     funnelEvents: visibleFunnelEvents,
@@ -135,12 +135,4 @@ function alignPerformanceWithPortfolio(performance: PerformancePoint[], portfoli
   return performance.map((point, index) => index === performance.length - 1
     ? { ...point, simulated: portfolio.returnPct, target: portfolio.targetPct }
     : point)
-}
-
-function isActiveSignal(signal: SignalRow) {
-  return signal.status === 'pending' || signal.status === 'blocked'
-}
-
-function isCompletedSignal(signal: SignalRow) {
-  return signal.status === 'executed' || signal.status === 'missed' || signal.status === 'cancelled'
 }

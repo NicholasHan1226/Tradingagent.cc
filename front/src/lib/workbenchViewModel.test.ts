@@ -92,6 +92,30 @@ describe('createWorkbenchViewModel', () => {
     expect(view.market).toBe('A-share')
     expect(view.liveGate).toEqual(expect.objectContaining({ gated: true, title: '实盘待接入' }))
   })
+
+  it('keeps partial queue outcomes out of active opportunities', () => {
+    const partial: SignalRow = {
+      ...signals[1],
+      symbol: 'ETH-USD',
+      queueBucket: 'partial',
+      next: '进入复盘',
+    }
+    const view = createWorkbenchViewModel({
+      accountMode: 'simulated',
+      activeMarket: 'All Markets',
+      performance: [],
+      portfolio,
+      marketSummaries: [],
+      signals: [partial],
+      holdings: [],
+      funnelEvents: [],
+      generatedAt: null,
+    })
+
+    expect(view.opportunities.active).toEqual([])
+    expect(view.opportunities.completed).toEqual([partial])
+    expect(view.reviewItems).toEqual([partial])
+  })
 })
 
 describe('formatRuntimeReason', () => {

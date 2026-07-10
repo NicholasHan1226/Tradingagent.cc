@@ -53,7 +53,15 @@ export function ThemePage({
           <section className="panel tall-panel">
             <PanelTitle kicker="收益结果" title="模拟盘收益走势" />
             <StatusBoundary loading={<ChartSkeleton height={430} />} onRetry={onRetry} status={domainStatus('performance')}>
-              <PerformanceChart data={data} events={events} height={430} latestPoint={latestPoint} onSelectEvent={setActivePage} showRangeControls />
+              <PerformanceChart
+                currentTone={getPerformanceTone(latestPoint.simulated)}
+                data={data}
+                events={events}
+                height={430}
+                latestPoint={latestPoint}
+                onSelectEvent={setActivePage}
+                showRangeControls
+              />
             </StatusBoundary>
           </section>
         </section>
@@ -149,4 +157,10 @@ export function ThemePage({
       </section>
     </div>
   )
+}
+
+function getPerformanceTone(value: number) {
+  if (value < -0.005) return 'negative' as const
+  if (value > 0.005) return 'positive' as const
+  return 'flat' as const
 }

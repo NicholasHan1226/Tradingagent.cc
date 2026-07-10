@@ -42,6 +42,7 @@ export function HomeDashboard({
   completedSignals,
   reviewItems,
   liveGate,
+  snapshotGeneratedAt,
 }: {
   accountMode: AccountMode
   activeMarket: Market
@@ -69,6 +70,7 @@ export function HomeDashboard({
   completedSignals: SignalRow[]
   reviewItems: SignalRow[]
   liveGate: { gated: boolean; title: string; detail: string }
+  snapshotGeneratedAt: string | null
 }) {
   const signalFunnel = getSignalFunnel(signals)
   const liveProfit = portfolio?.pnlAmount ?? 0
@@ -77,6 +79,8 @@ export function HomeDashboard({
   const targetGap = liveReturn - targetReturn
   const returnTone = getReturnTone(liveProfit, liveReturn)
   const returnChartLatestPoint = data[data.length - 1] ?? latestPoint
+  const performanceStatus = domainStatus('performance')
+  const snapshotTime = getSnapshotTime(snapshotGeneratedAt, now)
   const headline = hasPerformanceData
     ? targetGap >= 0
       ? '当前收益领先目标，回撤仍在边界内。'
@@ -105,7 +109,7 @@ export function HomeDashboard({
             <span>收益曲线</span>
             <strong>{hasPerformanceData ? '持续性与风险距离' : '等待收益、目标和基准数据'}</strong>
           </div>
-          <StatusBoundary loading={<ChartSkeleton height={220} />} onRetry={onRetry} status={hasPerformanceData ? domainStatus('performance') : 'ready'}>
+          <StatusBoundary loading={<ChartSkeleton height={220} />} onRetry={onRetry} status={hasPerformanceData ? performanceStatus : 'ready'}>
             {hasPerformanceData ? (
               <PerformanceChart
                 currentTone={returnTone}
@@ -124,8 +128,8 @@ export function HomeDashboard({
             )}
           </StatusBoundary>
           <div className="chart-meta">
-            <span>{formatTime(now)} (UTC+8)</span>
-            <b>{hasPerformanceData ? '已更新' : '等待数据'}</b>
+            <span>{formatTime(snapshotTime)} (UTC+8)</span>
+            <b>{hasPerformanceData ? performanceStatus === 'stale' ? '数据滞后' : '快照时间' : '等待数据'}</b>
             <em>{hasPerformanceData ? `机会差 ${returnChartLatestPoint.opportunity.toFixed(2)}%` : '未显示样例收益'}</em>
           </div>
     </section>
@@ -160,6 +164,12 @@ export function HomeDashboard({
       setActivePage={setActivePage}
     />
   )
+}
+
+function getSnapshotTime(value: string | null, fallback: Date) {
+  if (!value) return fallback
+  const timestamp = new Date(value)
+  return Number.isNaN(timestamp.getTime()) ? fallback : timestamp
 }
 
 function getReturnTone(amount: number, pct: number) {

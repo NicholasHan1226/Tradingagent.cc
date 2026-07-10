@@ -26,6 +26,13 @@ const executed: SignalRow = {
   reason: '已经形成结果',
 }
 
+const partiallyFilled: SignalRow = {
+  ...executed,
+  symbol: 'BTC-USD',
+  name: 'Bitcoin',
+  queueBucket: 'partial',
+}
+
 const holding: HoldingRow = {
   symbol: '600519.SH',
   name: '贵州茅台',
@@ -41,6 +48,7 @@ describe('WorkbenchBlotter', () => {
     render(<WorkbenchBlotter active={[pending]} positions={[holding]} completed={[executed]} review={[]} />)
 
     const panel = screen.getByRole('tabpanel', { name: '当前机会' })
+    expect(within(panel).getByRole('table', { name: '当前机会表' })).toBeInTheDocument()
     expect(within(panel).getAllByText('0700.HK').length).toBeGreaterThan(0)
     expect(within(panel).queryByText('AAPL.US')).not.toBeInTheDocument()
   })
@@ -58,5 +66,16 @@ describe('WorkbenchBlotter', () => {
     fireEvent.click(screen.getByRole('tab', { name: '已完成 1' }))
 
     expect(screen.getByRole('tabpanel', { name: '已完成' })).toHaveTextContent('AAPL.US')
+  })
+
+  it('labels partial fills as partial rather than protected', () => {
+    render(<WorkbenchBlotter active={[]} positions={[]} completed={[partiallyFilled]} review={[]} />)
+
+    fireEvent.click(screen.getByRole('tab', { name: '已完成 1' }))
+
+    const panel = screen.getByRole('tabpanel', { name: '已完成' })
+    expect(within(panel).getByRole('table', { name: '结果与复盘表' })).toBeInTheDocument()
+    expect(within(panel).getByText('部分成交')).toBeInTheDocument()
+    expect(within(panel).queryByText('已保护')).not.toBeInTheDocument()
   })
 })

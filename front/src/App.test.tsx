@@ -27,6 +27,9 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByLabelText('收益结果')).toBeInTheDocument()
     expect(screen.getByLabelText('机会漏斗')).toBeInTheDocument()
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
+    const marketHeader = screen.getByRole('region', { name: '市场概览' })
+    expect(within(marketHeader).getByText('当前机会').parentElement).toHaveTextContent('2')
+    expect(within(marketHeader).getByText('待复盘').parentElement).toHaveTextContent('3')
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
@@ -49,17 +52,28 @@ describe('App navigation and result-first dashboard', () => {
     expect(within(workbench).getByRole('complementary', { name: '当前审阅' })).toBeInTheDocument()
     expect(within(workbench).getByRole('tablist', { name: '工作台明细' })).toBeInTheDocument()
     expect(screen.getAllByRole('region', { name: '交易工作台' })).toHaveLength(1)
+
+    const chart = within(workbench).getByRole('img', { name: '模拟盘收益曲线' })
+    expect(chart).toHaveAttribute('aria-describedby')
+    expect(within(chart).queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('gates live mode without exposing execution controls', () => {
     render(<App />)
 
+    const marketHeader = screen.getByRole('region', { name: '市场概览' })
     click(screen.getByRole('tab', { name: '实盘' }))
 
     expect(screen.getByRole('region', { name: '实盘接入状态' })).toHaveTextContent('实盘待接入')
-    expect(screen.getByText('模拟盘参考')).toBeInTheDocument()
+    expect(screen.getAllByText('模拟盘参考')).toHaveLength(2)
+    expect(within(marketHeader).getByText('当前收益').parentElement).toHaveTextContent('待接入')
+    expect(within(marketHeader).getByText('模拟盘参考')).toBeInTheDocument()
     expect(screen.queryByText('market_data_missing')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /买|卖|下单|确认交易/ })).not.toBeInTheDocument()
+
+    click(screen.getByRole('button', { name: '收益' }))
+    expect(screen.getByRole('region', { name: '实盘接入状态' })).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: '模拟盘收益曲线' })).not.toBeInTheDocument()
   })
 
   it('replaces demo signals with TradingAgent snapshot signals when the local API is available', async () => {

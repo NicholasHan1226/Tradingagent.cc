@@ -69,6 +69,18 @@ describe('dashboard view rules', () => {
     expect(getClosedSignals(rows.filter((row) => row.status === 'pending'))).toEqual([])
   })
 
+  it('treats partial queue records as terminal review outcomes', () => {
+    const partial: SignalRow = {
+      ...rows[1],
+      symbol: 'ETH-USD',
+      queueBucket: 'partial',
+      next: '进入复盘',
+    }
+
+    expect(getActionableSignals([partial])).toEqual([])
+    expect(getClosedSignals([partial])).toEqual([partial])
+  })
+
   it('keeps market filters strict when a market has no matching rows', () => {
     expect(getVisibleSignals(rows, 'A-share')).toHaveLength(0)
   })

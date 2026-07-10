@@ -6,7 +6,7 @@ import { MarketHeader } from './components/MarketHeader'
 import { TopNav } from './components/TopNav'
 import { holdings as mockHoldings, mockDashboardApiResponse, performanceData, signals as mockSignals } from './data/dashboard'
 import { deriveChartEvents } from './lib/chartEvents'
-import { getLivePerformanceData, getSelectedMarketSummary, getSignalFunnel, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
+import { getLivePerformanceData, getSelectedMarketSummary, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
 import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
 import { createWorkbenchViewModel } from './lib/workbenchViewModel'
 import { HomeDashboard } from './pages/HomeDashboard'
@@ -118,7 +118,6 @@ function App() {
     opportunity: 0,
   }
   const visibleFunnelEvents = workbench.funnelEvents
-  const signalFunnel = useMemo(() => getSignalFunnel(visibleSignals), [visibleSignals])
   const chartEvents = useMemo(() => deriveChartEvents(visiblePerformanceData, visibleSignals), [visiblePerformanceData, visibleSignals])
   const domainStatus = (domain: DataDomain) => dashboardState.domains[domain]?.status ?? dashboardState.status
   const handleRetry = () => setDashboardState(toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
@@ -132,6 +131,7 @@ function App() {
       />
       <MarketHeader
         accountMode={accountMode}
+        activeOpportunityCount={workbench.opportunities.active.length}
         activePage={activePage}
         activeMarket={activeMarket}
         hasPerformanceData={hasPerformanceData}
@@ -141,15 +141,15 @@ function App() {
         liveReturn={visiblePortfolio?.returnPct ?? latestPoint.simulated}
         maxDrawdown={visiblePortfolio?.maxDrawdownPct ?? null}
         positionCount={visibleHoldings.length}
-        signalCount={visibleSignals.length}
+        performanceStatus={domainStatus('performance')}
+        reviewCount={workbench.reviewItems.length}
         snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
         setActiveMarket={setActiveMarket}
         targetReturn={visiblePortfolio?.targetPct ?? latestPoint.target}
-        tradeSignalCount={signalFunnel.tradeSignals.length}
       />
 
       <section className="workspace">
-        {activePage === '主页' ? (
+        {activePage === '主页' || workbench.liveGate.gated ? (
           <HomeDashboard
             accountMode={accountMode}
             activeSignals={workbench.opportunities.active}
@@ -175,6 +175,7 @@ function App() {
             setActivePage={setActivePage}
             signals={visibleSignals}
             reviewItems={workbench.reviewItems}
+            snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
             funnelEvents={visibleFunnelEvents}
             events={chartEvents}
           />

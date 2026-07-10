@@ -981,3 +981,16 @@
 .compact-flow-review > div .event-filled {
   color: var(--accent-cyan);
 }
+
+@media (min-width: 1120px) and (max-height: 760px) {
+  .compact-flow {
+    min-height: 64px;
+  }
+
+  .compact-flow-head,
+  .compact-flow-review,
+  .compact-flow-stages > span {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}

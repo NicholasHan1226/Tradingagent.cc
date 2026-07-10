@@ -2,25 +2,28 @@ import { useState } from 'react'
 import { marketLabels, markets, pageMeta } from '../data/dashboard'
 import { formatCurrency, formatSignedCnyCompact } from '../lib/format'
 import type { AccountMode, Market, Page } from '../types/dashboard'
+import type { DomainStatus } from '../types/status'
 
 export function MarketHeader({
   accountMode,
+  activeOpportunityCount,
   activePage,
   activeMarket,
   liveProfit,
   liveReturn,
   maxDrawdown,
   positionCount,
+  performanceStatus,
   hasPerformanceData,
   isDemoPreview,
   isCnyAccount,
-  signalCount,
+  reviewCount,
   setActiveMarket,
   snapshotGeneratedAt,
   targetReturn,
-  tradeSignalCount,
 }: {
   accountMode: AccountMode
+  activeOpportunityCount: number
   activePage: Page
   activeMarket: Market
   hasPerformanceData: boolean
@@ -30,33 +33,39 @@ export function MarketHeader({
   liveReturn: number
   maxDrawdown: number | null
   positionCount: number
-  signalCount: number
+  performanceStatus: DomainStatus
+  reviewCount: number
   setActiveMarket: (market: Market) => void
   snapshotGeneratedAt: string | null
   targetReturn: number
-  tradeSignalCount: number
 }) {
   const meta = pageMeta[activePage]
   const [showMarkets, setShowMarkets] = useState(false)
-  const freshness = snapshotGeneratedAt ? '最新快照' : isDemoPreview ? '演示数据' : '等待接口'
-  const accountLabel = accountMode === 'live' ? '实盘待接入' : '模拟盘'
-  const returnValue = hasPerformanceData
+  const freshness = performanceStatus === 'stale'
+    ? '快照滞后'
+    : snapshotGeneratedAt
+      ? `快照 ${formatSnapshotTime(snapshotGeneratedAt)}`
+      : isDemoPreview ? '演示数据' : '等待接口'
+  const isLive = accountMode === 'live'
+  const showPerformanceData = hasPerformanceData && !isLive
+  const accountLabel = isLive ? '实盘待接入' : '模拟盘'
+  const returnValue = showPerformanceData
     ? liveProfit !== null
       ? isCnyAccount ? formatSignedCnyCompact(liveProfit) : formatCurrency(liveProfit)
       : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
-    : '等待'
-  const returnDetail = hasPerformanceData && liveProfit !== null
+    : isLive ? '待接入' : '等待'
+  const returnDetail = showPerformanceData && liveProfit !== null
     ? formatSignedPct(liveReturn)
     : undefined
   const drawdown = Math.abs(maxDrawdown ?? 0)
   const returnTone = getTone(liveProfit ?? liveReturn, liveReturn)
 
   return (
-    <section className="market-header">
+    <section className="market-header" aria-label="市场概览">
       <div className="market-symbol">
         <div>
           <strong>{meta.title}</strong>
-        <span>{accountLabel} · {marketLabels[activeMarket]} · {meta.copy}</span>
+          <span>{accountLabel} · {marketLabels[activeMarket]} · {isLive ? <b>模拟盘参考</b> : meta.copy}</span>
         </div>
       </div>
       <div className="market-stats">
@@ -64,19 +73,19 @@ export function MarketHeader({
           detail={returnDetail}
           label="当前收益"
           value={returnValue}
-          cyan={hasPerformanceData && returnTone === 'positive'}
-          red={hasPerformanceData && returnTone === 'negative'}
+          cyan={showPerformanceData && returnTone === 'positive'}
+          red={showPerformanceData && returnTone === 'negative'}
         />
         <Stat
           label="目标差"
-          value={hasPerformanceData ? formatSignedPct(liveReturn - targetReturn) : '等待'}
-          cyan={hasPerformanceData && liveReturn - targetReturn > 0.005}
-          red={hasPerformanceData && liveReturn - targetReturn < -0.005}
+          value={showPerformanceData ? formatSignedPct(liveReturn - targetReturn) : isLive ? '待接入' : '等待'}
+          cyan={showPerformanceData && liveReturn - targetReturn > 0.005}
+          red={showPerformanceData && liveReturn - targetReturn < -0.005}
         />
-        <Stat detail="机会池" label="机会" value={`${signalCount}`} />
-        <Stat detail="通过筛选" label="可跟进" value={`${tradeSignalCount}`} cyan />
+        <Stat detail="等待处理" label="当前机会" value={`${activeOpportunityCount}`} cyan={activeOpportunityCount > 0} />
+        <Stat detail="风险与错过" label="待复盘" value={`${reviewCount}`} red={reviewCount > 0} />
         <Stat detail="模拟盘" label="持仓" value={`${positionCount}`} />
-        <Stat label="最大回撤" value={hasPerformanceData ? formatDrawdown(drawdown) : '等待'} red={hasPerformanceData && drawdown > 0} />
+        <Stat label="最大回撤" value={showPerformanceData ? formatDrawdown(drawdown) : isLive ? '待接入' : '等待'} red={showPerformanceData && drawdown > 0} />
       </div>
       <div className="market-tools">
         <span className="market-freshness"><i />{freshness}</span>
@@ -114,6 +123,17 @@ export function MarketHeader({
       </div>
     </section>
   )
+}
+
+function formatSnapshotTime(value: string) {
+  const timestamp = new Date(value)
+  if (Number.isNaN(timestamp.getTime())) return '时间未知'
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Shanghai',
+  }).format(timestamp)
 }
 
 function formatSignedPct(value: number) {

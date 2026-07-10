@@ -30,25 +30,25 @@ export function OpportunityTable({ signals }: { signals: SignalRow[] }) {
           <strong>{blockedCount}</strong>
         </span>
       </div>
-      <div className="terminal-table opportunity-table">
-        <div className="terminal-row terminal-head">
-          <span>机会</span>
-          <span>市场</span>
-          <span>当前结果</span>
-          <span>还差什么</span>
-          <span>有效期</span>
-          <span>预期影响</span>
-          <span>风险</span>
+      <div aria-label="当前机会表" className="terminal-table opportunity-table" role="table">
+        <div className="terminal-row terminal-head" role="row">
+          <span role="columnheader">机会</span>
+          <span role="columnheader">市场</span>
+          <span role="columnheader">当前结果</span>
+          <span role="columnheader">还差什么</span>
+          <span role="columnheader">有效期</span>
+          <span role="columnheader">预期影响</span>
+          <span role="columnheader">风险</span>
         </div>
         {signals.map((signal, index) => (
-          <div className="terminal-row" key={`${signal.symbol}-${signal.status}-${signal.age}-${index}`}>
-            <AssetCell symbol={signal.symbol} name={signal.name} />
-            <span>{marketLabels[signal.market]}</span>
-            <span>{signal.reason}</span>
-            <span>{signal.next}</span>
-            <span>{signal.age}</span>
-            <span className={signal.impact.startsWith('-') ? 'red-text' : 'cyan-text'}>{signal.impact}</span>
-            <span>{signal.status === 'blocked' ? '偏高' : '可观察'}</span>
+          <div className="terminal-row" key={`${signal.symbol}-${signal.status}-${signal.age}-${index}`} role="row">
+            <div role="cell"><AssetCell symbol={signal.symbol} name={signal.name} /></div>
+            <span role="cell">{marketLabels[signal.market]}</span>
+            <span role="cell">{signal.reason}</span>
+            <span role="cell">{signal.next}</span>
+            <span role="cell">{signal.age}</span>
+            <span className={signal.impact.startsWith('-') ? 'red-text' : 'cyan-text'} role="cell">{signal.impact}</span>
+            <span role="cell">{signal.status === 'blocked' ? '偏高' : '可观察'}</span>
           </div>
         ))}
       </div>
