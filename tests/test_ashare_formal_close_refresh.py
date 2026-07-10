@@ -23,6 +23,7 @@ class AshareFormalCloseRefreshTest(unittest.TestCase):
             review_dir = Path(tmp)
             existing = {
                 "report_type": "ashare_formal_close_refresh",
+                "schema_version": 2,
                 "trade_date": "20260710",
                 "status": "pass",
                 "reason": "formal_close_refresh_complete",
@@ -71,7 +72,16 @@ class AshareFormalCloseRefreshTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp, patch(
             "Ashare.formal_close_refresh.local_sim_ledger.get_local_sim_pnl",
-            return_value={"positions": positions},
+            side_effect=[
+                {"positions": positions},
+                {
+                    "realized_pnl": 0.0,
+                    "unrealized_pnl": 123.4,
+                    "total_pnl": 123.4,
+                    "market_value": 150000.0,
+                    "cash_available": 50000.0,
+                },
+            ],
         ), patch(
             "Ashare.formal_close_refresh.local_sim_ledger.refresh_local_sim_snapshot",
             side_effect=lambda *, mark_prices: captured.setdefault("snapshot_prices", mark_prices) or {"status": "ok"},
@@ -83,7 +93,23 @@ class AshareFormalCloseRefreshTest(unittest.TestCase):
             return_value={"strategy_label_count": 2},
         ), patch(
             "Ashare.formal_close_refresh.run_daily_review",
-            return_value={"session": "close"},
+            return_value={
+                "session": "close",
+                "capital_layer_reviews": {
+                    "simulated": {
+                        "market_reviews": {
+                            "ashare": {
+                                "stale": False,
+                                "ledger_realized_pnl": 0.0,
+                                "ledger_unrealized_pnl": 123.4,
+                                "ledger_total_pnl": 123.4,
+                                "ledger_market_value": 150000.0,
+                                "ledger_pnl_source": "ashare_local_sim_mark_to_market",
+                            }
+                        }
+                    }
+                },
+            },
         ):
             report = run_formal_close_refresh(
                 trade_date="20260710",
@@ -95,6 +121,9 @@ class AshareFormalCloseRefreshTest(unittest.TestCase):
         self.assertEqual(captured["snapshot_prices"], prices)
         self.assertEqual(captured["portfolio_prices"], prices)
         self.assertEqual(report["price_semantics"], "formal_daily_close_exact_trade_date")
+        self.assertEqual(report["formal_pnl"]["total_pnl"], 123.4)
+        self.assertEqual(report["daily_review"]["ledger_total_pnl"], 123.4)
+        self.assertEqual(report["daily_review"]["status"], "current")
 
     def test_run_fails_without_overwriting_snapshots_when_a_close_is_missing(self) -> None:
         positions = {"600000.SH": {"quantity": 100}, "000001.SZ": {"quantity": 200}}

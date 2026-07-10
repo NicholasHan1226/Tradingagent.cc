@@ -19,6 +19,7 @@ from shared.review.daily_review import run_daily_review
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REVIEW_DIR = ROOT / "shared" / "review" / "ashare"
 PRICE_SEMANTICS = "formal_daily_close_exact_trade_date"
+REPORT_SCHEMA_VERSION = 2
 
 
 def _compact_date(value: str) -> str:
@@ -94,10 +95,28 @@ def _completed_report(review_dir: Path, trade_date: str) -> dict[str, Any] | Non
     if (
         isinstance(report, dict)
         and report.get("status") == "pass"
+        and int(report.get("schema_version") or 0) >= REPORT_SCHEMA_VERSION
         and _compact_date(str(report.get("trade_date") or "")) == trade_date
     ):
         return {**report, "idempotent_skip": True}
     return None
+
+
+def _ashare_daily_review_summary(review: dict[str, Any]) -> dict[str, Any]:
+    layers = review.get("capital_layer_reviews") if isinstance(review, dict) else None
+    simulated = layers.get("simulated") if isinstance(layers, dict) else None
+    markets = simulated.get("market_reviews") if isinstance(simulated, dict) else None
+    ashare = markets.get("ashare") if isinstance(markets, dict) else None
+    if not isinstance(ashare, dict):
+        return {"status": "unavailable"}
+    return {
+        "status": "current" if not ashare.get("stale") else "stale",
+        "ledger_realized_pnl": ashare.get("ledger_realized_pnl"),
+        "ledger_unrealized_pnl": ashare.get("ledger_unrealized_pnl"),
+        "ledger_total_pnl": ashare.get("ledger_total_pnl"),
+        "ledger_market_value": ashare.get("ledger_market_value"),
+        "ledger_pnl_source": ashare.get("ledger_pnl_source"),
+    }
 
 
 def run_formal_close_refresh(
@@ -117,6 +136,7 @@ def run_formal_close_refresh(
     close_evidence = load_formal_close_prices(target_date, positions, reader=reader)
     base = {
         "report_type": "ashare_formal_close_refresh",
+        "schema_version": REPORT_SCHEMA_VERSION,
         "market": "ashare",
         "trade_date": target_date,
         "generated_at": generated_at,
@@ -135,6 +155,7 @@ def run_formal_close_refresh(
 
     prices = dict(close_evidence["prices"])
     snapshot = local_sim_ledger.refresh_local_sim_snapshot(mark_prices=prices)
+    formal_pnl = local_sim_ledger.get_local_sim_pnl(account=None, mark_prices=prices)
     portfolio = write_portfolio_evolution(
         trade_date=target_date,
         review_dir=review_dir,
@@ -152,6 +173,16 @@ def run_formal_close_refresh(
         "status": "pass",
         "reason": "formal_close_refresh_complete",
         "snapshot": snapshot,
+        "formal_pnl": {
+            key: formal_pnl.get(key)
+            for key in (
+                "realized_pnl",
+                "unrealized_pnl",
+                "total_pnl",
+                "market_value",
+                "cash_available",
+            )
+        },
         "portfolio_evolution": {
             "state": portfolio.get("state"),
             "valuation_status": portfolio.get("valuation_status"),
@@ -163,7 +194,7 @@ def run_formal_close_refresh(
         },
         "daily_review": {
             "session": daily.get("session"),
-            "ledger_total_pnl": daily.get("ledger_total_pnl"),
+            **_ashare_daily_review_summary(daily),
         },
     }
     _write_report(review_dir, report)
