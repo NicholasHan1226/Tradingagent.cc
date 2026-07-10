@@ -1,7 +1,7 @@
 # TradingAgent Terminal Operations Design
 
-**Date:** 2026-07-11  
-**Status:** Approved through the user's instruction to execute all recommended optimizations  
+**Date:** 2026-07-11
+**Status:** Approved through the user's instruction to execute all recommended optimizations
 **Scope:** `front/` desktop UI and additive read-only snapshot fields; 1280×720 and 1440×900
 
 ## Objective
