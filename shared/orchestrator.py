@@ -3166,7 +3166,13 @@ def run_sim_loop(
             ),
         }
         if str(market).lower() == "ashare":
-            market_snapshot = _latest_execution_market_snapshot(reader, mapped_market, mapped_symbol, date, side)
+            execution_market, execution_symbol = _safe_stage(
+                "adapter.map_symbol_to_reader.execution",
+                errors,
+                lambda symbol=symbol: market_adapter.map_symbol_to_reader(symbol),
+                default=(market, symbol),
+            )
+            market_snapshot = _latest_execution_market_snapshot(reader, execution_market, execution_symbol, date, side)
             if market_snapshot:
                 order["market_snapshot"] = market_snapshot
             score_snapshot = dict(scores_by_symbol.get(symbol, {}))

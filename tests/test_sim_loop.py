@@ -1049,6 +1049,37 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(snapshot["bar_volume"], 1800)
         self.assertEqual(snapshot["provider"], "sharedsignals_api_realtime_5min")
 
+    def test_run_sim_loop_uses_each_execution_symbol_for_ashare_5min_evidence(self) -> None:
+        class IntradayReader(StubReader):
+            def get_bars_intraday(self, market, symbol, interval="5m", start=None, end=None):
+                if symbol == "000001.SZ":
+                    return [{"close": 10.1, "bar_time": "2026-06-30 10:05:00", "volume": 1800}]
+                if symbol == "600000.SH":
+                    return [{"close": 20.2, "bar_time": "2026-06-30 10:10:00", "volume": 1900}]
+                return []
+
+        deps = self._multi_candidate_deps()
+
+        def score_universe(date, universe, data_reader=None, market="ashare"):
+            return [
+                ("000001.SZ", {"combined": 0.80, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"}),
+                ("600000.SH", {"combined": 0.70, "sector": "unit", "turnover_wan": 10000, "capital_layer": "simulated"}),
+            ]
+
+        deps.score_universe = score_universe
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(["000001.SZ", "600000.SH"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=1),
+            "20260630",
+            IntradayReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_5min_execution_symbol",
+        )
+
+        self.assertEqual(result["filled_count"], 1)
+        self.assertEqual(self.executed_orders[0]["ts_code"], "000001.SZ")
+        self.assertEqual(self.executed_orders[0]["market_snapshot"]["last_price"], 10.1)
+        self.assertEqual(self.executed_orders[0]["market_snapshot"]["bar_time"], "2026-06-30 10:05:00")
+
     def test_run_sim_loop_does_not_let_retired_daily_sample_gate_override_capacity(self) -> None:
         deps = self._multi_candidate_deps()
 
