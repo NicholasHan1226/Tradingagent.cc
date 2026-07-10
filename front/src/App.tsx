@@ -139,7 +139,7 @@ function App() {
         isCnyAccount={visiblePortfolio?.pnlCurrency === 'CNY'}
         liveProfit={visiblePortfolio?.pnlAmount ?? null}
         liveReturn={visiblePortfolio?.returnPct ?? latestPoint.simulated}
-        maxDrawdown={visiblePortfolio?.maxDrawdownPct ?? null}
+        maxDrawdown={visiblePortfolio?.maxDrawdownPct ?? (visiblePerformanceData.length ? getPerformanceDrawdown(visiblePerformanceData) : null)}
         positionCount={visibleHoldings.length}
         performanceStatus={domainStatus('performance')}
         runningCount={observatory.summary.runningCount}
@@ -225,6 +225,15 @@ function hasMarketPerformanceResult(summary?: MarketSummary) {
   if (!summary || summary.status === 'empty') return false
   if (summary.tradeCount > 0 || (summary.filledCount ?? 0) > 0) return true
   return Math.abs(summary.pnlAmount ?? 0) > 0.005 || Math.abs(summary.returnPct ?? 0) > 0.005
+}
+
+function getPerformanceDrawdown(rows: PerformancePoint[]) {
+  if (!rows.length) return 0
+  let peak = rows[0]?.simulated ?? 0
+  return rows.reduce((maximum, point) => {
+    peak = Math.max(peak, point.simulated)
+    return Math.max(maximum, peak - point.simulated)
+  }, 0)
 }
 
 function isDemoPreviewEnabled() {

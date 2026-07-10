@@ -592,8 +592,8 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByRole('region', { name: '过程终端' })).toBeInTheDocument()
     expect(screen.getByRole('table', { name: '运行中过程账本' })).toBeInTheDocument()
     expect(within(screen.getByLabelText('过程终端检查器')).getByRole('heading', { name: '过程分布' })).toBeInTheDocument()
-    expect(screen.getByText('BTC-USD')).toBeInTheDocument()
     expect(screen.getByText('IF2601.CFFEX')).toBeInTheDocument()
+    expect(screen.queryByText('BTC-USD')).not.toBeInTheDocument()
   })
 
   it('keeps the reserved live state inside the workbench rather than a dialog', () => {

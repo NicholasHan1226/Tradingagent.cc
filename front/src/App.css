@@ -4512,6 +4512,10 @@ button:not(:disabled) {
   grid-template-columns: minmax(0, 1fr) 316px;
 }
 
+.terminal-page:not(.has-ledger) .terminal-primary-grid {
+  min-height: calc(100vh - 286px);
+}
+
 .terminal-primary,
 .terminal-inspector {
   min-width: 0;
@@ -4809,17 +4813,26 @@ button:not(:disabled) {
 .risk-boundary > small { color: var(--text-muted); font-size: 11px; }
 
 .review-ledger .signal-table {
-  min-width: 1120px;
+  min-width: 960px;
   border: 0;
 }
 
 .review-ledger .terminal-row {
+  grid-template-columns: 128px 54px 72px 112px minmax(180px, 1fr) 76px 54px 150px 48px;
+  gap: 8px;
   font-size: 12px;
+}
+
+.review-ledger .terminal-row > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (min-width: 1120px) and (max-height: 760px) {
   .terminal-page { margin-top: 8px; }
   .terminal-primary-grid { min-height: 380px; }
+  .terminal-page:not(.has-ledger) .terminal-primary-grid { min-height: calc(100vh - 286px); }
   .terminal-chart-surface { min-height: 380px; }
   .terminal-chart-surface .chart-box { height: 330px !important; }
   .terminal-table-panel .terminal-table td { height: 40px; }

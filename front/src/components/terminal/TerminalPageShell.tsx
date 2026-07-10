@@ -21,7 +21,7 @@ export function TerminalPageShell({
   title: string
 }) {
   return (
-    <section aria-label={title} className="terminal-page" role="region">
+    <section aria-label={title} className={`terminal-page${ledger ? ' has-ledger' : ''}`} role="region">
       <div aria-label={`${title}指标`} className="terminal-metrics">
         <div className="terminal-metrics-title">{title}</div>
         {metrics.map((metric) => (
@@ -61,4 +61,3 @@ export function TerminalInspectorSection({ title, children }: { title: string; c
     </section>
   )
 }
-
