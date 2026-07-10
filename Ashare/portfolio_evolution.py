@@ -184,9 +184,11 @@ def build_portfolio_evolution(
     eligible_sample_count = len(cumulative_evolution_trades)
     realized_round_trip_count = sum(1 for row in cumulative_evolution_trades if str(row.get("side") or "").lower() == "sell")
     forward_label_count = _forward_label_count(review_path)
+    evolution_rejection_reasons = cumulative_quality.get("evolution_rejection_reasons") or {}
     evidence_blockers: list[str] = []
     if eligible_sample_count < strategy_sample_count:
         evidence_blockers.append("weak_fill_price_evidence")
+        evidence_blockers.extend(sorted(evolution_rejection_reasons.keys()))
     if realized_round_trip_count <= 0:
         evidence_blockers.append("no_realized_round_trip")
     if forward_label_count <= 0:
@@ -251,6 +253,7 @@ def build_portfolio_evolution(
             "forward_label_count": forward_label_count,
             "min_evolution_evidence_samples": min_evolution_evidence_samples,
             "blockers": evidence_blockers,
+            "rejection_reasons": evolution_rejection_reasons,
         },
         "strategy_sample_count": strategy_sample_count,
         "today_strategy_sample_count": len(day_strategy_trades),

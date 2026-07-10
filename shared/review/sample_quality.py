@@ -105,33 +105,47 @@ def _has_strategy_fill_price(row: dict[str, Any]) -> bool:
         return False
 
 
-def _has_evolution_execution_evidence(row: dict[str, Any]) -> bool:
-    """Require a time-and-liquidity-backed market quote before learning from a fill."""
+def _evolution_evidence_check(row: dict[str, Any]) -> tuple[bool, str]:
+    """Require a time-and-liquidity-backed market quote before learning from a fill.
+
+    Returns (eligible, rejection_reason). rejection_reason is non-empty only
+    when eligible is False, describing the first failing condition encountered.
+    """
     evidence = row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
-    if evidence.get("execution_evidence_class") != "verified_5min_market_data":
-        return False
+    execution_class = evidence.get("execution_evidence_class")
+    if not execution_class:
+        return False, "missing_execution_evidence_class"
+    if execution_class != "verified_5min_market_data":
+        return False, "execution_evidence_class_not_verified"
     if not _has_market_data_fill_price(row):
-        return False
+        return False, "no_market_data_fill_price"
     bar_time = row.get("bar_time") or evidence.get("bar_time")
     bar_volume = row.get("bar_volume") or evidence.get("bar_volume")
+    if not bar_time:
+        return False, "missing_bar_time"
     try:
-        if not bar_time or float(bar_volume or 0) <= 0:
-            return False
+        vol = float(bar_volume or 0)
     except (TypeError, ValueError):
-        return False
+        return False, "bar_volume_not_numeric"
+    if vol <= 0:
+        return False, "bar_volume_zero_or_negative"
     trade_time = _parse_trade_timestamp(row)
     if trade_time is None:
-        return False
+        return False, "missing_trade_timestamp"
     try:
         parsed_bar_time = datetime.fromisoformat(str(bar_time).replace("Z", "+00:00"))
     except ValueError:
-        return False
+        return False, "bar_time_unparseable"
     if parsed_bar_time.tzinfo is None:
         parsed_bar_time = parsed_bar_time.replace(tzinfo=CN_TZ)
     else:
         parsed_bar_time = parsed_bar_time.astimezone(CN_TZ)
     age_seconds = (trade_time - parsed_bar_time).total_seconds()
-    return -300 <= age_seconds <= 900
+    if age_seconds < -300:
+        return False, "bar_time_too_future"
+    if age_seconds > 900:
+        return False, "bar_time_too_stale"
+    return True, "verified_market_data_execution"
 
 
 def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
@@ -193,9 +207,16 @@ def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
 def enrich_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
     enriched = dict(row)
     enriched.update(classify_trade_sample(enriched))
-    eligible = bool(enriched.get("strategy_sample_valid")) and _has_evolution_execution_evidence(enriched)
+    strategy_valid = bool(enriched.get("strategy_sample_valid"))
+    evidence_ok, evidence_reason = _evolution_evidence_check(enriched)
+    eligible = strategy_valid and evidence_ok
     enriched["evolution_sample_eligible"] = eligible
-    enriched["evolution_sample_reason"] = "verified_market_data_execution" if eligible else "weak_fill_price_evidence"
+    if eligible:
+        enriched["evolution_sample_reason"] = "verified_market_data_execution"
+    elif not strategy_valid:
+        enriched["evolution_sample_reason"] = "not_strategy_sample"
+    else:
+        enriched["evolution_sample_reason"] = evidence_reason
     return enriched
 
 
@@ -205,6 +226,15 @@ def summarize_sample_quality(rows: list[dict[str, Any]]) -> dict[str, Any]:
     reasons = Counter(str(row.get("sample_quality_reason") or "unknown") for row in enriched)
     valid_count = sum(1 for row in enriched if bool(row.get("strategy_sample_valid")))
     evolution_eligible_count = sum(1 for row in enriched if bool(row.get("evolution_sample_eligible")))
+
+    # Rejection reason counters: only count strategy-valid trades that fail evolution eligibility
+    evolution_rejection_counter: Counter[str] = Counter()
+    for row in enriched:
+        if bool(row.get("strategy_sample_valid")) and not bool(row.get("evolution_sample_eligible")):
+            reason = str(row.get("evolution_sample_reason") or "unknown")
+            evolution_rejection_counter[reason] += 1
+    evolution_rejection_reasons = dict(sorted(evolution_rejection_counter.items()))
+
     validation_count = sum(1 for row in enriched if row.get("sample_classification") == "chain_validation")
     return {
         "total_count": len(enriched),
@@ -214,6 +244,7 @@ def summarize_sample_quality(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "invalid_strategy_sample_count": len(enriched) - valid_count,
         "by_classification": dict(sorted(classifications.items())),
         "by_reason": dict(sorted(reasons.items())),
+        "evolution_rejection_reasons": evolution_rejection_reasons,
     }
 
 
