@@ -4,15 +4,17 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-10 (Crontab 合并安装器精简重构)
+> 最后更新：2026-07-11 (A股证据门禁与 CNFutures 夜盘数据链生产验收)
 
 ---
 
 ## 一、当前状态
 
+- **2026-07-11 生产验收**：TradingAgent 运行时代码已发布至 `deee254`，SharedSignals 供数层已发布至 `e54e5bd`。SharedSignals 修正 Sina 周五夜盘跨午夜时把下一交易日误写为自然 `bar_time` 的问题，并清理 2 条部署前错误行；`/realtime_5min?market=Futures` 现按最大自然 `bar_time` 返回批次，生产实测返回 3 个铜合约、最新 `2026-07-11 01:00:00`、`degraded=false`。TradingAgent CNFutures 查询、live check 和单市场健康均通过；模拟 wrapper 读取 `universe_count=3`，因仅 1 个独立品种而按规则进入 `observation_only / insufficient_distinct_product_coverage`，`filled_count=0`、`error_count=0`、PnL 为 0。开盘验收中的 CNFutures 子项通过；总验收仍因独立的 `tradingagent_health.json=critical` 失败，并有 US 模拟盘 warn，不能归因到期货链路。
+
 - **Crontab 合并安装器（2026-07-10 精简重构）**：`tools/merge_tradingagent_crontab.py` 采用单文件最小实现，仅剥离当前 crontab 中 `/opt/investment/tradingagent/` schedule 行，追加模板 TA schedule 行，不动 env/注释/空行/跨仓条目。默认 dry-run；`--apply` 备份 → 安装 → readback + coverage 验证，失败自动 rollback 并 readback 确认原文本恢复。`--current-file`/`--output` 文件模式不碰系统。空模板 fail-closed。**严禁**直接 `crontab shared/crontab.txt`。已通过 12 项关键用例（`tests/test_merge_tradingagent_crontab.py`）。
 
-- **A股事件、演化与资金门禁修复（2026-07-10）**：事件评分改为 SharedSignals 最近 3 日 SS-first，文本方向推断使用固定 0.30 审慎置信度并输出无方向/低置信度诊断，不把中性公告伪造成催化；演化层保持 `verified_5min_market_data`、正成交量和 -5/+15 分钟时间窗不变，同时输出具体拒绝原因；defensive `target_positions=0` 不再回退触发机会成本换仓，风险卖出仍保留，策略现金预算上限收紧到真实账户可用现金，A股卖出来源统一为 `ashare_rebalance_sell`。这些变更已通过本地定向测试，生产运行时仍需发布后验收。
+- **A股事件、演化与资金门禁修复（2026-07-10）**：事件评分改为 SharedSignals 最近 3 日 SS-first，文本方向推断使用固定 0.30 审慎置信度并输出无方向/低置信度诊断，不把中性公告伪造成催化；演化层保持 `verified_5min_market_data`、正成交量和 -5/+15 分钟时间窗不变，同时输出具体拒绝原因；defensive `target_positions=0` 不再回退触发机会成本换仓，风险卖出仍保留，策略现金预算上限收紧到真实账户可用现金，A股卖出来源统一为 `ashare_rebalance_sell`。生产已发布并抽样验证：`300759.SZ` 的减持事件保留正式事件证据，`000776.SZ`、`600030.SH` 的中性公告不再伪造成催化；当前演化样本 3 个、eligible 0 个，其中 1 个执行证据类别未验证、2 个缺执行证据类别，继续禁止把浮盈当成已验证 alpha。
 
 - **A股开盘验收移除 SQLite 依赖（2026-07-10）**：`ashare_opening_validator.py` 完全移除对兄弟 SharedSignals SQLite/read-model 文件的直接读取。`validate_pre_open()` 复用 `ashare_preopen_dry_run._api_daily_coverage_from_reader` 检查日线覆盖（含覆盖率门禁、日期新鲜度、intraday-vs-daily 日期门禁和 asset universe 可用性），asset_count<=0 时 fail-closed。`validate_opening()` 通过 `get_realtime_5min_batch()` API 检查 5 分钟数据，只计数 `_is_supported_ashare_code` 通过的 A 股标的，输出 `latest_bar_age_minutes`；API 异常、0 行、无 A 股标的、覆盖不足、最新 bar 超 10 分钟均 fail（不再 warn）。移除 `_check_api_availability` 私有属性检查，以实际 API 调用成功/异常为准。`first_sample_alerts()` 本地证据收集完全保留。`opening_acceptance.py` 聚合验收不再用 preopen dry-run 二次 API 调用把 API 不可用 fail 转为 pass；CNFutures 的 `sqlite_db` 恢复使用 `DEFAULT_SHARED_SIGNALS_DB`，A 股不传 sqlite-db。三个 wrapper 不传 A 股 --sqlite-db。
 
