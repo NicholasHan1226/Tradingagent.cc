@@ -20,9 +20,15 @@ class FakeAshareReader:
 
     def get_assets(self, market: str | None = None) -> list[dict]:
         return [
-            {"market": market or "ashare", "symbol": "600000.SH", "name": "浦发银行", "exchange": "SH", "status": "active", "list_date": "19991110"},
-            {"market": market or "ashare", "symbol": "600001.SH", "name": "邯郸钢铁", "exchange": "SH", "status": "active", "list_date": "19980218"},
-            {"market": market or "ashare", "symbol": "000001.SZ", "name": "平安银行", "exchange": "SZ", "status": "active", "list_date": "19910403"},
+            {
+                "market": market or "ashare",
+                "symbol": _test_symbol(i),
+                "name": f"测试{i:03d}",
+                "exchange": "SH",
+                "status": "active",
+                "list_date": "20000101",
+            }
+            for i in range(1000)
         ]
 
     def get_latest_daily_batch(self, market: str = "Ashare", *, limit: int = 5000) -> list[dict]:
@@ -514,6 +520,35 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(data["status"], "fail")
         self.assertEqual(data["reason"], "api_asset_universe_unavailable")
         self.assertEqual(data["asset_count"], 0)
+
+    def test_daily_coverage_uses_asset_universe_intersection(self) -> None:
+        class IntersectionReader(FakeAshareReader):
+            def get_assets(self, market: str | None = None) -> list[dict]:
+                return [
+                    {"symbol": "600000.SH", "name": "A", "status": "active"},
+                    {"symbol": "000001.SZ", "name": "B", "status": "active"},
+                ]
+
+            def get_latest_daily_batch(self, market: str = "Ashare", *, limit: int = 5000) -> list[dict]:
+                return [
+                    {"symbol": "600000.SH", "trade_date": "20260710", "close": 10.0},
+                    {"symbol": "000001.SZ", "trade_date": "20260710", "close": 10.0},
+                    {"symbol": "600001.SH", "trade_date": "20260710", "close": 10.0},
+                ]
+
+        reader = IntersectionReader()
+
+        data = ashare_preopen_dry_run._api_daily_coverage_from_reader(
+            reader,
+            now=datetime.fromisoformat("2026-07-13T08:30:00+08:00"),
+            min_symbols=1,
+            min_coverage_ratio=0.90,
+        )
+
+        self.assertEqual(data["symbol_count"], 2)
+        self.assertEqual(data["daily_symbol_count_raw"], 3)
+        self.assertEqual(data["daily_symbol_outside_asset_count"], 1)
+        self.assertEqual(data["daily_coverage_ratio"], 1.0)
 
     def test_coverage_ratio_uses_explicit_parameter_not_env(self) -> None:
         """min_coverage_ratio comes from explicit parameter, not env fallback."""

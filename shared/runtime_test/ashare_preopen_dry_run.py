@@ -366,7 +366,7 @@ def _api_daily_coverage_from_reader(
         }
 
     # ---- asset count & coverage ratio ----
-    asset_count = 0
+    asset_symbols: set[str] = set()
     get_assets = getattr(reader, "get_assets", None)
     if callable(get_assets):
         try:
@@ -379,15 +379,18 @@ def _api_daily_coverage_from_reader(
         except Exception:
             asset_rows = None
         if asset_rows:
-            asset_count = len({
+            asset_symbols = {
                 symbol
                 for row in asset_rows
                 if isinstance(row, dict)
                 and (symbol := str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper())
                 and _is_supported_ashare_code(symbol)
-            })
+            }
 
-    symbol_count = len(symbols)
+    asset_count = len(asset_symbols)
+    covered_symbols = symbols & asset_symbols if asset_symbols else set()
+    symbol_count = len(covered_symbols)
+    outside_asset_count = len(symbols - asset_symbols) if asset_symbols else len(symbols)
     daily_coverage_ratio: float | None = None
     if asset_count > 0:
         daily_coverage_ratio = symbol_count / asset_count
@@ -433,6 +436,8 @@ def _api_daily_coverage_from_reader(
         "status": status,
         "reason": reason,
         "symbol_count": symbol_count,
+        "daily_symbol_count_raw": len(symbols),
+        "daily_symbol_outside_asset_count": outside_asset_count,
         "asset_count": asset_count,
         "daily_coverage_ratio": round(daily_coverage_ratio, 4) if daily_coverage_ratio is not None else None,
         "expected_evidence_date": expected_evidence_date,
