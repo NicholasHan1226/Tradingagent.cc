@@ -10,7 +10,7 @@
 
 ## 一、当前状态
 
-- **A股/CNFutures 50,000 CNY 资金切换候选（2026-07-11，尚未生产迁移）**：代码级当前默认本金已统一为 50,000 CNY；A股新增显式 `tools/migrate_sim_capital_epoch.py`，用于在保持 `shared/logs/local_sim/.local_sim.lock` inode 不变的前提下，把旧 200,000 元账本内容、持仓快照和历史 tier 账本归档为只读 epoch 1，再在原权威路径 bootstrap 50,000 元 epoch 2。迁移对重复执行幂等，状态损坏、state/metadata 不一致、归档碰撞或锁超时均 fail-closed，异常会尝试回滚；不存在可绕过账本迁移的 state-only 激活入口。A股生产旧账本在 apply 前仍保持原样，不能把“代码候选已完成”写成“生产已切换”。CNFutures 当前未发现需迁移的活跃旧模拟账本，发布后只改变生产默认本金。本地定向回归 336 项、完整 Python 964 项和前端 130 项测试通过，前端 lint 与客户端/API 构建通过；GitHub 与生产同步仍待本轮后续验收。
+- **A股/CNFutures 50,000 CNY 资金切换（2026-07-11，生产已迁移）**：代码级当前默认本金统一为 50,000 CNY，旧资金环境变量不能切回 100,000/200,000；A股生产 apply 已在保持 `shared/logs/local_sim/.local_sim.lock` inode 不变的前提下，把旧 200,000 元账本内容、持仓快照和 8 个历史 tier 文件归档到 epoch 1，并在原权威路径 bootstrap 50,000 元 epoch 2。旧 PnL/成交文件与归档 SHA256 一致，当前现金 50,000、持仓 0、成交文件为空，重复 apply 返回 `already_migrated`；state/metadata 不一致、状态损坏、归档碰撞或锁超时均 fail-closed，不存在 state-only 激活入口。CNFutures 未发现需迁移的活跃旧账本，生产默认本金已同步为 50,000。看板只展示当前主账户，忽略旧 tier manifest，并以当前主账本覆盖旧风格 PnL 分解。本地完整 Python 964 项、资金/迁移回归 113 项和前端 140 项测试通过，前端 lint 与客户端/API 构建通过。
 
 - **2026-07-11 生产验收**：TradingAgent 运行时代码已发布至 `deee254`，SharedSignals 供数层已发布至 `e54e5bd`。SharedSignals 修正 Sina 周五夜盘跨午夜时把下一交易日误写为自然 `bar_time` 的问题，并清理 2 条部署前错误行；`/realtime_5min?market=Futures` 现按最大自然 `bar_time` 返回批次，生产实测返回 3 个铜合约、最新 `2026-07-11 01:00:00`、`degraded=false`。TradingAgent CNFutures 查询、live check 和单市场健康均通过；模拟 wrapper 读取 `universe_count=3`，因仅 1 个独立品种而按规则进入 `observation_only / insufficient_distinct_product_coverage`，`filled_count=0`、`error_count=0`、PnL 为 0。开盘验收中的 CNFutures 子项通过；总验收仍因独立的 `tradingagent_health.json=critical` 失败，并有 US 模拟盘 warn，不能归因到期货链路。
 

@@ -76,6 +76,8 @@ type LocalSimTradeRow = {
 type LocalSimAccountPnl = {
   cash_available?: number | string
   market_value?: number | string
+  realized_pnl?: number | string
+  unrealized_pnl?: number | string
   total_pnl?: number | string
   total_trades?: number | string
   positions?: Record<string, unknown>
@@ -515,7 +517,7 @@ export async function readTradingAgentSnapshot({
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
   const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt)
-  const ashareTierSummaries = await readAShareTierSummaries(projectRoot, generatedAt, ashareAccount)
+  const ashareTierSummaries = readAShareTierSummaries(generatedAt, ashareAccount)
   const ashareNoTradeExplanation = await readLatestAShareNoTradeExplanation(projectRoot, now)
   const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
   const ashareForwardValidation = await readAShareForwardValidation(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareForwardValidation))
@@ -578,6 +580,9 @@ async function readAShareAccountSummary(projectRoot: string, generatedAt: string
   const cashAvailable = parseFiniteNumber(accountPnl?.cash_available) ?? 0
   const marketValue = parseFiniteNumber(accountPnl?.market_value) ?? 0
   const accountTotalPnl = parseFiniteNumber(accountPnl?.total_pnl) ?? 0
+  const accountRealizedPnl = parseFiniteNumber(accountPnl?.realized_pnl) ?? 0
+  const accountUnrealizedPnl = parseFiniteNumber(accountPnl?.unrealized_pnl)
+    ?? roundMoney(accountTotalPnl - accountRealizedPnl)
   const accountEquity = roundMoney(cashAvailable + marketValue)
   const capitalBase = accountEquity - accountTotalPnl
   const sampleQuality = await readAShareSampleQuality(join(localSimDir, 'local_sim_trades.jsonl'))
@@ -589,6 +594,8 @@ async function readAShareAccountSummary(projectRoot: string, generatedAt: string
     marketValue: roundMoney(marketValue),
     accountEquity,
     accountTotalPnl: roundMoney(accountTotalPnl),
+    accountRealizedPnl: roundMoney(accountRealizedPnl),
+    accountUnrealizedPnl: roundMoney(accountUnrealizedPnl),
     accountReturnPct: roundMetric(capitalBase > 0 ? (accountTotalPnl / capitalBase) * 100 : 0),
     openPositionCount: Object.keys(accountPnl?.positions ?? {}).length,
     totalSampleCount: sampleQuality.totalSampleCount,
@@ -654,23 +661,22 @@ function attachAShareAccountSummary(
     source: tradingAgentReadModelSources.localSimLedger,
     pnlSource: 'ashare_local_sim_account',
     pnlCurrency: 'CNY',
-    realizedPnl: 0,
-    unrealizedPnl: ashareAccount.accountTotalPnl,
+    realizedPnl: ashareAccount.accountRealizedPnl ?? 0,
+    unrealizedPnl: ashareAccount.accountUnrealizedPnl ?? ashareAccount.accountTotalPnl,
     ashareAccount,
     updatedAt: generatedAt,
   }
 }
 
-async function readAShareTierSummaries(
-  projectRoot: string,
+function readAShareTierSummaries(
   generatedAt: string,
   mainAccount?: PortfolioSummary['ashareAccount'],
-): Promise<AShareTierSummary[] | undefined> {
+): AShareTierSummary[] | undefined {
   const summaries: AShareTierSummary[] = []
   if (mainAccount) {
     summaries.push({
       account: 'ashare_server_sim',
-      label: '20万主账户',
+      label: `${Math.round((mainAccount.accountEquity - mainAccount.accountTotalPnl) / 10_000)}万主账户`,
       capital: roundMoney(mainAccount.accountEquity - mainAccount.accountTotalPnl),
       totalPnl: mainAccount.accountTotalPnl,
       returnPct: mainAccount.accountReturnPct,
@@ -678,37 +684,6 @@ async function readAShareTierSummaries(
       cashAvailable: mainAccount.cashAvailable,
       tradeCount: mainAccount.totalSampleCount,
       source: tradingAgentReadModelSources.localSimLedger,
-      updatedAt: generatedAt,
-    })
-  }
-
-  const tierManifest = asRecord(await readOptionalJson(join(projectRoot, 'shared/review/ashare/tier_experiments_latest.json')))
-  const accounts = Array.isArray(tierManifest.accounts) ? tierManifest.accounts : []
-  for (const raw of accounts) {
-    const account = asRecord(raw)
-    const accountName = String(account.account ?? '')
-    const capital = parseFiniteNumber(account.capital as number | string | undefined) ?? 0
-    if (!accountName || capital <= 0) continue
-    const pnlPayload = asRecord(await readOptionalJson(join(projectRoot, 'shared/logs/local_sim_tiers', accountName, 'local_sim_pnl.json')))
-    const accountPnl = asRecord(pnlPayload[accountName]) as LocalSimAccountPnl | undefined
-    const totalPnl = parseFiniteNumber(accountPnl?.total_pnl) ?? 0
-    const marketValue = parseFiniteNumber(accountPnl?.market_value) ?? 0
-    const cashAvailable = parseFiniteNumber(accountPnl?.cash_available) ?? 0
-    const returnPct = capital > 0 ? roundMetric((totalPnl / capital) * 100) : 0
-    const tradeCount = Math.max(
-      0,
-      Math.trunc(parseFiniteNumber(accountPnl?.total_trades ?? account.trade_count as number | string | undefined) ?? 0),
-    )
-    summaries.push({
-      account: accountName,
-      label: `${Math.round(capital / 10_000)}万档位`,
-      capital,
-      totalPnl: roundMoney(totalPnl),
-      returnPct,
-      marketValue: roundMoney(marketValue),
-      cashAvailable: roundMoney(cashAvailable),
-      tradeCount,
-      source: tradingAgentReadModelSources.ashareTierExperiments,
       updatedAt: generatedAt,
     })
   }
@@ -850,9 +825,15 @@ async function buildMarketSummaries({
       pnlAmount: hasMeaningfulPnl && pnlAmount !== undefined ? roundMoney(pnlAmount) : undefined,
       pnlCurrency: 'CNY',
       returnPct,
-      maxDrawdownPct: performanceSummary ? roundMetric(Math.abs(performanceSummary.maxDrawdown)) : undefined,
-      realizedPnl: performanceSummary ? roundMoney(performanceSummary.realizedPnl) : undefined,
-      unrealizedPnl: performanceSummary ? roundMoney(performanceSummary.unrealizedPnl) : undefined,
+      maxDrawdownPct: ashareAccount
+        ? roundMetric(Math.max(0, -ashareAccount.accountReturnPct))
+        : performanceSummary ? roundMetric(Math.abs(performanceSummary.maxDrawdown)) : undefined,
+      realizedPnl: ashareAccount
+        ? ashareAccount.accountRealizedPnl ?? 0
+        : performanceSummary ? roundMoney(performanceSummary.realizedPnl) : undefined,
+      unrealizedPnl: ashareAccount
+        ? ashareAccount.accountUnrealizedPnl ?? ashareAccount.accountTotalPnl
+        : performanceSummary ? roundMoney(performanceSummary.unrealizedPnl) : undefined,
       latestAt,
       source: styleSummary?.source ?? (performanceSummary ? tradingAgentReadModelSources.performanceTracker : isAshare && ashareAccount ? tradingAgentReadModelSources.localSimLedger : tradingAgentReadModelSources.simLedger),
       headline: healthSummary ? buildHealthAwareHeadline(market, healthSummary, baseHeadline) : baseHeadline,

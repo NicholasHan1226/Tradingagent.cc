@@ -2254,7 +2254,7 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
-  it('exposes A-share main and capital-tier summaries for dashboard comparison', async () => {
+  it('shows only the current A-share main account and ignores historical tier ledgers', async () => {
     const root = await createWorkspace()
     const ashareReview = join(root, 'TradingAgent/shared/review/ashare')
     const tiersRoot = join(root, 'TradingAgent/shared/logs/local_sim_tiers')
@@ -2319,27 +2319,61 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T12:00:00.000Z'),
     })
 
-    expect(snapshot.ashareTierSummaries).toHaveLength(3)
+    expect(snapshot.ashareTierSummaries).toHaveLength(1)
     expect(snapshot.ashareTierSummaries?.[0]).toMatchObject({
       account: 'ashare_server_sim',
+      label: '20万主账户',
       capital: 200_000,
       totalPnl: 1_200,
       returnPct: 0.6,
       tradeCount: 5,
     })
-    expect(snapshot.ashareTierSummaries?.[1]).toMatchObject({
-      account: 'ashare_50000',
-      capital: 50_000,
-      totalPnl: 300,
-      returnPct: 0.6,
-      tradeCount: 3,
+  })
+
+  it('uses the current A-share account for realized and unrealized PnL instead of stale style performance', async () => {
+    const root = await createWorkspace()
+    const localSimDir = join(root, 'TradingAgent/shared/logs/local_sim')
+    const reviewDir = join(root, 'TradingAgent/shared/review/ashare')
+    await mkdir(localSimDir, { recursive: true })
+    await mkdir(reviewDir, { recursive: true })
+    await writeFile(
+      join(localSimDir, 'local_sim_pnl.json'),
+      JSON.stringify({
+        ashare_sim: {
+          cash_available: 50_000,
+          market_value: 0,
+          realized_pnl: 0,
+          unrealized_pnl: 0,
+          total_pnl: 0,
+          positions: {},
+        },
+      }),
+    )
+    await writeFile(join(localSimDir, 'local_sim_trades.jsonl'), '')
+    await writeFile(
+      join(reviewDir, 'style_performance.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        style_name: 'legacy_style',
+        total_pnl: -65.69,
+        realized_pnl: 0,
+        unrealized_pnl: -65.69,
+        trades: 3,
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-11T04:00:00.000Z'),
     })
-    expect(snapshot.ashareTierSummaries?.[2]).toMatchObject({
-      account: 'ashare_100000',
-      capital: 100_000,
-      totalPnl: 700,
-      returnPct: 0.7,
-      tradeCount: 4,
+    const ashare = snapshot.marketSummaries?.find((summary) => summary.market === 'A-share')
+
+    expect(ashare).toMatchObject({
+      capitalBase: 50_000,
+      pnlAmount: 0,
+      realizedPnl: 0,
+      unrealizedPnl: 0,
     })
   })
 

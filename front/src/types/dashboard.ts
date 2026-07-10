@@ -121,6 +121,8 @@ export type AShareAccountSummary = {
   marketValue: number
   accountEquity: number
   accountTotalPnl: number
+  accountRealizedPnl?: number
+  accountUnrealizedPnl?: number
   accountReturnPct: number
   openPositionCount: number
   totalSampleCount: number
