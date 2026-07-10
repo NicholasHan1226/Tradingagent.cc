@@ -519,7 +519,8 @@ export async function readTradingAgentSnapshot({
   const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt)
   const ashareTierSummaries = readAShareTierSummaries(generatedAt, ashareAccount)
   const ashareNoTradeExplanation = await readLatestAShareNoTradeExplanation(projectRoot, now)
-  const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
+  const rawAShareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
+  const ashareResearchEvidence = alignAShareResearchCapital(rawAShareResearchEvidence, ashareAccount)
   const ashareForwardValidation = await readAShareForwardValidation(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareForwardValidation))
   const cnFuturesReplayEvidence = await readCNFuturesReplayEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.cnFuturesReplay))
   const equityPerformance = ashareAccount && isAShareLegacyEquitySummary(equityPortfolio.summary) ? [] : equityPortfolio.performance
@@ -1559,6 +1560,33 @@ async function readAShareResearchEvidence(path: string): Promise<AShareResearchE
     }
   } catch {
     return undefined
+  }
+}
+
+function alignAShareResearchCapital(
+  evidence: AShareResearchEvidence | undefined,
+  account: PortfolioSummary['ashareAccount'] | undefined,
+): AShareResearchEvidence | undefined {
+  if (!evidence || !account) return evidence
+
+  const capitalBase = roundMoney(account.accountEquity - account.accountTotalPnl)
+  const legacyBudget = evidence.styleEvidence.summary.virtualCapital
+  const legacyAllocated = evidence.styleEvidence.summary.allocatedCapital
+  const allocationRatio = legacyBudget && legacyBudget > 0
+    ? Math.min(1, Math.max(0, (legacyAllocated ?? 0) / legacyBudget))
+    : 0
+  const allocatedCapital = roundMoney(capitalBase * allocationRatio)
+
+  return {
+    ...evidence,
+    styleEvidence: {
+      summary: {
+        ...evidence.styleEvidence.summary,
+        virtualCapital: capitalBase,
+        allocatedCapital,
+        unallocatedCapital: roundMoney(capitalBase - allocatedCapital),
+      },
+    },
   }
 }
 

@@ -2361,6 +2361,25 @@ describe('TradingAgent snapshot reader', () => {
         trades: 3,
       }) + '\n',
     )
+    await writeFile(
+      join(reviewDir, 'research_evidence_latest.json'),
+      JSON.stringify({
+        generated_at: '2026-07-10T15:30:00+08:00',
+        trade_date: '20260710',
+        read_only: true,
+        opening_auction: {},
+        closing_momentum: {},
+        reverse_repo: {},
+        style_evidence: {
+          summary: {
+            styles: 7,
+            virtual_capital: 200_000,
+            allocated_capital: 120_000,
+            unallocated_capital: 80_000,
+          },
+        },
+      }),
+    )
 
     const snapshot = await readTradingAgentSnapshot({
       workspaceRoot: root,
@@ -2376,6 +2395,11 @@ describe('TradingAgent snapshot reader', () => {
       unrealizedPnl: 0,
       tradeCount: 0,
       source: 'shared/logs/local_sim/local_sim_trades.jsonl',
+    })
+    expect(snapshot.ashareResearchEvidence?.styleEvidence.summary).toMatchObject({
+      virtualCapital: 50_000,
+      allocatedCapital: 30_000,
+      unallocatedCapital: 20_000,
     })
   })
 
