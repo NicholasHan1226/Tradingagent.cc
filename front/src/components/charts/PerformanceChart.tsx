@@ -9,11 +9,12 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import type { ChartEvent, Page, PerformancePoint, PerformanceRange } from '../../types/dashboard'
 import { slicePerformanceData } from '../../lib/dashboard'
 import { DRAWDOWN_LIMIT_PCT, TARGET_RETURN_PCT } from '../../lib/dashboardConstants'
 import { chartColors } from './chartConfig'
+import { ChartAccessibleSummary } from '../workbench/ChartAccessibleSummary'
 
 const RANGE_OPTIONS: Array<{ key: PerformanceRange; label: string }> = [
   { key: 'today', label: '今日' },
@@ -60,7 +61,9 @@ export function PerformanceChart({
   latestPoint,
   onSelectEvent,
   showRangeControls = false,
+  ariaLabel = '模拟盘收益曲线',
 }: {
+  ariaLabel?: string
   currentTone?: 'positive' | 'negative' | 'flat'
   data: PerformancePoint[]
   events?: ChartEvent[]
@@ -70,6 +73,7 @@ export function PerformanceChart({
   showRangeControls?: boolean
 }) {
   const [range, setRange] = useState<PerformanceRange>('all')
+  const summaryId = useId()
   const visibleData = useMemo(() => (showRangeControls ? slicePerformanceData(data, range) : data), [data, range, showRangeControls])
   const chartData = visibleData.length ? visibleData : data.slice(-1)
   const chartLatest = chartData[chartData.length - 1] ?? latestPoint
@@ -98,7 +102,11 @@ export function PerformanceChart({
     .filter((item): item is { event: ChartEvent; point: PerformancePoint } => item != null && item.point.quality !== 'outlier')
 
   return (
-    <div className={`chart-box hyper-chart-panel ${showRangeControls ? 'with-range-controls' : ''}`} style={{ height }}>
+    <div
+      className={`chart-box hyper-chart-panel ${showRangeControls ? 'with-range-controls' : ''}`}
+      style={{ height }}
+    >
+      <ChartAccessibleSummary id={summaryId} latest={chartLatest} pointCount={chartData.length} />
       {showRangeControls && (
         <div className="chart-panel-toolbar">
           <span>累计收益</span>
@@ -118,7 +126,8 @@ export function PerformanceChart({
           </div>
         </div>
       )}
-      <div className="chart-plot">
+      <div aria-describedby={summaryId} aria-label={ariaLabel} className="chart-visual" role="img">
+        <div className="chart-plot">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={plotData} margin={{ top: 10, right: 18, left: -8, bottom: 4 }}>
             <CartesianGrid stroke={chartColors.grid} vertical={false} />
@@ -180,17 +189,18 @@ export function PerformanceChart({
             <Line type="monotone" dataKey="opportunityPlot" stroke={chartColors.opportunity} strokeWidth={1.2} strokeDasharray="7 8" dot={false} isAnimationActive={false} />
           </LineChart>
         </ResponsiveContainer>
-      </div>
-      <div className="chart-legend">
-        <span><i className="cyan" />模拟盘</span>
-        <span><i className="amber" />目标</span>
-        <span><i className="muted" />市场基准</span>
-        <span><i className="red" />机会差</span>
-        {hasOutlierSegment && <span><i className="outlier" />口径跳变</span>}
-      </div>
-      {hasOutlierSegment && <div className="chart-quality-note">异常区间已弱化</div>}
-      <div className="chart-live-labels" aria-hidden="true">
-        <span className={`current ${currentTone}`}>{chartLatest.day} {formatCurrentValue(chartLatest.simulated, currentTone)}</span>
+        </div>
+        <div className="chart-legend">
+          <span><i className="cyan" />模拟盘</span>
+          <span><i className="amber" />目标</span>
+          <span><i className="muted" />市场基准</span>
+          <span><i className="red" />机会差</span>
+          {hasOutlierSegment && <span><i className="outlier" />口径跳变</span>}
+        </div>
+        {hasOutlierSegment && <div className="chart-quality-note">异常区间已弱化</div>}
+        <div className="chart-live-labels" aria-hidden="true">
+          <span className={`current ${currentTone}`}>{chartLatest.day} {formatCurrentValue(chartLatest.simulated, currentTone)}</span>
+        </div>
       </div>
       {eventPoints.length > 0 && (
         <div className="chart-event-bar" aria-label="收益关键节点">

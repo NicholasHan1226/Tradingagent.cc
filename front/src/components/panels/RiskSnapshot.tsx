@@ -19,7 +19,7 @@ export function RiskSnapshot({
 
   return (
     <section className="panel rail-panel">
-      <PanelTitle action="看风险" kicker="风险" onAction={() => setActivePage('风险')} title="边界是否安全" />
+      <PanelTitle action="风险详情" kicker="风险" onAction={() => setActivePage('风险')} title="风险边界状态" />
       <div className="risk-cards">
         <button className="risk-card red" onClick={() => setActivePage('风险')} type="button">
           <span>最大回撤</span>
@@ -29,7 +29,7 @@ export function RiskSnapshot({
         <button className="risk-card cyan" onClick={() => setActivePage('风险')} type="button">
           <span>已挡住</span>
           <strong>{blockedCount}</strong>
-          <em>{missedCount ? `${missedCount} 条需要复盘` : '暂无明显错过'}</em>
+          <em>{missedCount ? `${missedCount} 条已进入自动复盘` : '暂无明显错过'}</em>
         </button>
       </div>
     </section>

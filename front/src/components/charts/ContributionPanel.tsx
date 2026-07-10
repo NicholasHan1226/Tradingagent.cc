@@ -8,8 +8,13 @@ export function ContributionPanel({ signals }: { signals: SignalRow[] }) {
 
   return (
     <section className="panel rail-panel">
-      <PanelTitle kicker="赚钱原因" title="哪类判断贡献最大" />
-      <div className="bar-box">
+      <PanelTitle kicker="收益来源" title="收益贡献分布" />
+      {contributionData.length === 0 ? (
+        <div className="empty-panel-copy" aria-label="收益归因状态">
+          <strong>暂无可用收益归因</strong>
+          <span>产生带明确收益贡献的复盘记录后，这里再展示排名。</span>
+        </div>
+      ) : <div className="bar-box">
         <ResponsiveContainer width="100%" height={178}>
           <BarChart data={contributionData} layout="vertical" margin={{ top: 4, right: 18, bottom: 0, left: 24 }}>
             <CartesianGrid stroke={chartColors.grid} horizontal={false} />
@@ -23,7 +28,7 @@ export function ContributionPanel({ signals }: { signals: SignalRow[] }) {
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-      </div>
+      </div>}
     </section>
   )
 }
@@ -31,7 +36,8 @@ export function ContributionPanel({ signals }: { signals: SignalRow[] }) {
 function getContributionData(signals: SignalRow[]) {
   const byMethod = signals.reduce<Record<string, number>>((acc, signal) => {
     const method = signal.method || '其他'
-    acc[method] = (acc[method] ?? 0) + readImpact(signal.impact)
+    const impact = readImpact(signal.impact)
+    if (impact !== null && impact !== 0) acc[method] = (acc[method] ?? 0) + impact
     return acc
   }, {})
   const rows = Object.entries(byMethod)
@@ -39,12 +45,12 @@ function getContributionData(signals: SignalRow[]) {
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
     .slice(0, 5)
 
-  return rows.length ? rows : [{ name: '等待结果', value: 0 }]
+  return rows.filter((row) => row.value !== 0)
 }
 
 function readImpact(value: string) {
   const parsed = Number(value.replace('+', '').replace('%', '').trim())
-  return Number.isFinite(parsed) ? parsed : 0
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 export function ContributionTooltip({ active, payload, label }: any) {

@@ -4,13 +4,15 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-11 (A股证据门禁与 CNFutures 夜盘数据链生产验收)
+> 最后更新：2026-07-11 (生产验收与前端桌面只读工作台候选)
 
 ---
 
 ## 一、当前状态
 
 - **2026-07-11 生产验收**：TradingAgent 运行时代码已发布至 `deee254`，SharedSignals 供数层已发布至 `e54e5bd`。SharedSignals 修正 Sina 周五夜盘跨午夜时把下一交易日误写为自然 `bar_time` 的问题，并清理 2 条部署前错误行；`/realtime_5min?market=Futures` 现按最大自然 `bar_time` 返回批次，生产实测返回 3 个铜合约、最新 `2026-07-11 01:00:00`、`degraded=false`。TradingAgent CNFutures 查询、live check 和单市场健康均通过；模拟 wrapper 读取 `universe_count=3`，因仅 1 个独立品种而按规则进入 `observation_only / insufficient_distinct_product_coverage`，`filled_count=0`、`error_count=0`、PnL 为 0。开盘验收中的 CNFutures 子项通过；总验收仍因独立的 `tradingagent_health.json=critical` 失败，并有 US 模拟盘 warn，不能归因到期货链路。
+
+- **前端自动化观测台候选（2026-07-11）**：`front/` 已在隔离分支完成第二阶段重构，桌面结构和密度进一步对齐 Hyperliquid，但产品语义固定为全自动系统的只读观测台。主导航收口为 `总览 / 收益 / 过程 / 持仓 / 风险 / 复盘`，合并旧机会与决策页面；`AutomationObservatoryViewModel` 统一运行中、已完成、自动复盘和右轨优先级，右轨只展示过程、阶段、状态、证据和更新时间，不给人工下一步。主页由紧凑市场条、收益图、自动化状态右轨、五阶段过程带和 `运行中 / 持仓 / 已完成 / 自动复盘` blotter 组成；终态不回流运行中。`实盘` 仍进入独立只读门禁，不暴露执行控件；快照 API、队列、资金、策略和执行行为均未改变，移动端明确延期。本地已完成 25 个测试文件/128 项测试、lint、生产构建，以及 1440×900、1280×720 两档真实浏览器验收；无横向溢出、控制台无告警或错误、页面无“下一步/还差什么/需要复盘/当前机会”等人工决策文案。当前仍是候选状态，尚未合入主线、推送或同步生产。
 
 - **Crontab 合并安装器（2026-07-10 精简重构）**：`tools/merge_tradingagent_crontab.py` 采用单文件最小实现，仅剥离当前 crontab 中 `/opt/investment/tradingagent/` schedule 行，追加模板 TA schedule 行，不动 env/注释/空行/跨仓条目。默认 dry-run；`--apply` 备份 → 安装 → readback + coverage 验证，失败自动 rollback 并 readback 确认原文本恢复。`--current-file`/`--output` 文件模式不碰系统。空模板 fail-closed。**严禁**直接 `crontab shared/crontab.txt`。已通过 12 项关键用例（`tests/test_merge_tradingagent_crontab.py`）。
 

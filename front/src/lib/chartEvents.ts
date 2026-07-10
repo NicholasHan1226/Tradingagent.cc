@@ -11,7 +11,7 @@ export function deriveChartEvents(performance: PerformancePoint[], signals: Sign
     events.push({
       day: positive.day,
       title: '收益跃升',
-      targetPage: '决策',
+      targetPage: '过程',
       summary: `当日收益变化 +${positive.move.toFixed(2)}%`,
     })
   }
@@ -29,7 +29,7 @@ export function deriveChartEvents(performance: PerformancePoint[], signals: Sign
     events.push({
       day: latest.day,
       title: currentOpportunity.symbol,
-      targetPage: '机会',
+      targetPage: '过程',
       summary: currentOpportunity.reason,
     })
   }

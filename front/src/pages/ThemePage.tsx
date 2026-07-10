@@ -8,9 +8,8 @@ import { DecisionFormation } from '../components/panels/DecisionFormation'
 import { OpportunityFocus } from '../components/panels/OpportunityFocus'
 import { ResultSummary } from '../components/panels/ResultSummary'
 import { RiskSnapshot } from '../components/panels/RiskSnapshot'
-import { SignalDepth } from '../components/panels/SignalDepth'
 import { HoldingsTable } from '../components/tables/HoldingsTable'
-import { OpportunityTable } from '../components/tables/OpportunityTable'
+import { RunningProcessTable } from '../components/tables/RunningProcessTable'
 import { SignalTable } from '../components/tables/SignalTable'
 import { PanelTitle } from '../components/PanelTitle'
 import { PageSummaryBoard } from '../components/PageSummaryBoard'
@@ -32,7 +31,7 @@ export function ThemePage({
   signals,
   events,
 }: {
-  activePage: Exclude<Page, '主页'>
+  activePage: Exclude<Page, '总览'>
   activeMarket: Market
   data: PerformancePoint[]
   events: ChartEvent[]
@@ -53,7 +52,15 @@ export function ThemePage({
           <section className="panel tall-panel">
             <PanelTitle kicker="收益结果" title="模拟盘收益走势" />
             <StatusBoundary loading={<ChartSkeleton height={430} />} onRetry={onRetry} status={domainStatus('performance')}>
-              <PerformanceChart data={data} events={events} height={430} latestPoint={latestPoint} onSelectEvent={setActivePage} showRangeControls />
+              <PerformanceChart
+                currentTone={getPerformanceTone(latestPoint.simulated)}
+                data={data}
+                events={events}
+                height={430}
+                latestPoint={latestPoint}
+                onSelectEvent={setActivePage}
+                showRangeControls
+              />
             </StatusBoundary>
           </section>
         </section>
@@ -64,15 +71,19 @@ export function ThemePage({
     )
   }
 
-  if (activePage === '机会') {
+  if (activePage === '过程') {
     return (
       <div className="theme-layout single">
-        <PageSummaryBoard activeMarket={activeMarket} holdings={holdings} marketSummary={marketSummary} page="机会" performance={data} portfolio={portfolio} signals={signals} />
+        <PageSummaryBoard activeMarket={activeMarket} holdings={holdings} marketSummary={marketSummary} page="过程" performance={data} portfolio={portfolio} signals={signals} />
         <section className="panel">
-          <PanelTitle action="看交易复盘" kicker="当前机会" onAction={() => setActivePage('复盘')} title="当前可处理机会" />
-          <StatusBoundary emptyLabel="当前没有需要处理的机会" loading={<TableSkeleton rows={4} />} onRetry={onRetry} status={domainStatus('signals')}>
-            <OpportunityTable signals={getActionableSignals(signals)} />
+          <PanelTitle kicker="运行阶段" title="自动化过程" />
+          <StatusBoundary emptyLabel="当前没有运行中的自动过程" loading={<TableSkeleton rows={4} />} onRetry={onRetry} status={domainStatus('signals')}>
+            <RunningProcessTable signals={getActionableSignals(signals)} />
           </StatusBoundary>
+        </section>
+        <section className="panel">
+          <PanelTitle kicker="过程结果" title="从发现到结果写回" />
+          <DecisionFormation portfolio={portfolio} signals={signals} />
         </section>
       </div>
     )
@@ -93,26 +104,6 @@ export function ThemePage({
         <aside className="theme-rail">
           <AllocationPanel holdings={holdings} />
           <ResultSummary holdings={holdings} portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
-        </aside>
-      </div>
-    )
-  }
-
-  if (activePage === '决策') {
-    return (
-      <div className="theme-layout">
-        <section className="theme-main">
-          <PageSummaryBoard activeMarket={activeMarket} holdings={holdings} marketSummary={marketSummary} page="决策" performance={data} portfolio={portfolio} signals={signals} />
-          <section className="panel">
-            <PanelTitle action="看机会" kicker="结果路径" onAction={() => setActivePage('机会')} title="从机会到结果" />
-            <StatusBoundary loading={<ChartSkeleton height={300} />} onRetry={onRetry} status={domainStatus('decisions')}>
-              <DecisionFormation portfolio={portfolio} signals={signals} />
-            </StatusBoundary>
-          </section>
-        </section>
-        <aside className="theme-rail">
-          <SignalDepth signals={signals} />
-          <RiskSnapshot portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
         </aside>
       </div>
     )
@@ -142,11 +133,17 @@ export function ThemePage({
     <div className="theme-layout single">
       <PageSummaryBoard activeMarket={activeMarket} holdings={holdings} marketSummary={marketSummary} page="复盘" performance={data} portfolio={portfolio} signals={signals} />
       <section className="panel">
-        <PanelTitle kicker="已关闭机会" title="为什么赚，为什么没做" />
+        <PanelTitle kicker="已关闭过程" title="自动复盘归因" />
         <StatusBoundary emptyLabel="还没有已关闭机会" loading={<TableSkeleton rows={5} />} onRetry={onRetry} status={domainStatus('signals')}>
           <SignalTable signals={getClosedSignals(signals)} />
         </StatusBoundary>
       </section>
     </div>
   )
+}
+
+function getPerformanceTone(value: number) {
+  if (value < -0.005) return 'negative' as const
+  if (value > 0.005) return 'positive' as const
+  return 'flat' as const
 }

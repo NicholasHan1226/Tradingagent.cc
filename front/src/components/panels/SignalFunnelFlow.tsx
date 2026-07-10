@@ -2,23 +2,25 @@ import type { CSSProperties } from 'react'
 import { getSignalFunnel } from '../../lib/dashboard'
 import type { FunnelEvent, HoldingRow, SignalRow } from '../../types/dashboard'
 
-const OUTCOME_LABELS = ['成交', '观察中', '复盘', '放弃']
+const OUTCOME_LABELS = ['结果写回', '自动等待', '自动复盘', '安全拦截']
 const MAX_ANIMATED_SIGNALS = 64
 const MAX_VISIBLE_LABELS = 3
 const FLOW_STAGES = [
   { eventStage: '发现', fallbackIndex: 0, label: '发现' },
-  { eventStage: '研判', fallbackIndex: 1, label: '研判' },
+  { eventStage: '研判', fallbackIndex: 1, label: '研究' },
   { eventStage: '风控', fallbackIndex: 2, label: '风控' },
-  { eventStage: '待确认', fallbackIndex: 3, label: '确认' },
-  { eventStage: '结果', fallbackIndex: 4, label: '成交' },
+  { eventStage: '待确认', fallbackIndex: 3, label: '模拟执行' },
+  { eventStage: '结果', fallbackIndex: 4, label: '结果写回' },
 ] as const
 
 export function SignalFunnelFlow({
+  compact = false,
   events,
   hasSignalData,
   holdings,
   signals,
 }: {
+  compact?: boolean
   events: FunnelEvent[]
   hasSignalData: boolean
   holdings: HoldingRow[]
@@ -53,28 +55,28 @@ export function SignalFunnelFlow({
     : getBottleneck(visualStages.map((stage) => ({ label: stage.label, count: stage.count })))
   const hasEventSource = queueEvents.length > 0
   const eventCaption = eventFlow
-      ? `${eventFlow.total} 个机会进入 · ${eventFlow.outcomes.executed} 个成交 · ${eventFlow.outcomes.abandoned} 个放弃`
-    : '等待新机会'
+      ? `${eventFlow.total} 条过程进入 · ${eventFlow.outcomes.executed} 条结果写回 · ${eventFlow.outcomes.abandoned} 条安全拦截`
+    : '等待下一轮调度'
   const caption = hasEventSource
     ? eventCaption
     : hasSignalData
     ? funnel.mode === 'screening' || hasStageDrop || hasTimingEvidence || funnel.executed.length !== signals.length
-      ? `${signals.length} 个进入 · ${funnel.tradeSignals.length} 个留下 · ${funnel.executed.length} 个成交`
-      : `${signals.length} 条历史结果 · 转化 ${passRate}%`
+      ? `${signals.length} 条过程进入 · ${funnel.tradeSignals.length} 条通过 · ${funnel.executed.length} 条结果写回`
+      : `${signals.length} 条历史结果 · 完成率 ${passRate}%`
     : holdings.length > 0
-      ? `0 个新机会 · ${holdings.length} 个持仓在跟踪`
-      : '等待新机会'
+      ? `运行空闲 · ${holdings.length} 个持仓继续盯市`
+      : '等待下一轮调度'
   const modeLabel = hasEventSource
-    ? '最新流动'
+    ? '实时运行'
     : funnel.mode === 'screening'
-    ? '筛选中'
+    ? '运行中'
     : funnel.mode === 'partial'
       ? '进行中'
       : funnel.mode === 'replay'
         ? '已完成'
         : hasHoldingContext
-          ? '暂无新机会'
-          : '等待'
+          ? '运行空闲'
+          : '空闲'
   const particles = hasEventSource
     ? buildEventParticles(pipelineEvents)
       : hasSignalData
@@ -92,8 +94,8 @@ export function SignalFunnelFlow({
   const finalStageCount = visualStages.at(-1)?.count ?? 0
   const conversionRate = Math.round((finalStageCount / firstStageCount) * 100)
   const hasFlowVolume = hasEventSource || hasSignalData || hasHoldingContext
-  const moduleTitle = '机会漏斗'
-  const captionText = hasHoldingContext ? caption : hasFlowVolume ? `${caption} · 转化 ${conversionRate}%` : caption
+  const moduleTitle = '自动化过程'
+  const captionText = hasHoldingContext ? caption : hasFlowVolume ? `${caption} · 完成率 ${conversionRate}%` : caption
   const flowSummary = getFlowSummary({
     bottleneck,
     conversionRate,
@@ -105,6 +107,43 @@ export function SignalFunnelFlow({
   })
   const lossRows = hasHoldingContext ? getHoldingLossRows(holdings) : getLossRows(visualStages)
   const railRows = getRailRows(visualStages, outcomeRows)
+  const compactReviewLabel = hasHoldingContext ? '当前没有运行中的自动过程' : flowSummary.label
+  const compactReviewValue = hasHoldingContext ? `${holdings.length} 个持仓继续跟踪` : flowSummary.value
+  const compactReviewDetail = hasHoldingContext && holdingSummary
+    ? getHoldingStateLabel(holdings, holdingSummary)
+    : flowSummary.detail
+
+  if (compact) {
+    return (
+      <section className="signal-flow-module compact-flow" aria-label={moduleTitle}>
+        <div className="compact-flow-head">
+          <span>{moduleTitle} <b>{modeLabel}</b></span>
+          <strong>{captionText}</strong>
+        </div>
+        <div className="compact-flow-stages" aria-label="自动化阶段摘要">
+          {visualStages.map((stage, index) => (
+            <span className={stage.dropped > 0 ? 'has-drop' : ''} key={`${stage.label}-compact`}>
+              <em>{stage.label}</em>
+              <strong>{stage.count}</strong>
+              <i style={{ '--stage-fill': `${stageWidths[index]}%` } as CSSProperties} />
+            </span>
+          ))}
+        </div>
+        <div className="compact-flow-review">
+          <span>{compactReviewLabel}</span>
+          <strong>{compactReviewValue}</strong>
+          <em>{compactReviewDetail}</em>
+          {latestTapeItems.length > 0 && (
+            <div aria-label="最近管道事件">
+              {latestTapeItems.slice(0, 2).map((item) => (
+                <b className={item.className} key={item.id}>{item.symbol} · {item.label}</b>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section className="signal-flow-module" aria-label={moduleTitle}>
@@ -116,7 +155,7 @@ export function SignalFunnelFlow({
         {hasHoldingContext && holdingSummary ? (
           <div className="holding-flow-monitor" role="img" aria-label="当前持仓跟踪状态">
             <div className="holding-monitor-head">
-              <span>当前没有新机会进入</span>
+              <span>当前没有运行中的自动过程</span>
               <strong>{holdings.length} 个持仓继续跟踪</strong>
             </div>
             <div className="holding-monitor-metrics">
@@ -149,7 +188,7 @@ export function SignalFunnelFlow({
           </div>
         ) : hasFlowVolume ? (
           <>
-            <div className="flow-stage-strip" aria-label="机会筛选阶段摘要">
+            <div className="flow-stage-strip" aria-label="自动化阶段摘要">
               {visualStages.map((stage, index) => (
                 <span className={stage.dropped > 0 ? 'has-drop' : ''} key={`${stage.label}-summary`}>
                   <em>{stage.label}</em>
@@ -158,7 +197,7 @@ export function SignalFunnelFlow({
                 </span>
               ))}
             </div>
-            <div className="real-funnel-body" role="img" aria-label="机会从发现到交易结果的动态筛选漏斗">
+            <div className="real-funnel-body" role="img" aria-label="自动过程从发现到结果写回的运行路径">
               <div className="real-funnel-rulers" aria-hidden="true">
                 {visualStages.map((stage, index) => (
                   <i key={stage.label} style={{ left: `${index * 20}%` }} />
@@ -270,7 +309,7 @@ export function SignalFunnelFlow({
             </div>
             <span>空闲状态</span>
             <strong>{hasHoldingContext ? '持仓跟踪中' : '管道空闲'}</strong>
-            <p>{hasHoldingContext ? `${holdings.length} 个持仓继续跟踪，暂时没有新的可处理机会。` : '机会进入后，会按发现、研究、风控和待确认顺序流动。'}</p>
+            <p>{hasHoldingContext ? `${holdings.length} 个持仓继续盯市，当前自动流程空闲。` : '自动流程按发现、研究、风控、模拟执行和结果写回顺序运行。'}</p>
             {hasHoldingContext && holdingSummary && (
               <div className="holding-context-strip" aria-label="持仓跟踪状态">
                 <span><b>{holdings.length}</b>持仓</span>
@@ -316,23 +355,23 @@ function getFlowSummary({
 }) {
   if (hasHoldingContext) {
     return {
-      detail: '等待下一条机会进入',
-      label: '管道状态',
-      value: '持仓跟踪',
+      detail: '等待下一轮自动调度',
+      label: '自动化状态',
+      value: '持仓盯市',
     }
   }
 
   if (hasEventSource && eventFlow) {
     return {
       detail: bottleneck,
-      label: '本轮机会',
-      value: `${eventFlow.outcomes.executed}/${eventFlow.total} 成交`,
+      label: '本轮过程',
+      value: `${eventFlow.outcomes.executed}/${eventFlow.total} 写回`,
     }
   }
 
   return {
     detail: bottleneck,
-    label: '筛选保留',
+    label: '过程吞吐',
     value: `${finalStageCount}/${firstStageCount} · ${conversionRate}%`,
   }
 }
@@ -474,10 +513,10 @@ function getEventFlow(events: FunnelEvent[]): EventFlow | null {
     total: signals.length,
     stages: {
       发现: signals.filter((rows) => hasStage(rows, '发现')).length,
-      研判: signals.filter((rows) => hasStage(rows, '研判')).length,
+      研究: signals.filter((rows) => hasStage(rows, '研判')).length,
       风控: signals.filter((rows) => hasStage(rows, '风控')).length,
-      确认: signals.filter((rows) => hasStage(rows, '待确认')).length,
-      成交: terminalRows.filter((event) => event.status === '成交').length,
+      模拟执行: signals.filter((rows) => hasStage(rows, '待确认')).length,
+      结果写回: terminalRows.filter((event) => event.status === '成交').length,
     },
     outcomes: {
       executed: terminalRows.filter((event) => event.status === '成交').length,
@@ -527,8 +566,8 @@ function eventStageWidth(count = 0, total: number) {
 function getEventStageHint(label: string, count: number, total: number, dropped: number) {
   if (count <= 0) return '等待'
   if (label === '发现') return '进入'
-  if (label === '确认') return '准备'
-  if (label === '成交') return '兑现'
+  if (label === '模拟执行') return '执行'
+  if (label === '结果写回') return '完成'
   if (dropped > 0) return `留下 ${count}`
   return `${Math.round((count / Math.max(1, total)) * 100)}%`
 }
@@ -545,7 +584,7 @@ function getRailRows(stages: Array<{ count: number; dropped: number; label: stri
 }
 
 function getBottleneck(stages: { label: string; count: number }[]) {
-  if (!stages.length || stages[0].count === 0) return '等待机会进入'
+  if (!stages.length || stages[0].count === 0) return '等待下一轮自动调度'
   const drops = stages.slice(1).map((stage, index) => ({
     from: stages[index].label,
     to: stage.label,
@@ -553,7 +592,7 @@ function getBottleneck(stages: { label: string; count: number }[]) {
   }))
   const biggest = drops.sort((a, b) => b.drop - a.drop)[0]
   if (!biggest || biggest.drop === 0) return '当前全部通过'
-  return `${biggest.from}→${biggest.to} 筛掉 ${biggest.drop} 条`
+  return `${biggest.from}→${biggest.to} 阻塞 ${biggest.drop} 条`
 }
 
 function getDropHeight(drop: number, total: number) {

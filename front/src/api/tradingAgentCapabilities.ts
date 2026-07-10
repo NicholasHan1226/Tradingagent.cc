@@ -12,14 +12,14 @@ export type TradingAgentCapability = {
 export const tradingAgentCapabilities: TradingAgentCapability[] = [
   {
     id: 'signals',
-    display: '当前机会',
+    display: '自动运行过程',
     status: 'ready',
-    dashboardSurface: '机会页 / 收益图事件',
+    dashboardSurface: '过程页 / 收益图事件',
     readableSources: [
       'signals/{pending,claimed,running}/*.json',
       'signals/{filled,cancelled,expired,failed,partial}/*.json',
     ],
-    note: '信号队列现在已经有真实文件，可只读展示机会、状态、有效期和下一步；claimed/running 会作为活跃机会显示。',
+    note: '信号队列已有真实文件，可只读展示自动过程、状态、阶段与证据；claimed/running 会作为运行中过程显示。',
   },
   {
     id: 'positions',
@@ -39,11 +39,11 @@ export const tradingAgentCapabilities: TradingAgentCapability[] = [
   },
   {
     id: 'decisions',
-    display: '决策结果',
+    display: '过程结果',
     status: 'partial',
-    dashboardSurface: '决策页漏斗 / 复盘页',
+    dashboardSurface: '过程页完成漏斗 / 复盘页',
     readableSources: ['shared/review/daily/daily_brief.jsonl', 'shared/review/attribution/strategy_attribution.jsonl', 'shared/review/strategies/strategy_version.jsonl'],
-    note: '决策页先展示从信号到结果的聚合；归因 JSONL 已声明但尚未进入 snapshot 构建。',
+    note: '过程页展示从发现到结果写回的聚合；归因 JSONL 已声明但尚未进入 snapshot 构建。',
   },
   {
     id: 'risk',

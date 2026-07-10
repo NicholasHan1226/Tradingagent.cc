@@ -21,24 +21,74 @@ describe('App navigation and result-first dashboard', () => {
     })
   }
 
-  it('renders the homepage around return, funnel, and chart without system wording', () => {
+  it('uses six result-and-process destinations without decision pages', () => {
+    render(<App />)
+
+    const navigation = screen.getByRole('navigation', { name: '主导航' })
+    expect(within(navigation).getAllByRole('button')).toHaveLength(6)
+    expect(within(navigation).getByRole('button', { name: '总览' })).toBeInTheDocument()
+    expect(within(navigation).getByRole('button', { name: '过程' })).toBeInTheDocument()
+    expect(within(navigation).queryByRole('button', { name: '机会' })).not.toBeInTheDocument()
+    expect(within(navigation).queryByRole('button', { name: '决策' })).not.toBeInTheDocument()
+
+    const marketHeader = screen.getByRole('region', { name: '市场与账户' })
+    expect(within(marketHeader).getByText('运行中').parentElement).toHaveTextContent('1')
+    expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('4')
+  })
+
+  it('renders the homepage around return, automated process, and chart without decision wording', () => {
     render(<App />)
 
     expect(screen.getByLabelText('收益结果')).toBeInTheDocument()
-    expect(screen.getByLabelText('机会漏斗')).toBeInTheDocument()
+    expect(screen.getByLabelText('自动化过程')).toBeInTheDocument()
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
+    const marketHeader = screen.getByRole('region', { name: '市场与账户' })
+    expect(within(marketHeader).getByText('运行中').parentElement).toHaveTextContent('1')
+    expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('4')
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('确认').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('模拟执行').length).toBeGreaterThan(0)
     expect(screen.queryByRole('tablist', { name: '收益区间' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '机会从全市场进入，只把可执行结果留在首页。' })).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '正在推进' })).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: '当前运行' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '本轮结果' })).not.toBeInTheDocument()
     expect(screen.queryByText('现在判断')).not.toBeInTheDocument()
     expect(screen.queryByText('看决策')).not.toBeInTheDocument()
-    expect(screen.queryByText('总览')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '总览' })).toBeInTheDocument()
+  })
+
+  it('renders one continuous workbench with chart, review rail, and blotter', () => {
+    render(<App />)
+
+    const workbench = screen.getByRole('region', { name: '交易工作台' })
+    expect(within(workbench).getByRole('region', { name: '收益与目标' })).toBeInTheDocument()
+    expect(within(workbench).getByRole('complementary', { name: '当前运行' })).toBeInTheDocument()
+    expect(within(workbench).getByRole('tablist', { name: '工作台明细' })).toBeInTheDocument()
+    expect(screen.getAllByRole('region', { name: '交易工作台' })).toHaveLength(1)
+
+    const chart = within(workbench).getByRole('img', { name: '模拟盘收益曲线' })
+    expect(chart).toHaveAttribute('aria-describedby')
+    expect(within(chart).queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('gates live mode without exposing execution controls', () => {
+    render(<App />)
+
+    const marketHeader = screen.getByRole('region', { name: '市场与账户' })
+    click(screen.getByRole('tab', { name: '实盘' }))
+
+    expect(screen.getByRole('region', { name: '实盘接入状态' })).toHaveTextContent('实盘待接入')
+    expect(screen.getAllByText('模拟盘参考')).toHaveLength(2)
+    expect(within(marketHeader).getByText('当前收益').parentElement).toHaveTextContent('待接入')
+    expect(within(marketHeader).getByText('模拟盘参考')).toBeInTheDocument()
+    expect(screen.queryByText('market_data_missing')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /买|卖|下单|确认交易/ })).not.toBeInTheDocument()
+
+    click(screen.getByRole('button', { name: '收益' }))
+    expect(screen.getByRole('region', { name: '实盘接入状态' })).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: '模拟盘收益曲线' })).not.toBeInTheDocument()
   })
 
   it('replaces demo signals with TradingAgent snapshot signals when the local API is available', async () => {
@@ -96,7 +146,8 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText(/2 个进入 · 2 个留下 · 0 个成交/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('complementary', { name: '当前运行' })).toHaveTextContent('0700.HK'))
+    click(screen.getByRole('tab', { name: '自动复盘 1' }))
     expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
   })
 
@@ -129,9 +180,10 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getByText('等待收益写入')).toBeInTheDocument())
-    expect(screen.getAllByText('暂无机会结果').length).toBeGreaterThan(0)
-    expect(screen.getByRole('heading', { name: '等待机会' })).toBeInTheDocument()
+    expect(screen.getAllByText('当前没有运行中的自动过程').length).toBeGreaterThan(0)
+    expect(screen.getByRole('heading', { name: '当前没有运行中的自动任务' })).toBeInTheDocument()
     expect(screen.queryByText(/等待新机会 · 转化 0%/)).not.toBeInTheDocument()
+    click(screen.getByRole('tab', { name: '持仓 0' }))
     expect(screen.getByText('暂无持仓记录')).toBeInTheDocument()
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
   })
@@ -211,12 +263,12 @@ describe('App navigation and result-first dashboard', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getAllByText('总资产')).not.toHaveLength(0))
-    expect(screen.getAllByText('机会漏斗').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('自动化过程').length).toBeGreaterThan(0)
     expect(screen.getAllByText('持仓跟踪').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('当前没有新机会进入').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('当前没有运行中的自动过程').length).toBeGreaterThan(0)
     expect(screen.getAllByText('1 个持仓继续跟踪').length).toBeGreaterThan(0)
     expect(screen.getAllByText('承压').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('暂无新机会').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('运行空闲').length).toBeGreaterThan(0)
     expect(screen.queryByText(/0 个新机会 · 1 个持仓在跟踪 · 转化/)).not.toBeInTheDocument()
     expect(screen.queryByText(/暂无新信号进入/)).not.toBeInTheDocument()
     expect(screen.getAllByText('¥19.99万').length).toBeGreaterThan(0)
@@ -224,6 +276,71 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText(/可复盘/).length).toBeGreaterThan(0)
     expect(screen.getAllByText('0/13').length).toBeGreaterThan(0)
     expect(screen.queryByText(/可复盘 0\/13 · 链路验证 13/)).not.toBeInTheDocument()
+  })
+
+  it('keeps the returns page chart summary aligned with the all-market headline', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            mode: 'simulated',
+            generatedAt: '2026-07-11T09:00:00.000Z',
+            domains: {
+              performance: { status: 'ready', updatedAt: '2026-07-11T09:00:00.000Z' },
+              signals: { status: 'empty', updatedAt: '2026-07-11T09:00:00.000Z' },
+              holdings: { status: 'empty', updatedAt: '2026-07-11T09:00:00.000Z' },
+              decisions: { status: 'empty', updatedAt: '2026-07-11T09:00:00.000Z' },
+              risk: { status: 'ready', updatedAt: '2026-07-11T09:00:00.000Z' },
+            },
+            performance: [{ day: '现在', simulated: -0.03, target: 8, benchmark: 0, opportunity: 0 }],
+            portfolio: {
+              pnlAmount: -65,
+              returnPct: -0.03,
+              capitalBase: 200000,
+              targetPct: 8,
+              maxDrawdownPct: 0,
+              tradeCount: 5,
+              pointCount: 1,
+              source: 'account',
+              pnlCurrency: 'CNY',
+              updatedAt: '2026-07-11T09:00:00.000Z',
+            },
+            marketSummaries: [{
+              market: 'A-share',
+              status: 'ready',
+              runtimeState: 'normal',
+              holdingCount: 3,
+              signalCount: 0,
+              tradeCount: 3,
+              styleCount: 1,
+              capitalBase: 200000,
+              pnlAmount: 6931,
+              pnlCurrency: 'CNY',
+              returnPct: 3.47,
+              maxDrawdownPct: 0,
+              source: 'market-summary',
+              headline: 'A股',
+              detail: 'A股结果',
+            }],
+            holdings: [],
+            signals: [],
+            funnelEvents: [],
+            sourceRefs: tradingAgentReadModelSources,
+          }),
+          { status: 200 },
+        ),
+      ),
+    )
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getAllByText('+3.47%').length).toBeGreaterThan(0))
+    click(screen.getByRole('button', { name: '收益' }))
+
+    expect(screen.getByRole('img', { name: '模拟盘收益曲线' })).toBeInTheDocument()
+    expect(screen.getByLabelText('收益曲线摘要')).toHaveTextContent('当前收益 +3.47%')
+    expect(screen.queryByText('当前收益 -0.03%')).not.toBeInTheDocument()
   })
 
   it('shows return range controls on the returns page only', () => {
@@ -373,7 +490,6 @@ describe('App navigation and result-first dashboard', () => {
     click(screen.getByRole('button', { name: 'A股' }))
     click(screen.getByRole('menuitem', { name: /加密/ }))
 
-    expect(screen.getAllByText('等待机会').length).toBeGreaterThan(0)
     expect(screen.getByText('加密正在等更好的入场条件')).toBeInTheDocument()
     expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
@@ -445,67 +561,68 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getAllByText('600519.SH').length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getByLabelText('最近管道事件')).toBeInTheDocument())
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('研判').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('研究').length).toBeGreaterThan(0)
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('确认').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('成交').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('放弃').length).toBeGreaterThan(0)
-    expect(screen.getByLabelText('最近管道事件')).toBeInTheDocument()
-    expect(screen.getAllByText('600519.SH').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('模拟执行').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('结果写回').length).toBeGreaterThan(0)
+    expect(screen.getByText(/1 条安全拦截/)).toBeInTheDocument()
+    expect(screen.getByLabelText('最近管道事件')).toHaveTextContent('600519.SH')
   })
 
-  it('switches the return card between simulated and reserved live mode in place', () => {
+  it('switches from the return card into the dedicated live gate and back', () => {
     render(<App />)
 
+    click(screen.getByRole('tab', { name: '已完成 4' }))
     const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'true')
-    expect(within(card).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'false')
-    expect(within(card).getAllByText('等待接入').length).toBeGreaterThan(0)
-    expect(within(card).getByText('接入完成后，这里会切换为真实账户的收益、回撤和持仓结果。')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '实盘接入状态' })).toHaveTextContent('实盘待接入')
+    click(screen.getByRole('button', { name: '返回模拟盘' }))
+    expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '已完成 4' })).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('shows actionable opportunity summary before the opportunity table', () => {
+  it('shows the automated process summary before the running process table', () => {
     render(<App />)
 
-    click(screen.getByRole('button', { name: '机会' }))
+    click(screen.getByRole('button', { name: '过程' }))
 
-    expect(screen.getByRole('heading', { name: '当前可处理机会' })).toBeInTheDocument()
-    expect(screen.getByText('可处理机会')).toBeInTheDocument()
-    expect(screen.getByText('预期机会')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '自动化过程' })).toBeInTheDocument()
+    expect(screen.getByLabelText('自动运行过程表')).toBeInTheDocument()
+    expect(within(screen.getByLabelText('过程摘要')).getByText('运行中')).toBeInTheDocument()
     expect(screen.getByText('BTC-USD')).toBeInTheDocument()
     expect(screen.getByText('IF2601.CFFEX')).toBeInTheDocument()
   })
 
-  it('keeps the reserved live state inside the return card', () => {
+  it('keeps the reserved live state inside the workbench rather than a dialog', () => {
     render(<App />)
 
     const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
-    expect(within(card).getAllByText('等待接入').length).toBeGreaterThan(0)
+    expect(screen.getByRole('region', { name: '实盘接入状态' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('收益结果')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '实盘接入状态' })).not.toBeInTheDocument()
   })
 
-  it('links a chart event marker to the related decision view', () => {
+  it('links a chart event marker to the related process view', () => {
     render(<App />)
 
-    click(screen.getByRole('button', { name: '查看 5月28日 决策' }))
+    click(screen.getByRole('button', { name: '查看 5月28日 过程' }))
 
-    expect(screen.getByText('决策影响收益')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '从机会到结果' })).toBeInTheDocument()
+    expect(screen.getByLabelText('过程摘要')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '从发现到结果写回' })).toBeInTheDocument()
   })
 
-  it('renders decision formation as a funnel with drop-off rates', () => {
+  it('renders automated process completion as a funnel with drop-off rates', () => {
     render(<App />)
 
-    click(screen.getByRole('button', { name: '决策' }))
+    click(screen.getByRole('button', { name: '过程' }))
 
-    expect(screen.getAllByText('机会通过').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('过程完成').length).toBeGreaterThan(0)
     expect(screen.getByText('未通过 33.3%')).toBeInTheDocument()
-    expect(screen.getByText('33% 已兑现')).toBeInTheDocument()
+    expect(screen.getByText('33% 已写回')).toBeInTheDocument()
   })
 })

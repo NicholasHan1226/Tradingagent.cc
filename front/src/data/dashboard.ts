@@ -2,12 +2,12 @@ import type { DepthRow, HoldingRow, Market, Page, PageMeta, PerformancePoint, Si
 import type { ApiStatus, DashboardApiResponse } from '../api/types'
 
 export const markets: Market[] = ['All Markets', 'A-share', 'US', 'Crypto', 'PM', 'CNFutures']
-export const pages: Page[] = ['主页', '收益', '机会', '持仓', '决策', '风险', '复盘']
+export const pages: Page[] = ['总览', '收益', '过程', '持仓', '风险', '复盘']
 
 export const pageMeta: Record<Page, PageMeta> = {
-  主页: {
-    title: '全市场看板',
-    copy: '收益、机会、持仓和风险边界集中在一屏。',
+  总览: {
+    title: '自动化总览',
+    copy: '集中展示自动运行过程、结果、持仓和风险边界。',
     mode: '全市场',
   },
   收益: {
@@ -15,20 +15,15 @@ export const pageMeta: Record<Page, PageMeta> = {
     copy: '看清收益是否持续、主要靠什么、离目标和回撤边界还有多远。',
     mode: '收益',
   },
-  机会: {
-    title: '当前机会',
-    copy: '只展示现在还能处理的机会、还差什么、风险在哪里。',
-    mode: '机会',
+  过程: {
+    title: '自动化过程',
+    copy: '查看发现、研究、风控、模拟执行和结果写回。',
+    mode: '过程',
   },
   持仓: {
     title: '模拟盘持仓',
     copy: '关注每个持仓赚了多少、占多大、哪里需要留意。',
     mode: '持仓',
-  },
-  决策: {
-    title: '决策影响收益',
-    copy: '看研究、交易、风控、组合这些判断最后带来了什么。',
-    mode: '决策',
   },
   风险: {
     title: '风险边界',
@@ -36,8 +31,8 @@ export const pageMeta: Record<Page, PageMeta> = {
     mode: '风险',
   },
   复盘: {
-    title: '交易复盘',
-    copy: '看已关闭机会为什么赚、为什么没做、下次怎么改。',
+    title: '自动复盘',
+    copy: '查看已完成结果、归因、异常和自动校准记录。',
     mode: '复盘',
   },
 }

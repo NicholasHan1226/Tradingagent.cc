@@ -835,3 +835,162 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.compact-flow {
+  min-height: 88px;
+  display: grid;
+  grid-template-columns: 184px minmax(440px, 1fr) minmax(260px, 0.9fr);
+  align-items: stretch;
+  background: #050b0c;
+}
+
+.compact-flow-head,
+.compact-flow-review {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.compact-flow-head {
+  border-right: 1px solid var(--border-hairline);
+}
+
+.compact-flow-head span {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.compact-flow-head span b {
+  margin-left: 6px;
+  color: var(--state-amber);
+  font-size: 10px;
+}
+
+.compact-flow-head > strong {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-flow-stages {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.compact-flow-stages > span {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 10px 12px;
+  border-right: 1px solid var(--border-hairline);
+}
+
+.compact-flow-stages em {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-flow-stages strong {
+  color: var(--text-primary);
+  font: 720 18px/1 var(--font-number);
+}
+
+.compact-flow-stages .has-drop strong {
+  color: var(--state-amber);
+}
+
+.compact-flow-stages i {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background: rgba(240, 246, 244, 0.06);
+}
+
+.compact-flow-stages i::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--stage-fill);
+  background: var(--accent-cyan);
+}
+
+.compact-flow-stages .has-drop i::after {
+  background: var(--state-amber);
+}
+
+.compact-flow-review {
+  border-left: 1px solid var(--border-hairline);
+  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+}
+
+.compact-flow-review > span {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.compact-flow-review > strong {
+  color: var(--text-primary);
+  font: 700 13px/1 var(--font-number);
+}
+
+.compact-flow-review > em {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-flow-review > div {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.compact-flow-review > div b {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-flow-review > div .event-block,
+.compact-flow-review > div .event-review {
+  color: var(--state-red);
+}
+
+.compact-flow-review > div .event-filled {
+  color: var(--accent-cyan);
+}
+
+@media (min-width: 1120px) and (max-height: 760px) {
+  .compact-flow {
+    min-height: 64px;
+  }
+
+  .compact-flow-head,
+  .compact-flow-review,
+  .compact-flow-stages > span {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}

@@ -2,13 +2,15 @@ import type { HoldingRow, Market, MarketSummary, PerformancePoint, PerformanceRa
 import type { DomainHealth } from '../types/status'
 
 export function getActionableSignals(rows: SignalRow[]) {
-  const actionable = rows.filter((signal) => signal.status === 'pending' || signal.status === 'blocked')
-  return actionable.length ? actionable : rows
+  return rows.filter((signal) => !isPartialOutcome(signal) && (signal.status === 'pending' || signal.status === 'blocked'))
 }
 
 export function getClosedSignals(rows: SignalRow[]) {
-  const closed = rows.filter((signal) => signal.status === 'executed' || signal.status === 'missed' || signal.status === 'cancelled')
-  return closed.length ? closed : rows
+  return rows.filter((signal) => isPartialOutcome(signal) || signal.status === 'executed' || signal.status === 'missed' || signal.status === 'cancelled')
+}
+
+function isPartialOutcome(signal: SignalRow) {
+  return signal.queueBucket?.toLowerCase() === 'partial'
 }
 
 export function getVisibleSignals(rows: SignalRow[], activeMarket: Market) {

@@ -1,19 +1,17 @@
 import { PerformanceChart } from '../components/charts/PerformanceChart'
-import { useMemo } from 'react'
 import { ChartSkeleton } from '../components/Skeleton'
 import { StatusBoundary } from '../components/StatusBoundary'
 import { AShareEvidencePanel } from '../components/panels/AShareEvidencePanel'
 import { AShareMoneyflowPanel } from '../components/panels/AShareMoneyflowPanel'
 import { AShareTierComparisonPanel } from '../components/panels/AShareTierComparisonPanel'
 import { ClosedLoopProofPanel } from '../components/panels/ClosedLoopProofPanel'
-import { HoldingsCompact } from '../components/panels/HoldingsCompact'
-import { HomeResultBrief } from '../components/panels/HomeResultBrief'
 import { MarketSummaryPanel } from '../components/panels/MarketSummaryPanel'
-import { OpportunityFocus } from '../components/panels/OpportunityFocus'
 import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
+import { WorkbenchShell } from '../components/workbench/WorkbenchShell'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
+import type { AutomationRuntimeItem } from '../lib/automationObservatoryViewModel'
 import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
@@ -25,7 +23,6 @@ export function HomeDashboard({
   ashareTierSummaries,
   data,
   latestPoint,
-  hasHoldingData,
   hasPerformanceData,
   hasSignalData,
   holdings,
@@ -40,6 +37,13 @@ export function HomeDashboard({
   signals,
   funnelEvents,
   events,
+  activeSignals,
+  completedSignals,
+  reviewItems,
+  liveGate,
+  snapshotGeneratedAt,
+  runningCount,
+  runtimeItem,
 }: {
   accountMode: AccountMode
   activeMarket: Market
@@ -48,7 +52,6 @@ export function HomeDashboard({
   ashareTierSummaries?: AShareTierSummary[]
   data: PerformancePoint[]
   events: ChartEvent[]
-  hasHoldingData: boolean
   hasPerformanceData: boolean
   hasSignalData: boolean
   holdings: HoldingRow[]
@@ -63,6 +66,13 @@ export function HomeDashboard({
   setActivePage: (page: Page) => void
   signals: SignalRow[]
   funnelEvents: FunnelEvent[]
+  activeSignals: SignalRow[]
+  completedSignals: SignalRow[]
+  reviewItems: SignalRow[]
+  liveGate: { gated: boolean; title: string; detail: string }
+  snapshotGeneratedAt: string | null
+  runningCount: number
+  runtimeItem: AutomationRuntimeItem
 }) {
   const signalFunnel = getSignalFunnel(signals)
   const liveProfit = portfolio?.pnlAmount ?? 0
@@ -70,29 +80,18 @@ export function HomeDashboard({
   const targetReturn = portfolio?.targetPct ?? latestPoint.target
   const targetGap = liveReturn - targetReturn
   const returnTone = getReturnTone(liveProfit, liveReturn)
-  const returnChartData = useMemo(() => {
-    if (!portfolio || data.length === 0) return data
-    return data.map((point, index) => index === data.length - 1
-      ? {
-          ...point,
-          simulated: portfolio.returnPct,
-          target: portfolio.targetPct,
-        }
-      : point)
-  }, [data, portfolio])
-  const returnChartLatestPoint = returnChartData[returnChartData.length - 1] ?? latestPoint
+  const returnChartLatestPoint = data[data.length - 1] ?? latestPoint
+  const performanceStatus = domainStatus('performance')
+  const snapshotTime = getSnapshotTime(snapshotGeneratedAt, now)
   const headline = hasPerformanceData
     ? targetGap >= 0
       ? '当前收益领先目标，回撤仍在边界内。'
-      : '收益暂时落后目标，先看机会质量和风险距离。'
-    : '收益结果还没有写入，先看机会和持仓。'
+      : '收益暂时落后目标，自动流程继续校准机会质量与风险距离。'
+    : '收益结果尚未写入，自动流程会持续运行并回写结果。'
 
-  return (
-    <div className="home-layout">
-      <section className="home-main">
-        <section className="panel performance-panel hero-performance">
+  const chart = (
+    <section className="panel performance-panel hero-performance">
           <div className="performance-headline">
-            <SignalFunnelFlow events={funnelEvents} hasSignalData={hasSignalData} holdings={holdings} signals={signals} />
             <RealtimeReturnCard
               accountMode={accountMode}
               executedCount={signalFunnel.executed.length}
@@ -104,7 +103,6 @@ export function HomeDashboard({
               pendingCount={signalFunnel.pending.length}
               portfolio={portfolio}
               selectAccountMode={selectAccountMode}
-              setActivePage={setActivePage}
               targetReturn={targetReturn}
             />
           </div>
@@ -112,18 +110,18 @@ export function HomeDashboard({
             <span>收益曲线</span>
             <strong>{hasPerformanceData ? '持续性与风险距离' : '等待收益、目标和基准数据'}</strong>
           </div>
-          <StatusBoundary loading={<ChartSkeleton height={236} />} onRetry={onRetry} status={hasPerformanceData ? domainStatus('performance') : 'ready'}>
+          <StatusBoundary loading={<ChartSkeleton height={220} />} onRetry={onRetry} status={hasPerformanceData ? performanceStatus : 'ready'}>
             {hasPerformanceData ? (
               <PerformanceChart
                 currentTone={returnTone}
-                data={returnChartData}
+                data={data}
                 events={events}
-                height={236}
+                height={220}
                 latestPoint={returnChartLatestPoint}
                 onSelectEvent={setActivePage}
               />
             ) : (
-              <div className="chart-empty-state" style={{ height: 236 }}>
+              <div className="chart-empty-state" style={{ height: 220 }}>
                 <span>等待收益序列</span>
                 <strong>连接正常，暂无可展示的收益曲线。</strong>
                 <p>当模拟盘写入净值、目标和市场基准后，这里会自动更新。</p>
@@ -131,38 +129,47 @@ export function HomeDashboard({
             )}
           </StatusBoundary>
           <div className="chart-meta">
-            <span>{formatTime(now)} (UTC+8)</span>
-            <b>{hasPerformanceData ? '已更新' : '等待数据'}</b>
+            <span>{formatTime(snapshotTime)} (UTC+8)</span>
+            <b>{hasPerformanceData ? performanceStatus === 'stale' ? '数据滞后' : '快照时间' : '等待数据'}</b>
             <em>{hasPerformanceData ? `机会差 ${returnChartLatestPoint.opportunity.toFixed(2)}%` : '未显示样例收益'}</em>
           </div>
-        </section>
-
-        <section className="home-drilldown" aria-label="当前机会和持仓结果">
-          <div className="drilldown-header">
-            <span>机会和持仓</span>
-            <strong>已接入快照时只显示真实记录</strong>
-          </div>
-          <div className="home-support-grid">
-            <OpportunityFocus hasSignalData={hasSignalData} setActivePage={setActivePage} signals={signals} />
-            <HoldingsCompact hasHoldingData={hasHoldingData} holdings={holdings} setActivePage={setActivePage} />
-          </div>
-        </section>
-      </section>
-
-      <aside className="home-rail">
+    </section>
+  )
+  const evidence = (
+    <div className="home-rail">
         <MarketSummaryPanel activeMarket={activeMarket} summary={marketSummary} />
         <ClosedLoopProofPanel summaries={marketSummaries} />
         <AShareMoneyflowPanel activeMarket={activeMarket} signals={signals} />
-        <HomeResultBrief hasHoldingData={hasHoldingData} hasPerformanceData={hasPerformanceData} hasSignalData={hasSignalData} holdings={holdings} portfolio={portfolio} setActivePage={setActivePage} signals={signals} />
         {(activeMarket === 'All Markets' || activeMarket === 'A-share') && (
           <>
             <AShareEvidencePanel evidence={ashareResearchEvidence} forwardValidation={ashareForwardValidation} />
             <AShareTierComparisonPanel activeMarket={activeMarket} summaries={ashareTierSummaries} />
           </>
         )}
-      </aside>
     </div>
   )
+
+  return (
+    <WorkbenchShell
+      active={activeSignals}
+      chart={chart}
+      completed={completedSignals}
+      context={<SignalFunnelFlow compact events={funnelEvents} hasSignalData={hasSignalData} holdings={holdings} signals={signals} />}
+      evidence={evidence}
+      liveGate={liveGate}
+      onUseSimulation={() => selectAccountMode('simulated')}
+      positions={holdings}
+      review={reviewItems}
+      runningCount={runningCount}
+      runtimeItem={runtimeItem}
+    />
+  )
+}
+
+function getSnapshotTime(value: string | null, fallback: Date) {
+  if (!value) return fallback
+  const timestamp = new Date(value)
+  return Number.isNaN(timestamp.getTime()) ? fallback : timestamp
 }
 
 function getReturnTone(amount: number, pct: number) {

@@ -6,8 +6,10 @@ import { MarketHeader } from './components/MarketHeader'
 import { TopNav } from './components/TopNav'
 import { holdings as mockHoldings, mockDashboardApiResponse, performanceData, signals as mockSignals } from './data/dashboard'
 import { deriveChartEvents } from './lib/chartEvents'
-import { getLivePerformanceData, getPortfolioForView, getSelectedMarketSummary, getSignalFunnel, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
+import { getLivePerformanceData, getSelectedMarketSummary, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
 import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
+import { createAutomationObservatoryViewModel } from './lib/automationObservatoryViewModel'
+import { createWorkbenchViewModel } from './lib/workbenchViewModel'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
 import type { DataDomain } from './types/status'
@@ -16,11 +18,11 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
-const DASHBOARD_BUILD_ID = '20260708-result-funnel'
+const DASHBOARD_BUILD_ID = '20260711-automated-observatory'
 
 function App() {
   const demoPreviewEnabled = isDemoPreviewEnabled()
-  const [activePage, setActivePage] = useState<Page>('主页')
+  const [activePage, setActivePage] = useState<Page>('总览')
   const [activeMarket, setActiveMarket] = useState<Market>('All Markets')
   const [accountMode, setAccountMode] = useState<AccountMode>('simulated')
   const [dashboardState, setDashboardState] = useState(() => toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
@@ -72,7 +74,6 @@ function App() {
   const isUsingDemoSnapshot = readModelSnapshot === null && demoPreviewEnabled
   const hasGlobalPerformanceData = isUsingDemoSnapshot || hasMeaningfulPerformanceRows(readModelSnapshot?.performance ?? []) || hasPortfolioResult(portfolioSummary)
   const hasGlobalSignalData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'signals')
-  const hasGlobalHoldingData = isUsingDemoSnapshot || hasSnapshotRows(readModelSnapshot, 'holdings')
   const livePerformanceData = useMemo(
     () => getLivePerformanceData(now, performanceRows, isUsingDemoSnapshot),
     [isUsingDemoSnapshot, now, performanceRows],
@@ -80,7 +81,7 @@ function App() {
   const selectedMarketSummary = useMemo(() => getSelectedMarketSummary(marketSummaries, activeMarket), [activeMarket, marketSummaries])
   const visibleSignals = useMemo(() => getVisibleSignals(signalRows, activeMarket), [activeMarket, signalRows])
   const visibleHoldings = useMemo(() => getVisibleHoldings(holdingRows, activeMarket), [activeMarket, holdingRows])
-  const visiblePerformanceData = useMemo(() => {
+  const marketPerformanceData = useMemo(() => {
     if (activeMarket === 'All Markets') return livePerformanceData
     if (selectedMarketSummary?.returnPct === undefined) return []
     return [{
@@ -95,11 +96,20 @@ function App() {
     ? hasGlobalPerformanceData
     : hasMarketPerformanceResult(selectedMarketSummary)
   const hasSignalData = activeMarket === 'All Markets' ? hasGlobalSignalData : visibleSignals.length > 0
-  const hasHoldingData = activeMarket === 'All Markets' ? hasGlobalHoldingData : visibleHoldings.length > 0
-  const visiblePortfolio = useMemo(
-    () => getPortfolioForView({ activeMarket, marketSummaries, portfolio: portfolioSummary }),
-    [activeMarket, marketSummaries, portfolioSummary],
-  )
+  const workbench = useMemo(() => createWorkbenchViewModel({
+    accountMode,
+    activeMarket,
+    performance: marketPerformanceData,
+    portfolio: portfolioSummary,
+    marketSummaries,
+    signals: signalRows,
+    holdings: holdingRows,
+    funnelEvents,
+    generatedAt: readModelSnapshot?.generatedAt ?? null,
+  }), [accountMode, activeMarket, funnelEvents, holdingRows, marketPerformanceData, marketSummaries, portfolioSummary, readModelSnapshot?.generatedAt, signalRows])
+  const observatory = useMemo(() => createAutomationObservatoryViewModel(workbench), [workbench])
+  const visiblePerformanceData = workbench.performance
+  const visiblePortfolio = workbench.portfolio
   const latestPoint = visiblePerformanceData[visiblePerformanceData.length - 1] ?? {
     day: '现在',
     simulated: 0,
@@ -107,11 +117,7 @@ function App() {
     benchmark: 0,
     opportunity: 0,
   }
-  const visibleFunnelEvents = useMemo(
-    () => funnelEvents.filter((event) => activeMarket === 'All Markets' || event.market === activeMarket),
-    [activeMarket, funnelEvents],
-  )
-  const signalFunnel = useMemo(() => getSignalFunnel(visibleSignals), [visibleSignals])
+  const visibleFunnelEvents = workbench.funnelEvents
   const chartEvents = useMemo(() => deriveChartEvents(visiblePerformanceData, visibleSignals), [visiblePerformanceData, visibleSignals])
   const domainStatus = (domain: DataDomain) => dashboardState.domains[domain]?.status ?? dashboardState.status
   const handleRetry = () => setDashboardState(toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
@@ -125,6 +131,7 @@ function App() {
       />
       <MarketHeader
         accountMode={accountMode}
+        completedCount={observatory.summary.completedCount}
         activePage={activePage}
         activeMarket={activeMarket}
         hasPerformanceData={hasPerformanceData}
@@ -133,36 +140,43 @@ function App() {
         liveProfit={visiblePortfolio?.pnlAmount ?? null}
         liveReturn={visiblePortfolio?.returnPct ?? latestPoint.simulated}
         maxDrawdown={visiblePortfolio?.maxDrawdownPct ?? null}
-        signalCount={visibleSignals.length}
+        positionCount={visibleHoldings.length}
+        performanceStatus={domainStatus('performance')}
+        runningCount={observatory.summary.runningCount}
         snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
         setActiveMarket={setActiveMarket}
         targetReturn={visiblePortfolio?.targetPct ?? latestPoint.target}
-        tradeSignalCount={signalFunnel.tradeSignals.length}
       />
 
       <section className="workspace">
-        {activePage === '主页' ? (
+        {activePage === '总览' || workbench.liveGate.gated ? (
           <HomeDashboard
             accountMode={accountMode}
+            activeSignals={observatory.running}
             activeMarket={activeMarket}
             ashareForwardValidation={readModelSnapshot?.ashareForwardValidation}
             ashareResearchEvidence={readModelSnapshot?.ashareResearchEvidence}
             ashareTierSummaries={readModelSnapshot?.ashareTierSummaries}
             data={visiblePerformanceData}
-            hasHoldingData={hasHoldingData}
             hasPerformanceData={hasPerformanceData}
             hasSignalData={hasSignalData}
             holdings={visibleHoldings}
             latestPoint={latestPoint}
+            liveGate={workbench.liveGate}
             marketSummary={selectedMarketSummary}
             marketSummaries={marketSummaries}
             now={now}
             portfolio={visiblePortfolio}
+            completedSignals={observatory.completed}
             domainStatus={domainStatus}
             onRetry={handleRetry}
             selectAccountMode={selectAccountMode}
             setActivePage={setActivePage}
             signals={visibleSignals}
+            reviewItems={observatory.automaticReview}
+            runningCount={observatory.summary.runningCount}
+            runtimeItem={observatory.runtimeItem}
+            snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
             funnelEvents={visibleFunnelEvents}
             events={chartEvents}
           />
@@ -214,7 +228,7 @@ function hasMarketPerformanceResult(summary?: MarketSummary) {
 }
 
 function isDemoPreviewEnabled() {
-  const meta = import.meta as ImportMeta & { env?: { DEV?: boolean; VITE_TRADING_AGENT_DEMO_PREVIEW?: string } }
-  if (meta.env?.VITE_TRADING_AGENT_DEMO_PREVIEW === '0') return false
-  return meta.env?.VITE_TRADING_AGENT_DEMO_PREVIEW === '1' || meta.env?.DEV === true
+  const configuredPreview = import.meta.env.VITE_TRADING_AGENT_DEMO_PREVIEW
+  if (configuredPreview === '0') return false
+  return configuredPreview === '1' || import.meta.env.DEV
 }

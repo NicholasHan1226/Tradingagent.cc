@@ -41,9 +41,9 @@ describe('deriveChartEvents', () => {
 
     expect(events).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ day: '5月28日', targetPage: '决策' }),
+        expect.objectContaining({ day: '5月28日', targetPage: '过程' }),
         expect.objectContaining({ day: '6月17日', targetPage: '风险' }),
-        expect.objectContaining({ day: '现在', targetPage: '机会' }),
+        expect.objectContaining({ day: '现在', targetPage: '过程' }),
       ]),
     )
   })
