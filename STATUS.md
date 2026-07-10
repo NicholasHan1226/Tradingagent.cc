@@ -11,7 +11,7 @@
 ## 一、当前状态
 
 - **策略证据门槛（2026-07-10）**：A股取消“每日必须形成一笔成交”的交易配额；无成交只形成 `observation_gap`，不会再触发 `force_sample_collection`。弱成交证据（仅 signal card 价格或缺 bar time/volume）继续保留在模拟账本，但不进入演化样本；风险扩张必须同时具备足量强成交证据、已实现回合、60 分钟前向标签和正已实现收益。六维评分若某个维度在整个候选批次均无证据，会对整批统一移除该权重并写出批次证据可用性，不能让中性 `0.5` 伪装为信息。盘前报告新增实际 `score_limit`，便于识别配置漂移。CNFutures 模拟执行默认要求至少 3 个独立底层品种；同品种跨月不足时进入 `observation_only`，不产生成交或演化样本。
-- **执行与诊断证据（2026-07-10）**：A股 simulated 主循环会将最新有效 SharedSignals 5 分钟 quote/bar 附到订单；仅含 `execution_evidence_class=verified_5min_market_data`、报价、bar time 与 bar volume 的成交可进入演化，价格兜底成交继续保留账本但不能学习或扩张风险。评分诊断会明确显示整批已移除的中性维度及其证据可用率。CNFutures 将连续确认不足标为 `insufficient_consecutive_5min_bars`，并按期货品种输出 hold 汇总，区分策略确认不足与真实行情缺失。
+- **执行与诊断证据（2026-07-10）**：A股 simulated 主循环会按每笔订单自身标的附加最新有效 SharedSignals 5 分钟 quote/bar；当日条线超过 15 分钟不得作为执行证据。仅含 `execution_evidence_class=verified_5min_market_data`、报价、bar time 与 bar volume 的成交可进入演化，价格兜底成交继续保留账本但不能学习或扩张风险。评分诊断会明确显示整批已移除的中性维度及其证据可用率。CNFutures 将连续确认不足标为 `insufficient_consecutive_5min_bars`，并按期货品种输出 hold 汇总，区分策略确认不足与真实行情缺失。
 - **A股模拟资金范围（2026-07-10）**：server-local 账本将策略成交与链路验证成交标成 `capital_scope=strategy|validation`；两者各自按 200,000 元硬现金/持仓门禁回放，验证样本保留审计与回执但不再占用策略资金，消除资金计划与写账拒单的口径冲突。
 - **A股可恢复失败重试（2026-07-10）**：同日失败卡默认仍阻断重复下单；只有 server-local 模拟账本的 `insufficient_cash` 会在资金范围修复后保留原卡并最多生成 2 次新 retry card，避免旧的可恢复拒单永久锁死候选，也避免无限重试。
 

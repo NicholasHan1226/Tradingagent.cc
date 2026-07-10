@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from shared.execution import local_sim_ledger
 from shared.markets.base import MarketAdapter
@@ -20,6 +21,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SIGNALS_DIR = ROOT / "signals"
 ASHARE_OPPORTUNITY_COST_MIN_ENTRY_SCORE = 0.70
 ASHARE_OPPORTUNITY_COST_MIN_SCORE_GAP = 0.12
+ASHARE_EXECUTION_BAR_MAX_AGE_MINUTES = 15
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
 StageFn = Callable[..., Any]
 
@@ -227,6 +230,8 @@ def _latest_execution_market_snapshot(
     symbol: str,
     date: str,
     side: str,
+    *,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Return provenance for a real 5-minute execution reference, if available."""
     get_intraday = getattr(reader, "get_bars_intraday", None)
@@ -244,6 +249,17 @@ def _latest_execution_market_snapshot(
         bar_volume = _safe_float(row.get("volume", row.get("vol", row.get("bar_volume"))), 0.0)
         if price <= 0 or not bar_time or bar_volume <= 0:
             continue
+        reference_now = now.astimezone(CN_TZ) if now and now.tzinfo else now or datetime.now(CN_TZ)
+        if _compact_date_key(date) == reference_now.strftime("%Y%m%d"):
+            try:
+                parsed_bar_time = datetime.fromisoformat(bar_time.replace("Z", "+00:00"))
+                if parsed_bar_time.tzinfo is None:
+                    parsed_bar_time = parsed_bar_time.replace(tzinfo=CN_TZ)
+                age_minutes = (reference_now - parsed_bar_time.astimezone(CN_TZ)).total_seconds() / 60.0
+            except ValueError:
+                continue
+            if age_minutes < -5 or age_minutes > ASHARE_EXECUTION_BAR_MAX_AGE_MINUTES:
+                continue
         quote_field = "ask_price" if str(side).lower() == "buy" else "bid_price"
         return {
             quote_field: price,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1079,6 +1080,24 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(self.executed_orders[0]["ts_code"], "000001.SZ")
         self.assertEqual(self.executed_orders[0]["market_snapshot"]["last_price"], 10.1)
         self.assertEqual(self.executed_orders[0]["market_snapshot"]["bar_time"], "2026-06-30 10:05:00")
+
+    def test_execution_snapshot_rejects_stale_current_ashare_bar(self) -> None:
+        from shared.orchestrator import _latest_execution_market_snapshot
+
+        class IntradayReader:
+            def get_bars_intraday(self, market, symbol, interval="5m", start=None, end=None):
+                return [{"close": 10.1, "bar_time": "2026-07-10 10:10:00", "volume": 1800}]
+
+        snapshot = _latest_execution_market_snapshot(
+            IntradayReader(),
+            "ashare",
+            "000001.SZ",
+            "20260710",
+            "buy",
+            now=datetime.fromisoformat("2026-07-10T10:54:00+08:00"),
+        )
+
+        self.assertEqual(snapshot, {})
 
     def test_run_sim_loop_does_not_let_retired_daily_sample_gate_override_capacity(self) -> None:
         deps = self._multi_candidate_deps()
