@@ -405,10 +405,13 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
                     or row.get("sentiment")
                 )
                 text_inferred = False
-                if impact is None and _row_matches_ts_code(row, ts_code):
+                impact_missing = impact is None or (
+                    isinstance(impact, str) and not impact.strip()
+                )
+                if impact_missing and _row_matches_ts_code(row, ts_code):
                     impact = _text_direction_hint(row)
                     text_inferred = bool(impact)
-                if impact is None:
+                if not impact:
                     sharedsignals_skipped_no_impact += 1
                     continue
                 conf = _safe_float(row.get("confidence"), 0.0)

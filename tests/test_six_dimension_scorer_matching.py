@@ -252,3 +252,120 @@ def test_event_no_evidence_produces_diagnostic_reason():
     assert evidence.get("has_evidence") is False
     reason = evidence.get("reason", "")
     assert "no_matched_event_evidence" in reason
+
+
+class NeutralAnnouncementReader:
+    """Simulates SharedSignals events with neutral announcements — no explicit
+    impact/direction/sentiment fields and text that contains neither positive
+    nor negative tokens, so _text_direction_hint returns ''."""
+
+    def get_events(self, market=None, symbol=None, start=None, end=None):
+        return [
+            {
+                "event_time": "2026-07-08",
+                "event_type": "announcement",
+                "symbol": "000776",
+                "market": "Ashare",
+                "title": "关于召开股东大会的通知",
+                "content": "公司定于2026年7月20日召开股东大会...",
+            }
+        ]
+
+    def get_event_candidates(self):
+        return []
+
+
+def test_neutral_announcement_without_direction_is_skipped():
+    """An announcement with neither explicit impact fields nor text-inferable
+    direction must be counted as skipped_no_impact, must NOT contribute to
+    candidate weight, and must result in event=0.5 with has_evidence=False."""
+    config = {
+        "_data_reader": NeutralAnnouncementReader(),
+        "dimensions": {"event": {"min_confidence": 0.30}},
+    }
+
+    score = scorer._score_event("000776.SZ", "20260710", config)
+
+    assert score == 0.5
+    evidence = config.get("_dimension_evidence", {}).get("event", {})
+    assert evidence.get("has_evidence") is False, (
+        f"Expected no evidence for neutral announcement, got {evidence}"
+    )
+    reason = evidence.get("reason", "")
+    assert "ss_rows=1" in reason, f"Expected ss_rows in reason, got: {reason}"
+    assert "skipped_no_impact=1" in reason, f"Expected skipped_no_impact in reason, got: {reason}"
+
+
+def test_empty_direction_field_falls_through_to_text_inference():
+    """When a row has an explicit but empty direction/sentiment field,
+    text inference is still attempted, and if text is neutral the row is
+    skipped as no_impact."""
+
+    class EmptyDirectionReader:
+        def get_events(self, market=None, symbol=None, start=None, end=None):
+            return [
+                {
+                    "event_time": "2026-07-08",
+                    "event_type": "announcement",
+                    "symbol": "600030",
+                    "market": "Ashare",
+                    "direction": "",  # explicit empty field
+                    "sentiment": "",  # explicit empty field
+                    "title": "关于变更会计师事务所的公告",
+                    "content": "公司拟变更2026年度审计机构...",
+                }
+            ]
+
+        def get_event_candidates(self):
+            return []
+
+    config = {
+        "_data_reader": EmptyDirectionReader(),
+        "dimensions": {"event": {"min_confidence": 0.30}},
+    }
+
+    score = scorer._score_event("600030.SH", "20260710", config)
+
+    assert score == 0.5
+    evidence = config.get("_dimension_evidence", {}).get("event", {})
+    assert evidence.get("has_evidence") is False
+    reason = evidence.get("reason", "")
+    assert "skipped_no_impact=1" in reason
+
+
+def test_text_inferred_negative_event_still_valid_evidence():
+    """Explicit negative text must still be treated as valid evidence with
+    fixed 0.30 confidence — regression check that the 'not impact' guard
+    does not discard genuinely inferred directions."""
+
+    class NegativeTextReader:
+        def get_events(self, market=None, symbol=None, start=None, end=None):
+            return [
+                {
+                    "event_time": "2026-07-08",
+                    "event_type": "announcement",
+                    "symbol": "600030",
+                    "market": "Ashare",
+                    "title": "关于股东减持公司股份的公告",
+                    "content": "股东计划减持不超过2%的股份...",
+                }
+            ]
+
+        def get_event_candidates(self):
+            return []
+
+    config = {
+        "_data_reader": NegativeTextReader(),
+        "dimensions": {"event": {"min_confidence": 0.30}},
+    }
+
+    score = scorer._score_event("600030.SH", "20260710", config)
+
+    assert score is not None
+    assert score < 0.5, f"Expected bearish score < 0.5 for negative text, got {score}"
+    evidence = config.get("_dimension_evidence", {}).get("event", {})
+    assert evidence.get("has_evidence") is True, (
+        f"Expected valid evidence for negative text event, got {evidence}"
+    )
+    assert evidence.get("source") == "SharedSignals events"
+    assert evidence.get("row_count", 0) >= 1
