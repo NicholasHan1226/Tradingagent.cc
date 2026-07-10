@@ -457,14 +457,9 @@ class TradingagentDataReader:
         self._last_api_used = False
 
     def _can_use_sqlite_fallback(self) -> bool:
-        if self._shared is not None:
-            return True
-        return str(os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        # Local readers are dependency-injected by tests. Production environment
+        # variables must never reactivate a sibling-system database fallback.
+        return self._shared is not None
 
     def _maybe_alert(self) -> None:
         """Log a warning when errors accumulate beyond threshold — dead-man switch."""

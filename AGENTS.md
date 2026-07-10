@@ -39,7 +39,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 ### 数据流
 
 - SharedSignals 是独立供数层：定时采集/维护先沉淀数据，TradingAgent 生产默认只通过 SharedSignals/ShareChannel API 取数。
-- 生产运行时必须设置 `SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`；SQLite read model 只允许在测试或紧急诊断中显式设置 `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` 与 `SHARED_SIGNALS_DB` 后只读使用，不能自动回退到兄弟系统目录。
+- 生产运行时必须设置 `SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`；生产环境变量不得启用 SharedSignals SQLite/read-model 回退。单元测试如需本地数据必须显式注入测试 reader，不能读取兄弟系统目录。
 - TradingAgent 不应在每次交易判断时重新现场采集 Tushare。
 - 跨系统写入必须走明确数据契约，不把一个系统目录当作另一个系统的内部模块直接改写。
 
@@ -59,6 +59,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - A股 universe 返回前必须按近期流动性/数据完整性做稳定预排序，避免 `score_universe_limit` 只覆盖代码顺序前段样本。
 - A股 simulated 新买入只允许来自 candidate 层；watch 只能观察，holdings 只参与持仓/卖出/换仓评估，候选池为空或 candidate pool 异常时必须 fail-closed 为无交易，不能回退到顺序 universe 或资产表样本。
 - A股候选池分层必须复用同一轮六维预计算评分；空池时先用 `score_diagnostics` 区分样本覆盖、研究维度中性、策略阈值未过或候选池分层异常，不得回退硬买。
+- A股盘前日线必须来自 SharedSignals API，覆盖率至少达到当前 API 可见普通 A股资产的 90%，并达到上一已完成交易日；覆盖不足、日线落后最近 5 分钟证据或 API 不可用时必须阻断新买入。盘前 dry-run 不得直接读取 SharedSignals SQLite。
 - A股 simulated 订单必须携带来源字段：买入为 `candidate_pool_layer=candidate`、`execution_source=ashare_candidate_layer`；卖出/压缩为 `execution_source=ashare_rebalance_sell`，便于复盘确认成交来源。
 - A股 server-local simulated 账本和签名回执必须持久化 `candidate_pool_layer`、`execution_source`、`fill_price_source`、`fill_price_source_class` 与 `fill_evidence`。已发生但缺少候选来源或成交价来源字段的 A股 simulated 成交保留为账户事实和链路验证样本，不作为策略有效样本参与胜率、方向命中、归因、策略 PnL 或自我进化。
 - A股可恢复失败产生的 retry 成交必须把 `retry_of`、`retry_attempt` 同时写入 append-only 成交事实、签名回执和复盘读取行；历史签名回执不得为补字段而原地改写。
@@ -70,6 +71,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - A股自我演化走组合级证据，不套用 Crypto/PM/US 的多风格账本。`Ashare/portfolio_evolution.py` 读取 server-local 策略有效成交、组合 PnL 和样本质量，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`；写入前会刷新 server-local `local_sim_pnl.json` 到同一盯市口径，但不改成交事实；它只证明组合样本进入演化层，不伪造 aggressive/balanced 等风格归因。
 - A股 200,000 元账户是主模拟账户；50,000 / 100,000 元必须作为资金档位实验账户存在，不能只写在配置里。`Ashare/tier_experiments.py` 从同一策略有效成交按各自本金、现金约束和 100 股手数 replay，写 `shared/logs/local_sim_tiers/ashare_50000/`、`shared/logs/local_sim_tiers/ashare_100000/` 独立账本，并通过 `shared/review/ashare/tier_experiments_latest.json` 进入组合级演化排名。
 - 主账户与 50,000 / 100,000 元资金档位复盘必须使用同一轮 SharedSignals 盯市价；bootstrap 只负责缺失快照初始化，已有成交和完整快照时不得重放成交价覆盖当前盯市 PnL。
+- 盘后正式估值必须使用目标交易日精确匹配的 SharedSignals 日线收盘价。任一持仓缺正式收盘价时，不刷新主账户、50,000/100,000 元实验账本或组合演化；17:40 首次复核、22:40 有界补跑，成功后同一交易日幂等跳过，统一刷新账本、前向标签和收盘复盘。
 
 ### SharedSignals 源状态门禁
 

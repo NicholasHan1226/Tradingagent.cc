@@ -35,6 +35,8 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 10 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_research_evidence.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_research_evidence.log 2>&1
 20 13,15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_forward_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_forward_validation.log 2>&1
 40 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_learning.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_learning.log 2>&1
+# Exact-date formal close refresh after SharedSignals P1 EOD collection.
+40 17,22 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_formal_close_refresh.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_formal_close_refresh.log 2>&1
 
 # Multi-market simulated trading loops. US/Crypto/PM are half-hour cadence and
 # intentionally staggered after SharedSignals ingestion; A-share/CNFutures keep

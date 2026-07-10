@@ -48,11 +48,8 @@ must not bypass local candidate, funding, risk, or execution gates.
   Empty but reachable evidence endpoints are recorded as `evidence_debts` by
   default because TradingAgent can degrade those dimensions to neutral scoring;
   use `--strict-empty` when validating a completed SharedSignals backfill.
-- Optional local read model:
-  `SHARED_SIGNALS_DB` may be used only when
-  `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` is explicitly set for tests or
-  emergency diagnostics. It must point to the SharedSignals runtime read model,
-  not to a MarketGraph runtime path.
+- Test-only local readers must be dependency-injected. Production environment
+  variables cannot enable direct SharedSignals read-model access.
 - Schema reference:
   `sharedsignals_schema.py` documents the 11 canonical tables:
   `market_assets`, `market_bars_daily`, `market_bars_intraday`,
@@ -70,8 +67,8 @@ uses SharedSignals HTTP API first; production cron/env defaults set
 `SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`. If the API is missing or fails,
 production fail-closes instead of silently reading a sibling-system file.
 
-`shared.data.reader.SharedSignalsReader` exposes explicit local read-model
-methods for tests/emergency diagnostics:
+`shared.data.reader.SharedSignalsReader` exposes local read-model methods only
+for dependency-injected isolated tests:
 
 - `get_bars_daily(market, symbol, start, end)`
 - `get_bars_intraday(market, symbol, interval, start, end)`
@@ -86,9 +83,6 @@ Rows are returned as dictionaries. Missing rows return `[]` or `None` through
 Event reads use:
 
 - API-first path: SharedSignals `/events?market=<market>&symbol=<symbol>&subject_code=<ts_code>&start=<YYYYMMDD>&end=<YYYYMMDD>`.
-- Optional diagnostic read model: `market_events` filtered by `market`,
-  `symbol`, and `trade_date`, only when
-  `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` is explicitly set.
 - If the HTTP API returns an empty shell or no filtered event candidates in
   production, TradingAgent treats evidence as missing/degraded instead of
   silently reading a sibling-system file.
@@ -102,9 +96,6 @@ Event reads use:
 - TradingAgent must still filter returned rows by the requested symbol/ts_code
   because SharedSignals may return a market-level batch when an endpoint version
   does not support one of the symbol parameter aliases.
-- Optional diagnostic read model: `market_bars_intraday` filtered by `market`,
-  `symbol`, and `interval`, only when the explicit SQLite diagnostic switch is
-  enabled.
 - A-share research evidence first asks SharedSignals for same-day `rt_min` /
   `stk_mins` symbols through `get_tushare()` and only falls back to the asset
   list when no intraday rows are indexed yet.
@@ -123,9 +114,18 @@ A-share pre-open daily coverage and liquidity ranking use:
   those rows to count coverage and sort candidate universe by `amount`
   (Tushare thousand-CNY units). It then uses single-symbol `/market_data` rows
   only for detailed scoring and execution-gate prices.
-- If the batch API is unavailable, SQLite remains an explicit diagnostic path
-  only when `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1`; production must not
-  silently read sibling-system files.
+- The latest daily batch must cover at least 90% of the API-visible ordinary
+  A-share asset universe and must not lag the most recent completed 5-minute
+  session evidence. Either condition failing blocks new simulated buys.
+- If the batch API is unavailable, TradingAgent fails closed; it does not read
+  sibling-system files.
+
+Post-close A-share valuation first runs at 17:40 and has one bounded retry at
+22:40 because SharedSignals EOD collection duration varies with provider volume.
+An already successful trade date is skipped idempotently.
+It requires an exact target-date daily close for every open position before it
+refreshes the 200,000 main account, 50,000/100,000 tier accounts, forward labels,
+portfolio evolution, or the close review.
 
 A-share reverse repo reads use SharedSignals `/market_data` for `204001.SH`.
 SharedSignals owns the `repo_daily` collection and projects those rows into
@@ -202,10 +202,6 @@ forced into per-stock scores.
 
 ## Environment Variables
 
-- `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE`: set to `1` only for local
-  read-model tests or emergency diagnostics.
-- `SHARED_SIGNALS_DB`: explicit local read-model path when the diagnostic switch
-  above is enabled.
 - `MARKETGRAPH_API_URL`: MarketGraph read-only REST API. Default:
   `http://127.0.0.1:8080` on the combined host.
 - `MARKETGRAPH_API_TOKEN`: optional bearer token loaded from the environment;

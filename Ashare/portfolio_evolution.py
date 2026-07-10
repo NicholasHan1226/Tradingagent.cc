@@ -298,19 +298,40 @@ def write_portfolio_evolution(
     trade_date: str | None = None,
     review_dir: Path | str | None = None,
     local_trades_path: Path | str | None = None,
+    mark_prices: dict[str, float] | None = None,
     min_samples: int = 5,
 ) -> dict[str, Any]:
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
     review_path.mkdir(parents=True, exist_ok=True)
     from Ashare.tier_experiments import write_tier_ledgers
 
-    refresh_result = _refresh_local_sim_snapshot_for_review(Path(local_trades_path) if local_trades_path else None)
-    mark_prices = refresh_result.get("mark_prices") if isinstance(refresh_result, dict) else None
-    write_tier_ledgers(
-        source_trades_path=local_trades_path,
-        review_dir=review_path,
-        mark_prices=mark_prices,
-    )
+    if mark_prices:
+        refresh_result: dict[str, Any] = {
+            "status": "provided",
+            "reason": "caller_supplied_mark_prices",
+            "mark_prices": mark_prices,
+        }
+    else:
+        refresh_result = _refresh_local_sim_snapshot_for_review(Path(local_trades_path) if local_trades_path else None)
+        mark_prices = refresh_result.get("mark_prices") if isinstance(refresh_result, dict) else None
+
+    tier_refresh: dict[str, Any]
+    if mark_prices:
+        tier_manifest = write_tier_ledgers(
+            source_trades_path=local_trades_path,
+            review_dir=review_path,
+            mark_prices=mark_prices,
+        )
+        tier_refresh = {
+            "status": "refreshed",
+            "mark_price_count": len(mark_prices),
+            "account_count": len(tier_manifest.get("accounts") or []),
+        }
+    else:
+        tier_refresh = {
+            "status": "skipped",
+            "reason": str(refresh_result.get("reason") or "no_mark_prices"),
+        }
     report = build_portfolio_evolution(
         trade_date=trade_date,
         review_dir=review_path,
@@ -319,6 +340,24 @@ def write_portfolio_evolution(
         min_samples=min_samples,
     )
     report["local_sim_snapshot_refresh"] = refresh_result
+    report["tier_experiment_refresh"] = tier_refresh
+    report["valuation_status"] = "current" if mark_prices else "unavailable"
+    if not mark_prices:
+        report["rankings"] = [
+            row for row in report.get("rankings", [])
+            if str(row.get("style_name") or "") == "ashare_portfolio"
+        ]
+        report["tier_experiments"] = {
+            "account_count": 0,
+            "accounts": [],
+            "capital_plans": {},
+            "status": "skipped",
+            "reason": tier_refresh["reason"],
+        }
+        blockers = report.setdefault("evolution_evidence", {}).setdefault("blockers", [])
+        if "mark_prices_unavailable" not in blockers:
+            blockers.append("mark_prices_unavailable")
+        report["state"] = "evidence_pending"
     try:
         from Ashare.evolution_controller import write_evolution_decision
 

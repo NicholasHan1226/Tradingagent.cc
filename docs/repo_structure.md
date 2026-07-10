@@ -15,9 +15,9 @@ screening, simulation and review code must use
 `shared.data.reader.TradingagentDataReader`, which prefers the SharedSignals
 HTTP API (`SHAREDSIGNALS_API_URL`) and fails closed when data is missing.
 
-Direct SharedSignals SQLite reads are only for explicit local tests or emergency
-diagnostics. They require `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1`, plus
-`SHARED_SIGNALS_DB` when a non-default database path is needed.
+Production never opens SharedSignals SQLite files. Tests that need a local read
+model inject an isolated reader directly and cannot enable fallback through
+environment variables.
 
 ## MarketGraph Boundary
 

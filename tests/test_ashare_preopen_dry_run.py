@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import sqlite3
 import tempfile
 import unittest
 from datetime import datetime
@@ -9,6 +7,11 @@ from pathlib import Path
 from unittest import mock
 
 from shared.runtime_test import ashare_preopen_dry_run
+
+
+def _test_symbol(index: int) -> str:
+    prefix = (600, 601, 603, 605, 688)[index // 1000]
+    return f"{prefix * 1000 + (index % 1000):06d}.SH"
 
 
 class FakeAshareReader:
@@ -20,6 +23,18 @@ class FakeAshareReader:
             {"market": market or "ashare", "symbol": "600000.SH", "name": "浦发银行", "exchange": "SH", "status": "active", "list_date": "19991110"},
             {"market": market or "ashare", "symbol": "600001.SH", "name": "邯郸钢铁", "exchange": "SH", "status": "active", "list_date": "19980218"},
             {"market": market or "ashare", "symbol": "000001.SZ", "name": "平安银行", "exchange": "SZ", "status": "active", "list_date": "19910403"},
+        ]
+
+    def get_latest_daily_batch(self, market: str = "Ashare", *, limit: int = 5000) -> list[dict]:
+        return [
+            {
+                "market": market,
+                "symbol": _test_symbol(i),
+                "trade_date": "20260706",
+                "close": 10.0,
+                "amount": 100_000.0,
+            }
+            for i in range(1000)
         ]
 
     def get_coverage(self, market: str, trade_date: str) -> list[dict]:
@@ -86,6 +101,12 @@ class LiquidityOrderedReader(FakeAshareReader):
             }
         ]
 
+    def get_latest_daily_batch(self, market: str = "Ashare", *, limit: int = 5000) -> list[dict]:
+        return [
+            self.get_bars_daily(market, symbol)[0]
+            for symbol in ("000001.SZ", "600000.SH", "000002.SZ")
+        ]
+
 
 class BulkDailyReader(FakeAshareReader):
     def get_assets(self, market: str | None = None) -> list[dict]:
@@ -137,21 +158,16 @@ class PartialCoverageReader(FakeAshareReader):
         self._daily_date = daily_date
         self._intraday_rows = intraday_rows or []
 
-    @staticmethod
-    def _symbol(index: int) -> str:
-        prefix = (600, 601, 603, 605, 688)[index // 1000]
-        return f"{prefix * 1000 + (index % 1000):06d}.SH"
-
     def get_assets(self, market: str | None = None) -> list[dict]:
         return [
-            {"market": "Ashare", "symbol": self._symbol(i), "name": f"测试{i:03d}",
+            {"market": "Ashare", "symbol": _test_symbol(i), "name": f"测试{i:03d}",
              "exchange": "SH", "status": "active", "list_date": "20000101"}
             for i in range(self._asset_count)
         ]
 
     def get_latest_daily_batch(self, market: str = "Ashare", *, limit: int = 5000) -> list[dict]:
         return [
-            {"market": "Ashare", "symbol": self._symbol(i),
+            {"market": "Ashare", "symbol": _test_symbol(i),
              "trade_date": self._daily_date, "close": 10.0, "amount": 100_000.0}
             for i in range(self._daily_count)
         ]
@@ -168,45 +184,13 @@ class NoAssetsReader(FakeAshareReader):
 
     def get_latest_daily_batch(self, market: str = "Ashare", *, limit: int = 5000) -> list[dict]:
         return [
-            {"market": "Ashare", "symbol": PartialCoverageReader._symbol(i),
+            {"market": "Ashare", "symbol": _test_symbol(i),
              "trade_date": "20260708", "close": 10.0, "amount": 100_000.0}
             for i in range(1100)
         ]
 
 
 class AsharePreopenDryRunTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self._old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
-        os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
-        self.addCleanup(self._restore_diag_env)
-
-    def _restore_diag_env(self) -> None:
-        if self._old_diag is None:
-            os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
-        else:
-            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = self._old_diag
-
-    def _db(self, latest_date: str = "20260706", count: int = 1000) -> Path:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        path = Path(tmp.name) / "marketdata.sqlite"
-        conn = sqlite3.connect(path)
-        conn.execute(
-            """
-            CREATE TABLE market_bars_daily (
-                market TEXT,
-                symbol TEXT,
-                trade_date TEXT,
-                close REAL
-            )
-            """
-        )
-        rows = [("Ashare", f"600{i:03d}.SH", latest_date, 10.0) for i in range(count)]
-        conn.executemany("INSERT INTO market_bars_daily VALUES (?, ?, ?, ?)", rows)
-        conn.commit()
-        conn.close()
-        return path
-
     def _account(self) -> dict:
         return {
             "account": "ashare_sim",
@@ -231,7 +215,6 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         ):
             report = ashare_preopen_dry_run.run_preopen_dry_run(
                 now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
-                sqlite_db=self._db(),
                 reader=reader,
                 score_limit=2,
             )
@@ -278,7 +261,6 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         ):
             report = ashare_preopen_dry_run.run_preopen_dry_run(
                 now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
-                sqlite_db=self._db(),
                 reader=reader,
                 score_limit=2,
             )
@@ -323,7 +305,6 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         ):
             report = ashare_preopen_dry_run.run_preopen_dry_run(
                 now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
-                sqlite_db=self._db(),
                 reader=reader,
                 score_limit=1,
             )
@@ -375,7 +356,6 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         ):
             report = ashare_preopen_dry_run.run_preopen_dry_run(
                 now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
-                sqlite_db=self._db(),
                 reader=reader,
                 score_limit=1,
             )
@@ -398,7 +378,6 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         ):
             report = ashare_preopen_dry_run.run_preopen_dry_run(
                 now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
-                sqlite_db=Path("/tmp/nonexistent-sharedsignals.sqlite"),
                 reader=reader,
                 score_limit=2,
             )
@@ -438,7 +417,6 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         ):
             report = ashare_preopen_dry_run.run_preopen_dry_run(
                 now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
-                sqlite_db=self._db(),
                 reader=reader,
                 score_limit=2,
             )
@@ -449,23 +427,6 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(report["candidate_pool"]["score_diagnostics"]["evidence_reason_summary"]["capital"]["missing_capital_flow_rows"], 1)
         self.assertFalse(report["execution_gate"]["ready"])
         self.assertIn("candidate_pool:no_candidate_layer_after_scoring", report["warnings"])
-
-    def test_uses_latest_regular_stock_date_when_bonds_are_newer(self) -> None:
-        path = self._db(latest_date="20260706", count=2)
-        conn = sqlite3.connect(path)
-        conn.executemany(
-            "INSERT INTO market_bars_daily VALUES (?, ?, ?, ?)",
-            [
-                ("Ashare", "110073.SH", "20260707", 106.88),
-                ("Ashare", "110074.SH", "20260707", 271.31),
-            ],
-        )
-        conn.commit()
-        conn.close()
-
-        universe = ashare_preopen_dry_run._latest_liquid_universe_from_read_model(path, "20260708", limit=2)
-
-        self.assertEqual(universe, ["600000.SH", "600001.SH"])
 
     def test_reader_universe_prefers_latest_liquid_daily_amount(self) -> None:
         universe = ashare_preopen_dry_run._latest_liquid_universe_from_reader(
@@ -484,10 +445,8 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(universe, ["300750.SZ", "600000.SH", "000002.SZ"])
 
     def test_execution_gate_observes_when_capital_plan_has_no_new_budget(self) -> None:
-        db_path = self._db(latest_date="20260706", count=1)
         gate = ashare_preopen_dry_run._execution_gate(
             reader=object(),
-            sqlite_db=db_path,
             date="20260708",
             candidate={"ts_code": "600000.SH"},
             capital_plan={"max_new_positions": 0, "position_budget_by_symbol": {}, "suggested_buys": []},
@@ -498,23 +457,21 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(gate["reason"], "capital_plan_no_new_buy_budget")
         self.assertFalse(gate["ready"])
         self.assertEqual(gate["blockers"], [])
-        self.assertEqual(gate["synthetic_order"]["price"], 10.0)
-        self.assertIn("price_from_latest_daily_close", gate["warnings"])
+        self.assertEqual(gate["synthetic_order"]["price"], 0.0)
         self.assertIn("capital_plan_no_new_buy_budget", gate["warnings"])
 
     def test_fails_when_daily_data_is_stale(self) -> None:
-        reader = FakeAshareReader()
+        reader = PartialCoverageReader(asset_count=5000, daily_count=4800, daily_date="20260625")
         with mock.patch.object(ashare_preopen_dry_run.AshareAdapter, "get_sim_account", return_value=self._account()):
             report = ashare_preopen_dry_run.run_preopen_dry_run(
                 now=datetime.fromisoformat("2026-07-06T08:35:00+08:00"),
-                sqlite_db=self._db(latest_date="20260625"),
                 reader=reader,
                 score_limit=2,
             )
 
         self.assertEqual(report["status"], "fail")
         self.assertEqual(report["data"]["status"], "fail")
-        self.assertIn("data:pre_open_daily_bars_stale", report["blockers"])
+        self.assertIn("data:api_daily_bars_stale", report["blockers"])
 
     # ------------------------------------------------------------------
     # Daily-coverage-ratio gate
@@ -672,7 +629,6 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         ):
             report = ashare_preopen_dry_run.run_preopen_dry_run(
                 now=datetime.fromisoformat("2026-07-10T08:30:00+08:00"),
-                sqlite_db=self._db(),
                 reader=reader,
                 score_limit=2,
             )

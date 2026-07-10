@@ -1,18 +1,17 @@
 # TradingAgent Data Sources
 
-> Status: active. Last reviewed: 2026-07-05.
+> Status: active. Last reviewed: 2026-07-10.
 
 TradingAgent does not collect market data directly. Production consumes
 prepared data from SharedSignals API and fails closed when the API is
-unavailable. Local read-model access is reserved for explicit tests or
-emergency diagnostics.
+unavailable. Tests may inject an isolated reader; production never opens the
+SharedSignals database directly.
 
 ## Current Sources
 
 | Source | Owner | TradingAgent use |
 |---|---|---|
 | SharedSignals HTTP API | SharedSignals | preferred market data, events, assets, 5-minute bars |
-| `marketdata.sqlite` read model | SharedSignals | explicit local test/diagnostic fallback only |
 | MarketGraph API | MarketGraph | optional read-only regime/research context and PM independent research probabilities |
 | TradingAgent `signals/` and `shared/logs/` | TradingAgent | simulated execution, receipts, positions, review evidence |
 
@@ -22,8 +21,7 @@ Use `shared.data.reader.TradingagentDataReader` for strategy, screening,
 simulation and review code.
 
 - `SHAREDSIGNALS_API_URL` should point to the SharedSignals service.
-- `SHARED_SIGNALS_DB` is only used when
-  `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` is explicitly set.
+- SharedSignals SQLite paths and fallback switches are not supported in production.
 - `MARKETGRAPH_DATA` is retired for production use; use `MARKETGRAPH_API_URL`.
 - `MARKETGRAPH_API_URL` points to the MarketGraph read-only REST service for
   research evidence such as A-share regime context and PM research
@@ -54,7 +52,8 @@ cron templates and active documents should use the current sources above.
 - A-share: SharedSignals `stock_basic`, `/tushare?api_name=daily` daily read
   model rows, single-symbol `/market_data` daily bars and 5-minute bars feed
   TradingAgent simulation. Pre-open dry-run uses the batch daily read model to
-  prove coverage and rank liquid ordinary A-share symbols before scoring;
+  prove at least 90% API-visible asset coverage, verify the latest completed
+  session date, and rank liquid ordinary A-share symbols before scoring;
   TradingAgent writes server-local simulated receipts under `signals/`.
 - Crypto / US: SharedSignals feeds the five-minute simulated loops;
   TradingAgent keeps simulated ledgers and style review outputs locally.

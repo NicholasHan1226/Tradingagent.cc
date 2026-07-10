@@ -26,9 +26,9 @@ if [[ -r "${FINANCE_SHARED_ENV_FILE}" ]]; then
     source "${FINANCE_SHARED_ENV_FILE}"
 fi
 
-# SharedSignals/ShareChannel API is the default data entry for TradingAgent.
-# Direct SQLite reads require TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1 and
-# an explicit SHARED_SIGNALS_DB for local tests or emergency diagnostics.
+# SharedSignals/ShareChannel API is the production data entry for TradingAgent.
+# Tests that need isolated data inject an explicit reader instead of opening the
+# SharedSignals database.
 export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
 export SHAREDSIGNALS_API_TIMEOUT="${SHAREDSIGNALS_API_TIMEOUT:-10}"
 export SHAREDSIGNALS_API_RETRIES="${SHAREDSIGNALS_API_RETRIES:-1}"

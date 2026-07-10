@@ -237,11 +237,11 @@ def _api_health_review(market: str) -> dict[str, Any]:
     }
 
 
-def _ashare_preopen_runtime_evidence(now: datetime, sqlite_db: Path) -> dict[str, Any]:
+def _ashare_preopen_runtime_evidence(now: datetime) -> dict[str, Any]:
     try:
         from shared.runtime_test.ashare_preopen_dry_run import run_preopen_dry_run
 
-        report = run_preopen_dry_run(now=now, sqlite_db=sqlite_db)
+        report = run_preopen_dry_run(now=now)
     except Exception as exc:
         return {
             "status": "warn",
@@ -387,7 +387,7 @@ def check_ashare_opening(now: datetime, sqlite_db: Path) -> AcceptanceCheck:
         details["original_reason"] = reason
         api_reason = "sqlite_diagnostic_disabled"
     if api_reason == "sqlite_diagnostic_disabled" and report.get("report_type") == "pre_open_acceptance":
-        evidence = _ashare_preopen_runtime_evidence(now, sqlite_db)
+        evidence = _ashare_preopen_runtime_evidence(now)
         details["runtime_evidence"] = evidence
         details["original_opening_status"] = status
         if evidence.get("status") == "pass":

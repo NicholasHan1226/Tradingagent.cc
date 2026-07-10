@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -31,7 +30,6 @@ from shared.orchestrator import (
     _latest_price,
     _score_diagnostics,
 )
-from shared.runtime_test.ashare_opening_validator import DEFAULT_SQLITE_DB, validate_pre_open
 from shared.screening.candidate_pool import build_pool
 from shared.screening.six_dimension_scorer import score_universe
 
@@ -43,22 +41,6 @@ CANDIDATE_THRESHOLD = 0.55
 MIN_SYMBOLS = 1000
 DEFAULT_DAILY_COVERAGE_RATIO = 0.90
 DEFAULT_SCORE_LIMIT = 50
-ASHARE_STOCK_SQL_FILTER = """
-(
-    b.symbol LIKE '000%.SZ' OR b.symbol LIKE '001%.SZ' OR
-    b.symbol LIKE '002%.SZ' OR b.symbol LIKE '003%.SZ' OR
-    b.symbol LIKE '300%.SZ' OR b.symbol LIKE '301%.SZ' OR
-    b.symbol LIKE '600%.SH' OR b.symbol LIKE '601%.SH' OR
-    b.symbol LIKE '603%.SH' OR b.symbol LIKE '605%.SH' OR
-    b.symbol LIKE '688%.SH'
-)
-"""
-
-
-def _allow_sqlite_diagnostic(sqlite_db: Path) -> bool:
-    if not sqlite_db.exists():
-        return False
-    return str(os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")).lower() in {"1", "true", "yes", "on"}
 
 
 def _now_cn(value: str | None = None) -> datetime:
@@ -107,87 +89,6 @@ def _compact_scores(scored: list[tuple[str, dict[str, float]]], *, limit: int = 
             }
         )
     return rows
-
-
-def _latest_liquid_universe_from_read_model(
-    sqlite_db: Path,
-    date: str,
-    *,
-    limit: int,
-) -> list[str]:
-    if not _allow_sqlite_diagnostic(sqlite_db):
-        return []
-    if not sqlite_db.exists():
-        return []
-    conn: sqlite3.Connection | None = None
-    try:
-        conn = sqlite3.connect(f"file:{sqlite_db}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        daily_columns = {
-            str(row[1])
-            for row in conn.execute("PRAGMA table_info(market_bars_daily)").fetchall()
-        }
-        if not daily_columns:
-            return []
-        has_amount = "amount" in daily_columns
-        has_assets = bool(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='market_assets'").fetchone())
-        amount_expr = "COALESCE(b.amount, 0)" if has_amount else "0"
-        order_clause = f"{amount_expr} DESC, b.symbol ASC" if has_amount else "b.symbol ASC"
-        join_assets = "LEFT JOIN market_assets a ON a.market=b.market AND a.symbol=b.symbol" if has_assets else ""
-        name_expr = "COALESCE(a.name, '')" if has_assets else "''"
-        status_expr = "COALESCE(a.status, '')" if has_assets else "''"
-        rows = conn.execute(
-            f"""
-            WITH latest AS (
-                SELECT MAX(trade_date) AS trade_date
-                FROM market_bars_daily b
-                WHERE b.market='Ashare'
-                  AND {ASHARE_STOCK_SQL_FILTER}
-                  AND trade_date <= ?
-                  AND close > 0
-            )
-            SELECT b.symbol AS symbol,
-                   b.close AS close,
-                   {amount_expr} AS amount,
-                   {name_expr} AS name,
-                   {status_expr} AS status
-            FROM market_bars_daily b
-            {join_assets}
-            WHERE b.market='Ashare'
-              AND {ASHARE_STOCK_SQL_FILTER}
-              AND b.trade_date = (SELECT trade_date FROM latest)
-              AND b.close > 0
-            ORDER BY {order_clause}
-            LIMIT ?
-            """,
-            (date, max(1, int(limit) * 4)),
-        ).fetchall()
-    except Exception:
-        return []
-    finally:
-        if conn is not None:
-            conn.close()
-
-    symbols: list[str] = []
-    seen: set[str] = set()
-    for row in rows:
-        symbol = str(row["symbol"] or "").strip().upper()
-        if not symbol or symbol in seen:
-            continue
-        if not _is_supported_ashare_code(symbol):
-            continue
-        name = str(row["name"] or "").upper()
-        status = str(row["status"] or "").lower()
-        if "ST" in name or "退" in name or status in {"suspended", "halted", "delisted", "inactive"}:
-            continue
-        amount = _safe_float(row["amount"], 0.0)
-        if amount > 0 and amount * 1000.0 < 50_000_000.0:
-            continue
-        seen.add(symbol)
-        symbols.append(symbol)
-        if len(symbols) >= max(1, int(limit)):
-            break
-    return symbols
 
 
 def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]:
@@ -240,7 +141,7 @@ def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]
     return [symbol for symbol, _ in candidates[: max(1, int(limit))]]
 
 
-def _latest_daily_amounts_from_reader(reader: Any) -> dict[str, float]:
+def _latest_daily_rows_from_reader(reader: Any) -> list[dict[str, Any]]:
     get_latest_daily_batch = getattr(reader, "get_latest_daily_batch", None)
     rows: list[dict[str, Any]] = []
     if callable(get_latest_daily_batch):
@@ -257,6 +158,11 @@ def _latest_daily_amounts_from_reader(reader: Any) -> dict[str, float]:
                 rows = []
             except Exception:
                 rows = []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _latest_daily_amounts_from_reader(reader: Any) -> dict[str, float]:
+    rows = _latest_daily_rows_from_reader(reader)
     latest_date = ""
     clean_rows: list[dict[str, Any]] = []
     for row in rows or []:
@@ -317,15 +223,13 @@ def _latest_daily_amount_from_reader(reader: Any, symbol: str) -> float:
 def _build_candidate_pool(
     *,
     reader: Any,
-    sqlite_db: Path,
     date: str,
     score_limit: int,
 ) -> dict[str, Any]:
     universe = _latest_liquid_universe_from_reader(reader, limit=score_limit)
     universe_source = "sharedsignals_api_assets"
     if not universe:
-        universe = _latest_liquid_universe_from_read_model(sqlite_db, date, limit=score_limit)
-        universe_source = "sharedsignals_read_model_explicit_diagnostic" if universe else "none"
+        universe_source = "none"
     limited = universe[: max(1, int(score_limit))]
     scored = score_universe(date=date, universe=limited, data_reader=reader, market="ashare")
     scores_by_symbol = {symbol: scores for symbol, scores in scored}
@@ -426,16 +330,7 @@ def _api_daily_coverage_from_reader(
     min_symbols: int,
     min_coverage_ratio: float = DEFAULT_DAILY_COVERAGE_RATIO,
 ) -> dict[str, Any]:
-    amounts = _latest_daily_amounts_from_reader(reader)
-    if not amounts:
-        return {}
-    rows: list[dict[str, Any]] = []
-    get_latest_daily_batch = getattr(reader, "get_latest_daily_batch", None)
-    if callable(get_latest_daily_batch):
-        try:
-            rows = list(get_latest_daily_batch("Ashare", limit=5000) or [])
-        except Exception:
-            rows = []
+    rows = _latest_daily_rows_from_reader(reader)
     latest_trade_date = ""
     symbols: set[str] = set()
     for row in rows or []:
@@ -455,8 +350,7 @@ def _api_daily_coverage_from_reader(
         elif trade_date == latest_trade_date:
             symbols.add(symbol)
     if not latest_trade_date:
-        latest_trade_date = "unknown"
-        symbols = set(amounts)
+        return {}
 
     # ---- asset count & coverage ratio ----
     asset_count = 0
@@ -590,39 +484,9 @@ def _build_capital_plan(adapter: AshareAdapter, candidates: list[dict[str, Any]]
     return plan
 
 
-def _latest_close_from_read_model(sqlite_db: Path, symbol: str, date: str) -> float:
-    if not _allow_sqlite_diagnostic(sqlite_db):
-        return 0.0
-    if not sqlite_db.exists():
-        return 0.0
-    conn: sqlite3.Connection | None = None
-    try:
-        conn = sqlite3.connect(f"file:{sqlite_db}?mode=ro", uri=True)
-        row = conn.execute(
-            """
-            SELECT close
-            FROM market_bars_daily
-            WHERE market='Ashare'
-              AND symbol=?
-              AND trade_date <= ?
-              AND close > 0
-            ORDER BY trade_date DESC
-            LIMIT 1
-            """,
-            (symbol, date),
-        ).fetchone()
-    except Exception:
-        return 0.0
-    finally:
-        if conn is not None:
-            conn.close()
-    return _safe_float(row[0], 0.0) if row else 0.0
-
-
 def _execution_gate(
     *,
     reader: Any,
-    sqlite_db: Path,
     date: str,
     candidate: dict[str, Any] | None,
     capital_plan: dict[str, Any],
@@ -648,10 +512,6 @@ def _execution_gate(
     if not _is_supported_ashare_code(symbol):
         blockers.append("unsupported_ashare_code")
     price = _latest_price(reader, "ashare", symbol, date, 0.0)
-    if price <= 0:
-        price = _latest_close_from_read_model(sqlite_db, symbol, date)
-        if price > 0:
-            warnings.append("price_from_latest_daily_close")
     if price <= 0:
         blockers.append("missing_or_non_positive_price")
     budgets = capital_plan.get("position_budget_by_symbol") if isinstance(capital_plan.get("position_budget_by_symbol"), dict) else {}
@@ -710,7 +570,6 @@ def _execution_gate(
 def run_preopen_dry_run(
     *,
     now: datetime | None = None,
-    sqlite_db: Path = DEFAULT_SQLITE_DB,
     reader: Any | None = None,
     score_limit: int | None = None,
 ) -> dict[str, Any]:
@@ -733,11 +592,14 @@ def run_preopen_dry_run(
     section_started = time.perf_counter()
     data = _api_daily_coverage_from_reader(data_reader, now=current, min_symbols=MIN_SYMBOLS)
     if not data:
-        data = validate_pre_open(sqlite_db=sqlite_db, now=current, min_symbols=MIN_SYMBOLS)
+        data = {
+            "status": "fail",
+            "reason": "sharedsignals_api_daily_unavailable",
+            "symbol_count": 0,
+            "data_source": "SharedSignals API",
+        }
     _mark("data_seconds", section_started)
     data_status = str(data.get("status") or "warn").lower()
-    if data.get("reason") in {"pre_open_daily_bars_missing", "pre_open_daily_bars_stale"}:
-        data_status = "fail"
     data_section = {
         "status": data_status,
         "reason": data.get("reason"),
@@ -749,13 +611,12 @@ def run_preopen_dry_run(
         "latest_daily_age_days": data.get("latest_daily_age_days"),
         "max_daily_age_days": data.get("max_daily_age_days"),
         "min_coverage_ratio": data.get("min_coverage_ratio"),
-        "data_source": data.get("data_source") or "SharedSignals explicit SQLite diagnostic read",
+        "data_source": data.get("data_source") or "SharedSignals API",
     }
 
     section_started = time.perf_counter()
     candidate_pool = _build_candidate_pool(
         reader=data_reader,
-        sqlite_db=sqlite_db,
         date=date,
         score_limit=resolved_score_limit,
     )
@@ -767,7 +628,6 @@ def run_preopen_dry_run(
     section_started = time.perf_counter()
     execution_gate = _execution_gate(
         reader=data_reader,
-        sqlite_db=sqlite_db,
         date=date,
         candidate=top_candidate,
         capital_plan=capital_plan,
@@ -904,7 +764,6 @@ def maybe_send_alert(report: dict[str, Any], rendered_text: str, send_on: str) -
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Read-only A-share pre-open dry run.")
     parser.add_argument("--now", default=None)
-    parser.add_argument("--sqlite-db", type=Path, default=DEFAULT_SQLITE_DB)
     parser.add_argument("--score-limit", type=int, default=None)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--pretty", action="store_true")
@@ -918,7 +777,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     report = run_preopen_dry_run(
         now=_now_cn(args.now) if args.now else None,
-        sqlite_db=args.sqlite_db,
         score_limit=args.score_limit,
     )
     rendered = render_text(report)

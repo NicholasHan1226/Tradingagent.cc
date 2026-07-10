@@ -39,6 +39,7 @@ class FullAcceptanceTest(unittest.TestCase):
             "sharedsignals_evidence_contract",
             "sim_market_health",
             "ashare_no_trade_summary",
+            "self_evolution_health",
             "opening_acceptance",
         ])
         self.assertTrue(any("shared.runtime_test.cron_coverage" in part for command in calls for part in command))

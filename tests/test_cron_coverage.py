@@ -60,6 +60,12 @@ class CronCoverageTest(unittest.TestCase):
         for path in (cron_coverage.ROOT / "crontab.txt", cron_coverage.ROOT / "shared/crontab.txt"):
             self.assertIn(expected, path.read_text())
 
+    def test_ashare_formal_close_refresh_runs_after_sharedsignals_eod(self) -> None:
+        expected = "40 17,22 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_formal_close_refresh.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_formal_close_refresh.log 2>&1"
+
+        for path in (cron_coverage.ROOT / "crontab.txt", cron_coverage.ROOT / "shared/crontab.txt"):
+            self.assertIn(expected, path.read_text())
+
     def test_fails_when_installed_crontab_misses_template_entry(self) -> None:
         report = cron_coverage.check_cron_coverage(
             crontabs={

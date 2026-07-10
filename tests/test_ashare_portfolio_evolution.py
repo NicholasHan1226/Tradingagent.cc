@@ -92,6 +92,7 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
             trade_date="20260709",
             review_dir=self.review_dir,
             local_trades_path=self.local_trades,
+            mark_prices={"600000.SH": 10.0},
         )
 
         latest = self.review_dir / "portfolio_evolution_latest.json"
@@ -159,6 +160,46 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
 
         self.assertIs(captured["tier_ledgers_mark_prices"], expected_prices)
         self.assertIs(captured["pnl_summary_mark_prices"], expected_prices)
+
+    def test_write_does_not_refresh_tier_ledgers_without_mark_prices(self) -> None:
+        self._write_trade(
+            {
+                "trade_id": "LSIM-NO-MARK",
+                "order_id": "SIM-NO-MARK",
+                "market": "ashare",
+                "account": "ashare_server_sim",
+                "trade_date": "2026-07-09",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "filled_price": 10.0,
+                "amount": 1000.0,
+                "commission": 5.0,
+                "net_amount": 1005.0,
+                "status": "filled",
+                "candidate_pool_layer": "candidate",
+                "execution_source": "ashare_candidate_layer",
+                "fill_price_source": "signal_card.price",
+                "fill_price_source_class": "signal_card_price",
+                "trade_timestamp_bj": "2026-07-09T10:00:00+08:00",
+            }
+        )
+
+        with patch(
+            "Ashare.portfolio_evolution._refresh_local_sim_snapshot_for_review",
+            return_value={"status": "skipped", "reason": "no_mark_prices"},
+        ), patch("Ashare.tier_experiments.write_tier_ledgers") as tier_writer:
+            report = write_portfolio_evolution(
+                trade_date="20260709",
+                review_dir=self.review_dir,
+                local_trades_path=self.local_trades,
+            )
+
+        tier_writer.assert_not_called()
+        self.assertEqual(report["valuation_status"], "unavailable")
+        self.assertEqual(report["tier_experiments"]["account_count"], 0)
+        self.assertIn("mark_prices_unavailable", report["evolution_evidence"]["blockers"])
+        self.assertEqual(report["tier_experiment_refresh"]["reason"], "no_mark_prices")
 
 
 if __name__ == "__main__":

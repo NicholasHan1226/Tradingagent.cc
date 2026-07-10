@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 import json
+import os
 from unittest.mock import patch
 from pathlib import Path
 
@@ -573,6 +574,11 @@ class FakeSharedBars:
 
 
 class TestTradingagentDataReaderAPI(unittest.TestCase):
+    def test_environment_cannot_enable_sqlite_fallback(self) -> None:
+        with patch.dict(os.environ, {"TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE": "1"}):
+            reader = TradingagentDataReader(api_client=FakeAPIClient())
+            self.assertFalse(reader._can_use_sqlite_fallback())
+
     def test_get_assets_uses_sharedsignals_stock_basic_for_ashare(self) -> None:
         api = FakeAPIClient()
         reader = TradingagentDataReader(api_client=api)

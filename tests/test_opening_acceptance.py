@@ -254,7 +254,7 @@ def test_ashare_sqlite_diagnostic_warning_uses_preopen_dry_run(monkeypatch):
             "real_trading_enabled": False,
         }
 
-    def fake_dry_run(*, now, sqlite_db):
+    def fake_dry_run(*, now):
         return {
             "status": "pass",
             "trade_date": "20260708",
