@@ -1,7 +1,7 @@
 # Hyperliquid-Inspired Read-Only Workbench Design
 
 **Date:** 2026-07-11
-**Status:** Proposed for implementation
+**Status:** Approved for implementation
 **Scope:** `TradingAgent/front/` only
 
 ## 1. Outcome
@@ -26,7 +26,6 @@ Use a targeted workbench refactor rather than a visual-only polish or full rewri
 - Introduce one derived `WorkbenchViewModel` so the header, chart, summary metrics, selected market, and account mode use the same portfolio and performance truth.
 - Recompose the homepage into a continuous desktop workbench: market strip, primary performance surface, review rail, and bottom blotter.
 - Keep theme pages as deep links and compatibility routes, but reuse the same derived view model and row classifiers.
-- Add mobile-specific navigation and layouts instead of shrinking the desktop grid.
 
 This approach fixes trust and workflow defects while keeping the existing data contract and rollback surface intact.
 
@@ -35,6 +34,7 @@ This approach fixes trust and workflow defects while keeping the existing data c
 - No buy, sell, leverage, wallet, broker, cancel, confirm, or order-entry controls.
 - No mutation API or changes to `signals/`, account state, callbacks, webhooks, email, or execution code.
 - No change to trading strategy thresholds, capital rules, market selection, or simulated fill logic.
+- No mobile navigation, 390px layout, touch-target, or phone-specific responsive work in this implementation phase.
 - No production deployment, push, or service restart in the implementation phase unless Nicholas separately authorizes it after local verification.
 - No new charting or component dependency unless the existing React, Recharts, and Lucide stack cannot meet a verified requirement.
 
@@ -54,18 +54,9 @@ The desktop page uses four continuous regions separated by hairlines rather than
 
 The opportunity funnel becomes a compact context strip above the blotter or chart rather than the largest first-screen object.
 
-### 4.2 Mobile workbench
+### 4.2 Deferred responsive scope
 
-At widths below 720px:
-
-- Use a compact header plus a fixed bottom navigation for `主页 / 机会 / 持仓 / 风险`.
-- Collapse the market strip into a two-column metric grid with the selected market control above it.
-- Stack chart, review rail, and blotter vertically.
-- Render funnel stages as a vertical sequence or a horizontally scrollable strip with a visible scroll affordance.
-- Never hide off-screen navigation or metrics behind `overflow: hidden`.
-- Keep primary touch targets at least 44px high.
-
-At 720-1180px, use a single-column workspace while retaining the desktop top navigation and a horizontally scrollable blotter.
+Phone and tablet-specific reflow is deferred. This phase is accepted against the desktop workbench at 1280x720 and 1440x900. Existing responsive CSS must not be deliberately broken, but it is not a completion gate for this implementation.
 
 ## 5. Canonical View Model
 
@@ -100,7 +91,6 @@ Rules:
 - `components/workbench/MarketStrip.tsx`: selected view and canonical headline metrics.
 - `components/workbench/ReviewRail.tsx`: active opportunity, selected position, or next-review state.
 - `components/workbench/WorkbenchBlotter.tsx`: tabbed active opportunities, positions, completed outcomes, and reviews.
-- `components/workbench/MobileNav.tsx`: four-item mobile navigation.
 - `components/workbench/ChartAccessibleSummary.tsx`: concise chart summary and optional tabular fallback for assistive technology.
 
 ### Reused components
@@ -134,7 +124,7 @@ Selecting `实盘` must enter a dedicated gated state:
 - Chinese: system sans stack already used by the application.
 - Numbers: existing tabular number font token.
 - Scale: 11 / 12 / 14 / 16 / 20 / 28 / 36px.
-- Body copy is never below 12px on mobile; 11px is reserved for non-critical desktop metadata.
+- Body copy uses 12px or larger for critical content; 11px is reserved for non-critical desktop metadata.
 
 ### Color tokens
 
@@ -174,10 +164,9 @@ Color is never the only state signal; labels or icons accompany every state.
 - Every chart has an accessible name, description, and concise text summary.
 - Primary navigation and blotter tabs have correct roles and selected states.
 - Keyboard focus is visible and is not represented by color alone.
-- Mobile touch targets are at least 44px high.
 - Critical text meets a readable contrast baseline; muted text may not carry unique instructions.
 - Tables preserve semantic row and column relationships where practical; div-based terminal rows receive an accessible table alternative or are converted to semantic tables.
-- Responsive validation includes 390x844, 768x1024, and 1280x720.
+- Rendered validation includes 1280x720 and 1440x900 desktop viewports.
 
 ## 10. Error, Loading, and Empty States
 
@@ -204,15 +193,13 @@ All behavior changes follow test-first development.
 
 - Workbench blotter changes tab content and selected state.
 - Empty active opportunities do not fall back to completed signals.
-- Mobile navigation exposes four primary destinations.
 - Performance chart renders its accessible name and summary.
 - Live mode clearly labels simulated reference data.
 
 ### Rendered validation
 
 - Desktop 1280x720: market strip, chart, review rail, and blotter are visible without overlap.
-- Tablet 768x1024: workspace becomes one column and tables remain reachable.
-- Mobile 390x844: no clipped primary navigation or off-screen KPI/funnel content.
+- Desktop 1440x900: the continuous workbench uses the additional width without returning to floating-card composition.
 - Browser console has no relevant errors or warnings.
 - Production-like snapshot data verifies headline/chart consistency and opportunity classification.
 
@@ -245,11 +232,10 @@ The implementation is acceptable when all of the following are true:
 3. The desktop first screen reads as one continuous workbench rather than a stack of equal-weight cards.
 4. Live mode is visibly gated and never resembles an enabled execution surface.
 5. Raw backend runtime reasons are not visible.
-6. 390px mobile view contains no clipped primary controls or inaccessible off-screen metrics.
-7. Charts expose an accessible name and text summary.
-8. Lint, unit/component tests, frontend build, and API build pass.
-9. Desktop, tablet, and mobile browser screenshots support the visual claims.
-10. Design Taste score is at least 85/100, with any remaining weaknesses named.
+6. Charts expose an accessible name and text summary.
+7. Lint, unit/component tests, frontend build, and API build pass.
+8. 1280x720 and 1440x900 browser screenshots support the visual claims.
+9. Design Taste score is at least 85/100, with any remaining weaknesses named.
 
 ## 14. Rollback
 
@@ -257,4 +243,3 @@ The implementation is acceptable when all of the following are true:
 - Isolate new composition in workbench components so the previous `HomeDashboard` composition can be restored without reverting data readers.
 - Land canonical view-model and opportunity-classification fixes before visual composition. These trust fixes remain useful even if the new layout is rolled back.
 - Do not delete legacy components until the new shell passes all commands and rendered validation.
-
