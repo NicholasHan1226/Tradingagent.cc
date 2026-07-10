@@ -138,6 +138,50 @@ class CronCoverageTest(unittest.TestCase):
         self.assertIn("shared/logs/local_sim_tiers", candidates)
         self.assertIn("shared/logs/trade_audit_trail.jsonl", candidates)
 
+    # -- Review cadence coverage: 07:30 / 11:45 / 15:30 / 22:00 wrappers --
+
+    _REVIEW_CADENCE_ENTRIES = {
+        "30 7 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_daily_brief_morning.sh >> /opt/investment/tradingagent/shared/logs/cron/job_daily_brief_morning.log 2>&1",
+        "45 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_daily_brief_day.sh >> /opt/investment/tradingagent/shared/logs/cron/job_daily_brief_day.log 2>&1",
+        "30 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_daily_brief_night.sh >> /opt/investment/tradingagent/shared/logs/cron/job_daily_brief_night.log 2>&1",
+        "0 22 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_night_calibration.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_night_calibration.log 2>&1",
+    }
+
+    _FORBIDDEN_DEPRECATED_ENTRIES = {
+        "0 16 * * 1-5 /opt/investment/tradingagent/cron/daily_review.sh",
+    }
+
+    def test_review_cadence_wrappers_are_in_both_templates(self) -> None:
+        for path in (cron_coverage.ROOT / "crontab.txt", cron_coverage.ROOT / "shared/crontab.txt"):
+            text = path.read_text()
+            for entry in self._REVIEW_CADENCE_ENTRIES:
+                with self.subTest(path=str(path), entry=entry):
+                    self.assertIn(entry, text)
+
+    def test_deprecated_1600_daily_review_is_forbidden(self) -> None:
+        for path in (cron_coverage.ROOT / "crontab.txt", cron_coverage.ROOT / "shared/crontab.txt"):
+            text = path.read_text()
+            for entry in self._FORBIDDEN_DEPRECATED_ENTRIES:
+                with self.subTest(path=str(path), entry=entry):
+                    self.assertNotIn(entry, text)
+
+    def test_night_calibration_wrapper_is_not_legacy(self) -> None:
+        wrapper = cron_coverage.ROOT / "shared/wrappers/job_ashare_night_calibration.sh"
+        text = wrapper.read_text()
+        self.assertNotIn("LEGACY / NOT ACTIVE", text)
+
+    def test_template_sync_includes_review_cadence(self) -> None:
+        report = cron_coverage.check_cron_coverage(
+            crontabs={
+                "marketgraph_text": "\n".join(cron_coverage.tradingagent_entries((cron_coverage.ROOT / "shared/crontab.txt").read_text())),
+                "marketgraph_error": "",
+                "root_text": "",
+                "root_error": "no root crontab",
+            }
+        )
+        self.assertEqual(report["template_drift_count"], 0)
+        self.assertNotIn("template_drift", report["failures"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,11 @@
 # This repo file only owns TradingAgent entries; never install it directly over
 # live crontab or use it to overwrite SharedSignals/MarketGraph entries.
 #
+# To install or update TradingAgent entries, use the merge installer:
+#   sudo python3 tools/merge_tradingagent_crontab.py --apply
+#   (dry-run without --apply to preview; see cron/AGENTS.md for details.)
+#   DO NOT run: crontab shared/crontab.txt or crontab crontab.txt
+#
 # TradingAgent owns judgment, queues, simulated/shadow accounting, review, and
 # notifications. It must not collect market data directly; market data comes
 # from SharedSignals API. HK remains disabled by Nicholas' current
@@ -57,7 +62,12 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 56 20 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_opening_acceptance.sh >> /opt/investment/tradingagent/shared/logs/cron/job_opening_acceptance.log 2>&1
 41 0 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_opening_acceptance.sh >> /opt/investment/tradingagent/shared/logs/cron/job_opening_acceptance.log 2>&1
 0 */4 * * * /opt/investment/tradingagent/cron/evolution.sh
-0 16 * * 1-5 /opt/investment/tradingagent/cron/daily_review.sh
+
+# Daily review cadence: 07:30 morning brief, 11:45 midday review, 15:30 close review, 22:00 night calibration.
+30 7 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_daily_brief_morning.sh >> /opt/investment/tradingagent/shared/logs/cron/job_daily_brief_morning.log 2>&1
+45 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_daily_brief_day.sh >> /opt/investment/tradingagent/shared/logs/cron/job_daily_brief_day.log 2>&1
+30 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_daily_brief_night.sh >> /opt/investment/tradingagent/shared/logs/cron/job_daily_brief_night.log 2>&1
+0 22 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_night_calibration.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_night_calibration.log 2>&1
 
 # Self-heal and domestic futures simulation. CNFutures runs one minute after
 # SharedSignals futures 5-minute collection so it reads the latest closed bar.

@@ -68,6 +68,7 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - 组合构建前过滤 `price <= 0`，记录到 `skipped_candidates`。
 - Tushare daily `amount` 按千元口径存储，流动性比较前必须换算为元。
 - A股机会成本换仓保持保守但必须可触发：候选 `combined >= 0.70` 且相对可卖弱持仓分差至少 `0.12` 才允许生成 `ashare_rebalance_sell`；T+1、可卖数量、风险门禁和资金计划仍是硬约束。
+- A股资金计划 `target_positions=0` 时属于 defensive 模式，禁止生成机会成本换仓；止损、评分退化和超额仓位压缩仍可按风险规则卖出。策略视图可以排除链路验证样本的持仓名额，但实际买入预算不得超过账户 `cash_available`，原始策略现金和受限后的可执行现金必须留在诊断中。
 - A股自我演化走组合级证据，不套用 Crypto/PM/US 的多风格账本。`Ashare/portfolio_evolution.py` 读取 server-local 策略有效成交、组合 PnL 和样本质量，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`；写入前会刷新 server-local `local_sim_pnl.json` 到同一盯市口径，但不改成交事实；它只证明组合样本进入演化层，不伪造 aggressive/balanced 等风格归因。
 - A股 200,000 元账户是主模拟账户；50,000 / 100,000 元必须作为资金档位实验账户存在，不能只写在配置里。`Ashare/tier_experiments.py` 从同一策略有效成交按各自本金、现金约束和 100 股手数 replay，写 `shared/logs/local_sim_tiers/ashare_50000/`、`shared/logs/local_sim_tiers/ashare_100000/` 独立账本，并通过 `shared/review/ashare/tier_experiments_latest.json` 进入组合级演化排名。
 - 主账户与 50,000 / 100,000 元资金档位复盘必须使用同一轮 SharedSignals 盯市价；bootstrap 只负责缺失快照初始化，已有成交和完整快照时不得重放成交价覆盖当前盯市 PnL。
@@ -174,6 +175,9 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - 失败归档：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>`
 - 旧 USD 本金隔离（dry-run）：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.quarantine_legacy_usd_capital --pretty --before <cutover_iso>`
 - 旧 USD 本金隔离（apply）：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.quarantine_legacy_usd_capital --apply --pretty --before <cutover_iso>`
+- Crontab 合并安装（dry-run/本地测试）：`python3 tools/merge_tradingagent_crontab.py [--current-file <path>] [--output <path>]`
+- Crontab 合并安装（生产 apply）：`sudo python3 tools/merge_tradingagent_crontab.py --apply`
+- **禁止直接 `crontab shared/crontab.txt` 覆盖**，必须通过 `tools/merge_tradingagent_crontab.py` 合并安装。
 
 ## 工作区同步规则
 
