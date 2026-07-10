@@ -99,7 +99,9 @@ def _refresh_local_sim_snapshot_for_review(local_trades_path: Path | None) -> di
         mark_prices = load_mark_prices_for_positions(positions, "ashare")
         if not mark_prices:
             return {"status": "skipped", "reason": "no_mark_prices"}
-        return local_sim_ledger.refresh_local_sim_snapshot(mark_prices=mark_prices)
+        result = local_sim_ledger.refresh_local_sim_snapshot(mark_prices=mark_prices)
+        result["mark_prices"] = mark_prices
+        return result
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "reason": f"{exc.__class__.__name__}: {exc}"}
 
@@ -155,6 +157,7 @@ def build_portfolio_evolution(
     trade_date: str | None = None,
     review_dir: Path | str | None = None,
     local_trades_path: Path | str | None = None,
+    mark_prices: dict[str, float] | None = None,
     min_samples: int = 5,
 ) -> dict[str, Any]:
     """Build read-only portfolio evolution evidence for A-share."""
@@ -169,7 +172,11 @@ def build_portfolio_evolution(
     day_strategy_trades = strategy_valid_trades(day_trades)
     cumulative_strategy_trades = strategy_valid_trades(all_trades)
     cumulative_evolution_trades = evolution_eligible_trades(all_trades)
-    pnl_by_market = sim_ledger_pnl_summary(markets=("ashare",), local_trades_path=local_path)
+    pnl_by_market = sim_ledger_pnl_summary(
+        markets=("ashare",),
+        local_trades_path=local_path,
+        ashare_mark_prices=mark_prices,
+    )
     pnl = pnl_by_market.get("ashare", {})
     tier_manifest = _load_tier_manifest(review_path)
     tier_rankings = _tier_rankings(tier_manifest)
@@ -297,12 +304,18 @@ def write_portfolio_evolution(
     review_path.mkdir(parents=True, exist_ok=True)
     from Ashare.tier_experiments import write_tier_ledgers
 
-    write_tier_ledgers(source_trades_path=local_trades_path, review_dir=review_path)
     refresh_result = _refresh_local_sim_snapshot_for_review(Path(local_trades_path) if local_trades_path else None)
+    mark_prices = refresh_result.get("mark_prices") if isinstance(refresh_result, dict) else None
+    write_tier_ledgers(
+        source_trades_path=local_trades_path,
+        review_dir=review_path,
+        mark_prices=mark_prices,
+    )
     report = build_portfolio_evolution(
         trade_date=trade_date,
         review_dir=review_path,
         local_trades_path=local_trades_path,
+        mark_prices=mark_prices,
         min_samples=min_samples,
     )
     report["local_sim_snapshot_refresh"] = refresh_result

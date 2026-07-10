@@ -110,6 +110,64 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(snapshot["positions"][0]["mark_price"], 11.0)
         self.assertEqual(snapshot["pnl"]["acct"]["total_pnl"], 95.0)
 
+    def test_bootstrap_check_does_not_overwrite_existing_mark_to_market_snapshot(self) -> None:
+        order = {
+            "order_id": "SIM-MTM-BOOTSTRAP",
+            "idempotency_key": "SIM:ashare:acct:20260701:600000.SH:buy:mtm-bootstrap",
+            "ts_code": "600000.SH",
+            "side": "buy",
+            "quantity": 100,
+            "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "signal_card_price",
+        }
+        with self._valid_session():
+            local_sim_ledger.record_local_sim_order(order, "ashare", {"account": "acct"}, {"local_sim_slippage_bps": 0})
+        local_sim_ledger.refresh_local_sim_snapshot(mark_prices={"600000.SH": 11.0})
+
+        result = local_sim_ledger.ensure_local_sim_bootstrap_snapshot(starting_cash=200000)
+
+        self.assertEqual(result["status"], "existing_trades")
+        pnl_payload = json.loads(local_sim_ledger.LOCAL_SIM_PNL.read_text(encoding="utf-8"))
+        snapshot = json.loads(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
+        self.assertEqual(pnl_payload["acct"]["total_pnl"], 95.0)
+        self.assertEqual(snapshot["positions"][0]["mark_price"], 11.0)
+
+    def test_persists_retry_lineage_in_trade_and_signed_receipt(self) -> None:
+        order = {
+            "order_id": "SIM-RETRY-1",
+            "idempotency_key": "SIM:ashare:acct:20260710:600000.SH:buy:retry1",
+            "retry_of": "SIM-ORIGINAL",
+            "retry_attempt": 1,
+            "ts_code": "600000.SH",
+            "side": "buy",
+            "quantity": 100,
+            "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "signal_card_price",
+        }
+        with self._valid_session():
+            result = local_sim_ledger.record_local_sim_order(
+                order,
+                "ashare",
+                {"account": "acct"},
+                {"local_sim_slippage_bps": 0},
+            )
+
+        self.assertEqual(result["status"], "filled")
+        trade = json.loads(local_sim_ledger.LOCAL_SIM_TRADES.read_text(encoding="utf-8").splitlines()[0])
+        receipt = json.loads(local_sim_ledger.LOCAL_SIM_RECEIPTS.read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(trade["retry_of"], "SIM-ORIGINAL")
+        self.assertEqual(trade["retry_attempt"], 1)
+        self.assertEqual(receipt["retry_of"], "SIM-ORIGINAL")
+        self.assertEqual(receipt["retry_attempt"], 1)
+        self.assertEqual(
+            receipt["receipt_sha256"],
+            local_sim_ledger._payload_sha256(receipt, drop_checksums=True),
+        )
+
     def test_rejects_buy_that_would_make_local_cash_negative(self) -> None:
         first = {
             "order_id": "SIM-CASH-1",

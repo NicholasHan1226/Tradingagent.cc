@@ -72,6 +72,8 @@ class LocalSimTrade:
     fill_price_source_class: str = ""
     fill_evidence: dict[str, Any] = field(default_factory=dict)
     capital_scope: str = ""
+    retry_of: str = ""
+    retry_attempt: int = 0
     hypothesis_id: str = ""
     research_hypothesis: dict[str, Any] = field(default_factory=dict)
     factor_snapshot: dict[str, Any] = field(default_factory=dict)
@@ -649,7 +651,9 @@ def ensure_local_sim_bootstrap_snapshot(
     with _lock():
         trades = _load_trades_unlocked()
         if trades:
-            _persist_unlocked(trades)
+            required_snapshots = (LOCAL_SIM_POSITIONS, LOCAL_SIM_PNL, LOCAL_SIM_POSITIONS_SNAPSHOT)
+            if not all(path.exists() for path in required_snapshots):
+                _persist_unlocked(trades)
             return {"status": "existing_trades", "written": False, "trade_count": len(trades), "account": account_name}
         if LOCAL_SIM_POSITIONS_SNAPSHOT.exists() and not force:
             try:
@@ -792,6 +796,8 @@ def record_local_sim_order(
         fill_price_source=fill_price_source,
         fill_price_source_class=fill_price_source_class,
         fill_evidence=fill_evidence,
+        retry_of=str(order.get("retry_of") or ""),
+        retry_attempt=_safe_int(order.get("retry_attempt"), 0),
         hypothesis_id=str(order.get("hypothesis_id") or research_hypothesis.get("hypothesis_id") or ""),
         research_hypothesis=research_hypothesis,
         factor_snapshot=factor_snapshot,
@@ -856,6 +862,8 @@ def record_local_sim_order(
                     "fill_price_source_class": fill_price_source_class,
                     "fill_evidence": fill_evidence,
                     "capital_scope": trade.capital_scope,
+                    "retry_of": trade.retry_of,
+                    "retry_attempt": trade.retry_attempt,
                     "hypothesis_id": trade.hypothesis_id,
                     "research_hypothesis": research_hypothesis,
                 },

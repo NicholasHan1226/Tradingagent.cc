@@ -149,6 +149,9 @@ def _normalize_local_sim_trade(row: dict[str, Any], path: Path) -> dict[str, Any
         "fill_price_source": row.get("fill_price_source") or "",
         "fill_price_source_class": row.get("fill_price_source_class") or "",
         "fill_evidence": row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {},
+        "capital_scope": row.get("capital_scope") or "",
+        "retry_of": row.get("retry_of") or "",
+        "retry_attempt": int(_safe_float(row.get("retry_attempt"))),
         "source_ledger": str(path),
         "notional": _safe_float(row.get("amount") or row.get("net_amount")),
         "fees": {

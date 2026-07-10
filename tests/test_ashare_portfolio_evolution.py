@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from Ashare.portfolio_evolution import build_portfolio_evolution, write_portfolio_evolution
 
@@ -108,6 +109,56 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
         ranking_names = {row["style_name"] for row in report["rankings"]}
         self.assertIn("ashare_50000", ranking_names)
         self.assertIn("ashare_100000", ranking_names)
+
+    def test_write_uses_same_mark_prices_for_tier_ledgers_and_pnl_summary(self) -> None:
+        self._write_trade(
+            {
+                "trade_id": "LSIM-B",
+                "order_id": "SIM-B",
+                "market": "ashare",
+                "account": "ashare_server_sim",
+                "trade_date": "2026-07-09",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "filled_price": 10.0,
+                "amount": 1000.0,
+                "commission": 5.0,
+                "net_amount": 1005.0,
+                "status": "filled",
+                "candidate_pool_layer": "candidate",
+                "execution_source": "ashare_candidate_layer",
+                "fill_price_source": "signal_card.price",
+                "fill_price_source_class": "signal_card_price",
+                "trade_timestamp_bj": "2026-07-09T10:00:00+08:00",
+            }
+        )
+
+        expected_prices = {"600000.SH": 12.34}
+        captured: dict[str, object] = {}
+
+        def fake_refresh(local_trades_path: Path | None) -> dict[str, object]:
+            return {"status": "ok", "mark_prices": expected_prices}
+
+        def fake_write_tier_ledgers(*, mark_prices: object = None, **kwargs: object) -> dict[str, object]:
+            captured["tier_ledgers_mark_prices"] = mark_prices
+            return {"accounts": []}
+
+        def fake_sim_ledger_pnl_summary(*, ashare_mark_prices: object = None, **kwargs: object) -> dict[str, object]:
+            captured["pnl_summary_mark_prices"] = ashare_mark_prices
+            return {"ashare": {}}
+
+        with patch("Ashare.portfolio_evolution._refresh_local_sim_snapshot_for_review", fake_refresh), \
+             patch("Ashare.tier_experiments.write_tier_ledgers", fake_write_tier_ledgers), \
+             patch("Ashare.portfolio_evolution.sim_ledger_pnl_summary", fake_sim_ledger_pnl_summary):
+            write_portfolio_evolution(
+                trade_date="20260709",
+                review_dir=self.review_dir,
+                local_trades_path=self.local_trades,
+            )
+
+        self.assertIs(captured["tier_ledgers_mark_prices"], expected_prices)
+        self.assertIs(captured["pnl_summary_mark_prices"], expected_prices)
 
 
 if __name__ == "__main__":

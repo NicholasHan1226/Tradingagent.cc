@@ -115,9 +115,23 @@ def _has_evolution_execution_evidence(row: dict[str, Any]) -> bool:
     bar_time = row.get("bar_time") or evidence.get("bar_time")
     bar_volume = row.get("bar_volume") or evidence.get("bar_volume")
     try:
-        return bool(bar_time) and float(bar_volume or 0) > 0
+        if not bar_time or float(bar_volume or 0) <= 0:
+            return False
     except (TypeError, ValueError):
         return False
+    trade_time = _parse_trade_timestamp(row)
+    if trade_time is None:
+        return False
+    try:
+        parsed_bar_time = datetime.fromisoformat(str(bar_time).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed_bar_time.tzinfo is None:
+        parsed_bar_time = parsed_bar_time.replace(tzinfo=CN_TZ)
+    else:
+        parsed_bar_time = parsed_bar_time.astimezone(CN_TZ)
+    age_seconds = (trade_time - parsed_bar_time).total_seconds()
+    return -300 <= age_seconds <= 900
 
 
 def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:

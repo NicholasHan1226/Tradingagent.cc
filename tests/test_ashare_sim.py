@@ -211,7 +211,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "market_snapshot": {
                     "ask_price": 10.5,
                     "last_price": 10.5,
-                    "bar_time": "2026-07-10 09:35:00",
+                    "bar_time": "2026-07-07 09:55:00",
                     "bar_volume": 1500,
                     "provider": "sharedsignals_api_realtime_5min",
                 },
@@ -221,9 +221,33 @@ class AshareSimExecutorTest(unittest.TestCase):
 
         evidence = result.raw_response["fill_evidence"]
         self.assertEqual(result.status, "filled")
-        self.assertEqual(evidence["bar_time"], "2026-07-10 09:35:00")
+        self.assertEqual(evidence["bar_time"], "2026-07-07 09:55:00")
         self.assertEqual(evidence["bar_volume"], 1500)
         self.assertEqual(evidence["execution_evidence_class"], "verified_5min_market_data")
+
+    def test_ashare_server_local_fill_downgrades_stale_5min_market_evidence(self) -> None:
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-STALE-5MIN",
+                "ts_code": "600000.SH",
+                "quantity": 100,
+                "price": 10.5,
+                "side": "buy",
+                "market_snapshot": {
+                    "ask_price": 10.5,
+                    "last_price": 10.5,
+                    "bar_time": "2026-07-07 09:35:00",
+                    "bar_volume": 1500,
+                    "provider": "sharedsignals_api_realtime_5min",
+                },
+            },
+            account={"account_id": "ashare_sim", "cash_available": 200_000},
+        )
+
+        evidence = result.raw_response["fill_evidence"]
+        self.assertEqual(result.status, "filled")
+        self.assertEqual(evidence["execution_evidence_class"], "weak_price_only")
+        self.assertEqual(evidence["evidence_reason"], "stale_or_future_5min_bar")
 
     def test_ashare_server_local_fill_rejects_same_day_t1_sell_from_ledger(self) -> None:
         self._patch_local_sim_paths()

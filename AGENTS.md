@@ -61,12 +61,15 @@ A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：
 - A股候选池分层必须复用同一轮六维预计算评分；空池时先用 `score_diagnostics` 区分样本覆盖、研究维度中性、策略阈值未过或候选池分层异常，不得回退硬买。
 - A股 simulated 订单必须携带来源字段：买入为 `candidate_pool_layer=candidate`、`execution_source=ashare_candidate_layer`；卖出/压缩为 `execution_source=ashare_rebalance_sell`，便于复盘确认成交来源。
 - A股 server-local simulated 账本和签名回执必须持久化 `candidate_pool_layer`、`execution_source`、`fill_price_source`、`fill_price_source_class` 与 `fill_evidence`。已发生但缺少候选来源或成交价来源字段的 A股 simulated 成交保留为账户事实和链路验证样本，不作为策略有效样本参与胜率、方向命中、归因、策略 PnL 或自我进化。
+- A股可恢复失败产生的 retry 成交必须把 `retry_of`、`retry_attempt` 同时写入 append-only 成交事实、签名回执和复盘读取行；历史签名回执不得为补字段而原地改写。
+- A股 `verified_5min_market_data` 必须在撮合时和演化读取时双重校验：分钟线相对成交时刻最多滞后 15 分钟、最多领先 5 分钟且成交量为正。过期或未来条线可继续作为价格兜底完成 server-local 模拟成交，但必须降级为 `weak_price_only`，不得进入演化或风险扩张样本。
 - A股 auto pipeline 不得用 `price=1.0` 作为候选或执行信号兜底；缺真实分钟/日线价格时跳过该候选或信号。
 - 组合构建前过滤 `price <= 0`，记录到 `skipped_candidates`。
 - Tushare daily `amount` 按千元口径存储，流动性比较前必须换算为元。
 - A股机会成本换仓保持保守但必须可触发：候选 `combined >= 0.70` 且相对可卖弱持仓分差至少 `0.12` 才允许生成 `ashare_rebalance_sell`；T+1、可卖数量、风险门禁和资金计划仍是硬约束。
 - A股自我演化走组合级证据，不套用 Crypto/PM/US 的多风格账本。`Ashare/portfolio_evolution.py` 读取 server-local 策略有效成交、组合 PnL 和样本质量，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`；写入前会刷新 server-local `local_sim_pnl.json` 到同一盯市口径，但不改成交事实；它只证明组合样本进入演化层，不伪造 aggressive/balanced 等风格归因。
 - A股 200,000 元账户是主模拟账户；50,000 / 100,000 元必须作为资金档位实验账户存在，不能只写在配置里。`Ashare/tier_experiments.py` 从同一策略有效成交按各自本金、现金约束和 100 股手数 replay，写 `shared/logs/local_sim_tiers/ashare_50000/`、`shared/logs/local_sim_tiers/ashare_100000/` 独立账本，并通过 `shared/review/ashare/tier_experiments_latest.json` 进入组合级演化排名。
+- 主账户与 50,000 / 100,000 元资金档位复盘必须使用同一轮 SharedSignals 盯市价；bootstrap 只负责缺失快照初始化，已有成交和完整快照时不得重放成交价覆盖当前盯市 PnL。
 
 ### SharedSignals 源状态门禁
 

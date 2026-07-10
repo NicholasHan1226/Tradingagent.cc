@@ -84,6 +84,19 @@ class AshareTierExperimentsTest(unittest.TestCase):
         self.assertEqual(ledger_50k["pnl"]["positions"]["600000.SH"]["quantity"], 200)
         self.assertEqual(ledger_100k["pnl"]["positions"]["600000.SH"]["quantity"], 500)
 
+    def test_tier_ledgers_use_current_mark_prices_for_unrealized_pnl(self) -> None:
+        ledger = build_tier_ledger(
+            [self._strategy_trade(quantity=1000, price=10.0)],
+            capital=50_000.0,
+            mark_prices={"600000.SH": 11.0},
+        )
+
+        position = ledger["pnl"]["positions"]["600000.SH"]
+        self.assertEqual(position["mark_price"], 11.0)
+        self.assertEqual(position["market_value"], 2200.0)
+        self.assertEqual(ledger["pnl"]["unrealized_pnl"], 195.0)
+        self.assertEqual(ledger["pnl"]["total_pnl"], 195.0)
+
     def test_each_tier_has_independent_capital_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

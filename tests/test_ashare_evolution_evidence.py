@@ -40,3 +40,17 @@ def test_verified_5min_evidence_is_eligible_for_evolution():
 
     assert enriched["evolution_sample_eligible"] is True
     assert enriched["evolution_sample_reason"] == "verified_market_data_execution"
+
+
+def test_stale_verified_5min_label_is_not_eligible_for_evolution():
+    trade = _base_trade()
+    trade["fill_evidence"] = {
+        **trade["fill_evidence"],
+        "bar_time": "2026-07-10 09:35:00",
+        "execution_evidence_class": "verified_5min_market_data",
+    }
+
+    enriched = enrich_trade_sample(trade)
+
+    assert enriched["evolution_sample_eligible"] is False
+    assert enriched["evolution_sample_reason"] == "weak_fill_price_evidence"

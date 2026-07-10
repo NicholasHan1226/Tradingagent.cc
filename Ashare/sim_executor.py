@@ -27,6 +27,8 @@ DEFAULT_SIGNALS_DIR = Path("/opt/investment/tradingagent/signals")
 MARKET = "ashare"
 SIM_ACCOUNT = "ashare_sim"
 CN_TZ = ZoneInfo("Asia/Shanghai")
+MAX_EXECUTION_BAR_AGE_SECONDS = 15 * 60
+MAX_EXECUTION_BAR_FUTURE_SECONDS = 5 * 60
 
 
 def _now_cn() -> datetime:
@@ -55,6 +57,31 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_bar_time(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=CN_TZ)
+    return parsed.astimezone(CN_TZ)
+
+
+def _fresh_5min_bar(value: Any, *, now: datetime | None = None) -> tuple[bool, float | None]:
+    parsed = _parse_bar_time(value)
+    if parsed is None:
+        return False, None
+    reference = (now or _now_cn()).astimezone(CN_TZ)
+    age_seconds = (reference - parsed).total_seconds()
+    return (
+        -MAX_EXECUTION_BAR_FUTURE_SECONDS <= age_seconds <= MAX_EXECUTION_BAR_AGE_SECONDS,
+        age_seconds,
+    )
 
 
 def _is_supported_ashare_code(code: Any) -> bool:
@@ -190,11 +217,23 @@ def _fill_evidence_from_snapshot(
         snapshot.get("trade_time"),
     )
     bar_volume = _first_value(snapshot.get("bar_volume"), snapshot.get("volume"), snapshot.get("vol"))
+    fresh_bar, bar_age_seconds = _fresh_5min_bar(bar_time)
     verified_5min = (
         quote_source.startswith(("order.market_snapshot.", "config.market_snapshot."))
         and bool(str(bar_time or "").strip())
         and _coerce_float(bar_volume, 0.0) > 0
+        and fresh_bar
     )
+    if verified_5min:
+        evidence_reason = "verified_fresh_5min_bar"
+    elif not quote_source.startswith(("order.market_snapshot.", "config.market_snapshot.")):
+        evidence_reason = "unverified_snapshot_source"
+    elif not str(bar_time or "").strip():
+        evidence_reason = "missing_bar_time"
+    elif _coerce_float(bar_volume, 0.0) <= 0:
+        evidence_reason = "missing_bar_volume"
+    else:
+        evidence_reason = "stale_or_future_5min_bar"
     source_class = "market_data" if verified_5min else "signal_card_price"
     return {
         "fill_price_field": quote_field,
@@ -206,6 +245,8 @@ def _fill_evidence_from_snapshot(
         "bar_volume": bar_volume,
         "bar_volume_source": volume_source,
         "bar_time": bar_time,
+        "bar_age_seconds": round(bar_age_seconds, 3) if bar_age_seconds is not None else None,
+        "evidence_reason": evidence_reason,
         "execution_evidence_class": "verified_5min_market_data" if verified_5min else "weak_price_only",
     }
 

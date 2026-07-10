@@ -168,7 +168,12 @@ def _build_tier_capital_plan(
     return plan_dict
 
 
-def build_tier_ledger(source_trades: list[dict[str, Any]], *, capital: float) -> dict[str, Any]:
+def build_tier_ledger(
+    source_trades: list[dict[str, Any]],
+    *,
+    capital: float,
+    mark_prices: dict[str, float] | None = None,
+) -> dict[str, Any]:
     account = _tier_account(capital)
     cash = float(capital)
     positions: dict[str, int] = {}
@@ -197,7 +202,12 @@ def build_tier_ledger(source_trades: list[dict[str, Any]], *, capital: float) ->
         cash += _safe_float(row.get("net_amount"))
         positions[symbol] = max(0, positions.get(symbol, 0) - quantity)
         generated.append(row)
-    pnl = local_sim_ledger._replay_account(generated, account, starting_cash=capital)  # noqa: SLF001
+    pnl = local_sim_ledger._replay_account(  # noqa: SLF001
+        generated,
+        account,
+        mark_prices=mark_prices,
+        starting_cash=capital,
+    )
     return {
         "account": account,
         "capital": capital,
@@ -217,6 +227,7 @@ def write_tier_ledgers(
     tiers: tuple[float, ...] = EXPERIMENT_TIERS,
     candidates: Sequence[dict[str, Any]] | None = None,
     market_context: dict[str, Any] | None = None,
+    mark_prices: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     source_path = Path(source_trades_path) if source_trades_path is not None else DEFAULT_SOURCE_TRADES
     output_root = Path(tier_root) if tier_root is not None else DEFAULT_TIER_ROOT
@@ -224,7 +235,7 @@ def write_tier_ledgers(
     source_trades = _read_jsonl(source_path)
     accounts: list[dict[str, Any]] = []
     for capital in tiers:
-        ledger = build_tier_ledger(source_trades, capital=float(capital))
+        ledger = build_tier_ledger(source_trades, capital=float(capital), mark_prices=mark_prices)
         capital_plan = _build_tier_capital_plan(ledger, candidates=candidates, market_context=market_context)
         account_dir = output_root / ledger["account"]
         account_dir.mkdir(parents=True, exist_ok=True)
