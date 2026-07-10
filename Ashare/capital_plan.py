@@ -320,6 +320,8 @@ def plan_capital(
         max_cash_reserve = profile.get("max_cash_reserve")
         dynamic_probe_budget = profile.get("dynamic_probe_budget") if isinstance(profile.get("dynamic_probe_budget"), dict) else None
         if risk_mode == "sample_collection":
+            max_probe_positions = max(1, int(_context_float(market_context or {}, "max_probe_positions", 1)))
+            target_positions = min(target_positions, n_holdings + max_probe_positions)
             capital_scale = max(0.25, min(1.0, float(total_capital) / TOTAL_CAPITAL))
             default_min = max(5_000.0, min(20_000.0 * capital_scale, float(total_capital) * 0.10))
             default_max = max(default_min, min(35_000.0 * capital_scale, float(total_capital) * 0.175))

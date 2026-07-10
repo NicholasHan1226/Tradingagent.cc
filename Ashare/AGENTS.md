@@ -31,7 +31,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 - A股信号卡的 `t_plus_1.sellable_from/sellable_date` 必须写下一交易日；当天买入不得在同日进入可卖数量或换仓释放资金。
 - A股 simulated 调度入口必须是 `shared.wrappers.tradings_cron_entry --job job_ashare_sim_exec`；通用 legacy `shared/wrappers/run_sim.py` 不承载 A股 no-trade 三段证据链，已显式拒绝 A股调用。
 - 交易时段硬门禁: `Ashare/sim_executor.py` 自身会按 `Asia/Shanghai` 和 A股交易日历拒绝非连续竞价时段（09:30-11:30、13:00-14:57）的 server-local fill 与 Hermes pending；wrapper 只是第一层保护。`bypass_market_hours` / `mock_filled` 只能用于测试、回测或隔离烟测，不得用于生产模拟调度。
-- 盘前 dry-run: `shared/runtime_test/ashare_preopen_dry_run.py` 只读预演日线覆盖、最新高流动性普通 A 股小样本的候选池、资金计划和执行门禁；默认样本上限 10 只，wrapper 默认 90 秒超时，避免盘前检查全市场逐票扫描；只允许写 runtime_test 最新/历史报告，不得写 `signals/`、账本、pending、review 或实盘队列。
+- 盘前 dry-run: `shared/runtime_test/ashare_preopen_dry_run.py` 只读预演日线覆盖、最新高流动性普通 A 股小样本的候选池、资金计划和执行门禁；默认样本上限 50 只，wrapper 默认 90 秒超时，避免盘前检查全市场逐票扫描，同时避免 10 只小样本误判候选池；只允许写 runtime_test 最新/历史报告，不得写 `signals/`、账本、pending、review 或实盘队列。
 - 盘前 dry-run 报告必须输出各段耗时，用于区分 SharedSignals 数据、候选池评分、资金计划和执行门禁哪一段拖慢开盘前检查。
 - 样本隔离: 已发生的非连续竞价时段 A股 simulated 成交保留为账户事实和链路验证样本，但必须归类为 `outside_ashare_regular_session`，不得进入策略胜率、方向命中、策略 PnL 或自我演化样本。
 - 活跃账户视图: A股 server-local 模拟盘默认读取 `strategy_samples_only`，只把交易时段内、来自 `candidate` 层、带成交价来源的策略样本计入现金、持仓、市值和收益；链路验证/盘外/缺来源样本仅作为 audit 视图展示，不得影响资金计划、目标持仓、机会成本换仓和看板累计收益。

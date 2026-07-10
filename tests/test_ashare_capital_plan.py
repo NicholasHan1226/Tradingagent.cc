@@ -251,6 +251,34 @@ class AshareCapitalPlanTest(unittest.TestCase):
         self.assertEqual(data["max_new_positions"], 1)
         self.assertIn("daily_strategy_sample_target_not_met", data["reasons"])
 
+    def test_sample_collection_respects_max_probe_positions_when_empty(self) -> None:
+        plan = plan_capital(
+            [],
+            200000.0,
+            candidates=[
+                {"ts_code": "600584.SH", "combined": 0.62},
+                {"ts_code": "002371.SZ", "combined": 0.58},
+                {"ts_code": "001309.SZ", "combined": 0.56},
+            ],
+            dynamic=True,
+            market_context={
+                "trend": "neutral",
+                "risk_rejection_rate": 0.0,
+                "data_issue_rate": 0.0,
+                "recent_win_rate": 0.50,
+                "strategy_sample_valid_count": 2,
+                "min_strategy_samples": 5,
+                "max_probe_positions": 1,
+            },
+        )
+
+        data = plan.to_dict()
+
+        self.assertEqual(data["risk_mode"], "sample_collection")
+        self.assertEqual(data["target_positions"], 1)
+        self.assertEqual(data["max_new_positions"], 1)
+        self.assertEqual(len(data["suggested_buys"]), 1)
+
     def test_sample_collection_probe_budget_scales_with_candidate_quality(self) -> None:
         base_context = {
             "trend": "neutral",

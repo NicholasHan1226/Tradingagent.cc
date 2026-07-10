@@ -41,7 +41,7 @@ LATEST = ROOT / "shared/runtime_test/ashare_preopen_dry_run_latest.json"
 HISTORY = ROOT / "shared/runtime_test/ashare_preopen_dry_run_history.jsonl"
 CANDIDATE_THRESHOLD = 0.55
 MIN_SYMBOLS = 1000
-DEFAULT_SCORE_LIMIT = 10
+DEFAULT_SCORE_LIMIT = 50
 ASHARE_STOCK_SQL_FILTER = """
 (
     b.symbol LIKE '000%.SZ' OR b.symbol LIKE '001%.SZ' OR
