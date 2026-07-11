@@ -412,7 +412,10 @@ def _safe_roots(
     archive_raw = Path(archive_dir).absolute()
     explicit_root = epoch_state.get("allowed_root")
     if explicit_root:
-        allowed_root = Path(str(explicit_root)).resolve(strict=True)
+        raw_root = Path(str(explicit_root))
+        if raw_root.is_symlink() or _path_or_ancestor_is_symlink(raw_root):
+            return None, None, None
+        allowed_root = raw_root.resolve(strict=True)
     else:
         review_resolved = review_raw.resolve(strict=False)
         archive_resolved = archive_raw.resolve(strict=False)
@@ -696,7 +699,10 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
     review_dir = Path(str(plan.get("review_dir") or ""))
     archive_dir = Path(str(plan.get("archive_dir") or ""))
     try:
-        allowed_root = Path(str(plan.get("allowed_root") or "")).resolve(strict=True)
+        raw_allowed_root = Path(str(plan.get("allowed_root") or ""))
+        if raw_allowed_root.is_symlink() or _path_or_ancestor_is_symlink(raw_allowed_root):
+            return {"status": "error", "reason": "unsafe_path"}
+        allowed_root = raw_allowed_root.resolve(strict=True)
     except OSError as exc:
         return {"status": "error", "reason": "unsafe_path", "detail": str(exc)}
     if (

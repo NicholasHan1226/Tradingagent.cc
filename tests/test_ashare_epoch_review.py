@@ -759,3 +759,71 @@ def test_next_monitor_and_learning_round_preserves_current_epoch_after_reset(tmp
         )
         assert valid, reason
         assert payload["capital_cny"] == 50_000.0
+
+
+def test_build_reset_plan_rejects_symlink_allowed_root_itself(tmp_path: Path) -> None:
+    """P0-2: build_epoch_reset_plan must reject when allowed_root itself is a symlink."""
+    real_root = tmp_path / "real-allowed"
+    symlink_root = tmp_path / "symlink-allowed"
+    real_root.mkdir()
+    symlink_root.symlink_to(real_root, target_is_directory=True)
+    review_dir = real_root / "review"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+    state = {**EPOCH_STATE, "allowed_root": str(symlink_root)}
+    plan = build_epoch_reset_plan(review_dir, real_root / "archive", state)
+    assert plan["status"] == "error"
+    assert plan["reason"] == "unsafe_path"
+
+
+def test_build_reset_plan_rejects_symlink_ancestor_of_allowed_root(tmp_path: Path) -> None:
+    """P0-2: build_epoch_reset_plan must reject when an ancestor of allowed_root is a symlink."""
+    real_base = tmp_path / "real-base"
+    real_base.mkdir()
+    link_to_base = tmp_path / "link-to-base"
+    link_to_base.symlink_to(real_base, target_is_directory=True)
+    allowed_root = link_to_base / "allowed"
+    allowed_root.mkdir()
+    review_dir = allowed_root / "review"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+    state = {**EPOCH_STATE, "allowed_root": str(allowed_root)}
+    plan = build_epoch_reset_plan(review_dir, allowed_root / "archive", state)
+    assert plan["status"] == "error"
+    assert plan["reason"] == "unsafe_path"
+
+
+def test_apply_reset_plan_rejects_symlink_allowed_root_before_resolve(tmp_path: Path) -> None:
+    """P0-2: apply_epoch_reset_plan must reject when plan allowed_root is a symlink."""
+    real_root = tmp_path / "real-allowed"
+    symlink_root = tmp_path / "symlink-allowed"
+    real_root.mkdir()
+    symlink_root.symlink_to(real_root, target_is_directory=True)
+    review_dir = real_root / "review"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+    state = {**EPOCH_STATE, "allowed_root": str(real_root)}
+    plan = build_epoch_reset_plan(review_dir, real_root / "archive", state)
+    assert plan["status"] == "ready"
+
+    # Forge the plan with a symlinked allowed_root
+    forged = copy.deepcopy(plan)
+    forged["allowed_root"] = str(symlink_root)
+    forged["plan_digest"] = json.dumps(
+        {field: forged.get(field) for field in (
+            "status", "review_dir", "archive_dir", "allowed_root", "move_count", "moves",
+            "missing_files", "bootstrap", "latest_bootstraps", "log_bootstraps", "authority_metadata",
+        )},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    )
+    forged["plan_digest"] = hashlib.sha256(forged["plan_digest"].encode("utf-8")).hexdigest()
+
+    result = apply_epoch_reset_plan(forged)
+    assert result["status"] == "error"
+    assert result["reason"] == "unsafe_path"

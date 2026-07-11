@@ -298,5 +298,86 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         self.assertIn("insufficient_verified_execution_evidence", decision["reasons"])
 
 
+    def test_decision_market_context_rejects_evidence_authority_invalid_capital_cny_mismatch(self) -> None:
+        """P0-1: decision_market_context must respect upstream evidence_authority_valid=False."""
+        decision = {
+            "capital_epoch": 2,
+            "evidence_trade_date": "20260711",
+            "evidence_authority_valid": False,
+            "evidence_authority_rejection_reason": "capital_cny_mismatch",
+            "recommended_action": "observe_and_label_candidates",
+            "policy": {
+                "today_strategy_sample_count": 0,
+                "min_strategy_samples": 5,
+                "strategy_sample_count": 8,
+                "sample_collection_min_score": 0.55,
+            },
+        }
+        context = decision_market_context(decision, target_trade_date="20260711", current_epoch_id=2)
+        self.assertFalse(context["evidence_usable"])
+        self.assertEqual(context["evidence_rejection_reason"], "capital_cny_mismatch")
+        self.assertEqual(context["strategy_sample_valid_count"], 0.0)
+
+    def test_decision_market_context_rejects_evidence_authority_invalid_cutover_mismatch(self) -> None:
+        """P0-1: wrong/exact cutover must not be evidence_usable."""
+        decision = {
+            "capital_epoch": 2,
+            "evidence_trade_date": "20260711",
+            "evidence_authority_valid": False,
+            "evidence_authority_rejection_reason": "epoch_cutover_timestamp_mismatch",
+            "recommended_action": "observe_and_label_candidates",
+            "policy": {
+                "today_strategy_sample_count": 0,
+                "min_strategy_samples": 5,
+                "strategy_sample_count": 8,
+                "sample_collection_min_score": 0.55,
+            },
+        }
+        context = decision_market_context(decision, target_trade_date="20260711", current_epoch_id=2)
+        self.assertFalse(context["evidence_usable"])
+        self.assertEqual(context["evidence_rejection_reason"], "epoch_cutover_timestamp_mismatch")
+        self.assertEqual(context["strategy_sample_valid_count"], 0.0)
+
+    def test_decision_market_context_rejects_evidence_authority_invalid_missing_capital_cny(self) -> None:
+        """P0-1: missing capital_cny must not enter sample_collection."""
+        decision = {
+            "capital_epoch": 2,
+            "evidence_trade_date": "20260711",
+            "evidence_authority_valid": False,
+            "evidence_authority_rejection_reason": "missing_capital_cny",
+            "recommended_action": "observe_and_label_candidates",
+            "policy": {
+                "today_strategy_sample_count": 0,
+                "min_strategy_samples": 5,
+                "strategy_sample_count": 8,
+                "sample_collection_min_score": 0.55,
+            },
+        }
+        context = decision_market_context(decision, target_trade_date="20260711", current_epoch_id=2)
+        self.assertFalse(context["evidence_usable"])
+        self.assertEqual(context["evidence_rejection_reason"], "missing_capital_cny")
+        self.assertEqual(context["strategy_sample_valid_count"], 0.0)
+
+    def test_decision_market_context_preserves_valid_evidence_with_authority(self) -> None:
+        """P0-1: valid evidence_authority must still pass through."""
+        decision = {
+            "capital_epoch": 2,
+            "evidence_trade_date": "20260711",
+            "evidence_authority_valid": True,
+            "evidence_authority_rejection_reason": "current_authority",
+            "recommended_action": "observe_and_label_candidates",
+            "policy": {
+                "today_strategy_sample_count": 3,
+                "min_strategy_samples": 5,
+                "strategy_sample_count": 8,
+                "sample_collection_min_score": 0.55,
+            },
+        }
+        context = decision_market_context(decision, target_trade_date="20260711", current_epoch_id=2)
+        self.assertTrue(context["evidence_usable"])
+        self.assertEqual(context["strategy_sample_valid_count"], 8.0)
+        self.assertEqual(context["today_strategy_sample_count"], 3.0)
+
+
 if __name__ == "__main__":
     unittest.main()

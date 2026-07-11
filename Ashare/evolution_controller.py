@@ -263,9 +263,14 @@ def decision_market_context(
     target_date = _compact_date(target_trade_date) or _today_cn_compact()
     evidence_date = _compact_date(decision.get("evidence_trade_date"))
     evidence_epoch = _safe_int(decision.get("capital_epoch"))
+    authority_valid = decision.get("evidence_authority_valid")
+    authority_rejection = str(decision.get("evidence_authority_rejection_reason") or "")
     evidence_usable = True
     rejection_reason = ""
-    if evidence_epoch != current_epoch_id:
+    if authority_valid is False:
+        evidence_usable = False
+        rejection_reason = authority_rejection or "evidence_authority_invalid"
+    elif evidence_epoch != current_epoch_id:
         evidence_usable = False
         rejection_reason = "capital_epoch_mismatch"
     elif evidence_date != target_date:
