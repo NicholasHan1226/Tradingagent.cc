@@ -425,17 +425,6 @@ def write_portfolio_evolution(
                 review_dir=review_path,
                 mark_prices=mark_prices,
             )
-        tier_manifest.update(
-            {
-                **epoch_fields,
-                "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "source_trades": _display_path(source_path),
-            }
-        )
-        (review_path / "tier_experiments_latest.json").write_text(
-            json.dumps(tier_manifest, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
         tier_refresh = {
             "status": "refreshed",
             "mark_price_count": len(mark_prices),

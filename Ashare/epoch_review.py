@@ -84,7 +84,7 @@ def validate_review_epoch(
 
 
 def validate_current_review_set(review_dir: Path, epoch_state: dict[str, Any]) -> dict[str, Any]:
-    """Validate every active review without requiring it to remain an empty bootstrap."""
+    """Require every Task-3 projection file to carry exact current authority."""
     try:
         from shared.execution.sim_account_epoch import require_authoritative_epoch_metadata
 
@@ -99,8 +99,7 @@ def validate_current_review_set(review_dir: Path, epoch_state: dict[str, Any]) -
             stale_or_missing.append({"file": name, "reason": "unsafe_path"})
             continue
         if not path.exists():
-            if name in _LATEST_FILES:
-                stale_or_missing.append({"file": name, "reason": "missing_current_review"})
+            stale_or_missing.append({"file": name, "reason": "missing_current_review"})
             continue
         try:
             payloads = (
@@ -111,6 +110,9 @@ def validate_current_review_set(review_dir: Path, epoch_state: dict[str, Any]) -
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             stale_or_missing.append({"file": name, "reason": "invalid_review_payload"})
             continue
+        if not payloads:
+            stale_or_missing.append({"file": name, "reason": "missing_current_review"})
+            continue
         for payload in payloads:
             valid, reason = validate_review_epoch(
                 payload,
@@ -120,9 +122,37 @@ def validate_current_review_set(review_dir: Path, epoch_state: dict[str, Any]) -
             if not valid:
                 stale_or_missing.append({"file": name, "reason": reason})
                 break
+            if (
+                isinstance(payload.get("capital_epoch"), bool)
+                or not isinstance(payload.get("capital_epoch"), int)
+                or payload.get("capital_epoch") != int(authority["capital_epoch"])
+            ):
+                stale_or_missing.append({"file": name, "reason": "capital_epoch_mismatch"})
+                break
+            try:
+                raw_capital = payload.get("capital_cny")
+                payload_capital = (
+                    float(raw_capital)
+                    if isinstance(raw_capital, (int, float)) and not isinstance(raw_capital, bool)
+                    else float("nan")
+                )
+            except (TypeError, ValueError):
+                payload_capital = float("nan")
+            if payload_capital != float(authority["capital_cny"]):
+                stale_or_missing.append({"file": name, "reason": "capital_cny_mismatch"})
+                break
+            if payload.get("epoch_cutover_timestamp") != authority["cutover_timestamp"]:
+                stale_or_missing.append(
+                    {"file": name, "reason": "epoch_cutover_timestamp_mismatch"}
+                )
+                break
     if stale_or_missing:
         return {"status": "stale_or_missing", "issues": stale_or_missing}
-    return {"status": "current", "checked_latest_count": len(_LATEST_FILES)}
+    return {
+        "status": "current",
+        "checked_latest_count": len(_LATEST_FILES),
+        "checked_file_count": len(CURRENT_DERIVED_FILES),
+    }
 
 
 def _sha256(path: Path) -> str:
@@ -265,17 +295,37 @@ def _latest_bootstraps(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
-def _plan_authority_digest(
-    authority_metadata: dict[str, Any],
-    bootstrap: dict[str, Any],
+def _log_bootstraps(
     latest_bootstraps: dict[str, dict[str, Any]],
-) -> str:
+) -> dict[str, dict[str, Any]]:
+    return {
+        "portfolio_evolution_log.jsonl": latest_bootstraps["portfolio_evolution_latest.json"],
+        "evolution_decision_log.jsonl": latest_bootstraps["evolution_decision_latest.json"],
+        "forward_validation.jsonl": latest_bootstraps["forward_validation_latest.json"],
+        "sample_learning_log.jsonl": latest_bootstraps["sample_learning_latest.json"],
+        "sample_target_monitor_log.jsonl": latest_bootstraps["sample_target_monitor_latest.json"],
+        "formal_close_history.jsonl": latest_bootstraps["formal_close_latest.json"],
+    }
+
+
+_PLAN_DIGEST_FIELDS = (
+    "status",
+    "review_dir",
+    "archive_dir",
+    "allowed_root",
+    "move_count",
+    "moves",
+    "missing_files",
+    "bootstrap",
+    "latest_bootstraps",
+    "log_bootstraps",
+    "authority_metadata",
+)
+
+
+def _plan_digest(plan: dict[str, Any]) -> str:
     encoded = json.dumps(
-        {
-            "authority_metadata": authority_metadata,
-            "bootstrap": bootstrap,
-            "latest_bootstraps": latest_bootstraps,
-        },
+        {field: plan.get(field) for field in _PLAN_DIGEST_FIELDS},
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -332,6 +382,7 @@ def _roots_already_bootstrapped(
     review_dir: Path,
     archive_dir: Path,
     latest_bootstraps: dict[str, dict[str, Any]],
+    log_bootstraps: dict[str, dict[str, Any]],
 ) -> bool:
     if not archive_dir.is_dir():
         return False
@@ -344,8 +395,16 @@ def _roots_already_bootstrapped(
             return False
         if current != expected:
             return False
-    for name in CURRENT_DERIVED_FILES:
-        if name not in latest_bootstraps and (review_dir / name).exists():
+    for name, expected in log_bootstraps.items():
+        try:
+            rows = [
+                json.loads(line)
+                for line in (review_dir / name).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return False
+        if rows != [expected]:
             return False
     return True
 
@@ -366,14 +425,14 @@ def build_epoch_reset_plan(
     if review_path is None or archive_path is None or allowed_root is None:
         return {"status": "error", "reason": "unsafe_path"}
     latest_bootstraps = _latest_bootstraps(bootstrap)
+    log_bootstraps = _log_bootstraps(latest_bootstraps)
     authority_metadata = {
         "current_epoch_id": bootstrap["capital_epoch"],
         "capital_cny": bootstrap["capital_cny"],
         "cutover_timestamp": bootstrap["epoch_cutover_timestamp"],
     }
-    authority_digest = _plan_authority_digest(authority_metadata, bootstrap, latest_bootstraps)
-    if _roots_already_bootstrapped(review_path, archive_path, latest_bootstraps):
-        return {
+    if _roots_already_bootstrapped(review_path, archive_path, latest_bootstraps, log_bootstraps):
+        result = {
             "status": "already_applied",
             "review_dir": str(review_path),
             "archive_dir": str(archive_path),
@@ -383,9 +442,11 @@ def build_epoch_reset_plan(
             "missing_files": [],
             "bootstrap": bootstrap,
             "latest_bootstraps": latest_bootstraps,
+            "log_bootstraps": log_bootstraps,
             "authority_metadata": authority_metadata,
-            "authority_digest": authority_digest,
         }
+        result["plan_digest"] = _plan_digest(result)
+        return result
 
     moves: list[dict[str, Any]] = []
     missing: list[str] = []
@@ -435,7 +496,7 @@ def build_epoch_reset_plan(
             "review_dir": str(review_path),
             "archive_dir": str(archive_path),
         }
-    return {
+    result = {
         "status": "ready",
         "review_dir": str(review_path),
         "archive_dir": str(archive_path),
@@ -445,9 +506,11 @@ def build_epoch_reset_plan(
         "missing_files": missing,
         "bootstrap": bootstrap,
         "latest_bootstraps": latest_bootstraps,
+        "log_bootstraps": log_bootstraps,
         "authority_metadata": authority_metadata,
-        "authority_digest": authority_digest,
     }
+    result["plan_digest"] = _plan_digest(result)
+    return result
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -462,8 +525,21 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _atomic_write_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(str(tmp), str(path))
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def _plan_already_applied(plan: dict[str, Any], allowed_root: Path) -> bool:
     latest = plan.get("latest_bootstraps") if isinstance(plan.get("latest_bootstraps"), dict) else {}
+    logs = plan.get("log_bootstraps") if isinstance(plan.get("log_bootstraps"), dict) else {}
     review_dir = Path(str(plan.get("review_dir") or ""))
     moves = plan.get("moves") if isinstance(plan.get("moves"), list) else []
     for item in moves:
@@ -483,6 +559,18 @@ def _plan_already_applied(plan: dict[str, Any], allowed_root: Path) -> bool:
         except (FileNotFoundError, OSError, json.JSONDecodeError):
             return False
         if current != payload:
+            return False
+    for name, payload in logs.items():
+        path = review_dir / name
+        try:
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return False
+        if rows != [payload]:
             return False
     return bool(latest)
 
@@ -512,6 +600,8 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
 
     if not isinstance(plan, dict) or plan.get("status") not in {"ready", "already_applied"}:
         return {"status": "error", "reason": "plan_not_ready"}
+    if str(plan.get("plan_digest") or "") != _plan_digest(plan):
+        return {"status": "error", "reason": "invalid_plan_digest"}
     try:
         authority = plan["authority_metadata"]
         bootstrap = plan["bootstrap"]
@@ -521,11 +611,9 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
         validated = require_authoritative_epoch_metadata(authority)
         expected_bootstrap = _bootstrap_payload(authority)
         expected_latest = _latest_bootstraps(expected_bootstrap)
-        expected_digest = _plan_authority_digest(authority, bootstrap, latest)
         if (
             bootstrap != expected_bootstrap
             or latest != expected_latest
-            or str(plan.get("authority_digest") or "") != expected_digest
             or int(validated["capital_epoch"]) != int(bootstrap.get("capital_epoch", -1))
         ):
             raise ValueError("plan authority mismatch")
@@ -544,7 +632,7 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
         or not _is_within(archive_dir.resolve(strict=False), allowed_root)
     ):
         return {"status": "error", "reason": "unsafe_path"}
-    if plan.get("status") == "already_applied" or _plan_already_applied(plan, allowed_root):
+    if _plan_already_applied(plan, allowed_root):
         return {
             "status": "already_applied",
             "move_count": int(plan.get("move_count") or 0),
@@ -556,8 +644,13 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
         if isinstance(plan.get("latest_bootstraps"), dict)
         else {}
     )
+    log_bootstraps = (
+        plan.get("log_bootstraps") if isinstance(plan.get("log_bootstraps"), dict) else {}
+    )
     if set(latest_bootstraps) != _LATEST_FILES:
         return {"status": "error", "reason": "invalid_latest_bootstrap_set"}
+    if set(log_bootstraps) != set(CURRENT_DERIVED_FILES) - _LATEST_FILES:
+        return {"status": "error", "reason": "invalid_log_bootstrap_set"}
 
     moved: list[tuple[Path, Path]] = []
     written: list[Path] = []
@@ -591,6 +684,10 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
         for name in sorted(_LATEST_FILES):
             destination = review_dir / name
             _atomic_write_json(destination, latest_bootstraps[name])
+            written.append(destination)
+        for name in sorted(log_bootstraps):
+            destination = review_dir / name
+            _atomic_write_jsonl(destination, log_bootstraps[name])
             written.append(destination)
     except Exception as exc:  # noqa: BLE001
         rollback_errors: list[dict[str, str]] = []
@@ -639,6 +736,7 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
         "move_count": len(moved),
         "archive_dir": str(archive_dir),
         "bootstrapped_latest_files": sorted(_LATEST_FILES),
+        "bootstrapped_log_files": sorted(log_bootstraps),
     }
 
 

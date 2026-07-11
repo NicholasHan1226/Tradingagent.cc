@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import copy
 import subprocess
 import sys
 from datetime import datetime
@@ -13,6 +14,7 @@ from Ashare.epoch_review import (
     CURRENT_DERIVED_FILES,
     apply_epoch_reset_plan,
     build_epoch_reset_plan,
+    validate_current_review_set,
     validate_review_epoch,
 )
 from Ashare.formal_close_refresh import run_formal_close_refresh
@@ -133,8 +135,8 @@ def test_apply_moves_all_stale_files_and_atomically_bootstraps_current_latest_fi
     assert result["status"] == "applied"
     assert result["move_count"] == len(CURRENT_DERIVED_FILES)
     assert all((archive_dir / name).exists() for name in CURRENT_DERIVED_FILES)
-    assert not (review_dir / "portfolio_evolution_log.jsonl").exists()
-    assert not (review_dir / "evolution_decision_log.jsonl").exists()
+    assert (review_dir / "portfolio_evolution_log.jsonl").exists()
+    assert (review_dir / "evolution_decision_log.jsonl").exists()
     portfolio = json.loads((review_dir / "portfolio_evolution_latest.json").read_text(encoding="utf-8"))
     decision = json.loads((review_dir / "evolution_decision_latest.json").read_text(encoding="utf-8"))
     forward = json.loads((review_dir / "forward_validation_latest.json").read_text(encoding="utf-8"))
@@ -403,6 +405,23 @@ def test_apply_reset_plan_is_idempotent_noop(tmp_path: Path) -> None:
     assert json.loads((review_dir / "portfolio_evolution_latest.json").read_text())["capital_epoch"] == 2
 
 
+def test_apply_reset_plan_does_not_claim_idempotency_when_current_log_is_missing(
+    tmp_path: Path,
+) -> None:
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+    plan = build_epoch_reset_plan(review_dir, tmp_path / "archive", EPOCH_STATE)
+    assert apply_epoch_reset_plan(plan)["status"] == "applied"
+    (review_dir / "portfolio_evolution_log.jsonl").unlink()
+
+    second = apply_epoch_reset_plan(plan)
+
+    assert second["status"] != "already_applied"
+
+
 def test_apply_reset_plan_rejects_forged_bootstrap_before_any_write(tmp_path: Path) -> None:
     review_dir = tmp_path / "review"
     review_dir.mkdir()
@@ -415,9 +434,76 @@ def test_apply_reset_plan_rejects_forged_bootstrap_before_any_write(tmp_path: Pa
 
     result = apply_epoch_reset_plan(plan)
 
-    assert result == {"status": "error", "reason": "invalid_plan_authority"}
+    assert result == {"status": "error", "reason": "invalid_plan_digest"}
     assert source.read_bytes() == original
     assert not archive_dir.exists()
+
+
+def test_apply_reset_plan_rejects_any_immutable_payload_tamper_before_write(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
+    archive_dir = tmp_path / "archive"
+    review_dir.mkdir()
+    source = review_dir / "portfolio_evolution_latest.json"
+    source.write_bytes(b'{"capital_epoch":1}\n')
+    original = source.read_bytes()
+    plan = build_epoch_reset_plan(review_dir, archive_dir, EPOCH_STATE)
+    forged_root = tmp_path / "forged-root"
+    forged_root.mkdir()
+
+    mutations = (
+        lambda candidate: candidate.update({"review_dir": str(tmp_path / "other-review")}),
+        lambda candidate: candidate.update({"archive_dir": str(tmp_path / "other-archive")}),
+        lambda candidate: candidate.update({"allowed_root": str(forged_root)}),
+        lambda candidate: candidate.update({"missing_files": []}),
+        lambda candidate: candidate["moves"][0].update(
+            {"destination": str(tmp_path / "within-root-forged-destination.json")}
+        ),
+        lambda candidate: candidate["moves"][0].update({"source": str(source.parent / "other.json")}),
+    )
+    for mutate in mutations:
+        forged = copy.deepcopy(plan)
+        mutate(forged)
+        result = apply_epoch_reset_plan(forged)
+        assert result == {"status": "error", "reason": "invalid_plan_digest"}
+        assert source.read_bytes() == original
+        assert not archive_dir.exists()
+        assert not (tmp_path / "within-root-forged-destination.json").exists()
+
+
+def test_current_review_set_requires_all_latest_and_logs_with_exact_authority(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+    plan = build_epoch_reset_plan(review_dir, tmp_path / "archive", EPOCH_STATE)
+    assert apply_epoch_reset_plan(plan)["status"] == "applied"
+
+    current = validate_current_review_set(review_dir, EPOCH_STATE)
+    assert current["status"] == "current"
+    assert current["checked_file_count"] == len(CURRENT_DERIVED_FILES)
+
+    log_path = review_dir / "portfolio_evolution_log.jsonl"
+    log_payload = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
+    log_payload["capital_cny"] = 200_000.0
+    log_path.write_text(json.dumps(log_payload) + "\n", encoding="utf-8")
+    mismatch = validate_current_review_set(review_dir, EPOCH_STATE)
+    assert mismatch["status"] == "stale_or_missing"
+    assert {item["reason"] for item in mismatch["issues"]} == {"capital_cny_mismatch"}
+
+    log_payload["capital_cny"] = 50_000.0
+    log_payload["epoch_cutover_timestamp"] = "2026-07-11T04:56:58+08:00"
+    log_path.write_text(json.dumps(log_payload) + "\n", encoding="utf-8")
+    timezone_alias = validate_current_review_set(review_dir, EPOCH_STATE)
+    assert timezone_alias["status"] == "stale_or_missing"
+    assert {item["reason"] for item in timezone_alias["issues"]} == {
+        "epoch_cutover_timestamp_mismatch"
+    }
+
+    log_path.unlink()
+    missing = validate_current_review_set(review_dir, EPOCH_STATE)
+    assert missing["status"] == "stale_or_missing"
+    assert {item["reason"] for item in missing["issues"]} == {"missing_current_review"}
 
 
 def test_rebuilt_plan_after_apply_is_already_applied_noop(tmp_path: Path) -> None:

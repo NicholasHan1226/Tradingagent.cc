@@ -11,7 +11,21 @@ from Ashare.portfolio_evolution import _tier_rankings
 from Ashare.tier_experiments import build_tier_ledger, write_tier_ledgers, EXPERIMENT_TIERS
 
 
+EPOCH_STATE = {
+    "current_epoch_id": 2,
+    "capital_cny": 50_000.0,
+    "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+}
+
+
 class AshareTierExperimentsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.epoch_state = patch("Ashare.tier_experiments.read_epoch_state", return_value=EPOCH_STATE)
+        self.epoch_state.start()
+
+    def tearDown(self) -> None:
+        self.epoch_state.stop()
+
     def _strategy_trade(self, quantity: int = 1000, price: float = 10.0) -> dict[str, object]:
         return {
             "trade_id": "LSIM-MAIN",
@@ -69,6 +83,83 @@ class AshareTierExperimentsTest(unittest.TestCase):
             self.assertFalse((root / "tiers").exists())
             manifest = json.loads((root / "review" / "tier_experiments_latest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["accounts"], [])
+            self.assertEqual(manifest["capital_epoch"], 2)
+            self.assertEqual(manifest["capital_cny"], 50_000.0)
+            self.assertEqual(
+                manifest["epoch_cutover_timestamp"], EPOCH_STATE["cutover_timestamp"]
+            )
+
+    def test_write_tier_ledgers_fails_closed_before_any_write_on_invalid_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "local_sim_trades.jsonl"
+            source.write_text(json.dumps(self._strategy_trade()) + "\n", encoding="utf-8")
+            with patch(
+                "Ashare.tier_experiments.read_epoch_state",
+                return_value={**EPOCH_STATE, "capital_cny": 200_000.0},
+            ):
+                with self.assertRaisesRegex(ValueError, "invalid_epoch_state"):
+                    write_tier_ledgers(
+                        source_trades_path=source,
+                        tier_root=root / "tiers",
+                        review_dir=root / "review",
+                        tiers=(100_000.0,),
+                    )
+            self.assertFalse((root / "tiers").exists())
+            self.assertFalse((root / "review").exists())
+
+    def test_tier_files_are_atomically_written_with_complete_epoch_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "local_sim_trades.jsonl"
+            source.write_text(json.dumps(self._strategy_trade()) + "\n", encoding="utf-8")
+            report = write_tier_ledgers(
+                source_trades_path=source,
+                tier_root=root / "tiers",
+                review_dir=root / "review",
+                tiers=(100_000.0,),
+            )
+            account_dir = root / "tiers" / "ashare_100000"
+            metadata = {
+                "capital_epoch": 2,
+                "capital_cny": 50_000.0,
+                "epoch_cutover_timestamp": EPOCH_STATE["cutover_timestamp"],
+            }
+            self.assertTrue(metadata.items() <= report.items())
+            for row in (account_dir / "local_sim_trades.jsonl").read_text().splitlines():
+                self.assertTrue(metadata.items() <= json.loads(row).items())
+            for name in ("local_sim_pnl.json", "local_sim_positions.json", "capital_plan.json"):
+                self.assertTrue(metadata.items() <= json.loads((account_dir / name).read_text()).items())
+
+    def test_atomic_write_failure_never_leaves_untagged_tier_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "local_sim_trades.jsonl"
+            source.write_text(json.dumps(self._strategy_trade()) + "\n", encoding="utf-8")
+            real_replace = os.replace
+            calls = {"count": 0}
+
+            def fail_second_replace(src: str, dst: str) -> None:
+                calls["count"] += 1
+                if calls["count"] == 2:
+                    raise OSError("injected atomic failure")
+                real_replace(src, dst)
+
+            with patch("Ashare.tier_experiments.os.replace", side_effect=fail_second_replace):
+                with self.assertRaisesRegex(OSError, "injected atomic failure"):
+                    write_tier_ledgers(
+                        source_trades_path=source,
+                        tier_root=root / "tiers",
+                        review_dir=root / "review",
+                        tiers=(100_000.0,),
+                    )
+            for path in (root / "tiers").rglob("*"):
+                if path.is_file() and not path.name.startswith("."):
+                    if path.suffix == ".jsonl":
+                        payloads = [json.loads(line) for line in path.read_text().splitlines() if line]
+                    else:
+                        payloads = [json.loads(path.read_text())]
+                    self.assertTrue(all(item.get("capital_epoch") == 2 for item in payloads))
 
     def test_tiers_have_independent_cash_and_positions(self) -> None:
         ledger_50k = build_tier_ledger([self._strategy_trade(quantity=1000, price=10.0)], capital=50_000.0)

@@ -27,6 +27,11 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
         )
         self.epoch_patch.start()
         self.addCleanup(self.epoch_patch.stop)
+        self.tier_epoch_patch = patch(
+            "Ashare.tier_experiments.read_epoch_state", return_value=EPOCH_STATE
+        )
+        self.tier_epoch_patch.start()
+        self.addCleanup(self.tier_epoch_patch.stop)
 
     def _write_trade(self, payload: dict[str, object]) -> None:
         payload.setdefault("capital_epoch", 2)

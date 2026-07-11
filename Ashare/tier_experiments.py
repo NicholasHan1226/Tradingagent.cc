@@ -10,11 +10,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any, Sequence
 
 from Ashare.capital_plan import plan_capital
 from shared.execution import local_sim_ledger
+from shared.execution.sim_account_epoch import (
+    read_epoch_state,
+    require_authoritative_epoch_metadata,
+)
 from shared.markets.sim_capital import default_sim_capital
 from shared.review.sample_quality import strategy_valid_trades
 
@@ -233,6 +238,20 @@ def build_tier_ledger(
     }
 
 
+def _atomic_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(str(tmp), str(path))
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    _atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
 def write_tier_ledgers(
     *,
     source_trades_path: Path | str | None = None,
@@ -243,6 +262,12 @@ def write_tier_ledgers(
     market_context: dict[str, Any] | None = None,
     mark_prices: dict[str, float] | None = None,
 ) -> dict[str, Any]:
+    authority = require_authoritative_epoch_metadata(read_epoch_state())
+    epoch_fields = {
+        "capital_epoch": int(authority["capital_epoch"]),
+        "capital_cny": float(authority["capital_cny"]),
+        "epoch_cutover_timestamp": str(authority["cutover_timestamp"]),
+    }
     source_path = Path(source_trades_path) if source_trades_path is not None else DEFAULT_SOURCE_TRADES
     output_root = Path(tier_root) if tier_root is not None else DEFAULT_TIER_ROOT
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
@@ -251,19 +276,29 @@ def write_tier_ledgers(
     accounts: list[dict[str, Any]] = []
     for capital in experiment_tiers:
         ledger = build_tier_ledger(source_trades, capital=float(capital), mark_prices=mark_prices)
+        ledger["trades"] = [{**row, **epoch_fields} for row in ledger["trades"]]
         capital_plan = _build_tier_capital_plan(ledger, candidates=candidates, market_context=market_context)
         account_dir = output_root / ledger["account"]
-        account_dir.mkdir(parents=True, exist_ok=True)
         trades_path = account_dir / "local_sim_trades.jsonl"
-        trades_path.write_text(
+        _atomic_write(
+            trades_path,
             "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in ledger["trades"]),
-            encoding="utf-8",
         )
-        (account_dir / "local_sim_pnl.json").write_text(json.dumps({ledger["account"]: ledger["pnl"]}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        (account_dir / "local_sim_positions.json").write_text(json.dumps({ledger["account"]: ledger["pnl"].get("positions", {})}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        (account_dir / "capital_plan.json").write_text(json.dumps({ledger["account"]: capital_plan}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_json(
+            account_dir / "local_sim_pnl.json",
+            {**epoch_fields, ledger["account"]: ledger["pnl"]},
+        )
+        _atomic_write_json(
+            account_dir / "local_sim_positions.json",
+            {**epoch_fields, ledger["account"]: ledger["pnl"].get("positions", {})},
+        )
+        _atomic_write_json(
+            account_dir / "capital_plan.json",
+            {**epoch_fields, ledger["account"]: capital_plan},
+        )
         accounts.append(
             {
+                **epoch_fields,
                 "account": ledger["account"],
                 "capital": ledger["capital"],
                 "trade_count": ledger["trade_count"],
@@ -274,6 +309,7 @@ def write_tier_ledgers(
             }
         )
     manifest = {
+        **epoch_fields,
         "market": "ashare",
         "primary_capital": round(_primary_capital(), 2),
         "source_trades": str(source_path.relative_to(ROOT)) if str(source_path).startswith(str(ROOT)) else str(source_path),
@@ -282,8 +318,7 @@ def write_tier_ledgers(
         "read_only_source": True,
         "real_trading_enabled": False,
     }
-    review_path.mkdir(parents=True, exist_ok=True)
-    (review_path / "tier_experiments_latest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _atomic_write_json(review_path / "tier_experiments_latest.json", manifest)
     return manifest
 
 
