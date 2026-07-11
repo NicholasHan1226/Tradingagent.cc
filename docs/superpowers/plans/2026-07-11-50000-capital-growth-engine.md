@@ -503,12 +503,14 @@ git commit -m "fix(ashare): isolate derived state by capital epoch"
 **Files:**
 - Modify: `CNFutures/sim_runner.py:702-715`
 - Modify: `CNFutures/sim_runner.py:1020-1120`
+- Modify: `CNFutures/sim_executor.py`
+- Modify: `CNFutures/contract_rules.py`
 - Modify: `CNFutures/observation_report.py`
 - Test: `tests/test_cn_futures_sim_runner.py`
 - Test: `tests/test_cn_futures_observation_report.py`
 
 **Interfaces:**
-- Replaces private integer-only sizing with `quantity_for_style_decision(symbol: str, price: float, capital: float, style: dict) -> dict[str, Any]`.
+- Replaces private integer-only sizing with `quantity_for_style_decision(symbol: str, price: float, account_state: dict, style: dict, exit_plan: dict, session: dict) -> dict[str, Any]`.
 - Produces: `build_affordability_hold(*, symbol: str, style_name: str, size_decision: dict, cadence: str, bar_time: str, session: str) -> dict[str, Any]`.
 - Produces: `quantity`, `margin_per_lot`, `margin_budget`, `modeled_loss_per_lot`, `loss_budget`, `eligible`, and `reason`.
 
@@ -519,8 +521,11 @@ def test_minimum_contract_above_risk_budget_returns_zero():
     decision = quantity_for_style_decision(
         symbol="RB2610.SHF",
         price=3_500.0,
-        capital=50_000.0,
-        style={"risk_per_trade": 0.01, "max_margin_usage": 0.30, "weight": 0.25, "stop_loss_pct": 0.01},
+        account_state={"equity": 50_000.0, "available_margin": 50_000.0,
+                       "consecutive_losses": 0, "max_consecutive_losses": 3},
+        style={"risk_per_trade": 0.01, "max_margin_usage": 0.30, "weight": 0.25},
+        exit_plan={"stop_loss_pct": 0.01},
+        session={"can_hold_overnight": False},
     )
     assert decision["margin_budget"] == 125.0
     assert decision["quantity"] == 0
@@ -532,8 +537,11 @@ def test_unaffordable_contract_creates_hold_not_error():
     decision = quantity_for_style_decision(
         symbol="RB2610.SHF",
         price=3_500.0,
-        capital=50_000.0,
-        style={"risk_per_trade": 0.01, "max_margin_usage": 0.30, "weight": 0.25, "stop_loss_pct": 0.01},
+        account_state={"equity": 50_000.0, "available_margin": 50_000.0,
+                       "consecutive_losses": 0, "max_consecutive_losses": 3},
+        style={"risk_per_trade": 0.01, "max_margin_usage": 0.30, "weight": 0.25},
+        exit_plan={"stop_loss_pct": 0.01},
+        session={"can_hold_overnight": False},
     )
     hold = build_affordability_hold(
         symbol="RB2610.SHF",
@@ -546,6 +554,30 @@ def test_unaffordable_contract_creates_hold_not_error():
     assert hold["stage"] == "risk"
     assert hold["reason"] == "minimum_contract_exceeds_risk_budget"
     assert hold["size_decision"]["quantity"] == 0
+
+
+def test_missing_stop_or_gap_risk_input_fails_closed():
+    decision = quantity_for_style_decision(
+        symbol="RB2610.SHF", price=3_500.0,
+        account_state={"equity": 50_000.0, "available_margin": 50_000.0},
+        style={"risk_per_trade": 0.01, "max_margin_usage": 0.30, "weight": 0.25},
+        exit_plan={}, session={"can_hold_overnight": True},
+    )
+    assert decision["quantity"] == 0
+    assert decision["reason"] == "missing_contract_risk_inputs"
+
+
+def test_consecutive_loss_gate_precedes_affordability():
+    decision = quantity_for_style_decision(
+        symbol="RB2610.SHF", price=3_500.0,
+        account_state={"equity": 50_000.0, "available_margin": 4_000.0,
+                       "consecutive_losses": 3, "max_consecutive_losses": 3},
+        style={"risk_per_trade": 0.01, "max_margin_usage": 0.30, "weight": 0.25},
+        exit_plan={"stop_loss_pct": 0.01},
+        session={"can_hold_overnight": False},
+    )
+    assert decision["quantity"] == 0
+    assert decision["reason"] == "consecutive_loss_limit"
 ```
 
 - [ ] **Step 2: Run RED tests**
@@ -570,7 +602,24 @@ eligible = quantity >= 1
 reason = "eligible" if eligible else "minimum_contract_exceeds_risk_budget"
 ```
 
-`modeled_loss_per_lot = price * contract_multiplier * stop_loss_pct + round_trip_fees + modeled_round_trip_slippage`. Missing stop-loss or contract-rule inputs fail closed with `missing_contract_risk_inputs`.
+Resolve the exit plan before sizing. For an overnight-capable position, use the larger of stop loss and the contract's modeled overnight gap:
+
+```python
+directional_loss_rate = stop_loss_pct
+if session["can_hold_overnight"]:
+    directional_loss_rate = max(directional_loss_rate, contract_rule["modeled_overnight_gap_pct"])
+modeled_loss_per_lot = (
+    price * contract_multiplier * directional_loss_rate
+    + round_trip_fees
+    + modeled_round_trip_slippage
+)
+margin_budget = min(
+    account_state["available_margin"],
+    account_state["equity"] * min(max_margin_usage, risk_per_trade * weight),
+)
+```
+
+Missing stop-loss, overnight-gap (when overnight holding is possible), current equity/available margin, multiplier, margin rate, fees, or slippage inputs fail closed with `missing_contract_risk_inputs`. Daily loss, consecutive loss, and maximum drawdown remain immutable pre-sizing gates. Use current net equity and remaining margin after realized losses, fees, and open-position reservations; never reuse the initial 50,000 as available cash.
 
 - [ ] **Step 4: Persist affordability evidence as a hold**
 
@@ -589,7 +638,9 @@ if not size_decision["eligible"]:
     continue
 ```
 
-The observation report must show raw distinct products and affordable distinct products separately.
+The observation report must show raw distinct products and affordable distinct products separately. A product is affordable only when at least one current contract passes every immutable gate; retain per-contract rejection reasons and do not count `counterfactual_only` as executable.
+
+As defense in depth, `sim_executor.py` rejects `quantity <= 0` as a structured simulated rejection instead of calling the cost model or crashing. Flatten/reduce-only orders for an existing position bypass new-position affordability, but still obey price-limit, expiry, liquidity, session, and fill-evidence rules.
 
 - [ ] **Step 5: Run GREEN tests**
 
@@ -604,7 +655,7 @@ Expected: PASS; insufficient capital is an explainable observation hold, never a
 - [ ] **Step 6: Commit**
 
 ```bash
-git add CNFutures/sim_runner.py CNFutures/observation_report.py \
+git add CNFutures/sim_runner.py CNFutures/sim_executor.py CNFutures/contract_rules.py CNFutures/observation_report.py \
   tests/test_cn_futures_sim_runner.py tests/test_cn_futures_observation_report.py
 git commit -m "fix(cnfutures): reject unaffordable minimum contracts"
 ```
