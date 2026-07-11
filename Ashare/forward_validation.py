@@ -13,6 +13,7 @@ from shared.data.reader import TradingagentDataReader
 from shared.execution import local_sim_ledger
 from shared.execution.sim_account_epoch import read_epoch_state, require_authoritative_epoch_metadata
 from shared.review.sample_quality import classify_trade_sample
+from Ashare.epoch_review import validate_review_authority
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "shared" / "review" / "ashare" / "forward_validation_latest.json"
@@ -63,24 +64,20 @@ def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
 def _filter_current_epoch_rows(
     rows: list[dict[str, Any]],
     *,
-    current_epoch_id: int,
+    epoch_fields: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     accepted: list[dict[str, Any]] = []
     rejections: dict[str, int] = {}
     for row in rows:
         if "capital_epoch" not in row:
-            if current_epoch_id <= 1:
+            if int(epoch_fields["capital_epoch"]) <= 1:
                 accepted.append(row)
             else:
                 rejections["missing_capital_epoch"] = rejections.get("missing_capital_epoch", 0) + 1
             continue
-        try:
-            row_epoch = int(row["capital_epoch"])
-        except (TypeError, ValueError):
-            rejections["invalid_capital_epoch"] = rejections.get("invalid_capital_epoch", 0) + 1
-            continue
-        if row_epoch != current_epoch_id:
-            rejections["capital_epoch_mismatch"] = rejections.get("capital_epoch_mismatch", 0) + 1
+        valid, reason = validate_review_authority(row, epoch_fields)
+        if not valid:
+            rejections[reason] = rejections.get(reason, 0) + 1
             continue
         accepted.append(row)
     return accepted, rejections
@@ -210,7 +207,7 @@ def build_forward_validation_report(
     epoch_fields = _epoch_fields(read_epoch_state())
     rows, epoch_rejections = _filter_current_epoch_rows(
         _read_jsonl(local_trades_path),
-        current_epoch_id=int(epoch_fields["capital_epoch"]),
+        epoch_fields=epoch_fields,
     )
     if date:
         compact = _compact_date(date)

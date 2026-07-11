@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from Ashare.forward_validation import build_forward_validation_report
-from Ashare.epoch_review import validate_review_epoch
+from Ashare.epoch_review import validate_review_authority, validate_review_epoch
 from Ashare.portfolio_evolution import write_portfolio_evolution
 from shared.data.reader import TradingagentDataReader
 from shared.execution import local_sim_ledger
@@ -116,6 +116,8 @@ def _completed_report(
             current_epoch_id=epoch_id,
             current_cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
         )
+        authority_matches, _ = validate_review_authority(report, epoch_fields)
+        epoch_matches = epoch_matches and authority_matches
     else:
         epoch_matches = int(report.get("capital_epoch") or 1) == 1
     if (

@@ -15,6 +15,7 @@ from Ashare.epoch_review import (
     apply_epoch_reset_plan,
     build_epoch_reset_plan,
     validate_current_review_set,
+    validate_review_authority,
     validate_review_epoch,
 )
 from Ashare.formal_close_refresh import run_formal_close_refresh
@@ -67,6 +68,19 @@ def test_current_epoch_review_at_cutover_is_accepted() -> None:
 
     assert valid is True
     assert reason == "current_epoch"
+
+
+def test_exact_review_authority_rejects_same_instant_timezone_alias() -> None:
+    payload = {
+        "capital_epoch": 2,
+        "capital_cny": 50_000.0,
+        "epoch_cutover_timestamp": "2026-07-11T04:56:58+08:00",
+    }
+
+    valid, reason = validate_review_authority(payload, EPOCH_STATE)
+
+    assert valid is False
+    assert reason == "epoch_cutover_timestamp_mismatch"
 
 
 def test_reset_plan_archives_legacy_reviews_and_bootstraps_empty_current_epoch(tmp_path: Path) -> None:
@@ -175,6 +189,8 @@ def _strategy_trade(*, trade_id: str, capital_epoch: int | None) -> dict[str, ob
     }
     if capital_epoch is not None:
         trade["capital_epoch"] = capital_epoch
+        trade["capital_cny"] = 50_000.0 if capital_epoch == 2 else 200_000.0
+        trade["epoch_cutover_timestamp"] = EPOCH_STATE["cutover_timestamp"]
     return trade
 
 
@@ -553,6 +569,95 @@ def test_reset_plan_rejects_symlinked_derived_file(tmp_path: Path) -> None:
 
     assert plan["status"] == "error"
     assert plan["reason"] == "unsafe_path"
+
+
+def test_reset_plan_and_validation_reject_symlink_for_every_task3_child(tmp_path: Path) -> None:
+    for index, name in enumerate(CURRENT_DERIVED_FILES):
+        allowed_root = tmp_path / f"allowed-{index}"
+        review_dir = allowed_root / "review"
+        review_dir.mkdir(parents=True)
+        target = tmp_path / f"target-{index}"
+        target.write_text("{}\n", encoding="utf-8")
+        (review_dir / name).symlink_to(target)
+        state = {**EPOCH_STATE, "allowed_root": str(allowed_root)}
+
+        plan = build_epoch_reset_plan(review_dir, allowed_root / "archive", state)
+        validation = validate_current_review_set(review_dir, EPOCH_STATE)
+
+        assert plan["status"] == "error", name
+        assert plan["reason"] == "unsafe_path", name
+        assert validation == {"status": "error", "reason": "unsafe_path"}, name
+
+
+def test_all_reset_and_validation_paths_reject_symlinked_log_and_review_ancestor(tmp_path: Path) -> None:
+    allowed_root = tmp_path / "allowed"
+    real_parent = allowed_root / "real-parent"
+    real_review = real_parent / "review"
+    real_review.mkdir(parents=True)
+    parent_link = allowed_root / "linked-parent"
+    parent_link.symlink_to(real_parent, target_is_directory=True)
+    state = {**EPOCH_STATE, "allowed_root": str(allowed_root)}
+
+    ancestor_plan = build_epoch_reset_plan(parent_link / "review", allowed_root / "archive-a", state)
+    assert ancestor_plan["status"] == "error"
+    assert ancestor_plan["reason"] == "unsafe_path"
+    assert validate_current_review_set(parent_link / "review", EPOCH_STATE)["reason"] == "unsafe_path"
+
+    seed = real_review / "portfolio_evolution_latest.json"
+    seed.write_text(json.dumps({"capital_epoch": 1}), encoding="utf-8")
+    archive_dir = allowed_root / "archive-b"
+    plan = build_epoch_reset_plan(real_review, archive_dir, state)
+    assert apply_epoch_reset_plan(plan)["status"] == "applied"
+    log_path = real_review / "formal_close_history.jsonl"
+    target = allowed_root / "outside-log.jsonl"
+    target.write_text(log_path.read_text(encoding="utf-8"), encoding="utf-8")
+    log_path.unlink()
+    log_path.symlink_to(target)
+
+    rebuilt = build_epoch_reset_plan(real_review, archive_dir, state)
+    assert rebuilt["status"] == "error"
+    assert rebuilt["reason"] == "unsafe_path"
+    assert validate_current_review_set(real_review, EPOCH_STATE)["reason"] == "unsafe_path"
+    applied = apply_epoch_reset_plan(plan)
+    assert applied["status"] == "error"
+    assert applied["reason"] == "unsafe_path"
+
+
+def test_portfolio_ignores_tier_and_forward_payloads_with_wrong_exact_authority(tmp_path: Path) -> None:
+    trades = tmp_path / "local_sim_trades.jsonl"
+    trades.write_text(json.dumps(_strategy_trade(trade_id="current", capital_epoch=2)) + "\n")
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    wrong_authority = {
+        "capital_epoch": 2,
+        "capital_cny": 200_000.0,
+        "epoch_cutover_timestamp": EPOCH_STATE["cutover_timestamp"],
+        "generated_at": "2026-07-11T03:00:00+00:00",
+    }
+    (review_dir / "tier_experiments_latest.json").write_text(
+        json.dumps({**wrong_authority, "accounts": [{"account": "ashare_200000", "trade_count": 9}]}),
+        encoding="utf-8",
+    )
+    (review_dir / "forward_validation_latest.json").write_text(
+        json.dumps(
+            {
+                **wrong_authority,
+                "labels": [{"labels": {"m60": {"status": "labeled"}}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("Ashare.portfolio_evolution.read_epoch_state", return_value=EPOCH_STATE):
+        report = build_portfolio_evolution(
+            trade_date="20260710",
+            review_dir=review_dir,
+            local_trades_path=trades,
+            mark_prices={"600000.SH": 10.0},
+        )
+
+    assert report["tier_experiments"]["account_count"] == 0
+    assert report["evolution_evidence"]["forward_label_count"] == 0
 
 
 def test_apply_reset_reports_blocked_when_rollback_action_fails(tmp_path: Path) -> None:

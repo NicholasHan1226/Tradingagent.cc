@@ -15,6 +15,7 @@ A股模拟交易全闭环：服务器本地模拟盘优先，保留 T+1、交易
 ## 资金
 - 当前主模拟盘初始 50,000 元（epoch 2）；`capital_plan.py` 按候选质量、风控拒绝率、数据异常率和近期表现动态决定 0/1/2/3 只。强信号可集中 2-3 只，弱信号或高拒绝率时优先留现金/逆回购，不为凑仓位硬买。
 - 旧 200,000 元账本必须由 `tools/migrate_sim_capital_epoch.py` 在同一把账本锁下归档到 `shared/logs/epoch_archive/epoch_1_legacy_200k/`，当前账本仍使用 `shared/logs/local_sim/`。100,000 / 200,000 元 replay 默认禁用，只能由离线分析显式传入 `tiers=`；不得进入生产 cron、当前看板或组合演化排名。
+- 当前 epoch 派生复盘和离线 tier replay 只接受同时精确匹配 `capital_epoch=2`、`capital_cny=50000` 和持久化 `epoch_cutover_timestamp` 原始字符串的源行；等价时刻的其它时区字符串也不视为同一 authority。review/archive 根、其受控祖先以及 Task-3 latest/log 子文件出现 symlink 时必须 fail-closed，不能返回 current、already-applied 或 already-migrated。
 - 组合复盘使用 SharedSignals 盯市价刷新当前主账户；盘中 bootstrap 检查不得把已有盯市快照重置成最近成交价。
 - 动态现金缓冲（替代原固定 30%）：激进约 17.5%，均衡 25%（当前为 12,500 元），谨慎 45%，防守（弱候选/高风险/无候选/强制防守）全现金。
 - 样本收集模式：仅当累计策略样本低于 `min_strategy_samples`，且数据异常率、风控拒绝率和近期胜率都未触发防守时，`capital_plan.py` 可以开放 1 笔 5,000-8,750 元受控探索仓；不得因为当天尚无成交而创建买入容量。弱候选、高风险或数据异常仍保持防守/谨慎。`Ashare/evolution_controller.py` 只能输出 simulated-only 观察/风控上下文，不得下单、不得启用实盘、不得绕过 candidate 层、现金/手数、T+1、交易时段和风控门禁。

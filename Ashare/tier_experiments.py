@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from Ashare.capital_plan import plan_capital
+from Ashare.epoch_review import validate_review_authority
 from shared.execution import local_sim_ledger
 from shared.execution.sim_account_epoch import (
     read_epoch_state,
@@ -272,10 +273,18 @@ def write_tier_ledgers(
     output_root = Path(tier_root) if tier_root is not None else DEFAULT_TIER_ROOT
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
     source_trades = _read_jsonl(source_path)
+    current_source_trades: list[dict[str, Any]] = []
+    source_authority_rejections: dict[str, int] = {}
+    for row in source_trades:
+        valid, reason = validate_review_authority(row, epoch_fields)
+        if valid:
+            current_source_trades.append(row)
+        else:
+            source_authority_rejections[reason] = source_authority_rejections.get(reason, 0) + 1
     experiment_tiers = tuple(tiers) if tiers is not None else _experiment_tiers()
     accounts: list[dict[str, Any]] = []
     for capital in experiment_tiers:
-        ledger = build_tier_ledger(source_trades, capital=float(capital), mark_prices=mark_prices)
+        ledger = build_tier_ledger(current_source_trades, capital=float(capital), mark_prices=mark_prices)
         ledger["trades"] = [{**row, **epoch_fields} for row in ledger["trades"]]
         capital_plan = _build_tier_capital_plan(ledger, candidates=candidates, market_context=market_context)
         account_dir = output_root / ledger["account"]
@@ -315,6 +324,10 @@ def write_tier_ledgers(
         "source_trades": str(source_path.relative_to(ROOT)) if str(source_path).startswith(str(ROOT)) else str(source_path),
         "tier_root": str(output_root.relative_to(ROOT)) if str(output_root).startswith(str(ROOT)) else str(output_root),
         "accounts": accounts,
+        "source_trade_count": len(current_source_trades),
+        "current_source_trade_count": len(current_source_trades),
+        "source_authority_rejection_count": sum(source_authority_rejections.values()),
+        "source_authority_rejections": source_authority_rejections,
         "read_only_source": True,
         "real_trading_enabled": False,
     }

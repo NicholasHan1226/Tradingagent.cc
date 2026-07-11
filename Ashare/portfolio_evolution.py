@@ -17,7 +17,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from Ashare.epoch_review import validate_review_epoch
+from Ashare.epoch_review import validate_review_authority, validate_review_epoch
 from shared.execution.sim_account_epoch import read_epoch_state, require_authoritative_epoch_metadata
 from shared.review.pnl_summary import load_mark_prices_for_positions
 from shared.review.pnl_summary import sim_ledger_pnl_summary
@@ -82,7 +82,8 @@ def _load_tier_manifest(review_dir: Path, epoch_fields: dict[str, Any]) -> dict[
         current_epoch_id=int(epoch_fields["capital_epoch"]),
         current_cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
     )
-    return payload if valid else {}
+    exact, _ = validate_review_authority(payload, epoch_fields)
+    return payload if valid and exact else {}
 
 
 @contextmanager
@@ -112,13 +113,9 @@ def _current_epoch_trade_file(
             else:
                 rejections["missing_capital_epoch"] = rejections.get("missing_capital_epoch", 0) + 1
             continue
-        try:
-            row_epoch = int(row["capital_epoch"])
-        except (TypeError, ValueError):
-            rejections["invalid_capital_epoch"] = rejections.get("invalid_capital_epoch", 0) + 1
-            continue
-        if row_epoch != current_epoch:
-            rejections["capital_epoch_mismatch"] = rejections.get("capital_epoch_mismatch", 0) + 1
+        valid, reason = validate_review_authority(row, epoch_fields)
+        if not valid:
+            rejections[reason] = rejections.get(reason, 0) + 1
             continue
         accepted.append(row)
 
@@ -222,6 +219,9 @@ def _forward_label_count(review_dir: Path, epoch_fields: dict[str, Any]) -> int:
             current_cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
         )
         if not valid:
+            return 0
+        exact, _ = validate_review_authority(payload, epoch_fields)
+        if not exact:
             return 0
     labels = payload.get("labels") if isinstance(payload, dict) else []
     return sum(

@@ -48,7 +48,56 @@ class AshareTierExperimentsTest(unittest.TestCase):
             "fill_price_source": "signal_card.price",
             "fill_price_source_class": "signal_card_price",
             "trade_timestamp_bj": "2026-07-09T10:00:00+08:00",
+            "capital_epoch": 2,
+            "capital_cny": 50_000.0,
+            "epoch_cutover_timestamp": EPOCH_STATE["cutover_timestamp"],
         }
+
+    def test_writer_never_relabels_old_or_wrong_authority_source_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current = self._strategy_trade()
+            old_epoch = {**current, "trade_id": "OLD", "capital_epoch": 1, "capital_cny": 200_000.0}
+            wrong_capital = {**current, "trade_id": "WRONG-CAPITAL", "capital_cny": 200_000.0}
+            same_instant_wrong_cutover = {
+                **current,
+                "trade_id": "WRONG-CUTOVER",
+                "epoch_cutover_timestamp": "2026-07-11T04:56:58+08:00",
+            }
+            source = root / "local_sim_trades.jsonl"
+            source.write_text(
+                "".join(
+                    json.dumps(row, ensure_ascii=False) + "\n"
+                    for row in (old_epoch, wrong_capital, same_instant_wrong_cutover, current)
+                ),
+                encoding="utf-8",
+            )
+
+            report = write_tier_ledgers(
+                source_trades_path=source,
+                tier_root=root / "tiers",
+                review_dir=root / "review",
+                tiers=(100_000.0,),
+            )
+
+            account = report["accounts"][0]
+            self.assertEqual(account["trade_count"], 1)
+            self.assertEqual(report["source_trade_count"], 1)
+            self.assertEqual(report["current_source_trade_count"], 1)
+            self.assertEqual(report["source_authority_rejection_count"], 3)
+            self.assertEqual(
+                report["source_authority_rejections"],
+                {
+                    "capital_epoch_mismatch": 1,
+                    "capital_cny_mismatch": 1,
+                    "epoch_cutover_timestamp_mismatch": 1,
+                },
+            )
+            rows = [
+                json.loads(line)
+                for line in (root / "tiers" / "ashare_100000" / "local_sim_trades.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual([row["trade_id"] for row in rows], ["LSIM-MAIN:ashare_100000"])
 
     def test_builds_independent_50k_tier_ledger_with_scaled_lot_size(self) -> None:
         ledger = build_tier_ledger([self._strategy_trade(quantity=1000, price=10.0)], capital=50_000.0)

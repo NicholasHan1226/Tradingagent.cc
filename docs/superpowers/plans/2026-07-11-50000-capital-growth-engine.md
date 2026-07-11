@@ -358,6 +358,9 @@ git commit -m "fix(ashare): require realized current-epoch expansion evidence"
 - Produces: `build_epoch_reset_plan(review_dir: Path, archive_dir: Path, epoch_state: dict) -> dict` without writes.
 - Produces: `apply_epoch_reset_plan(plan: dict) -> dict` that moves stale derived files into the immutable epoch archive and atomically writes empty epoch-2 latest snapshots.
 - CLI: `python tools/rebuild_current_epoch_reviews.py --dry-run|--apply --pretty`.
+- Review authority is the exact persisted triple: epoch `2`, capital `50,000 CNY`, and the original cutover timestamp string. A timezone-equivalent rendering is not accepted as the same authority.
+- Tier replay filters source trades before replay and reports only current-authority trade statistics; rejected rows remain rejection diagnostics and must never be relabeled as epoch 2.
+- Build, apply, already-applied detection, and current-set validation reject symlinks in the review/archive roots, controlled ancestors, and every Task-3 latest/log child.
 
 - [ ] **Step 1: Write failing epoch-isolation tests**
 

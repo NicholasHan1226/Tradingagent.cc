@@ -83,6 +83,74 @@ def validate_review_epoch(
     return True, "current_epoch"
 
 
+def validate_review_authority(
+    payload: dict[str, Any],
+    authority: dict[str, Any],
+) -> tuple[bool, str]:
+    """Require the exact persisted epoch/capital/cutover authority triple."""
+
+    if not isinstance(payload, dict):
+        return False, "invalid_review_payload"
+    expected_epoch = authority.get("capital_epoch", authority.get("current_epoch_id"))
+    expected_capital = authority.get("capital_cny")
+    expected_cutover = authority.get(
+        "epoch_cutover_timestamp", authority.get("cutover_timestamp")
+    )
+    if isinstance(expected_epoch, bool) or not isinstance(expected_epoch, int):
+        return False, "invalid_epoch_authority"
+    if isinstance(expected_capital, bool) or not isinstance(expected_capital, (int, float)):
+        return False, "invalid_epoch_authority"
+    if not isinstance(expected_cutover, str) or not expected_cutover:
+        return False, "invalid_epoch_authority"
+
+    raw_epoch = payload.get("capital_epoch")
+    if raw_epoch is None:
+        return False, "missing_capital_epoch"
+    if isinstance(raw_epoch, bool) or not isinstance(raw_epoch, int):
+        return False, "invalid_capital_epoch"
+    if raw_epoch != expected_epoch:
+        return False, "capital_epoch_mismatch"
+
+    raw_capital = payload.get("capital_cny")
+    if raw_capital is None:
+        return False, "missing_capital_cny"
+    if isinstance(raw_capital, bool) or not isinstance(raw_capital, (int, float)):
+        return False, "invalid_capital_cny"
+    if float(raw_capital) != float(expected_capital):
+        return False, "capital_cny_mismatch"
+
+    raw_cutover = payload.get("epoch_cutover_timestamp")
+    if raw_cutover is None:
+        return False, "missing_epoch_cutover_timestamp"
+    if not isinstance(raw_cutover, str):
+        return False, "invalid_epoch_cutover_timestamp"
+    # Exact string comparison is intentional: timezone-equivalent aliases are
+    # not the persisted authority value from the cutover plan.
+    if raw_cutover != expected_cutover:
+        return False, "epoch_cutover_timestamp_mismatch"
+    return True, "current_authority"
+
+
+def _path_or_ancestor_is_symlink(path: Path) -> bool:
+    current = path.absolute()
+    # Darwin exposes these fixed system roots as aliases into /private.  They
+    # are outside the operator-controlled review tree and are not writable
+    # review/archive indirections.
+    system_root_aliases = {Path("/etc"), Path("/tmp"), Path("/var")}
+    while True:
+        if current.is_symlink() and current not in system_root_aliases:
+            return True
+        if current == current.parent:
+            return False
+        current = current.parent
+
+
+def _review_tree_has_symlink(review_dir: Path) -> bool:
+    if _path_or_ancestor_is_symlink(review_dir):
+        return True
+    return any((review_dir / name).is_symlink() for name in CURRENT_DERIVED_FILES)
+
+
 def validate_current_review_set(review_dir: Path, epoch_state: dict[str, Any]) -> dict[str, Any]:
     """Require every Task-3 projection file to carry exact current authority."""
     try:
@@ -92,6 +160,8 @@ def validate_current_review_set(review_dir: Path, epoch_state: dict[str, Any]) -
     except (TypeError, ValueError) as exc:
         return {"status": "error", "reason": "invalid_epoch_state", "detail": str(exc)}
     root = Path(review_dir)
+    if _review_tree_has_symlink(root):
+        return {"status": "error", "reason": "unsafe_path"}
     stale_or_missing: list[dict[str, str]] = []
     for name in CURRENT_DERIVED_FILES:
         path = root / name
@@ -122,29 +192,9 @@ def validate_current_review_set(review_dir: Path, epoch_state: dict[str, Any]) -
             if not valid:
                 stale_or_missing.append({"file": name, "reason": reason})
                 break
-            if (
-                isinstance(payload.get("capital_epoch"), bool)
-                or not isinstance(payload.get("capital_epoch"), int)
-                or payload.get("capital_epoch") != int(authority["capital_epoch"])
-            ):
-                stale_or_missing.append({"file": name, "reason": "capital_epoch_mismatch"})
-                break
-            try:
-                raw_capital = payload.get("capital_cny")
-                payload_capital = (
-                    float(raw_capital)
-                    if isinstance(raw_capital, (int, float)) and not isinstance(raw_capital, bool)
-                    else float("nan")
-                )
-            except (TypeError, ValueError):
-                payload_capital = float("nan")
-            if payload_capital != float(authority["capital_cny"]):
-                stale_or_missing.append({"file": name, "reason": "capital_cny_mismatch"})
-                break
-            if payload.get("epoch_cutover_timestamp") != authority["cutover_timestamp"]:
-                stale_or_missing.append(
-                    {"file": name, "reason": "epoch_cutover_timestamp_mismatch"}
-                )
+            exact, exact_reason = validate_review_authority(payload, authority)
+            if not exact:
+                stale_or_missing.append({"file": name, "reason": exact_reason})
                 break
     if stale_or_missing:
         return {"status": "stale_or_missing", "issues": stale_or_missing}
@@ -396,6 +446,8 @@ def _roots_already_bootstrapped(
         if current != expected:
             return False
     for name, expected in log_bootstraps.items():
+        if (review_dir / name).is_symlink():
+            return False
         try:
             rows = [
                 json.loads(line)
@@ -431,6 +483,9 @@ def build_epoch_reset_plan(
         "capital_cny": bootstrap["capital_cny"],
         "cutover_timestamp": bootstrap["epoch_cutover_timestamp"],
     }
+    for root in (review_path, archive_path):
+        if _review_tree_has_symlink(root):
+            return {"status": "error", "reason": "unsafe_path", "path": str(root)}
     if _roots_already_bootstrapped(review_path, archive_path, latest_bootstraps, log_bootstraps):
         result = {
             "status": "already_applied",
@@ -554,6 +609,8 @@ def _plan_already_applied(plan: dict[str, Any], allowed_root: Path) -> bool:
             return False
     for name, payload in latest.items():
         path = review_dir / name
+        if path.is_symlink() or _contains_symlink(path, allowed_root):
+            return False
         try:
             current = json.loads(path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, json.JSONDecodeError):
@@ -562,6 +619,8 @@ def _plan_already_applied(plan: dict[str, Any], allowed_root: Path) -> bool:
             return False
     for name, payload in logs.items():
         path = review_dir / name
+        if path.is_symlink() or _contains_symlink(path, allowed_root):
+            return False
         try:
             rows = [
                 json.loads(line)
@@ -631,6 +690,8 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
         or not _is_within(review_dir.resolve(strict=False), allowed_root)
         or not _is_within(archive_dir.resolve(strict=False), allowed_root)
     ):
+        return {"status": "error", "reason": "unsafe_path"}
+    if _review_tree_has_symlink(review_dir) or _review_tree_has_symlink(archive_dir):
         return {"status": "error", "reason": "unsafe_path"}
     if _plan_already_applied(plan, allowed_root):
         return {
@@ -744,6 +805,7 @@ __all__ = [
     "CURRENT_DERIVED_FILES",
     "apply_epoch_reset_plan",
     "build_epoch_reset_plan",
+    "validate_review_authority",
     "validate_review_epoch",
     "validate_current_review_set",
 ]

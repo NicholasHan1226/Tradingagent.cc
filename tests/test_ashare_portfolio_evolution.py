@@ -60,6 +60,9 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
                 "fill_price_source": "signal_card.price",
                 "fill_price_source_class": "signal_card_price",
                 "trade_timestamp_bj": "2026-07-09T10:00:00+08:00",
+                "capital_epoch": 2,
+                "capital_cny": 50_000.0,
+                "epoch_cutover_timestamp": EPOCH_STATE["cutover_timestamp"],
             }
         )
 

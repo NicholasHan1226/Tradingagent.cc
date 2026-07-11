@@ -60,6 +60,33 @@ class AshareFormalCloseRefreshTest(unittest.TestCase):
             pnl.assert_not_called()
             self.assertFalse((review_dir / "formal_close_history.jsonl").exists())
 
+    def test_wrong_exact_authority_is_not_an_idempotent_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            review_dir = Path(tmp)
+            existing = {
+                "report_type": "ashare_formal_close_refresh",
+                "schema_version": 2,
+                "trade_date": "20260710",
+                "status": "pass",
+                "capital_epoch": 2,
+                "capital_cny": 200_000.0,
+                "epoch_cutover_timestamp": "2026-07-11T04:56:58+08:00",
+                "generated_at": "2026-07-11T03:00:00+00:00",
+            }
+            (review_dir / "formal_close_latest.json").write_text(json.dumps(existing), encoding="utf-8")
+            with patch(
+                "Ashare.formal_close_refresh.local_sim_ledger.get_local_sim_pnl",
+                return_value={"positions": {}},
+            ) as pnl:
+                report = run_formal_close_refresh(
+                    trade_date="20260710", review_dir=review_dir, reader=_Reader({})
+                )
+
+            self.assertNotIn("idempotent_skip", report)
+            self.assertEqual(report["capital_cny"], 50_000.0)
+            self.assertEqual(report["epoch_cutover_timestamp"], EPOCH_STATE["cutover_timestamp"])
+            pnl.assert_called_once()
+
     def test_load_requires_exact_trade_date_for_every_open_position(self) -> None:
         positions = {"600000.SH": {}, "000001.SZ": {}}
         reader = _Reader(
