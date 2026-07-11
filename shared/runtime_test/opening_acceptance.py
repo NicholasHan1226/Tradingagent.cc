@@ -290,6 +290,9 @@ def _accept_with_api_health_if_ready(
 def _ashare_opening_report(now: datetime) -> dict[str, Any]:
     from shared.runtime_test import ashare_opening_validator as validator
 
+    if not _is_ashare_trading_day(now):
+        return _closed_window_report("ashare", now, "ashare_non_trading_day")
+
     minutes = now.hour * 60 + now.minute
     if (8 * 60 <= minutes < 9 * 60 + 30) or (11 * 60 + 30 < minutes < 13 * 60):
         return validator.validate_pre_open(now=now, min_symbols=1000)
@@ -302,6 +305,12 @@ def _ashare_opening_report(now: datetime) -> dict[str, Any]:
             return validator.first_sample_alerts(now=now, min_symbols=10, wait_minutes=10)
         return validator.validate_opening(now=now, min_symbols=10)
     return _closed_window_report("ashare", now, "outside_ashare_opening_acceptance_window")
+
+
+def _is_ashare_trading_day(now: datetime) -> bool:
+    from Ashare.t_plus_1 import is_trading_day
+
+    return bool(is_trading_day(now.date()))
 
 
 def check_ashare_opening(now: datetime) -> AcceptanceCheck:

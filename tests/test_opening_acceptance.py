@@ -273,6 +273,27 @@ def test_ashare_closed_window_is_observation_not_warning():
     assert check.details["raw_status"] == "pass"
 
 
+def test_ashare_non_trading_day_skips_opening_validators(monkeypatch):
+    from shared.runtime_test import ashare_opening_validator
+
+    def unexpected_validator(**_kwargs):
+        pytest.fail("opening validators must not run on a non-trading day")
+
+    monkeypatch.setattr(opening_acceptance, "_is_ashare_trading_day", lambda _now: False)
+    monkeypatch.setattr(ashare_opening_validator, "validate_pre_open", unexpected_validator)
+    monkeypatch.setattr(ashare_opening_validator, "validate_opening", unexpected_validator)
+    monkeypatch.setattr(ashare_opening_validator, "first_sample_alerts", unexpected_validator)
+
+    check = opening_acceptance.check_ashare_opening(
+        datetime.fromisoformat("2026-07-11T13:06:00+08:00"),
+    )
+
+    assert check.status == "pass"
+    assert check.details["reason"] == "ashare_non_trading_day"
+    assert check.details["session"] == "closed"
+    assert check.details["raw_status"] == "pass"
+
+
 def test_cli_sqlite_default_is_preserved_for_cn_futures():
     args = opening_acceptance.parse_args([])
     assert args.sqlite_db == opening_acceptance.DEFAULT_SQLITE_DB
