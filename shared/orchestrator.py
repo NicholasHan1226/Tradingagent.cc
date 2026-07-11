@@ -907,12 +907,39 @@ def _ashare_dynamic_capital_plan(
             target_trade_date=date,
             current_epoch_id=read_epoch_state()["current_epoch_id"],
         )
-        if evolution_context and not evolution_context.get("evidence_usable", False):
-            evolution_context["strategy_sample_valid_count"] = 0.0
-            evolution_context["min_strategy_samples"] = 0.0
+        if not evolution_context:
+            strategy_sample_valid_count = _safe_float(
+                sample_context.get("strategy_sample_valid_count"),
+                min_strategy_samples,
+            )
+            evolution_decision = {
+                "state": "evidence_pending",
+                "recommended_action": "observe_and_label_candidates",
+                "reasons": ["evidence_unavailable"],
+                "policy": {},
+            }
+            evolution_context = {
+                "strategy_sample_valid_count": strategy_sample_valid_count,
+                "min_strategy_samples": min_strategy_samples,
+                "evolution_recommended_action": "observe_and_label_candidates",
+                "evidence_usable": False,
+                "evidence_rejection_reason": "evidence_unavailable",
+                "sample_collection_authorized": strategy_sample_valid_count < min_strategy_samples,
+            }
     except Exception:
-        evolution_decision = {}
-        evolution_context = {}
+        evolution_decision = {
+            "state": "evidence_pending",
+            "recommended_action": "observe_and_label_candidates",
+            "reasons": ["evidence_unavailable"],
+            "policy": {},
+        }
+        evolution_context = {
+            "strategy_sample_valid_count": 0.0,
+            "min_strategy_samples": min_strategy_samples,
+            "evolution_recommended_action": "observe_and_label_candidates",
+            "evidence_usable": False,
+            "evidence_rejection_reason": "evidence_unavailable",
+        }
     market_context = {
         "risk_rejection_rate": len(risk_rejections) / total_checked,
         "data_issue_rate": len(skipped_candidates) / total_checked,

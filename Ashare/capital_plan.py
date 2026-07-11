@@ -151,6 +151,10 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
     sample_collection_min_score = _context_float(context, "sample_collection_min_score", 0.55)
     probe_allocation_min = _context_float(context, "probe_allocation_min", 20_000.0)
     probe_allocation_max = _context_float(context, "probe_allocation_max", 35_000.0)
+    evidence_status_present = "evidence_usable" in context
+    evidence_usable = context.get("evidence_usable") is True
+    evolution_action = str(context.get("evolution_recommended_action") or "").strip()
+    evolution_gate_present = evidence_status_present or "evolution_recommended_action" in context
     trend = str(context.get("trend") or context.get("market_trend") or "").strip().lower()
     reasons: list[str] = []
 
@@ -184,6 +188,11 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
     cumulative_sample_debt = min_strategy_samples > 0 and strategy_sample_valid_count < min_strategy_samples
     sample_collection = (
         cumulative_sample_debt
+        and (
+            not evidence_status_present
+            or evidence_usable
+            or context.get("sample_collection_authorized") is True
+        )
         and sample_collection_min_score <= top < 0.75
         and risk_rejection_rate <= 0.25
         and data_issue_rate <= 0.25
@@ -216,6 +225,20 @@ def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] 
                 "quality_ratio": round(quality_ratio, 4),
                 "top_candidate_score": round(top, 4),
             },
+        }
+
+    if evolution_gate_present and (not evidence_usable or evolution_action != "expand_risk_candidate"):
+        if evidence_status_present and not evidence_usable:
+            reasons.append(str(context.get("evidence_rejection_reason") or "evidence_unavailable"))
+        else:
+            reasons.append("expansion_evidence_not_approved")
+        return {
+            "risk_mode": "cautious",
+            "target_positions": 1,
+            "cash_reserve_pct": 0.50,
+            "max_single_position_pct": 0.25,
+            "max_cash_reserve": None,
+            "reasons": reasons,
         }
 
     max_cash_reserve = None

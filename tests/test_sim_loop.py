@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -330,6 +331,51 @@ class SimLoopTest(unittest.TestCase):
         deps.construct = construct
         return deps
 
+    def _high_score_deps(self) -> OrchestratorDeps:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(
+            date: str,
+            universe: list[str],
+            data_reader: object = None,
+            market: str = "ashare",
+        ) -> list[tuple[str, dict[str, object]]]:
+            return [
+                (
+                    symbol,
+                    {
+                        "combined": 0.82,
+                        "sector": "unit",
+                        "turnover_wan": 10000,
+                        "capital_layer": "simulated",
+                    },
+                )
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        return deps
+
+    @contextmanager
+    def _approved_expansion_evidence(self, trade_date: str):
+        decision = {
+            "capital_epoch": 2,
+            "evidence_trade_date": trade_date,
+            "state": "expansion_candidate",
+            "recommended_action": "expand_risk_candidate",
+            "reasons": ["positive_realized_pnl_after_all_gates"],
+            "policy": {
+                "strategy_sample_count": 20,
+                "min_strategy_samples": 5,
+                "sample_collection_min_score": 0.55,
+            },
+        }
+        with (
+            patch("Ashare.evolution_controller.load_latest_decision", return_value=decision),
+            patch("shared.execution.sim_account_epoch.read_epoch_state", return_value={"current_epoch_id": 2}),
+        ):
+            yield
+
     def test_run_sim_loop_fills_signal_audit_and_review_as_simulated(self) -> None:
         result = run_sim_loop(
             StubSimAdapter(),
@@ -628,13 +674,14 @@ class SimLoopTest(unittest.TestCase):
 
         deps.score_universe = score_universe
 
-        result = run_sim_loop(
-            MultiCandidateSimAdapter(["AAA", "BBB", "CCC"], max_candidates=2, score_universe_limit=3, max_portfolio_positions=2),
-            "20260630",
-            StubReader(),
-            deps=deps,
-            signals_dir=self.tmp_path / "signals_ranked",
-        )
+        with self._approved_expansion_evidence("20260630"):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(["AAA", "BBB", "CCC"], max_candidates=2, score_universe_limit=3, max_portfolio_positions=2),
+                "20260630",
+                StubReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / "signals_ranked",
+            )
 
         self.assertEqual(result["candidate_count"], 2)
         self.assertEqual([record["symbol"] for record in result["records"]], ["BBB", "CCC"])
@@ -699,13 +746,14 @@ class SimLoopTest(unittest.TestCase):
 
         deps.score_universe = score_universe
 
-        result = run_sim_loop(
-            MultiCandidateSimAdapter(["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"], max_candidates=6, score_universe_limit=6, max_portfolio_positions=3),
-            "20260630",
-            StubReader(),
-            deps=deps,
-            signals_dir=self.tmp_path / "signals_capped",
-        )
+        with self._approved_expansion_evidence("20260630"):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"], max_candidates=6, score_universe_limit=6, max_portfolio_positions=3),
+                "20260630",
+                StubReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / "signals_capped",
+            )
 
         self.assertEqual(result["order_count"], 3)
         self.assertEqual(result["filled_count"], 3)
@@ -1055,6 +1103,133 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["filled_count"], 1)
         self.assertEqual(self.executed_orders[0]["ts_code"], "300418.SZ")
 
+    def test_stale_epoch_high_scores_cannot_enter_aggressive_capital_plan(self) -> None:
+        from Ashare.evolution_controller import build_evolution_decision
+
+        decision = build_evolution_decision(
+            {
+                "capital_epoch": 1,
+                "trade_date": "20260711",
+                "strategy_sample_count": 20,
+                "pnl": {"total_pnl": 100.0, "realized_pnl": 100.0, "equity": 50_100.0},
+                "evolution_evidence": {
+                    "eligible_sample_count": 20,
+                    "realized_round_trip_count": 10,
+                    "forward_label_count": 20,
+                },
+            },
+            target_trade_date="20260711",
+            current_epoch_id=2,
+        )
+
+        with (
+            patch("Ashare.evolution_controller.load_latest_decision", return_value=decision),
+            patch("shared.execution.sim_account_epoch.read_epoch_state", return_value={"current_epoch_id": 2}),
+        ):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(
+                    ["000001.SZ", "600000.SH", "300418.SZ"],
+                    max_candidates=3,
+                    score_universe_limit=3,
+                    max_portfolio_positions=3,
+                ),
+                "20260711",
+                StubReader(),
+                deps=self._high_score_deps(),
+                signals_dir=self.tmp_path / "signals_stale_epoch_capital_plan",
+            )
+
+        self.assertEqual(result["capital_plan"]["risk_mode"], "cautious")
+        self.assertLessEqual(result["capital_plan"]["max_new_positions"], 1)
+        self.assertFalse(result["capital_plan"]["evolution_decision"]["evidence_usable"])
+        self.assertEqual(
+            result["capital_plan"]["evolution_decision"]["evidence_rejection_reason"],
+            "capital_epoch_mismatch",
+        )
+
+    def test_zero_realized_pnl_high_scores_cannot_enter_aggressive_capital_plan(self) -> None:
+        from Ashare.evolution_controller import build_evolution_decision
+
+        decision = build_evolution_decision(
+            {
+                "capital_epoch": 2,
+                "trade_date": "20260711",
+                "strategy_sample_count": 20,
+                "pnl": {"total_pnl": 100.0, "realized_pnl": 0.0, "equity": 50_100.0},
+                "evolution_evidence": {
+                    "eligible_sample_count": 20,
+                    "realized_round_trip_count": 10,
+                    "forward_label_count": 20,
+                },
+            },
+            target_trade_date="20260711",
+            current_epoch_id=2,
+        )
+
+        with (
+            patch("Ashare.evolution_controller.load_latest_decision", return_value=decision),
+            patch("shared.execution.sim_account_epoch.read_epoch_state", return_value={"current_epoch_id": 2}),
+        ):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(
+                    ["000001.SZ", "600000.SH", "300418.SZ"],
+                    max_candidates=3,
+                    score_universe_limit=3,
+                    max_portfolio_positions=3,
+                ),
+                "20260711",
+                StubReader(),
+                deps=self._high_score_deps(),
+                signals_dir=self.tmp_path / "signals_zero_realized_capital_plan",
+            )
+
+        self.assertEqual(result["capital_plan"]["risk_mode"], "cautious")
+        self.assertLessEqual(result["capital_plan"]["max_new_positions"], 1)
+        self.assertTrue(result["capital_plan"]["evolution_decision"]["evidence_usable"])
+        self.assertEqual(
+            result["capital_plan"]["evolution_decision"]["recommended_action"],
+            "observe_and_label_candidates",
+        )
+
+    def test_epoch_validation_error_is_explicit_and_fails_closed(self) -> None:
+        decision = {
+            "capital_epoch": 2,
+            "evidence_trade_date": "20260711",
+            "state": "expansion_candidate",
+            "recommended_action": "expand_risk_candidate",
+            "reasons": ["positive_realized_pnl_after_all_gates"],
+            "policy": {
+                "strategy_sample_count": 20,
+                "min_strategy_samples": 5,
+                "sample_collection_min_score": 0.55,
+            },
+        }
+
+        with (
+            patch("Ashare.evolution_controller.load_latest_decision", return_value=decision),
+            patch("shared.execution.sim_account_epoch.read_epoch_state", side_effect=RuntimeError("epoch unavailable")),
+        ):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(
+                    ["000001.SZ", "600000.SH", "300418.SZ"],
+                    max_candidates=3,
+                    score_universe_limit=3,
+                    max_portfolio_positions=3,
+                ),
+                "20260711",
+                StubReader(),
+                deps=self._high_score_deps(),
+                signals_dir=self.tmp_path / "signals_epoch_error_capital_plan",
+            )
+
+        self.assertEqual(result["capital_plan"]["risk_mode"], "cautious")
+        self.assertLessEqual(result["capital_plan"]["max_new_positions"], 1)
+        self.assertFalse(result["capital_plan"]["evolution_decision"]["evidence_usable"])
+        self.assertEqual(
+            result["capital_plan"]["evolution_decision"]["evidence_rejection_reason"],
+            "evidence_unavailable",
+        )
+
     def test_run_sim_loop_attaches_latest_5min_bar_to_ashare_order(self) -> None:
         class IntradayReader(StubReader):
             def get_bars_intraday(self, market, symbol, interval="5m", start=None, end=None):
@@ -1203,19 +1378,20 @@ class SimLoopTest(unittest.TestCase):
             for i in range(5)
         ]
 
-        result = run_sim_loop(
-            MultiCandidateSimAdapter(
-                ["AAA", "BBB", "CCC"],
-                max_candidates=3,
-                score_universe_limit=3,
-                max_portfolio_positions=3,
-                positions=positions,
-            ),
-            "20260630",
-            StubReader(),
-            deps=deps,
-            signals_dir=self.tmp_path / "signals_rebalance",
-        )
+        with self._approved_expansion_evidence("20260630"):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(
+                    ["AAA", "BBB", "CCC"],
+                    max_candidates=3,
+                    score_universe_limit=3,
+                    max_portfolio_positions=3,
+                    positions=positions,
+                ),
+                "20260630",
+                StubReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / "signals_rebalance",
+            )
 
         sell_orders = [order for order in self.executed_orders if order["side"] == "sell"]
         self.assertEqual(result["rebalance"]["planned_sell_count"], 2)
@@ -1329,13 +1505,14 @@ class SimLoopTest(unittest.TestCase):
             {"ts_code": "000010.SZ", "quantity": 100, "sellable_quantity": 100, "avg_price": 12.0, "last_price": 10.0, "weight": 0.08}
         ]
 
-        result = run_sim_loop(
-            MultiCandidateSimAdapter(["000010.SZ", "000011.SZ", "000012.SZ"], max_candidates=3, score_universe_limit=3, max_portfolio_positions=3, positions=positions),
-            "20260630",
-            StubReader(),
-            deps=deps,
-            signals_dir=self.tmp_path / "signals_no_round_trip",
-        )
+        with self._approved_expansion_evidence("20260630"):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(["000010.SZ", "000011.SZ", "000012.SZ"], max_candidates=3, score_universe_limit=3, max_portfolio_positions=3, positions=positions),
+                "20260630",
+                StubReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / "signals_no_round_trip",
+            )
 
         sell_orders = [order for order in self.executed_orders if order["side"] == "sell"]
         buy_orders = [order for order in self.executed_orders if order["side"] == "buy"]
@@ -1361,13 +1538,14 @@ class SimLoopTest(unittest.TestCase):
             {"ts_code": "000012.SZ", "quantity": 5000, "sellable_quantity": 5000, "avg_price": 10.0, "last_price": 10.0, "weight": 0.25},
         ]
 
-        result = run_sim_loop(
-            MultiCandidateSimAdapter(["000013.SZ", "000014.SZ"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=3, positions=positions),
-            "20260630",
-            StubReader(),
-            deps=deps,
-            signals_dir=self.tmp_path / "signals_replacement_after_sell",
-        )
+        with self._approved_expansion_evidence("20260630"):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(["000013.SZ", "000014.SZ"], max_candidates=2, score_universe_limit=2, max_portfolio_positions=3, positions=positions),
+                "20260630",
+                StubReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / "signals_replacement_after_sell",
+            )
 
         sell_orders = [order for order in self.executed_orders if order["side"] == "sell"]
         buy_orders = [order for order in self.executed_orders if order["side"] == "buy"]
