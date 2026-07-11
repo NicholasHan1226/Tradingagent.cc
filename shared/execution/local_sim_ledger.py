@@ -77,6 +77,9 @@ class LocalSimTrade:
     hypothesis_id: str = ""
     research_hypothesis: dict[str, Any] = field(default_factory=dict)
     factor_snapshot: dict[str, Any] = field(default_factory=dict)
+    capital_epoch: int = 1
+    capital_cny: float = 0.0
+    epoch_cutover_timestamp: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
     trade_timestamp_bj: str = ""
     ashare_session_valid: bool = True
@@ -781,6 +784,26 @@ def record_local_sim_order(
             "account": account_name,
         }
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
+
+    epoch_state = read_epoch_state()
+    capital_epoch = _safe_int(epoch_state.get("current_epoch_id"), 1)
+    try:
+        capital_cny = epoch_capital_cny(capital_epoch)
+    except KeyError:
+        return {
+            "status": "rejected",
+            "recorded": False,
+            "reason": f"unknown_capital_epoch:{capital_epoch}",
+            "order_id": order_id,
+            "idempotency_key": idempotency_key,
+            "account": account_name,
+        }
+    epoch_cutover_timestamp = str(
+        epoch_state.get("cutover_timestamp")
+        or epoch_state.get("activated_at")
+        or created_at
+    )
     session_metadata = _ashare_session_metadata(market_key, code, created_at)
     trade = LocalSimTrade(
         order_id=order_id,
@@ -808,6 +831,9 @@ def record_local_sim_order(
         hypothesis_id=str(order.get("hypothesis_id") or research_hypothesis.get("hypothesis_id") or ""),
         research_hypothesis=research_hypothesis,
         factor_snapshot=factor_snapshot,
+        capital_epoch=capital_epoch,
+        capital_cny=capital_cny,
+        epoch_cutover_timestamp=epoch_cutover_timestamp,
         created_at=created_at,
         trade_timestamp_bj=str(session_metadata["trade_timestamp_bj"]),
         ashare_session_valid=bool(session_metadata["ashare_session_valid"]),
@@ -869,6 +895,9 @@ def record_local_sim_order(
                     "fill_price_source_class": fill_price_source_class,
                     "fill_evidence": fill_evidence,
                     "capital_scope": trade.capital_scope,
+                    "capital_epoch": trade.capital_epoch,
+                    "capital_cny": trade.capital_cny,
+                    "epoch_cutover_timestamp": trade.epoch_cutover_timestamp,
                     "retry_of": trade.retry_of,
                     "retry_attempt": trade.retry_attempt,
                     "hypothesis_id": trade.hypothesis_id,
@@ -888,6 +917,9 @@ def record_local_sim_order(
         "fill_price_source": fill_price_source,
         "fill_price_source_class": fill_price_source_class,
         "net_amount": net_amount,
+        "capital_epoch": trade.capital_epoch,
+        "capital_cny": trade.capital_cny,
+        "epoch_cutover_timestamp": trade.epoch_cutover_timestamp,
         "ledger": "server_local_sim_backup",
         "receipt_path": str(LOCAL_SIM_RECEIPTS),
     }

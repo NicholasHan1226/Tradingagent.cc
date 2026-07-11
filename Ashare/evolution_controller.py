@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REVIEW_DIR = ROOT / "shared" / "review" / "ashare"
@@ -190,10 +192,24 @@ def write_evolution_decision(
 ) -> dict[str, Any]:
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
     review_path.mkdir(parents=True, exist_ok=True)
+    epoch_state = read_epoch_state()
+    current_epoch_id = _safe_int(epoch_state.get("current_epoch_id"), 1)
     decision = build_evolution_decision(
         portfolio_evolution,
         target_trade_date=target_trade_date,
         min_strategy_samples=min_strategy_samples,
+        current_epoch_id=current_epoch_id,
+    )
+    decision.update(
+        {
+            "capital_epoch": current_epoch_id,
+            "capital_cny": epoch_capital_cny(current_epoch_id),
+            "epoch_cutover_timestamp": str(
+                epoch_state.get("cutover_timestamp")
+                or epoch_state.get("activated_at")
+                or decision["generated_at"]
+            ),
+        }
     )
     latest = review_path / LATEST_DECISION.name
     log = review_path / DECISION_LOG.name

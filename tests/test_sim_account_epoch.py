@@ -568,6 +568,45 @@ class SimAccountEpochTest(unittest.TestCase):
         self.assertFalse(state_file.exists())
         self.assertTrue(old_trade.exists())
 
+    def test_inner_blocked_review_reset_is_preserved_and_rollback_errors_are_merged(self) -> None:
+        ledger_dir = self.tmp_path / "local_sim"
+        ledger_dir.mkdir(parents=True)
+        old_trade = ledger_dir / "local_sim_trades.jsonl"
+        old_trade.write_text('{"trade_id":"T1"}\n')
+        review_dir = self.tmp_path / "review"
+        review_dir.mkdir()
+        (review_dir / "portfolio_evolution_latest.json").write_text(
+            json.dumps({"capital_epoch": 1})
+        )
+        state_file = self.tmp_path / "epoch_state.json"
+        inner_error = {
+            "action": "restore_review_file",
+            "path": str(review_dir / "portfolio_evolution_latest.json"),
+            "error": "OSError: restore denied",
+        }
+
+        with patch("shared.execution.sim_account_epoch.epoch_state_path", return_value=state_file), patch(
+            "Ashare.epoch_review.apply_epoch_reset_plan",
+            return_value={
+                "status": "blocked",
+                "reason": "bootstrap_failed",
+                "rollback_errors": [inner_error],
+                "rollback_audit": [{"action": "restore_review_file", "status": "failed"}],
+            },
+        ):
+            result = apply_cutover(
+                ledger_path=ledger_dir,
+                archive_root=self.tmp_path / "epoch_archive",
+                review_dir=review_dir,
+            )
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn(inner_error, result["rollback_errors"])
+        self.assertTrue(result["rollback_audit"])
+        self.assertTrue(any(item["action"] == "restore_ledger_entry" for item in result["rollback_audit"]))
+        self.assertFalse(state_file.exists())
+        self.assertTrue(old_trade.exists())
+
     def test_cutover_rollback_continues_after_tier_restore_failure_and_reports_blocked(self) -> None:
         ledger_dir = self.tmp_path / "local_sim"
         ledger_dir.mkdir(parents=True)

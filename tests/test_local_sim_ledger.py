@@ -85,6 +85,42 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(trades[0]["candidate_pool_layer"], "candidate")
         self.assertEqual(trades[0]["execution_source"], "ashare_candidate_layer")
 
+    def test_new_fill_persists_complete_current_epoch_metadata(self) -> None:
+        order = {
+            "order_id": "SIM-EPOCH-2",
+            "idempotency_key": "SIM:ashare:acct:20260711:600000.SH:buy:epoch2",
+            "ts_code": "600000.SH",
+            "side": "buy",
+            "quantity": 100,
+            "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "verified_5min_market_data",
+        }
+        epoch_state = {
+            "current_epoch_id": 2,
+            "capital_cny": 50_000.0,
+            "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+        }
+
+        with self._valid_session(), patch(
+            "shared.execution.sim_account_epoch.read_epoch_state", return_value=epoch_state
+        ):
+            result = local_sim_ledger.record_local_sim_order(
+                order,
+                "ashare",
+                {"account": "acct"},
+                {"local_sim_slippage_bps": 0},
+            )
+
+        self.assertEqual(result["status"], "filled")
+        trade = json.loads(local_sim_ledger.LOCAL_SIM_TRADES.read_text(encoding="utf-8").splitlines()[0])
+        receipt = json.loads(local_sim_ledger.LOCAL_SIM_RECEIPTS.read_text(encoding="utf-8").splitlines()[0])
+        for payload in (trade, receipt, result):
+            self.assertEqual(payload["capital_epoch"], 2)
+            self.assertEqual(payload["capital_cny"], 50_000.0)
+            self.assertEqual(payload["epoch_cutover_timestamp"], epoch_state["cutover_timestamp"])
+
     def test_refresh_local_sim_snapshot_persists_mark_to_market_pnl(self) -> None:
         order = {
             "order_id": "SIM-MTM",
