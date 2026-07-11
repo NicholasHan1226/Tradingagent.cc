@@ -4,13 +4,13 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-11 (Cron 环境隔离 + 生产验收与前端桌面只读工作台候选)
+> 最后更新：2026-07-11 (Cron 环境隔离与非交易日验收修复已发布)
 
 ---
 
 ## 一、当前状态
 
-- **跨仓 cron 环境隔离修复候选（2026-07-11）**：生产合并表把 TradingAgent schedule 追加在 MarketGraph `BASH_ENV` 之后，导致 TA cron 继承 MarketGraph loader 中的 SharedSignals token；该 token 对 localhost SharedSignals 返回 401，而交互式 TA loader 无 token时可正常读取，形成“交互检查通过、Crypto/PM/US cron 401”的环境漂移。候选修复让 merge 安装器在追加 TA schedule 前重新写入 TradingAgent `BASH_ENV`，`cron_coverage` 逐条验证有效 loader，`market_health` 保留 scheduled reader degradation，禁止把 401 污染的 cron 结果伪装成策略等待。当前仅完成隔离 worktree 代码/测试，生产发布与 crontab apply 状态需以本轮 live 验收为准。
+- **跨仓 cron 环境隔离与非交易日验收修复（2026-07-11，生产已发布）**：生产合并表曾把 TradingAgent schedule 追加在 MarketGraph `BASH_ENV` 之后，导致 TA cron 继承 MarketGraph loader 中的 SharedSignals token；该 token 对 localhost SharedSignals 返回 401，而交互式 TA loader 无 token时可正常读取，形成“交互检查通过、Crypto/PM/US cron 401”的环境漂移。合并安装器现会在 TA schedule 前重写 TradingAgent `BASH_ENV`，`cron_coverage` 逐条验证有效 loader，`market_health` 保留 scheduled reader degradation，禁止把 401 污染的 cron 结果伪装成策略等待。生产 crontab 已 apply 并复核 51/51 条、环境漂移 0、root 残留 0、权限阻塞 0，真实 cron 环境下 Crypto/PM/US reader 均无 401。A 股开盘验收同时接入交易日判断，周末或节假日直接记录 `ashare_non_trading_day`，不再把闭市日午后误报为缺 5 分钟 bar。GitHub 与生产源码已同步至 `c9e3523`；生产开盘验收 A 股/CNFutures 均 pass，`full_acceptance --profile prod` 为 warn，剩余 warn 仅来自 US 模拟盘数据等待，不再有 cron 环境或 A 股周末验收 fail。
 
 - **A股/CNFutures 50,000 CNY 资金切换（2026-07-11，生产已迁移）**：代码级当前默认本金统一为 50,000 CNY，旧资金环境变量不能切回 100,000/200,000；A股生产 apply 已在保持 `shared/logs/local_sim/.local_sim.lock` inode 不变的前提下，把旧 200,000 元账本内容、持仓快照和 8 个历史 tier 文件归档到 epoch 1，并在原权威路径 bootstrap 50,000 元 epoch 2。旧 PnL/成交文件与归档 SHA256 一致，当前现金 50,000、持仓 0、成交文件为空，重复 apply 返回 `already_migrated`；state/metadata 不一致、状态损坏、归档碰撞或锁超时均 fail-closed，不存在 state-only 激活入口。CNFutures 未发现需迁移的活跃旧账本，生产默认本金已同步为 50,000。看板只展示当前主账户，忽略旧 tier manifest，并以当前主账本覆盖旧风格 PnL 分解。本地完整 Python 964 项、资金/迁移回归 113 项和前端 140 项测试通过，前端 lint 与客户端/API 构建通过。
 
