@@ -676,6 +676,7 @@ button:not(:disabled) {
 .evidence-health .market-pulse-health.positive { color: var(--fresh-live); }
 .evidence-health .market-pulse-health.warning { color: var(--state-amber); }
 .evidence-health .market-pulse-health.negative { color: var(--state-red); }
+.evidence-health .market-coverage-trace { color: var(--text-muted); font-family: var(--font-number); }
 
 .market-tape + .workspace { height: calc(100vh - 252px); }
 

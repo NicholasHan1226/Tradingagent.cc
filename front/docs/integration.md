@@ -122,6 +122,7 @@ Display-ready fields used by the homepage:
 - `marketSummaries[]`: one read-only status row per active dashboard market.
 - `marketPulses[]`: optional representative-instrument rows enriched by the TradingAgent snapshot service from the configured SharedSignals HTTP read model. Each row contains `market`, `symbol`, `lastPrice`, optional `changePct/high/low/volume/updatedAt`, `freshness`, sourced `points[]`, and `source`. The reader selects at most one current holding or signal symbol per market, requests at most 24 rows, times out after 900ms, caches for 15 seconds, and never calls a provider or write route.
 - `marketPulseCoverage`: optional read-only diagnostics for all six markets. It contains `entries[]` with `sourced`, `no_representative`, `unavailable`, or `degraded` status plus `requestedCount`, `sourcedCount`, `cacheState`, `fetchedAt`, and `sourceLatencyMs`. A cached result preserves its original fetch time and labels its cache state rather than pretending to be a new source read.
+- `marketPulseCoverageHistory`: optional bounded in-process observations of fresh SharedSignals reads. It retains at most 12 entries, adds no sample on cache hit, and resets on snapshot-service restart. It is terminal observability only, not a durable health or SLA history.
   The reader combines existing signals, holdings, simulated ledger capital,
   `style_performance.jsonl`, and `style_comparison.json`. This lets the front
   show why a selected market has data, partial data, or no data without
@@ -177,6 +178,7 @@ Display-ready fields used by the homepage:
   `opportunity_id`, `signal_id`, `trace_id`, `id`, `card_id`, or `order_id`;
 - The presentation URL may include `opportunity=<opportunityId>`. This key only selects and filters existing `funnelEvents[]`; it never creates a relationship, changes queue state or becomes an execution parameter.
 - `holdings[]` may carry optional `opportunityId`, `realizedPnl`, and `unrealizedPnl` only when explicit source fields provide them. The linked opportunity strip joins signals and holdings exclusively on equal explicit IDs; matching symbols alone must not create PnL attribution.
+- `signals[]` and `holdings[]` may carry `marketDataSymbol` only from `market_data_symbol` / `marketDataSymbol` source fields. Non-A-share pulse requests require this field. A-share uses its exchange-qualified `ts_code` as its compatible explicit identifier. A-share local simulated position rows may expose `order_id` only when all recorded buy origins for the aggregated open position agree; the reader treats that order ID as an explicit correlation key and keeps mixed-origin rows unlinked.
   otherwise the read model derives a stable id from market, symbol, queue
   bucket, and filename without exposing server paths.
 - `sequence` should increase from discovery to result. The current event stages

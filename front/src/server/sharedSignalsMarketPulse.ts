@@ -1,4 +1,4 @@
-import type { HoldingRow, Market, MarketPulse, MarketPulseCoverage, MarketPulseCoverageEntry, SignalRow } from '../types/dashboard.ts'
+import type { HoldingRow, Market, MarketPulse, MarketPulseCoverage, MarketPulseCoverageEntry, MarketPulseCoverageObservation, SignalRow } from '../types/dashboard.ts'
 
 type PulseReaderOptions = {
   baseUrl?: string
@@ -10,13 +10,15 @@ type PulseReaderOptions = {
 
 type ApiPayload = { data?: unknown[]; metadata?: { degraded?: boolean }; source?: string }
 type RawRow = Record<string, unknown>
-type MarketPulseReadResult = { pulses: MarketPulse[]; coverage: MarketPulseCoverage }
+type MarketPulseReadResult = { pulses: MarketPulse[]; coverage: MarketPulseCoverage; coverageHistory: MarketPulseCoverageObservation[] }
 type CacheEntry = { expiresAt: number; value: MarketPulseReadResult }
 
 const CACHE_TTL_MS = 15_000
 const REQUEST_TIMEOUT_MS = 900
 const MAX_POINTS = 24
 const cache = new Map<string, CacheEntry>()
+const coverageHistory = new Map<string, MarketPulseCoverageObservation[]>()
+const MAX_COVERAGE_OBSERVATIONS = 12
 const MARKET_ORDER: Array<Exclude<Market, 'All Markets'>> = ['A-share', 'US', 'Crypto', 'HK', 'PM', 'CNFutures']
 
 export async function readSharedSignalsMarketPulses({ baseUrl, holdings, signals, fetchImpl = fetch, now = new Date() }: PulseReaderOptions): Promise<MarketPulseReadResult> {
@@ -30,7 +32,7 @@ export async function readSharedSignalsMarketPulses({ baseUrl, holdings, signals
   const key = `${normalizedBase}|${requests.map((item) => `${item.market}:${item.symbol}`).join('|')}`
   const cached = cache.get(key)
   if (cached && cached.expiresAt > now.getTime()) {
-    return { ...cached.value, coverage: { ...cached.value.coverage, cacheState: 'cached' } }
+    return { ...cached.value, coverage: { ...cached.value.coverage, cacheState: 'cached' }, coverageHistory: readCoverageHistory(normalizedBase) }
   }
 
   const startedAt = Date.now()
@@ -55,16 +57,19 @@ export async function readSharedSignalsMarketPulses({ baseUrl, holdings, signals
     const outcome = statusByMarket.get(market)
     return { market, symbol, status: outcome?.status ?? 'unavailable' }
   })
+  const coverage: MarketPulseCoverage = {
+    cacheState: 'fresh',
+    entries,
+    fetchedAt: now.toISOString(),
+    requestedCount: requests.length,
+    sourcedCount: entries.filter((entry) => entry.status === 'sourced').length,
+    sourceLatencyMs: Date.now() - startedAt,
+  }
+  if (requests.length) appendCoverageObservation(normalizedBase, coverage)
   const value: MarketPulseReadResult = {
     pulses: settled.flatMap((item) => item.pulse ? [item.pulse] : []),
-    coverage: {
-      cacheState: 'fresh',
-      entries,
-      fetchedAt: now.toISOString(),
-      requestedCount: requests.length,
-      sourcedCount: entries.filter((entry) => entry.status === 'sourced').length,
-      sourceLatencyMs: Date.now() - startedAt,
-    },
+    coverage,
+    coverageHistory: readCoverageHistory(normalizedBase),
   }
   cache.set(key, { expiresAt: now.getTime() + CACHE_TTL_MS, value })
   return value
@@ -72,13 +77,14 @@ export async function readSharedSignalsMarketPulses({ baseUrl, holdings, signals
 
 export function resetMarketPulseCacheForTests() {
   cache.clear()
+  coverageHistory.clear()
 }
 
 function selectRepresentatives(holdings: HoldingRow[], signals: SignalRow[]) {
   const selected = new Map<Exclude<Market, 'All Markets'>, string>()
   for (const item of [...holdings, ...signals]) {
     if (item.market === 'All Markets' || selected.has(item.market)) continue
-    const symbol = item.symbol.trim()
+    const symbol = item.market === 'A-share' ? (item.marketDataSymbol ?? item.symbol).trim() : item.marketDataSymbol?.trim()
     if (symbol) selected.set(item.market, symbol)
   }
   return selected
@@ -95,7 +101,24 @@ function emptyResult(now: Date): MarketPulseReadResult {
       sourcedCount: 0,
       sourceLatencyMs: 0,
     },
+    coverageHistory: [],
   }
+}
+
+function appendCoverageObservation(baseUrl: string, coverage: MarketPulseCoverage) {
+  const observation: MarketPulseCoverageObservation = {
+    entries: coverage.entries.map((entry) => ({ ...entry })),
+    fetchedAt: coverage.fetchedAt,
+    requestedCount: coverage.requestedCount,
+    sourcedCount: coverage.sourcedCount,
+    sourceLatencyMs: coverage.sourceLatencyMs,
+  }
+  const next = [...(coverageHistory.get(baseUrl) ?? []), observation].slice(-MAX_COVERAGE_OBSERVATIONS)
+  coverageHistory.set(baseUrl, next)
+}
+
+function readCoverageHistory(baseUrl: string) {
+  return (coverageHistory.get(baseUrl) ?? []).map((observation) => ({ ...observation, entries: observation.entries.map((entry) => ({ ...entry })) }))
 }
 
 function pulseUrl(baseUrl: string, market: Exclude<Market, 'All Markets'>, symbol: string) {

@@ -18,7 +18,7 @@ The market-pulse reader selects this field in preference to display symbol, send
 
 ### Safe single-origin position attribution
 
-The A-share local simulated snapshot preserves `order_id` and `opportunity_id` only when every remaining open lot for a symbol comes from the same original order. It preserves the position's existing `unrealized_pnl`; it does not allocate account-level realized PnL across open positions.
+The A-share local simulated snapshot preserves `order_id` and `opportunity_id` only when every recorded buy origin contributing to an aggregated open position has the same original order. It preserves the position's existing `unrealized_pnl`; it does not allocate account-level realized PnL across open positions.
 
 If more than one source order remains in an aggregated position, the fields are omitted. The frontend then remains unlinked rather than assigning the position to a convenient same-symbol signal. Existing historical trade facts and signed receipts remain append-only and unchanged.
 

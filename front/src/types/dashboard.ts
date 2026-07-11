@@ -105,6 +105,8 @@ export type MarketPulseCoverage = {
   sourceLatencyMs: number
 }
 
+export type MarketPulseCoverageObservation = Omit<MarketPulseCoverage, 'cacheState'>
+
 export type CNFuturesReplayEvidence = {
   generatedAt: string
   date: string
@@ -201,6 +203,7 @@ export type SignalRow = {
   name: string
   market: Market
   opportunityId?: string
+  marketDataSymbol?: string
   method: string
   strategyName?: string
   signalSource?: string
@@ -252,6 +255,7 @@ export type HoldingRow = {
   name: string
   market: Market
   opportunityId?: string
+  marketDataSymbol?: string
   weight: string
   pnl: string
   risk: '正常' | '观察' | '偏高'

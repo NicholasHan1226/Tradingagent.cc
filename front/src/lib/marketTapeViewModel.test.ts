@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { MarketPulse, MarketPulseCoverage, MarketSummary } from '../types/dashboard'
+import type { MarketPulse, MarketPulseCoverage, MarketPulseCoverageObservation, MarketSummary } from '../types/dashboard'
 import type { DashboardState } from '../types/status'
 import { createEvidenceHealth, createMarketPulseHealth, createMarketTapeRows } from './marketTapeViewModel'
 
@@ -25,6 +25,10 @@ const pulseCoverage: MarketPulseCoverage = {
     { market: 'US', status: 'no_representative' }, { market: 'HK', status: 'no_representative' }, { market: 'PM', status: 'no_representative' }, { market: 'CNFutures', status: 'no_representative' },
   ],
 }
+const coverageHistory: MarketPulseCoverageObservation[] = [
+  { ...pulseCoverage, entries: pulseCoverage.entries.map((entry) => ({ ...entry })), fetchedAt: '2026-07-11T03:30:00Z' },
+  { ...pulseCoverage, entries: pulseCoverage.entries.map((entry) => ({ ...entry })), fetchedAt: '2026-07-11T04:00:00Z' },
+]
 
 describe('market tape view model', () => {
   it('creates selected market rows with return, holdings and runtime truth', () => {
@@ -60,9 +64,11 @@ describe('market tape view model', () => {
   })
 
   it('summarizes pulse coverage instead of pretending unmapped markets have prices', () => {
-    expect(createMarketPulseHealth(pulseCoverage)).toEqual(expect.objectContaining({
+    expect(createMarketPulseHealth(pulseCoverage, coverageHistory)).toEqual(expect.objectContaining({
       headline: '1/2 已取到',
       detail: expect.stringContaining('4 市场待映射'),
+      traceLabel: '轨迹 2',
+      traceDetail: expect.stringContaining('近 2 次来源观测'),
       tone: 'warning',
     }))
   })

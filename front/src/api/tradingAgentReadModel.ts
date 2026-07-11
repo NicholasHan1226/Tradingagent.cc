@@ -1,5 +1,5 @@
 import type { ApiStatus, DashboardApiResponse } from './types.ts'
-import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, FunnelEvent, HoldingRow, MarketPulse, MarketPulseCoverage, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
+import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, FunnelEvent, HoldingRow, MarketPulse, MarketPulseCoverage, MarketPulseCoverageObservation, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
 import type { DataDomain } from '../types/status.ts'
 
 export const tradingAgentReadModelSources = {
@@ -47,6 +47,7 @@ export type TradingAgentReadModelSnapshot = {
   marketSummaries?: MarketSummary[]
   marketPulses?: MarketPulse[]
   marketPulseCoverage?: MarketPulseCoverage
+  marketPulseCoverageHistory?: MarketPulseCoverageObservation[]
   ashareResearchEvidence?: AShareResearchEvidence
   ashareForwardValidation?: AShareForwardValidation
   ashareTierSummaries?: AShareTierSummary[]

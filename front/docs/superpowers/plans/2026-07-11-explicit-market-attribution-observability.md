@@ -32,10 +32,10 @@
 - `SignalRow.marketDataSymbol` and `HoldingRow.marketDataSymbol` are optional explicit strings.
 - `MarketPulseCoverageHistory` contains at most 12 fresh observations.
 
-- [ ] Write failing reader tests: a Crypto display symbol without `marketDataSymbol` is unmapped; `BTCUSDT` routes to `/crypto?symbol=BTCUSDT`; two fresh reads create history while a cache hit does not.
-- [ ] Run `npm test -- --run src/server/sharedSignalsMarketPulse.test.ts src/server/tradingAgentSnapshot.test.ts` and confirm the expected failures.
-- [ ] Parse explicit fields, select strict representatives, retain fresh-only bounded observations, and attach optional history to snapshot.
-- [ ] Re-run the focused TypeScript tests.
+- [x] Write failing reader tests: a Crypto display symbol without `marketDataSymbol` is unmapped; `BTCUSDT` routes to `/crypto?symbol=BTCUSDT`; two fresh reads create history while a cache hit does not.
+- [x] Run `npm test -- --run src/server/sharedSignalsMarketPulse.test.ts src/server/tradingAgentSnapshot.test.ts` and confirm the expected failures.
+- [x] Parse explicit fields, select strict representatives, retain fresh-only bounded observations, and attach optional history to snapshot.
+- [x] Re-run the focused TypeScript tests.
 
 ### Task 2: Single-origin A-share position provenance
 
@@ -47,10 +47,10 @@
 **Interfaces:**
 - `_replay_account(...)['positions'][symbol]` contains `order_id` only when all outstanding buys for that symbol share one order ID.
 
-- [ ] Write failing Python tests for one open order retaining `order_id` and two open orders omitting it.
-- [ ] Run `python3 -m unittest tests.test_local_sim_ledger` and confirm both new assertions fail.
-- [ ] Track open order IDs during replay and emit a field only for a unique remaining origin; preserve all existing cash/PnL calculations.
-- [ ] Re-run Python tests and TypeScript snapshot parsing tests.
+- [x] Write failing Python tests for one open order retaining `order_id` and two open orders omitting it.
+- [x] Run `python3 -m unittest tests.test_local_sim_ledger` and confirm both new assertions fail.
+- [x] Track open order IDs during replay and emit a field only for a unique recorded buy origin; preserve all existing cash/PnL calculations.
+- [x] Re-run Python tests and TypeScript snapshot parsing tests.
 
 ### Task 3: Compact terminal observation surface and release
 
@@ -66,6 +66,6 @@
 **Interfaces:**
 - `createMarketPulseHealth` accepts optional coverage history and exposes `traceLabel`/accessible trace detail.
 
-- [ ] Write failing view/component tests for the trace label and explicit symbol presentation.
-- [ ] Run focused UI tests and confirm they fail before the new surface exists.
+- [x] Write failing view/component tests for the trace label and explicit symbol presentation.
+- [x] Run focused UI tests and confirm they fail before the new surface exists.
 - [ ] Implement the compact tape detail, update contracts, then run lint, all frontend tests, both builds, focused Python tests, desktop QA, release preflight, commit, push, deploy, and separately verify local/main/production source/runtime/public route.

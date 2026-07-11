@@ -26,6 +26,8 @@ The evidence-adaptive layer adds four explicit runtime states: `live`, `idle`, `
 
 The market-causal layer adds sourced representative-instrument pulse, persistent opportunity context and local terminal controls. Market pulse is read through the TradingAgent snapshot API from SharedSignals only; its coverage line distinguishes sourced, unmapped, unavailable and degraded markets instead of filling the tape with assumed instruments. Selecting an opportunity cycle writes the explicit `opportunityId` into the URL, highlights the cycle and filters its event stream while preserving the context across all secondary pages. The linked strip may show signals, holdings and PnL only when their explicit opportunity IDs match; no same-symbol attribution is inferred. `Cmd/Ctrl+K` opens the terminal command palette; density and table-column preferences remain browser-local.
 
+The explicit-attribution layer requires `marketDataSymbol` for non-A-share pulse reads, so cross-market display symbols never become implicit API identifiers. It adds a bounded in-process coverage trace to the evidence edge and preserves a local A-share position order ID only when its aggregate contains one recorded buy origin. The trace is a short session observation, not an SLA or persistent history; multi-origin positions remain intentionally unlinked.
+
 ## Shared page anatomy
 
 `TerminalPageShell` owns the secondary-page structure:

@@ -71,6 +71,7 @@ TradingAgent signals / positions / review / risk
 - 浏览器客户端：`src/api/tradingAgentIntegration.ts`。
 - TradingAgent 读取器：`src/server/tradingAgentSnapshot.ts`。
 - SharedSignals 市场脉冲读取器：`src/server/sharedSignalsMarketPulse.ts`。它只从 `SHAREDSIGNALS_API_URL` 读取持仓/信号涉及的有限代表标的，单请求 900ms 超时并使用 15 秒进程内缓存；`marketPulseCoverage` 会说明每个市场是已取到、无代表映射、不可用还是降级。它不直接调用 provider，不写 SharedSignals，也不让上游不可用拖垮快照。
+- 非 A 股代表行情必须由上游显式提供 `market_data_symbol` 或 `marketDataSymbol`；前端不从展示代码转换 Crypto、期货、PM、US 或 HK API 参数。`marketPulseCoverageHistory` 只保留当前服务进程最近 12 次真实来源读取，缓存命中与服务重启不会伪造连续观测。
 - 真实数据适配：`src/api/tradingAgentReadModel.ts` 和
   `src/adapters/tradingAgentReadModel.ts`。
 - 本地演示数据：`src/data/dashboard.ts`，只在本地开发或显式开启 `VITE_TRADING_AGENT_DEMO_PREVIEW=1` 时用于开发预览；生产接口不可用时必须展示等待/不可用状态，不得回退到样例收益、机会或持仓。如果接口可用但某个领域返回空数组，前端必须展示真实空状态。
@@ -195,6 +196,7 @@ npm run build:api
 - 首页右轨只展示过程、阶段、状态、证据、更新时间和简短结果说明，不展示人工建议、内部错误码或调试文案。
 - 市场状态带会从当前持仓或信号中为每个市场选择一个代表标的，并由只读 snapshot API 通过 `SHAREDSIGNALS_API_URL` 查询 SharedSignals。只展示真实返回的价格、短走势、区间、成交量和新鲜度；无代表标的、读取超时、上游降级或字段缺失时保持 `—`/“暂无代表行情”，不得生成样例价格。`marketPulseCoverage` 明确展示已取到、待映射、不可用和降级范围。请求限制为每个代表标的最多 24 个点、900ms 超时和 15 秒进程缓存。
 - 过程页选择机会周期后，URL 增加 `opportunity=<opportunityId>`，周期行进入选中态，原始事件账本只展示该机会的显式事件；关联条在其它页面继续显示标的、阶段、结果、完整度、关联信号/持仓与可归因盈亏。后两项只接受相同的显式 `opportunityId`，无匹配持仓时保持 `—`。清除关联只改变浏览器展示状态。
+- A 股 server-local 模拟持仓只在同一聚合仓位的所有记录买入来源均为同一 `order_id` 时透传该 ID 与未实现 PnL，供只读机会关联使用；多来源仓位不分摊、不归因，历史成交和签名回执不回写。
 - `Cmd/Ctrl+K` 打开桌面终端命令面板，可切换页面、市场和信息密度、清除关联机会。密度与各账本列显示写入版本化浏览器本地偏好，不写服务器、不修改 snapshot。
 
 ## 用户可见文案规范

@@ -25,7 +25,7 @@ describe('App navigation and result-first dashboard', () => {
   it('uses six result-and-process destinations without decision pages', () => {
     render(<App />)
 
-    expect(document.querySelector('.hyper-shell')).toHaveAttribute('data-build', '20260711-market-evidence-attribution')
+    expect(document.querySelector('.hyper-shell')).toHaveAttribute('data-build', '20260711-explicit-market-attribution')
     const navigation = screen.getByRole('navigation', { name: '主导航' })
     expect(within(navigation).getAllByRole('button')).toHaveLength(6)
     expect(within(navigation).getByRole('button', { name: '总览' })).toBeInTheDocument()

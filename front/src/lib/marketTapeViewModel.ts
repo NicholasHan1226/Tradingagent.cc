@@ -1,5 +1,5 @@
 import { marketLabels, markets } from '../data/dashboard'
-import type { Market, MarketPulse, MarketPulseCoverage, MarketSummary } from '../types/dashboard'
+import type { Market, MarketPulse, MarketPulseCoverage, MarketPulseCoverageObservation, MarketSummary } from '../types/dashboard'
 import type { DashboardState, DataDomain, DomainStatus } from '../types/status'
 
 export type MarketTapeRow = {
@@ -31,6 +31,8 @@ export type EvidenceHealthModel = {
 export type MarketPulseHealthModel = {
   headline: string
   detail: string
+  traceLabel: string
+  traceDetail: string
   tone: 'positive' | 'warning' | 'negative' | 'muted'
 }
 
@@ -79,7 +81,7 @@ export function createEvidenceHealth(domains: DashboardState['domains'], generat
   return { overall, snapshotLabel: snapshotTime(generatedAt), sourceLabel: marketSummary?.source ?? '只读快照', items }
 }
 
-export function createMarketPulseHealth(coverage?: MarketPulseCoverage): MarketPulseHealthModel | undefined {
+export function createMarketPulseHealth(coverage?: MarketPulseCoverage, history: MarketPulseCoverageObservation[] = []): MarketPulseHealthModel | undefined {
   if (!coverage) return undefined
   const unmapped = coverage.entries.filter((entry) => entry.status === 'no_representative').length
   const unavailable = coverage.entries.filter((entry) => entry.status === 'unavailable').length
@@ -98,7 +100,14 @@ export function createMarketPulseHealth(coverage?: MarketPulseCoverage): MarketP
       : coverage.requestedCount > 0
         ? 'negative'
         : 'muted'
-  return { headline: `${coverage.sourcedCount}/${coverage.requestedCount} 已取到`, detail, tone }
+  const latest = history.at(-1)
+  return {
+    headline: `${coverage.sourcedCount}/${coverage.requestedCount} 已取到`,
+    detail,
+    traceLabel: `轨迹 ${history.length}`,
+    traceDetail: latest ? `近 ${history.length} 次来源观测 · 最新 ${latest.sourcedCount}/${latest.requestedCount} 已取到` : '本次进程尚无来源观测',
+    tone,
+  }
 }
 
 function createAllMarketsRow(summaries: MarketSummary[], activeMarket: Market, generatedAt: string | null): MarketTapeRow {

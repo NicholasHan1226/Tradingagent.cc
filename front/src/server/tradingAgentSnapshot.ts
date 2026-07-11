@@ -33,6 +33,8 @@ type PositionRow = {
   signal_id?: string | number
   trace_id?: string | number
   order_id?: string | number
+  market_data_symbol?: string
+  marketDataSymbol?: string
 }
 
 type PositionPlanFile = {
@@ -53,6 +55,8 @@ type CNFuturesPositionRow = {
   signal_id?: string | number
   trace_id?: string | number
   order_id?: string | number
+  market_data_symbol?: string
+  marketDataSymbol?: string
 }
 
 type CNFuturesPositionsFile = {
@@ -71,6 +75,8 @@ type SimLedgerPosition = {
   signal_id?: string | number
   trace_id?: string | number
   order_id?: string | number
+  market_data_symbol?: string
+  marketDataSymbol?: string
 }
 
 type SimLedgerPositionsFile = {
@@ -166,6 +172,9 @@ type SignalFile = {
   trace_id?: string | number
   order_id?: string | number
   card_id?: string | number
+  market_data_symbol?: string
+  marketDataSymbol?: string
+  metadata?: Record<string, unknown>
   ts_code?: string
   symbol?: string
   market?: string
@@ -591,6 +600,7 @@ export async function readTradingAgentSnapshot({
     marketSummaries,
     marketPulses: marketPulseRead.pulses,
     marketPulseCoverage: marketPulseRead.coverage,
+    marketPulseCoverageHistory: marketPulseRead.coverageHistory,
     ashareResearchEvidence,
     ashareForwardValidation,
     ashareTierSummaries,
@@ -2252,6 +2262,7 @@ function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, mar
     name: normalizeSymbol(symbol, market),
     market,
     opportunityId: explicitOpportunityId(position),
+    marketDataSymbol: explicitMarketDataSymbol(position),
     weight: formatCost(cost),
     pnl: formatCurrency(realizedPnl + (unrealizedPnl ?? 0)),
     risk: position.quantity > 0 ? '正常' : '观察',
@@ -2301,6 +2312,7 @@ function parseCNFuturesPositionRow(row: CNFuturesPositionRow): HoldingRow | null
     name: symbol,
     market: 'CNFutures',
     opportunityId: explicitOpportunityId(row),
+    marketDataSymbol: explicitMarketDataSymbol(row),
     weight: margin === undefined ? `${qty} 手` : formatCurrency(margin),
     pnl: formatCurrency(realized + unrealized),
     risk: qty > 0 ? '正常' : '观察',
@@ -2337,6 +2349,7 @@ function parsePositionRow(row: unknown, source: HoldingRow['source'] = 'position
     name: symbol,
     market,
     opportunityId: explicitOpportunityId(position),
+    marketDataSymbol: explicitMarketDataSymbol(position),
     weight: formatMarketCost(marketValue ?? runningCost ?? quantity, market),
     pnl: formatMarketCurrency(pnl, market),
     risk: '正常',
@@ -2357,6 +2370,10 @@ function parsePositionRow(row: unknown, source: HoldingRow['source'] = 'position
 
 function explicitOpportunityId(row: { opportunity_id?: string | number; opportunityId?: string | number; signal_id?: string | number; trace_id?: string | number; order_id?: string | number }) {
   return firstString(row.opportunity_id, row.opportunityId, row.signal_id, row.trace_id, row.order_id)
+}
+
+function explicitMarketDataSymbol(row: { market_data_symbol?: string; marketDataSymbol?: string; metadata?: Record<string, unknown> }) {
+  return firstString(row.market_data_symbol, row.marketDataSymbol, row.metadata?.market_data_symbol, row.metadata?.marketDataSymbol)
 }
 
 async function readSimLedgerSignals(root: string, now: Date): Promise<SignalRow[]> {
@@ -2570,6 +2587,7 @@ async function readSignalFile(path: string, bucket: string, now: Date): Promise<
       name: symbol,
       market,
       opportunityId,
+      marketDataSymbol: explicitMarketDataSymbol(raw),
       queueBucket: bucket,
       method: raw.direction ? `${raw.direction}` : '待确认',
       status,

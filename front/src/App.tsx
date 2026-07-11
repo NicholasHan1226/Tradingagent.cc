@@ -26,7 +26,7 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
-const DASHBOARD_BUILD_ID = '20260711-market-evidence-attribution'
+const DASHBOARD_BUILD_ID = '20260711-explicit-market-attribution'
 
 function App() {
   const demoPreviewEnabled = isDemoPreviewEnabled()
@@ -148,7 +148,7 @@ function App() {
   const handleRetry = () => setDashboardState(toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
   const selectAccountMode = (mode: AccountMode) => setAccountMode(mode)
   const marketTapeRows = useMemo(() => createMarketTapeRows(marketSummaries, activeMarket, readModelSnapshot?.generatedAt ?? null, readModelSnapshot?.marketPulses ?? []), [activeMarket, marketSummaries, readModelSnapshot?.generatedAt, readModelSnapshot?.marketPulses])
-  const marketPulseHealth = useMemo(() => createMarketPulseHealth(readModelSnapshot?.marketPulseCoverage), [readModelSnapshot?.marketPulseCoverage])
+  const marketPulseHealth = useMemo(() => createMarketPulseHealth(readModelSnapshot?.marketPulseCoverage, readModelSnapshot?.marketPulseCoverageHistory), [readModelSnapshot?.marketPulseCoverage, readModelSnapshot?.marketPulseCoverageHistory])
   const evidenceHealth = useMemo(() => createEvidenceHealth(dashboardState.domains, readModelSnapshot?.generatedAt ?? null, selectedMarketSummary), [dashboardState.domains, readModelSnapshot?.generatedAt, selectedMarketSummary])
   const heartbeat = useMemo(() => createRuntimeHeartbeat({
     domains: dashboardState.domains,

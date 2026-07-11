@@ -33,7 +33,7 @@ describe('SharedSignals market pulse reader', () => {
       fetchImpl,
       holdings: [holding('A-share', '600519.SH')],
       now: new Date('2026-07-11T09:40:00+08:00'),
-      signals: [signal('CNFutures', 'RB2609.SHF')],
+      signals: [{ ...signal('CNFutures', 'RB2609.SHF'), marketDataSymbol: 'RB2609.SHF' }],
     })
 
     expect(fetchImpl).toHaveBeenCalledTimes(2)
@@ -87,7 +87,7 @@ describe('SharedSignals market pulse reader', () => {
     const { pulses: [pulse] } = await readSharedSignalsMarketPulses({
       baseUrl: 'http://127.0.0.1:8082',
       fetchImpl,
-      holdings: [holding('US', 'AAPL')],
+      holdings: [{ ...holding('US', 'AAPL'), marketDataSymbol: 'AAPL' }],
       signals: [],
       now: new Date('2026-07-12T09:00:00+08:00'),
     })
@@ -116,7 +116,7 @@ describe('SharedSignals market pulse reader', () => {
       baseUrl: 'http://127.0.0.1:8082',
       fetchImpl,
       holdings: [],
-      signals: [signal('PM', '561263')],
+      signals: [{ ...signal('PM', '561263'), marketDataSymbol: '561263' }],
       now: new Date('2026-07-11T05:05:00+00:00'),
     })
 
@@ -141,7 +141,7 @@ describe('SharedSignals market pulse reader', () => {
       baseUrl: 'http://127.0.0.1:8082',
       fetchImpl,
       holdings: [holding('A-share', '600519.SH')],
-      signals: [signal('Crypto', 'BTCUSDT'), signal('PM', 'market-123')],
+      signals: [{ ...signal('Crypto', 'BTCUSDT'), marketDataSymbol: 'BTCUSDT' }, { ...signal('PM', 'market-123'), marketDataSymbol: 'market-123' }],
       now: new Date('2026-07-11T09:40:00+08:00'),
     })
 
@@ -155,5 +155,25 @@ describe('SharedSignals market pulse reader', () => {
       expect.objectContaining({ market: 'CNFutures', status: 'no_representative' }),
     ]))
     expect(result.coverage).toMatchObject({ cacheState: 'fresh', sourcedCount: 1, requestedCount: 3 })
+  })
+
+  it('uses only explicit non-A-share market-data symbols and retains fresh-only coverage history', async () => {
+    const fetchImpl = vi.fn(async (_input: string | URL | Request) => new Response(JSON.stringify({
+      data: [{ close: 62_000, bar_time: '2026-07-11T09:35:00+08:00' }], metadata: { degraded: false }, source: 'binance',
+    }), { status: 200 }))
+    const explicitCrypto = { ...signal('Crypto', 'BTC-USD'), marketDataSymbol: 'BTCUSDT' }
+    const unmappedCrypto = signal('Crypto', 'ETH-USD')
+
+    const unmapped = await readSharedSignalsMarketPulses({ baseUrl: 'http://127.0.0.1:8082', fetchImpl, holdings: [], signals: [unmappedCrypto], now: new Date('2026-07-11T09:39:00+08:00') })
+    const first = await readSharedSignalsMarketPulses({ baseUrl: 'http://127.0.0.1:8082', fetchImpl, holdings: [], signals: [explicitCrypto], now: new Date('2026-07-11T09:40:00+08:00') })
+    const cached = await readSharedSignalsMarketPulses({ baseUrl: 'http://127.0.0.1:8082', fetchImpl, holdings: [], signals: [explicitCrypto], now: new Date('2026-07-11T09:40:10+08:00') })
+    const refreshed = await readSharedSignalsMarketPulses({ baseUrl: 'http://127.0.0.1:8082', fetchImpl, holdings: [], signals: [explicitCrypto], now: new Date('2026-07-11T09:40:20+08:00') })
+
+    expect(unmapped.coverage.entries).toContainEqual(expect.objectContaining({ market: 'Crypto', status: 'no_representative' }))
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/crypto?symbol=BTCUSDT&limit=24')
+    expect(first.coverage.entries).toContainEqual(expect.objectContaining({ market: 'Crypto', symbol: 'BTCUSDT', status: 'sourced' }))
+    expect(first.coverageHistory).toHaveLength(1)
+    expect(cached.coverageHistory).toHaveLength(1)
+    expect(refreshed.coverageHistory).toHaveLength(2)
   })
 })
