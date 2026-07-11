@@ -110,6 +110,23 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(snapshot["positions"][0]["mark_price"], 11.0)
         self.assertEqual(snapshot["pnl"]["acct"]["total_pnl"], 95.0)
 
+    def test_replay_exposes_single_open_order_id_for_read_only_opportunity_attribution(self) -> None:
+        replay = local_sim_ledger._replay_account([
+            {"account": "acct", "status": "filled", "ts_code": "600000.SH", "side": "buy", "quantity": 100, "net_amount": 1000, "filled_price": 10, "order_id": "opp-ashare-001"},
+        ], account="acct", mark_prices={"600000.SH": 11})
+
+        position = replay["positions"]["600000.SH"]
+        self.assertEqual(position["order_id"], "opp-ashare-001")
+        self.assertEqual(position["unrealized_pnl"], 100.0)
+
+    def test_replay_omits_attribution_when_open_position_has_multiple_order_origins(self) -> None:
+        replay = local_sim_ledger._replay_account([
+            {"account": "acct", "status": "filled", "ts_code": "600000.SH", "side": "buy", "quantity": 100, "net_amount": 1000, "filled_price": 10, "order_id": "opp-ashare-001"},
+            {"account": "acct", "status": "filled", "ts_code": "600000.SH", "side": "buy", "quantity": 100, "net_amount": 1200, "filled_price": 12, "order_id": "opp-ashare-002"},
+        ], account="acct", mark_prices={"600000.SH": 11})
+
+        self.assertNotIn("order_id", replay["positions"]["600000.SH"])
+
     def test_bootstrap_check_does_not_overwrite_existing_mark_to_market_snapshot(self) -> None:
         order = {
             "order_id": "SIM-MTM-BOOTSTRAP",

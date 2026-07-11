@@ -466,7 +466,7 @@ def _replay_account(
         net_amount = _safe_float(trade.get("net_amount"), 0.0)
         filled_price = _safe_float(trade.get("filled_price"), 0.0)
         side = str(trade.get("side") or "").lower()
-        pos = positions.setdefault(code, {"quantity": 0.0, "cost_basis": 0.0, "last_price": 0.0, "trades": 0})
+        pos = positions.setdefault(code, {"quantity": 0.0, "cost_basis": 0.0, "last_price": 0.0, "trades": 0, "order_ids": set()})
         total_trades += 1
         if side == "buy":
             cash_available -= net_amount
@@ -474,6 +474,9 @@ def _replay_account(
             pos["cost_basis"] += net_amount
             pos["last_price"] = filled_price or pos["last_price"]
             pos["trades"] += 1
+            order_id = str(trade.get("order_id") or "").strip()
+            if order_id:
+                pos["order_ids"].add(order_id)
             buys += 1
             continue
         if side != "sell" or qty <= 0 or pos["quantity"] <= 0:
@@ -503,7 +506,7 @@ def _replay_account(
         mark_price = round(float(mark_prices.get(code, last_price)) if mark_prices else last_price, 6)
         value = round(qty * mark_price, 2)
         row_unrealized = round(value - cost, 2)
-        clean_positions[code] = {
+        row = {
             "quantity": int(qty) if abs(qty - round(qty)) < 1e-12 else round(qty, 6),
             "cost_basis": cost,
             "avg_cost": round(cost / qty, 4) if qty else 0.0,
@@ -513,6 +516,10 @@ def _replay_account(
             "unrealized_pnl": row_unrealized,
             "trades": int(pos.get("trades") or 0),
         }
+        order_ids = pos.get("order_ids") or set()
+        if len(order_ids) == 1:
+            row["order_id"] = next(iter(order_ids))
+        clean_positions[code] = row
         market_value += value
         unrealized += row_unrealized
     return {
