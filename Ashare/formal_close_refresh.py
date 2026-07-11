@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from Ashare.forward_validation import build_forward_validation_report
+from Ashare.epoch_review import validate_review_epoch
 from Ashare.portfolio_evolution import write_portfolio_evolution
 from shared.data.reader import TradingagentDataReader
 from shared.execution import local_sim_ledger
+from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
 from shared.review.daily_review import run_daily_review
 
 
@@ -32,6 +34,17 @@ def _safe_float(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return parsed if parsed > 0 and parsed == parsed else 0.0
+
+
+def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
+    epoch_id = int(epoch_state.get("current_epoch_id") or 1)
+    return {
+        "capital_epoch": epoch_id,
+        "capital_cny": float(epoch_state.get("capital_cny") or epoch_capital_cny(epoch_id)),
+        "epoch_cutover_timestamp": str(
+            epoch_state.get("cutover_timestamp") or epoch_state.get("activated_at") or ""
+        ),
+    }
 
 
 def load_formal_close_prices(
@@ -84,7 +97,11 @@ def _write_report(review_dir: Path, report: dict[str, Any]) -> None:
         handle.write(json.dumps(report, ensure_ascii=False, sort_keys=True) + "\n")
 
 
-def _completed_report(review_dir: Path, trade_date: str) -> dict[str, Any] | None:
+def _completed_report(
+    review_dir: Path,
+    trade_date: str,
+    epoch_fields: dict[str, Any],
+) -> dict[str, Any] | None:
     latest = review_dir / "formal_close_latest.json"
     if not latest.exists():
         return None
@@ -92,8 +109,19 @@ def _completed_report(review_dir: Path, trade_date: str) -> dict[str, Any] | Non
         report = json.loads(latest.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(report, dict):
+        return None
+    epoch_id = int(epoch_fields["capital_epoch"])
+    if epoch_id > 1:
+        epoch_matches, _ = validate_review_epoch(
+            report,
+            current_epoch_id=epoch_id,
+            current_cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
+        )
+    else:
+        epoch_matches = int(report.get("capital_epoch") or 1) == 1
     if (
-        isinstance(report, dict)
+        epoch_matches
         and report.get("status") == "pass"
         and int(report.get("schema_version") or 0) >= REPORT_SCHEMA_VERSION
         and _compact_date(str(report.get("trade_date") or "")) == trade_date
@@ -126,7 +154,8 @@ def run_formal_close_refresh(
     review_dir: Path = DEFAULT_REVIEW_DIR,
 ) -> dict[str, Any]:
     target_date = _compact_date(trade_date) or date.today().strftime("%Y%m%d")
-    completed = _completed_report(review_dir, target_date)
+    epoch_fields = _epoch_fields(read_epoch_state())
+    completed = _completed_report(review_dir, target_date, epoch_fields)
     if completed is not None:
         return completed
     generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -135,6 +164,7 @@ def run_formal_close_refresh(
     positions = positions if isinstance(positions, dict) else {}
     close_evidence = load_formal_close_prices(target_date, positions, reader=reader)
     base = {
+        **epoch_fields,
         "report_type": "ashare_formal_close_refresh",
         "schema_version": REPORT_SCHEMA_VERSION,
         "market": "ashare",

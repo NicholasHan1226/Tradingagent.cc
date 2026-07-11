@@ -11,14 +11,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import tempfile
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from Ashare.epoch_review import validate_review_epoch
+from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
 from shared.review.pnl_summary import load_mark_prices_for_positions
 from shared.review.pnl_summary import sim_ledger_pnl_summary
 from shared.review.sample_quality import evolution_eligible_trades, strategy_valid_trades, summarize_sample_quality
-from shared.review.sim_ledger_reader import load_sim_trades_between, load_sim_trades_for_date
+from shared.review.sim_ledger_reader import DEFAULT_LOCAL_SIM_TRADES, load_sim_trades_between, load_sim_trades_for_date
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,13 +58,103 @@ def _display_path(path: Path) -> str:
         return str(path)
 
 
-def _load_tier_manifest(review_dir: Path) -> dict[str, Any]:
+def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
+    epoch_id = int(epoch_state.get("current_epoch_id") or 1)
+    return {
+        "capital_epoch": epoch_id,
+        "capital_cny": float(epoch_state.get("capital_cny") or epoch_capital_cny(epoch_id)),
+        "epoch_cutover_timestamp": str(
+            epoch_state.get("cutover_timestamp") or epoch_state.get("activated_at") or ""
+        ),
+    }
+
+
+def _load_tier_manifest(review_dir: Path, epoch_fields: dict[str, Any]) -> dict[str, Any]:
     path = review_dir / "tier_experiments_latest.json"
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    if int(epoch_fields["capital_epoch"]) <= 1 and "capital_epoch" not in payload:
+        return payload
+    valid, _ = validate_review_epoch(
+        payload,
+        current_epoch_id=int(epoch_fields["capital_epoch"]),
+        current_cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
+    )
+    return payload if valid else {}
+
+
+def _timestamp_at_or_after_cutover(row: dict[str, Any], cutover_timestamp: str) -> bool:
+    raw = str(
+        row.get("created_at")
+        or row.get("trade_timestamp_bj")
+        or row.get("timestamp_bj")
+        or ""
+    ).strip()
+    try:
+        row_time = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        cutover = datetime.fromisoformat(str(cutover_timestamp).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if row_time.tzinfo is None:
+        row_time = row_time.replace(tzinfo=timezone.utc)
+    if cutover.tzinfo is None:
+        cutover = cutover.replace(tzinfo=timezone.utc)
+    return row_time.astimezone(timezone.utc) >= cutover.astimezone(timezone.utc)
+
+
+@contextmanager
+def _current_epoch_trade_file(
+    path: Path,
+    epoch_fields: dict[str, Any],
+):
+    """Yield a temporary ledger containing only explicit current-epoch rows."""
+
+    current_epoch = int(epoch_fields["capital_epoch"])
+    accepted: list[dict[str, Any]] = []
+    rejections: dict[str, int] = {}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        lines = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if "capital_epoch" not in row:
+            if current_epoch <= 1 or _timestamp_at_or_after_cutover(
+                row, str(epoch_fields["epoch_cutover_timestamp"])
+            ):
+                accepted.append(row)
+            else:
+                rejections["missing_capital_epoch"] = rejections.get("missing_capital_epoch", 0) + 1
+            continue
+        try:
+            row_epoch = int(row["capital_epoch"])
+        except (TypeError, ValueError):
+            rejections["invalid_capital_epoch"] = rejections.get("invalid_capital_epoch", 0) + 1
+            continue
+        if row_epoch != current_epoch:
+            rejections["capital_epoch_mismatch"] = rejections.get("capital_epoch_mismatch", 0) + 1
+            continue
+        accepted.append(row)
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=".jsonl",
+        prefix="ashare-current-epoch-",
+    ) as handle:
+        for row in accepted:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.flush()
+        yield Path(handle.name), rejections
 
 
 def _tier_rankings(tier_manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -164,21 +258,35 @@ def build_portfolio_evolution(
 
     target_date = str(trade_date or _today_compact()).replace("-", "")[:8]
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
-    local_path = Path(local_trades_path) if local_trades_path is not None else None
-    day_trades = load_sim_trades_for_date(target_date, markets=("ashare",), local_trades_path=local_path)
-    all_trades = load_sim_trades_between("19000101", target_date, markets=("ashare",), local_trades_path=local_path)
+    local_path = Path(local_trades_path) if local_trades_path is not None else DEFAULT_LOCAL_SIM_TRADES
+    epoch_fields = _epoch_fields(read_epoch_state())
+    with _current_epoch_trade_file(local_path, epoch_fields) as (filtered_path, epoch_rejections):
+        no_style_ledgers = filtered_path.parent / "no-style-ledgers"
+        day_trades = load_sim_trades_for_date(
+            target_date,
+            markets=("ashare",),
+            local_trades_path=filtered_path,
+            ledger_root=no_style_ledgers,
+        )
+        all_trades = load_sim_trades_between(
+            "19000101",
+            target_date,
+            markets=("ashare",),
+            local_trades_path=filtered_path,
+            ledger_root=no_style_ledgers,
+        )
+        pnl_by_market = sim_ledger_pnl_summary(
+            markets=("ashare",),
+            local_trades_path=filtered_path,
+            ashare_mark_prices=mark_prices,
+        )
     day_quality = summarize_sample_quality(day_trades)
     cumulative_quality = summarize_sample_quality(all_trades)
     day_strategy_trades = strategy_valid_trades(day_trades)
     cumulative_strategy_trades = strategy_valid_trades(all_trades)
     cumulative_evolution_trades = evolution_eligible_trades(all_trades)
-    pnl_by_market = sim_ledger_pnl_summary(
-        markets=("ashare",),
-        local_trades_path=local_path,
-        ashare_mark_prices=mark_prices,
-    )
     pnl = pnl_by_market.get("ashare", {})
-    tier_manifest = _load_tier_manifest(review_path)
+    tier_manifest = _load_tier_manifest(review_path, epoch_fields)
     tier_rankings = _tier_rankings(tier_manifest)
     strategy_sample_count = _safe_int(cumulative_quality.get("strategy_sample_valid_count"))
     eligible_sample_count = len(cumulative_evolution_trades)
@@ -213,6 +321,7 @@ def build_portfolio_evolution(
         state = "evidence_pending"
 
     report = {
+        **epoch_fields,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "market": "ashare",
         "trade_date": target_date,
@@ -290,6 +399,7 @@ def build_portfolio_evolution(
         },
         "read_only": True,
         "real_trading_enabled": False,
+        "epoch_rejections": epoch_rejections,
     }
     report["latest_path"] = _display_path(review_path / LATEST_PATH.name)
     report["log_path"] = _display_path(review_path / LOG_PATH.name)
@@ -307,6 +417,7 @@ def write_portfolio_evolution(
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
     review_path.mkdir(parents=True, exist_ok=True)
     from Ashare.tier_experiments import write_tier_ledgers
+    epoch_fields = _epoch_fields(read_epoch_state())
 
     if mark_prices:
         refresh_result: dict[str, Any] = {
@@ -320,10 +431,23 @@ def write_portfolio_evolution(
 
     tier_refresh: dict[str, Any]
     if mark_prices:
-        tier_manifest = write_tier_ledgers(
-            source_trades_path=local_trades_path,
-            review_dir=review_path,
-            mark_prices=mark_prices,
+        source_path = Path(local_trades_path) if local_trades_path else DEFAULT_LOCAL_SIM_TRADES
+        with _current_epoch_trade_file(source_path, epoch_fields) as (filtered_path, _):
+            tier_manifest = write_tier_ledgers(
+                source_trades_path=filtered_path,
+                review_dir=review_path,
+                mark_prices=mark_prices,
+            )
+        tier_manifest.update(
+            {
+                **epoch_fields,
+                "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "source_trades": _display_path(source_path),
+            }
+        )
+        (review_path / "tier_experiments_latest.json").write_text(
+            json.dumps(tier_manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
         )
         tier_refresh = {
             "status": "refreshed",
@@ -362,14 +486,24 @@ def write_portfolio_evolution(
             blockers.append("mark_prices_unavailable")
         report["state"] = "evidence_pending"
     try:
-        from Ashare.evolution_controller import write_evolution_decision
+        from Ashare.evolution_controller import build_evolution_decision
 
-        report["evolution_decision"] = write_evolution_decision(
+        decision = build_evolution_decision(
             report,
-            review_dir=review_path,
             target_trade_date=report.get("trade_date"),
             min_strategy_samples=min_samples,
+            current_epoch_id=int(epoch_fields["capital_epoch"]),
         )
+        decision.update(epoch_fields)
+        report["evolution_decision"] = decision
+        decision_latest = review_path / "evolution_decision_latest.json"
+        decision_log = review_path / "evolution_decision_log.jsonl"
+        decision_latest.write_text(
+            json.dumps(decision, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        with decision_log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(decision, ensure_ascii=False, sort_keys=True) + "\n")
     except Exception as exc:  # noqa: BLE001
         report["evolution_decision"] = {
             "state": "degraded",

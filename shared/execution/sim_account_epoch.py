@@ -331,6 +331,7 @@ def dry_run_cutover(
     positions_snapshot_path: Path | str | None = None,
     tiers_root: Path | str | None = None,
     archive_root: Path | str | None = None,
+    review_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """Report exactly what an apply-cutover would do, without writing anything.
 
@@ -354,6 +355,11 @@ def dry_run_cutover(
     archive = Path(archive_root) if archive_root is not None else (ROOT / "shared" / "logs" / "epoch_archive")
     ps_path = Path(positions_snapshot_path) if positions_snapshot_path is not None else None
     tr_path = Path(tiers_root) if tiers_root is not None else None
+    active_review_dir = Path(review_dir) if review_dir is not None else (
+        ROOT / "shared" / "review" / "ashare"
+        if ledger_path is None
+        else lp.parent / "review" / "ashare"
+    )
 
     current_state = read_epoch_state()
     current_id = current_state.get("current_epoch_id", 1)
@@ -385,6 +391,25 @@ def dry_run_cutover(
             "status": "error",
             "reason": f"Archive target collision or incomplete prior cutover: {archive_dir}",
             "archive_dir": str(archive_dir),
+        }
+
+    from Ashare.epoch_review import build_epoch_reset_plan
+
+    proposed_cutover = _now_iso()
+    derived_review_reset = build_epoch_reset_plan(
+        active_review_dir,
+        archive_dir / "derived_reviews",
+        {
+            "current_epoch_id": CURRENT_EPOCH_ID,
+            "capital_cny": EPOCHS[CURRENT_EPOCH_ID]["capital_cny"],
+            "cutover_timestamp": proposed_cutover,
+        },
+    )
+    if derived_review_reset.get("status") != "ready":
+        return {
+            "status": "error",
+            "reason": "cutover_requires_review_repair",
+            "derived_review_reset": derived_review_reset,
         }
 
     # Discover files to archive
@@ -437,6 +462,13 @@ def dry_run_cutover(
     })
 
     actions.append({
+        "action": "reset_current_epoch_derived_reviews",
+        "move_count": derived_review_reset["move_count"],
+        "archive_dir": derived_review_reset["archive_dir"],
+        "bootstrap_epoch": CURRENT_EPOCH_ID,
+    })
+
+    actions.append({
         "action": "write_epoch_metadata",
         "path": str(_epoch_metadata_path(lp)),
         "epoch_id": 2,
@@ -455,6 +487,7 @@ def dry_run_cutover(
         "from_epoch": 1,
         "to_epoch": 2,
         "actions": actions,
+        "derived_review_reset": derived_review_reset,
     }
 
 
@@ -463,12 +496,32 @@ def dry_run_cutover(
 # ---------------------------------------------------------------------------
 
 
+def _rollback_derived_review_reset(plan: dict[str, Any]) -> None:
+    """Restore active derived files if a later cutover step fails."""
+
+    latest = plan.get("latest_bootstraps") if isinstance(plan.get("latest_bootstraps"), dict) else {}
+    review_dir = Path(str(plan["review_dir"]))
+    archive_dir = Path(str(plan["archive_dir"]))
+    for name in latest:
+        (review_dir / name).unlink(missing_ok=True)
+    moves = plan.get("moves") if isinstance(plan.get("moves"), list) else []
+    for item in reversed(moves):
+        source = Path(str(item["source"]))
+        destination = Path(str(item["destination"]))
+        if destination.exists():
+            source.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(str(destination), str(source))
+    if archive_dir.exists() and not any(archive_dir.iterdir()):
+        archive_dir.rmdir()
+
+
 def apply_cutover(
     *,
     ledger_path: Path | str | None = None,
     positions_snapshot_path: Path | str | None = None,
     tiers_root: Path | str | None = None,
     archive_root: Path | str | None = None,
+    review_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """Execute the authoritative-path cutover from epoch 1 to epoch 2.
 
@@ -495,6 +548,11 @@ def apply_cutover(
     archive = Path(archive_root) if archive_root is not None else (ROOT / "shared" / "logs" / "epoch_archive")
     ps_path = Path(positions_snapshot_path) if positions_snapshot_path is not None else None
     tr_path = Path(tiers_root) if tiers_root is not None else None
+    active_review_dir = Path(review_dir) if review_dir is not None else (
+        ROOT / "shared" / "review" / "ashare"
+        if ledger_path is None
+        else lp.parent / "review" / "ashare"
+    )
 
     # --- Idempotency: check current state ---
     current_state = read_epoch_state()
@@ -528,6 +586,25 @@ def apply_cutover(
             "archive_dir": str(archive_dir),
         }
 
+    from Ashare.epoch_review import build_epoch_reset_plan
+
+    cutover_timestamp = _now_iso()
+    derived_review_plan = build_epoch_reset_plan(
+        active_review_dir,
+        archive_dir / "derived_reviews",
+        {
+            "current_epoch_id": CURRENT_EPOCH_ID,
+            "capital_cny": EPOCHS[CURRENT_EPOCH_ID]["capital_cny"],
+            "cutover_timestamp": cutover_timestamp,
+        },
+    )
+    if derived_review_plan.get("status") != "ready":
+        return {
+            "status": "cutover_requires_review_repair",
+            "reason": "Derived-review reset plan is not safe to apply.",
+            "derived_review_reset": derived_review_plan,
+        }
+
     # --- Acquire lock ---
     lock_fd: int | None = None
     try:
@@ -542,6 +619,8 @@ def apply_cutover(
     moved_tiers = False
     tier_dest: Path | None = None
     archived_positions: Path | None = None
+    derived_review_reset: dict[str, Any] | None = None
+    review_reset_applied = False
     try:
         # --- Step 1: Move ledger contents to archive while preserving lock ---
         archive_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -587,7 +666,7 @@ def apply_cutover(
             "current_epoch_id": 2,
             "epoch_label": EPOCHS[2]["label"],
             "capital_cny": EPOCHS[2]["capital_cny"],
-            "cutover_timestamp": _now_iso(),
+            "cutover_timestamp": cutover_timestamp,
             "previous_epoch_id": 1,
             "previous_epoch_label": EPOCHS[1]["label"],
             "archived_to": str(archive_dir),
@@ -600,11 +679,22 @@ def apply_cutover(
 
         _write_current_epoch_bootstrap(lp, ps_path)
 
-        # --- Step 6: Persist epoch state ---
+        # --- Step 6: Invalidate and rebuild derived reviews before state advance ---
+        from Ashare.epoch_review import apply_epoch_reset_plan
+
+        derived_review_reset = apply_epoch_reset_plan(derived_review_plan)
+        if derived_review_reset.get("status") != "applied":
+            raise RuntimeError(
+                "derived_review_reset_failed: "
+                + str(derived_review_reset.get("reason") or "unknown")
+            )
+        review_reset_applied = True
+
+        # --- Step 7: Persist epoch state only after derived state is current ---
         new_state = {
             "current_epoch_id": 2,
             "previous_epoch_id": current_state.get("current_epoch_id", 1),
-            "cutover_timestamp": _now_iso(),
+            "cutover_timestamp": cutover_timestamp,
             "previous_state": {
                 "current_epoch_id": current_state.get("current_epoch_id"),
                 "activated_at": current_state.get("activated_at"),
@@ -615,6 +705,8 @@ def apply_cutover(
 
     except Exception as exc:
         try:
+            if review_reset_applied:
+                _rollback_derived_review_reset(derived_review_plan)
             if moved_tiers and tier_dest is not None and tier_dest.exists() and tr_path is not None:
                 tr_path.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(str(tier_dest), str(tr_path))
@@ -638,7 +730,16 @@ def apply_cutover(
             if archive_dir.exists() and not any(archive_dir.iterdir()):
                 archive_dir.rmdir()
         finally:
-            return {"status": "error", "reason": f"Cutover failed and rollback was attempted: {exc}"}
+            status = (
+                "cutover_requires_review_repair"
+                if "derived_review_reset_failed" in str(exc)
+                else "error"
+            )
+            return {
+                "status": status,
+                "reason": f"Cutover failed and rollback was attempted: {exc}",
+                "derived_review_reset": derived_review_reset,
+            }
     finally:
         _release_ledger_lock(lock_fd)
 
@@ -649,6 +750,7 @@ def apply_cutover(
         "capital_cny": EPOCHS[2]["capital_cny"],
         "archive_dir": str(archive_dir),
         "cutover_timestamp": epoch_meta["cutover_timestamp"],
+        "derived_review_reset": derived_review_reset,
     }
 
 

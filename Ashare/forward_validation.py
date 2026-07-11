@@ -11,6 +11,7 @@ from typing import Any
 
 from shared.data.reader import TradingagentDataReader
 from shared.execution import local_sim_ledger
+from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
 from shared.review.sample_quality import classify_trade_sample
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,52 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
             rows.append(payload)
     return rows
+
+
+def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
+    epoch_id = int(epoch_state.get("current_epoch_id") or 1)
+    return {
+        "capital_epoch": epoch_id,
+        "capital_cny": float(epoch_state.get("capital_cny") or epoch_capital_cny(epoch_id)),
+        "epoch_cutover_timestamp": str(
+            epoch_state.get("cutover_timestamp") or epoch_state.get("activated_at") or ""
+        ),
+    }
+
+
+def _filter_current_epoch_rows(
+    rows: list[dict[str, Any]],
+    *,
+    current_epoch_id: int,
+    cutover_timestamp: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    accepted: list[dict[str, Any]] = []
+    rejections: dict[str, int] = {}
+    for row in rows:
+        if "capital_epoch" not in row:
+            row_time = _parse_dt(
+                row.get("created_at")
+                or row.get("trade_timestamp_bj")
+                or row.get("timestamp_bj")
+            )
+            cutover = _parse_dt(cutover_timestamp)
+            if current_epoch_id <= 1 or (
+                row_time is not None and cutover is not None and row_time >= cutover
+            ):
+                accepted.append(row)
+            else:
+                rejections["missing_capital_epoch"] = rejections.get("missing_capital_epoch", 0) + 1
+            continue
+        try:
+            row_epoch = int(row["capital_epoch"])
+        except (TypeError, ValueError):
+            rejections["invalid_capital_epoch"] = rejections.get("invalid_capital_epoch", 0) + 1
+            continue
+        if row_epoch != current_epoch_id:
+            rejections["capital_epoch_mismatch"] = rejections.get("capital_epoch_mismatch", 0) + 1
+            continue
+        accepted.append(row)
+    return accepted, rejections
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -171,12 +218,18 @@ def build_forward_validation_report(
     output: Path | None = DEFAULT_OUTPUT,
     history: Path | None = DEFAULT_HISTORY,
 ) -> dict[str, Any]:
-    rows = _read_jsonl(local_trades_path)
+    epoch_fields = _epoch_fields(read_epoch_state())
+    rows, epoch_rejections = _filter_current_epoch_rows(
+        _read_jsonl(local_trades_path),
+        current_epoch_id=int(epoch_fields["capital_epoch"]),
+        cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
+    )
     if date:
         compact = _compact_date(date)
         rows = [row for row in rows if _compact_date(row.get("trade_date") or row.get("created_at")) == compact]
-    labels = [label_trade(row, reader=reader) for row in rows]
+    labels = [{**label_trade(row, reader=reader), **epoch_fields} for row in rows]
     report = {
+        **epoch_fields,
         "market": "ashare",
         "report_type": "ashare_forward_validation",
         "date": _compact_date(date) if date else "",
@@ -187,6 +240,7 @@ def build_forward_validation_report(
         "labels": labels,
         "read_only": True,
         "real_trading_enabled": False,
+        "epoch_rejections": epoch_rejections,
     }
     if output:
         output.parent.mkdir(parents=True, exist_ok=True)

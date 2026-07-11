@@ -492,6 +492,82 @@ class SimAccountEpochTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "migrated")
 
+    def test_dry_run_includes_read_only_derived_review_reset_plan(self) -> None:
+        ledger_dir = self.tmp_path / "local_sim"
+        ledger_dir.mkdir(parents=True)
+        (ledger_dir / "local_sim_trades.jsonl").write_text('{"trade_id":"T1"}\n')
+        review_dir = self.tmp_path / "review"
+        review_dir.mkdir()
+        stale = review_dir / "portfolio_evolution_latest.json"
+        stale.write_text(json.dumps({"capital_epoch": 1, "strategy_sample_count": 3}))
+        state_file = self.tmp_path / "epoch_state.json"
+
+        with patch("shared.execution.sim_account_epoch.epoch_state_path", return_value=state_file):
+            result = dry_run_cutover(
+                ledger_path=ledger_dir,
+                archive_root=self.tmp_path / "epoch_archive",
+                review_dir=review_dir,
+            )
+
+        self.assertEqual(result["status"], "dry_run")
+        self.assertEqual(result["derived_review_reset"]["status"], "ready")
+        self.assertEqual(result["derived_review_reset"]["move_count"], 1)
+        self.assertTrue(stale.exists())
+
+    def test_apply_resets_derived_reviews_before_advancing_epoch_state(self) -> None:
+        ledger_dir = self.tmp_path / "local_sim"
+        ledger_dir.mkdir(parents=True)
+        (ledger_dir / "local_sim_trades.jsonl").write_text('{"trade_id":"T1"}\n')
+        review_dir = self.tmp_path / "review"
+        review_dir.mkdir()
+        stale = review_dir / "portfolio_evolution_latest.json"
+        stale.write_text(json.dumps({"capital_epoch": 1, "strategy_sample_count": 3}))
+        state_file = self.tmp_path / "epoch_state.json"
+        archive_root = self.tmp_path / "epoch_archive"
+
+        with patch("shared.execution.sim_account_epoch.epoch_state_path", return_value=state_file):
+            result = apply_cutover(
+                ledger_path=ledger_dir,
+                archive_root=archive_root,
+                review_dir=review_dir,
+            )
+
+        self.assertEqual(result["status"], "migrated")
+        self.assertEqual(result["derived_review_reset"]["status"], "applied")
+        self.assertTrue(
+            (archive_root / "epoch_1_legacy_200k" / "derived_reviews" / stale.name).exists()
+        )
+        current = json.loads(stale.read_text())
+        self.assertEqual(current["capital_epoch"], 2)
+        self.assertEqual(current["strategy_sample_count"], 0)
+        self.assertEqual(json.loads(state_file.read_text())["current_epoch_id"], 2)
+
+    def test_review_reset_failure_does_not_advance_epoch_state(self) -> None:
+        ledger_dir = self.tmp_path / "local_sim"
+        ledger_dir.mkdir(parents=True)
+        old_trade = ledger_dir / "local_sim_trades.jsonl"
+        old_trade.write_text('{"trade_id":"T1"}\n')
+        review_dir = self.tmp_path / "review"
+        review_dir.mkdir()
+        (review_dir / "portfolio_evolution_latest.json").write_text(
+            json.dumps({"capital_epoch": 1, "strategy_sample_count": 3})
+        )
+        state_file = self.tmp_path / "epoch_state.json"
+
+        with patch("shared.execution.sim_account_epoch.epoch_state_path", return_value=state_file), patch(
+            "Ashare.epoch_review.apply_epoch_reset_plan",
+            return_value={"status": "error", "reason": "injected_failure"},
+        ):
+            result = apply_cutover(
+                ledger_path=ledger_dir,
+                archive_root=self.tmp_path / "epoch_archive",
+                review_dir=review_dir,
+            )
+
+        self.assertEqual(result["status"], "cutover_requires_review_repair")
+        self.assertFalse(state_file.exists())
+        self.assertTrue(old_trade.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
