@@ -68,4 +68,4 @@
 
 - [x] Write failing view/component tests for the trace label and explicit symbol presentation.
 - [x] Run focused UI tests and confirm they fail before the new surface exists.
-- [ ] Implement the compact tape detail, update contracts, then run lint, all frontend tests, both builds, focused Python tests, desktop QA, release preflight, commit, push, deploy, and separately verify local/main/production source/runtime/public route.
+- [x] Implement the compact tape detail, update contracts, then run lint, all frontend tests, both builds, focused Python tests, desktop QA, release preflight, commit, push, deploy, and separately verify local/main/production source/runtime/public route.
