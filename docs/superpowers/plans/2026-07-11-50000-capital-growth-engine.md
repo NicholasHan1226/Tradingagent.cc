@@ -20,6 +20,12 @@
 - Current epoch data and legacy epoch/tier evidence must be physically and logically separated. Epoch mismatch fails closed.
 - SharedSignals remains the only market-data provider. TradingAgent must not open a sibling SharedSignals database or collect directly from Tushare/exchanges.
 - MarketGraph remains an optional read-only research provider. Missing/stale MG evidence cannot block the SS-only baseline and cannot become an execution error.
+- Candidate learning uses three explicitly separated intents: `observe`/`counterfactual`, `exploration`, and `exploitation`. Sample debt is an input to exploration selection, never a standalone reason to suppress all candidates or all labels.
+- Every data-qualified candidate is recorded before mature-strategy and execution thresholds are applied, with prediction timestamp, strategy version, score/probability, market regime, MG on/off, intended channel, and a concrete no-trade reason. Only unreliable market data may make the candidate ineligible for forward labeling.
+- Exploration may lower only strategy gates such as candidate score, minimum modeled edge, or research completeness. It must never relax freshness/provenance, real price/fill evidence, liquidity, T+1, session, cash/margin, idempotency, lot size, single-name/portfolio exposure, daily loss, losing streak, maximum drawdown, or real-trading isolation.
+- A-share exploration is simulation-only, limited to at most one new position per trading day, and must derive executable size from current master equity, the existing 15% single-name cap, available cash, remaining exploration exposure/loss budget, 100-share board lots, and modeled costs/slippage. Old probe budgets are not single-name allowances and must not be reused as such.
+- Every valid CN-futures session emits a replayable decision record. A contract may enter simulated execution only when its real minimum lot, margin, modeled stop loss, slippage, night-gap allowance, and losing-streak gates fit the master budget; otherwise it is labeled `counterfactual_only` rather than force-sized to one lot.
+- Evolution promotion standards are unchanged by exploration. No channel may expand risk without completed round trips, matured forward labels, sample-quality evidence, net expectancy after fees/slippage, calibration evidence, and controlled drawdown.
 - Every state-changing implementation step must be TDD-first, append-only where facts are involved, fail-closed, reversible, and committed separately. Do not push, deploy, modify cron, migrate production, or delete production files until the repository release gate and explicit production preflight pass.
 - Existing user-owned or concurrent changes must not be overwritten. Never use force-push, history rewrite, `git reset --hard`, or destructive checkout.
 
@@ -36,6 +42,11 @@
 - `shared/review/mg_ablation.py` — matched baseline/enhanced counterfactual observations and delta metrics.
 - `shared/review/capital_growth_metrics.py` — cost-aware round trips, net expectancy, profit factor, drawdown, and sample confidence.
 - `shared/review/capital_growth_gate.py` — readiness state machine; never enables real trading.
+- `shared/review/prediction_observations.py` — append-only pre-gate candidate snapshots and concrete no-trade reasons for all three sample intents.
+- `shared/review/forward_label_contract.py` — due-time scheduling and idempotent m30/m60/close/next-day/3d/5d labels independent of execution eligibility.
+- `Ashare/exploration_policy.py` — rank/quantile exploration selection and dynamically derived 50k-safe lot/cost/exposure budget.
+- `CNFutures/session_observations.py` — one decision/hold/rejection observation per valid futures session with executable versus counterfactual classification.
+- `shared/runtime_test/sample_flow_acceptance.py` — preopen/opening/ops proof that qualified candidates and due labels cannot silently return to zero.
 - `Ashare/epoch_review.py` — current-epoch validation and reversible stale-review reset/rebuild.
 - `tools/rebuild_current_epoch_reviews.py` — dry-run/apply operator entry for post-cutover review repair.
 - `docs/architecture.md` — canonical three-system and TradingAgent internal architecture.
@@ -61,6 +72,7 @@
 - `shared/review/goals.yaml` — simulation evidence goals only; remove automatic real/scaled progression language.
 - `shared/review/daily_review.py` — canonical capital-growth metrics and gate state.
 - `shared/review/weekly_review.py` — sample/out-of-sample and MG ablation review.
+- `shared/review/daily_review.py`, `shared/review/weekly_review.py` — separately report observe/counterfactual, exploration, and exploitation counts and economics, including gate-block distributions.
 - `shared/runtime_test/market_health.py` — master reconciliation, epoch, affordability, and gate checks.
 - `shared/runtime_test/self_evolution_health.py` — reject stale epoch and unrealized-only expansion.
 - `shared/runtime_test/full_acceptance.py` — register the new focused acceptance checks.
@@ -1186,7 +1198,440 @@ git commit -m "feat(review): gate capital growth on net realized evidence"
 
 ---
 
-### Task 10: Consolidate Canonical Documentation and Retire the Old System Safely
+### Task 10: Record Pre-Gate Candidate Observations and Independent Forward Labels
+
+**Files:**
+- Create: `shared/review/prediction_observations.py`
+- Create: `shared/review/forward_label_contract.py`
+- Modify: `shared/orchestrator.py`
+- Modify: `Ashare/forward_validation.py`
+- Test: `tests/test_prediction_observations.py`
+- Test: `tests/test_forward_label_contract.py`
+
+**Interfaces:**
+- `record_candidate_observation(path, observation, *, now) -> dict` appends one idempotent snapshot before strategy/execution gates.
+- `due_label_horizons(observed_at, session_calendar, *, now) -> tuple[str, ...]` returns only matured horizons from `m30`, `m60`, `close`, `next_day`, `d3`, and `d5`.
+- `build_forward_label(observation, horizon, price_evidence) -> dict` requires trustworthy price evidence but does not require an executed trade.
+
+- [ ] **Step 1: Write failing pre-gate and label-independence tests**
+
+```python
+def test_data_qualified_candidate_is_recorded_when_strategy_rejects(tmp_path):
+    item = record_candidate_observation(
+        tmp_path / "observations.jsonl",
+        {
+            "market": "ashare",
+            "symbol": "600000.SH",
+            "prediction_ts": "2026-07-13T09:31:00+08:00",
+            "strategy_version": "ashare-v2",
+            "score": 0.41,
+            "probability": 0.54,
+            "market_regime": "risk_off",
+            "mg_enabled": False,
+            "sample_intent": "observe",
+            "data_quality": "qualified",
+            "execution_decision": "hold",
+            "no_trade_reason": "score_below_exploitation_threshold",
+        },
+        now="2026-07-13T09:31:01+08:00",
+    )
+    assert item["label_eligible"] is True
+    assert item["no_trade_reason"] == "score_below_exploitation_threshold"
+
+
+def test_execution_gate_does_not_block_due_forward_label():
+    label = build_forward_label(
+        {"observation_id": "obs-1", "entry_price": 10.0, "execution_decision": "hold"},
+        "m60",
+        {"price": 10.2, "source": "sharedsignals", "quality": "qualified"},
+    )
+    assert label["return_bps"] == 200.0
+    assert label["executed"] is False
+```
+
+- [ ] **Step 2: Run RED tests**
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
+  tests/test_prediction_observations.py tests/test_forward_label_contract.py -q
+```
+
+Expected: FAIL because the observation and horizon-label contracts do not exist.
+
+- [ ] **Step 3: Implement the append-only observation contract**
+
+```python
+REQUIRED_FIELDS = {
+    "market", "symbol", "prediction_ts", "strategy_version", "score",
+    "probability", "market_regime", "mg_enabled", "sample_intent",
+    "data_quality", "execution_decision", "no_trade_reason",
+}
+VALID_INTENTS = {"observe", "counterfactual", "exploration", "exploitation"}
+
+def observation_id(payload: Mapping[str, Any]) -> str:
+    identity = "|".join(str(payload[key]) for key in (
+        "market", "symbol", "prediction_ts", "strategy_version", "mg_enabled"
+    ))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+def label_eligible(payload: Mapping[str, Any]) -> bool:
+    return payload.get("data_quality") == "qualified"
+```
+
+Append under an exclusive file lock and return the existing row when the same `observation_id` is retried. Reject missing fields, invalid intents, and an empty no-trade reason for non-executed observations.
+
+- [ ] **Step 4: Implement matured, idempotent forward labels**
+
+```python
+HORIZONS = ("m30", "m60", "close", "next_day", "d3", "d5")
+
+def build_forward_label(observation, horizon, price_evidence):
+    if horizon not in HORIZONS:
+        raise ValueError("unsupported_label_horizon")
+    if observation.get("label_eligible", True) is not True:
+        raise ValueError("observation_not_label_eligible")
+    if price_evidence.get("quality") != "qualified" or not price_evidence.get("source"):
+        raise ValueError("unreliable_price_evidence")
+    entry = float(observation["entry_price"])
+    price = float(price_evidence["price"])
+    return {
+        "label_id": f'{observation["observation_id"]}:{horizon}',
+        "observation_id": observation["observation_id"],
+        "horizon": horizon,
+        "return_bps": round((price / entry - 1.0) * 10_000.0, 4),
+        "executed": observation.get("execution_decision") == "sim_trade",
+        "source": price_evidence["source"],
+    }
+```
+
+Use the existing exchange calendar to determine maturity; never replace session-aware maturity with elapsed wall-clock days.
+
+- [ ] **Step 5: Wire observation before thresholds and run regressions**
+
+Call `record_candidate_observation` after data-quality qualification and before exploitation/exploration selection. Then run:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
+  tests/test_prediction_observations.py tests/test_forward_label_contract.py \
+  tests/test_ashare_forward_validation.py tests/test_sim_loop.py -q
+```
+
+Expected: PASS; strategy rejection does not suppress observation or future labels, while unreliable data remains label-ineligible.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add shared/review/prediction_observations.py shared/review/forward_label_contract.py \
+  shared/orchestrator.py Ashare/forward_validation.py \
+  tests/test_prediction_observations.py tests/test_forward_label_contract.py
+git commit -m "feat(review): record pre-gate predictions and forward labels"
+```
+
+---
+
+### Task 11: Add A-share Safe Exploration Without Relaxing Safety Gates
+
+**Files:**
+- Create: `Ashare/exploration_policy.py`
+- Modify: `shared/orchestrator.py`
+- Modify: `shared/capital/policy.py`
+- Test: `tests/test_ashare_exploration_policy.py`
+- Test: `tests/test_sim_loop.py`
+
+**Interfaces:**
+- `select_exploration_candidate(candidates, *, normal_trade_count, sample_debt, quantile) -> dict | None` selects only from safety-qualified candidates and ranks within the current cohort.
+- `derive_exploration_order(candidate, master_snapshot, risk_policy, costs) -> dict` returns zero shares with a concrete immutable safety reason or a 100-share-lot simulation order tagged `sample_intent=exploration`.
+
+- [ ] **Step 1: Write failing exploration and immutable-gate tests**
+
+```python
+def test_sample_debt_can_select_one_safe_ranked_exploration_candidate():
+    candidates = [
+        {"symbol": "A", "score": 0.43, "safety_qualified": True},
+        {"symbol": "B", "score": 0.51, "safety_qualified": True},
+    ]
+    picked = select_exploration_candidate(
+        candidates, normal_trade_count=0, sample_debt=12, quantile=0.5
+    )
+    assert picked["symbol"] == "B"
+    assert picked["sample_intent"] == "exploration"
+
+
+def test_exploration_never_bypasses_t_plus_one_or_daily_loss_gate():
+    blocked = select_exploration_candidate(
+        [{"symbol": "B", "score": 0.9, "safety_qualified": False,
+          "safety_reasons": ["t_plus_one", "exploration_daily_loss_limit"]}],
+        normal_trade_count=0, sample_debt=12, quantile=0.0,
+    )
+    assert blocked is None
+
+
+def test_exploration_budget_is_derived_from_master_cap_and_board_lot():
+    order = derive_exploration_order(
+        {"symbol": "600000.SH", "price": 31.0},
+        {"equity": 50_000.0, "available_cash": 50_000.0,
+         "ashare_deployable_remaining": 30_000.0},
+        {"single_name_weight": 0.15, "daily_loss_limit": 0.03,
+         "max_positions": 5, "board_lot": 100, "stop_loss_bps": 300},
+        {"commission_bps": 3, "slippage_bps": 5},
+    )
+    assert order["exploration_daily_loss_budget"] == 300.0
+    assert order["exploration_total_exposure_cap"] == 7_500.0
+    assert order["shares"] == 200
+    assert order["notional"] <= 7_500.0
+```
+
+- [ ] **Step 2: Run RED tests**
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
+  tests/test_ashare_exploration_policy.py -q
+```
+
+Expected: FAIL because exploration selection and derived sizing do not exist.
+
+- [ ] **Step 3: Implement relative selection and derived sizing**
+
+```python
+portfolio_daily_loss_budget = snapshot.equity * policy.daily_loss_limit
+exploration_daily_loss_budget = portfolio_daily_loss_budget / policy.max_positions
+modeled_loss_rate = (
+    policy.stop_loss_bps + costs.buy_cost_bps + costs.slippage_bps
+) / 10_000.0
+exploration_total_exposure_cap = min(
+    snapshot.ashare_deployable_remaining,
+    snapshot.equity * policy.single_name_weight,
+    exploration_daily_loss_budget / modeled_loss_rate,
+)
+hard_cap = min(
+    snapshot.available_cash,
+    exploration_total_exposure_cap - snapshot.current_exploration_exposure,
+)
+per_share_loss = price * (policy.stop_loss_bps + costs.slippage_bps) / 10_000.0
+loss_budget_remaining = exploration_daily_loss_budget - snapshot.exploration_daily_loss
+loss_limited_shares = int(loss_budget_remaining // per_share_loss)
+cash_limited_shares = int(hard_cap // (price * (1.0 + costs.buy_cost_bps / 10_000.0)))
+shares = min(loss_limited_shares, cash_limited_shares)
+shares = (shares // policy.board_lot) * policy.board_lot
+```
+
+This creates an independent exploration loss budget by dividing the already-approved portfolio daily-loss allowance across the existing maximum-position capacity; it then converts that risk unit into an exposure cap using the strategy stop and modeled costs. Do not introduce a new percentage. Read every input from the existing validated risk policy/master snapshot; if any input is absent or non-positive, fail closed with `exploration_budget_missing`. Enforce one new exploration position per A-share trading day through the append-only reservation ledger and idempotency key.
+
+- [ ] **Step 4: Separate exploration from exploitation accounting**
+
+Every simulated fill, reservation, round trip, and review row must preserve:
+
+```python
+{"sample_intent": "exploration", "promotion_eligible": False}
+```
+
+`promotion_eligible` becomes true only in the later promotion evaluator after the normal evidence gates pass; it is not set by the order path.
+
+- [ ] **Step 5: Run GREEN and safety regressions**
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
+  tests/test_ashare_exploration_policy.py tests/test_sim_loop.py \
+  tests/test_ashare_capital_plan.py tests/test_master_capital_ledger.py -q
+```
+
+Expected: PASS; a safe candidate can create at most one tiny simulated position, and every immutable gate still blocks it.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add Ashare/exploration_policy.py shared/orchestrator.py shared/capital/policy.py \
+  tests/test_ashare_exploration_policy.py tests/test_sim_loop.py
+git commit -m "feat(ashare): add risk-bounded exploration samples"
+```
+
+---
+
+### Task 12: Record Every CN-Futures Session and Separate Executable From Counterfactual
+
+**Files:**
+- Create: `CNFutures/session_observations.py`
+- Modify: `CNFutures/sim_runner.py`
+- Modify: `CNFutures/observation_report.py`
+- Test: `tests/test_cn_futures_session_observations.py`
+- Test: `tests/test_cn_futures_sim_runner.py`
+
+- [ ] **Step 1: Write failing session-completeness and one-lot tests**
+
+```python
+def test_each_valid_session_emits_a_replayable_decision(tmp_path):
+    result = record_session_decision(
+        tmp_path / "sessions.jsonl",
+        market_session="2026-07-13:day-am",
+        candidate={"contract": "IF2607", "direction": "long", "score": 0.62},
+        decision="risk_reject",
+        reason="minimum_lot_risk_exceeds_budget",
+        executable=False,
+    )
+    assert result["sample_intent"] == "counterfactual"
+    assert result["execution_class"] == "counterfactual_only"
+
+
+def test_unaffordable_contract_stays_zero_quantity_but_remains_labelable():
+    result = classify_contract(
+        minimum_lots=1, margin_required=18_000.0, modeled_stop_loss=900.0,
+        margin_budget=5_000.0, risk_budget=250.0,
+    )
+    assert result["quantity"] == 0
+    assert result["execution_class"] == "counterfactual_only"
+    assert result["label_eligible"] is True
+```
+
+- [ ] **Step 2: Run RED tests**
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
+  tests/test_cn_futures_session_observations.py tests/test_cn_futures_sim_runner.py -q
+```
+
+Expected: FAIL because session-level replay records and execution classification are absent.
+
+- [ ] **Step 3: Implement session idempotency and execution classification**
+
+```python
+session_decision_id = hashlib.sha256(
+    f"{market_session}|{contract}|{strategy_version}|{direction}".encode("utf-8")
+).hexdigest()
+executable = (
+    minimum_lots == 1
+    and margin_required <= margin_budget
+    and modeled_stop_loss <= risk_budget
+    and all(immutable_gate_results.values())
+)
+quantity = 1 if executable else 0
+execution_class = "sim_executable" if executable else "counterfactual_only"
+```
+
+The record must include session, strategy version, prediction timestamp, direction, score/probability, MG on/off, contract multiplier, minimum lot, margin, stop risk, slippage, night-gap allowance, losing-streak state, decision, reason, and later label IDs.
+
+- [ ] **Step 4: Require one record per valid session**
+
+Register a session-completeness check against the existing exchange calendar. A normal trade, hold, or concrete risk rejection all satisfy the record requirement. A closed/non-trading session is explicitly `not_applicable`, not a missing record.
+
+- [ ] **Step 5: Run GREEN and affordability regressions**
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
+  tests/test_cn_futures_session_observations.py tests/test_cn_futures_sim_runner.py \
+  tests/test_cn_futures_observation_report.py tests/test_multi_market_p2_tools.py -q
+```
+
+Expected: PASS; unaffordable contracts remain quantity zero and labelable, while affordable contracts still obey every existing futures gate.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add CNFutures/session_observations.py CNFutures/sim_runner.py \
+  CNFutures/observation_report.py tests/test_cn_futures_session_observations.py \
+  tests/test_cn_futures_sim_runner.py
+git commit -m "feat(cnfutures): preserve session counterfactual samples"
+```
+
+---
+
+### Task 13: Prove Sample Flow at Preopen, Opening, and Review
+
+**Files:**
+- Create: `shared/runtime_test/sample_flow_acceptance.py`
+- Modify: `shared/runtime_test/opening_acceptance.py`
+- Modify: `shared/runtime_test/full_acceptance.py`
+- Modify: `shared/review/daily_review.py`
+- Modify: `shared/review/weekly_review.py`
+- Test: `tests/test_sample_flow_acceptance.py`
+- Test: `tests/test_opening_acceptance.py`
+- Test: `tests/test_daily_review_driver.py`
+
+- [ ] **Step 1: Write failing no-silent-zero and separated-metrics tests**
+
+```python
+def test_sample_debt_alone_cannot_explain_zero_exploration():
+    result = evaluate_sample_flow(
+        qualified_candidates=3, observations=3, exploration_trades=0,
+        exploration_block_reasons=["sample_debt"], due_labels=2, written_labels=2,
+    )
+    assert result["status"] == "blocked"
+    assert result["reason"] == "invalid_zero_exploration_reason"
+
+
+def test_review_separates_intents_and_reports_gate_distribution():
+    metrics = summarize_sample_channels([
+        {"sample_intent": "observe", "gate_reason": "score", "net_pnl": 0.0},
+        {"sample_intent": "exploration", "gate_reason": None, "net_pnl": -5.0},
+        {"sample_intent": "exploitation", "gate_reason": None, "net_pnl": 20.0},
+    ])
+    assert metrics["counts"] == {"observe": 1, "exploration": 1, "exploitation": 1}
+    assert metrics["gate_distribution"] == {"score": 1}
+    assert metrics["exploration"]["net_pnl"] == -5.0
+```
+
+- [ ] **Step 2: Run RED tests**
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
+  tests/test_sample_flow_acceptance.py tests/test_opening_acceptance.py \
+  tests/test_daily_review_driver.py -q
+```
+
+Expected: FAIL because sample-flow acceptance and channel-separated review metrics do not exist.
+
+- [ ] **Step 3: Implement fail-closed sample-flow acceptance**
+
+The acceptance payload must contain:
+
+```python
+{
+    "qualified_candidates": int,
+    "observations_added": int,
+    "labels_due": int,
+    "labels_written": int,
+    "channel_counts": dict,
+    "completed_round_trips": int,
+    "exploration_zero_reason": str | None,
+    "futures_session_expected": int,
+    "futures_session_recorded": int,
+    "counterfactual_only_count": int,
+    "sim_executable_count": int,
+    "gate_distribution": dict,
+    "real_trading_enabled": False,
+}
+```
+
+Zero exploration passes only when there are no data-qualified candidates or at least one concrete immutable safety gate blocked every otherwise eligible candidate. Missing due labels, missing valid-session futures records, or `REAL_TRADING_ENABLED != false` blocks acceptance.
+
+- [ ] **Step 4: Extend daily and weekly evidence metrics**
+
+For each intent report new samples, matured labels, completed round trips, wins, losses, win rate, average win, average loss, expectancy, fees, slippage, net PnL, maximum drawdown, calibration error, and gate distribution. Never combine exploration and exploitation expectancy into the promotion metric.
+
+- [ ] **Step 5: Register preopen/opening/ops checks and run GREEN**
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
+  tests/test_sample_flow_acceptance.py tests/test_opening_acceptance.py \
+  tests/test_full_acceptance.py tests/test_daily_review_driver.py \
+  tests/test_weekly_review.py -q
+```
+
+Expected: PASS; fixtures prove qualified observations, due labels, futures session decisions, channel separation, and fail-closed real-trading isolation.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add shared/runtime_test/sample_flow_acceptance.py \
+  shared/runtime_test/opening_acceptance.py shared/runtime_test/full_acceptance.py \
+  shared/review/daily_review.py shared/review/weekly_review.py \
+  tests/test_sample_flow_acceptance.py tests/test_opening_acceptance.py \
+  tests/test_daily_review_driver.py
+git commit -m "feat(acceptance): prevent silent zero-sample regressions"
+```
+
+---
+
+### Task 14: Consolidate Canonical Documentation and Retire the Old System Safely
 
 **Files:**
 - Create: `docs/architecture.md`
@@ -1335,7 +1780,7 @@ git commit -m "docs: consolidate capital growth architecture and retire legacy p
 
 ---
 
-### Task 11: Add Unified Acceptance and Release Gates
+### Task 15: Add Unified Acceptance and Release Gates
 
 **Files:**
 - Create: `shared/runtime_test/capital_growth_acceptance.py`
@@ -1443,7 +1888,7 @@ git commit -m "test: add 50k capital growth acceptance gate"
 
 ---
 
-### Task 12: Production Read-Only Re-Gate and Controlled Handoff
+### Task 16: Production Read-Only Re-Gate and Controlled Handoff
 
 **Files:**
 - Modify only if evidence changes: `STATUS.md`
@@ -1524,13 +1969,17 @@ No “all objectives achieved,” “stable profit,” or “no residual risk”
 - Cost-aware realized performance is Task 7.
 - MarketGraph matched A/B evidence is Task 8.
 - KPI/evidence promotion gates are Task 9.
-- Canonical documentation and safe legacy retirement are Task 10.
-- Unified local/production read-only verification is Tasks 11–12.
+- Pre-gate observe/counterfactual snapshots and execution-independent forward labels are Task 10.
+- A-share rank-based, dynamically sized, safety-gated exploration is Task 11.
+- CN-futures valid-session decisions and executable/counterfactual separation are Task 12.
+- Preopen/opening/ops no-silent-zero acceptance and channel-separated review metrics are Task 13.
+- Canonical documentation and safe legacy retirement are Task 14.
+- Unified local/production read-only verification is Tasks 15–16.
 - Real-money automation remains explicitly outside scope in every relevant task.
 
 ### Known dependencies and limits
 
-- CN-futures cannot collect representative samples until SharedSignals exposes at least three current, executable, **capital-affordable** independent products; that is a cross-repository dependency and must not be “fixed” by lowering TA risk gates.
+- CN-futures directional and rejection samples can accumulate for every valid session, but executable simulated fills still require SharedSignals to expose current, independently useful, **capital-affordable** products; that dependency must not be “fixed” by lowering TA risk gates.
 - MarketGraph A/B cannot demonstrate value until MG returns versioned, timestamped, stock/industry-scoped decision context with evidence IDs and TTL. Missing rows remain `not_measured`.
 - Current epoch begins with zero valid realized round trips. Passing code/tests proves the measurement and safety system, not profitability.
 - Exact exchange-grade queue priority, forced liquidation, dynamic margin notices, and delivery calendars remain outside the present simulator when SharedSignals does not provide those inputs; documentation must preserve this limitation.
@@ -1538,5 +1987,5 @@ No “all objectives achieved,” “stable profit,” or “no residual risk”
 ### Placeholder and type consistency review
 
 - The plan contains no unresolved implementation placeholders.
-- `capital_epoch`, `master_capital_event_id`, `observation_id`, `research_mode`, `net_expectancy`, and `closed_round_trip_count` use the same names across writers, reviews, gates, and acceptance.
+- `capital_epoch`, `master_capital_event_id`, `observation_id`, `sample_intent`, `execution_class`, `research_mode`, `net_expectancy`, and `closed_round_trip_count` use the same names across writers, reviews, gates, and acceptance.
 - Every deletion is preceded by an active dependency scan and preserves immutable financial audit evidence.
