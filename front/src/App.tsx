@@ -5,7 +5,9 @@ import { toDashboardState } from './adapters/dashboard'
 import { MarketHeader } from './components/MarketHeader'
 import { TopNav } from './components/TopNav'
 import { MarketTape } from './components/terminal/MarketTape'
-import { holdings as mockHoldings, mockDashboardApiResponse, performanceData, signals as mockSignals } from './data/dashboard'
+import { LinkedEvidenceContext } from './components/terminal/LinkedEvidenceContext'
+import { TerminalCommandPalette, type TerminalCommand } from './components/terminal/TerminalCommandPalette'
+import { holdings as mockHoldings, markets, mockDashboardApiResponse, pages, performanceData, signals as mockSignals } from './data/dashboard'
 import { deriveChartEvents } from './lib/chartEvents'
 import { getLivePerformanceData, getSelectedMarketSummary, getVisibleHoldings, getVisibleSignals } from './lib/dashboard'
 import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
@@ -13,6 +15,8 @@ import { createAutomationObservatoryViewModel } from './lib/automationObservator
 import { createWorkbenchViewModel } from './lib/workbenchViewModel'
 import { createEvidenceHealth, createMarketTapeRows } from './lib/marketTapeViewModel'
 import { createRuntimeHeartbeat } from './lib/runtimeHeartbeat'
+import { createLinkedEvidenceContext } from './lib/linkedEvidenceContext'
+import { readTerminalPreferences, writeTerminalPreferences, type TerminalDensity } from './lib/terminalPreferences'
 import { readTerminalNavigation, useTerminalNavigation } from './hooks/useTerminalNavigation'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
@@ -22,7 +26,7 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
-const DASHBOARD_BUILD_ID = '20260711-evidence-adaptive-terminal'
+const DASHBOARD_BUILD_ID = '20260711-market-causal-terminal'
 
 function App() {
   const demoPreviewEnabled = isDemoPreviewEnabled()
@@ -30,15 +34,29 @@ function App() {
   const [activePage, setActivePage] = useState<Page>(initialNavigation.page)
   const [activeMarket, setActiveMarket] = useState<Market>(initialNavigation.market)
   const [performanceRange, setPerformanceRange] = useState<PerformanceRange>(initialNavigation.range)
+  const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(initialNavigation.opportunity)
+  const [terminalDensity, setTerminalDensity] = useState<TerminalDensity>(() => readTerminalPreferences().density)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [accountMode, setAccountMode] = useState<AccountMode>('simulated')
   const [dashboardState, setDashboardState] = useState(() => toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
   const [readModelSnapshot, setReadModelSnapshot] = useState<TradingAgentReadModelSnapshot | null>(null)
   const [now, setNow] = useState(() => new Date())
-  useTerminalNavigation({ page: activePage, market: activeMarket, range: performanceRange, setPage: setActivePage, setMarket: setActiveMarket, setRange: setPerformanceRange })
+  useTerminalNavigation({ page: activePage, market: activeMarket, range: performanceRange, opportunity: selectedOpportunityId, setPage: setActivePage, setMarket: setActiveMarket, setRange: setPerformanceRange, setOpportunity: setSelectedOpportunityId })
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000)
     return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    const openCommands = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandPaletteOpen(true)
+      }
+    }
+    window.addEventListener('keydown', openCommands)
+    return () => window.removeEventListener('keydown', openCommands)
   }, [])
 
   useEffect(() => {
@@ -129,7 +147,7 @@ function App() {
   const domainStatus = (domain: DataDomain) => dashboardState.domains[domain]?.status ?? dashboardState.status
   const handleRetry = () => setDashboardState(toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
   const selectAccountMode = (mode: AccountMode) => setAccountMode(mode)
-  const marketTapeRows = useMemo(() => createMarketTapeRows(marketSummaries, activeMarket, readModelSnapshot?.generatedAt ?? null), [activeMarket, marketSummaries, readModelSnapshot?.generatedAt])
+  const marketTapeRows = useMemo(() => createMarketTapeRows(marketSummaries, activeMarket, readModelSnapshot?.generatedAt ?? null, readModelSnapshot?.marketPulses ?? []), [activeMarket, marketSummaries, readModelSnapshot?.generatedAt, readModelSnapshot?.marketPulses])
   const evidenceHealth = useMemo(() => createEvidenceHealth(dashboardState.domains, readModelSnapshot?.generatedAt ?? null, selectedMarketSummary), [dashboardState.domains, readModelSnapshot?.generatedAt, selectedMarketSummary])
   const heartbeat = useMemo(() => createRuntimeHeartbeat({
     domains: dashboardState.domains,
@@ -139,13 +157,37 @@ function App() {
     now,
     signals: visibleSignals,
   }), [dashboardState.domains, isUsingDemoSnapshot, now, readModelSnapshot?.generatedAt, selectedMarketSummary, visibleFunnelEvents, visibleSignals])
+  const linkedContext = useMemo(() => createLinkedEvidenceContext(funnelEvents, selectedOpportunityId), [funnelEvents, selectedOpportunityId])
+  const terminalCommands = useMemo<TerminalCommand[]>(() => [
+    ...pages.map((page, index) => ({ id: `page:${page}`, label: `打开${page}终端`, group: '页面', hint: `Alt+${index + 1}`, keywords: page })),
+    ...markets.map((market) => ({ id: `market:${market}`, label: `切换到${market === 'All Markets' ? '全市场' : market}`, group: '市场', keywords: market })),
+    { id: 'density', label: terminalDensity === 'compact' ? '切换舒适密度' : '切换紧凑密度', group: '视图', hint: '本地', keywords: 'density compact comfortable 密度' },
+    ...(linkedContext ? [{ id: 'clear-context', label: '清除关联机会', group: '上下文', hint: linkedContext.symbol, keywords: linkedContext.id }] : []),
+  ], [linkedContext, terminalDensity])
+
+  const executeTerminalCommand = (id: string) => {
+    if (id.startsWith('page:')) setActivePage(id.slice(5) as Page)
+    else if (id.startsWith('market:')) setActiveMarket(id.slice(7) as Market)
+    else if (id === 'clear-context') setSelectedOpportunityId(null)
+    else if (id === 'density') {
+      const density: TerminalDensity = terminalDensity === 'compact' ? 'comfortable' : 'compact'
+      setTerminalDensity(density)
+      const current = readTerminalPreferences()
+      writeTerminalPreferences({ ...current, density })
+    }
+  }
+
+  useEffect(() => {
+    if (selectedOpportunityId && readModelSnapshot && !linkedContext) setSelectedOpportunityId(null)
+  }, [linkedContext, readModelSnapshot, selectedOpportunityId])
 
   return (
-    <main className="hyper-shell" data-build={DASHBOARD_BUILD_ID}>
+    <main className={`hyper-shell${linkedContext ? ' has-linked-context' : ''}`} data-build={DASHBOARD_BUILD_ID} data-density={terminalDensity}>
       <TopNav
         activePage={activePage}
         heartbeat={heartbeat}
         setActivePage={setActivePage}
+        onOpenCommandPalette={() => setCommandPaletteOpen(true)}
       />
       <MarketHeader
         accountMode={accountMode}
@@ -167,6 +209,7 @@ function App() {
         targetReturn={visiblePortfolio?.targetPct ?? latestPoint.target}
       />
       <MarketTape evidence={evidenceHealth} onSelect={setActiveMarket} rows={marketTapeRows} />
+      {linkedContext && <LinkedEvidenceContext model={linkedContext} onClear={() => setSelectedOpportunityId(null)} onOpenProcess={() => setActivePage('过程')} />}
 
       <section className="workspace">
         {activePage === '总览' || workbench.liveGate.gated ? (
@@ -218,10 +261,13 @@ function App() {
             events={chartEvents}
             funnelEvents={visibleFunnelEvents}
             heartbeat={heartbeat}
+            selectedOpportunityId={selectedOpportunityId}
+            setSelectedOpportunityId={setSelectedOpportunityId}
             snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
           />
         )}
       </section>
+      {commandPaletteOpen && <TerminalCommandPalette commands={terminalCommands} onClose={() => setCommandPaletteOpen(false)} onExecute={executeTerminalCommand} />}
     </main>
   )
 }

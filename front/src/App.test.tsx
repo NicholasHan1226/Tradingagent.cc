@@ -25,6 +25,7 @@ describe('App navigation and result-first dashboard', () => {
   it('uses six result-and-process destinations without decision pages', () => {
     render(<App />)
 
+    expect(document.querySelector('.hyper-shell')).toHaveAttribute('data-build', '20260711-market-causal-terminal')
     const navigation = screen.getByRole('navigation', { name: '主导航' })
     expect(within(navigation).getAllByRole('button')).toHaveLength(6)
     expect(within(navigation).getByRole('button', { name: '总览' })).toBeInTheDocument()
@@ -631,5 +632,14 @@ describe('App navigation and result-first dashboard', () => {
     expect(within(inspector).getByRole('heading', { name: '过程分布' })).toBeInTheDocument()
     expect(within(inspector).getByText('结果写回')).toBeInTheDocument()
     expect(within(inspector).getByText('安全拦截')).toBeInTheDocument()
+  })
+
+  it('opens the local command palette with the desktop shortcut', () => {
+    render(<App />)
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+
+    expect(screen.getByRole('dialog', { name: '终端命令面板' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: '搜索终端命令' })).toHaveFocus()
   })
 })

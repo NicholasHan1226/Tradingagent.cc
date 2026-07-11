@@ -74,6 +74,20 @@ export type MarketSummary = {
   detail: string
 }
 
+export type MarketPulse = {
+  market: Exclude<Market, 'All Markets'>
+  symbol: string
+  lastPrice: number
+  changePct?: number
+  high?: number
+  low?: number
+  volume?: number
+  updatedAt?: string
+  freshness: 'live' | 'stale' | 'degraded'
+  points: number[]
+  source: string
+}
+
 export type CNFuturesReplayEvidence = {
   generatedAt: string
   date: string

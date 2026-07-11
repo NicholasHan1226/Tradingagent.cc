@@ -8,6 +8,8 @@ dist/
 front/node_modules/
 front/dist/
 front/dist-server/
+.codex-audit/
+front/.design-qa/
 build/
 
 # Data & databases

@@ -23,6 +23,7 @@ gated and must not trigger execution from the front layer.
 | Market summaries | `shared/review/*/style_comparison.json` | `shared/review/*/style_performance.jsonl`, `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}` | Ready |
 | A-share research evidence | `shared/review/ashare/research_evidence_latest.json` | omitted from snapshot when missing or malformed | Ready |
 | A-share forward validation | `shared/review/ashare/forward_validation_latest.json` | omitted from snapshot when missing or malformed | Ready |
+| Optional market pulse | Bounded SharedSignals HTTP reads selected from current holdings/signals | omitted when the upstream is unavailable, degraded, unsupported, or has no canonical series | Ready |
 | CNFutures replay evidence | `shared/review/cn_futures/replay_latest.json` | omitted from market summary when missing or malformed | Ready |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
 | Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
@@ -119,10 +120,12 @@ Display-ready fields used by the homepage:
   `reason`, `next`, `steps`, plus optional funnel fields `stage`,
   `stageTimes`, and `stageLatencyMinutes`.
 - `marketSummaries[]`: one read-only status row per active dashboard market.
+- `marketPulses[]`: optional representative-instrument rows enriched by the TradingAgent snapshot service from the configured SharedSignals HTTP read model. Each row contains `market`, `symbol`, `lastPrice`, optional `changePct/high/low/volume/updatedAt`, `freshness`, sourced `points[]`, and `source`. The reader selects at most one current holding or signal symbol per market, requests at most 24 rows, times out after 900ms, caches for 15 seconds, and returns an empty array on upstream failure. It never calls a provider or write route.
   The reader combines existing signals, holdings, simulated ledger capital,
   `style_performance.jsonl`, and `style_comparison.json`. This lets the front
   show why a selected market has data, partial data, or no data without
   inventing trades.
+- `marketPulses[]`: optional sourced price context for representative symbols already present in holdings or signals. The snapshot server reads only `SHAREDSIGNALS_API_URL`, applies a 900ms request timeout and 15-second in-process cache, orders timestamped samples chronologically, accepts compact `YYYYMMDD` daily dates, and uses only canonical YES-outcome rows for PM history. A failed or ambiguous upstream response omits the pulse; it does not fail the snapshot or synthesize movement.
 - CNFutures current runtime status uses the latest actionable row from
   `shared/review/data/cn_futures_sim_reviews.jsonl` as the authoritative
   source. `shared/review/cn_futures/style_comparison.json` is review context for
@@ -171,6 +174,7 @@ Display-ready fields used by the homepage:
   groups funnel particles by this id first, then falls back to market + symbol
   only when older records do not provide it. Upstream signal rows may provide
   `opportunity_id`, `signal_id`, `trace_id`, `id`, `card_id`, or `order_id`;
+- The presentation URL may include `opportunity=<opportunityId>`. This key only selects and filters existing `funnelEvents[]`; it never creates a relationship, changes queue state or becomes an execution parameter.
   otherwise the read model derives a stable id from market, symbol, queue
   bucket, and filename without exposing server paths.
 - `sequence` should increase from discovery to result. The current event stages

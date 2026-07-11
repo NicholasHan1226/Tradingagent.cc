@@ -14,7 +14,7 @@
 - No backend contract, queue, order, capital, strategy, cron or real-money changes.
 - Test-first for every new behavior.
 - Missing facts render as `—`; no synthetic trading facts.
-- Hyperliquid reference: `/Users/nicholashan/Projects/Finance/TradingAgent/.codex-audit/2026-07-11-next-optimization/00-hyperliquid-reference.png`.
+- Hyperliquid reference was inspected as a local, temporary design-audit artifact; it is not a repository or production dependency. Durable comparison results are recorded in `front/design-qa.md`.
 
 ---
 
@@ -116,4 +116,3 @@
 - [ ] Merge to local main without overwriting unrelated dirty paths, push GitHub main, preserve rollback builds, fast-forward production and rebuild with Node 24 PATH.
 - [ ] Verify source SHA equality, service health, public HTTP/snapshot, browser build id, six-page navigation and absence of execution controls.
 - [ ] Record production proof in STATUS and re-align local main, origin/main and production source.
-

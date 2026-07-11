@@ -1,5 +1,5 @@
 import type { ApiStatus, DashboardApiResponse } from './types.ts'
-import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, FunnelEvent, HoldingRow, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
+import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, FunnelEvent, HoldingRow, MarketPulse, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
 import type { DataDomain } from '../types/status.ts'
 
 export const tradingAgentReadModelSources = {
@@ -26,6 +26,7 @@ export const tradingAgentReadModelSources = {
   ashareForwardValidation: 'shared/review/ashare/forward_validation_latest.json',
   ashareTierExperiments: 'shared/review/ashare/tier_experiments_latest.json',
   cnFuturesReplay: 'shared/review/cn_futures/replay_latest.json',
+  sharedSignalsMarketPulse: 'SharedSignals HTTP read model via SHAREDSIGNALS_API_URL',
 } as const
 
 export type TradingAgentReadModelHealth = {
@@ -44,6 +45,7 @@ export type TradingAgentReadModelSnapshot = {
   signals: SignalRow[]
   funnelEvents: FunnelEvent[]
   marketSummaries?: MarketSummary[]
+  marketPulses?: MarketPulse[]
   ashareResearchEvidence?: AShareResearchEvidence
   ashareForwardValidation?: AShareForwardValidation
   ashareTierSummaries?: AShareTierSummary[]

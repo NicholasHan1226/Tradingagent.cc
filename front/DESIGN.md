@@ -15,6 +15,7 @@ The interface uses a Hyperliquid-inspired terminal grammar rather than a generic
 - a primary data surface, 316px read-only inspector, and optional bottom ledger;
 - tabular mono numbers, 12px primary UI copy, and 11px only for metadata;
 - cyan for positive/live/selected, red for loss or risk, amber for waiting/review, muted gray for unavailable facts;
+- `--market-up/down/flat` describe sourced price direction, while `--fresh-live/stale` describe data age and never trading intent;
 - no decorative glow, gradients, large radii, floating cards, or artificial asset graphics.
 
 Hyperliquid structures are translated to the product boundary: its market ticker becomes the snapshot strip, chart remains a chart, order book becomes Process Book, order form becomes Automation Inspector, and positions/orders/history become read-only ledgers.
@@ -22,6 +23,8 @@ Hyperliquid structures are translated to the product boundary: its market ticker
 The terminal operations layer adds a six-market tape and evidence-health block below the account header. It keeps return, holdings count, runtime truth, snapshot freshness and five data-domain states visible without introducing another card row.
 
 The evidence-adaptive layer adds four explicit runtime states: `live`, `idle`, `stale` and `degraded`. Top navigation, market header, page metrics and inspectors consume one heartbeat model, so a healthy scheduler with no pending process reads `调度正常 · 当前空闲` instead of claiming automation is running. Internal values such as `buy`, `sell`, `empty` and raw source codes are translated before rendering.
+
+The market-causal layer adds sourced representative-instrument pulse, persistent opportunity context and local terminal controls. Market pulse is read through the TradingAgent snapshot API from SharedSignals only; unavailable values remain `—`. Selecting an opportunity cycle writes the explicit `opportunityId` into the URL, highlights the cycle and filters its event stream while preserving the context across all secondary pages. `Cmd/Ctrl+K` opens the terminal command palette; density and table-column preferences remain browser-local.
 
 ## Shared page anatomy
 
@@ -70,10 +73,13 @@ Secondary pages do not use `PageSummaryBoard`. Empty running state reveals recen
 - `src/lib/terminalStateResolver.ts`: authoritative running/completed/review resolution.
 - `src/lib/marketTapeViewModel.ts` and `src/lib/processEventViewModel.ts`: market/evidence strip and event-audit rows.
 - `src/lib/runtimeHeartbeat.ts`, `terminalDensity.ts` and `processCycleViewModel.ts`: shared runtime truth, evidence-aware density and grouped opportunity cycles.
+- `src/server/sharedSignalsMarketPulse.ts`: bounded, cached, fail-soft SharedSignals HTTP enrichment for representative instruments.
+- `src/lib/linkedEvidenceContext.ts` and `terminalPreferences.ts`: explicit opportunity correlation and versioned local view state.
+- `src/components/terminal/MarketSparkline.tsx`, `LinkedEvidenceContext.tsx` and `TerminalCommandPalette.tsx`: market pulse, correlation and desktop command surfaces.
 - `src/hooks/useTerminalNavigation.ts`: URL and keyboard presentation state.
 - `src/components/workbench/`: overview workbench and result-tab selection.
 - `src/pages/ThemePage.tsx`: composition for the five secondary pages.
 - `src/App.css`: terminal tokens, canvas, grid and dense table rules.
-- `src/api/` and `src/server/`: unchanged read-only snapshot contract.
+- `src/api/` and `src/server/`: backward-compatible read-only snapshot contract with optional sourced `marketPulses[]`; missing or degraded upstream evidence stays absent rather than becoming synthetic chart movement.
 
 The implementation is accepted only after unit/component tests, lint, frontend/API builds, real-browser desktop checks, no-horizontal-overflow checks and a reference/implementation visual comparison all pass.

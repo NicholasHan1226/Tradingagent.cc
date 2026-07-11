@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { MarketSummary } from '../types/dashboard'
+import type { MarketPulse, MarketSummary } from '../types/dashboard'
 import type { DashboardState } from '../types/status'
 import { createEvidenceHealth, createMarketTapeRows } from './marketTapeViewModel'
 
@@ -16,6 +16,8 @@ const domains: DashboardState['domains'] = {
   risk: { status: 'ready', updatedAt: '2026-07-11T04:00:00Z' },
 }
 
+const pulses: MarketPulse[] = [{ market: 'A-share', symbol: '600519.SH', lastPrice: 1424.1, changePct: 1, high: 1430, low: 1400, volume: 2000, updatedAt: '2026-07-11T04:00:00Z', freshness: 'live', points: [1410, 1414, 1424.1], source: 'SharedSignals' }]
+
 describe('market tape view model', () => {
   it('creates selected market rows with return, holdings and runtime truth', () => {
     const rows = createMarketTapeRows(summaries, 'A-share', '2026-07-11T04:00:00Z')
@@ -31,6 +33,13 @@ describe('market tape view model', () => {
     const all = createMarketTapeRows(summaries, 'All Markets', '2026-07-11T04:00:00Z')[0]
 
     expect(all).toEqual(expect.objectContaining({ market: 'All Markets', selected: true, returnLabel: '+0.35%', holdingsLabel: '3 持仓' }))
+  })
+
+  it('adds a real representative instrument pulse without fabricating missing markets', () => {
+    const rows = createMarketTapeRows(summaries, 'A-share', '2026-07-11T04:00:00Z', pulses)
+
+    expect(rows.find((row) => row.market === 'A-share')?.pulse).toEqual(expect.objectContaining({ symbol: '600519.SH', priceLabel: '1,424.10', changeLabel: '+1.00%', freshness: 'live', points: [1410, 1414, 1424.1] }))
+    expect(rows.find((row) => row.market === 'US')?.pulse).toBeUndefined()
   })
 
   it('surfaces stale evidence without hiding healthy domains', () => {

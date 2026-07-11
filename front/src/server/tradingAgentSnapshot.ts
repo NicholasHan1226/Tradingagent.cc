@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
 import type { AShareForwardValidation, AShareNoTradeEvidence, AShareResearchEvidence, AShareTierSummary, CNFuturesReplayEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
+import { readSharedSignalsMarketPulses } from './sharedSignalsMarketPulse.ts'
 
 type SnapshotOptions = {
   workspaceRoot: string
@@ -538,6 +539,12 @@ export async function readTradingAgentSnapshot({
     cnFuturesReplayEvidence,
     now,
   })
+  const marketPulses = await readSharedSignalsMarketPulses({
+    baseUrl: process.env.SHAREDSIGNALS_API_URL,
+    holdings: fallbackHoldings,
+    signals,
+    now,
+  })
   const hasOrders = await directoryHasJson(filledSignalsPath)
   const hasPlan = await fileExists(positionPlanPath)
   const hasReview = await fileExists(reviewPath) || await fileExists(reviewFallbackPath)
@@ -566,6 +573,7 @@ export async function readTradingAgentSnapshot({
     signals,
     funnelEvents,
     marketSummaries,
+    marketPulses,
     ashareResearchEvidence,
     ashareForwardValidation,
     ashareTierSummaries,

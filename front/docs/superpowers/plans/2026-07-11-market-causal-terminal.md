@@ -31,10 +31,10 @@
 - Produces `readSharedSignalsMarketPulses({ baseUrl, holdings, signals, fetchImpl }): Promise<MarketPulse[]>`.
 - Snapshot adds optional `marketPulses` and source reference `sharedSignalsMarketPulse`.
 
-- [ ] Write tests proving supported symbol routing, OHLCV normalization, point ordering, timeout degradation and cache reuse.
-- [ ] Run `npm test -- --run src/server/sharedSignalsMarketPulse.test.ts` and confirm the missing module fails.
-- [ ] Implement the bounded reader and snapshot integration.
-- [ ] Re-run the focused test and snapshot tests.
+- [x] Write tests proving supported symbol routing, OHLCV normalization, chronological point ordering, compact daily-date freshness, canonical PM outcome selection, timeout degradation and cache reuse.
+- [x] Run `npm test -- --run src/server/sharedSignalsMarketPulse.test.ts` and confirm the ordering/date/PM regressions fail before the normalization fix.
+- [x] Implement the bounded reader and optional snapshot integration.
+- [x] Re-run the focused test and snapshot tests.
 
 ### Task 2: Market-native tape
 
@@ -112,4 +112,3 @@
 - [ ] Run `npm run lint`, `npm test -- --run`, `npm run build`, and `npm run build:api`.
 - [ ] Validate 1280×720 and 1440×900 in a real browser, including cycle selection, command palette, density and overflow.
 - [ ] Review the final diff, run safe release preflight, commit, push, deploy with the documented production path, and verify source/runtime/public layers separately.
-

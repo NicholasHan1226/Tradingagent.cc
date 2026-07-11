@@ -1,5 +1,5 @@
 import { marketLabels, markets } from '../data/dashboard'
-import type { Market, MarketSummary } from '../types/dashboard'
+import type { Market, MarketPulse, MarketSummary } from '../types/dashboard'
 import type { DashboardState, DataDomain, DomainStatus } from '../types/status'
 
 export type MarketTapeRow = {
@@ -11,6 +11,14 @@ export type MarketTapeRow = {
   runtimeLabel: string
   freshnessLabel: string
   tone: 'positive' | 'negative' | 'warning' | 'muted'
+  pulse?: {
+    symbol: string
+    priceLabel: string
+    changeLabel: string
+    detailLabel: string
+    freshness: MarketPulse['freshness']
+    points: number[]
+  }
 }
 
 export type EvidenceHealthModel = {
@@ -22,8 +30,9 @@ export type EvidenceHealthModel = {
 
 const DOMAIN_LABELS: Record<DataDomain, string> = { performance: '收益', signals: '信号', holdings: '持仓', decisions: '复盘', risk: '风险' }
 
-export function createMarketTapeRows(summaries: MarketSummary[], activeMarket: Market, generatedAt: string | null): MarketTapeRow[] {
+export function createMarketTapeRows(summaries: MarketSummary[], activeMarket: Market, generatedAt: string | null, pulses: MarketPulse[] = []): MarketTapeRow[] {
   const byMarket = new Map(summaries.map((summary) => [summary.market, summary]))
+  const pulseByMarket = new Map(pulses.map((pulse) => [pulse.market, pulse]))
   return markets.map((market) => {
     if (market === 'All Markets') return createAllMarketsRow(summaries, activeMarket, generatedAt)
     const summary = byMarket.get(market)
@@ -38,8 +47,21 @@ export function createMarketTapeRows(summaries: MarketSummary[], activeMarket: M
       runtimeLabel: runtimeLabel(summary),
       freshnessLabel: snapshotTime(summary.latestAt ?? generatedAt),
       tone: toneForSummary(summary),
+      pulse: createPulse(pulseByMarket.get(market)),
     }
   })
+}
+
+function createPulse(pulse?: MarketPulse): MarketTapeRow['pulse'] {
+  if (!pulse) return undefined
+  return {
+    symbol: pulse.symbol,
+    priceLabel: formatPrice(pulse.lastPrice),
+    changeLabel: pulse.changePct === undefined ? '—' : signedPercent(pulse.changePct),
+    detailLabel: `H ${formatOptionalPrice(pulse.high)} · L ${formatOptionalPrice(pulse.low)}`,
+    freshness: pulse.freshness,
+    points: pulse.points,
+  }
 }
 
 export function createEvidenceHealth(domains: DashboardState['domains'], generatedAt: string | null, marketSummary?: MarketSummary): EvidenceHealthModel {
@@ -92,4 +114,6 @@ function statusCopy(status: DomainStatus, message?: string) {
 }
 
 function signedPercent(value: number) { return `${value > 0 ? '+' : ''}${Math.abs(value) < 0.005 ? '0.00' : value.toFixed(2)}%` }
+function formatPrice(value: number) { return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: value < 10 ? 4 : 2 }).format(value) }
+function formatOptionalPrice(value?: number) { return value === undefined ? '—' : formatPrice(value) }
 function snapshotTime(value?: string | null) { if (!value) return '等待快照'; const date = new Date(value); return Number.isNaN(date.getTime()) ? '时间未知' : new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }).format(date) }

@@ -18,6 +18,7 @@ import { createProcessEventRows } from '../lib/processEventViewModel'
 import { createProcessCycles } from '../lib/processCycleViewModel'
 import { translateTerminalValue, type RuntimeHeartbeat } from '../lib/runtimeHeartbeat'
 import { getHoldingsEmptyEvidence, getPerformanceDensity } from '../lib/terminalDensity'
+import { filterEventsByOpportunity } from '../lib/linkedEvidenceContext'
 import type { ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PerformanceRange, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
@@ -37,6 +38,8 @@ export function ThemePage({
   events,
   funnelEvents,
   heartbeat,
+  selectedOpportunityId,
+  setSelectedOpportunityId,
   snapshotGeneratedAt,
 }: {
   activePage: Exclude<Page, '总览'>
@@ -45,6 +48,8 @@ export function ThemePage({
   events: ChartEvent[]
   funnelEvents: FunnelEvent[]
   heartbeat: RuntimeHeartbeat
+  selectedOpportunityId: string | null
+  setSelectedOpportunityId: (id: string | null) => void
   snapshotGeneratedAt: string | null
   holdings: HoldingRow[]
   latestPoint: PerformancePoint
@@ -88,7 +93,7 @@ export function ThemePage({
 
   if (activePage === '过程') {
     const model = createProcessBookRows(getActionableSignals(signals).filter((signal) => signal.status === 'pending'), completed)
-    const eventRows = createProcessEventRows(funnelEvents)
+    const eventRows = createProcessEventRows(filterEventsByOpportunity(funnelEvents, selectedOpportunityId))
     const cycles = createProcessCycles(funnelEvents)
     return (
       <TerminalPageShell
@@ -96,7 +101,7 @@ export function ThemePage({
         heartbeat={heartbeat}
         ledger={<ProcessEventLedger rows={eventRows} />}
         metrics={context}
-        primary={<StatusBoundary emptyLabel="当前没有过程记录" loading={<TableSkeleton rows={7} />} onRetry={onRetry} status={domainStatus('signals')}>{cycles.length ? <ProcessCycleLedger rows={cycles} /> : <ProcessBook {...model} />}</StatusBoundary>}
+        primary={<StatusBoundary emptyLabel="当前没有过程记录" loading={<TableSkeleton rows={7} />} onRetry={onRetry} status={domainStatus('signals')}>{cycles.length ? <ProcessCycleLedger onSelect={(id) => setSelectedOpportunityId(id === selectedOpportunityId ? null : id)} rows={cycles} selectedId={selectedOpportunityId} /> : <ProcessBook {...model} />}</StatusBoundary>}
         title="过程终端"
       />
     )

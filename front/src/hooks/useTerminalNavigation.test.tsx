@@ -8,8 +8,9 @@ function Harness() {
   const [page, setPage] = useState<Page>('总览')
   const [market, setMarket] = useState<Market>('All Markets')
   const [range, setRange] = useState<PerformanceRange>('all')
-  useTerminalNavigation({ page, market, range, setPage, setMarket, setRange })
-  return <><output>{page}|{market}|{range}</output><input data-terminal-search aria-label="终端搜索" /></>
+  const [opportunity, setOpportunity] = useState<string | null>(null)
+  useTerminalNavigation({ page, market, range, opportunity, setPage, setMarket, setRange, setOpportunity })
+  return <><output>{page}|{market}|{range}|{opportunity ?? 'none'}</output><input data-terminal-search aria-label="终端搜索" /><button onClick={() => setOpportunity('opp-1')}>选择机会</button></>
 }
 
 describe('terminal navigation', () => {
@@ -39,6 +40,16 @@ describe('terminal navigation', () => {
     window.history.replaceState(null, '', '/?page=%E9%A3%8E%E9%99%A9&market=Crypto&range=7d')
     fireEvent.popState(window)
 
-    expect(screen.getByText('风险|Crypto|7d')).toBeInTheDocument()
+    expect(screen.getByText('风险|Crypto|7d|none')).toBeInTheDocument()
+  })
+
+  it('persists and restores selected opportunity context', () => {
+    render(<Harness />)
+    fireEvent.click(screen.getByText('选择机会'))
+    expect(new URL(window.location.href).searchParams.get('opportunity')).toBe('opp-1')
+
+    window.history.replaceState(null, '', '/?page=%E8%BF%87%E7%A8%8B&market=A-share&range=all&opportunity=opp-2')
+    fireEvent.popState(window)
+    expect(screen.getByText('过程|A-share|all|opp-2')).toBeInTheDocument()
   })
 })

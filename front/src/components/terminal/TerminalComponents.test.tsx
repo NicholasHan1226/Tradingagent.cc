@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { PortfolioLedgerRow, ProcessBookRow, RiskLedgerRow } from '../../lib/terminalViewModels'
 import { PortfolioLedger } from './PortfolioLedger'
 import { ProcessBook } from './ProcessBook'
@@ -7,6 +7,7 @@ import { ProcessEventLedger } from './ProcessEventLedger'
 import { ProcessCycleLedger } from './ProcessCycleLedger'
 import { RiskLedger } from './RiskLedger'
 import { TerminalPageShell } from './TerminalPageShell'
+import { MarketTape } from './MarketTape'
 
 const processRow: ProcessBookRow = {
   symbol: '600030.SH',
@@ -52,6 +53,17 @@ const riskRow: RiskLedgerRow = {
 }
 
 describe('terminal components', () => {
+  it('renders a sourced market price pulse and truthful missing state', () => {
+    render(<MarketTape evidence={{ overall: 'positive', snapshotLabel: '13:20', sourceLabel: 'SharedSignals', items: [] }} onSelect={() => undefined} rows={[
+      { market: 'A-share', label: 'A股', selected: true, returnLabel: '+1.20%', holdingsLabel: '2 持仓', runtimeLabel: '正常', freshnessLabel: '13:20', tone: 'positive', pulse: { symbol: '600519.SH', priceLabel: '1,424.10', changeLabel: '+1.00%', detailLabel: 'H 1,430.00 · L 1,400.00', freshness: 'live', points: [1410, 1414, 1424.1] } },
+      { market: 'US', label: '美股', selected: false, returnLabel: '—', holdingsLabel: '0 持仓', runtimeLabel: '等待数据', freshnessLabel: '13:20', tone: 'muted' },
+    ]} />)
+
+    expect(screen.getByText('600519.SH')).toBeInTheDocument()
+    expect(screen.getByText('1,424.10')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: '600519.SH 价格走势，3 个真实数据点' })).toBeInTheDocument()
+    expect(screen.getByText('暂无代表行情')).toBeInTheDocument()
+  })
   it('renders one continuous terminal shell with metrics and ledger', () => {
     render(
       <TerminalPageShell
@@ -98,7 +110,8 @@ describe('terminal components', () => {
   })
 
   it('renders grouped opportunity cycles with honest missing stages', () => {
-    render(<ProcessCycleLedger rows={[{
+    const onSelect = vi.fn()
+    render(<ProcessCycleLedger onSelect={onSelect} selectedId="opp-1" rows={[{
       id: 'opp-1', symbol: '600519.SH', market: 'A股', result: '结果写回', source: '模拟账本',
       latency: '10分钟', evidence: '3/5 阶段', reason: '—', updatedAt: '07/11 13:10',
       stages: [
@@ -111,6 +124,10 @@ describe('terminal components', () => {
     expect(within(ledger).getByText('决策因果链')).toBeInTheDocument()
     expect(within(ledger).getByText('3/5 阶段 · 10分钟')).toBeInTheDocument()
     expect(within(ledger).getByRole('list', { name: '600519.SH阶段' }).children[1]).toHaveClass('missing')
+    const cycle = within(ledger).getByRole('button', { name: /600519.SH/ })
+    expect(cycle).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(cycle)
+    expect(onSelect).toHaveBeenCalledWith('opp-1')
   })
 
   it('renders portfolio currency and suppresses duplicate asset names', () => {

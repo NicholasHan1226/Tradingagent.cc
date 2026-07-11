@@ -49,6 +49,14 @@
   --state-idle: #71808a;
   --state-stale: #d6ad63;
   --state-degraded: #e46f78;
+  --market-up: #71d7c7;
+  --market-down: #e46f78;
+  --market-flat: #71808a;
+  --fresh-live: #71d7c7;
+  --fresh-stale: #d6ad63;
+  --delta-pulse: rgba(113, 215, 199, 0.16);
+  --terminal-row-compact: 38px;
+  --terminal-row-comfortable: 46px;
   --metric-green: #52e0d3;
   --metric-rose: #f25f67;
   --metric-blue: #a0b7b1;
