@@ -827,3 +827,40 @@ def test_apply_reset_plan_rejects_symlink_allowed_root_before_resolve(tmp_path: 
     result = apply_epoch_reset_plan(forged)
     assert result["status"] == "error"
     assert result["reason"] == "unsafe_path"
+
+
+def test_build_reset_plan_rejects_implicit_root_through_symlink_ancestor(tmp_path: Path) -> None:
+    real_root = tmp_path / "real-root"
+    alias_root = tmp_path / "alias-root"
+    real_root.mkdir()
+    alias_root.symlink_to(real_root, target_is_directory=True)
+    review_dir = alias_root / "review"
+    archive_dir = alias_root / "archive"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+
+    plan = build_epoch_reset_plan(review_dir, archive_dir, dict(EPOCH_STATE))
+
+    assert plan["status"] == "error"
+    assert plan["reason"] == "unsafe_path"
+
+
+def test_build_reset_plan_rejects_symlink_children_with_resolved_allowed_root(tmp_path: Path) -> None:
+    real_root = tmp_path / "real-root"
+    alias_root = tmp_path / "alias-root"
+    real_root.mkdir()
+    alias_root.symlink_to(real_root, target_is_directory=True)
+    review_dir = alias_root / "review"
+    archive_dir = alias_root / "archive"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+    state = {**EPOCH_STATE, "allowed_root": str(real_root.resolve())}
+
+    plan = build_epoch_reset_plan(review_dir, archive_dir, state)
+
+    assert plan["status"] == "error"
+    assert plan["reason"] == "unsafe_path"

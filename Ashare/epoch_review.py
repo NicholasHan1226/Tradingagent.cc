@@ -410,6 +410,8 @@ def _safe_roots(
 ) -> tuple[Path, Path, Path] | tuple[None, None, None]:
     review_raw = Path(review_dir).absolute()
     archive_raw = Path(archive_dir).absolute()
+    if _path_or_ancestor_is_symlink(review_raw) or _path_or_ancestor_is_symlink(archive_raw):
+        return None, None, None
     explicit_root = epoch_state.get("allowed_root")
     if explicit_root:
         raw_root = Path(str(explicit_root))
