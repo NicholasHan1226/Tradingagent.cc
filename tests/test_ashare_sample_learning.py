@@ -42,6 +42,8 @@ class AshareSampleLearningTest(unittest.TestCase):
         for row in rows:
             if row.get("trade_id"):
                 row.setdefault("capital_epoch", 2)
+                row.setdefault("capital_cny", 50_000.0)
+                row.setdefault("epoch_cutover_timestamp", EPOCH_STATE["cutover_timestamp"])
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
 
@@ -363,6 +365,77 @@ class AshareSampleLearningTest(unittest.TestCase):
             report["epoch_input_rejections"]["forward_validation"],
             "epoch_cutover_timestamp_mismatch",
         )
+
+    def test_trade_rows_require_exact_authority_before_any_learning_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            review_dir = root / "review"
+            trades_path = root / "trades.jsonl"
+            valid = {
+                "trade_id": "valid",
+                "order_id": "valid",
+                "trade_date": "20260710",
+                "market": "ashare",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "filled_price": 10.0,
+                "candidate_pool_layer": "candidate",
+                "execution_source": "ashare_candidate_layer",
+                "fill_price_source_class": "market_data",
+                "trade_timestamp_bj": "2026-07-10T10:00:00+08:00",
+                "capital_epoch": 2,
+                "capital_cny": 50_000.0,
+                "epoch_cutover_timestamp": EPOCH_STATE["cutover_timestamp"],
+                "hypothesis_id": "H-valid",
+                "research_hypothesis": {
+                    "hypothesis_id": "H-valid",
+                    "factor_snapshot": {"combined": 0.6},
+                },
+            }
+            wrong_capital = {
+                **valid,
+                "trade_id": "wrong-capital",
+                "order_id": "wrong-capital",
+                "capital_cny": 200_000.0,
+                "research_hypothesis": {
+                    "hypothesis_id": "H-wrong",
+                    "factor_snapshot": {"combined": 0.99},
+                },
+            }
+            missing_cutover = {
+                key: value for key, value in {**valid, "trade_id": "missing-cutover", "order_id": "missing-cutover"}.items()
+                if key != "epoch_cutover_timestamp"
+            }
+            trades_path.write_text(
+                "".join(
+                    json.dumps(row, ensure_ascii=False) + "\n"
+                    for row in (valid, wrong_capital, missing_cutover)
+                ),
+                encoding="utf-8",
+            )
+            self._write_json(
+                review_dir / "forward_validation_latest.json",
+                {
+                    "labels": [
+                        {"trade_id": "valid", "labels": {"close": {"return_pct": 1.0}}},
+                        {"trade_id": "wrong-capital", "labels": {"close": {"return_pct": 9.0}}},
+                    ]
+                },
+            )
+
+            report = build_sample_learning_report(
+                trade_date="20260710",
+                review_dir=review_dir,
+                local_trades_path=trades_path,
+                min_factor_samples=1,
+            )
+
+        self.assertEqual(report["sample_quality"]["total_count"], 1)
+        self.assertEqual(report["factor_research"]["max_factor_sample_count"], 1)
+        self.assertEqual(report["dynamic_probe_budget"]["top_candidate_score"], 0.6)
+        self.assertEqual(report["trade_epoch_rejections"]["capital_cny_mismatch"], 1)
+        self.assertEqual(report["trade_epoch_rejections"]["missing_epoch_cutover_timestamp"], 1)
 
 
 if __name__ == "__main__":

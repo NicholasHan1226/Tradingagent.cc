@@ -1109,6 +1109,8 @@ class SimLoopTest(unittest.TestCase):
         decision = build_evolution_decision(
             {
                 "capital_epoch": 1,
+                "capital_cny": 200_000.0,
+                "epoch_cutover_timestamp": "2025-01-01T00:00:00+00:00",
                 "trade_date": "20260711",
                 "strategy_sample_count": 20,
                 "pnl": {"total_pnl": 100.0, "realized_pnl": 100.0, "equity": 50_100.0},
@@ -1117,6 +1119,11 @@ class SimLoopTest(unittest.TestCase):
                     "realized_round_trip_count": 10,
                     "forward_label_count": 20,
                 },
+            },
+            epoch_authority={
+                "current_epoch_id": 2,
+                "capital_cny": 50_000.0,
+                "cutover_timestamp": "2026-07-10T20:56:58+00:00",
             },
             target_trade_date="20260711",
             current_epoch_id=2,
@@ -1153,6 +1160,8 @@ class SimLoopTest(unittest.TestCase):
         decision = build_evolution_decision(
             {
                 "capital_epoch": 2,
+                "capital_cny": 50_000.0,
+                "epoch_cutover_timestamp": "2026-07-10T20:56:58+00:00",
                 "trade_date": "20260711",
                 "strategy_sample_count": 20,
                 "pnl": {"total_pnl": 100.0, "realized_pnl": 0.0, "equity": 50_100.0},
@@ -1161,6 +1170,11 @@ class SimLoopTest(unittest.TestCase):
                     "realized_round_trip_count": 10,
                     "forward_label_count": 20,
                 },
+            },
+            epoch_authority={
+                "current_epoch_id": 2,
+                "capital_cny": 50_000.0,
+                "cutover_timestamp": "2026-07-10T20:56:58+00:00",
             },
             target_trade_date="20260711",
             current_epoch_id=2,

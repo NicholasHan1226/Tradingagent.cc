@@ -119,6 +119,25 @@ def test_reset_plan_is_read_only_and_missing_files_are_not_errors(tmp_path: Path
     assert len(plan["missing_files"]) == len(CURRENT_DERIVED_FILES) - 1
 
 
+def test_apply_blocks_when_a_planned_missing_path_appears_before_mutation(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
+    archive_dir = tmp_path / "archive"
+    review_dir.mkdir()
+    plan = build_epoch_reset_plan(review_dir, archive_dir, EPOCH_STATE)
+    late = review_dir / "sample_learning_latest.json"
+    original = b'{"owner":"late-writer"}\n'
+    late.write_bytes(original)
+
+    result = apply_epoch_reset_plan(plan)
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "plan_stale"
+    assert result["late_created_paths"] == [str(late)]
+    assert late.read_bytes() == original
+    assert not archive_dir.exists()
+    assert not (review_dir / "portfolio_evolution_latest.json").exists()
+
+
 def test_reset_plan_fails_closed_on_destination_collision(tmp_path: Path) -> None:
     review_dir = tmp_path / "review"
     archive_dir = tmp_path / "archive"

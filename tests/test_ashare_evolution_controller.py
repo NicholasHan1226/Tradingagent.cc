@@ -6,12 +6,23 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from Ashare.evolution_controller import build_evolution_decision, decision_market_context, write_evolution_decision
+
+
+EPOCH_AUTHORITY = {
+    "current_epoch_id": 2,
+    "capital_cny": 50_000.0,
+    "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+}
 
 
 def _qualified_evidence(**overrides):
     payload = {
         "capital_epoch": 2,
+        "capital_cny": 50_000.0,
+        "epoch_cutover_timestamp": EPOCH_AUTHORITY["cutover_timestamp"],
         "trade_date": "20260711",
         "strategy_sample_count": 20,
         "actions": [{"action": "observe", "reason": "non_positive_realized_pnl"}],
@@ -28,7 +39,10 @@ def _qualified_evidence(**overrides):
 
 def test_unrealized_profit_never_expands_risk():
     decision = build_evolution_decision(
-        _qualified_evidence(), target_trade_date="20260711", current_epoch_id=2
+        _qualified_evidence(),
+        epoch_authority=EPOCH_AUTHORITY,
+        target_trade_date="20260711",
+        current_epoch_id=2,
     )
     assert decision["recommended_action"] == "observe_and_label_candidates"
     assert "non_positive_realized_pnl" in decision["reasons"]
@@ -36,12 +50,42 @@ def test_unrealized_profit_never_expands_risk():
 
 def test_stale_epoch_never_enters_capital_plan_context():
     decision = build_evolution_decision(
-        _qualified_evidence(capital_epoch=1), target_trade_date="20260711", current_epoch_id=2
+        _qualified_evidence(capital_epoch=1),
+        epoch_authority=EPOCH_AUTHORITY,
+        target_trade_date="20260711",
+        current_epoch_id=2,
     )
     context = decision_market_context(decision, target_trade_date="20260711", current_epoch_id=2)
     assert context["evidence_usable"] is False
     assert context["evidence_rejection_reason"] == "capital_epoch_mismatch"
     assert context["strategy_sample_valid_count"] == 0.0
+
+
+def test_exact_authority_mismatch_never_expands_or_writes(tmp_path: Path) -> None:
+    authority = {
+        "current_epoch_id": 2,
+        "capital_cny": 50_000.0,
+        "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+    }
+    portfolio = _qualified_evidence(
+        capital_cny=200_000.0,
+        epoch_cutover_timestamp=authority["cutover_timestamp"],
+        pnl={"total_pnl": 1_000.0, "realized_pnl": 800.0, "equity": 51_000.0},
+    )
+
+    decision = build_evolution_decision(
+        portfolio,
+        target_trade_date="20260711",
+        epoch_authority=authority,
+    )
+
+    assert decision["recommended_action"] == "observe_and_label_candidates"
+    assert "capital_cny_mismatch" in decision["reasons"]
+    with patch("Ashare.evolution_controller.read_epoch_state", return_value=authority):
+        with pytest.raises(ValueError, match="capital_cny_mismatch"):
+            write_evolution_decision(portfolio, review_dir=tmp_path)
+    assert not (tmp_path / "evolution_decision_latest.json").exists()
+    assert not (tmp_path / "evolution_decision_log.jsonl").exists()
 
 
 class AshareEvolutionControllerTest(unittest.TestCase):
@@ -63,6 +107,9 @@ class AshareEvolutionControllerTest(unittest.TestCase):
     def test_missing_daily_fill_keeps_decision_in_observation_mode(self) -> None:
         portfolio = {
             "market": "ashare",
+            "capital_epoch": 2,
+            "capital_cny": 50_000.0,
+            "epoch_cutover_timestamp": EPOCH_AUTHORITY["cutover_timestamp"],
             "trade_date": "20260710",
             "state": "sample_insufficient",
             "strategy_sample_count": 2,
@@ -77,6 +124,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
 
         decision = build_evolution_decision(
             portfolio,
+            epoch_authority=EPOCH_AUTHORITY,
             min_strategy_samples=5,
         )
 
@@ -91,6 +139,8 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         portfolio = {
             "market": "ashare",
             "capital_epoch": 2,
+            "capital_cny": 50_000.0,
+            "epoch_cutover_timestamp": EPOCH_AUTHORITY["cutover_timestamp"],
             "trade_date": "20260709",
             "state": "sample_insufficient",
             "strategy_sample_count": 2,
@@ -100,6 +150,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
 
         decision = build_evolution_decision(
             portfolio,
+            epoch_authority=EPOCH_AUTHORITY,
             target_trade_date="20260710",
             min_strategy_samples=5,
         )
@@ -131,6 +182,8 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         portfolio = {
             "market": "ashare",
             "capital_epoch": 2,
+            "capital_cny": 50_000.0,
+            "epoch_cutover_timestamp": "2026-07-10T20:56:58+00:00",
             "trade_date": "20260710",
             "strategy_sample_count": 5,
             "today_strategy_sample_count": 1,
@@ -151,7 +204,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         self.assertEqual(json.loads(latest.read_text(encoding="utf-8"))["recommended_action"], decision["recommended_action"])
         self.assertEqual(len(log.read_text(encoding="utf-8").splitlines()), 1)
 
-    def test_standalone_writer_uses_authoritative_epoch_metadata(self) -> None:
+    def test_standalone_writer_rejects_stale_evidence_instead_of_retagging_it(self) -> None:
         portfolio = _qualified_evidence(
             capital_epoch=1,
             capital_cny=200_000.0,
@@ -164,13 +217,11 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         }
 
         with patch("Ashare.evolution_controller.read_epoch_state", return_value=epoch_state):
-            decision = write_evolution_decision(portfolio, review_dir=self.review_dir)
+            with self.assertRaisesRegex(ValueError, "capital_epoch_mismatch"):
+                write_evolution_decision(portfolio, review_dir=self.review_dir)
 
-        self.assertEqual(decision["capital_epoch"], 2)
-        self.assertEqual(decision["capital_cny"], 50_000.0)
-        self.assertEqual(decision["epoch_cutover_timestamp"], epoch_state["cutover_timestamp"])
-        persisted = json.loads((self.review_dir / "evolution_decision_latest.json").read_text())
-        self.assertEqual(persisted["capital_epoch"], 2)
+        self.assertFalse((self.review_dir / "evolution_decision_latest.json").exists())
+        self.assertFalse((self.review_dir / "evolution_decision_log.jsonl").exists())
 
     def test_epoch2_corrupt_state_fails_closed_without_writing_decision(self) -> None:
         portfolio = _qualified_evidence(capital_epoch=2, capital_cny=50_000.0)
@@ -194,6 +245,8 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         portfolio = {
             "market": "ashare",
             "capital_epoch": 2,
+            "capital_cny": 50_000.0,
+            "epoch_cutover_timestamp": EPOCH_AUTHORITY["cutover_timestamp"],
             "trade_date": "20260710",
             "strategy_sample_count": 30,
             "today_strategy_sample_count": 1,
@@ -207,6 +260,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
 
         decision = build_evolution_decision(
             portfolio,
+            epoch_authority=EPOCH_AUTHORITY,
             target_trade_date="20260710",
             min_strategy_samples=20,
         )
@@ -219,6 +273,8 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         portfolio = {
             "market": "ashare",
             "capital_epoch": 2,
+            "capital_cny": 50_000.0,
+            "epoch_cutover_timestamp": EPOCH_AUTHORITY["cutover_timestamp"],
             "trade_date": "20260710",
             "strategy_sample_count": 24,
             "pnl": {"total_pnl": 1200.0, "realized_pnl": 800.0, "equity": 201200.0},
@@ -231,6 +287,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
 
         decision = build_evolution_decision(
             portfolio,
+            epoch_authority=EPOCH_AUTHORITY,
             target_trade_date="20260710",
             min_strategy_samples=5,
         )

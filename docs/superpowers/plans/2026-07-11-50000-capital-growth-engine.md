@@ -361,6 +361,9 @@ git commit -m "fix(ashare): require realized current-epoch expansion evidence"
 - Review authority is the exact persisted triple: epoch `2`, capital `50,000 CNY`, and the original cutover timestamp string. A timezone-equivalent rendering is not accepted as the same authority.
 - Tier replay filters source trades before replay and reports only current-authority trade statistics; rejected rows remain rejection diagnostics and must never be relabeled as epoch 2.
 - Build, apply, already-applied detection, and current-set validation reject symlinks in the review/archive roots, controlled ancestors, and every Task-3 latest/log child.
+- Evolution decisions require the caller to provide the persisted authority triple; authority-mismatched portfolio evidence remains observation-only and the writer raises before creating either latest or log output.
+- Sample learning validates every trade row against exact epoch/capital/cutover authority before quality, hypothesis, probe-budget, account, or factor aggregation; rejection reasons remain separately counted.
+- Apply revalidates every path that was missing at plan time before its first mutation and creates bootstraps with no-replace semantics. A late writer produces `blocked / plan_stale`; its file is never overwritten or removed.
 
 - [ ] **Step 1: Write failing epoch-isolation tests**
 
@@ -475,6 +478,14 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
 ```
 
 Expected: PASS; current epoch reports cannot contain epoch-1 trades, tiers, PnL, or labels.
+
+**2026-07-11 quality re-gate:** The three negative cases were observed RED first, then passed after the minimal implementation:
+
+- exact-epoch but wrong-capital portfolio evidence cannot expand risk and cannot create evolution latest/log files;
+- wrong/missing trade capital or cutover metadata cannot enter sample quality, probe budget, or factor research, while each rejection reason remains visible;
+- a Task-3 file created after planning but before apply returns `blocked / plan_stale` with no archive/bootstrap mutation and no overwrite.
+
+The complete Task-3 plus related writer regression passed `178` tests in `57.82s` with bytecode/cache writes disabled. Targeted controller/sim-loop compatibility passed `13` tests in `23.24s`.
 
 - [ ] **Step 8: Commit**
 

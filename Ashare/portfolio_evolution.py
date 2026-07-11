@@ -469,8 +469,8 @@ def write_portfolio_evolution(
             target_trade_date=report.get("trade_date"),
             min_strategy_samples=min_samples,
             current_epoch_id=int(epoch_fields["capital_epoch"]),
+            epoch_authority=epoch_fields,
         )
-        decision.update(epoch_fields)
         report["evolution_decision"] = decision
         decision_latest = review_path / "evolution_decision_latest.json"
         decision_log = review_path / "evolution_decision_log.jsonl"

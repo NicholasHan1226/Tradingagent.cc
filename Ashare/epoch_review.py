@@ -568,28 +568,43 @@ def build_epoch_reset_plan(
     return result
 
 
-def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+class _PlanStaleError(RuntimeError):
+    pass
+
+
+def _atomic_write(path: Path, content: str, *, exclusive: bool = False) -> None:
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
-        tmp.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(str(tmp), str(path))
+        tmp.write_text(content, encoding="utf-8")
+        if exclusive:
+            try:
+                os.link(str(tmp), str(path))
+            except FileExistsError as exc:
+                raise _PlanStaleError(f"late_created_path: {path}") from exc
+        else:
+            os.replace(str(tmp), str(path))
     finally:
         tmp.unlink(missing_ok=True)
 
 
-def _atomic_write_jsonl(path: Path, payload: dict[str, Any]) -> None:
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        tmp.write_text(
-            json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(str(tmp), str(path))
-    finally:
-        tmp.unlink(missing_ok=True)
+def _atomic_write_json(
+    path: Path, payload: dict[str, Any], *, exclusive: bool = False
+) -> None:
+    _atomic_write(
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        exclusive=exclusive,
+    )
+
+
+def _atomic_write_jsonl(
+    path: Path, payload: dict[str, Any], *, exclusive: bool = False
+) -> None:
+    _atomic_write(
+        path,
+        json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
+        exclusive=exclusive,
+    )
 
 
 def _plan_already_applied(plan: dict[str, Any], allowed_root: Path) -> bool:
@@ -713,6 +728,24 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
     if set(log_bootstraps) != set(CURRENT_DERIVED_FILES) - _LATEST_FILES:
         return {"status": "error", "reason": "invalid_log_bootstrap_set"}
 
+    missing_files = plan.get("missing_files")
+    if not isinstance(missing_files, list) or any(
+        not isinstance(name, str) or name not in CURRENT_DERIVED_FILES
+        for name in missing_files
+    ):
+        return {"status": "error", "reason": "invalid_missing_file_set"}
+    late_created = [
+        review_dir / name
+        for name in missing_files
+        if os.path.lexists(review_dir / name)
+    ]
+    if late_created:
+        return {
+            "status": "blocked",
+            "reason": "plan_stale",
+            "late_created_paths": [str(path) for path in late_created],
+        }
+
     moved: list[tuple[Path, Path]] = []
     written: list[Path] = []
     try:
@@ -744,11 +777,11 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
             moved.append((source, destination))
         for name in sorted(_LATEST_FILES):
             destination = review_dir / name
-            _atomic_write_json(destination, latest_bootstraps[name])
+            _atomic_write_json(destination, latest_bootstraps[name], exclusive=True)
             written.append(destination)
         for name in sorted(log_bootstraps):
             destination = review_dir / name
-            _atomic_write_jsonl(destination, log_bootstraps[name])
+            _atomic_write_jsonl(destination, log_bootstraps[name], exclusive=True)
             written.append(destination)
     except Exception as exc:  # noqa: BLE001
         rollback_errors: list[dict[str, str]] = []
@@ -764,6 +797,8 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
         for source, destination in reversed(moved):
             if destination.exists():
                 def restore(source: Path = source, destination: Path = destination) -> None:
+                    if os.path.lexists(source):
+                        raise FileExistsError(f"rollback_source_recreated: {source}")
                     source.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(str(destination), str(source))
 
@@ -785,13 +820,17 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
             archive_dir,
             remove_archive_if_empty,
         )
-        return {
+        result = {
             "status": "blocked" if rollback_errors else "error",
             "reason": f"epoch_review_reset_failed: {exc}",
             "rollback_attempted": True,
             "rollback_errors": rollback_errors,
             "rollback_audit": rollback_audit,
         }
+        if isinstance(exc, _PlanStaleError):
+            result["status"] = "blocked"
+            result["reason"] = "plan_stale"
+        return result
     return {
         "status": "applied",
         "move_count": len(moved),

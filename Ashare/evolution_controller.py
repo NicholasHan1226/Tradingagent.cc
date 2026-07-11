@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from Ashare.epoch_review import validate_review_authority
 from shared.execution.sim_account_epoch import (
     read_epoch_state,
     require_authoritative_epoch_metadata,
@@ -64,6 +65,7 @@ def _today_cn_compact() -> str:
 def build_evolution_decision(
     portfolio_evolution: dict[str, Any],
     *,
+    epoch_authority: dict[str, Any],
     target_trade_date: str | None = None,
     min_strategy_samples: int = 5,
     current_epoch_id: int = 2,
@@ -75,6 +77,15 @@ def build_evolution_decision(
     target_date = _compact_date(target_trade_date) or _today_cn_compact()
     evidence_date = _compact_date(portfolio_evolution.get("trade_date"))
     evidence_epoch = _safe_int(portfolio_evolution.get("capital_epoch"))
+    authority_valid, authority_reason = validate_review_authority(
+        portfolio_evolution,
+        epoch_authority,
+    )
+    expected_epoch = epoch_authority.get(
+        "capital_epoch", epoch_authority.get("current_epoch_id")
+    )
+    if isinstance(expected_epoch, int) and not isinstance(expected_epoch, bool):
+        current_epoch_id = expected_epoch
     strategy_sample_count = _safe_int(portfolio_evolution.get("strategy_sample_count"))
     today_strategy_sample_count = _safe_int(portfolio_evolution.get("today_strategy_sample_count"))
     pnl = portfolio_evolution.get("pnl") if isinstance(portfolio_evolution.get("pnl"), dict) else {}
@@ -92,7 +103,11 @@ def build_evolution_decision(
         today_strategy_sample_count = 0
 
     reasons.append("daily_trade_target_removed")
-    if evidence_epoch != current_epoch_id:
+    if not authority_valid:
+        state = "evidence_pending"
+        action = "observe_and_label_candidates"
+        reasons.append(authority_reason)
+    elif evidence_epoch != current_epoch_id:
         state = "evidence_pending"
         action = "observe_and_label_candidates"
         reasons.append("capital_epoch_mismatch")
@@ -151,7 +166,11 @@ def build_evolution_decision(
         "trade_date": target_date,
         "evidence_trade_date": evidence_date,
         "capital_epoch": evidence_epoch,
+        "capital_cny": portfolio_evolution.get("capital_cny"),
+        "epoch_cutover_timestamp": portfolio_evolution.get("epoch_cutover_timestamp"),
         "current_epoch_id": current_epoch_id,
+        "evidence_authority_valid": authority_valid,
+        "evidence_authority_rejection_reason": authority_reason,
         "state": state,
         "recommended_action": action,
         "reasons": reasons,
@@ -197,19 +216,23 @@ def write_evolution_decision(
     epoch_state = read_epoch_state()
     epoch_metadata = require_authoritative_epoch_metadata(epoch_state)
     current_epoch_id = int(epoch_metadata["capital_epoch"])
+    epoch_authority = {
+        "capital_epoch": current_epoch_id,
+        "capital_cny": float(epoch_metadata["capital_cny"]),
+        "epoch_cutover_timestamp": str(epoch_metadata["cutover_timestamp"]),
+    }
     decision = build_evolution_decision(
         portfolio_evolution,
         target_trade_date=target_trade_date,
         min_strategy_samples=min_strategy_samples,
         current_epoch_id=current_epoch_id,
+        epoch_authority=epoch_authority,
     )
-    decision.update(
-        {
-            "capital_epoch": current_epoch_id,
-            "capital_cny": float(epoch_metadata["capital_cny"]),
-            "epoch_cutover_timestamp": str(epoch_metadata["cutover_timestamp"]),
-        }
-    )
+    if not decision["evidence_authority_valid"]:
+        raise ValueError(
+            f"portfolio_evolution_authority_rejected:"
+            f"{decision['evidence_authority_rejection_reason']}"
+        )
     review_path.mkdir(parents=True, exist_ok=True)
     latest = review_path / LATEST_DECISION.name
     log = review_path / DECISION_LOG.name

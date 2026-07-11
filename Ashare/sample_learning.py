@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from Ashare.epoch_review import validate_review_epoch
+from Ashare.epoch_review import validate_review_authority
 from shared.execution.sim_account_epoch import read_epoch_state, require_authoritative_epoch_metadata
 from shared.review.sample_quality import classify_trade_sample
 from shared.runtime_test.ashare_no_trade_summary import NO_TRADE_LOG, summarize_no_trade_log
@@ -95,48 +95,23 @@ def _validated_review(
 ) -> tuple[dict[str, Any], str]:
     if not payload:
         return {}, "missing"
-    if int(epoch_fields["capital_epoch"]) <= 1 and "capital_epoch" not in payload:
-        return payload, ""
-    valid, reason = validate_review_epoch(
-        payload,
-        current_epoch_id=int(epoch_fields["capital_epoch"]),
-        current_cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
-    )
+    valid, reason = validate_review_authority(payload, epoch_fields)
     if not valid:
         return {}, reason
-    try:
-        payload_capital = float(payload["capital_cny"])
-    except (KeyError, TypeError, ValueError):
-        return {}, "missing_or_invalid_capital_cny"
-    if payload_capital != float(epoch_fields["capital_cny"]):
-        return {}, "capital_cny_mismatch"
-    if str(payload.get("epoch_cutover_timestamp") or "") != str(
-        epoch_fields["epoch_cutover_timestamp"]
-    ):
-        return {}, "epoch_cutover_timestamp_mismatch"
     return payload, ""
 
 
 def _current_epoch_trades(
     rows: list[dict[str, Any]],
     *,
-    current_epoch_id: int,
+    epoch_fields: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    if current_epoch_id <= 1:
-        return rows, {}
     accepted: list[dict[str, Any]] = []
     rejected: Counter[str] = Counter()
     for row in rows:
-        if "capital_epoch" not in row:
-            rejected["missing_capital_epoch"] += 1
-            continue
-        try:
-            row_epoch = int(row["capital_epoch"])
-        except (TypeError, ValueError):
-            rejected["invalid_capital_epoch"] += 1
-            continue
-        if row_epoch != current_epoch_id:
-            rejected["capital_epoch_mismatch"] += 1
+        valid, reason = validate_review_authority(row, epoch_fields)
+        if not valid:
+            rejected[reason] += 1
             continue
         accepted.append(row)
     return accepted, dict(rejected)
@@ -449,7 +424,7 @@ def build_sample_learning_report(
     epoch_fields = _epoch_fields(read_epoch_state())
     trades, trade_epoch_rejections = _current_epoch_trades(
         [row for row in _read_jsonl(trades_path) if _compact_date(row.get("trade_date") or row.get("created_at")) == target_date],
-        current_epoch_id=int(epoch_fields["capital_epoch"]),
+        epoch_fields=epoch_fields,
     )
     epoch_input_rejections: dict[str, Any] = {}
     forward_validation, forward_error = _validated_review(
