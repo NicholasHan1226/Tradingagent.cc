@@ -13,6 +13,7 @@
 - Current scope is simulated/shadow research only. `REAL_TRADING_ENABLED` remains false; no broker, CTP, SimNow, Hermes real-account click, automatic order, automatic cancel, credential read, or real-account mutation is permitted.
 - The system must not promise stable profit. It may report only observed net expectancy, realized PnL, drawdown, sample size, confidence interval, and readiness blockers.
 - A-share and CN-futures share one canonical initial equity of exactly `50_000.0 CNY` under capital epoch 2; they must not each receive an independent 50,000 CNY production budget.
+- A-share has exactly one authoritative server-local 50,000 CNY simulation execution account and ledger. Legacy aggressive/balanced/grid ledgers remain retired evidence; no style, challenger, experiment, or dashboard may mint a parallel 50k/100k/200k production account or add shadow capital to portfolio equity.
 - Initial simulation allocation policy is A-share deployable notional `30_000 CNY`, CN-futures margin `5_000 CNY`, and protected cash reserve `15_000 CNY`; realized PnL changes equity but does not silently change these policy ratios.
 - Existing A-share single-name hard limit remains `15%` of master equity. Budget application, lot rounding, replacement buys, and retries must never expand a risk-approved weight.
 - Futures quantity is zero when the minimum one-lot margin or modeled stop loss exceeds the style and master risk budget. `max(1, ...)` behavior is forbidden.
@@ -26,6 +27,11 @@
 - A-share exploration is simulation-only, limited to at most one new position per trading day, and must derive executable size from current master equity, the existing 15% single-name cap, available cash, remaining exploration exposure/loss budget, 100-share board lots, and modeled costs/slippage. Old probe budgets are not single-name allowances and must not be reused as such.
 - Every valid CN-futures session emits a replayable decision record. A contract may enter simulated execution only when its real minimum lot, margin, modeled stop loss, slippage, night-gap allowance, and losing-streak gates fit the master budget; otherwise it is labeled `counterfactual_only` rather than force-sized to one lot.
 - Evolution promotion standards are unchanged by exploration. No channel may expand risk without completed round trips, matured forward labels, sample-quality evidence, net expectancy after fees/slippage, calibration evidence, and controlled drawdown.
+- A-share style diversity exists only in prediction and immutable counterfactual shadow evidence. One portfolio arbiter owns conflict resolution, correlation, cash, risk, T+1, price-limit, liquidity, lot, and idempotency gates and may emit at most one real-specification simulated order for the same symbol and trade date.
+- Initial A-share hypotheses must be economically distinct, not threshold variants: trend/strength continuation, pullback or short-horizon reversal, event catalyst with price confirmation, and defensive/low-volatility abstention baseline. Existing strategy files are mapped into these families after audit; duplicate or unexplained styles remain shadow-paused.
+- Every selected fill carries `primary_style`, `supporting_styles`, `style_scores`, `style_versions`, and `decision_policy_version`. Unselected and disagreeing styles retain their predictions, thesis, abstain/reject reason, and forward labels so training is not conditioned only on executed samples.
+- Champion styles may receive normal simulation allocation; challengers remain shadow-only or exploration-only until out-of-sample, net-of-cost expectancy, drawdown, and calibration gates pass. Demotion/pause is append-only and never rewrites historical predictions or fills.
+- A style sample is `execution_eligible` only when real price provenance, modeled commission/tax/slippage, 100-share lot, T+1, price-limit state, liquidity, cash, and fill evidence are complete. Incomplete rows remain useful observation/counterfactual evidence but must never be counted as executable fills or promotion-grade round trips.
 - Every state-changing implementation step must be TDD-first, append-only where facts are involved, fail-closed, reversible, and committed separately. Do not push, deploy, modify cron, migrate production, or delete production files until the repository release gate and explicit production preflight pass.
 - Existing user-owned or concurrent changes must not be overwritten. Never use force-push, history rewrite, `git reset --hard`, or destructive checkout.
 
@@ -45,6 +51,10 @@
 - `shared/review/prediction_observations.py` — append-only pre-gate candidate snapshots and concrete no-trade reasons for all three sample intents.
 - `shared/review/forward_label_contract.py` — due-time scheduling and idempotent m30/m60/close/next-day/3d/5d labels independent of execution eligibility.
 - `Ashare/exploration_policy.py` — rank/quantile exploration selection and dynamically derived 50k-safe lot/cost/exposure budget.
+- `Ashare/style_hypotheses.py` — audit and normalize existing strategies into a small set of orthogonal, explainable hypothesis families.
+- `Ashare/style_shadow_ledger.py` — append-only per-style predictions, thesis, expected-return distribution, abstentions, disagreements, and forward-label links without virtual capital.
+- `Ashare/portfolio_arbiter.py` — one-account conflict/correlation/idempotency arbitration and immutable execution attribution.
+- `Ashare/style_promotion.py` — append-only champion/challenger promotion, demotion, and pause decisions under unchanged evidence gates.
 - `CNFutures/session_observations.py` — one decision/hold/rejection observation per valid futures session with executable versus counterfactual classification.
 - `shared/runtime_test/sample_flow_acceptance.py` — preopen/opening/ops proof that qualified candidates and due labels cannot silently return to zero.
 - `Ashare/epoch_review.py` — current-epoch validation and reversible stale-review reset/rebuild.
@@ -1329,7 +1339,200 @@ git commit -m "feat(review): record pre-gate predictions and forward labels"
 
 ---
 
-### Task 11: Add A-share Safe Exploration Without Relaxing Safety Gates
+### Task 11: Add Orthogonal A-share Style Shadows and One-Account Arbitration
+
+**Files:**
+- Create: `Ashare/style_hypotheses.py`
+- Create: `Ashare/style_shadow_ledger.py`
+- Create: `Ashare/portfolio_arbiter.py`
+- Create: `Ashare/style_promotion.py`
+- Modify: `shared/orchestrator.py`
+- Modify: `shared/execution/local_sim_ledger.py`
+- Modify: `Ashare/research_evidence.py`
+- Test: `tests/test_ashare_style_hypotheses.py`
+- Test: `tests/test_ashare_style_shadow_ledger.py`
+- Test: `tests/test_ashare_portfolio_arbiter.py`
+- Test: `tests/test_ashare_style_promotion.py`
+
+**Interfaces:**
+- `audit_style_hypotheses(strategy_configs) -> dict` maps existing configurations to a bounded family registry and rejects duplicate threshold-only families.
+- `record_style_predictions(path, *, candidate, predictions, decision_context) -> list[dict]` records every style's prediction without assigning capital.
+- `arbitrate_candidate(*, candidate, style_predictions, account, risk_context, policy) -> dict` emits zero or one order decision for the single account.
+- `evaluate_style_status(*, style_evidence, current_status, gates, as_of) -> dict` emits an append-only champion/challenger/pause decision.
+
+- [ ] **Step 1: Write failing orthogonality and no-virtual-capital tests**
+
+```python
+def test_initial_style_registry_contains_distinct_hypothesis_families():
+    result = audit_style_hypotheses(load_existing_ashare_strategy_configs())
+    assert set(result["active_families"]) == {
+        "trend_strength_continuation",
+        "pullback_short_reversal",
+        "event_catalyst_confirmation",
+        "defensive_low_vol_abstain",
+    }
+    assert result["independent_execution_accounts"] == 0
+    assert result["duplicate_threshold_variants"] == []
+
+
+def test_shadow_predictions_never_allocate_or_sum_capital(tmp_path):
+    rows = record_style_predictions(
+        tmp_path / "style_predictions.jsonl",
+        candidate={"symbol": "600000.SH", "prediction_ts": "2026-07-13T09:31:00+08:00"},
+        predictions=[
+            {"style": "trend_strength_continuation", "score": 0.66},
+            {"style": "pullback_short_reversal", "score": 0.31},
+        ],
+        decision_context={"master_equity": 50_000.0, "decision_policy_version": "arbiter-v1"},
+    )
+    assert len(rows) == 2
+    assert all("capital" not in row and "virtual_budget" not in row for row in rows)
+```
+
+- [ ] **Step 2: Run RED tests**
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
+  tests/test_ashare_style_hypotheses.py tests/test_ashare_style_shadow_ledger.py -q
+```
+
+Expected: FAIL because bounded hypothesis families and the capital-free shadow ledger do not exist.
+
+- [ ] **Step 3: Implement the audited family registry and full prediction contract**
+
+The registry must map the current strategy files by their actual entry logic, horizon, catalyst dependency, and risk thesis. A style is not independently active merely because it has a different score threshold or stop percentage. Each shadow row must contain:
+
+```python
+{
+    "style_prediction_id": str,
+    "observation_id": str,
+    "symbol": str,
+    "prediction_ts": str,
+    "style_family": str,
+    "style_version": str,
+    "entry_thesis": str,
+    "exit_thesis": str,
+    "holding_horizon": str,
+    "expected_return_distribution": {
+        "p10": float, "p50": float, "p90": float, "probability_positive": float
+    },
+    "requested_risk_budget": float,
+    "prediction": "long" | "abstain" | "reject",
+    "abstain_or_reject_reason": str | None,
+    "mg_enabled": bool,
+    "decision_policy_version": str,
+}
+```
+
+The ledger is append-only and idempotent by `(observation_id, style_family, style_version)`. It contains no equity, balance, or independently spendable budget field.
+
+- [ ] **Step 4: Write failing one-order arbitration and attribution tests**
+
+```python
+def test_conflicting_styles_produce_one_order_and_preserve_disagreement():
+    result = arbitrate_candidate(
+        candidate={"symbol": "600000.SH", "trade_date": "20260713"},
+        style_predictions=[
+            {"style_family": "trend_strength_continuation", "style_version": "v3", "score": 0.72, "prediction": "long"},
+            {"style_family": "pullback_short_reversal", "style_version": "v2", "score": 0.64, "prediction": "abstain"},
+        ],
+        account={"account_id": "ashare-sim-epoch-2", "equity": 50_000.0},
+        risk_context=all_safety_gates_pass(),
+        policy={"version": "arbiter-v1"},
+    )
+    assert len(result["orders"]) == 1
+    assert result["orders"][0]["primary_style"] == "trend_strength_continuation"
+    assert result["orders"][0]["supporting_styles"] == []
+    assert result["style_disagreement"] is True
+
+
+def test_same_symbol_same_day_is_idempotent_across_styles():
+    first = arbitrate_and_reserve(symbol="600000.SH", trade_date="20260713", styles=["trend_strength_continuation"])
+    retry = arbitrate_and_reserve(symbol="600000.SH", trade_date="20260713", styles=["event_catalyst_confirmation"])
+    assert first["order_id"] == retry["order_id"]
+    assert retry["new_orders_created"] == 0
+```
+
+- [ ] **Step 5: Implement the single-account arbiter and immutable fill attribution**
+
+The idempotency key is derived from `(capital_epoch, account_id, market, symbol, trade_date, side, decision_policy_version)`, never from style name. The arbiter first resolves style status, disagreement, correlation, and combined thesis, then invokes the existing immutable risk gates once. A fill/receipt must preserve:
+
+```python
+{
+    "primary_style": "trend_strength_continuation",
+    "supporting_styles": ["event_catalyst_confirmation"],
+    "style_scores": {
+        "trend_strength_continuation": 0.72,
+        "event_catalyst_confirmation": 0.67,
+        "pullback_short_reversal": 0.31,
+    },
+    "style_versions": {
+        "trend_strength_continuation": "v3",
+        "event_catalyst_confirmation": "v1",
+        "pullback_short_reversal": "v2",
+    },
+    "decision_policy_version": "arbiter-v1",
+}
+```
+
+Every unselected style prediction remains forward-label eligible. Style conflict is stored as a feature; it is not collapsed into the winning style.
+
+- [ ] **Step 6: Write failing champion/challenger tests**
+
+```python
+def test_challenger_cannot_receive_exploitation_weight_without_all_gates():
+    result = evaluate_style_status(
+        style_evidence={"oos_round_trips": 8, "net_expectancy": 12.0,
+                        "max_drawdown": -0.03, "calibration_error": 0.07},
+        current_status="challenger",
+        gates={"min_oos_round_trips": 10, "min_net_expectancy": 0.0,
+               "max_drawdown": -0.10, "max_calibration_error": 0.10},
+        as_of="2026-07-13T15:10:00+08:00",
+    )
+    assert result["next_status"] == "challenger"
+    assert result["execution_channel"] in {"shadow", "exploration"}
+
+
+def test_failed_champion_is_paused_without_rewriting_history():
+    result = evaluate_style_status(
+        style_evidence={"oos_round_trips": 20, "net_expectancy": -5.0,
+                        "max_drawdown": -0.12, "calibration_error": 0.14},
+        current_status="champion",
+        gates=promotion_gates(),
+        as_of="2026-07-13T15:10:00+08:00",
+    )
+    assert result["next_status"] == "paused"
+    assert result["history_action"] == "append"
+```
+
+- [ ] **Step 7: Implement append-only promotion and run GREEN regressions**
+
+Promotion requires all existing sample-quality gates plus out-of-sample completed round trips, net expectancy after fees/slippage, maximum drawdown, and calibration thresholds. Challengers may be shadow or exploration but never exploitation. Then run:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
+  tests/test_ashare_style_hypotheses.py tests/test_ashare_style_shadow_ledger.py \
+  tests/test_ashare_portfolio_arbiter.py tests/test_ashare_style_promotion.py \
+  tests/test_local_sim_ledger.py tests/test_ashare_research_evidence.py \
+  tests/test_sim_loop.py -q
+```
+
+Expected: PASS; all styles predict, only the arbiter can reserve one account order, fills retain full attribution, and no style creates capital.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add Ashare/style_hypotheses.py Ashare/style_shadow_ledger.py \
+  Ashare/portfolio_arbiter.py Ashare/style_promotion.py Ashare/research_evidence.py \
+  shared/orchestrator.py shared/execution/local_sim_ledger.py \
+  tests/test_ashare_style_hypotheses.py tests/test_ashare_style_shadow_ledger.py \
+  tests/test_ashare_portfolio_arbiter.py tests/test_ashare_style_promotion.py
+git commit -m "feat(ashare): add style shadows and one-account arbitration"
+```
+
+---
+
+### Task 12: Add A-share Safe Exploration Without Relaxing Safety Gates
 
 **Files:**
 - Create: `Ashare/exploration_policy.py`
@@ -1447,7 +1650,7 @@ git commit -m "feat(ashare): add risk-bounded exploration samples"
 
 ---
 
-### Task 12: Record Every CN-Futures Session and Separate Executable From Counterfactual
+### Task 13: Record Every CN-Futures Session and Separate Executable From Counterfactual
 
 **Files:**
 - Create: `CNFutures/session_observations.py`
@@ -1534,7 +1737,7 @@ git commit -m "feat(cnfutures): preserve session counterfactual samples"
 
 ---
 
-### Task 13: Prove Sample Flow at Preopen, Opening, and Review
+### Task 14: Prove Sample Flow at Preopen, Opening, and Review
 
 **Files:**
 - Create: `shared/runtime_test/sample_flow_acceptance.py`
@@ -1567,6 +1770,18 @@ def test_review_separates_intents_and_reports_gate_distribution():
     assert metrics["counts"] == {"observe": 1, "exploration": 1, "exploitation": 1}
     assert metrics["gate_distribution"] == {"score": 1}
     assert metrics["exploration"]["net_pnl"] == -5.0
+
+
+def test_style_dashboard_does_not_sum_shadow_capital():
+    report = summarize_style_evidence(
+        master_account={"equity": 50_000.0, "risk_used": 1_200.0},
+        style_rows=[
+            {"style_family": "trend_strength_continuation", "sample_type": "prediction"},
+            {"style_family": "pullback_short_reversal", "sample_type": "counterfactual"},
+        ],
+    )
+    assert report["master_account"]["equity"] == 50_000.0
+    assert all("equity" not in row for row in report["styles"])
 ```
 
 - [ ] **Step 2: Run RED tests**
@@ -1590,6 +1805,18 @@ The acceptance payload must contain:
     "labels_due": int,
     "labels_written": int,
     "channel_counts": dict,
+    "sample_type_counts": {
+        "observation_counterfactual": int,
+        "exploration_fills": int,
+        "exploitation_fills": int,
+        "completed_round_trips": int,
+        "exit_stop_samples": int,
+        "safety_risk_rejections": int,
+        "chain_validation": int,
+    },
+    "style_metrics": dict,
+    "master_account_equity": 50_000.0,
+    "master_account_total_risk": float,
     "completed_round_trips": int,
     "exploration_zero_reason": str | None,
     "futures_session_expected": int,
@@ -1605,7 +1832,7 @@ Zero exploration passes only when there are no data-qualified candidates or at l
 
 - [ ] **Step 4: Extend daily and weekly evidence metrics**
 
-For each intent report new samples, matured labels, completed round trips, wins, losses, win rate, average win, average loss, expectancy, fees, slippage, net PnL, maximum drawdown, calibration error, and gate distribution. Never combine exploration and exploitation expectancy into the promotion metric.
+For each intent and each active/shadow style family report candidates, predictions, exploration fills, exploitation fills, completed round trips, exit/stop samples, safety/risk rejections, chain-validation samples, matured `m30/m60/close/next_day/d3/d5` labels, wins, losses, win rate, average win, average loss, expectancy, fees, slippage, net PnL, maximum drawdown, calibration error, and rejection distribution. Never combine exploration and exploitation expectancy into the promotion metric. Style rows contain attribution metrics only; portfolio equity, cash, exposure, and risk appear once under `master_account` and must never be summed from styles.
 
 - [ ] **Step 5: Register preopen/opening/ops checks and run GREEN**
 
@@ -1631,7 +1858,7 @@ git commit -m "feat(acceptance): prevent silent zero-sample regressions"
 
 ---
 
-### Task 14: Consolidate Canonical Documentation and Retire the Old System Safely
+### Task 15: Consolidate Canonical Documentation and Retire the Old System Safely
 
 **Files:**
 - Create: `docs/architecture.md`
@@ -1780,7 +2007,7 @@ git commit -m "docs: consolidate capital growth architecture and retire legacy p
 
 ---
 
-### Task 15: Add Unified Acceptance and Release Gates
+### Task 16: Add Unified Acceptance and Release Gates
 
 **Files:**
 - Create: `shared/runtime_test/capital_growth_acceptance.py`
@@ -1888,7 +2115,7 @@ git commit -m "test: add 50k capital growth acceptance gate"
 
 ---
 
-### Task 16: Production Read-Only Re-Gate and Controlled Handoff
+### Task 17: Production Read-Only Re-Gate and Controlled Handoff
 
 **Files:**
 - Modify only if evidence changes: `STATUS.md`
@@ -1970,11 +2197,12 @@ No “all objectives achieved,” “stable profit,” or “no residual risk”
 - MarketGraph matched A/B evidence is Task 8.
 - KPI/evidence promotion gates are Task 9.
 - Pre-gate observe/counterfactual snapshots and execution-independent forward labels are Task 10.
-- A-share rank-based, dynamically sized, safety-gated exploration is Task 11.
-- CN-futures valid-session decisions and executable/counterfactual separation are Task 12.
-- Preopen/opening/ops no-silent-zero acceptance and channel-separated review metrics are Task 13.
-- Canonical documentation and safe legacy retirement are Task 14.
-- Unified local/production read-only verification is Tasks 15–16.
+- Orthogonal A-share style shadows, one-account arbitration, attribution, and champion/challenger are Task 11.
+- A-share rank-based, dynamically sized, safety-gated exploration is Task 12.
+- CN-futures valid-session decisions and executable/counterfactual separation are Task 13.
+- Preopen/opening/ops no-silent-zero acceptance and channel/style-separated review metrics are Task 14.
+- Canonical documentation and safe legacy retirement are Task 15.
+- Unified local/production read-only verification is Tasks 16–17.
 - Real-money automation remains explicitly outside scope in every relevant task.
 
 ### Known dependencies and limits
@@ -1987,5 +2215,5 @@ No “all objectives achieved,” “stable profit,” or “no residual risk”
 ### Placeholder and type consistency review
 
 - The plan contains no unresolved implementation placeholders.
-- `capital_epoch`, `master_capital_event_id`, `observation_id`, `sample_intent`, `execution_class`, `research_mode`, `net_expectancy`, and `closed_round_trip_count` use the same names across writers, reviews, gates, and acceptance.
+- `capital_epoch`, `master_capital_event_id`, `observation_id`, `style_prediction_id`, `primary_style`, `supporting_styles`, `sample_intent`, `execution_class`, `research_mode`, `net_expectancy`, and `closed_round_trip_count` use the same names across writers, reviews, gates, and acceptance.
 - Every deletion is preceded by an active dependency scan and preserves immutable financial audit evidence.
