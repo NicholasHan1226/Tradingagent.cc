@@ -24,7 +24,7 @@ The terminal operations layer adds a six-market tape and evidence-health block b
 
 The evidence-adaptive layer adds four explicit runtime states: `live`, `idle`, `stale` and `degraded`. Top navigation, market header, page metrics and inspectors consume one heartbeat model, so a healthy scheduler with no pending process reads `调度正常 · 当前空闲` instead of claiming automation is running. Internal values such as `buy`, `sell`, `empty` and raw source codes are translated before rendering.
 
-The market-causal layer adds sourced representative-instrument pulse, persistent opportunity context and local terminal controls. Market pulse is read through the TradingAgent snapshot API from SharedSignals only; unavailable values remain `—`. Selecting an opportunity cycle writes the explicit `opportunityId` into the URL, highlights the cycle and filters its event stream while preserving the context across all secondary pages. `Cmd/Ctrl+K` opens the terminal command palette; density and table-column preferences remain browser-local.
+The market-causal layer adds sourced representative-instrument pulse, persistent opportunity context and local terminal controls. Market pulse is read through the TradingAgent snapshot API from SharedSignals only; its coverage line distinguishes sourced, unmapped, unavailable and degraded markets instead of filling the tape with assumed instruments. Selecting an opportunity cycle writes the explicit `opportunityId` into the URL, highlights the cycle and filters its event stream while preserving the context across all secondary pages. The linked strip may show signals, holdings and PnL only when their explicit opportunity IDs match; no same-symbol attribution is inferred. `Cmd/Ctrl+K` opens the terminal command palette; density and table-column preferences remain browser-local.
 
 ## Shared page anatomy
 
@@ -80,6 +80,6 @@ Secondary pages do not use `PageSummaryBoard`. Empty running state reveals recen
 - `src/components/workbench/`: overview workbench and result-tab selection.
 - `src/pages/ThemePage.tsx`: composition for the five secondary pages.
 - `src/App.css`: terminal tokens, canvas, grid and dense table rules.
-- `src/api/` and `src/server/`: backward-compatible read-only snapshot contract with optional sourced `marketPulses[]`; missing or degraded upstream evidence stays absent rather than becoming synthetic chart movement.
+- `src/api/` and `src/server/`: backward-compatible read-only snapshot contract with optional sourced `marketPulses[]` and `marketPulseCoverage`; missing or degraded upstream evidence stays absent rather than becoming synthetic chart movement.
 
 The implementation is accepted only after unit/component tests, lint, frontend/API builds, real-browser desktop checks, no-horizontal-overflow checks and a reference/implementation visual comparison all pass.

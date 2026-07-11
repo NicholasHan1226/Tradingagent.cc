@@ -1654,6 +1654,30 @@ describe('TradingAgent snapshot reader', () => {
     expect(sameOpportunityEvents).toContainEqual(expect.objectContaining({ source: 'sim_ledger', stage: '结果', status: '成交', terminal: true }))
   })
 
+  it('preserves explicit position opportunity and PnL fields for read-only attribution', async () => {
+    const root = await createWorkspace()
+    await writeFile(
+      join(root, 'TradingAgent/signals/positions/ashare.json'),
+      JSON.stringify([{
+        ts_code: '600519.SH',
+        quantity: 1,
+        market_value: 1500,
+        realized_pnl: 40,
+        unrealized_pnl: 12,
+        opportunity_id: 'opp-ashare-001',
+      }]),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({ workspaceRoot: root, signalQueueDir: join(root, 'signals'), now: new Date('2026-07-11T04:00:00.000Z') })
+
+    expect(snapshot.holdings).toContainEqual(expect.objectContaining({
+      symbol: '600519.SH',
+      opportunityId: 'opp-ashare-001',
+      realizedPnl: 40,
+      unrealizedPnl: 12,
+    }))
+  })
+
   it('merges signal queue rows with non-A-share simulated ledger rows', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')

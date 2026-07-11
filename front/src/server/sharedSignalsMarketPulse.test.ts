@@ -28,7 +28,7 @@ describe('SharedSignals market pulse reader', () => {
       return new Response(JSON.stringify({ data: rows, metadata: { degraded: false }, source: 'sqlite:market_bars_intraday' }), { status: 200 })
     })
 
-    const pulses = await readSharedSignalsMarketPulses({
+    const result = await readSharedSignalsMarketPulses({
       baseUrl: 'http://127.0.0.1:8082',
       fetchImpl,
       holdings: [holding('A-share', '600519.SH')],
@@ -39,17 +39,21 @@ describe('SharedSignals market pulse reader', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(String(fetchImpl.mock.calls[0][0])).toContain('/realtime_5min?market=Ashare&ts_code=600519.SH&limit=24')
     expect(String(fetchImpl.mock.calls[1][0])).toContain('/realtime_5min?market=Futures&ts_code=RB2609.SHF&limit=24')
-    expect(pulses[0]).toMatchObject({ market: 'A-share', symbol: '600519.SH', lastPrice: 1424.1, changePct: 1, high: 1430, low: 1400, volume: 2000, freshness: 'live' })
-    expect(pulses[0].points).toEqual([1410, 1424.1])
-    expect(pulses[0].source).toContain('market_bars_intraday')
+    expect(result.pulses[0]).toMatchObject({ market: 'A-share', symbol: '600519.SH', lastPrice: 1424.1, changePct: 1, high: 1430, low: 1400, volume: 2000, freshness: 'live' })
+    expect(result.pulses[0].points).toEqual([1410, 1424.1])
+    expect(result.pulses[0].source).toContain('market_bars_intraday')
   })
 
   it('reuses the short cache and degrades without inventing rows', async () => {
     const fetchImpl = vi.fn(async () => { throw new Error('unavailable') })
     const input = { baseUrl: 'http://127.0.0.1:8082', fetchImpl, holdings: [holding('A-share', '000001.SZ')], signals: [] }
 
-    expect(await readSharedSignalsMarketPulses(input)).toEqual([])
-    expect(await readSharedSignalsMarketPulses(input)).toEqual([])
+    const first = await readSharedSignalsMarketPulses(input)
+    const second = await readSharedSignalsMarketPulses(input)
+    expect(first.pulses).toEqual([])
+    expect(first.coverage.cacheState).toBe('fresh')
+    expect(second.pulses).toEqual([])
+    expect(second.coverage.cacheState).toBe('cached')
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
@@ -62,7 +66,7 @@ describe('SharedSignals market pulse reader', () => {
       metadata: { degraded: false },
     }), { status: 200 }))
 
-    const [pulse] = await readSharedSignalsMarketPulses({
+    const { pulses: [pulse] } = await readSharedSignalsMarketPulses({
       baseUrl: 'http://127.0.0.1:8082',
       fetchImpl,
       holdings: [holding('A-share', '600519.SH')],
@@ -80,7 +84,7 @@ describe('SharedSignals market pulse reader', () => {
       metadata: { degraded: false },
     }), { status: 200 }))
 
-    const [pulse] = await readSharedSignalsMarketPulses({
+    const { pulses: [pulse] } = await readSharedSignalsMarketPulses({
       baseUrl: 'http://127.0.0.1:8082',
       fetchImpl,
       holdings: [holding('US', 'AAPL')],
@@ -108,7 +112,7 @@ describe('SharedSignals market pulse reader', () => {
       metadata: { degraded: false },
     }), { status: 200 }))
 
-    const [pulse] = await readSharedSignalsMarketPulses({
+    const { pulses: [pulse] } = await readSharedSignalsMarketPulses({
       baseUrl: 'http://127.0.0.1:8082',
       fetchImpl,
       holdings: [],
@@ -119,5 +123,37 @@ describe('SharedSignals market pulse reader', () => {
     expect(pulse.points).toEqual([0.25, 0.2])
     expect(pulse.lastPrice).toBe(0.2)
     expect(pulse.updatedAt).toBe('2026-07-11T05:00:00+00:00')
+  })
+
+  it('reports sourced, unavailable, degraded and unmapped market coverage without guessing identifiers', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes('/crypto')) throw new Error('upstream unavailable')
+      if (url.includes('/pm_prices')) return new Response(JSON.stringify({ data: [], metadata: { degraded: true } }), { status: 200 })
+      return new Response(JSON.stringify({
+        data: [{ close: 1424.1, bar_time: '2026-07-11T09:35:00+08:00' }],
+        metadata: { degraded: false },
+        source: 'tushare_rt_min',
+      }), { status: 200 })
+    })
+
+    const result = await readSharedSignalsMarketPulses({
+      baseUrl: 'http://127.0.0.1:8082',
+      fetchImpl,
+      holdings: [holding('A-share', '600519.SH')],
+      signals: [signal('Crypto', 'BTCUSDT'), signal('PM', 'market-123')],
+      now: new Date('2026-07-11T09:40:00+08:00'),
+    })
+
+    expect(result.pulses).toHaveLength(1)
+    expect(result.coverage.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ market: 'A-share', symbol: '600519.SH', status: 'sourced' }),
+      expect.objectContaining({ market: 'Crypto', symbol: 'BTCUSDT', status: 'unavailable' }),
+      expect.objectContaining({ market: 'PM', symbol: 'market-123', status: 'degraded' }),
+      expect.objectContaining({ market: 'US', status: 'no_representative' }),
+      expect.objectContaining({ market: 'HK', status: 'no_representative' }),
+      expect.objectContaining({ market: 'CNFutures', status: 'no_representative' }),
+    ]))
+    expect(result.coverage).toMatchObject({ cacheState: 'fresh', sourcedCount: 1, requestedCount: 3 })
   })
 })

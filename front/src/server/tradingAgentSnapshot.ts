@@ -28,6 +28,11 @@ type PositionRow = {
   unrealized_pnl?: number
   entry_date?: string
   thesis?: string
+  opportunity_id?: string | number
+  opportunityId?: string | number
+  signal_id?: string | number
+  trace_id?: string | number
+  order_id?: string | number
 }
 
 type PositionPlanFile = {
@@ -43,6 +48,11 @@ type CNFuturesPositionRow = {
   margin_required?: number
   realized_pnl?: number
   unrealized_pnl?: number
+  opportunity_id?: string | number
+  opportunityId?: string | number
+  signal_id?: string | number
+  trace_id?: string | number
+  order_id?: string | number
 }
 
 type CNFuturesPositionsFile = {
@@ -55,6 +65,12 @@ type SimLedgerPosition = {
   outcome?: string
   quantity?: number
   realized_pnl?: number
+  unrealized_pnl?: number
+  opportunity_id?: string | number
+  opportunityId?: string | number
+  signal_id?: string | number
+  trace_id?: string | number
+  order_id?: string | number
 }
 
 type SimLedgerPositionsFile = {
@@ -539,7 +555,7 @@ export async function readTradingAgentSnapshot({
     cnFuturesReplayEvidence,
     now,
   })
-  const marketPulses = await readSharedSignalsMarketPulses({
+  const marketPulseRead = await readSharedSignalsMarketPulses({
     baseUrl: process.env.SHAREDSIGNALS_API_URL,
     holdings: fallbackHoldings,
     signals,
@@ -573,7 +589,8 @@ export async function readTradingAgentSnapshot({
     signals,
     funnelEvents,
     marketSummaries,
-    marketPulses,
+    marketPulses: marketPulseRead.pulses,
+    marketPulseCoverage: marketPulseRead.coverage,
     ashareResearchEvidence,
     ashareForwardValidation,
     ashareTierSummaries,
@@ -2227,21 +2244,25 @@ function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, mar
   const market = normalizeMarket(marketHint, symbol)
   const cost = toCny(Number(position.avg_cost ?? 0) * Number(position.quantity ?? 0), market)
   const realizedPnl = toCny(position.realized_pnl ?? 0, market)
+  const unrealizedPnl = position.unrealized_pnl === undefined ? undefined : toCny(position.unrealized_pnl, market)
   const averagePrice = toCny(Number(position.avg_cost ?? 0), market)
 
   return {
     symbol: normalizeSymbol(symbol, market),
     name: normalizeSymbol(symbol, market),
     market,
+    opportunityId: explicitOpportunityId(position),
     weight: formatCost(cost),
-    pnl: formatCurrency(realizedPnl),
+    pnl: formatCurrency(realizedPnl + (unrealizedPnl ?? 0)),
     risk: position.quantity > 0 ? '正常' : '观察',
     role: `${formatStrategyName(strategy)} 持仓`,
     quantity: Number(position.quantity),
     averagePrice,
     costBasis: cost,
     marketValue: cost,
-    dayPnl: realizedPnl,
+    dayPnl: realizedPnl + (unrealizedPnl ?? 0),
+    realizedPnl,
+    unrealizedPnl,
     currency: 'CNY',
     source: 'sim_ledger',
   }
@@ -2279,6 +2300,7 @@ function parseCNFuturesPositionRow(row: CNFuturesPositionRow): HoldingRow | null
     symbol,
     name: symbol,
     market: 'CNFutures',
+    opportunityId: explicitOpportunityId(row),
     weight: margin === undefined ? `${qty} 手` : formatCurrency(margin),
     pnl: formatCurrency(realized + unrealized),
     risk: qty > 0 ? '正常' : '观察',
@@ -2289,6 +2311,8 @@ function parseCNFuturesPositionRow(row: CNFuturesPositionRow): HoldingRow | null
     costBasis: parseFiniteNumber(row.avg_price) === undefined ? undefined : Math.abs(qty) * Number(row.avg_price),
     marketValue: margin,
     dayPnl: realized + unrealized,
+    realizedPnl: realized,
+    unrealizedPnl: unrealized,
     currency: 'CNY',
     source: 'position_snapshot',
   }
@@ -2312,6 +2336,7 @@ function parsePositionRow(row: unknown, source: HoldingRow['source'] = 'position
     symbol,
     name: symbol,
     market,
+    opportunityId: explicitOpportunityId(position),
     weight: formatMarketCost(marketValue ?? runningCost ?? quantity, market),
     pnl: formatMarketCurrency(pnl, market),
     risk: '正常',
@@ -2322,10 +2347,16 @@ function parsePositionRow(row: unknown, source: HoldingRow['source'] = 'position
     costBasis: runningCost,
     marketValue,
     dayPnl: pnl,
+    realizedPnl,
+    unrealizedPnl,
     currency: 'CNY',
     updatedAt: position.entry_date,
     source,
   }
+}
+
+function explicitOpportunityId(row: { opportunity_id?: string | number; opportunityId?: string | number; signal_id?: string | number; trace_id?: string | number; order_id?: string | number }) {
+  return firstString(row.opportunity_id, row.opportunityId, row.signal_id, row.trace_id, row.order_id)
 }
 
 async function readSimLedgerSignals(root: string, now: Date): Promise<SignalRow[]> {

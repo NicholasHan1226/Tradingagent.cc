@@ -672,6 +672,10 @@ button:not(:disabled) {
 .evidence-health-domains .warning { color: var(--state-amber); }
 .evidence-health-domains .negative { color: var(--state-red); }
 .evidence-health small { grid-column: 1 / -1; overflow: hidden; color: var(--text-faint); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.evidence-health .market-pulse-health { color: var(--text-faint); font-family: var(--font-number); }
+.evidence-health .market-pulse-health.positive { color: var(--fresh-live); }
+.evidence-health .market-pulse-health.warning { color: var(--state-amber); }
+.evidence-health .market-pulse-health.negative { color: var(--state-red); }
 
 .market-tape + .workspace { height: calc(100vh - 252px); }
 
@@ -692,10 +696,12 @@ button:not(:disabled) {
 .linked-evidence-main strong { color: var(--text-primary); font: 680 12px/1 var(--font-number); }
 .linked-evidence-main em { color: var(--text-muted); font-size: 10px; font-style: normal; }
 .linked-evidence-main small { overflow: hidden; color: var(--text-faint); font: 10px/1 var(--font-number); text-overflow: ellipsis; white-space: nowrap; }
-.linked-evidence-context dl { min-width: 0; display: grid; grid-template-columns: repeat(5, minmax(80px, 1fr)); margin: 0; }
+.linked-evidence-context dl { min-width: 0; display: grid; grid-template-columns: repeat(7, minmax(72px, 1fr)); margin: 0; overflow: hidden; }
 .linked-evidence-context dl div { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 12px; border-right: 1px solid var(--border-hairline); }
 .linked-evidence-context dt { color: var(--text-faint); font-size: 9px; }
 .linked-evidence-context dd { overflow: hidden; margin: 0; color: var(--text-secondary); font: 600 10px/1 var(--font-number); text-overflow: ellipsis; white-space: nowrap; }
+.linked-evidence-context dd.positive { color: var(--market-up); }
+.linked-evidence-context dd.negative { color: var(--market-down); }
 .linked-evidence-clear { display: grid; place-items: center; color: var(--text-muted); background: transparent; }
 .linked-evidence-clear:hover { color: var(--text-primary); background: var(--surface-hover); }
 .has-linked-context .workspace { height: calc(100vh - 294px); }

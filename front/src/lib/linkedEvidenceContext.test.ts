@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { FunnelEvent } from '../types/dashboard'
+import type { FunnelEvent, HoldingRow, SignalRow } from '../types/dashboard'
 import { createLinkedEvidenceContext, filterEventsByOpportunity } from './linkedEvidenceContext'
 
 const events: FunnelEvent[] = [
@@ -17,5 +17,18 @@ describe('linked evidence context', () => {
   it('filters the raw event stream by explicit opportunity id', () => {
     expect(filterEventsByOpportunity(events, 'opp-1').map((event) => event.id)).toEqual(['a', 'b'])
     expect(filterEventsByOpportunity(events, null)).toEqual(events)
+  })
+
+  it('attributes signals, holdings and PnL only through the same explicit opportunity id', () => {
+    const signals: SignalRow[] = [
+      { market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-1', method: '候选', status: 'executed', impact: '—', confidence: '—', age: '1m', reason: '—', next: '—', steps: 5 },
+      { market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-2', method: '候选', status: 'executed', impact: '—', confidence: '—', age: '1m', reason: '—', next: '—', steps: 5 },
+    ]
+    const holdings: HoldingRow[] = [
+      { market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-1', weight: '¥1,000', pnl: '+¥10', realizedPnl: 12.5, unrealizedPnl: -2.5, risk: '正常', role: '模拟盘持仓' },
+      { market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-2', weight: '¥1,000', pnl: '+¥99', realizedPnl: 99, risk: '正常', role: '模拟盘持仓' },
+    ]
+
+    expect(createLinkedEvidenceContext(events, 'opp-1', signals, holdings)).toEqual(expect.objectContaining({ signalCount: 1, holdingCount: 1, attributablePnl: 10 }))
   })
 })

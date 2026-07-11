@@ -88,6 +88,23 @@ export type MarketPulse = {
   source: string
 }
 
+export type MarketPulseCoverageStatus = 'sourced' | 'no_representative' | 'unavailable' | 'degraded'
+
+export type MarketPulseCoverageEntry = {
+  market: Exclude<Market, 'All Markets'>
+  symbol?: string
+  status: MarketPulseCoverageStatus
+}
+
+export type MarketPulseCoverage = {
+  cacheState: 'fresh' | 'cached'
+  entries: MarketPulseCoverageEntry[]
+  fetchedAt: string
+  requestedCount: number
+  sourcedCount: number
+  sourceLatencyMs: number
+}
+
 export type CNFuturesReplayEvidence = {
   generatedAt: string
   date: string
@@ -234,6 +251,7 @@ export type HoldingRow = {
   symbol: string
   name: string
   market: Market
+  opportunityId?: string
   weight: string
   pnl: string
   risk: '正常' | '观察' | '偏高'
@@ -244,6 +262,8 @@ export type HoldingRow = {
   costBasis?: number
   marketValue?: number
   dayPnl?: number
+  realizedPnl?: number
+  unrealizedPnl?: number
   currency?: 'CNY' | 'USD'
   updatedAt?: string
   source?: 'sim_ledger' | 'position_snapshot' | 'legacy_position_ledger'

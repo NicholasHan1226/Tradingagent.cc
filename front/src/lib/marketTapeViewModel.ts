@@ -1,5 +1,5 @@
 import { marketLabels, markets } from '../data/dashboard'
-import type { Market, MarketPulse, MarketSummary } from '../types/dashboard'
+import type { Market, MarketPulse, MarketPulseCoverage, MarketSummary } from '../types/dashboard'
 import type { DashboardState, DataDomain, DomainStatus } from '../types/status'
 
 export type MarketTapeRow = {
@@ -26,6 +26,12 @@ export type EvidenceHealthModel = {
   snapshotLabel: string
   sourceLabel: string
   items: Array<{ domain: DataDomain; label: string; state: string; tone: 'positive' | 'warning' | 'negative' | 'muted' }>
+}
+
+export type MarketPulseHealthModel = {
+  headline: string
+  detail: string
+  tone: 'positive' | 'warning' | 'negative' | 'muted'
 }
 
 const DOMAIN_LABELS: Record<DataDomain, string> = { performance: '收益', signals: '信号', holdings: '持仓', decisions: '复盘', risk: '风险' }
@@ -71,6 +77,28 @@ export function createEvidenceHealth(domains: DashboardState['domains'], generat
   })
   const overall = items.some((item) => item.tone === 'negative') ? 'negative' : items.some((item) => item.tone === 'warning') ? 'warning' : 'positive'
   return { overall, snapshotLabel: snapshotTime(generatedAt), sourceLabel: marketSummary?.source ?? '只读快照', items }
+}
+
+export function createMarketPulseHealth(coverage?: MarketPulseCoverage): MarketPulseHealthModel | undefined {
+  if (!coverage) return undefined
+  const unmapped = coverage.entries.filter((entry) => entry.status === 'no_representative').length
+  const unavailable = coverage.entries.filter((entry) => entry.status === 'unavailable').length
+  const degraded = coverage.entries.filter((entry) => entry.status === 'degraded').length
+  const detail = [
+    unmapped ? `${unmapped} 市场待映射` : undefined,
+    unavailable ? `${unavailable} 请求不可用` : undefined,
+    degraded ? `${degraded} 源已降级` : undefined,
+    coverage.cacheState === 'cached' ? '已缓存' : '实时读取',
+    `${coverage.sourceLatencyMs}ms`,
+  ].filter((value): value is string => Boolean(value)).join(' · ')
+  const tone = coverage.sourcedCount === coverage.requestedCount && !unavailable && !degraded
+    ? 'positive'
+    : coverage.sourcedCount > 0 || unmapped > 0
+      ? 'warning'
+      : coverage.requestedCount > 0
+        ? 'negative'
+        : 'muted'
+  return { headline: `${coverage.sourcedCount}/${coverage.requestedCount} 已取到`, detail, tone }
 }
 
 function createAllMarketsRow(summaries: MarketSummary[], activeMarket: Market, generatedAt: string | null): MarketTapeRow {

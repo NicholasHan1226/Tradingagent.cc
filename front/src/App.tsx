@@ -13,7 +13,7 @@ import { getLivePerformanceData, getSelectedMarketSummary, getVisibleHoldings, g
 import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, getSnapshotSignals, hasSnapshotRows } from './lib/dashboardSnapshot'
 import { createAutomationObservatoryViewModel } from './lib/automationObservatoryViewModel'
 import { createWorkbenchViewModel } from './lib/workbenchViewModel'
-import { createEvidenceHealth, createMarketTapeRows } from './lib/marketTapeViewModel'
+import { createEvidenceHealth, createMarketPulseHealth, createMarketTapeRows } from './lib/marketTapeViewModel'
 import { createRuntimeHeartbeat } from './lib/runtimeHeartbeat'
 import { createLinkedEvidenceContext } from './lib/linkedEvidenceContext'
 import { readTerminalPreferences, writeTerminalPreferences, type TerminalDensity } from './lib/terminalPreferences'
@@ -26,7 +26,7 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
-const DASHBOARD_BUILD_ID = '20260711-market-causal-terminal'
+const DASHBOARD_BUILD_ID = '20260711-market-evidence-attribution'
 
 function App() {
   const demoPreviewEnabled = isDemoPreviewEnabled()
@@ -148,6 +148,7 @@ function App() {
   const handleRetry = () => setDashboardState(toDashboardState(mockDashboardApiResponse(demoPreviewEnabled ? 'ready' : 'loading')))
   const selectAccountMode = (mode: AccountMode) => setAccountMode(mode)
   const marketTapeRows = useMemo(() => createMarketTapeRows(marketSummaries, activeMarket, readModelSnapshot?.generatedAt ?? null, readModelSnapshot?.marketPulses ?? []), [activeMarket, marketSummaries, readModelSnapshot?.generatedAt, readModelSnapshot?.marketPulses])
+  const marketPulseHealth = useMemo(() => createMarketPulseHealth(readModelSnapshot?.marketPulseCoverage), [readModelSnapshot?.marketPulseCoverage])
   const evidenceHealth = useMemo(() => createEvidenceHealth(dashboardState.domains, readModelSnapshot?.generatedAt ?? null, selectedMarketSummary), [dashboardState.domains, readModelSnapshot?.generatedAt, selectedMarketSummary])
   const heartbeat = useMemo(() => createRuntimeHeartbeat({
     domains: dashboardState.domains,
@@ -157,7 +158,7 @@ function App() {
     now,
     signals: visibleSignals,
   }), [dashboardState.domains, isUsingDemoSnapshot, now, readModelSnapshot?.generatedAt, selectedMarketSummary, visibleFunnelEvents, visibleSignals])
-  const linkedContext = useMemo(() => createLinkedEvidenceContext(funnelEvents, selectedOpportunityId), [funnelEvents, selectedOpportunityId])
+  const linkedContext = useMemo(() => createLinkedEvidenceContext(funnelEvents, selectedOpportunityId, signalRows, holdingRows), [funnelEvents, holdingRows, selectedOpportunityId, signalRows])
   const terminalCommands = useMemo<TerminalCommand[]>(() => [
     ...pages.map((page, index) => ({ id: `page:${page}`, label: `打开${page}终端`, group: '页面', hint: `Alt+${index + 1}`, keywords: page })),
     ...markets.map((market) => ({ id: `market:${market}`, label: `切换到${market === 'All Markets' ? '全市场' : market}`, group: '市场', keywords: market })),
@@ -208,7 +209,7 @@ function App() {
         setActiveMarket={setActiveMarket}
         targetReturn={visiblePortfolio?.targetPct ?? latestPoint.target}
       />
-      <MarketTape evidence={evidenceHealth} onSelect={setActiveMarket} rows={marketTapeRows} />
+      <MarketTape evidence={evidenceHealth} onSelect={setActiveMarket} pulseHealth={marketPulseHealth} rows={marketTapeRows} />
       {linkedContext && <LinkedEvidenceContext model={linkedContext} onClear={() => setSelectedOpportunityId(null)} onOpenProcess={() => setActivePage('过程')} />}
 
       <section className="workspace">

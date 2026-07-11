@@ -46,7 +46,7 @@ TradingAgent signals / positions / review / risk
 - 持仓为空时不保留大空表，改为显示当前敞口、可用资金、最近关闭结果和快照时间；没有来源的字段保持 `—`。
 - 过程页优先按 `opportunityId` 聚合真实事件为机会周期，明确展示五阶段完成/缺失情况；原始事件账本保留在下方供审计。内部 `buy/sell/empty` 和来源代码不会直接展示给用户。
 
-本阶段只验收 1280×720 与 1440×900 桌面视口。移动端导航、触控和手机布局明确延期；快照 API 只增加可选 `marketPulses[]`，现有字段保持向后兼容。
+本阶段只验收 1280×720 与 1440×900 桌面视口。移动端导航、触控和手机布局明确延期；快照 API 可选增加 `marketPulses[]` 与 `marketPulseCoverage`，现有字段保持向后兼容。
 
 六个页面统一使用连续终端语言：二级页面由紧凑指标条、主数据面、316px 只读检查器和可选底部账本构成；不再使用大号摘要卡或浮动 SaaS 卡片。内容边界如下：
 
@@ -70,7 +70,7 @@ TradingAgent signals / positions / review / risk
 - 读取入口：`GET /api/trading-agent/snapshot`。
 - 浏览器客户端：`src/api/tradingAgentIntegration.ts`。
 - TradingAgent 读取器：`src/server/tradingAgentSnapshot.ts`。
-- SharedSignals 市场脉冲读取器：`src/server/sharedSignalsMarketPulse.ts`。它只从 `SHAREDSIGNALS_API_URL` 读取持仓/信号涉及的有限代表标的，单请求 900ms 超时并使用 15 秒进程内缓存；不直接调用 provider，不写 SharedSignals，也不让上游不可用拖垮快照。
+- SharedSignals 市场脉冲读取器：`src/server/sharedSignalsMarketPulse.ts`。它只从 `SHAREDSIGNALS_API_URL` 读取持仓/信号涉及的有限代表标的，单请求 900ms 超时并使用 15 秒进程内缓存；`marketPulseCoverage` 会说明每个市场是已取到、无代表映射、不可用还是降级。它不直接调用 provider，不写 SharedSignals，也不让上游不可用拖垮快照。
 - 真实数据适配：`src/api/tradingAgentReadModel.ts` 和
   `src/adapters/tradingAgentReadModel.ts`。
 - 本地演示数据：`src/data/dashboard.ts`，只在本地开发或显式开启 `VITE_TRADING_AGENT_DEMO_PREVIEW=1` 时用于开发预览；生产接口不可用时必须展示等待/不可用状态，不得回退到样例收益、机会或持仓。如果接口可用但某个领域返回空数组，前端必须展示真实空状态。
@@ -86,7 +86,7 @@ TradingAgent signals / positions / review / risk
 - `../shared/review/ashare/research_evidence_latest.json`
 - `../shared/review/attribution/*.jsonl`
 - `../shared/risk/risk_limits.yaml`
-- `SHAREDSIGNALS_API_URL` 暴露的只读 HTTP read model，用于可选 `marketPulses[]`。A股/CNFutures 使用 5 分钟接口，US/HK 使用日线接口，Crypto 使用 `/crypto`；PM 只采用明确的 canonical YES outcome，无法识别 outcome 时保持空值。
+- `SHAREDSIGNALS_API_URL` 暴露的只读 HTTP read model，用于可选 `marketPulses[]` 与 `marketPulseCoverage`。A股/CNFutures 使用 5 分钟接口，US/HK 使用日线接口，Crypto 使用 `/crypto`；PM 只采用明确的 canonical YES outcome，无法识别 outcome 时保持空值。
 
 不得执行：
 
@@ -193,8 +193,8 @@ npm run build:api
 - 实盘只保留未来接入口；未验证账户授权前，前端不得展示为已接入。
 - 首页顶部和收益主面板必须使用同一 `portfolio` 视图口径：全市场看聚合组合，A股看 A股模拟账户，其它市场看该市场摘要。不要再次拆成“模拟盘收益”和“现在收益”两个数字。
 - 首页右轨只展示过程、阶段、状态、证据、更新时间和简短结果说明，不展示人工建议、内部错误码或调试文案。
-- 市场状态带会从当前持仓或信号中为每个市场选择一个代表标的，并由只读 snapshot API 通过 `SHAREDSIGNALS_API_URL` 查询 SharedSignals。只展示真实返回的价格、短走势、区间、成交量和新鲜度；无代表标的、读取超时、上游降级或字段缺失时保持 `—`/“暂无代表行情”，不得生成样例价格。请求限制为每个代表标的最多 24 个点、900ms 超时和 15 秒进程缓存。
-- 过程页选择机会周期后，URL 增加 `opportunity=<opportunityId>`，周期行进入选中态，原始事件账本只展示该机会的显式事件；关联条在其它页面继续显示标的、阶段、结果、完整度和更新时间。清除关联只改变浏览器展示状态。
+- 市场状态带会从当前持仓或信号中为每个市场选择一个代表标的，并由只读 snapshot API 通过 `SHAREDSIGNALS_API_URL` 查询 SharedSignals。只展示真实返回的价格、短走势、区间、成交量和新鲜度；无代表标的、读取超时、上游降级或字段缺失时保持 `—`/“暂无代表行情”，不得生成样例价格。`marketPulseCoverage` 明确展示已取到、待映射、不可用和降级范围。请求限制为每个代表标的最多 24 个点、900ms 超时和 15 秒进程缓存。
+- 过程页选择机会周期后，URL 增加 `opportunity=<opportunityId>`，周期行进入选中态，原始事件账本只展示该机会的显式事件；关联条在其它页面继续显示标的、阶段、结果、完整度、关联信号/持仓与可归因盈亏。后两项只接受相同的显式 `opportunityId`，无匹配持仓时保持 `—`。清除关联只改变浏览器展示状态。
 - `Cmd/Ctrl+K` 打开桌面终端命令面板，可切换页面、市场和信息密度、清除关联机会。密度与各账本列显示写入版本化浏览器本地偏好，不写服务器、不修改 snapshot。
 
 ## 用户可见文案规范

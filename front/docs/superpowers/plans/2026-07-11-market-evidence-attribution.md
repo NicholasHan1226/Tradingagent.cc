@@ -31,10 +31,10 @@
 - `readSharedSignalsMarketPulses(...)` returns `{ pulses, coverage }`.
 - `coverage.entries` has all six markets and only uses symbols found in holdings/signals.
 
-- [ ] Write failing tests for no-representative, unavailable, degraded, sourced, and cached coverage states.
-- [ ] Run `npm test -- --run src/server/sharedSignalsMarketPulse.test.ts` and confirm failure because coverage is absent.
-- [ ] Implement the typed result, bounded status collection, cache provenance, and optional snapshot field.
-- [ ] Re-run the focused reader and snapshot tests.
+- [x] Write failing tests for no-representative, unavailable, degraded, sourced, and cached coverage states.
+- [x] Run `npm test -- --run src/server/sharedSignalsMarketPulse.test.ts` and confirm failure because coverage is absent.
+- [x] Implement the typed result, bounded status collection, cache provenance, and optional snapshot field.
+- [x] Re-run the focused reader and snapshot tests.
 
 ### Task 2: Explicit PnL attribution
 
@@ -49,10 +49,10 @@
 - `HoldingRow` can carry explicit `opportunityId`, `realizedPnl`, and `unrealizedPnl`.
 - `createLinkedEvidenceContext(events, opportunityId, signals, holdings)` reports explicit-only signal/holding/PnL facts.
 
-- [ ] Write failing parser and view-model tests for equal-ID attribution and mismatched-symbol non-attribution.
-- [ ] Run the focused tests and confirm failure because position metadata is discarded.
-- [ ] Preserve explicit source fields and calculate only linked PnL facts.
-- [ ] Re-run the focused tests.
+- [x] Write failing parser and view-model tests for equal-ID attribution and mismatched-symbol non-attribution.
+- [x] Run the focused tests and confirm failure because position metadata is discarded.
+- [x] Preserve explicit source fields and calculate only linked PnL facts.
+- [x] Re-run the focused tests.
 
 ### Task 3: Terminal evidence surfaces and documentation
 
@@ -73,7 +73,7 @@
 - `createMarketPulseHealth` converts coverage to compact diagnostic copy.
 - `MarketTape` accepts optional health; `LinkedEvidenceContext` renders attribution facts from its model.
 
-- [ ] Write failing view/component tests for coverage copy and honest empty attribution.
-- [ ] Run focused UI tests and confirm failure because the new evidence is not rendered.
-- [ ] Implement compact terminal composition and document contract boundaries.
+- [x] Write failing view/component tests for coverage copy and honest empty attribution.
+- [x] Run focused UI tests and confirm failure because the new evidence is not rendered.
+- [x] Implement compact terminal composition and document contract boundaries.
 - [ ] Run lint, all tests, both builds, desktop visual QA, release preflight, review diff, commit, push, deploy, and verify local/main/production-source/runtime/public layers separately.

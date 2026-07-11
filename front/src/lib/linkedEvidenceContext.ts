@@ -1,5 +1,5 @@
 import { marketLabels } from '../data/dashboard'
-import type { FunnelEvent } from '../types/dashboard'
+import type { FunnelEvent, HoldingRow, SignalRow } from '../types/dashboard'
 
 const STAGES: FunnelEvent['stage'][] = ['发现', '研判', '风控', '待确认', '结果']
 
@@ -11,16 +11,24 @@ export type LinkedEvidenceContextModel = {
   result: string
   evidence: string
   eventCount: number
+  signalCount: number
+  holdingCount: number
+  attributablePnl?: number
   updatedAt: string
 }
 
-export function createLinkedEvidenceContext(events: FunnelEvent[], opportunityId: string | null): LinkedEvidenceContextModel | null {
+export function createLinkedEvidenceContext(events: FunnelEvent[], opportunityId: string | null, signals: SignalRow[] = [], holdings: HoldingRow[] = []): LinkedEvidenceContextModel | null {
   if (!opportunityId) return null
   const related = filterEventsByOpportunity(events, opportunityId)
   if (!related.length) return null
   const ordered = [...related].sort((left, right) => eventTime(left) - eventTime(right) || (left.sequence ?? 0) - (right.sequence ?? 0))
   const latest = ordered[ordered.length - 1]
   const stages = new Set(ordered.map((event) => event.stage))
+  const relatedSignals = signals.filter((signal) => signal.opportunityId === opportunityId)
+  const relatedHoldings = holdings.filter((holding) => holding.opportunityId === opportunityId)
+  const pnlValues = relatedHoldings
+    .map((holding) => holding.realizedPnl === undefined && holding.unrealizedPnl === undefined ? undefined : (holding.realizedPnl ?? 0) + (holding.unrealizedPnl ?? 0))
+    .filter((value): value is number => value !== undefined)
   return {
     id: opportunityId,
     symbol: latest.symbol,
@@ -29,6 +37,9 @@ export function createLinkedEvidenceContext(events: FunnelEvent[], opportunityId
     result: latest.label || latest.status,
     evidence: `${STAGES.filter((stage) => stages.has(stage)).length}/5 阶段`,
     eventCount: ordered.length,
+    signalCount: relatedSignals.length,
+    holdingCount: relatedHoldings.length,
+    attributablePnl: pnlValues.length ? roundMoney(pnlValues.reduce((total, value) => total + value, 0)) : undefined,
     updatedAt: formatTimestamp(latest.at),
   }
 }
@@ -50,3 +61,5 @@ function formatTimestamp(value?: string) {
   if (Number.isNaN(date.getTime())) return '—'
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }).format(date)
 }
+
+function roundMoney(value: number) { return Math.round(value * 100) / 100 }

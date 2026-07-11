@@ -1,4 +1,4 @@
-import type { HoldingRow, Market, MarketPulse, SignalRow } from '../types/dashboard.ts'
+import type { HoldingRow, Market, MarketPulse, MarketPulseCoverage, MarketPulseCoverageEntry, SignalRow } from '../types/dashboard.ts'
 
 type PulseReaderOptions = {
   baseUrl?: string
@@ -10,7 +10,8 @@ type PulseReaderOptions = {
 
 type ApiPayload = { data?: unknown[]; metadata?: { degraded?: boolean }; source?: string }
 type RawRow = Record<string, unknown>
-type CacheEntry = { expiresAt: number; value: MarketPulse[] }
+type MarketPulseReadResult = { pulses: MarketPulse[]; coverage: MarketPulseCoverage }
+type CacheEntry = { expiresAt: number; value: MarketPulseReadResult }
 
 const CACHE_TTL_MS = 15_000
 const REQUEST_TIMEOUT_MS = 900
@@ -18,9 +19,9 @@ const MAX_POINTS = 24
 const cache = new Map<string, CacheEntry>()
 const MARKET_ORDER: Array<Exclude<Market, 'All Markets'>> = ['A-share', 'US', 'Crypto', 'HK', 'PM', 'CNFutures']
 
-export async function readSharedSignalsMarketPulses({ baseUrl, holdings, signals, fetchImpl = fetch, now = new Date() }: PulseReaderOptions): Promise<MarketPulse[]> {
+export async function readSharedSignalsMarketPulses({ baseUrl, holdings, signals, fetchImpl = fetch, now = new Date() }: PulseReaderOptions): Promise<MarketPulseReadResult> {
   const normalizedBase = baseUrl?.trim().replace(/\/$/, '')
-  if (!normalizedBase) return []
+  if (!normalizedBase) return emptyResult(now)
   const representatives = selectRepresentatives(holdings, signals)
   const requests = MARKET_ORDER.flatMap((market) => {
     const symbol = representatives.get(market)
@@ -28,19 +29,43 @@ export async function readSharedSignalsMarketPulses({ baseUrl, holdings, signals
   })
   const key = `${normalizedBase}|${requests.map((item) => `${item.market}:${item.symbol}`).join('|')}`
   const cached = cache.get(key)
-  if (cached && cached.expiresAt > now.getTime()) return cached.value
+  if (cached && cached.expiresAt > now.getTime()) {
+    return { ...cached.value, coverage: { ...cached.value.coverage, cacheState: 'cached' } }
+  }
 
+  const startedAt = Date.now()
   const settled = await Promise.all(requests.map(async (request) => {
     try {
       const response = await fetchImpl(request.url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
-      if (!response.ok) return null
+      if (!response.ok) return { market: request.market, symbol: request.symbol, status: 'unavailable' as const }
       const payload = await response.json() as ApiPayload
-      return normalizePulse(request.market, request.symbol, payload, now)
+      if (payload.metadata?.degraded) return { market: request.market, symbol: request.symbol, status: 'degraded' as const }
+      const pulse = normalizePulse(request.market, request.symbol, payload, now)
+      return pulse
+        ? { market: request.market, symbol: request.symbol, status: 'sourced' as const, pulse }
+        : { market: request.market, symbol: request.symbol, status: 'unavailable' as const }
     } catch {
-      return null
+      return { market: request.market, symbol: request.symbol, status: 'unavailable' as const }
     }
   }))
-  const value = settled.filter((item): item is MarketPulse => item !== null)
+  const statusByMarket = new Map(settled.map((item) => [item.market, item]))
+  const entries: MarketPulseCoverageEntry[] = MARKET_ORDER.map((market) => {
+    const symbol = representatives.get(market)
+    if (!symbol) return { market, status: 'no_representative' }
+    const outcome = statusByMarket.get(market)
+    return { market, symbol, status: outcome?.status ?? 'unavailable' }
+  })
+  const value: MarketPulseReadResult = {
+    pulses: settled.flatMap((item) => item.pulse ? [item.pulse] : []),
+    coverage: {
+      cacheState: 'fresh',
+      entries,
+      fetchedAt: now.toISOString(),
+      requestedCount: requests.length,
+      sourcedCount: entries.filter((entry) => entry.status === 'sourced').length,
+      sourceLatencyMs: Date.now() - startedAt,
+    },
+  }
   cache.set(key, { expiresAt: now.getTime() + CACHE_TTL_MS, value })
   return value
 }
@@ -57,6 +82,20 @@ function selectRepresentatives(holdings: HoldingRow[], signals: SignalRow[]) {
     if (symbol) selected.set(item.market, symbol)
   }
   return selected
+}
+
+function emptyResult(now: Date): MarketPulseReadResult {
+  return {
+    pulses: [],
+    coverage: {
+      cacheState: 'fresh',
+      entries: MARKET_ORDER.map((market) => ({ market, status: 'no_representative' })),
+      fetchedAt: now.toISOString(),
+      requestedCount: 0,
+      sourcedCount: 0,
+      sourceLatencyMs: 0,
+    },
+  }
 }
 
 function pulseUrl(baseUrl: string, market: Exclude<Market, 'All Markets'>, symbol: string) {

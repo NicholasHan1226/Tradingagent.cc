@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { MarketPulse, MarketSummary } from '../types/dashboard'
+import type { MarketPulse, MarketPulseCoverage, MarketSummary } from '../types/dashboard'
 import type { DashboardState } from '../types/status'
-import { createEvidenceHealth, createMarketTapeRows } from './marketTapeViewModel'
+import { createEvidenceHealth, createMarketPulseHealth, createMarketTapeRows } from './marketTapeViewModel'
 
 const summaries: MarketSummary[] = [
   { market: 'A-share', status: 'ready', runtimeState: 'normal', holdingCount: 2, signalCount: 1, tradeCount: 3, styleCount: 1, capitalBase: 50000, pnlAmount: 600, returnPct: 1.2, latestAt: '2026-07-11T04:00:00Z', source: 'ashare ledger', headline: '正常', detail: '已更新' },
@@ -17,6 +17,14 @@ const domains: DashboardState['domains'] = {
 }
 
 const pulses: MarketPulse[] = [{ market: 'A-share', symbol: '600519.SH', lastPrice: 1424.1, changePct: 1, high: 1430, low: 1400, volume: 2000, updatedAt: '2026-07-11T04:00:00Z', freshness: 'live', points: [1410, 1414, 1424.1], source: 'SharedSignals' }]
+const pulseCoverage: MarketPulseCoverage = {
+  cacheState: 'cached', fetchedAt: '2026-07-11T04:00:00Z', requestedCount: 2, sourcedCount: 1, sourceLatencyMs: 18,
+  entries: [
+    { market: 'A-share', symbol: '600519.SH', status: 'sourced' },
+    { market: 'Crypto', symbol: 'BTCUSDT', status: 'unavailable' },
+    { market: 'US', status: 'no_representative' }, { market: 'HK', status: 'no_representative' }, { market: 'PM', status: 'no_representative' }, { market: 'CNFutures', status: 'no_representative' },
+  ],
+}
 
 describe('market tape view model', () => {
   it('creates selected market rows with return, holdings and runtime truth', () => {
@@ -49,5 +57,13 @@ describe('market tape view model', () => {
     expect(health.items.find((item) => item.domain === 'signals')).toEqual(expect.objectContaining({ label: '信号', state: '快照滞后', tone: 'warning' }))
     expect(health.items.find((item) => item.domain === 'performance')).toEqual(expect.objectContaining({ state: '正常', tone: 'positive' }))
     expect(health.sourceLabel).toBe('ashare ledger')
+  })
+
+  it('summarizes pulse coverage instead of pretending unmapped markets have prices', () => {
+    expect(createMarketPulseHealth(pulseCoverage)).toEqual(expect.objectContaining({
+      headline: '1/2 已取到',
+      detail: expect.stringContaining('4 市场待映射'),
+      tone: 'warning',
+    }))
   })
 })

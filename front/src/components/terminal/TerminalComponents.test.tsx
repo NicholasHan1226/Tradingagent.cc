@@ -8,6 +8,7 @@ import { ProcessCycleLedger } from './ProcessCycleLedger'
 import { RiskLedger } from './RiskLedger'
 import { TerminalPageShell } from './TerminalPageShell'
 import { MarketTape } from './MarketTape'
+import { LinkedEvidenceContext } from './LinkedEvidenceContext'
 
 const processRow: ProcessBookRow = {
   symbol: '600030.SH',
@@ -54,7 +55,7 @@ const riskRow: RiskLedgerRow = {
 
 describe('terminal components', () => {
   it('renders a sourced market price pulse and truthful missing state', () => {
-    render(<MarketTape evidence={{ overall: 'positive', snapshotLabel: '13:20', sourceLabel: 'SharedSignals', items: [] }} onSelect={() => undefined} rows={[
+    render(<MarketTape evidence={{ overall: 'positive', snapshotLabel: '13:20', sourceLabel: 'SharedSignals', items: [] }} pulseHealth={{ headline: '1/2 已取到', detail: '4 市场待映射 · 已缓存 · 18ms', tone: 'warning' }} onSelect={() => undefined} rows={[
       { market: 'A-share', label: 'A股', selected: true, returnLabel: '+1.20%', holdingsLabel: '2 持仓', runtimeLabel: '正常', freshnessLabel: '13:20', tone: 'positive', pulse: { symbol: '600519.SH', priceLabel: '1,424.10', changeLabel: '+1.00%', detailLabel: 'H 1,430.00 · L 1,400.00', freshness: 'live', points: [1410, 1414, 1424.1] } },
       { market: 'US', label: '美股', selected: false, returnLabel: '—', holdingsLabel: '0 持仓', runtimeLabel: '等待数据', freshnessLabel: '13:20', tone: 'muted' },
     ]} />)
@@ -63,6 +64,16 @@ describe('terminal components', () => {
     expect(screen.getByText('1,424.10')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: '600519.SH 价格走势，3 个真实数据点' })).toBeInTheDocument()
     expect(screen.getByText('暂无代表行情')).toBeInTheDocument()
+    expect(screen.getByLabelText('行情读模型')).toHaveTextContent('1/2 已取到')
+  })
+
+  it('renders explicit-only opportunity attribution and keeps missing PnL honest', () => {
+    render(<LinkedEvidenceContext model={{ id: 'opp-1', symbol: '600519.SH', market: 'A股', stage: '结果', result: '结果写回', evidence: '2/5 阶段', eventCount: 2, signalCount: 1, holdingCount: 0, updatedAt: '07/11 13:10' }} onClear={() => undefined} onOpenProcess={() => undefined} />)
+
+    expect(screen.getByText('关联信号')).toBeInTheDocument()
+    expect(screen.getByText('关联持仓')).toBeInTheDocument()
+    expect(screen.getByText('可归因盈亏')).toBeInTheDocument()
+    expect(screen.getByText('—')).toBeInTheDocument()
   })
   it('renders one continuous terminal shell with metrics and ledger', () => {
     render(
