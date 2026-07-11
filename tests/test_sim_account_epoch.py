@@ -76,6 +76,11 @@ class SimAccountEpochTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, reason):
                     require_authoritative_epoch_metadata(state)
 
+        with self.assertRaisesRegex(ValueError, "invalid_current_epoch_id"):
+            require_authoritative_epoch_metadata(
+                {**valid, "current_epoch_id": 1, "capital_cny": 200_000.0}
+            )
+
         self.assertEqual(
             require_authoritative_epoch_metadata(valid),
             {

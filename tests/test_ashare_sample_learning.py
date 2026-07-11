@@ -23,11 +23,25 @@ EPOCH_STATE = {
 
 
 class AshareSampleLearningTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.epoch_patch = patch(
+            "Ashare.sample_learning.read_epoch_state", return_value=EPOCH_STATE
+        )
+        self.epoch_patch.start()
+        self.addCleanup(self.epoch_patch.stop)
+
     def _write_json(self, path: Path, payload: dict) -> None:
+        payload.setdefault("capital_epoch", 2)
+        payload.setdefault("capital_cny", 50_000.0)
+        payload.setdefault("epoch_cutover_timestamp", EPOCH_STATE["cutover_timestamp"])
+        payload.setdefault("generated_at", "2026-07-11T03:00:00+00:00")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     def _write_jsonl(self, path: Path, rows: list[dict]) -> None:
+        for row in rows:
+            if row.get("trade_id"):
+                row.setdefault("capital_epoch", 2)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
 

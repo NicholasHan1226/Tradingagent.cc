@@ -108,9 +108,14 @@ def _is_epoch_tagged(path: Path) -> bool:
 
 
 def _bootstrap_payload(epoch_state: dict[str, Any]) -> dict[str, Any]:
-    epoch_id = int(epoch_state["current_epoch_id"])
-    capital = float(epoch_state["capital_cny"])
-    cutover = str(epoch_state["cutover_timestamp"])
+    # Local import avoids the cutover module's deliberate lazy import of this
+    # reset planner while keeping every derived writer on one validation path.
+    from shared.execution.sim_account_epoch import require_authoritative_epoch_metadata
+
+    metadata = require_authoritative_epoch_metadata(epoch_state)
+    epoch_id = int(metadata["capital_epoch"])
+    capital = float(metadata["capital_cny"])
+    cutover = str(metadata["cutover_timestamp"])
     return {
         "generated_at": cutover,
         "epoch_cutover_timestamp": cutover,

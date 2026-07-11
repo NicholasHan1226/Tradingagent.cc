@@ -11,7 +11,7 @@ from typing import Any
 
 from shared.data.reader import TradingagentDataReader
 from shared.execution import local_sim_ledger
-from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
+from shared.execution.sim_account_epoch import read_epoch_state, require_authoritative_epoch_metadata
 from shared.review.sample_quality import classify_trade_sample
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,13 +52,11 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
-    epoch_id = int(epoch_state.get("current_epoch_id") or 1)
+    metadata = require_authoritative_epoch_metadata(epoch_state)
     return {
-        "capital_epoch": epoch_id,
-        "capital_cny": float(epoch_state.get("capital_cny") or epoch_capital_cny(epoch_id)),
-        "epoch_cutover_timestamp": str(
-            epoch_state.get("cutover_timestamp") or epoch_state.get("activated_at") or ""
-        ),
+        "capital_epoch": int(metadata["capital_epoch"]),
+        "capital_cny": float(metadata["capital_cny"]),
+        "epoch_cutover_timestamp": str(metadata["cutover_timestamp"]),
     }
 
 

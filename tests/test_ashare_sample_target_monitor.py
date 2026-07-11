@@ -22,12 +22,23 @@ EPOCH_STATE = {
 
 
 class AshareSampleTargetMonitorTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.epoch_patch = patch(
+            "Ashare.sample_target_monitor.read_epoch_state", return_value=EPOCH_STATE
+        )
+        self.epoch_patch.start()
+        self.addCleanup(self.epoch_patch.stop)
+
     def _review_dir(self, tmp: str) -> Path:
         path = Path(tmp) / "review" / "ashare"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
     def _write_json(self, path: Path, payload: dict) -> None:
+        payload.setdefault("capital_epoch", 2)
+        payload.setdefault("capital_cny", 50_000.0)
+        payload.setdefault("epoch_cutover_timestamp", EPOCH_STATE["cutover_timestamp"])
+        payload.setdefault("generated_at", "2026-07-11T03:00:00+00:00")
         path.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
 
     def test_marks_pass_when_daily_strategy_sample_target_is_met(self) -> None:

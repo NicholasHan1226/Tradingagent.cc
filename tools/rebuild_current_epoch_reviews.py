@@ -15,7 +15,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from Ashare.epoch_review import apply_epoch_reset_plan, build_epoch_reset_plan
-from shared.execution.sim_account_epoch import epoch_capital_cny, get_epoch, read_epoch_state
+from shared.execution.sim_account_epoch import (
+    get_epoch,
+    read_epoch_state,
+    require_authoritative_epoch_metadata,
+)
 
 
 DEFAULT_REVIEW_DIR = ROOT / "shared" / "review" / "ashare"
@@ -46,15 +50,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     state = read_epoch_state()
-    current_epoch = int(state.get("current_epoch_id") or 1)
-    if current_epoch <= 1 or not state.get("cutover_timestamp"):
+    try:
+        metadata = require_authoritative_epoch_metadata(state)
+    except ValueError as exc:
         report = {
             "status": "error",
-            "reason": "capital_cutover_not_active",
-            "current_epoch_id": current_epoch,
+            "reason": str(exc),
         }
         print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=True))
         return 2
+    current_epoch = int(metadata["capital_epoch"])
 
     archive_dir = args.archive_dir or _default_archive_dir(state)
     custom_paths = args.review_dir != DEFAULT_REVIEW_DIR or args.archive_dir is not None
@@ -69,8 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     epoch_state = {
         **state,
         "current_epoch_id": current_epoch,
-        "capital_cny": float(state.get("capital_cny") or epoch_capital_cny(current_epoch)),
-        "cutover_timestamp": str(state["cutover_timestamp"]),
+        "capital_cny": float(metadata["capital_cny"]),
+        "cutover_timestamp": str(metadata["cutover_timestamp"]),
         "allowed_root": str(allowed_root),
     }
     plan = build_epoch_reset_plan(args.review_dir, archive_dir, epoch_state)

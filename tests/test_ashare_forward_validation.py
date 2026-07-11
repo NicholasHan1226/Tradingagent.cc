@@ -4,8 +4,15 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from Ashare import forward_validation
+
+EPOCH_STATE = {
+    "current_epoch_id": 2,
+    "capital_cny": 50_000.0,
+    "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+}
 
 
 class FakeAshareReader:
@@ -42,19 +49,21 @@ class AshareForwardValidationTest(unittest.TestCase):
                         "execution_source": "ashare_candidate_layer",
                         "fill_price_source": "market_snapshot",
                         "trade_timestamp_bj": "2026-07-06T10:00:00+08:00",
+                        "capital_epoch": 2,
                     }
                 )
                 + "\n",
                 encoding="utf-8",
             )
 
-            report = forward_validation.build_forward_validation_report(
-                date="20260706",
-                reader=FakeAshareReader(),
-                local_trades_path=trades,
-                output=None,
-                history=None,
-            )
+            with patch("Ashare.forward_validation.read_epoch_state", return_value=EPOCH_STATE):
+                report = forward_validation.build_forward_validation_report(
+                    date="20260706",
+                    reader=FakeAshareReader(),
+                    local_trades_path=trades,
+                    output=None,
+                    history=None,
+                )
 
         self.assertTrue(report["read_only"])
         self.assertFalse(report["real_trading_enabled"])

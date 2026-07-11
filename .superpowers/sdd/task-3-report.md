@@ -75,3 +75,19 @@
 - A-share simulated execution regression: `15 passed in 155.47s`.
 - `git diff --check`: passed.
 - `py_compile` for all seven changed Python source/test files: passed.
+
+## Derived-writer authoritative metadata follow-up
+
+- Tightened the shared `require_authoritative_epoch_metadata()` boundary to accept only the active production epoch 2 triple: `current_epoch_id=2`, `capital_cny=50000`, and a non-empty timezone-aware `cutover_timestamp`.
+- Removed `epoch_capital_cny()`, `activated_at`, and empty-string fallbacks from portfolio evolution, forward validation, sample learning, sample target monitoring, and formal-close derived writers.
+- The epoch reset planner and rebuild CLI now use the same validator. Invalid metadata is rejected before archive planning or apply.
+- Portfolio, learning, and monitor writers validate before creating their output directory. Every affected writer preserves an existing latest file byte-for-byte and creates no log/history file when metadata is missing, legacy, naive, or capital-inconsistent.
+- Existing writer tests now inject explicit epoch-2 state and tag current-path trade fixtures explicitly; they no longer depend on the missing-state epoch-1 compatibility fallback.
+
+### Follow-up TDD and verification
+
+- RED: the first 21-case entry matrix produced `18 failed, 3 passed`; only the already-hardened evolution-decision writer rejected invalid metadata before this change.
+- GREEN: the expanded matrix covers missing epoch id, missing capital, missing cutover, legacy epoch 1, naive cutover time, and wrong capital across portfolio/evolution/forward/learning/monitor/formal-close/rebuild entries.
+- Final Task 3 plus derived-writer and local-ledger regression: `150 passed in 60.75s`.
+- `git diff --check`: passed.
+- `py_compile` for all changed Task 3 source and test files: passed.

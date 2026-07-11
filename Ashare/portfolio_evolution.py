@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from Ashare.epoch_review import validate_review_epoch
-from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
+from shared.execution.sim_account_epoch import read_epoch_state, require_authoritative_epoch_metadata
 from shared.review.pnl_summary import load_mark_prices_for_positions
 from shared.review.pnl_summary import sim_ledger_pnl_summary
 from shared.review.sample_quality import evolution_eligible_trades, strategy_valid_trades, summarize_sample_quality
@@ -59,13 +59,11 @@ def _display_path(path: Path) -> str:
 
 
 def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
-    epoch_id = int(epoch_state.get("current_epoch_id") or 1)
+    metadata = require_authoritative_epoch_metadata(epoch_state)
     return {
-        "capital_epoch": epoch_id,
-        "capital_cny": float(epoch_state.get("capital_cny") or epoch_capital_cny(epoch_id)),
-        "epoch_cutover_timestamp": str(
-            epoch_state.get("cutover_timestamp") or epoch_state.get("activated_at") or ""
-        ),
+        "capital_epoch": int(metadata["capital_epoch"]),
+        "capital_cny": float(metadata["capital_cny"]),
+        "epoch_cutover_timestamp": str(metadata["cutover_timestamp"]),
     }
 
 
@@ -404,9 +402,9 @@ def write_portfolio_evolution(
     min_samples: int = 5,
 ) -> dict[str, Any]:
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
-    review_path.mkdir(parents=True, exist_ok=True)
     from Ashare.tier_experiments import write_tier_ledgers
     epoch_fields = _epoch_fields(read_epoch_state())
+    review_path.mkdir(parents=True, exist_ok=True)
 
     if mark_prices:
         refresh_result: dict[str, Any] = {

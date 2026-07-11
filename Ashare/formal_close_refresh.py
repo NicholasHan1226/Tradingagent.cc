@@ -14,7 +14,7 @@ from Ashare.epoch_review import validate_review_epoch
 from Ashare.portfolio_evolution import write_portfolio_evolution
 from shared.data.reader import TradingagentDataReader
 from shared.execution import local_sim_ledger
-from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
+from shared.execution.sim_account_epoch import read_epoch_state, require_authoritative_epoch_metadata
 from shared.review.daily_review import run_daily_review
 
 
@@ -37,13 +37,11 @@ def _safe_float(value: Any) -> float:
 
 
 def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
-    epoch_id = int(epoch_state.get("current_epoch_id") or 1)
+    metadata = require_authoritative_epoch_metadata(epoch_state)
     return {
-        "capital_epoch": epoch_id,
-        "capital_cny": float(epoch_state.get("capital_cny") or epoch_capital_cny(epoch_id)),
-        "epoch_cutover_timestamp": str(
-            epoch_state.get("cutover_timestamp") or epoch_state.get("activated_at") or ""
-        ),
+        "capital_epoch": int(metadata["capital_epoch"]),
+        "capital_cny": float(metadata["capital_cny"]),
+        "epoch_cutover_timestamp": str(metadata["cutover_timestamp"]),
     }
 
 

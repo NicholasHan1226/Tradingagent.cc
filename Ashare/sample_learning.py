@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from Ashare.epoch_review import validate_review_epoch
-from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
+from shared.execution.sim_account_epoch import read_epoch_state, require_authoritative_epoch_metadata
 from shared.review.sample_quality import classify_trade_sample
 from shared.runtime_test.ashare_no_trade_summary import NO_TRADE_LOG, summarize_no_trade_log
 from shared.markets.sim_capital import default_sim_capital
@@ -80,13 +80,11 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
-    epoch_id = int(epoch_state.get("current_epoch_id") or 1)
+    metadata = require_authoritative_epoch_metadata(epoch_state)
     return {
-        "capital_epoch": epoch_id,
-        "capital_cny": float(epoch_state.get("capital_cny") or epoch_capital_cny(epoch_id)),
-        "epoch_cutover_timestamp": str(
-            epoch_state.get("cutover_timestamp") or epoch_state.get("activated_at") or ""
-        ),
+        "capital_epoch": int(metadata["capital_epoch"]),
+        "capital_cny": float(metadata["capital_cny"]),
+        "epoch_cutover_timestamp": str(metadata["cutover_timestamp"]),
     }
 
 
@@ -517,7 +515,6 @@ def write_sample_learning_report(
     min_factor_samples: int = 10,
 ) -> dict[str, Any]:
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
-    review_path.mkdir(parents=True, exist_ok=True)
     report = build_sample_learning_report(
         trade_date=trade_date,
         review_dir=review_path,
@@ -525,6 +522,7 @@ def write_sample_learning_report(
         no_trade_log_path=no_trade_log_path,
         min_factor_samples=min_factor_samples,
     )
+    review_path.mkdir(parents=True, exist_ok=True)
     latest = review_path / LATEST_PATH.name
     log = review_path / LOG_PATH.name
     latest.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")

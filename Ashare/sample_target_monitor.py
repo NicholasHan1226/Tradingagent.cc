@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from Ashare.epoch_review import validate_review_epoch
-from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
+from shared.execution.sim_account_epoch import read_epoch_state, require_authoritative_epoch_metadata
 from shared.runtime_test.ashare_no_trade_summary import NO_TRADE_LOG, summarize_no_trade_log
 
 
@@ -42,13 +42,11 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
-    epoch_id = int(epoch_state.get("current_epoch_id") or 1)
+    metadata = require_authoritative_epoch_metadata(epoch_state)
     return {
-        "capital_epoch": epoch_id,
-        "capital_cny": float(epoch_state.get("capital_cny") or epoch_capital_cny(epoch_id)),
-        "epoch_cutover_timestamp": str(
-            epoch_state.get("cutover_timestamp") or epoch_state.get("activated_at") or ""
-        ),
+        "capital_epoch": int(metadata["capital_epoch"]),
+        "capital_cny": float(metadata["capital_cny"]),
+        "epoch_cutover_timestamp": str(metadata["cutover_timestamp"]),
     }
 
 
@@ -270,13 +268,13 @@ def write_sample_target_monitor(
     """Write the monitor report and optionally refresh evolution decision."""
 
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
-    review_path.mkdir(parents=True, exist_ok=True)
     report = build_sample_target_monitor(
         review_dir=review_path,
         no_trade_log_path=no_trade_log_path,
         now=now,
         min_strategy_samples=min_strategy_samples,
     )
+    review_path.mkdir(parents=True, exist_ok=True)
     report["evolution_decision_refresh"] = {
         "status": "not_needed",
         "reason": "daily_trade_target_removed" if refresh_decision else "refresh_disabled",

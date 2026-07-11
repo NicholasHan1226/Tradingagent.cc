@@ -103,7 +103,11 @@ def require_authoritative_epoch_metadata(state: dict[str, Any]) -> dict[str, Any
         capital_epoch = int(raw_epoch)
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid_epoch_state:invalid_current_epoch_id") from exc
-    if capital_epoch not in EPOCHS or str(raw_epoch).strip() != str(capital_epoch):
+    if (
+        capital_epoch != CURRENT_EPOCH_ID
+        or capital_epoch not in EPOCHS
+        or str(raw_epoch).strip() != str(capital_epoch)
+    ):
         raise ValueError("invalid_epoch_state:invalid_current_epoch_id")
 
     if "capital_cny" not in state:

@@ -8,6 +8,12 @@ from unittest.mock import patch
 
 from Ashare.portfolio_evolution import build_portfolio_evolution, write_portfolio_evolution
 
+EPOCH_STATE = {
+    "current_epoch_id": 2,
+    "capital_cny": 50_000.0,
+    "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+}
+
 
 class AsharePortfolioEvolutionTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -16,8 +22,14 @@ class AsharePortfolioEvolutionTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.local_trades = self.root / "local_sim_trades.jsonl"
         self.review_dir = self.root / "review" / "ashare"
+        self.epoch_patch = patch(
+            "Ashare.portfolio_evolution.read_epoch_state", return_value=EPOCH_STATE
+        )
+        self.epoch_patch.start()
+        self.addCleanup(self.epoch_patch.stop)
 
     def _write_trade(self, payload: dict[str, object]) -> None:
+        payload.setdefault("capital_epoch", 2)
         self.local_trades.parent.mkdir(parents=True, exist_ok=True)
         with self.local_trades.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")

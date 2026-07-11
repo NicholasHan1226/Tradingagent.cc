@@ -8,6 +8,12 @@ from unittest.mock import patch
 
 from Ashare.formal_close_refresh import load_formal_close_prices, run_formal_close_refresh
 
+EPOCH_STATE = {
+    "current_epoch_id": 2,
+    "capital_cny": 50_000.0,
+    "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+}
+
 
 class _Reader:
     def __init__(self, rows_by_symbol: dict[str, list[dict[str, object]]]) -> None:
@@ -18,6 +24,13 @@ class _Reader:
 
 
 class AshareFormalCloseRefreshTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.epoch_patch = patch(
+            "Ashare.formal_close_refresh.read_epoch_state", return_value=EPOCH_STATE
+        )
+        self.epoch_patch.start()
+        self.addCleanup(self.epoch_patch.stop)
+
     def test_completed_trade_date_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             review_dir = Path(tmp)
@@ -27,6 +40,10 @@ class AshareFormalCloseRefreshTest(unittest.TestCase):
                 "trade_date": "20260710",
                 "status": "pass",
                 "reason": "formal_close_refresh_complete",
+                "capital_epoch": 2,
+                "capital_cny": 50_000.0,
+                "epoch_cutover_timestamp": EPOCH_STATE["cutover_timestamp"],
+                "generated_at": "2026-07-11T03:00:00+00:00",
             }
             (review_dir / "formal_close_latest.json").write_text(
                 json.dumps(existing), encoding="utf-8"
