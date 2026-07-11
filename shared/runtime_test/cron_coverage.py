@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TRADING_PREFIX = "/opt/investment/tradingagent/"
 ROOT_UID = 0
 ROOT_GID = 0
+TRADINGAGENT_BASH_ENV = "/opt/investment/tradingagent/shared/env_loader.sh"
 
 
 def _run_crontab(command: list[str]) -> tuple[str, str]:
@@ -58,6 +59,23 @@ def _normalize_entry(line: str) -> str:
 
 def tradingagent_entries(text: str) -> list[str]:
     return [_normalize_entry(line) for line in text.splitlines() if _is_cron_schedule_line(line.strip())]
+
+
+def _tradingagent_environment_mismatches(text: str) -> list[dict[str, str]]:
+    effective_bash_env = ""
+    mismatches = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("BASH_ENV="):
+            effective_bash_env = line.split("=", 1)[1].strip()
+        elif _is_cron_schedule_line(line) and effective_bash_env != TRADINGAGENT_BASH_ENV:
+            mismatches.append(
+                {
+                    "entry": _normalize_entry(line),
+                    "effective_bash_env": effective_bash_env,
+                }
+            )
+    return mismatches
 
 
 def _template_entries(path: Path) -> list[str]:
@@ -141,6 +159,8 @@ def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, 
     installed_entries = set(tradingagent_entries(installed_text))
     missing_entries = [entry for entry in shared_entries if entry not in installed_entries]
 
+    env_mismatches = _tradingagent_environment_mismatches(installed_text)
+
     root_residual_entries: list[str] = []
     if details.get("marketgraph_text"):
         root_residual_entries = tradingagent_entries(details.get("root_text") or "")
@@ -153,6 +173,8 @@ def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, 
         failures.append("installed_crontab_unreadable")
     if missing_entries:
         failures.append("installed_crontab_missing_entries")
+    if env_mismatches:
+        failures.append("installed_crontab_environment_mismatch")
     if root_residual_entries:
         failures.append("root_tradingagent_residual")
     if permission_blockers:
@@ -171,6 +193,8 @@ def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, 
             "missing_from_root_crontab_txt": template_drift,
             "extra_in_root_crontab_txt": template_extra,
         },
+        "environment_mismatch_count": len(env_mismatches),
+        "environment_mismatches": env_mismatches,
         "root_residual_count": len(root_residual_entries),
         "root_residual_entries": root_residual_entries,
         "runtime_permission_blocker_count": len(permission_blockers),

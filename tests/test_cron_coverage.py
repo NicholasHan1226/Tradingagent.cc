@@ -80,6 +80,57 @@ class CronCoverageTest(unittest.TestCase):
         self.assertIn("installed_crontab_missing_entries", report["failures"])
         self.assertGreater(report["missing_count"], 0)
 
+    def test_fails_when_tradingagent_entries_inherit_marketgraph_bash_env(self) -> None:
+        template = (cron_coverage.ROOT / "shared/crontab.txt").read_text()
+        schedules = "\n".join(
+            line
+            for line in template.splitlines()
+            if cron_coverage._is_cron_schedule_line(line)
+        )
+        installed = (
+            "BASH_ENV=/opt/investment/MarketGraph/deploy/marketgraph_cron_loader.sh\n"
+            + schedules
+        )
+
+        report = cron_coverage.check_cron_coverage(
+            crontabs={
+                "marketgraph_text": installed,
+                "marketgraph_error": "",
+                "root_text": "",
+                "root_error": "no root crontab",
+            }
+        )
+
+        self.assertIn("installed_crontab_environment_mismatch", report["failures"])
+        self.assertEqual(
+            report["environment_mismatch_count"],
+            len(cron_coverage.tradingagent_entries(template)),
+        )
+
+    def test_accepts_tradingagent_block_after_marketgraph_loader(self) -> None:
+        template = (cron_coverage.ROOT / "shared/crontab.txt").read_text()
+        schedules = "\n".join(
+            line
+            for line in template.splitlines()
+            if cron_coverage._is_cron_schedule_line(line)
+        )
+        installed = (
+            "BASH_ENV=/opt/investment/MarketGraph/deploy/marketgraph_cron_loader.sh\n"
+            "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh\n"
+            + schedules
+        )
+
+        report = cron_coverage.check_cron_coverage(
+            crontabs={
+                "marketgraph_text": installed,
+                "marketgraph_error": "",
+                "root_text": "",
+                "root_error": "no root crontab",
+            }
+        )
+
+        self.assertEqual(report["environment_mismatch_count"], 0)
+
     def test_fails_when_root_has_tradingagent_residual_with_marketgraph_crontab(self) -> None:
         installed = "\n".join(cron_coverage.tradingagent_entries((cron_coverage.ROOT / "shared/crontab.txt").read_text()))
         report = cron_coverage.check_cron_coverage(

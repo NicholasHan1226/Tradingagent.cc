@@ -10,7 +10,12 @@ from unittest.mock import call, patch
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent))
-from tools.merge_tradingagent_crontab import _is_ta_schedule_line, apply_merge, merge
+from tools.merge_tradingagent_crontab import (
+    _is_ta_schedule_line,
+    _ta_coverage_ok,
+    apply_merge,
+    merge,
+)
 
 TA_TEMPLATE = """\
 # TradingAgent cron snapshot
@@ -47,6 +52,54 @@ BASH_ENV=/some/old/path
 
 class MergeTests(unittest.TestCase):
     """Core merge logic without system calls."""
+
+    def test_appended_ta_block_resets_effective_bash_env(self):
+        """TA schedule block must carry its own BASH_ENV line before entries."""
+        current = (
+            CURRENT
+            + "BASH_ENV=/opt/investment/MarketGraph/deploy/marketgraph_cron_loader.sh\n"
+        )
+        result = merge(current, TA_TEMPLATE)
+        lines = result.splitlines()
+        first_ta = next(i for i, line in enumerate(lines) if _is_ta_schedule_line(line))
+        self.assertEqual(
+            lines[first_ta - 1],
+            "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh",
+        )
+
+    def test_repeated_merge_does_not_accumulate_trailing_bash_env(self):
+        once = merge(CURRENT, TA_TEMPLATE)
+
+        twice = merge(once, TA_TEMPLATE)
+
+        marker = "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh"
+        self.assertEqual(twice.count(marker), once.count(marker))
+
+    def test_repeated_merge_removes_old_marker_before_trailing_comments(self):
+        once = merge(CURRENT, TA_TEMPLATE)
+        current = once + "# appended by another repository\n"
+
+        twice = merge(current, TA_TEMPLATE)
+
+        marker = "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh"
+        self.assertEqual(twice.count(marker), 1)
+
+    def test_readback_coverage_rejects_wrong_effective_bash_env(self):
+        merged = merge(CURRENT, TA_TEMPLATE)
+        wrong = merged.replace(
+            "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh",
+            "BASH_ENV=/opt/investment/MarketGraph/deploy/marketgraph_cron_loader.sh",
+        )
+
+        self.assertFalse(_ta_coverage_ok(wrong, TA_TEMPLATE))
+
+    def test_template_with_mismatched_bash_env_fails_closed(self):
+        mismatched = TA_TEMPLATE.replace(
+            "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh",
+            "BASH_ENV=/wrong/loader.sh",
+        )
+
+        self.assertIsNone(merge(CURRENT, mismatched))
 
     def test_preserves_cross_repo_and_env_comments(self):
         """SS/MG entries, env vars, comments survive verbatim in order.
@@ -89,7 +142,6 @@ class MergeTests(unittest.TestCase):
         self.assertIn("/usr/bin/foo", result)
         self.assertIn("health_check.sh", result)
         self.assertIn("evolution.sh", result)
-
 
 class ApplyWorkflowTests(unittest.TestCase):
     """apply_merge with mocked system calls."""

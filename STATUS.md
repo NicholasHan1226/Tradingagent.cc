@@ -4,11 +4,13 @@
 >
 > **⚠️ 变更后必须更新本文件。**
 >
-> 最后更新：2026-07-11 (生产验收与前端桌面只读工作台候选)
+> 最后更新：2026-07-11 (Cron 环境隔离 + 生产验收与前端桌面只读工作台候选)
 
 ---
 
 ## 一、当前状态
+
+- **跨仓 cron 环境隔离修复候选（2026-07-11）**：生产合并表把 TradingAgent schedule 追加在 MarketGraph `BASH_ENV` 之后，导致 TA cron 继承 MarketGraph loader 中的 SharedSignals token；该 token 对 localhost SharedSignals 返回 401，而交互式 TA loader 无 token时可正常读取，形成“交互检查通过、Crypto/PM/US cron 401”的环境漂移。候选修复让 merge 安装器在追加 TA schedule 前重新写入 TradingAgent `BASH_ENV`，`cron_coverage` 逐条验证有效 loader，`market_health` 保留 scheduled reader degradation，禁止把 401 污染的 cron 结果伪装成策略等待。当前仅完成隔离 worktree 代码/测试，生产发布与 crontab apply 状态需以本轮 live 验收为准。
 
 - **A股/CNFutures 50,000 CNY 资金切换（2026-07-11，生产已迁移）**：代码级当前默认本金统一为 50,000 CNY，旧资金环境变量不能切回 100,000/200,000；A股生产 apply 已在保持 `shared/logs/local_sim/.local_sim.lock` inode 不变的前提下，把旧 200,000 元账本内容、持仓快照和 8 个历史 tier 文件归档到 epoch 1，并在原权威路径 bootstrap 50,000 元 epoch 2。旧 PnL/成交文件与归档 SHA256 一致，当前现金 50,000、持仓 0、成交文件为空，重复 apply 返回 `already_migrated`；state/metadata 不一致、状态损坏、归档碰撞或锁超时均 fail-closed，不存在 state-only 激活入口。CNFutures 未发现需迁移的活跃旧账本，生产默认本金已同步为 50,000。看板只展示当前主账户，忽略旧 tier manifest，并以当前主账本覆盖旧风格 PnL 分解。本地完整 Python 964 项、资金/迁移回归 113 项和前端 140 项测试通过，前端 lint 与客户端/API 构建通过。
 
@@ -17,7 +19,7 @@
 - **前端 Hyperliquid 终端语言重构已发布（2026-07-11）**：UI 发布提交为 `cbc77a5`。六页统一为连续终端画布、紧凑指标条、主数据面和 316px 只读 Automation Inspector；新增 Process Book、Portfolio Ledger 与 Risk Ledger，过程页只把真实 `pending` 记录算作运行中，无运行记录时回退最近完成结果；持仓页按 CNY/USD/百分比/多币种真实口径汇总并用横向敞口条替换大环图；风险页明确 5% 预警与 7% 限制；复盘字段改为只读“自动校准”。本地设计 QA 在 1440×900 对照当前 Hyperliquid 参考，并逐页验证 1280×720：六页均无横向溢出、浏览器无错误/告警，收益/回撤在顶部、终端指标与检查器之间使用同一结果。发布前 lint、27 个测试文件/139 项测试、前端构建和只读 API 构建全部通过。GitHub `main`、生产源码与静态资源已同步；生产使用 Node `v24.4.1` 构建，`tradingagent-front-api.service=active`，内部 `/healthz` 为 HTTP 200，公开 `https://dashboard.tradingagent.cc/` 为 HTTP 200 且加载 `index-BsAS4weL.js` / `index-B7yyFM8C.css`，公开快照包含 performance/signals/holdings/decisions/risk 五域；回滚副本戳 `20260711044810`。本次未改变快照 API 契约、交易队列、资金、策略、cron、执行器或真实资金行为；移动端继续延期。
 - **前端终端运营层已发布（2026-07-11）**：功能发布提交为 `1098746`。在既有 Hyperliquid 连续终端语言上增加六市场状态带和五域证据健康；统一 `pending / completed / review` 状态解析；过程页新增按时间/序列排序的来源/延迟事件账本；持仓快照和模拟账本可选透传数量、均价、现价、成本、市值、当日盈亏与来源；风险账本纳入滞后/异常/隔离证据域；复盘直接展示置信度、影响、证据和自动校准。过程/事件/持仓/风险/复盘账本统一本地搜索、排序、列显隐，URL 保存 `page/market/range`，支持 `Alt+1…6`、`Alt+←/→` 和 `/` 快捷键。本地合并后 lint、32 个测试文件/156 项测试、前端与只读 API 构建通过；1440×900 同屏参考评分 92/100，1280×720 六页无文档级横向溢出，浏览器 back/forward 与真实快捷键通过。GitHub `main`、生产源码和静态资源已同步；生产备份戳 `20260711053556`，服务 active，内部健康与公开页面/快照均为 HTTP 200，公开构建标识为 `20260711-terminal-operations`，资源为 `index-JgfUxzbd.js` / `index-DdWiSlIC.css`。仍是只读展示，不改变队列、资金、策略、cron、执行器、账户或实盘边界；移动端继续延期。
 
-- **Crontab 合并安装器（2026-07-10 精简重构）**：`tools/merge_tradingagent_crontab.py` 采用单文件最小实现，仅剥离当前 crontab 中 `/opt/investment/tradingagent/` schedule 行，追加模板 TA schedule 行，不动 env/注释/空行/跨仓条目。默认 dry-run；`--apply` 备份 → 安装 → readback + coverage 验证，失败自动 rollback 并 readback 确认原文本恢复。`--current-file`/`--output` 文件模式不碰系统。空模板 fail-closed。**严禁**直接 `crontab shared/crontab.txt`。已通过 12 项关键用例（`tests/test_merge_tradingagent_crontab.py`）。
+- **Crontab 合并安装器（2026-07-10 精简重构，2026-07-11 环境隔离加固）**：`tools/merge_tradingagent_crontab.py` 采用单文件最小实现，仅剥离当前 crontab 中 `/opt/investment/tradingagent/` schedule 行，追加 `BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh` 与模板 TA schedule 行，不动 env/注释/空行/跨仓条目。合并后的组合 crontab 按文本位置解释环境变量，TradingAgent 块前插入自己的 `BASH_ENV` 确保不受前面仓库 loader 影响。默认 dry-run；`--apply` 备份 → 安装 → readback + coverage 验证，失败自动 rollback 并 readback 确认原文本恢复。`--current-file`/`--output` 文件模式不碰系统。空模板 fail-closed。**严禁**直接 `crontab shared/crontab.txt`。已通过 13 项关键用例（`tests/test_merge_tradingagent_crontab.py`）。`cron_coverage` 现检测已安装 crontab 中的环境继承错误：TA schedule 行上一条有效的 `BASH_ENV` 不是 TradingAgent 自己的 loader 时标记 `installed_crontab_environment_mismatch`。
 
 - **A股事件、演化与资金门禁修复（2026-07-10）**：事件评分改为 SharedSignals 最近 3 日 SS-first，文本方向推断使用固定 0.30 审慎置信度并输出无方向/低置信度诊断，不把中性公告伪造成催化；演化层保持 `verified_5min_market_data`、正成交量和 -5/+15 分钟时间窗不变，同时输出具体拒绝原因；defensive `target_positions=0` 不再回退触发机会成本换仓，风险卖出仍保留，策略现金预算上限收紧到真实账户可用现金，A股卖出来源统一为 `ashare_rebalance_sell`。生产已发布并抽样验证：`300759.SZ` 的减持事件保留正式事件证据，`000776.SZ`、`600030.SH` 的中性公告不再伪造成催化；当前演化样本 3 个、eligible 0 个，其中 1 个执行证据类别未验证、2 个缺执行证据类别，继续禁止把浮盈当成已验证 alpha。
 

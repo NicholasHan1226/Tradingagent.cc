@@ -17,7 +17,12 @@ Never run `crontab shared/crontab.txt` or `crontab crontab.txt` directly —
 that would overwrite SharedSignals and MarketGraph entries.
 
 The merge tool strips only TA schedule lines from the current crontab and
-appends the TA schedule lines from `shared/crontab.txt`.  All other lines
+appends a self-contained TradingAgent block: first
+`BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh`, then the TA
+schedule lines from `shared/crontab.txt`. Cron environment assignments are
+positional, so the loader reset must remain immediately before the appended TA
+block; otherwise a preceding MarketGraph/SharedSignals loader can leak its
+tokens and paths into TradingAgent jobs. All other lines
 (SharedSignals, MarketGraph, env vars, comments, blank lines) are preserved
 as-is in their original order.  Behaviour:
 
@@ -35,3 +40,5 @@ Stable commands:
     sudo python3 tools/merge_tradingagent_crontab.py --apply         # production
 
 See `shared/runtime_test/cron_coverage.py` for production read-only audits.
+The coverage guard verifies both task presence and the effective `BASH_ENV` at
+every installed TradingAgent schedule line.

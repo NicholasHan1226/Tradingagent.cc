@@ -579,6 +579,54 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
         self.assertEqual(check.details["execution_fault"], False)
 
+    def test_crypto_reader_degraded_cron_payload_cannot_pass_as_strategy_wait(self) -> None:
+        with patch.object(market_health, "_probe_market_data", return_value={
+            "status": "warn",
+            "reason": "crypto_momentum_threshold_not_met",
+            "priced_signal_count": 5,
+            "strategy_candidate_count": 0,
+        }), patch.object(market_health, "_latest_cron_result", return_value={
+            "payload": {
+                "status": "no_trade_signals",
+                "reader_degraded": True,
+                "reader_errors": ["HTTP 401: Unauthorized"],
+            }
+        }):
+            check = market_health._check_sim_market_loop("crypto", "job_crypto_sim.sh")
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["diagnostic_class"], "market_data_wait")
+        self.assertIn("latest_cron_reader_degraded", check.details["warn_reasons"])
+
+    def test_crypto_reader_degraded_cron_payload_overrides_clean_probe(self) -> None:
+        ledger = self.root / "shared/logs/sim_ledger/crypto/aggressive/trade_journal.jsonl"
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text(
+            '{"symbol":"BTCUSDT","side":"buy","fill_price":60000,"fill_qty":0.01}\n',
+            encoding="utf-8",
+        )
+        with (
+            patch.object(
+                market_health,
+                "_probe_market_data",
+                return_value={"status": "ok", "priced_signal_count": 5},
+            ),
+            patch.object(
+                market_health,
+                "_latest_cron_result",
+                return_value={
+                    "payload": {
+                        "status": "ok",
+                        "reader_degraded": True,
+                        "reader_errors": [],
+                    }
+                },
+            ),
+        ):
+            check = market_health._check_sim_market_loop("crypto", "job_crypto_sim.sh")
+
+        self.assertEqual(check.status, "warn")
+        self.assertEqual(check.details["diagnostic_class"], "market_data_wait")
+
     def test_crypto_sim_market_loop_marks_strategy_wait_even_with_existing_ledger(self) -> None:
         ledger = self.root / "shared/logs/sim_ledger/crypto/aggressive/trade_journal.jsonl"
         ledger.parent.mkdir(parents=True)
