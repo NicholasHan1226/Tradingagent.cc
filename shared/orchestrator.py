@@ -848,6 +848,7 @@ def _position_value(position: dict[str, Any], capital: float) -> float:
 def _ashare_dynamic_capital_plan(
     *,
     market: str,
+    date: str,
     capital: float,
     existing_positions: list[dict[str, Any]],
     available_cash: float | None,
@@ -898,9 +899,17 @@ def _ashare_dynamic_capital_plan(
     evolution_context: dict[str, Any] = {}
     try:
         from Ashare.evolution_controller import decision_market_context, load_latest_decision
+        from shared.execution.sim_account_epoch import read_epoch_state
 
         evolution_decision = load_latest_decision()
-        evolution_context = decision_market_context(evolution_decision)
+        evolution_context = decision_market_context(
+            evolution_decision,
+            target_trade_date=date,
+            current_epoch_id=read_epoch_state()["current_epoch_id"],
+        )
+        if evolution_context and not evolution_context.get("evidence_usable", False):
+            evolution_context["strategy_sample_valid_count"] = 0.0
+            evolution_context["min_strategy_samples"] = 0.0
     except Exception:
         evolution_decision = {}
         evolution_context = {}
@@ -935,6 +944,8 @@ def _ashare_dynamic_capital_plan(
             "recommended_action": evolution_decision.get("recommended_action"),
             "reasons": evolution_decision.get("reasons", []),
             "policy": evolution_decision.get("policy", {}),
+            "evidence_usable": evolution_context.get("evidence_usable", False),
+            "evidence_rejection_reason": evolution_context.get("evidence_rejection_reason", ""),
         }
     plan["cash_source"] = "account_snapshot" if available_cash is not None and _safe_float(available_cash, -1.0) >= 0 else "capital_minus_positions"
     return plan
@@ -2984,6 +2995,7 @@ def run_sim_loop(
     )
     capital_plan = _ashare_dynamic_capital_plan(
         market=market,
+        date=date,
         capital=capital,
         existing_positions=strategy_positions,
         available_cash=strategy_cash_available,

@@ -61,6 +61,7 @@ def build_evolution_decision(
     *,
     target_trade_date: str | None = None,
     min_strategy_samples: int = 5,
+    current_epoch_id: int = 2,
 ) -> dict[str, Any]:
     """Build a simulated-only evolution decision from portfolio evidence."""
 
@@ -68,10 +69,12 @@ def build_evolution_decision(
     min_evolution_evidence_samples = max(MIN_EVOLUTION_EVIDENCE_SAMPLES, min_samples)
     target_date = _compact_date(target_trade_date) or _today_cn_compact()
     evidence_date = _compact_date(portfolio_evolution.get("trade_date"))
+    evidence_epoch = _safe_int(portfolio_evolution.get("capital_epoch"))
     strategy_sample_count = _safe_int(portfolio_evolution.get("strategy_sample_count"))
     today_strategy_sample_count = _safe_int(portfolio_evolution.get("today_strategy_sample_count"))
     pnl = portfolio_evolution.get("pnl") if isinstance(portfolio_evolution.get("pnl"), dict) else {}
     total_pnl = _safe_float(pnl.get("total_pnl"), _safe_float(portfolio_evolution.get("total_pnl")))
+    realized_pnl = _safe_float(pnl.get("realized_pnl"), _safe_float(portfolio_evolution.get("realized_pnl")))
     equity = _safe_float(pnl.get("equity"), 0.0)
     pnl_pct = round(total_pnl / equity, 6) if equity > 0 else 0.0
     rankings = portfolio_evolution.get("rankings") if isinstance(portfolio_evolution.get("rankings"), list) else []
@@ -80,23 +83,38 @@ def build_evolution_decision(
     realized_round_trip_count = _safe_int(evidence.get("realized_round_trip_count"))
     forward_label_count = _safe_int(evidence.get("forward_label_count"))
     reasons: list[str] = []
-    if evidence_date and evidence_date != target_date:
+    if evidence_date != target_date:
         today_strategy_sample_count = 0
-        reasons.append("portfolio_evolution_trade_date_stale")
 
     reasons.append("daily_trade_target_removed")
-    if strategy_sample_count < min_samples:
+    if evidence_epoch != current_epoch_id:
+        state = "evidence_pending"
+        action = "observe_and_label_candidates"
+        reasons.append("capital_epoch_mismatch")
+    elif evidence_date != target_date:
+        state = "evidence_pending"
+        action = "observe_and_label_candidates"
+        reasons.append("portfolio_evolution_trade_date_stale")
+    elif strategy_sample_count < min_samples:
         state = "evidence_pending"
         action = "observe_and_label_candidates"
         reasons.append("cumulative_strategy_samples_below_minimum")
-    elif (
-        eligible_sample_count < min_evolution_evidence_samples
-        or realized_round_trip_count < max(1, min_evolution_evidence_samples // 2)
-        or forward_label_count < min_evolution_evidence_samples
-    ):
+    elif eligible_sample_count < min_evolution_evidence_samples:
         state = "evidence_pending"
         action = "observe_and_label_candidates"
         reasons.append("insufficient_verified_execution_evidence")
+    elif realized_round_trip_count < max(1, min_evolution_evidence_samples // 2):
+        state = "evidence_pending"
+        action = "observe_and_label_candidates"
+        reasons.append("insufficient_realized_round_trips")
+    elif forward_label_count < min_evolution_evidence_samples:
+        state = "evidence_pending"
+        action = "observe_and_label_candidates"
+        reasons.append("insufficient_forward_validation")
+    elif realized_pnl <= 0:
+        state = "evidence_pending"
+        action = "observe_and_label_candidates"
+        reasons.append("non_positive_realized_pnl")
     elif total_pnl < 0:
         state = "risk_tightening"
         action = "tighten_risk"
@@ -104,7 +122,7 @@ def build_evolution_decision(
     else:
         state = "expansion_candidate"
         action = "expand_risk_candidate"
-        reasons.append("positive_mark_to_market_pnl_after_min_samples")
+        reasons.append("positive_realized_pnl_after_all_gates")
 
     policy = {
         "today_strategy_sample_count": today_strategy_sample_count,
@@ -127,6 +145,8 @@ def build_evolution_decision(
         "market": "ashare",
         "trade_date": target_date,
         "evidence_trade_date": evidence_date,
+        "capital_epoch": evidence_epoch,
+        "current_epoch_id": current_epoch_id,
         "state": state,
         "recommended_action": action,
         "reasons": reasons,
@@ -140,6 +160,7 @@ def build_evolution_decision(
             "min_strategy_samples": min_samples,
             "min_evolution_evidence_samples": min_evolution_evidence_samples,
             "total_pnl": round(total_pnl, 6),
+            "realized_pnl": round(realized_pnl, 6),
             "pnl_pct": pnl_pct,
             "ranking_count": len(rankings),
             "tier_account_count": _safe_int((portfolio_evolution.get("tier_experiments") or {}).get("account_count"))
@@ -189,18 +210,38 @@ def load_latest_decision(path: Path | str | None = None, *, review_dir: Path | s
     return _read_json(review_path / LATEST_DECISION.name)
 
 
-def decision_market_context(decision: dict[str, Any] | None) -> dict[str, Any]:
+def decision_market_context(
+    decision: dict[str, Any] | None,
+    *,
+    target_trade_date: str | None = None,
+    current_epoch_id: int = 2,
+) -> dict[str, Any]:
     if not isinstance(decision, dict):
         return {}
     policy = decision.get("policy") if isinstance(decision.get("policy"), dict) else {}
     if not policy:
         return {}
+    target_date = _compact_date(target_trade_date) or _today_cn_compact()
+    evidence_date = _compact_date(decision.get("evidence_trade_date"))
+    evidence_epoch = _safe_int(decision.get("capital_epoch"))
+    evidence_usable = True
+    rejection_reason = ""
+    if evidence_epoch != current_epoch_id:
+        evidence_usable = False
+        rejection_reason = "capital_epoch_mismatch"
+    elif evidence_date != target_date:
+        evidence_usable = False
+        rejection_reason = "portfolio_evolution_trade_date_stale"
     return {
         "today_strategy_sample_count": _safe_float(policy.get("today_strategy_sample_count"), 0.0),
         "min_strategy_samples": _safe_float(policy.get("min_strategy_samples"), 5.0),
-        "strategy_sample_valid_count": _safe_float(policy.get("strategy_sample_count"), 0.0),
+        "strategy_sample_valid_count": (
+            _safe_float(policy.get("strategy_sample_count"), 0.0) if evidence_usable else 0.0
+        ),
         "sample_collection_min_score": _safe_float(policy.get("sample_collection_min_score"), 0.55),
         "evolution_recommended_action": str(decision.get("recommended_action") or ""),
+        "evidence_usable": evidence_usable,
+        "evidence_rejection_reason": rejection_reason,
     }
 
 

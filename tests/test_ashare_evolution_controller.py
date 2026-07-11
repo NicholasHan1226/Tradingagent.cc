@@ -8,6 +8,41 @@ from pathlib import Path
 from Ashare.evolution_controller import build_evolution_decision, decision_market_context, write_evolution_decision
 
 
+def _qualified_evidence(**overrides):
+    payload = {
+        "capital_epoch": 2,
+        "trade_date": "20260711",
+        "strategy_sample_count": 20,
+        "actions": [{"action": "observe", "reason": "non_positive_realized_pnl"}],
+        "pnl": {"total_pnl": 100.0, "realized_pnl": 0.0, "equity": 50_100.0},
+        "evolution_evidence": {
+            "eligible_sample_count": 20,
+            "realized_round_trip_count": 10,
+            "forward_label_count": 20,
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_unrealized_profit_never_expands_risk():
+    decision = build_evolution_decision(
+        _qualified_evidence(), target_trade_date="20260711", current_epoch_id=2
+    )
+    assert decision["recommended_action"] == "observe_and_label_candidates"
+    assert "non_positive_realized_pnl" in decision["reasons"]
+
+
+def test_stale_epoch_never_enters_capital_plan_context():
+    decision = build_evolution_decision(
+        _qualified_evidence(capital_epoch=1), target_trade_date="20260711", current_epoch_id=2
+    )
+    context = decision_market_context(decision, target_trade_date="20260711", current_epoch_id=2)
+    assert context["evidence_usable"] is False
+    assert context["evidence_rejection_reason"] == "capital_epoch_mismatch"
+    assert context["strategy_sample_valid_count"] == 0.0
+
+
 class AshareEvolutionControllerTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -44,6 +79,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
     def test_stale_portfolio_date_resets_today_sample_count(self) -> None:
         portfolio = {
             "market": "ashare",
+            "capital_epoch": 2,
             "trade_date": "20260709",
             "state": "sample_insufficient",
             "strategy_sample_count": 2,
@@ -64,6 +100,8 @@ class AshareEvolutionControllerTest(unittest.TestCase):
 
     def test_decision_market_context_exposes_capital_plan_inputs(self) -> None:
         decision = {
+            "capital_epoch": 2,
+            "evidence_trade_date": "20260711",
             "recommended_action": "observe_and_label_candidates",
             "policy": {
                 "today_strategy_sample_count": 0,
@@ -73,7 +111,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
             },
         }
 
-        context = decision_market_context(decision)
+        context = decision_market_context(decision, target_trade_date="20260711", current_epoch_id=2)
 
         self.assertEqual(context["today_strategy_sample_count"], 0)
         self.assertEqual(context["sample_collection_min_score"], 0.55)
@@ -81,6 +119,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
     def test_write_evolution_decision_persists_latest_and_log(self) -> None:
         portfolio = {
             "market": "ashare",
+            "capital_epoch": 2,
             "trade_date": "20260710",
             "strategy_sample_count": 5,
             "today_strategy_sample_count": 1,
@@ -104,6 +143,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
     def test_positive_mark_to_market_cannot_expand_risk_without_verified_evidence(self) -> None:
         portfolio = {
             "market": "ashare",
+            "capital_epoch": 2,
             "trade_date": "20260710",
             "strategy_sample_count": 30,
             "today_strategy_sample_count": 1,
@@ -115,7 +155,11 @@ class AshareEvolutionControllerTest(unittest.TestCase):
             },
         }
 
-        decision = build_evolution_decision(portfolio, min_strategy_samples=20)
+        decision = build_evolution_decision(
+            portfolio,
+            target_trade_date="20260710",
+            min_strategy_samples=20,
+        )
 
         self.assertEqual(decision["state"], "evidence_pending")
         self.assertEqual(decision["recommended_action"], "observe_and_label_candidates")
@@ -124,6 +168,7 @@ class AshareEvolutionControllerTest(unittest.TestCase):
     def test_small_verified_sample_set_cannot_expand_risk(self) -> None:
         portfolio = {
             "market": "ashare",
+            "capital_epoch": 2,
             "trade_date": "20260710",
             "strategy_sample_count": 24,
             "pnl": {"total_pnl": 1200.0, "realized_pnl": 800.0, "equity": 201200.0},
@@ -134,7 +179,11 @@ class AshareEvolutionControllerTest(unittest.TestCase):
             },
         }
 
-        decision = build_evolution_decision(portfolio, min_strategy_samples=5)
+        decision = build_evolution_decision(
+            portfolio,
+            target_trade_date="20260710",
+            min_strategy_samples=5,
+        )
 
         self.assertEqual(decision["state"], "evidence_pending")
         self.assertEqual(decision["recommended_action"], "observe_and_label_candidates")
