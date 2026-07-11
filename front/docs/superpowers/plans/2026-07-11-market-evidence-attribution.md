@@ -76,4 +76,4 @@
 - [x] Write failing view/component tests for coverage copy and honest empty attribution.
 - [x] Run focused UI tests and confirm failure because the new evidence is not rendered.
 - [x] Implement compact terminal composition and document contract boundaries.
-- [ ] Run lint, all tests, both builds, desktop visual QA, release preflight, review diff, commit, push, deploy, and verify local/main/production-source/runtime/public layers separately.
+- [x] Run lint, all tests, both builds, desktop visual QA, release preflight, review diff, commit, push, deploy, and verify local/main/production-source/runtime/public layers separately.
