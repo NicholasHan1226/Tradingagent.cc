@@ -403,6 +403,23 @@ def test_apply_reset_plan_is_idempotent_noop(tmp_path: Path) -> None:
     assert json.loads((review_dir / "portfolio_evolution_latest.json").read_text())["capital_epoch"] == 2
 
 
+def test_apply_reset_plan_rejects_forged_bootstrap_before_any_write(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    source = review_dir / "portfolio_evolution_latest.json"
+    source.write_bytes(b'{"capital_epoch":1}\n')
+    original = source.read_bytes()
+    archive_dir = tmp_path / "archive"
+    plan = build_epoch_reset_plan(review_dir, archive_dir, EPOCH_STATE)
+    plan["latest_bootstraps"]["portfolio_evolution_latest.json"]["capital_cny"] = 200_000.0
+
+    result = apply_epoch_reset_plan(plan)
+
+    assert result == {"status": "error", "reason": "invalid_plan_authority"}
+    assert source.read_bytes() == original
+    assert not archive_dir.exists()
+
+
 def test_rebuilt_plan_after_apply_is_already_applied_noop(tmp_path: Path) -> None:
     review_dir = tmp_path / "review"
     review_dir.mkdir()

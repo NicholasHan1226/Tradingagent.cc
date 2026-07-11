@@ -83,6 +83,48 @@ def validate_review_epoch(
     return True, "current_epoch"
 
 
+def validate_current_review_set(review_dir: Path, epoch_state: dict[str, Any]) -> dict[str, Any]:
+    """Validate every active review without requiring it to remain an empty bootstrap."""
+    try:
+        from shared.execution.sim_account_epoch import require_authoritative_epoch_metadata
+
+        authority = require_authoritative_epoch_metadata(epoch_state)
+    except (TypeError, ValueError) as exc:
+        return {"status": "error", "reason": "invalid_epoch_state", "detail": str(exc)}
+    root = Path(review_dir)
+    stale_or_missing: list[dict[str, str]] = []
+    for name in CURRENT_DERIVED_FILES:
+        path = root / name
+        if path.is_symlink():
+            stale_or_missing.append({"file": name, "reason": "unsafe_path"})
+            continue
+        if not path.exists():
+            if name in _LATEST_FILES:
+                stale_or_missing.append({"file": name, "reason": "missing_current_review"})
+            continue
+        try:
+            payloads = (
+                [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+                if path.suffix == ".jsonl"
+                else [json.loads(path.read_text(encoding="utf-8"))]
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            stale_or_missing.append({"file": name, "reason": "invalid_review_payload"})
+            continue
+        for payload in payloads:
+            valid, reason = validate_review_epoch(
+                payload,
+                current_epoch_id=int(authority["capital_epoch"]),
+                current_cutover_timestamp=str(authority["cutover_timestamp"]),
+            )
+            if not valid:
+                stale_or_missing.append({"file": name, "reason": reason})
+                break
+    if stale_or_missing:
+        return {"status": "stale_or_missing", "issues": stale_or_missing}
+    return {"status": "current", "checked_latest_count": len(_LATEST_FILES)}
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -223,6 +265,24 @@ def _latest_bootstraps(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def _plan_authority_digest(
+    authority_metadata: dict[str, Any],
+    bootstrap: dict[str, Any],
+    latest_bootstraps: dict[str, dict[str, Any]],
+) -> str:
+    encoded = json.dumps(
+        {
+            "authority_metadata": authority_metadata,
+            "bootstrap": bootstrap,
+            "latest_bootstraps": latest_bootstraps,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _is_within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -306,6 +366,12 @@ def build_epoch_reset_plan(
     if review_path is None or archive_path is None or allowed_root is None:
         return {"status": "error", "reason": "unsafe_path"}
     latest_bootstraps = _latest_bootstraps(bootstrap)
+    authority_metadata = {
+        "current_epoch_id": bootstrap["capital_epoch"],
+        "capital_cny": bootstrap["capital_cny"],
+        "cutover_timestamp": bootstrap["epoch_cutover_timestamp"],
+    }
+    authority_digest = _plan_authority_digest(authority_metadata, bootstrap, latest_bootstraps)
     if _roots_already_bootstrapped(review_path, archive_path, latest_bootstraps):
         return {
             "status": "already_applied",
@@ -317,6 +383,8 @@ def build_epoch_reset_plan(
             "missing_files": [],
             "bootstrap": bootstrap,
             "latest_bootstraps": latest_bootstraps,
+            "authority_metadata": authority_metadata,
+            "authority_digest": authority_digest,
         }
 
     moves: list[dict[str, Any]] = []
@@ -377,6 +445,8 @@ def build_epoch_reset_plan(
         "missing_files": missing,
         "bootstrap": bootstrap,
         "latest_bootstraps": latest_bootstraps,
+        "authority_metadata": authority_metadata,
+        "authority_digest": authority_digest,
     }
 
 
@@ -442,6 +512,25 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
 
     if not isinstance(plan, dict) or plan.get("status") not in {"ready", "already_applied"}:
         return {"status": "error", "reason": "plan_not_ready"}
+    try:
+        authority = plan["authority_metadata"]
+        bootstrap = plan["bootstrap"]
+        latest = plan["latest_bootstraps"]
+        from shared.execution.sim_account_epoch import require_authoritative_epoch_metadata
+
+        validated = require_authoritative_epoch_metadata(authority)
+        expected_bootstrap = _bootstrap_payload(authority)
+        expected_latest = _latest_bootstraps(expected_bootstrap)
+        expected_digest = _plan_authority_digest(authority, bootstrap, latest)
+        if (
+            bootstrap != expected_bootstrap
+            or latest != expected_latest
+            or str(plan.get("authority_digest") or "") != expected_digest
+            or int(validated["capital_epoch"]) != int(bootstrap.get("capital_epoch", -1))
+        ):
+            raise ValueError("plan authority mismatch")
+    except (KeyError, TypeError, ValueError):
+        return {"status": "error", "reason": "invalid_plan_authority"}
     review_dir = Path(str(plan.get("review_dir") or ""))
     archive_dir = Path(str(plan.get("archive_dir") or ""))
     try:
@@ -558,4 +647,5 @@ __all__ = [
     "apply_epoch_reset_plan",
     "build_epoch_reset_plan",
     "validate_review_epoch",
+    "validate_current_review_set",
 ]

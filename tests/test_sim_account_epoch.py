@@ -341,6 +341,11 @@ class SimAccountEpochTest(unittest.TestCase):
                 ledger_path=ledger_dir,
                 archive_root=archive_root,
             )
+            current_review = self.tmp_path / "review" / "ashare" / "portfolio_evolution_latest.json"
+            evolved = json.loads(current_review.read_text())
+            evolved["strategy_sample_count"] = 3
+            evolved["generated_at"] = first["cutover_timestamp"]
+            current_review.write_text(json.dumps(evolved))
             second = apply_cutover(
                 ledger_path=ledger_dir,
                 archive_root=archive_root,
@@ -350,6 +355,32 @@ class SimAccountEpochTest(unittest.TestCase):
         self.assertEqual(second["status"], "already_migrated",
                          "Second apply must be a no-op")
         self.assertEqual(second["current_epoch_id"], 2)
+
+    def test_already_migrated_requires_current_derived_reviews(self) -> None:
+        ledger_dir = self.tmp_path / "local_sim"
+        ledger_dir.mkdir(parents=True)
+        cutover = "2026-07-10T20:56:58+00:00"
+        (ledger_dir / ".epoch_metadata.json").write_text(json.dumps({
+            "current_epoch_id": 2, "capital_cny": 50_000.0, "cutover_timestamp": cutover,
+        }))
+        state_file = self.tmp_path / "epoch_state.json"
+        state_file.write_text(json.dumps({
+            "current_epoch_id": 2, "capital_cny": 50_000.0, "cutover_timestamp": cutover,
+        }))
+        review_dir = self.tmp_path / "review"
+        review_dir.mkdir()
+        stale = review_dir / "portfolio_evolution_latest.json"
+        stale.write_text(json.dumps({"capital_epoch": 1}))
+
+        with patch("shared.execution.sim_account_epoch.epoch_state_path", return_value=state_file):
+            result = apply_cutover(
+                ledger_path=ledger_dir,
+                archive_root=self.tmp_path / "epoch_archive",
+                review_dir=review_dir,
+            )
+
+        self.assertEqual(result["status"], "cutover_requires_review_repair")
+        self.assertEqual(json.loads(stale.read_text())["capital_epoch"], 1)
 
     def test_apply_rolls_back_when_bootstrap_write_fails(self) -> None:
         ledger_dir = self.tmp_path / "local_sim"
@@ -440,7 +471,11 @@ class SimAccountEpochTest(unittest.TestCase):
             )
 
         # Now patch the ledger globals to point at our recreated directory
-        with patch.object(local_sim_ledger, "LOCAL_SIM_DIR", ledger_dir):
+        current_state = json.loads(state_file.read_text())
+        with patch(
+            "shared.execution.sim_account_epoch.read_epoch_state",
+            return_value=current_state,
+        ), patch.object(local_sim_ledger, "LOCAL_SIM_DIR", ledger_dir):
             with patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", ledger_dir / "local_sim_trades.jsonl"):
                 with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS", ledger_dir / "local_sim_positions.json"):
                     with patch.object(local_sim_ledger, "LOCAL_SIM_PNL", ledger_dir / "local_sim_pnl.json"):

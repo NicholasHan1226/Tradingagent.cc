@@ -130,6 +130,20 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _snapshot_writer_epoch_error() -> str | None:
+    """Validate persisted epoch authority before a snapshot writer touches disk."""
+    from shared.execution.sim_account_epoch import (
+        read_epoch_state,
+        require_authoritative_epoch_metadata,
+    )
+
+    try:
+        require_authoritative_epoch_metadata(read_epoch_state())
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
 def _account_name(account: Any) -> str:
     if isinstance(account, dict):
         for key in ("account", "account_id", "account_name", "name"):
@@ -562,6 +576,9 @@ def refresh_local_sim_snapshot(
     for review/evolution jobs that need local_sim_pnl.json to match the same
     mark-to-market price source they use for portfolio evidence.
     """
+    epoch_error = _snapshot_writer_epoch_error()
+    if epoch_error:
+        return {"status": "rejected", "written": False, "reason": epoch_error}
     original_local_sim_trades = LOCAL_SIM_TRADES
     if local_trades_path is not None:
         globals()["LOCAL_SIM_TRADES"] = Path(local_trades_path)
@@ -655,6 +672,10 @@ def ensure_local_sim_bootstrap_snapshot(
     force: bool = False,
 ) -> dict[str, Any]:
     """Create an empty A-share simulated snapshot before the first local fill."""
+
+    epoch_error = _snapshot_writer_epoch_error()
+    if epoch_error:
+        return {"status": "rejected", "written": False, "reason": epoch_error}
 
     account_name = _account_name(account or "ashare_sim")
     cash = _starting_cash_for_bootstrap(starting_cash)

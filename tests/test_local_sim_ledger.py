@@ -658,6 +658,23 @@ class LocalSimLedgerTest(unittest.TestCase):
         self.assertEqual(snapshot["pnl"]["ashare_sim"]["total_trades"], 0)
         self.assertEqual(snapshot["pnl"]["ashare_sim"]["cash_available"], 50000.0)
 
+    def test_snapshot_writers_reject_bad_epoch_before_lock_or_write(self) -> None:
+        old_snapshot = b'{"sentinel":"unchanged"}\n'
+        local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.write_bytes(old_snapshot)
+        absent_dir = local_sim_ledger.LOCAL_SIM_DIR / "absent-ledger"
+        bad_state = {"current_epoch_id": 2, "capital_cny": 200_000.0, "cutover_timestamp": "bad"}
+
+        with patch.object(local_sim_ledger, "LOCAL_SIM_DIR", absent_dir), patch.object(
+            local_sim_ledger, "LOCAL_SIM_LOCK", absent_dir / ".local_sim.lock"
+        ), patch("shared.execution.sim_account_epoch.read_epoch_state", return_value=bad_state):
+            refreshed = local_sim_ledger.refresh_local_sim_snapshot()
+            bootstrapped = local_sim_ledger.ensure_local_sim_bootstrap_snapshot()
+
+        self.assertEqual(refreshed["status"], "rejected")
+        self.assertEqual(bootstrapped["status"], "rejected")
+        self.assertEqual(local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_bytes(), old_snapshot)
+        self.assertFalse(absent_dir.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

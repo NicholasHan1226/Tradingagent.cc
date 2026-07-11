@@ -681,6 +681,25 @@ def apply_cutover(
                 "status": "error",
                 "reason": "Epoch state says epoch 2 but authoritative ledger metadata is missing or inconsistent.",
             }
+        try:
+            state_authority = require_authoritative_epoch_metadata(current_state)
+            ledger_authority = require_authoritative_epoch_metadata(current_metadata)
+        except ValueError as exc:
+            return {"status": "error", "reason": str(exc)}
+        if state_authority != ledger_authority:
+            return {
+                "status": "error",
+                "reason": "Epoch state and authoritative ledger metadata are inconsistent.",
+            }
+        from Ashare.epoch_review import validate_current_review_set
+
+        review_validation = validate_current_review_set(active_review_dir, current_state)
+        if review_validation.get("status") != "current":
+            return {
+                "status": "cutover_requires_review_repair",
+                "reason": "Current epoch derived reviews are stale, missing, or not bound to authoritative epoch metadata.",
+                "derived_review_reset": review_validation,
+            }
         return {
             "status": "already_migrated",
             "note": "Epoch state already at epoch 2; cutover is a no-op.",
