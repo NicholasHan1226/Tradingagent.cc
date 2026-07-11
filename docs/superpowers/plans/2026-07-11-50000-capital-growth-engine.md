@@ -1367,7 +1367,7 @@ def test_initial_style_registry_contains_distinct_hypothesis_families():
     result = audit_style_hypotheses(load_existing_ashare_strategy_configs())
     assert set(result["active_families"]) == {
         "trend_strength_continuation",
-        "pullback_short_reversal",
+        "pullback_short_horizon_reversal",
         "event_catalyst_confirmation",
         "defensive_low_vol_abstain",
     }
@@ -1381,7 +1381,7 @@ def test_shadow_predictions_never_allocate_or_sum_capital(tmp_path):
         candidate={"symbol": "600000.SH", "prediction_ts": "2026-07-13T09:31:00+08:00"},
         predictions=[
             {"style": "trend_strength_continuation", "score": 0.66},
-            {"style": "pullback_short_reversal", "score": 0.31},
+            {"style": "pullback_short_horizon_reversal", "score": 0.31},
         ],
         decision_context={"master_equity": 50_000.0, "decision_policy_version": "arbiter-v1"},
     )
@@ -1434,7 +1434,7 @@ def test_conflicting_styles_produce_one_order_and_preserve_disagreement():
         candidate={"symbol": "600000.SH", "trade_date": "20260713"},
         style_predictions=[
             {"style_family": "trend_strength_continuation", "style_version": "v3", "score": 0.72, "prediction": "long"},
-            {"style_family": "pullback_short_reversal", "style_version": "v2", "score": 0.64, "prediction": "abstain"},
+            {"style_family": "pullback_short_horizon_reversal", "style_version": "v2", "score": 0.64, "prediction": "abstain"},
         ],
         account={"account_id": "ashare-sim-epoch-2", "equity": 50_000.0},
         risk_context=all_safety_gates_pass(),
@@ -1464,12 +1464,12 @@ The idempotency key is derived from `(capital_epoch, account_id, market, symbol,
     "style_scores": {
         "trend_strength_continuation": 0.72,
         "event_catalyst_confirmation": 0.67,
-        "pullback_short_reversal": 0.31,
+        "pullback_short_horizon_reversal": 0.31,
     },
     "style_versions": {
         "trend_strength_continuation": "v3",
         "event_catalyst_confirmation": "v1",
-        "pullback_short_reversal": "v2",
+        "pullback_short_horizon_reversal": "v2",
     },
     "decision_policy_version": "arbiter-v1",
 }
@@ -1777,7 +1777,7 @@ def test_style_dashboard_does_not_sum_shadow_capital():
         master_account={"equity": 50_000.0, "risk_used": 1_200.0},
         style_rows=[
             {"style_family": "trend_strength_continuation", "sample_type": "prediction"},
-            {"style_family": "pullback_short_reversal", "sample_type": "counterfactual"},
+            {"style_family": "pullback_short_horizon_reversal", "sample_type": "counterfactual"},
         ],
     )
     assert report["master_account"]["equity"] == 50_000.0
