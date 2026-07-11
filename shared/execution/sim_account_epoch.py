@@ -352,7 +352,11 @@ def dry_run_cutover(
     Returns an operational summary with the list of planned actions.
     """
     lp = Path(ledger_path) if ledger_path is not None else epoch_ledger_root(1)
-    archive = Path(archive_root) if archive_root is not None else (ROOT / "shared" / "logs" / "epoch_archive")
+    archive = Path(archive_root) if archive_root is not None else (
+        ROOT / "shared" / "logs" / "epoch_archive"
+        if ledger_path is None
+        else lp.parent / "epoch_archive"
+    )
     ps_path = Path(positions_snapshot_path) if positions_snapshot_path is not None else None
     tr_path = Path(tiers_root) if tiers_root is not None else None
     active_review_dir = Path(review_dir) if review_dir is not None else (
@@ -403,6 +407,9 @@ def dry_run_cutover(
             "current_epoch_id": CURRENT_EPOCH_ID,
             "capital_cny": EPOCHS[CURRENT_EPOCH_ID]["capital_cny"],
             "cutover_timestamp": proposed_cutover,
+            "allowed_root": str(ROOT) if ledger_path is None else str(
+                Path(os.path.commonpath((str(lp.resolve().parent), str(active_review_dir.resolve().parent))))
+            ),
         },
     )
     if derived_review_reset.get("status") != "ready":
@@ -496,23 +503,60 @@ def dry_run_cutover(
 # ---------------------------------------------------------------------------
 
 
-def _rollback_derived_review_reset(plan: dict[str, Any]) -> None:
-    """Restore active derived files if a later cutover step fails."""
+def _rollback_action(
+    errors: list[dict[str, str]],
+    action: str,
+    path: Path,
+    operation: Any,
+) -> bool:
+    try:
+        operation()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        errors.append(
+            {
+                "action": action,
+                "path": str(path),
+                "error": f"{exc.__class__.__name__}: {exc}",
+            }
+        )
+        return False
 
+
+def _rollback_derived_review_reset(plan: dict[str, Any]) -> dict[str, Any]:
+    """Restore active derived files, attempting every action independently."""
+
+    errors: list[dict[str, str]] = []
     latest = plan.get("latest_bootstraps") if isinstance(plan.get("latest_bootstraps"), dict) else {}
     review_dir = Path(str(plan["review_dir"]))
     archive_dir = Path(str(plan["archive_dir"]))
     for name in latest:
-        (review_dir / name).unlink(missing_ok=True)
+        path = review_dir / name
+        _rollback_action(
+            errors,
+            "remove_review_bootstrap",
+            path,
+            lambda path=path: path.unlink(missing_ok=True),
+        )
     moves = plan.get("moves") if isinstance(plan.get("moves"), list) else []
     for item in reversed(moves):
         source = Path(str(item["source"]))
         destination = Path(str(item["destination"]))
         if destination.exists():
-            source.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(str(destination), str(source))
-    if archive_dir.exists() and not any(archive_dir.iterdir()):
-        archive_dir.rmdir()
+            def restore(source: Path = source, destination: Path = destination) -> None:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(str(destination), str(source))
+
+            _rollback_action(errors, "restore_review_file", source, restore)
+    def remove_archive_if_empty() -> None:
+        if archive_dir.exists() and not any(archive_dir.iterdir()):
+            archive_dir.rmdir()
+
+    _rollback_action(errors, "remove_review_archive", archive_dir, remove_archive_if_empty)
+    return {
+        "status": "blocked" if errors else "restored",
+        "errors": errors,
+    }
 
 
 def apply_cutover(
@@ -545,7 +589,11 @@ def apply_cutover(
     Returns an operational summary.
     """
     lp = Path(ledger_path) if ledger_path is not None else epoch_ledger_root(1)
-    archive = Path(archive_root) if archive_root is not None else (ROOT / "shared" / "logs" / "epoch_archive")
+    archive = Path(archive_root) if archive_root is not None else (
+        ROOT / "shared" / "logs" / "epoch_archive"
+        if ledger_path is None
+        else lp.parent / "epoch_archive"
+    )
     ps_path = Path(positions_snapshot_path) if positions_snapshot_path is not None else None
     tr_path = Path(tiers_root) if tiers_root is not None else None
     active_review_dir = Path(review_dir) if review_dir is not None else (
@@ -596,6 +644,9 @@ def apply_cutover(
             "current_epoch_id": CURRENT_EPOCH_ID,
             "capital_cny": EPOCHS[CURRENT_EPOCH_ID]["capital_cny"],
             "cutover_timestamp": cutover_timestamp,
+            "allowed_root": str(ROOT) if ledger_path is None else str(
+                Path(os.path.commonpath((str(lp.resolve().parent), str(active_review_dir.resolve().parent))))
+            ),
         },
     )
     if derived_review_plan.get("status") != "ready":
@@ -619,6 +670,7 @@ def apply_cutover(
     moved_tiers = False
     tier_dest: Path | None = None
     archived_positions: Path | None = None
+    manifest_path = archive_dir / _ARCHIVE_MANIFEST
     derived_review_reset: dict[str, Any] | None = None
     review_reset_applied = False
     try:
@@ -655,7 +707,6 @@ def apply_cutover(
             "positions_snapshot_archived": archived_positions is not None,
             "tier_evidence_archived": moved_tiers,
         }
-        manifest_path = archive_dir / _ARCHIVE_MANIFEST
         manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -704,42 +755,120 @@ def apply_cutover(
         _write_epoch_state(new_state)
 
     except Exception as exc:
-        try:
-            if review_reset_applied:
-                _rollback_derived_review_reset(derived_review_plan)
-            if moved_tiers and tier_dest is not None and tier_dest.exists() and tr_path is not None:
+        rollback_errors: list[dict[str, str]] = []
+        review_rollback: dict[str, Any] | None = None
+        if review_reset_applied:
+            try:
+                review_rollback = _rollback_derived_review_reset(derived_review_plan)
+                rollback_errors.extend(review_rollback.get("errors") or [])
+            except Exception as rollback_exc:  # noqa: BLE001
+                rollback_errors.append(
+                    {
+                        "action": "rollback_derived_reviews",
+                        "path": str(derived_review_plan.get("review_dir") or ""),
+                        "error": f"{rollback_exc.__class__.__name__}: {rollback_exc}",
+                    }
+                )
+
+        if moved_tiers and tier_dest is not None and tier_dest.exists() and tr_path is not None:
+            def restore_tiers() -> None:
                 tr_path.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(str(tier_dest), str(tr_path))
-            if archived_positions is not None and archived_positions.exists() and ps_path is not None:
+
+            _rollback_action(rollback_errors, "restore_tiers", tr_path, restore_tiers)
+
+        positions_restored = False
+        if archived_positions is not None and archived_positions.exists() and ps_path is not None:
+            def restore_positions() -> None:
                 shutil.copy2(str(archived_positions), str(ps_path))
-            if lp.exists():
-                for current_entry in list(lp.iterdir()):
-                    if current_entry.name == ".local_sim.lock":
-                        continue
+
+            positions_restored = _rollback_action(
+                rollback_errors,
+                "restore_positions_snapshot",
+                ps_path,
+                restore_positions,
+            )
+
+        current_entries: list[Path] = []
+        if lp.exists():
+            try:
+                current_entries = list(lp.iterdir())
+            except Exception as list_exc:  # noqa: BLE001
+                rollback_errors.append(
+                    {
+                        "action": "inspect_current_ledger",
+                        "path": str(lp),
+                        "error": f"{list_exc.__class__.__name__}: {list_exc}",
+                    }
+                )
+            for current_entry in current_entries:
+                if current_entry.name == ".local_sim.lock":
+                    continue
+
+                def remove_current(current_entry: Path = current_entry) -> None:
                     if current_entry.is_dir():
                         shutil.rmtree(str(current_entry))
                     else:
                         current_entry.unlink(missing_ok=True)
-            for source, destination in reversed(moved_ledger_entries):
-                if destination.exists():
+
+                _rollback_action(
+                    rollback_errors,
+                    "remove_current_ledger_bootstrap",
+                    current_entry,
+                    remove_current,
+                )
+
+        for source, destination in reversed(moved_ledger_entries):
+            if destination.exists():
+                def restore_ledger(source: Path = source, destination: Path = destination) -> None:
+                    source.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(str(destination), str(source))
-            if archived_positions is not None and archived_positions.exists():
-                archived_positions.unlink()
-            manifest_path = archive_dir / _ARCHIVE_MANIFEST
-            manifest_path.unlink(missing_ok=True)
+
+                _rollback_action(
+                    rollback_errors,
+                    "restore_ledger_entry",
+                    source,
+                    restore_ledger,
+                )
+
+        if positions_restored and archived_positions is not None and archived_positions.exists():
+            _rollback_action(
+                rollback_errors,
+                "remove_archived_positions_copy",
+                archived_positions,
+                archived_positions.unlink,
+            )
+
+        _rollback_action(
+            rollback_errors,
+            "remove_archive_manifest",
+            manifest_path,
+            lambda: manifest_path.unlink(missing_ok=True),
+        )
+        def remove_epoch_archive_if_empty() -> None:
             if archive_dir.exists() and not any(archive_dir.iterdir()):
                 archive_dir.rmdir()
-        finally:
-            status = (
-                "cutover_requires_review_repair"
-                if "derived_review_reset_failed" in str(exc)
-                else "error"
-            )
-            return {
-                "status": status,
-                "reason": f"Cutover failed and rollback was attempted: {exc}",
-                "derived_review_reset": derived_review_reset,
-            }
+
+        _rollback_action(
+            rollback_errors,
+            "remove_empty_epoch_archive",
+            archive_dir,
+            remove_epoch_archive_if_empty,
+        )
+
+        if rollback_errors:
+            status = "blocked"
+        elif "derived_review_reset_failed" in str(exc):
+            status = "cutover_requires_review_repair"
+        else:
+            status = "error"
+        return {
+            "status": status,
+            "reason": f"Cutover failed and rollback was attempted: {exc}",
+            "derived_review_reset": derived_review_reset,
+            "review_rollback": review_rollback,
+            "rollback_errors": rollback_errors,
+        }
     finally:
         _release_ledger_lock(lock_fd)
 

@@ -15,6 +15,13 @@ from Ashare.sample_learning import (
 )
 
 
+EPOCH_STATE = {
+    "current_epoch_id": 2,
+    "capital_cny": 50_000.0,
+    "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+}
+
+
 class AshareSampleLearningTest(unittest.TestCase):
     def _write_json(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -266,6 +273,82 @@ class AshareSampleLearningTest(unittest.TestCase):
         self.assertGreaterEqual(budget["recommended_allocation"], 4000.0)
         self.assertLessEqual(budget["min"], 7500.0)
         self.assertLessEqual(budget["max"], 12000.0)
+
+    def test_rejects_old_epoch_review_inputs_and_writes_current_epoch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            review_dir = root / "review"
+            trades_path = root / "local_sim_trades.jsonl"
+            trade = {
+                "trade_id": "T-current",
+                "order_id": "O-current",
+                "capital_epoch": 2,
+                "trade_date": "20260711",
+                "market": "ashare",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "filled_price": 10.0,
+                "candidate_pool_layer": "candidate",
+                "execution_source": "ashare_candidate_layer",
+                "fill_price_source_class": "market_data",
+                "trade_timestamp_bj": "2026-07-11T10:00:00+08:00",
+                "hypothesis_id": "H-current",
+                "research_hypothesis": {"hypothesis_id": "H-current", "factor_snapshot": {"combined": 0.8}},
+            }
+            self._write_jsonl(trades_path, [trade])
+            old_review = {
+                "capital_epoch": 1,
+                "capital_cny": 200_000.0,
+                "generated_at": "2026-07-10T08:00:00+00:00",
+                "labels": [{"trade_id": "T-current", "labels": {"close": {"return_pct": 0.5}}}],
+                "overall_status": "pass",
+                "daily_target": {"today_strategy_sample_count": 99},
+            }
+            self._write_json(review_dir / "forward_validation_latest.json", old_review)
+            self._write_json(review_dir / "sample_target_monitor_latest.json", old_review)
+
+            with patch("Ashare.sample_learning.read_epoch_state", return_value=EPOCH_STATE):
+                report = write_sample_learning_report(
+                    trade_date="20260711",
+                    review_dir=review_dir,
+                    local_trades_path=trades_path,
+                    min_factor_samples=1,
+                )
+
+            persisted = json.loads((review_dir / "sample_learning_latest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(report["capital_epoch"], 2)
+        self.assertEqual(report["capital_cny"], 50_000.0)
+        self.assertEqual(report["epoch_cutover_timestamp"], EPOCH_STATE["cutover_timestamp"])
+        self.assertEqual(report["factor_research"]["status"], "sample_debt")
+        self.assertEqual(report["epoch_input_rejections"]["forward_validation"], "capital_epoch_mismatch")
+        self.assertEqual(report["epoch_input_rejections"]["sample_target_monitor"], "capital_epoch_mismatch")
+        self.assertEqual(persisted["capital_epoch"], 2)
+
+    def test_rejects_matching_epoch_review_with_wrong_cutover(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            review_dir = Path(tmp) / "review"
+            wrong = {
+                "capital_epoch": 2,
+                "capital_cny": 50_000.0,
+                "epoch_cutover_timestamp": "2026-07-01T00:00:00+00:00",
+                "generated_at": "2026-07-11T03:00:00+00:00",
+                "labels": [],
+            }
+            self._write_json(review_dir / "forward_validation_latest.json", wrong)
+
+            with patch("Ashare.sample_learning.read_epoch_state", return_value=EPOCH_STATE):
+                report = build_sample_learning_report(
+                    trade_date="20260711",
+                    review_dir=review_dir,
+                    local_trades_path=Path(tmp) / "trades.jsonl",
+                )
+
+        self.assertEqual(
+            report["epoch_input_rejections"]["forward_validation"],
+            "epoch_cutover_timestamp_mismatch",
+        )
 
 
 if __name__ == "__main__":

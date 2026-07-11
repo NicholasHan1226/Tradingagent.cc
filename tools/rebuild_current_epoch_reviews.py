@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -55,15 +56,25 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=True))
         return 2
 
+    archive_dir = args.archive_dir or _default_archive_dir(state)
+    custom_paths = args.review_dir != DEFAULT_REVIEW_DIR or args.archive_dir is not None
+    allowed_root = ROOT if not custom_paths else Path(
+        os.path.commonpath(
+            (
+                str(args.review_dir.resolve(strict=False)),
+                str(archive_dir.resolve(strict=False)),
+            )
+        )
+    )
     epoch_state = {
         **state,
         "current_epoch_id": current_epoch,
         "capital_cny": float(state.get("capital_cny") or epoch_capital_cny(current_epoch)),
         "cutover_timestamp": str(state["cutover_timestamp"]),
+        "allowed_root": str(allowed_root),
     }
-    archive_dir = args.archive_dir or _default_archive_dir(epoch_state)
     plan = build_epoch_reset_plan(args.review_dir, archive_dir, epoch_state)
-    if plan.get("status") != "ready":
+    if plan.get("status") not in {"ready", "already_applied"}:
         report = {"status": "error", "mode": "dry_run", "plan": plan}
         print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=True))
         return 2
@@ -71,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.apply:
         result = apply_epoch_reset_plan(plan)
         report = {"status": result.get("status"), "mode": "apply", "plan": plan, "result": result}
-        exit_code = 0 if result.get("status") == "applied" else 2
+        exit_code = 0 if result.get("status") in {"applied", "already_applied"} else 2
     else:
         report = {"status": "dry_run", "mode": "dry_run", "plan": plan}
         exit_code = 0

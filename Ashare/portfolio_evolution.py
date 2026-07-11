@@ -87,25 +87,6 @@ def _load_tier_manifest(review_dir: Path, epoch_fields: dict[str, Any]) -> dict[
     return payload if valid else {}
 
 
-def _timestamp_at_or_after_cutover(row: dict[str, Any], cutover_timestamp: str) -> bool:
-    raw = str(
-        row.get("created_at")
-        or row.get("trade_timestamp_bj")
-        or row.get("timestamp_bj")
-        or ""
-    ).strip()
-    try:
-        row_time = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        cutover = datetime.fromisoformat(str(cutover_timestamp).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if row_time.tzinfo is None:
-        row_time = row_time.replace(tzinfo=timezone.utc)
-    if cutover.tzinfo is None:
-        cutover = cutover.replace(tzinfo=timezone.utc)
-    return row_time.astimezone(timezone.utc) >= cutover.astimezone(timezone.utc)
-
-
 @contextmanager
 def _current_epoch_trade_file(
     path: Path,
@@ -128,9 +109,7 @@ def _current_epoch_trade_file(
         if not isinstance(row, dict):
             continue
         if "capital_epoch" not in row:
-            if current_epoch <= 1 or _timestamp_at_or_after_cutover(
-                row, str(epoch_fields["epoch_cutover_timestamp"])
-            ):
+            if current_epoch <= 1:
                 accepted.append(row)
             else:
                 rejections["missing_capital_epoch"] = rejections.get("missing_capital_epoch", 0) + 1
@@ -231,11 +210,21 @@ def _action_for_samples(
     return "observe", "flat_mark_to_market_pnl"
 
 
-def _forward_label_count(review_dir: Path) -> int:
+def _forward_label_count(review_dir: Path, epoch_fields: dict[str, Any]) -> int:
     try:
         payload = json.loads((review_dir / "forward_validation_latest.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return 0
+    if not isinstance(payload, dict):
+        return 0
+    if int(epoch_fields["capital_epoch"]) > 1:
+        valid, _ = validate_review_epoch(
+            payload,
+            current_epoch_id=int(epoch_fields["capital_epoch"]),
+            current_cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
+        )
+        if not valid:
+            return 0
     labels = payload.get("labels") if isinstance(payload, dict) else []
     return sum(
         1
@@ -291,7 +280,7 @@ def build_portfolio_evolution(
     strategy_sample_count = _safe_int(cumulative_quality.get("strategy_sample_valid_count"))
     eligible_sample_count = len(cumulative_evolution_trades)
     realized_round_trip_count = sum(1 for row in cumulative_evolution_trades if str(row.get("side") or "").lower() == "sell")
-    forward_label_count = _forward_label_count(review_path)
+    forward_label_count = _forward_label_count(review_path, epoch_fields)
     evolution_rejection_reasons = cumulative_quality.get("evolution_rejection_reasons") or {}
     evidence_blockers: list[str] = []
     if eligible_sample_count < strategy_sample_count:

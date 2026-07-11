@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from Ashare.epoch_review import validate_review_epoch
+from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
 from shared.runtime_test.ashare_no_trade_summary import NO_TRADE_LOG, summarize_no_trade_log
 
 
@@ -37,6 +39,47 @@ def _read_json(path: Path) -> dict[str, Any]:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
+    epoch_id = int(epoch_state.get("current_epoch_id") or 1)
+    return {
+        "capital_epoch": epoch_id,
+        "capital_cny": float(epoch_state.get("capital_cny") or epoch_capital_cny(epoch_id)),
+        "epoch_cutover_timestamp": str(
+            epoch_state.get("cutover_timestamp") or epoch_state.get("activated_at") or ""
+        ),
+    }
+
+
+def _validated_review(
+    payload: dict[str, Any],
+    *,
+    name: str,
+    epoch_fields: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    if not payload:
+        return {}, f"{name}_missing"
+    if int(epoch_fields["capital_epoch"]) <= 1 and "capital_epoch" not in payload:
+        return payload, ""
+    valid, reason = validate_review_epoch(
+        payload,
+        current_epoch_id=int(epoch_fields["capital_epoch"]),
+        current_cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
+    )
+    if not valid:
+        return {}, f"{name}_{reason}"
+    try:
+        payload_capital = float(payload["capital_cny"])
+    except (KeyError, TypeError, ValueError):
+        return {}, f"{name}_missing_or_invalid_capital_cny"
+    if payload_capital != float(epoch_fields["capital_cny"]):
+        return {}, f"{name}_capital_cny_mismatch"
+    if str(payload.get("epoch_cutover_timestamp") or "") != str(
+        epoch_fields["epoch_cutover_timestamp"]
+    ):
+        return {}, f"{name}_epoch_cutover_timestamp_mismatch"
+    return payload, ""
 
 
 def _compact_date(value: Any) -> str:
@@ -121,14 +164,27 @@ def build_sample_target_monitor(
     current = _now_cn(now)
     trade_date = current.strftime("%Y%m%d")
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
-    portfolio = _read_json(review_path / "portfolio_evolution_latest.json")
-    decision = _read_json(review_path / "evolution_decision_latest.json")
+    epoch_fields = _epoch_fields(read_epoch_state())
+    portfolio, portfolio_epoch_error = _validated_review(
+        _read_json(review_path / "portfolio_evolution_latest.json"),
+        name="portfolio_evolution",
+        epoch_fields=epoch_fields,
+    )
+    decision, decision_epoch_error = _validated_review(
+        _read_json(review_path / "evolution_decision_latest.json"),
+        name="evolution_decision",
+        epoch_fields=epoch_fields,
+    )
     target = _observation_target()
     portfolio_trade_date = _compact_date(portfolio.get("trade_date"))
     today_count = _safe_int(portfolio.get("today_strategy_sample_count"))
     strategy_count = _safe_int(portfolio.get("strategy_sample_count"))
     reasons: list[str] = []
     blockers: list[str] = []
+    for epoch_error in (portfolio_epoch_error, decision_epoch_error):
+        if epoch_error:
+            reasons.append(epoch_error)
+            blockers.append(epoch_error)
     if not portfolio:
         reasons.append("portfolio_evolution_missing")
         blockers.append("portfolio_evolution_missing")
@@ -157,6 +213,7 @@ def build_sample_target_monitor(
         action = "observe_and_label_candidates"
 
     return {
+        **epoch_fields,
         "report_type": "ashare_sample_target_monitor",
         "generated_at": current.isoformat(timespec="seconds"),
         "timezone": "Asia/Shanghai",

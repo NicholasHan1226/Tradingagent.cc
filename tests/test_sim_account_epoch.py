@@ -568,6 +568,49 @@ class SimAccountEpochTest(unittest.TestCase):
         self.assertFalse(state_file.exists())
         self.assertTrue(old_trade.exists())
 
+    def test_cutover_rollback_continues_after_tier_restore_failure_and_reports_blocked(self) -> None:
+        ledger_dir = self.tmp_path / "local_sim"
+        ledger_dir.mkdir(parents=True)
+        old_trade = ledger_dir / "local_sim_trades.jsonl"
+        old_trade.write_text('{"trade_id":"T1"}\n')
+        tiers_root = self.tmp_path / "local_sim_tiers"
+        tiers_root.mkdir()
+        (tiers_root / "legacy.json").write_text("{}")
+        positions = self.tmp_path / "simulated_ashare_positions.json"
+        positions.write_text(json.dumps({"positions": [{"ts_code": "600000.SH"}]}))
+        review_dir = self.tmp_path / "review"
+        review_dir.mkdir()
+        (review_dir / "portfolio_evolution_latest.json").write_text(
+            json.dumps({"capital_epoch": 1})
+        )
+        state_file = self.tmp_path / "epoch_state.json"
+        archive_root = self.tmp_path / "epoch_archive"
+        real_replace = __import__("os").replace
+
+        def fail_only_tier_restore(src: str, dst: str) -> None:
+            if Path(src).name == "local_sim_tiers" and Path(dst) == tiers_root:
+                raise OSError("tier restore denied")
+            real_replace(src, dst)
+
+        with patch("shared.execution.sim_account_epoch.epoch_state_path", return_value=state_file), patch(
+            "shared.execution.sim_account_epoch._write_epoch_state",
+            side_effect=OSError("state write failed"),
+        ), patch("shared.execution.sim_account_epoch.os.replace", side_effect=fail_only_tier_restore):
+            result = apply_cutover(
+                ledger_path=ledger_dir,
+                positions_snapshot_path=positions,
+                tiers_root=tiers_root,
+                archive_root=archive_root,
+                review_dir=review_dir,
+            )
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertTrue(old_trade.exists(), "ledger restore must continue after tier restore failure")
+        self.assertTrue(positions.exists(), "snapshot restore must still be attempted")
+        self.assertFalse(state_file.exists())
+        self.assertTrue(result["rollback_errors"])
+        self.assertTrue(any(item["action"] == "restore_tiers" for item in result["rollback_errors"]))
+
 
 if __name__ == "__main__":
     unittest.main()

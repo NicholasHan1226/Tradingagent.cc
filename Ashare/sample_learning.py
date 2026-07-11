@@ -16,6 +16,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from Ashare.epoch_review import validate_review_epoch
+from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
 from shared.review.sample_quality import classify_trade_sample
 from shared.runtime_test.ashare_no_trade_summary import NO_TRADE_LOG, summarize_no_trade_log
 from shared.markets.sim_capital import default_sim_capital
@@ -75,6 +77,71 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
             rows.append(payload)
     return rows
+
+
+def _epoch_fields(epoch_state: dict[str, Any]) -> dict[str, Any]:
+    epoch_id = int(epoch_state.get("current_epoch_id") or 1)
+    return {
+        "capital_epoch": epoch_id,
+        "capital_cny": float(epoch_state.get("capital_cny") or epoch_capital_cny(epoch_id)),
+        "epoch_cutover_timestamp": str(
+            epoch_state.get("cutover_timestamp") or epoch_state.get("activated_at") or ""
+        ),
+    }
+
+
+def _validated_review(
+    payload: dict[str, Any],
+    *,
+    epoch_fields: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    if not payload:
+        return {}, "missing"
+    if int(epoch_fields["capital_epoch"]) <= 1 and "capital_epoch" not in payload:
+        return payload, ""
+    valid, reason = validate_review_epoch(
+        payload,
+        current_epoch_id=int(epoch_fields["capital_epoch"]),
+        current_cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
+    )
+    if not valid:
+        return {}, reason
+    try:
+        payload_capital = float(payload["capital_cny"])
+    except (KeyError, TypeError, ValueError):
+        return {}, "missing_or_invalid_capital_cny"
+    if payload_capital != float(epoch_fields["capital_cny"]):
+        return {}, "capital_cny_mismatch"
+    if str(payload.get("epoch_cutover_timestamp") or "") != str(
+        epoch_fields["epoch_cutover_timestamp"]
+    ):
+        return {}, "epoch_cutover_timestamp_mismatch"
+    return payload, ""
+
+
+def _current_epoch_trades(
+    rows: list[dict[str, Any]],
+    *,
+    current_epoch_id: int,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    if current_epoch_id <= 1:
+        return rows, {}
+    accepted: list[dict[str, Any]] = []
+    rejected: Counter[str] = Counter()
+    for row in rows:
+        if "capital_epoch" not in row:
+            rejected["missing_capital_epoch"] += 1
+            continue
+        try:
+            row_epoch = int(row["capital_epoch"])
+        except (TypeError, ValueError):
+            rejected["invalid_capital_epoch"] += 1
+            continue
+        if row_epoch != current_epoch_id:
+            rejected["capital_epoch_mismatch"] += 1
+            continue
+        accepted.append(row)
+    return accepted, dict(rejected)
 
 
 def build_hypothesis_id(
@@ -381,13 +448,38 @@ def build_sample_learning_report(
     trades_path = Path(local_trades_path) if local_trades_path is not None else DEFAULT_TRADES_PATH
     no_trade_path = Path(no_trade_log_path) if no_trade_log_path is not None else NO_TRADE_LOG
     target_date = _compact_date(trade_date) or datetime.now(CN_TZ).strftime("%Y%m%d")
-    trades = [row for row in _read_jsonl(trades_path) if _compact_date(row.get("trade_date") or row.get("created_at")) == target_date]
-    forward_validation = _read_json(review_path / "forward_validation_latest.json")
+    epoch_fields = _epoch_fields(read_epoch_state())
+    trades, trade_epoch_rejections = _current_epoch_trades(
+        [row for row in _read_jsonl(trades_path) if _compact_date(row.get("trade_date") or row.get("created_at")) == target_date],
+        current_epoch_id=int(epoch_fields["capital_epoch"]),
+    )
+    epoch_input_rejections: dict[str, Any] = {}
+    forward_validation, forward_error = _validated_review(
+        _read_json(review_path / "forward_validation_latest.json"),
+        epoch_fields=epoch_fields,
+    )
+    if forward_error:
+        epoch_input_rejections["forward_validation"] = forward_error
     labels = _label_map(forward_validation)
-    sample_monitor = _read_json(review_path / "sample_target_monitor_latest.json")
+    sample_monitor, monitor_error = _validated_review(
+        _read_json(review_path / "sample_target_monitor_latest.json"),
+        epoch_fields=epoch_fields,
+    )
+    if monitor_error:
+        epoch_input_rejections["sample_target_monitor"] = monitor_error
     no_trade_summary = summarize_no_trade_log(no_trade_path, target_date)
-    tier_manifest = _read_json(review_path / "tier_experiments_latest.json")
-    portfolio = _read_json(review_path / "portfolio_evolution_latest.json")
+    tier_manifest, tier_error = _validated_review(
+        _read_json(review_path / "tier_experiments_latest.json"),
+        epoch_fields=epoch_fields,
+    )
+    if tier_error:
+        epoch_input_rejections["tier_experiments"] = tier_error
+    portfolio, portfolio_error = _validated_review(
+        _read_json(review_path / "portfolio_evolution_latest.json"),
+        epoch_fields=epoch_fields,
+    )
+    if portfolio_error:
+        epoch_input_rejections["portfolio_evolution"] = portfolio_error
     quality = _sample_quality(trades, labels)
     factor_research = _factor_research(trades, labels, min_samples=max(1, int(min_factor_samples)))
     status = "pass"
@@ -396,6 +488,7 @@ def build_sample_learning_report(
     if sample_monitor.get("overall_status") == "fail":
         status = "fail"
     report = {
+        **epoch_fields,
         "report_type": "ashare_sample_learning",
         "generated_at": datetime.now(CN_TZ).isoformat(timespec="seconds"),
         "trade_date": target_date,
@@ -409,6 +502,8 @@ def build_sample_learning_report(
         "read_only": True,
         "writes_orders": False,
         "real_trading_enabled": False,
+        "epoch_input_rejections": epoch_input_rejections,
+        "trade_epoch_rejections": trade_epoch_rejections,
     }
     return report
 

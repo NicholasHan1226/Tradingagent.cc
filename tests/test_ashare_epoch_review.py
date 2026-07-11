@@ -4,6 +4,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +17,8 @@ from Ashare.epoch_review import (
 )
 from Ashare.formal_close_refresh import run_formal_close_refresh
 from Ashare.portfolio_evolution import build_portfolio_evolution, write_portfolio_evolution
+from Ashare.sample_learning import write_sample_learning_report
+from Ashare.sample_target_monitor import write_sample_target_monitor
 from tools.rebuild_current_epoch_reviews import main as rebuild_reviews_main
 
 
@@ -212,7 +215,7 @@ def test_portfolio_evolution_excludes_old_epoch_trades_and_tiers(tmp_path: Path)
     }
 
 
-def test_post_cutover_untagged_trade_is_inferred_as_current_not_legacy(tmp_path: Path) -> None:
+def test_post_cutover_untagged_trade_is_rejected_from_current_review(tmp_path: Path) -> None:
     trade = _strategy_trade(trade_id="post-cutover", capital_epoch=None)
     trade["trade_date"] = "20260713"
     trade["trade_timestamp_bj"] = "2026-07-13T10:00:00+08:00"
@@ -228,8 +231,15 @@ def test_post_cutover_untagged_trade_is_inferred_as_current_not_legacy(tmp_path:
             mark_prices={"600000.SH": 10.0},
         )
 
-    assert report["strategy_sample_count"] == 1
-    assert report["epoch_rejections"] == {}
+    assert report["strategy_sample_count"] == 0
+    assert report["epoch_rejections"] == {"missing_capital_epoch": 1}
+
+
+def test_current_derived_file_set_includes_monitor_and_formal_close() -> None:
+    assert "sample_target_monitor_latest.json" in CURRENT_DERIVED_FILES
+    assert "sample_target_monitor_log.jsonl" in CURRENT_DERIVED_FILES
+    assert "formal_close_latest.json" in CURRENT_DERIVED_FILES
+    assert "formal_close_history.jsonl" in CURRENT_DERIVED_FILES
 
 
 class _ForwardReader:
@@ -268,6 +278,34 @@ def test_forward_validation_labels_only_current_epoch_trades(tmp_path: Path) -> 
     assert report["trade_count"] == 1
     assert [row["trade_id"] for row in report["labels"]] == ["current"]
     assert report["epoch_rejections"] == {"capital_epoch_mismatch": 1}
+
+
+def test_portfolio_ignores_stale_epoch_forward_labels(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    (review_dir / "forward_validation_latest.json").write_text(
+        json.dumps(
+            {
+                "capital_epoch": 1,
+                "generated_at": "2026-07-10T08:00:00+00:00",
+                "labels": [{"labels": {"m60": {"status": "labeled"}}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    trades = tmp_path / "local_sim_trades.jsonl"
+    trades.write_text(json.dumps(_strategy_trade(trade_id="current", capital_epoch=2)) + "\n")
+
+    with patch("Ashare.portfolio_evolution.read_epoch_state", return_value=EPOCH_STATE):
+        report = build_portfolio_evolution(
+            trade_date="20260710",
+            review_dir=review_dir,
+            local_trades_path=trades,
+            mark_prices={"600000.SH": 10.0},
+        )
+
+    assert report["evolution_evidence"]["forward_label_count"] == 0
+    assert "no_forward_validation_labels" in report["evolution_evidence"]["blockers"]
 
 
 def test_formal_close_refresh_propagates_epoch_fields_when_no_positions(tmp_path: Path) -> None:
@@ -347,3 +385,150 @@ def test_rebuild_cli_is_directly_executable() -> None:
     assert result.returncode == 0, result.stderr
     assert "--dry-run" in result.stdout
     assert "--apply" in result.stdout
+
+
+def test_apply_reset_plan_is_idempotent_noop(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+    plan = build_epoch_reset_plan(review_dir, tmp_path / "archive", EPOCH_STATE)
+
+    first = apply_epoch_reset_plan(plan)
+    second = apply_epoch_reset_plan(plan)
+
+    assert first["status"] == "applied"
+    assert second["status"] == "already_applied"
+    assert json.loads((review_dir / "portfolio_evolution_latest.json").read_text())["capital_epoch"] == 2
+
+
+def test_rebuilt_plan_after_apply_is_already_applied_noop(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+    archive_dir = tmp_path / "archive"
+    first_plan = build_epoch_reset_plan(review_dir, archive_dir, EPOCH_STATE)
+    assert apply_epoch_reset_plan(first_plan)["status"] == "applied"
+
+    second_plan = build_epoch_reset_plan(review_dir, archive_dir, EPOCH_STATE)
+    second = apply_epoch_reset_plan(second_plan)
+
+    assert second_plan["status"] == "already_applied"
+    assert second["status"] == "already_applied"
+
+
+def test_reset_plan_rejects_symlinked_review_root_escape(tmp_path: Path) -> None:
+    allowed_root = tmp_path / "allowed"
+    outside = tmp_path / "outside"
+    allowed_root.mkdir()
+    outside.mkdir()
+    (outside / "portfolio_evolution_latest.json").write_text("{}", encoding="utf-8")
+    review_link = allowed_root / "review"
+    review_link.symlink_to(outside, target_is_directory=True)
+    state = {**EPOCH_STATE, "allowed_root": str(allowed_root)}
+
+    plan = build_epoch_reset_plan(review_link, allowed_root / "archive", state)
+
+    assert plan["status"] == "error"
+    assert plan["reason"] == "unsafe_path"
+
+
+def test_reset_plan_rejects_symlinked_derived_file(tmp_path: Path) -> None:
+    allowed_root = tmp_path / "allowed"
+    review_dir = allowed_root / "review"
+    archive_dir = allowed_root / "archive"
+    outside = tmp_path / "outside.json"
+    review_dir.mkdir(parents=True)
+    outside.write_text("{}", encoding="utf-8")
+    (review_dir / "portfolio_evolution_latest.json").symlink_to(outside)
+    state = {**EPOCH_STATE, "allowed_root": str(allowed_root)}
+
+    plan = build_epoch_reset_plan(review_dir, archive_dir, state)
+
+    assert plan["status"] == "error"
+    assert plan["reason"] == "unsafe_path"
+
+
+def test_apply_reset_reports_blocked_when_rollback_action_fails(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    source = review_dir / "portfolio_evolution_latest.json"
+    source.write_text(json.dumps({"capital_epoch": 1}), encoding="utf-8")
+    plan = build_epoch_reset_plan(review_dir, tmp_path / "archive", EPOCH_STATE)
+    real_replace = __import__("os").replace
+    calls = {"count": 0}
+
+    def fail_restore(src: str, dst: str) -> None:
+        calls["count"] += 1
+        if calls["count"] >= 2:
+            raise OSError("restore blocked")
+        real_replace(src, dst)
+
+    with patch("Ashare.epoch_review._atomic_write_json", side_effect=OSError("bootstrap failed")), patch(
+        "Ashare.epoch_review.os.replace", side_effect=fail_restore
+    ):
+        result = apply_epoch_reset_plan(plan)
+
+    assert result["status"] == "blocked"
+    assert result["rollback_errors"]
+    assert any(item["action"] == "restore_review_file" for item in result["rollback_errors"])
+
+
+def test_apply_reset_audits_archive_cleanup_inspection_failure(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+    archive_dir = tmp_path / "archive"
+    plan = build_epoch_reset_plan(review_dir, archive_dir, EPOCH_STATE)
+    real_iterdir = Path.iterdir
+
+    def fail_archive_iterdir(path: Path):
+        if path == archive_dir:
+            raise OSError("archive inspection denied")
+        return real_iterdir(path)
+
+    with patch("Ashare.epoch_review._atomic_write_json", side_effect=OSError("bootstrap failed")), patch(
+        "pathlib.Path.iterdir", side_effect=fail_archive_iterdir, autospec=True
+    ):
+        result = apply_epoch_reset_plan(plan)
+
+    assert result["status"] == "blocked"
+    assert any(item["action"] == "remove_empty_archive_dir" for item in result["rollback_errors"])
+
+
+def test_next_monitor_and_learning_round_preserves_current_epoch_after_reset(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    (review_dir / "portfolio_evolution_latest.json").write_text(
+        json.dumps({"capital_epoch": 1}), encoding="utf-8"
+    )
+    plan = build_epoch_reset_plan(review_dir, tmp_path / "archive", EPOCH_STATE)
+    assert apply_epoch_reset_plan(plan)["status"] == "applied"
+    trades = tmp_path / "local_sim_trades.jsonl"
+    trades.write_text("", encoding="utf-8")
+
+    with patch("Ashare.sample_target_monitor.read_epoch_state", return_value=EPOCH_STATE):
+        monitor = write_sample_target_monitor(
+            review_dir=review_dir,
+            now=datetime.fromisoformat("2026-07-11T11:45:00+08:00"),
+        )
+    with patch("Ashare.sample_learning.read_epoch_state", return_value=EPOCH_STATE):
+        learning = write_sample_learning_report(
+            trade_date="20260711",
+            review_dir=review_dir,
+            local_trades_path=trades,
+        )
+
+    for payload in (monitor, learning):
+        valid, reason = validate_review_epoch(
+            payload,
+            current_epoch_id=2,
+            current_cutover_timestamp=EPOCH_STATE["cutover_timestamp"],
+        )
+        assert valid, reason
+        assert payload["capital_cny"] == 50_000.0

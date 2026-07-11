@@ -66,21 +66,12 @@ def _filter_current_epoch_rows(
     rows: list[dict[str, Any]],
     *,
     current_epoch_id: int,
-    cutover_timestamp: str,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     accepted: list[dict[str, Any]] = []
     rejections: dict[str, int] = {}
     for row in rows:
         if "capital_epoch" not in row:
-            row_time = _parse_dt(
-                row.get("created_at")
-                or row.get("trade_timestamp_bj")
-                or row.get("timestamp_bj")
-            )
-            cutover = _parse_dt(cutover_timestamp)
-            if current_epoch_id <= 1 or (
-                row_time is not None and cutover is not None and row_time >= cutover
-            ):
+            if current_epoch_id <= 1:
                 accepted.append(row)
             else:
                 rejections["missing_capital_epoch"] = rejections.get("missing_capital_epoch", 0) + 1
@@ -222,7 +213,6 @@ def build_forward_validation_report(
     rows, epoch_rejections = _filter_current_epoch_rows(
         _read_jsonl(local_trades_path),
         current_epoch_id=int(epoch_fields["capital_epoch"]),
-        cutover_timestamp=str(epoch_fields["epoch_cutover_timestamp"]),
     )
     if date:
         compact = _compact_date(date)

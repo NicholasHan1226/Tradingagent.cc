@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from os.path import commonpath
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,11 @@ CURRENT_DERIVED_FILES = (
     "forward_validation.jsonl",
     "sample_learning_latest.json",
     "sample_learning_log.jsonl",
+    "sample_target_monitor_latest.json",
+    "sample_target_monitor_log.jsonl",
     "tier_experiments_latest.json",
+    "formal_close_latest.json",
+    "formal_close_history.jsonl",
 )
 
 _LATEST_FILES = frozenset(name for name in CURRENT_DERIVED_FILES if name.endswith("_latest.json"))
@@ -167,6 +172,24 @@ def _latest_bootstraps(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "samples": [],
         "read_only": True,
     }
+    monitor = {
+        **base,
+        "report_type": "ashare_sample_target_monitor",
+        "market": "ashare",
+        "overall_status": "pass",
+        "state": "observation_gap",
+        "recommended_action": "observe_and_label_candidates",
+        "reasons": ["current_epoch_has_no_verified_samples"],
+        "blockers": ["current_epoch_has_no_verified_samples"],
+        "daily_target": {
+            "target": 0,
+            "today_strategy_sample_count": 0,
+            "strategy_sample_count": 0,
+            "target_met": False,
+        },
+        "read_only": True,
+        "writes_orders": False,
+    }
     tiers = {
         **base,
         "report_type": "ashare_tier_experiments",
@@ -175,13 +198,91 @@ def _latest_bootstraps(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "accounts": [],
         "read_only": True,
     }
+    formal_close = {
+        **base,
+        "report_type": "ashare_formal_close_refresh",
+        "schema_version": 2,
+        "market": "ashare",
+        "status": "pass",
+        "reason": "no_open_positions",
+        "read_only": True,
+    }
     return {
         "portfolio_evolution_latest.json": portfolio,
         "evolution_decision_latest.json": decision,
         "forward_validation_latest.json": forward,
         "sample_learning_latest.json": learning,
+        "sample_target_monitor_latest.json": monitor,
         "tier_experiments_latest.json": tiers,
+        "formal_close_latest.json": formal_close,
     }
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _contains_symlink(path: Path, allowed_root: Path) -> bool:
+    current = path.absolute()
+    stop = allowed_root.absolute()
+    while _is_within(current, stop):
+        if current.is_symlink():
+            return True
+        if current == stop:
+            break
+        current = current.parent
+    return False
+
+
+def _safe_roots(
+    review_dir: Path,
+    archive_dir: Path,
+    epoch_state: dict[str, Any],
+) -> tuple[Path, Path, Path] | tuple[None, None, None]:
+    review_raw = Path(review_dir).absolute()
+    archive_raw = Path(archive_dir).absolute()
+    explicit_root = epoch_state.get("allowed_root")
+    if explicit_root:
+        allowed_root = Path(str(explicit_root)).resolve(strict=True)
+    else:
+        review_resolved = review_raw.resolve(strict=False)
+        archive_resolved = archive_raw.resolve(strict=False)
+        allowed_root = Path(commonpath((str(review_resolved), str(archive_resolved)))).resolve()
+    if allowed_root == Path(allowed_root.anchor):
+        return None, None, None
+    review_resolved = review_raw.resolve(strict=False)
+    archive_resolved = archive_raw.resolve(strict=False)
+    if not _is_within(review_resolved, allowed_root) or not _is_within(archive_resolved, allowed_root):
+        return None, None, None
+    if _contains_symlink(review_raw, allowed_root) or _contains_symlink(archive_raw, allowed_root):
+        return None, None, None
+    return review_resolved, archive_resolved, allowed_root
+
+
+def _roots_already_bootstrapped(
+    review_dir: Path,
+    archive_dir: Path,
+    latest_bootstraps: dict[str, dict[str, Any]],
+) -> bool:
+    if not archive_dir.is_dir():
+        return False
+    for name, expected in latest_bootstraps.items():
+        if (review_dir / name).is_symlink():
+            return False
+        try:
+            current = json.loads((review_dir / name).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return False
+        if current != expected:
+            return False
+    for name in CURRENT_DERIVED_FILES:
+        if name not in latest_bootstraps and (review_dir / name).exists():
+            return False
+    return True
 
 
 def build_epoch_reset_plan(
@@ -191,12 +292,27 @@ def build_epoch_reset_plan(
 ) -> dict[str, Any]:
     """Build a deterministic, read-only reset plan for active derived files."""
 
-    review_path = Path(review_dir)
-    archive_path = Path(archive_dir)
     try:
         bootstrap = _bootstrap_payload(epoch_state)
-    except (KeyError, TypeError, ValueError) as exc:
+        safe = _safe_roots(Path(review_dir), Path(archive_dir), epoch_state)
+    except (KeyError, TypeError, ValueError, OSError) as exc:
         return {"status": "error", "reason": "invalid_epoch_state", "detail": str(exc)}
+    review_path, archive_path, allowed_root = safe
+    if review_path is None or archive_path is None or allowed_root is None:
+        return {"status": "error", "reason": "unsafe_path"}
+    latest_bootstraps = _latest_bootstraps(bootstrap)
+    if _roots_already_bootstrapped(review_path, archive_path, latest_bootstraps):
+        return {
+            "status": "already_applied",
+            "review_dir": str(review_path),
+            "archive_dir": str(archive_path),
+            "allowed_root": str(allowed_root),
+            "move_count": 0,
+            "moves": [],
+            "missing_files": [],
+            "bootstrap": bootstrap,
+            "latest_bootstraps": latest_bootstraps,
+        }
 
     moves: list[dict[str, Any]] = []
     missing: list[str] = []
@@ -207,6 +323,18 @@ def build_epoch_reset_plan(
         if not source.exists():
             missing.append(name)
             continue
+        if source.is_symlink() or _contains_symlink(source, allowed_root):
+            return {
+                "status": "error",
+                "reason": "unsafe_path",
+                "path": str(source),
+            }
+        if destination.is_symlink() or _contains_symlink(destination, allowed_root):
+            return {
+                "status": "error",
+                "reason": "unsafe_path",
+                "path": str(destination),
+            }
         if not source.is_file():
             return {
                 "status": "error",
@@ -238,11 +366,12 @@ def build_epoch_reset_plan(
         "status": "ready",
         "review_dir": str(review_path),
         "archive_dir": str(archive_path),
+        "allowed_root": str(allowed_root),
         "move_count": len(moves),
         "moves": moves,
         "missing_files": missing,
         "bootstrap": bootstrap,
-        "latest_bootstraps": _latest_bootstraps(bootstrap),
+        "latest_bootstraps": latest_bootstraps,
     }
 
 
@@ -258,13 +387,73 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _plan_already_applied(plan: dict[str, Any], allowed_root: Path) -> bool:
+    latest = plan.get("latest_bootstraps") if isinstance(plan.get("latest_bootstraps"), dict) else {}
+    review_dir = Path(str(plan.get("review_dir") or ""))
+    moves = plan.get("moves") if isinstance(plan.get("moves"), list) else []
+    for item in moves:
+        destination = Path(str(item.get("destination") or ""))
+        if destination.is_symlink() or _contains_symlink(destination, allowed_root):
+            return False
+        if not destination.is_file():
+            return False
+        if destination.stat().st_size != int(item.get("size") or -1):
+            return False
+        if _sha256(destination) != str(item.get("sha256") or ""):
+            return False
+    for name, payload in latest.items():
+        path = review_dir / name
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return False
+        if current != payload:
+            return False
+    return bool(latest)
+
+
+def _record_rollback_error(
+    errors: list[dict[str, str]],
+    action: str,
+    path: Path,
+    operation: Any,
+) -> None:
+    try:
+        operation()
+    except Exception as exc:  # noqa: BLE001
+        errors.append(
+            {
+                "action": action,
+                "path": str(path),
+                "error": f"{exc.__class__.__name__}: {exc}",
+            }
+        )
+
+
 def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
     """Apply a previously built reset plan, rolling back on any failure."""
 
-    if not isinstance(plan, dict) or plan.get("status") != "ready":
+    if not isinstance(plan, dict) or plan.get("status") not in {"ready", "already_applied"}:
         return {"status": "error", "reason": "plan_not_ready"}
     review_dir = Path(str(plan.get("review_dir") or ""))
     archive_dir = Path(str(plan.get("archive_dir") or ""))
+    try:
+        allowed_root = Path(str(plan.get("allowed_root") or "")).resolve(strict=True)
+    except OSError as exc:
+        return {"status": "error", "reason": "unsafe_path", "detail": str(exc)}
+    if (
+        _contains_symlink(review_dir, allowed_root)
+        or _contains_symlink(archive_dir, allowed_root)
+        or not _is_within(review_dir.resolve(strict=False), allowed_root)
+        or not _is_within(archive_dir.resolve(strict=False), allowed_root)
+    ):
+        return {"status": "error", "reason": "unsafe_path"}
+    if plan.get("status") == "already_applied" or _plan_already_applied(plan, allowed_root):
+        return {
+            "status": "already_applied",
+            "move_count": int(plan.get("move_count") or 0),
+            "archive_dir": str(plan.get("archive_dir") or ""),
+        }
     moves = plan.get("moves") if isinstance(plan.get("moves"), list) else []
     latest_bootstraps = (
         plan.get("latest_bootstraps")
@@ -280,6 +469,15 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
         for item in moves:
             source = Path(str(item["source"]))
             destination = Path(str(item["destination"]))
+            if (
+                source.is_symlink()
+                or destination.is_symlink()
+                or _contains_symlink(source, allowed_root)
+                or _contains_symlink(destination, allowed_root)
+                or not _is_within(source.resolve(strict=False), allowed_root)
+                or not _is_within(destination.resolve(strict=False), allowed_root)
+            ):
+                raise RuntimeError(f"unsafe_path: {source} -> {destination}")
             if destination.exists():
                 raise FileExistsError(f"destination_collision: {destination}")
             if not source.is_file():
@@ -299,18 +497,41 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
             _atomic_write_json(destination, latest_bootstraps[name])
             written.append(destination)
     except Exception as exc:  # noqa: BLE001
+        rollback_errors: list[dict[str, str]] = []
         for path in written:
-            path.unlink(missing_ok=True)
+            _record_rollback_error(
+                rollback_errors,
+                "remove_bootstrap",
+                path,
+                lambda path=path: path.unlink(missing_ok=True),
+            )
         for source, destination in reversed(moved):
             if destination.exists():
-                source.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(str(destination), str(source))
-        if archive_dir.exists() and not any(archive_dir.iterdir()):
-            archive_dir.rmdir()
+                def restore(source: Path = source, destination: Path = destination) -> None:
+                    source.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(str(destination), str(source))
+
+                _record_rollback_error(
+                    rollback_errors,
+                    "restore_review_file",
+                    source,
+                    restore,
+                )
+        def remove_archive_if_empty() -> None:
+            if archive_dir.exists() and not any(archive_dir.iterdir()):
+                archive_dir.rmdir()
+
+        _record_rollback_error(
+            rollback_errors,
+            "remove_empty_archive_dir",
+            archive_dir,
+            remove_archive_if_empty,
+        )
         return {
-            "status": "error",
+            "status": "blocked" if rollback_errors else "error",
             "reason": f"epoch_review_reset_failed: {exc}",
             "rollback_attempted": True,
+            "rollback_errors": rollback_errors,
         }
     return {
         "status": "applied",

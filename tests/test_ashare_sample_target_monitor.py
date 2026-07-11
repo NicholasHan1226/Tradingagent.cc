@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from Ashare.sample_target_monitor import (
     build_sample_target_monitor,
@@ -13,6 +14,11 @@ from Ashare.sample_target_monitor import (
 
 
 CN_TZ = timezone(timedelta(hours=8))
+EPOCH_STATE = {
+    "current_epoch_id": 2,
+    "capital_cny": 50_000.0,
+    "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+}
 
 
 class AshareSampleTargetMonitorTest(unittest.TestCase):
@@ -136,6 +142,64 @@ class AshareSampleTargetMonitorTest(unittest.TestCase):
         self.assertIn("risk_rejections_present", report["blockers"])
         self.assertEqual(report["recommended_action"], "observe_and_label_candidates")
         self.assertFalse(report["writes_orders"])
+
+    def test_rejects_old_epoch_inputs_and_writes_current_epoch_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            review_dir = self._review_dir(tmp)
+            old = {
+                "capital_epoch": 1,
+                "capital_cny": 200_000.0,
+                "epoch_cutover_timestamp": "2026-07-01T00:00:00+00:00",
+                "generated_at": "2026-07-10T08:00:00+00:00",
+                "trade_date": "20260711",
+                "strategy_sample_count": 99,
+                "today_strategy_sample_count": 9,
+                "recommended_action": "expand_risk_candidate",
+            }
+            self._write_json(review_dir / "portfolio_evolution_latest.json", old)
+            self._write_json(review_dir / "evolution_decision_latest.json", old)
+
+            with patch("Ashare.sample_target_monitor.read_epoch_state", return_value=EPOCH_STATE):
+                report = write_sample_target_monitor(
+                    review_dir=review_dir,
+                    now=datetime(2026, 7, 11, 11, 45, tzinfo=CN_TZ),
+                )
+
+            persisted = json.loads(
+                (review_dir / "sample_target_monitor_latest.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(report["capital_epoch"], 2)
+        self.assertEqual(report["capital_cny"], 50_000.0)
+        self.assertEqual(report["epoch_cutover_timestamp"], EPOCH_STATE["cutover_timestamp"])
+        self.assertEqual(report["daily_target"]["strategy_sample_count"], 0)
+        self.assertIn("portfolio_evolution_capital_epoch_mismatch", report["blockers"])
+        self.assertIn("evolution_decision_capital_epoch_mismatch", report["blockers"])
+        self.assertEqual(persisted["capital_epoch"], 2)
+
+    def test_rejects_matching_epoch_with_wrong_capital(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            review_dir = self._review_dir(tmp)
+            payload = {
+                "capital_epoch": 2,
+                "capital_cny": 200_000.0,
+                "epoch_cutover_timestamp": EPOCH_STATE["cutover_timestamp"],
+                "generated_at": "2026-07-11T03:00:00+00:00",
+                "trade_date": "20260711",
+                "strategy_sample_count": 99,
+                "today_strategy_sample_count": 9,
+            }
+            self._write_json(review_dir / "portfolio_evolution_latest.json", payload)
+            self._write_json(review_dir / "evolution_decision_latest.json", {**payload, "capital_cny": 50_000.0})
+
+            with patch("Ashare.sample_target_monitor.read_epoch_state", return_value=EPOCH_STATE):
+                report = build_sample_target_monitor(
+                    review_dir=review_dir,
+                    now=datetime(2026, 7, 11, 11, 45, tzinfo=CN_TZ),
+                )
+
+        self.assertIn("portfolio_evolution_capital_cny_mismatch", report["blockers"])
+        self.assertEqual(report["daily_target"]["strategy_sample_count"], 0)
 
 
 if __name__ == "__main__":
