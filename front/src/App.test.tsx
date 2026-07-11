@@ -33,7 +33,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(within(navigation).queryByRole('button', { name: '决策' })).not.toBeInTheDocument()
 
     const marketHeader = screen.getByRole('region', { name: '市场与账户' })
-    expect(within(marketHeader).getByText('运行中').parentElement).toHaveTextContent('1')
+    expect(within(marketHeader).getByText('运行状态').parentElement).toHaveTextContent('1 运行中')
     expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('2')
     expect(screen.getByRole('navigation', { name: '市场状态带' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: '证据健康' })).toBeInTheDocument()
@@ -46,7 +46,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByLabelText('自动化过程')).toBeInTheDocument()
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
     const marketHeader = screen.getByRole('region', { name: '市场与账户' })
-    expect(within(marketHeader).getByText('运行中').parentElement).toHaveTextContent('1')
+    expect(within(marketHeader).getByText('运行状态').parentElement).toHaveTextContent('1 运行中')
     expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('2')
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
@@ -188,6 +188,9 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.queryByText(/等待新机会 · 转化 0%/)).not.toBeInTheDocument()
     click(screen.getByRole('tab', { name: '持仓 0' }))
     expect(screen.getByText('暂无持仓记录')).toBeInTheDocument()
+    click(screen.getByRole('button', { name: '持仓' }))
+    expect(screen.getByRole('region', { name: '当前没有模拟持仓' })).toHaveTextContent('当前敞口0 项')
+    expect(screen.queryByText('empty')).not.toBeInTheDocument()
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
   })
 

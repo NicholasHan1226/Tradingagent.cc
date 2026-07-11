@@ -4,6 +4,7 @@ import type { PortfolioLedgerRow, ProcessBookRow, RiskLedgerRow } from '../../li
 import { PortfolioLedger } from './PortfolioLedger'
 import { ProcessBook } from './ProcessBook'
 import { ProcessEventLedger } from './ProcessEventLedger'
+import { ProcessCycleLedger } from './ProcessCycleLedger'
 import { RiskLedger } from './RiskLedger'
 import { TerminalPageShell } from './TerminalPageShell'
 
@@ -54,6 +55,7 @@ describe('terminal components', () => {
   it('renders one continuous terminal shell with metrics and ledger', () => {
     render(
       <TerminalPageShell
+        heartbeat={{ state: 'idle', headline: '调度正常 · 当前空闲', detail: '最近事件 10分钟前', runningCount: 0, latestEventLabel: '最近事件 10分钟前', snapshotLabel: '快照 刚刚', tone: 'muted' }}
         inspector={<div>自动化检查器</div>}
         ledger={<div>底部账本</div>}
         metrics={[{ label: '收益', value: '+5.2%', tone: 'positive' }, { label: '风险', value: '正常' }]}
@@ -93,6 +95,22 @@ describe('terminal components', () => {
     const table = screen.getByRole('table', { name: '过程事件账本' })
     expect(within(table).getByText('风险检查通过')).toBeInTheDocument()
     expect(within(table).getByText('信号队列')).toBeInTheDocument()
+  })
+
+  it('renders grouped opportunity cycles with honest missing stages', () => {
+    render(<ProcessCycleLedger rows={[{
+      id: 'opp-1', symbol: '600519.SH', market: 'A股', result: '结果写回', source: '模拟账本',
+      latency: '10分钟', evidence: '3/5 阶段', reason: '—', updatedAt: '07/11 13:10',
+      stages: [
+        { label: '发现', state: 'complete' }, { label: '研判', state: 'missing' },
+        { label: '风控', state: 'complete' }, { label: '待确认', state: 'missing' }, { label: '结果', state: 'current' },
+      ],
+    }]} />)
+
+    const ledger = screen.getByRole('region', { name: '机会周期账本' })
+    expect(within(ledger).getByText('决策因果链')).toBeInTheDocument()
+    expect(within(ledger).getByText('3/5 阶段 · 10分钟')).toBeInTheDocument()
+    expect(within(ledger).getByRole('list', { name: '600519.SH阶段' }).children[1]).toHaveClass('missing')
   })
 
   it('renders portfolio currency and suppresses duplicate asset names', () => {

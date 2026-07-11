@@ -1,5 +1,6 @@
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { SignalRow } from '../../types/dashboard'
+import { translateTerminalValue } from '../../lib/runtimeHeartbeat'
 import { PanelTitle } from '../PanelTitle'
 import { chartColors } from './chartConfig'
 
@@ -35,7 +36,7 @@ export function ContributionPanel({ signals }: { signals: SignalRow[] }) {
 
 function getContributionData(signals: SignalRow[]) {
   const byMethod = signals.reduce<Record<string, number>>((acc, signal) => {
-    const method = signal.method || '其他'
+    const method = translateTerminalValue(signal.method || '其他')
     const impact = readImpact(signal.impact)
     if (impact !== null && impact !== 0) acc[method] = (acc[method] ?? 0) + impact
     return acc

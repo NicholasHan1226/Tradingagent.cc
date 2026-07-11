@@ -19,6 +19,7 @@ describe('MarketHeader freshness', () => {
         performanceStatus="stale"
         positionCount={0}
         runningCount={0}
+        heartbeat={{ state: 'stale', headline: '快照滞后 · 等待更新', detail: '最近事件 1小时前', runningCount: 0, latestEventLabel: '最近事件 1小时前', snapshotLabel: '快照 1小时前', tone: 'warning' }}
         setActiveMarket={vi.fn()}
         snapshotGeneratedAt="2026-07-04T10:00:00.000Z"
         targetReturn={8}

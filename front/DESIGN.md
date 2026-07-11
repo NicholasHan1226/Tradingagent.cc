@@ -21,6 +21,8 @@ Hyperliquid structures are translated to the product boundary: its market ticker
 
 The terminal operations layer adds a six-market tape and evidence-health block below the account header. It keeps return, holdings count, runtime truth, snapshot freshness and five data-domain states visible without introducing another card row.
 
+The evidence-adaptive layer adds four explicit runtime states: `live`, `idle`, `stale` and `degraded`. Top navigation, market header, page metrics and inspectors consume one heartbeat model, so a healthy scheduler with no pending process reads `调度正常 · 当前空闲` instead of claiming automation is running. Internal values such as `buy`, `sell`, `empty` and raw source codes are translated before rendering.
+
 ## Shared page anatomy
 
 `TerminalPageShell` owns the secondary-page structure:
@@ -35,9 +37,9 @@ Secondary pages do not use `PageSummaryBoard`. Empty running state reveals recen
 ## Page content contract
 
 - `总览`: return chart, runtime inspector, compact process strip and `运行中 / 持仓 / 已完成 / 自动复盘` blotter. If running is empty, the blotter opens the most relevant non-empty result tab.
-- `收益`: equity/target/benchmark chart as the primary surface; ranked contribution and realized/unrealized result in the inspector.
-- `过程`: Process Book with process, market, stage, state, evidence, latency, result and update time; the event ledger below it orders `funnelEvents[]` by timestamp/sequence and exposes source, reason and latency.
-- `持仓`: Portfolio Ledger with sourced quantity, average/mark price, cost, market value, derived portfolio weight, PnL, contribution and risk; absent optional evidence remains `—`.
+- `收益`: equity/target/benchmark chart as the primary surface; ranked contribution and realized/unrealized result in the inspector. Flat or one-point evidence uses a 300px quiet chart plus sample/realized/unrealized strip; meaningful movement restores the full 520px chart.
+- `过程`: opportunity cycles group `funnelEvents[]` into `发现 → 研判 → 风控 → 待确认 → 结果`, preserving missing stages instead of inferring them. The raw event ledger remains below for timestamp/source/reason audit detail; Process Book is the fallback when no explicit events exist.
+- `持仓`: Portfolio Ledger with sourced quantity, average/mark price, cost, market value, derived portfolio weight, PnL, contribution and risk. When empty, the surface collapses to sourced exposure, available cash, latest closed process and snapshot time; absent optional evidence remains `—`.
 - `风险`: drawdown chart with 5% warning and 7% hard-limit context, market exposure inspector, and Risk Ledger for blocked/missed/cancelled records plus stale/error/live-gated evidence domains.
 - `复盘`: completed result ledger with confidence, impact, evidence and automatic calibration. User-facing copy is `自动校准`, never an instruction for manual action.
 
@@ -67,6 +69,7 @@ Secondary pages do not use `PageSummaryBoard`. Empty running state reveals recen
 - `src/lib/terminalViewModels.ts`: currency-safe, read-only display models.
 - `src/lib/terminalStateResolver.ts`: authoritative running/completed/review resolution.
 - `src/lib/marketTapeViewModel.ts` and `src/lib/processEventViewModel.ts`: market/evidence strip and event-audit rows.
+- `src/lib/runtimeHeartbeat.ts`, `terminalDensity.ts` and `processCycleViewModel.ts`: shared runtime truth, evidence-aware density and grouped opportunity cycles.
 - `src/hooks/useTerminalNavigation.ts`: URL and keyboard presentation state.
 - `src/components/workbench/`: overview workbench and result-tab selection.
 - `src/pages/ThemePage.tsx`: composition for the five secondary pages.

@@ -1,5 +1,6 @@
 import { marketLabels } from '../../data/dashboard'
 import type { SignalRow } from '../../types/dashboard'
+import { translateTerminalValue } from '../../lib/runtimeHeartbeat'
 import { AssetCell } from '../AssetCell'
 
 export function RunningProcessTable({ signals }: { signals: SignalRow[] }) {
@@ -16,7 +17,7 @@ export function RunningProcessTable({ signals }: { signals: SignalRow[] }) {
       {signals.map((signal, index) => (
         <div className="terminal-row" key={`${signal.symbol}-${signal.status}-${signal.age}-${index}`} role="row">
           <div role="cell">
-            <AssetCell symbol={signal.symbol} name={signal.strategyName ?? signal.method} />
+            <AssetCell symbol={signal.symbol} name={translateTerminalValue(signal.strategyName ?? signal.method)} />
           </div>
           <span role="cell">{marketLabels[signal.market]}</span>
           <span role="cell">{formatStage(signal)}</span>

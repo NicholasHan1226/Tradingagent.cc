@@ -12,6 +12,7 @@ import { getSnapshotFunnelEvents, getSnapshotHoldings, getSnapshotPerformance, g
 import { createAutomationObservatoryViewModel } from './lib/automationObservatoryViewModel'
 import { createWorkbenchViewModel } from './lib/workbenchViewModel'
 import { createEvidenceHealth, createMarketTapeRows } from './lib/marketTapeViewModel'
+import { createRuntimeHeartbeat } from './lib/runtimeHeartbeat'
 import { readTerminalNavigation, useTerminalNavigation } from './hooks/useTerminalNavigation'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
@@ -21,7 +22,7 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
-const DASHBOARD_BUILD_ID = '20260711-terminal-operations'
+const DASHBOARD_BUILD_ID = '20260711-evidence-adaptive-terminal'
 
 function App() {
   const demoPreviewEnabled = isDemoPreviewEnabled()
@@ -130,11 +131,20 @@ function App() {
   const selectAccountMode = (mode: AccountMode) => setAccountMode(mode)
   const marketTapeRows = useMemo(() => createMarketTapeRows(marketSummaries, activeMarket, readModelSnapshot?.generatedAt ?? null), [activeMarket, marketSummaries, readModelSnapshot?.generatedAt])
   const evidenceHealth = useMemo(() => createEvidenceHealth(dashboardState.domains, readModelSnapshot?.generatedAt ?? null, selectedMarketSummary), [dashboardState.domains, readModelSnapshot?.generatedAt, selectedMarketSummary])
+  const heartbeat = useMemo(() => createRuntimeHeartbeat({
+    domains: dashboardState.domains,
+    funnelEvents: visibleFunnelEvents,
+    generatedAt: isUsingDemoSnapshot ? now.toISOString() : readModelSnapshot?.generatedAt ?? null,
+    marketSummary: selectedMarketSummary,
+    now,
+    signals: visibleSignals,
+  }), [dashboardState.domains, isUsingDemoSnapshot, now, readModelSnapshot?.generatedAt, selectedMarketSummary, visibleFunnelEvents, visibleSignals])
 
   return (
     <main className="hyper-shell" data-build={DASHBOARD_BUILD_ID}>
       <TopNav
         activePage={activePage}
+        heartbeat={heartbeat}
         setActivePage={setActivePage}
       />
       <MarketHeader
@@ -151,6 +161,7 @@ function App() {
         positionCount={visibleHoldings.length}
         performanceStatus={domainStatus('performance')}
         runningCount={observatory.summary.runningCount}
+        heartbeat={heartbeat}
         snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
         setActiveMarket={setActiveMarket}
         targetReturn={visiblePortfolio?.targetPct ?? latestPoint.target}
@@ -206,6 +217,8 @@ function App() {
             signals={visibleSignals}
             events={chartEvents}
             funnelEvents={visibleFunnelEvents}
+            heartbeat={heartbeat}
+            snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
           />
         )}
       </section>

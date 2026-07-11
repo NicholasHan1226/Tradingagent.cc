@@ -45,6 +45,10 @@
   --state-danger-border: rgba(242, 95, 103, 0.2);
   --state-neutral-soft: rgba(218, 242, 237, 0.04);
   --state-neutral-border: rgba(218, 242, 237, 0.09);
+  --state-live: #71d7c7;
+  --state-idle: #71808a;
+  --state-stale: #d6ad63;
+  --state-degraded: #e46f78;
   --metric-green: #52e0d3;
   --metric-rose: #f25f67;
   --metric-blue: #a0b7b1;

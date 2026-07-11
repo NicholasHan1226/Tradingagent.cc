@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { marketLabels, markets, pageMeta } from '../data/dashboard'
 import { formatCurrency, formatSignedCnyCompact } from '../lib/format'
+import type { RuntimeHeartbeat } from '../lib/runtimeHeartbeat'
+import { AutomationHeartbeat } from './terminal/AutomationHeartbeat'
 import type { AccountMode, Market, Page } from '../types/dashboard'
 import type { DomainStatus } from '../types/status'
 
@@ -18,6 +20,7 @@ export function MarketHeader({
   isDemoPreview,
   isCnyAccount,
   runningCount,
+  heartbeat,
   setActiveMarket,
   snapshotGeneratedAt,
   targetReturn,
@@ -35,6 +38,7 @@ export function MarketHeader({
   positionCount: number
   performanceStatus: DomainStatus
   runningCount: number
+  heartbeat: RuntimeHeartbeat
   setActiveMarket: (market: Market) => void
   snapshotGeneratedAt: string | null
   targetReturn: number
@@ -82,12 +86,13 @@ export function MarketHeader({
           cyan={showPerformanceData && liveReturn - targetReturn > 0.005}
           red={showPerformanceData && liveReturn - targetReturn < -0.005}
         />
-        <Stat detail="自动流程" label="运行中" value={`${runningCount}`} cyan={runningCount > 0} />
+        <Stat detail={heartbeat.state === 'idle' ? '当前空闲' : '自动过程'} label="运行状态" value={runningCount > 0 ? `${runningCount} 运行中` : heartbeat.state === 'idle' ? '空闲' : heartbeat.state === 'stale' ? '滞后' : '关注'} cyan={heartbeat.state === 'live'} red={heartbeat.state === 'degraded'} />
         <Stat detail="结果写回" label="已完成" value={`${completedCount}`} />
         <Stat detail="模拟盘" label="持仓" value={`${positionCount}`} />
         <Stat label="最大回撤" value={showPerformanceData ? formatDrawdown(drawdown) : isLive ? '待接入' : '等待'} red={showPerformanceData && drawdown > 0} />
       </div>
       <div className="market-tools">
+        <AutomationHeartbeat compact heartbeat={heartbeat} />
         <span className="market-freshness"><i />{freshness}</span>
         <div className="market-filter">
           <button

@@ -10,13 +10,14 @@ Implementation states inspected:
 - returns, process, holdings, risk and review at 1440×900;
 - all six navigation states at 1280×720;
 - risk chart and ledger at both desktop viewports.
-- terminal operations layer at 1440×900 and 1280×720, including market/evidence tape, process event ledger, sourced holdings, evidence-domain risk rows and review controls.
+- terminal operations layer at 1440×900 and 1280×720, including market/evidence tape, process event ledger, sourced holdings, evidence-domain risk rows and review controls;
+- evidence-adaptive overview, quiet returns and empty holdings at 1440×900, plus all six routes at 1280×720.
 
 ## Visual comparison
 
 The Hyperliquid reference and final returns-terminal screenshot were inspected together at the same 1440×900 viewport. The implementation matches the intended structural grammar: compact top navigation and market strip, one continuous divided canvas, large primary data surface, fixed right inspector, dense bottom/history surfaces, tabular numbers and restrained cyan/red/amber semantics. TradingAgent intentionally replaces the reference order form with a read-only Automation Inspector and does not reproduce trading controls.
 
-Quantitative design gate: **92/100**. Hierarchy 19/20, continuous-grid fidelity 19/20, information density 18/20, state/data truth 20/20, interaction/accessibility 16/20. The remaining gap from the reference is intentional product translation: TradingAgent uses line/evidence views instead of candlesticks/order entry, and keeps desktop-only inner ledger scrolling for wide evidence tables.
+Quantitative design gate: **94/100**. Visual hierarchy 19/20, typography 14/15, color semantics 15/15, spacing rhythm 14/15, interaction feedback 9/10, accessibility baseline 9/10, originality/brand fit 9/10, desktop responsive integrity 5/5. The remaining gap from the reference is intentional product translation: TradingAgent uses line/evidence views instead of candlesticks/order entry and does not fabricate market microstructure or trading controls.
 
 ## Issues found and resolved
 
@@ -34,6 +35,12 @@ Quantitative design gate: **92/100**. Hierarchy 19/20, continuous-grid fidelity 
 - Added Process Event Ledger source/latency/reason columns and sourced portfolio cost/mark/quantity fields.
 - Added compact search, sorting and native column visibility controls to process, event, portfolio, risk and review ledgers.
 - Fixed a real-browser `/` shortcut issue found during QA: focus now occurs on key-up so the slash never pollutes the search query.
+- Replaced the fixed top-level “自动化运行中” claim with one shared live/idle/stale/degraded heartbeat.
+- Compressed a flat return series to a 300px quiet chart with a four-field evidence strip; meaningful movement retains the 520px chart.
+- Replaced the large empty holdings table with a 390px sourced evidence surface and removed the leaked `empty` value.
+- Grouped explicit funnel events into opportunity cycles while retaining the raw event ledger below.
+- Translated `buy`, `sell`, `empty`, `signal_queue`, `sim_ledger` and `opportunity_log` before they reach user-facing affected surfaces.
+- Removed decorative canvas gradients to match the reference's flatter continuous terminal surface.
 
 ## Runtime checks
 
@@ -46,6 +53,16 @@ Quantitative design gate: **92/100**. Hierarchy 19/20, continuous-grid fidelity 
 - All six pages reported `documentElement.scrollWidth === clientWidth` at 1280×720; returns, process, holdings, risk and review also passed at 1440×900.
 - Process, portfolio, risk and review ledgers exposed a visible local search and accurate result count; portfolio wide columns remained inside the ledger scroll container rather than widening the document.
 - No order, buy/sell, queue-write, capital-control or strategy-edit control was introduced.
+- Build marker `20260711-evidence-adaptive-terminal` rendered at both desktop viewports.
+- At 1440×900, quiet returns rendered with `data-density=quiet` and a 300px chart; empty holdings rendered with `data-density=empty` and a 390px primary grid.
+- All six routes at 1280×720 had `scrollWidth === clientWidth`, no app/state error surface and no browser console warnings/errors.
+- User-visible leak scan returned no raw `buy`, `sell`, `empty`, `signal_queue`, `sim_ledger` or `opportunity_log` text.
+
+## Next iteration
+
+1. Add sourced mini-sparklines to the market tape when SharedSignals exposes stable price-series fields.
+2. Add cycle-to-return cross-highlighting when event and equity timestamps share a reliable identifier.
+3. Add saved desktop column presets only after real operators demonstrate repeated table customization.
 
 ## Final result
 

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { marketLabels, statusLabels } from '../../data/dashboard'
 import { filterAndSortRows, type SortDirection } from '../../lib/terminalTableState'
+import { translateTerminalValue } from '../../lib/runtimeHeartbeat'
 import type { SignalRow } from '../../types/dashboard'
 import { AssetCell } from '../AssetCell'
 import { TerminalTableToolbar } from '../terminal/TerminalTableToolbar'
@@ -21,7 +22,7 @@ const columns: SignalColumn[] = [
   { key: 'asset', label: '标的', width: '128px', sortable: true, value: (row) => `${row.symbol} ${row.name}`, render: (row) => <AssetCell symbol={row.symbol} name={row.name} /> },
   { key: 'market', label: '市场', width: '54px', sortable: true, value: (row) => marketLabels[row.market], render: (row) => marketLabels[row.market] },
   { key: 'result', label: '结果', width: '72px', sortable: true, value: (row) => row.status, render: (row) => <span className={`status ${row.status}`}>{row.queueBucket?.toLowerCase() === 'partial' ? '部分成交' : statusLabels[row.status]}</span> },
-  { key: 'strategy', label: '策略', width: '112px', sortable: true, value: (row) => `${row.strategyName ?? row.method} ${row.signalSource ?? ''}`, render: (row) => <span title={row.signalSource ? `来源：${row.signalSource}` : undefined}>{row.strategyName ?? row.method}</span> },
+  { key: 'strategy', label: '策略', width: '112px', sortable: true, value: (row) => `${translateTerminalValue(row.strategyName ?? row.method)} ${translateTerminalValue(row.signalSource)}`, render: (row) => <span title={row.signalSource ? `来源：${translateTerminalValue(row.signalSource)}` : undefined}>{translateTerminalValue(row.strategyName ?? row.method)}</span> },
   { key: 'reason', label: '为什么', width: 'minmax(180px, 1fr)', value: (row) => row.reason, render: (row) => row.reason },
   { key: 'process', label: '过程', width: '76px', value: (row) => row.steps, render: (row) => <Timeline steps={row.steps} labels={stages} /> },
   { key: 'impact', label: '影响', width: '54px', sortable: true, value: (row) => Number.parseFloat(row.impact.replace(/[^0-9.-]/g, '')), render: (row) => <span className={row.impact.startsWith('-') ? 'red-text' : 'cyan-text'}>{row.impact}</span> },

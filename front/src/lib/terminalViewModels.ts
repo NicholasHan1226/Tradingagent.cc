@@ -2,6 +2,7 @@ import { marketLabels, statusLabels } from '../data/dashboard'
 import type { HoldingRow, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 import { parseHoldingExposure } from './holdings'
+import { translateTerminalValue } from './runtimeHeartbeat'
 
 export type ProcessBookRow = {
   symbol: string
@@ -126,7 +127,7 @@ function toProcessRow(signal: SignalRow): ProcessBookRow {
     symbol: signal.symbol,
     name: normalizeAssetName(signal),
     market: marketLabels[signal.market],
-    process: signal.strategyName ?? signal.method,
+    process: translateTerminalValue(signal.strategyName ?? signal.method),
     stage: formatStage(signal),
     state: signal.queueBucket?.toLowerCase() === 'partial' ? '部分成交' : statusLabels[signal.status],
     evidence: formatEvidence(signal.stageEvidence),

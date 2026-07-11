@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import type { RuntimeHeartbeat } from '../../lib/runtimeHeartbeat'
+import { AutomationHeartbeat } from './AutomationHeartbeat'
 
 export type TerminalMetric = {
   label: string
@@ -13,12 +15,14 @@ export function TerminalPageShell({
   metrics,
   primary,
   title,
+  heartbeat,
 }: {
   inspector: ReactNode
   ledger?: ReactNode
   metrics: TerminalMetric[]
   primary: ReactNode
   title: string
+  heartbeat: RuntimeHeartbeat
 }) {
   return (
     <section aria-label={title} className={`terminal-page${ledger ? ' has-ledger' : ''}`} role="region">
@@ -34,7 +38,7 @@ export function TerminalPageShell({
       </div>
       <div className="terminal-primary-grid">
         <div className="terminal-primary">{primary}</div>
-        <aside aria-label={`${title}检查器`} className="terminal-inspector">{inspector}</aside>
+        <aside aria-label={`${title}检查器`} className="terminal-inspector"><AutomationHeartbeat heartbeat={heartbeat} />{inspector}</aside>
       </div>
       {ledger && <div className="terminal-ledger">{ledger}</div>}
     </section>
