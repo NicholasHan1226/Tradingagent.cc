@@ -115,6 +115,14 @@ https://github.com/NicholasHan1226/Tradingagent.cc.git
 
 ## 运维报告
 
+生产使用一个 `marketgraph` 用户的跨仓合并 crontab。Cron 环境赋值按文本
+位置持续生效，因此 TradingAgent schedule 块必须紧跟
+`BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh`（merge 安装器自动在 TA schedule 行前插入）。只能使用
+`tools/merge_tradingagent_crontab.py` 合并更新；
+`shared.runtime_test.cron_coverage` 会把继承到其它仓库 loader 的 TA 任务判为
+失败（`installed_crontab_environment_mismatch`）。模拟盘健康检查同时保留 scheduled reader 的 `reader_degraded`/错误证据，
+不能被一次新鲜交互探针降级成“策略等待”。
+
 TradingAgent 每小时生成一次统一运维报告：
 
 ```bash

@@ -26,11 +26,16 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from shared.runtime_test.cron_coverage import tradingagent_entries
+from shared.runtime_test.cron_coverage import (
+    TRADINGAGENT_BASH_ENV as TRADINGAGENT_BASH_ENV_PATH,
+    _tradingagent_environment_mismatches,
+    tradingagent_entries,
+)
 
 TEMPLATE_PATH = ROOT / "shared" / "crontab.txt"
 BACKUP_DIR = ROOT / "runtime" / "backups" / "crontab"
 USER = "marketgraph"
+TRADINGAGENT_BASH_ENV = f"BASH_ENV={TRADINGAGENT_BASH_ENV_PATH}"
 
 
 # ---------------------------------------------------------------------------
@@ -49,15 +54,27 @@ def _is_ta_schedule_line(line: str) -> bool:
 def merge(current_text: str, template_text: str) -> str | None:
     """Return merged crontab, or None if template has no TA schedule entries.
 
-    Strips TA schedule lines from *current_text*, then appends raw TA schedule
-    lines from *template_text*.  All other lines are preserved as-is in order.
+    Strips TA schedule lines from *current_text*, then appends the TradingAgent
+    BASH_ENV reset followed by raw TA schedule lines from *template_text*. All
+    other lines are preserved as-is in order.
     """
     expected = tradingagent_entries(template_text)
     ta_raw = [line for line in template_text.splitlines() if _is_ta_schedule_line(line)]
-    if not expected or len(expected) != len(set(expected)) or len(ta_raw) != len(expected):
+    template_lines = {line.strip() for line in template_text.splitlines()}
+    if (
+        not expected
+        or len(expected) != len(set(expected))
+        or len(ta_raw) != len(expected)
+        or TRADINGAGENT_BASH_ENV not in template_lines
+    ):
         return None
-    kept = [l for l in current_text.splitlines() if not _is_ta_schedule_line(l)]
-    return "\n".join(kept + ta_raw) + "\n"
+    kept = [
+        line
+        for line in current_text.splitlines()
+        if not _is_ta_schedule_line(line)
+        and line.strip() != TRADINGAGENT_BASH_ENV
+    ]
+    return "\n".join(kept + [TRADINGAGENT_BASH_ENV] + ta_raw) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +118,10 @@ def _backup(text: str) -> Path:
 # ---------------------------------------------------------------------------
 
 def _ta_coverage_ok(text: str, template_text: str) -> bool:
-    return tradingagent_entries(text) == tradingagent_entries(template_text)
+    return (
+        tradingagent_entries(text) == tradingagent_entries(template_text)
+        and not _tradingagent_environment_mismatches(text)
+    )
 
 
 def apply_merge(template_text: str, *, user: str = USER,
