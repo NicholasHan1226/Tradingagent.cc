@@ -964,19 +964,27 @@ def _apply_position_budgets(
         price = _safe_float(position.get("price"), _safe_float(meta.get("price"), 0.0))
         if price <= 0:
             continue
-        shares = int(budget // price)
+        requested_budget = budget
+        risk_weight_cap = min(0.15, max(0.0, _safe_float(meta.get("weight"), 0.0)))
+        risk_capped_budget = min(requested_budget, capital * risk_weight_cap)
+        shares = int(risk_capped_budget // price)
         shares = (shares // 100) * 100
+        position["requested_budget"] = round(requested_budget, 2)
+        position["risk_capped_budget"] = round(risk_capped_budget, 2)
+        position["budget_cap_reason"] = (
+            "risk_adjusted_weight_cap" if risk_capped_budget < requested_budget else "capital_plan_budget"
+        )
         if shares <= 0:
             position["shares"] = 0
             position["amount"] = 0.0
             position["weight"] = 0.0
-            position["target_amount"] = round(budget, 2)
+            position["target_amount"] = round(requested_budget, 2)
             continue
         amount = shares * price
         position["shares"] = shares
         position["amount"] = round(amount, 2)
         position["weight"] = round(amount / max(capital, 1.0), 6)
-        position["target_amount"] = round(budget, 2)
+        position["target_amount"] = round(requested_budget, 2)
 
 
 def _ashare_post_sell_buy_capacity(

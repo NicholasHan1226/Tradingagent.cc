@@ -391,13 +391,18 @@ def plan_capital(
             if alloc < min_position_value:
                 break
             code = cand.get("code", cand.get("ts_code", f"slot_{i}"))
+            requested_budget = round(alloc, 2)
+            risk_limit_budget = round(float(total_capital) * 0.15, 2)
             suggested_buys.append({
                 "code": code,
-                "allocation": round(alloc, 2),
+                "allocation": requested_budget,
                 "weight": round(alloc / max(float(total_capital), 1.0), 4),
                 "score": round(_candidate_score(cand), 4),
+                "requested_budget": requested_budget,
+                "risk_limit_budget": risk_limit_budget,
+                "executable_budget": round(min(requested_budget, risk_limit_budget), 2),
             })
-            position_budget_by_symbol[str(code)] = round(alloc, 2)
+            position_budget_by_symbol[str(code)] = requested_budget
             remaining -= alloc
 
         investable -= sum(b["allocation"] for b in suggested_buys)

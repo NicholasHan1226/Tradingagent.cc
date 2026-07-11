@@ -11,7 +11,36 @@ from shared.accounting import trade_audit_trail
 from shared.execution import shadow_broker, sim_executor_registry
 from shared.execution.signal_state_machine import read_json
 from shared.markets.base import MarketAdapter
-from shared.orchestrator import OrchestratorDeps, _build_signal_card, run_sim_loop
+from shared.orchestrator import OrchestratorDeps, _apply_position_budgets, _build_signal_card, run_sim_loop
+
+
+def test_ashare_position_budget_cannot_expand_risk_approved_weight():
+    portfolio = {"positions": [{"ts_code": "600000.SH", "price": 10.0, "shares": 700, "weight": 0.14}]}
+    _apply_position_budgets(
+        market="ashare",
+        portfolio=portfolio,
+        order_meta={"600000.SH": {"price": 10.0, "weight": 0.14}},
+        capital_plan={"enabled": True, "position_budget_by_symbol": {"600000.SH": 15_000.0}},
+        capital=50_000.0,
+    )
+    position = portfolio["positions"][0]
+    assert position["weight"] <= 0.14
+    assert position["amount"] <= 7_000.0
+    assert position["requested_budget"] == 15_000.0
+    assert position["budget_cap_reason"] == "risk_adjusted_weight_cap"
+
+
+def test_ashare_position_budget_rounding_cannot_cross_fifteen_percent():
+    portfolio = {"positions": [{"ts_code": "600000.SH", "price": 7.31, "shares": 100, "weight": 0.01}]}
+    _apply_position_budgets(
+        market="ashare",
+        portfolio=portfolio,
+        order_meta={"600000.SH": {"price": 7.31, "weight": 0.15}},
+        capital_plan={"enabled": True, "position_budget_by_symbol": {"600000.SH": 17_500.0}},
+        capital=50_000.0,
+    )
+    assert portfolio["positions"][0]["amount"] <= 7_500.0
+    assert portfolio["positions"][0]["weight"] <= 0.15
 
 
 class StubSimAdapter(MarketAdapter):

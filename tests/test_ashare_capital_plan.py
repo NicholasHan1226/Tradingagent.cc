@@ -7,6 +7,32 @@ from Ashare.capital_plan import plan_capital
 
 
 class AshareCapitalPlanTest(unittest.TestCase):
+    def test_suggested_buy_distinguishes_requested_and_executable_budget(self) -> None:
+        data = plan_capital(
+            [],
+            50000.0,
+            candidates=[
+                {"ts_code": "600000.SH", "combined": 0.86},
+                {"ts_code": "000001.SZ", "combined": 0.78},
+                {"ts_code": "300750.SZ", "combined": 0.72},
+            ],
+            dynamic=True,
+            total_capital=50000.0,
+            market_context={
+                "trend": "bullish",
+                "risk_rejection_rate": 0.0,
+                "data_issue_rate": 0.0,
+                "recent_win_rate": 0.62,
+            },
+        ).to_dict()
+
+        self.assertEqual(data["max_single_position_pct"], 0.35)
+        self.assertTrue(data["suggested_buys"])
+        for buy in data["suggested_buys"]:
+            self.assertEqual(buy["requested_budget"], buy["allocation"])
+            self.assertEqual(buy["risk_limit_budget"], 7500.0)
+            self.assertEqual(buy["executable_budget"], min(buy["allocation"], 7500.0))
+
     def test_dynamic_plan_expands_to_three_positions_for_strong_candidates(self) -> None:
         plan = plan_capital(
             [],
