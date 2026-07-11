@@ -591,9 +591,10 @@ def _rollback_derived_review_reset(plan: dict[str, Any]) -> dict[str, Any]:
     errors: list[dict[str, str]] = []
     audit: list[dict[str, str]] = []
     latest = plan.get("latest_bootstraps") if isinstance(plan.get("latest_bootstraps"), dict) else {}
+    logs = plan.get("log_bootstraps") if isinstance(plan.get("log_bootstraps"), dict) else {}
     review_dir = Path(str(plan["review_dir"]))
     archive_dir = Path(str(plan["archive_dir"]))
-    for name in latest:
+    for name in (*latest, *logs):
         path = review_dir / name
         _rollback_action(
             errors,

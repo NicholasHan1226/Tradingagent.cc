@@ -753,9 +753,9 @@ class SimAccountEpochTest(unittest.TestCase):
         positions.write_text(json.dumps({"positions": [{"ts_code": "600000.SH"}]}))
         review_dir = self.tmp_path / "review"
         review_dir.mkdir()
-        (review_dir / "portfolio_evolution_latest.json").write_text(
-            json.dumps({"capital_epoch": 1})
-        )
+        stale_review = review_dir / "portfolio_evolution_latest.json"
+        old_review = {"capital_epoch": 1}
+        stale_review.write_text(json.dumps(old_review))
         state_file = self.tmp_path / "epoch_state.json"
         archive_root = self.tmp_path / "epoch_archive"
         real_replace = __import__("os").replace
@@ -780,9 +780,122 @@ class SimAccountEpochTest(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertTrue(old_trade.exists(), "ledger restore must continue after tier restore failure")
         self.assertTrue(positions.exists(), "snapshot restore must still be attempted")
+        self.assertEqual(json.loads(stale_review.read_text()), old_review)
         self.assertFalse(state_file.exists())
         self.assertTrue(result["rollback_errors"])
         self.assertTrue(any(item["action"] == "restore_tiers" for item in result["rollback_errors"]))
+
+    def test_state_write_failure_removes_all_review_bootstraps_and_allows_safe_retry(self) -> None:
+        from Ashare.epoch_review import CURRENT_DERIVED_FILES
+
+        ledger_dir = self.tmp_path / "local_sim"
+        ledger_dir.mkdir(parents=True)
+        old_trade = ledger_dir / "local_sim_trades.jsonl"
+        old_trade.write_text('{"trade_id":"T1"}\n')
+        review_dir = self.tmp_path / "review"
+        review_dir.mkdir()
+        state_file = self.tmp_path / "epoch_state.json"
+        old_state = {
+            "current_epoch_id": 1,
+            "capital_cny": 200_000.0,
+            "cutover_timestamp": "2026-07-01T00:00:00+00:00",
+        }
+        state_file.write_text(json.dumps(old_state))
+        archive_root = self.tmp_path / "epoch_archive"
+
+        with patch(
+            "shared.execution.sim_account_epoch.epoch_state_path",
+            return_value=state_file,
+        ), patch(
+            "shared.execution.sim_account_epoch._write_epoch_state",
+            side_effect=OSError("state write failed"),
+        ):
+            failed = apply_cutover(
+                ledger_path=ledger_dir,
+                archive_root=archive_root,
+                review_dir=review_dir,
+            )
+
+        self.assertEqual(failed["status"], "error", failed)
+        self.assertEqual(json.loads(state_file.read_text()), old_state)
+        self.assertTrue(old_trade.exists())
+        self.assertEqual(
+            [name for name in CURRENT_DERIVED_FILES if (review_dir / name).exists()],
+            [],
+        )
+        removed = [
+            item
+            for item in failed["rollback_audit"]
+            if item["action"] == "remove_review_bootstrap"
+        ]
+        self.assertEqual({Path(item["path"]).name for item in removed}, set(CURRENT_DERIVED_FILES))
+        self.assertTrue(all(item["status"] == "restored" for item in removed))
+
+        with patch(
+            "shared.execution.sim_account_epoch.epoch_state_path",
+            return_value=state_file,
+        ):
+            retried = apply_cutover(
+                ledger_path=ledger_dir,
+                archive_root=archive_root,
+                review_dir=review_dir,
+            )
+
+        self.assertEqual(retried["status"], "migrated", retried)
+        self.assertEqual(json.loads(state_file.read_text())["current_epoch_id"], 2)
+        self.assertTrue(all((review_dir / name).exists() for name in CURRENT_DERIVED_FILES))
+
+    def test_review_bootstrap_delete_failure_blocks_outer_rollback(self) -> None:
+        ledger_dir = self.tmp_path / "local_sim"
+        ledger_dir.mkdir(parents=True)
+        old_trade = ledger_dir / "local_sim_trades.jsonl"
+        old_trade.write_text('{"trade_id":"T1"}\n')
+        review_dir = self.tmp_path / "review"
+        review_dir.mkdir()
+        state_file = self.tmp_path / "epoch_state.json"
+        old_state = {"current_epoch_id": 1}
+        state_file.write_text(json.dumps(old_state))
+        archive_root = self.tmp_path / "epoch_archive"
+        failed_delete = review_dir / "formal_close_history.jsonl"
+        real_unlink = Path.unlink
+
+        def fail_one_review_delete(path: Path, *args: object, **kwargs: object) -> None:
+            if path.resolve(strict=False) == failed_delete.resolve(strict=False):
+                raise OSError("review bootstrap delete denied")
+            real_unlink(path, *args, **kwargs)
+
+        with patch(
+            "shared.execution.sim_account_epoch.epoch_state_path",
+            return_value=state_file,
+        ), patch(
+            "shared.execution.sim_account_epoch._write_epoch_state",
+            side_effect=OSError("state write failed"),
+        ), patch.object(Path, "unlink", fail_one_review_delete):
+            result = apply_cutover(
+                ledger_path=ledger_dir,
+                archive_root=archive_root,
+                review_dir=review_dir,
+            )
+
+        self.assertEqual(result["status"], "blocked", result)
+        self.assertEqual(json.loads(state_file.read_text()), old_state)
+        self.assertTrue(old_trade.exists())
+        self.assertTrue(failed_delete.exists())
+        self.assertTrue(
+            any(
+                item["action"] == "remove_review_bootstrap"
+                and Path(item["path"]).resolve(strict=False) == failed_delete.resolve(strict=False)
+                for item in result["rollback_errors"]
+            )
+        )
+        self.assertTrue(
+            any(
+                item["action"] == "remove_review_bootstrap"
+                and Path(item["path"]).resolve(strict=False) == failed_delete.resolve(strict=False)
+                and item["status"] == "failed"
+                for item in result["rollback_audit"]
+            )
+        )
 
 
 if __name__ == "__main__":
