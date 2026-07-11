@@ -57,5 +57,21 @@
 - No old JSONL row is edited in place.
 - Review reset destination collisions and source drift fail closed.
 - Cutover state is not advanced when review reset fails.
-- Current trade rows must carry explicit `capital_epoch`; otherwise the review boundary excludes them. The ledger writer was outside this task's allowed file set, so this remains an upstream data-contract dependency rather than a review-layer fallback.
+- Current trade rows must carry explicit `capital_epoch`; otherwise the review boundary excludes them.
 - No documentation update outside this task report was required because the operator interface and behavior are fully captured by the task brief and the new CLI help.
+
+## Final spec-blocker follow-up
+
+- Added one strict validator for the authoritative persisted epoch triple: `current_epoch_id`, `capital_cny`, and timezone-aware `cutover_timestamp`. Missing, malformed, unknown, or epoch/capital-inconsistent values now fail closed.
+- The local simulated ledger reads all three fields directly from `read_epoch_state()`. It no longer reconstructs capital from the code epoch table or substitutes `activated_at`, order creation time, or wall-clock time. Invalid state returns a rejected result before trade, receipt, position, or PnL writes.
+- The evolution-decision writer uses the same authoritative triple and validates it before creating the review directory. Invalid state raises `ValueError` before latest/log decision writes.
+- The inner `apply_epoch_reset_plan()` now emits `rollback_audit` for every attempted rollback action with `action`, `path`, and `status=restored|failed`; failures also retain the error string and remain in `rollback_errors`.
+- Added a real inner-to-outer cutover integration test. It runs the actual inner apply, injects a bootstrap failure plus a real restore failure, proves the inner `blocked` state survives, and proves its audit/errors are merged into the outer result without hiding subsequent ledger rollback actions.
+
+### Final fresh verification
+
+- Initial RED proof: 3 focused tests failed (`filled` instead of rejected, no evolution exception, and inner `blocked` hidden as `cutover_requires_review_repair`).
+- Final Task 3 plus writer regression surface: `108 passed in 60.84s`.
+- A-share simulated execution regression: `15 passed in 155.47s`.
+- `git diff --check`: passed.
+- `py_compile` for all seven changed Python source/test files: passed.

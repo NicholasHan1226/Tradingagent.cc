@@ -414,20 +414,22 @@ def _plan_already_applied(plan: dict[str, Any], allowed_root: Path) -> bool:
 
 def _record_rollback_error(
     errors: list[dict[str, str]],
+    audit: list[dict[str, str]],
     action: str,
     path: Path,
     operation: Any,
 ) -> None:
     try:
         operation()
+        audit.append({"action": action, "path": str(path), "status": "restored"})
     except Exception as exc:  # noqa: BLE001
-        errors.append(
-            {
-                "action": action,
-                "path": str(path),
-                "error": f"{exc.__class__.__name__}: {exc}",
-            }
-        )
+        error = {
+            "action": action,
+            "path": str(path),
+            "error": f"{exc.__class__.__name__}: {exc}",
+        }
+        errors.append(error)
+        audit.append({**error, "status": "failed"})
 
 
 def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
@@ -498,9 +500,11 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
             written.append(destination)
     except Exception as exc:  # noqa: BLE001
         rollback_errors: list[dict[str, str]] = []
+        rollback_audit: list[dict[str, str]] = []
         for path in written:
             _record_rollback_error(
                 rollback_errors,
+                rollback_audit,
                 "remove_bootstrap",
                 path,
                 lambda path=path: path.unlink(missing_ok=True),
@@ -513,6 +517,7 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
 
                 _record_rollback_error(
                     rollback_errors,
+                    rollback_audit,
                     "restore_review_file",
                     source,
                     restore,
@@ -523,6 +528,7 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
 
         _record_rollback_error(
             rollback_errors,
+            rollback_audit,
             "remove_empty_archive_dir",
             archive_dir,
             remove_archive_if_empty,
@@ -532,6 +538,7 @@ def apply_epoch_reset_plan(plan: dict) -> dict[str, Any]:
             "reason": f"epoch_review_reset_failed: {exc}",
             "rollback_attempted": True,
             "rollback_errors": rollback_errors,
+            "rollback_audit": rollback_audit,
         }
     return {
         "status": "applied",

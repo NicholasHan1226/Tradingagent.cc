@@ -13,7 +13,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
+from shared.execution.sim_account_epoch import (
+    read_epoch_state,
+    require_authoritative_epoch_metadata,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -191,9 +194,9 @@ def write_evolution_decision(
     min_strategy_samples: int = 5,
 ) -> dict[str, Any]:
     review_path = Path(review_dir) if review_dir is not None else DEFAULT_REVIEW_DIR
-    review_path.mkdir(parents=True, exist_ok=True)
     epoch_state = read_epoch_state()
-    current_epoch_id = _safe_int(epoch_state.get("current_epoch_id"), 1)
+    epoch_metadata = require_authoritative_epoch_metadata(epoch_state)
+    current_epoch_id = int(epoch_metadata["capital_epoch"])
     decision = build_evolution_decision(
         portfolio_evolution,
         target_trade_date=target_trade_date,
@@ -203,14 +206,11 @@ def write_evolution_decision(
     decision.update(
         {
             "capital_epoch": current_epoch_id,
-            "capital_cny": epoch_capital_cny(current_epoch_id),
-            "epoch_cutover_timestamp": str(
-                epoch_state.get("cutover_timestamp")
-                or epoch_state.get("activated_at")
-                or decision["generated_at"]
-            ),
+            "capital_cny": float(epoch_metadata["capital_cny"]),
+            "epoch_cutover_timestamp": str(epoch_metadata["cutover_timestamp"]),
         }
     )
+    review_path.mkdir(parents=True, exist_ok=True)
     latest = review_path / LATEST_DECISION.name
     log = review_path / DECISION_LOG.name
     latest.write_text(json.dumps(decision, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

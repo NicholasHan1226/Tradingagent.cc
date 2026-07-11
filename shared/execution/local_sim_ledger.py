@@ -784,26 +784,26 @@ def record_local_sim_order(
             "account": account_name,
         }
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    from shared.execution.sim_account_epoch import epoch_capital_cny, read_epoch_state
+    from shared.execution.sim_account_epoch import (
+        read_epoch_state,
+        require_authoritative_epoch_metadata,
+    )
 
     epoch_state = read_epoch_state()
-    capital_epoch = _safe_int(epoch_state.get("current_epoch_id"), 1)
     try:
-        capital_cny = epoch_capital_cny(capital_epoch)
-    except KeyError:
+        epoch_metadata = require_authoritative_epoch_metadata(epoch_state)
+    except ValueError as exc:
         return {
             "status": "rejected",
             "recorded": False,
-            "reason": f"unknown_capital_epoch:{capital_epoch}",
+            "reason": str(exc),
             "order_id": order_id,
             "idempotency_key": idempotency_key,
             "account": account_name,
         }
-    epoch_cutover_timestamp = str(
-        epoch_state.get("cutover_timestamp")
-        or epoch_state.get("activated_at")
-        or created_at
-    )
+    capital_epoch = int(epoch_metadata["capital_epoch"])
+    capital_cny = float(epoch_metadata["capital_cny"])
+    epoch_cutover_timestamp = str(epoch_metadata["cutover_timestamp"])
     session_metadata = _ashare_session_metadata(market_key, code, created_at)
     trade = LocalSimTrade(
         order_id=order_id,

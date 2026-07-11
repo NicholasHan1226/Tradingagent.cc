@@ -49,6 +49,16 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.review_dir = Path(self.tmp.name)
+        epoch_patcher = patch(
+            "Ashare.evolution_controller.read_epoch_state",
+            return_value={
+                "current_epoch_id": 2,
+                "capital_cny": 50_000.0,
+                "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+            },
+        )
+        epoch_patcher.start()
+        self.addCleanup(epoch_patcher.stop)
 
     def test_missing_daily_fill_keeps_decision_in_observation_mode(self) -> None:
         portfolio = {
@@ -161,6 +171,24 @@ class AshareEvolutionControllerTest(unittest.TestCase):
         self.assertEqual(decision["epoch_cutover_timestamp"], epoch_state["cutover_timestamp"])
         persisted = json.loads((self.review_dir / "evolution_decision_latest.json").read_text())
         self.assertEqual(persisted["capital_epoch"], 2)
+
+    def test_epoch2_corrupt_state_fails_closed_without_writing_decision(self) -> None:
+        portfolio = _qualified_evidence(capital_epoch=2, capital_cny=50_000.0)
+        corrupt_epoch_state = {
+            "current_epoch_id": 2,
+            "capital_cny": 50_000.0,
+            "generated_at": "2026-07-10T20:56:58+00:00",
+        }
+
+        with patch(
+            "Ashare.evolution_controller.read_epoch_state",
+            return_value=corrupt_epoch_state,
+        ):
+            with self.assertRaisesRegex(ValueError, "missing_cutover_timestamp"):
+                write_evolution_decision(portfolio, review_dir=self.review_dir)
+
+        self.assertFalse((self.review_dir / "evolution_decision_latest.json").exists())
+        self.assertFalse((self.review_dir / "evolution_decision_log.jsonl").exists())
 
     def test_positive_mark_to_market_cannot_expand_risk_without_verified_evidence(self) -> None:
         portfolio = {

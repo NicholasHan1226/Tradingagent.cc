@@ -31,6 +31,7 @@ from __future__ import annotations
 import errno
 import fcntl
 import json
+import math
 import os
 import shutil
 import time
@@ -82,6 +83,59 @@ def get_epoch(epoch_id: int) -> dict[str, Any]:
 def epoch_capital_cny(epoch_id: int) -> float:
     """Return the ``capital_cny`` for *epoch_id*."""
     return float(EPOCHS[epoch_id]["capital_cny"])
+
+
+def require_authoritative_epoch_metadata(state: dict[str, Any]) -> dict[str, Any]:
+    """Validate and return the three mandatory persisted epoch fields.
+
+    Writers must not reconstruct these values from code defaults or wall-clock
+    time.  An incomplete/corrupt state therefore blocks the write.
+    """
+
+    if not isinstance(state, dict):
+        raise ValueError("invalid_epoch_state:not_an_object")
+    if "current_epoch_id" not in state:
+        raise ValueError("invalid_epoch_state:missing_current_epoch_id")
+    raw_epoch = state["current_epoch_id"]
+    if isinstance(raw_epoch, bool):
+        raise ValueError("invalid_epoch_state:invalid_current_epoch_id")
+    try:
+        capital_epoch = int(raw_epoch)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_epoch_state:invalid_current_epoch_id") from exc
+    if capital_epoch not in EPOCHS or str(raw_epoch).strip() != str(capital_epoch):
+        raise ValueError("invalid_epoch_state:invalid_current_epoch_id")
+
+    if "capital_cny" not in state:
+        raise ValueError("invalid_epoch_state:missing_capital_cny")
+    raw_capital = state["capital_cny"]
+    if isinstance(raw_capital, bool):
+        raise ValueError("invalid_epoch_state:invalid_capital_cny")
+    try:
+        capital_cny = float(raw_capital)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_epoch_state:invalid_capital_cny") from exc
+    expected_capital = float(EPOCHS[capital_epoch]["capital_cny"])
+    if not math.isfinite(capital_cny) or capital_cny <= 0 or capital_cny != expected_capital:
+        raise ValueError("invalid_epoch_state:invalid_capital_cny")
+
+    if "cutover_timestamp" not in state:
+        raise ValueError("invalid_epoch_state:missing_cutover_timestamp")
+    cutover_timestamp = state["cutover_timestamp"]
+    if not isinstance(cutover_timestamp, str) or not cutover_timestamp.strip():
+        raise ValueError("invalid_epoch_state:invalid_cutover_timestamp")
+    try:
+        parsed_cutover = datetime.fromisoformat(cutover_timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("invalid_epoch_state:invalid_cutover_timestamp") from exc
+    if parsed_cutover.tzinfo is None:
+        raise ValueError("invalid_epoch_state:invalid_cutover_timestamp")
+
+    return {
+        "capital_epoch": capital_epoch,
+        "capital_cny": capital_cny,
+        "cutover_timestamp": cutover_timestamp,
+    }
 
 
 def epoch_ledger_root(epoch_id: int) -> Path:
@@ -916,4 +970,5 @@ __all__ = [
     "get_epoch",
     "read_epoch_state",
     "read_ledger_epoch_metadata",
+    "require_authoritative_epoch_metadata",
 ]

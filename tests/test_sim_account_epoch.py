@@ -31,6 +31,7 @@ from shared.execution.sim_account_epoch import (
     get_current_epoch,
     get_epoch,
     read_epoch_state,
+    require_authoritative_epoch_metadata,
 )
 
 
@@ -52,6 +53,37 @@ class SimAccountEpochTest(unittest.TestCase):
         self.assertEqual(EPOCHS[2]["id"], 2)
         self.assertEqual(EPOCHS[2]["label"], "current_50k")
         self.assertEqual(EPOCHS[2]["capital_cny"], 50_000.0)
+
+    def test_authoritative_epoch_metadata_rejects_every_missing_or_invalid_field(self) -> None:
+        valid = {
+            "current_epoch_id": 2,
+            "capital_cny": 50_000.0,
+            "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+        }
+        invalid_cases = {
+            "missing_current_epoch_id": {key: value for key, value in valid.items() if key != "current_epoch_id"},
+            "invalid_current_epoch_id": {**valid, "current_epoch_id": 99},
+            "missing_capital_cny": {key: value for key, value in valid.items() if key != "capital_cny"},
+            "invalid_capital_cny": {**valid, "capital_cny": 200_000.0},
+            "missing_cutover_timestamp": {
+                key: value for key, value in valid.items() if key != "cutover_timestamp"
+            },
+            "invalid_cutover_timestamp": {**valid, "cutover_timestamp": "2026-07-10 20:56:58"},
+        }
+
+        for reason, state in invalid_cases.items():
+            with self.subTest(reason=reason):
+                with self.assertRaisesRegex(ValueError, reason):
+                    require_authoritative_epoch_metadata(state)
+
+        self.assertEqual(
+            require_authoritative_epoch_metadata(valid),
+            {
+                "capital_epoch": 2,
+                "capital_cny": 50_000.0,
+                "cutover_timestamp": valid["cutover_timestamp"],
+            },
+        )
 
     def test_current_epoch_is_50k(self) -> None:
         self.assertEqual(CURRENT_EPOCH_ID, 2)
@@ -606,6 +638,68 @@ class SimAccountEpochTest(unittest.TestCase):
         self.assertTrue(any(item["action"] == "restore_ledger_entry" for item in result["rollback_audit"]))
         self.assertFalse(state_file.exists())
         self.assertTrue(old_trade.exists())
+
+    def test_real_inner_rollback_audit_is_merged_and_blocked_is_preserved(self) -> None:
+        ledger_dir = self.tmp_path / "local_sim"
+        ledger_dir.mkdir(parents=True)
+        old_trade = ledger_dir / "local_sim_trades.jsonl"
+        old_trade.write_text('{"trade_id":"T1"}\n')
+        review_dir = self.tmp_path / "review"
+        review_dir.mkdir()
+        stale_review = review_dir / "portfolio_evolution_latest.json"
+        stale_review.write_text(json.dumps({"capital_epoch": 1}))
+        state_file = self.tmp_path / "epoch_state.json"
+        archive_root = self.tmp_path / "epoch_archive"
+        derived_archive = archive_root / "epoch_1_legacy_200k" / "derived_reviews"
+        real_replace = __import__("os").replace
+
+        def fail_only_inner_review_restore(source: str | Path, destination: str | Path) -> None:
+            if (
+                Path(source).resolve(strict=False).parent == derived_archive.resolve(strict=False)
+                and Path(destination).resolve(strict=False) == stale_review.resolve(strict=False)
+            ):
+                raise OSError("inner review restore denied")
+            real_replace(source, destination)
+
+        with patch(
+            "shared.execution.sim_account_epoch.epoch_state_path",
+            return_value=state_file,
+        ), patch(
+            "Ashare.epoch_review._atomic_write_json",
+            side_effect=OSError("bootstrap failed"),
+        ), patch(
+            "Ashare.epoch_review.os.replace",
+            side_effect=fail_only_inner_review_restore,
+        ):
+            result = apply_cutover(
+                ledger_path=ledger_dir,
+                archive_root=archive_root,
+                review_dir=review_dir,
+            )
+
+        self.assertEqual(result["status"], "blocked", result)
+        self.assertEqual(result["derived_review_reset"]["status"], "blocked")
+        inner_audit = result["derived_review_reset"]["rollback_audit"]
+        self.assertTrue(
+            any(
+                item["action"] == "restore_review_file" and item["status"] == "failed"
+                for item in inner_audit
+            )
+        )
+        self.assertTrue(
+            any(
+                item["action"] == "remove_empty_archive_dir" and item["status"] == "restored"
+                for item in inner_audit
+            )
+        )
+        for item in inner_audit:
+            self.assertIn("path", item)
+            self.assertIn(item["status"], {"restored", "failed"})
+        self.assertTrue(all(item in result["rollback_audit"] for item in inner_audit))
+        self.assertTrue(result["rollback_errors"])
+        self.assertTrue(old_trade.exists())
+        self.assertFalse(stale_review.exists())
+        self.assertFalse(state_file.exists())
 
     def test_cutover_rollback_continues_after_tier_restore_failure_and_reports_blocked(self) -> None:
         ledger_dir = self.tmp_path / "local_sim"

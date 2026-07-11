@@ -26,6 +26,16 @@ class LocalSimLedgerTest(unittest.TestCase):
             patcher = patch.object(local_sim_ledger, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        epoch_patcher = patch(
+            "shared.execution.sim_account_epoch.read_epoch_state",
+            return_value={
+                "current_epoch_id": 2,
+                "capital_cny": 50_000.0,
+                "cutover_timestamp": "2026-07-10T20:56:58+00:00",
+            },
+        )
+        epoch_patcher.start()
+        self.addCleanup(epoch_patcher.stop)
 
     def _valid_session(self):
         return patch.object(
@@ -120,6 +130,40 @@ class LocalSimLedgerTest(unittest.TestCase):
             self.assertEqual(payload["capital_epoch"], 2)
             self.assertEqual(payload["capital_cny"], 50_000.0)
             self.assertEqual(payload["epoch_cutover_timestamp"], epoch_state["cutover_timestamp"])
+
+    def test_epoch2_corrupt_state_rejects_fill_without_writing_trade_or_receipt(self) -> None:
+        order = {
+            "order_id": "SIM-EPOCH-2-CORRUPT",
+            "idempotency_key": "SIM:ashare:acct:20260711:600000.SH:buy:epoch2-corrupt",
+            "ts_code": "600000.SH",
+            "side": "buy",
+            "quantity": 100,
+            "price": 10,
+            "candidate_pool_layer": "candidate",
+            "execution_source": "ashare_candidate_layer",
+            "fill_price_source_class": "verified_5min_market_data",
+        }
+        corrupt_epoch_state = {
+            "current_epoch_id": 2,
+            "capital_cny": 50_000.0,
+            "activated_at": "2026-07-10T20:56:58+00:00",
+        }
+
+        with self._valid_session(), patch(
+            "shared.execution.sim_account_epoch.read_epoch_state",
+            return_value=corrupt_epoch_state,
+        ):
+            result = local_sim_ledger.record_local_sim_order(
+                order,
+                "ashare",
+                {"account": "acct"},
+                {"local_sim_slippage_bps": 0},
+            )
+
+        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["reason"], "invalid_epoch_state:missing_cutover_timestamp")
+        self.assertFalse(local_sim_ledger.LOCAL_SIM_TRADES.exists())
+        self.assertFalse(local_sim_ledger.LOCAL_SIM_RECEIPTS.exists())
 
     def test_refresh_local_sim_snapshot_persists_mark_to_market_pnl(self) -> None:
         order = {
