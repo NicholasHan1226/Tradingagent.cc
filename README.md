@@ -1,158 +1,75 @@
 # TradingAgent
 
-模拟/影子交易执行全闭环。从筛选到执行到复盘，以稳定胜率和回报率为方向持续进化；真实资金默认关闭，只能在人工确认和专门安全门禁下预留。
+TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复盘系统。当前目标是在真实数据、费用、滑点和小账户约束下形成可学习闭环，逐步检验是否存在费用后正期望；这不是收益承诺。
 
-> **阅读顺序：** 进入 TradingAgent 后，先读 [AGENTS.md](AGENTS.md) → [STATUS.md](STATUS.md) 了解规则和当前状态。本文件提供系统概述和架构总览。
+> 接手顺序：[AGENTS.md](AGENTS.md) → [STATUS.md](STATUS.md) → [docs/AGENTS.md](docs/AGENTS.md)。
 
-## 目标
-构建自动化模拟交易系统：主动发现机会 → 条件驱动捕捉 → 风控保护 → 复盘进化。当前生产范围为模拟盘/影子盘，实盘接口只保留设计边界。
+## 当前架构
 
-## 核心理念
-1. 权重式打分 + 必要证据门禁 — 某维度弱会拉低综合分，但候选来源、价格/日线覆盖、流动性与执行来源缺失时必须 fail-closed
-2. 条件驱动，主动发现 — 不等信号触发才发现，预设计条件自动捕捉
-3. 基本面预计算 — 全市场预评分，主动发现低估/成长股
-4. 持续优化 — 复盘调整权重/参数/策略，以胜率和回报率为方向进化
-
-## 架构
-```
-shared/ (跨市场共享):
-  screening/    六维打分(宏观/事件/基本面/资金/技术/情绪) + 条件订单
-  adversarial/  多空对辩 + 压力测试 + 历史类比
-  risk/         事前风控 + 持仓监控 + 黑天鹅应急
-  portfolio/    组合构建 + 仓位分配 + 再平衡 + 退出
-  execution/    服务器本地模拟盘 + 影子盘 + 滑点建模 + Hermes同花顺备用模拟对照路径
-  notify/       11类邮件模版 + 告警路由(10min自愈)
-  review/       日复盘(2次) + 周复盘 + 归因 + 基准 + 自愈闭环
-  accounting/   资金记账 + 持仓记账 + 对账 + 审计
-  benchmark/    沪深300/创业板/买入持有基准
-
-Ashare/   A股(T+1, 服务器本地模拟盘为主, Hermes同花顺仅作显式启用的备用模拟对照路径, 集合竞价+连续+收盘竞价)
-CNFutures/ 国内期货(保证金/夜盘/多空双向, 当前仅全自动模拟)
-Crypto/   加密(24/7, 当前仅 simulated/shadow, 实盘 fail-closed)
-US/       美股(当前仅 simulated/shadow, 实盘 fail-closed)
-HK/       港股(预留)
-PM/       预测市场(CLOB sandbox)
+```mermaid
+flowchart LR
+    SS["SharedSignals\n基础数据 authority"] --> TA["TradingAgent\n预测、风控、模拟执行"]
+    MG["MarketGraph\n可选研究增强"] -. "paired mg_on / mg_off" .-> TA
+    TA --> A["A股 fresh-start 50k\n独立 capital + execution ledger"]
+    TA --> F["CNFutures fresh-start 50k\n独立 capital + margin ledger"]
+    A --> J["SampleJournal / actual-cost KPI"]
+    F --> R["session samples / counterfactual"]
+    J --> M["day 5 / day 10 人工复核"]
+    R --> FM["长期模拟成熟度"]
 ```
 
-## 交易流程 (条件驱动漏斗)
-```
-全市场预计算(日级) → 六维打分排序 → 候选池分层(5层)
-→ 对抗分析(多空对辩+压力测试) → 信念分
-→ 风控筛选(降权不硬拒) → 组合构建(风险平价)
-→ 条件订单生成 → 5min实时监控 → 条件触发
-→ 执行(模拟/影子/实盘) → 持仓状态机
-→ 退出(止损/止盈/时间/逻辑证伪) → 复盘
-→ 调整权重/参数 → 下一轮进化
-```
+- SharedSignals 提供统一只读数据；TradingAgent 不直读兄弟仓数据库，也不现场采集行情。
+- MarketGraph 只作可开关增强，不阻塞基础样本闭环，也没有资金或执行权。
+- A股和 CNFutures 各自拥有独立的 50,000 CNY 模拟账户；两个账户不得相加、净额抵消或互相补资。
+- 所有流程保持 `REAL_TRADING_ENABLED=false`。邮件、同花顺人工实盘和 broker gateway 都未在本仓实现。
 
-## 候选池分层 (不同层不同频率)
-```
-A: 持仓池      — 实时/5min监控退出+调整条件
-B: 一级观察    — 5min监控买入触发条件
-C: 二级候选    — 15min/小时监控维度变化
-D: 全市场      — 日级打分升降级
-E: 基本面深度  — 周/季度财报更新
-```
+## 资本与风险
 
-## 六维打分 (权重式, 不设门禁)
-```
-宏观面(0.15) ← SharedSignals macro/read model 优先，MarketGraph regime 增强
-事件面(0.20) ← SharedSignals raw events 优先，MarketGraph event impact 增强
-基本面(0.25) ← SharedSignals fundamentals/factors
-资金面(0.15) ← SharedSignals moneyflow/capital_flow
-技术面(0.15) ← SharedSignals daily/5min 行情计算(动量/弹性/突破)
-情绪面(0.10) ← SharedSignals sentiment/read model
-→ 综合分排序, 取Top N, 不排除任何股
-```
+| 市场 | 初始权益 | 主要容量 | 独立风险状态 |
+|---|---:|---|---|
+| A股 | 50,000 CNY | 股票总敞口 90%；单票 15%；100 股整手；最多 8 个仓位并支持至少 7 个不同股票 | 5% 回撤收紧，7% 暂停 |
+| CNFutures | 50,000 CNY | 保证金使用率 50%；最小一手与止损损失预算另行校验 | 5% 回撤收紧，7% 暂停 |
 
-## 邮件通道
-- 交易类: notice@tradingagent.cc → tradingadviser@coze.email (11类模版)
-- 系统类: notice@tradingagent.cc → soc@coze.email
+A股不设固定保护现金：全部资金可服务合格机会，但弱市、无正期望或硬门禁未过时不强制部署。资金计划必须展示利用率和未部署原因；现金管理收益与股票 alpha 分账。
 
-## 资金
-- A股与 CNFutures 代码级生产模拟本金固定为 50,000 元人民币；A股旧 200,000 元账本由 `tools/migrate_sim_capital_epoch.py` 归档为历史 epoch（生产 apply 状态以 `STATUS.md` 为准），100,000 / 200,000 元仅用于显式离线历史分析。US/Crypto/PM 默认使用 10,000 USD/USDT/USDC 原币本金并按人民币展示；A股由动态资金计划决定 0/1/2/3 只，不为凑仓位硬买；闲置资金可研究逆回购(204001)
-- 盘前1小时资金规划邮件
-- 强信号可集中，弱信号或高拒绝率优先留现金；影子盘用于对比不同分散/集中策略
+历史共享资金池、旧模拟持仓/PnL 和旧多账本均冻结只读，不进入新 authority、KPI、成熟度或前端汇总。
 
-## 执行
-- A股模拟盘: 默认由服务器本地 `Ashare/sim_executor.py` + `shared/execution/sim_broker.py` 完成 paper fill、统一模拟账本和复盘闭环；Hermes/同花顺 GUI 仅作为 `ASHARE_SIM_HERMES_ENABLED=1` 的第二对照路径
-- A股候选与证据门禁: 新买入只允许来自 `candidate` 层，必须带有 `candidate_pool_layer=candidate` 与 `execution_source=ashare_candidate_layer`；价格、日线覆盖、流动性证据、候选来源或成交价来源缺失时跳过或标记为链路验证样本，fail-closed 不硬买
-- 影子盘: 多策略并行记录 (已验证策略平行运行)；PM/Crypto/US/HK 影子和模拟工具拒绝 `real_money_enabled`/`live_broker_enabled`/`capital_layer=real` 等真实执行标记
-- 实盘: 仅 Nicholas 手工确认，不自动点击；`REAL_TRADING_ENABLED` 默认关闭，未显式启用时任何实盘订单/队列提交均抛 `SafetyViolation`，不能降级为 simulated/shadow
-- CNFutures: 先走多风格全自动模拟盘 + SimNow/CTP 文档预留, 实盘自动化默认关闭
-- US/Crypto: 当前仅 simulated/shadow；不连接 Alpaca 或其他真实经纪 API 自动下单，实盘 fail-closed
-- 升级路径: 非期货按各市场规则推进; CNFutures 为模拟多风格验证→受控小实盘预留→规模化
+## 样本闭环
 
-## 复盘 (3对比+归因+行动)
-```
-对比1: 实际 vs 预期目标 (胜率55%+/夏普0.5+/回撤<10%)
-对比2: 实际 vs 基准 (沪深300, 跑赢多少)
-对比3: 本期 vs 上期 (趋势改善/恶化)
-归因: 哪个维度/策略/条件贡献收益或损失
-行动: 继续/停止/调整什么
-```
+- `observation/counterfactual`：所有数据合格候选保存多风格预测和前向标签请求，不被成熟策略阈值阻断。
+- `exploration`：在硬风控内从安全 top-K 做分层随机/epsilon-greedy，记录 propensity；每日最多新增一个、累计探索敞口不超过 7,500 CNY。
+- `exploitation`：按成熟策略门槛运行，与 exploration 分开统计。
+- A股四类假设共享一个执行账户，同一股票同日最多一份真实规格模拟订单；未选风格仍生成标签。
+- CNFutures 每个有效会话记录 prediction/candidate/hold/reject/fill；一手不适配时保留 `counterfactual_only`，不伪造成交。
+- 标签固定为 `m30/m60/close/1d/3d/5d`。真实成交使用实际费用/滑点，反事实使用版本化保守成本。
 
-## 与其他层的关系
-- ← SharedSignals: 只读行情+宏观+事件+基本面+资金+情绪，是 TradingAgent 的基础数据入口
-- ← MarketGraph: 只读regime+event_impact+forward_calendar+scenario，作为研究增强
-- → MarketGraph: 价格结果反馈(纯价格, 非交易, 用于因果验证)
-- → 不回传: 交易决策不回传(保持研究独立)
+SampleJournal/KPI 是唯一演化 authority。旧 review 结果不能自动晋级、扩风险或切实盘。
 
-## 边界
-- 做: 选股/择时/风控/执行/复盘
-- 不做: 不采集数据（SharedSignals负责）
-- 不做: 不采集宏观数据；基础宏观数据由 SharedSignals API/read model 提供，MarketGraph 只提供宏观研究增强
-- 不做: 不修改因果规则（只消费MarketGraph输出）
+## 运行入口
 
-## 仓库
-https://github.com/NicholasHan1226/Tradingagent.cc.git
-
-## 现有工具
-- Ashare: 144个工具 (因子28/复盘27/组合18/执行16/筛选11/风控10/通知14)
-- CNFutures: 静态合约规则 + 保证金/手续费模型 + 多风格模拟执行骨架
-- Crypto: 21个 / US: 20个 / PM: 20个 / HK: 预留
-- shared/: 50个.py文件 (筛选/对抗/风控/组合/执行/通知/复盘/记账)
-
-## 运维报告
-
-生产使用一个 `marketgraph` 用户的跨仓合并 crontab。Cron 环境赋值按文本
-位置持续生效，因此 TradingAgent schedule 块必须紧跟
-`BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh`（merge 安装器自动在 TA schedule 行前插入）。只能使用
-`tools/merge_tradingagent_crontab.py` 合并更新；
-`shared.runtime_test.cron_coverage` 会把继承到其它仓库 loader 的 TA 任务判为
-失败（`installed_crontab_environment_mismatch`）。模拟盘健康检查同时保留 scheduled reader 的 `reader_degraded`/错误证据，
-不能被一次新鲜交互探针降级成“策略等待”。
-
-TradingAgent 每小时生成一次统一运维报告：
+先固定模拟边界：
 
 ```bash
-PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/ops_report.py --send-on never --pretty
+export REAL_TRADING_ENABLED=false
 ```
 
-报告文件：
-
-- `shared/review/ops/tradings_ops_latest.json`
-- `shared/review/ops/tradings_ops_history.jsonl`
-
-覆盖范围：执行队列、影子队列、失败原因聚合、Mini/Hermes 回执完整性、服务器本地模拟账本和影子盘 PnL 摘要。系统邮件只在 `overall_status=fail` 时发送到 `soc@coze.email`；`warn` 仅记录在报告里。
-
-### 回执指纹口径
-
-- `payload_sha256`: Mini receiver 收到的原始任务包指纹。
-- `receipt_sha256` / `checksum`: Mini executor 生成的回执自身指纹。
-- `payload_linked`: 已带任务包指纹的回执数量。
-- `signed`: 已带有效回执自身指纹的回执数量。
-
-旧回执没有这些字段时会显示为 `unsigned`，但不等于执行失败或回执被篡改。
-
-Mini executor 推送服务器时也会在写入前验证 `receipt_sha256`；校验失败会拒写。历史无签名回执仍兼容读取，并在运维报告中归类为 `unsigned`。
-
-### 已复盘失败归档
-
-历史失败复盘完成后，可用以下命令从 active 队列归档到 reviewed 区：
+只读检查：
 
 ```bash
-PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>
+python3 tools/market_capital_ops.py dual-status --trade-date YYYYMMDD
+python3 -m shared.runtime_test.full_acceptance --profile quick --pretty
+python3 -m shared.runtime_test.full_acceptance --profile prod --pretty
 ```
 
-归档会保留 manifest，支持按 `target_path -> source_path` 回滚。active `pending/claimed/running` 非空时工具会拒绝执行。
+资本、样本和会话完整验收需要显式传入两个 capital root、A股 journal、label 截止时间、期货记录和有效会话；见 [docs/operations.md](docs/operations.md)。缺证据必须失败或明确 warning，不能用“样本不足”静默通过。
+
+## 文档入口
+
+- [系统架构](docs/architecture.md)
+- [数据与事实契约](docs/data_contract.md)
+- [样本与成熟度验收](docs/capital_growth_validation.md)
+- [运行、验收与回滚](docs/operations.md)
+- [冻结范围后的 Backlog](docs/BACKLOG.md)
+- [当前状态](STATUS.md)
+
+本地通过、远端主线、生产文件、生产 runtime、cron 生效和真实市场样本是不同层级；任何一层都不能替代其它层。当前工作禁止 push、deploy、apply cron、发邮件或真实交易。

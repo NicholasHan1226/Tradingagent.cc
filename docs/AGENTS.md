@@ -1,38 +1,31 @@
-# TradingAgent Docs — 文档导航
+# TradingAgent 文档导航
 
-> **阅读顺序：** 先读 [../AGENTS.md](../AGENTS.md) → [../STATUS.md](../STATUS.md) 了解规则和当前状态，再按需查阅本目录文档。
+> 阅读顺序：[../AGENTS.md](../AGENTS.md) → [../STATUS.md](../STATUS.md) → 本文件。
 
-## 文档分类
+## Canonical 文档
 
-### 活跃的参考文档（反映当前架构）
+| 文件 | 唯一职责 |
+|---|---|
+| [architecture.md](architecture.md) | 三仓边界、双市场独立资本、样本与原子执行架构 |
+| [data_contract.md](data_contract.md) | 输入、capital ledger、执行、样本、标签、KPI 和成熟度字段 |
+| [capital_growth_validation.md](capital_growth_validation.md) | 样本、费用后结果、回撤、MG 消融和人工复核验收 |
+| [operations.md](operations.md) | sim-only 运行、双 capital root、样本/会话验收、故障与回滚 |
+| [BACKLOG.md](BACKLOG.md) | 范围冻结后移出的发布、终端、人工实盘规格和长期统计工作 |
 
-| 文件 | 用途 |
-|------|------|
-| [runtime_incidents_20260701.md](runtime_incidents_20260701.md) | 7/1 运行时事件时间线和修复复盘 |
-| [runtime_incidents_20260702.md](runtime_incidents_20260702.md) | 7/2 Mini/服务器执行桥路径漂移、reader 导入回归和桌面 Investment 退役记录 |
-| [data_contract.md](data_contract.md) | 数据契约定义 |
-| [data_sources.md](data_sources.md) | 数据源接入说明 |
-| [email_setup.md](email_setup.md) | 邮件通道配置 |
-| [write_end_contract.md](write_end_contract.md) | 写端单一真相源合同 |
-| [INFRASTRUCTURE.md](INFRASTRUCTURE.md) | 基础设施说明 |
-| [repo_structure.md](repo_structure.md) | 仓库结构说明 |
-| [../shared/orchestrator_design.md](../shared/orchestrator_design.md) | 调度编排器设计 |
+根 `README.md` 只做入口；根/模块 `AGENTS.md` 保存长期规则；`STATUS.md` 保存当前证据和阻塞。不要重新创建重复的 infrastructure、data-source、write-end、事故日记或实施计划文档。
 
-### 已归档（历史，仅供参考）
+## 更新规则
 
-| 文件 | 原因 |
-|------|------|
-| [archive/BATCH_PLAN_20260630.md](archive/BATCH_PLAN_20260630.md) | 6/30 待确认开发计划草案 |
-| `HANDOFF_架构对齐_20260630.md` | 6/30 过期交接快照已删除，避免恢复旧 Ashare/MarketGraph 直接路径 |
+- 资本/架构/安全边界变化：更新 `architecture.md` 和最近层 `AGENTS.md`。
+- schema、路径、字段或事实源变化：更新 `data_contract.md`。
+- 样本、KPI、消融、成熟度或复核门槛变化：更新 `capital_growth_validation.md`。
+- 命令、环境、cron、发布、故障或回滚变化：更新 `operations.md`。
+- 当前测试、远端、生产、cron 或真实市场证据：只更新 `STATUS.md`，并按层级披露。
+- 后续范围：只写入 `BACKLOG.md`；不得把 backlog 写成已实现或已授权。
 
-## 规则优先级
+## 退役约束
 
-1. [../AGENTS.md](../AGENTS.md) — TradingAgent 总规则（最高优先级）
-2. 各市场/模块 AGENTS.md（Ashare/, Crypto/, shared/ 等）
-3. 本目录活跃参考文档（补充背景和交接说明）
-4. 本目录 `archive/` — 仅供参考，不代表当前状态
-
-## 对 agent 的关键提示
-
-- runtime_incidents_20260701.md 是 7/1 事故链的详细时间线，理解永久护栏规则的背景时查阅
-- 所有运行时状态以 AGENTS.md 和 live 服务器为准，不以本目录任何文档为准
+- 旧共享资本、旧模拟持仓/PnL、旧多账本、旧演化 writer、旧重复 cron/docs 都是退役历史，不得重新成为入口。
+- 历史从 Git 和只读冻结目录审计，不在 active docs 中复制旧数值、命令或路径。
+- 回滚文档只允许停止新任务、保留 append-only 新事实并切回已验证代码；不得指导恢复旧 ledger、删除事件或覆盖投影为事实。
+- 本文档任务不授权 commit、push、deploy、apply cron、发邮件或真实交易。

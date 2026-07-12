@@ -1,198 +1,81 @@
-# TradingAgent
+# TradingAgent 项目规则
 
-> **阅读顺序：** 进入 TradingAgent 后，按以下顺序阅读：
-> 1. 本文件 — 理解 TradingAgent 的规则、边界和运行时护栏
-> 2. **[STATUS.md](STATUS.md)** — 理解当前状态、已知问题、下一步任务
-> 3. 跨系统协作前，读 [根目录 AGENTS.md](../AGENTS.md) 和 [根 STATUS.md](../STATUS.md) 了解三系统架构和全局状态
+> 阅读顺序：本文件 → [STATUS.md](STATUS.md) → [docs/AGENTS.md](docs/AGENTS.md)。跨仓修改还需读取 Finance 工作区和目标仓最近层 `AGENTS.md`。
 
-## 三系统定位
+## 项目定位
 
-- TradingAgent 是交易判断和任务队列系统：读取 SharedSignals 的市场/事件数据与 MarketGraph 的研究证据，生成影子盘、模拟盘、实盘复核信号、日报和周报。
-- 三系统当前不是 MCP 互调，也不是强耦合单体；SharedSignals 供数，MarketGraph 供研究图谱，TradingAgent 做交易判断、队列、回执汇总和通知。
-- 未来系统间调用优先通过公开服务接口、只读 API/MCP read model 或明确数据契约完成；TradingAgent 不应直接依赖 MarketGraph 的内部实现细节，也不应把 MarketGraph 当执行入口。
-- TradingAgent 必须自有短周期机会发现能力：A股和 CNFutures 的候选、门禁、资金计划、模拟成交、复盘与演化由 TradingAgent 自身完成；SharedSignals API/read model 是基础数据入口，应最大化消费已开放的行情、宏观、事件、基本面、资金、情绪、行业和 5 分钟数据接口；MarketGraph 对 A股/CNFutures 只补充宏观研究、事件图谱和中长线研究背景。缺少 MarketGraph 研究证据时应记录为 evidence debt 或保持中性/空跑，不能把外部图谱缺失当成执行器故障，也不能绕过 TradingAgent 自身门禁硬买。
+- TradingAgent 负责候选、预测、组合决策、风险门禁、模拟执行、样本、复盘和只读看板。
+- SharedSignals 是基础数据 authority；生产只通过其 HTTP API 消费，不直读兄弟仓数据库，也不在本仓现场采集行情。
+- MarketGraph 是可选只读研究增强。它不是价格、资本、账户或执行 authority，`mg_off` 必须能独立形成样本闭环。
+- 当前目标是验证工程闭环、样本质量、费用/滑点后结果与回撤；不承诺盈利，更不承诺稳定盈利。
 
-## 目标
+## 当前唯一资本事实
 
-交易模拟盘/影子盘，高频训练策略，每日 2 次复盘。
+- A股和 CNFutures 各有一个独立、fresh-start、50,000 CNY 的 simulated authority：`ashare-capital-v1` 与 `cn-futures-capital-v1`，当前 `authority_generation=1`。
+- 两个账户的现金、持仓/保证金、预约、盈亏、回撤、风控、execution lineage 和样本归因完全分离。总览只可并列，禁止相加、净额抵消或互相补资。
+- A股政策：股票总敞口上限 90%（45,000 CNY），单一标的累计上限 15%（7,500 CNY），100 股整手，组合容量 8 且至少支持 7 个不同股票；全部 50,000 CNY 有资格服务合格机会，但不强制满仓。
+- CNFutures 政策：保证金使用率上限 50%（25,000 CNY）。保证金容量和止损损失预算分开验证，不能把保证金上限当作可承受亏损。
+- 每个市场独立执行：日亏 3% 暂停、连续亏损 3 次暂停、回撤 5% 仅收紧风险预算至 0.75 倍、回撤 7% 才暂停并复核。
+- 政策源仅为 `shared/capital/ashare_capital_policy.yaml` 和 `shared/capital/cn_futures_capital_policy.yaml`。调用方不得复制另一套漂移常量。
+- 旧共享资金池、旧模拟持仓/PnL、旧多账本与历史账户只读冻结，不导入、不迁移、不进入新统计；退役入口不得恢复。
 
-## 代码位置
+## Simulation-only 红线
 
-- 生产路径：`/opt/investment/tradingagent/`
-- 开发路径：`/Users/nicholashan/Projects/Finance/TradingAgent/`
-- 生产前端/运营看板：`front/`，同属 TradingAgent 仓库，是唯一活跃前端入口；不要使用兄弟级 dashboard 仓库作为生产或开发来源。
-- 工具集：`/opt/investment/tools/`（约 20 个工具）
+- `REAL_TRADING_ENABLED=false`；当前记录必须是 `capital_layer=simulated`、`account_type=simulated`、`real_trading_enabled=false`。
+- 任一真实资金、live broker、direct execution、真实账户或签名密钥标记必须 fail closed，不能静默降级为 simulated/shadow。
+- A股首 1–2 周只跑模拟；第 5、10 个交易日是人工复核点，不是自动实盘日期。
+- 自动 champion 晋级、自动风险扩张和自动 live transition 永久关闭。即使 `promotion_evidence_ready=true`，也只表示证据检查通过，不构成授权。
+- 未来 A股只可能在 Nicholas 明确确认后进入 20%–30% 初始敞口的人工试运行。拟议“TA 信号 → 邮件 → Nicholas 在同花顺人工复核下单”仍是外部设计，未在本仓实现；不得发送邮件或连接券商。
+- CNFutures 长期模拟，无实盘日期，不绑定 A股进度。
 
-## 架构边界（永久规则）
+## A股样本与组合执行
 
-### 执行桥
+- 对所有数据合格候选保存 observation/counterfactual prediction。成熟阈值或执行门禁不能阻断 observation；数据不可靠时才拒绝标签。
+- 初始正交假设族仅为：趋势突破/强势延续、回调/短反转、事件催化+价格确认、防御低波/空仓基线。风格只有预测与影子归因，没有独立资金或订单 authority。
+- 同一 immutable base snapshot 必须生成 paired `mg_on` / `mg_off`；`mg_off` 不得读取 MG 特征。
+- Exploration 使用安全 top-K 内分层随机/epsilon-greedy，记录 policy、seed、selection probability/propensity；每日最多新增 1 个探索头寸，探索累计敞口上限 7,500 CNY，探索日亏上限 225 CNY。
+- Exploration 只可降低分数、最小 edge、研究完整度等策略门槛；数据、价格/成交证据、流动性、时段、T+1、整手、资金、幂等、累计敞口、日亏、连续亏损、回撤和实盘隔离永不放宽。
+- Exploitation 保留成熟门槛。多个风格由一个组合决策器解决冲突、相关性、资金和幂等；同一股票同日只产生一份真实规格模拟订单。
+- 成交保存 `primary_style`、`supporting_styles`、`style_scores`、`style_versions`、`decision_policy_version`、风格争议和 sample intent；未选风格仍生成标签。
+- 资金计划必须输出 deployed/committed/planned utilization、dynamic operating cash、undeployed capital 和具体 undeployed reasons。现金管理收益与股票 alpha 分账，不得伪造资金利用率。
 
-A 股模拟盘默认闭环走服务器本地 paper fill 与统一模拟账本：`job_ashare_sim_exec → Ashare/sim_executor.py → shared/execution/sim_broker.py → shared/logs/sim_ledger/ashare`。
+## CNFutures 样本与执行
 
-- Hermes/mini 是 A 股同花顺 GUI 执行桥的预留第二路径，只有显式设置 `ASHARE_SIM_HERMES_ENABLED=1` 时才投递到 `signals/pending` 并要求 mini 回执。
-- Hermes/mini 只执行和回写，不做买卖判断；当前服务器本地模拟闭环不依赖 Hermes 可用性。
-- `~/Desktop/Investment` 不再是 active dev root 或 live runtime root；Mac Mini live runtime 使用 `~/.hermes/ashare-runtime`，服务器写回使用 `/opt/investment/tradingagent/signals`。
-- 旧桌面路径任务 `ai.hermes.sim-remote-sync` 与 `ai.hermes.condition-cleanup` 已于 2026-07-02 禁用；不得重新启用，除非先确认新的事实源、回滚方式和验证方式。
-- MarketGraph 不得直接触发 Hermes/Mac Mini/同花顺或任何执行 webhook。
-- 执行桥归 TradingAgent。
+- 每个有效交易会话至少保留 prediction/candidate/hold/risk reject/simulated fill 之一，并保存会话、合约、方向、原始 ranking score、市场状态、MG 状态和未交易原因。
+- 原始 heuristic score 与 uncalibrated expected-return prior 必须按原名保存，不能称为未来收益概率或已校准预期收益。
+- 最小一手、真实规格保证金、手续费、滑点、价格限制、会话、夜盘跳空、换月和风险预算全部适配时才可 `execution_eligible`；否则 quantity=0、`counterfactual_only=true`，方向预测和标签继续。
+- 不得为样本绕过最小一手、保证金、夜盘、连续亏损、日亏、回撤或持仓/预约一致性。
+- 静态合约规格只作模拟 bootstrap；没有实时可追溯规格时，不得声称交易所级撮合、保证金或强平精度。
 
-### 数据流
+## 资本与执行原子性
 
-- SharedSignals 是独立供数层：定时采集/维护先沉淀数据，TradingAgent 生产默认只通过 SharedSignals/ShareChannel API 取数。
-- 生产运行时必须设置 `SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`；生产环境变量不得启用 SharedSignals SQLite/read-model 回退。单元测试如需本地数据必须显式注入测试 reader，不能读取兄弟系统目录。
-- TradingAgent 不应在每次交易判断时重新现场采集 Tushare。
-- 跨系统写入必须走明确数据契约，不把一个系统目录当作另一个系统的内部模块直接改写。
+- 每个市场各自使用 append-only capital ledger、stable reference、checksum chain、PIT lineage、head CAS 和 exact reservation manifest。
+- A股买入 `fill_commit`、A股卖出 `ashare_sell_commit`、期货开仓 `fill_commit`、期货平仓 `position_close_commit` 必须使用实际数量、价格、费用/滑点和不可变成交/持仓指纹。
+- 成交事实先进入 durable outbox；资本 commit 成功或幂等重放成功后才可标为 execution-eligible。pending outbox 保守占用风险，重启后重放，不能伪造释放或重复记账。
+- partial fill 只消费实际部分，未成交部分在终态原子释放；同一 symbol 的持仓市值 + 未决预约 + 新订单合并校验 15% 上限。
+- 当日 MTM reconcile 必须证明现金、持仓/保证金、冻结额、exact reservations、未结 fill commits 和 execution lineage 一致；风险以 MTM equity 而非仅 realized PnL 计算。
 
-## 关键运行时护栏（永久规则）
+## 样本、标签与演化 authority
 
-### 订单幂等与队列隔离
+- A股唯一演化事实源是 append-only `shared/review/ashare/sample_journal.jsonl`；`sample_kpi_latest.json`、evolution decision 和 maturity 都只是可重建投影。
+- 样本必须分层：observation/counterfactual、exploration fill、exploitation fill、completed round trip、exit/stop、risk reject、chain validation，禁止混算。
+- horizon 固定为 `m30/m60/close/1d/3d/5d`。标签使用 PIT `as_of`，真实成交采用实际费用/滑点；反事实标签采用版本化保守成本。
+- 5 分钟重复样本聚类去重；选择概率、预测快照、source SHA、execution lineage、actual costs 和成交重验证缺失时不得进入晋级证据。
+- SampleJournal/KPI 是唯一演化 authority。旧 portfolio/weekly/legacy review 不得自动给出生命周期或风险晋级。
+- “样本不足”不能单独导致长期零 observation 或零交易；无探索成交必须归因于无数据合格候选或具体安全门禁。
 
-- A股模拟订单同日幂等：`market + account + trade_date + symbol + side`。
-- 发单前检查所有状态的 signal cards（`pending|claimed|running|filled|failed|partial|expired|cancelled`），重复同日同标的记 `status=duplicate`，不入新订单。
-- 迁移测试、拒绝测试和生产模拟交易任务必须隔离，避免测试 pending 导致生产调度 `skipped=mini_busy`。
+## 活跃写入与前端
 
-### 候选池过滤
+- A股资本：`shared/logs/capital/ashare/`
+- CNFutures 资本：`shared/logs/capital/cn_futures/`
+- A股 server-local 执行：`shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/`；`shared/logs/local_sim/` 只读冻结。
+- 执行状态与回执：`signals/`
+- A股样本与复盘：`shared/review/ashare/`
+- `front/` 是唯一活跃只读前端。All Markets 只可汇总非货币计数；不同市场的资本、权益、PnL、收益率和回撤绝不聚合。
 
-- A股候选池动态 5 层结构（holdings/watch/candidate/universe/fundamental），每次调度动态重建。
-- 所有 A股入口必须只保留普通 A股代码段；`200xxx.SZ`、`900xxx.SH`、北交所等非本模拟执行链路标的必须在三层被过滤：`Ashare.adapter`、`shared/screening/universe_filter.py`、`shared/screening/candidate_pool.py`。
-- 可执行候选必须有近期日线 close > 0 和成交额/流动性证据；无名称、无日线覆盖、无流动性证据的股票在 universe/candidate 阶段排除。
-- A股 universe 返回前必须按近期流动性/数据完整性做稳定预排序，避免 `score_universe_limit` 只覆盖代码顺序前段样本。
-- A股 simulated 新买入只允许来自 candidate 层；watch 只能观察，holdings 只参与持仓/卖出/换仓评估，候选池为空或 candidate pool 异常时必须 fail-closed 为无交易，不能回退到顺序 universe 或资产表样本。
-- A股候选池分层必须复用同一轮六维预计算评分；空池时先用 `score_diagnostics` 区分样本覆盖、研究维度中性、策略阈值未过或候选池分层异常，不得回退硬买。
-- A股盘前日线必须来自 SharedSignals API，覆盖率至少达到当前 API 可见普通 A股资产的 90%，并达到上一已完成交易日；覆盖不足、日线落后最近 5 分钟证据或 API 不可用时必须阻断新买入。盘前 dry-run 不得直接读取 SharedSignals SQLite。
-- A股 simulated 订单必须携带来源字段：买入为 `candidate_pool_layer=candidate`、`execution_source=ashare_candidate_layer`；卖出/压缩为 `execution_source=ashare_rebalance_sell`，便于复盘确认成交来源。
-- A股 server-local simulated 账本和签名回执必须持久化 `candidate_pool_layer`、`execution_source`、`fill_price_source`、`fill_price_source_class` 与 `fill_evidence`。已发生但缺少候选来源或成交价来源字段的 A股 simulated 成交保留为账户事实和链路验证样本，不作为策略有效样本参与胜率、方向命中、归因、策略 PnL 或自我进化。
-- A股可恢复失败产生的 retry 成交必须把 `retry_of`、`retry_attempt` 同时写入 append-only 成交事实、签名回执和复盘读取行；历史签名回执不得为补字段而原地改写。
-- A股 `verified_5min_market_data` 必须在撮合时和演化读取时双重校验：分钟线相对成交时刻最多滞后 15 分钟、最多领先 5 分钟且成交量为正。过期或未来条线可继续作为价格兜底完成 server-local 模拟成交，但必须降级为 `weak_price_only`，不得进入演化或风险扩张样本。
-- A股 auto pipeline 不得用 `price=1.0` 作为候选或执行信号兜底；缺真实分钟/日线价格时跳过该候选或信号。
-- 组合构建前过滤 `price <= 0`，记录到 `skipped_candidates`。
-- Tushare daily `amount` 按千元口径存储，流动性比较前必须换算为元。
-- A股机会成本换仓保持保守但必须可触发：候选 `combined >= 0.70` 且相对可卖弱持仓分差至少 `0.12` 才允许生成 `ashare_rebalance_sell`；T+1、可卖数量、风险门禁和资金计划仍是硬约束。
-- A股资金计划 `target_positions=0` 时属于 defensive 模式，禁止生成机会成本换仓；止损、评分退化和超额仓位压缩仍可按风险规则卖出。策略视图可以排除链路验证样本的持仓名额，但实际买入预算不得超过账户 `cash_available`，原始策略现金和受限后的可执行现金必须留在诊断中。
-- A股自我演化走组合级证据，不套用 Crypto/PM/US 的多风格账本。`Ashare/portfolio_evolution.py` 读取 server-local 策略有效成交、组合 PnL 和样本质量，写 `shared/review/ashare/portfolio_evolution_latest.json` 与 `portfolio_evolution_log.jsonl`；写入前会刷新 server-local `local_sim_pnl.json` 到同一盯市口径，但不改成交事实；它只证明组合样本进入演化层，不伪造 aggressive/balanced 等风格归因。
-- A股与 CNFutures 当前生产模拟本金统一为 50,000 CNY。A股旧 200,000 元主账本只能通过 `tools/migrate_sim_capital_epoch.py` 归档为只读 epoch 1；当前 epoch 2 继续使用 `shared/logs/local_sim/` 唯一权威路径，禁止创建 `local_sim_epoch2` 或通过 state-only 开关跳过账本迁移。100,000 / 200,000 元只允许调用方显式传入 `tiers=` 做离线历史分析，生产默认不生成并行资金档位账本。
-- 当前主账户复盘必须使用 SharedSignals 盯市价；bootstrap 只负责缺失快照初始化，已有成交和完整快照时不得重放成交价覆盖当前盯市 PnL。
-- 盘后正式估值必须使用目标交易日精确匹配的 SharedSignals 日线收盘价。任一持仓缺正式收盘价时，不刷新当前主账户或组合演化；17:40 首次复核、22:40 有界补跑，成功后同一交易日幂等跳过，统一刷新账本、前向标签和收盘复盘。
+## 验收与发布边界
 
-### SharedSignals 源状态门禁
-
-- 模拟交易 wrapper 可读取 SharedSignals `/source_status` 做数据源治理门禁；红灯或不可达默认 fail-closed，但必须按市场隔离判断。A股不能因为 Crypto/PM 新鲜度红灯停摆；Crypto/PM 自身红灯仍应阻断对应市场任务；接口清单、cron、能力注册等无法归属市场的全局红灯才阻断所有市场。
-- 健康检查可以展示全局 `/source_status` 红黄绿状态，但交易任务判断必须使用市场参数，避免跨市场数据债互相误伤。
-
-### Mini/Hermes 健康门
-
-- `job_ashare_sim_exec` 默认不检查 mini health，也不写 Hermes pending；A 股模拟单在服务器内完成 paper fill、账本和复盘数据闭环。
-- 仅当 `ASHARE_SIM_HERMES_ENABLED=1` 时，任务才启用 mini health/backpressure 检查，并把同一模拟信号投递给 Mini/Hermes/同花顺模拟盘作为第二执行路径。
-- Mini webhook 未启用时，普通模拟盘/研究/健康检查任务不得因为 `WEBHOOK_SECRET` 未配置刷生产告警；只有实际发送 Mini webhook 且 secret 为空时才报警。
-- Hermes 路径启用后，mini `/health` 不可用、`halted=true` 或 `pending + in_progress > ASHARE_SIM_MINI_BUSY_LIMIT`（默认 0）时，不得阻断服务器本地模拟闭环；任务必须记录 `mini_health_unavailable` / `mini_halted` / `mini_busy`，临时设置 `ASHARE_SIM_WEBHOOK_ENABLED=0`，继续写服务器本地 paper fill。
-- 服务器本地模拟账本是训练/复盘数据权威来源；Hermes/mini 成功或失败只用于同花顺 GUI 模拟盘对照，仍以回执和截图确认为准。
-- Hermes/mini 点击提交但没有严格持仓表/委托/成交确认时，写 unconfirmed failed receipt，创建 `executor_halt.json`，停止消费队列。截图确认只看裁剪后的持仓表区域。
-- 同花顺模式识别：用 AX 标签确认"模拟"，不依赖 Vision 判断资金/账户区域。显式真实风险标识是"实盘"、"资金账号"、"普通交易"、"融资融券"。
-
-### 交易时段保护
-
-- A股模拟执行受交易时段保护：非工作日或非 `09:30-11:30` / `13:00-14:57` 直接 `skipped=market_closed`。
-
-### 开盘验收证据
-
-- `opening_acceptance.py` 聚合验收不得只用泛化 API 健康替代业务证据。A股验收通过 `TradingagentDataReader`/SharedSignals HTTP API 检查日线覆盖和 5 分钟数据新鲜度；API 不可用、数据为空、覆盖不足或过期时必须 fail-closed，不能通过再次调用同一 API、泛化健康状态或本地旧快照转绿。A股开盘验收不得读取兄弟 SharedSignals SQLite/read-model 文件；本地信号卡、local_sim 成交、签名回执、复盘日志和 no-trade 归因只用于验证 TradingAgent 自身闭环。CNFutures 旧日线诊断不可用时可嵌入 `cn_futures_live_check` 的 5 分钟数据、复盘和策略 hold 摘要，只有该业务 runtime evidence 通过才可降级为 pass。
-
-### 影子盘隔离
-
-- 影子信号只写入 `signals/shadow/pending`，不进入可执行队列。
-- `signals/shadow` 具备完整状态目录：`pending/claimed/running/filled/expired/cancelled/failed/partial`。
-- PM/Crypto/US/HK 的影子和模拟工具必须拒绝 `real_money_enabled`、`live_broker_enabled`、`direct_execution_enabled` 以及订单/账户/配置中的 `capital_layer=real`、`account_type=real`、签名密钥或 live broker 标记；不得把真实执行负载静默改写成 simulated 后继续执行。
-- A股影子账本拒绝非普通 A股代码（200xxx.SZ 等）。
-- 影子盘估值优先 SharedSignals 日线收盘价，缺失时回退最近影子成交价。
-
-### 实盘安全门
-
-- 实盘队列只能使用 `signals/real/*`，不得写入 shadow/sim 队列，也不得直接写入当前 A股模拟执行队列。
-- `REAL_TRADING_ENABLED` 默认关闭；任何实盘订单、实盘队列提交或人工确认流程在开关未显式启用时必须拒绝。
-- 实盘订单必须先通过手工确认 token、单笔/单日资金硬上限、A股交易时段、T+1、emergency halt 文件检查；任一失败必须抛 `SafetyViolation`，不能降级为 simulated/shadow。
-- `signals/real/pending` 仍是人工确认后的隔离队列；不得被视为自动下单、自动点击或已成交证明。成交状态只接受带 `receipt_sha256`/`checksum`/`sha256` 校验的回执。
-
-### 看板收益口径
-
-- 前端只读快照统一以人民币展示跨市场收益；US/Crypto/PM 的原币 PnL、realized/unrealized PnL、max drawdown 在进入 `marketSummaries[]`、全市场收益曲线和首页汇总前必须折算为 CNY。
-- `style_performance.jsonl` 若提供 `*_cny` 或 `fx_to_cny`，优先使用行内字段；否则 US/Crypto/PM 按 10,000 USD/USDT/USDC 原币本金对应的规范汇率折算。不得用原币 PnL 除以人民币本金，也不得让旧账本本金覆盖规范本金。
-
-### LLM/DeepSeek 使用边界
-
-- A股 5 分钟级模拟执行调度默认 `TRADINGS_DEBATE_MODE=fast`，用六维分数生成确定性 belief_score，不阻塞等待 DeepSeek。
-- DeepSeek/LLM 只用于研究层、多空复核、日报/周报和慢速校准。
-
-### PM 调度
-
-- PM shadow scan 每 10 分钟运行；`run_job` 锁防止并发。
-- PM 独立研究概率由 `job_pm_research_probability` 通过 MarketGraph 统一 API 读取，写入 `shared/review/pm/model_probabilities.jsonl` 和 `model_probabilities_summary.json`；SharedSignals 只提供 PM 市场/价格行，不提供判断概率。
-- `PM/research_probability.py` 必须忽略 SharedSignals 行内的 `research_probability` / `marketgraph_probability` 等判断字段；可触发交易 edge 的研究概率只能来自 MarketGraph `GET /pm/research-probabilities` 或 MCP `read_pm_research_probabilities`。MarketGraph API 不可用或无研究概率时必须清空本地模型概率文件并安全空跑，不写 SharedSignals、不写交易队列。
-- `job_pm_optimize` 运行产物写入 `shared/review/pm/`，不写入 Git 跟踪路径。
-
-### 风格演化状态
-
-- `Crypto/`、`PM/`、`US/`、`HK/` 下的 `styles/*.json` 是只读基础配置，不作为运行时状态存储。
-- 自动演化只能把权重、暂停/降级状态、performance、comparison 和自动生成 variant 写到 `shared/review/<market>/` 或生产运行层对应 review root。
-- `shared/review/<market>/style_weights.json` 是运行时风格权重/状态来源；自动生成风格放在 `shared/review/<market>/generated_styles/`。
-- 不得让 cron 或 pipeline 回写基础 `styles/*.json`，否则会污染 Git 工作树并混淆配置与运行结果。
-
-### 回执完整性
-
-- 服务器写入 receipt 前验证 `receipt_sha256`/`checksum`，不匹配拒写。
-- 无签名的历史 receipt 标记 `unsigned`，不当作篡改或失败。
-- `payload_sha256` 是下发指纹，不是回执签名；只有 `receipt_sha256`/`checksum`/`sha256` 用于判断 signed。
-
-### 邮件通道
-
-- 交易通道：`notice@tradingagent.cc → tradingadviser@coze.email`
-- 系统通道：`notice@tradingagent.cc → soc@coze.email`
-- 发送方式：Cloudflare Email Service REST endpoint
-- 生产 env 入口：`/opt/tradingagent/.env` 或仓库内 `/opt/investment/tradingagent/.env` 保存 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_EMAIL_API_TOKEN` 和 `EMAIL_FROM_/EMAIL_TO_`；loader 会兼容旧 `CF_EMAIL_*` 与 `EMAIL_*_FROM/TO` 命名，但文档和新增配置必须使用规范名。
-
-## 服务器
-
-- 主服务器：`8.138.181.177`（阿里云华南3/广州）
-- 生产路径：`/opt/investment/tradingagent/`
-- Mini 远程访问：Tailscale `100.125.4.113` / SSH alias `macmini-tailscale`
-- `192.168.5.2` 是 RSS 服务器，不是 MarketGraph 主服务器，也不是 Hermes mini 执行桥。
-
-## 复盘节奏
-
-- 两次主复盘：11:45 午盘复盘、15:30 收盘复盘
-- 22:00 夜间校准（汇总研究、归因、回测、尾盘候选和次日计划）
-- 07:30 晨报（不计为复盘迭代）
-- 尾盘候选扫描：14:40/14:50/14:56 生成 TradingAgent 自有 review/候选输出（仅观察，不入实盘）；如需 MarketGraph 研究证据，只读调用 MarketGraph API。
-
-## 关键命令入口
-
-- TradingAgent 本地快速验收：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.full_acceptance --profile quick --pretty`
-- TradingAgent 生产只读验收：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.full_acceptance --profile prod --pretty`
-- TradingAgent 发布前全量验收：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.full_acceptance --profile all --pretty`
-- 生产服务器的 pytest/验收解释器固定为仓库外 `/opt/investment/tools/venvs/tradingagent-test/bin/python`，依赖来自本仓 `requirements.txt`；不得用缺少 pytest 的系统 Python 代替并把环境失败误报为代码失败。该 venv 只用于只读测试，不是服务、cron 或交易运行时解释器，回退时可整体删除该目录。
-- A股盘前 dry-run：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.ashare_preopen_dry_run --json --pretty --send-on never`
-- A股市场健康检查：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/market_health.py --market ashare --pretty`
-- 自我演化健康检查：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.self_evolution_health --pretty`
-- 运维报告：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/ops_report.py --send-on never --pretty`
-- 失败归档：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/archive_reviewed_signals.py --apply --batch-id <id> --reason <reason>`
-- 旧 USD 本金隔离（dry-run）：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.quarantine_legacy_usd_capital --pretty --before <cutover_iso>`
-- 旧 USD 本金隔离（apply）：`PYTHONPATH=/opt/investment/tradingagent python3 -m shared.runtime_test.quarantine_legacy_usd_capital --apply --pretty --before <cutover_iso>`
-- Crontab 合并安装（dry-run/本地测试）：`python3 tools/merge_tradingagent_crontab.py [--current-file <path>] [--output <path>]`
-- Crontab 合并安装（生产 apply）：`sudo python3 tools/merge_tradingagent_crontab.py --apply`
-- **禁止直接 `crontab shared/crontab.txt` 覆盖**，必须通过 `tools/merge_tradingagent_crontab.py` 合并安装。
-
-## 工作区同步规则
-
-- 仓库地址、remote 名称和默认分支以本仓库内 `git remote -v`、`git branch --show-current` 为准。
-- 开发前检查 `git status -sb`、`git remote -v`、当前分支和是否落后远端。
-- 工作树不干净时先判断改动来源，不得覆盖并发 agent、cron、桌面自动化或 Nicholas 的改动。
-- 涉及交易 agent 行为、邮件/API、部署、配置、数据契约、风控边界、服务器路径、定时任务或协作流程的变更，必须同步更新核心文档。
-- 涉及真实资金、实盘执行、账号凭据、2FA、私钥、邮件发送通道或生产服务器的操作，必须先说明授权边界、回退方式和验证方式。
-- 提交时只暂存本次审计过的文件；数据库、缓存、日志、staging、密钥、本机运行产物和交易临时输出默认不提交。
-
-## 历史事件日志
-
-2026-07-01 发生了一系列运行时事件（虚假成交确认、过期 pending 清理、回执指纹闭环等），详细的**事件时间线、修复动作和事后复盘**记录在：[docs/runtime_incidents_20260701.md](docs/runtime_incidents_20260701.md)。
-
-2026-07-02 发生了 Mini/服务器执行桥路径漂移与 `TradingagentDataReader` 导入回归，已记录在：[docs/runtime_incidents_20260702.md](docs/runtime_incidents_20260702.md)。该日志同时记录 `~/Desktop/Investment` 退役、旧 LaunchAgent 禁用、服务器修复提交和残余风险。
-
-上述"关键运行时护栏"中的永久规则大部分是从这些事件中提取的。如果需要理解某条规则的背景或复盘某个事故链，查阅该事件日志。
+- 命令、运行顺序和回滚见 [docs/operations.md](docs/operations.md)；字段见 [docs/data_contract.md](docs/data_contract.md)；样本与成熟度见 [docs/capital_growth_validation.md](docs/capital_growth_validation.md)。
+- 当前事实只写 [STATUS.md](STATUS.md)。文档不得把本地测试、GitHub、生产文件、生产 runtime、cron、真实市场样本或真实交易混成一个“完成”。
+- 回滚只能停止新任务、切回已验证代码并保留 append-only 事实；不得删除/改写新账本，也不得恢复旧共享账本。
+- 未经单独授权，禁止 commit、push、deploy、apply cron、发邮件、操作 GUI 或接入真实交易。

@@ -1,0 +1,27 @@
+# TradingAgent 后续 Backlog
+
+> 本文件只记录 2026-07-12 范围冻结后明确移出的工作。它不表示已授权发布、外部写入或实盘。
+
+## 1. 生产发布与下个交易日启用
+
+- 获 Nicholas 单独授权后，备份并核对生产文件、环境变量和现有 crontab。
+- 分市场初始化两个 fresh 50,000 CNY production-side simulated root，验证 freeze manifest、checksum、execution lineage 和首次 MTM reconcile。
+- 只安装已审计的 sim-only cron；运行 opening/preopen/ops、A股 15:32 daily MTM、样本和看板 smoke。
+- 分开报告生产文件、runtime、cron 与首个真实市场样本；任一层失败则回滚任务启用，不删除 append-only 事实。
+
+## 2. 进化终端深化
+
+- 在只读看板深化 champion/challenger、按风格样本、拒绝分布、校准、N_eff、逐日 MTM 回撤和 MG paired ablation。
+- 保持 SampleJournal/KPI 唯一 authority；不得恢复自动 promotion、自动风险扩张或风格独立资金。
+
+## 3. 邮件/同花顺人工实盘规格
+
+- 仅设计 `TA 信号 → 邮件 → Nicholas 在同花顺人工复核下单` 的权限、内容、幂等、过期、撤销、人工确认和审计规格。
+- Nicholas 审阅并明确授权前，不编码发送链、不发真实邮件、不操作同花顺、不接 broker。
+- 独立 broker automation gateway 属于更晚的单独项目。
+
+## 4. 长期统计方法
+
+- 以更多独立交易日、决策 cluster、市场状态和完整回合验证费用后 expectancy、校准、稳定性与逐日 MTM 回撤。
+- CNFutures Sharpe 仅在有同频净收益序列后计算；再评估 DSR、多重比较、换月/夜盘/极端状态分层。
+- 任何长期统计升级不得用 label-cell 数替代独立样本，也不得据短期盈利自动晋级。
