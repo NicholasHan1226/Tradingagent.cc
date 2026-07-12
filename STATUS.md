@@ -11,9 +11,9 @@
 - A股执行现实统一为 `ashare-execution-reality-20260706-v1`：主板风险警示股 10%、独立收盘集合竞价/盘后固定价 session、价格笼子、100 股整手、卖方印花税 5bps、双向过户费各 0.1bps；华创佣金仍是待合同/交割单核实的保守临时口径。
 - 样本科学口径已区分 label cells、raw N、unique decision clusters、独立交易日与 N_eff；PIT、校准、benchmark null、逐日 MTM 回撤和 universe recall 均不再由布尔字段或默认 0 自证。
 - CNFutures 已加入 append-only order events、checksum projection 与 startup reconcile；目录漂移只 HALT 新增模拟风险，observation/counterfactual 继续。旧伪 Sharpe 已改为诊断比率，`sharpe=null` 且不得用于 DSR/晋级。
-- `REAL_TRADING_ENABLED=false`；没有 push、deploy、cron apply、邮件、同花顺操作、broker 接入或真实交易。
+- `REAL_TRADING_ENABLED=false`；TradingAgent 已合入并 push GitHub main `5817457`，但尚未 deploy、restart 或 apply cron，也没有邮件、同花顺操作、broker 接入或真实交易。
 - 本地 production cron/env 门禁同时要求 `ASHARE_SIM_HERMES_ENABLED=0` 与 `ASHARE_SIM_WEBHOOK_ENABLED=0`；`.env` 或共享环境中的 truthy/未知值会在任务正文前 fail closed。该门禁尚未部署，不能据此声称服务器第二路径已关闭。
-- 当前是“本地实现与固定验收已完成，等待单独发布授权”，不是已发布，也没有连续真实交易日的模拟绩效证据，不能宣称正期望或稳定盈利。
+- 当前是“本地与 GitHub main 已完成，生产发布停在 SharedSignals SQLite 迁移确认门禁”；不是已发布，也没有连续真实交易日的模拟绩效证据，不能宣称正期望或稳定盈利。
 
 ## 当前资本 authority
 

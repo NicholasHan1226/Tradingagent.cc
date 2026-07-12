@@ -58,7 +58,7 @@ REAL_TRADING_ENABLED=false \
   shared/wrappers/job_market_capital_reconcile.sh cn_futures preopen
 ```
 
-`opening/preopen/ops` 时点已经写入仓库 cron 模板，但本任务没有 apply。A股 `14:58` 仍是收盘前资本 checkpoint；独立 `15:32 ops` 在盘后固定价格交易结束后写当日 closing MTM，并向 `shared/review/ashare/sample_journal.jsonl` 追加日级 `account_daily_mtm_equity` chain-validation 证据。15:31 前的 reconcile 不得作为正式逐日回撤点。wrapper 缺 source、mark、exact reservation、commit、lineage 或 ledger-head 证据时必须 blocked；不能用 dry-run 或人工 JSON 伪造 fresh。
+`opening/preopen/ops` 时点已经写入仓库 cron 模板；生产是否安装必须通过项目 merge 工具的 readback 与 cron coverage 单独证明，不能从模板反推。A股 `14:58` 仍是收盘前资本 checkpoint；独立 `15:32 ops` 在盘后固定价格交易结束后写当日 closing MTM，并向 `shared/review/ashare/sample_journal.jsonl` 追加日级 `account_daily_mtm_equity` chain-validation 证据。15:31 前的 reconcile 不得作为正式逐日回撤点。wrapper 缺 source、mark、exact reservation、commit、lineage 或 ledger-head 证据时必须 blocked；不能用 dry-run 或人工 JSON 伪造 fresh。
 
 ## 3. Fresh-start 初始化边界
 
@@ -80,7 +80,7 @@ Opening authority 的完整 contract 必须证明 50,000 CNY cash/equity、零�
 
 Legacy freeze manifest 必须引用真实只读事件文件和真实归档目录，并保存 SHA-256、最后 event ID、行数、带时区 frozen-at 和 `imported=false`。路径/哈希/行数/最后 ID 任一不匹配都必须 fail-before-write。
 
-当前任务不得对生产 root 执行 init 或切换 runtime env。未来若获发布授权，初始化、环境切换和首次 reconcile 必须作为独立 cutover，由主集成者备份、停止任务、验证两个 root 后逐市场进行。
+默认不得对生产 root 执行 init 或切换 runtime env。只有目标明确包含 fresh-start 生产发布且完成对应 preflight 时，主集成者才可把初始化、root 激活和首次 reconcile 作为独立 cutover：先备份并停止相关任务，在两个互异、非 symlink 的隔离 root 初始化并验证，再逐市场激活；日常任务不得隐式创建本金或 authority。
 
 ## 4. A股日内与样本运行
 
