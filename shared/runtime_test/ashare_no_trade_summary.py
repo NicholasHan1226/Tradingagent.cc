@@ -10,10 +10,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.execution.local_sim_ledger import (
+    LOCAL_SIM_TRADES as CURRENT_ASHARE_SIM_TRADES,
+)
+
 CN_TZ = timezone(timedelta(hours=8))
 ROOT = Path(__file__).resolve().parents[2]
 NO_TRADE_LOG = ROOT / "shared/logs/ashare_no_trade_explanations.jsonl"
-TRADE_LOG = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
+TRADE_LOG = CURRENT_ASHARE_SIM_TRADES
 LATEST_REPORT = ROOT / "shared/runtime_test/ashare_no_trade_summary_latest.json"
 
 
@@ -47,7 +51,13 @@ def _compact_date(payload: dict[str, Any]) -> str:
         value = str(payload.get(key) or "").replace("-", "")[:8]
         if len(value) == 8 and value.isdigit():
             return value
-    generated_at = str(payload.get("generated_at") or payload.get("timestamp") or payload.get("filled_at") or payload.get("created_at") or "")
+    generated_at = str(
+        payload.get("generated_at")
+        or payload.get("timestamp")
+        or payload.get("filled_at")
+        or payload.get("created_at")
+        or ""
+    )
     if len(generated_at) >= 10:
         value = generated_at[:10].replace("-", "")
         if len(value) == 8 and value.isdigit():
@@ -75,13 +85,21 @@ def _count_range(rows: list[dict[str, Any]], key: str) -> dict[str, int | None]:
     return {"min": min(values), "max": max(values), "latest": values[-1]}
 
 
-def summarize_no_trade_log(path: Path = NO_TRADE_LOG, trade_date: str | None = None) -> dict[str, Any]:
+def summarize_no_trade_log(
+    path: Path = NO_TRADE_LOG, trade_date: str | None = None
+) -> dict[str, Any]:
     target_date = (trade_date or _today_compact()).replace("-", "")[:8]
     rows = [row for row in _read_jsonl(path) if _compact_date(row) == target_date]
     latest = rows[-1] if rows else {}
     latest_explanation = _explanation(latest) if latest else {}
-    category_counts = Counter(str(_explanation(row).get("category") or "unknown") for row in rows)
-    counts = latest_explanation.get("counts") if isinstance(latest_explanation.get("counts"), dict) else {}
+    category_counts = Counter(
+        str(_explanation(row).get("category") or "unknown") for row in rows
+    )
+    counts = (
+        latest_explanation.get("counts")
+        if isinstance(latest_explanation.get("counts"), dict)
+        else {}
+    )
     evidence_gaps: list[str] = []
     candidates = int(counts.get("candidates") or counts.get("candidate_count") or 0)
     orders = int(counts.get("orders") or counts.get("order_count") or 0)
@@ -111,7 +129,9 @@ def summarize_no_trade_log(path: Path = NO_TRADE_LOG, trade_date: str | None = N
             "skipped_candidates": _count_range(rows, "skipped_candidates"),
             "execution_skips": _count_range(rows, "execution_skips"),
         },
-        "evidence_status": "incomplete" if evidence_gaps else ("ready" if rows else "no_rows"),
+        "evidence_status": "incomplete"
+        if evidence_gaps
+        else ("ready" if rows else "no_rows"),
         "evidence_gaps": evidence_gaps,
         "trade_source_check": summarize_trade_source_check(TRADE_LOG, target_date),
         "read_only": True,
@@ -119,7 +139,9 @@ def summarize_no_trade_log(path: Path = NO_TRADE_LOG, trade_date: str | None = N
     }
 
 
-def summarize_trade_source_check(path: Path = TRADE_LOG, trade_date: str | None = None) -> dict[str, Any]:
+def summarize_trade_source_check(
+    path: Path = TRADE_LOG, trade_date: str | None = None
+) -> dict[str, Any]:
     target_date = (trade_date or _today_compact()).replace("-", "")[:8]
     rows = [row for row in _read_jsonl(path) if _compact_date(row) == target_date]
     filled_rows = [row for row in rows if _is_filled_trade(row)]
@@ -138,20 +160,28 @@ def summarize_trade_source_check(path: Path = TRADE_LOG, trade_date: str | None 
         if side == "buy" and layer != "candidate":
             invalid_layer_count += 1
             issue.append("buy_candidate_layer_invalid")
-        if side == "sell" and source != "ashare_rebalance_sell" and layer != "ashare_rebalance_sell":
+        if (
+            side == "sell"
+            and source != "ashare_rebalance_sell"
+            and layer != "ashare_rebalance_sell"
+        ):
             invalid_layer_count += 1
             issue.append("sell_source_invalid")
         if issue:
-            invalid_rows.append({
-                "index": index,
-                "symbol": row.get("ts_code") or row.get("symbol"),
-                "side": side or None,
-                "execution_source": source or None,
-                "candidate_pool_layer": layer or None,
-                "issues": issue,
-            })
+            invalid_rows.append(
+                {
+                    "index": index,
+                    "symbol": row.get("ts_code") or row.get("symbol"),
+                    "side": side or None,
+                    "execution_source": source or None,
+                    "candidate_pool_layer": layer or None,
+                    "issues": issue,
+                }
+            )
 
-    status = "no_rows" if not filled_rows else ("incomplete" if invalid_rows else "ready")
+    status = (
+        "no_rows" if not filled_rows else ("incomplete" if invalid_rows else "ready")
+    )
     return {
         "status": status,
         "filled_count": len(filled_rows),
@@ -169,14 +199,22 @@ def _is_filled_trade(row: dict[str, Any]) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--log-path", type=Path, default=NO_TRADE_LOG)
-    parser.add_argument("--date", default=None, help="YYYYMMDD or YYYY-MM-DD; default today China time")
-    parser.add_argument("--write-latest", action="store_true", help="Write shared/runtime_test/ashare_no_trade_summary_latest.json")
+    parser.add_argument(
+        "--date", default=None, help="YYYYMMDD or YYYY-MM-DD; default today China time"
+    )
+    parser.add_argument(
+        "--write-latest",
+        action="store_true",
+        help="Write shared/runtime_test/ashare_no_trade_summary_latest.json",
+    )
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
     report = summarize_no_trade_log(args.log_path, args.date)
     if args.write_latest:
         LATEST_REPORT.parent.mkdir(parents=True, exist_ok=True)
-        LATEST_REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        LATEST_REPORT.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
     print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
     return 0
 

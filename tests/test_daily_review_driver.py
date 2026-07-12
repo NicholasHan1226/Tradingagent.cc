@@ -20,17 +20,35 @@ class DailyReviewDriverTest(unittest.TestCase):
         self.sim_ledger_dir = self.ledger_dir / "sim_ledger"
         self.local_sim_trades = self.ledger_dir / "local_sim" / "local_sim_trades.jsonl"
 
-        self._patch(daily_review, "SHADOW_TRADES_LOG", self.shadow_dir / "shadow_trades.jsonl")
+        self._patch(
+            daily_review, "SHADOW_TRADES_LOG", self.shadow_dir / "shadow_trades.jsonl"
+        )
         self._patch(daily_review, "FILLED_SIGNALS_DIR", self.filled_dir)
         self._patch(daily_review, "DAILY_LOG", self.review_dir / "daily_reviews.jsonl")
-        self._patch(daily_review, "DIRECTION_HIT_LOG", self.review_dir / "direction_hit_reviews.jsonl")
+        self._patch(
+            daily_review,
+            "DIRECTION_HIT_LOG",
+            self.review_dir / "direction_hit_reviews.jsonl",
+        )
         self._patch(sim_ledger_reader, "DEFAULT_SIM_LEDGER_ROOT", self.sim_ledger_dir)
-        self._patch(sim_ledger_reader, "DEFAULT_LOCAL_SIM_TRADES", self.local_sim_trades)
-        self._patch(benchmark, "LAST_PERIOD_STORE", self.review_dir / "last_period_return.json")
-        self._patch(benchmark, "BENCHMARK_STORE", self.review_dir / "benchmark_history.json")
+        self._patch(
+            sim_ledger_reader, "DEFAULT_LOCAL_SIM_TRADES", self.local_sim_trades
+        )
+        self._patch(
+            benchmark, "LAST_PERIOD_STORE", self.review_dir / "last_period_return.json"
+        )
+        self._patch(
+            benchmark, "BENCHMARK_STORE", self.review_dir / "benchmark_history.json"
+        )
         self._patch(position_ledger, "LEDGER_DIR", self.ledger_dir)
-        self._patch(position_ledger, "POSITION_CSV", self.ledger_dir / "position_ledger.csv")
-        self._patch(position_ledger, "POSITION_LOCK", self.ledger_dir / "position_ledger.csv.lock")
+        self._patch(
+            position_ledger, "POSITION_CSV", self.ledger_dir / "position_ledger.csv"
+        )
+        self._patch(
+            position_ledger,
+            "POSITION_LOCK",
+            self.ledger_dir / "position_ledger.csv.lock",
+        )
 
     def _patch(self, module: object, name: str, value: object) -> None:
         patcher = patch.object(module, name, value)
@@ -39,7 +57,9 @@ class DailyReviewDriverTest(unittest.TestCase):
 
     def _write_shadow_trade(self, payload: dict[str, object]) -> None:
         self.shadow_dir.mkdir(parents=True, exist_ok=True)
-        with (self.shadow_dir / "shadow_trades.jsonl").open("a", encoding="utf-8") as handle:
+        with (self.shadow_dir / "shadow_trades.jsonl").open(
+            "a", encoding="utf-8"
+        ) as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
     def _write_jsonl(self, path: Path, payload: dict[str, object]) -> None:
@@ -47,7 +67,9 @@ class DailyReviewDriverTest(unittest.TestCase):
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
-    def test_shadow_trade_driver_runs_lunch_and_close_without_legacy_ashare_reads(self) -> None:
+    def test_shadow_trade_driver_runs_lunch_and_close_without_legacy_ashare_reads(
+        self,
+    ) -> None:
         position_ledger.open_position(
             "600000.SH",
             100,
@@ -56,44 +78,56 @@ class DailyReviewDriverTest(unittest.TestCase):
             entry_date="2026-06-30",
             note="unit-test",
         )
-        self._write_shadow_trade({
-            "trade_id": "SHADOW-1",
-            "trade_date": "2026-06-30",
-            "ts_code": "600000.SH",
-            "side": "buy",
-            "quantity": 100,
-            "price": 10.0,
-            "capital_layer": "paper",
-            "created_at": "2026-06-30T10:30:00",
-            "strategy_name": "trend",
-            "pnl": 0.12,
-        })
-        self._write_shadow_trade({
-            "trade_id": "SHADOW-2",
-            "trade_date": "2026-06-30",
-            "ts_code": "600000.SH",
-            "side": "sell",
-            "quantity": 100,
-            "price": 10.5,
-            "capital_layer": "shadow",
-            "created_at": "2026-06-30T14:20:00",
-            "strategy_name": "trend",
-            "pnl": -0.03,
-        })
+        self._write_shadow_trade(
+            {
+                "trade_id": "SHADOW-1",
+                "trade_date": "2026-06-30",
+                "ts_code": "600000.SH",
+                "side": "buy",
+                "quantity": 100,
+                "price": 10.0,
+                "capital_layer": "paper",
+                "created_at": "2026-06-30T10:30:00",
+                "strategy_name": "trend",
+                "pnl": 0.12,
+            }
+        )
+        self._write_shadow_trade(
+            {
+                "trade_id": "SHADOW-2",
+                "trade_date": "2026-06-30",
+                "ts_code": "600000.SH",
+                "side": "sell",
+                "quantity": 100,
+                "price": 10.5,
+                "capital_layer": "shadow",
+                "created_at": "2026-06-30T14:20:00",
+                "strategy_name": "trend",
+                "pnl": -0.03,
+            }
+        )
 
-        with patch.object(daily_review, "_read_csv_dicts", side_effect=AssertionError("legacy csv path should not be used")):
+        with patch.object(
+            daily_review,
+            "_read_csv_dicts",
+            side_effect=AssertionError("legacy csv path should not be used"),
+        ):
             lunch = daily_review.run_daily_review("20260630", session="lunch")
             close = daily_review.run_daily_review("20260630", session="close")
 
         self.assertEqual(lunch["capital_layer"], "shadow")
         self.assertFalse(lunch["stale"])
-        self.assertEqual(lunch["capital_layer_reviews"]["shadow"]["capital_layer"], "shadow")
+        self.assertEqual(
+            lunch["capital_layer_reviews"]["shadow"]["capital_layer"], "shadow"
+        )
         self.assertIn("comparisons", lunch["capital_layer_reviews"]["shadow"])
         self.assertIn("next_plan", lunch["capital_layer_reviews"]["shadow"])
 
         self.assertEqual(close["capital_layer"], "shadow")
         self.assertFalse(close["stale"])
-        self.assertEqual(close["capital_layer_reviews"]["shadow"]["capital_layer"], "shadow")
+        self.assertEqual(
+            close["capital_layer_reviews"]["shadow"]["capital_layer"], "shadow"
+        )
         self.assertIn("comparisons", close["capital_layer_reviews"]["shadow"])
         self.assertIn("next_day_plan", close["capital_layer_reviews"]["shadow"])
 
@@ -112,8 +146,12 @@ class DailyReviewDriverTest(unittest.TestCase):
 
         self.assertTrue(lunch["stale"])
         self.assertTrue(close["stale"])
-        self.assertEqual(lunch["capital_layer_reviews"]["shadow"]["capital_layer"], "shadow")
-        self.assertEqual(close["capital_layer_reviews"]["shadow"]["capital_layer"], "shadow")
+        self.assertEqual(
+            lunch["capital_layer_reviews"]["shadow"]["capital_layer"], "shadow"
+        )
+        self.assertEqual(
+            close["capital_layer_reviews"]["shadow"]["capital_layer"], "shadow"
+        )
 
     def test_daily_review_reads_unified_and_local_sim_ledgers(self) -> None:
         self._write_jsonl(
@@ -137,7 +175,7 @@ class DailyReviewDriverTest(unittest.TestCase):
                 "order_id": "SIM-ASHARE-1",
                 "idempotency_key": "idem-1",
                 "market": "ashare",
-                "account": "ashare_server_sim",
+                "account": "ashare_sim",
                 "trade_date": "2026-06-30",
                 "ts_code": "600000.SH",
                 "side": "buy",
@@ -162,12 +200,27 @@ class DailyReviewDriverTest(unittest.TestCase):
         self.assertFalse(lunch["stale"])
         self.assertFalse(close["stale"])
         self.assertEqual(close["review_trade_count"], 2)
-        self.assertEqual(close["source_trade_counts"]["by_capital_layer"]["simulated"], 2)
-        self.assertEqual(close["source_trade_counts"]["sample_quality"]["validation_sample_count"], 1)
-        self.assertEqual(close["source_trade_counts"]["sample_quality"]["strategy_sample_valid_count"], 1)
-        self.assertIn("crypto", close["capital_layer_reviews"]["simulated"]["market_reviews"])
-        self.assertIn("ashare", close["capital_layer_reviews"]["simulated"]["market_reviews"])
-        ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"]["ashare"]
+        self.assertEqual(
+            close["source_trade_counts"]["by_capital_layer"]["simulated"], 2
+        )
+        self.assertEqual(
+            close["source_trade_counts"]["sample_quality"]["validation_sample_count"], 1
+        )
+        self.assertEqual(
+            close["source_trade_counts"]["sample_quality"][
+                "strategy_sample_valid_count"
+            ],
+            1,
+        )
+        self.assertIn(
+            "crypto", close["capital_layer_reviews"]["simulated"]["market_reviews"]
+        )
+        self.assertIn(
+            "ashare", close["capital_layer_reviews"]["simulated"]["market_reviews"]
+        )
+        ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"][
+            "ashare"
+        ]
         self.assertEqual(ashare_review["trades"], 1)
         self.assertEqual(ashare_review["strategy_trades"], 0)
         self.assertEqual(ashare_review["validation_sample_count"], 1)
@@ -194,7 +247,7 @@ class DailyReviewDriverTest(unittest.TestCase):
                 "order_id": "SIM-ASHARE-1",
                 "idempotency_key": "idem-1",
                 "market": "ashare",
-                "account": "ashare_server_sim",
+                "account": "ashare_sim",
                 "trade_date": "2026-06-30",
                 "ts_code": "600000.SH",
                 "side": "buy",
@@ -219,7 +272,9 @@ class DailyReviewDriverTest(unittest.TestCase):
             {str(self.local_sim_trades): 1},
         )
 
-    def test_daily_review_marks_after_hours_ashare_trade_as_validation_sample(self) -> None:
+    def test_daily_review_marks_after_hours_ashare_trade_as_validation_sample(
+        self,
+    ) -> None:
         self._write_jsonl(
             self.local_sim_trades,
             {
@@ -227,7 +282,7 @@ class DailyReviewDriverTest(unittest.TestCase):
                 "order_id": "SIM-AFTER-HOURS",
                 "idempotency_key": "after-hours",
                 "market": "ashare",
-                "account": "ashare_server_sim",
+                "account": "ashare_sim",
                 "trade_date": "2026-07-07",
                 "ts_code": "600000.SH",
                 "side": "buy",
@@ -252,11 +307,15 @@ class DailyReviewDriverTest(unittest.TestCase):
         self.assertEqual(quality["validation_sample_count"], 1)
         self.assertEqual(quality["strategy_sample_valid_count"], 0)
         self.assertEqual(quality["by_reason"], {"outside_ashare_regular_session": 1})
-        ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"]["ashare"]
+        ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"][
+            "ashare"
+        ]
         self.assertEqual(ashare_review["trades"], 1)
         self.assertEqual(ashare_review["strategy_trades"], 0)
 
-    def test_daily_review_counts_regular_session_local_sim_trade_as_strategy_sample(self) -> None:
+    def test_daily_review_counts_regular_session_local_sim_trade_as_strategy_sample(
+        self,
+    ) -> None:
         self._write_jsonl(
             self.local_sim_trades,
             {
@@ -264,7 +323,7 @@ class DailyReviewDriverTest(unittest.TestCase):
                 "order_id": "SIM-REGULAR",
                 "idempotency_key": "regular-session",
                 "market": "ashare",
-                "account": "ashare_server_sim",
+                "account": "ashare_sim",
                 "trade_date": "2026-07-09",
                 "ts_code": "300759.SZ",
                 "side": "buy",
@@ -296,10 +355,15 @@ class DailyReviewDriverTest(unittest.TestCase):
         self.assertEqual(quality["validation_sample_count"], 0)
         self.assertEqual(quality["strategy_sample_valid_count"], 1)
         self.assertEqual(quality["by_reason"], {"ashare_candidate_layer_buy": 1})
-        ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"]["ashare"]
+        ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"][
+            "ashare"
+        ]
         self.assertEqual(ashare_review["trades"], 1)
         self.assertEqual(ashare_review["strategy_trades"], 1)
-        self.assertEqual(ashare_review["sample_quality"]["by_reason"], {"ashare_candidate_layer_buy": 1})
+        self.assertEqual(
+            ashare_review["sample_quality"]["by_reason"],
+            {"ashare_candidate_layer_buy": 1},
+        )
 
 
 if __name__ == "__main__":

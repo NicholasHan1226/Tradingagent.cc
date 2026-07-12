@@ -1,0 +1,20 @@
+schema_version: market-capital-policy.v1
+capital_authority_id: ashare-capital-v1
+authority_generation: 1
+account_name: ashare_sim
+market: ashare
+currency: CNY
+cutover_state: fresh_start_approved
+cutover_decision_id: nicholas-fresh-start-019f5040-20260712
+source_thread_id: 019f5040-76a7-7672-b2fc-91c1526312bf
+initial_equity_cny: 50000.0
+single_name_max_pct: 0.15
+stock_gross_exposure_limit_pct: 0.90
+risk:
+  daily_loss_pause_pct: 0.03
+  drawdown_tighten_pct: 0.05
+  drawdown_halt_pct: 0.07
+  max_consecutive_losses: 3
+execution:
+  capital_layer: simulated
+  real_trading_enabled: false

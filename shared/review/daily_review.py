@@ -28,9 +28,8 @@ try:
     from shared.data.reader import TradingagentDataReader
 except Exception:  # pragma: no cover - optional upstream dependency
     TradingagentDataReader = None  # type: ignore[assignment]
-SharedSignalsReader = TradingagentDataReader
 
-from .attribution import attribute, attribute_pct
+from .attribution import attribute_pct
 from .benchmark import compare_to_benchmark, get_benchmark, record_last_period
 from .pnl_summary import sim_ledger_pnl_summary
 from .sample_quality import strategy_valid_trades, summarize_sample_quality
@@ -40,6 +39,8 @@ from .sim_ledger_reader import (
     load_sim_trades_for_date,
     summarize_trade_sources,
 )
+
+SharedSignalsReader = TradingagentDataReader
 
 REVIEW_DIR = Path(__file__).resolve().parent
 TRADINGAGENT_ROOT = REVIEW_DIR.parent.parent
@@ -78,6 +79,7 @@ def _load_goals() -> dict[str, Any]:
     """
     try:
         import yaml  # type: ignore
+
         with open(GOALS_PATH, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except Exception:
@@ -102,7 +104,11 @@ def _load_goals() -> dict[str, Any]:
             elif cur is not None:
                 # store as string; caller can coerce
                 try:
-                    goals[cur][k] = float(v) if v and v[0].isdigit() else (True if v == "true" else False if v == "false" else v)
+                    goals[cur][k] = (
+                        float(v)
+                        if v and v[0].isdigit()
+                        else (True if v == "true" else False if v == "false" else v)
+                    )
                 except (ValueError, AttributeError):
                     goals[cur][k] = v
         return goals
@@ -145,7 +151,9 @@ def _normalize_side(value: Any) -> str:
     return raw
 
 
-def _group_by_capital_layer(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def _group_by_capital_layer(
+    rows: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows or []:
         layer = _normalize_capital_layer(row.get("capital_layer"))
@@ -159,7 +167,9 @@ def _group_by_capital_layer(rows: list[dict[str, Any]]) -> dict[str, list[dict[s
 def _group_by_capital_layer_market(
     rows: list[dict[str, Any]],
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
-    grouped: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    grouped: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     for row in rows or []:
         layer = _normalize_capital_layer(row.get("capital_layer"))
         market = _normalize_market(row.get("market"))
@@ -170,7 +180,9 @@ def _group_by_capital_layer_market(
     return {layer: dict(markets) for layer, markets in grouped.items()}
 
 
-def _append_layer_logs(base_record: dict[str, Any], grouped_records: dict[str, dict[str, Any]]) -> None:
+def _append_layer_logs(
+    base_record: dict[str, Any], grouped_records: dict[str, dict[str, Any]]
+) -> None:
     for capital_layer, layer_record in grouped_records.items():
         log_record = dict(base_record)
         log_record.update(layer_record)
@@ -179,7 +191,9 @@ def _append_layer_logs(base_record: dict[str, Any], grouped_records: dict[str, d
         _append_log(log_record)
 
 
-def _append_market_layer_logs(base_record: dict[str, Any], grouped_records: dict[str, dict[str, Any]]) -> None:
+def _append_market_layer_logs(
+    base_record: dict[str, Any], grouped_records: dict[str, dict[str, Any]]
+) -> None:
     for capital_layer, layer_record in grouped_records.items():
         market_reviews = layer_record.get("market_reviews") or {}
         if not market_reviews:
@@ -199,7 +213,11 @@ def _append_market_layer_logs(base_record: dict[str, Any], grouped_records: dict
 
 def _preferred_capital_layer(layers: list[str]) -> str:
     priority = {"real": 0, "simulated": 1, "shadow": 2}
-    return sorted(layers, key=lambda layer: priority.get(layer, 99))[0] if layers else "shadow"
+    return (
+        sorted(layers, key=lambda layer: priority.get(layer, 99))[0]
+        if layers
+        else "shadow"
+    )
 
 
 def _hit_rate(trades: list[dict[str, Any]]) -> float:
@@ -215,21 +233,31 @@ def _sum_pnl(trades: list[dict[str, Any]]) -> float:
 
 def _load_execution_exclusions(trade_date: str) -> dict[str, dict[str, dict[str, Any]]]:
     compact = _compact_date(trade_date)
-    grouped: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(lambda: {
-        "total": 0,
-        "skipped_candidates": 0,
-        "risk_rejections": 0,
-        "execution_skips": 0,
-        "sample": [],
-    }))
-    for path in sorted(EXECUTION_EXCLUSION_ROOT.glob(f"*/execution_exclusions_{compact}.jsonl")):
+    grouped: dict[str, dict[str, dict[str, Any]]] = defaultdict(
+        lambda: defaultdict(
+            lambda: {
+                "total": 0,
+                "skipped_candidates": 0,
+                "risk_rejections": 0,
+                "execution_skips": 0,
+                "sample": [],
+            }
+        )
+    )
+    for path in sorted(
+        EXECUTION_EXCLUSION_ROOT.glob(f"*/execution_exclusions_{compact}.jsonl")
+    ):
         for row in _read_jsonl_dicts(path):
             if not isinstance(row, dict):
                 continue
-            row_date = _first_present(row, "date", "trade_date", "generated_at", default="")
+            row_date = _first_present(
+                row, "date", "trade_date", "generated_at", default=""
+            )
             if row_date and not _date_eq(row_date, compact):
                 continue
-            layer = _normalize_capital_layer(row.get("capital_layer"), default="simulated")
+            layer = _normalize_capital_layer(
+                row.get("capital_layer"), default="simulated"
+            )
             market = _normalize_market(row.get("market"), default=path.parent.name)
             kind = str(row.get("kind") or "").strip()
             bucket = grouped[layer][market]
@@ -262,7 +290,9 @@ def _execution_quality(
         "skipped_candidates": int(record.get("skipped_candidates", 0) or 0),
         "risk_rejections": int(record.get("risk_rejections", 0) or 0),
         "execution_skips": int(record.get("execution_skips", 0) or 0),
-        "sample": record.get("sample", []) if isinstance(record.get("sample"), list) else [],
+        "sample": record.get("sample", [])
+        if isinstance(record.get("sample"), list)
+        else [],
     }
 
 
@@ -270,34 +300,59 @@ def _stage_goals(goals: dict[str, Any], stage: str = "stage_1_sim") -> dict[str,
     return goals.get(stage, {})
 
 
-def _compare_to_goals(metrics: dict[str, Any], stage_goals: dict[str, Any]) -> dict[str, Any]:
+def _compare_to_goals(
+    metrics: dict[str, Any], stage_goals: dict[str, Any]
+) -> dict[str, Any]:
     """Comparison #1: actual vs expected goals."""
     checks: list[dict[str, Any]] = []
     wr = metrics.get("win_rate", 0.0)
     g_wr = stage_goals.get("win_rate")
     if g_wr is not None:
-        checks.append({"metric": "win_rate", "actual": wr, "goal": g_wr, "met": wr >= g_wr})
+        checks.append(
+            {"metric": "win_rate", "actual": wr, "goal": g_wr, "met": wr >= g_wr}
+        )
 
     sh = metrics.get("sharpe")
     g_sh = stage_goals.get("sharpe")
     if sh is not None and g_sh is not None:
-        checks.append({"metric": "sharpe", "actual": sh, "goal": g_sh, "met": sh >= g_sh})
+        checks.append(
+            {"metric": "sharpe", "actual": sh, "goal": g_sh, "met": sh >= g_sh}
+        )
 
     mdd = metrics.get("max_drawdown")
     g_mdd = stage_goals.get("max_drawdown")
     if mdd is not None and g_mdd is not None:
         # drawdown is "bad when high", so met means actual <= goal
-        checks.append({"metric": "max_drawdown", "actual": mdd, "goal": g_mdd, "met": mdd <= g_mdd})
+        checks.append(
+            {
+                "metric": "max_drawdown",
+                "actual": mdd,
+                "goal": g_mdd,
+                "met": mdd <= g_mdd,
+            }
+        )
 
     mr = metrics.get("monthly_return")
     if stage_goals.get("monthly_return") == "positive" and mr is not None:
-        checks.append({"metric": "monthly_return", "actual": mr, "goal": "positive", "met": mr > 0})
+        checks.append(
+            {
+                "metric": "monthly_return",
+                "actual": mr,
+                "goal": "positive",
+                "met": mr > 0,
+            }
+        )
 
     all_met = all(c["met"] for c in checks) if checks else False
-    return {"stage": metrics.get("stage", "stage_1_sim"), "checks": checks, "all_goals_met": all_met}
+    return {
+        "stage": metrics.get("stage", "stage_1_sim"),
+        "checks": checks,
+        "all_goals_met": all_met,
+    }
 
 
 # ---- tradingagent data loaders --------------------------------------------------
+
 
 def _compact_date(value: Any) -> str:
     raw = str(value or "").strip()
@@ -362,26 +417,44 @@ def _created_at_matches(created_at: Any, trade_date: str) -> bool:
     return raw.startswith(compact) or _compact_date(raw) == compact
 
 
-def _normalize_trade(row: dict[str, Any], default_layer: str = "shadow") -> dict[str, Any]:
+def _normalize_trade(
+    row: dict[str, Any], default_layer: str = "shadow"
+) -> dict[str, Any]:
     return {
         "ts_code": _first_present(row, "ts_code", "code", "symbol"),
         "side": _first_present(row, "side", "action", "trade_side"),
-        "quantity": _float_value(_first_present(row, "quantity", "qty", "shares", default=0.0)),
-        "price": _float_value(_first_present(row, "price", "fill_price", "avg_price", default=0.0)),
+        "quantity": _float_value(
+            _first_present(row, "quantity", "qty", "shares", default=0.0)
+        ),
+        "price": _float_value(
+            _first_present(row, "price", "fill_price", "avg_price", default=0.0)
+        ),
         "pnl": _float_value(row.get("pnl"), 0.0),
         "strategy": _first_present(row, "strategy", "strategy_name"),
-        "signal_id": _first_present(row, "tradebook_id", "source_decision_id", "signal_id"),
+        "signal_id": _first_present(
+            row, "tradebook_id", "source_decision_id", "signal_id"
+        ),
         "created_at": _first_present(row, "created_at", "timestamp", "time"),
         "trade_date": _first_present(row, "trade_date", "date"),
-        "market": _normalize_market(_first_present(row, "market", "asset_class", default="unknown")),
+        "market": _normalize_market(
+            _first_present(row, "market", "asset_class", default="unknown")
+        ),
         "capital_layer": _normalize_capital_layer(
-            _first_present(row, "capital_layer", "capital_nature", "account_type", default=default_layer),
+            _first_present(
+                row,
+                "capital_layer",
+                "capital_nature",
+                "account_type",
+                default=default_layer,
+            ),
             default=default_layer,
         ),
     }
 
 
-def _normalize_position(row: dict[str, Any], default_layer: str = "shadow") -> dict[str, Any]:
+def _normalize_position(
+    row: dict[str, Any], default_layer: str = "shadow"
+) -> dict[str, Any]:
     weight_pct = _first_present(row, "weight_pct", default=None)
     if weight_pct is not None:
         weight = _float_value(weight_pct) / 100.0
@@ -390,13 +463,23 @@ def _normalize_position(row: dict[str, Any], default_layer: str = "shadow") -> d
     return {
         "ts_code": _first_present(row, "ts_code", "code", "symbol"),
         "weight": weight,
-        "pnl_pct": _float_value(_first_present(row, "pnl_pct", "unrealized_pnl_pct", default=0.0)),
+        "pnl_pct": _float_value(
+            _first_present(row, "pnl_pct", "unrealized_pnl_pct", default=0.0)
+        ),
         "stop_loss_pct": _float_value(row.get("stop_loss_pct"), -0.03),
         "take_profit_pct": _float_value(row.get("take_profit_pct"), 0.05),
         "momentum": _float_value(row.get("momentum"), 0.0),
-        "market": _normalize_market(_first_present(row, "market", "asset_class", default="unknown")),
+        "market": _normalize_market(
+            _first_present(row, "market", "asset_class", default="unknown")
+        ),
         "capital_layer": _normalize_capital_layer(
-            _first_present(row, "capital_layer", "capital_nature", "account_type", default=default_layer),
+            _first_present(
+                row,
+                "capital_layer",
+                "capital_nature",
+                "account_type",
+                default=default_layer,
+            ),
             default=default_layer,
         ),
     }
@@ -427,19 +510,32 @@ def _read_signal_fills(trade_date: str) -> list[dict[str, Any]]:
                 continue
             if not isinstance(row, dict):
                 continue
-            if not (_date_eq(row.get("trade_date"), trade_date) or _created_at_matches(row.get("filled_at"), trade_date)):
+            if not (
+                _date_eq(row.get("trade_date"), trade_date)
+                or _created_at_matches(row.get("filled_at"), trade_date)
+            ):
                 continue
             normalized = _normalize_trade(
                 {
                     "ts_code": _first_present(row, "ts_code", "symbol"),
                     "side": _first_present(row, "direction", "side", "action"),
-                    "quantity": _first_present(row, "filled_quantity", "filled_qty", "quantity", default=0),
+                    "quantity": _first_present(
+                        row, "filled_quantity", "filled_qty", "quantity", default=0
+                    ),
                     "price": _first_present(row, "filled_price", "price", default=0),
-                    "signal_id": _first_present(row, "order_id", "idempotency_key", "signal_id"),
-                    "created_at": _first_present(row, "filled_at", "fill_time", "timestamp"),
+                    "signal_id": _first_present(
+                        row, "order_id", "idempotency_key", "signal_id"
+                    ),
+                    "created_at": _first_present(
+                        row, "filled_at", "fill_time", "timestamp"
+                    ),
                     "trade_date": _first_present(row, "trade_date", "valid_until"),
-                    "market": _first_present(row, "market", "asset_class", default="unknown"),
-                    "capital_layer": _first_present(row, "capital_layer", "account_type", default="shadow"),
+                    "market": _first_present(
+                        row, "market", "asset_class", default="unknown"
+                    ),
+                    "capital_layer": _first_present(
+                        row, "capital_layer", "account_type", default="shadow"
+                    ),
                 },
                 default_layer="shadow",
             )
@@ -476,8 +572,12 @@ def _merge_market_review(
     entry["trades"] += trades
     entry["wins"] += wins
     entry["losses"] += losses
-    entry["pnl"] = round(_safe_float(entry.get("pnl")) + _safe_float(review.get("pnl")), 6)
-    entry["win_rate"] = round(entry["wins"] / entry["trades"], 4) if entry["trades"] else 0.0
+    entry["pnl"] = round(
+        _safe_float(entry.get("pnl")) + _safe_float(review.get("pnl")), 6
+    )
+    entry["win_rate"] = (
+        round(entry["wins"] / entry["trades"], 4) if entry["trades"] else 0.0
+    )
     entry["stale"] = entry["trades"] == 0
 
 
@@ -485,7 +585,8 @@ def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
     rows = [
         _normalize_trade(row, default_layer="shadow")
         for row in _read_jsonl_dicts(SHADOW_TRADES_LOG)
-        if _date_eq(row.get("trade_date"), trade_date) or _created_at_matches(row.get("created_at"), trade_date)
+        if _date_eq(row.get("trade_date"), trade_date)
+        or _created_at_matches(row.get("created_at"), trade_date)
     ]
     return rows or _read_signal_fills(trade_date)
 
@@ -505,7 +606,15 @@ def _dedupe_trade_key(row: dict[str, Any]) -> tuple[str, str]:
             return layer, key
     fallback = "|".join(
         str(row.get(key, "") or "")
-        for key in ("market", "ts_code", "side", "quantity", "price", "created_at", "trade_date")
+        for key in (
+            "market",
+            "ts_code",
+            "side",
+            "quantity",
+            "price",
+            "created_at",
+            "trade_date",
+        )
     )
     return layer, fallback
 
@@ -560,7 +669,8 @@ def load_positions(as_of_date: str) -> list[dict[str, Any]]:
         return [
             _normalize_position(row, default_layer="shadow")
             for row in position_ledger.get_positions(capital_layer="all")
-            if not row.get("entry_date") or _compact_date(row.get("entry_date")) <= _compact_date(as_of_date)
+            if not row.get("entry_date")
+            or _compact_date(row.get("entry_date")) <= _compact_date(as_of_date)
         ]
     except Exception:
         return []
@@ -572,17 +682,25 @@ def _reader_symbol(symbol: Any) -> str:
 
 
 def _close_from_rows(rows: list[dict[str, Any]], trade_date: str) -> float:
-    candidates = [row for row in rows if _date_eq(_first_present(row, "trade_date", "date", "bar_date"), trade_date)]
+    candidates = [
+        row
+        for row in rows
+        if _date_eq(_first_present(row, "trade_date", "date", "bar_date"), trade_date)
+    ]
     if not candidates:
         candidates = rows
     for row in reversed(candidates):
-        close = _float_value(_first_present(row, "close", "adj_close", "price", default=0.0), 0.0)
+        close = _float_value(
+            _first_present(row, "close", "adj_close", "price", default=0.0), 0.0
+        )
         if close > 0:
             return close
     return 0.0
 
 
-def _load_close_price(market: str, symbol: str, trade_date: str, reader: Any = None) -> float:
+def _load_close_price(
+    market: str, symbol: str, trade_date: str, reader: Any = None
+) -> float:
     if not symbol:
         return 0.0
     if reader is None:
@@ -601,7 +719,11 @@ def _load_close_price(market: str, symbol: str, trade_date: str, reader: Any = N
     stripped = _reader_symbol(symbol)
     if stripped and stripped not in symbols:
         symbols.append(stripped)
-    markets = [market, market.capitalize(), "Ashare"] if market and market != "unknown" else ["Ashare"]
+    markets = (
+        [market, market.capitalize(), "Ashare"]
+        if market and market != "unknown"
+        else ["Ashare"]
+    )
 
     for market_key in markets:
         for symbol_key in symbols:
@@ -609,13 +731,17 @@ def _load_close_price(market: str, symbol: str, trade_date: str, reader: Any = N
                 rows = get_bars(market_key, symbol_key, trade_date, trade_date)
             except Exception:
                 rows = []
-            close = _close_from_rows([row for row in rows if isinstance(row, dict)], trade_date)
+            close = _close_from_rows(
+                [row for row in rows if isinstance(row, dict)], trade_date
+            )
             if close > 0:
                 return close
     return 0.0
 
 
-def _direction_hit_review(trade: dict[str, Any], close_price: float, trade_date: str) -> dict[str, Any] | None:
+def _direction_hit_review(
+    trade: dict[str, Any], close_price: float, trade_date: str
+) -> dict[str, Any] | None:
     side = _normalize_side(trade.get("side"))
     if side not in {"buy", "sell"}:
         return None
@@ -690,7 +816,7 @@ def load_direction_hits(trade_date: str) -> list[dict[str, Any]]:
 
 def run_daily_review(
     trade_date: str,
-    benchmark_return: float = 0.0,
+    benchmark_return: float | None = None,
     stage: str = "stage_1_sim",
     session: str = "close",
 ) -> dict[str, Any]:
@@ -702,38 +828,55 @@ def run_daily_review(
 
         if session_key == "lunch":
             morning_trades = [trade for trade in trades if _is_morning_trade(trade)]
-            result = review_lunch(positions, morning_trades, benchmark_return=benchmark_return, stage=stage, trade_date=trade_date)
+            result = review_lunch(
+                positions,
+                morning_trades,
+                benchmark_return=benchmark_return,
+                stage=stage,
+                trade_date=trade_date,
+            )
             result["trade_date"] = trade_date
-            result["capital_layer"] = _preferred_capital_layer(list(result.get("capital_layer_reviews") or {}))
+            result["capital_layer"] = _preferred_capital_layer(
+                list(result.get("capital_layer_reviews") or {})
+            )
             result["stale"] = not morning_trades
             result["review_trade_count"] = len(morning_trades)
             result["source_trade_counts"] = review_trade_source_counts(morning_trades)
             return result
 
         if session_key == "close":
-            result = review_close(trades, positions, benchmark_return, stage=stage, trade_date=trade_date)
+            result = review_close(
+                trades, positions, benchmark_return, stage=stage, trade_date=trade_date
+            )
             direction_hit_reviews = load_direction_hits(trade_date)
             result["trade_date"] = trade_date
             result["direction_hit_reviews"] = direction_hit_reviews
             result["review_outcome_count"] = len(direction_hit_reviews)
-            result["capital_layer"] = _preferred_capital_layer(list(result.get("capital_layer_reviews") or {}))
+            result["capital_layer"] = _preferred_capital_layer(
+                list(result.get("capital_layer_reviews") or {})
+            )
             result["stale"] = not trades
             result["review_trade_count"] = len(trades)
             result["source_trade_counts"] = source_counts
             return result
 
-        return {"session": session, "error": f"unsupported session: {session}", "trade_date": trade_date}
+        return {
+            "session": session,
+            "error": f"unsupported session: {session}",
+            "trade_date": trade_date,
+        }
     except Exception as e:
         return {"session": session, "error": str(e), "trade_date": trade_date}
 
 
 # ---- lunch review -----------------------------------------------------------
 
+
 def review_lunch(
     positions: list[dict[str, Any]],
     morning_trades: list[dict[str, Any]],
     *,
-    benchmark_return: float = 0.0,
+    benchmark_return: float | None = None,
     stage: str = "stage_1_sim",
     trade_date: str | None = None,
 ) -> dict[str, Any]:
@@ -787,22 +930,32 @@ def review_lunch(
         signal_count = sum(1 for t in strategy_trade if t.get("signal_id"))
         hit = _hit_rate(strategy_trade)
         realized_pnl = _sum_pnl(strategy_trade)
-        floating_pnl = sum(_safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight")) for p in layer_pos)
+        floating_pnl = sum(
+            _safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight"))
+            for p in layer_pos
+        )
         pnl = realized_pnl + floating_pnl
         ledger = ledger_pnl or {}
 
         reduce_list = [
             p.get("ts_code", "?")
             for p in layer_pos
-            if _safe_float(p.get("pnl_pct")) <= _safe_float(p.get("stop_loss_pct"), -0.03)
+            if _safe_float(p.get("pnl_pct"))
+            <= _safe_float(p.get("stop_loss_pct"), -0.03)
         ]
         add_list = [
             p.get("ts_code", "?")
             for p in layer_pos
-            if 0 < _safe_float(p.get("pnl_pct")) < _safe_float(p.get("take_profit_pct"), 0.05)
+            if 0
+            < _safe_float(p.get("pnl_pct"))
+            < _safe_float(p.get("take_profit_pct"), 0.05)
             and _safe_float(p.get("momentum", 0)) > 0
         ]
-        watch_list = [p.get("ts_code", "?") for p in layer_pos if p.get("ts_code") not in reduce_list + add_list]
+        watch_list = [
+            p.get("ts_code", "?")
+            for p in layer_pos
+            if p.get("ts_code") not in reduce_list + add_list
+        ]
         attr = attribute_pct(strategy_trade)
         bench_cmp = compare_to_benchmark(pnl, benchmark_return)
         bench_info = get_benchmark(benchmark_date)
@@ -829,7 +982,9 @@ def review_lunch(
             "market": market,
             "trades": len(layer_trade),
             "strategy_trades": len(strategy_trade),
-            "validation_sample_count": int(sample_quality.get("validation_sample_count", 0)),
+            "validation_sample_count": int(
+                sample_quality.get("validation_sample_count", 0)
+            ),
             "sample_quality": sample_quality,
             "wins": wins,
             "losses": losses,
@@ -841,13 +996,23 @@ def review_lunch(
             "ledger_realized_pnl": round(ledger.get("realized_pnl", 0.0), 6),
             "ledger_unrealized_pnl": round(ledger.get("unrealized_pnl", 0.0), 6),
             "ledger_total_pnl": round(ledger.get("total_pnl", 0.0), 6),
-            "ledger_strategy_realized_pnl": round(ledger.get("strategy_realized_pnl", 0.0), 6),
-            "ledger_strategy_unrealized_pnl": round(ledger.get("strategy_unrealized_pnl", 0.0), 6),
-            "ledger_strategy_total_pnl": round(ledger.get("strategy_total_pnl", 0.0), 6),
+            "ledger_strategy_realized_pnl": round(
+                ledger.get("strategy_realized_pnl", 0.0), 6
+            ),
+            "ledger_strategy_unrealized_pnl": round(
+                ledger.get("strategy_unrealized_pnl", 0.0), 6
+            ),
+            "ledger_strategy_total_pnl": round(
+                ledger.get("strategy_total_pnl", 0.0), 6
+            ),
             "ledger_market_value": round(ledger.get("market_value", 0.0), 6),
-            "ledger_strategy_market_value": round(ledger.get("strategy_market_value", 0.0), 6),
+            "ledger_strategy_market_value": round(
+                ledger.get("strategy_market_value", 0.0), 6
+            ),
             "ledger_open_position_count": int(ledger.get("open_position_count", 0)),
-            "ledger_strategy_open_position_count": int(ledger.get("strategy_open_position_count", 0)),
+            "ledger_strategy_open_position_count": int(
+                ledger.get("strategy_open_position_count", 0)
+            ),
             "ledger_missing_mark_count": int(ledger.get("missing_mark_count", 0)),
             "ledger_pnl_source": ledger.get("pnl_source", ""),
             "position_count": len(layer_pos),
@@ -866,7 +1031,9 @@ def review_lunch(
             },
             "afternoon_plan": next_plan,
             "next_plan": next_plan,
-            "execution_quality": _execution_quality(execution_exclusions, layer, market),
+            "execution_quality": _execution_quality(
+                execution_exclusions, layer, market
+            ),
         }
 
     capital_layer_reviews: dict[str, Any] = {}
@@ -883,7 +1050,11 @@ def review_lunch(
         )
         layer_review["market_reviews"] = {}
         for market in layer_markets:
-            market_ledger_pnl = ledger_pnl_summary.get(market) if layer == "simulated" and market != "all" else None
+            market_ledger_pnl = (
+                ledger_pnl_summary.get(market)
+                if layer == "simulated" and market != "all"
+                else None
+            )
             market_review = build_review(
                 layer,
                 market,
@@ -903,16 +1074,19 @@ def review_lunch(
         "capital_layer_reviews": capital_layer_reviews,
         "market_reviews": market_reviews,
     }
-    _append_market_layer_logs({"session": "lunch", "as_of": result["as_of"]}, capital_layer_reviews)
+    _append_market_layer_logs(
+        {"session": "lunch", "as_of": result["as_of"]}, capital_layer_reviews
+    )
     return result
 
 
 # ---- close review -----------------------------------------------------------
 
+
 def review_close(
     all_trades: list[dict[str, Any]],
     positions: list[dict[str, Any]],
-    benchmark_return: float,
+    benchmark_return: float | None,
     *,
     portfolio_returns_series: list[float] | None = None,
     benchmark_returns_series: list[float] | None = None,
@@ -972,29 +1146,45 @@ def review_close(
         wins = [t for t in strategy_trd if _safe_float(t.get("pnl")) > 0]
         losses = [t for t in strategy_trd if _safe_float(t.get("pnl")) < 0]
         pnl = _sum_pnl(strategy_trd)
-        floating = sum(_safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight")) for p in layer_pos)
+        floating = sum(
+            _safe_float(p.get("pnl_pct")) * _safe_float(p.get("weight"))
+            for p in layer_pos
+        )
         total_pnl = pnl + floating
         ledger = ledger_pnl or {}
         win_rate = len(wins) / len(strategy_trd) if strategy_trd else 0.0
         avg_win = (_sum_pnl(wins) / len(wins)) if wins else 0.0
         avg_loss = (_sum_pnl(losses) / len(losses)) if losses else 0.0
-        profit_factor = (abs(_sum_pnl(wins)) / abs(_sum_pnl(losses))) if losses and _sum_pnl(losses) != 0 else float("inf") if wins else 0.0
+        profit_factor = (
+            (abs(_sum_pnl(wins)) / abs(_sum_pnl(losses)))
+            if losses and _sum_pnl(losses) != 0
+            else float("inf")
+            if wins
+            else 0.0
+        )
         trades_summary = {
             "count": len(layer_trd),
             "strategy_count": len(strategy_trd),
-            "validation_sample_count": int(sample_quality.get("validation_sample_count", 0)),
+            "validation_sample_count": int(
+                sample_quality.get("validation_sample_count", 0)
+            ),
             "wins": len(wins),
             "losses": len(losses),
             "win_rate": round(win_rate, 4),
             "avg_win": round(avg_win, 6),
             "avg_loss": round(avg_loss, 6),
-            "profit_factor": round(profit_factor, 6) if profit_factor != float("inf") else None,
+            "profit_factor": round(profit_factor, 6)
+            if profit_factor != float("inf")
+            else None,
             "realized_pnl": round(pnl, 6),
             "floating_pnl": round(floating, 6),
         }
         attr = attribute_pct(strategy_trd)
         bench_cmp = compare_to_benchmark(
-            total_pnl, benchmark_return, portfolio_returns_series, benchmark_returns_series
+            total_pnl,
+            benchmark_return,
+            portfolio_returns_series,
+            benchmark_returns_series,
         )
         bench_info = get_benchmark(datetime.now(timezone.utc).strftime("%Y%m%d"))
         last_period_return = _safe_float(bench_info.get("last_period_return"))
@@ -1012,11 +1202,13 @@ def review_close(
         }
         vs_goals = _compare_to_goals(metrics_for_goals, stage_goals)
         bleeding_dims = [
-            d for d, pct in attr.get("by_dimension", {}).items()
+            d
+            for d, pct in attr.get("by_dimension", {}).items()
             if pct < -0.1 and d != "unattributed"
         ]
         bleeding_strats = [
-            s for s, pct in attr.get("by_strategy", {}).items()
+            s
+            for s, pct in attr.get("by_strategy", {}).items()
             if pct < -0.1 and s != "unattributed"
         ]
         return {
@@ -1024,7 +1216,9 @@ def review_close(
             "market": market,
             "trades": len(layer_trd),
             "strategy_trades": len(strategy_trd),
-            "validation_sample_count": int(sample_quality.get("validation_sample_count", 0)),
+            "validation_sample_count": int(
+                sample_quality.get("validation_sample_count", 0)
+            ),
             "sample_quality": sample_quality,
             "wins": len(wins),
             "losses": len(losses),
@@ -1034,13 +1228,23 @@ def review_close(
             "ledger_realized_pnl": round(ledger.get("realized_pnl", 0.0), 6),
             "ledger_unrealized_pnl": round(ledger.get("unrealized_pnl", 0.0), 6),
             "ledger_total_pnl": round(ledger.get("total_pnl", 0.0), 6),
-            "ledger_strategy_realized_pnl": round(ledger.get("strategy_realized_pnl", 0.0), 6),
-            "ledger_strategy_unrealized_pnl": round(ledger.get("strategy_unrealized_pnl", 0.0), 6),
-            "ledger_strategy_total_pnl": round(ledger.get("strategy_total_pnl", 0.0), 6),
+            "ledger_strategy_realized_pnl": round(
+                ledger.get("strategy_realized_pnl", 0.0), 6
+            ),
+            "ledger_strategy_unrealized_pnl": round(
+                ledger.get("strategy_unrealized_pnl", 0.0), 6
+            ),
+            "ledger_strategy_total_pnl": round(
+                ledger.get("strategy_total_pnl", 0.0), 6
+            ),
             "ledger_market_value": round(ledger.get("market_value", 0.0), 6),
-            "ledger_strategy_market_value": round(ledger.get("strategy_market_value", 0.0), 6),
+            "ledger_strategy_market_value": round(
+                ledger.get("strategy_market_value", 0.0), 6
+            ),
             "ledger_open_position_count": int(ledger.get("open_position_count", 0)),
-            "ledger_strategy_open_position_count": int(ledger.get("strategy_open_position_count", 0)),
+            "ledger_strategy_open_position_count": int(
+                ledger.get("strategy_open_position_count", 0)
+            ),
             "ledger_missing_mark_count": int(ledger.get("missing_mark_count", 0)),
             "ledger_pnl_source": ledger.get("pnl_source", ""),
             "stale": not layer_trd,
@@ -1062,7 +1266,9 @@ def review_close(
                     f"下日重点: {'维持信号' if vs_goals.get('all_goals_met') else '收紧止损+降权出血维度'}."
                 ),
             },
-            "execution_quality": _execution_quality(execution_exclusions, layer, market),
+            "execution_quality": _execution_quality(
+                execution_exclusions, layer, market
+            ),
         }
 
     capital_layer_reviews: dict[str, Any] = {}
@@ -1079,7 +1285,11 @@ def review_close(
         )
         layer_review["market_reviews"] = {}
         for market in layer_markets:
-            market_ledger_pnl = ledger_pnl_summary.get(market) if layer == "simulated" and market != "all" else None
+            market_ledger_pnl = (
+                ledger_pnl_summary.get(market)
+                if layer == "simulated" and market != "all"
+                else None
+            )
             market_review = build_review(
                 layer,
                 market,
@@ -1101,7 +1311,9 @@ def review_close(
     }
     baseline_layer = _preferred_capital_layer(list(capital_layer_reviews))
     record_last_period(capital_layer_reviews[baseline_layer]["pnl"], "daily")
-    _append_market_layer_logs({"session": "close", "as_of": result["as_of"]}, capital_layer_reviews)
+    _append_market_layer_logs(
+        {"session": "close", "as_of": result["as_of"]}, capital_layer_reviews
+    )
     return result
 
 
@@ -1109,15 +1321,57 @@ def review_close(
 
 if __name__ == "__main__":
     pos = [
-        {"ts_code": "000001.SZ", "weight": 0.3, "pnl_pct": 0.02, "stop_loss_pct": -0.03, "take_profit_pct": 0.05, "momentum": 0.5},
-        {"ts_code": "600519.SH", "weight": 0.4, "pnl_pct": -0.04, "stop_loss_pct": -0.03, "take_profit_pct": 0.08, "momentum": -0.2},
+        {
+            "ts_code": "000001.SZ",
+            "weight": 0.3,
+            "pnl_pct": 0.02,
+            "stop_loss_pct": -0.03,
+            "take_profit_pct": 0.05,
+            "momentum": 0.5,
+        },
+        {
+            "ts_code": "600519.SH",
+            "weight": 0.4,
+            "pnl_pct": -0.04,
+            "stop_loss_pct": -0.03,
+            "take_profit_pct": 0.08,
+            "momentum": -0.2,
+        },
     ]
     morning = [
-        {"ts_code": "000001.SZ", "pnl": 0.02, "signal_id": "s1", "dimensions": {"macro": 0.6, "technical": 0.4}, "strategy": "pullback", "condition": "low_vol"},
-        {"ts_code": "600519.SH", "pnl": -0.01, "signal_id": "s2", "dimension": "event", "strategy": "event_driven", "condition": "high_vol"},
+        {
+            "ts_code": "000001.SZ",
+            "pnl": 0.02,
+            "signal_id": "s1",
+            "dimensions": {"macro": 0.6, "technical": 0.4},
+            "strategy": "pullback",
+            "condition": "low_vol",
+        },
+        {
+            "ts_code": "600519.SH",
+            "pnl": -0.01,
+            "signal_id": "s2",
+            "dimension": "event",
+            "strategy": "event_driven",
+            "condition": "high_vol",
+        },
     ]
     print("=== LUNCH ===")
     print(json.dumps(review_lunch(pos, morning), ensure_ascii=False, indent=2))
     print("\n=== CLOSE ===")
-    all_t = morning + [{"ts_code": "300750.SZ", "pnl": 0.03, "dimensions": {"technical": 1.0}, "strategy": "trend", "condition": "mid_vol"}]
-    print(json.dumps(review_close(all_t, pos, benchmark_return=0.005, stage="stage_1_sim"), ensure_ascii=False, indent=2))
+    all_t = morning + [
+        {
+            "ts_code": "300750.SZ",
+            "pnl": 0.03,
+            "dimensions": {"technical": 1.0},
+            "strategy": "trend",
+            "condition": "mid_vol",
+        }
+    ]
+    print(
+        json.dumps(
+            review_close(all_t, pos, benchmark_return=0.005, stage="stage_1_sim"),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )

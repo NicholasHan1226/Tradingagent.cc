@@ -1,76 +1,38 @@
-# execution/
+# TradingAgent / shared/execution
 
-> **阅读顺序：** [../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件
+> 阅读顺序：[../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件。
 
-## 目标
-订单执行层: 服务器本地模拟盘 + 影子盘(多策略并行) + 模拟盘(滑点建模) + Hermes(A股同花顺备用模拟对照路径) + 国内期货模拟/CTP 预留。
+## 职责
 
-## 自动化级别
-5-10分钟级自动化: 信号触发→路由→模拟/影子记录→(实盘待人工确认)。
+执行层负责 server-local 模拟撮合、不可变成交事实、回执重验证、durable outbox、capital commit、shadow 记录和可选 Hermes 模拟对照。当前没有真实下单入口。
 
-## 文件
-- hermes_bridge.py — A股信号卡桥, 只写入/读取 signals JSON 文件, 不 SSH 到 Mac Mini, 不直接执行
-- shadow_broker.py — 影子盘, 仅记录不执行, 多策略并行
-- sim_broker.py — 模拟执行, 含滑点建模
-- execution_router.py — 按策略阶段路由 (sim→shadow→real)
-- slippage_model.py — 滑点模型 (市价/限价)
-- CTP 实盘网关如未来新增, 默认必须关闭, 且必须先通过授权、穿透式监管确认、风控和人工确认门禁。
-- CNFutures 当前只允许 `capital_layer=simulated`; 多风格并行用模拟账户隔离, 不走 `shadow_broker.py`。
+## A股闭环
 
-## 边界
-- 真实资金只给Nicholas手工确认, 不自动下单/撤单/点击
-- 影子盘和模拟盘可全自动记录
-- Hermes/Mac Mini 是 A 股同花顺 GUI 执行桥的预留第二路径：只负责 GUI 执行、截图/视觉定位、有限重试、回执和账户同步；不做买卖判断，不拒绝服务器已生成的 simulated 信号。
-- A 股模拟盘权威闭环默认在服务器本地完成：TradingAgent 生成 simulated order → `Ashare/sim_executor.py` paper fill → `shared/execution/sim_broker.py`/统一模拟账本记录 → 复盘与训练消费。`signals/pending` → mini → `signals/filled|failed|positions` 只在 `ASHARE_SIM_HERMES_ENABLED=1` 时作为同花顺 GUI 对照路径启用。
-- 成功点击后即使本地回执保存或远端同步异常，也必须进入待同步/人工排查，不能把同一信号重新放回待执行造成重复点击。
+- `Ashare/sim_executor.py → sim_broker.py → local_sim_ledger.py` 是唯一 A股模拟执行链；当前 fresh lineage root `shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/` 保存现金、持仓、T+1 和 actual fills，旧 `shared/logs/local_sim/` 只读冻结。
+- 完整 append-only 账户事实校验现金和可卖持仓；过滤后的策略视图不能放行透支或超卖。
+- `filled/partial` 只使用 actual quantity/price/time/fee/slippage 与 verified 5-minute evidence；请求价格、请求数量、pending/unknown 不可伪造成交。
+- immutable local fill 与 capital `fill_commit`/`ashare_sell_commit` 通过 durable outbox 关联。capital commit 成功或幂等重放成功前，策略样本不能标记 execution-eligible。
+- partial 只消费实际预约；终态原子释放剩余。outbox pending 保守占用风险并在重启后重放。
+- 每个成交保存 authority/generation、execution lineage、PIT timestamp、candidate/prediction snapshot、receipt/local-trade fingerprints、style attribution、sample intent 和 actual costs。
 
+## CNFutures 闭环
 
-## Mac Mini Hermes 运行前提
+- 方向判断不等于成交；一手 affordability、止损损失预算、保证金/费用/滑点、会话/夜盘/换月和独立 capital reservation 全部通过后才可模拟执行。
+- 开仓提交 `fill_commit`，平/减仓提交 `position_close_commit`；actual margin、fee、gross realized PnL、position fingerprint 和 ledger-head CAS 缺一不可。
+- pending commit 阻断新增风险但不得阻断有证据的风险降低型退出；错误必须可见、可重放且不重复记账。
 
-- 本节仅适用于 `ASHARE_SIM_HERMES_ENABLED=1` 的备用 GUI 执行路径；服务器本地模拟盘默认不依赖 mini。
-- mini 侧必须同时运行 `com.nicholashan.sim-signal-receiver` 和 `com.nicholashan.sim-signal-executor`；服务器通过反向 SSH 隧道 `127.0.0.1:9865` 投递信号，receiver 落地到本地 `Ashare/signals/pending`，executor 再执行 GUI。
-- A 股模拟盘当前按 Nicholas 的业务定义视作模拟盘；LaunchAgent 必须保留 `SIM_ACCEPT_ASHARE_PANEL_AS_SIM=1`，同时保留 DashScope/视觉定位环境，因为按钮定位仍依赖截图和视觉判断。
-- 接收器/隧道健康检查优先看服务器 `curl http://127.0.0.1:9865/health` 和 mini 本地 `curl http://127.0.0.1:8654/health`；只看到 ssh 隧道不代表 receiver 正常。
+## 幂等与故障
 
-## 2026-07-01 Mini Queue Contract
+- 同一 execution fill identity + 相同 payload 幂等；identity 相同但 payload 冲突 fail closed。
+- 资本 ledger、local ledger、receipt、position 或 outbox 任一 checksum/lineage 不一致时，保留证据并停止新增风险；不伪造释放或可用资金。
+- chain-validation 样本可保存链路故障，但不得进入胜率、expectancy、费用后 PnL 或成熟度。
 
-- The Mac mini receiver `/health` response must include both `pending` and `in_progress`. Server-side A-share simulated scheduling treats `pending + in_progress` as active Hermes workload and must not enqueue another batch while that value is above the configured limit.
-- This guard is backpressure only. It must not cancel or rewrite orders already accepted by Hermes; the executor remains responsible for finite retry, GUI execution, receipts, and account/position writeback.
-- A-share simulated execution cards must carry a stable idempotency key. Mini receipts should preserve `idempotency_key` when present, but server de-duplication must also handle older filled/failed cards that only have `market + ts_code + date + side`.
-- The mini executor must recover stale local `signals/in_progress/*.json` that were claimed but not executed, returning them to `pending` after `SIM_STALE_IN_PROGRESS_SECONDS` (default 600s) unless max attempts are exhausted. This prevents a restart-time orphan from permanently blocking server-side busy checks.
+## Hermes/Mini
 
-## 2026-07-01 Mini Mode And Confirmation Update
+- 默认 server-local 模拟闭环不依赖 Mini；只有 `ASHARE_SIM_HERMES_ENABLED=1` 才启用 GUI 模拟对照。
+- Mini 不判断买卖、不分配资本、不修改 capital authority。点击不是成交；无法用委托/成交/持仓证据严格确认时必须 failed + halt，禁止自动重试下单。
+- 拟议邮件 → Nicholas → 同花顺人工复核实盘仍是设计，未实现、未授权；Mini 不发送邮件、不读取真实账户、不点击真实交易。
 
-- The mini executor must prefer Tonghuashun accessibility labels over Vision for account-mode detection. The live Tonghuashun window exposes an AX label `模拟`; Vision may still misclassify the same screen as `实盘=是` because it sees account/funds panels.
-- `A股` is not a real-money marker. Explicit real-risk markers are `实盘`, `资金账号`, `普通交易`, and `融资融券`.
-- A clicked UI order is not a fill. Mini may write `filled` only when the receipt has `confirmation_status=confirmed`, `filled_qty>0`, and `execution_confirmed_by` in `tonghuashun_deal_query|tonghuashun_order_query|tonghuashun_position_delta|tonghuashun_position_table_crop`.
-- If the executor clicks submit but cannot confirm the new position/order/deal, it must write an unconfirmed failed receipt, create `signals/executor_halt.json`, and stop consuming the queue until account/position reconciliation clears the halt file. Do not auto-retry that signal, because the click may have reached Tonghuashun.
-- Posthoc correction on 2026-07-01 15:29 CST: earlier `000002.SZ` and `000006.SZ` confirmations were false positives caused by full-window Vision verification. Cropped holdings-table screenshots showed only old holding `600029`, not `000002`/`000006`/`000007`. Server records were corrected to posthoc unconfirmed failed and positions were cleared; backup directory `/opt/investment/agent_backups/ashare_sim_false_confirm_reconcile_20260701T152920`.
-- Future screenshot confirmation must use only the cropped holdings table and must parse explicit six-digit codes from that table. Do not accept generic Vision answers such as `有`, and do not inspect the full window because the order form and right watchlist can contain unrelated codes.
-- When Nicholas is away from the local LAN, operate the Mac mini over Tailscale (`macmini-tailscale`, `100.125.4.113`). Do not use `192.168.5.2` for Hermes; that address is unrelated to the MarketGraph/Hermes execution bridge.
-- Receiver `/health` must expose `halted`, `execution_status`, `halt_signal_id`, `halt_reason`, and `expired_pending`. Server scheduling must treat `halted=true` as `mini_halted`, even when `pending + in_progress == 0`, because clearing queue pressure is not the same as clearing an unresolved clicked order.
-- 2026-07-01 15:43 CST: after `000007.SZ` triggered `executor_halt.json`, the remaining 16 pending cards were already expired. They were archived as `failed_final` with `cleanup_reason=expired_pending_while_executor_halted`; the halt file remains in place until account/order reconciliation verifies the clicked order state.
-- `real-account-sync.sh` now defaults to `~/.hermes/ashare-runtime` and calls `tools/a_share_tonghuashun_readonly_sync.py`. The sync is read-only: screenshots/accessibility only, no credential read, no buy/sell/cancel/confirm click. If the visible Tonghuashun account box shows `模拟`/`模拟练习`, real-account sync must write `not_real_account_visible` and must not write a real snapshot.
-- Mac mini LaunchAgent `com.nicholashan.real-account-sync` is loaded for weekday 09:20 and 15:20 read-only real-account status sync. A successful status write returns exit 0 even when `snapshot_usable=false`; consumers must read the JSON status instead of inferring from process exit alone.
-- Simulated account read-only reconciliation on 2026-07-01 16:03 CST found only `600029.SH 南方航空` in the cropped holdings table. This evidence cleared the `000007.SZ` executor halt after market close, with pending/in_progress both zero and server market-hours guard active.
+## 实盘红线
 
-## 2026-07-01 执行/影子边界补充
-- `signals/pending` 是执行队列，不应放影子盘研究信号；影子盘信号放在 `signals/shadow/pending`，避免被 Hermes 或模拟执行巡检误判为堵塞。
-- A股服务器本地模拟执行不依赖 mini/Hermes 健康状态；mini 反向隧道 `127.0.0.1:9865 -> mini:8654` 只用于显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 的同花顺 GUI 第二路径。
-- A股影子/模拟链路禁止 `200xxx.SZ` 等非普通 A股代码进入 shadow broker；被拒绝记录应保留在维护 manifest 或 failed/backup 中，不能污染当前 PnL。
-
-## 2026-07-01 A股健康检查入口
-- A股市场健康检查入口：`PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/market_health.py --market ashare --pretty`。
-- 输出文件可保存到 `shared/runtime_test/ashare_health_latest.json`；默认只读，不发邮件、不点击同花顺、不改变交易状态。
-- 当前检查覆盖：A股 universe 合规性、影子账本污染和收益口径、执行/影子队列隔离、服务器本地模拟账本、可选 Hermes 第二路径状态、模拟持仓快照、邮件模板/发送记录、失败回执可复盘性。
-- 通过标准：`overall_status=pass` 且 `signals/pending|claimed|running` 为 0、`signals/shadow/*` 可有影子研究记录、`200xxx.SZ/900xxx.SH` 不出现在 A股影子账本。
-
-## 2026-07-04 A股服务器本地模拟盘边界
-- `Ashare/sim_executor.py` 默认返回服务器本地 `server_local_sim_only` paper fill，不写 Hermes pending。
-- `shared/execution/local_sim_ledger.py` 与 `shared/logs/local_sim/` 是 A 股服务器本地模拟盘的训练/复盘事实源；只记录 server paper fill，不等同于同花顺 GUI 成交；当前默认资金口径为 50,000 元，并从成交回放写出 `cash_available`。旧 200,000 元账本只允许归档为只读 epoch 1。
-- A股本地模拟账本默认输出 `strategy_samples_only` 活跃账户视图：只有候选来源、交易时段和成交价来源合格的策略样本进入策略现金、策略持仓、收益率/胜率/自我演化；链路验证、盘外、缺来源或缺价格证据样本只保留在 audit 视图和样本质量统计中，便于追溯但不污染策略账户。写账前的现金/可卖持仓硬门禁必须按完整 append-only 账本回放同账户全部已记录成交事实，不能用 `strategy_samples_only` 过滤后放行透支或超卖。
-- A股 server-local 成交事实源固定为 `shared/logs/local_sim/local_sim_trades.jsonl`，签名回执固定为 `signals/sim_execution_receipts.jsonl`；不存在 `signals/local_sim_trades.jsonl` 这个活跃事实源。开盘/首样本验收必须按 `trade_id`、`order_id` 或 `idempotency_key` 做成交与回执的一对一核对。
-- A股 server-local 模拟账本必须在写入成交前按 append-only 本地账本实时回放现金；现金不足时返回 `insufficient_cash` 并阻断上游 filled 状态，防止过期账户快照或并发订单把模拟账户打成负现金。
-- 通用模拟 pipeline、风格模拟器和 fallback 适配器在 `market=ashare` 或 `market=cn_futures` 时必须使用 50,000 元当前默认资金；其它市场继续使用各自规范本金，不得把旧 100,000/200,000 fallback 误认为当前 A股或期货资金口径。
-- `shared/execution/sim_broker.py` 对 A 股 simulated 订单默认同步写本地模拟账本；只允许 `filled` / `partial` 回执入账，`pending` 或未成交回执不得写入本地 filled 账本；可用 `TRADINGS_LOCAL_SIM_BACKUP_ENABLED=0` 临时关闭本地备份记录。
-- Hermes/同花顺 GUI 模拟路径仍保留，但必须显式打开 `ASHARE_SIM_HERMES_ENABLED=1`，并以 mini 回执和截图作为 GUI 对照证据。
+任何 real/live/direct-execution 标记必须安全失败，不能改写为 simulated/shadow。未来 broker gateway 需独立架构、权限、风控、人工确认和发布验收。

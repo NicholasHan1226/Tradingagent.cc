@@ -1,4 +1,6 @@
-# TradingAgent production cron snapshot - verified 2026-07-09
+# GENERATED COMPATIBILITY MIRROR — DO NOT EDIT OR INSTALL
+# Canonical template: shared/crontab.txt
+# Runtime truth must still be verified from the installed composed crontab.
 #
 # Source of truth: on 8.138.181.177, inspect with:
 #   sudo -u marketgraph crontab -l
@@ -17,6 +19,9 @@
 # decision.
 
 SHELL=/bin/bash
+CRON_TZ=Asia/Shanghai
+TZ=Asia/Shanghai
+REAL_TRADING_ENABLED=false
 BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
 # A-share observation/real-review signal digest belongs to MarketGraph-owned
@@ -25,23 +30,25 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 # A-share server-local simulated execution. Hermes/Mini is reserved as second
 # path only when explicitly enabled by environment.
 1,6,11,16,21,26,31,36,41,46,51,56 9-15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sim_exec.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sim_exec.log 2>&1
+# Fresh per-market MTM authority. These writers refresh SharedSignals marks,
+# prove execution/capital conservation, and remain sim-only.
+32 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh ashare opening >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_ashare.log 2>&1
+2 13 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh ashare ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_ashare.log 2>&1
+58 14 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh ashare ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_ashare.log 2>&1
+32 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh ashare ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_ashare.log 2>&1
 35 8 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_preopen_dry_run.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_preopen_dry_run.log 2>&1
 55 8 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_pre_open_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_pre_open_validation.log 2>&1
 35 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_opening_validation.log 2>&1
 5 13 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_opening_validation.log 2>&1
 45 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_first_sample_alert.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_first_sample_alert.log 2>&1
 10 13 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_first_sample_alert.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_first_sample_alert.log 2>&1
-45 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1
-45 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1
-30 14 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1
-30 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_target_monitor.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_target_monitor.log 2>&1
 26 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_research_evidence.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_research_evidence.log 2>&1
 56 14 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_research_evidence.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_research_evidence.log 2>&1
 10 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_research_evidence.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_research_evidence.log 2>&1
-20 13,15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_forward_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_forward_validation.log 2>&1
-40 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_learning.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_learning.log 2>&1
-# Exact-date formal close refresh after SharedSignals P1 EOD collection.
-40 17,22 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_formal_close_refresh.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_formal_close_refresh.log 2>&1
+# Unified sim-only labels, SampleJournal KPI, manual evolution assessment, and
+# A-share maturity projection.  It never sends email or enables live trading.
+20 10,11,13,14,15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_ops.log 2>&1
+40 17,22 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_ops.log 2>&1
 
 # Multi-market simulated trading loops. US/Crypto/PM are half-hour cadence and
 # intentionally staggered after SharedSignals ingestion; A-share/CNFutures keep
@@ -72,12 +79,20 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 # Self-heal and domestic futures simulation. CNFutures runs one minute after
 # SharedSignals futures 5-minute collection so it reads the latest closed bar.
 */15 * * * * /opt/investment/tradingagent/shared/wrappers/job_self_heal.sh >> /opt/investment/tradingagent/shared/logs/cron/job_self_heal.log 2>&1
+58 8,20 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures preopen >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1
+2 9,13,21 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures opening >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1
+32 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1
+2 15,23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1
+32 2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1
 1-59/5 9-15,21-23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_sim.log 2>&1
 1-59/5 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_sim.log 2>&1
 2-59/5 9-15,21-23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_observation_report.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_observation_report.log 2>&1
 2-59/5 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_observation_report.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_observation_report.log 2>&1
-16,46 9-15,21-23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_evolution.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_evolution.log 2>&1
-16,46 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_evolution.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_evolution.log 2>&1
+# Append-only forward labels plus the single rebuildable CNFutures maturity
+# projection. Run after each effective day/night session; sim-only, no promotion.
+40 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_sample_ops.log 2>&1
+10 15,23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_sample_ops.log 2>&1
+40 2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_sample_ops.log 2>&1
 45 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_calibration_report.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_calibration_report.log 2>&1
 45 2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_calibration_report.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_calibration_report.log 2>&1
 35 11,15,23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_replay.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_replay.log 2>&1

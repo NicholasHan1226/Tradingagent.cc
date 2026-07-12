@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from shared.data.reader import TradingagentDataReader
+from shared.execution.execution_reality import ashare_execution_reality
 from shared.markets.base import MarketAdapter
 from shared.markets.sim_capital import default_sim_capital
 from Ashare import sim_executor as _sim_executor  # noqa: F401
@@ -19,6 +20,17 @@ from Ashare import sim_executor as _sim_executor  # noqa: F401
 MARKET = "ashare"
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
 logger = logging.getLogger(__name__)
+MAX_PORTFOLIO_POSITIONS = 8
+EXECUTION_CANDIDATE_SCAN_LIMIT = MAX_PORTFOLIO_POSITIONS * 3
+SAMPLE_DEBT_POLICY_VERSION = "ashare-sample-debt-v1"
+MIN_STRATEGY_EXECUTION_SAMPLES = 5
+DEFAULT_SAMPLE_JOURNAL_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "shared"
+    / "review"
+    / "ashare"
+    / "sample_journal.jsonl"
+)
 
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "exclude_st": True,
@@ -72,7 +84,12 @@ def _lookback_start(date: str, calendar_days: int = 14) -> str:
 def _is_st(asset: dict[str, Any]) -> bool:
     name = str(asset.get("name") or "").upper()
     status = str(asset.get("status") or "").upper()
-    return "ST" in name or "*ST" in name or "退" in str(asset.get("name") or "") or "ST" in status
+    return (
+        "ST" in name
+        or "*ST" in name
+        or "退" in str(asset.get("name") or "")
+        or "ST" in status
+    )
 
 
 def _is_delisted(asset: dict[str, Any]) -> bool:
@@ -108,7 +125,22 @@ def _is_regular_a_share_symbol(symbol: Any) -> bool:
         return digits.startswith(("000", "001", "002", "003", "300", "301"))
     if exchange == "SH":
         return digits.startswith(("600", "601", "603", "605", "688", "689"))
-    return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
+    return digits.startswith(
+        (
+            "000",
+            "001",
+            "002",
+            "003",
+            "300",
+            "301",
+            "600",
+            "601",
+            "603",
+            "605",
+            "688",
+            "689",
+        )
+    )
 
 
 def _read_jsonl_dicts(path: Path) -> list[dict[str, Any]]:
@@ -150,17 +182,24 @@ def _positions_from_pnl(account: str, positions: Any) -> list[dict[str, Any]]:
     return rows
 
 
-def _strategy_view_from_local_sim_trades(account: str, default_capital: float) -> dict[str, Any]:
+def _strategy_view_from_local_sim_trades(
+    account: str, default_capital: float
+) -> dict[str, Any]:
     try:
         from shared.execution import local_sim_ledger
-        from shared.review.sample_quality import classify_trade_sample, summarize_sample_quality
+        from shared.review.sample_quality import (
+            classify_trade_sample,
+            summarize_sample_quality,
+        )
     except Exception:
         return {}
 
     rows = _read_jsonl_dicts(local_sim_ledger.LOCAL_SIM_TRADES)
     if not rows:
         return {}
-    account_rows = [row for row in rows if str(row.get("account") or account) == account]
+    account_rows = [
+        row for row in rows if str(row.get("account") or account) == account
+    ]
     if not account_rows:
         return {}
 
@@ -179,7 +218,9 @@ def _strategy_view_from_local_sim_trades(account: str, default_capital: float) -
 
     sample_quality = summarize_sample_quality(account_rows)
     strategy_positions = _positions_from_pnl(account, strategy_pnl.get("positions"))
-    strategy_cash_available = _safe_float(strategy_pnl.get("cash_available"), default_capital)
+    strategy_cash_available = _safe_float(
+        strategy_pnl.get("cash_available"), default_capital
+    )
     validation_count = int(sample_quality.get("validation_sample_count") or 0)
     strategy_count = int(sample_quality.get("strategy_sample_valid_count") or 0)
     return {
@@ -196,6 +237,193 @@ def _strategy_view_from_local_sim_trades(account: str, default_capital: float) -
     }
 
 
+def _current_sample_authority_scope() -> dict[str, Any]:
+    from shared.execution.execution_lineage import (
+        ASHARE_AUTHORITY_GENERATION,
+        ASHARE_CAPITAL_AUTHORITY_ID,
+        ASHARE_EXECUTION_LINEAGE_ID,
+    )
+
+    return {
+        "capital_authority_id": ASHARE_CAPITAL_AUTHORITY_ID,
+        "authority_generation": ASHARE_AUTHORITY_GENERATION,
+        "execution_lineage_id": ASHARE_EXECUTION_LINEAGE_ID,
+    }
+
+
+def _sample_policy(value: Any = None) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    version = str(raw.get("policy_version") or SAMPLE_DEBT_POLICY_VERSION).strip()
+    if version != SAMPLE_DEBT_POLICY_VERSION:
+        version = SAMPLE_DEBT_POLICY_VERSION
+    try:
+        minimum = int(
+            raw.get(
+                "min_strategy_execution_samples",
+                MIN_STRATEGY_EXECUTION_SAMPLES,
+            )
+        )
+    except (TypeError, ValueError):
+        minimum = MIN_STRATEGY_EXECUTION_SAMPLES
+    if minimum <= 0:
+        minimum = MIN_STRATEGY_EXECUTION_SAMPLES
+    return {
+        "policy_version": version,
+        "min_strategy_execution_samples": minimum,
+    }
+
+
+def _is_execution_fill(record: dict[str, Any]) -> bool:
+    kind = (
+        str(
+            record.get("record_type")
+            or record.get("event_type")
+            or record.get("type")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    status = str(record.get("status") or "").strip().lower()
+    intent = str(record.get("sample_intent") or "").strip().lower()
+    return (
+        kind in {"fill", "simulated_fill", "execution_fill"}
+        or status in {"filled", "partial"}
+    ) and intent in {"exploration", "exploitation"}
+
+
+def _has_symlink_component(path: Path) -> bool:
+    return any(candidate.is_symlink() for candidate in (path, *path.parents))
+
+
+def build_current_sample_adjustment(
+    *,
+    journal_path: Path | None = None,
+    sample_policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Read sample debt only from the current fresh-start SampleJournal.
+
+    Local trade files and adapter-provided counters are diagnostic only.  A
+    missing journal is the expected fresh-start state and therefore carries an
+    explicit debt instead of silently disabling bounded exploration.
+    """
+
+    from shared.review.sample_journal import SampleJournal
+
+    path = Path(journal_path or DEFAULT_SAMPLE_JOURNAL_PATH)
+    policy = _sample_policy(sample_policy)
+    minimum = policy["min_strategy_execution_samples"]
+    authority = _current_sample_authority_scope()
+    base = {
+        "view": "current_sample_journal_execution_fills",
+        "sample_policy_version": policy["policy_version"],
+        "min_strategy_samples": minimum,
+        "authority_scope": authority,
+        "journal_path": str(path),
+        "sample_authority_source": "sample_journal_kpi",
+        "real_trading_enabled": False,
+    }
+    if _has_symlink_component(path):
+        return {
+            **base,
+            "sample_authority_status": "sample_journal_unavailable",
+            "sample_authority_reliable": False,
+            "strategy_sample_valid_count": 0,
+            "valid_exploration_fill_count": 0,
+            "valid_exploitation_fill_count": 0,
+            "excluded_wrong_authority_count": 0,
+            "excluded_non_execution_eligible_count": 0,
+            "sample_debt": True,
+            "reason": "sample_journal_symlink_not_allowed",
+        }
+    if not path.exists():
+        return {
+            **base,
+            "sample_authority_status": "fresh_start_journal_missing",
+            "sample_authority_reliable": True,
+            "strategy_sample_valid_count": 0,
+            "valid_exploration_fill_count": 0,
+            "valid_exploitation_fill_count": 0,
+            "excluded_wrong_authority_count": 0,
+            "excluded_non_execution_eligible_count": 0,
+            "sample_debt": True,
+            "reason": "fresh_start_has_no_execution_samples_yet",
+        }
+
+    try:
+        journal = SampleJournal(path)
+        records = journal.latest_sample_records()
+        kpi = journal.build_kpi(authority_scope=authority)
+        current_records = [
+            row
+            for row in records
+            if str(row.get("capital_authority_id") or "")
+            == authority["capital_authority_id"]
+            and row.get("authority_generation") == authority["authority_generation"]
+            and str(row.get("execution_lineage_id") or "")
+            == authority["execution_lineage_id"]
+        ]
+        current_execution_fills = [
+            row for row in current_records if _is_execution_fill(row)
+        ]
+        valid_fills = [
+            row
+            for row in current_execution_fills
+            if row.get("execution_eligible") is True
+            and _safe_float(row.get("maturity_weight"), 1.0) > 0.0
+        ]
+        exploration_count = sum(
+            1
+            for row in valid_fills
+            if str(row.get("sample_intent") or "").strip().lower() == "exploration"
+        )
+        exploitation_count = sum(
+            1
+            for row in valid_fills
+            if str(row.get("sample_intent") or "").strip().lower() == "exploitation"
+        )
+        valid_count = exploration_count + exploitation_count
+        return {
+            **base,
+            "sample_authority_status": "ready",
+            "sample_authority_reliable": True,
+            "strategy_sample_valid_count": valid_count,
+            "valid_exploration_fill_count": exploration_count,
+            "valid_exploitation_fill_count": exploitation_count,
+            "excluded_wrong_authority_count": int(
+                kpi.get("excluded_legacy_count") or 0
+            ),
+            "excluded_non_execution_eligible_count": (
+                len(current_execution_fills) - len(valid_fills)
+            ),
+            "sample_kpi_layer_totals": dict(
+                kpi.get("sample_layer_totals")
+                if isinstance(kpi.get("sample_layer_totals"), dict)
+                else {}
+            ),
+            "sample_debt": valid_count < minimum,
+            "reason": (
+                "current_execution_sample_debt"
+                if valid_count < minimum
+                else "current_execution_sample_minimum_met"
+            ),
+        }
+    except Exception as exc:
+        logger.warning("Unable to read A-share SampleJournal authority: %s", exc)
+        return {
+            **base,
+            "sample_authority_status": "sample_journal_unavailable",
+            "sample_authority_reliable": False,
+            "strategy_sample_valid_count": 0,
+            "valid_exploration_fill_count": 0,
+            "valid_exploitation_fill_count": 0,
+            "excluded_wrong_authority_count": 0,
+            "excluded_non_execution_eligible_count": 0,
+            "sample_debt": True,
+            "reason": "sample_journal_unavailable",
+        }
+
+
 class AshareAdapter(MarketAdapter):
     """Market-specific adapter for A-share shadow screening and execution."""
 
@@ -207,7 +435,10 @@ class AshareAdapter(MarketAdapter):
         strategy_dir: Path | None = None,
     ) -> None:
         self.reader = reader if reader is not None else TradingagentDataReader()
-        self.universe_filter = {**DEFAULT_UNIVERSE_FILTER, **dict(universe_filter or {})}
+        self.universe_filter = {
+            **DEFAULT_UNIVERSE_FILTER,
+            **dict(universe_filter or {}),
+        }
         self.strategy_dir = strategy_dir or STRATEGY_DIR
 
     def get_market(self) -> str:
@@ -226,7 +457,9 @@ class AshareAdapter(MarketAdapter):
             if not symbol:
                 continue
             liquidity = self._latest_liquidity(symbol, date)
-            if self._exclude_asset(asset, coverage.get(symbol), date, liquidity=liquidity):
+            if self._exclude_asset(
+                asset, coverage.get(symbol), date, liquidity=liquidity
+            ):
                 continue
             amount = liquidity[1] if liquidity[1] is not None else 0.0
             ranked.append((amount, symbol))
@@ -239,6 +472,8 @@ class AshareAdapter(MarketAdapter):
 
     def get_strategy_config(self) -> dict[str, Any]:
         strategies = self._load_strategies()
+        market_rules = ashare_execution_reality().as_contract()
+        market_rules["idle_cash_reverse_repo"] = "204001"
         return {
             "market": MARKET,
             "sim_capital": default_sim_capital(MARKET),
@@ -246,31 +481,13 @@ class AshareAdapter(MarketAdapter):
             "portfolio_method": "conviction_weighted",
             "regime": "ashare_default",
             "score_universe_limit": 500,
-            "max_candidates": 3,
-            "max_portfolio_positions": 3,
+            "max_candidates": EXECUTION_CANDIDATE_SCAN_LIMIT,
+            "max_portfolio_positions": MAX_PORTFOLIO_POSITIONS,
+            "sample_collection_policy": _sample_policy(),
             "default_price": 0.0,
             "default_volatility": 0.28,
             "strategies": strategies,
-            "market_rules": {
-                "settlement": "T+1",
-                "can_sell_same_day": False,
-                "price_limit": {
-                    "main_board": 0.10,
-                    "st": 0.05,
-                    "star_market": 0.20,
-                    "chinext": 0.20,
-                    "bse": 0.30,
-                },
-                "sessions": {
-                    "opening_auction": {"start": "09:15", "end": "09:25", "cancel_forbidden_after": "09:20"},
-                    "continuous_auction_am": {"start": "09:30", "end": "11:30"},
-                    "continuous_auction_pm": {"start": "13:00", "end": "14:57"},
-                    "closing_auction": {"start": "14:57", "end": "15:00"},
-                },
-                "lot_size": 100,
-                "currency": "CNY",
-                "idle_cash_reverse_repo": "204001",
-            },
+            "market_rules": market_rules,
             "universe_filter": dict(self.universe_filter),
         }
 
@@ -280,19 +497,23 @@ class AshareAdapter(MarketAdapter):
     def get_sim_account(self) -> dict[str, Any]:
         account = "ashare_sim"
         default_capital = default_sim_capital(MARKET)
+        current_sample_adjustment = build_current_sample_adjustment()
         fallback = {
             "account": account,
             "sim_capital": default_capital,
             "cash_available": default_capital,
             "positions": [],
             "source": "ashare_adapter_empty_sim_account",
+            "capital_plan_sample_adjustment": current_sample_adjustment,
         }
         try:
             from shared.execution.local_sim_ledger import LOCAL_SIM_POSITIONS_SNAPSHOT
 
             if not LOCAL_SIM_POSITIONS_SNAPSHOT.exists():
                 return fallback
-            payload = json.loads(LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8"))
+            payload = json.loads(
+                LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8")
+            )
         except Exception as exc:
             logger.warning("Unable to load A-share local sim snapshot: %s", exc)
             return fallback
@@ -320,6 +541,28 @@ class AshareAdapter(MarketAdapter):
             account_pnl.get("cash_available", payload.get("cash_available")),
             default_capital,
         )
+        strategy_view = _strategy_view_from_local_sim_trades(account, default_capital)
+        legacy_sample_diagnostics = strategy_view.pop(
+            "capital_plan_sample_adjustment", {}
+        )
+        sample_adjustment = {
+            key: value
+            for key, value in (
+                legacy_sample_diagnostics.items()
+                if isinstance(legacy_sample_diagnostics, dict)
+                else []
+            )
+            if key
+            not in {
+                "strategy_sample_valid_count",
+                "min_strategy_samples",
+                "sample_debt",
+                "sample_authority_status",
+                "sample_authority_reliable",
+                "authority_scope",
+            }
+        }
+        sample_adjustment.update(current_sample_adjustment)
         return {
             "account": account,
             "sim_capital": default_capital,
@@ -329,7 +572,8 @@ class AshareAdapter(MarketAdapter):
             "pnl": account_pnl,
             "source": str(payload.get("source") or "server_local_sim_backup"),
             "snapshot_synced_at": str(payload.get("synced_at") or ""),
-            **_strategy_view_from_local_sim_trades(account, default_capital),
+            **strategy_view,
+            "capital_plan_sample_adjustment": sample_adjustment,
         }
 
     def _get_assets(self) -> list[dict[str, Any]]:
@@ -400,7 +644,9 @@ class AshareAdapter(MarketAdapter):
             return True
         if cfg.get("exclude_bse", True) and _is_bse(asset):
             return True
-        if cfg.get("exclude_non_a_share", True) and not _is_regular_a_share_symbol(asset.get("symbol")):
+        if cfg.get("exclude_non_a_share", True) and not _is_regular_a_share_symbol(
+            asset.get("symbol")
+        ):
             return True
 
         list_date = _parse_date(asset.get("list_date"))
@@ -411,7 +657,11 @@ class AshareAdapter(MarketAdapter):
                 return True
 
         min_amount = _safe_float(cfg.get("min_liquidity_amount"), 50_000_000.0)
-        has_close, amount = liquidity if liquidity is not None else self._latest_liquidity(str(asset.get("symbol") or ""), date)
+        has_close, amount = (
+            liquidity
+            if liquidity is not None
+            else self._latest_liquidity(str(asset.get("symbol") or ""), date)
+        )
         if not has_close:
             return True
         if amount is None:
@@ -420,7 +670,8 @@ class AshareAdapter(MarketAdapter):
             # ordered asset-table samples, which is not a tradable signal.
             logger.warning(
                 "_exclude_asset: no liquidity data for %s on %s — excluding from executable universe",
-                asset.get("symbol"), date,
+                asset.get("symbol"),
+                date,
             )
             return True
         if amount < min_amount:
@@ -441,4 +692,10 @@ class AshareAdapter(MarketAdapter):
         return strategies
 
 
-__all__ = ["AshareAdapter"]
+__all__ = [
+    "AshareAdapter",
+    "DEFAULT_SAMPLE_JOURNAL_PATH",
+    "MIN_STRATEGY_EXECUTION_SAMPLES",
+    "SAMPLE_DEBT_POLICY_VERSION",
+    "build_current_sample_adjustment",
+]

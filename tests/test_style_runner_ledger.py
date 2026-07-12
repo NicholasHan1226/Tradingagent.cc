@@ -70,7 +70,9 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             review_root = root / "review"
             ledger_root = root / "ledger"
             styles_dir.mkdir()
-            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            (styles_dir / "balanced.json").write_text(
+                json.dumps(STYLE), encoding="utf-8"
+            )
             runner = StyleRunner(
                 "crypto",
                 FilledSimulator(),
@@ -78,7 +80,9 @@ class StyleRunnerLedgerTest(unittest.TestCase):
                 review_root=review_root,
                 ledger_root=ledger_root,
             )
-            signals = [{"symbol": "BTCUSDT", "price": 100.0, "side": "buy", "conviction": 0.9}]
+            signals = [
+                {"symbol": "BTCUSDT", "price": 100.0, "side": "buy", "conviction": 0.9}
+            ]
 
             first = runner.run(signals, date="20260704")
             second = runner.run(signals, date="20260704")
@@ -86,12 +90,20 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             self.assertEqual(first["runs"][0]["ledger"]["status"], "recorded")
             self.assertEqual(second["runs"][0]["ledger"]["status"], "duplicate")
             journal = ledger_root / "crypto" / "balanced" / "trade_journal.jsonl"
-            rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+            rows = [
+                json.loads(line)
+                for line in journal.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["symbol"], "BTCUSDT")
             self.assertEqual(rows[0]["side"], "buy")
             self.assertGreater(rows[0]["fill_qty"], 0)
-            positions = json.loads((ledger_root / "crypto" / "balanced" / "positions.json").read_text(encoding="utf-8"))
+            positions = json.loads(
+                (ledger_root / "crypto" / "balanced" / "positions.json").read_text(
+                    encoding="utf-8"
+                )
+            )
             self.assertIn("BTCUSDT", positions["positions"])
 
     def test_preserves_dashboard_exclusion_metadata_in_ledger_and_review(self) -> None:
@@ -101,7 +113,9 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             review_root = root / "review"
             ledger_root = root / "ledger"
             styles_dir.mkdir()
-            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            (styles_dir / "balanced.json").write_text(
+                json.dumps(STYLE), encoding="utf-8"
+            )
             runner = StyleRunner(
                 "crypto",
                 FilledSimulator(),
@@ -125,15 +139,25 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             )
 
             journal = ledger_root / "crypto" / "balanced" / "trade_journal.jsonl"
-            rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+            rows = [
+                json.loads(line)
+                for line in journal.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
             self.assertTrue(rows[0]["exclude_from_dashboard"])
             self.assertEqual(rows[0]["run_context"], "maintenance_backfill")
-            comparison = json.loads((review_root / "crypto" / "style_comparison.json").read_text(encoding="utf-8"))
+            comparison = json.loads(
+                (review_root / "crypto" / "style_comparison.json").read_text(
+                    encoding="utf-8"
+                )
+            )
             self.assertTrue(comparison["exclude_from_dashboard"])
             self.assertEqual(comparison["run_context"], "maintenance_backfill")
             performance = [
                 json.loads(line)
-                for line in (review_root / "crypto" / "style_performance.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (review_root / "crypto" / "style_performance.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
                 if line.strip()
             ]
             self.assertTrue(performance[0]["exclude_from_dashboard"])
@@ -146,7 +170,9 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             review_root = root / "review"
             ledger_root = root / "ledger"
             styles_dir.mkdir()
-            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            (styles_dir / "balanced.json").write_text(
+                json.dumps(STYLE), encoding="utf-8"
+            )
             runner = StyleRunner(
                 "crypto",
                 FilledSimulator(),
@@ -171,8 +197,14 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             )
 
             journal = ledger_root / "crypto" / "balanced" / "trade_journal.jsonl"
-            rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
-            self.assertEqual(rows[0]["strategy_name"], "crypto_momentum_breakout:balanced")
+            rows = [
+                json.loads(line)
+                for line in journal.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(
+                rows[0]["strategy_name"], "crypto_momentum_breakout:balanced"
+            )
             self.assertEqual(rows[0]["signal_source"], "explicit_strategy_signal")
             self.assertEqual(rows[0]["reason"], "momentum threshold passed")
 
@@ -183,7 +215,9 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             review_root = root / "review"
             ledger_root = root / "ledger"
             styles_dir.mkdir()
-            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            (styles_dir / "balanced.json").write_text(
+                json.dumps(STYLE), encoding="utf-8"
+            )
             runner = StyleRunner(
                 "crypto",
                 FilledSimulator(),
@@ -192,12 +226,34 @@ class StyleRunnerLedgerTest(unittest.TestCase):
                 ledger_root=ledger_root,
             )
 
-            runner.run([{"symbol": "BTCUSDT", "price": 100.0, "side": "buy", "conviction": 0.9}], date="20260704")
-            result = runner.run([{"symbol": "BTCUSDT", "price": 110.0, "side": "buy", "conviction": 0.9}], date="20260704")
+            runner.run(
+                [
+                    {
+                        "symbol": "BTCUSDT",
+                        "price": 100.0,
+                        "side": "buy",
+                        "conviction": 0.9,
+                    }
+                ],
+                date="20260704",
+            )
+            result = runner.run(
+                [
+                    {
+                        "symbol": "BTCUSDT",
+                        "price": 110.0,
+                        "side": "buy",
+                        "conviction": 0.9,
+                    }
+                ],
+                date="20260704",
+            )
 
             metric = result["style_comparison"][0]
             self.assertEqual(metric["pnl_source"], "sim_ledger_mark_to_market")
-            self.assertEqual(metric["pnl_metric_source"], "sim_ledger_realized_unrealized_samples")
+            self.assertEqual(
+                metric["pnl_metric_source"], "sim_ledger_realized_unrealized_samples"
+            )
             self.assertEqual(metric["realized_pnl"], 0.0)
             self.assertGreater(metric["unrealized_pnl"], 0.0)
             self.assertEqual(metric["pnl"], metric["unrealized_pnl"])
@@ -210,7 +266,9 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             review_root = root / "review"
             ledger_root = root / "ledger"
             styles_dir.mkdir()
-            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            (styles_dir / "balanced.json").write_text(
+                json.dumps(STYLE), encoding="utf-8"
+            )
             runner = StyleRunner(
                 "crypto",
                 FilledSimulator(),
@@ -219,15 +277,41 @@ class StyleRunnerLedgerTest(unittest.TestCase):
                 ledger_root=ledger_root,
             )
 
-            runner.run([{"symbol": "BTCUSDT", "price": 100.0, "side": "buy", "conviction": 0.9}], date="20260704")
-            result = runner.run([{"symbol": "BTCUSDT", "price": 120.0, "side": "sell", "conviction": 0.9}], date="20260704")
+            runner.run(
+                [
+                    {
+                        "symbol": "BTCUSDT",
+                        "price": 100.0,
+                        "side": "buy",
+                        "conviction": 0.9,
+                    }
+                ],
+                date="20260704",
+            )
+            result = runner.run(
+                [
+                    {
+                        "symbol": "BTCUSDT",
+                        "price": 120.0,
+                        "side": "sell",
+                        "conviction": 0.9,
+                    }
+                ],
+                date="20260704",
+            )
 
             metric = result["style_comparison"][0]
             self.assertEqual(metric["pnl_source"], "sim_ledger_mark_to_market")
-            self.assertEqual(metric["pnl_metric_source"], "sim_ledger_realized_unrealized_samples")
+            self.assertEqual(
+                metric["pnl_metric_source"], "sim_ledger_realized_unrealized_samples"
+            )
             self.assertGreater(metric["realized_pnl"], 0.0)
             self.assertGreater(metric["unrealized_pnl"], 0.0)
-            self.assertAlmostEqual(metric["pnl"], metric["realized_pnl"] + metric["unrealized_pnl"], places=6)
+            self.assertAlmostEqual(
+                metric["pnl"],
+                metric["realized_pnl"] + metric["unrealized_pnl"],
+                places=6,
+            )
             self.assertEqual(metric["win_rate"], 1.0)
 
     def test_copies_market_snapshot_fields_from_signal_to_order(self) -> None:
@@ -235,14 +319,22 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             root = Path(tmp)
             styles_dir = root / "styles"
             styles_dir.mkdir()
-            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            (styles_dir / "balanced.json").write_text(
+                json.dumps(STYLE), encoding="utf-8"
+            )
             simulator = CapturingSimulator()
-            runner = StyleRunner("ashare", simulator, styles_dir=styles_dir, review_root=root / "review", record_ledger=False)
+            runner = StyleRunner(
+                "us",
+                simulator,
+                styles_dir=styles_dir,
+                review_root=root / "review",
+                record_ledger=False,
+            )
 
             runner.run(
                 [
                     {
-                        "symbol": "600000.SH",
+                        "symbol": "AAPL",
                         "price": 10.0,
                         "side": "buy",
                         "conviction": 0.9,
@@ -256,7 +348,9 @@ class StyleRunnerLedgerTest(unittest.TestCase):
 
             self.assertEqual(simulator.orders[0]["bar_volume"], 1500)
             self.assertEqual(simulator.orders[0]["previous_close"], 9.8)
-            self.assertEqual(simulator.orders[0]["counterparty_profile"], "retail_panic")
+            self.assertEqual(
+                simulator.orders[0]["counterparty_profile"], "retail_panic"
+            )
 
     def test_pm_orders_keep_outcome_and_market_id_in_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -265,7 +359,9 @@ class StyleRunnerLedgerTest(unittest.TestCase):
             review_root = root / "review"
             ledger_root = root / "ledger"
             styles_dir.mkdir()
-            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
+            (styles_dir / "balanced.json").write_text(
+                json.dumps(STYLE), encoding="utf-8"
+            )
             runner = StyleRunner(
                 "pm",
                 FilledSimulator(),
@@ -274,35 +370,54 @@ class StyleRunnerLedgerTest(unittest.TestCase):
                 ledger_root=ledger_root,
             )
 
-            runner.run([{"market_id": "558943", "price": 0.2, "side": "buy", "outcome": "no", "conviction": 0.9}], date="20260704")
+            runner.run(
+                [
+                    {
+                        "market_id": "558943",
+                        "price": 0.2,
+                        "side": "buy",
+                        "outcome": "no",
+                        "conviction": 0.9,
+                    }
+                ],
+                date="20260704",
+            )
 
             journal = ledger_root / "pm" / "balanced" / "trade_journal.jsonl"
-            rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+            rows = [
+                json.loads(line)
+                for line in journal.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
             self.assertEqual(rows[0]["symbol"], "558943:no")
             self.assertEqual(rows[0]["market_id"], "558943")
             self.assertEqual(rows[0]["outcome"], "no")
-            positions = json.loads((ledger_root / "pm" / "balanced" / "positions.json").read_text(encoding="utf-8"))
+            positions = json.loads(
+                (ledger_root / "pm" / "balanced" / "positions.json").read_text(
+                    encoding="utf-8"
+                )
+            )
             self.assertIn("558943:no", positions["positions"])
             self.assertEqual(positions["positions"]["558943:no"]["market_id"], "558943")
             self.assertEqual(positions["positions"]["558943:no"]["outcome"], "no")
 
-    def test_active_style_weights_split_one_market_capital_pool(self) -> None:
+    def test_ashare_multi_account_style_runner_is_retired(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             styles_dir = root / "styles"
             styles_dir.mkdir()
-            first = {**STYLE, "name": "first", "weight": 0.67}
-            second = {**STYLE, "name": "second", "weight": 0.33}
-            (styles_dir / "first.json").write_text(json.dumps(first), encoding="utf-8")
-            (styles_dir / "second.json").write_text(json.dumps(second), encoding="utf-8")
-            simulator = CapturingSimulator()
-            runner = StyleRunner("ashare", simulator, styles_dir=styles_dir, review_root=root / "review", record_ledger=False)
+            (styles_dir / "balanced.json").write_text(
+                json.dumps(STYLE), encoding="utf-8"
+            )
 
-            runner.run([{"symbol": "600000.SH", "price": 10.0, "side": "buy", "conviction": 0.9}], date="20260704")
-
-            by_style = {order["style_name"]: order for order in simulator.orders}
-            self.assertEqual(by_style["first"]["quantity"], 300.0)
-            self.assertEqual(by_style["second"]["quantity"], 100.0)
+            with self.assertRaisesRegex(RuntimeError, "ashare.*retired"):
+                StyleRunner(
+                    "ashare",
+                    CapturingSimulator(),
+                    styles_dir=styles_dir,
+                    review_root=root / "review",
+                    record_ledger=False,
+                )
 
 
 class SimLedgerTotalPnlTest(unittest.TestCase):
@@ -311,12 +426,24 @@ class SimLedgerTotalPnlTest(unittest.TestCase):
             ledger = SimLedger(Path(tmp) / "ledger", starting_cash=10_000.0)
             ledger.record_fill(
                 {"order_id": "B1", "symbol": "BTCUSDT", "side": "buy"},
-                {"fill_id": "F1", "order_id": "B1", "fill_qty": 1.0, "fill_price": 100.0, "fill_time": "2026-07-04T00:00:00+00:00"},
+                {
+                    "fill_id": "F1",
+                    "order_id": "B1",
+                    "fill_qty": 1.0,
+                    "fill_price": 100.0,
+                    "fill_time": "2026-07-04T00:00:00+00:00",
+                },
                 fees={"total": 0.0},
             )
             ledger.record_fill(
                 {"order_id": "S1", "symbol": "BTCUSDT", "side": "sell"},
-                {"fill_id": "F2", "order_id": "S1", "fill_qty": 0.5, "fill_price": 120.0, "fill_time": "2026-07-04T00:00:00+00:00"},
+                {
+                    "fill_id": "F2",
+                    "order_id": "S1",
+                    "fill_qty": 0.5,
+                    "fill_price": 120.0,
+                    "fill_time": "2026-07-04T00:00:00+00:00",
+                },
                 fees={"total": 0.0},
             )
 
@@ -338,7 +465,13 @@ class SimLedgerTotalPnlTest(unittest.TestCase):
             ledger = SimLedger(Path(tmp) / "ledger", starting_cash=10_000.0)
             ledger.record_fill(
                 {"order_id": "B1", "symbol": "BTCUSDT", "side": "buy"},
-                {"fill_id": "F1", "order_id": "B1", "fill_qty": 1.0, "fill_price": 100.0, "fill_time": "2026-07-04T00:00:00+00:00"},
+                {
+                    "fill_id": "F1",
+                    "order_id": "B1",
+                    "fill_qty": 1.0,
+                    "fill_price": 100.0,
+                    "fill_time": "2026-07-04T00:00:00+00:00",
+                },
                 fees={"total": 0.0},
             )
 

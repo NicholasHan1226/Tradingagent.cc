@@ -8,7 +8,13 @@ from unittest.mock import patch
 
 from shared.accounting import position_ledger
 from shared.notify import email_sender
-from shared.review import benchmark, daily_review, self_heal_loop, sim_ledger_reader, weekly_review
+from shared.review import (
+    benchmark,
+    daily_review,
+    self_heal_loop,
+    sim_ledger_reader,
+    weekly_review,
+)
 from shared.wrappers import tradings_cron_entry as cron
 
 
@@ -31,22 +37,54 @@ class CronHandlersV2Test(unittest.TestCase):
         self._patch(cron, "SHARED", self.shared_dir)
         self._patch(cron, "trade_date", lambda: "20260703")
         self._patch(cron, "now_iso", lambda: "2026-07-03T08:00:00+00:00")
-        self._patch(daily_review, "SHADOW_TRADES_LOG", self.shadow_dir / "shadow_trades.jsonl")
+        self._patch(
+            daily_review, "SHADOW_TRADES_LOG", self.shadow_dir / "shadow_trades.jsonl"
+        )
         self._patch(daily_review, "FILLED_SIGNALS_DIR", self.filled_dir)
-        self._patch(daily_review, "DAILY_LOG", self.review_data_dir / "daily_reviews.jsonl")
-        self._patch(daily_review, "DIRECTION_HIT_LOG", self.review_data_dir / "direction_hit_reviews.jsonl")
+        self._patch(
+            daily_review, "DAILY_LOG", self.review_data_dir / "daily_reviews.jsonl"
+        )
+        self._patch(
+            daily_review,
+            "DIRECTION_HIT_LOG",
+            self.review_data_dir / "direction_hit_reviews.jsonl",
+        )
         self._patch(sim_ledger_reader, "DEFAULT_SIM_LEDGER_ROOT", self.sim_ledger_dir)
-        self._patch(sim_ledger_reader, "DEFAULT_LOCAL_SIM_TRADES", self.local_sim_trades)
-        self._patch(benchmark, "LAST_PERIOD_STORE", self.review_data_dir / "last_period_return.json")
-        self._patch(benchmark, "BENCHMARK_STORE", self.review_data_dir / "benchmark_history.json")
+        self._patch(
+            sim_ledger_reader, "DEFAULT_LOCAL_SIM_TRADES", self.local_sim_trades
+        )
+        self._patch(
+            benchmark,
+            "LAST_PERIOD_STORE",
+            self.review_data_dir / "last_period_return.json",
+        )
+        self._patch(
+            benchmark,
+            "BENCHMARK_STORE",
+            self.review_data_dir / "benchmark_history.json",
+        )
         self._patch(position_ledger, "LEDGER_DIR", self.ledger_dir)
-        self._patch(position_ledger, "POSITION_CSV", self.ledger_dir / "position_ledger.csv")
-        self._patch(position_ledger, "POSITION_LOCK", self.ledger_dir / "position_ledger.csv.lock")
-        self._patch(weekly_review, "WEEKLY_LOG", self.review_data_dir / "weekly_reviews.jsonl")
-        self._patch(weekly_review, "WEEKLY_STATE", self.review_data_dir / "weekly_state.json")
-        self._patch(self_heal_loop, "MEMORY_STORE", self.review_data_dir / "heal_memory.json")
+        self._patch(
+            position_ledger, "POSITION_CSV", self.ledger_dir / "position_ledger.csv"
+        )
+        self._patch(
+            position_ledger,
+            "POSITION_LOCK",
+            self.ledger_dir / "position_ledger.csv.lock",
+        )
+        self._patch(
+            weekly_review, "WEEKLY_LOG", self.review_data_dir / "weekly_reviews.jsonl"
+        )
+        self._patch(
+            weekly_review, "WEEKLY_STATE", self.review_data_dir / "weekly_state.json"
+        )
+        self._patch(
+            self_heal_loop, "MEMORY_STORE", self.review_data_dir / "heal_memory.json"
+        )
         self._patch(self_heal_loop, "HEAL_LOG", self.review_data_dir / "heal_log.jsonl")
-        self._patch(self_heal_loop, "RULES_STORE", self.review_data_dir / "heal_rules.json")
+        self._patch(
+            self_heal_loop, "RULES_STORE", self.review_data_dir / "heal_rules.json"
+        )
 
     def _patch(self, module: object, name: str, value: object) -> None:
         patcher = patch.object(module, name, value)
@@ -60,7 +98,9 @@ class CronHandlersV2Test(unittest.TestCase):
 
     def _write_json(self, path: Path, payload: dict[str, object]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
     def _write_cron_log(self, job_name: str, lines: list[str]) -> None:
         path = self.cron_dir / f"{job_name}.log"
@@ -79,14 +119,16 @@ class CronHandlersV2Test(unittest.TestCase):
             channel: str = "trading",
             from_addr: str | None = None,
         ) -> dict[str, object]:
-            sent.append({
-                "to": to,
-                "subject": subject,
-                "body": body,
-                "html_body": html_body or "",
-                "channel": channel,
-                "from_addr": from_addr or "",
-            })
+            sent.append(
+                {
+                    "to": to,
+                    "subject": subject,
+                    "body": body,
+                    "html_body": html_body or "",
+                    "channel": channel,
+                    "from_addr": from_addr or "",
+                }
+            )
             return {
                 "status": "sent",
                 "provider": "unit-test",
@@ -162,7 +204,9 @@ class CronHandlersV2Test(unittest.TestCase):
                 "category": "no_portfolio_orders",
                 "counts": {"candidates": 3, "orders": 0},
             },
-            "candidate_decision_trace": [{"symbol": "AAA", "drop_reason": "capital_plan_capacity_zero"}],
+            "candidate_decision_trace": [
+                {"symbol": "AAA", "drop_reason": "capital_plan_capacity_zero"}
+            ],
             "capital_plan_decision": {"risk_mode": "defensive", "position_capacity": 0},
             "portfolio_decision": {"allowed_buy_count": 0},
         }
@@ -179,15 +223,23 @@ class CronHandlersV2Test(unittest.TestCase):
             self.review_data_dir / "weekly_state.json",
             {
                 "strategies": {
-                    "shadow:trend": {"consecutive_positive_weeks": 1, "consecutive_below50_weeks": 0},
-                    "shadow:mean_revert": {"consecutive_positive_weeks": 0, "consecutive_below50_weeks": 1},
+                    "shadow:trend": {
+                        "consecutive_positive_weeks": 1,
+                        "consecutive_below50_weeks": 0,
+                    },
+                    "shadow:mean_revert": {
+                        "consecutive_positive_weeks": 0,
+                        "consecutive_below50_weeks": 1,
+                    },
                 }
             },
         )
         sent, sender = self._capture_send_email()
 
         with patch.object(email_sender, "send_email", side_effect=sender):
-            result = cron.run_weekly_review("job_weekly_review", "review/weekly/weekly_review.json")
+            result = cron.run_weekly_review(
+                "job_weekly_review", "review/weekly/weekly_review.json"
+            )
 
         self.assertEqual(result["job"], "job_weekly_review")
         self.assertEqual(result["state"], "email_sent")
@@ -198,11 +250,16 @@ class CronHandlersV2Test(unittest.TestCase):
         self.assertIn("tradingagent 周报", str(sent[0]["subject"]))
         self.assertIn("Weekly Report", str(sent[0]["html_body"]))
         self.assertIn("策略统计", str(sent[0]["html_body"]))
-        self.assertIn("升级候选=trend", result["email_data"]["summary"])
+        self.assertIn("升级候选=无", result["email_data"]["summary"])
+        self.assertIn("人工复核候选=trend", result["email_data"]["summary"])
         self.assertIn("降级候选=mean_revert", result["email_data"]["summary"])
-        self.assertTrue((self.shared_dir / "review" / "weekly" / "weekly_review.json").exists())
+        self.assertTrue(
+            (self.shared_dir / "review" / "weekly" / "weekly_review.json").exists()
+        )
 
-    def test_run_weekly_review_uses_simulated_ledgers_when_no_shadow_trades(self) -> None:
+    def test_run_weekly_review_uses_simulated_ledgers_when_no_shadow_trades(
+        self,
+    ) -> None:
         self._append_jsonl(
             self.sim_ledger_dir / "pm" / "grid" / "trade_journal.jsonl",
             {
@@ -219,12 +276,21 @@ class CronHandlersV2Test(unittest.TestCase):
         )
         self._write_json(
             self.review_data_dir / "weekly_state.json",
-            {"strategies": {"simulated:grid": {"consecutive_positive_weeks": 1, "consecutive_below50_weeks": 0}}},
+            {
+                "strategies": {
+                    "simulated:grid": {
+                        "consecutive_positive_weeks": 1,
+                        "consecutive_below50_weeks": 0,
+                    }
+                }
+            },
         )
         sent, sender = self._capture_send_email()
 
         with patch.object(email_sender, "send_email", side_effect=sender):
-            result = cron.run_weekly_review("job_pm_weekly", "review/weekly/pm_weekly.json")
+            result = cron.run_weekly_review(
+                "job_pm_weekly", "review/weekly/pm_weekly.json"
+            )
 
         self.assertEqual(result["capital_layer"], "simulated")
         self.assertEqual(result["simulated_trade_count"], 1)
@@ -232,8 +298,11 @@ class CronHandlersV2Test(unittest.TestCase):
         self.assertEqual(result["review_trade_count"], 1)
         self.assertEqual(result["email_notification"]["status"], "sent")
         self.assertEqual(len(sent), 1)
-        self.assertIn("升级候选=grid", result["email_data"]["summary"])
-        self.assertTrue((self.shared_dir / "review" / "weekly" / "pm_weekly.json").exists())
+        self.assertIn("升级候选=无", result["email_data"]["summary"])
+        self.assertIn("人工复核候选=grid", result["email_data"]["summary"])
+        self.assertTrue(
+            (self.shared_dir / "review" / "weekly" / "pm_weekly.json").exists()
+        )
 
     def test_run_alert_renders_system_health_and_sends(self) -> None:
         self._append_jsonl(
@@ -274,8 +343,12 @@ class CronHandlersV2Test(unittest.TestCase):
         self.assertEqual(sent[0]["channel"], "system")
         self.assertIn("tradingagent 系统健康", str(sent[0]["subject"]))
         self.assertIn("System Health", str(sent[0]["html_body"]))
-        self.assertIn("job_trading_signals", json.dumps(result["cron_health"], ensure_ascii=False))
-        self.assertTrue((self.shared_dir / "notify" / "logs" / "alert_log.jsonl").exists())
+        self.assertIn(
+            "job_trading_signals", json.dumps(result["cron_health"], ensure_ascii=False)
+        )
+        self.assertTrue(
+            (self.shared_dir / "notify" / "logs" / "alert_log.jsonl").exists()
+        )
 
     def test_run_self_heal_executes_real_cycle_and_logs_result(self) -> None:
         pending_dir = self.tmp_path / "signals" / "pending"
@@ -311,9 +384,15 @@ class CronHandlersV2Test(unittest.TestCase):
         self.assertGreaterEqual(int(result.get("issues_found", 0) or 0), 1)
         self.assertGreaterEqual(int(result.get("issues_fixed", 0) or 0), 1)
         self.assertEqual(result["signal_sweep_expired"]["expired_count"], 1)
-        self.assertTrue((self.tmp_path / "signals" / "expired" / "EXPIRED-SELF-HEAL.json").exists())
-        self.assertTrue((self.shared_dir / "review" / "heal" / "self_heal_actions.jsonl").exists())
-        self.assertTrue((self.shared_dir / "logs" / "cron" / "signal_sweep_expired.jsonl").exists())
+        self.assertTrue(
+            (self.tmp_path / "signals" / "expired" / "EXPIRED-SELF-HEAL.json").exists()
+        )
+        self.assertTrue(
+            (self.shared_dir / "review" / "heal" / "self_heal_actions.jsonl").exists()
+        )
+        self.assertTrue(
+            (self.shared_dir / "logs" / "cron" / "signal_sweep_expired.jsonl").exists()
+        )
         self.assertTrue(self_heal_loop.MEMORY_STORE.exists())
         self.assertTrue(self_heal_loop.RULES_STORE.exists())
 

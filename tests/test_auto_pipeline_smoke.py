@@ -4,16 +4,30 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from shared.execution.auto_pipeline import AutoPipeline, LocalStyleSimulator, _candidate_price
-from shared.markets.sim_capital import default_sim_capital
+from shared.execution.auto_pipeline import (
+    ACTIVE_MARKETS,
+    AutoPipeline,
+    LocalStyleSimulator,
+    _candidate_price,
+)
 
 
 class SnapshotReader:
     def get_assets(self, market):
         if market in {"ashare", "Ashare"}:
             return [
-                {"symbol": "000001.SZ", "name": "", "status": "active", "list_date": "19910403"},
-                {"symbol": "600000.SH", "name": "浦发银行", "status": "active", "list_date": "19991110"},
+                {
+                    "symbol": "000001.SZ",
+                    "name": "",
+                    "status": "active",
+                    "list_date": "19910403",
+                },
+                {
+                    "symbol": "600000.SH",
+                    "name": "浦发银行",
+                    "status": "active",
+                    "list_date": "19991110",
+                },
             ]
         return []
 
@@ -28,7 +42,9 @@ class SnapshotReader:
             {"symbol": "600000.SH", "coverage_status": "normal"},
         ]
 
-    def get_bars_intraday(self, market, symbol, interval="5min", start_time="", end_time=""):
+    def get_bars_intraday(
+        self, market, symbol, interval="5min", start_time="", end_time=""
+    ):
         if market == "Ashare" and symbol == "600000.SH":
             return [
                 {
@@ -44,13 +60,33 @@ class SnapshotReader:
     def get_bars_daily(self, market, symbol, start_date="", end_date=""):
         if market in {"ashare", "Ashare"} and symbol == "000001.SZ":
             return [
-                {"trade_date": "20260703", "close": 9.8, "volume": 100000, "amount": 80_000},
-                {"trade_date": "20260704", "close": 10.2, "volume": 120000, "amount": 80_000},
+                {
+                    "trade_date": "20260703",
+                    "close": 9.8,
+                    "volume": 100000,
+                    "amount": 80_000,
+                },
+                {
+                    "trade_date": "20260704",
+                    "close": 10.2,
+                    "volume": 120000,
+                    "amount": 80_000,
+                },
             ]
         if market in {"ashare", "Ashare"} and symbol == "600000.SH":
             return [
-                {"trade_date": "20260703", "close": 9.8, "volume": 100000, "amount": 80_000},
-                {"trade_date": "20260704", "close": 10.2, "volume": 120000, "amount": 80_000},
+                {
+                    "trade_date": "20260703",
+                    "close": 9.8,
+                    "volume": 100000,
+                    "amount": 80_000,
+                },
+                {
+                    "trade_date": "20260704",
+                    "close": 10.2,
+                    "volume": 120000,
+                    "amount": 80_000,
+                },
             ]
         return []
 
@@ -64,28 +100,43 @@ class AutoPipelineSmokeTest(unittest.TestCase):
                 fundamental_analyzer=object(),
                 perspective_analyzer=object(),
                 simulator_factory=lambda market: object(),
-                evolution_fn=lambda market, review_root=None: {"state": "ok", "market": market},
+                evolution_fn=lambda market, review_root=None: {
+                    "state": "ok",
+                    "market": market,
+                },
                 review_root=Path(tmp),
                 max_candidates=1,
             )
 
-            result = pipeline.run(trade_date="20260704", markets=["crypto"], stage="daily_review")
+            result = pipeline.run(
+                trade_date="20260704", markets=["crypto"], stage="daily_review"
+            )
 
             self.assertEqual(result["capital_layer"], "simulated")
-            self.assertEqual(result["markets"][0]["stages"]["daily_review"]["state"], "ok")
+            self.assertEqual(
+                result["markets"][0]["stages"]["daily_review"]["state"], "ok"
+            )
+
+    def test_local_style_simulator_refuses_retired_ashare_authority(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "ashare.*retired"):
+            LocalStyleSimulator("ashare")
 
     def test_local_style_simulator_uses_matching_engine(self) -> None:
-        simulator = LocalStyleSimulator("ashare")
+        simulator = LocalStyleSimulator("us")
 
         fill = simulator.simulate(
             {
-                "order_id": "SIM-AUTO-ASHARE",
-                "symbol": "600000.SH",
+                "order_id": "SIM-AUTO-US",
+                "symbol": "AAPL",
                 "side": "buy",
                 "quantity": 100,
                 "price": 10.0,
             },
-            {"initial_capital": 200_000.0, "capital_layer": "simulated", "account_type": "simulated"},
+            {
+                "initial_capital": 50_000.0,
+                "capital_layer": "simulated",
+                "account_type": "simulated",
+            },
         )
 
         self.assertEqual(fill["status"], "filled")
@@ -93,97 +144,100 @@ class AutoPipelineSmokeTest(unittest.TestCase):
         self.assertEqual(fill["engine_record"]["state"], "filled")
 
     def test_local_style_simulator_uses_bar_volume_when_book_size_missing(self) -> None:
-        simulator = LocalStyleSimulator("ashare")
+        simulator = LocalStyleSimulator("us")
 
         fill = simulator.simulate(
             {
-                "order_id": "SIM-AUTO-ASHARE-BARVOL",
-                "symbol": "600000.SH",
+                "order_id": "SIM-AUTO-US-BARVOL",
+                "symbol": "AAPL",
                 "side": "buy",
                 "quantity": 300,
                 "price": 10.0,
                 "bar_volume": 1500,
             },
-            {"initial_capital": 200_000.0, "capital_layer": "simulated", "account_type": "simulated"},
+            {
+                "initial_capital": 50_000.0,
+                "capital_layer": "simulated",
+                "account_type": "simulated",
+            },
         )
 
         self.assertEqual(fill["status"], "partial")
-        self.assertEqual(fill["filled_qty"], 100)
+        self.assertEqual(fill["filled_qty"], 75.0)
 
-    def test_auto_pipeline_defaults_ashare_initial_capital_to_50000(self) -> None:
+    def test_active_markets_exclude_authoritative_ashare_and_cn_futures(self) -> None:
+        self.assertNotIn("ashare", ACTIVE_MARKETS)
+        self.assertNotIn("cn_futures", ACTIVE_MARKETS)
+
+    def test_explicit_ashare_pipeline_is_fail_closed_before_any_stage(self) -> None:
         pipeline = AutoPipeline()
 
-        self.assertEqual(pipeline._initial_capital_for_market("ashare"), 50_000.0)
-        self.assertEqual(pipeline._initial_capital_for_market("crypto"), default_sim_capital("crypto"))
+        with self.assertRaisesRegex(RuntimeError, "ashare.*retired"):
+            pipeline.run(trade_date="20260713", markets=["ashare"], stage="all")
 
-    def test_signals_include_sharedsignals_market_snapshot(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "ashare.*retired"):
+            pipeline.run(
+                trade_date="20260713", markets=["ashare"], stage="daily_review"
+            )
+
+    def test_direct_ashare_execution_and_review_are_fail_closed(self) -> None:
+        pipeline = AutoPipeline()
+
+        with self.assertRaisesRegex(RuntimeError, "ashare.*retired"):
+            pipeline.run_execution("ashare", {"positions": []}, [], "20260713")
+
+        with self.assertRaisesRegex(RuntimeError, "ashare.*retired"):
+            pipeline.run_review("ashare", "20260713")
+
+    def test_non_ashare_fallback_preserves_existing_requested_allocations(self) -> None:
+        pipeline = AutoPipeline(decision_engine=object())
+        decisions = [
+            {
+                "symbol": f"CRYPTO-{index}",
+                "ts_code": f"CRYPTO-{index}",
+                "action": "buy",
+                "belief_score": 0.90,
+                "position_pct": 0.12,
+                "price": 1.0,
+            }
+            for index in range(10)
+        ]
+
+        portfolio = pipeline._fallback_portfolio_rebalance(
+            "crypto", decisions, "20260713"
+        )
+
+        self.assertEqual(len(portfolio["positions"]), 10)
+        self.assertAlmostEqual(portfolio["allocated_pct"], 1.20, places=6)
+
+    def test_auto_pipeline_ashare_read_and_signal_helpers_are_fail_closed(self) -> None:
         pipeline = AutoPipeline(
             reader=SnapshotReader(),
             decision_engine=object(),
             fundamental_analyzer=object(),
             perspective_analyzer=object(),
-            evolution_fn=lambda market, review_root=None: {"state": "ok", "market": market},
-            max_candidates=1,
-        )
-
-        signals = pipeline._signals_from_positions(
-            "ashare",
-            {"positions": [{"ts_code": "600000.SH", "side": "buy", "price": 10.2}]},
-            [{"ts_code": "600000.SH", "belief_score": 0.8, "conviction": 0.8}],
-            "20260704",
-        )
-
-        snapshot = signals[0]["market_snapshot"]
-        self.assertEqual(snapshot["bar_volume"], 1500)
-        self.assertEqual(snapshot["previous_close"], 9.8)
-        self.assertEqual(snapshot["ask_price"], 10.21)
-
-    def test_auto_pipeline_ashare_uses_filtered_universe_and_real_price(self) -> None:
-        pipeline = AutoPipeline(
-            reader=SnapshotReader(),
-            decision_engine=object(),
-            fundamental_analyzer=object(),
-            perspective_analyzer=object(),
-            evolution_fn=lambda market, review_root=None: {"state": "ok", "market": market},
+            evolution_fn=lambda market, review_root=None: {
+                "state": "ok",
+                "market": market,
+            },
             max_candidates=5,
         )
 
-        candidates = pipeline.load_universe("ashare", "20260704")
+        with self.assertRaisesRegex(RuntimeError, "ashare.*retired"):
+            pipeline.load_universe("ashare", "20260704")
 
-        self.assertEqual([row["ts_code"] for row in candidates], ["600000.SH"])
-        self.assertEqual(candidates[0]["price"], 10.2)
-        self.assertEqual(candidates[0]["candidate_source"], "ashare_adapter_filtered_universe")
+        with self.assertRaisesRegex(RuntimeError, "ashare.*retired"):
+            pipeline._signals_from_positions(
+                "ashare",
+                {"positions": [{"ts_code": "600000.SH", "side": "buy", "price": 10.2}]},
+                [{"ts_code": "600000.SH", "belief_score": 0.8, "conviction": 0.8}],
+                "20260704",
+            )
 
     def test_auto_pipeline_ashare_candidate_price_never_defaults_to_one(self) -> None:
         self.assertEqual(_candidate_price({}, "ashare"), 0.0)
 
-    def test_auto_pipeline_ashare_signal_skips_missing_price(self) -> None:
-        class EmptyPriceReader:
-            def get_bars_intraday(self, *args, **kwargs):
-                return []
-
-            def get_bars_daily(self, *args, **kwargs):
-                return []
-
-        pipeline = AutoPipeline(
-            reader=EmptyPriceReader(),
-            decision_engine=object(),
-            fundamental_analyzer=object(),
-            perspective_analyzer=object(),
-            evolution_fn=lambda market, review_root=None: {"state": "ok", "market": market},
-            max_candidates=1,
-        )
-
-        signals = pipeline._signals_from_positions(
-            "ashare",
-            {"positions": [{"ts_code": "600000.SH", "side": "buy"}]},
-            [{"ts_code": "600000.SH", "action": "buy"}],
-            "20260704",
-        )
-
-        self.assertEqual(signals, [])
-
-    def test_full_pipeline_runs_with_default_decision_engine_contract(self) -> None:
+    def test_full_pipeline_runs_for_supported_market(self) -> None:
         class Fundamental:
             def analyze(self, symbol, **kwargs):
                 return {"symbol": symbol, "composite_score": 90.0, "red_flags": []}
@@ -202,12 +256,17 @@ class AutoPipelineSmokeTest(unittest.TestCase):
                 reader=SnapshotReader(),
                 fundamental_analyzer=Fundamental(),
                 perspective_analyzer=Perspective(),
-                evolution_fn=lambda market, review_root=None: {"state": "ok", "market": market},
+                evolution_fn=lambda market, review_root=None: {
+                    "state": "ok",
+                    "market": market,
+                },
                 review_root=Path(tmp),
                 max_candidates=1,
             )
 
-            result = pipeline.run(trade_date="20260704", markets=["ashare"], stage="all")
+            result = pipeline.run(
+                trade_date="20260704", markets=["crypto"], stage="all"
+            )
 
             execution = result["markets"][0]["stages"]["execute_sim"]
             self.assertEqual(execution["state"], "ok")

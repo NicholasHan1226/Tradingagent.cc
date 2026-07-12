@@ -5,6 +5,7 @@
 
 check(order, portfolio) → {approved, adjustments, reasons}
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
@@ -39,7 +40,8 @@ _DEFAULT_LIMITS: dict[str, Any] = {
             "daily_loss_limit": 0.03,
             "limit_up_down": True,
             "pre_market_auction": True,
-            "max_positions": 5,
+            "max_positions": 8,
+            "total_exposure_max": 0.90,
         },
         "crypto": {
             "t_plus_1": False,
@@ -140,7 +142,9 @@ def _normalize_market(value: Any) -> str:
     raw = str(value or "").strip().lower()
     if not raw:
         return "ashare"
-    return _MARKET_ALIASES.get(raw, raw if raw in _DEFAULT_LIMITS["market_rules"] else "ashare")
+    return _MARKET_ALIASES.get(
+        raw, raw if raw in _DEFAULT_LIMITS["market_rules"] else "ashare"
+    )
 
 
 def _market_rule(limits: dict[str, Any], market: str) -> dict[str, Any]:
@@ -183,15 +187,23 @@ def _order_trade_date(order: dict[str, Any]) -> date:
         if parsed is not None:
             return parsed
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
     try:
-        import zoneinfo; bj = zoneinfo.ZoneInfo("Asia/Shanghai")
+        import zoneinfo
+
+        bj = zoneinfo.ZoneInfo("Asia/Shanghai")
     except Exception:
         bj = _tz(_td(hours=8))
     return _dt.now(bj).date()
 
 
 def _is_sell_order(order: dict[str, Any]) -> bool:
-    return str(order.get("side", "") or "").strip().lower() in {"sell", "exit", "close", "reduce"}
+    return str(order.get("side", "") or "").strip().lower() in {
+        "sell",
+        "exit",
+        "close",
+        "reduce",
+    }
 
 
 def _is_buy_order(order: dict[str, Any]) -> bool:
@@ -204,14 +216,26 @@ def _entry_date_from_order(
     positions: list[Any],
     ts_code: str,
 ) -> date | None:
-    for key in ("position_open_date", "entry_date", "open_date", "buy_date", "filled_date"):
+    for key in (
+        "position_open_date",
+        "entry_date",
+        "open_date",
+        "buy_date",
+        "filled_date",
+    ):
         parsed = _parse_date(order.get(key))
         if parsed is not None:
             return parsed
     for position in positions:
         if not isinstance(position, dict) or position.get("ts_code") != ts_code:
             continue
-        for key in ("entry_date", "position_open_date", "open_date", "buy_date", "filled_date"):
+        for key in (
+            "entry_date",
+            "position_open_date",
+            "open_date",
+            "buy_date",
+            "filled_date",
+        ):
             parsed = _parse_date(position.get(key))
             if parsed is not None:
                 return parsed
@@ -225,14 +249,18 @@ def _fallback_next_trading_day(open_day: date) -> date:
     return current
 
 
-def _can_sell_by_market(rule: dict[str, Any], entry_day: date | None, trade_day: date) -> bool:
+def _can_sell_by_market(
+    rule: dict[str, Any], entry_day: date | None, trade_day: date
+) -> bool:
     if entry_day is None:
         return False
     if rule.get("24/7") or str(rule.get("t_plus_N", "")).lower() == "none":
         return True
     if rule.get("t_plus_1"):
         if _t_plus_1 is not None:
-            return bool(_t_plus_1.can_sell(entry_day.isoformat(), trade_day.isoformat()))
+            return bool(
+                _t_plus_1.can_sell(entry_day.isoformat(), trade_day.isoformat())
+            )
         return trade_day >= _fallback_next_trading_day(entry_day)
     if rule.get("t_plus_2"):
         return trade_day >= entry_day + timedelta(days=2)
@@ -256,7 +284,9 @@ def _market_exposure(
             continue
         position_market = _normalize_market(position.get("market", market))
         if position_market == market:
-            exposure += _safe_float(position.get("weight", position.get("market_weight", 0.0)))
+            exposure += _safe_float(
+                position.get("weight", position.get("market_weight", 0.0))
+            )
     return exposure
 
 
@@ -296,17 +326,24 @@ def _pdt_block_reason(
     if not day_trade:
         return ""
 
-    day_trades = int(_safe_float(
-        order.get(
-            "day_trades_5d",
+    day_trades = int(
+        _safe_float(
             order.get(
-                "day_trades_last_5_days",
-                portfolio.get("day_trades_5d", portfolio.get("day_trades_last_5_days", 0)),
-            ),
+                "day_trades_5d",
+                order.get(
+                    "day_trades_last_5_days",
+                    portfolio.get(
+                        "day_trades_5d", portfolio.get("day_trades_last_5_days", 0)
+                    ),
+                ),
+            )
         )
-    ))
+    )
     account_equity = _safe_float(
-        order.get("account_equity", portfolio.get("account_equity", portfolio.get("equity", 0.0)))
+        order.get(
+            "account_equity",
+            portfolio.get("account_equity", portfolio.get("equity", 0.0)),
+        )
     )
     pdt_min_equity = _safe_float(rule.get("pdt_min_equity", 25000.0), 25000.0)
     if day_trades >= 3 and account_equity < pdt_min_equity:
@@ -317,7 +354,9 @@ def _pdt_block_reason(
     return ""
 
 
-def check(order: dict[str, Any], portfolio: dict[str, Any] | None = None) -> dict[str, Any]:
+def check(
+    order: dict[str, Any], portfolio: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """事前风控检查。
 
     Args:
@@ -405,7 +444,11 @@ def check(order: dict[str, Any], portfolio: dict[str, Any] | None = None) -> dic
     sector_max = _safe_float(limits.get("sector_max", 0.40))
     sector_exposure = existing_weight  # 同标的已有
     for p in positions:
-        if isinstance(p, dict) and p.get("sector") == sector and p.get("ts_code") != ts_code:
+        if (
+            isinstance(p, dict)
+            and p.get("sector") == sector
+            and p.get("ts_code") != ts_code
+        ):
             sector_exposure += _safe_float(p.get("weight", 0.0))
 
     new_sector_total = sector_exposure + target_weight
@@ -419,8 +462,12 @@ def check(order: dict[str, Any], portfolio: dict[str, Any] | None = None) -> dic
             )
             adjusted_weight = allowed
 
-    # --- 软限: 总敞口 max 80% ---
-    total_max = _safe_float(limits.get("total_exposure_max", 0.80))
+    # --- 软限: 分市场总敞口 ---
+    # A股账户完整拥有其 50k 权益，但股票毛敞口最多 90%；其它市场
+    # 继续沿用全局默认，避免跨市场行为漂移。
+    total_max = _safe_float(
+        market_rule.get("total_exposure_max", limits.get("total_exposure_max", 0.80))
+    )
     current_exposure = _safe_float(portfolio.get("total_exposure", 0.0))
     new_total_exposure = current_exposure + adjusted_weight
     if new_total_exposure > total_max + 1e-9:
@@ -452,7 +499,9 @@ def check(order: dict[str, Any], portfolio: dict[str, Any] | None = None) -> dic
             }
 
     # --- 软限: 持仓数 ---
-    max_positions = int(market_rule.get("max_positions", limits.get("max_positions", 5)))
+    max_positions = int(
+        market_rule.get("max_positions", limits.get("max_positions", 5))
+    )
     # 已持有的不同标的数
     existing_codes = set()
     for p in positions:
@@ -475,8 +524,16 @@ def check(order: dict[str, Any], portfolio: dict[str, Any] | None = None) -> dic
     entry_day = _entry_date_from_order(order, positions, ts_code)
 
     # --- 硬限: T+1/T+2 卖出窗口 ---
-    if _is_sell_order(order) and not _can_sell_by_market(market_rule, entry_day, trade_day):
-        label = "T+1" if market_rule.get("t_plus_1") else "T+2" if market_rule.get("t_plus_2") else "settlement"
+    if _is_sell_order(order) and not _can_sell_by_market(
+        market_rule, entry_day, trade_day
+    ):
+        label = (
+            "T+1"
+            if market_rule.get("t_plus_1")
+            else "T+2"
+            if market_rule.get("t_plus_2")
+            else "settlement"
+        )
         approved = False
         reasons.append(f"硬拒: {market} {label} 规则禁止当前卖出")
         return {
@@ -499,7 +556,9 @@ def check(order: dict[str, Any], portfolio: dict[str, Any] | None = None) -> dic
         }
 
     # --- 软限: 分市场日亏 → 暂停新增 ---
-    daily_loss_limit = _safe_float(market_rule.get("daily_loss_limit", limits.get("daily_loss_limit", 0.03)))
+    daily_loss_limit = _safe_float(
+        market_rule.get("daily_loss_limit", limits.get("daily_loss_limit", 0.03))
+    )
     daily_pnl = _safe_float(portfolio.get("daily_pnl_pct", 0.0))
     if daily_pnl < -daily_loss_limit:
         if ts_code not in existing_codes:
@@ -595,14 +654,24 @@ def pre_trade_check(
     若调用方未传 portfolio, 允许从 order["portfolio"] 读取; market 缺失时由 check()
     保守回落到 ashare 规则。
     """
-    if portfolio is None and isinstance(order, dict) and isinstance(order.get("portfolio"), dict):
+    if (
+        portfolio is None
+        and isinstance(order, dict)
+        and isinstance(order.get("portfolio"), dict)
+    ):
         portfolio = order.get("portfolio")
     return check(order, portfolio)
 
 
 if __name__ == "__main__":
     import json
-    test_order = {"ts_code": "600519.SH", "weight": 0.12, "sector": "白酒", "turnover_wan": 30000}
+
+    test_order = {
+        "ts_code": "600519.SH",
+        "weight": 0.12,
+        "sector": "白酒",
+        "turnover_wan": 30000,
+    }
     test_portfolio = {
         "positions": [
             {"ts_code": "000858.SZ", "weight": 0.10, "sector": "白酒"},

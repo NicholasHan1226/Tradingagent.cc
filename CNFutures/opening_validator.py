@@ -17,28 +17,43 @@ from typing import Any
 
 try:
     from .review import DEFAULT_REVIEW_PATH, latest_actionable_review
-    from .contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
+    from .contract_rules import (
+        get_contract_rule,
+        is_executable_contract_symbol,
+        normalize_product,
+    )
     from .session import active_trade_date, is_current_session_bar
 except ImportError:  # pragma: no cover - direct script execution fallback
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from CNFutures.review import DEFAULT_REVIEW_PATH, latest_actionable_review
-    from CNFutures.contract_rules import get_contract_rule, is_executable_contract_symbol, normalize_product
+    from CNFutures.contract_rules import (
+        get_contract_rule,
+        is_executable_contract_symbol,
+        normalize_product,
+    )
     from CNFutures.session import active_trade_date, is_current_session_bar
 
 try:
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, TradingagentDataReader
 except Exception:  # pragma: no cover
-    DEFAULT_SHARED_SIGNALS_DB = Path("/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite")
+    DEFAULT_SHARED_SIGNALS_DB = Path(
+        "/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite"
+    )
     TradingagentDataReader = None  # type: ignore[assignment]
 
 DEFAULT_SQLITE_DB = DEFAULT_SHARED_SIGNALS_DB
 DEFAULT_SIGNALS_DIR = Path(__file__).resolve().parents[1] / "signals"
-DEFAULT_RECEIPT_PATH = Path(__file__).resolve().parents[1] / "signals" / "sim_execution_receipts.jsonl"
-DEFAULT_STYLE_WEIGHTS_PATH = Path(__file__).resolve().parents[1] / "shared" / "review" / "cn_futures" / "style_weights.json"
+DEFAULT_RECEIPT_PATH = (
+    Path(__file__).resolve().parents[1] / "signals" / "sim_execution_receipts.jsonl"
+)
 CN_TZ = timezone(timedelta(hours=8))
 READER_MARKET = "Futures"
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
-SESSION_WAIT_REASONS = {"style_session_not_allowed", "night_session_not_allowed", "product_night_session_closed"}
+SESSION_WAIT_REASONS = {
+    "style_session_not_allowed",
+    "night_session_not_allowed",
+    "product_night_session_closed",
+}
 STRATEGY_WAIT_REASONS = SESSION_WAIT_REASONS | {
     "insufficient_distinct_product_coverage",
     "style_paused",
@@ -67,7 +82,9 @@ def _session_start(now: datetime) -> tuple[str, datetime | None]:
     if current >= time(21, 0):
         return "night", datetime.combine(now.date(), time(21, 0), tzinfo=CN_TZ)
     if current <= time(2, 30):
-        return "night", datetime.combine(now.date() - timedelta(days=1), time(21, 0), tzinfo=CN_TZ)
+        return "night", datetime.combine(
+            now.date() - timedelta(days=1), time(21, 0), tzinfo=CN_TZ
+        )
     return "closed", None
 
 
@@ -116,7 +133,9 @@ def _reader_daily_start(trade_date: str, *, lookback_days: int = 30) -> str:
     return (parsed - timedelta(days=max(1, int(lookback_days)))).strftime("%Y%m%d")
 
 
-def _reader_symbols(reader: Any | None, *, limit: int = 80, as_of: str = "") -> list[str]:
+def _reader_symbols(
+    reader: Any | None, *, limit: int = 80, as_of: str = ""
+) -> list[str]:
     if reader is None:
         return []
     get_assets = getattr(reader, "get_assets", None)
@@ -165,7 +184,13 @@ def _reader_symbols(reader: Any | None, *, limit: int = 80, as_of: str = "") -> 
 
 
 def _contract_coverage(symbols: list[str]) -> dict[str, Any]:
-    raw_symbols = sorted({str(symbol or "").strip().upper() for symbol in symbols if str(symbol or "").strip()})
+    raw_symbols = sorted(
+        {
+            str(symbol or "").strip().upper()
+            for symbol in symbols
+            if str(symbol or "").strip()
+        }
+    )
     executable: list[str] = []
     unsupported_products: set[str] = set()
     products: set[str] = set()
@@ -195,13 +220,20 @@ def _contract_coverage(symbols: list[str]) -> dict[str, Any]:
     }
 
 
-def _query_daily_bars_via_reader(reader: Any | None, trade_date: str, *, min_symbols: int) -> dict[str, Any]:
+def _query_daily_bars_via_reader(
+    reader: Any | None, trade_date: str, *, min_symbols: int
+) -> dict[str, Any]:
     get_bars_daily = getattr(reader, "get_bars_daily", None)
     if not callable(get_bars_daily):
         return {"error": "sharedsignals_reader_unavailable", "symbol_count": 0}
-    symbols = _reader_symbols(reader, limit=max(80, int(min_symbols) * 20), as_of=trade_date)
+    symbols = _reader_symbols(
+        reader, limit=max(80, int(min_symbols) * 20), as_of=trade_date
+    )
     if not symbols:
-        return {"error": "futures_assets_empty_from_sharedsignals_reader", "symbol_count": 0}
+        return {
+            "error": "futures_assets_empty_from_sharedsignals_reader",
+            "symbol_count": 0,
+        }
     latest_dates: list[str] = []
     daily_bar_count = 0
     priced_symbols: list[str] = []
@@ -212,15 +244,17 @@ def _query_daily_bars_via_reader(reader: Any | None, trade_date: str, *, min_sym
         except Exception:
             rows = []
         priced_rows = [
-            dict(row)
-            for row in rows or []
-            if float(dict(row).get("close") or 0) > 0
+            dict(row) for row in rows or [] if float(dict(row).get("close") or 0) > 0
         ]
         if not priced_rows:
             continue
         daily_bar_count += len(priced_rows)
         priced_symbols.append(symbol)
-        latest_dates.extend(str(row.get("trade_date") or "") for row in priced_rows if row.get("trade_date"))
+        latest_dates.extend(
+            str(row.get("trade_date") or "")
+            for row in priced_rows
+            if row.get("trade_date")
+        )
     coverage = _contract_coverage(priced_symbols)
     return {
         "daily_bar_count": daily_bar_count,
@@ -269,7 +303,12 @@ def _query_daily_bars_sqlite(db_path: Path, trade_date: str) -> dict[str, Any]:
 
 def _query_intraday_readiness_sqlite(db_path: Path, trade_date: str) -> dict[str, Any]:
     if not db_path.exists():
-        return {"reachable": False, "error": f"sqlite database not found: {db_path}", "bar_count": 0, "symbol_count": 0}
+        return {
+            "reachable": False,
+            "error": f"sqlite database not found: {db_path}",
+            "bar_count": 0,
+            "symbol_count": 0,
+        }
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -284,7 +323,12 @@ def _query_intraday_readiness_sqlite(db_path: Path, trade_date: str) -> dict[str
             (trade_date,),
         ).fetchone()
     except Exception as exc:  # noqa: BLE001
-        return {"reachable": False, "error": f"{exc.__class__.__name__}: {exc}", "bar_count": 0, "symbol_count": 0}
+        return {
+            "reachable": False,
+            "error": f"{exc.__class__.__name__}: {exc}",
+            "bar_count": 0,
+            "symbol_count": 0,
+        }
     finally:
         if conn is not None:
             conn.close()
@@ -299,41 +343,15 @@ def _query_intraday_readiness_sqlite(db_path: Path, trade_date: str) -> dict[str
     }
 
 
-def _style_state_summary(path: Path = DEFAULT_STYLE_WEIGHTS_PATH) -> dict[str, Any]:
-    if not path.exists():
-        return {"path": str(path), "exists": False, "style_count": 0, "active_styles": 0, "paused_styles": 0, "real_trading_enabled": False}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        return {"path": str(path), "exists": True, "error": f"{exc.__class__.__name__}: {exc}", "style_count": 0, "active_styles": 0, "paused_styles": 0, "real_trading_enabled": False}
-    styles = payload.get("styles") if isinstance(payload, dict) else {}
-    if not isinstance(styles, dict):
-        styles = {}
-    active = 0
-    paused = 0
-    night_allowed = 0
-    for style in styles.values():
-        if not isinstance(style, dict):
-            continue
-        status = str(style.get("status") or "active").lower()
-        is_paused = status in {"paused", "deprecated", "disabled"} or style.get("paused") is True
-        paused += 1 if is_paused else 0
-        active += 0 if is_paused else 1
-        night_allowed += 1 if style.get("night_session_allowed") is True else 0
-    return {
-        "path": str(path),
-        "exists": True,
-        "style_count": len(styles),
-        "active_styles": active,
-        "paused_styles": paused,
-        "night_session_allowed_styles": night_allowed,
-        "real_trading_enabled": bool(payload.get("real_trading_enabled")) if isinstance(payload, dict) else False,
-    }
-
-
-def _query_session_bars_sqlite(db_path: Path, start: datetime, now: datetime) -> dict[str, Any]:
+def _query_session_bars_sqlite(
+    db_path: Path, start: datetime, now: datetime
+) -> dict[str, Any]:
     if not db_path.exists():
-        return {"error": f"sqlite database not found: {db_path}", "symbol_count": 0, "bar_count": 0}
+        return {
+            "error": f"sqlite database not found: {db_path}",
+            "symbol_count": 0,
+            "bar_count": 0,
+        }
     start_text = start.strftime("%Y-%m-%d %H:%M:%S")
     now_text = now.strftime("%Y-%m-%d %H:%M:%S")
     conn: sqlite3.Connection | None = None
@@ -351,7 +369,11 @@ def _query_session_bars_sqlite(db_path: Path, start: datetime, now: datetime) ->
             (start_text, now_text),
         ).fetchone()
     except Exception as exc:  # noqa: BLE001
-        return {"error": f"{exc.__class__.__name__}: {exc}", "symbol_count": 0, "bar_count": 0}
+        return {
+            "error": f"{exc.__class__.__name__}: {exc}",
+            "symbol_count": 0,
+            "bar_count": 0,
+        }
     finally:
         if conn is not None:
             conn.close()
@@ -374,10 +396,20 @@ def _query_session_bars_via_reader(
 ) -> dict[str, Any]:
     get_bars_intraday = getattr(reader, "get_bars_intraday", None)
     if not callable(get_bars_intraday):
-        return {"error": "sharedsignals_reader_unavailable", "symbol_count": 0, "bar_count": 0}
-    symbols = _reader_symbols(reader, limit=max(80, int(min_symbols) * 20), as_of=start.strftime("%Y%m%d"))
+        return {
+            "error": "sharedsignals_reader_unavailable",
+            "symbol_count": 0,
+            "bar_count": 0,
+        }
+    symbols = _reader_symbols(
+        reader, limit=max(80, int(min_symbols) * 20), as_of=start.strftime("%Y%m%d")
+    )
     if not symbols:
-        return {"error": "futures_assets_empty_from_sharedsignals_reader", "symbol_count": 0, "bar_count": 0}
+        return {
+            "error": "futures_assets_empty_from_sharedsignals_reader",
+            "symbol_count": 0,
+            "bar_count": 0,
+        }
     start_text = start.strftime("%Y-%m-%d %H:%M:%S")
     now_text = now.strftime("%Y-%m-%d %H:%M:%S")
     first_bar = ""
@@ -386,7 +418,13 @@ def _query_session_bars_via_reader(
     symbol_count = 0
     for symbol in symbols:
         try:
-            rows = get_bars_intraday(READER_MARKET, symbol, "5min", start.strftime("%Y%m%d"), now.strftime("%Y%m%d"))
+            rows = get_bars_intraday(
+                READER_MARKET,
+                symbol,
+                "5min",
+                start.strftime("%Y%m%d"),
+                now.strftime("%Y%m%d"),
+            )
         except Exception:
             rows = []
         in_session = []
@@ -399,7 +437,9 @@ def _query_session_bars_via_reader(
             continue
         symbol_count += 1
         bar_count += len(in_session)
-        times = [str(row.get("bar_time") or row.get("time") or "") for row in in_session]
+        times = [
+            str(row.get("bar_time") or row.get("time") or "") for row in in_session
+        ]
         if times:
             first_bar = min([first_bar, *times]) if first_bar else min(times)
             latest_bar = max([latest_bar, *times]) if latest_bar else max(times)
@@ -412,18 +452,45 @@ def _query_session_bars_via_reader(
     }
 
 
-def _query_session_bars_via_api(start: datetime, now: datetime, *, min_symbols: int) -> dict[str, Any]:
-    base_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip().rstrip("/")
-    url = f"{base_url}/realtime_5min?{urllib.parse.urlencode({'market': READER_MARKET})}"
+def _query_session_bars_via_api(
+    start: datetime, now: datetime, *, min_symbols: int
+) -> dict[str, Any]:
+    base_url = (
+        os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL)
+        .strip()
+        .rstrip("/")
+    )
+    url = (
+        f"{base_url}/realtime_5min?{urllib.parse.urlencode({'market': READER_MARKET})}"
+    )
     try:
-        req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+        req = urllib.request.Request(
+            url, headers={"Accept": "application/json"}, method="GET"
+        )
         with urllib.request.urlopen(req, timeout=10) as resp:
             payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except (OSError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
-        return {"error": f"sharedsignals_api_error:{exc.__class__.__name__}: {exc}", "symbol_count": 0, "bar_count": 0, "query_source": "SharedSignals API", "url": url}
+    except (
+        OSError,
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        json.JSONDecodeError,
+    ) as exc:
+        return {
+            "error": f"sharedsignals_api_error:{exc.__class__.__name__}: {exc}",
+            "symbol_count": 0,
+            "bar_count": 0,
+            "query_source": "SharedSignals API",
+            "url": url,
+        }
     rows = payload.get("data") if isinstance(payload, dict) else payload
     if not isinstance(rows, list):
-        return {"error": "sharedsignals_api_invalid_payload", "symbol_count": 0, "bar_count": 0, "query_source": "SharedSignals API", "url": url}
+        return {
+            "error": "sharedsignals_api_invalid_payload",
+            "symbol_count": 0,
+            "bar_count": 0,
+            "query_source": "SharedSignals API",
+            "url": url,
+        }
     session_age_minutes = max(0.0, (now - start).total_seconds() / 60.0)
     priced: list[dict[str, Any]] = []
     for row in rows:
@@ -448,8 +515,17 @@ def _query_session_bars_via_api(start: datetime, now: datetime, *, min_symbols: 
         if not is_executable_contract_symbol(symbol):
             continue
         priced.append(row)
-    symbols = sorted({str(row.get("symbol") or row.get("ts_code") or "").strip().upper() for row in priced})
-    times = [str(row.get("bar_time") or row.get("time") or "") for row in priced if row.get("bar_time") or row.get("time")]
+    symbols = sorted(
+        {
+            str(row.get("symbol") or row.get("ts_code") or "").strip().upper()
+            for row in priced
+        }
+    )
+    times = [
+        str(row.get("bar_time") or row.get("time") or "")
+        for row in priced
+        if row.get("bar_time") or row.get("time")
+    ]
     return {
         "bar_count": len(priced),
         "symbol_count": len(symbols),
@@ -474,9 +550,15 @@ def _allow_sqlite_fallback(sqlite_db: Path) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _query_daily_bars(db_path: Path, trade_date: str, *, reader: Any | None = None, min_symbols: int = 4) -> dict[str, Any]:
-    payload = _query_daily_bars_via_reader(_reader_for_db(db_path, reader), trade_date, min_symbols=min_symbols)
-    if not payload.get("error") and int(payload.get("symbol_count") or 0) >= max(1, int(min_symbols)):
+def _query_daily_bars(
+    db_path: Path, trade_date: str, *, reader: Any | None = None, min_symbols: int = 4
+) -> dict[str, Any]:
+    payload = _query_daily_bars_via_reader(
+        _reader_for_db(db_path, reader), trade_date, min_symbols=min_symbols
+    )
+    if not payload.get("error") and int(payload.get("symbol_count") or 0) >= max(
+        1, int(min_symbols)
+    ):
         return payload
     if _allow_sqlite_fallback(db_path):
         fallback = _query_daily_bars_sqlite(db_path, trade_date)
@@ -489,7 +571,14 @@ def _query_daily_bars(db_path: Path, trade_date: str, *, reader: Any | None = No
     return payload
 
 
-def _query_session_bars(db_path: Path, start: datetime, now: datetime, *, reader: Any | None = None, min_symbols: int = 4) -> dict[str, Any]:
+def _query_session_bars(
+    db_path: Path,
+    start: datetime,
+    now: datetime,
+    *,
+    reader: Any | None = None,
+    min_symbols: int = 4,
+) -> dict[str, Any]:
     api_payload = _query_session_bars_via_api(start, now, min_symbols=min_symbols)
     if (
         not api_payload.get("error")
@@ -497,7 +586,9 @@ def _query_session_bars(db_path: Path, start: datetime, now: datetime, *, reader
         and int(api_payload.get("symbol_count") or 0) >= max(1, int(min_symbols))
     ):
         return api_payload
-    payload = _query_session_bars_via_reader(_reader_for_db(db_path, reader), start, now, min_symbols=min_symbols)
+    payload = _query_session_bars_via_reader(
+        _reader_for_db(db_path, reader), start, now, min_symbols=min_symbols
+    )
     if (
         not payload.get("error")
         and int(payload.get("bar_count") or 0) > 0
@@ -509,10 +600,9 @@ def _query_session_bars(db_path: Path, start: datetime, now: datetime, *, reader
         fallback["query_source"] = "SharedSignals read_model/sqlite"
         if payload.get("error"):
             fallback["reader_error"] = payload.get("error")
-        elif (
-            int(payload.get("bar_count") or 0) <= 0
-            or int(payload.get("symbol_count") or 0) < max(1, int(min_symbols))
-        ):
+        elif int(payload.get("bar_count") or 0) <= 0 or int(
+            payload.get("symbol_count") or 0
+        ) < max(1, int(min_symbols)):
             fallback["reader_shortfall"] = payload
         return fallback
     return payload
@@ -541,7 +631,11 @@ def _read_latest_review(path: Path, *, now: datetime | None = None) -> dict[str,
 def _count_jsonl_rows(path: Path) -> int:
     if not path.exists():
         return 0
-    return sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+    return sum(
+        1
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.strip()
+    )
 
 
 def _count_filled_signals(signals_dir: Path, date: str) -> int:
@@ -557,7 +651,12 @@ def _count_filled_signals(signals_dir: Path, date: str) -> int:
             continue
         if not isinstance(payload, dict):
             continue
-        card_date = str(payload.get("trade_date") or payload.get("valid_until") or payload.get("bar_time") or "")[:10].replace("-", "")
+        card_date = str(
+            payload.get("trade_date")
+            or payload.get("valid_until")
+            or payload.get("bar_time")
+            or ""
+        )[:10].replace("-", "")
         if card_date == trade_date:
             count += 1
     return count
@@ -578,7 +677,9 @@ def _count_market_receipts(receipt_path: Path, date: str) -> int:
             continue
         if str(payload.get("market") or "").lower() != "cn_futures":
             continue
-        receipt_date = str(payload.get("trade_date") or payload.get("receipt_at") or "")[:10].replace("-", "")
+        receipt_date = str(
+            payload.get("trade_date") or payload.get("receipt_at") or ""
+        )[:10].replace("-", "")
         if receipt_date == date:
             count += 1
     return count
@@ -595,12 +696,26 @@ def _opening_30m_review(
 ) -> dict[str, Any]:
     bar_count = int(bars.get("bar_count") or 0)
     symbol_count = int(bars.get("symbol_count") or 0)
-    hold_summary = latest_review.get("hold_reason_summary", {}) if isinstance(latest_review.get("hold_reason_summary"), dict) else {}
-    hold_by_reason = hold_summary.get("by_reason") if isinstance(hold_summary.get("by_reason"), dict) else {}
-    hold_count = int(latest_review.get("hold_count") or hold_summary.get("total") or 0) if latest_review else 0
+    hold_summary = (
+        latest_review.get("hold_reason_summary", {})
+        if isinstance(latest_review.get("hold_reason_summary"), dict)
+        else {}
+    )
+    hold_by_reason = (
+        hold_summary.get("by_reason")
+        if isinstance(hold_summary.get("by_reason"), dict)
+        else {}
+    )
+    hold_count = (
+        int(latest_review.get("hold_count") or hold_summary.get("total") or 0)
+        if latest_review
+        else 0
+    )
     top_hold_reason = ""
     if hold_by_reason:
-        top_hold_reason = max(hold_by_reason.items(), key=lambda item: int(item[1] or 0))[0]
+        top_hold_reason = max(
+            hold_by_reason.items(), key=lambda item: int(item[1] or 0)
+        )[0]
     if elapsed_minutes is None:
         status = "waiting"
         phase = "outside_session"
@@ -626,7 +741,11 @@ def _opening_30m_review(
             status = "warn"
             phase = "insufficient_5min_data"
             action = "check_cn_futures_5min_collector"
-    elif int(latest_review.get("filled_count") or 0) <= 0 and filled_signal_count <= 0 and hold_count > 0:
+    elif (
+        int(latest_review.get("filled_count") or 0) <= 0
+        and filled_signal_count <= 0
+        and hold_count > 0
+    ):
         if top_hold_reason in SESSION_WAIT_REASONS:
             status = "pass"
             phase = "no_night_session"
@@ -659,7 +778,9 @@ def _opening_30m_review(
             "symbol_count": symbol_count,
             "min_symbols": max(1, int(min_symbols)),
             "latest_review_exists": bool(latest_review),
-            "latest_review_filled_count": int(latest_review.get("filled_count") or 0) if latest_review else 0,
+            "latest_review_filled_count": int(latest_review.get("filled_count") or 0)
+            if latest_review
+            else 0,
             "latest_review_hold_count": hold_count,
             "filled_signals": filled_signal_count,
             "sim_execution_receipts": receipt_count,
@@ -695,24 +816,20 @@ def validate_pre_open(
         return {**result, "status": "warn", "reason": "not_in_pre_open_window"}
     bars = _query_daily_bars(sqlite_db, start.strftime("%Y%m%d"))
     if _allow_sqlite_fallback(sqlite_db):
-        intraday_readiness = _query_intraday_readiness_sqlite(sqlite_db, start.strftime("%Y%m%d"))
+        intraday_readiness = _query_intraday_readiness_sqlite(
+            sqlite_db, start.strftime("%Y%m%d")
+        )
     else:
         intraday_readiness = {
             "reachable": False,
             "reason": "sqlite_diagnostic_disabled",
             "sqlite_db": str(sqlite_db),
         }
-    style_state = _style_state_summary()
     warnings: list[str] = []
     if not intraday_readiness.get("reachable"):
         warnings.append("intraday_read_model_not_ready")
-    if style_state.get("exists") and int(style_state.get("style_count") or 0) > 0 and int(style_state.get("active_styles") or 0) <= 0:
-        warnings.append("no_active_cn_futures_styles")
-    if style_state.get("real_trading_enabled"):
-        warnings.append("real_trading_enabled_unexpected_for_simulated_only_market")
     result.update(bars)
     result["intraday_readiness"] = intraday_readiness
-    result["style_state"] = style_state
     result["warnings"] = warnings
     if bars.get("error"):
         result["status"] = "fail"
@@ -720,7 +837,7 @@ def validate_pre_open(
     elif int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
         result["status"] = "warn"
         result["reason"] = "pre_open_executable_daily_bars_missing"
-    elif "intraday_read_model_not_ready" in warnings or "no_active_cn_futures_styles" in warnings:
+    elif "intraday_read_model_not_ready" in warnings:
         result["status"] = "warn"
         result["reason"] = warnings[0]
     else:
@@ -745,7 +862,9 @@ def first_sample_alerts(
     else:
         current = current.astimezone(CN_TZ)
     session_name, start = _session_start(current)
-    elapsed_minutes = int((current - start).total_seconds() // 60) if start is not None else None
+    elapsed_minutes = (
+        int((current - start).total_seconds() // 60) if start is not None else None
+    )
     result: dict[str, Any] = {
         "market": "cn_futures",
         "report_type": "first_sample_alert",
@@ -768,23 +887,32 @@ def first_sample_alerts(
         return {**result, "status": "pass", "reason": "first_sample_check_not_due"}
 
     bars = _query_session_bars_via_api(start, current, min_symbols=min_symbols)
-    if (bars.get("error") or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols))) and _allow_sqlite_fallback(sqlite_db):
+    if (
+        bars.get("error")
+        or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols))
+    ) and _allow_sqlite_fallback(sqlite_db):
         fallback = _query_session_bars(sqlite_db, start, current)
         fallback["primary_api_result"] = bars
         bars = fallback
     result.update(bars)
     alerts: list[dict[str, Any]] = []
     latest_review = _read_latest_review(review_path, now=current)
-    latest_filled_count = int(latest_review.get("filled_count") or 0) if latest_review else 0
+    latest_filled_count = (
+        int(latest_review.get("filled_count") or 0) if latest_review else 0
+    )
     trade_date = active_trade_date(current)
     filled_signal_count = _count_filled_signals(signals_dir, trade_date)
     receipt_count = _count_market_receipts(receipt_path, trade_date)
     result["latest_review"] = {
         "exists": bool(latest_review),
         "generated_at": latest_review.get("generated_at", "") if latest_review else "",
-        "latest_bar_time": latest_review.get("latest_bar_time") or latest_review.get("bar_time") or "",
+        "latest_bar_time": latest_review.get("latest_bar_time")
+        or latest_review.get("bar_time")
+        or "",
         "filled_count": latest_filled_count,
-        "real_trading_enabled": bool(latest_review.get("real_trading_enabled")) if latest_review else False,
+        "real_trading_enabled": bool(latest_review.get("real_trading_enabled"))
+        if latest_review
+        else False,
     }
     result["samples"] = {
         "filled_signals": filled_signal_count,
@@ -801,24 +929,60 @@ def first_sample_alerts(
     )
     opening_phase = str(result["opening_30m_review"].get("phase") or "")
     if bars.get("error"):
-        alerts.append({"severity": "error", "code": "futures_5min_check_failed", "message": "期货5分钟首样本检查无法读取 SharedSignals API。"})
-    elif (
-        opening_phase not in {"no_night_session", "strategy_hold"}
-        and (int(bars.get("bar_count") or 0) <= 0 or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)))
+        alerts.append(
+            {
+                "severity": "error",
+                "code": "futures_5min_check_failed",
+                "message": "期货5分钟首样本检查无法读取 SharedSignals API。",
+            }
+        )
+    elif opening_phase not in {"no_night_session", "strategy_hold"} and (
+        int(bars.get("bar_count") or 0) <= 0
+        or int(bars.get("symbol_count") or 0) < max(1, int(min_symbols))
     ):
-        alerts.append({"severity": "warn", "code": "futures_5min_missing_in_session", "message": "期货交易时段开始后仍缺少足够的 Futures 5分钟数据。"})
+        alerts.append(
+            {
+                "severity": "warn",
+                "code": "futures_5min_missing_in_session",
+                "message": "期货交易时段开始后仍缺少足够的 Futures 5分钟数据。",
+            }
+        )
     if result["opening_30m_review"]["status"] == "warn":
-        alerts.append({
-            "severity": "warn",
-            "code": f"cn_futures_opening_30m_{result['opening_30m_review']['phase']}",
-            "message": "CNFutures 开盘后30分钟验收未完全通过。",
-        })
+        alerts.append(
+            {
+                "severity": "warn",
+                "code": f"cn_futures_opening_30m_{result['opening_30m_review']['phase']}",
+                "message": "CNFutures 开盘后30分钟验收未完全通过。",
+            }
+        )
     if result["latest_review"]["real_trading_enabled"]:
-        alerts.append({"severity": "error", "code": "cn_futures_real_trading_flag_enabled", "message": "CNFutures 复盘样本错误带有实盘启用标记。"})
-    if latest_filled_count <= 0 and filled_signal_count <= 0 and opening_phase not in {"strategy_hold", "no_night_session"}:
-        alerts.append({"severity": "warn", "code": "cn_futures_first_sim_sample_missing", "message": "期货5分钟数据已进入会话窗口，但 TradingAgent 尚无首个模拟成交样本。"})
+        alerts.append(
+            {
+                "severity": "error",
+                "code": "cn_futures_real_trading_flag_enabled",
+                "message": "CNFutures 复盘样本错误带有实盘启用标记。",
+            }
+        )
+    if (
+        latest_filled_count <= 0
+        and filled_signal_count <= 0
+        and opening_phase not in {"strategy_hold", "no_night_session"}
+    ):
+        alerts.append(
+            {
+                "severity": "warn",
+                "code": "cn_futures_first_sim_sample_missing",
+                "message": "期货5分钟数据已进入会话窗口，但 TradingAgent 尚无首个模拟成交样本。",
+            }
+        )
     if filled_signal_count > 0 and receipt_count <= 0:
-        alerts.append({"severity": "warn", "code": "cn_futures_first_receipt_missing", "message": "CNFutures 已有模拟成交信号，但签名回执尚未生成。"})
+        alerts.append(
+            {
+                "severity": "warn",
+                "code": "cn_futures_first_receipt_missing",
+                "message": "CNFutures 已有模拟成交信号，但签名回执尚未生成。",
+            }
+        )
     result["alerts"] = alerts
     result["status"] = "warn" if alerts else "pass"
     result["reason"] = "first_sample_alerts_present" if alerts else "first_sample_ready"
@@ -869,7 +1033,9 @@ def validate_opening(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Read-only CN futures opening 5-minute data validation.")
+    parser = argparse.ArgumentParser(
+        description="Read-only CN futures opening 5-minute data validation."
+    )
     parser.add_argument("--sqlite-db", type=Path, default=DEFAULT_SQLITE_DB)
     parser.add_argument("--review-path", type=Path, default=DEFAULT_REVIEW_PATH)
     parser.add_argument("--signals-dir", type=Path, default=DEFAULT_SIGNALS_DIR)
@@ -887,7 +1053,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     now = _parse_now(args.now)
     if args.pre_open:
-        report = validate_pre_open(sqlite_db=args.sqlite_db, now=now, min_symbols=args.min_symbols)
+        report = validate_pre_open(
+            sqlite_db=args.sqlite_db, now=now, min_symbols=args.min_symbols
+        )
     elif args.first_sample:
         report = first_sample_alerts(
             sqlite_db=args.sqlite_db,
@@ -899,7 +1067,9 @@ def main(argv: list[str] | None = None) -> int:
             wait_minutes=args.wait_minutes,
         )
     else:
-        report = validate_opening(sqlite_db=args.sqlite_db, now=now, min_symbols=args.min_symbols)
+        report = validate_opening(
+            sqlite_db=args.sqlite_db, now=now, min_symbols=args.min_symbols
+        )
     print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
     return 2 if report.get("status") == "fail" else 0
 

@@ -23,7 +23,8 @@ market_rules:
     daily_loss_limit: 0.03
     limit_up_down: true
     pre_market_auction: true
-    max_positions: 5
+    max_positions: 8
+    total_exposure_max: 0.90
   crypto:
     t_plus_1: false
     daily_loss_limit: 0.10

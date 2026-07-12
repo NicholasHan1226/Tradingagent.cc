@@ -33,6 +33,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+from shared.execution.execution_reality import ashare_execution_reality
+
 LEDGER_DIR = Path(__file__).resolve().parent.parent / "logs"
 CAPITAL_CSV = LEDGER_DIR / "capital_ledger.csv"
 CAPITAL_DB = LEDGER_DIR / "capital_ledger.sqlite3"
@@ -51,7 +53,7 @@ CSV_HEADERS = [
     "entry_id",
     "timestamp",
     "event_type",
-    "capital_layer",   # shadow | simulated | real
+    "capital_layer",  # shadow | simulated | real
     "ts_code",
     "quantity",
     "price",
@@ -62,11 +64,13 @@ CSV_HEADERS = [
     "note",
 ]
 
+_ASHARE_EXECUTION_REALITY = ashare_execution_reality()
 FEE_CONFIG = {
-    "commission_rate": 0.00025,
-    "commission_min": 5.0,
-    "stamp_duty_rate": 0.0005,
-    "transfer_fee_rate": 0.00002,
+    "model_version": _ASHARE_EXECUTION_REALITY.model_version,
+    "commission_rate": _ASHARE_EXECUTION_REALITY.commission_bps / 10_000.0,
+    "commission_min": _ASHARE_EXECUTION_REALITY.min_commission_cny,
+    "stamp_duty_rate": _ASHARE_EXECUTION_REALITY.stamp_duty_sell_bps / 10_000.0,
+    "transfer_fee_rate": _ASHARE_EXECUTION_REALITY.transfer_fee_bps / 10_000.0,
 }
 
 
@@ -102,7 +106,11 @@ def _ledger_lock() -> Iterator[None]:
 
 def _acquire_exclusive_lock(fd: int, lock_path: Path) -> None:
     last_error: OSError | None = None
-    retry_errnos = {errno.EACCES, errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN)}
+    retry_errnos = {
+        errno.EACCES,
+        errno.EAGAIN,
+        getattr(errno, "EWOULDBLOCK", errno.EAGAIN),
+    }
     for attempt in range(1, LOCK_RETRY_ATTEMPTS + 1):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -113,7 +121,9 @@ def _acquire_exclusive_lock(fd: int, lock_path: Path) -> None:
             last_error = exc
             if attempt < LOCK_RETRY_ATTEMPTS:
                 time.sleep(LOCK_RETRY_DELAY_SECONDS * attempt)
-    raise TimeoutError(f"Could not acquire ledger lock {lock_path} after {LOCK_RETRY_ATTEMPTS} attempts") from last_error
+    raise TimeoutError(
+        f"Could not acquire ledger lock {lock_path} after {LOCK_RETRY_ATTEMPTS} attempts"
+    ) from last_error
 
 
 def _normalize_capital_layer(value: str | None) -> str:
@@ -194,7 +204,9 @@ def _ensure_db_unlocked(conn: sqlite3.Connection) -> None:
 
 def _insert_entry_unlocked(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     normalized = {key: str(row.get(key, "") or "") for key in CSV_HEADERS}
-    normalized["capital_layer"] = _normalize_capital_layer(normalized.get("capital_layer"))
+    normalized["capital_layer"] = _normalize_capital_layer(
+        normalized.get("capital_layer")
+    )
     table = _table_for_layer(normalized["capital_layer"])
     placeholders = ", ".join("?" for _ in CSV_HEADERS)
     columns = ", ".join(CSV_HEADERS)
@@ -245,16 +257,15 @@ def _append(entry: CapitalEntry) -> str:
 
 
 def _calc_buy_fee(amount: float) -> float:
-    commission = max(amount * FEE_CONFIG["commission_rate"], FEE_CONFIG["commission_min"])
-    transfer = amount * FEE_CONFIG["transfer_fee_rate"]
-    return round(commission + transfer, 2)
+    return round(
+        float(_ASHARE_EXECUTION_REALITY.calculate_fees("buy", amount)["total"]), 2
+    )
 
 
 def _calc_sell_fee(amount: float) -> float:
-    commission = max(amount * FEE_CONFIG["commission_rate"], FEE_CONFIG["commission_min"])
-    stamp = amount * FEE_CONFIG["stamp_duty_rate"]
-    transfer = amount * FEE_CONFIG["transfer_fee_rate"]
-    return round(commission + stamp + transfer, 2)
+    return round(
+        float(_ASHARE_EXECUTION_REALITY.calculate_fees("sell", amount)["total"]), 2
+    )
 
 
 def record_deposit(
@@ -519,7 +530,9 @@ def get_capital_balance(
         entries = [e for e in entries if e["timestamp"] <= as_of]
 
     total_inflow = sum(float(e["amount"]) for e in entries if float(e["amount"]) > 0)
-    total_outflow = sum(abs(float(e["amount"])) for e in entries if float(e["amount"]) < 0)
+    total_outflow = sum(
+        abs(float(e["amount"])) for e in entries if float(e["amount"]) < 0
+    )
     balance = round(total_inflow - total_outflow, 2)
 
     return {
@@ -532,7 +545,9 @@ def get_capital_balance(
     }
 
 
-def get_cash_position(as_of: str | None = None, capital_layer: str | None = None) -> float:
+def get_cash_position(
+    as_of: str | None = None, capital_layer: str | None = None
+) -> float:
     layer = "real" if capital_layer is None else capital_layer
     return get_capital_balance(as_of=as_of, capital_layer=layer)["balance"]
 
@@ -540,7 +555,9 @@ def get_cash_position(as_of: str | None = None, capital_layer: str | None = None
 if __name__ == "__main__":
     r1 = record_buy("600519.SH", 100, 10.00, order_id="TEST-001", note="smoke test buy")
     print("buy:", r1)
-    r2 = record_sell("600519.SH", 100, 11.00, order_id="TEST-002", note="smoke test sell")
+    r2 = record_sell(
+        "600519.SH", 100, 11.00, order_id="TEST-002", note="smoke test sell"
+    )
     print("sell:", r2)
     r3 = record_reverse_repo(10000.0, 0.025, note="GC001 smoke")
     print("repo:", r3)

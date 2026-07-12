@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Hard-boundary tests for real-money execution paths."""
 
 from __future__ import annotations
@@ -24,12 +25,24 @@ class RealMoneyBoundaryTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.signals_dir = self.root / "signals"
         self._patch_module_attr(hermes_bridge, "SIGNALS_DIR", self.signals_dir)
-        self._patch_module_attr(hermes_bridge, "PENDING_DIR", self.signals_dir / "pending")
-        self._patch_module_attr(hermes_bridge, "FILLED_DIR", self.signals_dir / "filled")
-        self._patch_module_attr(hermes_bridge, "CANCELLED_DIR", self.signals_dir / "cancelled")
-        self._patch_module_attr(hermes_bridge, "POSITIONS_DIR", self.signals_dir / "positions")
-        self._patch_module_attr(hermes_bridge, "POSITIONS_FILE", self.signals_dir / "positions.json")
-        self._patch_module_attr(execution_router, "ROUTER_LOG", self.root / "router_decisions.jsonl")
+        self._patch_module_attr(
+            hermes_bridge, "PENDING_DIR", self.signals_dir / "pending"
+        )
+        self._patch_module_attr(
+            hermes_bridge, "FILLED_DIR", self.signals_dir / "filled"
+        )
+        self._patch_module_attr(
+            hermes_bridge, "CANCELLED_DIR", self.signals_dir / "cancelled"
+        )
+        self._patch_module_attr(
+            hermes_bridge, "POSITIONS_DIR", self.signals_dir / "positions"
+        )
+        self._patch_module_attr(
+            hermes_bridge, "POSITIONS_FILE", self.signals_dir / "positions.json"
+        )
+        self._patch_module_attr(
+            execution_router, "ROUTER_LOG", self.root / "router_decisions.jsonl"
+        )
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -105,8 +118,12 @@ class RealMoneyBoundaryTest(unittest.TestCase):
         )
 
         self.assertFalse(result["executed"])
-        self.assertEqual(result["message"], "graduation not met")
-        self.assertEqual(result["result"]["status"], "rejected_graduation")
+        self.assertEqual(result["message"], "automatic real transition disabled")
+        self.assertEqual(result["result"]["status"], "manual_authorization_required")
+        self.assertEqual(
+            result["result"]["reason"],
+            "automatic_shadow_to_real_transition_disabled",
+        )
         self.assertFalse(hermes_bridge.PENDING_DIR.exists())
 
     def test_real_signal_card_without_manual_confirm_is_rejected(self) -> None:
@@ -126,7 +143,7 @@ class RealMoneyBoundaryTest(unittest.TestCase):
         self.assertIn("execution_router", result["message"])
         self.assertFalse((hermes_bridge.PENDING_DIR / "REAL-BOUNDARY-1.json").exists())
 
-    def test_real_route_with_graduation_receipt_queues_manual_signal(self) -> None:
+    def test_thresholds_never_queue_or_graduate_to_real(self) -> None:
         result = execution_router.route(
             {
                 "order_id": "REAL-GRADUATED",
@@ -150,10 +167,23 @@ class RealMoneyBoundaryTest(unittest.TestCase):
         )
 
         self.assertFalse(result["executed"])
-        self.assertEqual(result["result"]["status"], "pending")
-        card = result["result"]["signal_card"]
-        self.assertEqual(card["graduation_receipt"]["issued_by"], "execution_router")
-        self.assertTrue((hermes_bridge.PENDING_DIR / "REAL-GRADUATED.json").exists())
+        self.assertEqual(result["result"]["status"], "manual_authorization_required")
+        self.assertFalse((hermes_bridge.PENDING_DIR / "REAL-GRADUATED.json").exists())
+        graduation = execution_router.check_graduation(
+            "graduated_strategy",
+            "shadow",
+            {
+                "total_trades": 10_000,
+                "positive_days_pct": 1.0,
+                "max_drawdown_pct": 0.0,
+            },
+        )
+        self.assertFalse(graduation["ready"])
+        self.assertEqual(graduation["next_stage"], "shadow")
+        self.assertEqual(
+            graduation["reason"],
+            "automatic_shadow_to_real_transition_disabled",
+        )
 
     def test_cancel_real_order_without_manual_confirm_is_rejected(self) -> None:
         hermes_bridge.ensure_signal_dirs()
@@ -166,7 +196,9 @@ class RealMoneyBoundaryTest(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertIn("Manual confirmation required", result["message"])
         self.assertTrue(pending_path.exists())
-        self.assertFalse((hermes_bridge.CANCELLED_DIR / "REAL-BOUNDARY-1.json").exists())
+        self.assertFalse(
+            (hermes_bridge.CANCELLED_DIR / "REAL-BOUNDARY-1.json").exists()
+        )
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 
 The review layer treats these files as append-only sources of fills:
 - shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl
-- shared/logs/local_sim/local_sim_trades.jsonl
+- shared/logs/execution_lineages/<current-ashare-lineage>/local_sim_trades.jsonl
 """
 
 from __future__ import annotations
@@ -12,12 +12,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from shared.execution.local_sim_ledger import (
+    LOCAL_SIM_TRADES as CURRENT_ASHARE_SIM_TRADES,
+)
 from shared.review.sample_quality import enrich_trade_sample
 
 REVIEW_DIR = Path(__file__).resolve().parent
 SHARED_DIR = REVIEW_DIR.parent
 DEFAULT_SIM_LEDGER_ROOT = SHARED_DIR / "logs" / "sim_ledger"
-DEFAULT_LOCAL_SIM_TRADES = SHARED_DIR / "logs" / "local_sim" / "local_sim_trades.jsonl"
+DEFAULT_LOCAL_SIM_TRADES = CURRENT_ASHARE_SIM_TRADES
 DEFAULT_REVIEW_MARKETS = ("ashare", "crypto", "pm", "us")
 
 
@@ -98,18 +101,29 @@ def _infer_market_strategy(path: Path, ledger_root: Path) -> tuple[str, str]:
     return "unknown", "simulated"
 
 
-def _normalize_style_ledger_trade(row: dict[str, Any], path: Path, ledger_root: Path) -> dict[str, Any]:
+def _normalize_style_ledger_trade(
+    row: dict[str, Any], path: Path, ledger_root: Path
+) -> dict[str, Any]:
     market, strategy = _infer_market_strategy(path, ledger_root)
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     timestamp = row.get("timestamp") or row.get("created_at") or row.get("fill_time")
     return {
         "ts_code": row.get("symbol") or row.get("ts_code") or row.get("code") or "",
         "side": row.get("side") or "",
-        "quantity": _safe_float(row.get("fill_qty") or row.get("quantity") or metadata.get("quantity")),
-        "price": _safe_float(row.get("fill_price") or row.get("price") or metadata.get("price")),
-        "pnl": _safe_float(row.get("realized_pnl") or row.get("pnl") or metadata.get("realized_pnl")),
+        "quantity": _safe_float(
+            row.get("fill_qty") or row.get("quantity") or metadata.get("quantity")
+        ),
+        "price": _safe_float(
+            row.get("fill_price") or row.get("price") or metadata.get("price")
+        ),
+        "pnl": _safe_float(
+            row.get("realized_pnl") or row.get("pnl") or metadata.get("realized_pnl")
+        ),
         "strategy": row.get("strategy") or strategy,
-        "signal_id": row.get("order_id") or row.get("fill_id") or row.get("signal_id") or "",
+        "signal_id": row.get("order_id")
+        or row.get("fill_id")
+        or row.get("signal_id")
+        or "",
         "order_id": row.get("order_id") or "",
         "fill_id": row.get("fill_id") or "",
         "created_at": timestamp or "",
@@ -123,42 +137,55 @@ def _normalize_style_ledger_trade(row: dict[str, Any], path: Path, ledger_root: 
 
 
 def _normalize_local_sim_trade(row: dict[str, Any], path: Path) -> dict[str, Any]:
-    return enrich_trade_sample({
-        "ts_code": row.get("ts_code") or row.get("symbol") or "",
-        "side": row.get("side") or "",
-        "quantity": _safe_float(row.get("quantity")),
-        "filled_price": _safe_float(row.get("filled_price") or row.get("avg_price")),
-        "avg_price": _safe_float(row.get("avg_price")),
-        "price": _safe_float(row.get("filled_price") or row.get("avg_price") or row.get("requested_price")),
-        "pnl": _safe_float(row.get("realized_pnl") or row.get("pnl")),
-        "strategy": row.get("strategy") or row.get("source") or "server_local_sim",
-        "signal_id": row.get("order_id") or row.get("idempotency_key") or row.get("trade_id") or "",
-        "order_id": row.get("order_id") or "",
-        "trade_id": row.get("trade_id") or "",
-        "idempotency_key": row.get("idempotency_key") or "",
-        "created_at": row.get("created_at") or "",
-        "trade_timestamp_bj": row.get("trade_timestamp_bj") or "",
-        "ashare_session_valid": row.get("ashare_session_valid"),
-        "ashare_session_rejection": row.get("ashare_session_rejection") or "",
-        "trade_date": row.get("trade_date") or row.get("created_at") or "",
-        "market": _normalize_market(row.get("market") or "ashare"),
-        "capital_layer": "simulated",
-        "status": row.get("status") or "",
-        "candidate_pool_layer": row.get("candidate_pool_layer") or "",
-        "execution_source": row.get("execution_source") or "",
-        "fill_price_source": row.get("fill_price_source") or "",
-        "fill_price_source_class": row.get("fill_price_source_class") or "",
-        "fill_evidence": row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {},
-        "capital_scope": row.get("capital_scope") or "",
-        "retry_of": row.get("retry_of") or "",
-        "retry_attempt": int(_safe_float(row.get("retry_attempt"))),
-        "source_ledger": str(path),
-        "notional": _safe_float(row.get("amount") or row.get("net_amount")),
-        "fees": {
-            "commission": _safe_float(row.get("commission")),
-            "stamp_duty": _safe_float(row.get("stamp_duty")),
-        },
-    })
+    return enrich_trade_sample(
+        {
+            "ts_code": row.get("ts_code") or row.get("symbol") or "",
+            "side": row.get("side") or "",
+            "quantity": _safe_float(row.get("quantity")),
+            "filled_price": _safe_float(
+                row.get("filled_price") or row.get("avg_price")
+            ),
+            "avg_price": _safe_float(row.get("avg_price")),
+            "price": _safe_float(
+                row.get("filled_price")
+                or row.get("avg_price")
+                or row.get("requested_price")
+            ),
+            "pnl": _safe_float(row.get("realized_pnl") or row.get("pnl")),
+            "strategy": row.get("strategy") or row.get("source") or "server_local_sim",
+            "signal_id": row.get("order_id")
+            or row.get("idempotency_key")
+            or row.get("trade_id")
+            or "",
+            "order_id": row.get("order_id") or "",
+            "trade_id": row.get("trade_id") or "",
+            "idempotency_key": row.get("idempotency_key") or "",
+            "created_at": row.get("created_at") or "",
+            "trade_timestamp_bj": row.get("trade_timestamp_bj") or "",
+            "ashare_session_valid": row.get("ashare_session_valid"),
+            "ashare_session_rejection": row.get("ashare_session_rejection") or "",
+            "trade_date": row.get("trade_date") or row.get("created_at") or "",
+            "market": _normalize_market(row.get("market") or "ashare"),
+            "capital_layer": "simulated",
+            "status": row.get("status") or "",
+            "candidate_pool_layer": row.get("candidate_pool_layer") or "",
+            "execution_source": row.get("execution_source") or "",
+            "fill_price_source": row.get("fill_price_source") or "",
+            "fill_price_source_class": row.get("fill_price_source_class") or "",
+            "fill_evidence": row.get("fill_evidence")
+            if isinstance(row.get("fill_evidence"), dict)
+            else {},
+            "capital_scope": row.get("capital_scope") or "",
+            "retry_of": row.get("retry_of") or "",
+            "retry_attempt": int(_safe_float(row.get("retry_attempt"))),
+            "source_ledger": str(path),
+            "notional": _safe_float(row.get("amount") or row.get("net_amount")),
+            "fees": {
+                "commission": _safe_float(row.get("commission")),
+                "stamp_duty": _safe_float(row.get("stamp_duty")),
+            },
+        }
+    )
 
 
 def _load_style_ledger_trades(
@@ -176,7 +203,9 @@ def _load_style_ledger_trades(
         if market == "ashare" and strategy != "ashare_sim":
             continue
         for row in _read_jsonl_dicts(path):
-            trade_date = row.get("trade_date") or row.get("timestamp") or row.get("created_at")
+            trade_date = (
+                row.get("trade_date") or row.get("timestamp") or row.get("created_at")
+            )
             if not _date_in_range(trade_date, start_date, end_date):
                 continue
             normalized = _normalize_style_ledger_trade(row, path, ledger_root)
@@ -200,7 +229,11 @@ def _load_local_sim_trades(
         if not _date_in_range(trade_date, start_date, end_date):
             continue
         normalized = _normalize_local_sim_trade(row, local_trades_path)
-        if str(normalized.get("status") or "filled").lower() in {"failed", "rejected", "cancelled"}:
+        if str(normalized.get("status") or "filled").lower() in {
+            "failed",
+            "rejected",
+            "cancelled",
+        }:
             continue
         rows.append(normalized)
     return rows
@@ -217,9 +250,10 @@ def load_sim_trades_between(
     market_filter = _markets_filter(markets)
     root = ledger_root or DEFAULT_SIM_LEDGER_ROOT
     local_path = local_trades_path or DEFAULT_LOCAL_SIM_TRADES
-    return (
-        _load_style_ledger_trades(start_date, end_date, markets=market_filter, ledger_root=root)
-        + _load_local_sim_trades(start_date, end_date, markets=market_filter, local_trades_path=local_path)
+    return _load_style_ledger_trades(
+        start_date, end_date, markets=market_filter, ledger_root=root
+    ) + _load_local_sim_trades(
+        start_date, end_date, markets=market_filter, local_trades_path=local_path
     )
 
 
@@ -242,6 +276,8 @@ def load_sim_trades_for_date(
 def summarize_trade_sources(trades: list[dict[str, Any]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for trade in trades:
-        source = str(trade.get("source_ledger") or trade.get("capital_layer") or "unknown")
+        source = str(
+            trade.get("source_ledger") or trade.get("capital_layer") or "unknown"
+        )
         counts[source] = counts.get(source, 0) + 1
     return counts

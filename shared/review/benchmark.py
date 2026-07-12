@@ -37,6 +37,7 @@ BENCHMARK_LOOKBACK_DAYS = 40
 
 # ---- helpers ----------------------------------------------------------------
 
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -86,7 +87,11 @@ def _to_trade_date(value: str) -> date:
 
 
 def _date_key(value: str | date) -> str:
-    return value.strftime("%Y%m%d") if isinstance(value, date) else _to_trade_date(value).strftime("%Y%m%d")
+    return (
+        value.strftime("%Y%m%d")
+        if isinstance(value, date)
+        else _to_trade_date(value).strftime("%Y%m%d")
+    )
 
 
 def _date_range_variants(target_date: str) -> tuple[tuple[str, str], ...]:
@@ -105,11 +110,15 @@ def _market_variants(market: str) -> tuple[str, ...]:
 
 def _shared_signals_db_path() -> Path:
     env_value = os.environ.get("SHARED_SIGNALS_DB")
-    return Path(env_value).expanduser() if env_value else Path(DEFAULT_SHARED_SIGNALS_DB)
+    return (
+        Path(env_value).expanduser() if env_value else Path(DEFAULT_SHARED_SIGNALS_DB)
+    )
 
 
 def _allow_sqlite_diagnostic() -> bool:
-    return str(os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")).strip().lower() in {
+    return str(
+        os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")
+    ).strip().lower() in {
         "1",
         "true",
         "yes",
@@ -121,9 +130,11 @@ def _sqlite_uri(path: Path) -> str:
     return "file:" + str(path) + "?mode=ro"
 
 
-def _calc_return(previous_close: float | None, current_close: float | None) -> float:
+def _calc_return(
+    previous_close: float | None, current_close: float | None
+) -> float | None:
     if previous_close in (None, 0) or current_close is None:
-        return 0.0
+        return None
     return (float(current_close) - float(previous_close)) / float(previous_close)
 
 
@@ -146,9 +157,13 @@ def _history_buy_hold_return(date_key: str) -> float:
 def _rows_from_reader(symbol: str, target_date: str) -> list[dict[str, Any]]:
     if TradingagentDataReader is None:
         return []
-    start = (_to_trade_date(target_date) - timedelta(days=BENCHMARK_LOOKBACK_DAYS)).strftime("%Y%m%d")
+    start = (
+        _to_trade_date(target_date) - timedelta(days=BENCHMARK_LOOKBACK_DAYS)
+    ).strftime("%Y%m%d")
     try:
-        return TradingagentDataReader().get_bars_daily("Ashare", symbol, start=start, end=target_date)
+        return TradingagentDataReader().get_bars_daily(
+            "Ashare", symbol, start=start, end=target_date
+        )
     except Exception:
         return []
 
@@ -180,7 +195,9 @@ def _rows_from_sqlite(symbol: str, target_date: str) -> list[dict[str, Any]]:
         conn.close()
 
 
-def _select_latest_two(rows: list[dict[str, Any]], target_date: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+def _select_latest_two(
+    rows: list[dict[str, Any]], target_date: str
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     deduped: dict[str, dict[str, Any]] = {}
     for row in rows:
         trade_date = _date_key(str(row.get("trade_date") or ""))
@@ -196,25 +213,46 @@ def _select_latest_two(rows: list[dict[str, Any]], target_date: str) -> tuple[di
     return current, previous
 
 
-def _read_index_return(target_date: str, symbols: tuple[str, ...], label: str) -> tuple[float, str]:
+def _read_index_return(
+    target_date: str, symbols: tuple[str, ...], label: str
+) -> tuple[float | None, str]:
     for symbol in symbols:
         try:
-            current, previous = _select_latest_two(_rows_from_reader(symbol, target_date), target_date)
+            current, previous = _select_latest_two(
+                _rows_from_reader(symbol, target_date), target_date
+            )
         except Exception:
             current, previous = None, None
-        if current is not None:
-            return _calc_return(_safe_float(previous.get("close")) if previous else None, _safe_float(current.get("close"))), f"sharedsignals_reader:{label}:{symbol}:{current['trade_date']}"
+        if current is not None and previous is not None:
+            value = _calc_return(
+                _safe_float(previous.get("close")), _safe_float(current.get("close"))
+            )
+            if value is not None:
+                return (
+                    value,
+                    f"sharedsignals_reader:{label}:{symbol}:{current['trade_date']}",
+                )
     for symbol in symbols:
         try:
-            current, previous = _select_latest_two(_rows_from_sqlite(symbol, target_date), target_date)
+            current, previous = _select_latest_two(
+                _rows_from_sqlite(symbol, target_date), target_date
+            )
         except Exception:
             current, previous = None, None
-        if current is not None:
-            return _calc_return(_safe_float(previous.get("close")) if previous else None, _safe_float(current.get("close"))), f"sharedsignals_sqlite:{label}:{symbol}:{current['trade_date']}"
-    return 0.0, f"sharedsignals_unavailable:{label}"
+        if current is not None and previous is not None:
+            value = _calc_return(
+                _safe_float(previous.get("close")), _safe_float(current.get("close"))
+            )
+            if value is not None:
+                return (
+                    value,
+                    f"sharedsignals_sqlite:{label}:{symbol}:{current['trade_date']}",
+                )
+    return None, f"sharedsignals_unavailable:{label}"
 
 
 # ---- public API -------------------------------------------------------------
+
 
 def get_benchmark(date: str) -> dict[str, Any]:
     """Return benchmark returns for a given date.
@@ -240,16 +278,25 @@ def get_benchmark(date: str) -> dict[str, Any]:
     """
     date_key = _date_key(date)
     last = _read_json(LAST_PERIOD_STORE)
-    csi300_return, csi300_source = _read_index_return(date_key, CSI300_SYMBOLS, "csi300")
-    chinext_return, chinext_source = _read_index_return(date_key, CHINEXT_SYMBOLS, "chinext")
+    csi300_return, csi300_source = _read_index_return(
+        date_key, CSI300_SYMBOLS, "csi300"
+    )
+    chinext_return, chinext_source = _read_index_return(
+        date_key, CHINEXT_SYMBOLS, "chinext"
+    )
     return {
         "date": date_key,
-        "csi300_return": float(csi300_return),
-        "chinext_return": float(chinext_return),
+        "csi300_return": float(csi300_return) if csi300_return is not None else None,
+        "csi300_status": "available" if csi300_return is not None else "unavailable",
+        "chinext_return": float(chinext_return) if chinext_return is not None else None,
+        "chinext_status": "available" if chinext_return is not None else "unavailable",
         "buy_hold_return": _history_buy_hold_return(date_key),
         "last_period_return": float(last.get("return", 0.0)),
         "last_period_kind": last.get("kind", "unknown"),
         "source": f"{csi300_source}|{chinext_source}",
+        "benchmark_status": (
+            "available" if csi300_return is not None else "unavailable_csi300_evidence"
+        ),
         "as_of": _now_iso(),
     }
 
@@ -273,7 +320,7 @@ def record_last_period(return_value: float, kind: str = "daily") -> None:
 
 def compare_to_benchmark(
     portfolio_return: float,
-    benchmark_return: float,
+    benchmark_return: float | None,
     portfolio_returns_series: list[float] | None = None,
     benchmark_returns_series: list[float] | None = None,
 ) -> dict[str, Any]:
@@ -297,8 +344,21 @@ def compare_to_benchmark(
           "excess_return": float,    # 同 alpha, 显式命名
         }
     """
-    alpha = float(portfolio_return) - float(benchmark_return)
-    beat = float(portfolio_return) > float(benchmark_return)
+    if benchmark_return is None or not math.isfinite(float(benchmark_return)):
+        return {
+            "status": "unavailable",
+            "reason": "benchmark_return_unavailable",
+            "benchmark_return": None,
+            "alpha": None,
+            "beta": None,
+            "sharpe": None,
+            "max_drawdown": None,
+            "beat_benchmark": None,
+            "excess_return": None,
+        }
+    benchmark_value = float(benchmark_return)
+    alpha = float(portfolio_return) - benchmark_value
+    beat = float(portfolio_return) > benchmark_value
 
     beta: float | None = None
     sharpe: float | None = None
@@ -315,6 +375,9 @@ def compare_to_benchmark(
         max_dd = _max_drawdown(portfolio_returns_series)
 
     return {
+        "status": "available",
+        "reason": None,
+        "benchmark_return": benchmark_value,
         "alpha": round(alpha, 6),
         "beta": round(beta, 6) if beta is not None else None,
         "sharpe": round(sharpe, 6) if sharpe is not None else None,
@@ -325,6 +388,7 @@ def compare_to_benchmark(
 
 
 # ---- statistics -------------------------------------------------------------
+
 
 def _mean(xs: list[float]) -> float:
     return sum(xs) / len(xs) if xs else 0.0
@@ -372,7 +436,7 @@ def _max_drawdown(daily_returns: list[float]) -> float:
     peak = 1.0
     max_dd = 0.0
     for r in daily_returns:
-        equity *= (1.0 + r)
+        equity *= 1.0 + r
         if equity > peak:
             peak = equity
         dd = (peak - equity) / peak
@@ -389,7 +453,7 @@ if __name__ == "__main__":
     bench_series = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     port_cum = 1.0
     for r in port_series:
-        port_cum *= (1 + r)
+        port_cum *= 1 + r
     port_ret = port_cum - 1.0
     cmp = compare_to_benchmark(port_ret, 0.0, port_series, bench_series)
     print(json.dumps(cmp, ensure_ascii=False, indent=2))

@@ -20,6 +20,8 @@ required_vars=(
     TRADINGS_LOG_ROOT
     TRADINGS_CRON_LOG_ROOT
     TRADINGS_REPAIR_QUEUE
+    REAL_TRADING_ENABLED
+    TZ
 )
 
 for var_name in "${required_vars[@]}"; do
@@ -29,6 +31,9 @@ for var_name in "${required_vars[@]}"; do
         exit 1
     fi
 done
+
+[[ "${REAL_TRADING_ENABLED}" == "false" ]]
+[[ "${TZ}" == "Asia/Shanghai" ]]
 
 echo "env_loader smoke ok"
 

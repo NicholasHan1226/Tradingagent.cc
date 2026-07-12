@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Market runtime health checks.
 
 Default mode is read-only: no orders, no emails, no state mutation.
@@ -23,6 +24,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from CNFutures.review import latest_actionable_review
 from CNFutures.session import is_current_session_bar, parse_cn_datetime
+from shared.execution.execution_lineage import ASHARE_EXECUTION_LINEAGE_ID
+
 LATEST_BY_MARKET = {
     "ashare": ROOT / "shared/runtime_test/ashare_market_health_latest.json",
     "cn_futures": ROOT / "shared/runtime_test/cn_futures_market_health_latest.json",
@@ -32,7 +35,9 @@ LATEST_BY_MARKET = {
 DEFAULT_MINI_HEALTH_URL = "http://127.0.0.1:9865/health"
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
 STALE_SIGNAL_MINUTES = 60
-VALID_ASHARE_RE = re.compile(r"^(000|001|002|003|300|301|600|601|603|605|688|689)\d{3}(\.(SZ|SH))?$", re.I)
+VALID_ASHARE_RE = re.compile(
+    r"^(000|001|002|003|300|301|600|601|603|605|688|689)\d{3}(\.(SZ|SH))?$", re.I
+)
 INVALID_ASHARE_RE = re.compile(r"\b(?:200\d{3}\.SZ|900\d{3}\.SH)\b", re.I)
 REQUIRED_TEMPLATES = [
     "daily_report.py",
@@ -43,7 +48,9 @@ REQUIRED_TEMPLATES = [
 ]
 SIM_MARKETS = tuple(
     item.strip().lower()
-    for item in os.environ.get("TRADINGAGENT_SIM_MARKETS", "ashare,crypto,pm,us,cn_futures").split(",")
+    for item in os.environ.get(
+        "TRADINGAGENT_SIM_MARKETS", "ashare,crypto,pm,us,cn_futures"
+    ).split(",")
     if item.strip()
 )
 SIM_LOG_NAMES = {
@@ -64,11 +71,40 @@ SIM_WRAPPERS = {
 }
 DEFAULT_SIM_SYMBOLS = {
     "crypto": ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"),
-    "us": ("TSLA", "NVDA", "META", "AMZN", "GOOGL", "AMD", "NFLX", "AVGO", "COIN", "PLTR"),
+    "us": (
+        "TSLA",
+        "NVDA",
+        "META",
+        "AMZN",
+        "GOOGL",
+        "AMD",
+        "NFLX",
+        "AVGO",
+        "COIN",
+        "PLTR",
+    ),
     "hk": ("00700.HK", "09988.HK", "03690.HK", "09618.HK", "00005.HK", "00388.HK"),
 }
 CRYPTO_ONE_BAR_THRESHOLD = 0.012
 CRYPTO_LOOKBACK_THRESHOLD = 0.025
+
+
+def _ashare_execution_root() -> Path:
+    configured = str(os.environ.get("TRADINGAGENT_ASHARE_EXECUTION_ROOT") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return ROOT / "shared/logs/execution_lineages" / ASHARE_EXECUTION_LINEAGE_ID
+
+
+def _ashare_execution_file(name: str) -> Path:
+    return _ashare_execution_root() / name
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 @dataclass
@@ -95,7 +131,9 @@ def _is_ashare_trading_day(current: datetime) -> bool:
 
 def _market_session_state(market: str, now: datetime | None = None) -> dict[str, Any]:
     """Return whether today's production samples should already exist."""
-    current = (now or datetime.now(timezone.utc)).astimezone(timezone(timedelta(hours=8)))
+    current = (now or datetime.now(timezone.utc)).astimezone(
+        timezone(timedelta(hours=8))
+    )
     weekday = current.weekday()
     minutes = current.hour * 60 + current.minute
     in_session = False
@@ -103,7 +141,9 @@ def _market_session_state(market: str, now: datetime | None = None) -> dict[str,
     if market == "ashare":
         trading_day = _is_ashare_trading_day(current)
         windows = ((9 * 60 + 30, 11 * 60 + 30), (13 * 60, 15 * 60))
-        in_session = trading_day and any(start <= minutes <= end for start, end in windows)
+        in_session = trading_day and any(
+            start <= minutes <= end for start, end in windows
+        )
         samples_expected_today = trading_day and minutes >= 9 * 60 + 30
     elif market == "cn_futures":
         try:
@@ -111,13 +151,14 @@ def _market_session_state(market: str, now: datetime | None = None) -> dict[str,
 
             return cn_futures_session_state(current)
         except Exception:
-            day_session = weekday < 5 and ((9 * 60 <= minutes <= 11 * 60 + 30) or (13 * 60 <= minutes <= 15 * 60))
+            day_session = weekday < 5 and (
+                (9 * 60 <= minutes <= 11 * 60 + 30) or (13 * 60 <= minutes <= 15 * 60)
+            )
             night_session = weekday < 5 and 21 * 60 <= minutes <= 23 * 60 + 59
             early_session = 1 <= weekday <= 5 and 0 <= minutes <= 2 * 60 + 30
             in_session = day_session or night_session or early_session
-            samples_expected_today = (
-                (weekday < 5 and minutes >= 9 * 60)
-                or (1 <= weekday <= 5 and minutes <= 2 * 60 + 30)
+            samples_expected_today = (weekday < 5 and minutes >= 9 * 60) or (
+                1 <= weekday <= 5 and minutes <= 2 * 60 + 30
             )
     return {
         "timezone": "Asia/Shanghai",
@@ -143,7 +184,15 @@ def _safe_float(value: Any) -> float:
 
 
 def _price(row: dict[str, Any]) -> float:
-    for key in ("latest_price", "price", "close", "last_price", "market_price", "yes_price", "probability"):
+    for key in (
+        "latest_price",
+        "price",
+        "close",
+        "last_price",
+        "market_price",
+        "yes_price",
+        "probability",
+    ):
         value = _safe_float(row.get(key))
         if value > 0:
             return value
@@ -212,7 +261,9 @@ def _pct_change(latest: float, previous: float) -> float:
     return latest / previous - 1.0
 
 
-def _crypto_momentum_diagnostic(symbol: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _crypto_momentum_diagnostic(
+    symbol: str, rows: list[dict[str, Any]]
+) -> dict[str, Any]:
     priced = _priced_rows(rows)
     if not priced:
         return {
@@ -240,7 +291,10 @@ def _crypto_momentum_diagnostic(symbol: str, rows: list[dict[str, Any]]) -> dict
         }
     one_bar_return = _pct_change(latest_price, _price(priced[-2]))
     lookback_return = _pct_change(latest_price, _price(priced[0]))
-    candidate = one_bar_return >= CRYPTO_ONE_BAR_THRESHOLD or lookback_return >= CRYPTO_LOOKBACK_THRESHOLD
+    candidate = (
+        one_bar_return >= CRYPTO_ONE_BAR_THRESHOLD
+        or lookback_return >= CRYPTO_LOOKBACK_THRESHOLD
+    )
     return {
         "symbol": symbol,
         "rows": len(rows),
@@ -250,14 +304,21 @@ def _crypto_momentum_diagnostic(symbol: str, rows: list[dict[str, Any]]) -> dict
         "one_bar_return": round(one_bar_return, 6),
         "lookback_return": round(lookback_return, 6),
         "strategy_candidate": candidate,
-        "reason": "crypto_strategy_candidate" if candidate else "crypto_momentum_threshold_not_met",
+        "reason": "crypto_strategy_candidate"
+        if candidate
+        else "crypto_momentum_threshold_not_met",
     }
 
 
 def _file_age_minutes(path: Path) -> float | None:
     if not path.exists():
         return None
-    return round(max(0.0, (datetime.now(timezone.utc).timestamp() - path.stat().st_mtime) / 60.0), 2)
+    return round(
+        max(
+            0.0, (datetime.now(timezone.utc).timestamp() - path.stat().st_mtime) / 60.0
+        ),
+        2,
+    )
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -276,7 +337,9 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
 def _iter_json_files(path: Path) -> list[Path]:
     if not path.exists():
         return []
-    return sorted(path.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    return sorted(
+        path.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True
+    )
 
 
 def _count_json_files(path: Path) -> int:
@@ -312,13 +375,26 @@ def _position_count_from_positions_payload(payload: dict[str, Any]) -> int:
 
 def _execution_card_stale(path: Path, card: dict[str, Any]) -> dict[str, Any] | None:
     age = _file_age_minutes(path)
-    today = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).strftime("%Y%m%d")
+    today = (
+        datetime.now(timezone.utc)
+        .astimezone(timezone(timedelta(hours=8)))
+        .strftime("%Y%m%d")
+    )
     for key in ("valid_until", "trade_date", "date"):
         date_key = _compact_date_key(card.get(key))
         if date_key and date_key < today:
-            return {"path": str(path.relative_to(ROOT)), "reason": f"{key}_expired", "date": date_key, "age_minutes": age}
+            return {
+                "path": str(path.relative_to(ROOT)),
+                "reason": f"{key}_expired",
+                "date": date_key,
+                "age_minutes": age,
+            }
     if age is not None and age > STALE_SIGNAL_MINUTES:
-        return {"path": str(path.relative_to(ROOT)), "reason": "age_exceeded", "age_minutes": age}
+        return {
+            "path": str(path.relative_to(ROOT)),
+            "reason": "age_exceeded",
+            "age_minutes": age,
+        }
     return None
 
 
@@ -332,10 +408,21 @@ def _check_ashare_universe() -> Check:
     try:
         from shared.data.reader import SharedSignalsAPIClient, TradingagentDataReader
 
-        api_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip() or DEFAULT_SHAREDSIGNALS_API_URL
-        reader = TradingagentDataReader(api_client=SharedSignalsAPIClient(base_url=api_url))
+        api_url = (
+            os.environ.get(
+                "SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL
+            ).strip()
+            or DEFAULT_SHAREDSIGNALS_API_URL
+        )
+        reader = TradingagentDataReader(
+            api_client=SharedSignalsAPIClient(base_url=api_url)
+        )
         assets = reader.get_assets("Ashare") or reader.get_assets("ashare")
-        symbols = [str(row.get("symbol") or "").strip() for row in assets if isinstance(row, dict) and row.get("symbol")]
+        symbols = [
+            str(row.get("symbol") or "").strip()
+            for row in assets
+            if isinstance(row, dict) and row.get("symbol")
+        ]
         regular = [symbol for symbol in symbols if VALID_ASHARE_RE.match(symbol)]
         excluded = [symbol for symbol in symbols if symbol not in regular]
         ok = bool(regular) and not reader.degraded
@@ -354,7 +441,13 @@ def _check_ashare_universe() -> Check:
             },
         )
     except Exception as exc:  # noqa: BLE001
-        return Check("ashare_universe", "fail", "A股资产入口检查失败", {"error": f"{exc.__class__.__name__}: {exc}"})
+        return Check(
+            "ashare_universe",
+            "fail",
+            "A股资产入口检查失败",
+            {"error": f"{exc.__class__.__name__}: {exc}"},
+        )
+
 
 def _normalize_shadow_pnl_payload(pnl: dict[str, Any]) -> dict[str, Any]:
     ashare = pnl.get("ashare_shadow", {}) if isinstance(pnl, dict) else {}
@@ -364,7 +457,11 @@ def _normalize_shadow_pnl_payload(pnl: dict[str, Any]) -> dict[str, Any]:
     try:
         from shared.execution.shadow_broker import get_shadow_pnl
 
-        replay = get_shadow_pnl("ashare_shadow", datetime.now(timezone.utc).strftime("%Y%m%d"), market="ashare")
+        replay = get_shadow_pnl(
+            "ashare_shadow",
+            datetime.now(timezone.utc).strftime("%Y%m%d"),
+            market="ashare",
+        )
     except Exception:
         replay = {}
     return {
@@ -385,11 +482,19 @@ def _check_shadow_ledger() -> Check:
     ]
     matches: dict[str, int] = {}
     for path in files:
-        text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        text = (
+            path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        )
         matches[str(path.relative_to(ROOT))] = len(INVALID_ASHARE_RE.findall(text))
     pnl = _load_json(ROOT / "shared/logs/shadow/shadow_pnl.json", {}) or {}
     ashare = _normalize_shadow_pnl_payload(pnl if isinstance(pnl, dict) else {})
-    required = ["realized_pnl", "unrealized_pnl", "market_value", "total_pnl", "valuation_source"]
+    required = [
+        "realized_pnl",
+        "unrealized_pnl",
+        "market_value",
+        "total_pnl",
+        "valuation_source",
+    ]
     missing = [key for key in required if key not in ashare]
     ok = all(count == 0 for count in matches.values()) and not missing
     return Check(
@@ -398,7 +503,17 @@ def _check_shadow_ledger() -> Check:
         "A股影子账本干净且有收益口径" if ok else "A股影子账本仍有污染或口径缺失",
         {
             "invalid_ashare_code_matches": matches,
-            "ashare_pnl": {key: ashare.get(key) for key in ["total_trades", "market_value", "realized_pnl", "unrealized_pnl", "total_pnl", "valuation_source"]},
+            "ashare_pnl": {
+                key: ashare.get(key)
+                for key in [
+                    "total_trades",
+                    "market_value",
+                    "realized_pnl",
+                    "unrealized_pnl",
+                    "total_pnl",
+                    "valuation_source",
+                ]
+            },
             "missing_pnl_fields": missing,
         },
     )
@@ -406,7 +521,15 @@ def _check_shadow_ledger() -> Check:
 
 def _market_layer_counts(base: Path) -> dict[str, int]:
     counts: dict[str, int] = {}
-    for state in ["pending", "claimed", "running", "filled", "failed", "expired", "cancelled"]:
+    for state in [
+        "pending",
+        "claimed",
+        "running",
+        "filled",
+        "failed",
+        "expired",
+        "cancelled",
+    ]:
         counts[state] = _count_json_files(base / state)
     return counts
 
@@ -416,25 +539,46 @@ def _check_signal_queues() -> Check:
     shadow = _market_layer_counts(ROOT / "signals/shadow")
     leaked_shadow = []
     stale_execution = []
-    for state in ["pending", "claimed", "running", "failed", "expired", "cancelled", "filled"]:
+    for state in [
+        "pending",
+        "claimed",
+        "running",
+        "failed",
+        "expired",
+        "cancelled",
+        "filled",
+    ]:
         for path in _iter_json_files(ROOT / "signals" / state):
             try:
                 card = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 card = {}
-            if str(card.get("capital_layer") or "").lower() == "shadow" or path.name.startswith("SHADOW-"):
+            if str(
+                card.get("capital_layer") or ""
+            ).lower() == "shadow" or path.name.startswith("SHADOW-"):
                 leaked_shadow.append(str(path.relative_to(ROOT)))
             if state in {"pending", "claimed", "running"} and isinstance(card, dict):
                 stale = _execution_card_stale(path, card)
                 if stale:
                     stale["state"] = state
                     stale_execution.append(stale)
-    ok = execution["pending"] == 0 and execution["claimed"] == 0 and execution["running"] == 0 and not leaked_shadow and not stale_execution
+    ok = (
+        execution["pending"] == 0
+        and execution["claimed"] == 0
+        and execution["running"] == 0
+        and not leaked_shadow
+        and not stale_execution
+    )
     return Check(
         "signal_queue_isolation",
         _status(ok),
         "执行队列与影子队列已隔离" if ok else "执行队列存在待处理/影子污染/陈旧信号",
-        {"execution_queue": execution, "shadow_queue": shadow, "leaked_shadow_sample": leaked_shadow[:20], "stale_execution_sample": stale_execution[:20]},
+        {
+            "execution_queue": execution,
+            "shadow_queue": shadow,
+            "leaked_shadow_sample": leaked_shadow[:20],
+            "stale_execution_sample": stale_execution[:20],
+        },
     )
 
 
@@ -446,7 +590,13 @@ def _check_mini_health(url: str = DEFAULT_MINI_HEALTH_URL) -> Check:
         in_progress = int(data.get("in_progress", 0))
         expired = int(data.get("expired_pending", 0))
         halted = bool(data.get("halted")) or data.get("execution_status") == "halted"
-        ok = data.get("status") == "ok" and pending == 0 and in_progress == 0 and expired == 0 and not halted
+        ok = (
+            data.get("status") == "ok"
+            and pending == 0
+            and in_progress == 0
+            and expired == 0
+            and not halted
+        )
         return Check(
             "mini_hermes_health",
             _status(ok),
@@ -454,7 +604,12 @@ def _check_mini_health(url: str = DEFAULT_MINI_HEALTH_URL) -> Check:
             {"url": url, "health": data},
         )
     except Exception as exc:  # noqa: BLE001
-        return Check("mini_hermes_health", "fail", "mini/Hermes 健康口不可达", {"url": url, "error": f"{exc.__class__.__name__}: {exc}"})
+        return Check(
+            "mini_hermes_health",
+            "fail",
+            "mini/Hermes 健康口不可达",
+            {"url": url, "error": f"{exc.__class__.__name__}: {exc}"},
+        )
 
 
 def _check_optional_mini_health(url: str = DEFAULT_MINI_HEALTH_URL) -> Check:
@@ -473,18 +628,32 @@ def _check_optional_mini_health(url: str = DEFAULT_MINI_HEALTH_URL) -> Check:
     return Check(
         "mini_hermes_optional",
         "pass" if ok else "warn",
-        "Hermes/同花顺 GUI 第二路径 ready" if ok else "Hermes/同花顺 GUI 第二路径异常，服务器本地模拟盘继续独立运行",
-        {"url": url, "enabled": True, "raw_status": raw.status, "raw_summary": raw.summary, "raw_details": raw.details},
+        "Hermes/同花顺 GUI 第二路径 ready"
+        if ok
+        else "Hermes/同花顺 GUI 第二路径异常，服务器本地模拟盘继续独立运行",
+        {
+            "url": url,
+            "enabled": True,
+            "raw_status": raw.status,
+            "raw_summary": raw.summary,
+            "raw_details": raw.details,
+        },
         severity="warn",
     )
 
 
 def _check_simulated_position_sync() -> Check:
-    path = ROOT / "signals/positions/simulated_ashare_positions.json"
-    local_trades_path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
+    path = _ashare_execution_file("simulated_ashare_positions.json")
+    local_trades_path = _ashare_execution_file("local_sim_trades.jsonl")
     local_trade_count = 0
     if local_trades_path.exists():
-        local_trade_count = sum(1 for line in local_trades_path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+        local_trade_count = sum(
+            1
+            for line in local_trades_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+            if line.strip()
+        )
     data = _load_json(path, {}) or {}
     positions = data.get("positions") or data.get("holdings") or []
     if isinstance(positions, dict):
@@ -504,14 +673,19 @@ def _check_simulated_position_sync() -> Check:
     return Check(
         "ashare_sim_position_sync",
         _status(ok, warn=True),
-        "A股模拟持仓快照可读" if path.exists() else "A股模拟盘暂无成交，持仓快照待首笔成交生成" if no_trade_bootstrap else "A股模拟持仓快照缺失",
+        "A股模拟持仓快照可读"
+        if path.exists()
+        else "A股模拟盘暂无成交，持仓快照待首笔成交生成"
+        if no_trade_bootstrap
+        else "A股模拟持仓快照缺失",
         {
-            "path": str(path.relative_to(ROOT)),
+            "path": _display_path(path),
             "position_count": position_count,
             "sample": sample,
             "mtime": path.stat().st_mtime if path.exists() else None,
             "local_trade_count": local_trade_count,
-            "bootstrap_state": snapshot_bootstrap_state or ("no_trades_yet" if no_trade_bootstrap else ""),
+            "bootstrap_state": snapshot_bootstrap_state
+            or ("no_trades_yet" if no_trade_bootstrap else ""),
         },
         severity="warn",
     )
@@ -519,25 +693,47 @@ def _check_simulated_position_sync() -> Check:
 
 def _check_email_templates() -> Check:
     template_dir = ROOT / "shared/notify/email_templates"
-    missing = [name for name in REQUIRED_TEMPLATES if not (template_dir / name).exists()]
+    missing = [
+        name for name in REQUIRED_TEMPLATES if not (template_dir / name).exists()
+    ]
     channels = _load_json(ROOT / "shared/notify/logs/email_rate_limit.json", {})
     latest_sent = []
     log = ROOT / "shared/notify/logs/emails_sent.jsonl"
     if log.exists():
-        rows = [line for line in log.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+        rows = [
+            line
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
+            if line.strip()
+        ]
         for line in rows[-50:]:
             try:
                 item = json.loads(line)
             except Exception:
                 continue
             if item.get("status") == "sent":
-                latest_sent.append({key: item.get(key) for key in ["to", "from", "subject", "provider", "status_code", "attempted_at"]})
+                latest_sent.append(
+                    {
+                        key: item.get(key)
+                        for key in [
+                            "to",
+                            "from",
+                            "subject",
+                            "provider",
+                            "status_code",
+                            "attempted_at",
+                        ]
+                    }
+                )
     ok = not missing
     return Check(
         "email_templates_and_delivery",
         _status(ok, warn=True),
         "邮件模板存在，最近发送记录可复盘" if ok else "邮件模板缺失",
-        {"missing_templates": missing, "latest_sent": latest_sent[-5:], "rate_limit_state_keys": len(channels) if isinstance(channels, dict) else 0},
+        {
+            "missing_templates": missing,
+            "latest_sent": latest_sent[-5:],
+            "rate_limit_state_keys": len(channels) if isinstance(channels, dict) else 0,
+        },
         severity="warn",
     )
 
@@ -553,25 +749,48 @@ def _check_local_sim_ledger() -> Check:
         invalid_matches = 0
         trade_rows = _ashare_local_sim_trade_rows(trades_path)
         for item in trade_rows:
-            symbol = str(item.get("ts_code") or item.get("symbol") or item.get("code") or "").strip()
+            symbol = str(
+                item.get("ts_code") or item.get("symbol") or item.get("code") or ""
+            ).strip()
             if symbol and not VALID_ASHARE_RE.match(symbol):
                 invalid_matches += 1
         sample_quality = _ashare_local_sample_quality(trades_path)
         pnl = _load_json(pnl_path, {}) if pnl_path.exists() else {}
-        positions_payload = _load_json(positions_path, {}) if positions_path.exists() else {}
+        positions_payload = (
+            _load_json(positions_path, {}) if positions_path.exists() else {}
+        )
         snapshot = _load_json(snapshot_path, {}) if snapshot_path.exists() else {}
-        position_count = _position_count_from_positions_payload(positions_payload if isinstance(positions_payload, dict) else {})
-        snapshot_position_count = _position_count_from_snapshot(snapshot if isinstance(snapshot, dict) else {})
-        account_view = str(snapshot.get("account_view") or "") if isinstance(snapshot, dict) else ""
+        position_count = _position_count_from_positions_payload(
+            positions_payload if isinstance(positions_payload, dict) else {}
+        )
+        snapshot_position_count = _position_count_from_snapshot(
+            snapshot if isinstance(snapshot, dict) else {}
+        )
+        account_view = (
+            str(snapshot.get("account_view") or "")
+            if isinstance(snapshot, dict)
+            else ""
+        )
         audit_position_count = _position_count_from_positions_payload(
-            snapshot.get("audit_positions_by_account") if isinstance(snapshot, dict) and isinstance(snapshot.get("audit_positions_by_account"), dict) else {}
+            snapshot.get("audit_positions_by_account")
+            if isinstance(snapshot, dict)
+            and isinstance(snapshot.get("audit_positions_by_account"), dict)
+            else {}
         )
         consistency_errors: list[str] = []
-        if trades_path.exists() and snapshot_path.exists() and position_count != snapshot_position_count:
+        if (
+            trades_path.exists()
+            and snapshot_path.exists()
+            and position_count != snapshot_position_count
+        ):
             consistency_errors.append("position_count_mismatch")
         missing_cash_accounts: list[str] = []
         cash_mismatch_accounts: list[str] = []
-        snapshot_pnl = snapshot.get("pnl") if isinstance(snapshot, dict) and isinstance(snapshot.get("pnl"), dict) else {}
+        snapshot_pnl = (
+            snapshot.get("pnl")
+            if isinstance(snapshot, dict) and isinstance(snapshot.get("pnl"), dict)
+            else {}
+        )
         if isinstance(pnl, dict):
             for account, account_pnl in pnl.items():
                 if not isinstance(account_pnl, dict):
@@ -580,19 +799,36 @@ def _check_local_sim_ledger() -> Check:
                 if local_cash is None:
                     missing_cash_accounts.append(str(account))
                     continue
-                snapshot_account = snapshot_pnl.get(account) if isinstance(snapshot_pnl.get(account), dict) else {}
+                snapshot_account = (
+                    snapshot_pnl.get(account)
+                    if isinstance(snapshot_pnl.get(account), dict)
+                    else {}
+                )
                 snapshot_cash = snapshot_account.get("cash_available")
-                if snapshot_cash is not None and abs(_safe_float(local_cash) - _safe_float(snapshot_cash)) > 0.01:
+                if (
+                    snapshot_cash is not None
+                    and abs(_safe_float(local_cash) - _safe_float(snapshot_cash)) > 0.01
+                ):
                     cash_mismatch_accounts.append(str(account))
         if missing_cash_accounts:
             consistency_errors.append("cash_available_missing")
         if cash_mismatch_accounts:
             consistency_errors.append("cash_available_mismatch")
-        invalid_strategy_samples = int(sample_quality.get("invalid_strategy_sample_count", 0) or 0)
+        invalid_strategy_samples = int(
+            sample_quality.get("invalid_strategy_sample_count", 0) or 0
+        )
         outside_session_only = _ashare_outside_session_only_samples(sample_quality)
-        if invalid_strategy_samples > 0 and position_count != snapshot_position_count and account_view != "strategy_samples_only":
+        if (
+            invalid_strategy_samples > 0
+            and position_count != snapshot_position_count
+            and account_view != "strategy_samples_only"
+        ):
             consistency_errors.append("strategy_account_view_missing")
-        ok = invalid_matches == 0 and not consistency_errors and (invalid_strategy_samples == 0 or outside_session_only)
+        ok = (
+            invalid_matches == 0
+            and not consistency_errors
+            and (invalid_strategy_samples == 0 or outside_session_only)
+        )
         status = _status(ok)
         severity = "error"
         summary = "服务器本地模拟盘备份账本可用"
@@ -602,10 +838,16 @@ def _check_local_sim_ledger() -> Check:
             severity = "info"
             advisory = True
             summary = "服务器本地模拟盘账本可用；链路验证样本已隔离出策略口径"
-        elif invalid_matches == 0 and not consistency_errors and invalid_strategy_samples > 0:
+        elif (
+            invalid_matches == 0
+            and not consistency_errors
+            and invalid_strategy_samples > 0
+        ):
             status = "warn"
             severity = "warn"
-            summary = "服务器本地模拟盘账本可用，但存在非策略样本，已从策略绩效/演化口径隔离"
+            summary = (
+                "服务器本地模拟盘账本可用，但存在非策略样本，已从策略绩效/演化口径隔离"
+            )
         elif not ok:
             summary = "服务器本地模拟盘备份账本存在异常"
         return Check(
@@ -630,14 +872,31 @@ def _check_local_sim_ledger() -> Check:
             severity=severity,
         )
     except Exception as exc:  # noqa: BLE001
-        return Check("ashare_server_local_sim", "fail", "服务器本地模拟盘备份账本不可用", {"error": f"{exc.__class__.__name__}: {exc}"})
+        return Check(
+            "ashare_server_local_sim",
+            "fail",
+            "服务器本地模拟盘备份账本不可用",
+            {"error": f"{exc.__class__.__name__}: {exc}"},
+        )
 
 
 def _latest_ashare_capital_plan_row() -> tuple[Path | None, dict[str, Any]]:
     target_dir = ROOT / "shared/review/ashare"
-    files = sorted(target_dir.glob("capital_plan_*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True) if target_dir.exists() else []
+    files = (
+        sorted(
+            target_dir.glob("capital_plan_*.jsonl"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        if target_dir.exists()
+        else []
+    )
     for path in files:
-        rows = [line for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+        rows = [
+            line
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if line.strip()
+        ]
         for line in reversed(rows):
             try:
                 payload = json.loads(line)
@@ -649,19 +908,25 @@ def _latest_ashare_capital_plan_row() -> tuple[Path | None, dict[str, Any]]:
 
 
 def _check_ashare_capital_plan_alignment() -> Check:
-    local_trades_path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
+    local_trades_path = _ashare_execution_file("local_sim_trades.jsonl")
     local_trade_count = _count_jsonl_rows(local_trades_path)
     sample_quality = _ashare_local_sample_quality(local_trades_path)
     outside_session_only = _ashare_outside_session_only_samples(sample_quality)
-    snapshot_path = ROOT / "signals/positions/simulated_ashare_positions.json"
+    snapshot_path = _ashare_execution_file("simulated_ashare_positions.json")
     snapshot = _load_json(snapshot_path, {}) if snapshot_path.exists() else {}
-    snapshot_count = _position_count_from_snapshot(snapshot if isinstance(snapshot, dict) else {})
+    snapshot_count = _position_count_from_snapshot(
+        snapshot if isinstance(snapshot, dict) else {}
+    )
     if local_trade_count == 0 and snapshot_count == 0:
         return Check(
             "ashare_capital_plan_alignment",
             "pass",
             "A股模拟盘尚无成交，资金计划持仓对账待首笔成交后启用",
-            {"local_trade_count": local_trade_count, "snapshot_position_count": snapshot_count, "bootstrap_state": "no_trades_yet"},
+            {
+                "local_trade_count": local_trade_count,
+                "snapshot_position_count": snapshot_count,
+                "bootstrap_state": "no_trades_yet",
+            },
             severity="warn",
         )
 
@@ -671,17 +936,32 @@ def _check_ashare_capital_plan_alignment() -> Check:
             "ashare_capital_plan_alignment",
             "warn",
             "A股资金计划日志尚未生成，无法对账持仓数",
-            {"local_trade_count": local_trade_count, "snapshot_position_count": snapshot_count},
+            {
+                "local_trade_count": local_trade_count,
+                "snapshot_position_count": snapshot_count,
+            },
             severity="warn",
         )
 
-    capital_plan = row.get("capital_plan") if isinstance(row.get("capital_plan"), dict) else {}
+    capital_plan = (
+        row.get("capital_plan") if isinstance(row.get("capital_plan"), dict) else {}
+    )
     rebalance = row.get("rebalance") if isinstance(row.get("rebalance"), dict) else {}
-    plan_count = capital_plan.get("existing_position_count", rebalance.get("existing_position_count"))
-    plan_count_int = int(plan_count) if isinstance(plan_count, (int, float)) or str(plan_count).isdigit() else -1
+    plan_count = capital_plan.get(
+        "existing_position_count", rebalance.get("existing_position_count")
+    )
+    plan_count_int = (
+        int(plan_count)
+        if isinstance(plan_count, (int, float)) or str(plan_count).isdigit()
+        else -1
+    )
     ok = plan_count_int == snapshot_count
     plan_ts = _parse_iso_datetime(row.get("generated_at"))
-    snapshot_ts = _parse_iso_datetime(snapshot.get("synced_at")) if isinstance(snapshot, dict) else None
+    snapshot_ts = (
+        _parse_iso_datetime(snapshot.get("synced_at"))
+        if isinstance(snapshot, dict)
+        else None
+    )
     plan_older_than_snapshot = bool(plan_ts and snapshot_ts and plan_ts < snapshot_ts)
     status = _status(ok)
     severity = "error" if not ok else "info"
@@ -703,9 +983,13 @@ def _check_ashare_capital_plan_alignment() -> Check:
         status,
         message,
         {
-            "latest_capital_plan": str(plan_path.relative_to(ROOT)) if plan_path else "",
+            "latest_capital_plan": str(plan_path.relative_to(ROOT))
+            if plan_path
+            else "",
             "generated_at": row.get("generated_at"),
-            "snapshot_synced_at": snapshot.get("synced_at") if isinstance(snapshot, dict) else "",
+            "snapshot_synced_at": snapshot.get("synced_at")
+            if isinstance(snapshot, dict)
+            else "",
             "plan_older_than_snapshot": plan_older_than_snapshot,
             "local_trade_count": local_trade_count,
             "snapshot_position_count": snapshot_count,
@@ -720,28 +1004,58 @@ def _check_ashare_capital_plan_alignment() -> Check:
 
 def _check_failure_receipts() -> Check:
     failed = _iter_json_files(ROOT / "signals/failed")
-    local_trades_path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
+    local_trades_path = _ashare_execution_file("local_sim_trades.jsonl")
     local_trade_count = 0
     if local_trades_path.exists():
-        local_trade_count = sum(1 for line in local_trades_path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+        local_trade_count = sum(
+            1
+            for line in local_trades_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+            if line.strip()
+        )
     sample_quality = _ashare_local_sample_quality(local_trades_path)
     outside_session_only = _ashare_outside_session_only_samples(sample_quality)
-    receipt_paths = [ROOT / "signals/sim_execution_receipts.jsonl"]
+    receipt_paths = [_ashare_execution_file("sim_execution_receipts.jsonl")]
     latest_receipts = []
     existing_paths = []
     for receipts in receipt_paths:
         if not receipts.exists():
             continue
         existing_paths.append(str(receipts))
-        rows = [line for line in receipts.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+        rows = [
+            line
+            for line in receipts.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+            if line.strip()
+        ]
         for line in rows[-20:]:
             try:
                 item = json.loads(line)
             except Exception:
                 continue
-            latest_receipts.append({key: item.get(key) for key in ["id", "signal_id", "order_id", "code", "symbol", "status", "success", "filled_qty", "message", "receipt_sha256"]})
+            latest_receipts.append(
+                {
+                    key: item.get(key)
+                    for key in [
+                        "id",
+                        "signal_id",
+                        "order_id",
+                        "code",
+                        "symbol",
+                        "status",
+                        "success",
+                        "filled_qty",
+                        "message",
+                        "receipt_sha256",
+                    ]
+                }
+            )
     no_receipt_expected = not failed and local_trade_count == 0
-    validation_receipt_advisory = not failed and outside_session_only and not latest_receipts
+    validation_receipt_advisory = (
+        not failed and outside_session_only and not latest_receipts
+    )
     ok = (bool(existing_paths) and bool(latest_receipts)) or no_receipt_expected
     if validation_receipt_advisory:
         ok = True
@@ -768,7 +1082,9 @@ def _check_failure_receipts() -> Check:
             "receipt_path_exists": bool(existing_paths),
             "receipt_paths": existing_paths,
             "latest_receipts": latest_receipts[-5:],
-            "bootstrap_state": "no_receipts_expected_yet" if no_receipt_expected else "",
+            "bootstrap_state": "no_receipts_expected_yet"
+            if no_receipt_expected
+            else "",
             "sample_quality": sample_quality,
             "advisory": advisory,
         },
@@ -781,13 +1097,17 @@ def _installed_crontab_text() -> tuple[str, str]:
     errors: list[str] = []
     for command in commands:
         try:
-            result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=5)
+            result = subprocess.run(
+                command, check=False, capture_output=True, text=True, timeout=5
+            )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{' '.join(command)}: {exc.__class__.__name__}: {exc}")
             continue
         if result.returncode == 0:
             return result.stdout, ""
-        errors.append(f"{' '.join(command)}: {result.stderr.strip() or result.stdout.strip()}")
+        errors.append(
+            f"{' '.join(command)}: {result.stderr.strip() or result.stdout.strip()}"
+        )
     return "", "; ".join(error for error in errors if error)
 
 
@@ -804,7 +1124,10 @@ def _latest_cron_result(market: str) -> dict[str, Any]:
                 parsed = json.loads(line[start:])
             except json.JSONDecodeError:
                 continue
-            if isinstance(parsed, dict) and str(parsed.get("market") or "").lower() == market:
+            if (
+                isinstance(parsed, dict)
+                and str(parsed.get("market") or "").lower() == market
+            ):
                 payload = parsed
                 break
     return {
@@ -817,14 +1140,27 @@ def _latest_cron_result(market: str) -> dict[str, Any]:
 
 def _count_jsonl_rows(path: Path) -> int:
     try:
-        return sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+        return sum(
+            1
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if line.strip()
+        )
     except OSError:
         return 0
 
 
-def _ashare_no_trade_payload_date(payload: dict[str, Any], explanation: dict[str, Any]) -> str:
+def _ashare_no_trade_payload_date(
+    payload: dict[str, Any], explanation: dict[str, Any]
+) -> str:
     for source in (explanation, payload):
-        for key in ("trade_date", "date", "local_date", "generated_at", "created_at", "timestamp"):
+        for key in (
+            "trade_date",
+            "date",
+            "local_date",
+            "generated_at",
+            "created_at",
+            "timestamp",
+        ):
             value = source.get(key)
             compact = _compact_date(value)
             if compact:
@@ -832,7 +1168,9 @@ def _ashare_no_trade_payload_date(payload: dict[str, Any], explanation: dict[str
     return ""
 
 
-def _latest_ashare_no_trade_explanation(path: Path | None = None, trade_date: str | None = None) -> dict[str, Any]:
+def _latest_ashare_no_trade_explanation(
+    path: Path | None = None, trade_date: str | None = None
+) -> dict[str, Any]:
     target = path or (ROOT / "shared/logs/ashare_no_trade_explanations.jsonl")
     if not target.exists():
         return {}
@@ -891,8 +1229,12 @@ def _ashare_candidate_order_gap_has_evidence(explanation: dict[str, Any]) -> boo
 
 
 def _ashare_candidate_order_gap_evidence_gaps(explanation: dict[str, Any]) -> list[str]:
-    counts = explanation.get("counts") if isinstance(explanation.get("counts"), dict) else {}
-    candidates = _int_value(counts.get("candidates"), _int_value(counts.get("candidate_count"), 0))
+    counts = (
+        explanation.get("counts") if isinstance(explanation.get("counts"), dict) else {}
+    )
+    candidates = _int_value(
+        counts.get("candidates"), _int_value(counts.get("candidate_count"), 0)
+    )
     orders = _int_value(counts.get("orders"), _int_value(counts.get("order_count"), 0))
     if orders > 0:
         return []
@@ -917,7 +1259,7 @@ def _int_value(value: Any, default: int = 0) -> int:
 
 
 def _ashare_local_sim_trade_rows(path: Path | None = None) -> list[dict[str, Any]]:
-    target = path or (ROOT / "shared/logs/local_sim/local_sim_trades.jsonl")
+    target = path or _ashare_execution_file("local_sim_trades.jsonl")
     rows: list[dict[str, Any]] = []
     if not target.exists():
         return rows
@@ -944,14 +1286,23 @@ def _compact_date(value: Any) -> str:
     return raw if len(raw) == 8 and raw.isdigit() else ""
 
 
-def _ashare_local_sim_trade_count_for_date(trade_date: str, path: Path | None = None) -> int:
+def _ashare_local_sim_trade_count_for_date(
+    trade_date: str, path: Path | None = None
+) -> int:
     target_date = _compact_date(trade_date)
     if not target_date:
         return 0
     count = 0
     for row in _ashare_local_sim_trade_rows(path):
         row_date = ""
-        for key in ("trade_date", "date", "fill_time", "created_at", "timestamp", "receipt_at"):
+        for key in (
+            "trade_date",
+            "date",
+            "fill_time",
+            "created_at",
+            "timestamp",
+            "receipt_at",
+        ):
             row_date = _compact_date(row.get(key))
             if row_date:
                 break
@@ -966,7 +1317,18 @@ def _ashare_local_sample_quality(path: Path | None = None) -> dict[str, Any]:
     quality_rows = [
         row
         for row in _ashare_local_sim_trade_rows(path)
-        if any(row.get(key) for key in ("side", "status", "created_at", "execution_source", "candidate_pool_layer", "order_id", "trade_id"))
+        if any(
+            row.get(key)
+            for key in (
+                "side",
+                "status",
+                "created_at",
+                "execution_source",
+                "candidate_pool_layer",
+                "order_id",
+                "trade_id",
+            )
+        )
     ]
     return summarize_sample_quality(quality_rows)
 
@@ -974,7 +1336,11 @@ def _ashare_local_sample_quality(path: Path | None = None) -> dict[str, Any]:
 def _ashare_outside_session_only_samples(sample_quality: dict[str, Any]) -> bool:
     total = int(sample_quality.get("total_count", 0) or 0)
     invalid_count = int(sample_quality.get("invalid_strategy_sample_count", 0) or 0)
-    by_reason = sample_quality.get("by_reason") if isinstance(sample_quality.get("by_reason"), dict) else {}
+    by_reason = (
+        sample_quality.get("by_reason")
+        if isinstance(sample_quality.get("by_reason"), dict)
+        else {}
+    )
     outside_count = int(by_reason.get("outside_ashare_regular_session", 0) or 0)
     return total > 0 and invalid_count > 0 and outside_count == invalid_count
 
@@ -984,17 +1350,20 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
     try:
         from shared.review.pnl_summary import sim_ledger_pnl_summary
 
-        pnl_result = sim_ledger_pnl_summary(markets=(market,))
+        pnl_result = sim_ledger_pnl_summary(
+            markets=(market,),
+            local_trades_path=_ashare_execution_file("local_sim_trades.jsonl"),
+        )
         pnl = pnl_result.get(market, {})
     except Exception as exc:  # noqa: BLE001
         pnl = {"error": f"{exc.__class__.__name__}: {exc}"}
     if market == "ashare":
-        path = ROOT / "shared/logs/local_sim/local_sim_trades.jsonl"
+        path = _ashare_execution_file("local_sim_trades.jsonl")
         return {
             "type": "server_local_sim_backup",
             "trade_rows": _count_jsonl_rows(path),
             "ledger_count": 1 if path.exists() else 0,
-            "latest_file": str(path.relative_to(ROOT)),
+            "latest_file": _display_path(path),
             "latest_age_minutes": _file_age_minutes(path),
             "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
             "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
@@ -1011,7 +1380,9 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
         review_path = ROOT / "shared/review/data/cn_futures_sim_reviews.jsonl"
         rows = []
         if review_path.exists():
-            for line in review_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            for line in review_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines():
                 if not line.strip():
                     continue
                 try:
@@ -1025,7 +1396,9 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
 
             target_trade_date = active_trade_date()
         except Exception:
-            target_trade_date = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
+            target_trade_date = datetime.now(timezone(timedelta(hours=8))).strftime(
+                "%Y%m%d"
+            )
         latest = latest_actionable_review(rows, trade_date=target_trade_date)
         return {
             "type": "cn_futures_append_only_review",
@@ -1036,17 +1409,25 @@ def _sim_ledger_summary(market: str) -> dict[str, Any]:
             "latest_file": str(review_path.relative_to(ROOT)),
             "latest_age_minutes": _file_age_minutes(review_path),
             "latest_state": latest.get("state", ""),
-            "latest_filled_count": int(latest.get("filled_count") or 0) if latest else 0,
+            "latest_filled_count": int(latest.get("filled_count") or 0)
+            if latest
+            else 0,
             "latest_error_count": int(latest.get("error_count") or 0) if latest else 0,
-            "latest_error_summary": latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {},
-            "latest_style_health": latest.get("style_health") if isinstance(latest.get("style_health"), dict) else {},
+            "latest_error_summary": latest.get("error_summary")
+            if isinstance(latest.get("error_summary"), dict)
+            else {},
+            "latest_style_health": latest.get("style_health")
+            if isinstance(latest.get("style_health"), dict)
+            else {},
             "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
             "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
             "total_pnl": round(_safe_float(pnl.get("total_pnl")), 6),
             "pnl_source": pnl.get("pnl_source", ""),
         }
 
-    files = sorted((ROOT / "shared/logs/sim_ledger" / market).glob("*/trade_journal.jsonl"))
+    files = sorted(
+        (ROOT / "shared/logs/sim_ledger" / market).glob("*/trade_journal.jsonl")
+    )
     latest = max(files, key=lambda item: item.stat().st_mtime) if files else None
     return {
         "type": "style_sim_ledger",
@@ -1065,19 +1446,32 @@ def _probe_market_data(market: str) -> dict[str, Any]:
     try:
         from shared.data.reader import SharedSignalsAPIClient, TradingagentDataReader
 
-        api_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip() or DEFAULT_SHAREDSIGNALS_API_URL
-        reader = TradingagentDataReader(api_client=SharedSignalsAPIClient(base_url=api_url))
+        api_url = (
+            os.environ.get(
+                "SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL
+            ).strip()
+            or DEFAULT_SHAREDSIGNALS_API_URL
+        )
+        reader = TradingagentDataReader(
+            api_client=SharedSignalsAPIClient(base_url=api_url)
+        )
         priced_rows: list[dict[str, Any]] = []
         asset_count = 0
         if market == "ashare":
             assets = reader.get_assets("Ashare") or reader.get_assets("ashare")
             asset_count = len(assets)
             regular = [
-                row for row in assets
-                if isinstance(row, dict) and VALID_ASHARE_RE.match(str(row.get("symbol") or row.get("ts_code") or ""))
+                row
+                for row in assets
+                if isinstance(row, dict)
+                and VALID_ASHARE_RE.match(
+                    str(row.get("symbol") or row.get("ts_code") or "")
+                )
             ]
             return {
-                "status": "ok" if regular and not reader.degraded else ("warn" if regular else "fail"),
+                "status": "ok"
+                if regular and not reader.degraded
+                else ("warn" if regular else "fail"),
                 "asset_count": asset_count,
                 "priced_signal_count": 0,
                 "regular_ashare_count": len(regular),
@@ -1091,8 +1485,18 @@ def _probe_market_data(market: str) -> dict[str, Any]:
             rows = enrich_pm_rows(_unwrap_rows(reader.get_pm_markets(limit=10)))
             priced_rows = [row for row in rows if _price(row) > 0]
             modeled_rows = [
-                row for row in priced_rows
-                if _probability(row, ("model_probability", "model_prob", "fair_probability", "estimated_probability")) > 0
+                row
+                for row in priced_rows
+                if _probability(
+                    row,
+                    (
+                        "model_probability",
+                        "model_prob",
+                        "fair_probability",
+                        "estimated_probability",
+                    ),
+                )
+                > 0
             ]
             explicit_rows = [row for row in rows if _explicit_trade_side(row)]
             candidate_rows = [row for row in priced_rows if _pm_strategy_signal(row)]
@@ -1117,7 +1521,16 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                     "explicit_signal_count": len(explicit_rows),
                     "reason": "pm_prices_missing",
                     "sample": [
-                        {key: row.get(key) for key in ("symbol", "market_id", "trade_date", "price", "yes_price")}
+                        {
+                            key: row.get(key)
+                            for key in (
+                                "symbol",
+                                "market_id",
+                                "trade_date",
+                                "price",
+                                "yes_price",
+                            )
+                        }
                         for row in rows[:5]
                     ],
                     "reader_degraded": reader.degraded,
@@ -1132,7 +1545,20 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                     "explicit_signal_count": 0,
                     "reason": "pm_model_probability_missing",
                     "sample": [
-                        {key: row.get(key) for key in ("symbol", "market_id", "trade_date", "price", "latest_price", "yes_price", "model_probability", "fair_probability", "estimated_probability")}
+                        {
+                            key: row.get(key)
+                            for key in (
+                                "symbol",
+                                "market_id",
+                                "trade_date",
+                                "price",
+                                "latest_price",
+                                "yes_price",
+                                "model_probability",
+                                "fair_probability",
+                                "estimated_probability",
+                            )
+                        }
                         for row in priced_rows[:5]
                     ],
                     "reader_degraded": reader.degraded,
@@ -1148,7 +1574,20 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                     "strategy_candidate_count": 0,
                     "reason": "pm_model_edge_below_threshold",
                     "sample": [
-                        {key: row.get(key) for key in ("symbol", "market_id", "trade_date", "price", "latest_price", "yes_price", "model_probability", "model_source", "model_reason")}
+                        {
+                            key: row.get(key)
+                            for key in (
+                                "symbol",
+                                "market_id",
+                                "trade_date",
+                                "price",
+                                "latest_price",
+                                "yes_price",
+                                "model_probability",
+                                "model_source",
+                                "model_reason",
+                            )
+                        }
                         for row in priced_rows[:5]
                     ],
                     "reader_degraded": reader.degraded,
@@ -1164,7 +1603,9 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                 latest = _latest_priced(rows)
                 if latest:
                     priced_rows.append(latest)
-            strategy_candidates = [row for row in diagnostics if row.get("strategy_candidate")]
+            strategy_candidates = [
+                row for row in diagnostics if row.get("strategy_candidate")
+            ]
             if not priced_rows:
                 return {
                     "status": "warn",
@@ -1242,15 +1683,32 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                         "proxy": "HSI",
                         "reason": "hk_stock_daily_missing_using_hsi_proxy",
                         "sample": [
-                            {key: row.get(key) for key in ("symbol", "market", "trade_date", "price", "close", "latest_price", "market_proxy_for")}
+                            {
+                                key: row.get(key)
+                                for key in (
+                                    "symbol",
+                                    "market",
+                                    "trade_date",
+                                    "price",
+                                    "close",
+                                    "latest_price",
+                                    "market_proxy_for",
+                                )
+                            }
                             for row in proxy_rows[:5]
                         ],
                         "reader_degraded": reader.degraded,
                         "reader_errors": reader.errors[-5:],
                     }
         elif market == "cn_futures":
-            api_base = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL).strip().rstrip("/")
-            api_url = f"{api_base}/realtime_5min?{parse.urlencode({'market': 'Futures'})}"
+            api_base = (
+                os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL)
+                .strip()
+                .rstrip("/")
+            )
+            api_url = (
+                f"{api_base}/realtime_5min?{parse.urlencode({'market': 'Futures'})}"
+            )
             try:
                 req = request.Request(api_url, headers={"Accept": "application/json"})
                 with request.urlopen(req, timeout=8) as resp:
@@ -1264,8 +1722,12 @@ def _probe_market_data(market: str) -> dict[str, Any]:
             if isinstance(rows, list):
                 session_state = _market_session_state(market)
                 session_start = str(session_state.get("session_start") or "")
-                now_local = parse_cn_datetime(session_state.get("local_time")) or datetime.now(timezone.utc)
-                max_age_minutes = float(os.environ.get("CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES", "10"))
+                now_local = parse_cn_datetime(
+                    session_state.get("local_time")
+                ) or datetime.now(timezone.utc)
+                max_age_minutes = float(
+                    os.environ.get("CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES", "10")
+                )
                 priced_rows = []
                 for row in rows:
                     if not isinstance(row, dict):
@@ -1286,16 +1748,36 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                     if price > 0 and symbol:
                         priced_rows.append(row)
                 if priced_rows:
-                    latest_bar_time = max(str(row.get("bar_time") or row.get("time") or "") for row in priced_rows)
+                    latest_bar_time = max(
+                        str(row.get("bar_time") or row.get("time") or "")
+                        for row in priced_rows
+                    )
                     return {
                         "status": "ok",
-                        "asset_count": len({str(row.get("symbol") or row.get("ts_code") or "") for row in priced_rows}),
+                        "asset_count": len(
+                            {
+                                str(row.get("symbol") or row.get("ts_code") or "")
+                                for row in priced_rows
+                            }
+                        ),
                         "priced_signal_count": len(priced_rows),
                         "latest_bar_time": latest_bar_time,
                         "reason": "",
                         "market_session": session_state,
                         "sample": [
-                            {key: row.get(key) for key in ("symbol", "ts_code", "market", "trade_date", "bar_time", "close", "price", "provider")}
+                            {
+                                key: row.get(key)
+                                for key in (
+                                    "symbol",
+                                    "ts_code",
+                                    "market",
+                                    "trade_date",
+                                    "bar_time",
+                                    "close",
+                                    "price",
+                                    "provider",
+                                )
+                            }
                             for row in priced_rows[:5]
                         ],
                         "reader_degraded": False,
@@ -1307,17 +1789,24 @@ def _probe_market_data(market: str) -> dict[str, Any]:
             from CNFutures.adapter import CNFuturesAdapter, READER_MARKET
 
             adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 5})
-            symbols = adapter.get_intraday_universe(datetime.now(timezone.utc).strftime("%Y%m%d"))
+            symbols = adapter.get_intraday_universe(
+                datetime.now(timezone.utc).strftime("%Y%m%d")
+            )
             priced_rows_fallback = []
             latest_bar_time = ""
             session_state = _market_session_state(market)
             session_start = str(session_state.get("session_start") or "")
-            now_local = parse_cn_datetime(session_state.get("local_time")) or datetime.now(timezone.utc)
-            max_age_minutes = float(os.environ.get("CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES", "10"))
+            now_local = parse_cn_datetime(
+                session_state.get("local_time")
+            ) or datetime.now(timezone.utc)
+            max_age_minutes = float(
+                os.environ.get("CN_FUTURES_MAX_INTRADAY_BAR_AGE_MINUTES", "10")
+            )
             for symbol in symbols[:5]:
                 rows = adapter.get_bars_intraday(READER_MARKET, symbol, interval="5min")
                 priced = [
-                    row for row in rows
+                    row
+                    for row in rows
                     if _price(row) > 0
                     and is_current_session_bar(
                         row.get("bar_time") or row.get("time"),
@@ -1328,9 +1817,31 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                 ]
                 if priced:
                     priced_rows_fallback.append(priced[-1])
-                    latest_bar_time = max(latest_bar_time, str(priced[-1].get("bar_time") or ""))
-            status = "ok" if priced_rows_fallback else ("warn" if symbols and session_state["samples_expected_today"] else "fail" if not symbols else "ok")
-            reason = "" if priced_rows_fallback else ("futures_intraday_bars_missing" if symbols and session_state["samples_expected_today"] else "futures_intraday_waiting_for_next_session" if symbols else "futures_universe_missing")
+                    latest_bar_time = max(
+                        latest_bar_time, str(priced[-1].get("bar_time") or "")
+                    )
+            status = (
+                "ok"
+                if priced_rows_fallback
+                else (
+                    "warn"
+                    if symbols and session_state["samples_expected_today"]
+                    else "fail"
+                    if not symbols
+                    else "ok"
+                )
+            )
+            reason = (
+                ""
+                if priced_rows_fallback
+                else (
+                    "futures_intraday_bars_missing"
+                    if symbols and session_state["samples_expected_today"]
+                    else "futures_intraday_waiting_for_next_session"
+                    if symbols
+                    else "futures_universe_missing"
+                )
+            )
             return {
                 "status": status,
                 "asset_count": len(symbols),
@@ -1339,7 +1850,18 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                 "reason": reason,
                 "market_session": session_state,
                 "sample": [
-                    {key: row.get(key) for key in ("symbol", "ts_code", "market", "trade_date", "bar_time", "close", "price")}
+                    {
+                        key: row.get(key)
+                        for key in (
+                            "symbol",
+                            "ts_code",
+                            "market",
+                            "trade_date",
+                            "bar_time",
+                            "close",
+                            "price",
+                        )
+                    }
                     for row in priced_rows_fallback[:5]
                 ],
                 "reader_degraded": False,
@@ -1351,7 +1873,19 @@ def _probe_market_data(market: str) -> dict[str, Any]:
             "asset_count": asset_count,
             "priced_signal_count": len(priced_rows),
             "sample": [
-                {key: row.get(key) for key in ("symbol", "ts_code", "market_id", "trade_date", "price", "close", "latest_price", "yes_price")}
+                {
+                    key: row.get(key)
+                    for key in (
+                        "symbol",
+                        "ts_code",
+                        "market_id",
+                        "trade_date",
+                        "price",
+                        "close",
+                        "latest_price",
+                        "yes_price",
+                    )
+                }
                 for row in priced_rows[:5]
             ],
             "reader_degraded": reader.degraded,
@@ -1361,7 +1895,9 @@ def _probe_market_data(market: str) -> dict[str, Any]:
         return {"status": "fail", "error": f"{exc.__class__.__name__}: {exc}"}
 
 
-def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: str = "") -> Check:
+def _check_sim_market_loop(
+    market: str, crontab_text: str = "", crontab_error: str = ""
+) -> Check:
     data = _probe_market_data(market)
     ledger = _sim_ledger_summary(market)
     cron_result = _latest_cron_result(market)
@@ -1370,10 +1906,18 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
     session_state = _market_session_state(market)
     samples_expected = bool(session_state.get("samples_expected_today"))
     session_trade_date = _compact_date(session_state.get("local_time"))
-    current_trade_date = session_trade_date or datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
-    no_trade_explanation = _latest_ashare_no_trade_explanation(trade_date=session_trade_date or None) if market == "ashare" else {}
+    current_trade_date = session_trade_date or datetime.now(
+        timezone(timedelta(hours=8))
+    ).strftime("%Y%m%d")
+    no_trade_explanation = (
+        _latest_ashare_no_trade_explanation(trade_date=session_trade_date or None)
+        if market == "ashare"
+        else {}
+    )
     if market == "ashare":
-        ledger["today_trade_rows"] = _ashare_local_sim_trade_count_for_date(current_trade_date)
+        ledger["today_trade_rows"] = _ashare_local_sim_trade_count_for_date(
+            current_trade_date
+        )
 
     hard_fail_reasons: list[str] = []
     warn_reasons: list[str] = []
@@ -1385,29 +1929,44 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
         else:
             hard_fail_reasons.append("market_data_missing")
     elif data.get("status") == "warn":
-        market_wait_reason = _sim_market_wait_reason(market, str(data.get("reason") or ""))
-        if market_wait_reason in {"pm_waiting_for_market_data", "crypto_waiting_for_market_data"} or not market_wait_reason:
+        market_wait_reason = _sim_market_wait_reason(
+            market, str(data.get("reason") or "")
+        )
+        if (
+            market_wait_reason
+            in {"pm_waiting_for_market_data", "crypto_waiting_for_market_data"}
+            or not market_wait_reason
+        ):
             warn_reasons.append("market_data_degraded")
         if market_wait_reason:
             warn_reasons.append(market_wait_reason)
-    if market not in {"ashare", "cn_futures"} and int(ledger.get("trade_rows") or 0) <= 0:
+    if (
+        market not in {"ashare", "cn_futures"}
+        and int(ledger.get("trade_rows") or 0) <= 0
+    ):
         if not _sim_market_wait_reason(market, str(data.get("reason") or "")):
             hard_fail_reasons.append("sim_trade_ledger_empty")
-    if market == "ashare" and int(ledger.get("today_trade_rows") or 0) <= 0 and samples_expected:
+    if (
+        market == "ashare"
+        and int(ledger.get("today_trade_rows") or 0) <= 0
+        and samples_expected
+    ):
         if _ashare_scientific_no_trade(no_trade_explanation):
             warn_reasons.append("ashare_waiting_for_portfolio_or_strategy_signal")
         else:
             warn_reasons.append("server_local_sim_has_no_production_trades_yet")
-    if market == "cn_futures" and int(ledger.get("review_rows") or 0) <= 0 and samples_expected:
+    if (
+        market == "cn_futures"
+        and int(ledger.get("review_rows") or 0) <= 0
+        and samples_expected
+    ):
         warn_reasons.append("cn_futures_review_has_no_samples_yet")
     payload = cron_result.get("payload") or {}
-    cron_status = (payload.get("status") or payload.get("state") or "") if payload else ""
+    cron_status = (
+        (payload.get("status") or payload.get("state") or "") if payload else ""
+    )
     cron_reader_degraded = bool(
-        payload
-        and (
-            payload.get("reader_degraded")
-            or payload.get("reader_errors")
-        )
+        payload and (payload.get("reader_degraded") or payload.get("reader_errors"))
     )
     if cron_reader_degraded:
         warn_reasons.append("latest_cron_reader_degraded")
@@ -1434,7 +1993,11 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
             )
         )
     )
-    status = "fail" if hard_fail_reasons else ("pass" if strategy_wait else ("warn" if warn_reasons else "pass"))
+    status = (
+        "fail"
+        if hard_fail_reasons
+        else ("pass" if strategy_wait else ("warn" if warn_reasons else "pass"))
+    )
     market_data_wait = (
         not hard_fail_reasons
         and not strategy_wait
@@ -1457,7 +2020,15 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
         else "normal"
     )
     execution_fault = bool(hard_fail_reasons)
-    state_label = "策略等待" if strategy_wait else ("正常" if status == "pass" else ("数据等待" if market_data_wait else "需要处理"))
+    state_label = (
+        "策略等待"
+        if strategy_wait
+        else (
+            "正常"
+            if status == "pass"
+            else ("数据等待" if market_data_wait else "需要处理")
+        )
+    )
     return Check(
         f"{market}_sim_loop",
         status,
@@ -1477,7 +2048,9 @@ def _check_sim_market_loop(market: str, crontab_text: str = "", crontab_error: s
             "diagnostic_class": diagnostic_class,
             "execution_fault": execution_fault,
         },
-        severity="error" if status == "fail" else ("warn" if status == "warn" else "info"),
+        severity="error"
+        if status == "fail"
+        else ("warn" if status == "warn" else "info"),
     )
 
 
@@ -1492,14 +2065,20 @@ def _sim_market_wait_reason(market: str, reason: str) -> str:
     if market == "crypto":
         if reason == "crypto_klines_empty":
             return "crypto_waiting_for_market_data"
-        if reason in {"crypto_insufficient_priced_rows", "crypto_momentum_threshold_not_met"}:
+        if reason in {
+            "crypto_insufficient_priced_rows",
+            "crypto_momentum_threshold_not_met",
+        }:
             return "crypto_waiting_for_momentum_signal"
     return ""
 
 
 def run_sim_market_health(markets: tuple[str, ...] = SIM_MARKETS) -> dict[str, Any]:
     crontab_text, crontab_error = _installed_crontab_text()
-    checks = [_check_sim_market_loop(market, crontab_text, crontab_error) for market in markets]
+    checks = [
+        _check_sim_market_loop(market, crontab_text, crontab_error)
+        for market in markets
+    ]
     failed = [check for check in checks if check.status == "fail"]
     warned = [check for check in checks if check.status == "warn"]
     overall = "fail" if failed else ("warn" if warned else "pass")
@@ -1537,7 +2116,9 @@ def run_all_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict[st
     }
 
 
-def run_ashare_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict[str, Any]:
+def run_ashare_health(
+    *, mini_health_url: str = DEFAULT_MINI_HEALTH_URL
+) -> dict[str, Any]:
     checks = [
         _check_ashare_universe(),
         _check_shadow_ledger(),
@@ -1590,11 +2171,25 @@ def run_cn_futures_health() -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="tradingagent market health checks")
-    parser.add_argument("--market", default="ashare", choices=["ashare", "cn_futures", "sim", "all"], help="market scope to check")
+    parser.add_argument(
+        "--market",
+        default="ashare",
+        choices=["ashare", "cn_futures", "sim", "all"],
+        help="market scope to check",
+    )
     parser.add_argument("--mini-health-url", default=DEFAULT_MINI_HEALTH_URL)
     parser.add_argument("--pretty", action="store_true")
-    parser.add_argument("--write-latest", action="store_true", help="write a latest JSON report for dashboards and cron probes")
-    parser.add_argument("--latest-path", type=Path, default=None, help="override latest JSON report path")
+    parser.add_argument(
+        "--write-latest",
+        action="store_true",
+        help="write a latest JSON report for dashboards and cron probes",
+    )
+    parser.add_argument(
+        "--latest-path",
+        type=Path,
+        default=None,
+        help="override latest JSON report path",
+    )
     args = parser.parse_args(argv)
     if args.market == "ashare":
         result = run_ashare_health(mini_health_url=args.mini_health_url)
@@ -1610,9 +2205,19 @@ def main(argv: list[str] | None = None) -> int:
         latest_path = args.latest_path or LATEST_BY_MARKET[args.market]
         latest_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = latest_path.with_suffix(latest_path.suffix + ".tmp")
-        tmp_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+        tmp_path.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2, sort_keys=False) + "\n",
+            encoding="utf-8",
+        )
         tmp_path.replace(latest_path)
-    print(json.dumps(result, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=False))
+    print(
+        json.dumps(
+            result,
+            ensure_ascii=False,
+            indent=2 if args.pretty else None,
+            sort_keys=False,
+        )
+    )
     return 0 if result["overall_status"] != "fail" else 2
 
 

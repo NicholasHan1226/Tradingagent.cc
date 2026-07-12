@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from shared.markets.evolution_engine import evaluate_and_adjust
+from shared.markets.evolution_engine import evaluate_all_markets, evaluate_and_adjust
 from shared.markets.performance_tracker import save_run
 from shared.markets.style_runner import StyleRunner
 
@@ -44,6 +44,13 @@ class NoopSimulator:
 
 
 class EvolutionRuntimeStylesTest(unittest.TestCase):
+    def test_single_account_markets_refuse_generic_auto_evolution(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "ashare.*retired"):
+            evaluate_and_adjust("ashare")
+
+        with self.assertRaisesRegex(RuntimeError, "cn_futures.*retired"):
+            evaluate_all_markets(("crypto", "cn_futures"))
+
     def test_evolution_keeps_checked_in_styles_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -83,7 +90,9 @@ class EvolutionRuntimeStylesTest(unittest.TestCase):
                 review_root=review_root,
             )
 
-            result = evaluate_and_adjust("crypto", review_root=review_root, styles_dir=styles_dir)
+            result = evaluate_and_adjust(
+                "crypto", review_root=review_root, styles_dir=styles_dir
+            )
 
             self.assertEqual(style_path.read_text(encoding="utf-8"), original)
             self.assertEqual(result["state"], "adjusted")
@@ -91,9 +100,16 @@ class EvolutionRuntimeStylesTest(unittest.TestCase):
             generated = sorted(generated_dir.glob("balanced_g2_*.json"))
             self.assertEqual(len(generated), 1)
 
-            weights = json.loads((review_root / "crypto" / "style_weights.json").read_text(encoding="utf-8"))
+            weights = json.loads(
+                (review_root / "crypto" / "style_weights.json").read_text(
+                    encoding="utf-8"
+                )
+            )
             self.assertIn("balanced", weights["styles"])
-            self.assertIn(json.loads(generated[0].read_text(encoding="utf-8"))["name"], weights["styles"])
+            self.assertIn(
+                json.loads(generated[0].read_text(encoding="utf-8"))["name"],
+                weights["styles"],
+            )
 
     def test_style_runner_loads_runtime_generated_styles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -103,14 +119,30 @@ class EvolutionRuntimeStylesTest(unittest.TestCase):
             generated_dir = review_root / "crypto" / "generated_styles"
             styles_dir.mkdir()
             generated_dir.mkdir(parents=True)
-            (styles_dir / "balanced.json").write_text(json.dumps(STYLE), encoding="utf-8")
-            variant = {**STYLE, "name": "balanced_g2_20260704", "generation": 2, "weight": 0.02}
-            (generated_dir / "balanced_g2_20260704.json").write_text(json.dumps(variant), encoding="utf-8")
+            (styles_dir / "balanced.json").write_text(
+                json.dumps(STYLE), encoding="utf-8"
+            )
+            variant = {
+                **STYLE,
+                "name": "balanced_g2_20260704",
+                "generation": 2,
+                "weight": 0.02,
+            }
+            (generated_dir / "balanced_g2_20260704.json").write_text(
+                json.dumps(variant), encoding="utf-8"
+            )
 
-            runner = StyleRunner("crypto", NoopSimulator(), styles_dir=styles_dir, review_root=review_root)
+            runner = StyleRunner(
+                "crypto",
+                NoopSimulator(),
+                styles_dir=styles_dir,
+                review_root=review_root,
+            )
             styles = runner._load_weighted_styles()
 
-            self.assertEqual({style.name for style in styles}, {"balanced", "balanced_g2_20260704"})
+            self.assertEqual(
+                {style.name for style in styles}, {"balanced", "balanced_g2_20260704"}
+            )
 
     def test_save_run_deduplicates_same_style_date(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,13 +154,37 @@ class EvolutionRuntimeStylesTest(unittest.TestCase):
                 "sharpe": 1.0,
                 "avg_hold_hours": 10,
             }
-            save_run("balanced", "crypto", {**base, "pnl": 1.0, "trades": 2}, review_root=review_root)
-            save_run("balanced", "crypto", {**base, "pnl": 3.0, "trades": 5}, review_root=review_root)
-            save_run("mean_reversion", "crypto", {**base, "pnl": 2.0, "trades": 3}, review_root=review_root)
-            save_run("balanced", "pm", {**base, "pnl": 4.0, "trades": 4}, review_root=review_root)
+            save_run(
+                "balanced",
+                "crypto",
+                {**base, "pnl": 1.0, "trades": 2},
+                review_root=review_root,
+            )
+            save_run(
+                "balanced",
+                "crypto",
+                {**base, "pnl": 3.0, "trades": 5},
+                review_root=review_root,
+            )
+            save_run(
+                "mean_reversion",
+                "crypto",
+                {**base, "pnl": 2.0, "trades": 3},
+                review_root=review_root,
+            )
+            save_run(
+                "balanced",
+                "pm",
+                {**base, "pnl": 4.0, "trades": 4},
+                review_root=review_root,
+            )
 
             crypto_path = review_root / "crypto" / "style_performance.jsonl"
-            crypto_rows = [json.loads(line) for line in crypto_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            crypto_rows = [
+                json.loads(line)
+                for line in crypto_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
             self.assertEqual(len(crypto_rows), 2)
             balanced_rows = [r for r in crypto_rows if r["style_name"] == "balanced"]
             self.assertEqual(len(balanced_rows), 1)
@@ -136,7 +192,11 @@ class EvolutionRuntimeStylesTest(unittest.TestCase):
             self.assertEqual(balanced_rows[0]["trades"], 5)
 
             pm_path = review_root / "pm" / "style_performance.jsonl"
-            pm_rows = [json.loads(line) for line in pm_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            pm_rows = [
+                json.loads(line)
+                for line in pm_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
             self.assertEqual(len(pm_rows), 1)
             self.assertEqual(pm_rows[0]["pnl"], 4.0)
 

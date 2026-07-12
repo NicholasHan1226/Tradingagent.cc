@@ -18,6 +18,7 @@ from typing import Any
 from shared.markets.sim_capital import default_sim_capital
 from zoneinfo import ZoneInfo
 
+from shared.execution.execution_reality import ashare_execution_reality
 from shared.execution.signal_state_machine import SignalStateMachine
 from shared.execution.sim_engine import SimExecutionEngine, SimOrder
 from shared.execution.sim_broker import SimResult
@@ -74,14 +75,18 @@ def _parse_bar_time(value: Any) -> datetime | None:
     return parsed.astimezone(CN_TZ)
 
 
-def _fresh_5min_bar(value: Any, *, now: datetime | None = None) -> tuple[bool, float | None]:
+def _fresh_5min_bar(
+    value: Any, *, now: datetime | None = None
+) -> tuple[bool, float | None]:
     parsed = _parse_bar_time(value)
     if parsed is None:
         return False, None
     reference = (now or _now_cn()).astimezone(CN_TZ)
     age_seconds = (reference - parsed).total_seconds()
     return (
-        -MAX_EXECUTION_BAR_FUTURE_SECONDS <= age_seconds <= MAX_EXECUTION_BAR_AGE_SECONDS,
+        -MAX_EXECUTION_BAR_FUTURE_SECONDS
+        <= age_seconds
+        <= MAX_EXECUTION_BAR_AGE_SECONDS,
         age_seconds,
     )
 
@@ -98,10 +103,32 @@ def _is_supported_ashare_code(code: Any) -> bool:
         return digits.startswith(("000", "001", "002", "003", "300", "301"))
     if exchange == "SH":
         return digits.startswith(("600", "601", "603", "605", "688", "689"))
-    return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
+    return digits.startswith(
+        (
+            "000",
+            "001",
+            "002",
+            "003",
+            "300",
+            "301",
+            "600",
+            "601",
+            "603",
+            "605",
+            "688",
+            "689",
+        )
+    )
 
 
-def _reject(order_id: str, code: str, message: str) -> SimResult:
+def _reject(
+    order_id: str,
+    code: str,
+    message: str,
+    *,
+    details: dict[str, Any] | None = None,
+) -> SimResult:
+    model = ashare_execution_reality()
     return SimResult(
         status="rejected",
         filled_qty=0,
@@ -114,6 +141,8 @@ def _reject(order_id: str, code: str, message: str) -> SimResult:
             "mode": "pre_bridge_validation",
             "code": code,
             "reason": message,
+            "execution_reality_model_version": model.model_version,
+            **dict(details or {}),
         },
     )
 
@@ -143,26 +172,93 @@ def _parse_session_now(value: Any) -> datetime:
     return parsed.astimezone(CN_TZ)
 
 
-def _is_regular_trading_session(now: datetime) -> bool:
+def _classify_market_session(now: datetime) -> str:
     from Ashare.t_plus_1 import is_trading_day
 
     if not is_trading_day(now.date()):
-        return False
+        return "closed"
     current = now.time()
-    return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(14, 57))
+    if time(9, 15) <= current < time(9, 25):
+        return "opening_auction"
+    if time(9, 30) <= current <= time(11, 30):
+        return "continuous_auction_am"
+    if time(13, 0) <= current < time(14, 57):
+        return "continuous_auction_pm"
+    if time(14, 57) <= current <= time(15, 0):
+        return "closing_auction"
+    if time(15, 5) <= current <= time(15, 30):
+        return "after_hours_fixed_price"
+    return "closed"
 
 
-def _market_session_rejection(config: dict[str, Any]) -> str:
+def _is_regular_trading_session(now: datetime) -> bool:
+    return _classify_market_session(now).startswith("continuous_auction")
+
+
+def _market_session_validation(
+    order: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    model = ashare_execution_reality()
+    order_type = (
+        str(order.get("order_type") or config.get("order_type") or "market")
+        .strip()
+        .lower()
+    )
+    base = {
+        "execution_reality_model_version": model.model_version,
+        "required_order_type": None,
+        "market_session": "bypass",
+        "allowed": True,
+        "reason": "",
+    }
     if _coerce_bool(config.get("bypass_market_hours"), False):
-        return ""
+        return base
     enforce = _coerce_bool(os.environ.get("ASHARE_SIM_ENFORCE_MARKET_HOURS"), True)
     enforce = _coerce_bool(config.get("enforce_market_hours"), enforce)
     if not enforce:
-        return ""
+        return base
     now = _parse_session_now(config.get("market_session_now") or config.get("now"))
-    if _is_regular_trading_session(now):
-        return ""
-    return f"market_closed: A-share simulated execution only runs during 09:30-11:30 or 13:00-14:57 Asia/Shanghai; now={now.isoformat(timespec='seconds')}"
+    session = _classify_market_session(now)
+    result = {
+        **base,
+        "market_session": session,
+        "now": now.isoformat(timespec="seconds"),
+    }
+    if session.startswith("continuous_auction"):
+        if order_type == "after_hours_fixed_price":
+            return {
+                **result,
+                "allowed": False,
+                "required_order_type": "market_or_limit",
+                "reason": "after_hours_fixed_price_order_type_outside_after_hours_session",
+            }
+        return result
+    session_rule = model.as_contract()["sessions"].get(session)
+    if isinstance(session_rule, dict):
+        return {
+            **result,
+            "allowed": False,
+            "required_order_type": session_rule.get("order_type"),
+            "reason": str(
+                session_rule.get("unsupported_reason")
+                or f"{session}_unsupported_by_sim_engine"
+            ),
+        }
+    return {
+        **result,
+        "allowed": False,
+        "reason": (
+            "market_closed: A-share continuous auction is 09:30-11:30 or "
+            "13:00-14:57 Asia/Shanghai; closing auction and after-hours fixed "
+            f"price are separate sessions; now={now.isoformat(timespec='seconds')}"
+        ),
+    }
+
+
+def _market_session_rejection(config: dict[str, Any]) -> str:
+    validation = _market_session_validation({}, config)
+    return "" if validation["allowed"] else str(validation["reason"])
 
 
 def _first_value(*values: Any, default: Any = None) -> Any:
@@ -181,13 +277,19 @@ def _snapshot_field_source(
 ) -> str:
     for owner_name, owner in (("order", order), ("config", config)):
         source_snapshot = owner.get("market_snapshot")
-        if isinstance(source_snapshot, dict) and source_snapshot.get(field) not in (None, ""):
+        if isinstance(source_snapshot, dict) and source_snapshot.get(field) not in (
+            None,
+            "",
+        ):
             return f"{owner_name}.market_snapshot.{field}"
     if order.get(field) not in (None, ""):
         return f"order.{field}"
     if config.get(field) not in (None, ""):
         return f"config.{field}"
-    if field in {"ask_price", "bid_price", "last_price"} and card.get("price") not in (None, ""):
+    if field in {"ask_price", "bid_price", "last_price"} and card.get("price") not in (
+        None,
+        "",
+    ):
         if snapshot.get(field) == card.get("price"):
             return "signal_card.price"
     if snapshot.get(field) not in (None, ""):
@@ -218,7 +320,9 @@ def _fill_evidence_from_snapshot(
         snapshot.get("bar_time"),
         snapshot.get("trade_time"),
     )
-    bar_volume = _first_value(snapshot.get("bar_volume"), snapshot.get("volume"), snapshot.get("vol"))
+    bar_volume = _first_value(
+        snapshot.get("bar_volume"), snapshot.get("volume"), snapshot.get("vol")
+    )
     fresh_bar, bar_age_seconds = _fresh_5min_bar(bar_time)
     verified_5min = (
         quote_source.startswith(("order.market_snapshot.", "config.market_snapshot."))
@@ -228,7 +332,9 @@ def _fill_evidence_from_snapshot(
     )
     if verified_5min:
         evidence_reason = "verified_fresh_5min_bar"
-    elif not quote_source.startswith(("order.market_snapshot.", "config.market_snapshot.")):
+    elif not quote_source.startswith(
+        ("order.market_snapshot.", "config.market_snapshot.")
+    ):
         evidence_reason = "unverified_snapshot_source"
     elif not str(bar_time or "").strip():
         evidence_reason = "missing_bar_time"
@@ -247,9 +353,13 @@ def _fill_evidence_from_snapshot(
         "bar_volume": bar_volume,
         "bar_volume_source": volume_source,
         "bar_time": bar_time,
-        "bar_age_seconds": round(bar_age_seconds, 3) if bar_age_seconds is not None else None,
+        "bar_age_seconds": round(bar_age_seconds, 3)
+        if bar_age_seconds is not None
+        else None,
         "evidence_reason": evidence_reason,
-        "execution_evidence_class": "verified_5min_market_data" if verified_5min else "weak_price_only",
+        "execution_evidence_class": "verified_5min_market_data"
+        if verified_5min
+        else "weak_price_only",
     }
 
 
@@ -294,17 +404,32 @@ def _snapshot_from_payload(
     )
     default_size = None if bar_liquidity is not None else card.get("quantity")
     if side == "buy":
-        snapshot.setdefault("ask_price", _first_value(order.get("ask_price"), config.get("ask_price"), price))
-        ask_size = _first_value(order.get("ask_size"), config.get("ask_size"), default_size)
+        snapshot.setdefault(
+            "ask_price",
+            _first_value(order.get("ask_price"), config.get("ask_price"), price),
+        )
+        ask_size = _first_value(
+            order.get("ask_size"), config.get("ask_size"), default_size
+        )
         if ask_size is not None:
             snapshot.setdefault("ask_size", ask_size)
     else:
-        snapshot.setdefault("bid_price", _first_value(order.get("bid_price"), config.get("bid_price"), price))
-        bid_size = _first_value(order.get("bid_size"), config.get("bid_size"), default_size)
+        snapshot.setdefault(
+            "bid_price",
+            _first_value(order.get("bid_price"), config.get("bid_price"), price),
+        )
+        bid_size = _first_value(
+            order.get("bid_size"), config.get("bid_size"), default_size
+        )
         if bid_size is not None:
             snapshot.setdefault("bid_size", bid_size)
-    snapshot.setdefault("last_price", _first_value(order.get("last_price"), config.get("last_price"), price))
-    available_qty = _first_value(order.get("available_qty"), config.get("available_qty"), default_size)
+    snapshot.setdefault(
+        "last_price",
+        _first_value(order.get("last_price"), config.get("last_price"), price),
+    )
+    available_qty = _first_value(
+        order.get("available_qty"), config.get("available_qty"), default_size
+    )
     if available_qty is not None:
         snapshot.setdefault("available_qty", available_qty)
 
@@ -312,9 +437,19 @@ def _snapshot_from_payload(
         "previous_close",
         "pre_close",
         "reference_price",
+        "official_closing_price",
         "upper_limit",
         "lower_limit",
         "price_limit_pct",
+        "price_limit_exempt",
+        "price_cage_reference",
+        "buy_price_cage_reference",
+        "sell_price_cage_reference",
+        "price_cage_reference_required",
+        "board",
+        "board_type",
+        "risk_warning",
+        "is_st",
         "bar_volume",
         "volume",
         "vol",
@@ -331,14 +466,40 @@ def _snapshot_from_payload(
         if value is not None:
             snapshot.setdefault(key, value)
 
+    model = ashare_execution_reality()
+    snapshot.setdefault(
+        "market_session",
+        str(config.get("_resolved_market_session") or ""),
+    )
+    snapshot.setdefault(
+        "execution_time",
+        str(
+            config.get("_resolved_market_session_now")
+            or config.get("market_session_now")
+            or config.get("now")
+            or ""
+        ),
+    )
+    snapshot.setdefault("execution_reality_model_version", model.model_version)
+
     if isinstance(account, dict):
-        cash_available = _first_value(account.get("cash_available"), account.get("cash"), account.get("available_cash"))
-        sellable_qty = _first_value(account.get("sellable_qty"), account.get("available_position"))
+        cash_available = _first_value(
+            account.get("cash_available"),
+            account.get("cash"),
+            account.get("available_cash"),
+        )
+        sellable_qty = _first_value(
+            account.get("sellable_qty"), account.get("available_position")
+        )
     else:
         cash_available = None
         sellable_qty = None
-    cash_available = _first_value(order.get("cash_available"), config.get("cash_available"), cash_available)
-    sellable_qty = _first_value(order.get("sellable_qty"), config.get("sellable_qty"), sellable_qty)
+    cash_available = _first_value(
+        order.get("cash_available"), config.get("cash_available"), cash_available
+    )
+    sellable_qty = _first_value(
+        order.get("sellable_qty"), config.get("sellable_qty"), sellable_qty
+    )
     if cash_available is None or sellable_qty is None:
         try:
             from shared.execution.local_sim_ledger import get_local_sim_account_snapshot
@@ -346,11 +507,18 @@ def _snapshot_from_payload(
             account_snapshot = get_local_sim_account_snapshot(
                 account or _account_name(account),
                 symbol=str(card.get("ts_code") or ""),
-                trade_date=str(card.get("valid_until") or order.get("trade_date") or order.get("date") or ""),
+                trade_date=str(
+                    card.get("valid_until")
+                    or order.get("trade_date")
+                    or order.get("date")
+                    or ""
+                ),
                 starting_cash=_first_value(
                     config.get("starting_cash"),
                     config.get("initial_capital"),
-                    account.get("initial_capital") if isinstance(account, dict) else None,
+                    account.get("initial_capital")
+                    if isinstance(account, dict)
+                    else None,
                     account.get("cash") if isinstance(account, dict) else None,
                     default=default_sim_capital(MARKET),
                 ),
@@ -383,15 +551,22 @@ def _execute_server_local(
     safe_metadata["fill_evidence"] = fill_evidence
     safe_metadata["fill_price_source"] = fill_evidence["fill_price_source"]
     safe_metadata["fill_price_source_class"] = fill_evidence["fill_price_source_class"]
+    safe_metadata["market_session"] = market_snapshot.get("market_session")
+    safe_metadata["execution_reality_model_version"] = market_snapshot.get(
+        "execution_reality_model_version"
+    )
     sim_order = SimOrder(
         symbol=str(card["ts_code"]),
         side=str(card.get("side") or "buy"),
         quantity=int(card["quantity"]),
         limit_price=float(card["price"]),
         order_type=str(order.get("order_type") or config.get("order_type") or "market"),
-        time_in_force=str(order.get("time_in_force") or config.get("time_in_force") or "day"),
+        time_in_force=str(
+            order.get("time_in_force") or config.get("time_in_force") or "day"
+        ),
         market=MARKET,
         order_id=str(card["order_id"]),
+        submitted_at=str(card.get("timestamp") or ""),
         metadata=safe_metadata,
     )
     engine = SimExecutionEngine(MARKET, profile=config.get("sim_engine_profile"))
@@ -423,22 +598,40 @@ def _signal_card(
     account: dict[str, Any] | str | None,
     config: dict[str, Any],
 ) -> dict[str, Any]:
-    now = datetime.now().astimezone()
+    model = ashare_execution_reality()
+    now = _parse_session_now(config.get("market_session_now") or config.get("now"))
     today = now.date().isoformat()
     trade_date = _date_iso(order.get("trade_date") or order.get("date"), today)
-    order_id = str(order.get("order_id") or f"SIM-ASHARE-{now.strftime('%Y%m%d%H%M%S')}")
-    price = _coerce_float(order.get("price", order.get("limit_price", order.get("mid_price"))), 0.0)
-    quantity = _coerce_int(order.get("quantity", order.get("qty", order.get("filled_qty"))), 0)
-    side = str(order.get("side", order.get("direction", "buy"))).lower().strip() or "buy"
-    sellable_date = _date_iso(config.get("sellable_from") or config.get("sellable_date"), "")
+    order_id = str(
+        order.get("order_id") or f"SIM-ASHARE-{now.strftime('%Y%m%d%H%M%S')}"
+    )
+    price = _coerce_float(
+        order.get("price", order.get("limit_price", order.get("mid_price"))), 0.0
+    )
+    quantity = _coerce_int(
+        order.get("quantity", order.get("qty", order.get("filled_qty"))), 0
+    )
+    side = (
+        str(order.get("side", order.get("direction", "buy"))).lower().strip() or "buy"
+    )
+    sellable_date = _date_iso(
+        config.get("sellable_from") or config.get("sellable_date"), ""
+    )
     if not sellable_date:
-        sellable_date = _next_sellable_date_iso(trade_date) if side == "buy" else trade_date
-    return {
+        sellable_date = (
+            _next_sellable_date_iso(trade_date) if side == "buy" else trade_date
+        )
+    card = {
         "order_id": order_id,
         "market": MARKET,
         "ts_code": str(order.get("ts_code") or order.get("symbol") or "").strip(),
         "direction": side,
         "side": side,
+        "order_type": str(
+            order.get("order_type") or config.get("order_type") or "market"
+        )
+        .strip()
+        .lower(),
         "quantity": quantity,
         "price": price,
         "trigger_price": price,
@@ -446,6 +639,9 @@ def _signal_card(
         "capital_layer": "simulated",
         "account_type": "simulated",
         "real_trading_enabled": False,
+        "execution_reality_model_version": model.model_version,
+        "commission_schedule_status": model.commission_schedule_status,
+        "commission_schedule_version": model.commission_schedule_version,
         "account": _account_name(account),
         "manual_confirm_required": False,
         "direct_execution": False,
@@ -462,6 +658,17 @@ def _signal_card(
         },
         "notes": "Hermes/Mac Mini bridge is reserved; server-local simulated execution is primary unless explicitly enabled.",
     }
+    for key in (
+        "capital_scope",
+        "market_capital_required",
+        "market_capital_reference_id",
+        "market_capital_reservation_id",
+        "market_capital_event_id",
+        "market_reserved_gross_cny",
+    ):
+        if key in order:
+            card[key] = order.get(key)
+    return card
 
 
 def ashare_sim_execute(
@@ -479,6 +686,27 @@ def ashare_sim_execute(
         return _reject(order_id, code, f"unsupported or non-A-share code: {code}")
     if int(card.get("quantity") or 0) <= 0 or float(card.get("price") or 0.0) <= 0:
         return _reject(order_id, code, "non-positive quantity or price")
+
+    session_validation = _market_session_validation(order, config)
+    card["market_session"] = session_validation["market_session"]
+    card["execution_reality_model_version"] = session_validation[
+        "execution_reality_model_version"
+    ]
+    config["_resolved_market_session"] = session_validation["market_session"]
+    config["_resolved_market_session_now"] = (
+        session_validation.get("now") or card["timestamp"]
+    )
+    if not session_validation["allowed"]:
+        return _reject(
+            order_id,
+            code,
+            str(session_validation["reason"]),
+            details={
+                key: value
+                for key, value in session_validation.items()
+                if key not in {"allowed", "reason"}
+            },
+        )
     mock_mode = bool(
         config.get("mock")
         or config.get("mock_filled")
@@ -500,11 +728,10 @@ def ashare_sim_execute(
             },
         )
 
-    market_rejection = _market_session_rejection(config)
-    if market_rejection:
-        return _reject(order_id, code, market_rejection)
-
-    hermes_enabled = bool(config.get("hermes_enabled")) or os.environ.get("ASHARE_SIM_HERMES_ENABLED", "0") == "1"
+    hermes_enabled = (
+        bool(config.get("hermes_enabled"))
+        or os.environ.get("ASHARE_SIM_HERMES_ENABLED", "0") == "1"
+    )
     if not hermes_enabled:
         return _execute_server_local(order, account, config, card)
 
@@ -550,7 +777,11 @@ def ashare_sim_execute(
 
     machine = SignalStateMachine(signals_dir)
     queued = machine.write_pending(card)
-    mode = "file_bridge_pending_after_webhook_failed" if webhook_result else "file_bridge_pending"
+    mode = (
+        "file_bridge_pending_after_webhook_failed"
+        if webhook_result
+        else "file_bridge_pending"
+    )
     return SimResult(
         status="pending",
         filled_qty=0,

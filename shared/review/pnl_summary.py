@@ -17,12 +17,15 @@ from pathlib import Path
 from typing import Any
 
 from shared.accounting.sim_ledger import SimLedger
+from shared.execution.local_sim_ledger import (
+    LOCAL_SIM_TRADES as CURRENT_ASHARE_SIM_TRADES,
+)
 from shared.review.sample_quality import classify_trade_sample, summarize_sample_quality
 
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SIM_LEDGER_ROOT = TRADINGAGENT_ROOT / "shared" / "logs" / "sim_ledger"
-DEFAULT_LOCAL_SIM_TRADES = TRADINGAGENT_ROOT / "shared" / "logs" / "local_sim" / "local_sim_trades.jsonl"
+DEFAULT_LOCAL_SIM_TRADES = CURRENT_ASHARE_SIM_TRADES
 DEFAULT_MARKETS = ("ashare", "crypto", "pm", "us", "cn_futures")
 
 
@@ -91,7 +94,15 @@ def _pm_position_outcome(symbol: str, position: dict[str, Any] | None = None) ->
 
 
 def _pm_yes_price(row: dict[str, Any]) -> float:
-    for key in ("yes_price", "last_price", "price", "latest_price", "market_price", "implied_probability", "probability"):
+    for key in (
+        "yes_price",
+        "last_price",
+        "price",
+        "latest_price",
+        "market_price",
+        "implied_probability",
+        "probability",
+    ):
         price = _safe_float(row.get(key), 0.0)
         if price > 0:
             return _clamp_probability(price)
@@ -167,7 +178,9 @@ def _latest_prices_from_journal(path: Path) -> dict[str, float]:
     return prices
 
 
-def _replay_journal_to_ledger(journal_path: Path, ledger: SimLedger, market: str) -> None:
+def _replay_journal_to_ledger(
+    journal_path: Path, ledger: SimLedger, market: str
+) -> None:
     """Replay a trade journal into a fresh SimLedger instance.
 
     This keeps the summary computation independent of the persisted ``positions.json``
@@ -178,11 +191,17 @@ def _replay_journal_to_ledger(journal_path: Path, ledger: SimLedger, market: str
     for row in _read_jsonl_dicts(journal_path):
         symbol = str(row.get("symbol") or row.get("ts_code") or "").strip()
         side = str(row.get("side") or "").lower()
-        qty = _safe_float(row.get("fill_qty") or row.get("quantity") or row.get("filled_qty"), 0.0)
+        qty = _safe_float(
+            row.get("fill_qty") or row.get("quantity") or row.get("filled_qty"), 0.0
+        )
         price = _safe_float(row.get("fill_price") or row.get("price"), 0.0)
         if not symbol or side not in {"buy", "sell"} or qty <= 0 or price <= 0:
             continue
-        order_id = str(row.get("order_id") or row.get("fill_id") or f"REPLAY-{uuid.uuid4().hex[:12]}")
+        order_id = str(
+            row.get("order_id")
+            or row.get("fill_id")
+            or f"REPLAY-{uuid.uuid4().hex[:12]}"
+        )
         order = SimOrder(
             symbol=symbol,
             side=side,
@@ -191,7 +210,9 @@ def _replay_journal_to_ledger(journal_path: Path, ledger: SimLedger, market: str
             order_type="market",
             market=market,
             order_id=order_id,
-            submitted_at=str(row.get("timestamp") or row.get("fill_time") or _now_iso()),
+            submitted_at=str(
+                row.get("timestamp") or row.get("fill_time") or _now_iso()
+            ),
         )
         fill = SimFill(
             order_id=order_id,
@@ -208,7 +229,9 @@ def _replay_journal_to_ledger(journal_path: Path, ledger: SimLedger, market: str
 def _aggregate_style_ledgers(market: str, ledger_root: Path) -> dict[str, Any]:
     """Aggregate realized + unrealized PnL across all style ledgers for one market."""
     market_dir = ledger_root / market
-    journals = sorted(market_dir.glob("*/trade_journal.jsonl")) if market_dir.exists() else []
+    journals = (
+        sorted(market_dir.glob("*/trade_journal.jsonl")) if market_dir.exists() else []
+    )
 
     realized = 0.0
     unrealized = 0.0
@@ -268,7 +291,9 @@ def _ashare_local_sim_summary(
         if local_trades_path is not None:
             local_sim_ledger.LOCAL_SIM_TRADES = local_trades_path
         try:
-            pnl = local_sim_ledger.get_local_sim_pnl(account=None, mark_prices=mark_prices)
+            pnl = local_sim_ledger.get_local_sim_pnl(
+                account=None, mark_prices=mark_prices
+            )
             audit_pnl = local_sim_ledger.get_local_sim_pnl(
                 account=None,
                 mark_prices=mark_prices,
@@ -277,9 +302,13 @@ def _ashare_local_sim_summary(
             strategy_pnl = local_sim_ledger.get_local_sim_pnl(
                 account=None,
                 mark_prices=mark_prices,
-                trade_filter=lambda row: bool(classify_trade_sample(row).get("strategy_sample_valid")),
+                trade_filter=lambda row: bool(
+                    classify_trade_sample(row).get("strategy_sample_valid")
+                ),
             )
-            sample_quality = summarize_sample_quality(_read_jsonl_dicts(local_sim_ledger.LOCAL_SIM_TRADES))
+            sample_quality = summarize_sample_quality(
+                _read_jsonl_dicts(local_sim_ledger.LOCAL_SIM_TRADES)
+            )
         finally:
             local_sim_ledger.LOCAL_SIM_TRADES = original_local_sim_trades
     except Exception as exc:  # noqa: BLE001
@@ -328,18 +357,22 @@ def _ashare_local_sim_summary(
         "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
         "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
         "total_pnl": round(_safe_float(pnl.get("total_pnl")), 6),
-        "strategy_realized_pnl": round(_safe_float(strategy_pnl.get("realized_pnl")), 6),
-        "strategy_unrealized_pnl": round(_safe_float(strategy_pnl.get("unrealized_pnl")), 6),
+        "strategy_realized_pnl": round(
+            _safe_float(strategy_pnl.get("realized_pnl")), 6
+        ),
+        "strategy_unrealized_pnl": round(
+            _safe_float(strategy_pnl.get("unrealized_pnl")), 6
+        ),
         "strategy_total_pnl": round(_safe_float(strategy_pnl.get("total_pnl")), 6),
         "audit_realized_pnl": round(_safe_float(audit_pnl.get("realized_pnl")), 6),
         "audit_unrealized_pnl": round(_safe_float(audit_pnl.get("unrealized_pnl")), 6),
         "audit_total_pnl": round(_safe_float(audit_pnl.get("total_pnl")), 6),
         "market_value": round(_safe_float(pnl.get("market_value")), 6),
-        "strategy_market_value": round(_safe_float(strategy_pnl.get("market_value")), 6),
+        "strategy_market_value": round(
+            _safe_float(strategy_pnl.get("market_value")), 6
+        ),
         "audit_market_value": round(_safe_float(audit_pnl.get("market_value")), 6),
-        "equity": round(_safe_float(pnl.get("equity")), 6)
-        if "equity" in pnl
-        else None,
+        "equity": round(_safe_float(pnl.get("equity")), 6) if "equity" in pnl else None,
         "cash": round(_safe_float(pnl.get("cash")), 6) if "cash" in pnl else None,
         "open_position_count": len(positions),
         "strategy_open_position_count": len(strategy_pnl.get("positions") or {}),
@@ -374,7 +407,11 @@ def sim_ledger_pnl_summary(
     """
     target_markets = tuple(markets) if markets is not None else DEFAULT_MARKETS
     root = Path(ledger_root) if ledger_root is not None else DEFAULT_SIM_LEDGER_ROOT
-    local_path = Path(local_trades_path) if local_trades_path is not None else DEFAULT_LOCAL_SIM_TRADES
+    local_path = (
+        Path(local_trades_path)
+        if local_trades_path is not None
+        else DEFAULT_LOCAL_SIM_TRADES
+    )
 
     result: dict[str, dict[str, Any]] = {}
     for market in target_markets:
@@ -383,7 +420,11 @@ def sim_ledger_pnl_summary(
             mark_prices = ashare_mark_prices
             if mark_prices is None:
                 positions = _ashare_local_positions(local_path)
-                mark_prices = load_mark_prices_for_positions(positions, "ashare") if positions else None
+                mark_prices = (
+                    load_mark_prices_for_positions(positions, "ashare")
+                    if positions
+                    else None
+                )
             result[market_key] = _ashare_local_sim_summary(local_path, mark_prices)
         else:
             result[market_key] = _aggregate_style_ledgers(market_key, root)
@@ -429,9 +470,13 @@ def load_mark_prices_for_positions(
             .strip()
             or "http://127.0.0.1:8082"
         )
-        reader = TradingagentDataReader(api_client=SharedSignalsAPIClient(base_url=api_url))
+        reader = TradingagentDataReader(
+            api_client=SharedSignalsAPIClient(base_url=api_url)
+        )
         market_key = str(market).lower().strip()
-        date = trade_date or __import__("datetime", fromlist=["date"]).date.today().strftime("%Y%m%d")
+        date = trade_date or __import__(
+            "datetime", fromlist=["date"]
+        ).date.today().strftime("%Y%m%d")
         start, end = _lookback_window(date)
 
         if market_key == "crypto":
@@ -484,7 +529,9 @@ def load_mark_prices_for_positions(
         }.get(market_key, market)
         for symbol in positions:
             try:
-                latest = _latest_priced(get_bars(reader_market, symbol, start, end) or [])
+                latest = _latest_priced(
+                    get_bars(reader_market, symbol, start, end) or []
+                )
                 if latest:
                     prices[symbol] = _row_price(latest)
             except Exception:  # noqa: BLE001

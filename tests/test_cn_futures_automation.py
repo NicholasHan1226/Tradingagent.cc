@@ -19,13 +19,57 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def _market_capital_provider_state(
+    trade_date: str = "20260703",
+    *,
+    available_margin: float = 25_000.0,
+    reserved_margin: float = 0.0,
+) -> dict[str, object]:
+    return {
+        "source": "market_capital_ledger",
+        "reconciled": True,
+        "fresh": True,
+        "trade_date": trade_date,
+        "initial_equity_cny": 50_000.0,
+        "equity_cny": 50_000.0,
+        "available_margin": available_margin,
+        "margin_used_cny": reserved_margin,
+        "unrealized_pnl_cny": 0.0,
+        "market": "cn_futures",
+        "authority_id": "cn-futures-capital-v1",
+        "authority_generation": 1,
+        "execution_lineage_id": f"test-lineage-{trade_date}-0001",
+        "event_id": f"MCAP-{trade_date}-RECONCILED",
+        "event_checksum": "a" * 64,
+        "margin_utilization_limit_cny": 25000.0,
+        "cumulative_pnl": 0.0,
+        "daily_realized_pnl": 0.0,
+        "max_daily_loss": 1_500.0,
+        "consecutive_losses": 0,
+        "max_consecutive_losses": 3,
+        "high_water_equity": 50_000.0,
+        "max_drawdown": 3_500.0,
+        "real_trading_enabled": False,
+    }
+
+
 class FakeFuturesReader:
     def get_assets(self, market: str) -> list[dict[str, object]]:
         if market != "Futures":
             return []
         return [
-            {"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"},
-            {"symbol": "cu2601", "name": "沪铜2601", "exchange": "SHFE", "status": "listed"},
+            {
+                "symbol": "rb2601",
+                "name": "螺纹钢2601",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
+            {
+                "symbol": "cu2601",
+                "name": "沪铜2601",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
         ]
 
     def get_bars_daily(
@@ -63,14 +107,44 @@ class FakeFuturesReader:
         self.last_intraday_symbol = symbol
         rows = {
             "rb2601": [
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3450, "volume": 1000},
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3500, "volume": 1300},
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 3560, "volume": 1800},
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:45:00",
+                    "close": 3450,
+                    "volume": 1000,
+                },
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:50:00",
+                    "close": 3500,
+                    "volume": 1300,
+                },
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:55:00",
+                    "close": 3560,
+                    "volume": 1800,
+                },
             ],
             "cu2601": [
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 70000, "volume": 1000},
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 69950, "volume": 900},
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 69850, "volume": 800},
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:45:00",
+                    "close": 70000,
+                    "volume": 1000,
+                },
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:50:00",
+                    "close": 69950,
+                    "volume": 900,
+                },
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:55:00",
+                    "close": 69850,
+                    "volume": 800,
+                },
             ],
         }
         if market != "Futures" or interval != "5min":
@@ -83,8 +157,18 @@ class FakeMixedFuturesReader(FakeFuturesReader):
         if market != "Futures":
             return []
         return [
-            {"symbol": "IF2601.CFFEX", "name": "沪深300股指2601", "exchange": "CFFEX", "status": "listed"},
-            {"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"},
+            {
+                "symbol": "IF2601.CFFEX",
+                "name": "沪深300股指2601",
+                "exchange": "CFFEX",
+                "status": "listed",
+            },
+            {
+                "symbol": "rb2601",
+                "name": "螺纹钢2601",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
         ]
 
     def get_bars_intraday(
@@ -99,18 +183,68 @@ class FakeMixedFuturesReader(FakeFuturesReader):
             return []
         rows = {
             "IF2601.CFFEX": [
-                {"trade_date": "20260706", "bar_time": "2026-07-06 14:10:00", "close": 3500, "volume": 1000},
-                {"trade_date": "20260706", "bar_time": "2026-07-06 14:15:00", "close": 3502, "volume": 1000},
-                {"trade_date": "20260706", "bar_time": "2026-07-06 14:20:00", "close": 3505, "volume": 1100},
-                {"trade_date": "20260706", "bar_time": "2026-07-06 14:25:00", "close": 3512, "volume": 1400},
-                {"trade_date": "20260706", "bar_time": "2026-07-06 14:30:00", "close": 3520, "volume": 1600},
+                {
+                    "trade_date": "20260706",
+                    "bar_time": "2026-07-06 14:10:00",
+                    "close": 3500,
+                    "volume": 1000,
+                },
+                {
+                    "trade_date": "20260706",
+                    "bar_time": "2026-07-06 14:15:00",
+                    "close": 3502,
+                    "volume": 1000,
+                },
+                {
+                    "trade_date": "20260706",
+                    "bar_time": "2026-07-06 14:20:00",
+                    "close": 3505,
+                    "volume": 1100,
+                },
+                {
+                    "trade_date": "20260706",
+                    "bar_time": "2026-07-06 14:25:00",
+                    "close": 3512,
+                    "volume": 1400,
+                },
+                {
+                    "trade_date": "20260706",
+                    "bar_time": "2026-07-06 14:30:00",
+                    "close": 3520,
+                    "volume": 1600,
+                },
             ],
             "rb2601": [
-                {"trade_date": "20260706", "bar_time": "2026-07-06 14:10:00", "close": 3450, "volume": 1000},
-                {"trade_date": "20260706", "bar_time": "2026-07-06 14:15:00", "close": 3460, "volume": 1100},
-                {"trade_date": "20260706", "bar_time": "2026-07-06 14:20:00", "close": 3470, "volume": 1200},
-                {"trade_date": "20260706", "bar_time": "2026-07-06 14:25:00", "close": 3485, "volume": 1300},
-                {"trade_date": "20260706", "bar_time": "2026-07-06 14:30:00", "close": 3500, "volume": 1500},
+                {
+                    "trade_date": "20260706",
+                    "bar_time": "2026-07-06 14:10:00",
+                    "close": 3450,
+                    "volume": 1000,
+                },
+                {
+                    "trade_date": "20260706",
+                    "bar_time": "2026-07-06 14:15:00",
+                    "close": 3460,
+                    "volume": 1100,
+                },
+                {
+                    "trade_date": "20260706",
+                    "bar_time": "2026-07-06 14:20:00",
+                    "close": 3470,
+                    "volume": 1200,
+                },
+                {
+                    "trade_date": "20260706",
+                    "bar_time": "2026-07-06 14:25:00",
+                    "close": 3485,
+                    "volume": 1300,
+                },
+                {
+                    "trade_date": "20260706",
+                    "bar_time": "2026-07-06 14:30:00",
+                    "close": 3500,
+                    "volume": 1500,
+                },
             ],
         }
         return rows.get(symbol, [])
@@ -128,11 +262,27 @@ class DateScopedFuturesReader(FakeFuturesReader):
         end: object = None,
     ) -> list[dict[str, object]]:
         self.calls.append((start, end))
-        if market != "Futures" or symbol != "rb2601" or interval != "5min" or start != "20260703" or end != "20260703":
+        if (
+            market != "Futures"
+            or symbol != "rb2601"
+            or interval != "5min"
+            or start != "20260703"
+            or end != "20260703"
+        ):
             return []
         return [
-            {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3500, "volume": 1300},
-            {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 3560, "volume": 1800},
+            {
+                "trade_date": "20260703",
+                "bar_time": "2026-07-03 14:50:00",
+                "close": 3500,
+                "volume": 1300,
+            },
+            {
+                "trade_date": "20260703",
+                "bar_time": "2026-07-03 14:55:00",
+                "close": 3560,
+                "volume": 1800,
+            },
         ]
 
 
@@ -144,10 +294,30 @@ class DateScopedUniverseReader(FakeFuturesReader):
         if market != "Futures":
             return []
         return [
-            {"symbol": "CU.SHF", "name": "沪铜连续", "exchange": "SHFE", "status": "listed"},
-            {"symbol": "CU0001.SHF", "name": "沪铜旧合约", "exchange": "SHFE", "status": "listed"},
-            {"symbol": "CU2607.SHF", "name": "沪铜2607", "exchange": "SHFE", "status": "listed"},
-            {"symbol": "RB2607.SHF", "name": "螺纹钢2607", "exchange": "SHFE", "status": "listed"},
+            {
+                "symbol": "CU.SHF",
+                "name": "沪铜连续",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
+            {
+                "symbol": "CU0001.SHF",
+                "name": "沪铜旧合约",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
+            {
+                "symbol": "CU2607.SHF",
+                "name": "沪铜2607",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
+            {
+                "symbol": "RB2607.SHF",
+                "name": "螺纹钢2607",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
         ]
 
     def get_bars_intraday(
@@ -159,10 +329,22 @@ class DateScopedUniverseReader(FakeFuturesReader):
         end: object = None,
     ) -> list[dict[str, object]]:
         self.calls.append((symbol, start, end))
-        if market != "Futures" or interval != "5min" or start != "20260707" or end != "20260707":
+        if (
+            market != "Futures"
+            or interval != "5min"
+            or start != "20260707"
+            or end != "20260707"
+        ):
             return []
         if symbol in {"CU2607.SHF", "RB2607.SHF"}:
-            return [{"trade_date": "20260707", "bar_time": "2026-07-07 14:30:00", "close": 3500, "volume": 1200}]
+            return [
+                {
+                    "trade_date": "20260707",
+                    "bar_time": "2026-07-07 14:30:00",
+                    "close": 3500,
+                    "volume": 1200,
+                }
+            ]
         return []
 
 
@@ -171,8 +353,18 @@ class ApiPreferredUniverseReader(FakeFuturesReader):
         if market != "Futures":
             return []
         return [
-            {"symbol": "CU2607.SHF", "name": "沪铜2607", "exchange": "SHFE", "status": "listed"},
-            {"symbol": "RB2607.SHF", "name": "螺纹钢2607", "exchange": "SHFE", "status": "listed"},
+            {
+                "symbol": "CU2607.SHF",
+                "name": "沪铜2607",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
+            {
+                "symbol": "RB2607.SHF",
+                "name": "螺纹钢2607",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
         ]
 
     def get_bars_intraday(
@@ -190,7 +382,14 @@ class ApiPreferredUniverseReader(FakeFuturesReader):
             and end == "20260707"
             and symbol == "CU2607.SHF"
         ):
-            return [{"trade_date": "20260707", "bar_time": "2026-07-07 14:35:00", "close": 71000, "volume": 1200}]
+            return [
+                {
+                    "trade_date": "20260707",
+                    "bar_time": "2026-07-07 14:35:00",
+                    "close": 71000,
+                    "volume": 1200,
+                }
+            ]
         return []
 
 
@@ -199,8 +398,18 @@ class RealtimeBatchUniverseReader(FakeFuturesReader):
         if market != "Futures":
             return []
         return [
-            {"symbol": "CU.SHF", "name": "沪铜主力", "exchange": "SHFE", "status": "listed"},
-            {"symbol": "RB.SHF", "name": "螺纹钢主力", "exchange": "SHFE", "status": "listed"},
+            {
+                "symbol": "CU.SHF",
+                "name": "沪铜主力",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
+            {
+                "symbol": "RB.SHF",
+                "name": "螺纹钢主力",
+                "exchange": "SHFE",
+                "status": "listed",
+            },
         ]
 
     def get_realtime_5min_batch(
@@ -217,9 +426,27 @@ class RealtimeBatchUniverseReader(FakeFuturesReader):
         elif date != "20260709":
             return []
         rows: list[dict[str, object]] = [
-            {"symbol": "CU2607.SHF", "trade_date": "20260709", "bar_time": "2026-07-09 09:05:00", "interval": "5min", "close": 102320.0},
-            {"symbol": "RB2608.SHF", "trade_date": "20260709", "bar_time": "2026-07-09 09:05:00", "interval": "5min", "close": 3052.0},
-            {"symbol": "CU.SHF", "trade_date": "20260709", "bar_time": "2026-07-09 09:05:00", "interval": "5min", "close": 102320.0},
+            {
+                "symbol": "CU2607.SHF",
+                "trade_date": "20260709",
+                "bar_time": "2026-07-09 09:05:00",
+                "interval": "5min",
+                "close": 102320.0,
+            },
+            {
+                "symbol": "RB2608.SHF",
+                "trade_date": "20260709",
+                "bar_time": "2026-07-09 09:05:00",
+                "interval": "5min",
+                "close": 3052.0,
+            },
+            {
+                "symbol": "CU.SHF",
+                "trade_date": "20260709",
+                "bar_time": "2026-07-09 09:05:00",
+                "interval": "5min",
+                "close": 102320.0,
+            },
         ]
         return rows[: limit or len(rows)]
 
@@ -228,7 +455,9 @@ class SQLiteSharedQuery:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
 
-    def _query(self, sql: str, params: tuple[object, ...] = ()) -> list[dict[str, object]]:
+    def _query(
+        self, sql: str, params: tuple[object, ...] = ()
+    ) -> list[dict[str, object]]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
@@ -243,14 +472,124 @@ class ReadModelIntradayReader(FakeFuturesReader):
 
 
 class CNFuturesAutomationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        provider = patch(
+            "CNFutures.sim_runner.get_cn_futures_capital_provider_state",
+            side_effect=lambda *, trade_date: _market_capital_provider_state(
+                trade_date
+            ),
+        )
+        provider.start()
+        self.addCleanup(provider.stop)
+        reservation = patch(
+            "CNFutures.sim_runner._reserve_cn_futures_market_margin",
+            side_effect=lambda *, reference_id, worst_case_amount_cny, trade_date, **kwargs: {
+                "approved": True,
+                "reason": "reserved",
+                "reservation_id": f"TEST-RES-{reference_id}",
+                "event_id": f"TEST-EVENT-{reference_id}",
+                "reference_id": reference_id,
+                "amount_cny": worst_case_amount_cny,
+                "trade_date": trade_date,
+                "real_trading_enabled": False,
+                "risk_unit_key": kwargs.get(
+                    "risk_unit_key", f"risk-unit-{reference_id}"
+                ),
+                "authority_id": "cn-futures-capital-v1",
+                "authority_generation": 1,
+                "point_in_time_as_of": kwargs.get(
+                    "point_in_time_as_of", "2026-07-03T14:55:00+08:00"
+                ),
+                "lineage_sha256": kwargs.get("lineage_sha256", "b" * 64),
+                "execution_lineage_id": kwargs.get(
+                    "execution_lineage_id", f"test-lineage-{trade_date}-0001"
+                ),
+                "event_checksum": "c" * 64,
+                "fee_cash_cny": kwargs.get("worst_case_fee_cash_cny", 0.0),
+            },
+        )
+        reservation.start()
+        self.addCleanup(reservation.stop)
+        release = patch(
+            "CNFutures.sim_runner._release_cn_futures_market_margin",
+            side_effect=lambda **kwargs: {
+                "status": "released",
+                "reservation_id": kwargs.get("reservation_id", ""),
+                "amount_cny": kwargs.get("amount_cny", 0.0),
+                "reference_id": kwargs.get("reference_id", ""),
+                "real_trading_enabled": False,
+            },
+        )
+        release.start()
+        self.addCleanup(release.stop)
+        pnl = patch(
+            "CNFutures.sim_runner._record_cn_futures_market_pnl",
+            side_effect=lambda **kwargs: {
+                "status": "recorded",
+                "reference_id": kwargs.get("reference_id", ""),
+                "amount_cny": kwargs.get("amount_cny", 0.0),
+                "affects_loss_streak": kwargs.get("affects_loss_streak", True),
+                "real_trading_enabled": False,
+            },
+        )
+        pnl.start()
+        self.addCleanup(pnl.stop)
+
+        def complete_atomic_outbox(signals_dir: Path) -> dict[str, object]:
+            from CNFutures import sim_runner
+
+            with sim_runner._capital_outbox_lock(signals_dir):
+                outbox = sim_runner._read_capital_outbox_unlocked(signals_dir)
+                for row in outbox["actions"]:
+                    if row.get("status") == "completed":
+                        continue
+                    row["status"] = "completed"
+                    row["completed_at"] = "2026-07-03T14:56:00+08:00"
+                    row["result"] = {
+                        "status": "committed",
+                        "reason": "test_atomic_commit",
+                        "committed": True,
+                        "event_id": f"TEST-COMMIT-{row['action_id']}",
+                        "event_checksum": "d" * 64,
+                        "idempotent": False,
+                        "real_trading_enabled": False,
+                    }
+                if outbox["actions"]:
+                    sim_runner._write_capital_outbox_unlocked(signals_dir, outbox)
+                return {
+                    "status": "replayed",
+                    "pending_count": 0,
+                    "action_count": len(outbox["actions"]),
+                    "actions": [dict(row) for row in outbox["actions"]],
+                    "real_trading_enabled": False,
+                }
+
+        dispatcher = patch(
+            "CNFutures.sim_runner._dispatch_cn_futures_capital_outbox",
+            side_effect=complete_atomic_outbox,
+        )
+        dispatcher.start()
+        self.addCleanup(dispatcher.stop)
+
     def test_active_trade_date_rolls_night_session_to_next_calendar_day(self) -> None:
         from CNFutures.session import active_trade_date, cn_futures_session_state
 
-        self.assertEqual(active_trade_date(datetime.fromisoformat("2026-07-09T10:00:00+08:00")), "20260709")
-        self.assertEqual(active_trade_date(datetime.fromisoformat("2026-07-09T21:30:00+08:00")), "20260710")
-        self.assertEqual(active_trade_date(datetime.fromisoformat("2026-07-10T01:15:00+08:00")), "20260710")
+        self.assertEqual(
+            active_trade_date(datetime.fromisoformat("2026-07-09T10:00:00+08:00")),
+            "20260709",
+        )
+        self.assertEqual(
+            active_trade_date(datetime.fromisoformat("2026-07-09T21:30:00+08:00")),
+            "20260710",
+        )
+        self.assertEqual(
+            active_trade_date(datetime.fromisoformat("2026-07-10T01:15:00+08:00")),
+            "20260710",
+        )
 
-        state = cn_futures_session_state(datetime.fromisoformat("2026-07-09T21:30:00+08:00"))
+        state = cn_futures_session_state(
+            datetime.fromisoformat("2026-07-09T21:30:00+08:00")
+        )
         self.assertEqual(state["active_trade_date"], "20260710")
 
     def test_session_bar_freshness_treats_naive_bars_as_china_time(self) -> None:
@@ -279,8 +618,18 @@ class CNFuturesAutomationTest(unittest.TestCase):
         from CNFutures.review import latest_actionable_review
 
         rows = [
-            {"date": "20260709", "state": "degraded", "error_count": 1, "error_summary": {"by_error": {"stale_intraday_bar": 1}}},
-            {"date": "20260710", "state": "ok", "hold_count": 1, "hold_reason_summary": {"by_reason": {"below_threshold": 1}}},
+            {
+                "date": "20260709",
+                "state": "degraded",
+                "error_count": 1,
+                "error_summary": {"by_error": {"stale_intraday_bar": 1}},
+            },
+            {
+                "date": "20260710",
+                "state": "ok",
+                "hold_count": 1,
+                "hold_reason_summary": {"by_reason": {"below_threshold": 1}},
+            },
         ]
 
         latest = latest_actionable_review(rows, trade_date="20260710")
@@ -296,14 +645,20 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
         self.assertIsInstance(adapter.reader, TradingagentDataReader)
 
-    def test_adapter_reads_futures_assets_without_using_trading_logic_upstream(self) -> None:
+    def test_adapter_reads_futures_assets_without_using_trading_logic_upstream(
+        self,
+    ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 
-        adapter = CNFuturesAdapter(reader=FakeFuturesReader(), universe_filter={"max_symbols": 1})
+        adapter = CNFuturesAdapter(
+            reader=FakeFuturesReader(), universe_filter={"max_symbols": 1}
+        )
 
         self.assertEqual(adapter.get_market(), "cn_futures")
         self.assertEqual(adapter.map_symbol_to_reader("rb2601"), ("Futures", "rb2601"))
-        self.assertEqual(adapter.map_symbol_to_reader("RB2601.SHF"), ("Futures", "RB2601.SHF"))
+        self.assertEqual(
+            adapter.map_symbol_to_reader("RB2601.SHF"), ("Futures", "RB2601.SHF")
+        )
         self.assertEqual(adapter.get_universe("20260703"), ["rb2601"])
         self.assertEqual(adapter.get_sim_account()["account"], "cn_futures_sim")
         self.assertEqual(adapter.get_strategy_config()["capital_layer"], "simulated")
@@ -322,11 +677,17 @@ class CNFuturesAutomationTest(unittest.TestCase):
         from CNFutures.adapter import CNFuturesAdapter
 
         reader = DateScopedUniverseReader()
-        adapter = CNFuturesAdapter(reader=reader, universe_filter={"max_symbols": 4, "products": ("cu", "rb")})
+        adapter = CNFuturesAdapter(
+            reader=reader, universe_filter={"max_symbols": 4, "products": ("cu", "rb")}
+        )
 
-        self.assertEqual(adapter.get_intraday_universe("20260707"), ["CU2607.SHF", "RB2607.SHF"])
+        self.assertEqual(
+            adapter.get_intraday_universe("20260707"), ["CU2607.SHF", "RB2607.SHF"]
+        )
         self.assertNotIn(("CU0001.SHF", "", "20260707"), reader.calls)
-        self.assertTrue(all(call[1:] == ("20260707", "20260707") for call in reader.calls))
+        self.assertTrue(
+            all(call[1:] == ("20260707", "20260707") for call in reader.calls)
+        )
 
     def test_intraday_universe_read_model_uses_latest_bar_batch(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -349,10 +710,38 @@ class CNFuturesAutomationTest(unittest.TestCase):
             conn.executemany(
                 "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?, ?)",
                 [
-                    ("Futures", "CU2607.SHF", "2026-07-07 14:30:00", "20260707", "5min", 71000.0),
-                    ("Futures", "CU.SHF", "2026-07-07 14:35:00", "20260707", "5min", 71050.0),
-                    ("Futures", "RB2607.SHF", "2026-07-07 14:35:00", "20260707", "5min", 3500.0),
-                    ("Futures", "RB2608.SHF", "2026-07-07 14:35:00", "20260707", "5min", 3520.0),
+                    (
+                        "Futures",
+                        "CU2607.SHF",
+                        "2026-07-07 14:30:00",
+                        "20260707",
+                        "5min",
+                        71000.0,
+                    ),
+                    (
+                        "Futures",
+                        "CU.SHF",
+                        "2026-07-07 14:35:00",
+                        "20260707",
+                        "5min",
+                        71050.0,
+                    ),
+                    (
+                        "Futures",
+                        "RB2607.SHF",
+                        "2026-07-07 14:35:00",
+                        "20260707",
+                        "5min",
+                        3500.0,
+                    ),
+                    (
+                        "Futures",
+                        "RB2608.SHF",
+                        "2026-07-07 14:35:00",
+                        "20260707",
+                        "5min",
+                        3520.0,
+                    ),
                 ],
             )
             conn.commit()
@@ -368,7 +757,10 @@ class CNFuturesAutomationTest(unittest.TestCase):
                         universe_filter={"max_symbols": 4, "products": ("cu", "rb")},
                     )
 
-                self.assertEqual(adapter.get_intraday_universe("20260707"), ["RB2607.SHF", "RB2608.SHF"])
+                self.assertEqual(
+                    adapter.get_intraday_universe("20260707"),
+                    ["RB2607.SHF", "RB2608.SHF"],
+                )
             finally:
                 if old_db is None:
                     os.environ.pop("SHARED_SIGNALS_DB", None)
@@ -399,7 +791,14 @@ class CNFuturesAutomationTest(unittest.TestCase):
             )
             conn.execute(
                 "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?, ?)",
-                ("Futures", "RB2607.SHF", "2026-07-07 14:35:00", "20260707", "5min", 3500.0),
+                (
+                    "Futures",
+                    "RB2607.SHF",
+                    "2026-07-07 14:35:00",
+                    "20260707",
+                    "5min",
+                    3500.0,
+                ),
             )
             conn.commit()
             conn.close()
@@ -413,7 +812,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     universe_filter={"max_symbols": 2, "products": ("cu", "rb")},
                 )
 
-                self.assertEqual(adapter.get_intraday_universe("20260707"), ["CU2607.SHF"])
+                self.assertEqual(
+                    adapter.get_intraday_universe("20260707"), ["CU2607.SHF"]
+                )
             finally:
                 if old_db is None:
                     os.environ.pop("SHARED_SIGNALS_DB", None)
@@ -424,7 +825,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 else:
                     os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
 
-    def test_intraday_universe_uses_realtime_batch_contracts_before_assets_scan(self) -> None:
+    def test_intraday_universe_uses_realtime_batch_contracts_before_assets_scan(
+        self,
+    ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 
         adapter = CNFuturesAdapter(
@@ -432,9 +835,13 @@ class CNFuturesAutomationTest(unittest.TestCase):
             universe_filter={"max_symbols": 4, "products": ("cu", "rb")},
         )
 
-        self.assertEqual(adapter.get_intraday_universe("20260709"), ["CU2607.SHF", "RB2608.SHF"])
+        self.assertEqual(
+            adapter.get_intraday_universe("20260709"), ["CU2607.SHF", "RB2608.SHF"]
+        )
 
-    def test_multi_style_runner_executes_only_simulated_lanes_and_writes_review(self) -> None:
+    def test_multi_style_runner_executes_only_simulated_lanes_and_writes_review(
+        self,
+    ) -> None:
         import CNFutures.sim_executor  # noqa: F401
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
@@ -445,8 +852,16 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 reader=FakeFuturesReader(),
                 universe_filter={"max_symbols": 1},
                 styles={
-                    "trend": {"name": "trend", "signal_threshold": 0.01, "risk_per_trade": 0.03},
-                    "breakout": {"name": "breakout", "signal_threshold": 0.015, "risk_per_trade": 0.02},
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.01,
+                        "risk_per_trade": 0.10,
+                    },
+                    "breakout": {
+                        "name": "breakout",
+                        "signal_threshold": 0.015,
+                        "risk_per_trade": 0.10,
+                    },
                 },
             )
 
@@ -459,29 +874,75 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 now=datetime.fromisoformat("2026-07-03 14:56:00"),
             )
 
-            self.assertEqual(result["state"], "ok")
+            self.assertEqual(result["state"], "ok", result.get("errors"))
             self.assertEqual(result["cadence"], "5min")
             self.assertEqual(result["capital_layer"], "simulated")
             self.assertEqual(result["market"], "cn_futures")
             self.assertEqual(result["style_count"], 2)
             self.assertEqual(result["filled_count"], 2)
             self.assertEqual(result["real_trading_enabled"], False)
-            self.assertEqual({row["style"] for row in result["records"]}, {"trend", "breakout"})
+            self.assertEqual(
+                {row["style"] for row in result["records"]}, {"trend", "breakout"}
+            )
             self.assertTrue(all(row["cadence"] == "5min" for row in result["records"]))
-            self.assertTrue(all(row["bar_time"] == "2026-07-03 14:55:00" for row in result["records"]))
-            self.assertTrue(all(row["forward_outcome"]["status"] == "pending_future_bars" for row in result["records"]))
-            self.assertTrue(all(row["exit_plan"]["prediction_horizon_bars"] >= 1 for row in result["records"]))
-            self.assertTrue(all(row["scenario_tags"]["session"] == "day" for row in result["records"]))
-            self.assertTrue(all(row["order"]["order_id"].endswith("-202607031455") for row in result["records"]))
-            self.assertTrue(all(row["order"]["scenario_tags"]["session"] == "day" for row in result["records"]))
-            self.assertTrue(all(row["receipt"]["capital_layer"] == "simulated" for row in result["records"]))
-            self.assertTrue(all(row["signal_card"]["account_type"] == "simulated" for row in result["records"]))
-            filled_files = list((tmp_path / "signals" / "filled").glob("SIM-CNF-*.json"))
+            self.assertTrue(
+                all(
+                    row["bar_time"] == "2026-07-03 14:55:00"
+                    for row in result["records"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["forward_outcome"]["status"] == "pending_future_bars"
+                    for row in result["records"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["exit_plan"]["prediction_horizon_bars"] >= 1
+                    for row in result["records"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["scenario_tags"]["session"] == "day_afternoon"
+                    for row in result["records"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["order"]["order_id"].endswith("-202607031455")
+                    for row in result["records"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["order"]["scenario_tags"]["session"] == "day_afternoon"
+                    for row in result["records"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["receipt"]["capital_layer"] == "simulated"
+                    for row in result["records"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["signal_card"]["account_type"] == "simulated"
+                    for row in result["records"]
+                )
+            )
+            filled_files = list(
+                (tmp_path / "signals" / "filled").glob("SIM-CNF-*.json")
+            )
             self.assertEqual(len(filled_files), 2)
 
             review_rows = [
                 json.loads(line)
-                for line in (tmp_path / "cn_futures_reviews.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (tmp_path / "cn_futures_reviews.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
                 if line.strip()
             ]
             self.assertEqual(len(review_rows), 1)
@@ -489,25 +950,58 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(review_rows[0]["styles"]["trend"]["filled_count"], 1)
             self.assertEqual(review_rows[0]["styles"]["breakout"]["filled_count"], 1)
             self.assertEqual(
+                result["hold_reason_summary"]["total"],
+                0,
+            )
+            self.assertEqual(
                 review_rows[0]["score_summary"]["style_scores"]["trend"]["status"],
                 "sample_insufficient",
             )
 
-    def test_multi_style_runner_observes_when_realtime_universe_has_one_distinct_product(self) -> None:
+    def test_multi_style_runner_observes_when_realtime_universe_has_one_distinct_product(
+        self,
+    ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
 
         class SingleProductReader(FakeFuturesReader):
             def get_assets(self, market: str) -> list[dict[str, object]]:
                 return [
-                    {"symbol": "CU2608.SHF", "name": "沪铜2608", "exchange": "SHFE", "status": "listed"},
-                    {"symbol": "CU2609.SHF", "name": "沪铜2609", "exchange": "SHFE", "status": "listed"},
+                    {
+                        "symbol": "CU2608.SHF",
+                        "name": "沪铜2608",
+                        "exchange": "SHFE",
+                        "status": "listed",
+                    },
+                    {
+                        "symbol": "CU2609.SHF",
+                        "name": "沪铜2609",
+                        "exchange": "SHFE",
+                        "status": "listed",
+                    },
                 ]
 
-            def get_bars_intraday(self, market: str, symbol: str, interval: str = "5min", start: object = None, end: object = None) -> list[dict[str, object]]:
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
                 return [
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 70000, "volume": 1000},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 70200, "volume": 1200},
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:50:00",
+                        "close": 70000,
+                        "volume": 1000,
+                    },
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:55:00",
+                        "close": 70200,
+                        "volume": 1200,
+                    },
                 ]
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -515,7 +1009,13 @@ class CNFuturesAutomationTest(unittest.TestCase):
             adapter = CNFuturesAdapter(
                 reader=SingleProductReader(),
                 universe_filter={"max_symbols": 10, "min_distinct_products": 3},
-                styles={"trend": {"name": "trend", "signal_threshold": 0.01, "products": ["cu"]}},
+                styles={
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.01,
+                        "products": ["cu"],
+                    }
+                },
             )
 
             result = run_multi_style_simulation(
@@ -530,7 +1030,12 @@ class CNFuturesAutomationTest(unittest.TestCase):
         self.assertEqual(result["state"], "observation_only")
         self.assertEqual(result["distinct_product_count"], 1)
         self.assertEqual(result["filled_count"], 0)
-        self.assertEqual(result["hold_reason_summary"]["by_reason"]["insufficient_distinct_product_coverage"], 1)
+        self.assertEqual(
+            result["hold_reason_summary"]["by_reason"][
+                "insufficient_distinct_product_coverage"
+            ],
+            1,
+        )
 
     def test_multi_style_runner_reports_market_closed_after_session(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -584,7 +1089,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["errors"], [])
 
-    def test_multi_style_runner_rejects_stale_intraday_bars_inside_session(self) -> None:
+    def test_multi_style_runner_rejects_stale_intraday_bars_inside_session(
+        self,
+    ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
 
@@ -600,9 +1107,24 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 if market != "Futures" or interval != "5min":
                     return []
                 return [
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:30:00", "close": 3400, "volume": 1000},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:35:00", "close": 3450, "volume": 1000},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:40:00", "close": 3500, "volume": 1000},
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:30:00",
+                        "close": 3400,
+                        "volume": 1000,
+                    },
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:35:00",
+                        "close": 3450,
+                        "volume": 1000,
+                    },
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:40:00",
+                        "close": 3500,
+                        "volume": 1000,
+                    },
                 ]
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -628,7 +1150,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["errors"][0]["error"], "stale_intraday_bar")
 
-    def test_multi_style_runner_treats_product_night_close_as_hold(self) -> None:
+    def test_multi_style_runner_reports_market_closed_after_product_night_close(
+        self,
+    ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
 
@@ -636,7 +1160,14 @@ class CNFuturesAutomationTest(unittest.TestCase):
             def get_assets(self, market: str) -> list[dict[str, object]]:
                 if market != "Futures":
                     return []
-                return [{"symbol": "cu2608", "name": "沪铜2608", "exchange": "SHFE", "status": "listed"}]
+                return [
+                    {
+                        "symbol": "cu2608",
+                        "name": "沪铜2608",
+                        "exchange": "SHFE",
+                        "status": "listed",
+                    }
+                ]
 
             def get_bars_intraday(
                 self,
@@ -649,8 +1180,18 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 if market != "Futures" or interval != "5min":
                     return []
                 return [
-                    {"trade_date": "20260710", "bar_time": "2026-07-10 00:55:00", "close": 103980, "volume": 10},
-                    {"trade_date": "20260710", "bar_time": "2026-07-10 01:00:00", "close": 103940, "volume": 21},
+                    {
+                        "trade_date": "20260710",
+                        "bar_time": "2026-07-10 00:55:00",
+                        "close": 103980,
+                        "volume": 10,
+                    },
+                    {
+                        "trade_date": "20260710",
+                        "bar_time": "2026-07-10 01:00:00",
+                        "close": 103940,
+                        "volume": 21,
+                    },
                 ]
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -672,9 +1213,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 max_intraday_bar_age_minutes=10,
             )
 
-            self.assertEqual(result["state"], "ok")
+            self.assertEqual(result["state"], "market_closed")
             self.assertEqual(result["errors"], [])
-            self.assertEqual(result["holds"][0]["reason"], "product_night_session_closed")
+            self.assertEqual(result["holds"], [])
 
     def test_multi_style_runner_records_hold_reason_summary(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -699,15 +1240,23 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
             self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["hold_count"], 1)
-            self.assertEqual(result["hold_reason_summary"]["by_reason"]["below_threshold"], 1)
+            self.assertEqual(
+                result["hold_reason_summary"]["by_reason"]["below_threshold"], 1
+            )
             review_rows = [
                 json.loads(line)
-                for line in (tmp_path / "cn_futures_reviews.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (tmp_path / "cn_futures_reviews.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
                 if line.strip()
             ]
-            self.assertEqual(review_rows[0]["hold_reason_summary"]["by_reason"]["below_threshold"], 1)
+            self.assertEqual(
+                review_rows[0]["hold_reason_summary"]["by_reason"]["below_threshold"], 1
+            )
 
-    def test_multi_style_runner_does_not_append_empty_review_when_market_closed(self) -> None:
+    def test_multi_style_runner_does_not_append_empty_review_when_market_closed(
+        self,
+    ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
 
@@ -721,7 +1270,10 @@ class CNFuturesAutomationTest(unittest.TestCase):
                         "market": "cn_futures",
                         "state": "ok",
                         "hold_count": 1,
-                        "hold_reason_summary": {"total": 1, "by_reason": {"below_threshold": 1}},
+                        "hold_reason_summary": {
+                            "total": 1,
+                            "by_reason": {"below_threshold": 1},
+                        },
                     },
                     ensure_ascii=False,
                 )
@@ -745,7 +1297,11 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
             self.assertEqual(result["state"], "market_closed")
             self.assertTrue(result["review"]["append_skipped"])
-            review_rows = [line for line in review_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            review_rows = [
+                line
+                for line in review_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
             self.assertEqual(len(review_rows), 1)
             self.assertIn("below_threshold", review_rows[0])
 
@@ -759,8 +1315,19 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 reader=FakeFuturesReader(),
                 universe_filter={"max_symbols": 1},
                 styles={
-                    "trend": {"name": "trend", "signal_threshold": 0.01, "risk_per_trade": 0.03, "status": "active"},
-                    "blocked": {"name": "blocked", "signal_threshold": 0.01, "risk_per_trade": 0.03, "status": "paused", "enabled": False},
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.01,
+                        "risk_per_trade": 0.10,
+                        "status": "active",
+                    },
+                    "blocked": {
+                        "name": "blocked",
+                        "signal_threshold": 0.01,
+                        "risk_per_trade": 0.03,
+                        "status": "paused",
+                        "enabled": False,
+                    },
                 },
             )
 
@@ -778,7 +1345,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["filled_count"], 1)
             self.assertEqual({row["style"] for row in result["records"]}, {"trend"})
             self.assertEqual(result["errors"], [])
-            self.assertEqual(result["hold_reason_summary"]["by_reason"]["style_paused"], 1)
+            self.assertEqual(
+                result["hold_reason_summary"]["by_reason"]["style_paused"], 1
+            )
 
     def test_index_intraday_directional_style_only_trades_index_products(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -812,23 +1381,26 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 },
             )
 
-            with patch.object(adapter, "get_sim_account", return_value={"sim_capital": 200_000.0}):
-                result = run_multi_style_simulation(
-                    adapter,
-                    "20260706",
-                    reader,
-                    signals_dir=tmp_path / "signals",
-                    review_path=tmp_path / "cn_futures_reviews.jsonl",
-                    now=datetime.fromisoformat("2026-07-06 14:31:00"),
-                )
+            result = run_multi_style_simulation(
+                adapter,
+                "20260706",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-06 14:31:00"),
+            )
 
-            pairs = {(row["style"], row["symbol"]) for row in result["records"]}
+            self.assertEqual(result["filled_count"], 0)
+            pairs = {
+                (row["style"], row["symbol"])
+                for row in result["affordability"]["contracts"]
+            }
             self.assertIn(("index_intraday_directional", "IF2601.CFFEX"), pairs)
             self.assertIn(("trend", "rb2601"), pairs)
             self.assertNotIn(("index_intraday_directional", "rb2601"), pairs)
             self.assertNotIn(("trend", "IF2601.CFFEX"), pairs)
 
-    def test_index_intraday_directional_style_skips_outside_day_session_runtime(self) -> None:
+    def test_index_futures_without_night_session_reports_market_closed(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
 
@@ -861,28 +1433,82 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 now=datetime.fromisoformat("2026-07-06 21:01:00"),
             )
 
-            self.assertEqual(result["state"], "ok")
+            self.assertEqual(result["state"], "market_closed")
             self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["records"], [])
             self.assertEqual(result["errors"], [])
-            self.assertEqual(result["hold_count"], 1)
-            self.assertEqual(result["hold_reason_summary"]["by_reason"]["style_session_not_allowed"], 1)
+            self.assertEqual(result["hold_count"], 0)
+            self.assertEqual(result["hold_reason_summary"], {})
 
     def test_multi_style_runner_blocks_repeated_same_side_exposure(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
 
+        class RepeatReader(FakeFuturesReader):
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return (
+                    [
+                        {
+                            "symbol": "m2601",
+                            "name": "豆粕2601",
+                            "exchange": "DCE",
+                            "status": "listed",
+                        }
+                    ]
+                    if market == "Futures"
+                    else []
+                )
+
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
+                if market != "Futures" or symbol != "m2601" or interval != "5min":
+                    return []
+                return [
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:45:00",
+                        "close": 980,
+                        "volume": 1000,
+                    },
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:50:00",
+                        "close": 990,
+                        "volume": 1000,
+                    },
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:55:00",
+                        "close": 1000,
+                        "volume": 1000,
+                    },
+                ]
+
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
+            reader = RepeatReader()
             adapter = CNFuturesAdapter(
-                reader=FakeFuturesReader(),
-                universe_filter={"max_symbols": 1},
-                styles={"trend": {"name": "trend", "signal_threshold": 0.01}},
+                reader=reader,
+                universe_filter={"max_symbols": 1, "products": ("m",)},
+                styles={
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.01,
+                        "risk_per_trade": 0.03,
+                        "no_overnight": False,
+                    }
+                },
             )
             common = {
                 "adapter": adapter,
                 "date": "20260703",
-                "reader": FakeFuturesReader(),
+                "reader": reader,
                 "signals_dir": tmp_path / "signals",
                 "review_path": tmp_path / "cn_futures_reviews.jsonl",
                 "now": datetime.fromisoformat("2026-07-03 14:56:00"),
@@ -894,7 +1520,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(first["filled_count"], 1)
             self.assertEqual(second["filled_count"], 0)
             self.assertEqual(second["errors"], [])
-            self.assertEqual(second["holds"][0]["reason"], "repeated_same_side_exposure")
+            self.assertEqual(
+                second["holds"][0]["reason"], "repeated_same_side_exposure"
+            )
             self.assertEqual(second["state"], "ok")
 
     def test_multi_style_runner_estimates_realized_pnl_on_reversal(self) -> None:
@@ -905,7 +1533,18 @@ class CNFuturesAutomationTest(unittest.TestCase):
             bars: list[dict[str, object]] = []
 
             def get_assets(self, market: str) -> list[dict[str, object]]:
-                return [{"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"}] if market == "Futures" else []
+                return (
+                    [
+                        {
+                            "symbol": "rb2601",
+                            "name": "螺纹钢2601",
+                            "exchange": "SHFE",
+                            "status": "listed",
+                        }
+                    ]
+                    if market == "Futures"
+                    else []
+                )
 
             def get_bars_intraday(
                 self,
@@ -915,7 +1554,11 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 start: object = None,
                 end: object = None,
             ) -> list[dict[str, object]]:
-                return list(self.bars) if market == "Futures" and symbol == "rb2601" and interval == "5min" else []
+                return (
+                    list(self.bars)
+                    if market == "Futures" and symbol == "rb2601" and interval == "5min"
+                    else []
+                )
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -923,7 +1566,14 @@ class CNFuturesAutomationTest(unittest.TestCase):
             adapter = CNFuturesAdapter(
                 reader=reader,
                 universe_filter={"max_symbols": 1, "products": ("rb",)},
-                styles={"trend": {"name": "trend", "signal_threshold": 0.001, "risk_per_trade": 0.03, "slippage_bps": 0.0}},
+                styles={
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.001,
+                        "risk_per_trade": 0.10,
+                        "slippage_bps": 0.0,
+                    }
+                },
             )
             common = {
                 "adapter": adapter,
@@ -933,29 +1583,79 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 "review_path": tmp_path / "cn_futures_reviews.jsonl",
             }
             reader.bars = [
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:10:00", "close": 3400, "volume": 1000},
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:15:00", "close": 3450, "volume": 1000},
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:20:00", "close": 3500, "volume": 1000},
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:10:00",
+                    "close": 3400,
+                    "volume": 1000,
+                },
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:15:00",
+                    "close": 3450,
+                    "volume": 1000,
+                },
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:20:00",
+                    "close": 3500,
+                    "volume": 1000,
+                },
             ]
-            first = run_multi_style_simulation(**common, now=datetime.fromisoformat("2026-07-03 14:21:00"))
+            first = run_multi_style_simulation(
+                **common, now=datetime.fromisoformat("2026-07-03 14:21:00")
+            )
             reader.bars = [
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:25:00", "close": 3500, "volume": 1000},
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:30:00", "close": 3450, "volume": 1000},
-                {"trade_date": "20260703", "bar_time": "2026-07-03 14:35:00", "close": 3400, "volume": 1000},
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:25:00",
+                    "close": 3500,
+                    "volume": 1000,
+                },
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:30:00",
+                    "close": 3450,
+                    "volume": 1000,
+                },
+                {
+                    "trade_date": "20260703",
+                    "bar_time": "2026-07-03 14:35:00",
+                    "close": 3400,
+                    "volume": 1000,
+                },
             ]
-            second = run_multi_style_simulation(**common, now=datetime.fromisoformat("2026-07-03 14:36:00"))
+            second = run_multi_style_simulation(
+                **common, now=datetime.fromisoformat("2026-07-03 14:36:00")
+            )
 
             self.assertEqual(first["filled_count"], 1)
             self.assertEqual(second["filled_count"], 1)
             performance = second["records"][0]["performance"]
-            self.assertEqual(performance["method"], "same_day_reversal_estimate")
+            self.assertEqual(performance["method"], "force_flatten_position_close")
             self.assertIn("realized_pnl", performance)
 
-    def test_multi_style_runner_writes_partial_signal_state_for_low_volume_fill(self) -> None:
+    def test_multi_style_runner_writes_partial_signal_state_for_low_volume_fill(
+        self,
+    ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
 
         class LowVolumeReader(FakeFuturesReader):
+            def get_assets(self, market: str) -> list[dict[str, object]]:
+                return (
+                    [
+                        {
+                            "symbol": "m2601",
+                            "name": "豆粕2601",
+                            "exchange": "DCE",
+                            "status": "listed",
+                        }
+                    ]
+                    if market == "Futures"
+                    else []
+                )
+
             def get_bars_intraday(
                 self,
                 market: str,
@@ -964,12 +1664,27 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 start: object = None,
                 end: object = None,
             ) -> list[dict[str, object]]:
-                if market != "Futures" or symbol != "rb2601" or interval != "5min":
+                if market != "Futures" or symbol != "m2601" or interval != "5min":
                     return []
                 return [
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3400, "volume": 10},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3450, "volume": 10},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 3500, "volume": 10},
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:45:00",
+                        "close": 980,
+                        "volume": 10,
+                    },
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:50:00",
+                        "close": 990,
+                        "volume": 10,
+                    },
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:55:00",
+                        "close": 1000,
+                        "volume": 10,
+                    },
                 ]
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -977,13 +1692,13 @@ class CNFuturesAutomationTest(unittest.TestCase):
             reader = LowVolumeReader()
             adapter = CNFuturesAdapter(
                 reader=reader,
-                universe_filter={"max_symbols": 1},
+                universe_filter={"max_symbols": 1, "products": ("m",)},
                 styles={
                     "trend": {
                         "name": "trend",
                         "signal_threshold": 0.001,
-                        "risk_per_trade": 0.50,
-                        "max_margin_usage": 0.80,
+                        "risk_per_trade": 0.10,
+                        "max_margin_usage": 0.10,
                         "volume_participation": 0.10,
                     },
                 },
@@ -1001,18 +1716,36 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["record_count"], 1)
             self.assertEqual(result["records"][0]["receipt"]["status"], "partial")
             self.assertEqual(result["records"][0]["signal_result"]["status"], "partial")
-            self.assertEqual(len(list((tmp_path / "signals" / "partial").glob("SIM-CNF-*.json"))), 1)
+            self.assertEqual(
+                len(list((tmp_path / "signals" / "partial").glob("SIM-CNF-*.json"))), 1
+            )
 
-    def test_multi_style_runner_writes_position_snapshot_and_blocks_margin_cap(self) -> None:
+    def test_multi_style_runner_writes_position_snapshot_and_blocks_margin_cap(
+        self,
+    ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
 
         class TwoContractReader(FakeFuturesReader):
             def get_assets(self, market: str) -> list[dict[str, object]]:
-                return [
-                    {"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"},
-                    {"symbol": "rb2605", "name": "螺纹钢2605", "exchange": "SHFE", "status": "listed"},
-                ] if market == "Futures" else []
+                return (
+                    [
+                        {
+                            "symbol": "rb2601",
+                            "name": "螺纹钢2601",
+                            "exchange": "SHFE",
+                            "status": "listed",
+                        },
+                        {
+                            "symbol": "rb2605",
+                            "name": "螺纹钢2605",
+                            "exchange": "SHFE",
+                            "status": "listed",
+                        },
+                    ]
+                    if market == "Futures"
+                    else []
+                )
 
             def get_bars_intraday(
                 self,
@@ -1025,9 +1758,24 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 if market != "Futures" or interval != "5min":
                     return []
                 return [
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3400, "volume": 1000},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3450, "volume": 1000},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 3500, "volume": 1000},
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:45:00",
+                        "close": 3400,
+                        "volume": 1000,
+                    },
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:50:00",
+                        "close": 3450,
+                        "volume": 1000,
+                    },
+                    {
+                        "trade_date": "20260703",
+                        "bar_time": "2026-07-03 14:55:00",
+                        "close": 3500,
+                        "volume": 1000,
+                    },
                 ]
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1035,12 +1783,16 @@ class CNFuturesAutomationTest(unittest.TestCase):
             reader = TwoContractReader()
             adapter = CNFuturesAdapter(
                 reader=reader,
-                universe_filter={"max_symbols": 2, "min_distinct_products": 1, "products": ("rb",)},
+                universe_filter={
+                    "max_symbols": 2,
+                    "min_distinct_products": 1,
+                    "products": ("rb",),
+                },
                 styles={
                     "trend": {
                         "name": "trend",
                         "signal_threshold": 0.001,
-                        "risk_per_trade": 0.08,
+                        "risk_per_trade": 0.10,
                         "max_margin_usage": 0.10,
                         "slippage_bps": 0.0,
                     },
@@ -1059,8 +1811,15 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["filled_count"], 1)
             self.assertEqual(result["state"], "ok")
             self.assertEqual(result["errors"], [])
-            self.assertEqual(result["hold_reason_summary"]["by_reason"]["margin_cap_exceeded"], 1)
-            snapshot_path = tmp_path / "signals" / "positions" / "cn_futures_sim_positions.json"
+            self.assertEqual(
+                result["hold_reason_summary"]["by_reason"][
+                    "minimum_contract_exceeds_risk_budget"
+                ],
+                1,
+            )
+            snapshot_path = (
+                tmp_path / "signals" / "positions" / "cn_futures_sim_positions.json"
+            )
             snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
             self.assertEqual(snapshot["position_count"], 1)
             self.assertEqual(snapshot["positions"][0]["symbol"], "rb2601")
@@ -1072,7 +1831,18 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
         class ClosingReader(FakeMixedFuturesReader):
             def get_assets(self, market: str) -> list[dict[str, object]]:
-                return [{"symbol": "IF2601.CFFEX", "name": "沪深300股指2601", "exchange": "CFFEX", "status": "listed"}] if market == "Futures" else []
+                return (
+                    [
+                        {
+                            "symbol": "IF2601.CFFEX",
+                            "name": "沪深300股指2601",
+                            "exchange": "CFFEX",
+                            "status": "listed",
+                        }
+                    ]
+                    if market == "Futures"
+                    else []
+                )
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -1096,30 +1866,49 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     },
                 },
             )
+            positions_path = (
+                tmp_path / "signals" / "positions" / "cn_futures_sim_positions.json"
+            )
+            positions_path.parent.mkdir(parents=True)
+            positions_path.write_text(
+                json.dumps(
+                    {
+                        "positions": [
+                            {
+                                "style": "index_intraday_directional",
+                                "symbol": "IF2601.CFFEX",
+                                "net_qty": 1,
+                                "avg_price": 3_500.0,
+                                "mark_price": 3_520.0,
+                                "contract_multiplier": 300,
+                                "margin_required": 126_000.0,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
 
-            with patch.object(adapter, "get_sim_account", return_value={"sim_capital": 200_000.0}):
-                first = run_multi_style_simulation(
-                    adapter,
-                    "20260706",
-                    reader,
-                    signals_dir=tmp_path / "signals",
-                    review_path=tmp_path / "cn_futures_reviews.jsonl",
-                    now=datetime.fromisoformat("2026-07-06 14:31:00"),
-                )
-                second = run_multi_style_simulation(
-                    adapter,
-                    "20260706",
-                    reader,
-                    signals_dir=tmp_path / "signals",
-                    review_path=tmp_path / "cn_futures_reviews.jsonl",
-                    now=datetime.fromisoformat("2026-07-06 14:51:00"),
-                )
+            result = run_multi_style_simulation(
+                adapter,
+                "20260706",
+                reader,
+                signals_dir=tmp_path / "signals",
+                review_path=tmp_path / "cn_futures_reviews.jsonl",
+                now=datetime.fromisoformat("2026-07-06 14:51:00"),
+                max_intraday_bar_age_minutes=30,
+            )
 
-            self.assertEqual(first["filled_count"], 1)
-            self.assertEqual(second["filled_count"], 1)
-            self.assertEqual(second["records"][0]["order"]["intent"], "flatten_no_overnight")
-            self.assertEqual(second["records"][0]["order"]["side"], "sell")
-            snapshot = json.loads((tmp_path / "signals" / "positions" / "cn_futures_sim_positions.json").read_text(encoding="utf-8"))
+            self.assertEqual(result["filled_count"], 1)
+            self.assertEqual(
+                result["records"][0]["order"]["intent"], "flatten_no_overnight"
+            )
+            self.assertEqual(result["records"][0]["order"]["side"], "sell")
+            snapshot = json.loads(
+                (
+                    tmp_path / "signals" / "positions" / "cn_futures_sim_positions.json"
+                ).read_text(encoding="utf-8")
+            )
             self.assertEqual(snapshot["position_count"], 0)
 
     def test_multi_style_runner_blocks_contracts_inside_rollover_guard(self) -> None:
@@ -1128,7 +1917,18 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
         class ExpiringReader(FakeFuturesReader):
             def get_assets(self, market: str) -> list[dict[str, object]]:
-                return [{"symbol": "rb2607", "name": "螺纹钢2607", "exchange": "SHFE", "status": "listed"}] if market == "Futures" else []
+                return (
+                    [
+                        {
+                            "symbol": "rb2607",
+                            "name": "螺纹钢2607",
+                            "exchange": "SHFE",
+                            "status": "listed",
+                        }
+                    ]
+                    if market == "Futures"
+                    else []
+                )
 
             def get_bars_intraday(
                 self,
@@ -1138,11 +1938,30 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 start: object = None,
                 end: object = None,
             ) -> list[dict[str, object]]:
-                return [
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3400, "volume": 1000},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3450, "volume": 1000},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:55:00", "close": 3500, "volume": 1000},
-                ] if market == "Futures" and interval == "5min" else []
+                return (
+                    [
+                        {
+                            "trade_date": "20260703",
+                            "bar_time": "2026-07-03 14:45:00",
+                            "close": 3400,
+                            "volume": 1000,
+                        },
+                        {
+                            "trade_date": "20260703",
+                            "bar_time": "2026-07-03 14:50:00",
+                            "close": 3450,
+                            "volume": 1000,
+                        },
+                        {
+                            "trade_date": "20260703",
+                            "bar_time": "2026-07-03 14:55:00",
+                            "close": 3500,
+                            "volume": 1000,
+                        },
+                    ]
+                    if market == "Futures" and interval == "5min"
+                    else []
+                )
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -1180,7 +1999,18 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
         class DepthReader(FakeFuturesReader):
             def get_assets(self, market: str) -> list[dict[str, object]]:
-                return [{"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"}] if market == "Futures" else []
+                return (
+                    [
+                        {
+                            "symbol": "rb2601",
+                            "name": "螺纹钢2601",
+                            "exchange": "SHFE",
+                            "status": "listed",
+                        }
+                    ]
+                    if market == "Futures"
+                    else []
+                )
 
             def get_bars_intraday(
                 self,
@@ -1190,18 +2020,32 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 start: object = None,
                 end: object = None,
             ) -> list[dict[str, object]]:
-                return [
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3400, "volume": 1000},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3450, "volume": 1000},
-                    {
-                        "trade_date": "20260703",
-                        "bar_time": "2026-07-03 14:55:00",
-                        "close": 3500,
-                        "volume": 1000,
-                        "ask_price": 3502.0,
-                        "ask_size": 1,
-                    },
-                ] if market == "Futures" and symbol == "rb2601" and interval == "5min" else []
+                return (
+                    [
+                        {
+                            "trade_date": "20260703",
+                            "bar_time": "2026-07-03 14:45:00",
+                            "close": 3400,
+                            "volume": 1000,
+                        },
+                        {
+                            "trade_date": "20260703",
+                            "bar_time": "2026-07-03 14:50:00",
+                            "close": 3450,
+                            "volume": 1000,
+                        },
+                        {
+                            "trade_date": "20260703",
+                            "bar_time": "2026-07-03 14:55:00",
+                            "close": 3500,
+                            "volume": 1000,
+                            "ask_price": 3502.0,
+                            "ask_size": 1,
+                        },
+                    ]
+                    if market == "Futures" and symbol == "rb2601" and interval == "5min"
+                    else []
+                )
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -1209,7 +2053,15 @@ class CNFuturesAutomationTest(unittest.TestCase):
             adapter = CNFuturesAdapter(
                 reader=reader,
                 universe_filter={"max_symbols": 1, "products": ("rb",)},
-                styles={"trend": {"name": "trend", "signal_threshold": 0.001, "risk_per_trade": 0.50, "max_margin_usage": 0.80, "slippage_bps": 0.0}},
+                styles={
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.001,
+                        "risk_per_trade": 0.50,
+                        "max_margin_usage": 0.80,
+                        "slippage_bps": 0.0,
+                    }
+                },
             )
 
             result = run_multi_style_simulation(
@@ -1224,15 +2076,33 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(result["record_count"], 1)
             self.assertEqual(result["records"][0]["receipt"]["status"], "partial")
             self.assertEqual(result["records"][0]["receipt"]["avg_price"], 3502.0)
-            self.assertEqual(result["records"][0]["receipt"]["raw_response"]["execution_price_source"], "order_book_ask")
+            self.assertEqual(
+                result["records"][0]["receipt"]["raw_response"][
+                    "execution_price_source"
+                ],
+                "order_book_ask",
+            )
 
-    def test_multi_style_runner_preserves_expiry_metadata_from_intraday_bar(self) -> None:
+    def test_multi_style_runner_preserves_expiry_metadata_from_intraday_bar(
+        self,
+    ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
         from CNFutures.sim_runner import run_multi_style_simulation
 
         class ExpiryReader(FakeFuturesReader):
             def get_assets(self, market: str) -> list[dict[str, object]]:
-                return [{"symbol": "rb2601", "name": "螺纹钢2601", "exchange": "SHFE", "status": "listed"}] if market == "Futures" else []
+                return (
+                    [
+                        {
+                            "symbol": "rb2601",
+                            "name": "螺纹钢2601",
+                            "exchange": "SHFE",
+                            "status": "listed",
+                        }
+                    ]
+                    if market == "Futures"
+                    else []
+                )
 
             def get_bars_intraday(
                 self,
@@ -1242,18 +2112,32 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 start: object = None,
                 end: object = None,
             ) -> list[dict[str, object]]:
-                return [
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:45:00", "close": 3400, "volume": 1000},
-                    {"trade_date": "20260703", "bar_time": "2026-07-03 14:50:00", "close": 3450, "volume": 1000},
-                    {
-                        "trade_date": "20260703",
-                        "bar_time": "2026-07-03 14:55:00",
-                        "close": 3500,
-                        "volume": 1000,
-                        "last_trade_date": "20261215",
-                        "expiry_date": "20261231",
-                    },
-                ] if market == "Futures" and symbol == "rb2601" and interval == "5min" else []
+                return (
+                    [
+                        {
+                            "trade_date": "20260703",
+                            "bar_time": "2026-07-03 14:45:00",
+                            "close": 3400,
+                            "volume": 1000,
+                        },
+                        {
+                            "trade_date": "20260703",
+                            "bar_time": "2026-07-03 14:50:00",
+                            "close": 3450,
+                            "volume": 1000,
+                        },
+                        {
+                            "trade_date": "20260703",
+                            "bar_time": "2026-07-03 14:55:00",
+                            "close": 3500,
+                            "volume": 1000,
+                            "last_trade_date": "20261215",
+                            "expiry_date": "20261231",
+                        },
+                    ]
+                    if market == "Futures" and symbol == "rb2601" and interval == "5min"
+                    else []
+                )
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -1261,7 +2145,13 @@ class CNFuturesAutomationTest(unittest.TestCase):
             adapter = CNFuturesAdapter(
                 reader=reader,
                 universe_filter={"max_symbols": 1, "products": ("rb",)},
-                styles={"trend": {"name": "trend", "signal_threshold": 0.001, "risk_per_trade": 0.03}},
+                styles={
+                    "trend": {
+                        "name": "trend",
+                        "signal_threshold": 0.001,
+                        "risk_per_trade": 0.10,
+                    }
+                },
             )
 
             result = run_multi_style_simulation(
@@ -1281,7 +2171,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(raw_response["last_trade_date"], "20261215")
             self.assertEqual(raw_response["expiry_date"], "20261231")
 
-    def test_adapter_falls_back_to_sharedsignals_sqlite_for_futures_assets(self) -> None:
+    def test_adapter_falls_back_to_sharedsignals_sqlite_for_futures_assets(
+        self,
+    ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1307,7 +2199,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             os.environ["SHARED_SIGNALS_DB"] = str(db_path)
             os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
             try:
-                adapter = CNFuturesAdapter(reader=object(), universe_filter={"max_symbols": 1})
+                adapter = CNFuturesAdapter(
+                    reader=object(), universe_filter={"max_symbols": 1}
+                )
                 self.assertEqual(adapter.get_universe("20260703"), ["RB2601.SHF"])
             finally:
                 if old_db is None:
@@ -1462,10 +2356,16 @@ class CNFuturesAutomationTest(unittest.TestCase):
             os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
             try:
                 with patch("CNFutures.adapter.TradingagentDataReader", None):
-                    adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 2})
+                    adapter = CNFuturesAdapter(
+                        reader=None, universe_filter={"max_symbols": 2}
+                    )
 
-                self.assertEqual(adapter.get_universe("20260703"), ["CU2609.SHF", "RB2609.SHF"])
-                self.assertEqual(adapter.get_universe("20260704"), ["CU2609.SHF", "RB2609.SHF"])
+                self.assertEqual(
+                    adapter.get_universe("20260703"), ["CU2609.SHF", "RB2609.SHF"]
+                )
+                self.assertEqual(
+                    adapter.get_universe("20260704"), ["CU2609.SHF", "RB2609.SHF"]
+                )
             finally:
                 if old_db is None:
                     os.environ.pop("SHARED_SIGNALS_DB", None)
@@ -1514,8 +2414,22 @@ class CNFuturesAutomationTest(unittest.TestCase):
             conn.executemany(
                 "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?, ?)",
                 [
-                    ("Futures", "CU2609.SHF", "2026-07-03 14:55:00", "20260703", "5min", 71000.0),
-                    ("Futures", "RB2609.SHF", "2026-07-03 14:55:00", "20260703", "5min", 3500.0),
+                    (
+                        "Futures",
+                        "CU2609.SHF",
+                        "2026-07-03 14:55:00",
+                        "20260703",
+                        "5min",
+                        71000.0,
+                    ),
+                    (
+                        "Futures",
+                        "RB2609.SHF",
+                        "2026-07-03 14:55:00",
+                        "20260703",
+                        "5min",
+                        3500.0,
+                    ),
                 ],
             )
             conn.commit()
@@ -1525,10 +2439,17 @@ class CNFuturesAutomationTest(unittest.TestCase):
             os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
             try:
                 with patch("CNFutures.adapter.TradingagentDataReader", None):
-                    adapter = CNFuturesAdapter(reader=None, universe_filter={"max_symbols": 2})
+                    adapter = CNFuturesAdapter(
+                        reader=None, universe_filter={"max_symbols": 2}
+                    )
 
-                self.assertEqual(adapter.get_intraday_universe("20260703"), ["CU2609.SHF", "RB2609.SHF"])
-                rows = adapter.get_bars_intraday("Futures", "RB2609.SHF", "5min", end="20260703")
+                self.assertEqual(
+                    adapter.get_intraday_universe("20260703"),
+                    ["CU2609.SHF", "RB2609.SHF"],
+                )
+                rows = adapter.get_bars_intraday(
+                    "Futures", "RB2609.SHF", "5min", end="20260703"
+                )
                 self.assertEqual(rows[-1]["bar_time"], "2026-07-03 14:55:00")
             finally:
                 if old_db is None:
@@ -1575,7 +2496,10 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     "receipt": {
                         "status": "filled",
                         "fee": 1.0,
-                        "raw_response": {"margin_required": 1000.0, "notional": 10000.0},
+                        "raw_response": {
+                            "margin_required": 1000.0,
+                            "notional": 10000.0,
+                        },
                     },
                     "performance": {"realized_pnl": pnl},
                 }
@@ -1599,11 +2523,16 @@ class CNFuturesAutomationTest(unittest.TestCase):
         self.assertFalse(status["real_trading_enabled"])
         self.assertFalse(status["broker_adapter_ready"])
         with self.assertRaisesRegex(SafetyViolation, "fail-closed"):
-            submit_real_order({"symbol": "RB2609.SHF", "side": "buy", "quantity": 1}, approval_token="token")
+            submit_real_order(
+                {"symbol": "RB2609.SHF", "side": "buy", "quantity": 1},
+                approval_token="token",
+            )
 
     # --- RED: canonical capital sourcing ---
 
-    def test_sim_runner_capital_fallback_uses_canonical_source_not_hardcoded_200k(self) -> None:
+    def test_sim_runner_capital_fallback_uses_canonical_source_not_hardcoded_200k(
+        self,
+    ) -> None:
         """When adapter.get_sim_account() returns no sim_capital, the fallback
         must be default_sim_capital('cn_futures'), not a hardcoded 200_000."""
         from CNFutures.adapter import CNFuturesAdapter
@@ -1624,15 +2553,18 @@ class CNFuturesAutomationTest(unittest.TestCase):
                         },
                     },
                 )
-
-                result = run_multi_style_simulation(
-                    adapter,
-                    "20260703",
-                    FakeFuturesReader(),
-                    signals_dir=tmp_path / "signals",
-                    review_path=tmp_path / "cn_futures_reviews.jsonl",
-                    now=datetime.fromisoformat("2026-07-03 14:56:00"),
-                )
+                with patch(
+                    "CNFutures.sim_runner.get_cn_futures_capital_provider_state",
+                    return_value=None,
+                ):
+                    result = run_multi_style_simulation(
+                        adapter,
+                        "20260703",
+                        FakeFuturesReader(),
+                        signals_dir=tmp_path / "signals",
+                        review_path=tmp_path / "cn_futures_reviews.jsonl",
+                        now=datetime.fromisoformat("2026-07-03 14:56:00"),
+                    )
 
             # The runner should complete without error regardless of capital.
             # If it had a hardcoded 200k fallback it would still work here
@@ -1640,9 +2572,13 @@ class CNFuturesAutomationTest(unittest.TestCase):
             # implies the capital was resolved, not that margin cap was hit.
             self.assertIn(result["state"], {"ok", "degraded"})
             self.assertEqual(result["filled_count"], 0)
+            self.assertFalse(result["account_state"]["authoritative"])
+            self.assertEqual(result["account_state"]["equity"], 50_000.0)
             # hold_reason_summary should show below_threshold, not margin_cap_exceeded
-            self.assertIn("below_threshold",
-                          result.get("hold_reason_summary", {}).get("by_reason", {}))
+            self.assertIn(
+                "below_threshold",
+                result.get("hold_reason_summary", {}).get("by_reason", {}),
+            )
         finally:
             if old_tier is None:
                 os.environ.pop("CN_FUTURES_SIM_CAPITAL_TIER", None)
@@ -1662,7 +2598,11 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 tmp_path = Path(tmp)
                 adapter = CNFuturesAdapter(
                     reader=FakeFuturesReader(),
-                    universe_filter={"max_symbols": 2, "min_distinct_products": 1, "products": ("rb",)},
+                    universe_filter={
+                        "max_symbols": 2,
+                        "min_distinct_products": 1,
+                        "products": ("rb",),
+                    },
                     styles={
                         "trend": {
                             "name": "trend",
@@ -1683,15 +2623,16 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     now=datetime.fromisoformat("2026-07-03 14:56:00"),
                 )
 
-            # On 50k with max_margin_usage=0.10, margin budget = 5000.
-            # rb2601 at 3500 with multiplier 10 needs ~3500 margin per lot.
-            # With risk_per_trade=0.08 and weight=1.0, it's 4000.
-            # So 1 lot fits (4000 <= 5000), second contract at margin cap
-            # may be blocked.
+            # On 50k, risk budget is 4,000 while one rb lot needs about
+            # 4,550 margin under the current static rule, so it must hold.
             self.assertIn(result["state"], {"ok", "degraded"})
-            # At least one fill should happen (rb2601 at low margin)
-            # The second contract may be blocked by margin cap
-            self.assertGreaterEqual(result["filled_count"], 1)
+            self.assertEqual(result["filled_count"], 0)
+            self.assertEqual(
+                result["hold_reason_summary"]["by_reason"][
+                    "minimum_contract_exceeds_risk_budget"
+                ],
+                1,
+            )
         finally:
             if old_tier is None:
                 os.environ.pop("CN_FUTURES_SIM_CAPITAL_TIER", None)

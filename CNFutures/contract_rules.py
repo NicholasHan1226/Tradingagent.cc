@@ -23,6 +23,8 @@ class ContractRule:
     open_fee_rate: float
     close_fee_rate: float
     price_limit_rate: float
+    modeled_overnight_gap_pct: float
+    modeled_slippage_bps: float
     open_fee_type: str = "rate"
     close_fee_type: str = "rate"
     night_session: bool = False
@@ -39,6 +41,8 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         open_fee_rate=0.0001,
         close_fee_rate=0.0001,
         price_limit_rate=0.07,
+        modeled_overnight_gap_pct=0.03,
+        modeled_slippage_bps=2.0,
         night_session=True,
         night_session_end_minute=23 * 60,
     ),
@@ -51,6 +55,8 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         open_fee_rate=0.00005,
         close_fee_rate=0.00005,
         price_limit_rate=0.06,
+        modeled_overnight_gap_pct=0.025,
+        modeled_slippage_bps=2.0,
         night_session=True,
         night_session_end_minute=60,
     ),
@@ -63,6 +69,8 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         open_fee_rate=0.0001,
         close_fee_rate=0.0001,
         price_limit_rate=0.11,
+        modeled_overnight_gap_pct=0.04,
+        modeled_slippage_bps=2.0,
         night_session=True,
         night_session_end_minute=23 * 60,
     ),
@@ -75,6 +83,8 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         open_fee_rate=1.5,
         close_fee_rate=1.5,
         price_limit_rate=0.07,
+        modeled_overnight_gap_pct=0.03,
+        modeled_slippage_bps=2.0,
         open_fee_type="fixed_per_lot",
         close_fee_type="fixed_per_lot",
         night_session=True,
@@ -89,6 +99,8 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         open_fee_rate=0.000023,
         close_fee_rate=0.000023,
         price_limit_rate=0.10,
+        modeled_overnight_gap_pct=0.03,
+        modeled_slippage_bps=2.0,
         night_session=False,
     ),
     "ih": ContractRule(
@@ -100,6 +112,8 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         open_fee_rate=0.000023,
         close_fee_rate=0.000023,
         price_limit_rate=0.10,
+        modeled_overnight_gap_pct=0.03,
+        modeled_slippage_bps=2.0,
         night_session=False,
     ),
     "ic": ContractRule(
@@ -111,6 +125,8 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         open_fee_rate=0.000023,
         close_fee_rate=0.000023,
         price_limit_rate=0.10,
+        modeled_overnight_gap_pct=0.03,
+        modeled_slippage_bps=2.0,
         night_session=False,
     ),
     "im": ContractRule(
@@ -122,6 +138,8 @@ _PRODUCT_RULES: dict[str, ContractRule] = {
         open_fee_rate=0.000023,
         close_fee_rate=0.000023,
         price_limit_rate=0.10,
+        modeled_overnight_gap_pct=0.03,
+        modeled_slippage_bps=2.0,
         night_session=False,
     ),
 }
@@ -151,7 +169,7 @@ def is_executable_contract_symbol(symbol: str) -> bool:
         product = normalize_product(value)
     except ValueError:
         return False
-    suffix = base[len(product):]
+    suffix = base[len(product) :]
     return suffix.isdigit() and len(suffix) >= 3
 
 

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Read-only A-share pre-open dry run for the simulated trading chain."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -20,13 +22,20 @@ from Ashare.adapter import AshareAdapter
 from Ashare.capital_plan import TOTAL_CAPITAL, plan_capital
 from Ashare.evolution_controller import decision_market_context, load_latest_decision
 from Ashare.sim_executor import _is_supported_ashare_code, _market_session_rejection
+from shared.capital import load_market_capital_provider_state
 from shared.data.reader import TradingagentDataReader
+from shared.execution.execution_lineage import (
+    ASHARE_AUTHORITY_GENERATION,
+    ASHARE_CAPITAL_AUTHORITY_ID,
+    ASHARE_EXECUTION_LINEAGE_ID,
+)
 from shared.notify import email_sender
 from shared.orchestrator import (
     _account_available_cash,
     _account_capital,
     _account_positions,
-    _ashare_strategy_account_view,
+    _ashare_authoritative_account_view,
+    _estimate_ashare_market_reservation,
     _latest_price,
     _score_diagnostics,
 )
@@ -65,15 +74,22 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def _status_rank(status: str) -> int:
-    return {"pass": 0, "ok": 0, "warn": 1, "degraded": 1, "fail": 2, "critical": 2}.get(str(status).lower(), 1)
+    return {"pass": 0, "ok": 0, "warn": 1, "degraded": 1, "fail": 2, "critical": 2}.get(
+        str(status).lower(), 1
+    )
 
 
 def _overall_status(sections: list[dict[str, Any]]) -> str:
-    worst = max((_status_rank(str(section.get("status") or "warn")) for section in sections), default=1)
+    worst = max(
+        (_status_rank(str(section.get("status") or "warn")) for section in sections),
+        default=1,
+    )
     return "fail" if worst >= 2 else ("warn" if worst == 1 else "pass")
 
 
-def _compact_scores(scored: list[tuple[str, dict[str, float]]], *, limit: int = 10) -> list[dict[str, Any]]:
+def _compact_scores(
+    scored: list[tuple[str, dict[str, float]]], *, limit: int = 10
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for symbol, scores in scored[: max(1, limit)]:
         rows.append(
@@ -109,12 +125,20 @@ def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]
     for row in rows or []:
         if not isinstance(row, dict):
             continue
-        symbol = str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper()
+        symbol = (
+            str(row.get("symbol") or row.get("ts_code") or row.get("code") or "")
+            .strip()
+            .upper()
+        )
         if not symbol or symbol in seen or not _is_supported_ashare_code(symbol):
             continue
         name = str(row.get("name") or "").upper()
         status = str(row.get("status") or "").lower()
-        if "ST" in name or "退" in name or status in {"suspended", "halted", "delisted", "inactive"}:
+        if (
+            "ST" in name
+            or "退" in name
+            or status in {"suspended", "halted", "delisted", "inactive"}
+        ):
             continue
         seen.add(symbol)
         asset_symbols.append(symbol)
@@ -124,7 +148,8 @@ def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]
         candidates = [
             (symbol, amount)
             for symbol in asset_symbols
-            if (amount := batch_amounts.get(symbol, 0.0)) > 0 and amount * 1000.0 >= 50_000_000.0
+            if (amount := batch_amounts.get(symbol, 0.0)) > 0
+            and amount * 1000.0 >= 50_000_000.0
         ]
         candidates.sort(key=lambda item: (-item[1], item[0]))
         return [symbol for symbol, _ in candidates[: max(1, int(limit))]]
@@ -176,12 +201,18 @@ def _latest_daily_amounts_from_reader(reader: Any) -> dict[str, float]:
     for row in rows or []:
         if not isinstance(row, dict):
             continue
-        symbol = str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper()
+        symbol = (
+            str(row.get("symbol") or row.get("ts_code") or row.get("code") or "")
+            .strip()
+            .upper()
+        )
         if not symbol or not _is_supported_ashare_code(symbol):
             continue
         if _safe_float(row.get("close"), 0.0) <= 0:
             continue
-        trade_date = str(row.get("trade_date") or row.get("date") or "").replace("-", "")
+        trade_date = str(row.get("trade_date") or row.get("date") or "").replace(
+            "-", ""
+        )
         if not trade_date:
             continue
         if trade_date > latest_date:
@@ -192,10 +223,16 @@ def _latest_daily_amounts_from_reader(reader: Any) -> dict[str, float]:
 
     amounts: dict[str, float] = {}
     for row in clean_rows:
-        trade_date = str(row.get("trade_date") or row.get("date") or "").replace("-", "")
+        trade_date = str(row.get("trade_date") or row.get("date") or "").replace(
+            "-", ""
+        )
         if trade_date != latest_date:
             continue
-        symbol = str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper()
+        symbol = (
+            str(row.get("symbol") or row.get("ts_code") or row.get("code") or "")
+            .strip()
+            .upper()
+        )
         amount = _safe_float(row.get("amount"), 0.0)
         if amount > amounts.get(symbol, 0.0):
             amounts[symbol] = amount
@@ -221,7 +258,9 @@ def _latest_daily_amount_from_reader(reader: Any, symbol: str) -> float:
             continue
         if _safe_float(row.get("close"), 0.0) <= 0:
             continue
-        if best is None or str(row.get("trade_date") or "") > str(best.get("trade_date") or ""):
+        if best is None or str(row.get("trade_date") or "") > str(
+            best.get("trade_date") or ""
+        ):
             best = row
     if best is None:
         return 0.0
@@ -239,7 +278,9 @@ def _build_candidate_pool(
     if not universe:
         universe_source = "none"
     limited = universe[: max(1, int(score_limit))]
-    scored = score_universe(date=date, universe=limited, data_reader=reader, market="ashare")
+    scored = score_universe(
+        date=date, universe=limited, data_reader=reader, market="ashare"
+    )
     scores_by_symbol = {symbol: scores for symbol, scores in scored}
     pool = build_pool(
         date=date,
@@ -265,7 +306,9 @@ def _build_candidate_pool(
     watch = list(pool.get("watch") or [])[:20]
     return {
         "status": "pass" if candidates else "warn",
-        "reason": "candidate_layer_ready" if candidates else "no_candidate_layer_after_scoring",
+        "reason": "candidate_layer_ready"
+        if candidates
+        else "no_candidate_layer_after_scoring",
         "universe_source": universe_source,
         "universe_count": len(universe),
         "scored_count": len(scored),
@@ -273,9 +316,13 @@ def _build_candidate_pool(
         "candidate_threshold": CANDIDATE_THRESHOLD,
         "candidate_count": len(candidates),
         "watch_count": len(watch),
-        "top_candidates": _compact_scores([(row["ts_code"], row["scores"]) for row in candidates], limit=10),
+        "top_candidates": _compact_scores(
+            [(row["ts_code"], row["scores"]) for row in candidates], limit=10
+        ),
         "top_scored": _compact_scores(scored, limit=10),
-        "score_diagnostics": _score_diagnostics(scores_by_symbol, actual_candidate_count=len(candidates)),
+        "score_diagnostics": _score_diagnostics(
+            scores_by_symbol, actual_candidate_count=len(candidates)
+        ),
         "candidates_for_plan": candidates,
     }
 
@@ -295,7 +342,9 @@ def _intraday_evidence_date(reader: Any) -> str | None:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        trade_date = str(row.get("trade_date") or row.get("bar_time") or "").replace("-", "")[:8]
+        trade_date = str(row.get("trade_date") or row.get("bar_time") or "").replace(
+            "-", ""
+        )[:8]
         if not trade_date:
             continue
         if trade_date > latest:
@@ -304,7 +353,10 @@ def _intraday_evidence_date(reader: Any) -> str | None:
 
 
 def _is_daily_behind_intraday(
-    *, daily_date: str, intraday_date: str, now: datetime,
+    *,
+    daily_date: str,
+    intraday_date: str,
+    now: datetime,
 ) -> bool:
     """Return True when daily bars are stale relative to intraday evidence.
 
@@ -344,12 +396,18 @@ def _api_daily_coverage_from_reader(
     for row in rows or []:
         if not isinstance(row, dict):
             continue
-        symbol = str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper()
+        symbol = (
+            str(row.get("symbol") or row.get("ts_code") or row.get("code") or "")
+            .strip()
+            .upper()
+        )
         if not symbol or not _is_supported_ashare_code(symbol):
             continue
         if _safe_float(row.get("close"), 0.0) <= 0:
             continue
-        trade_date = str(row.get("trade_date") or row.get("date") or "").replace("-", "")
+        trade_date = str(row.get("trade_date") or row.get("date") or "").replace(
+            "-", ""
+        )
         if not trade_date:
             continue
         if trade_date > latest_trade_date:
@@ -383,14 +441,22 @@ def _api_daily_coverage_from_reader(
                 symbol
                 for row in asset_rows
                 if isinstance(row, dict)
-                and (symbol := str(row.get("symbol") or row.get("ts_code") or row.get("code") or "").strip().upper())
+                and (
+                    symbol := str(
+                        row.get("symbol") or row.get("ts_code") or row.get("code") or ""
+                    )
+                    .strip()
+                    .upper()
+                )
                 and _is_supported_ashare_code(symbol)
             }
 
     asset_count = len(asset_symbols)
     covered_symbols = symbols & asset_symbols if asset_symbols else set()
     symbol_count = len(covered_symbols)
-    outside_asset_count = len(symbols - asset_symbols) if asset_symbols else len(symbols)
+    outside_asset_count = (
+        len(symbols - asset_symbols) if asset_symbols else len(symbols)
+    )
     daily_coverage_ratio: float | None = None
     if asset_count > 0:
         daily_coverage_ratio = symbol_count / asset_count
@@ -403,7 +469,10 @@ def _api_daily_coverage_from_reader(
     age_days: int | None = None
     if latest_trade_date != "unknown":
         try:
-            age_days = (now.replace(tzinfo=None).date() - datetime.strptime(latest_trade_date, "%Y%m%d").date()).days
+            age_days = (
+                now.replace(tzinfo=None).date()
+                - datetime.strptime(latest_trade_date, "%Y%m%d").date()
+            ).days
         except ValueError:
             age_days = None
 
@@ -426,7 +495,9 @@ def _api_daily_coverage_from_reader(
         intraday_date
         and latest_trade_date != "unknown"
         and _is_daily_behind_intraday(
-            daily_date=latest_trade_date, intraday_date=intraday_date, now=now,
+            daily_date=latest_trade_date,
+            intraday_date=intraday_date,
+            now=now,
         )
     ):
         status = "fail"
@@ -439,7 +510,9 @@ def _api_daily_coverage_from_reader(
         "daily_symbol_count_raw": len(symbols),
         "daily_symbol_outside_asset_count": outside_asset_count,
         "asset_count": asset_count,
-        "daily_coverage_ratio": round(daily_coverage_ratio, 4) if daily_coverage_ratio is not None else None,
+        "daily_coverage_ratio": round(daily_coverage_ratio, 4)
+        if daily_coverage_ratio is not None
+        else None,
         "expected_evidence_date": expected_evidence_date,
         "latest_trade_date": latest_trade_date,
         "latest_daily_age_days": age_days,
@@ -449,65 +522,459 @@ def _api_daily_coverage_from_reader(
     }
 
 
-def _build_capital_plan(adapter: AshareAdapter, candidates: list[dict[str, Any]]) -> dict[str, Any]:
-    account = adapter.get_sim_account()
-    config = adapter.get_strategy_config()
-    positions = _account_positions(account, config)
-    capital = _account_capital(account, config)
-    if capital <= 0:
-        capital = float(TOTAL_CAPITAL)
-    account_cash = _account_available_cash(account, config, capital, positions)
-    strategy_positions, cash, sample_adjustment = _ashare_strategy_account_view(account, positions, account_cash)
-    sample_context = sample_adjustment if isinstance(sample_adjustment, dict) else {}
-    min_strategy_samples = _safe_float(sample_context.get("min_strategy_samples"), 5.0)
-    if min_strategy_samples <= 0:
-        min_strategy_samples = 5.0
+def _compact_trade_date(value: Any) -> str:
+    return str(value or "").strip().replace("-", "")[:8]
+
+
+def _unique_position_count(rows: Any) -> int:
+    if not isinstance(rows, list):
+        return 0
+    return len(
+        {
+            str(row.get("ts_code") or row.get("symbol") or row.get("code") or "")
+            .strip()
+            .upper()
+            for row in rows
+            if isinstance(row, dict)
+            and str(
+                row.get("ts_code") or row.get("symbol") or row.get("code") or ""
+            ).strip()
+        }
+    )
+
+
+def _adapter_diagnostics(account: Any, config: Any, error: str = "") -> dict[str, Any]:
+    safe_config = config if isinstance(config, dict) else {}
+    positions = _account_positions(account, safe_config)
+    capital = _account_capital(account, safe_config)
+    cash = _account_available_cash(account, safe_config, capital, positions)
+    raw_account = account if isinstance(account, dict) else {}
+    strategy_positions = raw_account.get("strategy_positions")
+    return {
+        "status": "warn" if error else "diagnostic_only",
+        "error": error,
+        "source": str(raw_account.get("source") or ""),
+        "reported_capital_cny": round(capital, 2),
+        "reported_cash_available_cny": round(cash, 2),
+        "reported_position_count": _unique_position_count(positions),
+        "reported_strategy_cash_available_cny": (
+            round(_safe_float(raw_account.get("strategy_cash_available")), 2)
+            if raw_account.get("strategy_cash_available") is not None
+            else None
+        ),
+        "reported_strategy_position_count": _unique_position_count(strategy_positions),
+        "reported_sample_adjustment": (
+            dict(raw_account.get("capital_plan_sample_adjustment"))
+            if isinstance(raw_account.get("capital_plan_sample_adjustment"), dict)
+            else {}
+        ),
+        "used_for_planning": False,
+        "reason": "adapter_balances_positions_and_validation_samples_are_diagnostics_only",
+    }
+
+
+def _load_authoritative_account_view(
+    adapter_account: Any,
+    trade_date: str,
+) -> dict[str, Any]:
+    """Read the fresh server-local 50k strategy account without bootstrapping."""
+
+    # Adapter balances and positions are diagnostics only.  Even account
+    # identity is pinned here so a stale adapter cannot select a second pool.
+    _ = adapter_account
+    view = _ashare_authoritative_account_view({"account": "ashare_sim"}, trade_date)
+    if not isinstance(view, dict):
+        raise RuntimeError("ashare_local_account_view_invalid")
+    if str(view.get("source") or "") != "server_local_sim_ledger":
+        raise RuntimeError("ashare_local_account_source_invalid")
+    if str(view.get("account") or "") != "ashare_sim":
+        raise RuntimeError("ashare_local_account_identity_invalid")
+    expected_authority = {
+        "capital_authority_id": ASHARE_CAPITAL_AUTHORITY_ID,
+        "authority_generation": ASHARE_AUTHORITY_GENERATION,
+        "execution_lineage_id": ASHARE_EXECUTION_LINEAGE_ID,
+    }
+    if any(view.get(key) != value for key, value in expected_authority.items()):
+        raise RuntimeError("ashare_local_account_fresh_lineage_mismatch")
+    capital = _safe_float(view.get("capital_cny"), -1.0)
+    cash = _safe_float(view.get("cash_available"), -1.0)
+    if not math.isclose(capital, float(TOTAL_CAPITAL), abs_tol=0.01):
+        raise RuntimeError("ashare_local_account_capital_mismatch")
+    if cash < 0:
+        raise RuntimeError("ashare_local_account_cash_unavailable")
+    if not isinstance(view.get("positions"), list):
+        raise RuntimeError("ashare_local_account_positions_invalid")
+    if view.get("real_trading_enabled") is not False:
+        raise RuntimeError("ashare_local_account_real_trading_flag_invalid")
+    if _compact_trade_date(view.get("trade_date")) != _compact_trade_date(trade_date):
+        raise RuntimeError("ashare_local_account_trade_date_mismatch")
+    return {
+        **view,
+        **expected_authority,
+        "real_trading_enabled": False,
+    }
+
+
+def _ashare_capital_section(trade_date: str) -> dict[str, Any]:
+    """Load and validate the standalone ashare MarketCapitalLedger provider state."""
+    try:
+        raw_state = load_market_capital_provider_state("ashare", trade_date)
+    except Exception as exc:
+        return {
+            "status": "fail",
+            "reason": "ashare_capital_provider_error",
+            "error": f"{exc.__class__.__name__}: {exc}",
+            "trade_date": _compact_trade_date(trade_date),
+            "real_trading_enabled": None,
+            "available_ashare_capacity_cny": 0.0,
+        }
+
+    if raw_state is None:
+        return {
+            "status": "fail",
+            "reason": "ashare_capital_unavailable",
+            "trade_date": _compact_trade_date(trade_date),
+            "real_trading_enabled": None,
+            "available_ashare_capacity_cny": 0.0,
+        }
+
+    # --- Authority field validation ---
+    if str(raw_state.get("source") or "") != "market_capital_ledger":
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_source_invalid",
+            "available_ashare_capacity_cny": 0.0,
+        }
+    if str(raw_state.get("authority_id") or "") != "ashare-capital-v1":
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_authority_id_invalid",
+            "available_ashare_capacity_cny": 0.0,
+        }
+    if raw_state.get("authority_generation") != 1:
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_authority_generation_invalid",
+            "available_ashare_capacity_cny": 0.0,
+        }
+    if str(raw_state.get("market") or "") != "ashare":
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_market_invalid",
+            "available_ashare_capacity_cny": 0.0,
+        }
+    if not math.isclose(
+        _safe_float(raw_state.get("initial_equity_cny")), 50_000.0, abs_tol=0.01
+    ):
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_initial_equity_invalid",
+            "available_ashare_capacity_cny": 0.0,
+        }
+    if not math.isclose(
+        _safe_float(raw_state.get("stock_gross_exposure_limit_cny")),
+        45_000.0,
+        abs_tol=0.01,
+    ):
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_gross_exposure_invalid",
+            "available_ashare_capacity_cny": 0.0,
+        }
+    if not math.isclose(
+        _safe_float(raw_state.get("single_name_cap_cny")), 7_500.0, abs_tol=0.01
+    ):
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_single_name_cap_invalid",
+            "available_ashare_capacity_cny": 0.0,
+        }
+    if raw_state.get("real_trading_enabled") is not False:
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_real_trading_flag_invalid",
+            "available_ashare_capacity_cny": 0.0,
+        }
+
+    # --- Freshness and reconciliation ---
+    if raw_state.get("fresh") is not True:
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_not_reconciled_for_trade_date",
+            "available_ashare_capacity_cny": 0.0,
+        }
+    if raw_state.get("reconciled") is not True:
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_not_reconciled",
+            "available_ashare_capacity_cny": 0.0,
+        }
+
+    # --- Trade date must match ---
+    if _compact_trade_date(raw_state.get("trade_date")) != _compact_trade_date(
+        trade_date
+    ):
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_trade_date_mismatch",
+            "available_ashare_capacity_cny": 0.0,
+        }
+
+    # --- Execution lineage must be present ---
+    if not str(raw_state.get("execution_lineage_id") or "").strip():
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_capital_execution_lineage_missing",
+            "available_ashare_capacity_cny": 0.0,
+        }
+
+    # --- Risk gates: 5% derisk, 7% halt ---
+    initial_equity = _safe_float(raw_state.get("initial_equity_cny"), 50_000.0)
+    max_daily_loss = _safe_float(raw_state.get("max_daily_loss"), initial_equity * 0.03)
+    daily_realized_pnl = _safe_float(raw_state.get("daily_realized_pnl"), 0.0)
+    if daily_realized_pnl <= -abs(max_daily_loss):
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_daily_loss_pause",
+            "available_ashare_capacity_cny": 0.0,
+        }
+
+    consecutive_losses = raw_state.get("consecutive_losses")
+    max_consecutive_losses = raw_state.get("max_consecutive_losses")
+    if (
+        isinstance(consecutive_losses, int)
+        and isinstance(max_consecutive_losses, int)
+        and consecutive_losses >= max_consecutive_losses
+    ):
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_consecutive_loss_pause",
+            "available_ashare_capacity_cny": 0.0,
+        }
+
+    equity_cny = _safe_float(raw_state.get("equity_cny"), initial_equity)
+    high_water_equity = _safe_float(raw_state.get("high_water_equity"), initial_equity)
+    drawdown = max(0.0, high_water_equity - equity_cny)
+    max_drawdown = _safe_float(raw_state.get("max_drawdown"), initial_equity * 0.07)
+    drawdown_tighten = initial_equity * 0.05  # 5% derisk
+
+    if drawdown >= max_drawdown - 1e-9:
+        return {
+            **raw_state,
+            "status": "fail",
+            "reason": "ashare_drawdown_halt",
+            "drawdown_cny": round(drawdown, 2),
+            "available_ashare_capacity_cny": 0.0,
+        }
+
+    drawdown_tightened = drawdown >= drawdown_tighten
+    risk_multiplier = 0.75 if drawdown_tightened else 1.0
+
+    available_capacity = _safe_float(raw_state.get("available_to_reserve_cny"), 0.0)
+
+    return {
+        **raw_state,
+        "status": "pass",
+        "reason": "ashare_capital_ready",
+        "drawdown_cny": round(drawdown, 2),
+        "drawdown_tightened": drawdown_tightened,
+        "risk_multiplier": risk_multiplier,
+        "available_ashare_capacity_cny": round(max(0.0, available_capacity), 2),
+        "new_risk_allowed": not drawdown_tightened or drawdown < max_drawdown,
+    }
+
+
+def _unavailable_capital_plan(
+    *,
+    adapter_diagnostics: dict[str, Any],
+    account_error: str,
+) -> dict[str, Any]:
+    return {
+        "status": "fail",
+        "reason": "server_local_strategy_account_unavailable",
+        "account_error": account_error,
+        "account": "ashare_sim",
+        "total_capital": float(TOTAL_CAPITAL),
+        "cash_available": 0.0,
+        "account_cash_available": 0.0,
+        "existing_position_count": 0,
+        "account_position_count": 0,
+        "max_new_positions": 0,
+        "target_positions": 0,
+        "position_budget_by_symbol": {},
+        "suggested_buys": [],
+        "source": "server_local_sim_ledger_unavailable",
+        "real_trading_enabled": False,
+        "adapter_diagnostics": adapter_diagnostics,
+    }
+
+
+def _build_capital_plan(
+    adapter: AshareAdapter,
+    candidates: list[dict[str, Any]],
+    *,
+    date: str,
+    ashare_capital_state: dict[str, Any],
+) -> dict[str, Any]:
+    adapter_error = ""
+    try:
+        account = adapter.get_sim_account()
+    except Exception as exc:
+        account = {}
+        adapter_error = f"{exc.__class__.__name__}: {exc}"
+    try:
+        config = adapter.get_strategy_config()
+    except Exception as exc:
+        config = {}
+        adapter_error = adapter_error or f"{exc.__class__.__name__}: {exc}"
+    diagnostics = _adapter_diagnostics(account, config, adapter_error)
+
+    try:
+        authority = _load_authoritative_account_view(account, date)
+    except Exception as exc:
+        return _unavailable_capital_plan(
+            adapter_diagnostics=diagnostics,
+            account_error=f"{exc.__class__.__name__}: {exc}",
+        )
+
+    positions: list[dict[str, Any]] = []
+    for raw in authority.get("positions") or []:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        market_value = _safe_float(row.get("market_value", row.get("value")), 0.0)
+        row["market_value"] = market_value
+        row["value"] = market_value
+        positions.append(row)
+    cash = _safe_float(authority.get("cash_available"), -1.0)
+    if cash < 0:
+        return _unavailable_capital_plan(
+            adapter_diagnostics=diagnostics,
+            account_error="RuntimeError: ashare_local_account_cash_unavailable",
+        )
+
     evolution_decision = load_latest_decision()
-    evolution_context = decision_market_context(evolution_decision)
-    market_context = {
+    execution_lineage = str(
+        ashare_capital_state.get("execution_lineage_id") or "ashare-sim-legacy"
+    ).strip()
+    authority_scope = {
+        "capital_authority_id": "ashare-capital-v1",
+        "authority_generation": 1,
+        "execution_lineage_id": execution_lineage,
+    }
+    evolution_context = decision_market_context(
+        evolution_decision,
+        target_trade_date=date,
+        authority_scope=authority_scope,
+    )
+    market_context: dict[str, Any] = {
         "risk_rejection_rate": 0.0,
         "data_issue_rate": 0.0,
-        "strategy_sample_valid_count": _safe_float(
-            sample_context.get("strategy_sample_valid_count"),
-            min_strategy_samples,
+        "exploration_daily_realized_pnl_cny": _safe_float(
+            ashare_capital_state.get("daily_realized_pnl"), 0.0
         ),
-        "min_strategy_samples": min_strategy_samples,
     }
     market_context.update(evolution_context)
     plan = plan_capital(
-        strategy_positions,
+        positions,
         cash,
         candidates=candidates,
         dynamic=True,
         market_context=market_context,
-        total_capital=capital,
+        total_capital=float(TOTAL_CAPITAL),
     ).to_dict()
+
+    single_name_limit = round(float(TOTAL_CAPITAL) * 0.15, 2)
+    exposure_by_symbol = {
+        str(row.get("ts_code") or row.get("symbol") or row.get("code") or "")
+        .strip()
+        .upper(): _safe_float(row.get("market_value", row.get("value")), 0.0)
+        for row in positions
+        if isinstance(row, dict)
+    }
+    raw_budgets = (
+        plan.get("position_budget_by_symbol")
+        if isinstance(plan.get("position_budget_by_symbol"), dict)
+        else {}
+    )
+    safe_budgets: dict[str, float] = {}
+    for symbol, raw_budget in raw_budgets.items():
+        key = str(symbol).strip().upper()
+        remaining_single_name = max(
+            0.0, single_name_limit - exposure_by_symbol.get(key, 0.0)
+        )
+        safe_budgets[key] = round(
+            min(max(0.0, _safe_float(raw_budget)), remaining_single_name, cash),
+            2,
+        )
+    plan["position_budget_by_symbol"] = safe_budgets
+    if isinstance(plan.get("suggested_buys"), list):
+        for row in plan["suggested_buys"]:
+            if not isinstance(row, dict):
+                continue
+            key = str(row.get("code") or row.get("ts_code") or "").strip().upper()
+            safe_budget = safe_budgets.get(key, 0.0)
+            row["allocation"] = safe_budget
+            row["executable_budget"] = safe_budget
+            row["risk_limit_budget"] = single_name_limit
+
+    has_safe_budget = any(value > 0 for value in safe_budgets.values())
     plan.update(
         {
-            "status": "pass" if int(plan.get("target_positions") or 0) > 0 or positions else "warn",
-            "account": account.get("account") if isinstance(account, dict) else "ashare_sim",
-            "total_capital": round(capital, 2),
+            "status": "pass" if has_safe_budget else "warn",
+            "account": str(authority.get("account") or "ashare_sim"),
+            "total_capital": float(TOTAL_CAPITAL),
             "cash_available": round(cash, 2),
-            "account_cash_available": round(account_cash, 2),
-            "existing_position_count": len({str(row.get("ts_code") or row.get("symbol") or "") for row in strategy_positions if isinstance(row, dict)} - {""}),
-            "account_position_count": len({str(row.get("ts_code") or row.get("symbol") or "") for row in positions if isinstance(row, dict)} - {""}),
-            "source": account.get("source") if isinstance(account, dict) else "",
-            "snapshot_synced_at": account.get("snapshot_synced_at") if isinstance(account, dict) else "",
+            "account_cash_available": round(cash, 2),
+            "existing_position_count": _unique_position_count(positions),
+            "account_position_count": _unique_position_count(positions),
+            "source": "server_local_sim_ledger",
+            "trade_date": _compact_trade_date(authority.get("trade_date") or date),
+            "real_trading_enabled": False,
+            "policy_single_name_limit_cny": single_name_limit,
+            "adapter_diagnostics": diagnostics,
+            "account_authority": {
+                "status": "pass",
+                "reason": "fresh_server_local_strategy_account_ready",
+                "source": "server_local_sim_ledger",
+                "trade_date": _compact_trade_date(authority.get("trade_date") or date),
+                "capital_authority_id": str(
+                    authority.get("capital_authority_id") or ""
+                ),
+                "authority_generation": authority.get("authority_generation"),
+                "execution_lineage_id": str(
+                    authority.get("execution_lineage_id") or ""
+                ),
+                "real_trading_enabled": False,
+            },
         }
     )
-    if sample_adjustment:
-        plan["sample_adjustment"] = sample_adjustment
     if evolution_decision:
         plan["evolution_decision"] = {
             "state": evolution_decision.get("state"),
             "recommended_action": evolution_decision.get("recommended_action"),
             "reasons": evolution_decision.get("reasons", []),
             "policy": evolution_decision.get("policy", {}),
+            "used_as_risk_context": True,
+            "authoritative_for_cash_or_positions": False,
         }
-    if int(plan.get("target_positions") or 0) <= 0 and not strategy_positions:
-        plan["reason"] = "capital_plan_defensive_no_new_buy"
-    else:
-        plan["reason"] = "capital_plan_ready"
+    plan["reason"] = (
+        "capital_plan_ready" if has_safe_budget else "capital_plan_no_new_buy_budget"
+    )
     return plan
 
 
@@ -517,21 +984,38 @@ def _execution_gate(
     date: str,
     candidate: dict[str, Any] | None,
     capital_plan: dict[str, Any],
+    ashare_capital_state: dict[str, Any],
     now: datetime,
 ) -> dict[str, Any]:
     blockers: list[str] = []
     warnings: list[str] = []
+    if str(capital_plan.get("status") or "") == "fail":
+        blockers.append(
+            str(
+                capital_plan.get("reason")
+                or "server_local_strategy_account_unavailable"
+            )
+        )
+    if str(ashare_capital_state.get("status") or "") != "pass":
+        blockers.append(
+            str(ashare_capital_state.get("reason") or "ashare_capital_unavailable")
+        )
     if not candidate:
         return {
-            "status": "warn",
+            "status": "fail" if blockers else "warn",
             "ready": False,
-            "reason": "no_candidate_for_synthetic_order",
-            "blockers": ["no_candidate"],
+            "reason": blockers[0] if blockers else "no_candidate_for_synthetic_order",
+            "blockers": blockers or ["no_candidate"],
             "warnings": warnings,
             "synthetic_order": {},
+            "market_reservation_performed": False,
+            "execution_performed": False,
             "market_session_check": {
                 "would_execute_now": False,
-                "message": _market_session_rejection({"now": now.isoformat(timespec="seconds")}) or "regular_session",
+                "message": _market_session_rejection(
+                    {"now": now.isoformat(timespec="seconds")}
+                )
+                or "regular_session",
             },
         }
 
@@ -541,52 +1025,126 @@ def _execution_gate(
     price = _latest_price(reader, "ashare", symbol, date, 0.0)
     if price <= 0:
         blockers.append("missing_or_non_positive_price")
-    budgets = capital_plan.get("position_budget_by_symbol") if isinstance(capital_plan.get("position_budget_by_symbol"), dict) else {}
-    budget = _safe_float(budgets.get(symbol), 0.0)
-    if budget <= 0:
-        suggested = capital_plan.get("suggested_buys") if isinstance(capital_plan.get("suggested_buys"), list) else []
+    budgets = (
+        capital_plan.get("position_budget_by_symbol")
+        if isinstance(capital_plan.get("position_budget_by_symbol"), dict)
+        else {}
+    )
+    requested_budget = _safe_float(budgets.get(symbol), 0.0)
+    if requested_budget <= 0:
+        suggested = (
+            capital_plan.get("suggested_buys")
+            if isinstance(capital_plan.get("suggested_buys"), list)
+            else []
+        )
         for row in suggested:
             if not isinstance(row, dict):
                 continue
             if str(row.get("code") or row.get("ts_code") or "") == symbol:
-                budget = _safe_float(row.get("allocation"), 0.0)
+                requested_budget = _safe_float(
+                    row.get("executable_budget", row.get("allocation")), 0.0
+                )
                 break
-    if budget <= 0:
+    policy_single_name_limit = _safe_float(
+        capital_plan.get("policy_single_name_limit_cny"),
+        float(TOTAL_CAPITAL) * 0.15,
+    )
+    ashare_available = _safe_float(
+        ashare_capital_state.get("available_ashare_capacity_cny"), 0.0
+    )
+    budget = round(
+        min(
+            max(0.0, requested_budget),
+            max(0.0, policy_single_name_limit),
+            max(0.0, ashare_available),
+        ),
+        2,
+    )
+    if requested_budget > 0 and ashare_available <= 0 and not blockers:
+        blockers.append("ashare_capacity_exhausted")
+    if requested_budget <= 0:
         if int(capital_plan.get("max_new_positions") or 0) <= 0:
             warnings.append("capital_plan_no_new_buy_budget")
         else:
             blockers.append("no_position_budget")
     quantity = int(budget // max(price, 1e-9)) if budget > 0 and price > 0 else 0
     quantity = (quantity // 100) * 100 if quantity > 0 else 0
+    estimated_reservation = 0.0
+    while quantity >= 100:
+        estimated_reservation = _estimate_ashare_market_reservation(
+            {
+                "market": "ashare",
+                "ts_code": symbol,
+                "side": "buy",
+                "quantity": quantity,
+                "price": price,
+            }
+        )
+        if estimated_reservation <= budget + 0.01:
+            break
+        quantity -= 100
+    if quantity < 100:
+        quantity = 0
+        estimated_reservation = 0.0
     if budget > 0 and quantity <= 0:
         blockers.append("quantity_below_100_lot")
-    session_message = _market_session_rejection({"now": now.isoformat(timespec="seconds")})
+    session_message = _market_session_rejection(
+        {"now": now.isoformat(timespec="seconds")}
+    )
     if session_message:
         warnings.append("outside_regular_session_now_expected_for_preopen")
+    risk_unit_key = symbol.strip().upper()
+    execution_lineage = str(
+        ashare_capital_state.get("execution_lineage_id") or ""
+    ).strip()
+    authority_generation = ashare_capital_state.get("authority_generation", 1)
+    ashare_event_id = str(ashare_capital_state.get("event_id") or "")
     order = {
         "ts_code": symbol,
         "side": "buy",
         "quantity": quantity,
         "price": round(price, 4),
         "budget": round(budget, 2),
+        "requested_budget": round(max(0.0, requested_budget), 2),
+        "policy_single_name_limit_cny": round(max(0.0, policy_single_name_limit), 2),
+        "ashare_available_capacity_cny": round(max(0.0, ashare_available), 2),
+        "estimated_reservation_cny": round(estimated_reservation, 2),
         "trade_date": date,
         "market": "ashare",
         "capital_layer": "simulated",
         "account_type": "simulated",
+        "capital_scope": "strategy",
+        "risk_unit_key": risk_unit_key,
+        "authority_generation": authority_generation,
+        "execution_lineage_id": execution_lineage,
+        "ashare_capital_event_id": ashare_event_id,
+        "account_source": "server_local_sim_ledger",
         "candidate_pool_layer": "candidate",
         "execution_source": "ashare_candidate_layer",
         "dry_run": True,
     }
-    no_budget_by_plan = "capital_plan_no_new_buy_budget" in warnings and not [item for item in blockers if item != "missing_or_non_positive_price"]
+    no_budget_by_plan = "capital_plan_no_new_buy_budget" in warnings and not [
+        item for item in blockers if item != "missing_or_non_positive_price"
+    ]
     if no_budget_by_plan and "missing_or_non_positive_price" in blockers:
-        blockers = [item for item in blockers if item != "missing_or_non_positive_price"]
+        blockers = [
+            item for item in blockers if item != "missing_or_non_positive_price"
+        ]
     return {
         "status": "pass" if not blockers else "fail",
         "ready": not blockers and not no_budget_by_plan,
-        "reason": "capital_plan_no_new_buy_budget" if no_budget_by_plan and not blockers else ("synthetic_order_gate_ready" if not blockers else "synthetic_order_gate_blocked"),
+        "reason": (
+            blockers[0]
+            if blockers
+            else "capital_plan_no_new_buy_budget"
+            if no_budget_by_plan
+            else "synthetic_order_gate_ready"
+        ),
         "blockers": blockers,
         "warnings": warnings,
         "synthetic_order": order,
+        "market_reservation_performed": False,
+        "execution_performed": False,
         "market_session_check": {
             "would_execute_now": not bool(session_message),
             "message": session_message or "regular_session",
@@ -618,7 +1176,9 @@ def run_preopen_dry_run(
 
     section_started = time.perf_counter()
     try:
-        data = _api_daily_coverage_from_reader(data_reader, now=current, min_symbols=MIN_SYMBOLS)
+        data = _api_daily_coverage_from_reader(
+            data_reader, now=current, min_symbols=MIN_SYMBOLS
+        )
     except Exception as exc:
         data = {
             "status": "fail",
@@ -651,25 +1211,45 @@ def run_preopen_dry_run(
     )
     _mark("candidate_pool_seconds", section_started)
     section_started = time.perf_counter()
-    capital_plan = _build_capital_plan(adapter, candidate_pool["candidates_for_plan"])
+    ashare_capital_state = _ashare_capital_section(date)
+    _mark("ashare_capital_seconds", section_started)
+    section_started = time.perf_counter()
+    capital_plan = _build_capital_plan(
+        adapter,
+        candidate_pool["candidates_for_plan"],
+        date=date,
+        ashare_capital_state=ashare_capital_state,
+    )
     _mark("capital_plan_seconds", section_started)
-    top_candidate = candidate_pool["candidates_for_plan"][0] if candidate_pool["candidates_for_plan"] else None
+    top_candidate = (
+        candidate_pool["candidates_for_plan"][0]
+        if candidate_pool["candidates_for_plan"]
+        else None
+    )
     section_started = time.perf_counter()
     execution_gate = _execution_gate(
         reader=data_reader,
         date=date,
         candidate=top_candidate,
         capital_plan=capital_plan,
+        ashare_capital_state=ashare_capital_state,
         now=current,
     )
     _mark("execution_gate_seconds", section_started)
 
-    sections = [data_section, candidate_pool, capital_plan, execution_gate]
+    sections = [
+        data_section,
+        candidate_pool,
+        ashare_capital_state,
+        capital_plan,
+        execution_gate,
+    ]
     blockers: list[str] = []
     warnings: list[str] = []
     for section_name, section in (
         ("data", data_section),
         ("candidate_pool", candidate_pool),
+        ("ashare_capital", ashare_capital_state),
         ("capital_plan", capital_plan),
         ("execution_gate", execution_gate),
     ):
@@ -714,7 +1294,12 @@ def run_preopen_dry_run(
             "candidate_threshold": CANDIDATE_THRESHOLD,
         },
         "data": data_section,
-        "candidate_pool": {key: value for key, value in candidate_pool.items() if key != "candidates_for_plan"},
+        "candidate_pool": {
+            key: value
+            for key, value in candidate_pool.items()
+            if key != "candidates_for_plan"
+        },
+        "ashare_capital": ashare_capital_state,
         "capital_plan": capital_plan,
         "execution_gate": execution_gate,
         "blockers": blockers,
@@ -731,10 +1316,18 @@ def _next_actions(blockers: list[str], warnings: list[str]) -> list[str]:
         actions: list[str] = []
         if any("data:" in item for item in blockers):
             actions.append("先修复 SharedSignals A股日线/覆盖数据，再进入开盘模拟。")
-        if any("candidate_pool:" in item for item in blockers) or any("candidate_pool:" in item for item in warnings):
+        if any("candidate_pool:" in item for item in blockers) or any(
+            "candidate_pool:" in item for item in warnings
+        ):
             actions.append("复核 A股候选池阈值、流动性过滤和六维打分输入。")
+        if any("ashare_capital:" in item for item in blockers):
+            actions.append(
+                "先完成当日 ashare 市场资金对账，确认 generation 1、sim-only 与风险预算后再开盘模拟。"
+            )
         if any("capital_plan:" in item for item in blockers):
-            actions.append("复核模拟账户快照、现金和持仓数量。")
+            actions.append(
+                "复核唯一 50,000 CNY server-local strategy 账本、fresh lineage、现金和持仓。"
+            )
         if any("execution_gate:" in item for item in blockers):
             actions.append("复核候选价格、100股整手、来源字段和执行门禁。")
         return actions or ["复核失败项后重跑盘前 dry-run。"]
@@ -745,7 +1338,9 @@ def _next_actions(blockers: list[str], warnings: list[str]) -> list[str]:
 
 def write_outputs(report: dict[str, Any], *, append_history: bool = True) -> None:
     LATEST.parent.mkdir(parents=True, exist_ok=True)
-    LATEST.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    LATEST.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     if append_history:
         with HISTORY.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(report, ensure_ascii=False) + "\n")
@@ -758,11 +1353,16 @@ def render_text(report: dict[str, Any]) -> str:
         f"交易日：{report.get('trade_date')}",
         f"数据：{report.get('data', {}).get('status')}；最新日线={report.get('data', {}).get('latest_trade_date')}；覆盖={report.get('data', {}).get('symbol_count')}",
         f"候选池：{report.get('candidate_pool', {}).get('status')}；候选={report.get('candidate_pool', {}).get('candidate_count')}；已打分={report.get('candidate_pool', {}).get('scored_count')}",
+        f"A股资金：{report.get('ashare_capital', {}).get('status')}；generation={report.get('ashare_capital', {}).get('authority_generation')}；fresh={report.get('ashare_capital', {}).get('fresh')}；可用={report.get('ashare_capital', {}).get('available_ashare_capacity_cny')}",
         f"资金计划：{report.get('capital_plan', {}).get('status')}；现金={report.get('capital_plan', {}).get('cash_available')}；目标持仓={report.get('capital_plan', {}).get('target_positions')}；风险模式={report.get('capital_plan', {}).get('risk_mode')}",
         f"执行门禁：{report.get('execution_gate', {}).get('status')}；ready={report.get('execution_gate', {}).get('ready')}",
     ]
-    blockers = report.get("blockers") if isinstance(report.get("blockers"), list) else []
-    warnings = report.get("warnings") if isinstance(report.get("warnings"), list) else []
+    blockers = (
+        report.get("blockers") if isinstance(report.get("blockers"), list) else []
+    )
+    warnings = (
+        report.get("warnings") if isinstance(report.get("warnings"), list) else []
+    )
     if blockers:
         lines.append("阻断：" + "；".join(str(item) for item in blockers))
     if warnings:
@@ -791,12 +1391,17 @@ def _send_alert(report: dict[str, Any], rendered_text: str) -> dict[str, Any]:
     )
 
 
-def maybe_send_alert(report: dict[str, Any], rendered_text: str, send_on: str) -> dict[str, Any]:
+def maybe_send_alert(
+    report: dict[str, Any], rendered_text: str, send_on: str
+) -> dict[str, Any]:
     status = str(report.get("status") or "warn")
     should_send = send_on == "warn" and status != "pass"
     should_send = should_send or (send_on == "fail" and status == "fail")
     if not should_send:
-        return {"status": "skipped", "reason": "ashare_preopen_dry_run_pass_or_send_disabled"}
+        return {
+            "status": "skipped",
+            "reason": "ashare_preopen_dry_run_pass_or_send_disabled",
+        }
     return _send_alert(report, rendered_text)
 
 
@@ -807,8 +1412,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--pretty", action="store_true")
     parser.add_argument("--send-on", choices=["warn", "fail", "never"], default="never")
-    parser.add_argument("--no-write", action="store_true", help="Do not write latest/history report files.")
-    parser.add_argument("--exit-zero", action="store_true", help="Return 0 after reporting so cron does not retry identical alerts.")
+    parser.add_argument(
+        "--no-write",
+        action="store_true",
+        help="Do not write latest/history report files.",
+    )
+    parser.add_argument(
+        "--exit-zero",
+        action="store_true",
+        help="Return 0 after reporting so cron does not retry identical alerts.",
+    )
     return parser.parse_args(argv)
 
 

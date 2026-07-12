@@ -306,19 +306,27 @@ class TestSharedSignalsReader(unittest.TestCase):
             "Pufa Bank",
         )
         self.assertEqual(
-            self.reader.get_bars_daily("Ashare", "600000", "20260628", "20260630")[0]["close"],
+            self.reader.get_bars_daily("Ashare", "600000", "20260628", "20260630")[0][
+                "close"
+            ],
             10.2,
         )
         self.assertEqual(
-            self.reader.get_bars_intraday("Ashare", "600000", "5m", "2026-06-29", "2026-06-29")[0]["close"],
+            self.reader.get_bars_intraday(
+                "Ashare", "600000", "5m", "2026-06-29", "2026-06-29"
+            )[0]["close"],
             10.15,
         )
         self.assertEqual(
-            self.reader.get_bars_intraday("Ashare", "000001.SZ", "5m", "20260706", "20260706")[0]["close"],
+            self.reader.get_bars_intraday(
+                "Ashare", "000001.SZ", "5m", "20260706", "20260706"
+            )[0]["close"],
             10.45,
         )
         self.assertEqual(
-            self.reader.get_events("Ashare", "600000", "20260629", "20260629")[0]["event_hash"],
+            self.reader.get_events("Ashare", "600000", "20260629", "20260629")[0][
+                "event_hash"
+            ],
             "evt-1",
         )
         self.assertEqual(
@@ -334,7 +342,9 @@ class TestSharedSignalsReader(unittest.TestCase):
         with patch.dict(os.environ, {"SHAREDSIGNALS_API_URL": ""}):
             missing_reader = TradingagentDataReader(
                 shared=SharedSignalsReader(Path(self.tmp.name) / "missing.sqlite"),
-                marketgraph=MarketGraphCSVReader(Path(self.tmp.name) / "missing_marketgraph"),
+                marketgraph=MarketGraphCSVReader(
+                    Path(self.tmp.name) / "missing_marketgraph"
+                ),
             )
 
         self.assertEqual(missing_reader.get_bars_daily("Ashare", "600000"), [])
@@ -346,12 +356,16 @@ class TestSharedSignalsReader(unittest.TestCase):
     def test_tradings_get_factors_canonicalizes_ashare_market_and_symbol(self) -> None:
         api = FakeAPIClient()
         api.get_tushare = lambda *args, **kwargs: []  # type: ignore[method-assign]
-        api.get_fundamentals = lambda ts_code, **kwargs: [{"metric": "value", "value": 1.2, "symbol": ts_code}]  # type: ignore[attr-defined]
+        api.get_fundamentals = lambda ts_code, **kwargs: [
+            {"metric": "value", "value": 1.2, "symbol": ts_code}
+        ]  # type: ignore[attr-defined]
         api.get_capital_flow = lambda *args, **kwargs: []  # type: ignore[attr-defined]
         trading_reader = TradingagentDataReader(
             api_client=api,
             shared=self.reader,
-            marketgraph=MarketGraphCSVReader(Path(self.tmp.name) / "missing_marketgraph"),
+            marketgraph=MarketGraphCSVReader(
+                Path(self.tmp.name) / "missing_marketgraph"
+            ),
         )
 
         rows = trading_reader.get_factors("ashare", "600000.SH")
@@ -363,7 +377,9 @@ class TestSharedSignalsReader(unittest.TestCase):
         trading_reader = TradingagentDataReader(
             api_client=api,
             shared=self.reader,
-            marketgraph=MarketGraphCSVReader(Path(self.tmp.name) / "missing_marketgraph"),
+            marketgraph=MarketGraphCSVReader(
+                Path(self.tmp.name) / "missing_marketgraph"
+            ),
         )
 
         rows = trading_reader.get_latest_daily_batch("Ashare", limit=3000)
@@ -372,7 +388,9 @@ class TestSharedSignalsReader(unittest.TestCase):
         self.assertEqual(api.tushare_calls[-1]["api_name"], "daily")
         self.assertEqual(api.tushare_calls[-1]["limit"], 3000)
 
-    def test_default_sqlite_fallback_is_nonexistent_until_explicitly_configured(self) -> None:
+    def test_default_sqlite_fallback_is_nonexistent_until_explicitly_configured(
+        self,
+    ) -> None:
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(
                 _default_shared_signals_db(),
@@ -389,14 +407,18 @@ class FakeAPIClient:
         self.pm_price_calls: list[dict[str, object]] = []
         self.event_calls: list[dict[str, object]] = []
 
-    def get_tushare(self, api_name, ts_code=None, start_date=None, end_date=None, **kwargs):
-        self.tushare_calls.append({
-            "api_name": api_name,
-            "ts_code": ts_code,
-            "start_date": start_date,
-            "end_date": end_date,
-            **kwargs,
-        })
+    def get_tushare(
+        self, api_name, ts_code=None, start_date=None, end_date=None, **kwargs
+    ):
+        self.tushare_calls.append(
+            {
+                "api_name": api_name,
+                "ts_code": ts_code,
+                "start_date": start_date,
+                "end_date": end_date,
+                **kwargs,
+            }
+        )
         if api_name == "stock_basic":
             return [
                 {
@@ -432,8 +454,17 @@ class FakeAPIClient:
         return []
 
     def get_market_data(self, ts_code, start=None, end=None, freq="daily"):
-        self.market_data_calls.append({"ts_code": ts_code, "start": start, "end": end, "freq": freq})
-        return [{"symbol": ts_code, "trade_date": end or start, "close": 10.29, "amount": 888789.3933}]
+        self.market_data_calls.append(
+            {"ts_code": ts_code, "start": start, "end": end, "freq": freq}
+        )
+        return [
+            {
+                "symbol": ts_code,
+                "trade_date": end or start,
+                "close": 10.29,
+                "amount": 888789.3933,
+            }
+        ]
 
     def get_realtime_5min(self, ts_code, date=None, market=None):
         self.realtime_calls.append({"ts_code": ts_code, "date": date, "market": market})
@@ -458,102 +489,196 @@ class FakeAPIClient:
         self.pm_price_calls.append({"market_id": market_id, "limit": limit})
         return [{"market_id": market_id, "price": 0.42}]
 
-    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
-        self.event_calls.append({
-            "start": start,
-            "end": end,
-            "market": market,
-            "symbol": symbol,
-            "subject_code": subject_code,
-            "event_type": event_type,
-        })
-        return [{"market": market, "symbol": symbol, "event_hash": "evt-api", "title": "api event"}]
+    def get_events(
+        self,
+        start=None,
+        end=None,
+        market=None,
+        symbol=None,
+        subject_code=None,
+        event_type=None,
+    ):
+        self.event_calls.append(
+            {
+                "start": start,
+                "end": end,
+                "market": market,
+                "symbol": symbol,
+                "subject_code": subject_code,
+                "event_type": event_type,
+            }
+        )
+        return [
+            {
+                "market": market,
+                "symbol": symbol,
+                "event_hash": "evt-api",
+                "title": "api event",
+            }
+        ]
 
 
 class AshareCapitalizedEventsAPIClient(FakeAPIClient):
     """Simulates real SharedSignals API: returns market="Ashare" regardless of input."""
 
-    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
-        self.event_calls.append({
-            "start": start,
-            "end": end,
-            "market": market,
-            "symbol": symbol,
-            "subject_code": subject_code,
-            "event_type": event_type,
-        })
+    def get_events(
+        self,
+        start=None,
+        end=None,
+        market=None,
+        symbol=None,
+        subject_code=None,
+        event_type=None,
+    ):
+        self.event_calls.append(
+            {
+                "start": start,
+                "end": end,
+                "market": market,
+                "symbol": symbol,
+                "subject_code": subject_code,
+                "event_type": event_type,
+            }
+        )
         return [
-            {"market": "Ashare", "symbol": symbol, "event_hash": "evt-api", "title": "api event"},
+            {
+                "market": "Ashare",
+                "symbol": symbol,
+                "event_hash": "evt-api",
+                "title": "api event",
+            },
         ]
 
 
 class FixedSymbolEventsAPIClient(AshareCapitalizedEventsAPIClient):
     """Returns one A-share event for a fixed symbol, ignoring the request."""
 
-    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
-        self.event_calls.append({
-            "start": start,
-            "end": end,
-            "market": market,
-            "symbol": symbol,
-            "subject_code": subject_code,
-            "event_type": event_type,
-        })
+    def get_events(
+        self,
+        start=None,
+        end=None,
+        market=None,
+        symbol=None,
+        subject_code=None,
+        event_type=None,
+    ):
+        self.event_calls.append(
+            {
+                "start": start,
+                "end": end,
+                "market": market,
+                "symbol": symbol,
+                "subject_code": subject_code,
+                "event_type": event_type,
+            }
+        )
         return [
-            {"market": "Ashare", "symbol": "600000", "event_hash": "evt-fixed", "title": "fixed symbol event"},
+            {
+                "market": "Ashare",
+                "symbol": "600000",
+                "event_hash": "evt-fixed",
+                "title": "fixed symbol event",
+            },
         ]
 
 
 class MixedMarketEventsAPIClient(FakeAPIClient):
     """Returns mixed-market event rows to test cross-market filtering."""
 
-    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
-        self.event_calls.append({
-            "start": start,
-            "end": end,
-            "market": market,
-            "symbol": symbol,
-            "subject_code": subject_code,
-            "event_type": event_type,
-        })
+    def get_events(
+        self,
+        start=None,
+        end=None,
+        market=None,
+        symbol=None,
+        subject_code=None,
+        event_type=None,
+    ):
+        self.event_calls.append(
+            {
+                "start": start,
+                "end": end,
+                "market": market,
+                "symbol": symbol,
+                "subject_code": subject_code,
+                "event_type": event_type,
+            }
+        )
         return [
-            {"market": "Ashare", "symbol": "600000", "event_hash": "evt-ashare", "title": "ashare event"},
-            {"market": "Crypto", "symbol": "BTCUSDT", "event_hash": "evt-crypto", "title": "crypto event"},
-            {"market": "HK", "symbol": "00700", "event_hash": "evt-hk", "title": "hk event"},
+            {
+                "market": "Ashare",
+                "symbol": "600000",
+                "event_hash": "evt-ashare",
+                "title": "ashare event",
+            },
+            {
+                "market": "Crypto",
+                "symbol": "BTCUSDT",
+                "event_hash": "evt-crypto",
+                "title": "crypto event",
+            },
+            {
+                "market": "HK",
+                "symbol": "00700",
+                "event_hash": "evt-hk",
+                "title": "hk event",
+            },
         ]
 
 
 class EmptyShellAPIClient(FakeAPIClient):
     def get_market_data(self, ts_code, start=None, end=None, freq="daily"):
-        self.market_data_calls.append({"ts_code": ts_code, "start": start, "end": end, "freq": freq})
+        self.market_data_calls.append(
+            {"ts_code": ts_code, "start": start, "end": end, "freq": freq}
+        )
         return [{}]
 
     def get_realtime_5min(self, ts_code, date=None, market=None):
         self.realtime_calls.append({"ts_code": ts_code, "date": date, "market": market})
         return [{}]
 
-    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
-        self.event_calls.append({
-            "start": start,
-            "end": end,
-            "market": market,
-            "symbol": symbol,
-            "subject_code": subject_code,
-            "event_type": event_type,
-        })
+    def get_events(
+        self,
+        start=None,
+        end=None,
+        market=None,
+        symbol=None,
+        subject_code=None,
+        event_type=None,
+    ):
+        self.event_calls.append(
+            {
+                "start": start,
+                "end": end,
+                "market": market,
+                "symbol": symbol,
+                "subject_code": subject_code,
+                "event_type": event_type,
+            }
+        )
         return [{}]
 
 
 class EmptyEventsAPIClient(FakeAPIClient):
-    def get_events(self, start=None, end=None, market=None, symbol=None, subject_code=None, event_type=None):
-        self.event_calls.append({
-            "start": start,
-            "end": end,
-            "market": market,
-            "symbol": symbol,
-            "subject_code": subject_code,
-            "event_type": event_type,
-        })
+    def get_events(
+        self,
+        start=None,
+        end=None,
+        market=None,
+        symbol=None,
+        subject_code=None,
+        event_type=None,
+    ):
+        self.event_calls.append(
+            {
+                "start": start,
+                "end": end,
+                "market": market,
+                "symbol": symbol,
+                "subject_code": subject_code,
+                "event_type": event_type,
+            }
+        )
         return []
 
 
@@ -601,7 +726,9 @@ class FakeSharedBars:
             }
         ]
 
-    def get_bars_intraday(self, market, symbol, interval="5m", start_time="", end_time=""):
+    def get_bars_intraday(
+        self, market, symbol, interval="5m", start_time="", end_time=""
+    ):
         return [
             {
                 "market": market,
@@ -665,7 +792,10 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
 
         self.assertEqual(rows[0]["symbol"], "")
         self.assertEqual(rows[0]["market"], "Futures")
-        self.assertEqual(api.realtime_calls[0], {"ts_code": "", "date": "20260709", "market": "Futures"})
+        self.assertEqual(
+            api.realtime_calls[0],
+            {"ts_code": "", "date": "20260709", "market": "Futures"},
+        )
 
     def test_empty_api_result_does_not_trigger_sqlite_diagnostic_read(self) -> None:
         api = EmptyShellAPIClient()
@@ -674,7 +804,9 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         rows = reader.get_bars_intraday("Futures", "RB2609.SHF", "5min", "", "20260703")
 
         self.assertEqual(rows, [])
-        self.assertFalse(any("SQLite diagnostic read" in error for error in reader.errors))
+        self.assertFalse(
+            any("SQLite diagnostic read" in error for error in reader.errors)
+        )
 
     def test_get_bars_daily_single_end_date_uses_same_start_date(self) -> None:
         api = FakeAPIClient()
@@ -706,7 +838,9 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         api = EmptyShellAPIClient()
         reader = TradingagentDataReader(shared=FakeSharedBars(), api_client=api)
 
-        rows = reader.get_market_data("HSI", market="Global", start="20260701", end="20260703")
+        rows = reader.get_market_data(
+            "HSI", market="Global", start="20260701", end="20260703"
+        )
 
         self.assertEqual(rows[0]["close"], 23350.03)
         self.assertEqual(rows[0]["market"], "Global")
@@ -723,18 +857,28 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(rows[0]["ask_size"], 9)
         self.assertEqual(rows[0]["last_trade_date"], "20260915")
         self.assertEqual(rows[0]["expiry_date"], "20260930")
-        self.assertEqual(api.realtime_calls[0], {"ts_code": "RB2609.SHF", "date": "20260703", "market": "Futures"})
+        self.assertEqual(
+            api.realtime_calls[0],
+            {"ts_code": "RB2609.SHF", "date": "20260703", "market": "Futures"},
+        )
 
-    def test_get_bars_intraday_filters_batch_realtime_rows_to_requested_symbol_and_date(self) -> None:
+    def test_get_bars_intraday_filters_batch_realtime_rows_to_requested_symbol_and_date(
+        self,
+    ) -> None:
         api = BatchRealtimeAPIClient()
         reader = TradingagentDataReader(api_client=api)
 
-        rows = reader.get_bars_intraday("ashare", "300759.SZ", "5m", "20260709", "20260709")
+        rows = reader.get_bars_intraday(
+            "ashare", "300759.SZ", "5m", "20260709", "20260709"
+        )
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["symbol"], "300759.SZ")
         self.assertEqual(rows[0]["close"], 61.23)
-        self.assertEqual(api.realtime_calls[0], {"ts_code": "300759.SZ", "date": "20260709", "market": "ashare"})
+        self.assertEqual(
+            api.realtime_calls[0],
+            {"ts_code": "300759.SZ", "date": "20260709", "market": "ashare"},
+        )
 
     def test_get_bars_intraday_falls_back_when_api_returns_empty_shell(self) -> None:
         api = EmptyShellAPIClient()
@@ -744,7 +888,10 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
 
         self.assertEqual(rows[0]["close"], 23350.03)
         self.assertEqual(rows[0]["market"], "Global")
-        self.assertEqual(api.realtime_calls[0], {"ts_code": "HSI", "date": "20260703", "market": "Global"})
+        self.assertEqual(
+            api.realtime_calls[0],
+            {"ts_code": "HSI", "date": "20260703", "market": "Global"},
+        )
 
     def test_get_events_falls_back_when_api_returns_empty_shell(self) -> None:
         api = EmptyShellAPIClient()
@@ -775,7 +922,9 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
 
         rows = reader.get_events("ashare", "600000", "20260708", "20260708")
 
-        self.assertEqual(len(rows), 1, "ashare should match Ashare via canonical normalization")
+        self.assertEqual(
+            len(rows), 1, "ashare should match Ashare via canonical normalization"
+        )
         self.assertEqual(rows[0]["event_hash"], "evt-api")
         self.assertEqual(api.event_calls[0]["market"], "ashare")
 
@@ -831,7 +980,9 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
                             "readiness_summary": {"readiness_status": "weak_evidence"},
                             "tables": {
                                 "market_knowledge_edges": {
-                                    "rows": [{"market": "Ashare", "impact_score": "0.7"}]
+                                    "rows": [
+                                        {"market": "Ashare", "impact_score": "0.7"}
+                                    ]
                                 }
                             },
                             "is_trading_permission": False,
@@ -840,13 +991,23 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
                     }
                 ).encode("utf-8")
 
-        with patch.dict("os.environ", {"MARKETGRAPH_API_URL": "http://marketgraph.test"}), patch(
-            "shared.data.reader.urllib.request.urlopen",
-            return_value=FakeResponse(),
+        with (
+            patch.dict(
+                "os.environ", {"MARKETGRAPH_API_URL": "http://marketgraph.test"}
+            ),
+            patch(
+                "shared.data.reader.urllib.request.urlopen",
+                return_value=FakeResponse(),
+            ),
         ):
             reader = TradingagentDataReader()
-            self.assertEqual(reader.get_market_readiness_summary("Ashare")["readiness_status"], "weak_evidence")
-            self.assertEqual(reader.get_market_knowledge_edges("Ashare")[0]["impact_score"], "0.7")
+            self.assertEqual(
+                reader.get_market_readiness_summary("Ashare")["readiness_status"],
+                "weak_evidence",
+            )
+            self.assertEqual(
+                reader.get_market_knowledge_edges("Ashare")[0]["impact_score"], "0.7"
+            )
 
 
 class TestMarketGraphCSVReader(unittest.TestCase):
@@ -953,7 +1114,11 @@ class FakeScoringReader:
             {"factor_name": "growth", "event_time": "20260629", "value": 0.6},
             {"factor_name": "quality", "event_time": "20260629", "value": 0.4},
             {"factor_name": "momentum", "event_time": "20260629", "value": 0.2},
-            {"factor_name": "net_mf_amount", "event_time": "20260629", "value": 10000.0},
+            {
+                "factor_name": "net_mf_amount",
+                "event_time": "20260629",
+                "value": 10000.0,
+            },
         ]
 
     def get_bars_daily(self, market, symbol, start, end):
@@ -1011,7 +1176,9 @@ class SharedSignalsMacroScoringReader(EmptyScoringReader):
         ]
 
     def get_regime(self):
-        raise AssertionError("MarketGraph regime should not be required when SharedSignals macro exists")
+        raise AssertionError(
+            "MarketGraph regime should not be required when SharedSignals macro exists"
+        )
 
 
 class SharedSignalsRawMacroScoringReader(EmptyScoringReader):
@@ -1071,7 +1238,9 @@ class SharedSignalsEventScoringReader(EmptyScoringReader):
         ]
 
     def get_event_candidates(self):
-        raise AssertionError("MarketGraph event candidates should not be required when SharedSignals events exist")
+        raise AssertionError(
+            "MarketGraph event candidates should not be required when SharedSignals events exist"
+        )
 
 
 class SharedSignalsRawEventScoringReader(EmptyScoringReader):
@@ -1104,18 +1273,46 @@ class SharedSignalsMarketOnlyEventScoringReader(EmptyScoringReader):
 class APIOnlyScoringReader(EmptyScoringReader):
     def get_fundamentals(self, ts_code, end_date=None):
         return [
-            {"factor_name": "daily_basic:pe_ttm", "event_time": "20260629", "value": 12.0},
+            {
+                "factor_name": "daily_basic:pe_ttm",
+                "event_time": "20260629",
+                "value": 12.0,
+            },
             {"factor_name": "daily_basic:pb", "event_time": "20260629", "value": 1.4},
-            {"factor_name": "fina_indicator:roe", "event_time": "20260629", "value": 18.0},
-            {"factor_name": "fina_indicator:netprofit_yoy", "event_time": "20260629", "value": 22.0},
+            {
+                "factor_name": "fina_indicator:roe",
+                "event_time": "20260629",
+                "value": 18.0,
+            },
+            {
+                "factor_name": "fina_indicator:netprofit_yoy",
+                "event_time": "20260629",
+                "value": 22.0,
+            },
         ]
 
     def get_capital_flow(self, ts_code, start=None, end=None):
         return [
-            {"factor_name": "moneyflow:buy_lg_amount", "event_time": "20260629", "value": 90000.0},
-            {"factor_name": "moneyflow:sell_lg_amount", "event_time": "20260629", "value": 30000.0},
-            {"factor_name": "moneyflow:buy_elg_amount", "event_time": "20260629", "value": 50000.0},
-            {"factor_name": "moneyflow:sell_elg_amount", "event_time": "20260629", "value": 10000.0},
+            {
+                "factor_name": "moneyflow:buy_lg_amount",
+                "event_time": "20260629",
+                "value": 90000.0,
+            },
+            {
+                "factor_name": "moneyflow:sell_lg_amount",
+                "event_time": "20260629",
+                "value": 30000.0,
+            },
+            {
+                "factor_name": "moneyflow:buy_elg_amount",
+                "event_time": "20260629",
+                "value": 50000.0,
+            },
+            {
+                "factor_name": "moneyflow:sell_elg_amount",
+                "event_time": "20260629",
+                "value": 10000.0,
+            },
         ]
 
 
@@ -1169,9 +1366,13 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
 
         self.assertNotIn("macro", scores["missing_evidence_dimensions"])
         self.assertGreater(scores["macro"], 0.5)
-        self.assertEqual(scores["evidence_sources"]["macro"]["source"], "SharedSignals macro")
+        self.assertEqual(
+            scores["evidence_sources"]["macro"]["source"], "SharedSignals macro"
+        )
 
-    def test_sharedsignals_macro_uses_supported_liquidity_factor_not_raw_amount(self) -> None:
+    def test_sharedsignals_macro_uses_supported_liquidity_factor_not_raw_amount(
+        self,
+    ) -> None:
         scores = six_dimension_scorer.score_stock(
             "600000.SH",
             "20260629",
@@ -1192,7 +1393,9 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
         self.assertNotIn("macro", scores["missing_evidence_dimensions"])
         self.assertGreater(scores["macro"], 0.5)
         self.assertLess(scores["macro"], 0.6)
-        self.assertEqual(scores["evidence_sources"]["macro"]["source"], "SharedSignals macro")
+        self.assertEqual(
+            scores["evidence_sources"]["macro"]["source"], "SharedSignals macro"
+        )
 
     def test_sharedsignals_event_feeds_event_dimension_before_marketgraph(self) -> None:
         scores = six_dimension_scorer.score_stock(
@@ -1203,9 +1406,13 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
 
         self.assertNotIn("event", scores["missing_evidence_dimensions"])
         self.assertGreater(scores["event"], 0.5)
-        self.assertEqual(scores["evidence_sources"]["event"]["source"], "SharedSignals events")
+        self.assertEqual(
+            scores["evidence_sources"]["event"]["source"], "SharedSignals events"
+        )
 
-    def test_sharedsignals_raw_stock_event_text_feeds_weak_event_dimension(self) -> None:
+    def test_sharedsignals_raw_stock_event_text_feeds_weak_event_dimension(
+        self,
+    ) -> None:
         scores = six_dimension_scorer.score_stock(
             "600000.SH",
             "20260629",
@@ -1215,9 +1422,13 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
 
         self.assertNotIn("event", scores["missing_evidence_dimensions"])
         self.assertGreater(scores["event"], 0.5)
-        self.assertEqual(scores["evidence_sources"]["event"]["source"], "SharedSignals events")
+        self.assertEqual(
+            scores["evidence_sources"]["event"]["source"], "SharedSignals events"
+        )
 
-    def test_sharedsignals_market_only_event_does_not_feed_stock_event_dimension(self) -> None:
+    def test_sharedsignals_market_only_event_does_not_feed_stock_event_dimension(
+        self,
+    ) -> None:
         scores = six_dimension_scorer.score_stock(
             "600000.SH",
             "20260629",
@@ -1239,7 +1450,9 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
 
         self.assertNotIn("sentiment", scores["missing_evidence_dimensions"])
         self.assertGreater(scores["sentiment"], 0.5)
-        self.assertEqual(scores["evidence_sources"]["sentiment"]["source"], "SharedSignals sentiment")
+        self.assertEqual(
+            scores["evidence_sources"]["sentiment"]["source"], "SharedSignals sentiment"
+        )
         self.assertEqual(reader.sentiment_calls[0], ("20260615", "20260629"))
 
     def test_sharedsignals_market_news_feeds_weak_market_sentiment(self) -> None:
@@ -1250,7 +1463,9 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
         )
 
         self.assertNotIn("sentiment", scores["missing_evidence_dimensions"])
-        self.assertEqual(scores["evidence_sources"]["sentiment"]["source"], "SharedSignals sentiment")
+        self.assertEqual(
+            scores["evidence_sources"]["sentiment"]["source"], "SharedSignals sentiment"
+        )
         self.assertEqual(scores["evidence_sources"]["sentiment"]["row_count"], 2)
         self.assertGreaterEqual(scores["sentiment"], 0.0)
         self.assertLessEqual(scores["sentiment"], 1.0)
@@ -1272,8 +1487,16 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
             data_reader=reader,
         )
 
-        self.assertNotIn("macro", scores["missing_evidence_dimensions"])
-        self.assertGreater(scores["macro"], 0.5)
+        self.assertEqual(scores["macro"], 0.5)
+        self.assertIn("macro", scores["missing_evidence_dimensions"])
+        self.assertEqual(scores["base_score"]["macro"], 0.5)
+        self.assertGreater(scores["marketgraph_score"]["macro"], 0.5)
+        self.assertTrue(scores["marketgraph_pairing"]["same_scoring_snapshot"])
+        self.assertIn("macro", scores["marketgraph_pairing"]["used_dimensions"])
+        self.assertNotIn(
+            "MarketGraph",
+            scores["base_score"]["evidence_sources"]["macro"]["source"],
+        )
 
     def test_marketgraph_impact_relations_feed_event_dimension(self) -> None:
         reader = TradingagentDataReader(
@@ -1292,9 +1515,16 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
             data_reader=reader,
         )
 
-        self.assertNotIn("event", scores["missing_evidence_dimensions"])
-        self.assertGreater(scores["event"], 0.5)
-        self.assertEqual(scores["evidence_sources"]["event"]["source"], "MarketGraph event candidates")
+        self.assertEqual(scores["event"], 0.5)
+        self.assertIn("event", scores["missing_evidence_dimensions"])
+        self.assertEqual(scores["base_score"]["event"], 0.5)
+        self.assertGreater(scores["marketgraph_score"]["event"], 0.5)
+        self.assertEqual(
+            scores["marketgraph_score"]["evidence_sources"]["event"]["source"],
+            "MarketGraph event candidates",
+        )
+        self.assertTrue(scores["marketgraph_pairing"]["same_scoring_snapshot"])
+        self.assertIn("event", scores["marketgraph_pairing"]["used_dimensions"])
 
     def test_scoring_uses_reader_and_preserves_formula(self) -> None:
         scores = six_dimension_scorer.score_stock(
@@ -1303,17 +1533,29 @@ class TestSixDimensionScorerWithReader(unittest.TestCase):
             data_reader=FakeScoringReader(),
         )
 
-        self.assertAlmostEqual(scores["macro"], 0.6)
-        self.assertAlmostEqual(scores["event"], 2 / 3)
+        self.assertAlmostEqual(scores["macro"], 0.5)
+        self.assertAlmostEqual(scores["event"], 0.5)
         self.assertAlmostEqual(scores["fundamental"], 0.54)
         self.assertAlmostEqual(scores["capital"], 0.7)
         self.assertAlmostEqual(scores["technical"], 0.85)
         self.assertAlmostEqual(scores["sentiment"], 0.75)
-        self.assertAlmostEqual(scores["combined"], 0.6658333333333333)
+        self.assertAlmostEqual(scores["combined"], 0.6175)
+        self.assertAlmostEqual(scores["marketgraph_score"]["macro"], 0.6)
+        self.assertAlmostEqual(scores["marketgraph_score"]["event"], 2 / 3)
+        self.assertAlmostEqual(
+            scores["marketgraph_score"]["combined"],
+            0.6658333333333333,
+        )
         self.assertGreater(scores["evidence_coverage"], 0.0)
-        self.assertEqual(scores["missing_evidence_dimensions"], [])
+        self.assertEqual(scores["missing_evidence_dimensions"], ["macro", "event"])
+        self.assertEqual(
+            scores["marketgraph_score"]["missing_evidence_dimensions"],
+            [],
+        )
 
-    def test_scoring_uses_sharedsignals_fundamentals_and_capital_flow_when_factors_empty(self) -> None:
+    def test_scoring_uses_sharedsignals_fundamentals_and_capital_flow_when_factors_empty(
+        self,
+    ) -> None:
         scores = six_dimension_scorer.score_stock(
             "600000.SH",
             "20260629",

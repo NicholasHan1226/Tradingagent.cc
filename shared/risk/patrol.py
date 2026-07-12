@@ -4,15 +4,42 @@
 patrol(portfolio, market_data) → {alerts, summary, timestamp}
 聚合 position_monitor + black_swan + risk_limits 检查。
 """
+
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from .position_monitor import check_positions, filter_actions
 from .pre_trade_check import _load_limits, _safe_float
 from .black_swan import check_black_swan
+
+
+_MARKET_ALIASES = {
+    "a": "ashare",
+    "a-share": "ashare",
+    "a_share": "ashare",
+    "ashare": "ashare",
+    "cn": "ashare",
+    "china": "ashare",
+}
+
+
+def _patrol_market_rule(limits: dict[str, Any], raw_market: Any) -> dict[str, Any]:
+    """Return only an explicitly declared market override.
+
+    Missing/unknown markets keep the longstanding top-level defaults.  This is
+    important because the A-share 8-position/90%-exposure policy must not leak
+    into another market.
+    """
+
+    normalized = str(raw_market or "").strip().lower()
+    market = _MARKET_ALIASES.get(normalized, normalized)
+    all_rules = limits.get("market_rules")
+    if not market or not isinstance(all_rules, dict):
+        return {}
+    rule = all_rules.get(market)
+    return dict(rule) if isinstance(rule, dict) else {}
 
 
 def patrol(
@@ -66,72 +93,99 @@ def patrol(
     # 1. 黑天鹅检查
     bs_result = check_black_swan(market_data)
     if bs_result.get("triggered"):
-        alerts.append({
-            "type": "black_swan",
-            "severity": "high",
-            "message": bs_result.get("trigger_reason", "黑天鹅触发"),
-            "action": bs_result.get("action", "force_reduce"),
-            "timestamp": now,
-        })
+        alerts.append(
+            {
+                "type": "black_swan",
+                "severity": "high",
+                "message": bs_result.get("trigger_reason", "黑天鹅触发"),
+                "action": bs_result.get("action", "force_reduce"),
+                "timestamp": now,
+            }
+        )
     elif bs_result.get("action") == "monitor":
-        alerts.append({
-            "type": "black_swan_warning",
-            "severity": "medium",
-            "message": bs_result.get("trigger_reason", ""),
-            "action": "monitor",
-            "timestamp": now,
-        })
+        alerts.append(
+            {
+                "type": "black_swan_warning",
+                "severity": "medium",
+                "message": bs_result.get("trigger_reason", ""),
+                "action": "monitor",
+                "timestamp": now,
+            }
+        )
 
     # 2. 持仓监控
     pos_signals = check_positions(
-        positions, current_prices, regime=regime,
+        positions,
+        current_prices,
+        regime=regime,
         portfolio_high_water=high_water,
         portfolio_current_value=current_value,
     )
     # 只取需要行动的信号 (非 hold)
     action_signals = filter_actions(pos_signals)
     for s in action_signals:
-        alerts.append({
-            "type": s.get("action", "unknown"),
-            "severity": s.get("severity", "low"),
-            "message": s.get("reason", ""),
-            "ts_code": s.get("ts_code", ""),
-            "timestamp": now,
-        })
+        alerts.append(
+            {
+                "type": s.get("action", "unknown"),
+                "severity": s.get("severity", "low"),
+                "message": s.get("reason", ""),
+                "ts_code": s.get("ts_code", ""),
+                "timestamp": now,
+            }
+        )
 
     # 3. 风控参数检查 — 总敞口
     limits = _load_limits()
-    total_max = _safe_float(limits.get("total_exposure_max", 0.80))
+    market_rule = _patrol_market_rule(limits, portfolio.get("market"))
+    total_max = _safe_float(
+        market_rule.get("total_exposure_max", limits.get("total_exposure_max", 0.80))
+    )
     total_exposure = _safe_float(portfolio.get("total_exposure", 0.0))
     if total_exposure > total_max + 1e-9:
-        alerts.append({
-            "type": "exposure_breach",
-            "severity": "high",
-            "message": f"总敞口 {total_exposure:.4f} > 上限 {total_max:.4f}",
-            "timestamp": now,
-        })
+        alerts.append(
+            {
+                "type": "exposure_breach",
+                "severity": "high",
+                "message": f"总敞口 {total_exposure:.4f} > 上限 {total_max:.4f}",
+                "timestamp": now,
+            }
+        )
 
     # 4. 日亏检查
-    daily_loss_limit = _safe_float(limits.get("daily_loss_limit", 0.03))
+    daily_loss_limit = _safe_float(
+        market_rule.get("daily_loss_limit", limits.get("daily_loss_limit", 0.03))
+    )
     daily_pnl = _safe_float(portfolio.get("daily_pnl_pct", 0.0))
     if daily_pnl < -daily_loss_limit:
-        alerts.append({
-            "type": "daily_loss_breach",
-            "severity": "high",
-            "message": f"当日亏损 {daily_pnl:.4f} < -{daily_loss_limit:.4f}, 暂停新增",
-            "timestamp": now,
-        })
+        alerts.append(
+            {
+                "type": "daily_loss_breach",
+                "severity": "high",
+                "message": f"当日亏损 {daily_pnl:.4f} < -{daily_loss_limit:.4f}, 暂停新增",
+                "timestamp": now,
+            }
+        )
 
     # 5. 持仓数检查
-    max_positions = int(limits.get("max_positions", 5))
-    n_positions = len({p.get("ts_code") for p in positions if isinstance(p, dict) and p.get("ts_code")})
+    max_positions = int(
+        market_rule.get("max_positions", limits.get("max_positions", 5))
+    )
+    n_positions = len(
+        {
+            p.get("ts_code")
+            for p in positions
+            if isinstance(p, dict) and p.get("ts_code")
+        }
+    )
     if n_positions > max_positions:
-        alerts.append({
-            "type": "position_count_breach",
-            "severity": "medium",
-            "message": f"持仓数 {n_positions} > 上限 {max_positions}",
-            "timestamp": now,
-        })
+        alerts.append(
+            {
+                "type": "position_count_breach",
+                "severity": "medium",
+                "message": f"持仓数 {n_positions} > 上限 {max_positions}",
+                "timestamp": now,
+            }
+        )
 
     # 按 severity 排序
     severity_order = {"high": 0, "medium": 1, "low": 2}
@@ -160,6 +214,7 @@ def patrol(
 
 if __name__ == "__main__":
     import json
+
     test_portfolio = {
         "positions": [
             {

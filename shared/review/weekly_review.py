@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Weekly review — Friday close.
+"""Weekly evidence review — Friday close.
 
-Decides strategy promotions / demotions based on 2 consecutive weeks of data.
-
-  - Eliminate (demote): win rate <50% for 2 consecutive weeks → downgrade weight/kill
-  - Promote (upgrade) : shadow positive for 2 consecutive weeks → upgrade to sim/real
-
-Also reports dimension effectiveness so the screening layer can re-weight.
+The report can flag manual-review and demotion candidates, but it never changes
+strategy lifecycle, increases risk, or upgrades simulation to real trading.
 """
 
 from __future__ import annotations
@@ -75,7 +71,9 @@ def _normalize_capital_layer(value: Any, default: str = "shadow") -> str:
     return default
 
 
-def _group_by_capital_layer(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def _group_by_capital_layer(
+    rows: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows or []:
         layer = _normalize_capital_layer(row.get("capital_layer"))
@@ -112,10 +110,13 @@ def _dimension_effectiveness(week_trades: list[dict[str, Any]]) -> dict[str, flo
 
 # ---- consecutive-week tracking ----------------------------------------------
 
-def _update_consecutive(state: dict[str, Any], strategy: str, week_positive: bool, week_below_50: bool) -> dict[str, Any]:
-    """Track consecutive weeks for promotion/demotion logic."""
+
+def _update_consecutive(
+    state: dict[str, Any], strategy: str, week_positive: bool, week_below_50: bool
+) -> dict[str, Any]:
+    """Track consecutive weeks for manual review/demotion evidence."""
     s = state.setdefault("strategies", {}).setdefault(strategy, {})
-    # promotion: consecutive positive weeks
+    # Positive streaks only nominate manual review; they never auto-promote.
     if week_positive:
         s["consecutive_positive_weeks"] = s.get("consecutive_positive_weeks", 0) + 1
         s["consecutive_below50_weeks"] = 0
@@ -131,7 +132,10 @@ def _update_consecutive(state: dict[str, Any], strategy: str, week_positive: boo
 
 # ---- main API ---------------------------------------------------------------
 
-def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None = None) -> dict[str, Any]:
+
+def review_week(
+    week_trades: list[dict[str, Any]], strategies: list[str] | None = None
+) -> dict[str, Any]:
     """Friday review.
 
     Args:
@@ -144,7 +148,8 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
           "dimension_effectiveness": {dim: pnl_pct},
           "conditions_to_adjust": [str],      # conditions that bled
           "strategies_to_eliminate": [str],   # demotion candidates
-          "strategies_to_promote": [str],     # promotion candidates
+          "strategies_to_promote": [],        # permanently disabled compatibility field
+          "strategies_for_manual_review": [str],
           "week_pnl": float,
           "week_win_rate": float,
         }
@@ -160,26 +165,34 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
 
     for layer in sorted(grouped or {"shadow": []}):
         raw_layer_trades = grouped.get(layer, [])
-        layer_trades = strategy_valid_trades(raw_layer_trades) if layer == "simulated" else raw_layer_trades
+        layer_trades = (
+            strategy_valid_trades(raw_layer_trades)
+            if layer == "simulated"
+            else raw_layer_trades
+        )
         stats = _strategy_stats(layer_trades)
         for s in strategies or []:
             stats.setdefault(s, {"trades": 0, "wins": 0, "win_rate": 0.0, "pnl": 0.0})
 
         dim_eff = _dimension_effectiveness(layer_trades)
         attr_cond = attribute_pct(layer_trades).get("by_condition", {})
-        conditions_to_adjust = [c for c, pct in attr_cond.items() if pct < -0.1 and c != "unattributed"]
+        conditions_to_adjust = [
+            c for c, pct in attr_cond.items() if pct < -0.1 and c != "unattributed"
+        ]
         strategies_to_eliminate: list[str] = []
-        strategies_to_promote: list[str] = []
+        strategies_for_manual_review: list[str] = []
 
         for s, st in stats.items():
             wr = st["win_rate"]
             week_positive = st["pnl"] > 0
             week_below_50 = wr < 0.50
-            tracked = _update_consecutive(state, f"{layer}:{s}", week_positive, week_below_50)
+            tracked = _update_consecutive(
+                state, f"{layer}:{s}", week_positive, week_below_50
+            )
             if tracked.get("consecutive_below50_weeks", 0) >= 2:
                 strategies_to_eliminate.append(s)
             if tracked.get("consecutive_positive_weeks", 0) >= 2:
-                strategies_to_promote.append(s)
+                strategies_for_manual_review.append(s)
 
         total_pnl = sum(_safe_float(t.get("pnl")) for t in layer_trades)
         total_wins = sum(1 for t in layer_trades if _safe_float(t.get("pnl")) > 0)
@@ -194,12 +207,22 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
         }
         if layer == "simulated":
             for market_pnl in ledger_pnl_summary.values():
-                layer_ledger["realized_pnl"] += float(market_pnl.get("realized_pnl") or 0.0)
-                layer_ledger["unrealized_pnl"] += float(market_pnl.get("unrealized_pnl") or 0.0)
+                layer_ledger["realized_pnl"] += float(
+                    market_pnl.get("realized_pnl") or 0.0
+                )
+                layer_ledger["unrealized_pnl"] += float(
+                    market_pnl.get("unrealized_pnl") or 0.0
+                )
                 layer_ledger["total_pnl"] += float(market_pnl.get("total_pnl") or 0.0)
-                layer_ledger["market_value"] += float(market_pnl.get("market_value") or 0.0)
-                layer_ledger["open_position_count"] += int(market_pnl.get("open_position_count") or 0)
-                layer_ledger["missing_mark_count"] += int(market_pnl.get("missing_mark_count") or 0)
+                layer_ledger["market_value"] += float(
+                    market_pnl.get("market_value") or 0.0
+                )
+                layer_ledger["open_position_count"] += int(
+                    market_pnl.get("open_position_count") or 0
+                )
+                layer_ledger["missing_mark_count"] += int(
+                    market_pnl.get("missing_mark_count") or 0
+                )
         capital_layer_reviews[layer] = {
             "capital_layer": layer,
             "week_pnl": round(total_pnl, 6),
@@ -209,14 +232,21 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
             "dimension_effectiveness": dim_eff,
             "conditions_to_adjust": conditions_to_adjust,
             "strategies_to_eliminate": strategies_to_eliminate,
-            "strategies_to_promote": strategies_to_promote,
+            # Weekly evidence can nominate a shadow/manual-review candidate,
+            # but it can never mutate lifecycle state or increase risk.
+            "strategies_to_promote": [],
+            "strategies_for_manual_review": strategies_for_manual_review,
+            "automatic_promotion_enabled": False,
+            "automatic_risk_expansion_enabled": False,
             "ledger_realized_pnl": round(layer_ledger["realized_pnl"], 6),
             "ledger_unrealized_pnl": round(layer_ledger["unrealized_pnl"], 6),
             "ledger_total_pnl": round(layer_ledger["total_pnl"], 6),
             "ledger_market_value": round(layer_ledger["market_value"], 6),
             "ledger_open_position_count": layer_ledger["open_position_count"],
             "ledger_missing_mark_count": layer_ledger["missing_mark_count"],
-            "ledger_pnl_source": "sim_ledger_mark_to_market" if layer == "simulated" else "",
+            "ledger_pnl_source": "sim_ledger_mark_to_market"
+            if layer == "simulated"
+            else "",
         }
 
     _write_json(WEEKLY_STATE, state)
@@ -226,7 +256,11 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
         "capital_layer_reviews": capital_layer_reviews,
     }
     for capital_layer, layer_record in capital_layer_reviews.items():
-        log_record = {"session": "weekly", "as_of": as_of, "capital_layer": capital_layer}
+        log_record = {
+            "session": "weekly",
+            "as_of": as_of,
+            "capital_layer": capital_layer,
+        }
         log_record.update(layer_record)
         _append_log(log_record)
     return result
@@ -236,10 +270,43 @@ def review_week(week_trades: list[dict[str, Any]], strategies: list[str] | None 
 
 if __name__ == "__main__":
     trades = [
-        {"pnl": 0.05, "strategy": "pullback", "dimensions": {"macro": 0.6, "technical": 0.4}, "condition": "low_vol"},
-        {"pnl": -0.03, "strategy": "pullback", "dimension": "technical", "condition": "low_vol"},
-        {"pnl": 0.04, "strategy": "trend", "dimensions": {"technical": 1.0}, "condition": "mid_vol"},
-        {"pnl": -0.06, "strategy": "event_driven", "dimension": "event", "condition": "high_vol"},
-        {"pnl": -0.02, "strategy": "event_driven", "dimension": "event", "condition": "high_vol"},
+        {
+            "pnl": 0.05,
+            "strategy": "pullback",
+            "dimensions": {"macro": 0.6, "technical": 0.4},
+            "condition": "low_vol",
+        },
+        {
+            "pnl": -0.03,
+            "strategy": "pullback",
+            "dimension": "technical",
+            "condition": "low_vol",
+        },
+        {
+            "pnl": 0.04,
+            "strategy": "trend",
+            "dimensions": {"technical": 1.0},
+            "condition": "mid_vol",
+        },
+        {
+            "pnl": -0.06,
+            "strategy": "event_driven",
+            "dimension": "event",
+            "condition": "high_vol",
+        },
+        {
+            "pnl": -0.02,
+            "strategy": "event_driven",
+            "dimension": "event",
+            "condition": "high_vol",
+        },
     ]
-    print(json.dumps(review_week(trades, strategies=["pullback", "trend", "event_driven", "breakout"]), ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            review_week(
+                trades, strategies=["pullback", "trend", "event_driven", "breakout"]
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )

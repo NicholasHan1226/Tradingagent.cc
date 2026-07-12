@@ -1,79 +1,301 @@
-"""Daily capital plan generator for the canonical A-share simulated account.
+"""A-share capital planning for the independent 50,000 CNY simulation account.
 
-Produces a structured capital allocation plan each trading day:
+This module is a planning read model.  It never creates an order, reserves
+capital, or promotes a strategy.  Hard execution checks (100-share lots,
+price/fee/slippage evidence, T+1, liquidity, and ledger reservation) remain in
+the downstream execution boundary.
 
-* Allocate dynamically across up to 2-3 positions within the active capital.
-* Dynamic cash buffer by risk mode (aggressive ~17.5%, balanced 25%, cautious
-  45%, defensive 100% for weak-candidate / high-risk).
-* Before enough valid strategy samples exist, allow one smaller probe position
-  only when data/risk gates are clean and candidate quality is acceptable.
-* Suggest 204001 (GC-001) reverse repo for idle funds at close.
-
-Functions
----------
-plan_capital(holdings, available_cash)
-    Build the day's buy / hold / cash plan given current holdings and cash.
-suggest_reverse_repo(idle_cash)
-    Return a reverse-repo suggestion dict for end-of-day idle cash.
+The canonical policy is :class:`shared.capital.market_policy.MarketPolicy` for
+``ashare``.  Historical tier capital and the retired shared-master allocation
+are intentionally not accepted as sizing authorities.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
-from shared.markets.sim_capital import default_sim_capital
-
-# ---------------------------------------------------------------------------
-# Account constants for the canonical simulated account.
-# ---------------------------------------------------------------------------
-TOTAL_CAPITAL = int(default_sim_capital("ashare"))
-MIN_POSITION_VALUE = int(TOTAL_CAPITAL * 0.25)
-MAX_POSITION_VALUE = int(TOTAL_CAPITAL * 0.35)
-MIN_CASH_RESERVE = int(TOTAL_CAPITAL * 0.15)
-MAX_CASH_RESERVE = int(TOTAL_CAPITAL * 0.25)
-TARGET_POSITIONS = (2, 3)       # target 2-3 positions
-REVERSE_REPO_CODE = "204001"    # GC-001 1-day reverse repo
+from shared.capital.market_policy import MarketPolicy
 
 
-def _scale_plan_constants(total_capital: float) -> dict[str, float]:
-    """Scale position-budget constants to the account size.
+CAPITAL_POLICY = MarketPolicy.load("ashare")
+TOTAL_CAPITAL = int(CAPITAL_POLICY.initial_equity_cny)
+MAX_SINGLE_POSITION_PCT = float(CAPITAL_POLICY.single_name_max_pct or 0.0)
+MAX_POSITION_VALUE = int(CAPITAL_POLICY.single_name_cap_cny)
+STOCK_EXPOSURE_LIMIT_CNY = float(CAPITAL_POLICY.stock_gross_exposure_limit_cny)
+POSITION_CAPACITY = 8
 
-    The same percentages apply to explicit historical-capital evaluations.
-    """
-    min_position_value = max(5_000.0, total_capital * 0.25)
-    max_position_value = max(min_position_value, total_capital * 0.35)
-    min_cash_reserve = max(5_000.0, total_capital * 0.15)
-    return {
-        "min_position_value": min_position_value,
-        "max_position_value": max_position_value,
-        "min_cash_reserve": min_cash_reserve,
+# Compatibility constants consumed by the replacement-budget adapter.  They
+# are not fixed target allocations and the final lot/cost gate remains
+# downstream.
+MIN_POSITION_VALUE = 5_000
+MIN_CASH_RESERVE = 0
+MAX_CASH_RESERVE = 0
+TARGET_POSITIONS = (0, POSITION_CAPACITY)
+
+REVERSE_REPO_CODE = "204001"
+MAX_EXPLORATION_NEW_POSITIONS_PER_DAY = 1
+EXPLORATION_TOTAL_EXPOSURE_LIMIT_CNY = float(MAX_POSITION_VALUE)
+EXPLORATION_DAILY_LOSS_LIMIT_CNY = round(
+    EXPLORATION_TOTAL_EXPOSURE_LIMIT_CNY * CAPITAL_POLICY.daily_loss_pause_pct,
+    2,
+)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return (
+        parsed
+        if parsed == parsed and parsed not in (float("inf"), float("-inf"))
+        else default
+    )
+
+
+def _context_float(context: Mapping[str, Any], key: str, default: float = 0.0) -> float:
+    return _safe_float(context.get(key), default)
+
+
+def _symbol(row: Mapping[str, Any]) -> str:
+    return (
+        str(row.get("ts_code") or row.get("symbol") or row.get("code") or "")
+        .strip()
+        .upper()
+    )
+
+
+def _market_value(row: Mapping[str, Any]) -> float:
+    for key in ("market_value_cny", "market_value", "value", "amount"):
+        value = _safe_float(row.get(key), -1.0)
+        if value >= 0.0:
+            return value
+    return 0.0
+
+
+def _candidate_score(candidate: Mapping[str, Any]) -> float:
+    # This is a ranking score, not a calibrated probability.
+    for key in (
+        "raw_style_score",
+        "combined",
+        "score",
+        "total",
+        "belief_score",
+        "confidence",
+        "weight",
+    ):
+        value = _safe_float(candidate.get(key), float("nan"))
+        if value == value:
+            return value
+    return 0.0
+
+
+def _explicit_false(row: Mapping[str, Any], *keys: str) -> bool:
+    return any(key in row and row.get(key) is False for key in keys)
+
+
+def _requested_budget(candidate: Mapping[str, Any]) -> float | None:
+    for key in (
+        "worst_case_budget_cny",
+        "requested_budget_cny",
+        "requested_budget",
+        "position_budget_cny",
+        "allocation",
+    ):
+        if key not in candidate:
+            continue
+        value = _safe_float(candidate.get(key), -1.0)
+        if value > 0.0:
+            return value
+    return None
+
+
+def _aggregate_positions(
+    holdings: Sequence[dict[str, Any]],
+) -> tuple[dict[str, float], float, int]:
+    by_symbol: dict[str, float] = {}
+    anonymous_total = 0.0
+    anonymous_count = 0
+    for raw in holdings:
+        if not isinstance(raw, Mapping):
+            continue
+        value = max(0.0, _market_value(raw))
+        symbol = _symbol(raw)
+        if symbol:
+            by_symbol[symbol] = by_symbol.get(symbol, 0.0) + value
+        else:
+            anonymous_total += value
+            anonymous_count += 1
+    total = sum(by_symbol.values()) + anonymous_total
+    return by_symbol, round(total, 2), len(by_symbol) + anonymous_count
+
+
+def _aggregate_pending_reservations(
+    context: Mapping[str, Any],
+    candidates: Sequence[dict[str, Any]],
+) -> tuple[dict[str, float], float]:
+    by_symbol: dict[str, float] = {}
+    raw_rows = context.get("pending_buy_reservations")
+    if isinstance(raw_rows, Mapping):
+        for raw_symbol, raw_value in raw_rows.items():
+            symbol = str(raw_symbol or "").strip().upper()
+            if symbol:
+                by_symbol[symbol] = by_symbol.get(symbol, 0.0) + max(
+                    0.0, _safe_float(raw_value)
+                )
+    elif isinstance(raw_rows, Sequence) and not isinstance(raw_rows, (str, bytes)):
+        for row in raw_rows:
+            if not isinstance(row, Mapping):
+                continue
+            symbol = _symbol(row)
+            if not symbol:
+                continue
+            value = 0.0
+            for key in ("reserved_cny", "pending_buy_reserved_cny", "amount", "value"):
+                if key in row:
+                    value = max(0.0, _safe_float(row.get(key)))
+                    break
+            by_symbol[symbol] = by_symbol.get(symbol, 0.0) + value
+
+    # Some callers attach a same-symbol pending snapshot directly to the
+    # candidate.  Use the maximum declared value per symbol to avoid counting
+    # duplicate style rows as separate reservations.
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            continue
+        symbol = _symbol(candidate)
+        if not symbol or "pending_buy_reserved_cny" not in candidate:
+            continue
+        declared = max(0.0, _safe_float(candidate.get("pending_buy_reserved_cny")))
+        by_symbol[symbol] = max(by_symbol.get(symbol, 0.0), declared)
+
+    attributed_total = sum(by_symbol.values())
+    declared_total = max(0.0, _context_float(context, "pending_buy_reserved_cny"))
+    total = max(attributed_total, declared_total)
+    return by_symbol, round(total, 2)
+
+
+def _existing_exploration_exposure(holdings: Sequence[dict[str, Any]]) -> float:
+    intents = {"exploration", "sample_collection", "cumulative_sample_collection"}
+    total = 0.0
+    for raw in holdings:
+        if not isinstance(raw, Mapping):
+            continue
+        if "exploration_exposure_cny" in raw:
+            total += max(0.0, _safe_float(raw.get("exploration_exposure_cny")))
+        elif str(raw.get("sample_intent") or "").strip().lower() in intents:
+            total += max(0.0, _market_value(raw))
+    return round(total, 2)
+
+
+def _dynamic_operating_cash(
+    context: Mapping[str, Any],
+) -> tuple[float, dict[str, float]]:
+    components = {
+        "frozen_cash_cny": max(0.0, _context_float(context, "frozen_cash_cny")),
+        "expected_execution_cost_buffer_cny": max(
+            0.0, _context_float(context, "expected_execution_cost_buffer_cny")
+        ),
+        "lot_rounding_cash_cny": max(
+            0.0, _context_float(context, "lot_rounding_cash_cny")
+        ),
+        "other_operating_cash_cny": max(
+            0.0, _context_float(context, "other_operating_cash_cny")
+        ),
     }
+    component_total = sum(components.values())
+    explicit_total = max(0.0, _context_float(context, "dynamic_operating_cash_cny"))
+    return round(max(component_total, explicit_total), 2), {
+        key: round(value, 2) for key, value in components.items() if value > 0.0
+    }
+
+
+def _is_sample_debt(context: Mapping[str, Any]) -> bool:
+    minimum = max(0.0, _context_float(context, "min_strategy_samples"))
+    valid = max(0.0, _context_float(context, "strategy_sample_valid_count"))
+    return minimum > 0.0 and valid < minimum
+
+
+def _hard_new_risk_blockers(context: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    if context.get("force_defensive") is True:
+        blockers.append("forced_defensive")
+    if context.get("new_risk_allowed") is False:
+        blockers.append("new_risk_not_allowed")
+    if context.get("risk_gate_passed") is False:
+        blockers.append("risk_gate_failed")
+    explicit = context.get("hard_gate_blockers")
+    if isinstance(explicit, Sequence) and not isinstance(explicit, (str, bytes)):
+        blockers.extend(str(value).strip() for value in explicit if str(value).strip())
+    return list(dict.fromkeys(blockers))
+
+
+def _exploration_limits(
+    *,
+    existing_exposure_cny: float,
+    pending_exposure_cny: float,
+    daily_loss_used_cny: float,
+    existing_new_positions_today: int,
+) -> dict[str, Any]:
+    committed = max(0.0, existing_exposure_cny) + max(0.0, pending_exposure_cny)
+    return {
+        "max_new_positions_per_day": MAX_EXPLORATION_NEW_POSITIONS_PER_DAY,
+        "single_name_limit_cny": float(MAX_POSITION_VALUE),
+        "total_exposure_limit_cny": EXPLORATION_TOTAL_EXPOSURE_LIMIT_CNY,
+        "daily_loss_limit_cny": EXPLORATION_DAILY_LOSS_LIMIT_CNY,
+        "existing_exposure_cny": round(existing_exposure_cny, 2),
+        "pending_exposure_cny": round(pending_exposure_cny, 2),
+        "remaining_exposure_cny": round(
+            max(0.0, EXPLORATION_TOTAL_EXPOSURE_LIMIT_CNY - committed), 2
+        ),
+        "existing_new_positions_today": max(0, existing_new_positions_today),
+        "remaining_new_positions_today": max(
+            0,
+            MAX_EXPLORATION_NEW_POSITIONS_PER_DAY
+            - max(0, existing_new_positions_today),
+        ),
+        "daily_loss_used_cny": round(max(0.0, daily_loss_used_cny), 2),
+        "daily_loss_remaining_cny": round(
+            max(0.0, EXPLORATION_DAILY_LOSS_LIMIT_CNY - daily_loss_used_cny), 2
+        ),
+        "policy_initial_equity_cny": CAPITAL_POLICY.initial_equity_cny,
+        "single_name_max_pct": CAPITAL_POLICY.single_name_max_pct,
+        "daily_loss_pause_pct": CAPITAL_POLICY.daily_loss_pause_pct,
+        "lot_sizing_owner": "downstream_execution_gate",
+    }
+
+
+def _reason(code: str, amount: float, details: str) -> dict[str, Any]:
+    return {"code": code, "amount_cny": round(max(0.0, amount), 2), "details": details}
 
 
 @dataclass
 class CapitalPlan:
-    """Structured output of :func:`plan_capital`."""
+    """Auditable output of :func:`plan_capital`."""
 
     available_cash: float
     deployed_capital: float
     cash_reserve: float
-    target_positions: int = TARGET_POSITIONS[1]
+    target_positions: int = POSITION_CAPACITY
     max_new_positions: int = 0
     existing_position_count: int = 0
     capacity_reason: str = ""
     cash_reserve_pct: float = 0.0
-    max_single_position_pct: float = 0.0
-    risk_mode: str = "static"
-    suggested_buys: list[dict] = field(default_factory=list)
+    max_single_position_pct: float = MAX_SINGLE_POSITION_PCT
+    risk_mode: str = "normal"
+    suggested_buys: list[dict[str, Any]] = field(default_factory=list)
     position_budget_by_symbol: dict[str, float] = field(default_factory=dict)
-    reverse_repo: dict | None = None
+    reverse_repo: dict[str, Any] | None = None
     notes: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
-    dynamic_probe_budget: dict[str, float] | None = None
+    dynamic_probe_budget: dict[str, Any] | None = None
+    sample_intent: str = "observation"
+    exploration_limits: dict[str, Any] = field(default_factory=dict)
+    audit: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
-        payload = {
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "available_cash": self.available_cash,
             "deployed_capital": self.deployed_capital,
             "cash_reserve": self.cash_reserve,
@@ -89,368 +311,558 @@ class CapitalPlan:
             "reverse_repo": self.reverse_repo,
             "notes": self.notes,
             "reasons": self.reasons,
+            "sample_intent": self.sample_intent,
+            "exploration_limits": self.exploration_limits,
         }
+        payload.update(self.audit)
         if self.dynamic_probe_budget is not None:
             payload["dynamic_probe_budget"] = self.dynamic_probe_budget
         return payload
 
 
-def _candidate_score(candidate: dict[str, Any]) -> float:
-    for key in ("combined", "score", "total", "belief_score", "confidence", "weight"):
-        try:
-            value = float(candidate.get(key, 0.0))
-        except (TypeError, ValueError):
-            continue
-        if value == value:
-            return value
-    return 0.0
-
-
-def _context_float(context: dict[str, Any], key: str, default: float = 0.0) -> float:
-    try:
-        value = float(context.get(key, default))
-        return value if value == value else default
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        parsed = float(value)
-        return parsed if parsed == parsed else default
-    except (TypeError, ValueError):
-        return default
-
-
-def _position_key(holding: dict[str, Any]) -> str:
-    return str(holding.get("ts_code") or holding.get("code") or holding.get("symbol") or "").strip().upper()
-
-
-def _count_unique_positions(holdings: Sequence[dict]) -> int:
-    symbols = {
-        _position_key(holding)
-        for holding in holdings
-        if isinstance(holding, dict) and _position_key(holding)
-    }
-    if symbols:
-        return len(symbols)
-    return len(holdings)
-
-
-def _dynamic_profile(candidates: Sequence[dict], market_context: dict[str, Any] | None) -> dict[str, Any]:
-    context = market_context or {}
-    scores = sorted((_candidate_score(cand) for cand in candidates if isinstance(cand, dict)), reverse=True)
-    top = scores[0] if scores else 0.0
-    avg_top3 = sum(scores[:3]) / max(1, min(3, len(scores)))
-    second = scores[1] if len(scores) > 1 else 0.0
-    risk_rejection_rate = _context_float(context, "risk_rejection_rate")
-    data_issue_rate = _context_float(context, "data_issue_rate")
-    recent_win_rate = _context_float(context, "recent_win_rate", 0.5)
-    strategy_sample_valid_count = _context_float(context, "strategy_sample_valid_count", 0.0)
-    min_strategy_samples = _context_float(context, "min_strategy_samples", 0.0)
-    sample_collection_min_score = _context_float(context, "sample_collection_min_score", 0.55)
-    probe_allocation_min = _context_float(context, "probe_allocation_min", 20_000.0)
-    probe_allocation_max = _context_float(context, "probe_allocation_max", 35_000.0)
-    evidence_status_present = "evidence_usable" in context
-    evidence_usable = context.get("evidence_usable") is True
-    evolution_action = str(context.get("evolution_recommended_action") or "").strip()
-    evolution_gate_present = evidence_status_present or "evolution_recommended_action" in context
-    trend = str(context.get("trend") or context.get("market_trend") or "").strip().lower()
-    reasons: list[str] = []
-
-    defensive = (
-        not scores
-        or top < 0.55
-        or risk_rejection_rate >= 0.60
-        or data_issue_rate >= 0.75
-        or bool(context.get("force_defensive"))
-    )
-    if defensive:
-        if not scores:
-            reasons.append("no_candidates")
-        if top < 0.55:
-            reasons.append("weak_candidate_quality")
-        if risk_rejection_rate >= 0.60:
-            reasons.append("high_risk_rejection_rate")
-        if data_issue_rate >= 0.75:
-            reasons.append("high_data_issue_rate")
-        if context.get("force_defensive"):
-            reasons.append("forced_defensive")
-        return {
-            "risk_mode": "defensive",
-            "target_positions": 0,
-            "cash_reserve_pct": 1.0,
-            "max_single_position_pct": 0.0,
-            "max_cash_reserve": None,
-            "reasons": reasons,
-        }
-
-    cumulative_sample_debt = min_strategy_samples > 0 and strategy_sample_valid_count < min_strategy_samples
-    sample_collection = (
-        cumulative_sample_debt
-        and (
-            not evidence_status_present
-            or evidence_usable
-            or context.get("sample_collection_authorized") is True
-        )
-        and sample_collection_min_score <= top < 0.75
-        and risk_rejection_rate <= 0.25
-        and data_issue_rate <= 0.25
-        and recent_win_rate >= 0.45
-        and trend not in {"bearish", "risk_off"}
-    )
-    if sample_collection:
-        denominator = max(0.01, 0.75 - sample_collection_min_score)
-        quality_ratio = max(0.0, min(1.0, (top - sample_collection_min_score) / denominator))
-        risk_drag = max(risk_rejection_rate, data_issue_rate) * 0.5
-        win_rate_drag = 0.10 if recent_win_rate < 0.50 else 0.0
-        recommended_probe = probe_allocation_min + (probe_allocation_max - probe_allocation_min) * quality_ratio
-        recommended_probe *= max(0.50, 1.0 - risk_drag - win_rate_drag)
-        recommended_probe = max(probe_allocation_min, min(probe_allocation_max, recommended_probe))
-        recommended_probe = round(recommended_probe // 100 * 100, 2)
-        sample_reasons: list[str] = []
-        if cumulative_sample_debt:
-            sample_reasons.append("sample_collection_before_min_samples")
-        return {
-            "risk_mode": "sample_collection",
-            "target_positions": 3,
-            "cash_reserve_pct": 0.15,
-            "max_single_position_pct": 0.175,
-            "max_cash_reserve": 30000,
-            "reasons": sample_reasons or ["sample_collection"],
-            "dynamic_probe_budget": {
-                "min": round(probe_allocation_min, 2),
-                "max": round(probe_allocation_max, 2),
-                "recommended": recommended_probe,
-                "quality_ratio": round(quality_ratio, 4),
-                "top_candidate_score": round(top, 4),
-            },
-        }
-
-    if evolution_gate_present and (not evidence_usable or evolution_action != "expand_risk_candidate"):
-        if evidence_status_present and not evidence_usable:
-            reasons.append(str(context.get("evidence_rejection_reason") or "evidence_unavailable"))
-        else:
-            reasons.append("expansion_evidence_not_approved")
-        return {
-            "risk_mode": "cautious",
-            "target_positions": 1,
-            "cash_reserve_pct": 0.50,
-            "max_single_position_pct": 0.25,
-            "max_cash_reserve": None,
-            "reasons": reasons,
-        }
-
-    max_cash_reserve = None
-
-    if top >= 0.75 and avg_top3 >= 0.65 and risk_rejection_rate <= 0.25 and trend not in {"bearish", "risk_off"}:
-        risk_mode = "aggressive"
-        target_positions = 3
-        cash_reserve_pct = 0.175
-        max_single_position_pct = 0.35
-        reasons.append("strong_candidate_cluster")
-    elif top >= 0.65:
-        risk_mode = "balanced"
-        target_positions = 2
-        cash_reserve_pct = 0.25
-        max_single_position_pct = 0.30
-        max_cash_reserve = 50000
-        reasons.append("qualified_candidate_quality")
-    else:
-        risk_mode = "cautious"
-        target_positions = 1
-        cash_reserve_pct = 0.45
-        max_single_position_pct = 0.25
-        reasons.append("thin_candidate_quality")
-
-    if top - second >= 0.18 and target_positions > 2:
-        target_positions = 2
-        reasons.append("single_name_score_concentration")
-    if recent_win_rate < 0.45:
-        target_positions = min(target_positions, 1)
-        cash_reserve_pct = max(cash_reserve_pct, 0.50)
-        risk_mode = "cautious"
-        reasons.append("recent_win_rate_below_threshold")
-
-    return {
-        "risk_mode": risk_mode,
-        "target_positions": target_positions,
-        "cash_reserve_pct": cash_reserve_pct,
-        "max_single_position_pct": max_single_position_pct,
-        "max_cash_reserve": max_cash_reserve,
-        "reasons": reasons,
-    }
-
-
 def plan_capital(
-    holdings: Sequence[dict],
+    holdings: Sequence[dict[str, Any]],
     available_cash: float,
-    candidates: Sequence[dict] | None = None,
+    candidates: Sequence[dict[str, Any]] | None = None,
     *,
     dynamic: bool = False,
     market_context: dict[str, Any] | None = None,
     total_capital: float | None = None,
 ) -> CapitalPlan:
-    """Generate a daily capital plan.
+    """Build a suggestion-only plan under the independent A-share policy.
 
-    Parameters
-    ----------
-    holdings
-        Current open positions. Each dict should have at least
-        ``"value"`` (current market value in RMB).
-    available_cash
-        Free cash available for new buys (RMB).
-    candidates
-        Optional ranked buy candidates. Each dict may carry a
-        ``"weight"`` (0-1) used to size the allocation. If omitted
-        the plan will simply note available capacity.
-
-    Returns
-    -------
-    CapitalPlan
+    ``total_capital`` is retained for caller compatibility but cannot mint
+    capacity.  Policy limits always come from ``MarketPolicy.load("ashare")``.
     """
-    if total_capital is None:
-        total_capital = default_sim_capital("ashare")
-    scaled = _scale_plan_constants(total_capital)
-    min_position_value = scaled["min_position_value"]
-    max_position_value = scaled["max_position_value"]
-    min_cash_reserve = scaled["min_cash_reserve"]
 
-    deployed = sum(h.get("value", 0.0) for h in holdings)
-    n_holdings = _count_unique_positions(holdings)
-    notes: list[str] = []
-    reasons: list[str] = []
+    context: dict[str, Any] = dict(market_context or {})
+    candidate_rows = [row for row in (candidates or []) if isinstance(row, dict)]
+    free_cash = max(0.0, _safe_float(available_cash))
+    positions_by_symbol, deployed, existing_position_count = _aggregate_positions(
+        [row for row in holdings if isinstance(row, dict)]
+    )
+    pending_by_symbol, pending_total = _aggregate_pending_reservations(
+        context, candidate_rows
+    )
+    committed_stock_exposure = round(deployed + pending_total, 2)
+    remaining_stock_budget = max(
+        0.0, STOCK_EXPOSURE_LIMIT_CNY - committed_stock_exposure
+    )
+    dynamic_cash, dynamic_cash_components = _dynamic_operating_cash(context)
+    deployable_cash = round(
+        min(max(0.0, free_cash - dynamic_cash), remaining_stock_budget), 2
+    )
 
-    # --- decide how many new positions we can / should open -------------
-    target_positions = TARGET_POSITIONS[1]
-    cash_reserve_pct = min_cash_reserve / max(float(total_capital), 1.0)
-    max_single_position_pct = max_position_value / max(float(total_capital), 1.0)
-    risk_mode = "static"
-    if dynamic:
-        profile = _dynamic_profile(candidates or [], market_context)
-        target_positions = int(profile["target_positions"])
-        cash_reserve_pct = float(profile["cash_reserve_pct"])
-        max_single_position_pct = float(profile["max_single_position_pct"])
-        risk_mode = str(profile["risk_mode"])
-        reasons = list(profile.get("reasons", []))
-        max_cash_reserve = profile.get("max_cash_reserve")
-        dynamic_probe_budget = profile.get("dynamic_probe_budget") if isinstance(profile.get("dynamic_probe_budget"), dict) else None
-        if risk_mode == "sample_collection":
-            max_probe_positions = max(1, int(_context_float(market_context or {}, "max_probe_positions", 1)))
-            target_positions = min(target_positions, n_holdings + max_probe_positions)
-            capital_scale = max(0.25, min(1.0, float(total_capital) / TOTAL_CAPITAL))
-            default_min = max(5_000.0, min(20_000.0 * capital_scale, float(total_capital) * 0.10))
-            default_max = max(default_min, min(35_000.0 * capital_scale, float(total_capital) * 0.175))
-            if dynamic_probe_budget:
-                min_position_value = max(5_000.0, min(_safe_float(dynamic_probe_budget.get("min"), default_min) * capital_scale, default_min))
-                max_position_value = max(
-                    min_position_value,
-                    min(_safe_float(dynamic_probe_budget.get("recommended"), default_max) * capital_scale, default_max),
-                )
-                dynamic_probe_budget = dict(dynamic_probe_budget)
-                dynamic_probe_budget["scaled_recommended"] = round(max_position_value, 2)
-            else:
-                min_position_value = default_min
-                max_position_value = default_max
-    else:
-        dynamic_probe_budget = None
+    existing_symbols = set(positions_by_symbol)
+    remaining_position_slots = max(0, POSITION_CAPACITY - existing_position_count)
+    hard_blockers = _hard_new_risk_blockers(context)
 
-    max_new = target_positions - n_holdings
-    if max_new < 0:
-        max_new = 0
-    capacity_reason = "new_position_capacity_available" if max_new > 0 else "target_positions_reached"
-    if target_positions <= 0:
-        capacity_reason = "defensive_no_target_positions"
-    elif n_holdings >= target_positions:
-        notes.append(
-            f"Target positions reached ({n_holdings}/{target_positions}); skip new buys unless replacement sell frees capacity."
-        )
+    direct_loss = max(0.0, _context_float(context, "exploration_daily_loss_cny"))
+    realized_loss = max(
+        0.0, -_context_float(context, "exploration_daily_realized_pnl_cny")
+    )
+    exploration_daily_loss_used = max(direct_loss, realized_loss)
+    exploration_existing = _existing_exploration_exposure(holdings)
+    exploration_pending = max(
+        0.0, _context_float(context, "exploration_pending_reserved_cny")
+    )
+    exploration_new_today = max(
+        0, int(_context_float(context, "existing_exploration_new_positions"))
+    )
+    exploration_limits = _exploration_limits(
+        existing_exposure_cny=exploration_existing,
+        pending_exposure_cny=exploration_pending,
+        daily_loss_used_cny=exploration_daily_loss_used,
+        existing_new_positions_today=exploration_new_today,
+    )
 
-    # cash needed for reserve
-    if dynamic:
-        cash_reserve = min(float(available_cash), max(0.0, float(total_capital) * cash_reserve_pct))
-        if target_positions > 0:
-            cash_reserve = max(min(float(available_cash), min_cash_reserve), cash_reserve)
-            if max_cash_reserve is not None:
-                cash_reserve = min(cash_reserve, float(max_cash_reserve))
-        else:
-            cash_reserve = float(available_cash)
-    else:
-        cash_reserve = max(min_cash_reserve, min(available_cash, MAX_CASH_RESERVE))
-    investable = available_cash - cash_reserve
+    explicit_exploration = any(
+        str(row.get("sample_intent") or "").strip().lower() == "exploration"
+        for row in candidate_rows
+    )
+    exploration_mode = (
+        bool(candidate_rows)
+        and not hard_blockers
+        and context.get("exploration_enabled") is not False
+        and (explicit_exploration or _is_sample_debt(context))
+    )
 
-    if investable < min_position_value:
-        notes.append(
-            f"Insufficient investable cash ({investable:.0f} RMB) after "
-            f"reserve ({cash_reserve:.0f} RMB); skip new buys."
-        )
-        if max_new > 0:
-            capacity_reason = "insufficient_investable_cash"
-        max_new = 0
+    qualified_count = 0
+    execution_eligible_count = 0
+    candidate_rejections: list[dict[str, Any]] = []
+    eligible: list[dict[str, Any]] = []
+    seen_symbols: set[str] = set()
+    planned_new_symbols: set[str] = set()
 
-    # --- allocate to candidates -----------------------------------------
-    suggested_buys: list[dict] = []
-    position_budget_by_symbol: dict[str, float] = {}
-    if candidates and max_new > 0 and investable >= min_position_value:
-        remaining = investable
-        slots = min(max_new, len(candidates))
-        max_single_value = max_position_value
-        if dynamic and max_single_position_pct > 0:
-            max_single_value = min(max_position_value, float(total_capital) * max_single_position_pct)
-
-        for i, cand in enumerate(candidates[:slots]):
-            if remaining < min_position_value:
-                notes.append(
-                    f"Stopped after {i} buys — remaining cash "
-                    f"{remaining:.0f} below min {min_position_value}."
-                )
-                break
-            remaining_slots = max(1, slots - i)
-            alloc = min(
-                remaining / remaining_slots,
-                max_single_value,
+    indexed_candidates = list(enumerate(candidate_rows))
+    if explicit_exploration:
+        # Reserve planning capacity for the explicitly selected exploration
+        # candidate before ordinary ranked rows can consume all eight slots.
+        indexed_candidates.sort(
+            key=lambda item: (
+                str(item[1].get("sample_intent") or "").strip().lower()
+                != "exploration",
+                item[0],
             )
-            alloc = max(min_position_value, min(alloc, remaining))
-            if alloc < min_position_value:
-                break
-            code = cand.get("code", cand.get("ts_code", f"slot_{i}"))
-            requested_budget = round(alloc, 2)
-            risk_limit_budget = round(float(total_capital) * 0.15, 2)
-            suggested_buys.append({
-                "code": code,
-                "allocation": requested_budget,
-                "weight": round(alloc / max(float(total_capital), 1.0), 4),
-                "score": round(_candidate_score(cand), 4),
-                "requested_budget": requested_budget,
-                "risk_limit_budget": risk_limit_budget,
-                "executable_budget": round(min(requested_budget, risk_limit_budget), 2),
-            })
-            position_budget_by_symbol[str(code)] = requested_budget
-            remaining -= alloc
-
-        investable -= sum(b["allocation"] for b in suggested_buys)
-
-    elif not candidates and max_new > 0:
-        notes.append(
-            f"Capacity for {max_new} new position(s) but no candidates provided."
         )
 
-    # --- reverse repo for truly idle cash -------------------------------
-    idle = available_cash - sum(b["allocation"] for b in suggested_buys) - cash_reserve
-    reverse_repo = None
-    if idle > 1_000:  # only suggest repo for meaningful idle cash
-        reverse_repo = suggest_reverse_repo(idle)
+    for index, candidate in indexed_candidates:
+        symbol = _symbol(candidate)
+        if not symbol:
+            candidate_rejections.append(
+                {"candidate_index": index, "symbol": "", "code": "missing_symbol"}
+            )
+            continue
+        if _explicit_false(
+            candidate, "data_qualified", "source_qualified", "qualified"
+        ):
+            candidate_rejections.append(
+                {
+                    "candidate_index": index,
+                    "symbol": symbol,
+                    "code": "data_not_qualified",
+                }
+            )
+            continue
+        qualified_count += 1
+        if _explicit_false(
+            candidate,
+            "execution_eligible",
+            "risk_gate_passed",
+            "liquidity_qualified",
+            "price_evidence_valid",
+        ):
+            candidate_rejections.append(
+                {
+                    "candidate_index": index,
+                    "symbol": symbol,
+                    "code": "execution_not_eligible",
+                }
+            )
+            continue
+        execution_eligible_count += 1
+        if symbol in seen_symbols:
+            candidate_rejections.append(
+                {
+                    "candidate_index": index,
+                    "symbol": symbol,
+                    "code": "duplicate_candidate_symbol",
+                }
+            )
+            continue
+        seen_symbols.add(symbol)
+
+        current_symbol_commitment = positions_by_symbol.get(
+            symbol, 0.0
+        ) + pending_by_symbol.get(symbol, 0.0)
+        symbol_headroom = max(0.0, MAX_POSITION_VALUE - current_symbol_commitment)
+        if symbol_headroom <= 1e-9:
+            candidate_rejections.append(
+                {
+                    "candidate_index": index,
+                    "symbol": symbol,
+                    "code": "single_name_aggregate_limit_reached",
+                    "committed_symbol_exposure_cny": round(
+                        current_symbol_commitment, 2
+                    ),
+                }
+            )
+            continue
+
+        is_new_symbol = symbol not in existing_symbols
+        if is_new_symbol and len(planned_new_symbols) >= remaining_position_slots:
+            candidate_rejections.append(
+                {
+                    "candidate_index": index,
+                    "symbol": symbol,
+                    "code": "position_capacity_reached",
+                }
+            )
+            continue
+
+        eligible.append(
+            {
+                "candidate": candidate,
+                "symbol": symbol,
+                "symbol_headroom": symbol_headroom,
+                "is_new_symbol": is_new_symbol,
+            }
+        )
+        if is_new_symbol:
+            planned_new_symbols.add(symbol)
+
+    reasons: list[str] = []
+    notes: list[str] = []
+    risk_mode = "normal"
+    sample_intent = "exploitation"
+    max_new_positions = remaining_position_slots
+    capacity_reason = (
+        "new_position_capacity_available"
+        if remaining_position_slots > 0
+        else "position_capacity_reached"
+    )
+
+    if hard_blockers:
+        eligible = []
+        risk_mode = "risk_halt"
+        sample_intent = "observation"
+        max_new_positions = 0
+        capacity_reason = hard_blockers[0]
+        reasons.extend(hard_blockers)
+    elif remaining_stock_budget <= 1e-9:
+        eligible = []
+        risk_mode = "risk_limit"
+        sample_intent = "observation"
+        max_new_positions = 0
+        capacity_reason = "portfolio_stock_exposure_limit_reached"
+        reasons.append(capacity_reason)
+    elif deployable_cash <= 1e-9:
+        eligible = []
+        risk_mode = "cash_constrained"
+        sample_intent = "observation"
+        max_new_positions = 0
+        capacity_reason = "insufficient_deployable_cash"
+        reasons.append(capacity_reason)
+    elif exploration_mode:
+        remaining_exploration = exploration_limits["remaining_exposure_cny"]
+        if explicit_exploration:
+            normal_rows = [
+                row
+                for row in eligible
+                if str(row["candidate"].get("sample_intent") or "").strip().lower()
+                != "exploration"
+            ]
+            exploration_rows = sorted(
+                (
+                    row
+                    for row in eligible
+                    if str(row["candidate"].get("sample_intent") or "").strip().lower()
+                    == "exploration"
+                ),
+                key=lambda row: _candidate_score(row["candidate"]),
+                reverse=True,
+            )
+            exploration_block = ""
+            if exploration_daily_loss_used >= EXPLORATION_DAILY_LOSS_LIMIT_CNY:
+                exploration_block = "exploration_daily_loss_limit_reached"
+            elif exploration_new_today >= MAX_EXPLORATION_NEW_POSITIONS_PER_DAY:
+                exploration_block = "exploration_daily_new_position_limit_reached"
+            elif remaining_exploration <= 0.0:
+                exploration_block = "exploration_total_exposure_limit_reached"
+
+            if exploration_block:
+                for row in exploration_rows:
+                    candidate_rejections.append(
+                        {"symbol": row["symbol"], "code": exploration_block}
+                    )
+                exploration_rows = []
+                reasons.append(exploration_block)
+            else:
+                for row in exploration_rows[1:]:
+                    candidate_rejections.append(
+                        {
+                            "symbol": row["symbol"],
+                            "code": "exploration_daily_selection_limit",
+                        }
+                    )
+                exploration_rows = exploration_rows[:1]
+
+            eligible = exploration_rows + normal_rows
+            if exploration_rows and normal_rows:
+                risk_mode = "mixed_sampling"
+                sample_intent = "mixed"
+                capacity_reason = "mixed_exploration_exploitation_capacity_available"
+            elif exploration_rows:
+                risk_mode = "sample_collection"
+                sample_intent = "exploration"
+                max_new_positions = min(
+                    MAX_EXPLORATION_NEW_POSITIONS_PER_DAY, remaining_position_slots
+                )
+                capacity_reason = "exploration_capacity_available"
+            elif normal_rows:
+                risk_mode = "normal"
+                sample_intent = "exploitation"
+                capacity_reason = (
+                    "normal_capacity_available_exploration_blocked"
+                    if exploration_block
+                    else "new_position_capacity_available"
+                )
+            else:
+                risk_mode = "observation_only"
+                sample_intent = "observation"
+                max_new_positions = 0
+                capacity_reason = (
+                    exploration_block or "no_execution_eligible_candidates"
+                )
+            reasons.append("explicit_exploration_selection")
+        else:
+            risk_mode = "sample_collection"
+            sample_intent = "exploration"
+            if exploration_daily_loss_used >= EXPLORATION_DAILY_LOSS_LIMIT_CNY:
+                eligible = []
+                max_new_positions = 0
+                capacity_reason = "exploration_daily_loss_limit_reached"
+                reasons.append(capacity_reason)
+            elif exploration_new_today >= MAX_EXPLORATION_NEW_POSITIONS_PER_DAY:
+                eligible = []
+                max_new_positions = 0
+                capacity_reason = "exploration_daily_new_position_limit_reached"
+                reasons.append(capacity_reason)
+            elif remaining_exploration <= 0.0:
+                eligible = []
+                max_new_positions = 0
+                capacity_reason = "exploration_total_exposure_limit_reached"
+                reasons.append(capacity_reason)
+            else:
+                eligible = sorted(
+                    eligible,
+                    key=lambda row: _candidate_score(row["candidate"]),
+                    reverse=True,
+                )
+                for row in eligible[1:]:
+                    candidate_rejections.append(
+                        {
+                            "symbol": row["symbol"],
+                            "code": "exploration_daily_selection_limit",
+                        }
+                    )
+                eligible = eligible[:1]
+                max_new_positions = min(
+                    MAX_EXPLORATION_NEW_POSITIONS_PER_DAY, remaining_position_slots
+                )
+                capacity_reason = (
+                    "exploration_capacity_available"
+                    if eligible and max_new_positions > 0
+                    else "no_execution_eligible_exploration_candidate"
+                )
+                remaining_stock_budget = min(
+                    remaining_stock_budget, remaining_exploration
+                )
+                deployable_cash = min(deployable_cash, remaining_exploration)
+                reasons.append("sample_collection_before_min_samples")
+    elif not eligible:
+        risk_mode = "observation_only"
+        sample_intent = "observation"
+        capacity_reason = "no_execution_eligible_candidates"
+        reasons.append(capacity_reason)
+
+    suggested_buys: list[dict[str, Any]] = []
+    position_budget_by_symbol: dict[str, float] = {}
+    remaining_budget = min(deployable_cash, remaining_stock_budget)
+    remaining_exploration_budget = float(exploration_limits["remaining_exposure_cny"])
+    selected_count = len(eligible)
+    for index, row in enumerate(eligible):
+        if remaining_budget <= 1e-9:
+            candidate_rejections.append(
+                {
+                    "symbol": row["symbol"],
+                    "code": "portfolio_stock_exposure_limit_reached",
+                }
+            )
+            continue
+        remaining_candidates = max(1, selected_count - index)
+        fair_share = remaining_budget / remaining_candidates
+        request = _requested_budget(row["candidate"])
+        requested = fair_share if request is None else request
+        candidate_intent = (
+            str(row["candidate"].get("sample_intent") or sample_intent).strip().lower()
+        )
+        if candidate_intent not in {"exploration", "exploitation"}:
+            candidate_intent = (
+                "exploration" if sample_intent == "exploration" else "exploitation"
+            )
+        intent_budget_limit = (
+            remaining_exploration_budget
+            if candidate_intent == "exploration"
+            else MAX_POSITION_VALUE
+        )
+        allocation = min(
+            requested,
+            row["symbol_headroom"],
+            fair_share,
+            remaining_budget,
+            MAX_POSITION_VALUE,
+            intent_budget_limit,
+        )
+        if allocation <= 1e-9:
+            candidate_rejections.append(
+                {"symbol": row["symbol"], "code": "no_positive_worst_case_budget"}
+            )
+            continue
+        allocation = round(allocation, 2)
+        candidate = row["candidate"]
+        suggestion = {
+            "code": row["symbol"],
+            "ts_code": row["symbol"],
+            "allocation": allocation,
+            "requested_budget": allocation,
+            "risk_limit_budget": round(row["symbol_headroom"], 2),
+            "executable_budget": allocation,
+            "weight": round(allocation / TOTAL_CAPITAL, 6),
+            "raw_ranking_score": round(_candidate_score(candidate), 6),
+            "sample_intent": candidate_intent,
+            "selection_method": str(
+                candidate.get("selection_method")
+                or context.get("relative_exploration_selection_method")
+                or (
+                    "epsilon_greedy_upstream"
+                    if candidate_intent == "exploration"
+                    else "ranked_candidate_order"
+                )
+            ),
+            "selection_propensity": (
+                _safe_float(
+                    candidate.get("selection_propensity", candidate.get("propensity"))
+                )
+                if candidate.get("selection_propensity", candidate.get("propensity"))
+                is not None
+                else None
+            ),
+            "lot_sizing_status": "pending_downstream_100_share_and_cost_gate",
+        }
+        suggested_buys.append(suggestion)
+        position_budget_by_symbol[row["symbol"]] = allocation
+        remaining_budget = max(0.0, remaining_budget - allocation)
+        if candidate_intent == "exploration":
+            remaining_exploration_budget = max(
+                0.0, remaining_exploration_budget - allocation
+            )
+
+    planned_allocation = round(sum(row["allocation"] for row in suggested_buys), 2)
+    planned_stock_exposure = round(committed_stock_exposure + planned_allocation, 2)
+    undeployed_capital = round(
+        max(0.0, CAPITAL_POLICY.initial_equity_cny - committed_stock_exposure), 2
+    )
+    planned_undeployed_capital = round(
+        max(0.0, CAPITAL_POLICY.initial_equity_cny - planned_stock_exposure), 2
+    )
+
+    undeployed_reasons: list[dict[str, Any]] = []
+    policy_cash = max(
+        0.0,
+        CAPITAL_POLICY.initial_equity_cny - STOCK_EXPOSURE_LIMIT_CNY,
+    )
+    if policy_cash > 0.0:
+        undeployed_reasons.append(
+            _reason(
+                "stock_gross_exposure_limit",
+                min(undeployed_capital, policy_cash),
+                "Not a protected-cash reserve; stock gross exposure is capped at 90% and the cash remains eligible for separate cash management.",
+            )
+        )
+    if dynamic_cash > 0.0:
+        undeployed_reasons.append(
+            _reason(
+                "dynamic_operating_cash",
+                min(undeployed_capital, dynamic_cash),
+                f"Explicit frozen/cost/rounding evidence: {dynamic_cash_components}",
+            )
+        )
+    if hard_blockers:
+        undeployed_reasons.append(
+            _reason(
+                "hard_new_risk_gate",
+                min(undeployed_capital, deployable_cash),
+                ",".join(hard_blockers),
+            )
+        )
+    elif execution_eligible_count == 0:
+        undeployed_reasons.append(
+            _reason(
+                "no_execution_eligible_candidates",
+                min(undeployed_capital, deployable_cash),
+                "Observation remains allowed; no stock order is forced.",
+            )
+        )
+    elif planned_allocation > 0.0:
+        undeployed_reasons.append(
+            _reason(
+                "planned_not_reserved",
+                min(undeployed_capital, planned_allocation),
+                "Suggestion only; becomes committed only after the capital ledger accepts a reservation.",
+            )
+        )
+    if remaining_position_slots == 0 and deployable_cash > 0.0:
+        undeployed_reasons.append(
+            _reason(
+                "position_capacity_reached",
+                min(undeployed_capital, deployable_cash),
+                "Eight distinct stock positions already exist; do not force a ninth.",
+            )
+        )
+    if planned_allocation < deployable_cash and execution_eligible_count > 0:
+        undeployed_reasons.append(
+            _reason(
+                "quality_or_candidate_budget_not_forced",
+                min(undeployed_capital, deployable_cash - planned_allocation),
+                "Capital remains eligible but the plan does not pad weak or undersized candidates.",
+            )
+        )
+
+    projected_cash_after_plan = max(0.0, free_cash - dynamic_cash - planned_allocation)
+    reverse_repo = (
+        suggest_reverse_repo(projected_cash_after_plan)
+        if projected_cash_after_plan >= 1_000.0
+        else None
+    )
+    cash_management = {
+        "auto_order": False,
+        "status": "suggestion_only",
+        "attribution_bucket": "cash_management_yield",
+        "excluded_from_stock_alpha": True,
+        "eligible_cash_cny": round(projected_cash_after_plan, 2),
+        "suggestion": reverse_repo,
+    }
+
+    if (
+        total_capital is not None
+        and abs(_safe_float(total_capital) - TOTAL_CAPITAL) > 1e-6
+    ):
+        notes.append(
+            "noncanonical_total_capital_ignored; MarketPolicy ashare remains authority"
+        )
+
+    exploration_planned_allocation = round(
+        sum(
+            row["allocation"]
+            for row in suggested_buys
+            if row.get("sample_intent") == "exploration"
+        ),
+        2,
+    )
+    suggestion_intents = {row.get("sample_intent") for row in suggested_buys}
+    reported_sample_intent = (
+        "mixed"
+        if suggestion_intents == {"exploration", "exploitation"}
+        else next(iter(suggestion_intents))
+        if len(suggestion_intents) == 1
+        else "observation"
+    )
+
+    dynamic_probe_budget = None
+    if exploration_mode:
+        dynamic_probe_budget = {
+            "min": 0.0,
+            "max": exploration_limits["remaining_exposure_cny"],
+            "recommended": exploration_planned_allocation,
+            "sample_intent": "exploration",
+            "selection_method": str(
+                context.get("relative_exploration_selection_method")
+                or "epsilon_greedy_upstream"
+            ),
+            "legacy_probe_overrides_applied": False,
+        }
 
     return CapitalPlan(
-        available_cash=round(available_cash, 2),
+        available_cash=round(free_cash, 2),
         deployed_capital=round(deployed, 2),
-        cash_reserve=round(cash_reserve, 2),
-        target_positions=target_positions,
-        max_new_positions=max_new,
-        existing_position_count=n_holdings,
+        cash_reserve=round(dynamic_cash, 2),
+        target_positions=POSITION_CAPACITY,
+        max_new_positions=max_new_positions,
+        existing_position_count=existing_position_count,
         capacity_reason=capacity_reason,
-        cash_reserve_pct=round(cash_reserve_pct, 4),
-        max_single_position_pct=round(max_single_position_pct, 4),
+        cash_reserve_pct=round(dynamic_cash / TOTAL_CAPITAL, 6),
+        max_single_position_pct=MAX_SINGLE_POSITION_PCT,
         risk_mode=risk_mode,
         suggested_buys=suggested_buys,
         position_budget_by_symbol=position_budget_by_symbol,
@@ -458,48 +870,83 @@ def plan_capital(
         notes=notes,
         reasons=reasons,
         dynamic_probe_budget=dynamic_probe_budget,
+        sample_intent=reported_sample_intent,
+        exploration_limits=exploration_limits,
+        audit={
+            "schema_version": "ashare-capital-plan.v2",
+            "capital_authority_id": CAPITAL_POLICY.capital_authority_id,
+            "authority_generation": CAPITAL_POLICY.authority_generation,
+            "cutover_state": CAPITAL_POLICY.cutover_state,
+            "initial_equity_cny": CAPITAL_POLICY.initial_equity_cny,
+            "stock_exposure_limit_cny": STOCK_EXPOSURE_LIMIT_CNY,
+            "deployed_market_value_cny": round(deployed, 2),
+            "pending_buy_reserved_cny": round(pending_total, 2),
+            "committed_stock_exposure_cny": committed_stock_exposure,
+            "planned_stock_exposure_cny": planned_stock_exposure,
+            "dynamic_operating_cash_cny": round(dynamic_cash, 2),
+            "dynamic_operating_cash_components": dynamic_cash_components,
+            "deployable_cash_cny": deployable_cash,
+            "deployed_utilization_rate": round(deployed / TOTAL_CAPITAL, 6),
+            "committed_utilization_rate": round(
+                committed_stock_exposure / TOTAL_CAPITAL, 6
+            ),
+            "planned_stock_utilization_rate": round(
+                planned_stock_exposure / TOTAL_CAPITAL, 6
+            ),
+            "undeployed_capital_cny": undeployed_capital,
+            "planned_undeployed_capital_cny": planned_undeployed_capital,
+            "undeployed_reasons": undeployed_reasons,
+            "position_capacity": POSITION_CAPACITY,
+            "remaining_position_slots": remaining_position_slots,
+            "qualified_candidate_count": qualified_count,
+            "execution_eligible_candidate_count": execution_eligible_count,
+            "candidate_rejections": candidate_rejections,
+            "cash_management": cash_management,
+            "automatic_promotion_enabled": False,
+            "automatic_risk_expansion_enabled": False,
+            "real_trading_enabled": False,
+            "capital_layer": "simulated",
+        },
     )
 
 
-def suggest_reverse_repo(idle_cash: float) -> dict:
-    """Suggest 204001 (1-day reverse repo) for *idle_cash* at close.
+def suggest_reverse_repo(idle_cash: float) -> dict[str, Any]:
+    """Return a non-executing cash-management suggestion.
 
-    Reverse repo is a near-risk-free overnight lending rate available to
-    A-share cash accounts. 204001 settles T+1 and is ideal for funds that
-    would otherwise sit idle overnight.
-
-    Parameters
-    ----------
-    idle_cash
-        RMB amount available for reverse repo at close.
-
-    Returns
-    -------
-    dict
-        Suggestion with code, amount, and instruction.
+    The amount is excluded from stock deployment and stock-alpha attribution.
     """
-    if idle_cash <= 0:
-        return {
-            "code": REVERSE_REPO_CODE,
-            "action": "skip",
-            "amount": 0.0,
-            "reason": "No idle cash available.",
-        }
 
-    # 204001 minimum lot is 1000 RMB (1 lot = 10 units * 100 RMB face)
-    lots = int(idle_cash // 1000)
-    amount = lots * 1000
-
+    cash = max(0.0, _safe_float(idle_cash))
+    lots = int(cash // 1_000)
+    amount = float(lots * 1_000)
     return {
         "code": REVERSE_REPO_CODE,
         "name": "GC-001 1-day reverse repo",
-        "action": "lend" if lots > 0 else "skip",
-        "amount": float(amount),
+        "action": "suggest_lend" if lots > 0 else "skip",
+        "amount": amount,
         "lots": lots,
+        "auto_order": False,
+        "status": "suggestion_only",
+        "attribution_bucket": "cash_management_yield",
+        "excluded_from_stock_alpha": True,
         "instruction": (
-            f"At 14:50 close, place reverse-repo order {REVERSE_REPO_CODE} "
-            f"for {amount:.0f} RMB ({lots} lots) to earn overnight rate."
+            f"Manual review only: consider {REVERSE_REPO_CODE} for {amount:.0f} CNY."
             if lots > 0
-            else f"Idle cash {idle_cash:.0f} below 1000 RMB minimum lot; skip repo."
+            else "Below the 1,000 CNY suggestion threshold."
         ),
     }
+
+
+__all__ = [
+    "CAPITAL_POLICY",
+    "CapitalPlan",
+    "EXPLORATION_DAILY_LOSS_LIMIT_CNY",
+    "EXPLORATION_TOTAL_EXPOSURE_LIMIT_CNY",
+    "MAX_POSITION_VALUE",
+    "MIN_POSITION_VALUE",
+    "POSITION_CAPACITY",
+    "STOCK_EXPOSURE_LIMIT_CNY",
+    "TOTAL_CAPITAL",
+    "plan_capital",
+    "suggest_reverse_repo",
+]

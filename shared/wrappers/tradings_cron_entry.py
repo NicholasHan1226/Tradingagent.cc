@@ -30,6 +30,7 @@ def trade_date() -> str:
     previous calendar day because markets have not opened yet.
     """
     import zoneinfo
+
     try:
         bj_tz = zoneinfo.ZoneInfo("Asia/Shanghai")
     except Exception:
@@ -47,7 +48,9 @@ def ensure_parent(path: Path) -> None:
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     ensure_parent(path)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -83,7 +86,11 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _read_last_jsonl(path: Path) -> dict[str, Any]:
     try:
-        lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        lines = [
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
     except FileNotFoundError:
         return {}
     for line in reversed(lines):
@@ -193,7 +200,11 @@ def _load_position_snapshot(as_of_date: str) -> list[dict[str, Any]]:
         if entry_date and entry_date > as_of:
             continue
         entry = dict(row)
-        entry["market"] = _normalize_market(entry.get("market")) if entry.get("market") else _market_from_symbol(entry.get("ts_code"))
+        entry["market"] = (
+            _normalize_market(entry.get("market"))
+            if entry.get("market")
+            else _market_from_symbol(entry.get("ts_code"))
+        )
         snapshot.append(entry)
     return snapshot
 
@@ -202,17 +213,27 @@ def _load_shadow_trades_for_date(target_date: str) -> list[dict[str, Any]]:
     from shared.review import daily_review as review_driver
 
     rows = []
-    loader = getattr(review_driver, "load_review_trades", review_driver.load_shadow_trades)
+    loader = getattr(
+        review_driver, "load_review_trades", review_driver.load_shadow_trades
+    )
     for row in loader(target_date):
         entry = dict(row)
-        entry["market"] = _normalize_market(entry.get("market")) if entry.get("market") else _market_from_symbol(entry.get("ts_code"))
+        entry["market"] = (
+            _normalize_market(entry.get("market"))
+            if entry.get("market")
+            else _market_from_symbol(entry.get("ts_code"))
+        )
         rows.append(entry)
     return rows
 
 
 def _market_matches(row: dict[str, Any], market: str) -> bool:
     target = _normalize_market(market)
-    row_market = _normalize_market(row.get("market")) if row.get("market") else _market_from_symbol(row.get("ts_code"))
+    row_market = (
+        _normalize_market(row.get("market"))
+        if row.get("market")
+        else _market_from_symbol(row.get("ts_code"))
+    )
     return row_market == target
 
 
@@ -233,7 +254,9 @@ def _position_current_price(row: dict[str, Any]) -> float:
     return 0.0
 
 
-def _positions_for_market(positions: list[dict[str, Any]], market: str) -> list[dict[str, Any]]:
+def _positions_for_market(
+    positions: list[dict[str, Any]], market: str
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in positions:
         entry = dict(row)
@@ -244,7 +267,9 @@ def _positions_for_market(positions: list[dict[str, Any]], market: str) -> list[
     return rows
 
 
-def _latest_strategy_configs(markets: tuple[str, ...] = DAILY_BRIEF_MARKETS) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+def _latest_strategy_configs(
+    markets: tuple[str, ...] = DAILY_BRIEF_MARKETS,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     snapshots: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for market in markets:
@@ -252,25 +277,35 @@ def _latest_strategy_configs(markets: tuple[str, ...] = DAILY_BRIEF_MARKETS) -> 
             adapter = get_market_adapter(market)
             config = adapter.get_strategy_config()
         except Exception as exc:  # noqa: BLE001
-            errors.append({"market": market, "error": f"{exc.__class__.__name__}: {exc}"})
+            errors.append(
+                {"market": market, "error": f"{exc.__class__.__name__}: {exc}"}
+            )
             continue
         if not isinstance(config, dict):
             errors.append({"market": market, "error": "strategy config is not a dict"})
             continue
-        encoded = json.dumps(config, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
-        strategies = config.get("strategies") if isinstance(config.get("strategies"), dict) else {}
-        snapshots.append({
-            "market": _normalize_market(config.get("market") or market),
-            "adapter": adapter.__class__.__name__,
-            "version_hash": hashlib.sha256(encoded).hexdigest()[:16],
-            "strategy_count": len(strategies),
-            "strategies": sorted(strategies),
-            "portfolio_method": config.get("portfolio_method", "unknown"),
-            "regime": config.get("regime", "unknown"),
-            "max_candidates": config.get("max_candidates"),
-            "shadow_capital": config.get("shadow_capital"),
-            "market_rules": config.get("market_rules", {}),
-        })
+        encoded = json.dumps(
+            config, ensure_ascii=False, sort_keys=True, default=str
+        ).encode("utf-8")
+        strategies = (
+            config.get("strategies")
+            if isinstance(config.get("strategies"), dict)
+            else {}
+        )
+        snapshots.append(
+            {
+                "market": _normalize_market(config.get("market") or market),
+                "adapter": adapter.__class__.__name__,
+                "version_hash": hashlib.sha256(encoded).hexdigest()[:16],
+                "strategy_count": len(strategies),
+                "strategies": sorted(strategies),
+                "portfolio_method": config.get("portfolio_method", "unknown"),
+                "regime": config.get("regime", "unknown"),
+                "max_candidates": config.get("max_candidates"),
+                "shadow_capital": config.get("shadow_capital"),
+                "market_rules": config.get("market_rules", {}),
+            }
+        )
     return snapshots, errors
 
 
@@ -300,13 +335,23 @@ def _normalize_capital_layer(value: Any, default: str = "shadow") -> str:
 
 def _preferred_report_layer(layers: list[str] | tuple[str, ...] | set[str]) -> str:
     priority = {"real": 0, "simulated": 1, "shadow": 2}
-    normalized = [_normalize_capital_layer(layer) for layer in layers if str(layer or "").strip()]
-    return sorted(normalized, key=lambda layer: priority.get(layer, 99))[0] if normalized else "shadow"
+    normalized = [
+        _normalize_capital_layer(layer) for layer in layers if str(layer or "").strip()
+    ]
+    return (
+        sorted(normalized, key=lambda layer: priority.get(layer, 99))[0]
+        if normalized
+        else "shadow"
+    )
 
 
 def _trades_for_layer(trades: list[dict[str, Any]], layer: str) -> list[dict[str, Any]]:
     target = _normalize_capital_layer(layer)
-    return [row for row in trades if _normalize_capital_layer(row.get("capital_layer")) == target]
+    return [
+        row
+        for row in trades
+        if _normalize_capital_layer(row.get("capital_layer")) == target
+    ]
 
 
 def _trade_count_by_layer(trades: list[dict[str, Any]]) -> dict[str, int]:
@@ -329,7 +374,10 @@ def _trade_count_fields(trades: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _trade_notional(trades: list[dict[str, Any]]) -> float:
-    return sum(abs(_safe_float(row.get("quantity")) * _safe_float(row.get("price"))) for row in trades)
+    return sum(
+        abs(_safe_float(row.get("quantity")) * _safe_float(row.get("price")))
+        for row in trades
+    )
 
 
 def _pnl_pct_from_trades(pnl_value: Any, trades: list[dict[str, Any]]) -> float:
@@ -349,7 +397,11 @@ def _market_trade_summary(trades: list[dict[str, Any]]) -> dict[str, dict[str, A
             "state": "idle",
         }
     for row in trades:
-        market = _normalize_market(row.get("market")) if row.get("market") else _market_from_symbol(row.get("ts_code"))
+        market = (
+            _normalize_market(row.get("market"))
+            if row.get("market")
+            else _market_from_symbol(row.get("ts_code"))
+        )
         if market not in grouped:
             grouped[market] = {
                 "market": market,
@@ -359,10 +411,14 @@ def _market_trade_summary(trades: list[dict[str, Any]]) -> dict[str, dict[str, A
                 "state": "idle",
             }
         grouped[market]["trade_count"] += 1
-        grouped[market]["pnl"] = round(grouped[market]["pnl"] + _safe_float(row.get("pnl")), 6)
+        grouped[market]["pnl"] = round(
+            grouped[market]["pnl"] + _safe_float(row.get("pnl")), 6
+        )
         grouped[market]["state"] = "active"
     for market, summary in grouped.items():
-        market_trades = [row for row in trades if _normalize_market(row.get("market")) == market]
+        market_trades = [
+            row for row in trades if _normalize_market(row.get("market")) == market
+        ]
         summary["signal_count"] = _count_signals(market_trades)
     return grouped
 
@@ -370,7 +426,11 @@ def _market_trade_summary(trades: list[dict[str, Any]]) -> dict[str, dict[str, A
 def _position_market_summary(positions: list[dict[str, Any]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in positions:
-        market = _normalize_market(row.get("market")) if row.get("market") else _market_from_symbol(row.get("ts_code"))
+        market = (
+            _normalize_market(row.get("market"))
+            if row.get("market")
+            else _market_from_symbol(row.get("ts_code"))
+        )
         counts[market] = counts.get(market, 0) + 1
     return counts
 
@@ -382,7 +442,11 @@ def _shadow_layer_review(review_payload: dict[str, Any]) -> dict[str, Any]:
         preferred = layer_reviews.get(preferred_layer)
         if isinstance(preferred, dict):
             return preferred
-    if _normalize_capital_layer(review_payload.get("capital_layer")) in {"real", "simulated", "shadow"}:
+    if _normalize_capital_layer(review_payload.get("capital_layer")) in {
+        "real",
+        "simulated",
+        "shadow",
+    }:
         return review_payload
     return {}
 
@@ -392,15 +456,17 @@ def _positions_for_template(positions: list[dict[str, Any]]) -> list[dict[str, A
     for row in positions[:12]:
         quantity = int(_safe_float(row.get("quantity")))
         avg_price = _safe_float(row.get("avg_price") or row.get("cost"))
-        rendered.append({
-            "ts_code": row.get("ts_code", ""),
-            "name": row.get("market", ""),
-            "quantity": quantity or "",
-            "cost": avg_price,
-            "last_close": avg_price,
-            "current_price": avg_price,
-            "pnl_pct": _safe_float(row.get("pnl_pct")),
-        })
+        rendered.append(
+            {
+                "ts_code": row.get("ts_code", ""),
+                "name": row.get("market", ""),
+                "quantity": quantity or "",
+                "cost": avg_price,
+                "last_close": avg_price,
+                "current_price": avg_price,
+                "pnl_pct": _safe_float(row.get("pnl_pct")),
+            }
+        )
     return rendered
 
 
@@ -427,11 +493,22 @@ def _market_focus_rows(
     position_counts = _position_market_summary(positions)
     rows: list[dict[str, str]] = []
     for market in DAILY_BRIEF_MARKETS:
-        summary = trade_summary.get(market, {"trade_count": 0, "signal_count": 0, "pnl": 0.0, "state": "idle"})
-        market_review = review_market_map.get(market) if isinstance(review_market_map, dict) else {}
-        pnl_value = _safe_float((market_review or {}).get("pnl"), summary.get("pnl", 0.0))
-        signal_count = int((market_review or {}).get("signal_count", summary.get("signal_count", 0)) or 0)
-        trade_count = int((market_review or {}).get("trades", summary.get("trade_count", 0)) or 0)
+        summary = trade_summary.get(
+            market, {"trade_count": 0, "signal_count": 0, "pnl": 0.0, "state": "idle"}
+        )
+        market_review = (
+            review_market_map.get(market) if isinstance(review_market_map, dict) else {}
+        )
+        pnl_value = _safe_float(
+            (market_review or {}).get("pnl"), summary.get("pnl", 0.0)
+        )
+        signal_count = int(
+            (market_review or {}).get("signal_count", summary.get("signal_count", 0))
+            or 0
+        )
+        trade_count = int(
+            (market_review or {}).get("trades", summary.get("trade_count", 0)) or 0
+        )
         position_count = int(position_counts.get(market, 0))
         direction = "活跃" if trade_count or position_count else "待观察"
         reason = (
@@ -454,10 +531,14 @@ def _build_system_health(
         "daily_log": bool(_read_last_jsonl(SHARED / "review/data/daily_reviews.jsonl")),
     }
     ok_count = sum(1 for value in checks.values() if value)
-    label = "healthy" if ok_count >= 3 else "degraded" if ok_count >= 2 else "cold_start"
+    label = (
+        "healthy" if ok_count >= 3 else "degraded" if ok_count >= 2 else "cold_start"
+    )
     latest_review = nightly_review or midday_review
     latest_session = str(latest_review.get("session") or "--")
-    detail = ", ".join(f"{name}={'ok' if ok else 'missing'}" for name, ok in checks.items())
+    detail = ", ".join(
+        f"{name}={'ok' if ok else 'missing'}" for name, ok in checks.items()
+    )
     return {
         "status": label,
         "ok_count": ok_count,
@@ -475,11 +556,17 @@ def _summary_text(title: str, trade_date_value: str, extra_lines: list[str]) -> 
 def _afternoon_plan_rows(plan: dict[str, Any]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for target in plan.get("reduce", []) or []:
-        rows.append({"action": "减仓", "target": str(target), "condition": "触及止损或动量衰减"})
+        rows.append(
+            {"action": "减仓", "target": str(target), "condition": "触及止损或动量衰减"}
+        )
     for target in plan.get("add", []) or []:
-        rows.append({"action": "加仓", "target": str(target), "condition": "信号未充分兑现"})
+        rows.append(
+            {"action": "加仓", "target": str(target), "condition": "信号未充分兑现"}
+        )
     for target in plan.get("watch", []) or []:
-        rows.append({"action": "观察", "target": str(target), "condition": "等待下午确认"})
+        rows.append(
+            {"action": "观察", "target": str(target), "condition": "等待下午确认"}
+        )
     notes = str(plan.get("notes", "") or "").strip()
     if notes:
         rows.append({"action": "备注", "target": "全市场", "condition": notes})
@@ -489,13 +576,15 @@ def _afternoon_plan_rows(plan: dict[str, Any]) -> list[dict[str, str]]:
 def _trade_rows(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in trades:
-        rows.append({
-            "ts_code": row.get("ts_code", ""),
-            "side": row.get("side", ""),
-            "quantity": _safe_float(row.get("quantity")),
-            "price": _safe_float(row.get("price")),
-            "pnl": _safe_float(row.get("pnl")),
-        })
+        rows.append(
+            {
+                "ts_code": row.get("ts_code", ""),
+                "side": row.get("side", ""),
+                "quantity": _safe_float(row.get("quantity")),
+                "price": _safe_float(row.get("price")),
+                "pnl": _safe_float(row.get("pnl")),
+            }
+        )
     return rows
 
 
@@ -560,16 +649,24 @@ def _market_scope_for_job(job_name: str) -> str | None:
     return mapping.get(lowered)
 
 
-def _load_week_shadow_trades(anchor_trade_date: str, market: str | None = None) -> tuple[list[dict[str, Any]], str, str]:
+def _load_week_shadow_trades(
+    anchor_trade_date: str, market: str | None = None
+) -> tuple[list[dict[str, Any]], str, str]:
     from shared.review import daily_review as review_driver
 
     week_start, week_end = _week_window(anchor_trade_date)
     rows: list[dict[str, Any]] = []
-    loader = getattr(review_driver, "load_review_trades", review_driver.load_shadow_trades)
+    loader = getattr(
+        review_driver, "load_review_trades", review_driver.load_shadow_trades
+    )
     for one_day in _iter_trade_dates(week_start, week_end):
         for row in loader(one_day):
             entry = dict(row)
-            entry["market"] = _normalize_market(entry.get("market")) if entry.get("market") else _market_from_symbol(entry.get("ts_code"))
+            entry["market"] = (
+                _normalize_market(entry.get("market"))
+                if entry.get("market")
+                else _market_from_symbol(entry.get("ts_code"))
+            )
             if market and entry["market"] != market:
                 continue
             rows.append(entry)
@@ -590,44 +687,70 @@ def _weekly_strategy_rows(
     for name, stats in strategy_stats.items():
         notional = grouped_notional.get(name, 0.0)
         pnl = _safe_float(stats.get("pnl"))
-        rows.append({
-            "name": name,
-            "trades": int(stats.get("trades", 0) or 0),
-            "win_rate": _safe_float(stats.get("win_rate")),
-            "pnl": pnl,
-            "pnl_pct": round(pnl / notional, 6) if notional else 0.0,
-        })
-    rows.sort(key=lambda item: (_safe_float(item.get("pnl")), _safe_float(item.get("win_rate"))), reverse=True)
+        rows.append(
+            {
+                "name": name,
+                "trades": int(stats.get("trades", 0) or 0),
+                "win_rate": _safe_float(stats.get("win_rate")),
+                "pnl": pnl,
+                "pnl_pct": round(pnl / notional, 6) if notional else 0.0,
+            }
+        )
+    rows.sort(
+        key=lambda item: (
+            _safe_float(item.get("pnl")),
+            _safe_float(item.get("win_rate")),
+        ),
+        reverse=True,
+    )
     return rows
 
 
 def _weekly_daily_rows(week_trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for trade in week_trades:
-        trade_day = _compact_date(trade.get("trade_date") or trade.get("created_at") or "")
+        trade_day = _compact_date(
+            trade.get("trade_date") or trade.get("created_at") or ""
+        )
         grouped.setdefault(trade_day, []).append(trade)
     rows: list[dict[str, Any]] = []
     for trade_day in sorted(grouped):
         trades = grouped[trade_day]
         pnl = sum(_safe_float(item.get("pnl")) for item in trades)
-        rows.append({
-            "date": _format_trade_day(trade_day),
-            "pnl": round(pnl, 6),
-            "pnl_pct": _pnl_pct_from_trades(pnl, trades),
-        })
+        rows.append(
+            {
+                "date": _format_trade_day(trade_day),
+                "pnl": round(pnl, 6),
+                "pnl_pct": _pnl_pct_from_trades(pnl, trades),
+            }
+        )
     return rows
 
 
 def _weekly_trends(layer_review: dict[str, Any]) -> dict[str, str]:
     dimensions = layer_review.get("dimension_effectiveness") or {}
     ranked = sorted(
-        ((str(name), _safe_float(value)) for name, value in dimensions.items() if str(name) != "unattributed"),
+        (
+            (str(name), _safe_float(value))
+            for name, value in dimensions.items()
+            if str(name) != "unattributed"
+        ),
         key=lambda item: item[1],
         reverse=True,
     )
-    leaders = ", ".join(f"{name}({_safe_float(value):+.2f})" for name, value in ranked[:2]) or "暂无显著强势维度"
-    laggards = ", ".join(f"{name}({_safe_float(value):+.2f})" for name, value in ranked[-2:] if _safe_float(value) < 0) or "暂无显著弱势维度"
-    promotes = len(layer_review.get("strategies_to_promote") or [])
+    leaders = (
+        ", ".join(f"{name}({_safe_float(value):+.2f})" for name, value in ranked[:2])
+        or "暂无显著强势维度"
+    )
+    laggards = (
+        ", ".join(
+            f"{name}({_safe_float(value):+.2f})"
+            for name, value in ranked[-2:]
+            if _safe_float(value) < 0
+        )
+        or "暂无显著弱势维度"
+    )
+    manual_reviews = len(layer_review.get("strategies_for_manual_review") or [])
     eliminates = len(layer_review.get("strategies_to_eliminate") or [])
     adjustments = len(layer_review.get("conditions_to_adjust") or [])
     layer = _normalize_capital_layer(layer_review.get("capital_layer"))
@@ -637,26 +760,47 @@ def _weekly_trends(layer_review: dict[str, Any]) -> dict[str, str]:
             f"周交易 {int(layer_review.get('week_trade_count', 0) or 0)} 笔"
         ),
         "sectors": f"强势维度: {leaders}; 弱势维度: {laggards}",
-        "capital_flow": f"升级候选 {promotes} 个, 降级候选 {eliminates} 个, 条件调参 {adjustments} 项",
+        "capital_flow": (
+            f"人工复核候选 {manual_reviews} 个, 降级候选 {eliminates} 个, "
+            f"条件调参 {adjustments} 项; 自动升级关闭"
+        ),
     }
 
 
-def _weekly_next_week_rows(layer_review: dict[str, Any], strategy_rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _weekly_next_week_rows(
+    layer_review: dict[str, Any], strategy_rows: list[dict[str, Any]]
+) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
-    for name in layer_review.get("strategies_to_promote") or []:
-        rows.append({"focus": f"策略 {name}", "action": "保持正反馈，准备升级到更高权重或模拟盘验证"})
+    for name in layer_review.get("strategies_for_manual_review") or []:
+        rows.append(
+            {
+                "focus": f"策略 {name}",
+                "action": "保持影子/模拟观察，等待人工复核；不得自动升级或扩大风险",
+            }
+        )
     for name in layer_review.get("strategies_to_eliminate") or []:
-        rows.append({"focus": f"策略 {name}", "action": "连续两周偏弱，下周降权或临时下线观察"})
+        rows.append(
+            {"focus": f"策略 {name}", "action": "连续两周偏弱，下周降权或临时下线观察"}
+        )
     for name in layer_review.get("conditions_to_adjust") or []:
-        rows.append({"focus": f"条件 {name}", "action": "条件贡献转负，下周收紧触发或延后执行"})
+        rows.append(
+            {"focus": f"条件 {name}", "action": "条件贡献转负，下周收紧触发或延后执行"}
+        )
     if not rows and strategy_rows:
         leader = strategy_rows[0]
-        rows.append({
-            "focus": f"策略 {leader['name']}",
-            "action": "延续本周最强策略，同时观察是否还能维持正胜率",
-        })
+        rows.append(
+            {
+                "focus": f"策略 {leader['name']}",
+                "action": "延续本周最强策略，同时观察是否还能维持正胜率",
+            }
+        )
     if not rows:
-        rows.append({"focus": "全市场", "action": "本周样本不足，继续积累模拟/影子交易并等待下周复盘"})
+        rows.append(
+            {
+                "focus": "全市场",
+                "action": "本周样本不足，继续积累模拟/影子交易并等待下周复盘",
+            }
+        )
     return rows[:8]
 
 
@@ -667,10 +811,17 @@ def _compose_weekly_email_data(
     layer_review: dict[str, Any],
 ) -> dict[str, Any]:
     total_pnl = _safe_float(layer_review.get("week_pnl"))
-    strategy_rows = _weekly_strategy_rows(layer_review.get("strategy_win_rates") or {}, week_trades)
+    strategy_rows = _weekly_strategy_rows(
+        layer_review.get("strategy_win_rates") or {}, week_trades
+    )
     next_week = _weekly_next_week_rows(layer_review, strategy_rows)
     promote_names = ", ".join(layer_review.get("strategies_to_promote") or []) or "无"
-    eliminate_names = ", ".join(layer_review.get("strategies_to_eliminate") or []) or "无"
+    manual_review_names = (
+        ", ".join(layer_review.get("strategies_for_manual_review") or []) or "无"
+    )
+    eliminate_names = (
+        ", ".join(layer_review.get("strategies_to_eliminate") or []) or "无"
+    )
     data = {
         "week_range": f"{_format_trade_day(week_start)} ~ {_format_trade_day(week_end)}",
         "date": _format_trade_day(week_end),
@@ -688,6 +839,7 @@ def _compose_weekly_email_data(
                 f"周胜率={_safe_float(layer_review.get('week_win_rate')):.2%}",
                 f"周PnL={total_pnl:.4f}",
                 f"升级候选={promote_names}",
+                f"人工复核候选={manual_review_names}",
                 f"降级候选={eliminate_names}",
             ],
         ),
@@ -725,6 +877,7 @@ def _ops_template_fields() -> dict[str, Any]:
         ),
     }
 
+
 def _cron_log_snapshot() -> dict[str, Any]:
     log_dir = SHARED / "logs" / "cron"
     records: list[dict[str, Any]] = []
@@ -742,7 +895,13 @@ def _cron_log_snapshot() -> dict[str, Any]:
     scan_tail_lines = 80
     for path in sorted(log_dir.glob("*.log")):
         try:
-            lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+            lines = [
+                line.strip()
+                for line in path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+                if line.strip()
+            ]
         except FileNotFoundError:
             continue
         if not lines:
@@ -755,7 +914,10 @@ def _cron_log_snapshot() -> dict[str, Any]:
                 failed = False
                 reasons = []
                 continue
-            if any(keyword in lowered for keyword in failure_keywords) and "0 error" not in lowered:
+            if (
+                any(keyword in lowered for keyword in failure_keywords)
+                and "0 error" not in lowered
+            ):
                 failed = True
                 reasons.append(line[:160])
         first_token = lines[-1].split("]", 1)[0].lstrip("[")
@@ -764,13 +926,15 @@ def _cron_log_snapshot() -> dict[str, Any]:
             latest_dt = line_dt
         if failed:
             failed_jobs.append(path.stem)
-        records.append({
-            "job": path.stem,
-            "failed": failed,
-            "line_count": len(lines),
-            "scan_tail_lines": min(len(lines), scan_tail_lines),
-            "sample": reasons[:2] or [lines[-1][:160]],
-        })
+        records.append(
+            {
+                "job": path.stem,
+                "failed": failed,
+                "line_count": len(lines),
+                "scan_tail_lines": min(len(lines), scan_tail_lines),
+                "sample": reasons[:2] or [lines[-1][:160]],
+            }
+        )
     return {
         "jobs_checked": len(records),
         "records": records,
@@ -786,7 +950,9 @@ def _latest_self_heal_snapshot() -> dict[str, Any]:
     return {
         "latest": latest,
         "actions_count": len(actions),
-        "latest_cycle_at": str(latest.get("cycle_at") or latest.get("generated_at") or ""),
+        "latest_cycle_at": str(
+            latest.get("cycle_at") or latest.get("generated_at") or ""
+        ),
         "issues_found": int(latest.get("issues_found", 0) or 0),
         "issues_fixed": int(latest.get("issues_fixed", 0) or 0),
         "issues_escalated": int(latest.get("issues_escalated", 0) or 0),
@@ -801,7 +967,9 @@ def _consecutive_zero_signal_periods(rows: list[dict[str, Any]]) -> int:
             continue
         signal_count = row.get("signal_count")
         if signal_count is None:
-            signal_count = ((row.get("capital_layer_reviews") or {}).get("shadow") or {}).get("signal_count")
+            signal_count = (
+                (row.get("capital_layer_reviews") or {}).get("shadow") or {}
+            ).get("signal_count")
         if signal_count is None:
             continue
         if int(signal_count or 0) > 0:
@@ -826,7 +994,10 @@ def _self_heal_context() -> dict[str, Any]:
         if dt is not None
     ]
     if latest_activity:
-        age_minutes = max(0.0, (datetime.now(timezone.utc) - max(latest_activity)).total_seconds() / 60.0)
+        age_minutes = max(
+            0.0,
+            (datetime.now(timezone.utc) - max(latest_activity)).total_seconds() / 60.0,
+        )
     else:
         age_minutes = 999.0
 
@@ -841,12 +1012,21 @@ def _self_heal_context() -> dict[str, Any]:
         if not weight_pct:
             cost_basis = _safe_float(row.get("cost_basis"))
             if not cost_basis:
-                cost_basis = abs(_safe_float(row.get("quantity")) * _safe_float(row.get("avg_price") or row.get("cost")))
-            weight_pct = round(cost_basis / DAILY_BRIEF_CAPITAL_BASE * 100, 4) if cost_basis else 0.0
-        position_rows.append({
-            "ts_code": row.get("ts_code"),
-            "weight_pct": weight_pct,
-        })
+                cost_basis = abs(
+                    _safe_float(row.get("quantity"))
+                    * _safe_float(row.get("avg_price") or row.get("cost"))
+                )
+            weight_pct = (
+                round(cost_basis / DAILY_BRIEF_CAPITAL_BASE * 100, 4)
+                if cost_basis
+                else 0.0
+            )
+        position_rows.append(
+            {
+                "ts_code": row.get("ts_code"),
+                "weight_pct": weight_pct,
+            }
+        )
     return {
         "data_age_minutes": round(age_minutes, 2),
         "pipeline_errors": pipeline_errors,
@@ -858,7 +1038,9 @@ def _self_heal_context() -> dict[str, Any]:
     }
 
 
-def _system_health_email_data(self_heal_snapshot: dict[str, Any], cron_snapshot: dict[str, Any]) -> dict[str, Any]:
+def _system_health_email_data(
+    self_heal_snapshot: dict[str, Any], cron_snapshot: dict[str, Any]
+) -> dict[str, Any]:
     failed_jobs = cron_snapshot.get("failed_jobs") or []
     issues_found = int(self_heal_snapshot.get("issues_found", 0) or 0)
     issues_escalated = int(self_heal_snapshot.get("issues_escalated", 0) or 0)
@@ -883,7 +1065,9 @@ def _system_health_email_data(self_heal_snapshot: dict[str, Any], cron_snapshot:
         "collection": {
             "status": collection_status,
             "sources": f"self_heal_actions={actions_count}, cron_logs={int(cron_snapshot.get('jobs_checked', 0) or 0)}",
-            "last_update": self_heal_snapshot.get("latest_cycle_at") or cron_snapshot.get("latest_run") or "--",
+            "last_update": self_heal_snapshot.get("latest_cycle_at")
+            or cron_snapshot.get("latest_run")
+            or "--",
             "gaps": ", ".join(gaps) if gaps else "无",
         },
         "pipeline": {
@@ -953,11 +1137,17 @@ def _tomorrow_plan_rows(layer_review: dict[str, Any]) -> list[dict[str, str]]:
     next_day = layer_review.get("next_day_plan") or {}
     rows = _comparison_rows(layer_review)
     if next_day.get("tighten_stops"):
-        rows.append({"action": "收紧止损", "target": "组合", "reason": "胜率未达阶段目标"})
+        rows.append(
+            {"action": "收紧止损", "target": "组合", "reason": "胜率未达阶段目标"}
+        )
     for name in next_day.get("reduce_dimensions", []) or []:
-        rows.append({"action": "降权维度", "target": str(name), "reason": "当日归因为负"})
+        rows.append(
+            {"action": "降权维度", "target": str(name), "reason": "当日归因为负"}
+        )
     for name in next_day.get("reduce_strategies", []) or []:
-        rows.append({"action": "降权策略", "target": str(name), "reason": "当日归因为负"})
+        rows.append(
+            {"action": "降权策略", "target": str(name), "reason": "当日归因为负"}
+        )
     notes = str(next_day.get("notes", "") or "").strip()
     if notes:
         rows.append({"action": "备注", "target": "下日", "reason": notes})
@@ -988,12 +1178,23 @@ def _compose_morning_email_data(
         },
         "sector_focus": market_rows,
         "strategy": [
-            {"name": "系统健康", "action": health["status"], "target": health["detail"]},
-            {"name": "今日信号", "action": str(signal_count), "target": f"review trades={len(trades)}"},
+            {
+                "name": "系统健康",
+                "action": health["status"],
+                "target": health["detail"],
+            },
+            {
+                "name": "今日信号",
+                "action": str(signal_count),
+                "target": f"review trades={len(trades)}",
+            },
             {
                 "name": "最近复盘",
                 "action": health["latest_review_session"],
-                "target": str((latest_layer_review.get("next_day_plan") or {}).get("notes") or "--"),
+                "target": str(
+                    (latest_layer_review.get("next_day_plan") or {}).get("notes")
+                    or "--"
+                ),
             },
         ],
         "summary": _summary_text(
@@ -1015,7 +1216,9 @@ def _compose_midday_email_data(
 ) -> dict[str, Any]:
     morning_trades = [row for row in trades if _is_morning_trade(row)]
     layer_review = _shadow_layer_review(review_payload)
-    morning_pnl = _safe_float(layer_review.get("realized_pnl"), _safe_float(layer_review.get("pnl")))
+    morning_pnl = _safe_float(
+        layer_review.get("realized_pnl"), _safe_float(layer_review.get("pnl"))
+    )
     win_rate = _safe_float(layer_review.get("win_rate"))
     return {
         "trade_date": trade_date_value,
@@ -1024,7 +1227,9 @@ def _compose_midday_email_data(
         "morning_pnl_pct": _pnl_pct_from_trades(morning_pnl, morning_trades),
         "morning_trades": _trade_rows(morning_trades),
         "holdings": _positions_for_template(positions),
-        "afternoon_plan": _afternoon_plan_rows(layer_review.get("afternoon_plan") or {}),
+        "afternoon_plan": _afternoon_plan_rows(
+            layer_review.get("afternoon_plan") or {}
+        ),
         "summary": _summary_text(
             "午盘复盘",
             trade_date_value,
@@ -1105,6 +1310,7 @@ class StubMarketAdapter:
 def _build_ashare_adapter() -> Any:
     try:
         from Ashare.adapter import AshareAdapter
+
         return AshareAdapter()
     except Exception:
         return StubMarketAdapter("Ashare")
@@ -1113,6 +1319,7 @@ def _build_ashare_adapter() -> Any:
 def _build_crypto_adapter() -> Any:
     try:
         from Crypto.adapter import CryptoAdapter
+
         return CryptoAdapter()
     except Exception:
         return StubMarketAdapter("Crypto")
@@ -1121,6 +1328,7 @@ def _build_crypto_adapter() -> Any:
 def _build_us_adapter() -> Any:
     try:
         from US.adapter import USAdapter
+
         return USAdapter()
     except Exception:
         return StubMarketAdapter("US")
@@ -1159,7 +1367,13 @@ def get_market_adapter(market: str) -> Any:
 
 
 def _pm_price_to_close(row: dict[str, Any]) -> float:
-    for key in ("yes_price", "last_price", "price", "implied_probability", "probability"):
+    for key in (
+        "yes_price",
+        "last_price",
+        "price",
+        "implied_probability",
+        "probability",
+    ):
         value = row.get(key)
         if value in (None, ""):
             continue
@@ -1181,7 +1395,9 @@ class PMReaderBridge:
     def __getattr__(self, name: str) -> Any:
         return getattr(self.reader, name)
 
-    def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, Any]]:
+    def get_bars_daily(
+        self, market: str, symbol: str, start: object = None, end: object = None
+    ) -> list[dict[str, Any]]:
         if str(market).lower() != "pm":
             return self.reader.get_bars_daily(market, symbol, start, end)
         rows = self.reader.get_pm_prices(symbol, start, end)
@@ -1201,7 +1417,9 @@ def _pm_score_stock(symbol: str, date: str, data_reader: Any = None) -> dict[str
     return score_market(symbol, date, data_reader=data_reader)
 
 
-def _crypto_score_stock(symbol: str, date: str, data_reader: Any = None) -> dict[str, Any]:
+def _crypto_score_stock(
+    symbol: str, date: str, data_reader: Any = None
+) -> dict[str, Any]:
     from shared.screening.six_dimension_scorer import score_stock
 
     return score_stock("crypto", symbol, data_reader, date)
@@ -1237,7 +1455,9 @@ def _us_orchestrator_deps() -> Any:
     return deps
 
 
-def run_market_watch(job_name: str, market: str, output_rel: str, phase: str) -> dict[str, Any]:
+def run_market_watch(
+    job_name: str, market: str, output_rel: str, phase: str
+) -> dict[str, Any]:
     adapter = get_market_adapter(market)
     config = adapter.get_strategy_config()
     current_trade_date = trade_date()
@@ -1276,13 +1496,19 @@ def run_shadow_orchestrator(job_name: str, market: str) -> dict[str, Any]:
     elif str(market).upper() == "US" or adapter_market == "us":
         deps = _us_orchestrator_deps()
     result = run_shadow_loop(adapter, trade_date(), reader, deps=deps)
-    result.update({"job": job_name, "state": result.get("state", "ok"), "generated_at": now_iso()})
+    result.update(
+        {"job": job_name, "state": result.get("state", "ok"), "generated_at": now_iso()}
+    )
     append_jsonl(SHARED / "logs/orchestrator_shadow_runs.jsonl", result)
     return result
 
 
 def _hydrate_ashare_no_trade_explanation(result: dict[str, Any]) -> dict[str, Any]:
-    explanation = result.get("no_trade_explanation") if isinstance(result.get("no_trade_explanation"), dict) else {}
+    explanation = (
+        result.get("no_trade_explanation")
+        if isinstance(result.get("no_trade_explanation"), dict)
+        else {}
+    )
     hydrated = dict(explanation)
     for key, fallback in (
         ("candidate_decision_trace", []),
@@ -1316,7 +1542,9 @@ def run_sim_orchestrator(job_name: str, market: str) -> dict[str, Any]:
     elif str(market).upper() == "US" or adapter_market == "us":
         deps = _us_orchestrator_deps()
     result = run_sim_loop(adapter, trade_date(), reader, deps=deps)
-    result.update({"job": job_name, "state": result.get("state", "ok"), "generated_at": now_iso()})
+    result.update(
+        {"job": job_name, "state": result.get("state", "ok"), "generated_at": now_iso()}
+    )
     append_jsonl(SHARED / "logs/orchestrator_sim_runs.jsonl", result)
     if str(market).lower() == "ashare" and int(result.get("filled_count") or 0) <= 0:
         no_trade_explanation = _hydrate_ashare_no_trade_explanation(result)
@@ -1344,7 +1572,9 @@ def run_all_market_trading_signals() -> dict[str, Any]:
     ]
     payload = {
         "job": "job_trading_signals",
-        "state": "degraded" if any(item.get("state") == "degraded" for item in results) else "ok",
+        "state": "degraded"
+        if any(item.get("state") == "degraded" for item in results)
+        else "ok",
         "generated_at": now_iso(),
         "capital_layer": "shadow",
         "results": results,
@@ -1359,20 +1589,26 @@ def run_daily_brief_morning() -> dict[str, Any]:
     positions = _load_position_snapshot(current_trade_date)
     midday_review = _read_last_jsonl(SHARED / "review/daily/midday_review.jsonl")
     nightly_review = _read_last_jsonl(SHARED / "review/daily/daily_brief.jsonl")
-    email_data = _compose_morning_email_data(current_trade_date, trades, positions, midday_review, nightly_review)
+    email_data = _compose_morning_email_data(
+        current_trade_date, trades, positions, midday_review, nightly_review
+    )
     email_result = send_template_email("pre_market_plan", email_data)
     health = _build_system_health(trades, midday_review, nightly_review)
     payload = {
         "job": "job_daily_brief_morning",
         "phase": "morning",
-        "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
+        "state": "email_sent"
+        if email_result.get("status") == "sent"
+        else "saved_local",
         "generated_at": now_iso(),
         "trade_date": current_trade_date,
         "capital_layer": _preferred_report_layer(_trade_count_by_layer(trades).keys()),
         "signal_count": _count_signals(trades),
         **_trade_count_fields(trades),
         "system_health": health,
-        "market_statuses": _market_focus_rows(trades, positions, _shadow_layer_review(nightly_review or midday_review)),
+        "market_statuses": _market_focus_rows(
+            trades, positions, _shadow_layer_review(nightly_review or midday_review)
+        ),
         "email_notification": email_result,
         "email_data": email_data,
     }
@@ -1387,19 +1623,28 @@ def run_daily_brief_day() -> dict[str, Any]:
     trades = _load_shadow_trades_for_date(current_trade_date)
     positions = _load_position_snapshot(current_trade_date)
     result = review_driver.run_daily_review(current_trade_date, session="lunch")
-    email_data = _compose_midday_email_data(current_trade_date, trades, positions, result)
+    email_data = _compose_midday_email_data(
+        current_trade_date, trades, positions, result
+    )
     email_result = send_template_email("midday_review", email_data)
-    result.update({
-        "job": "job_daily_brief_day",
-        "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
-        "phase": "lunch",
-        "generated_at": now_iso(),
-        "trade_date": current_trade_date,
-        "capital_layer": result.get("capital_layer", _preferred_report_layer(_trade_count_by_layer(trades).keys())),
-        **_trade_count_fields(trades),
-        "email_notification": email_result,
-        "email_data": email_data,
-    })
+    result.update(
+        {
+            "job": "job_daily_brief_day",
+            "state": "email_sent"
+            if email_result.get("status") == "sent"
+            else "saved_local",
+            "phase": "lunch",
+            "generated_at": now_iso(),
+            "trade_date": current_trade_date,
+            "capital_layer": result.get(
+                "capital_layer",
+                _preferred_report_layer(_trade_count_by_layer(trades).keys()),
+            ),
+            **_trade_count_fields(trades),
+            "email_notification": email_result,
+            "email_data": email_data,
+        }
+    )
     append_jsonl(SHARED / "review/daily/midday_review.jsonl", result)
     return result
 
@@ -1411,19 +1656,28 @@ def run_daily_brief_night() -> dict[str, Any]:
     trades = _load_shadow_trades_for_date(current_trade_date)
     positions = _load_position_snapshot(current_trade_date)
     result = review_driver.run_daily_review(current_trade_date, session="close")
-    email_data = _compose_nightly_email_data(current_trade_date, trades, positions, result)
+    email_data = _compose_nightly_email_data(
+        current_trade_date, trades, positions, result
+    )
     email_result = send_template_email("daily_report", email_data)
-    result.update({
-        "job": "job_daily_brief_night",
-        "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
-        "phase": "close",
-        "generated_at": now_iso(),
-        "trade_date": current_trade_date,
-        "capital_layer": result.get("capital_layer", _preferred_report_layer(_trade_count_by_layer(trades).keys())),
-        **_trade_count_fields(trades),
-        "email_notification": email_result,
-        "email_data": email_data,
-    })
+    result.update(
+        {
+            "job": "job_daily_brief_night",
+            "state": "email_sent"
+            if email_result.get("status") == "sent"
+            else "saved_local",
+            "phase": "close",
+            "generated_at": now_iso(),
+            "trade_date": current_trade_date,
+            "capital_layer": result.get(
+                "capital_layer",
+                _preferred_report_layer(_trade_count_by_layer(trades).keys()),
+            ),
+            **_trade_count_fields(trades),
+            "email_notification": email_result,
+            "email_data": email_data,
+        }
+    )
     append_jsonl(SHARED / "review/daily/daily_brief.jsonl", result)
     return result
 
@@ -1455,7 +1709,9 @@ def run_signal_sweep_expired() -> dict[str, Any]:
         "execution": sweeps.get("execution", {}),
         "shadow": sweeps.get("shadow", {}),
         "status": "error" if state == "degraded" else "ok",
-        "expired_count": int((sweeps.get("execution") or {}).get("expired_count", 0) or 0)
+        "expired_count": int(
+            (sweeps.get("execution") or {}).get("expired_count", 0) or 0
+        )
         + int((sweeps.get("shadow") or {}).get("expired_count", 0) or 0),
     }
     append_jsonl(SHARED / "logs/cron/signal_sweep_expired.jsonl", result)
@@ -1467,13 +1723,21 @@ def run_self_heal() -> dict[str, Any]:
 
     signal_sweep = run_signal_sweep_expired()
     result = run_heal_cycle(_self_heal_context())
-    state = "critical" if int(result.get("issues_escalated", 0) or 0) else "healed" if int(result.get("issues_found", 0) or 0) else "healthy"
-    result.update({
-        "job": "job_self_heal",
-        "state": state,
-        "generated_at": now_iso(),
-        "signal_sweep_expired": signal_sweep,
-    })
+    state = (
+        "critical"
+        if int(result.get("issues_escalated", 0) or 0)
+        else "healed"
+        if int(result.get("issues_found", 0) or 0)
+        else "healthy"
+    )
+    result.update(
+        {
+            "job": "job_self_heal",
+            "state": state,
+            "generated_at": now_iso(),
+            "signal_sweep_expired": signal_sweep,
+        }
+    )
     append_jsonl(SHARED / "review/heal/self_heal_actions.jsonl", result)
     return result
 
@@ -1491,15 +1755,19 @@ def run_self_heal_night() -> dict[str, Any]:
         "position_cap_pct": 12,
     }
     result = run_heal_cycle(context, thresholds=thresholds)
-    result.update({
-        "job": "job_self_heal_night",
-        "state": "degraded" if int(result.get("issues_escalated", 0) or 0) else "ok",
-        "generated_at": now_iso(),
-        "mode": "deep_night",
-        "context": context,
-        "thresholds": thresholds,
-        "signal_sweep_expired": signal_sweep,
-    })
+    result.update(
+        {
+            "job": "job_self_heal_night",
+            "state": "degraded"
+            if int(result.get("issues_escalated", 0) or 0)
+            else "ok",
+            "generated_at": now_iso(),
+            "mode": "deep_night",
+            "context": context,
+            "thresholds": thresholds,
+            "signal_sweep_expired": signal_sweep,
+        }
+    )
     write_json(SHARED / "review/heal/heal_report.json", result)
     return result
 
@@ -1508,25 +1776,35 @@ def run_weekly_review(job_name: str, output_rel: str) -> dict[str, Any]:
     from shared.review.weekly_review import review_week
 
     market_scope = _market_scope_for_job(job_name)
-    week_trades, week_start, week_end = _load_week_shadow_trades(trade_date(), market=market_scope)
+    week_trades, week_start, week_end = _load_week_shadow_trades(
+        trade_date(), market=market_scope
+    )
     result = review_week(week_trades)
-    layer_key = _preferred_report_layer((result.get("capital_layer_reviews") or {}).keys())
+    layer_key = _preferred_report_layer(
+        (result.get("capital_layer_reviews") or {}).keys()
+    )
     layer_review = (result.get("capital_layer_reviews") or {}).get(layer_key) or {}
     layer_trades = _trades_for_layer(week_trades, layer_key) or week_trades
-    email_data = _compose_weekly_email_data(week_start, week_end, layer_trades, layer_review)
+    email_data = _compose_weekly_email_data(
+        week_start, week_end, layer_trades, layer_review
+    )
     email_result = send_template_email("weekly_report", email_data)
-    result.update({
-        "job": job_name,
-        "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
-        "generated_at": now_iso(),
-        "capital_layer": layer_key,
-        "market": market_scope or "all",
-        "week_start": week_start,
-        "week_end": week_end,
-        **_trade_count_fields(week_trades),
-        "email_notification": email_result,
-        "email_data": email_data,
-    })
+    result.update(
+        {
+            "job": job_name,
+            "state": "email_sent"
+            if email_result.get("status") == "sent"
+            else "saved_local",
+            "generated_at": now_iso(),
+            "capital_layer": layer_key,
+            "market": market_scope or "all",
+            "week_start": week_start,
+            "week_end": week_end,
+            **_trade_count_fields(week_trades),
+            "email_notification": email_result,
+            "email_data": email_data,
+        }
+    )
     write_json(SHARED / output_rel, result)
     return result
 
@@ -1561,7 +1839,9 @@ def run_strategy_version() -> dict[str, Any]:
         "trade_date": trade_date(),
         "capital_layer": "shadow",
         "market_count": len(snapshots),
-        "strategy_count": sum(int(item.get("strategy_count", 0) or 0) for item in snapshots),
+        "strategy_count": sum(
+            int(item.get("strategy_count", 0) or 0) for item in snapshots
+        ),
         "versions": snapshots,
         "errors": errors,
     }
@@ -1579,7 +1859,12 @@ def run_pm_risk() -> dict[str, Any]:
         positions = position_ledger.get_positions(capital_layer="all")
     except Exception as exc:  # noqa: BLE001
         positions = []
-        errors.append({"source": "position_ledger.get_positions", "error": f"{exc.__class__.__name__}: {exc}"})
+        errors.append(
+            {
+                "source": "position_ledger.get_positions",
+                "error": f"{exc.__class__.__name__}: {exc}",
+            }
+        )
     pm_positions = _positions_for_market(positions, "PM")
     current_prices = {
         str(row.get("ts_code")): _position_current_price(row)
@@ -1587,7 +1872,11 @@ def run_pm_risk() -> dict[str, Any]:
         if row.get("ts_code") and _position_current_price(row) > 0
     }
     total_notional = sum(_position_notional(row) for row in pm_positions)
-    total_exposure = min(1.0, total_notional / DAILY_BRIEF_CAPITAL_BASE) if DAILY_BRIEF_CAPITAL_BASE else 0.0
+    total_exposure = (
+        min(1.0, total_notional / DAILY_BRIEF_CAPITAL_BASE)
+        if DAILY_BRIEF_CAPITAL_BASE
+        else 0.0
+    )
     portfolio = {
         "positions": pm_positions,
         "current_prices": current_prices,
@@ -1598,12 +1887,16 @@ def run_pm_risk() -> dict[str, Any]:
         "regime": "pm_probability_market",
     }
     try:
-        position_signals = check_positions(pm_positions, current_prices, regime="pm_probability_market")
+        position_signals = check_positions(
+            pm_positions, current_prices, regime="pm_probability_market"
+        )
         action_signals = filter_actions(position_signals)
     except Exception as exc:  # noqa: BLE001
         position_signals = []
         action_signals = []
-        errors.append({"source": "position_monitor", "error": f"{exc.__class__.__name__}: {exc}"})
+        errors.append(
+            {"source": "position_monitor", "error": f"{exc.__class__.__name__}: {exc}"}
+        )
     market_data = {
         "market_change_pct": 0.0,
         "policy_shock": None,
@@ -1613,7 +1906,9 @@ def run_pm_risk() -> dict[str, Any]:
         black_swan = check_black_swan(market_data)
     except Exception as exc:  # noqa: BLE001
         black_swan = {}
-        errors.append({"source": "black_swan", "error": f"{exc.__class__.__name__}: {exc}"})
+        errors.append(
+            {"source": "black_swan", "error": f"{exc.__class__.__name__}: {exc}"}
+        )
     payload = {
         "job": "job_pm_risk",
         "state": _state_from_errors(errors),
@@ -1637,7 +1932,8 @@ def run_stress_test() -> dict[str, Any]:
 
     positions = _load_position_snapshot(trade_date())
     shadow_positions = [
-        row for row in positions
+        row
+        for row in positions
         if str(row.get("capital_layer") or "shadow").strip().lower() == "shadow"
     ]
     results: list[dict[str, Any]] = []
@@ -1649,7 +1945,9 @@ def run_stress_test() -> dict[str, Any]:
         try:
             per_symbol = stress_test(ts_code)
         except Exception as exc:  # noqa: BLE001
-            errors.append({"ts_code": ts_code, "error": f"{exc.__class__.__name__}: {exc}"})
+            errors.append(
+                {"ts_code": ts_code, "error": f"{exc.__class__.__name__}: {exc}"}
+            )
             continue
         for item in per_symbol:
             enriched = dict(item)
@@ -1684,14 +1982,26 @@ def run_auto_position() -> dict[str, Any]:
         }
     except Exception as exc:  # noqa: BLE001
         capital_balances = {}
-        errors.append({"source": "capital_ledger.get_capital_balance", "error": f"{exc.__class__.__name__}: {exc}"})
+        errors.append(
+            {
+                "source": "capital_ledger.get_capital_balance",
+                "error": f"{exc.__class__.__name__}: {exc}",
+            }
+        )
     try:
         positions = position_ledger.get_positions(capital_layer="all")
     except Exception as exc:  # noqa: BLE001
         positions = []
-        errors.append({"source": "position_ledger.get_positions", "error": f"{exc.__class__.__name__}: {exc}"})
+        errors.append(
+            {
+                "source": "position_ledger.get_positions",
+                "error": f"{exc.__class__.__name__}: {exc}",
+            }
+        )
 
-    shadow_balance = capital_balances.get("shadow", {}) if isinstance(capital_balances, dict) else {}
+    shadow_balance = (
+        capital_balances.get("shadow", {}) if isinstance(capital_balances, dict) else {}
+    )
     capital_base = max(
         _safe_float(shadow_balance.get("total_inflow")),
         _safe_float(shadow_balance.get("balance")),
@@ -1704,14 +2014,16 @@ def run_auto_position() -> dict[str, Any]:
             continue
         notional = _position_notional(row)
         current_weight = notional / capital_base if capital_base else 0.0
-        candidates.append({
-            "ts_code": ts_code,
-            "belief_score": max(0.10, min(0.90, 0.70 - current_weight)),
-            "volatility": _safe_float(row.get("volatility"), 0.20),
-            "capital_layer": row.get("capital_layer", "shadow"),
-            "current_weight": round(current_weight, 6),
-            "current_notional": round(notional, 2),
-        })
+        candidates.append(
+            {
+                "ts_code": ts_code,
+                "belief_score": max(0.10, min(0.90, 0.70 - current_weight)),
+                "volatility": _safe_float(row.get("volatility"), 0.20),
+                "capital_layer": row.get("capital_layer", "shadow"),
+                "current_weight": round(current_weight, 6),
+                "current_notional": round(notional, 2),
+            }
+        )
     target_positions = size_positions_batch(candidates, regime="unknown")
     by_code = {item["ts_code"]: item for item in candidates}
     plan_rows: list[dict[str, Any]] = []
@@ -1726,15 +2038,17 @@ def run_auto_position() -> dict[str, Any]:
             action = "consider_reduce_shadow"
         else:
             action = "hold"
-        plan_rows.append({
-            **target,
-            "capital_layer": source.get("capital_layer", "shadow"),
-            "current_weight": current_weight,
-            "target_weight": target_weight,
-            "delta_weight": delta,
-            "target_notional": round(target_weight * capital_base, 2),
-            "action": action,
-        })
+        plan_rows.append(
+            {
+                **target,
+                "capital_layer": source.get("capital_layer", "shadow"),
+                "current_weight": current_weight,
+                "target_weight": target_weight,
+                "delta_weight": delta,
+                "target_notional": round(target_weight * capital_base, 2),
+                "action": action,
+            }
+        )
     payload = {
         "job": "job_auto_position",
         "state": _state_from_errors(errors),
@@ -1758,7 +2072,9 @@ def run_alert() -> dict[str, Any]:
     email_result = send_template_email("system_health", email_data, channel="system")
     result = {
         "job": "job_alert",
-        "state": "email_sent" if email_result.get("status") == "sent" else "saved_local",
+        "state": "email_sent"
+        if email_result.get("status") == "sent"
+        else "saved_local",
         "generated_at": now_iso(),
         "trade_date": trade_date(),
         "self_heal": self_heal_snapshot,
@@ -1770,12 +2086,15 @@ def run_alert() -> dict[str, Any]:
     return result
 
 
-def _market_review_snapshot(job_name: str, market: str, output_rel: str) -> dict[str, Any]:
+def _market_review_snapshot(
+    job_name: str, market: str, output_rel: str
+) -> dict[str, Any]:
     from shared.review.attribution import attribute
 
     current_trade_date = trade_date()
     trades = [
-        row for row in _load_shadow_trades_for_date(current_trade_date)
+        row
+        for row in _load_shadow_trades_for_date(current_trade_date)
         if _market_matches(row, market)
     ]
     payload = {
@@ -1806,8 +2125,12 @@ def run_pm_optimize() -> dict[str, Any]:
         "strategy_version": config.get("version_hash", ""),
         "strategy_count": strategy_count,
         "params": {
-            "portfolio_method": config.get("portfolio_method", "pm_probability_weighted"),
-            "max_positions": (config.get("market_rules") or {}).get("max_positions", 20),
+            "portfolio_method": config.get(
+                "portfolio_method", "pm_probability_weighted"
+            ),
+            "max_positions": (config.get("market_rules") or {}).get(
+                "max_positions", 20
+            ),
             "max_candidates": config.get("max_candidates", 20),
             "shadow_capital": config.get("shadow_capital", default_sim_capital("pm")),
         },
@@ -1831,9 +2154,13 @@ def run_pm_research_probability() -> dict[str, Any]:
 def run_pm_promote() -> dict[str, Any]:
     from shared.review.weekly_review import review_week
 
-    week_trades, week_start, week_end = _load_week_shadow_trades(trade_date(), market="PM")
+    week_trades, week_start, week_end = _load_week_shadow_trades(
+        trade_date(), market="PM"
+    )
     result = review_week(week_trades)
-    layer_key = _preferred_report_layer((result.get("capital_layer_reviews") or {}).keys())
+    layer_key = _preferred_report_layer(
+        (result.get("capital_layer_reviews") or {}).keys()
+    )
     layer_review = (result.get("capital_layer_reviews") or {}).get(layer_key) or {}
     payload = {
         "job": "job_pm_promote",
@@ -1845,6 +2172,9 @@ def run_pm_promote() -> dict[str, Any]:
         "week_end": week_end,
         **_trade_count_fields(week_trades),
         "strategies_to_promote": layer_review.get("strategies_to_promote", []),
+        "strategies_for_manual_review": layer_review.get(
+            "strategies_for_manual_review", []
+        ),
         "strategies_to_eliminate": layer_review.get("strategies_to_eliminate", []),
         "review": result,
     }
@@ -1871,7 +2201,9 @@ def run_gate_review(job_name: str, output_rel: str, phase: str) -> dict[str, Any
     total_notional = sum(_position_notional(row) for row in positions)
     portfolio = {
         "positions": positions,
-        "total_exposure": min(1.0, total_notional / DAILY_BRIEF_CAPITAL_BASE) if DAILY_BRIEF_CAPITAL_BASE else 0.0,
+        "total_exposure": min(1.0, total_notional / DAILY_BRIEF_CAPITAL_BASE)
+        if DAILY_BRIEF_CAPITAL_BASE
+        else 0.0,
         "daily_pnl_pct": 0.0,
     }
     decisions: list[dict[str, Any]] = []
@@ -1881,12 +2213,16 @@ def run_gate_review(job_name: str, output_rel: str, phase: str) -> dict[str, Any
             decision = check(order, portfolio)
         except Exception as exc:  # noqa: BLE001
             decision = {"approved": False, "error": f"{exc.__class__.__name__}: {exc}"}
-            errors.append({"order_id": str(order.get("order_id", "")), "error": decision["error"]})
-        decisions.append({
-            "order_id": order.get("order_id", ""),
-            "ts_code": order.get("ts_code", ""),
-            "decision": decision,
-        })
+            errors.append(
+                {"order_id": str(order.get("order_id", "")), "error": decision["error"]}
+            )
+        decisions.append(
+            {
+                "order_id": order.get("order_id", ""),
+                "ts_code": order.get("ts_code", ""),
+                "decision": decision,
+            }
+        )
     payload = {
         "job": job_name,
         "state": _state_from_errors(errors),
@@ -1931,11 +2267,15 @@ def run_cross_market_review() -> dict[str, Any]:
 def run_backtest_report() -> dict[str, Any]:
     daily_rows = _read_jsonl_dicts(SHARED / "review/data/daily_reviews.jsonl")
     review_rows = [
-        row for row in daily_rows
-        if _normalize_capital_layer(row.get("capital_layer")) in {"shadow", "simulated", "real"}
+        row
+        for row in daily_rows
+        if _normalize_capital_layer(row.get("capital_layer"))
+        in {"shadow", "simulated", "real"}
     ]
     recent_rows = review_rows[-20:]
-    layer_key = _preferred_report_layer([row.get("capital_layer", "shadow") for row in recent_rows])
+    layer_key = _preferred_report_layer(
+        [row.get("capital_layer", "shadow") for row in recent_rows]
+    )
     payload = {
         "job": "job_backtest_report",
         "state": "ok",
@@ -1944,9 +2284,12 @@ def run_backtest_report() -> dict[str, Any]:
         "sample_count": len(recent_rows),
         "total_pnl": round(sum(_safe_float(row.get("pnl")) for row in recent_rows), 6),
         "avg_hit_rate": round(
-            sum(_safe_float(row.get("hit_rate")) for row in recent_rows) / len(recent_rows),
+            sum(_safe_float(row.get("hit_rate")) for row in recent_rows)
+            / len(recent_rows),
             6,
-        ) if recent_rows else 0.0,
+        )
+        if recent_rows
+        else 0.0,
         "recent_reviews": recent_rows,
     }
     write_json(SHARED / "review/backtest/backtest_report.json", payload)
@@ -1955,7 +2298,9 @@ def run_backtest_report() -> dict[str, Any]:
 
 def run_research_report() -> dict[str, Any]:
     versions = _read_jsonl_dicts(SHARED / "review/strategies/strategy_version.jsonl")
-    attribution = _read_last_jsonl(SHARED / "review/attribution/strategy_attribution.jsonl")
+    attribution = _read_last_jsonl(
+        SHARED / "review/attribution/strategy_attribution.jsonl"
+    )
     payload = {
         "job": "job_research_report",
         "state": "ok",
@@ -1965,14 +2310,17 @@ def run_research_report() -> dict[str, Any]:
         "latest_strategy_version": versions[-1] if versions else {},
         "latest_attribution": attribution,
     }
-    write_markdown(SHARED / "review/research/research_report.md", "job_research_report", payload)
+    write_markdown(
+        SHARED / "review/research/research_report.md", "job_research_report", payload
+    )
     return payload
 
 
 def run_pm_report() -> dict[str, Any]:
     positions = _positions_for_market(_load_position_snapshot(trade_date()), "PM")
     trades = [
-        row for row in _load_shadow_trades_for_date(trade_date())
+        row
+        for row in _load_shadow_trades_for_date(trade_date())
         if _market_matches(row, "PM")
     ]
     risk = run_pm_risk()
@@ -2024,13 +2372,19 @@ def _build_email_notify_payload() -> tuple[str, str, str]:
         if not payload:
             lines.append(f"{title}: 暂无产物")
             html_sections.append(
-                f"<div style=\"margin-bottom:16px;\"><h3>{title}</h3><p>暂无产物</p></div>"
+                f'<div style="margin-bottom:16px;"><h3>{title}</h3><p>暂无产物</p></div>'
             )
             continue
 
         layer_reviews = payload.get("capital_layer_reviews") or {}
-        layer_key = _preferred_report_layer(layer_reviews.keys()) if isinstance(layer_reviews, dict) else "shadow"
-        selected = layer_reviews.get(layer_key) if isinstance(layer_reviews, dict) else {}
+        layer_key = (
+            _preferred_report_layer(layer_reviews.keys())
+            if isinstance(layer_reviews, dict)
+            else "shadow"
+        )
+        selected = (
+            layer_reviews.get(layer_key) if isinstance(layer_reviews, dict) else {}
+        )
         if not isinstance(selected, dict):
             selected = {}
         summary_bits = [
@@ -2043,28 +2397,29 @@ def _build_email_notify_payload() -> tuple[str, str, str]:
         ]
         lines.append(f"{title}: " + ", ".join(summary_bits))
         html_sections.append(
-            "".join([
-                "<div style=\"margin-bottom:16px;\">",
-                f"<h3>{title}</h3>",
-                "<ul>",
-                f"<li>状态: {payload.get('state', '--')}</li>",
-                f"<li>资金层: {layer_key}</li>",
-                f"<li>信号数: {selected.get('signal_count', '--')}</li>",
-                f"<li>命中率: {_format_pct(selected.get('hit_rate'))}</li>",
-                f"<li>盈亏: {selected.get('pnl', '--')}</li>",
-                f"<li>持仓数: {selected.get('position_count', '--')}</li>",
-                "</ul>",
-                "</div>",
-            ])
+            "".join(
+                [
+                    '<div style="margin-bottom:16px;">',
+                    f"<h3>{title}</h3>",
+                    "<ul>",
+                    f"<li>状态: {payload.get('state', '--')}</li>",
+                    f"<li>资金层: {layer_key}</li>",
+                    f"<li>信号数: {selected.get('signal_count', '--')}</li>",
+                    f"<li>命中率: {_format_pct(selected.get('hit_rate'))}</li>",
+                    f"<li>盈亏: {selected.get('pnl', '--')}</li>",
+                    f"<li>持仓数: {selected.get('position_count', '--')}</li>",
+                    "</ul>",
+                    "</div>",
+                ]
+            )
         )
-
 
     ops = _latest_ops_report()
     if ops:
         ops_totals = (ops.get("queue_summary") or {}).get("totals") or {}
         ops_receipts = ops.get("receipt_integrity") or {}
-        ops_shadow = ((ops.get("shadow_queue_summary") or {}).get("totals") or {})
-        ops_failures = ((ops.get("failure_summary") or {}).get("by_category") or {})
+        ops_shadow = (ops.get("shadow_queue_summary") or {}).get("totals") or {}
+        ops_failures = (ops.get("failure_summary") or {}).get("by_category") or {}
         ops_line = (
             f"运维报告: status={ops.get('overall_status', '--')}, "
             f"pending={ops_totals.get('pending', 0)}, running={ops_totals.get('running', 0)}, "
@@ -2074,18 +2429,20 @@ def _build_email_notify_payload() -> tuple[str, str, str]:
         )
         lines.append(ops_line)
         html_sections.append(
-            "".join([
-                "<div style=\"margin-bottom:16px;\">",
-                "<h3>运维报告</h3>",
-                "<ul>",
-                f"<li>状态: {ops.get('overall_status', '--')}</li>",
-                f"<li>执行队列: pending={ops_totals.get('pending', 0)}, running={ops_totals.get('running', 0)}, filled={ops_totals.get('filled', 0)}, failed={ops_totals.get('failed', 0)}, expired={ops_totals.get('expired', 0)}</li>",
-                f"<li>影子队列: pending={ops_shadow.get('pending', 0)}, running={ops_shadow.get('running', 0)}, filled={ops_shadow.get('filled', 0)}, failed={ops_shadow.get('failed', 0)}, expired={ops_shadow.get('expired', 0)}</li>",
-                f"<li>回执: total={ops_receipts.get('total', 0)}, signed={ops_receipts.get('signed', 0)}, unsigned={ops_receipts.get('unsigned', 0)}, invalid={ops_receipts.get('invalid', 0)}</li>",
-                f"<li>失败分类: {json.dumps(ops_failures, ensure_ascii=False)}</li>",
-                "</ul>",
-                "</div>",
-            ])
+            "".join(
+                [
+                    '<div style="margin-bottom:16px;">',
+                    "<h3>运维报告</h3>",
+                    "<ul>",
+                    f"<li>状态: {ops.get('overall_status', '--')}</li>",
+                    f"<li>执行队列: pending={ops_totals.get('pending', 0)}, running={ops_totals.get('running', 0)}, filled={ops_totals.get('filled', 0)}, failed={ops_totals.get('failed', 0)}, expired={ops_totals.get('expired', 0)}</li>",
+                    f"<li>影子队列: pending={ops_shadow.get('pending', 0)}, running={ops_shadow.get('running', 0)}, filled={ops_shadow.get('filled', 0)}, failed={ops_shadow.get('failed', 0)}, expired={ops_shadow.get('expired', 0)}</li>",
+                    f"<li>回执: total={ops_receipts.get('total', 0)}, signed={ops_receipts.get('signed', 0)}, unsigned={ops_receipts.get('unsigned', 0)}, invalid={ops_receipts.get('invalid', 0)}</li>",
+                    f"<li>失败分类: {json.dumps(ops_failures, ensure_ascii=False)}</li>",
+                    "</ul>",
+                    "</div>",
+                ]
+            )
         )
 
     body = "\n".join(lines)
@@ -2105,12 +2462,17 @@ def run_ashare_night_calibration() -> dict[str, Any]:
     sending a duplicate daily report email.
     """
     current_trade_date = trade_date()
-    attribution = run_attribution("job_ashare_night_attribution", "review/attribution/ashare_night_attribution.jsonl")
+    attribution = run_attribution(
+        "job_ashare_night_attribution",
+        "review/attribution/ashare_night_attribution.jsonl",
+    )
     strategy_version = run_strategy_version()
     research = run_research_report()
     backtest = run_backtest_report()
     latest_daily = _read_last_jsonl(SHARED / "review/daily/daily_brief.jsonl")
-    closing_scan_path = os.environ.get("MARKETGRAPH_CLOSING_CANDIDATES_PATH", "").strip()
+    closing_scan_path = os.environ.get(
+        "MARKETGRAPH_CLOSING_CANDIDATES_PATH", ""
+    ).strip()
     closing_scan = _read_json(Path(closing_scan_path)) if closing_scan_path else {}
     payload = {
         "job": "job_ashare_night_calibration",
@@ -2129,13 +2491,21 @@ def run_ashare_night_calibration() -> dict[str, Any]:
     }
     append_jsonl(SHARED / "review/daily/night_calibration.jsonl", payload)
     write_json(SHARED / "review/daily/night_calibration_latest.json", payload)
-    write_markdown(SHARED / "review/daily/night_calibration.md", "job_ashare_night_calibration", payload)
+    write_markdown(
+        SHARED / "review/daily/night_calibration.md",
+        "job_ashare_night_calibration",
+        payload,
+    )
     return payload
 
 
-
 def run_ops_report() -> dict[str, Any]:
-    from shared.runtime_test.ops_report import build_ops_report, send_alert_if_needed, write_report
+    from shared.runtime_test.ops_report import (
+        build_ops_report,
+        send_alert_if_needed,
+        write_report,
+    )
+
     report = build_ops_report()
     paths = write_report(report)
     email = send_alert_if_needed(report, "fail")
@@ -2167,12 +2537,14 @@ def run_email_notify() -> dict[str, Any]:
         html_body,
         channel="trading",
     )
-    result.update({
-        "job": "job_email_notify",
-        "generated_at": now_iso(),
-        "trade_date": trade_date(),
-        "state": "sent" if result.get("status") == "sent" else "saved_local",
-    })
+    result.update(
+        {
+            "job": "job_email_notify",
+            "generated_at": now_iso(),
+            "trade_date": trade_date(),
+            "state": "sent" if result.get("status") == "sent" else "saved_local",
+        }
+    )
     return result
 
 
@@ -2184,7 +2556,9 @@ JOB_HANDLERS: dict[str, Any] = {
         "signals/premarket_signals.jsonl",
         "premarket",
     ),
-    "job_ashare_sim_exec": lambda: run_sim_orchestrator("job_ashare_sim_exec", "Ashare"),
+    "job_ashare_sim_exec": lambda: run_sim_orchestrator(
+        "job_ashare_sim_exec", "Ashare"
+    ),
     "job_us_premarket": lambda: run_market_watch(
         "job_us_premarket",
         "US",
@@ -2208,7 +2582,9 @@ JOB_HANDLERS: dict[str, Any] = {
         "review/us/us_signal_review.jsonl",
     ),
     "job_crypto_daily": lambda: run_shadow_orchestrator("job_crypto_daily", "Crypto"),
-    "job_crypto_weekly": lambda: run_weekly_review("job_crypto_weekly", "review/crypto/crypto_weekly_review.json"),
+    "job_crypto_weekly": lambda: run_weekly_review(
+        "job_crypto_weekly", "review/crypto/crypto_weekly_review.json"
+    ),
     "job_pm_forward": lambda: run_market_watch(
         "job_pm_forward",
         "PM",
@@ -2225,16 +2601,28 @@ JOB_HANDLERS: dict[str, Any] = {
     "job_self_heal": run_self_heal,
     "job_self_heal_night": run_self_heal_night,
     "job_signal_sweep_expired": run_signal_sweep_expired,
-    "job_weekly_review": lambda: run_weekly_review("job_weekly_review", "review/weekly/weekly_review.json"),
-    "job_us_weekly": lambda: run_weekly_review("job_us_weekly", "review/us/us_weekly_review.json"),
-    "job_strategy_attribution": lambda: run_attribution("job_strategy_attribution", "review/attribution/strategy_attribution.jsonl"),
-    "job_factor_attribution": lambda: run_attribution("job_factor_attribution", "review/attribution/factor_attribution.jsonl"),
+    "job_weekly_review": lambda: run_weekly_review(
+        "job_weekly_review", "review/weekly/weekly_review.json"
+    ),
+    "job_us_weekly": lambda: run_weekly_review(
+        "job_us_weekly", "review/us/us_weekly_review.json"
+    ),
+    "job_strategy_attribution": lambda: run_attribution(
+        "job_strategy_attribution", "review/attribution/strategy_attribution.jsonl"
+    ),
+    "job_factor_attribution": lambda: run_attribution(
+        "job_factor_attribution", "review/attribution/factor_attribution.jsonl"
+    ),
     "job_strategy_version": run_strategy_version,
     "job_pm_risk": run_pm_risk,
     "job_stress_test": run_stress_test,
     "job_auto_position": run_auto_position,
-    "job_gate_review_night": lambda: run_gate_review("job_gate_review_night", "risk/gate/gate_decisions.jsonl", "night"),
-    "job_gate_review_day": lambda: run_gate_review("job_gate_review_day", "risk/gate/gate_intraday.jsonl", "day"),
+    "job_gate_review_night": lambda: run_gate_review(
+        "job_gate_review_night", "risk/gate/gate_decisions.jsonl", "night"
+    ),
+    "job_gate_review_day": lambda: run_gate_review(
+        "job_gate_review_day", "risk/gate/gate_intraday.jsonl", "day"
+    ),
     "job_cross_market_review": run_cross_market_review,
     "job_backtest_report": run_backtest_report,
     "job_research_report": run_research_report,

@@ -51,26 +51,11 @@ fi
 
 sharedsignals_source_gate "${JOB_NAME}" "${PHASE}" "ashare"
 
-refresh_portfolio_evolution() {
-    local output=""
-    local exit_code=0
-    set +e
-    output="$(PYTHONPATH="${TRADINGAGENT_ROOT}" "${PYTHON_BIN}" -m Ashare.portfolio_evolution --write --pretty 2>&1)"
-    exit_code=$?
-    set -e
-    if (( exit_code == 0 )); then
-        printf '[%s] %s portfolio_evolution_refreshed=%q\n' "$(timestamp)" "${JOB_NAME}" "${output}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
-    else
-        printf '[%s] %s portfolio_evolution_refresh_failed exit_code=%s detail=%q action=continue\n' "$(timestamp)" "${JOB_NAME}" "${exit_code}" "${output}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
-    fi
-}
-
 if [[ "${HERMES_ENABLED}" != "1" ]]; then
     export ASHARE_SIM_HERMES_ENABLED=0
     export ASHARE_SIM_WEBHOOK_ENABLED=0
     printf '[%s] %s hermes_reserved action=server_local_sim_only webhook=disabled\n' "$(timestamp)" "${JOB_NAME}" >> "${TRADINGS_CRON_LOG_ROOT}/${JOB_NAME}.log"
     run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" "${PYTHON_BIN}" "${ENTRYPOINT}" --job "${JOB_NAME}"
-    refresh_portfolio_evolution
     exit 0
 fi
 
@@ -124,4 +109,3 @@ else
 fi
 
 run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" "${PYTHON_BIN}" "${ENTRYPOINT}" --job "${JOB_NAME}"
-refresh_portfolio_evolution

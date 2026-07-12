@@ -24,7 +24,8 @@ from shared.screening.fundamental_analyzer import FundamentalAnalyzer
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REVIEW_ROOT = TRADINGAGENT_ROOT / "shared" / "review"
-ACTIVE_MARKETS = ("crypto", "us", "pm", "ashare")
+ACTIVE_MARKETS = ("crypto", "us", "pm")
+RETIRED_AUTHORITY_MARKETS = frozenset({"ashare", "cn_futures"})
 PIPELINE_STAGES = (
     ("pre_market_scan", "07:30", "load candidates"),
     ("research_phase", "09:00", "fundamental and multi-perspective research"),
@@ -44,8 +45,24 @@ def _today_compact() -> str:
 
 def _normalize_market(market: Any) -> str:
     value = str(market or "").strip().lower()
-    aliases = {"crypto": "crypto", "us": "us", "pm": "pm", "ashare": "ashare", "a": "ashare"}
+    aliases = {
+        "crypto": "crypto",
+        "us": "us",
+        "pm": "pm",
+        "ashare": "ashare",
+        "a": "ashare",
+    }
     return aliases.get(value, value)
+
+
+def _require_pipeline_market(market: Any) -> str:
+    market_key = _normalize_market(market)
+    if market_key in RETIRED_AUTHORITY_MARKETS:
+        raise RuntimeError(
+            f"{market_key} auto_pipeline authority is retired; "
+            "use the market-specific single-account orchestrator and SampleJournal/KPI review"
+        )
+    return market_key
 
 
 def _unwrap_rows(rows: Any) -> list[dict[str, Any]]:
@@ -78,14 +95,24 @@ def _candidate_symbol(candidate: dict[str, Any]) -> str:
 
 
 def _candidate_price(candidate: dict[str, Any], market: str) -> float:
-    for key in ("price", "latest_price", "close", "last_price", "market_price", "yes_price", "probability"):
+    for key in (
+        "price",
+        "latest_price",
+        "close",
+        "last_price",
+        "market_price",
+        "yes_price",
+        "probability",
+    ):
         try:
             value = float(candidate.get(key))
         except (TypeError, ValueError):
             continue
         if value > 0 and value == value:
             return value
-    return 0.5 if market == "pm" else 0.0 if _normalize_market(market) == "ashare" else 1.0
+    return (
+        0.5 if market == "pm" else 0.0 if _normalize_market(market) == "ashare" else 1.0
+    )
 
 
 def _symbol_variants(symbol: Any) -> list[str]:
@@ -117,7 +144,9 @@ def _safe_call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     try:
         return fn(*args, **kwargs)
     except TypeError:
-        filtered = {key: value for key, value in kwargs.items() if key in {"as_of", "market"}}
+        filtered = {
+            key: value for key, value in kwargs.items() if key in {"as_of", "market"}
+        }
         try:
             return fn(*args, **filtered)
         except TypeError:
@@ -128,11 +157,17 @@ class LocalStyleSimulator:
     """No-broker simulator used when a market has no dedicated simulator."""
 
     def __init__(self, market: str) -> None:
-        self.market = _normalize_market(market)
+        self.market = _require_pipeline_market(market)
 
-    def simulate(self, order: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
-        reject_real_execution_payload(order, context=f"LocalStyleSimulator.{self.market}.order")
-        reject_real_execution_payload(account, context=f"LocalStyleSimulator.{self.market}.account")
+    def simulate(
+        self, order: dict[str, Any], account: dict[str, Any]
+    ) -> dict[str, Any]:
+        reject_real_execution_payload(
+            order, context=f"LocalStyleSimulator.{self.market}.order"
+        )
+        reject_real_execution_payload(
+            account, context=f"LocalStyleSimulator.{self.market}.account"
+        )
         quantity = float(order.get("quantity", order.get("qty", 0.0)) or 0.0)
         price = float(order.get("price", order.get("limit_price", 0.0)) or 0.0)
         if quantity <= 0 or price <= 0:
@@ -148,14 +183,22 @@ class LocalStyleSimulator:
 
         side = str(order.get("side") or "buy").strip().lower()
         snapshot = dict(order.get("market_snapshot") or {})
-        has_bar_liquidity = any(order.get(key) not in (None, "") for key in ("bar_volume", "volume", "vol"))
+        has_bar_liquidity = any(
+            order.get(key) not in (None, "") for key in ("bar_volume", "volume", "vol")
+        )
         default_size = None if has_bar_liquidity else quantity
         if side == "buy":
             snapshot.setdefault("ask_price", order.get("ask_price", price))
             ask_size = order.get("ask_size", default_size)
             if ask_size is not None:
                 snapshot.setdefault("ask_size", ask_size)
-            snapshot.setdefault("cash_available", account.get("cash_available", account.get("cash", account.get("initial_capital"))))
+            snapshot.setdefault(
+                "cash_available",
+                account.get(
+                    "cash_available",
+                    account.get("cash", account.get("initial_capital")),
+                ),
+            )
         else:
             snapshot.setdefault("bid_price", order.get("bid_price", price))
             bid_size = order.get("bid_size", default_size)
@@ -186,7 +229,12 @@ class LocalStyleSimulator:
             if order.get(key) not in (None, ""):
                 snapshot.setdefault(key, order.get(key))
         sim_order = SimOrder(
-            symbol=str(order.get("symbol") or order.get("ts_code") or order.get("market_id") or ""),
+            symbol=str(
+                order.get("symbol")
+                or order.get("ts_code")
+                or order.get("market_id")
+                or ""
+            ),
             side=side,
             quantity=quantity,
             limit_price=price,
@@ -202,7 +250,9 @@ class LocalStyleSimulator:
         return {
             "status": status,
             "market": self.market,
-            "symbol": order.get("symbol") or order.get("ts_code") or order.get("market_id"),
+            "symbol": order.get("symbol")
+            or order.get("ts_code")
+            or order.get("market_id"),
             "side": side,
             "quantity": quantity,
             "filled_qty": record.filled_qty,
@@ -259,21 +309,30 @@ class AutoPipeline:
     ) -> None:
         self.reader = reader or TradingagentDataReader()
         self.decision_engine = decision_engine or DecisionEngine(market="crypto")
-        self.fundamental_analyzer = fundamental_analyzer or FundamentalAnalyzer(reader=self.reader)
-        self.perspective_analyzer = perspective_analyzer or MultiPerspectiveAnalyzer(reader=self.reader)
+        self.fundamental_analyzer = fundamental_analyzer or FundamentalAnalyzer(
+            reader=self.reader
+        )
+        self.perspective_analyzer = perspective_analyzer or MultiPerspectiveAnalyzer(
+            reader=self.reader
+        )
         self.simulator_factory = simulator_factory or default_simulator_factory
         self.style_runner_cls = style_runner_cls
         self.evolution_fn = evolution_fn
-        self.review_root = Path(review_root) if review_root is not None else DEFAULT_REVIEW_ROOT
+        self.review_root = (
+            Path(review_root) if review_root is not None else DEFAULT_REVIEW_ROOT
+        )
         self.styles_dir_by_market = {
             _normalize_market(key): Path(value)
             for key, value in (styles_dir_by_market or {}).items()
         }
         self.max_candidates = max(1, int(max_candidates))
         self._initial_capital_override = initial_capital
-        self.initial_capital = float(initial_capital) if initial_capital is not None else default_sim_capital("ashare")
+        self.initial_capital = (
+            float(initial_capital) if initial_capital is not None else None
+        )
 
     def _initial_capital_for_market(self, market: str) -> float:
+        _require_pipeline_market(market)
         if self._initial_capital_override is not None:
             return float(self._initial_capital_override)
         return _default_initial_capital(market)
@@ -286,11 +345,17 @@ class AutoPipeline:
         stage: str = "all",
     ) -> dict[str, Any]:
         trade_date = trade_date or _today_compact()
-        market_keys = tuple(_normalize_market(market) for market in (markets or ACTIVE_MARKETS))
+        market_keys = tuple(
+            _require_pipeline_market(market) for market in (markets or ACTIVE_MARKETS)
+        )
         if stage == "daily_review":
-            market_results = [self._run_review_only(market, trade_date) for market in market_keys]
+            market_results = [
+                self._run_review_only(market, trade_date) for market in market_keys
+            ]
         else:
-            market_results = [self.run_market(market, trade_date=trade_date) for market in market_keys]
+            market_results = [
+                self.run_market(market, trade_date=trade_date) for market in market_keys
+            ]
         result = {
             "job": "auto_pipeline",
             "trade_date": trade_date,
@@ -307,7 +372,7 @@ class AutoPipeline:
         return result
 
     def run_market(self, market: str, *, trade_date: str) -> dict[str, Any]:
-        market_key = _normalize_market(market)
+        market_key = _require_pipeline_market(market)
         candidates = self.load_universe(market_key, trade_date)
         research = self.run_research(market_key, candidates, trade_date)
         decisions = self.run_decisions(market_key, research, trade_date)
@@ -351,7 +416,7 @@ class AutoPipeline:
         }
 
     def load_universe(self, market: str, trade_date: str) -> list[dict[str, Any]]:
-        market = _normalize_market(market)
+        market = _require_pipeline_market(market)
         if market == "ashare":
             return self._load_ashare_universe(trade_date)
 
@@ -376,7 +441,12 @@ class AutoPipeline:
         if not raw:
             assets_method = getattr(self.reader, "get_assets", None)
             if callable(assets_method):
-                for market_name in (market, market.capitalize(), market.upper(), "Ashare" if market == "ashare" else market):
+                for market_name in (
+                    market,
+                    market.capitalize(),
+                    market.upper(),
+                    "Ashare" if market == "ashare" else market,
+                ):
                     raw = assets_method(market_name)
                     if raw:
                         break
@@ -389,7 +459,9 @@ class AutoPipeline:
             if not symbol:
                 continue
             try:
-                reject_real_execution_payload(item, context=f"AutoPipeline.{market}.candidate")
+                reject_real_execution_payload(
+                    item, context=f"AutoPipeline.{market}.candidate"
+                )
             except RuntimeError:
                 unsafe_count += 1
                 continue
@@ -416,7 +488,11 @@ class AutoPipeline:
                     "direct_execution": False,
                 }
             )
-        return [item for item in candidates if item.get("symbol") != "__unsafe_candidates_skipped__"]
+        return [
+            item
+            for item in candidates
+            if item.get("symbol") != "__unsafe_candidates_skipped__"
+        ]
 
     def _load_ashare_universe(self, trade_date: str) -> list[dict[str, Any]]:
         try:
@@ -446,7 +522,11 @@ class AutoPipeline:
 
         candidates: list[dict[str, Any]] = []
         for symbol in symbols:
-            asset = dict(assets_by_symbol.get(symbol) or assets_by_symbol.get(str(symbol).split(".", 1)[0]) or {})
+            asset = dict(
+                assets_by_symbol.get(symbol)
+                or assets_by_symbol.get(str(symbol).split(".", 1)[0])
+                or {}
+            )
             price = self._latest_ashare_price(symbol, trade_date)
             if price <= 0:
                 continue
@@ -464,7 +544,9 @@ class AutoPipeline:
                 "candidate_source": "ashare_adapter_filtered_universe",
             }
             try:
-                reject_real_execution_payload(item, context="AutoPipeline.ashare.candidate")
+                reject_real_execution_payload(
+                    item, context="AutoPipeline.ashare.candidate"
+                )
             except RuntimeError:
                 continue
             candidates.append(item)
@@ -480,7 +562,9 @@ class AutoPipeline:
                     rows: Any = []
                     for interval in ("5min", "5m"):
                         try:
-                            rows = get_intraday(market_name, variant, interval, trade_date, trade_date)
+                            rows = get_intraday(
+                                market_name, variant, interval, trade_date, trade_date
+                            )
                         except TypeError:
                             continue
                         except Exception:
@@ -490,7 +574,10 @@ class AutoPipeline:
                     for row in reversed(rows or []):
                         if not isinstance(row, dict):
                             continue
-                        price = _safe_float(row.get("close", row.get("last_price", row.get("price"))), 0.0)
+                        price = _safe_float(
+                            row.get("close", row.get("last_price", row.get("price"))),
+                            0.0,
+                        )
                         if price > 0:
                             return price
 
@@ -516,19 +603,28 @@ class AutoPipeline:
         candidates: list[dict[str, Any]],
         trade_date: str,
     ) -> list[dict[str, Any]]:
+        market = _require_pipeline_market(market)
         reports: list[dict[str, Any]] = []
         for candidate in candidates:
             symbol = _candidate_symbol(candidate)
             if not symbol:
                 continue
             try:
-                fundamental = _safe_call(self.fundamental_analyzer.analyze, symbol, as_of=trade_date)
+                fundamental = _safe_call(
+                    self.fundamental_analyzer.analyze, symbol, as_of=trade_date
+                )
             except Exception as exc:
                 fundamental = {
                     "ts_code": symbol,
                     "as_of": trade_date,
                     "scores": {"composite": 50.0},
-                    "red_flags": [{"flag": "fundamental_error", "severity": "medium", "detail": str(exc)}],
+                    "red_flags": [
+                        {
+                            "flag": "fundamental_error",
+                            "severity": "medium",
+                            "detail": str(exc),
+                        }
+                    ],
                     "capital_layer": "research_only",
                 }
             try:
@@ -539,13 +635,24 @@ class AutoPipeline:
                     fundamental_report=fundamental,
                 )
             except TypeError:
-                perspective = _safe_call(self.perspective_analyzer.analyze, symbol, as_of=trade_date, market=market)
+                perspective = _safe_call(
+                    self.perspective_analyzer.analyze,
+                    symbol,
+                    as_of=trade_date,
+                    market=market,
+                )
             except Exception as exc:
                 perspective = {
                     "ts_code": symbol,
                     "as_of": trade_date,
-                    "consensus": {"score": 50.0, "direction": "neutral", "conviction_level": "low"},
-                    "disagreement_areas": [{"area": "research_error", "detail": str(exc)}],
+                    "consensus": {
+                        "score": 50.0,
+                        "direction": "neutral",
+                        "conviction_level": "low",
+                    },
+                    "disagreement_areas": [
+                        {"area": "research_error", "detail": str(exc)}
+                    ],
                     "capital_layer": "research_only",
                 }
             reports.append(
@@ -568,6 +675,7 @@ class AutoPipeline:
         research: list[dict[str, Any]],
         trade_date: str,
     ) -> list[dict[str, Any]]:
+        market = _require_pipeline_market(market)
         decisions: list[dict[str, Any]] = []
         for report in research:
             decision = self._decide(report, market, trade_date)
@@ -575,7 +683,9 @@ class AutoPipeline:
             decision["account_type"] = "simulated"
             decision["real_execution"] = False
             decision["direct_execution"] = False
-            reject_real_execution_payload(decision, context=f"AutoPipeline.{market}.decision")
+            reject_real_execution_payload(
+                decision, context=f"AutoPipeline.{market}.decision"
+            )
             decisions.append(decision)
         return decisions
 
@@ -585,6 +695,7 @@ class AutoPipeline:
         decisions: list[dict[str, Any]],
         trade_date: str,
     ) -> dict[str, Any]:
+        market = _require_pipeline_market(market)
         capital = self._initial_capital_for_market(market)
         try:
             portfolio = self.decision_engine.portfolio_rebalance(
@@ -594,13 +705,21 @@ class AutoPipeline:
                 capital=capital,
             )
         except TypeError:
-            portfolio = self._fallback_portfolio_rebalance(market, decisions, trade_date)
+            portfolio = self._fallback_portfolio_rebalance(
+                market, decisions, trade_date
+            )
         if not isinstance(portfolio.get("positions"), list):
-            portfolio = self._fallback_portfolio_rebalance(market, decisions, trade_date)
-        reject_real_execution_payload(portfolio, context=f"AutoPipeline.{market}.portfolio")
+            portfolio = self._fallback_portfolio_rebalance(
+                market, decisions, trade_date
+            )
+        reject_real_execution_payload(
+            portfolio, context=f"AutoPipeline.{market}.portfolio"
+        )
         return portfolio
 
-    def _decide(self, report: dict[str, Any], market: str, trade_date: str) -> dict[str, Any]:
+    def _decide(
+        self, report: dict[str, Any], market: str, trade_date: str
+    ) -> dict[str, Any]:
         try:
             result = self.decision_engine.decide(
                 candidate=report["candidate"],
@@ -614,26 +733,52 @@ class AutoPipeline:
                 self._legacy_fundamental(report),
                 self._legacy_perspectives(report),
                 self._legacy_risk(report),
-                {"capital": self._initial_capital_for_market(market), "market": market, "as_of": trade_date},
+                {
+                    "capital": self._initial_capital_for_market(market),
+                    "market": market,
+                    "as_of": trade_date,
+                },
             )
         return self._decision_dict(result, report, market)
 
-    def _decision_dict(self, result: Any, report: dict[str, Any], market: str) -> dict[str, Any]:
+    def _decision_dict(
+        self, result: Any, report: dict[str, Any], market: str
+    ) -> dict[str, Any]:
         data = asdict(result) if is_dataclass(result) else dict(result or {})
         candidate = dict(report.get("candidate") or {})
-        symbol = str(data.get("symbol") or candidate.get("symbol") or candidate.get("ts_code") or "").strip()
+        symbol = str(
+            data.get("symbol")
+            or candidate.get("symbol")
+            or candidate.get("ts_code")
+            or ""
+        ).strip()
         raw_action = str(data.get("action") or data.get("decision") or "watch").lower()
-        action = "buy" if raw_action in {"buy", "long"} else "sell" if raw_action in {"sell", "short", "reduce"} else "watch"
+        action = (
+            "buy"
+            if raw_action in {"buy", "long"}
+            else "sell"
+            if raw_action in {"sell", "short", "reduce"}
+            else "watch"
+        )
         confidence = _safe_float(data.get("confidence", data.get("belief_score")), 0.5)
         conviction = self._conviction_value(data.get("conviction"), confidence)
-        price = _safe_float(candidate.get("price", candidate.get("latest_price", candidate.get("close"))), _candidate_price(candidate, market))
+        price = _safe_float(
+            candidate.get(
+                "price", candidate.get("latest_price", candidate.get("close"))
+            ),
+            _candidate_price(candidate, market),
+        )
         return {
             **data,
             "market": market,
             "symbol": symbol,
             "ts_code": symbol,
             "action": action,
-            "side": "buy" if action == "buy" else "sell" if action == "sell" else "watch",
+            "side": "buy"
+            if action == "buy"
+            else "sell"
+            if action == "sell"
+            else "watch",
             "price": price,
             "belief_score": confidence,
             "conviction": conviction,
@@ -647,7 +792,9 @@ class AutoPipeline:
     @staticmethod
     def _conviction_value(value: Any, confidence: float) -> float:
         if isinstance(value, str):
-            return {"high": 0.8, "medium": 0.65, "low": 0.5}.get(value.lower(), confidence)
+            return {"high": 0.8, "medium": 0.65, "low": 0.5}.get(
+                value.lower(), confidence
+            )
         parsed = _safe_float(value, 0.0)
         return parsed if parsed > 0 else confidence
 
@@ -655,8 +802,15 @@ class AutoPipeline:
     def _legacy_fundamental(report: dict[str, Any]) -> dict[str, Any]:
         fundamental = dict(report.get("fundamental") or {})
         candidate = dict(report.get("candidate") or {})
-        scores = fundamental.get("scores") if isinstance(fundamental.get("scores"), dict) else {}
-        fundamental.setdefault("symbol", candidate.get("symbol") or candidate.get("ts_code") or report.get("symbol"))
+        scores = (
+            fundamental.get("scores")
+            if isinstance(fundamental.get("scores"), dict)
+            else {}
+        )
+        fundamental.setdefault(
+            "symbol",
+            candidate.get("symbol") or candidate.get("ts_code") or report.get("symbol"),
+        )
         fundamental.setdefault("composite_score", scores.get("composite", 50.0))
         return fundamental
 
@@ -665,7 +819,11 @@ class AutoPipeline:
         perspective = dict(report.get("multi_perspective") or {})
         if any(key in perspective for key in ("bull", "bear", "macro", "technical")):
             return perspective
-        consensus = perspective.get("consensus") if isinstance(perspective.get("consensus"), dict) else {}
+        consensus = (
+            perspective.get("consensus")
+            if isinstance(perspective.get("consensus"), dict)
+            else {}
+        )
         score = _safe_float(consensus.get("score"), 50.0)
         return {
             "bull": {"score": score},
@@ -677,19 +835,49 @@ class AutoPipeline:
     @staticmethod
     def _legacy_risk(report: dict[str, Any]) -> dict[str, Any]:
         fundamental = dict(report.get("fundamental") or {})
-        red_flags = fundamental.get("red_flags") if isinstance(fundamental.get("red_flags"), list) else []
+        red_flags = (
+            fundamental.get("red_flags")
+            if isinstance(fundamental.get("red_flags"), list)
+            else []
+        )
         return {"risk_score": min(90.0, 20.0 + 10.0 * len(red_flags))}
 
-    def _fallback_portfolio_rebalance(self, market: str, decisions: list[dict[str, Any]], trade_date: str) -> dict[str, Any]:
+    def _fallback_portfolio_rebalance(
+        self, market: str, decisions: list[dict[str, Any]], trade_date: str
+    ) -> dict[str, Any]:
+        market = _require_pipeline_market(market)
         capital = self._initial_capital_for_market(market)
-        buys = [decision for decision in decisions if str(decision.get("action") or "").lower() == "buy"]
-        buys.sort(key=lambda row: _safe_float(row.get("belief_score"), 0.0), reverse=True)
+        buys = [
+            decision
+            for decision in decisions
+            if str(decision.get("action") or "").lower() == "buy"
+        ]
+        buys.sort(
+            key=lambda row: _safe_float(row.get("belief_score"), 0.0), reverse=True
+        )
         positions: list[dict[str, Any]] = []
-        max_positions = 3 if market == "ashare" else 10
-        for decision in buys[:max_positions]:
+        is_ashare = _normalize_market(market) == "ashare"
+        max_positions = 8 if is_ashare else 10
+        selected = buys[:max_positions]
+        requested_weights: list[float] = []
+        for decision in selected:
             position_pct = _safe_float(decision.get("position_pct"), 0.0)
             if position_pct <= 0:
-                position_pct = min(0.10, max(0.01, _safe_float(decision.get("belief_score"), 0.5) * 0.10))
+                position_pct = min(
+                    0.10,
+                    max(0.01, _safe_float(decision.get("belief_score"), 0.5) * 0.10),
+                )
+            if is_ashare:
+                position_pct = min(position_pct, 0.15)
+            requested_weights.append(position_pct)
+        total_requested = sum(requested_weights)
+        scale = (
+            min(1.0, 0.90 / total_requested)
+            if is_ashare and total_requested > 0
+            else 1.0
+        )
+        for decision, requested_weight in zip(selected, requested_weights):
+            position_pct = requested_weight * scale
             positions.append(
                 {
                     "market": market,
@@ -712,7 +900,9 @@ class AutoPipeline:
             "capital": capital,
             "positions": positions,
             "position_count": len(positions),
-            "allocated_pct": round(sum(_safe_float(row.get("position_pct"), 0.0) for row in positions), 6),
+            "allocated_pct": round(
+                sum(_safe_float(row.get("position_pct"), 0.0) for row in positions), 6
+            ),
             "trade_date": trade_date,
             "capital_layer": "simulated",
             "account_type": "simulated",
@@ -727,6 +917,7 @@ class AutoPipeline:
         decisions: list[dict[str, Any]],
         trade_date: str,
     ) -> dict[str, Any]:
+        market = _require_pipeline_market(market)
         signals = self._signals_from_positions(market, portfolio, decisions, trade_date)
         simulator = self.simulator_factory(market)
         styles_dir = self._styles_dir(market)
@@ -762,6 +953,7 @@ class AutoPipeline:
         }
 
     def run_review(self, market: str, trade_date: str) -> dict[str, Any]:
+        market = _require_pipeline_market(market)
         try:
             result = self.evolution_fn(market, review_root=self.review_root)
         except TypeError:
@@ -779,6 +971,7 @@ class AutoPipeline:
         return result
 
     def _run_review_only(self, market: str, trade_date: str) -> dict[str, Any]:
+        market = _require_pipeline_market(market)
         return {
             "market": market,
             "capital_layer": "simulated",
@@ -799,7 +992,11 @@ class AutoPipeline:
         decisions: list[dict[str, Any]],
         trade_date: str,
     ) -> list[dict[str, Any]]:
-        by_symbol = {str(decision.get("ts_code") or decision.get("symbol")): decision for decision in decisions}
+        market = _require_pipeline_market(market)
+        by_symbol = {
+            str(decision.get("ts_code") or decision.get("symbol")): decision
+            for decision in decisions
+        }
         signals: list[dict[str, Any]] = []
         for position in portfolio.get("positions", []) or []:
             symbol = str(position.get("ts_code") or position.get("symbol") or "")
@@ -823,8 +1020,12 @@ class AutoPipeline:
                 "ts_code": symbol,
                 "side": position.get("side", "buy"),
                 "price": price,
-                "belief_score": position.get("belief_score", decision.get("belief_score", 0.5)),
-                "conviction": position.get("conviction", decision.get("conviction", 0.5)),
+                "belief_score": position.get(
+                    "belief_score", decision.get("belief_score", 0.5)
+                ),
+                "conviction": position.get(
+                    "conviction", decision.get("conviction", 0.5)
+                ),
                 "strategy_name": "auto_pipeline",
                 "trade_date": trade_date,
                 "capital_layer": "simulated",
@@ -845,37 +1046,58 @@ class AutoPipeline:
                 ):
                     if snapshot.get(key) not in (None, ""):
                         signal.setdefault(key, snapshot[key])
-            reject_real_execution_payload(signal, context=f"AutoPipeline.{market}.signal")
+            reject_real_execution_payload(
+                signal, context=f"AutoPipeline.{market}.signal"
+            )
             signals.append(signal)
         return signals
 
-    def _market_snapshot(self, market: str, symbol: str, trade_date: str) -> dict[str, Any]:
+    def _market_snapshot(
+        self, market: str, symbol: str, trade_date: str
+    ) -> dict[str, Any]:
         snapshot: dict[str, Any] = {}
         market_names = self._reader_market_names(market)
         intraday = self._latest_intraday_bar(market_names, symbol, trade_date)
         if intraday:
-            close = _safe_float(_first_present(intraday, "close", "price", "last_price"), 0.0)
-            volume = _safe_float(_first_present(intraday, "bar_volume", "volume", "vol"), 0.0)
+            close = _safe_float(
+                _first_present(intraday, "close", "price", "last_price"), 0.0
+            )
+            volume = _safe_float(
+                _first_present(intraday, "bar_volume", "volume", "vol"), 0.0
+            )
             if close > 0:
                 snapshot["last_price"] = close
                 snapshot["close"] = close
             if volume > 0:
                 snapshot["bar_volume"] = volume
                 snapshot["volume"] = volume
-            for key in ("bar_time", "trade_time", "ask_price", "ask_size", "bid_price", "bid_size"):
+            for key in (
+                "bar_time",
+                "trade_time",
+                "ask_price",
+                "ask_size",
+                "bid_price",
+                "bid_size",
+            ):
                 if intraday.get(key) not in (None, ""):
                     snapshot[key] = intraday[key]
 
         daily_rows = self._recent_daily_bars(market_names, symbol, trade_date)
         if daily_rows:
             latest = daily_rows[-1]
-            latest_close = _safe_float(_first_present(latest, "close", "price", "last_price"), 0.0)
+            latest_close = _safe_float(
+                _first_present(latest, "close", "price", "last_price"), 0.0
+            )
             if latest_close > 0:
                 snapshot.setdefault("last_price", latest_close)
                 snapshot.setdefault("close", latest_close)
-            pre_close = _safe_float(_first_present(latest, "pre_close", "previous_close", "prev_close"), 0.0)
+            pre_close = _safe_float(
+                _first_present(latest, "pre_close", "previous_close", "prev_close"), 0.0
+            )
             if pre_close <= 0 and len(daily_rows) >= 2:
-                pre_close = _safe_float(_first_present(daily_rows[-2], "close", "price", "last_price"), 0.0)
+                pre_close = _safe_float(
+                    _first_present(daily_rows[-2], "close", "price", "last_price"), 0.0
+                )
             if pre_close > 0:
                 snapshot["previous_close"] = pre_close
                 snapshot["pre_close"] = pre_close
@@ -893,22 +1115,30 @@ class AutoPipeline:
             names.insert(0, "Ashare")
         return tuple(dict.fromkeys(names))
 
-    def _latest_intraday_bar(self, market_names: tuple[str, ...], symbol: str, trade_date: str) -> dict[str, Any]:
+    def _latest_intraday_bar(
+        self, market_names: tuple[str, ...], symbol: str, trade_date: str
+    ) -> dict[str, Any]:
         get_bars = getattr(self.reader, "get_bars_intraday", None)
         if not callable(get_bars):
             return {}
         for market_name in market_names:
             for interval in ("5min", "5m"):
                 try:
-                    rows = get_bars(market_name, symbol, interval, trade_date, trade_date)
+                    rows = get_bars(
+                        market_name, symbol, interval, trade_date, trade_date
+                    )
                 except Exception:
                     continue
-                valid = [dict(row) for row in _unwrap_rows(rows) if isinstance(row, dict)]
+                valid = [
+                    dict(row) for row in _unwrap_rows(rows) if isinstance(row, dict)
+                ]
                 if valid:
                     return valid[-1]
         return {}
 
-    def _recent_daily_bars(self, market_names: tuple[str, ...], symbol: str, trade_date: str) -> list[dict[str, Any]]:
+    def _recent_daily_bars(
+        self, market_names: tuple[str, ...], symbol: str, trade_date: str
+    ) -> list[dict[str, Any]]:
         get_bars = getattr(self.reader, "get_bars_daily", None)
         if not callable(get_bars):
             return []
@@ -968,7 +1198,9 @@ def run_auto_pipeline(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run TradingAgent simulated auto pipeline")
+    parser = argparse.ArgumentParser(
+        description="Run TradingAgent simulated auto pipeline"
+    )
     parser.add_argument("--date", dest="trade_date", default=None)
     parser.add_argument("--market", action="append", dest="markets", default=None)
     parser.add_argument("--stage", default="all", choices=("all", "daily_review"))
@@ -995,5 +1227,6 @@ __all__ = [
     "AutoPipeline",
     "LocalStyleSimulator",
     "PIPELINE_STAGES",
+    "RETIRED_AUTHORITY_MARKETS",
     "run_auto_pipeline",
 ]

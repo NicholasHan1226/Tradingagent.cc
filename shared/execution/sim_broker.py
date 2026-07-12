@@ -64,7 +64,7 @@ class SimFill:
     slippage_pct: float
     fill_probability: float
     fill_time: str
-    status: str = "filled"           # filled | partial | unfilled
+    status: str = "filled"  # filled | partial | unfilled
     filled_quantity: int = 0
     model: str = ""
     details: dict[str, Any] = field(default_factory=dict)
@@ -115,10 +115,41 @@ def _with_sim_markers(value: Any) -> Any:
 def _ashare_provenance_error(order: dict[str, Any]) -> str:
     side = str(order.get("side") or order.get("direction") or "buy").lower().strip()
     metadata = order.get("metadata") if isinstance(order.get("metadata"), dict) else {}
-    candidate_pool_layer = str(order.get("candidate_pool_layer") or metadata.get("candidate_pool_layer") or "").lower().strip()
-    execution_source = str(order.get("execution_source") or metadata.get("execution_source") or "").lower().strip()
-    if side == "buy" and not (candidate_pool_layer == "candidate" and execution_source == "ashare_candidate_layer"):
-        return "A-share simulated buy requires candidate_pool_layer=candidate and execution_source=ashare_candidate_layer"
+    candidate_pool_layer = (
+        str(
+            order.get("candidate_pool_layer")
+            or metadata.get("candidate_pool_layer")
+            or ""
+        )
+        .lower()
+        .strip()
+    )
+    execution_source = (
+        str(order.get("execution_source") or metadata.get("execution_source") or "")
+        .lower()
+        .strip()
+    )
+    sample_intent = (
+        str(order.get("sample_intent") or metadata.get("sample_intent") or "")
+        .lower()
+        .strip()
+    )
+    valid_candidate = (
+        candidate_pool_layer == "candidate"
+        and execution_source == "ashare_candidate_layer"
+        and sample_intent in {"", "exploitation"}
+    )
+    valid_exploration = (
+        candidate_pool_layer == "exploration"
+        and execution_source == "ashare_candidate_layer"
+        and sample_intent == "exploration"
+    )
+    if side == "buy" and not (valid_candidate or valid_exploration):
+        return (
+            "A-share simulated buy requires candidate_pool_layer=candidate "
+            "with sample_intent=exploitation, or candidate_pool_layer=exploration "
+            "with sample_intent=exploration; execution_source=ashare_candidate_layer"
+        )
     if side == "sell" and execution_source != "ashare_rebalance_sell":
         return "A-share simulated sell requires execution_source=ashare_rebalance_sell"
     return ""
@@ -149,8 +180,12 @@ def _coerce_sim_result(result: Any, order: dict[str, Any], market: str) -> SimRe
     if isinstance(result, dict):
         return SimResult(
             status=result.get("status", "failed"),
-            filled_qty=int(result.get("filled_qty", result.get("filled_quantity", 0)) or 0),
-            avg_price=float(result.get("avg_price", result.get("filled_price", 0.0)) or 0.0),
+            filled_qty=int(
+                result.get("filled_qty", result.get("filled_quantity", 0)) or 0
+            ),
+            avg_price=float(
+                result.get("avg_price", result.get("filled_price", 0.0)) or 0.0
+            ),
             fee=float(result.get("fee", 0.0) or 0.0),
             message=str(result.get("message", "")),
             order_id=str(result.get("order_id", order.get("order_id", ""))),
@@ -185,9 +220,17 @@ def execute_sim_order(
     account_payload = _coerce_payload_mapping(account, scalar_key="account")
     config_payload = _coerce_payload_mapping(config, scalar_key="config")
     try:
-        reject_real_execution_payload(order_payload, context=f"execute_sim_order.{market_key or 'unknown'}.order")
-        reject_real_execution_payload(account_payload, context=f"execute_sim_order.{market_key or 'unknown'}.account")
-        reject_real_execution_payload(config_payload, context=f"execute_sim_order.{market_key or 'unknown'}.config")
+        reject_real_execution_payload(
+            order_payload, context=f"execute_sim_order.{market_key or 'unknown'}.order"
+        )
+        reject_real_execution_payload(
+            account_payload,
+            context=f"execute_sim_order.{market_key or 'unknown'}.account",
+        )
+        reject_real_execution_payload(
+            config_payload,
+            context=f"execute_sim_order.{market_key or 'unknown'}.config",
+        )
     except Exception as exc:
         return SimResult(
             status="failed",
@@ -209,7 +252,9 @@ def execute_sim_order(
                 raw_response={"recorded": False, "reason": provenance_error},
             )
     executor = get_sim_executor(market_key)
-    if executor is None or (executor is local_sim_executor and market_key in {"ashare", "crypto"}):
+    if executor is None or (
+        executor is local_sim_executor and market_key in {"ashare", "crypto"}
+    ):
         _ensure_builtin_executor(market_key)
         executor = get_sim_executor(market_key)
     if executor is None:
@@ -239,21 +284,43 @@ def execute_sim_order(
         try:
             from .local_sim_ledger import record_local_sim_order
 
-            backup = record_local_sim_order(sim_order, market_key, sim_account, sim_config, sim_result)
-        except Exception as exc:  # pragma: no cover - backup must not block Hermes dispatch
-            backup = {"status": "failed", "recorded": False, "error": f"{exc.__class__.__name__}: {exc}"}
-        sim_result.raw_response = {**dict(sim_result.raw_response or {}), "local_sim_backup": backup}
-        if backup.get("status") == "rejected" and backup.get("reason") == "insufficient_cash":
-            return SimResult(
-                status="rejected",
-                filled_qty=0,
-                avg_price=0.0,
-                fee=0.0,
-                message=(
+            backup = record_local_sim_order(
+                sim_order, market_key, sim_account, sim_config, sim_result
+            )
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - backup must not block Hermes dispatch
+            backup = {
+                "status": "failed",
+                "recorded": False,
+                "error": f"{exc.__class__.__name__}: {exc}",
+            }
+        sim_result.raw_response = {
+            **dict(sim_result.raw_response or {}),
+            "local_sim_backup": backup,
+        }
+        if backup.get("status") in {"rejected", "failed"}:
+            reason = str(
+                backup.get("reason")
+                or backup.get("error")
+                or "local simulated ledger rejected fill"
+            )
+            if reason == "insufficient_cash":
+                message = (
                     "A-share server-local simulated fill rejected by ledger: "
                     f"insufficient cash ({backup.get('cash_available')} available, "
                     f"{backup.get('required_cash')} required)"
-                ),
+                )
+            else:
+                message = (
+                    f"A-share server-local simulated fill rejected by ledger: {reason}"
+                )
+            return SimResult(
+                status=str(backup.get("status") or "failed"),
+                filled_qty=0,
+                avg_price=0.0,
+                fee=0.0,
+                message=message,
                 order_id=sim_result.order_id or str(order_payload.get("order_id", "")),
                 market=market_key,
                 raw_response={
@@ -331,7 +398,9 @@ def simulate_order(order: dict[str, Any]) -> dict[str, Any]:
     )
 
     # Determine fill status
-    filled_price = est.estimated_fill_price if est.estimated_fill_price is not None else mid_price
+    filled_price = (
+        est.estimated_fill_price if est.estimated_fill_price is not None else mid_price
+    )
 
     # For sell orders, slippage reduces the fill price
     if side.lower() == "sell":
@@ -339,6 +408,7 @@ def simulate_order(order: dict[str, Any]) -> dict[str, Any]:
 
     # Fill probability check for limit orders
     import random
+
     if order_type.lower() == "limit":
         if random.random() > est.fill_probability:
             status = "unfilled"
@@ -401,7 +471,12 @@ def get_sim_pnl(date: str | None = None) -> dict[str, Any]:
         dict with: total_trades, filled_trades, avg_slippage, by_strategy.
     """
     if not SIM_LEDGER.exists():
-        return {"total_trades": 0, "filled_trades": 0, "avg_slippage": 0.0, "by_strategy": {}}
+        return {
+            "total_trades": 0,
+            "filled_trades": 0,
+            "avg_slippage": 0.0,
+            "by_strategy": {},
+        }
 
     trades = []
     with open(SIM_LEDGER, "r", encoding="utf-8") as fh:
@@ -415,7 +490,9 @@ def get_sim_pnl(date: str | None = None) -> dict[str, Any]:
         trades = [t for t in trades if t.get("fill_time", "").startswith(date)]
 
     filled = [t for t in trades if t.get("status") == "filled"]
-    avg_slippage = sum(t.get("slippage_pct", 0) for t in filled) / len(filled) if filled else 0.0
+    avg_slippage = (
+        sum(t.get("slippage_pct", 0) for t in filled) / len(filled) if filled else 0.0
+    )
 
     by_strategy: dict[str, dict[str, Any]] = {}
     for t in filled:
@@ -427,7 +504,9 @@ def get_sim_pnl(date: str | None = None) -> dict[str, Any]:
 
     for strat in by_strategy:
         n = by_strategy[strat]["trades"]
-        by_strategy[strat]["avg_slippage"] = round(by_strategy[strat]["total_slippage"] / n, 4) if n else 0.0
+        by_strategy[strat]["avg_slippage"] = (
+            round(by_strategy[strat]["total_slippage"] / n, 4) if n else 0.0
+        )
 
     return {
         "total_trades": len(trades),

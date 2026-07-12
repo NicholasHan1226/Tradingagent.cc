@@ -1,34 +1,49 @@
-# Tradings/CNFutures
+# TradingAgent / CNFutures
 
-## 目标
+> 阅读顺序：[../AGENTS.md](../AGENTS.md) → [../STATUS.md](../STATUS.md) → 本文件。
 
-国内期货交易研究、全自动模拟盘和未来受控 CTP 接入预留。
+## 定位与账户
 
-## 约束
+- CNFutures 负责国内期货方向判断、会话/合约语义、一手 affordability、模拟成交和复盘。
+- 唯一资金 authority 是独立 fresh-start `cn-futures-capital-v1` / generation 1 的 50,000 CNY simulated 账户；不与 A股共享、相加、净额或互补。
+- 保证金使用率上限 50%，当前 25,000 CNY。保证金容量与单笔止损损失预算是两道独立门禁。
+- 日亏、连续亏损、MTM 回撤和 high-water 各自独立；5% 回撤收紧预算，7% 暂停。
+- 当前长期模拟，无实盘日期。SimNow/CTP 只是测试或未来预留，不构成真实交易接入。
 
-- 国内期货与 A 股分离: 保证金、杠杆、T+0、多空双向、夜盘、强平和合约换月规则不同。
-- 当前阶段只允许模拟盘; 本模块不设单独影子盘层。未完成期货公司授权、穿透式监管确认、风控验收和 Nicholas 人工确认前, 不得自动实盘下单或撤单。
-- CTP / SimNow 适配器只能作为模拟或测试接入; 不能把 SimNow 成交、回报或持仓描述成真实交易结果。
-- 合约规则、保证金、手续费、夜盘、涨跌停、最小跳动和主力合约切换必须可追溯到数据来源; 未接入实时来源时只能使用显式静态规则。
+## 每会话样本
 
-## 执行
+- 每个有效会话至少保留 `prediction`、`candidate`、`hold`、`risk_reject` 或 `simulated_fill` 之一。
+- 记录 trade date/session、symbol/product、style/version、方向、raw heuristic score、uncalibrated prior、market regime、MG 状态、holding horizon、未交易原因和标签状态。
+- 原始 score/prior 不得命名为已校准胜率或未来收益概率。
+- 闭市、午休、日盘后等待夜盘、品种夜盘结束、换月保护和资金拒绝是可复盘状态，不应混成系统 error。
 
-- 模拟盘: 本模块 `sim_executor.py` 只生成模拟成交回执和资金占用估算。
-- 资金: 当前生产默认模拟本金固定为 50,000 CNY，与 A股一致；环境变量不能切回 100,000/200,000。`default_sim_capital(..., capital_cny=...)` 或 `tier=` 只允许受控离线历史分析显式使用，非法档位回退 50,000 CNY。当前没有需迁移的活跃 CNFutures 旧账本时，不得伪造“已归档”记录。
-- 风控拒单: 保证金 cap、风格暂停、会话不允许、换月保护等预期内风控结果必须写入 hold/risk rejection 原因；不得作为系统 `errors` 导致模拟任务 degraded。只有数据缺失、执行异常、无效价格或代码异常才应进入 error。
-- 多风格验证: 通过独立模拟账户/策略风格并行记录, 不使用 `shadow_broker.py`。
-- 只读 replay: `CNFutures/replay.py` 只能读取 SharedSignals 5分钟 bars 并回放现有风格触发情况，用于解释阈值、hold 原因和历史窗口表现；不得写订单、持仓、账本或实盘接口。Replay 必须复用 live 风格产品过滤，并标注 `execution_eligible` 与不可执行原因，尤其是产品不匹配、午休/闭市边界、保证金 cap、价格/合约规则缺失；历史 buy/sell 只能代表“当时风格触发”，不能直接代表当前可成交。
-- 实盘: 未来通过 `shared/execution/` 下的受控网关抽象接入, 默认关闭。
+## Counterfactual 与 execution-eligible
 
-## 边界
+- 方向预测与当前本金可执行性分开。
+- multiplier、tick、最小一手、可追溯保证金、手续费、价格限制、滑点、夜盘跳空、合约/换月、会话、持仓和风险预算全部适配时，才可 execution-eligible simulated fill。
+- 任一不适配时 `quantity=0`、`counterfactual_only=true`，保存方向预测、具体拒绝原因和后续标签。
+- 不得为了样本绕过最小一手、保证金、止损预算、夜盘、换月、连续亏损、日亏、回撤或重复敞口。
+- 静态 `contract_rules.py` 只作模拟 bootstrap；缺少实时可追溯规格时不得声称交易所级保证金、盘口撮合或强平精度。
 
-- SharedSignals 负责行情、合约和日历输入。
-- MarketGraph 负责商品、宏观、跨市场研究证据。
-- CNFutures 只消费上述输入, 负责期货市场内的订单语义、模拟成交、风控前置和执行状态。
-- 盘中可交易合约池必须来自 SharedSignals API 的最新 `Futures` 5分钟批次；`fut_basic` 只作为合约元数据，不得作为盘中主 universe。生产模拟执行默认要求至少 3 个独立底层品种；同一品种跨月合约只算 1 个品种。覆盖不足时写 `insufficient_distinct_product_coverage` 并进入 `observation_only`，不产生模拟成交。
-- 交易时段判断必须复用 `CNFutures/session.py`；午休 `11:30-13:00`、日盘后等待夜盘、非交易日等属于正常观察态，不能被开盘验收或健康检查误报为数据故障。
-- 期货交易日与日历日不能混用。`CNFutures/session.py` 的活跃交易日只用于订单、信号、回执、账本和 review 归属；当前会话行情读取使用 SharedSignals `/realtime_5min?market=Futures` 的最新批次，不得把次日活跃交易日作为 API `date` 过滤条件。逐合约 5分钟读取按 `now` 的北京时间自然日查询，再用当前 session、最多 10 分钟陈旧和最多 5 分钟未来偏差做硬门禁。无时区的 `bar_time` 按北京时间解释。品种夜盘已经正常收盘后的最后一根 5分钟 bar（如铜 01:00）属于等待下一交易段，不得误报为 `stale_intraday_bar`。
-- 开盘验收、实时健康和模拟盘巡检必须优先使用 SharedSignals API `/realtime_5min?market=Futures` 验证当前 5 分钟条线；SQLite read model 只允许显式诊断/测试开关下只读使用，不能作为生产自动兜底。
-- 策略主动 `hold`、全部风格因夜盘不允许而空跑、保证金 cap 或换月保护等预期内门禁，应进入 pass/info 的可解释空跑；首样本验收不得因为“有 5分钟数据且策略主动 hold、但没有成交”而报警。只有数据缺失、实盘开关误启、成交缺 bar time、异常错误或应成交但无账本时才报警。
-- 连续确认不足必须写为 `insufficient_consecutive_5min_bars`，并在 review/health 按标准化 `product` 汇总；它代表已有数据但策略确认不足，不能与采集缺条线、保证金拒绝或会话关闭混为同一原因。
-- 运维/看板健康输出必须把当前最新复盘与 append-only 历史累计分开：当前状态只看 `current`；旧的 `missing_intraday_bars`、`stale_intraday_bar`、历史风控分类等只能放在 `historical` 里用于复盘，不得和当前 live health 并列展示成今天故障。
+## 原子资本闭环
+
+- 开仓预约使用最坏情形 margin + fee，绑定 authority/generation、execution lineage、PIT timestamp、source SHA、risk unit 和 stable reference。
+- 实际开仓通过 durable outbox 提交 `fill_commit`；实际平/减仓提交 `position_close_commit`。两者使用 actual fill、actual fee、actual margin/realized PnL、receipt/local-position fingerprints 和 ledger-head CAS。
+- commit 成功或幂等重放成功后才更新 execution-eligible 绩效；pending action 保守阻断新增风险并可 crash replay。
+- partial 只处理实际数量；不能把原订单数量、请求价格或旧 reservation 当成交事实。
+- 当日 MTM reconcile 必须证明现金、持仓数量/成本、保证金、冻结额、exact reservations、未结 commit IDs 和 execution lineage 一致。
+
+## 订单事件与复核指标
+
+- `signals/order_events/cn_futures_order_events.jsonl` 是 CN 模拟订单生命周期的 append-only 事件证据，checksum chain 生成 `cn_futures_order_projection.json`；启动时必须与 `pending/claimed/running/filled/partial/...` 目录投影 reconcile。不一致时只暂停新增模拟执行并继续 observation/counterfactual 采样。
+- 当前本地模拟器是 IOC-like，`partial` 明确记录 `terminal=true`。事件 schema 保留显式 terminal 与 `ACTIVE/REDUCING/HALTED` 生命周期，供未来异步 adapter 设计；当前未实现 broker、邮件、同花顺或实盘订单续报。
+- `realized_pnl/(drawdown+fee)` 只可命名为 `net_pnl_to_drawdown_plus_fee_ratio` 诊断值，不能称为 Sharpe。没有同频净收益序列时 `sharpe=null`、DSR 不可用，且该值不得进入晋级证据或自动调权。
+
+## 数据与成熟度
+
+- 盘中合约与 5 分钟行情来自 SharedSignals API；SQLite 只限显式隔离测试/诊断。
+- 生产 universe 至少覆盖 3 个独立底层品种；同品种跨月只算一个。覆盖不足仍保存 observation，并标明偏差，不放宽执行门禁。
+- 成熟度独立展示有效样本、完整回合、品种/波动/会话覆盖、夜盘、换月、极端风险、费用后结果、回撤和稳定性；不读取 A股模拟天数或晋级状态。
+- 自动晋级、自动风险扩张和 live transition 均关闭。
+
+会话验收见 [../docs/operations.md](../docs/operations.md)，字段见 [../docs/data_contract.md](../docs/data_contract.md)。

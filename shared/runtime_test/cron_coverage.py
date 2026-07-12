@@ -15,12 +15,28 @@ ROOT = Path(__file__).resolve().parents[2]
 TRADING_PREFIX = "/opt/investment/tradingagent/"
 ROOT_UID = 0
 ROOT_GID = 0
+TRADINGAGENT_SHELL = "/bin/bash"
+TRADINGAGENT_CRON_TZ = "Asia/Shanghai"
+TRADINGAGENT_TIMEZONE = "Asia/Shanghai"
+TRADINGAGENT_REAL_TRADING_ENABLED = "false"
 TRADINGAGENT_BASH_ENV = "/opt/investment/tradingagent/shared/env_loader.sh"
+TRADINGAGENT_REQUIRED_ENVIRONMENT = {
+    "shell": ("SHELL", TRADINGAGENT_SHELL),
+    "cron_tz": ("CRON_TZ", TRADINGAGENT_CRON_TZ),
+    "timezone": ("TZ", TRADINGAGENT_TIMEZONE),
+    "real_trading_enabled": (
+        "REAL_TRADING_ENABLED",
+        TRADINGAGENT_REAL_TRADING_ENABLED,
+    ),
+    "bash_env": ("BASH_ENV", TRADINGAGENT_BASH_ENV),
+}
 
 
 def _run_crontab(command: list[str]) -> tuple[str, str]:
     try:
-        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            command, check=False, capture_output=True, text=True, timeout=5
+        )
     except Exception as exc:  # noqa: BLE001
         return "", f"{' '.join(command)}: {exc.__class__.__name__}: {exc}"
     if result.returncode == 0:
@@ -29,11 +45,16 @@ def _run_crontab(command: list[str]) -> tuple[str, str]:
 
 
 def _read_installed_crontabs() -> dict[str, str]:
-    marketgraph_text, marketgraph_error = _run_crontab(["crontab", "-u", "marketgraph", "-l"])
+    marketgraph_text, marketgraph_error = _run_crontab(
+        ["crontab", "-u", "marketgraph", "-l"]
+    )
     if os.geteuid() == ROOT_UID:
         root_text, root_error = _run_crontab(["crontab", "-l"])
     else:
-        root_text, root_error = "", "root crontab unchecked: run cron_coverage as root for residual audit"
+        root_text, root_error = (
+            "",
+            "root crontab unchecked: run cron_coverage as root for residual audit",
+        )
     return {
         "marketgraph_text": marketgraph_text,
         "marketgraph_error": marketgraph_error,
@@ -45,7 +66,11 @@ def _read_installed_crontabs() -> dict[str, str]:
 def _is_cron_schedule_line(line: str) -> bool:
     if not line or line.startswith("#"):
         return False
-    if "=" in line and not line.split()[0].startswith(("@", "*")) and not line.split()[0][0].isdigit():
+    if (
+        "=" in line
+        and not line.split()[0].startswith(("@", "*"))
+        and not line.split()[0][0].isdigit()
+    ):
         return False
     return TRADING_PREFIX in line
 
@@ -58,21 +83,43 @@ def _normalize_entry(line: str) -> str:
 
 
 def tradingagent_entries(text: str) -> list[str]:
-    return [_normalize_entry(line) for line in text.splitlines() if _is_cron_schedule_line(line.strip())]
+    return [
+        _normalize_entry(line)
+        for line in text.splitlines()
+        if _is_cron_schedule_line(line.strip())
+    ]
 
 
-def _tradingagent_environment_mismatches(text: str) -> list[dict[str, str]]:
-    effective_bash_env = ""
-    mismatches = []
+def _tradingagent_environment_mismatches(text: str) -> list[dict[str, Any]]:
+    effective_environment = {
+        variable: "" for variable, _ in TRADINGAGENT_REQUIRED_ENVIRONMENT.values()
+    }
+    mismatches: list[dict[str, Any]] = []
     for raw in text.splitlines():
         line = raw.strip()
-        if line.startswith("BASH_ENV="):
-            effective_bash_env = line.split("=", 1)[1].strip()
-        elif _is_cron_schedule_line(line) and effective_bash_env != TRADINGAGENT_BASH_ENV:
+        if "=" in line and not line.startswith("#"):
+            variable, value = line.split("=", 1)
+            variable = variable.strip()
+            if variable in effective_environment:
+                effective_environment[variable] = value.strip()
+                continue
+        if _is_cron_schedule_line(line):
+            mismatched_fields = [
+                field
+                for field, (
+                    variable,
+                    expected,
+                ) in TRADINGAGENT_REQUIRED_ENVIRONMENT.items()
+                if effective_environment[variable] != expected
+            ]
+            if not mismatched_fields:
+                continue
             mismatches.append(
                 {
                     "entry": _normalize_entry(line),
-                    "effective_bash_env": effective_bash_env,
+                    "mismatched_fields": mismatched_fields,
+                    "effective_environment": dict(effective_environment),
+                    "effective_bash_env": effective_environment["BASH_ENV"],
                 }
             )
     return mismatches
@@ -98,17 +145,14 @@ def _runtime_permission_candidate_paths() -> set[Path]:
     candidates: set[Path] = {
         ROOT / "runtime/state",
         ROOT / "shared/review/ashare",
-        ROOT / "shared/review/ashare/forward_validation_latest.json",
-        ROOT / "shared/review/ashare/forward_validation.jsonl",
-        ROOT / "shared/review/ashare/portfolio_evolution_latest.json",
-        ROOT / "shared/review/ashare/portfolio_evolution_log.jsonl",
-        ROOT / "shared/review/ashare/sample_target_monitor_latest.json",
-        ROOT / "shared/review/ashare/sample_target_monitor_log.jsonl",
-        ROOT / "shared/review/ashare/sample_learning_latest.json",
-        ROOT / "shared/review/ashare/sample_learning_log.jsonl",
-        ROOT / "shared/review/ashare/tier_experiments_latest.json",
+        ROOT / "shared/review/ashare/sample_journal.jsonl",
+        ROOT / "shared/review/ashare/sample_kpi_latest.json",
+        ROOT / "shared/review/ashare/sample_kpi_log.jsonl",
+        ROOT / "shared/review/ashare/evolution_decision_latest.json",
+        ROOT / "shared/review/ashare/evolution_decision_log.jsonl",
+        ROOT / "shared/review/ashare/market_maturity_latest.json",
+        ROOT / "shared/review/ashare/market_maturity_log.jsonl",
         ROOT / "shared/review/opportunities",
-        ROOT / "shared/logs/local_sim_tiers",
         ROOT / "shared/logs/trade_audit_trail.jsonl",
         ROOT / "shared/logs/cron/sim_market_health.log",
         ROOT / "shared/logs/cron/equity_snapshots.log",
@@ -119,10 +163,29 @@ def _runtime_permission_candidate_paths() -> set[Path]:
         "shared/review/ashare/*.json",
         "shared/review/ashare/*.jsonl",
         "shared/review/opportunities/*.jsonl",
-        "shared/logs/local_sim_tiers/**/*",
         "shared/logs/cron/job_*.log",
     ):
         candidates.update(ROOT.glob(pattern))
+    retired_ashare_projection_names = {
+        "forward_validation_latest.json",
+        "forward_validation.jsonl",
+        "portfolio_evolution_latest.json",
+        "portfolio_evolution_log.jsonl",
+        "sample_target_monitor_latest.json",
+        "sample_target_monitor_log.jsonl",
+        "sample_learning_latest.json",
+        "sample_learning_log.jsonl",
+        "tier_experiments_latest.json",
+    }
+    candidates = {
+        path
+        for path in candidates
+        if not (
+            path.parent == ROOT / "shared/review/ashare"
+            and path.name in retired_ashare_projection_names
+        )
+        and not path.is_relative_to(ROOT / "shared/logs/local_sim_tiers")
+    }
     return candidates
 
 
@@ -151,13 +214,23 @@ def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, 
 
     shared_entries = _template_entries(shared_template)
     root_entries = _template_entries(root_template)
-    template_drift = [entry for entry in shared_entries if entry not in set(root_entries)]
-    template_extra = [entry for entry in root_entries if entry not in set(shared_entries)]
+    template_drift = [
+        entry for entry in shared_entries if entry not in set(root_entries)
+    ]
+    template_extra = [
+        entry for entry in root_entries if entry not in set(shared_entries)
+    ]
 
     installed_text = details.get("marketgraph_text") or details.get("root_text") or ""
-    installed_source = "marketgraph" if details.get("marketgraph_text") else ("root" if details.get("root_text") else "")
+    installed_source = (
+        "marketgraph"
+        if details.get("marketgraph_text")
+        else ("root" if details.get("root_text") else "")
+    )
     installed_entries = set(tradingagent_entries(installed_text))
-    missing_entries = [entry for entry in shared_entries if entry not in installed_entries]
+    missing_entries = [
+        entry for entry in shared_entries if entry not in installed_entries
+    ]
 
     env_mismatches = _tradingagent_environment_mismatches(installed_text)
 
@@ -207,7 +280,9 @@ def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, 
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check TradingAgent cron template and production coverage.")
+    parser = argparse.ArgumentParser(
+        description="Check TradingAgent cron template and production coverage."
+    )
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args(argv)
     report = check_cron_coverage()

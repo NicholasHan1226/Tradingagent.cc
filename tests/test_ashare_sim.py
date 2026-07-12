@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import json
@@ -37,7 +38,7 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.addCleanup(now_patcher.stop)
 
     def _patch_local_sim_paths(self) -> None:
-        base = self.tmp_path / "local_sim"
+        base = self.tmp_path / local_sim_ledger.ASHARE_EXECUTION_LINEAGE_ID
         for name, value in (
             ("LOCAL_SIM_DIR", base),
             ("LOCAL_SIM_TRADES", base / "local_sim_trades.jsonl"),
@@ -50,14 +51,23 @@ class AshareSimExecutorTest(unittest.TestCase):
             patcher = patch.object(local_sim_ledger, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        local_sim_ledger.bootstrap_fresh_local_sim(
+            root=base,
+            lineage_started_at="2026-07-07T09:00:00+08:00",
+            point_in_time_as_of="2026-07-07T09:00:00+08:00",
+        )
 
-    def test_adapter_exposes_ashare_sim_account_without_breaking_shadow_account(self) -> None:
+    def test_adapter_exposes_ashare_sim_account_without_breaking_shadow_account(
+        self,
+    ) -> None:
         adapter = AshareAdapter(reader=object())
 
         self.assertEqual(adapter.get_shadow_account(), "ashare_shadow")
         self.assertEqual(adapter.get_sim_account()["account"], "ashare_sim")
 
-    def test_ashare_sim_execute_queues_pending_signal_card_when_hermes_enabled(self) -> None:
+    def test_ashare_sim_execute_queues_pending_signal_card_when_hermes_enabled(
+        self,
+    ) -> None:
         result = ashare_sim_execute(
             order={
                 "order_id": "SIM-ASHARE-1",
@@ -66,6 +76,13 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "price": 10.5,
                 "side": "buy",
                 "trade_date": "2026-07-07",
+                "capital_scope": "strategy",
+                "market_capital_required": True,
+                "market_capital_reference_id": "MCAP-A-REF-1",
+                "market_capital_reservation_id": "MCAP-A-RES-1",
+                "market_capital_event_id": "MCAP-A-EVENT-1",
+                "market_reserved_gross_cny": 1050.0,
+                "master_capital_reference_id": "RETIRED-MUST-NOT-LEAK",
             },
             account={"account_id": "ashare_sim"},
             config={"signals_dir": self.signals_dir, "hermes_enabled": True},
@@ -89,6 +106,13 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(card["price"], 10.5)
         self.assertEqual(card["t_plus_1"]["sellable_from"], "2026-07-08")
         self.assertEqual(card["t_plus_1"]["sellable_date"], "2026-07-08")
+        self.assertEqual(card["capital_scope"], "strategy")
+        self.assertTrue(card["market_capital_required"])
+        self.assertEqual(card["market_capital_reference_id"], "MCAP-A-REF-1")
+        self.assertEqual(card["market_capital_reservation_id"], "MCAP-A-RES-1")
+        self.assertEqual(card["market_capital_event_id"], "MCAP-A-EVENT-1")
+        self.assertEqual(card["market_reserved_gross_cny"], 1050.0)
+        self.assertFalse(any(key.startswith("master_capital_") for key in card))
 
     def test_ashare_sim_execute_rejects_non_a_share_before_bridge(self) -> None:
         result = ashare_sim_execute(
@@ -104,9 +128,13 @@ class AshareSimExecutorTest(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "rejected")
-        self.assertFalse((self.signals_dir / "pending" / "SIM-ASHARE-BSHARE.json").exists())
+        self.assertFalse(
+            (self.signals_dir / "pending" / "SIM-ASHARE-BSHARE.json").exists()
+        )
 
-    def test_ashare_sim_execute_defaults_to_server_local_fill_without_hermes(self) -> None:
+    def test_ashare_sim_execute_defaults_to_server_local_fill_without_hermes(
+        self,
+    ) -> None:
         with patch("Ashare.sim_executor.send_sim_signal_to_mini") as send_mock:
             result = ashare_sim_execute(
                 order={
@@ -128,7 +156,9 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(result.raw_response["engine_record"]["state"], "filled")
         send_mock.assert_not_called()
 
-    def test_ashare_sim_execute_rejects_outside_regular_session_before_any_execution(self) -> None:
+    def test_ashare_sim_execute_rejects_outside_regular_session_before_any_execution(
+        self,
+    ) -> None:
         with patch("Ashare.sim_executor.send_sim_signal_to_mini") as send_mock:
             result = ashare_sim_execute(
                 order={
@@ -148,10 +178,64 @@ class AshareSimExecutorTest(unittest.TestCase):
 
         self.assertEqual(result.status, "rejected")
         self.assertIn("market_closed", result.message)
-        self.assertFalse((self.signals_dir / "pending" / "SIM-ASHARE-AFTER-CLOSE.json").exists())
+        self.assertFalse(
+            (self.signals_dir / "pending" / "SIM-ASHARE-AFTER-CLOSE.json").exists()
+        )
         send_mock.assert_not_called()
 
-    def test_ashare_sim_execute_rejects_holiday_even_during_regular_clock_time(self) -> None:
+    def test_ashare_sim_execute_classifies_closing_auction_as_explicitly_unsupported(
+        self,
+    ) -> None:
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-CLOSING-AUCTION",
+                "ts_code": "600000.SH",
+                "quantity": 100,
+                "price": 10.5,
+                "side": "buy",
+                "order_type": "limit",
+            },
+            account={"account_id": "ashare_sim"},
+            config={"market_session_now": "2026-07-07T14:58:00+08:00"},
+        )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertIn("closing_auction_batch_match_not_implemented", result.message)
+        self.assertEqual(result.raw_response["market_session"], "closing_auction")
+        self.assertEqual(
+            result.raw_response["execution_reality_model_version"],
+            "ashare-execution-reality-20260706-v1",
+        )
+
+    def test_ashare_sim_execute_classifies_after_hours_fixed_price_as_unsupported(
+        self,
+    ) -> None:
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-AFTER-HOURS",
+                "ts_code": "600000.SH",
+                "quantity": 100,
+                "price": 10.5,
+                "side": "buy",
+                "order_type": "after_hours_fixed_price",
+            },
+            account={"account_id": "ashare_sim"},
+            config={"market_session_now": "2026-07-07T15:10:00+08:00"},
+        )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertIn("after_hours_fixed_price_match_not_implemented", result.message)
+        self.assertEqual(
+            result.raw_response["market_session"], "after_hours_fixed_price"
+        )
+        self.assertEqual(
+            result.raw_response["required_order_type"],
+            "after_hours_fixed_price",
+        )
+
+    def test_ashare_sim_execute_rejects_holiday_even_during_regular_clock_time(
+        self,
+    ) -> None:
         result = ashare_sim_execute(
             order={
                 "order_id": "SIM-ASHARE-HOLIDAY",
@@ -181,9 +265,14 @@ class AshareSimExecutorTest(unittest.TestCase):
 
         self.assertEqual(result.status, "rejected")
         self.assertIn("buy_quantity_not_lot_aligned", result.message)
-        self.assertEqual(result.raw_response["engine_record"]["reason"], "buy_quantity_not_lot_aligned")
+        self.assertEqual(
+            result.raw_response["engine_record"]["reason"],
+            "buy_quantity_not_lot_aligned",
+        )
 
-    def test_ashare_server_local_fill_uses_bar_volume_when_book_size_missing(self) -> None:
+    def test_ashare_server_local_fill_uses_bar_volume_when_book_size_missing(
+        self,
+    ) -> None:
         result = ashare_sim_execute(
             order={
                 "order_id": "SIM-ASHARE-BARVOL",
@@ -223,9 +312,13 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(result.status, "filled")
         self.assertEqual(evidence["bar_time"], "2026-07-07 09:55:00")
         self.assertEqual(evidence["bar_volume"], 1500)
-        self.assertEqual(evidence["execution_evidence_class"], "verified_5min_market_data")
+        self.assertEqual(
+            evidence["execution_evidence_class"], "verified_5min_market_data"
+        )
 
-    def test_ashare_server_local_fill_downgrades_stale_5min_market_evidence(self) -> None:
+    def test_ashare_server_local_fill_downgrades_stale_5min_market_evidence(
+        self,
+    ) -> None:
         result = ashare_sim_execute(
             order={
                 "order_id": "SIM-ASHARE-STALE-5MIN",
@@ -249,7 +342,9 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(evidence["execution_evidence_class"], "weak_price_only")
         self.assertEqual(evidence["evidence_reason"], "stale_or_future_5min_bar")
 
-    def test_ashare_server_local_fill_rejects_same_day_t1_sell_from_ledger(self) -> None:
+    def test_ashare_server_local_fill_rejects_same_day_t1_sell_from_ledger(
+        self,
+    ) -> None:
         self._patch_local_sim_paths()
         local_sim_ledger.record_local_sim_order(
             {
@@ -278,7 +373,10 @@ class AshareSimExecutorTest(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "rejected")
-        self.assertEqual(result.raw_response["engine_record"]["reason"], "insufficient_sellable_qty_t1")
+        self.assertEqual(
+            result.raw_response["engine_record"]["reason"],
+            "insufficient_sellable_qty_t1",
+        )
 
     def test_ashare_server_local_fill_rejects_insufficient_default_cash(self) -> None:
         self._patch_local_sim_paths()
@@ -295,12 +393,20 @@ class AshareSimExecutorTest(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "rejected")
-        self.assertEqual(result.raw_response["engine_record"]["reason"], "insufficient_cash")
+        self.assertEqual(
+            result.raw_response["engine_record"]["reason"], "insufficient_cash"
+        )
 
-    def test_ashare_sim_execute_sends_webhook_when_hermes_explicitly_enabled(self) -> None:
+    def test_ashare_sim_execute_sends_webhook_when_hermes_explicitly_enabled(
+        self,
+    ) -> None:
         with patch(
             "Ashare.sim_executor.send_sim_signal_to_mini",
-            return_value={"status": "sent", "success": True, "order_id": "SIM-ASHARE-WEBHOOK"},
+            return_value={
+                "status": "sent",
+                "success": True,
+                "order_id": "SIM-ASHARE-WEBHOOK",
+            },
         ) as send_mock:
             result = ashare_sim_execute(
                 order={
@@ -341,7 +447,9 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(result.account_type, "simulated")
         self.assertEqual(result.raw_response["mode"], "mock_filled")
 
-    def test_registered_executor_and_mini_consumer_can_consume_ashare_signal(self) -> None:
+    def test_registered_executor_and_mini_consumer_can_consume_ashare_signal(
+        self,
+    ) -> None:
         executor = get_sim_executor("ashare")
         self.assertIs(executor, ashare_sim_execute)
 
@@ -374,8 +482,12 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "fee": 0.8,
             }
         )
-        completed = subprocess.CompletedProcess(args=["executor"], returncode=0, stdout=stdout, stderr="")
-        with patch("mini.mini_consumer.subprocess.run", return_value=completed) as run_mock:
+        completed = subprocess.CompletedProcess(
+            args=["executor"], returncode=0, stdout=stdout, stderr=""
+        )
+        with patch(
+            "mini.mini_consumer.subprocess.run", return_value=completed
+        ) as run_mock:
             result = consumer.dispatch(claimed or {})
 
         self.assertEqual(result["status"], "filled")

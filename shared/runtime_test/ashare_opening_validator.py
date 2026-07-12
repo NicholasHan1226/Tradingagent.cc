@@ -15,16 +15,19 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from Ashare.sim_executor import _is_supported_ashare_code
 from shared.data.reader import TradingagentDataReader
+from shared.execution.execution_lineage import ASHARE_EXECUTION_LINEAGE_ID
 from shared.runtime_test.ashare_preopen_dry_run import _api_daily_coverage_from_reader
 
 CN_TZ = timezone(timedelta(hours=8))
-NO_TRADE_LOG = Path(__file__).resolve().parents[1] / "logs" / "ashare_no_trade_explanations.jsonl"
+NO_TRADE_LOG = (
+    Path(__file__).resolve().parents[1] / "logs" / "ashare_no_trade_explanations.jsonl"
+)
 MAX_PRE_OPEN_DAILY_AGE_DAYS = 5
 
 
@@ -132,8 +135,12 @@ def _api_session_bars_summary(
     return {
         "bar_count": bar_count,
         "symbol_count": len(symbols),
-        "first_bar_time": first_bar_dt.isoformat(timespec="seconds") if first_bar_dt else None,
-        "latest_bar_time": latest_bar_dt.isoformat(timespec="seconds") if latest_bar_dt else None,
+        "first_bar_time": first_bar_dt.isoformat(timespec="seconds")
+        if first_bar_dt
+        else None,
+        "latest_bar_time": latest_bar_dt.isoformat(timespec="seconds")
+        if latest_bar_dt
+        else None,
         "latest_bar_age_minutes": latest_bar_age_minutes,
         "data_source": "SharedSignals API",
     }
@@ -161,7 +168,11 @@ def _parse_bar_time(raw: str) -> datetime | None:
 def _count_jsonl_rows(path: Path) -> int:
     if not path.exists():
         return 0
-    return sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+    return sum(
+        1
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.strip()
+    )
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -193,7 +204,9 @@ def _count_local_sim_trades(path: Path, date_str: str) -> int:
             continue
         if not isinstance(payload, dict):
             continue
-        market = str(payload.get("market") or payload.get("market_type") or "ashare").lower()
+        market = str(
+            payload.get("market") or payload.get("market_type") or "ashare"
+        ).lower()
         if market not in {"ashare", "a_share", "a-share"}:
             continue
         trade_date = str(
@@ -224,7 +237,9 @@ def _count_filled_signals(signals_dir: Path, date_str: str) -> int:
             continue
         if str(payload.get("market") or "").lower() != "ashare":
             continue
-        card_date = str(payload.get("trade_date") or payload.get("valid_until") or "")[:10].replace("-", "")
+        card_date = str(payload.get("trade_date") or payload.get("valid_until") or "")[
+            :10
+        ].replace("-", "")
         if card_date == trade_date:
             count += 1
     return count
@@ -255,7 +270,12 @@ def _signal_status_counts(signals_dir: Path, date_str: str) -> dict[str, int]:
                 continue
             if str(payload.get("market") or "").lower() != "ashare":
                 continue
-            card_date = str(payload.get("trade_date") or payload.get("valid_until") or payload.get("created_at") or "")[:10].replace("-", "")
+            card_date = str(
+                payload.get("trade_date")
+                or payload.get("valid_until")
+                or payload.get("created_at")
+                or ""
+            )[:10].replace("-", "")
             if card_date == trade_date:
                 counts[status] += 1
     return counts
@@ -276,7 +296,9 @@ def _count_market_receipts(receipt_path: Path, date_str: str) -> int:
             continue
         if str(payload.get("market") or "").lower() != "ashare":
             continue
-        receipt_date = str(payload.get("trade_date") or payload.get("receipt_at") or "")[:10].replace("-", "")
+        receipt_date = str(
+            payload.get("trade_date") or payload.get("receipt_at") or ""
+        )[:10].replace("-", "")
         if receipt_date == date_str:
             count += 1
     return count
@@ -302,13 +324,27 @@ def _link_keys(payload: dict[str, Any]) -> set[str]:
     return keys
 
 
-def _audit_local_sim_receipts(local_sim_path: Path, receipt_path: Path, date_str: str) -> dict[str, Any]:
+def _audit_local_sim_receipts(
+    local_sim_path: Path, receipt_path: Path, date_str: str
+) -> dict[str, Any]:
     trades: list[dict[str, Any]] = []
     for payload in _read_jsonl(local_sim_path):
-        market = str(payload.get("market") or payload.get("market_type") or "ashare").lower()
+        market = str(
+            payload.get("market") or payload.get("market_type") or "ashare"
+        ).lower()
         if market not in {"ashare", "a_share", "a-share"}:
             continue
-        if _ashare_payload_date(payload, "trade_date", "created_at", "filled_at", "executed_at", "timestamp") != date_str:
+        if (
+            _ashare_payload_date(
+                payload,
+                "trade_date",
+                "created_at",
+                "filled_at",
+                "executed_at",
+                "timestamp",
+            )
+            != date_str
+        ):
             continue
         trades.append(payload)
 
@@ -317,7 +353,10 @@ def _audit_local_sim_receipts(local_sim_path: Path, receipt_path: Path, date_str
     for payload in _read_jsonl(receipt_path):
         if str(payload.get("market") or "").lower() != "ashare":
             continue
-        if _ashare_payload_date(payload, "trade_date", "receipt_at", "created_at") != date_str:
+        if (
+            _ashare_payload_date(payload, "trade_date", "receipt_at", "created_at")
+            != date_str
+        ):
             continue
         receipt_count += 1
         receipt_keys.update(_link_keys(payload))
@@ -336,7 +375,9 @@ def _audit_local_sim_receipts(local_sim_path: Path, receipt_path: Path, date_str
                 "side": str(trade.get("side") or ""),
                 "quantity": trade.get("quantity"),
                 "trade_date": str(trade.get("trade_date") or ""),
-                "reason": "missing_link_key" if not keys else "matching_receipt_not_found",
+                "reason": "missing_link_key"
+                if not keys
+                else "matching_receipt_not_found",
             }
         )
 
@@ -356,7 +397,12 @@ def _audit_local_sim_receipts(local_sim_path: Path, receipt_path: Path, date_str
 def _latest_no_trade_explanation(path: Path, date_str: str) -> dict[str, Any]:
     rows = _read_jsonl(path)
     for payload in reversed(rows):
-        raw_date = str(payload.get("date") or payload.get("trade_date") or payload.get("generated_at") or "")[:10].replace("-", "")
+        raw_date = str(
+            payload.get("date")
+            or payload.get("trade_date")
+            or payload.get("generated_at")
+            or ""
+        )[:10].replace("-", "")
         if raw_date and raw_date != date_str:
             continue
         explanation = payload.get("no_trade_explanation")
@@ -382,21 +428,37 @@ def _latest_no_trade_explanation(path: Path, date_str: str) -> dict[str, Any]:
                 "category": explanation.get("category"),
                 "action": explanation.get("action") or explanation.get("next_action"),
                 "counts": explanation.get("counts", {}),
-                "sample_risk_rejections": explanation.get("sample_risk_rejections", [])[:5],
-                "sample_execution_skips": explanation.get("sample_execution_skips", [])[:5],
+                "sample_risk_rejections": explanation.get("sample_risk_rejections", [])[
+                    :5
+                ],
+                "sample_execution_skips": explanation.get("sample_execution_skips", [])[
+                    :5
+                ],
                 "sample_errors": explanation.get("sample_errors", [])[:3],
                 "score_diagnostics": score_diagnostics,
                 "candidate_pool_status": score_diagnostics.get("candidate_pool_status"),
                 "data_quality_status": score_diagnostics.get("data_quality_status"),
                 "max_combined": score_diagnostics.get("max_combined"),
                 "candidate_threshold": score_diagnostics.get("candidate_threshold"),
-                "candidate_above_threshold_count": score_diagnostics.get("candidate_above_threshold_count"),
-                "watch_above_threshold_count": score_diagnostics.get("watch_above_threshold_count"),
+                "candidate_above_threshold_count": score_diagnostics.get(
+                    "candidate_above_threshold_count"
+                ),
+                "watch_above_threshold_count": score_diagnostics.get(
+                    "watch_above_threshold_count"
+                ),
                 "diagnostic_summary": diagnostic_summary,
-                "candidate_layer_breakdown": explanation.get("candidate_layer_breakdown", {}),
-                "candidate_decision_trace": candidate_trace[:10] if isinstance(candidate_trace, list) else [],
-                "capital_plan_decision": capital_decision if isinstance(capital_decision, dict) else {},
-                "portfolio_decision": portfolio_decision if isinstance(portfolio_decision, dict) else {},
+                "candidate_layer_breakdown": explanation.get(
+                    "candidate_layer_breakdown", {}
+                ),
+                "candidate_decision_trace": candidate_trace[:10]
+                if isinstance(candidate_trace, list)
+                else [],
+                "capital_plan_decision": capital_decision
+                if isinstance(capital_decision, dict)
+                else {},
+                "portfolio_decision": portfolio_decision
+                if isinstance(portfolio_decision, dict)
+                else {},
                 "evidence_status": "incomplete" if evidence_gaps else "ready",
                 "evidence_gaps": evidence_gaps,
             }
@@ -411,8 +473,12 @@ def _candidate_order_gap_evidence_gaps(
     portfolio_decision: Any,
 ) -> list[str]:
     counts_dict = counts if isinstance(counts, dict) else {}
-    candidates = _int_value(counts_dict.get("candidates"), _int_value(counts_dict.get("candidate_count"), 0))
-    orders = _int_value(counts_dict.get("orders"), _int_value(counts_dict.get("order_count"), 0))
+    candidates = _int_value(
+        counts_dict.get("candidates"), _int_value(counts_dict.get("candidate_count"), 0)
+    )
+    orders = _int_value(
+        counts_dict.get("orders"), _int_value(counts_dict.get("order_count"), 0)
+    )
     if candidates <= 0 or orders > 0:
         return []
     gaps: list[str] = []
@@ -447,9 +513,12 @@ def _score_diagnostic_summary(score_diagnostics: dict[str, Any]) -> dict[str, An
         "candidate_threshold": candidate_threshold,
         "candidate_above_threshold_count": candidate_count,
         "watch_above_threshold_count": watch_count,
-        "evidence_reason_summary": score_diagnostics.get("evidence_reason_summary") or {},
+        "evidence_reason_summary": score_diagnostics.get("evidence_reason_summary")
+        or {},
     }
-    evidence_actions = _evidence_gap_actions(score_diagnostics.get("evidence_reason_summary"))
+    evidence_actions = _evidence_gap_actions(
+        score_diagnostics.get("evidence_reason_summary")
+    )
     if candidate_pool_status == "pool_empty_despite_threshold_scores":
         summary.update(
             {
@@ -493,7 +562,10 @@ def _score_diagnostic_summary(score_diagnostics: dict[str, Any]) -> dict[str, An
                 "next_action": "check_ashare_score_universe_and_data_reader",
             }
         )
-    elif candidate_pool_status in {"strategy_threshold_not_met", "strategy_threshold_not_met_watch_only"}:
+    elif candidate_pool_status in {
+        "strategy_threshold_not_met",
+        "strategy_threshold_not_met_watch_only",
+    }:
         summary.update(
             {
                 "reason": "strategy_threshold_not_met",
@@ -538,7 +610,11 @@ def _evidence_gap_actions(evidence_reason_summary: Any) -> list[str]:
             action = reason_actions.get(str(reason))
             if action and action not in actions:
                 actions.append(action)
-    actions.sort(key=lambda action: priority.index(action) if action in priority else len(priority))
+    actions.sort(
+        key=lambda action: (
+            priority.index(action) if action in priority else len(priority)
+        )
+    )
     return actions
 
 
@@ -552,12 +628,27 @@ def _classify_from_latest_no_trade(latest: dict[str, Any]) -> tuple[str, str] | 
         action = str(diagnostic_summary["next_action"])
     mapped = {
         "no_universe": ("no_universe", "check_sharedsignals_assets_and_daily_coverage"),
-        "no_candidates": ("no_candidates", "check_candidate_pool_thresholds_and_universe_filter"),
-        "all_candidates_missing_price": ("candidate_price_missing", "check_sharedsignals_daily_or_realtime_prices"),
+        "no_candidates": (
+            "no_candidates",
+            "check_candidate_pool_thresholds_and_universe_filter",
+        ),
+        "all_candidates_missing_price": (
+            "candidate_price_missing",
+            "check_sharedsignals_daily_or_realtime_prices",
+        ),
         "all_rejected_by_risk": ("all_rejected_by_risk", "review_risk_rejections"),
-        "no_portfolio_orders": ("no_portfolio_orders", "check_position_sizing_and_portfolio_constructor"),
-        "portfolio_empty": ("portfolio_empty_or_capital_lot_blocked", "check_capital_lot_size_and_constructor_output"),
-        "duplicate_existing_signal": ("duplicate_existing_signal", "review_same_day_idempotency_state"),
+        "no_portfolio_orders": (
+            "no_portfolio_orders",
+            "check_position_sizing_and_portfolio_constructor",
+        ),
+        "portfolio_empty": (
+            "portfolio_empty_or_capital_lot_blocked",
+            "check_capital_lot_size_and_constructor_output",
+        ),
+        "duplicate_existing_signal": (
+            "duplicate_existing_signal",
+            "review_same_day_idempotency_state",
+        ),
         "execution_skipped": ("execution_skipped", "review_execution_skip_reasons"),
         "execution_failed": ("execution_failed", "review_failed_receipts"),
         "pending_execution": ("pending_execution", "review_pending_signal_state"),
@@ -610,7 +701,20 @@ def _explain_no_trade(
     elif review_count <= 0 and local_sim_count > 0:
         category = "review_pending"
         action = "wait_for_review_or_run_daily_review"
-    elif sum(int(signal_counts.get(key, 0)) for key in ("pending", "filled", "failed", "partial", "expired", "cancelled")) <= 0:
+    elif (
+        sum(
+            int(signal_counts.get(key, 0))
+            for key in (
+                "pending",
+                "filled",
+                "failed",
+                "partial",
+                "expired",
+                "cancelled",
+            )
+        )
+        <= 0
+    ):
         category = "no_signal_cards_created"
         action = "check_signal_generation_thresholds"
     elif local_sim_count <= 0 and filled_signal_count <= 0:
@@ -675,7 +779,11 @@ def _expected_scientific_no_trade(explanation: dict[str, Any]) -> bool:
 
 
 def _has_warning_alerts(alerts: list[dict[str, Any]]) -> bool:
-    return any(str(alert.get("severity") or "").lower() in {"warn", "warning", "error", "critical"} for alert in alerts)
+    return any(
+        str(alert.get("severity") or "").lower()
+        in {"warn", "warning", "error", "critical"}
+        for alert in alerts
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -808,13 +916,20 @@ def first_sample_alerts(
     else:
         current = current.astimezone(CN_TZ)
     session_name, start = _session_start(current)
-    elapsed_minutes = int((current - start).total_seconds() // 60) if start is not None else None
+    elapsed_minutes = (
+        int((current - start).total_seconds() // 60) if start is not None else None
+    )
 
     root = Path(__file__).resolve().parents[2]
     signals_dir = signals_dir or root / "signals"
-    local_sim_path = local_sim_path or root / "shared" / "logs" / "local_sim" / "local_sim_trades.jsonl"
-    receipt_path = receipt_path or root / "signals" / "sim_execution_receipts.jsonl"
-    review_path = review_path or root / "shared" / "review" / "data" / "daily_reviews.jsonl"
+    execution_root = (
+        root / "shared" / "logs" / "execution_lineages" / ASHARE_EXECUTION_LINEAGE_ID
+    )
+    local_sim_path = local_sim_path or execution_root / "local_sim_trades.jsonl"
+    receipt_path = receipt_path or execution_root / "sim_execution_receipts.jsonl"
+    review_path = (
+        review_path or root / "shared" / "review" / "data" / "daily_reviews.jsonl"
+    )
     no_trade_log_path = no_trade_log_path or NO_TRADE_LOG
 
     result: dict[str, Any] = {
@@ -840,13 +955,40 @@ def first_sample_alerts(
 
     bars = _api_session_bars_summary(data_reader, start, current)
     if bars.get("error"):
-        alerts.append({"severity": "error", "code": "ashare_5min_api_unavailable", "message": "A股5分钟首样本检查无法读取 SharedSignals API 数据。"})
+        alerts.append(
+            {
+                "severity": "error",
+                "code": "ashare_5min_api_unavailable",
+                "message": "A股5分钟首样本检查无法读取 SharedSignals API 数据。",
+            }
+        )
     elif int(bars.get("bar_count") or 0) <= 0:
-        alerts.append({"severity": "error", "code": "ashare_5min_missing_in_session", "message": "A股交易时段开始后仍无有效5分钟数据。"})
+        alerts.append(
+            {
+                "severity": "error",
+                "code": "ashare_5min_missing_in_session",
+                "message": "A股交易时段开始后仍无有效5分钟数据。",
+            }
+        )
     elif int(bars.get("symbol_count") or 0) < max(1, int(min_symbols)):
-        alerts.append({"severity": "error", "code": "ashare_5min_coverage_low", "message": "A股交易时段开始后5分钟数据覆盖不足。"})
-    elif bars.get("latest_bar_age_minutes") is not None and float(bars["latest_bar_age_minutes"]) > 10.0:
-        alerts.append({"severity": "error", "code": "ashare_5min_stale_in_session", "message": "A股最新5分钟数据已超过10分钟。"})
+        alerts.append(
+            {
+                "severity": "error",
+                "code": "ashare_5min_coverage_low",
+                "message": "A股交易时段开始后5分钟数据覆盖不足。",
+            }
+        )
+    elif (
+        bars.get("latest_bar_age_minutes") is not None
+        and float(bars["latest_bar_age_minutes"]) > 10.0
+    ):
+        alerts.append(
+            {
+                "severity": "error",
+                "code": "ashare_5min_stale_in_session",
+                "message": "A股最新5分钟数据已超过10分钟。",
+            }
+        )
 
     result.update(bars)
 
@@ -880,27 +1022,51 @@ def first_sample_alerts(
         wait_minutes=wait_minutes,
         min_symbols=min_symbols,
     )
-    expected_no_trade = local_sim_count <= 0 and _expected_scientific_no_trade(result["no_trade_explanation"])
+    expected_no_trade = local_sim_count <= 0 and _expected_scientific_no_trade(
+        result["no_trade_explanation"]
+    )
     if local_sim_count <= 0:
         if expected_no_trade:
-            alerts.append({
-                "severity": "info",
-                "code": "ashare_first_sim_trade_not_expected",
-                "message": "A股5分钟数据已就绪，但当前资金计划、候选池或风控结果不要求新增模拟成交。",
-            })
+            alerts.append(
+                {
+                    "severity": "info",
+                    "code": "ashare_first_sim_trade_not_expected",
+                    "message": "A股5分钟数据已就绪，但当前资金计划、候选池或风控结果不要求新增模拟成交。",
+                }
+            )
         else:
-            alerts.append({"severity": "warn", "code": "ashare_first_sim_trade_missing", "message": "A股5分钟数据已进入会话窗口，但服务器本地模拟盘尚无成交样本。"})
+            alerts.append(
+                {
+                    "severity": "warn",
+                    "code": "ashare_first_sim_trade_missing",
+                    "message": "A股5分钟数据已进入会话窗口，但服务器本地模拟盘尚无成交样本。",
+                }
+            )
     if local_sim_count > 0 and receipt_count <= 0:
-        alerts.append({"severity": "warn", "code": "ashare_first_receipt_missing", "message": "A股已有本地模拟成交，但签名回执尚未生成。"})
+        alerts.append(
+            {
+                "severity": "warn",
+                "code": "ashare_first_receipt_missing",
+                "message": "A股已有本地模拟成交，但签名回执尚未生成。",
+            }
+        )
     elif int(receipt_audit.get("missing_receipt_count") or 0) > 0:
-        alerts.append({
-            "severity": "warn",
-            "code": "ashare_local_sim_orphan_trade",
-            "message": "A股本地模拟成交存在无法匹配签名回执的样本。",
-            "samples": receipt_audit.get("missing_receipts", []),
-        })
+        alerts.append(
+            {
+                "severity": "warn",
+                "code": "ashare_local_sim_orphan_trade",
+                "message": "A股本地模拟成交存在无法匹配签名回执的样本。",
+                "samples": receipt_audit.get("missing_receipts", []),
+            }
+        )
     if review_count <= 0:
-        alerts.append({"severity": "info", "code": "ashare_review_not_yet_run", "message": "A股复盘日志尚未生成，等待日终复盘任务。"})
+        alerts.append(
+            {
+                "severity": "info",
+                "code": "ashare_review_not_yet_run",
+                "message": "A股复盘日志尚未生成，等待日终复盘任务。",
+            }
+        )
 
     result["alerts"] = alerts
     fatal_data_alerts = {
@@ -909,9 +1075,13 @@ def first_sample_alerts(
         "ashare_5min_coverage_low",
         "ashare_5min_stale_in_session",
     }
-    has_fatal_data_alert = any(str(alert.get("code") or "") in fatal_data_alerts for alert in alerts)
+    has_fatal_data_alert = any(
+        str(alert.get("code") or "") in fatal_data_alerts for alert in alerts
+    )
     has_warning_alerts = _has_warning_alerts(alerts)
-    result["status"] = "fail" if has_fatal_data_alert else ("warn" if has_warning_alerts else "pass")
+    result["status"] = (
+        "fail" if has_fatal_data_alert else ("warn" if has_warning_alerts else "pass")
+    )
     if has_fatal_data_alert:
         result["reason"] = "first_sample_5min_data_gate_failed"
     elif has_warning_alerts:
@@ -929,7 +1099,9 @@ def first_sample_alerts(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Read-only A-share opening acceptance via SharedSignals API.")
+    parser = argparse.ArgumentParser(
+        description="Read-only A-share opening acceptance via SharedSignals API."
+    )
     parser.add_argument("--signals-dir", type=Path, default=None)
     parser.add_argument("--local-sim-path", type=Path, default=None)
     parser.add_argument("--receipt-path", type=Path, default=None)

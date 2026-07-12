@@ -50,11 +50,15 @@ def _is_ashare_regular_session(row: dict[str, Any]) -> bool:
         if trade_time.weekday() >= 5:
             return False
     current = trade_time.time()
-    return (time(9, 30) <= current <= time(11, 30)) or (time(13, 0) <= current <= time(14, 57))
+    return (time(9, 30) <= current <= time(11, 30)) or (
+        time(13, 0) <= current <= time(14, 57)
+    )
 
 
 def _fill_price_source_class(row: dict[str, Any]) -> str:
-    evidence = row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    evidence = (
+        row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    )
     return _normalize(
         row.get("fill_price_source_class")
         or evidence.get("fill_price_source_class")
@@ -66,13 +70,19 @@ def _has_market_data_fill_price(row: dict[str, Any]) -> bool:
     source_class = _fill_price_source_class(row)
     if source_class == "market_data":
         return True
-    evidence = row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    evidence = (
+        row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    )
     source = _normalize(
         row.get("fill_price_source")
         or evidence.get("fill_price_source")
         or row.get("price_source")
     )
-    if not source or source in {"signal_card.price", "unknown", "requested_order_price"}:
+    if not source or source in {
+        "signal_card.price",
+        "unknown",
+        "requested_order_price",
+    }:
         return False
     return any(
         marker in source
@@ -91,7 +101,9 @@ def _has_strategy_fill_price(row: dict[str, Any]) -> bool:
     if _has_market_data_fill_price(row):
         return True
     source_class = _fill_price_source_class(row)
-    evidence = row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    evidence = (
+        row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    )
     source = _normalize(
         row.get("fill_price_source")
         or evidence.get("fill_price_source")
@@ -111,7 +123,9 @@ def _evolution_evidence_check(row: dict[str, Any]) -> tuple[bool, str]:
     Returns (eligible, rejection_reason). rejection_reason is non-empty only
     when eligible is False, describing the first failing condition encountered.
     """
-    evidence = row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    evidence = (
+        row.get("fill_evidence") if isinstance(row.get("fill_evidence"), dict) else {}
+    )
     execution_class = evidence.get("execution_evidence_class")
     if not execution_class:
         return False, "missing_execution_evidence_class"
@@ -152,10 +166,13 @@ def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
     """Return strategy-sample validity for one normalized trade row."""
 
     market = _normalize(row.get("market") or "ashare")
-    capital_layer = _normalize(row.get("capital_layer") or row.get("account_type") or "simulated")
+    capital_layer = _normalize(
+        row.get("capital_layer") or row.get("account_type") or "simulated"
+    )
     side = _normalize(row.get("side"))
     execution_source = _normalize(row.get("execution_source"))
     candidate_layer = _normalize(row.get("candidate_pool_layer"))
+    sample_intent = _normalize(row.get("sample_intent"))
 
     if market != "ashare" or capital_layer != "simulated":
         return {
@@ -171,7 +188,14 @@ def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
             "sample_quality_reason": "outside_ashare_regular_session",
         }
 
-    if side == "buy" and execution_source == "ashare_candidate_layer" and candidate_layer == "candidate":
+    valid_buy_layer = (
+        candidate_layer == "candidate" and sample_intent in {"", "exploitation"}
+    ) or (candidate_layer == "exploration" and sample_intent == "exploration")
+    if (
+        side == "buy"
+        and execution_source == "ashare_candidate_layer"
+        and valid_buy_layer
+    ):
         if not _has_strategy_fill_price(row):
             return {
                 "strategy_sample_valid": False,
@@ -181,7 +205,11 @@ def classify_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
         return {
             "strategy_sample_valid": True,
             "sample_classification": "strategy_sample",
-            "sample_quality_reason": "ashare_candidate_layer_buy",
+            "sample_quality_reason": (
+                "ashare_exploration_layer_buy"
+                if candidate_layer == "exploration"
+                else "ashare_candidate_layer_buy"
+            ),
         }
 
     if side == "sell" and execution_source == "ashare_rebalance_sell":
@@ -222,20 +250,30 @@ def enrich_trade_sample(row: dict[str, Any]) -> dict[str, Any]:
 
 def summarize_sample_quality(rows: list[dict[str, Any]]) -> dict[str, Any]:
     enriched = [enrich_trade_sample(row) for row in rows]
-    classifications = Counter(str(row.get("sample_classification") or "unknown") for row in enriched)
-    reasons = Counter(str(row.get("sample_quality_reason") or "unknown") for row in enriched)
+    classifications = Counter(
+        str(row.get("sample_classification") or "unknown") for row in enriched
+    )
+    reasons = Counter(
+        str(row.get("sample_quality_reason") or "unknown") for row in enriched
+    )
     valid_count = sum(1 for row in enriched if bool(row.get("strategy_sample_valid")))
-    evolution_eligible_count = sum(1 for row in enriched if bool(row.get("evolution_sample_eligible")))
+    evolution_eligible_count = sum(
+        1 for row in enriched if bool(row.get("evolution_sample_eligible"))
+    )
 
     # Rejection reason counters: only count strategy-valid trades that fail evolution eligibility
     evolution_rejection_counter: Counter[str] = Counter()
     for row in enriched:
-        if bool(row.get("strategy_sample_valid")) and not bool(row.get("evolution_sample_eligible")):
+        if bool(row.get("strategy_sample_valid")) and not bool(
+            row.get("evolution_sample_eligible")
+        ):
             reason = str(row.get("evolution_sample_reason") or "unknown")
             evolution_rejection_counter[reason] += 1
     evolution_rejection_reasons = dict(sorted(evolution_rejection_counter.items()))
 
-    validation_count = sum(1 for row in enriched if row.get("sample_classification") == "chain_validation")
+    validation_count = sum(
+        1 for row in enriched if row.get("sample_classification") == "chain_validation"
+    )
     return {
         "total_count": len(enriched),
         "strategy_sample_valid_count": valid_count,
@@ -249,11 +287,19 @@ def summarize_sample_quality(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def strategy_valid_trades(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [row for row in (enrich_trade_sample(item) for item in rows) if bool(row.get("strategy_sample_valid"))]
+    return [
+        row
+        for row in (enrich_trade_sample(item) for item in rows)
+        if bool(row.get("strategy_sample_valid"))
+    ]
 
 
 def evolution_eligible_trades(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [row for row in (enrich_trade_sample(item) for item in rows) if bool(row.get("evolution_sample_eligible"))]
+    return [
+        row
+        for row in (enrich_trade_sample(item) for item in rows)
+        if bool(row.get("evolution_sample_eligible"))
+    ]
 
 
 __all__ = [

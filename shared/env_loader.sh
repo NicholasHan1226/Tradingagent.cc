@@ -2,10 +2,35 @@
 # tradingagent unified cron environment loader.
 # This file is sourced by crontab via BASH_ENV and by every wrapper explicitly.
 
+_tradingagent_require_sim_only() {
+    local raw_value="${REAL_TRADING_ENABLED:-}"
+    local normalized_value=""
+    normalized_value="$(printf '%s' "${raw_value}" | tr '[:upper:]' '[:lower:]')"
+    case "${normalized_value}" in
+        1|true|yes|on|enabled|live|real|production)
+            printf 'TradingAgent cron blocked: REAL_TRADING_ENABLED=%q requests live execution\n' \
+                "${raw_value}" >&2
+            return 2
+            ;;
+        ""|0|false|no|off|disabled)
+            export REAL_TRADING_ENABLED=false
+            return 0
+            ;;
+        *)
+            printf 'TradingAgent cron blocked: REAL_TRADING_ENABLED=%q is not an accepted sim-only value\n' \
+                "${raw_value}" >&2
+            return 2
+            ;;
+    esac
+}
+
 if [[ -n "${TRADINGAGENT_ENV_LOADER_READY:-}" ]]; then
+    if ! _tradingagent_require_sim_only; then
+        exit 2
+    fi
+    export TZ=Asia/Shanghai
     return 0 2>/dev/null || exit 0
 fi
-export TRADINGAGENT_ENV_LOADER_READY=1
 
 export TRADINGAGENT_ROOT="${TRADINGAGENT_ROOT:-/opt/investment/tradingagent}"
 export TRADINGAGENT_SHARED_ROOT="${TRADINGAGENT_SHARED_ROOT:-${TRADINGAGENT_ROOT}/shared}"
@@ -25,6 +50,16 @@ if [[ -r "${FINANCE_SHARED_ENV_FILE}" ]]; then
     # shellcheck disable=SC1090
     source "${FINANCE_SHARED_ENV_FILE}"
 fi
+
+# Re-check after both env files are sourced. A truthy or unrecognized value is
+# an operator/configuration error and must stop the job; never overwrite a live
+# request with a simulated value and continue silently.
+if ! _tradingagent_require_sim_only; then
+    unset TRADINGAGENT_ENV_LOADER_READY
+    exit 2
+fi
+export TZ=Asia/Shanghai
+export TRADINGAGENT_ENV_LOADER_READY=1
 
 # SharedSignals/ShareChannel API is the production data entry for TradingAgent.
 # Tests that need isolated data inject an explicit reader instead of opening the

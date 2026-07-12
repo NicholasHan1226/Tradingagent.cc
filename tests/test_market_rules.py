@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import sys
@@ -17,6 +18,132 @@ from shared.risk import pre_trade_check as pre_trade_check_module
 
 
 class MarketRulesTest(unittest.TestCase):
+    def test_ashare_allows_eighth_distinct_position_below_ninety_percent_gross_cap(
+        self,
+    ) -> None:
+        positions = [
+            {
+                "ts_code": f"60000{index}.SH",
+                "market": "ashare",
+                "weight": 0.11,
+                "sector": f"sector-{index}",
+            }
+            for index in range(1, 8)
+        ]
+
+        result = pre_trade_check(
+            {
+                "ts_code": "600008.SH",
+                "market": "ashare",
+                "side": "buy",
+                "weight": 0.10,
+                "sector": "sector-8",
+                "turnover_wan": 10_000,
+            },
+            {
+                "positions": positions,
+                "total_exposure": 0.77,
+                "daily_pnl_pct": 0.0,
+            },
+        )
+
+        self.assertTrue(result["approved"])
+        self.assertAlmostEqual(result["adjusted_weight"], 0.10, places=6)
+
+    def test_ashare_rejects_ninth_distinct_position_at_operational_cap(self) -> None:
+        positions = [
+            {
+                "ts_code": f"60000{index}.SH",
+                "market": "ashare",
+                "weight": 0.10,
+                "sector": f"sector-{index}",
+            }
+            for index in range(1, 9)
+        ]
+
+        result = pre_trade_check(
+            {
+                "ts_code": "600009.SH",
+                "market": "ashare",
+                "side": "buy",
+                "weight": 0.05,
+                "sector": "sector-9",
+                "turnover_wan": 10_000,
+            },
+            {
+                "positions": positions,
+                "total_exposure": 0.80,
+                "daily_pnl_pct": 0.0,
+            },
+        )
+
+        self.assertFalse(result["approved"])
+        self.assertTrue(any("上限 8" in reason for reason in result["reasons"]))
+
+    def test_ashare_gross_exposure_is_capped_at_ninety_percent(self) -> None:
+        result = pre_trade_check(
+            {
+                "ts_code": "600008.SH",
+                "market": "ashare",
+                "side": "buy",
+                "weight": 0.10,
+                "sector": "sector-8",
+                "turnover_wan": 10_000,
+            },
+            {
+                "positions": [],
+                "total_exposure": 0.85,
+                "daily_pnl_pct": 0.0,
+            },
+        )
+
+        self.assertTrue(result["approved"])
+        self.assertAlmostEqual(result["adjusted_weight"], 0.05, places=6)
+
+    def test_ashare_capacity_change_preserves_correlation_and_liquidity_reductions(
+        self,
+    ) -> None:
+        result = pre_trade_check(
+            {
+                "ts_code": "600008.SH",
+                "market": "ashare",
+                "side": "buy",
+                "weight": 0.10,
+                "sector": "sector-8",
+                "turnover_wan": 1_000,
+            },
+            {
+                "positions": [],
+                "total_exposure": 0.50,
+                "daily_pnl_pct": 0.0,
+                "correlations": {"600001.SH|600008.SH": 0.90},
+            },
+        )
+
+        self.assertTrue(result["approved"])
+        self.assertLess(result["adjusted_weight"], 0.10)
+        self.assertTrue(any("相关性降权" in item for item in result["adjustments"]))
+        self.assertTrue(any("流动性降权" in item for item in result["adjustments"]))
+
+    def test_crypto_retains_global_eighty_percent_gross_exposure_limit(self) -> None:
+        result = pre_trade_check(
+            {
+                "ts_code": "ETHUSDT",
+                "market": "crypto",
+                "side": "buy",
+                "weight": 0.10,
+                "sector": "crypto-2",
+            },
+            {
+                "positions": [],
+                "total_exposure": 0.75,
+                "daily_pnl_pct": 0.0,
+            },
+        )
+
+        self.assertTrue(result["approved"])
+        self.assertAlmostEqual(result["adjusted_weight"], 0.05, places=6)
+
     def test_ashare_t_plus_1_new_position_cannot_exit_same_day(self) -> None:
         today = date.today().isoformat()
         positions = [

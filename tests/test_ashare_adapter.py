@@ -6,8 +6,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from Ashare import adapter as ashare_adapter_module
 from Ashare.adapter import AshareAdapter
 from shared.execution import local_sim_ledger
+from shared.execution.execution_lineage import (
+    ASHARE_AUTHORITY_GENERATION,
+    ASHARE_CAPITAL_AUTHORITY_ID,
+    ASHARE_EXECUTION_LINEAGE_ID,
+)
+from shared.review.sample_journal import SampleJournal
 from shared.screening.six_dimension_scorer import score_stock
 
 
@@ -147,7 +154,9 @@ class FakeAshareReader:
             for symbol, status in self.coverage.items()
         ]
 
-    def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, object]]:
+    def get_bars_daily(
+        self, market: str, symbol: str, start: object = None, end: object = None
+    ) -> list[dict[str, object]]:
         self.daily_calls.append((market, symbol, start, end))
         amount = self.amounts.get(symbol)
         if amount == "missing_amount":
@@ -164,7 +173,9 @@ class FakeScoringReader:
     def get_regime(self) -> dict[str, object]:
         return {"regime": "growth", "regime_confidence": 1.0}
 
-    def get_events(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, object]]:
+    def get_events(
+        self, market: str, symbol: str, start: object = None, end: object = None
+    ) -> list[dict[str, object]]:
         self.calls.append(("events", market, symbol))
         return [{"confidence": 0.6, "direction": "positive"}]
 
@@ -178,19 +189,182 @@ class FakeScoringReader:
             {"factor_name": "growth", "event_time": "20260630", "value": 0.7},
             {"factor_name": "quality", "event_time": "20260630", "value": 0.6},
             {"factor_name": "momentum", "event_time": "20260630", "value": 0.5},
-            {"factor_name": "net_mf_amount", "event_time": "20260630", "value": 10000.0},
+            {
+                "factor_name": "net_mf_amount",
+                "event_time": "20260630",
+                "value": 10000.0,
+            },
         ]
 
-    def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, object]]:
+    def get_bars_daily(
+        self, market: str, symbol: str, start: object = None, end: object = None
+    ) -> list[dict[str, object]]:
         self.calls.append(("bars", market, symbol))
         closes = [10.0] * 15 + [10.2, 10.4, 10.6, 10.8, 11.0]
-        return [{"trade_date": f"202606{idx + 1:02d}", "close": close} for idx, close in enumerate(closes)]
+        return [
+            {"trade_date": f"202606{idx + 1:02d}", "close": close}
+            for idx, close in enumerate(closes)
+        ]
 
     def get_sentiment(self) -> list[dict[str, object]]:
         return []
 
 
 class AshareAdapterTest(unittest.TestCase):
+    def test_empty_fresh_start_account_reports_versioned_sample_debt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir).resolve()
+            missing_snapshot = root / "simulated_ashare_positions.json"
+            missing_journal = root / "sample_journal.jsonl"
+            with (
+                patch.object(
+                    local_sim_ledger,
+                    "LOCAL_SIM_POSITIONS_SNAPSHOT",
+                    missing_snapshot,
+                ),
+                patch.object(
+                    ashare_adapter_module,
+                    "DEFAULT_SAMPLE_JOURNAL_PATH",
+                    missing_journal,
+                ),
+            ):
+                account = AshareAdapter(reader=FakeAshareReader()).get_sim_account()
+
+        adjustment = account["capital_plan_sample_adjustment"]
+        self.assertEqual(adjustment["sample_policy_version"], "ashare-sample-debt-v1")
+        self.assertEqual(
+            adjustment["sample_authority_status"], "fresh_start_journal_missing"
+        )
+        self.assertEqual(adjustment["strategy_sample_valid_count"], 0)
+        self.assertEqual(adjustment["min_strategy_samples"], 5)
+        self.assertIs(adjustment["sample_debt"], True)
+        self.assertEqual(
+            adjustment["authority_scope"],
+            {
+                "capital_authority_id": ASHARE_CAPITAL_AUTHORITY_ID,
+                "authority_generation": ASHARE_AUTHORITY_GENERATION,
+                "execution_lineage_id": ASHARE_EXECUTION_LINEAGE_ID,
+            },
+        )
+
+    def test_sample_debt_counts_only_current_execution_eligible_journal_fills(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir).resolve()
+            journal_path = root / "sample_journal.jsonl"
+            journal = SampleJournal(journal_path)
+            base = {
+                "record_type": "fill",
+                "sample_intent": "exploration",
+                "sample_layer": "exploration_fill",
+                "capital_authority_id": ASHARE_CAPITAL_AUTHORITY_ID,
+                "authority_generation": ASHARE_AUTHORITY_GENERATION,
+                "execution_lineage_id": ASHARE_EXECUTION_LINEAGE_ID,
+                "real_trading_enabled": False,
+            }
+            journal.append_sample(
+                {
+                    **base,
+                    "journal_event_id": "current-valid-fill",
+                    "execution_eligible": True,
+                }
+            )
+            journal.append_sample(
+                {
+                    **base,
+                    "journal_event_id": "current-ineligible-fill",
+                    "sample_intent": "exploitation",
+                    "sample_layer": "exploitation_fill",
+                    "execution_eligible": False,
+                }
+            )
+            journal.append_sample(
+                {
+                    **base,
+                    "journal_event_id": "legacy-authority-fill",
+                    "capital_authority_id": "legacy-shared-capital",
+                    "execution_eligible": True,
+                }
+            )
+            journal.append_sample(
+                {
+                    **base,
+                    "journal_event_id": "wrong-lineage-fill",
+                    "execution_lineage_id": "legacy-epoch-2",
+                    "execution_eligible": True,
+                }
+            )
+            missing_snapshot = root / "simulated_ashare_positions.json"
+            with (
+                patch.object(
+                    local_sim_ledger,
+                    "LOCAL_SIM_POSITIONS_SNAPSHOT",
+                    missing_snapshot,
+                ),
+                patch.object(
+                    ashare_adapter_module,
+                    "DEFAULT_SAMPLE_JOURNAL_PATH",
+                    journal_path,
+                ),
+            ):
+                account = AshareAdapter(reader=FakeAshareReader()).get_sim_account()
+
+        adjustment = account["capital_plan_sample_adjustment"]
+        self.assertEqual(adjustment["sample_authority_status"], "ready")
+        self.assertEqual(adjustment["strategy_sample_valid_count"], 1)
+        self.assertEqual(adjustment["excluded_wrong_authority_count"], 2)
+        self.assertEqual(adjustment["excluded_non_execution_eligible_count"], 1)
+        self.assertIs(adjustment["sample_debt"], True)
+
+    def test_missing_journal_under_symlink_parent_is_not_a_trusted_fresh_start(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir).resolve()
+            target = root / "target"
+            target.mkdir()
+            linked = root / "linked"
+            linked.symlink_to(target, target_is_directory=True)
+            journal_path = linked / "sample_journal.jsonl"
+            missing_snapshot = root / "simulated_ashare_positions.json"
+            with (
+                patch.object(
+                    local_sim_ledger,
+                    "LOCAL_SIM_POSITIONS_SNAPSHOT",
+                    missing_snapshot,
+                ),
+                patch.object(
+                    ashare_adapter_module,
+                    "DEFAULT_SAMPLE_JOURNAL_PATH",
+                    journal_path,
+                ),
+            ):
+                account = AshareAdapter(reader=FakeAshareReader()).get_sim_account()
+
+        adjustment = account["capital_plan_sample_adjustment"]
+        self.assertEqual(
+            adjustment["sample_authority_status"], "sample_journal_unavailable"
+        )
+        self.assertIs(adjustment["sample_authority_reliable"], False)
+        self.assertEqual(adjustment["reason"], "sample_journal_symlink_not_allowed")
+
+    def test_strategy_config_supports_eight_positions_and_replacement_candidates(
+        self,
+    ) -> None:
+        config = AshareAdapter(reader=FakeAshareReader()).get_strategy_config()
+
+        self.assertEqual(config["max_portfolio_positions"], 8)
+        self.assertGreater(config["max_candidates"], config["max_portfolio_positions"])
+        self.assertGreaterEqual(config["max_candidates"], 8)
+        self.assertEqual(
+            config["sample_collection_policy"],
+            {
+                "policy_version": "ashare-sample-debt-v1",
+                "min_strategy_execution_samples": 5,
+            },
+        )
+
     def test_universe_filter_excludes_st_suspended_new_illiquid_and_bse(self) -> None:
         reader = FakeAshareReader()
         adapter = AshareAdapter(reader=reader)
@@ -203,9 +377,27 @@ class AshareAdapterTest(unittest.TestCase):
     def test_universe_is_ranked_by_recent_liquidity_before_scoring_limit(self) -> None:
         reader = FakeAshareReader()
         reader.assets = [
-            {"symbol": "000001", "name": "Lower Liquidity", "exchange": "SZSE", "list_date": "19910403", "status": "active"},
-            {"symbol": "600002", "name": "Higher Liquidity", "exchange": "SSE", "list_date": "19991110", "status": "active"},
-            {"symbol": "600519", "name": "High Liquidity", "exchange": "SSE", "list_date": "20010827", "status": "active"},
+            {
+                "symbol": "000001",
+                "name": "Lower Liquidity",
+                "exchange": "SZSE",
+                "list_date": "19910403",
+                "status": "active",
+            },
+            {
+                "symbol": "600002",
+                "name": "Higher Liquidity",
+                "exchange": "SSE",
+                "list_date": "19991110",
+                "status": "active",
+            },
+            {
+                "symbol": "600519",
+                "name": "High Liquidity",
+                "exchange": "SSE",
+                "list_date": "20010827",
+                "status": "active",
+            },
         ]
         reader.amounts.update({"000001": 55_000, "600002": 80_000, "600519": 120_000})
         adapter = AshareAdapter(reader=reader)
@@ -218,7 +410,9 @@ class AshareAdapterTest(unittest.TestCase):
         adapter = AshareAdapter(reader=FakeAshareReader())
 
         self.assertEqual(adapter.get_market(), "ashare")
-        self.assertEqual(adapter.map_symbol_to_reader("600519.SH"), ("ashare", "600519.SH"))
+        self.assertEqual(
+            adapter.map_symbol_to_reader("600519.SH"), ("ashare", "600519.SH")
+        )
         self.assertEqual(adapter.map_symbol_to_reader("000001"), ("ashare", "000001"))
         self.assertEqual(adapter.get_shadow_account(), "ashare_shadow")
 
@@ -252,7 +446,9 @@ class AshareAdapterTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot):
+            with patch.object(
+                local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot
+            ):
                 account = AshareAdapter(reader=FakeAshareReader()).get_sim_account()
 
         self.assertEqual(account["account"], "ashare_sim")
@@ -262,7 +458,9 @@ class AshareAdapterTest(unittest.TestCase):
         self.assertEqual(account["positions"][0]["sellable_quantity"], 700)
         self.assertEqual(account["positions"][0]["value"], 7140.0)
 
-    def test_sim_account_exposes_strategy_view_excluding_validation_samples(self) -> None:
+    def test_sim_account_exposes_strategy_view_excluding_validation_samples(
+        self,
+    ) -> None:
         from shared.execution import local_sim_ledger
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -315,7 +513,9 @@ class AshareAdapterTest(unittest.TestCase):
                 encoding="utf-8",
             )
             with (
-                patch.object(local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot),
+                patch.object(
+                    local_sim_ledger, "LOCAL_SIM_POSITIONS_SNAPSHOT", snapshot
+                ),
                 patch.object(local_sim_ledger, "LOCAL_SIM_TRADES", trades),
             ):
                 account = AshareAdapter(reader=FakeAshareReader()).get_sim_account()
@@ -324,8 +524,15 @@ class AshareAdapterTest(unittest.TestCase):
         self.assertEqual(len(account["positions"]), 1)
         self.assertEqual(account["strategy_cash_available"], 50000.0)
         self.assertEqual(account["strategy_positions"], [])
-        self.assertEqual(account["strategy_sample_quality"]["validation_sample_count"], 1)
-        self.assertEqual(account["capital_plan_sample_adjustment"]["ignored_validation_sample_count"], 1)
+        self.assertEqual(
+            account["strategy_sample_quality"]["validation_sample_count"], 1
+        )
+        self.assertEqual(
+            account["capital_plan_sample_adjustment"][
+                "ignored_validation_sample_count"
+            ],
+            1,
+        )
 
     def test_strategy_config_loads_eight_strategies_and_market_rules(self) -> None:
         adapter = AshareAdapter(reader=FakeAshareReader())
@@ -338,6 +545,26 @@ class AshareAdapterTest(unittest.TestCase):
         self.assertIn("trend_follow", config["strategies"])
         self.assertEqual(config["market_rules"]["settlement"], "T+1")
         self.assertIn("opening_auction", config["market_rules"]["sessions"])
+        self.assertEqual(
+            config["market_rules"]["execution_reality_model_version"],
+            "ashare-execution-reality-20260706-v1",
+        )
+        self.assertEqual(config["market_rules"]["effective_from"], "2026-07-06")
+        self.assertEqual(
+            config["market_rules"]["price_limit"]["main_board_risk_warning"],
+            0.10,
+        )
+        self.assertNotIn("st", config["market_rules"]["price_limit"])
+        after_hours = config["market_rules"]["sessions"]["after_hours_fixed_price"]
+        self.assertEqual(after_hours["start"], "15:05")
+        self.assertEqual(after_hours["end"], "15:30")
+        self.assertEqual(after_hours["order_type"], "after_hours_fixed_price")
+        self.assertFalse(after_hours["execution_supported"])
+        self.assertEqual(config["market_rules"]["lot_rules"]["buy_lot_size"], 100)
+        self.assertEqual(config["market_rules"]["price_cage"]["ratio"], 0.02)
+        self.assertTrue(
+            config["market_rules"]["cancel_policy"]["state_version_required"]
+        )
         self.assertEqual(config["sim_capital"], 50_000.0)
         self.assertEqual(config["score_universe_limit"], 500)
         self.assertEqual(config["default_price"], 0.0)

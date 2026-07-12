@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Merge TradingAgent crontab into a multi-repo crontab.
 
 Only allowed way to install/update TA cron entries. Never run ``crontab
@@ -28,6 +29,10 @@ if str(ROOT) not in sys.path:
 
 from shared.runtime_test.cron_coverage import (
     TRADINGAGENT_BASH_ENV as TRADINGAGENT_BASH_ENV_PATH,
+    TRADINGAGENT_CRON_TZ,
+    TRADINGAGENT_REAL_TRADING_ENABLED,
+    TRADINGAGENT_SHELL,
+    TRADINGAGENT_TIMEZONE,
     _tradingagent_environment_mismatches,
     tradingagent_entries,
 )
@@ -36,11 +41,28 @@ TEMPLATE_PATH = ROOT / "shared" / "crontab.txt"
 BACKUP_DIR = ROOT / "runtime" / "backups" / "crontab"
 USER = "marketgraph"
 TRADINGAGENT_BASH_ENV = f"BASH_ENV={TRADINGAGENT_BASH_ENV_PATH}"
+TRADINGAGENT_MANAGED_BLOCK_BEGIN = "# BEGIN TRADINGAGENT MANAGED CRON"
+TRADINGAGENT_MANAGED_BLOCK_END = "# END TRADINGAGENT MANAGED CRON"
+TRADINGAGENT_ENVIRONMENT_LINES = (
+    f"SHELL={TRADINGAGENT_SHELL}",
+    f"CRON_TZ={TRADINGAGENT_CRON_TZ}",
+    f"TZ={TRADINGAGENT_TIMEZONE}",
+    f"REAL_TRADING_ENABLED={TRADINGAGENT_REAL_TRADING_ENABLED}",
+    TRADINGAGENT_BASH_ENV,
+)
+REQUIRED_SAMPLE_OPS_MARKER = "job_ashare_sample_ops.sh"
+RETIRED_ASHARE_SAMPLE_JOB_MARKERS = (
+    "job_ashare_sample_learning.sh",
+    "job_ashare_formal_close_refresh.sh",
+    "job_ashare_forward_validation.sh",
+    "job_ashare_sample_target_monitor.sh",
+)
 
 
 # ---------------------------------------------------------------------------
 # TA schedule-line detection (matches cron_coverage._is_cron_schedule_line)
 # ---------------------------------------------------------------------------
+
 
 def _is_ta_schedule_line(line: str) -> bool:
     """Return whether a line is a TradingAgent cron schedule entry."""
@@ -51,42 +73,85 @@ def _is_ta_schedule_line(line: str) -> bool:
 # Merge
 # ---------------------------------------------------------------------------
 
+
+def _without_existing_managed_block(lines: list[str]) -> list[str] | None:
+    """Remove one prior managed block, rejecting malformed or duplicate markers."""
+
+    kept: list[str] = []
+    inside = False
+    seen = False
+    for line in lines:
+        marker = line.strip()
+        if marker == TRADINGAGENT_MANAGED_BLOCK_BEGIN:
+            if inside or seen:
+                return None
+            inside = True
+            seen = True
+            continue
+        if marker == TRADINGAGENT_MANAGED_BLOCK_END:
+            if not inside:
+                return None
+            inside = False
+            continue
+        if not inside:
+            kept.append(line)
+    if inside:
+        return None
+    return kept
+
+
 def merge(current_text: str, template_text: str) -> str | None:
     """Return merged crontab, or None if template has no TA schedule entries.
 
     Strips TA schedule lines from *current_text*, then appends the TradingAgent
-    BASH_ENV reset followed by raw TA schedule lines from *template_text*. All
-    other lines are preserved as-is in order.
+    self-contained simulation-only/timezone environment followed by raw TA
+    schedule lines from *template_text*. All other lines are preserved as-is in
+    order.
     """
     expected = tradingagent_entries(template_text)
     ta_raw = [line for line in template_text.splitlines() if _is_ta_schedule_line(line)]
-    template_lines = {line.strip() for line in template_text.splitlines()}
+    template_lines = [line.strip() for line in template_text.splitlines()]
     if (
         not expected
         or len(expected) != len(set(expected))
         or len(ta_raw) != len(expected)
-        or TRADINGAGENT_BASH_ENV not in template_lines
+        or any(
+            template_lines.count(line) != 1 for line in TRADINGAGENT_ENVIRONMENT_LINES
+        )
+        or not any(REQUIRED_SAMPLE_OPS_MARKER in line for line in ta_raw)
+        or any(
+            marker in line
+            for line in ta_raw
+            for marker in RETIRED_ASHARE_SAMPLE_JOB_MARKERS
+        )
     ):
+        return None
+    unmanaged = _without_existing_managed_block(current_text.splitlines())
+    if unmanaged is None:
         return None
     kept = [
         line
-        for line in current_text.splitlines()
-        if not _is_ta_schedule_line(line)
-        and line.strip() != TRADINGAGENT_BASH_ENV
+        for line in unmanaged
+        if not _is_ta_schedule_line(line) and line.strip() != TRADINGAGENT_BASH_ENV
     ]
-    return "\n".join(kept + [TRADINGAGENT_BASH_ENV] + ta_raw) + "\n"
+    managed = [
+        TRADINGAGENT_MANAGED_BLOCK_BEGIN,
+        *TRADINGAGENT_ENVIRONMENT_LINES,
+        *ta_raw,
+        TRADINGAGENT_MANAGED_BLOCK_END,
+    ]
+    return "\n".join(kept + managed) + "\n"
 
 
 # ---------------------------------------------------------------------------
 # System helpers
 # ---------------------------------------------------------------------------
 
-def _crontab(user: str, args: list[str], stdin: str | None = None
-             ) -> tuple[str, str]:
+
+def _crontab(user: str, args: list[str], stdin: str | None = None) -> tuple[str, str]:
     cmd = ["crontab", "-u", user] + args
     try:
-        r = subprocess.run(cmd, input=stdin, capture_output=True,
-                           text=True, timeout=10)
+        r = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=10)
     except Exception as exc:
         return "", f"{' '.join(cmd)}: {type(exc).__name__}: {exc}"
     if r.returncode == 0:
@@ -117,15 +182,20 @@ def _backup(text: str) -> Path:
 # Apply workflow
 # ---------------------------------------------------------------------------
 
+
 def _ta_coverage_ok(text: str, template_text: str) -> bool:
-    return (
-        tradingagent_entries(text) == tradingagent_entries(template_text)
-        and not _tradingagent_environment_mismatches(text)
-    )
+    return tradingagent_entries(text) == tradingagent_entries(
+        template_text
+    ) and not _tradingagent_environment_mismatches(text)
 
 
-def apply_merge(template_text: str, *, user: str = USER,
-                dry_run: bool = True, output_path: str | None = None) -> dict:
+def apply_merge(
+    template_text: str,
+    *,
+    user: str = USER,
+    dry_run: bool = True,
+    output_path: str | None = None,
+) -> dict:
     report: dict = {"action": "dry_run" if dry_run else "apply", "user": user}
 
     current, err = _read(user)
@@ -148,22 +218,28 @@ def apply_merge(template_text: str, *, user: str = USER,
     try:
         report["backup_path"] = str(_backup(current))
     except OSError as exc:
-        return {**report, "status": "fail", "failure": "backup_failed",
-                "error": str(exc)}
+        return {
+            **report,
+            "status": "fail",
+            "failure": "backup_failed",
+            "error": str(exc),
+        }
 
     _, err = _write(user, merged)
     if err:
-        return {**report, "status": "fail", "failure": "install_failed",
-                "error": err}
+        return {**report, "status": "fail", "failure": "install_failed", "error": err}
 
     readback, err = _read(user)
     if err or not _ta_coverage_ok(readback, template_text):
         _, rollback_error = _write(user, current)
         rb2, rollback_read_error = _read(user)
         if rollback_error or rollback_read_error or rb2 != current:
-            return {**report, "status": "fail",
-                    "failure": "rollback_readback_mismatch",
-                    "error": rollback_error or rollback_read_error}
+            return {
+                **report,
+                "status": "fail",
+                "failure": "rollback_readback_mismatch",
+                "error": rollback_error or rollback_read_error,
+            }
         reason = "readback_failed" if err else "coverage_mismatch"
         return {**report, "status": "fail", "failure": reason}
 
@@ -178,9 +254,11 @@ def apply_merge(template_text: str, *, user: str = USER,
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Merge TradingAgent crontab into a multi-repo crontab.")
+        description="Merge TradingAgent crontab into a multi-repo crontab."
+    )
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--current-file")
     parser.add_argument("--output", "-o")
@@ -188,8 +266,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.apply and args.current_file:
-        print("ERROR: --apply and --current-file are mutually exclusive.",
-              file=sys.stderr)
+        print(
+            "ERROR: --apply and --current-file are mutually exclusive.", file=sys.stderr
+        )
         return 2
 
     template_text = TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -198,8 +277,9 @@ def main(argv: list[str] | None = None) -> int:
         current_text = Path(args.current_file).read_text(encoding="utf-8")
         merged = merge(current_text, template_text)
         if merged is None:
-            print("ERROR: template has no TradingAgent schedule entries.",
-                  file=sys.stderr)
+            print(
+                "ERROR: template has no TradingAgent schedule entries.", file=sys.stderr
+            )
             return 2
         if args.output:
             Path(args.output).write_text(merged, encoding="utf-8")
@@ -207,8 +287,9 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(merged)
         return 0
 
-    report = apply_merge(template_text, user=args.user,
-                         dry_run=not args.apply, output_path=args.output)
+    report = apply_merge(
+        template_text, user=args.user, dry_run=not args.apply, output_path=args.output
+    )
     if report["status"] == "pass":
         print("status: pass")
         if not args.apply and not args.output:

@@ -4,6 +4,7 @@
 方法: risk_parity / equal_weight / conviction_weighted /
 volatility_targeted / pm_probability_weighted。
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -11,6 +12,8 @@ from typing import Any
 from .position_sizer import size_position
 
 _MAX_TOTAL_WEIGHT = 0.80
+_ASHARE_MAX_TOTAL_WEIGHT = 0.90
+_ASHARE_MAX_POSITIONS = 8
 _MAX_SINGLE_WEIGHT = 0.15
 _CRYPTO_VOLATILITY_BASELINE = 0.80
 
@@ -66,6 +69,18 @@ def _valid_order_count(orders: list[dict[str, Any]]) -> int:
     return len([o for o in orders if isinstance(o, dict) and o.get("ts_code")])
 
 
+def _is_ashare_portfolio(orders: list[dict[str, Any]], regime: str | None) -> bool:
+    regime_key = str(regime or "").strip().lower().replace("-", "_")
+    if regime_key.startswith("ashare") or regime_key.startswith("a_share"):
+        return True
+    declared = {
+        str(order.get("market") or "").strip().lower().replace("-", "_")
+        for order in orders
+        if isinstance(order, dict) and order.get("market")
+    }
+    return declared == {"ashare"} or declared == {"a_share"}
+
+
 def _limit_weights(
     weights: list[float],
     *,
@@ -91,7 +106,11 @@ def _limit_weights(
     if target_total is not None:
         target = min(max_total, max(0.0, target_total))
         while target - sum(limited) > 1e-12:
-            room_indexes = [i for i, w in enumerate(limited) if w < max_single - 1e-12 and clean[i] > 0]
+            room_indexes = [
+                i
+                for i, w in enumerate(limited)
+                if w < max_single - 1e-12 and clean[i] > 0
+            ]
             if not room_indexes:
                 break
             remaining = target - sum(limited)
@@ -116,20 +135,24 @@ def _limit_weights(
     return limited
 
 
-def _volatility_targeted_weights(orders: list[dict[str, Any]]) -> list[float]:
+def _volatility_targeted_weights(
+    orders: list[dict[str, Any]], *, max_total: float = _MAX_TOTAL_WEIGHT
+) -> list[float]:
     weights: list[float] = []
     for order in orders:
         if not isinstance(order, dict) or not order.get("ts_code"):
             weights.append(0.0)
             continue
         vol = _safe_float(order.get("volatility"), _CRYPTO_VOLATILITY_BASELINE)
-        baseline = _safe_float(order.get("volatility_baseline"), _CRYPTO_VOLATILITY_BASELINE)
+        baseline = _safe_float(
+            order.get("volatility_baseline"), _CRYPTO_VOLATILITY_BASELINE
+        )
         if baseline <= 0:
             baseline = _CRYPTO_VOLATILITY_BASELINE
         # Explicit volatility target: lower realized volatility receives more
         # capital, while high-volatility assets are scaled against the target.
         weights.append(baseline / vol if vol > 0 else 0.0)
-    return _limit_weights(weights, target_total=_MAX_TOTAL_WEIGHT)
+    return _limit_weights(weights, target_total=max_total, max_total=max_total)
 
 
 def _pm_probability_weight(order: dict[str, Any]) -> float:
@@ -151,14 +174,16 @@ def _pm_probability_weight(order: dict[str, Any]) -> float:
     return probability * max(0.0, edge)
 
 
-def _pm_probability_weighted_weights(orders: list[dict[str, Any]]) -> list[float]:
+def _pm_probability_weighted_weights(
+    orders: list[dict[str, Any]], *, max_total: float = _MAX_TOTAL_WEIGHT
+) -> list[float]:
     weights: list[float] = []
     for order in orders:
         if not isinstance(order, dict) or not order.get("ts_code"):
             weights.append(0.0)
             continue
         weights.append(_pm_probability_weight(order))
-    return _limit_weights(weights, target_total=_MAX_TOTAL_WEIGHT)
+    return _limit_weights(weights, target_total=max_total, max_total=max_total)
 
 
 def construct(
@@ -223,25 +248,39 @@ def construct(
     if method not in valid_methods:
         raise ValueError(f"method must be one of {valid_methods}, got {method}")
 
+    ashare_portfolio = _is_ashare_portfolio(orders, regime)
+    max_total_weight = (
+        _ASHARE_MAX_TOTAL_WEIGHT if ashare_portfolio else _MAX_TOTAL_WEIGHT
+    )
+    active_orders = (
+        list(orders[:_ASHARE_MAX_POSITIONS]) if ashare_portfolio else list(orders)
+    )
+
     # 计算每个订单的目标权重
     weights: list[float] = []
     if method == "volatility_targeted":
-        weights = _volatility_targeted_weights(orders)
+        weights = _volatility_targeted_weights(
+            active_orders, max_total=max_total_weight
+        )
     elif method == "pm_probability_weighted":
-        weights = _pm_probability_weighted_weights(orders)
+        weights = _pm_probability_weighted_weights(
+            active_orders, max_total=max_total_weight
+        )
     else:
-        for order in orders:
+        for order in active_orders:
             if not isinstance(order, dict) or not order.get("ts_code"):
                 weights.append(0.0)
                 continue
 
             if method == "equal_weight":
-                n = _valid_order_count(orders)
+                n = _valid_order_count(active_orders)
                 w = 1.0 / n if n > 0 else 0.0
                 weights.append(w)
 
             elif method == "conviction_weighted":
-                belief = _safe_float(order.get("belief_score") or order.get("conviction"), 0.5)
+                belief = _safe_float(
+                    order.get("belief_score") or order.get("conviction"), 0.5
+                )
                 vol = _safe_float(order.get("volatility"), 0.25)
                 w = size_position(belief, vol, regime)
                 weights.append(w)
@@ -254,21 +293,25 @@ def construct(
 
         # 归一化方法输出到组合总仓目标, conviction_weighted 保留原有留现金逻辑。
         if method in {"risk_parity", "equal_weight"}:
-            weights = _limit_weights(weights, target_total=_MAX_TOTAL_WEIGHT)
+            weights = _limit_weights(
+                weights,
+                target_total=max_total_weight,
+                max_total=max_total_weight,
+            )
         else:
-            weights = _limit_weights(weights)
+            weights = _limit_weights(weights, max_total=max_total_weight)
 
     # conviction_weighted: 权重已经是各自独立计算的, 不强制归一化 (允许留现金)
-    # 其他方法归一化到总仓上限, 并统一执行单股 15% / 总仓 80% 硬限。
+    # 其他方法归一化到市场总仓上限，并统一执行单股 15% 硬限。
     total_w = sum(weights)
-    if total_w > _MAX_TOTAL_WEIGHT:
-        scale = _MAX_TOTAL_WEIGHT / total_w
+    if total_w > max_total_weight:
+        scale = max_total_weight / total_w
         weights = [w * scale for w in weights]
         total_w = sum(weights)
 
     # 构建持仓
     positions: list[dict[str, Any]] = []
-    for order, w in zip(orders, weights):
+    for order, w in zip(active_orders, weights):
         if not isinstance(order, dict) or not order.get("ts_code"):
             continue
         if w <= 0:
@@ -295,7 +338,7 @@ def construct(
     final_total = sum(p["weight"] for p in positions)
     capital_layers = {
         str(o.get("capital_layer"))
-        for o in orders
+        for o in active_orders
         if isinstance(o, dict) and o.get("capital_layer") is not None
     }
 
@@ -323,12 +366,36 @@ def build_portfolio(
 
 if __name__ == "__main__":
     import json
+
     test_orders = [
-        {"ts_code": "600519.SH", "belief_score": 0.75, "volatility": 0.20, "sector": "白酒", "price": 1700.0},
-        {"ts_code": "000858.SZ", "belief_score": 0.60, "volatility": 0.25, "sector": "白酒", "price": 150.0},
-        {"ts_code": "601318.SH", "belief_score": 0.55, "volatility": 0.18, "sector": "保险", "price": 50.0},
+        {
+            "ts_code": "600519.SH",
+            "belief_score": 0.75,
+            "volatility": 0.20,
+            "sector": "白酒",
+            "price": 1700.0,
+        },
+        {
+            "ts_code": "000858.SZ",
+            "belief_score": 0.60,
+            "volatility": 0.25,
+            "sector": "白酒",
+            "price": 150.0,
+        },
+        {
+            "ts_code": "601318.SH",
+            "belief_score": 0.55,
+            "volatility": 0.18,
+            "sector": "保险",
+            "price": 50.0,
+        },
     ]
-    for m in ("conviction_weighted", "equal_weight", "risk_parity", "volatility_targeted"):
+    for m in (
+        "conviction_weighted",
+        "equal_weight",
+        "risk_parity",
+        "volatility_targeted",
+    ):
         print(f"\n=== {m} ===")
         r = construct(test_orders, 1_000_000, method=m, regime="growth")
         print(json.dumps(r, ensure_ascii=False, indent=2))

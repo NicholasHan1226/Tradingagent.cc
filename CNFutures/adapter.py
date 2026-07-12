@@ -18,7 +18,9 @@ from .contract_rules import is_executable_contract_symbol, normalize_product
 try:  # Optional in partial local checkouts.
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, TradingagentDataReader
 except Exception:  # pragma: no cover
-    DEFAULT_SHARED_SIGNALS_DB = Path("/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite")
+    DEFAULT_SHARED_SIGNALS_DB = Path(
+        "/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite"
+    )
     TradingagentDataReader = None  # type: ignore[assignment]
 
 
@@ -92,7 +94,18 @@ DEFAULT_STYLES: dict[str, dict[str, Any]] = {
     },
 }
 
-_ACTIVE_STATUSES = {"", "1", "active", "enabled", "listed", "open", "trading", "normal", "true", "yes"}
+_ACTIVE_STATUSES = {
+    "",
+    "1",
+    "active",
+    "enabled",
+    "listed",
+    "open",
+    "trading",
+    "normal",
+    "true",
+    "yes",
+}
 
 
 def _is_active(asset: dict[str, Any]) -> bool:
@@ -102,7 +115,9 @@ def _is_active(asset: dict[str, Any]) -> bool:
             if isinstance(value, str):
                 return value.strip().lower() in _ACTIVE_STATUSES
             return bool(value)
-    status = str(asset.get("status") or asset.get("market_status") or "").strip().lower()
+    status = (
+        str(asset.get("status") or asset.get("market_status") or "").strip().lower()
+    )
     return status in _ACTIVE_STATUSES
 
 
@@ -130,7 +145,10 @@ class CNFuturesAdapter(MarketAdapter):
             self.reader = TradingagentDataReader()
         else:
             self.reader = None
-        self.universe_filter = {**DEFAULT_UNIVERSE_FILTER, **dict(universe_filter or {})}
+        self.universe_filter = {
+            **DEFAULT_UNIVERSE_FILTER,
+            **dict(universe_filter or {}),
+        }
         self.strategy_dir = strategy_dir or STRATEGY_DIR
         self._styles_override = styles
 
@@ -140,9 +158,12 @@ class CNFuturesAdapter(MarketAdapter):
     def get_universe(self, date: str) -> list[str]:
         assets = self._get_assets()
         asset_by_symbol = {
-            str(asset.get("symbol") or asset.get("ts_code") or "").strip().lower(): asset
+            str(asset.get("symbol") or asset.get("ts_code") or "")
+            .strip()
+            .lower(): asset
             for asset in assets
-            if isinstance(asset, dict) and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+            if isinstance(asset, dict)
+            and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
         }
         max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
         allowed_products = {
@@ -179,16 +200,21 @@ class CNFuturesAdapter(MarketAdapter):
     def get_intraday_universe(self, date: str, *, interval: str = "5min") -> list[str]:
         """Prefer contracts with fresh 5-minute bars for intraday simulation."""
 
-        symbols_with_bars = self._get_symbols_with_intraday_bars_from_reader(date, interval)
+        symbols_with_bars = self._get_symbols_with_intraday_bars_from_reader(
+            date, interval
+        )
         if not symbols_with_bars and self._allow_direct_sqlite_fallback():
             symbols_with_bars = self._get_symbols_with_intraday_bars(date, interval)
         if not symbols_with_bars:
             return self.get_universe(date)
         assets = self._get_assets()
         asset_by_symbol = {
-            str(asset.get("symbol") or asset.get("ts_code") or "").strip().lower(): asset
+            str(asset.get("symbol") or asset.get("ts_code") or "")
+            .strip()
+            .lower(): asset
             for asset in assets
-            if isinstance(asset, dict) and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+            if isinstance(asset, dict)
+            and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
         }
         max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
         allowed_products = {
@@ -239,9 +265,12 @@ class CNFuturesAdapter(MarketAdapter):
     def _scan_candidate_symbols(self) -> list[str]:
         assets = self._get_assets()
         asset_by_symbol = {
-            str(asset.get("symbol") or asset.get("ts_code") or "").strip().lower(): asset
+            str(asset.get("symbol") or asset.get("ts_code") or "")
+            .strip()
+            .lower(): asset
             for asset in assets
-            if isinstance(asset, dict) and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+            if isinstance(asset, dict)
+            and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
         }
         allowed_products = {
             str(item).strip().lower()
@@ -273,7 +302,9 @@ class CNFuturesAdapter(MarketAdapter):
         max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
         for symbol in self._scan_candidate_symbols():
             try:
-                rows = get_bars_daily(READER_MARKET, symbol, str(date or ""), str(date or ""))
+                rows = get_bars_daily(
+                    READER_MARKET, symbol, str(date or ""), str(date or "")
+                )
             except Exception:
                 rows = []
             if rows:
@@ -282,7 +313,9 @@ class CNFuturesAdapter(MarketAdapter):
                     break
         return selected
 
-    def _get_symbols_with_intraday_bars_from_reader(self, date: str, interval: str) -> list[str]:
+    def _get_symbols_with_intraday_bars_from_reader(
+        self, date: str, interval: str
+    ) -> list[str]:
         if self.reader is None:
             return []
         selected = self._get_symbols_from_realtime_batch(date, interval)
@@ -294,7 +327,13 @@ class CNFuturesAdapter(MarketAdapter):
             max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
             for symbol in self._scan_candidate_symbols():
                 try:
-                    rows = get_bars_intraday(READER_MARKET, symbol, interval, str(date or ""), str(date or ""))
+                    rows = get_bars_intraday(
+                        READER_MARKET,
+                        symbol,
+                        interval,
+                        str(date or ""),
+                        str(date or ""),
+                    )
                 except Exception:
                     rows = []
                 if rows:
@@ -319,11 +358,16 @@ class CNFuturesAdapter(MarketAdapter):
             rows = []
         if not rows:
             return []
-        interval_values = {"5m", "5min"} if interval in {"5m", "5min"} else {str(interval)}
+        interval_values = (
+            {"5m", "5min"} if interval in {"5m", "5min"} else {str(interval)}
+        )
         asset_by_symbol = {
-            str(asset.get("symbol") or asset.get("ts_code") or "").strip().lower(): asset
+            str(asset.get("symbol") or asset.get("ts_code") or "")
+            .strip()
+            .lower(): asset
             for asset in self._get_assets()
-            if isinstance(asset, dict) and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
+            if isinstance(asset, dict)
+            and str(asset.get("symbol") or asset.get("ts_code") or "").strip()
         }
         allowed_products = {
             str(item).strip().lower()
@@ -335,14 +379,17 @@ class CNFuturesAdapter(MarketAdapter):
                 str(row.get("symbol") or row.get("ts_code") or "").strip()
                 for row in rows
                 if isinstance(row, dict)
-                and str(row.get("interval") or "5min").strip().lower() in interval_values
+                and str(row.get("interval") or "5min").strip().lower()
+                in interval_values
             ],
             asset_by_symbol=asset_by_symbol,
             allowed_products=allowed_products,
             max_symbols=max(1, int(self.universe_filter.get("max_symbols", 30))),
         )
 
-    def _get_intraday_symbols_from_reader_read_model(self, date: str, interval: str) -> list[str]:
+    def _get_intraday_symbols_from_reader_read_model(
+        self, date: str, interval: str
+    ) -> list[str]:
         if not self._allow_direct_sqlite_fallback():
             return []
         trade_date = str(date or "").replace("-", "").strip()
@@ -524,11 +571,19 @@ class CNFuturesAdapter(MarketAdapter):
 
     def _get_assets(self) -> list[dict[str, Any]]:
         if self.reader is None:
-            return self._get_assets_from_sqlite() if self._allow_direct_sqlite_fallback() else []
+            return (
+                self._get_assets_from_sqlite()
+                if self._allow_direct_sqlite_fallback()
+                else []
+            )
         get_assets = getattr(self.reader, "get_assets", None)
         if callable(get_assets):
             rows = get_assets(market=READER_MARKET)
-            filtered = [dict(row) for row in rows or [] if dict(row).get("market") in (None, "", READER_MARKET)]
+            filtered = [
+                dict(row)
+                for row in rows or []
+                if dict(row).get("market") in (None, "", READER_MARKET)
+            ]
             if filtered:
                 return filtered
             if not self._allow_direct_sqlite_fallback():
@@ -610,7 +665,10 @@ class CNFuturesAdapter(MarketAdapter):
 
     def _load_styles(self) -> dict[str, dict[str, Any]]:
         if self._styles_override is not None:
-            return {str(name): dict(config) for name, config in self._styles_override.items()}
+            return {
+                str(name): dict(config)
+                for name, config in self._styles_override.items()
+            }
         styles = {name: dict(config) for name, config in DEFAULT_STYLES.items()}
         if not self.strategy_dir.exists():
             return self._apply_runtime_styles(styles)
@@ -623,37 +681,13 @@ class CNFuturesAdapter(MarketAdapter):
             styles[name] = payload
         return self._apply_runtime_styles(styles)
 
-    def _apply_runtime_styles(self, styles: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        review_root = Path(os.environ.get("CN_FUTURES_REVIEW_ROOT") or DEFAULT_REVIEW_ROOT)
-        generated_dir = review_root / MARKET / "generated_styles"
-        if generated_dir.exists():
-            for path in sorted(generated_dir.glob("*.json")):
-                try:
-                    payload = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    continue
-                if not isinstance(payload, dict):
-                    continue
-                name = str(payload.get("name") or path.stem)
-                if name:
-                    styles[name] = payload
-        weights_path = review_root / MARKET / "style_weights.json"
-        try:
-            weight_payload = json.loads(weights_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return styles
-        overlays = weight_payload.get("styles") if isinstance(weight_payload, dict) else {}
-        if not isinstance(overlays, dict):
-            return styles
-        for name, overlay in overlays.items():
-            if name not in styles or not isinstance(overlay, dict):
-                continue
-            styles[name].update({
-                key: overlay[key]
-                for key in ("status", "enabled", "weight", "evolution_action", "evolution_reason", "last_modified")
-                if key in overlay
-            })
-        return styles
+    def _apply_runtime_styles(
+        self, styles: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        # Runtime-generated variants and weight overlays are retired.  The
+        # checked-in style set remains immutable until a manually reviewed
+        # promotion is implemented against SampleJournal/KPI evidence.
+        return {str(name): dict(config) for name, config in styles.items()}
 
     def _shared_signals_db_path(self) -> Path:
         return Path(os.environ.get("SHARED_SIGNALS_DB") or DEFAULT_SHARED_SIGNALS_DB)

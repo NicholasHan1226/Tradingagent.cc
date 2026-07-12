@@ -1,59 +1,48 @@
-# tradingagent/shared/review
+# TradingAgent / shared/review
 
-> **阅读顺序：** [../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件
+> 阅读顺序：[../../AGENTS.md](../../AGENTS.md) → [../../STATUS.md](../../STATUS.md) → 本文件。
 
-## 目标
-复盘系统: 3组对比(实际vs预期目标 / 实际vs基准沪深300 / 实际vs上一周期) + 归因 + 行动。
-自愈闭环: 巡逻→修复→记忆→复盘→迭代。向稳定胜率与收益进化。
+## Authority
 
-## 文件结构
-- daily_review.py — 每日2次复盘(午盘11:35 + 收盘15:30)
-- weekly_review.py — 周五复盘(策略胜率/维度有效性/升降级)
-- sim_ledger_reader.py — 只读加载 unified simulated ledger 与 A股 server-local simulated ledger, 作为复盘/报告输入
-- monthly_review.py — 月末复盘(架构健康/记忆固化/目标达成)
-- attribution.py — 收益归因到维度/策略/条件
-- benchmark.py — 基准追踪(沪深300/创业板/买入持有/上一周期)
-- goals.yaml — 阶段目标(stage_1_sim → stage_4_scaled)
-- opportunity_funnel.py — 机会漏斗事件写入规范; 只写 `shared/review/opportunities/funnel_events.jsonl`, 供前端动态漏斗播放, 不改变信号/订单状态
-- self_heal_loop.py — 闭环自愈系统(巡逻→修复→记忆→复盘→迭代)
+- A股唯一演化事实源：append-only `shared/review/ashare/sample_journal.jsonl`。
+- `sample_kpi_latest.json`、`evolution_decision_latest.json`、`market_maturity_latest.json` 及对应 log 是可重建投影，不可反写或覆盖 journal 事实。
+- 只有当前 `capital_authority_id + authority_generation + execution_lineage_id` 的记录进入 KPI；历史/legacy 记录保留但从当前统计排除。
+- 旧 portfolio/weekly/legacy review 不能给出自动 lifecycle、champion 或风险晋级。
 
-## 三组对比框架
-1. 实际 vs 预期目标 — 对照 goals.yaml 当前阶段门槛,判定是否达标
-2. 实际 vs 基准(沪深300) — alpha/beta/sharpe/最大回撤,是否跑赢
-3. 实际 vs 上一周期 — 同比改善/退化,趋势方向
+## 样本分层
 
-## 归因
-将收益拆解到:
-- 维度: 宏观/事件/基本面/资金/技术/情绪
-- 策略: 回调/趋势/突破/事件驱动/...
-- 条件: 单仓/行业/时段/波动率 regime
+必须分别统计：
 
-## 复盘输入
-- `load_shadow_trades()` 保持旧兼容: 仅读旧 shadow trade log / filled signals fallback。
-- `load_review_trades()` 是日报、周报、归因和邮件报告的默认入口: 合并 legacy shadow fills、`shared/logs/sim_ledger/<market>/<style>/trade_journal.jsonl` 和 A股 `shared/logs/local_sim/local_sim_trades.jsonl`。
-- A股 server-local simulated 账本是账户事实; 非连续竞价时段成交必须保留在账户/持仓/回执里, 但由 `sample_quality.py` 标为 `outside_ashare_regular_session` 链路验证样本, 不得进入策略 PnL、胜率、方向命中、周度升降级或自我演化。
-- A股 local_sim 成交进入复盘时必须保留样本判断字段: `filled_price/avg_price`、`trade_timestamp_bj`、`ashare_session_valid`、`fill_price_source`、`fill_price_source_class`、`fill_evidence`、`candidate_pool_layer`、`execution_source`。复盘 normalizer 不得只保留展示字段后重新分类, 否则会把有效策略成交误判为链路验证样本。
-- `fill_price_source=signal_card.price` 且有真实 `filled_price/avg_price` 的 A股 server-local 成交是明确成交价来源; 只有缺成交价、缺候选来源、缺执行来源或非交易时段样本才进入链路验证样本。
-- HK 暂不进入默认生产复盘输入; 如未来恢复 HK, 必须显式把 HK 放回生产市场范围并同步健康检查。
-- 报告必须同时保留 `review_trade_count`、`shadow_trade_count`、`simulated_trade_count`，避免把模拟盘样本误判为 0。
+1. `observation_counterfactual`
+2. `exploration_fill`
+3. `exploitation_fill`
+4. `completed_round_trip`
+5. `exit_stop`
+6. `risk_reject`
+7. `chain_validation`
 
-## 自我演化健康检查
-- `shared.runtime_test.self_evolution_health` 是只读验收入口, 用于检查各市场账本策略样本是否进入演化层、`evolution_log` action 是否和最终 `style_weights` 一致、是否存在可证明的正向演化。
-- A股 server-local 模拟盘使用当前 50,000 元主账户的组合级演化证据：`Ashare/portfolio_evolution.py` 写入 `shared/review/ashare/portfolio_evolution_latest.json` 和 `portfolio_evolution_log.jsonl`，`self_evolution_health` 应优先用该文件判断策略样本是否被演化层看到。旧资金档位账本只作离线历史分析，不进入当前组合级 `rankings`；不要把同一组合成交拆成 aggressive/balanced/conservative 多风格账本来制造归因。
-- A股演化样本不合格时必须同时保留总类 blocker `weak_fill_price_evidence` 和具体拒绝原因，例如缺成交证据类别、非市场报价、缺 bar time、零成交量、时间过旧或未来条线；不得用一个笼统原因覆盖所有失败，也不得因补充诊断而放宽演化门槛。
-- 机械闭环 pass 不等于正向自我演化。只有有效样本进入演化输入、产生可解释的权重/门禁/变体动作, 且后续样本改善时, 才能称为正向演化。
-- 样本不足、闭市、策略等待可以是 pass/info; 有策略样本但演化层 `trades=0`、权重日志前后矛盾、或旧隔离样本进入演化, 必须至少 warn。
+chain validation、盘外、缺来源/lineage、弱成交证据或 capital commit pending 样本只保留审计，不进入胜率、expectancy、费用后 PnL 或晋级证据。
 
-## 自愈闭环
-巡逻(patrol)检出 → 修复(heal)处置 → 写入记忆(memory) → 复盘(review)迭代规则。
-修复失败 → 10分钟紧急告警 → 升级人工。
+## 预测、消融与标签
 
-## 升降级纪律
-- 降级: 胜率<50% 连续2周 → 策略降权/下线
-- 升级: 当前资金层连续2周为正 → 升级到更高权重或下一验证层; 当前生产主验证层为 simulated, 实盘仍需人工安全门
-- 冻结模型期: 不允许 in-sample 调参(纪律红线)
+- 所有数据合格候选保存 prediction；成熟/执行门禁不阻断 observation。
+- paired MG 消融必须共享 immutable base snapshot、prediction time、data quality 和 label/cost口径；`mg_off` 不读取 MG 特征。
+- raw heuristic score 与 uncalibrated prior 必须如实命名，不能包装成校准概率。
+- Exploration 保存 policy version、seed、top-K、selection method、selection probability/propensity 和未选择原因。
+- horizon 固定为 `m30/m60/close/1d/3d/5d`；`next_day` 仅是 `1d` 兼容别名。
+- `as_of` 防止未来泄漏；日线不能伪造 m30/m60。反事实标签使用版本化保守成本，真实 round trip 使用 actual fee/slippage。
+- 5 分钟重复样本按 cluster 去重；未成交风格同样生成标签，避免选择偏差。
+- 同一决策时点的 style×MG×horizon 共用 `decision_cluster_id`；成熟度使用预先指定主 horizon 的 unique clusters、独立交易日与 N_eff，不使用 label-cell 总数。
+- PIT 重新校验 event/available/ingested/retrieved 时间链；calibration 真实计算 Brier/log loss/base-rate skill/reliability，布尔字段不能自证。
 
-## 原则
-- 复盘是行动的依据, 不是仪式
-- 每次复盘必须产出 next_day_plan / next_week_plan / next_month_focus
-- 记忆是闭环的脊柱: 无记忆则无迭代
+## KPI 与成熟度
+
+- 按风格和 sample intent 展示 candidate/prediction/fill/round-trip/exit/reject/chain counts、各 horizon 状态、胜率、平均盈亏、expectancy、gross/cost/post-cost PnL、最大回撤和拒绝分布。
+- 组合资本、权益、PnL 和回撤只来自对应市场 authority；不同市场或风格 shadow 不聚合。
+- 正式最大回撤只来自账户逐日 MTM equity；trade-PnL 序列回撤仅作辅助。benchmark unavailable 保持 null/status，不回落为 0。
+- A股成熟度显示模拟交易日、day-5/day-10 review due、有效样本、科学证据、阻塞原因和人工授权状态。
+- CNFutures 成熟度独立显示有效会话/样本、品种与波动覆盖、夜盘/换月/极端风险、完整回合、费用后结果和稳定性。
+- `promotion_evidence_ready` 只表示证据检查结果；`automatic_promotion_enabled=false`、`automatic_risk_expansion_enabled=false`、`live_transition_authorized=false` 始终保持。
+- 短样本正收益不等于可重复盈利；机械闭环通过也不等于策略成熟。
+
+统一运行入口是 `python3 -m shared.runtime_test.ashare_sample_ops`；它只生成标签和投影，不创建订单、账户、邮件或 live transition。字段见 [../../docs/data_contract.md](../../docs/data_contract.md)，验收见 [../../docs/capital_growth_validation.md](../../docs/capital_growth_validation.md)。

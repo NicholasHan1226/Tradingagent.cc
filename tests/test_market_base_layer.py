@@ -105,18 +105,29 @@ promotion:
         unsafe_payloads = [
             {"direct_execution": True},
             {"risk": {"real_execution": True}},
+            {"real_trading_enabled": True},
+            {"nested": {"live_execution_enabled": "enabled"}},
             {"nested": [{"live": True}]},
             {"account": {"capital_layer": "real"}},
         ]
         for payload in unsafe_payloads:
             with self.subTest(payload=payload):
-                with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "real/live execution is rejected"
+                ):
                     reject_real_execution_payload(payload, context="test.payload")
 
     def test_validate_market_config_rejects_safety_flags(self) -> None:
-        from shared.markets.config_schema import MarketToolConfig, validate_market_config
+        from shared.markets.config_schema import (
+            MarketToolConfig,
+            validate_market_config,
+        )
 
-        for flag in ("real_money_enabled", "live_broker_enabled", "direct_execution_enabled"):
+        for flag in (
+            "real_money_enabled",
+            "live_broker_enabled",
+            "direct_execution_enabled",
+        ):
             with self.subTest(flag=flag):
                 config = MarketToolConfig(market="unsafe", safety={flag: True})
                 with self.assertRaisesRegex(ValueError, flag):

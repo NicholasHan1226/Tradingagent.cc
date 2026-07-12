@@ -71,7 +71,9 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(payload["missing_mark_count"], 1)
             self.assertEqual(payload["total_pnl"], 0.0)
 
-    def test_daily_mark_to_market_inherits_dashboard_exclusion_from_positions(self) -> None:
+    def test_daily_mark_to_market_inherits_dashboard_exclusion_from_positions(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = self._seed_ledger(Path(tmp) / "crypto" / "balanced")
             state = json.loads(ledger.positions_path.read_text(encoding="utf-8"))
@@ -141,7 +143,9 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(result["ledgers"][0]["total_pnl"], 50.0)
             rows = [
                 json.loads(line)
-                for line in (style_dir / "daily_mark_to_market.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (style_dir / "daily_mark_to_market.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
                 if line.strip()
             ]
             self.assertEqual(rows[-1]["date"], "20260705")
@@ -200,7 +204,18 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(result["ledgers"][0]["style"], "ashare_sim")
             self.assertEqual(result["ledgers"][0]["equity"], 50_000.0)
             self.assertFalse((legacy_style / "daily_mark_to_market.jsonl").exists())
-            self.assertTrue((root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").exists())
+            self.assertTrue(
+                (root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").exists()
+            )
+            row = json.loads(
+                (root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()[-1]
+            )
+            self.assertIsNone(row["benchmark_return"])
+            self.assertIsNone(row["benchmark_pnl"])
+            self.assertIsNone(row["pnl_vs_benchmark"])
+            self.assertEqual(row["benchmark_status"], "unavailable")
 
     def test_writer_marks_ashare_local_sim_with_recent_prices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -239,13 +254,78 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(result["ledgers"][0]["equity"], 50_200.0)
             rows = [
                 json.loads(line)
-                for line in (root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (
+                    root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl"
+                )
+                .read_text(encoding="utf-8")
+                .splitlines()
                 if line.strip()
             ]
             self.assertEqual(rows[-1]["pnl_source"], "ashare_local_sim_mark_to_market")
             self.assertEqual(rows[-1]["open_position_count"], 1)
 
-    def test_ashare_local_sim_equity_includes_cash_and_market_value_after_buys(self) -> None:
+    def test_ashare_writer_drawdown_uses_daily_account_mtm_equity_curve(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "logs" / "sim_ledger"
+            local_sim_dir = base / "logs" / "local_sim"
+            local_sim_dir.mkdir(parents=True)
+            (local_sim_dir / "local_sim_trades.jsonl").write_text(
+                json.dumps(
+                    {
+                        "account": "ashare_sim",
+                        "status": "filled",
+                        "ts_code": "600000.SH",
+                        "side": "buy",
+                        "quantity": 100,
+                        "filled_price": 10.0,
+                        "net_amount": 1000.0,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "shared.review.equity_snapshots.load_mark_prices_for_positions",
+                return_value={"600000.SH": 15.0},
+            ):
+                write_sim_ledger_equity_snapshots(
+                    markets=["ashare"],
+                    ledger_root=root,
+                    local_sim_dir=local_sim_dir,
+                    trade_date="20260713",
+                )
+            with patch(
+                "shared.review.equity_snapshots.load_mark_prices_for_positions",
+                return_value={"600000.SH": 5.0},
+            ):
+                write_sim_ledger_equity_snapshots(
+                    markets=["ashare"],
+                    ledger_root=root,
+                    local_sim_dir=local_sim_dir,
+                    trade_date="20260714",
+                )
+
+            rows = [
+                json.loads(line)
+                for line in (
+                    root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl"
+                )
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(rows[-1]["equity"], 49_500.0)
+            self.assertEqual(rows[-1]["max_drawdown_cny"], 1_000.0)
+            self.assertAlmostEqual(
+                rows[-1]["max_drawdown_pct"], 1_000.0 / 50_500.0 * 100.0, places=6
+            )
+            self.assertEqual(rows[-1]["drawdown_source"], "account_daily_mtm_equity")
+
+    def test_ashare_local_sim_equity_includes_cash_and_market_value_after_buys(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             root = base / "logs" / "sim_ledger"
@@ -293,7 +373,11 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(result["ledgers"][0]["equity"], 50_200.0)
             rows = [
                 json.loads(line)
-                for line in (root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (
+                    root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl"
+                )
+                .read_text(encoding="utf-8")
+                .splitlines()
                 if line.strip()
             ]
             self.assertEqual(rows[-1]["capital_base"], 50_000.0)
@@ -309,8 +393,18 @@ class EquitySnapshotTest(unittest.TestCase):
             def get_bars_daily(self, market, symbol, start="", end=""):
                 self.calls.append((market, symbol, start, end))
                 return [
-                    {"market": market, "symbol": symbol, "trade_date": "20260703", "close": 12.34},
-                    {"market": market, "symbol": symbol, "trade_date": "20260701", "close": 11.11},
+                    {
+                        "market": market,
+                        "symbol": symbol,
+                        "trade_date": "20260703",
+                        "close": 12.34,
+                    },
+                    {
+                        "market": market,
+                        "symbol": symbol,
+                        "trade_date": "20260701",
+                        "close": 11.11,
+                    },
                 ]
 
         with patch("shared.data.reader.TradingagentDataReader", FakeReader):
@@ -374,7 +468,13 @@ class EquitySnapshotTest(unittest.TestCase):
 
         with patch("shared.data.reader.TradingagentDataReader", FakeReader):
             prices = load_mark_prices_for_positions(
-                {"558943:no": {"quantity": 100, "market_id": "558943", "outcome": "no"}},
+                {
+                    "558943:no": {
+                        "quantity": 100,
+                        "market_id": "558943",
+                        "outcome": "no",
+                    }
+                },
                 "pm",
                 trade_date="20260705",
             )
@@ -394,7 +494,13 @@ class EquitySnapshotTest(unittest.TestCase):
 
         with patch("shared.data.reader.TradingagentDataReader", FakeReader):
             prices = load_mark_prices_for_positions(
-                {"558943:no": {"quantity": 100, "market_id": "558943", "outcome": "no"}},
+                {
+                    "558943:no": {
+                        "quantity": 100,
+                        "market_id": "558943",
+                        "outcome": "no",
+                    }
+                },
                 "pm",
                 trade_date="20260705",
             )

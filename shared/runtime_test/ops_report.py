@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from CNFutures.review import latest_actionable_review
+from shared.execution.execution_lineage import ASHARE_EXECUTION_LINEAGE_ID
 
 ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "shared"
@@ -56,8 +57,12 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def canonical_json(payload: dict[str, Any], drop_checksums: bool = False) -> bytes:
-    data = {k: v for k, v in payload.items() if not (drop_checksums and k in CHECKSUM_KEYS)}
-    return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    data = {
+        k: v for k, v in payload.items() if not (drop_checksums and k in CHECKSUM_KEYS)
+    }
+    return json.dumps(
+        data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def payload_sha256(payload: dict[str, Any], drop_checksums: bool = False) -> str:
@@ -65,8 +70,12 @@ def payload_sha256(payload: dict[str, Any], drop_checksums: bool = False) -> str
 
 
 def market_of(card: dict[str, Any]) -> str:
-    raw = str(card.get("market") or card.get("asset_class") or card.get("source_market") or "").lower()
-    code = str(card.get("ts_code") or card.get("code") or card.get("symbol") or "").upper()
+    raw = str(
+        card.get("market") or card.get("asset_class") or card.get("source_market") or ""
+    ).lower()
+    code = str(
+        card.get("ts_code") or card.get("code") or card.get("symbol") or ""
+    ).upper()
     if raw in MARKETS:
         return raw
     if raw in {"ashare", "a", "cn"} or code.endswith((".SH", ".SZ", ".BJ")):
@@ -92,7 +101,6 @@ def cards(state: str) -> list[dict[str, Any]]:
     return rows
 
 
-
 def shadow_cards(state: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for path in sorted((SIGNALS / "shadow" / state).glob("*.json")):
@@ -104,7 +112,15 @@ def shadow_cards(state: str) -> list[dict[str, Any]]:
 
 
 def shadow_queue_summary() -> dict[str, Any]:
-    states = ("pending", "claimed", "running", "filled", "failed", "expired", "cancelled")
+    states = (
+        "pending",
+        "claimed",
+        "running",
+        "filled",
+        "failed",
+        "expired",
+        "cancelled",
+    )
     by_market: dict[str, Any] = {m: {state: 0 for state in states} for m in MARKETS}
     by_market["unknown"] = {state: 0 for state in states}
     totals = {state: 0 for state in states}
@@ -115,8 +131,17 @@ def shadow_queue_summary() -> dict[str, Any]:
             totals[state] += 1
     return {"totals": totals, "by_market": by_market}
 
+
 def queue_summary() -> dict[str, Any]:
-    states = ("pending", "claimed", "running", "filled", "failed", "expired", "cancelled")
+    states = (
+        "pending",
+        "claimed",
+        "running",
+        "filled",
+        "failed",
+        "expired",
+        "cancelled",
+    )
     by_market: dict[str, Any] = {m: {state: 0 for state in states} for m in MARKETS}
     by_market["unknown"] = {state: 0 for state in states}
     totals = {state: 0 for state in states}
@@ -130,11 +155,19 @@ def queue_summary() -> dict[str, Any]:
 
 def classify_failure(card: dict[str, Any]) -> str:
     receipt = card.get("receipt") if isinstance(card.get("receipt"), dict) else {}
-    text = " ".join(str(x or "") for x in [
-        card.get("posthoc_reason"), card.get("reason"), card.get("status"), card.get("message"),
-        receipt.get("status"), receipt.get("message"), receipt.get("failure_category"),
-        receipt.get("confirmation_status"),
-    ]).lower()
+    text = " ".join(
+        str(x or "")
+        for x in [
+            card.get("posthoc_reason"),
+            card.get("reason"),
+            card.get("status"),
+            card.get("message"),
+            receipt.get("status"),
+            receipt.get("message"),
+            receipt.get("failure_category"),
+            receipt.get("confirmation_status"),
+        ]
+    ).lower()
     if "posthoc" in text or "false_positive" in text or "假阳" in text:
         return "posthoc_false_positive"
     if "unsupported" in text or "不支持" in text:
@@ -147,7 +180,13 @@ def classify_failure(card: dict[str, Any]) -> str:
         return "position_mismatch"
     if "confirm" in text or "unconfirmed" in text or "未确认" in text:
         return "confirmation_unverified"
-    if "vision" in text or "button" in text or "click" in text or "gui" in text or "ax" in text:
+    if (
+        "vision" in text
+        or "button" in text
+        or "click" in text
+        or "gui" in text
+        or "ax" in text
+    ):
         return "gui_automation_failure"
     if "network" in text or "sync" in text or "webhook" in text:
         return "network_or_sync"
@@ -170,15 +209,28 @@ def failure_review() -> dict[str, Any]:
             by_category[category] += 1
             by_market[market][category] += 1
             if len(examples) < 12 and state in {"failed", "expired"}:
-                receipt = card.get("receipt") if isinstance(card.get("receipt"), dict) else {}
-                examples.append({
-                    "state": state,
-                    "market": market,
-                    "category": category,
-                    "order_id": card.get("order_id") or card.get("id") or receipt.get("order_id"),
-                    "symbol": card.get("ts_code") or card.get("symbol") or card.get("code"),
-                    "message": str(card.get("message") or receipt.get("message") or card.get("reason") or "")[:180],
-                })
+                receipt = (
+                    card.get("receipt") if isinstance(card.get("receipt"), dict) else {}
+                )
+                examples.append(
+                    {
+                        "state": state,
+                        "market": market,
+                        "category": category,
+                        "order_id": card.get("order_id")
+                        or card.get("id")
+                        or receipt.get("order_id"),
+                        "symbol": card.get("ts_code")
+                        or card.get("symbol")
+                        or card.get("code"),
+                        "message": str(
+                            card.get("message")
+                            or receipt.get("message")
+                            or card.get("reason")
+                            or ""
+                        )[:180],
+                    }
+                )
     return {
         "total_reviewed": total,
         "by_category": dict(by_category),
@@ -189,8 +241,16 @@ def failure_review() -> dict[str, Any]:
 
 def receipt_integrity(paths: list[Path] | None = None) -> dict[str, Any]:
     if paths is None:
-        paths = [SIGNALS / "sim_execution_receipts.jsonl"]
-        legacy_path = ROOT.parent / "MarketGraph" / "outputs" / "sim_execution_receipts.jsonl"
+        paths = [
+            SHARED
+            / "logs"
+            / "execution_lineages"
+            / ASHARE_EXECUTION_LINEAGE_ID
+            / "sim_execution_receipts.jsonl"
+        ]
+        legacy_path = (
+            ROOT.parent / "MarketGraph" / "outputs" / "sim_execution_receipts.jsonl"
+        )
         if legacy_path.exists():
             paths.append(legacy_path)
     total = signed = unsigned = invalid = payload_linked = 0
@@ -203,7 +263,9 @@ def receipt_integrity(paths: list[Path] | None = None) -> dict[str, Any]:
             if row.get("payload_sha256"):
                 payload_linked += 1
                 path_payload_linked += 1
-            embedded = next((str(row.get(k) or "") for k in RECEIPT_CHECKSUM_KEYS if row.get(k)), "")
+            embedded = next(
+                (str(row.get(k) or "") for k in RECEIPT_CHECKSUM_KEYS if row.get(k)), ""
+            )
             if not embedded:
                 unsigned += 1
                 path_unsigned += 1
@@ -214,16 +276,24 @@ def receipt_integrity(paths: list[Path] | None = None) -> dict[str, Any]:
             else:
                 invalid += 1
                 path_invalid += 1
-        by_path.append({
-            "path": str(path),
-            "rows": len(rows),
-            "signed": path_signed,
-            "unsigned": path_unsigned,
-            "invalid": path_invalid,
-            "payload_linked": path_payload_linked,
-        })
-    return {"total": total, "signed": signed, "unsigned": unsigned, "invalid": invalid, "payload_linked": payload_linked, "by_path": by_path}
-
+        by_path.append(
+            {
+                "path": str(path),
+                "rows": len(rows),
+                "signed": path_signed,
+                "unsigned": path_unsigned,
+                "invalid": path_invalid,
+                "payload_linked": path_payload_linked,
+            }
+        )
+    return {
+        "total": total,
+        "signed": signed,
+        "unsigned": unsigned,
+        "invalid": invalid,
+        "payload_linked": payload_linked,
+        "by_path": by_path,
+    }
 
 
 def reviewed_summary() -> dict[str, Any]:
@@ -233,30 +303,45 @@ def reviewed_summary() -> dict[str, Any]:
     if not root.exists():
         return {"batch_count": 0, "totals": totals, "latest_batches": []}
     for batch in sorted([p for p in root.iterdir() if p.is_dir()], reverse=True):
-        counts = {"failed": len(list((batch / "failed").glob("*.json"))), "expired": len(list((batch / "expired").glob("*.json")))}
+        counts = {
+            "failed": len(list((batch / "failed").glob("*.json"))),
+            "expired": len(list((batch / "expired").glob("*.json"))),
+        }
         for key, value in counts.items():
             totals[key] = totals.get(key, 0) + value
         manifest = read_json(batch / "manifest.json")
-        batches.append({
-            "batch_id": batch.name,
-            "record_count": manifest.get("record_count", sum(counts.values())),
-            "reason": manifest.get("reason", ""),
-            "counts": counts,
-            "generated_at": manifest.get("generated_at", ""),
-        })
-    return {"batch_count": len(batches), "totals": totals, "latest_batches": batches[:5]}
+        batches.append(
+            {
+                "batch_id": batch.name,
+                "record_count": manifest.get("record_count", sum(counts.values())),
+                "reason": manifest.get("reason", ""),
+                "counts": counts,
+                "generated_at": manifest.get("generated_at", ""),
+            }
+        )
+    return {
+        "batch_count": len(batches),
+        "totals": totals,
+        "latest_batches": batches[:5],
+    }
+
 
 def pnl_summary() -> dict[str, Any]:
     local: dict[str, Any] = {}
     try:
         from shared.execution.local_sim_ledger import get_local_sim_pnl
+
         local = get_local_sim_pnl()
     except Exception as exc:  # pragma: no cover - defensive runtime report
         local = {"error": str(exc)}
     shadow = read_json(SHARED / "logs" / "shadow" / "shadow_pnl.json")
-    attribution = read_json(SHARED / "review" / "attribution" / "strategy_attribution_latest.json")
+    attribution = read_json(
+        SHARED / "review" / "attribution" / "strategy_attribution_latest.json"
+    )
     if not attribution:
-        attribution = read_json(SHARED / "review" / "attribution" / "strategy_attribution.json")
+        attribution = read_json(
+            SHARED / "review" / "attribution" / "strategy_attribution.json"
+        )
     sim_ledger: dict[str, Any] = {}
     try:
         from shared.review.pnl_summary import sim_ledger_pnl_summary
@@ -264,7 +349,12 @@ def pnl_summary() -> dict[str, Any]:
         sim_ledger = sim_ledger_pnl_summary()
     except Exception as exc:  # pragma: no cover - defensive runtime report
         sim_ledger = {"error": str(exc)}
-    return {"server_local_sim": local, "shadow": shadow, "strategy_attribution": attribution, "sim_ledger": sim_ledger}
+    return {
+        "server_local_sim": local,
+        "shadow": shadow,
+        "strategy_attribution": attribution,
+        "sim_ledger": sim_ledger,
+    }
 
 
 def cn_futures_review_summary(path: Path | None = None) -> dict[str, Any]:
@@ -273,40 +363,81 @@ def cn_futures_review_summary(path: Path | None = None) -> dict[str, Any]:
     review_path = path or (SHARED / "review" / "data" / "cn_futures_sim_reviews.jsonl")
     rows = read_jsonl(review_path)
     latest = latest_actionable_review(rows)
-    historical_style_totals: dict[str, dict[str, Any]] = defaultdict(lambda: {"filled_count": 0, "error_count": 0})
+    historical_style_totals: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"filled_count": 0, "error_count": 0}
+    )
     historical_error_counter: Counter[str] = Counter()
     for row in rows:
         styles = row.get("styles") if isinstance(row.get("styles"), dict) else {}
         for style, values in styles.items():
             if isinstance(values, dict):
-                historical_style_totals[str(style)]["filled_count"] += int(values.get("filled_count") or 0)
-        error_summary = row.get("error_summary") if isinstance(row.get("error_summary"), dict) else {}
-        by_error = error_summary.get("by_error") if isinstance(error_summary.get("by_error"), dict) else {}
+                historical_style_totals[str(style)]["filled_count"] += int(
+                    values.get("filled_count") or 0
+                )
+        error_summary = (
+            row.get("error_summary")
+            if isinstance(row.get("error_summary"), dict)
+            else {}
+        )
+        by_error = (
+            error_summary.get("by_error")
+            if isinstance(error_summary.get("by_error"), dict)
+            else {}
+        )
         for name, count in by_error.items():
             historical_error_counter[str(name)] += int(count or 0)
-        by_style = error_summary.get("by_style") if isinstance(error_summary.get("by_style"), dict) else {}
+        by_style = (
+            error_summary.get("by_style")
+            if isinstance(error_summary.get("by_style"), dict)
+            else {}
+        )
         for style, values in by_style.items():
             if isinstance(values, dict):
-                historical_style_totals[str(style)]["error_count"] += int(values.get("error_count") or 0)
-    latest_styles = latest.get("styles") if isinstance(latest.get("styles"), dict) else {}
-    latest_hold_summary = latest.get("hold_reason_summary") if isinstance(latest.get("hold_reason_summary"), dict) else {}
-    latest_error_summary = latest.get("error_summary") if isinstance(latest.get("error_summary"), dict) else {}
-    latest_style_health = latest.get("style_health") if isinstance(latest.get("style_health"), dict) else {}
+                historical_style_totals[str(style)]["error_count"] += int(
+                    values.get("error_count") or 0
+                )
+    latest_styles = (
+        latest.get("styles") if isinstance(latest.get("styles"), dict) else {}
+    )
+    latest_hold_summary = (
+        latest.get("hold_reason_summary")
+        if isinstance(latest.get("hold_reason_summary"), dict)
+        else {}
+    )
+    latest_error_summary = (
+        latest.get("error_summary")
+        if isinstance(latest.get("error_summary"), dict)
+        else {}
+    )
+    latest_style_health = (
+        latest.get("style_health")
+        if isinstance(latest.get("style_health"), dict)
+        else {}
+    )
     current = {
         "generated_at": latest.get("generated_at", ""),
         "state": latest.get("state", ""),
         "date": latest.get("date", ""),
         "record_count": int(latest.get("record_count") or 0) if latest else 0,
         "filled_count": int(latest.get("filled_count") or 0) if latest else 0,
-        "hold_count": int(latest.get("hold_count") or latest_hold_summary.get("total") or 0) if latest else 0,
+        "hold_count": int(
+            latest.get("hold_count") or latest_hold_summary.get("total") or 0
+        )
+        if latest
+        else 0,
         "error_count": int(latest.get("error_count") or 0) if latest else 0,
         "error_summary": latest_error_summary,
         "style_health": latest_style_health,
         "hold_reason_summary": latest_hold_summary,
         "styles": latest_styles,
     }
-    historical_error_count = sum(int(count or 0) for count in historical_error_counter.values())
-    historical_filled_count = sum(int(values.get("filled_count") or 0) for values in historical_style_totals.values())
+    historical_error_count = sum(
+        int(count or 0) for count in historical_error_counter.values()
+    )
+    historical_filled_count = sum(
+        int(values.get("filled_count") or 0)
+        for values in historical_style_totals.values()
+    )
     return {
         "path": str(review_path),
         "exists": review_path.exists(),
@@ -317,15 +448,18 @@ def cn_futures_review_summary(path: Path | None = None) -> dict[str, Any]:
             "note": "Historical totals include retired data gaps and old risk classifications; use current for live health.",
             "filled_count": historical_filled_count,
             "error_count": historical_error_count,
-            "style_totals": {style: dict(values) for style, values in historical_style_totals.items()},
+            "style_totals": {
+                style: dict(values) for style, values in historical_style_totals.items()
+            },
             "top_errors": dict(historical_error_counter.most_common(10)),
         },
     }
 
 
-def overall_status(queue: dict[str, Any], failures: dict[str, Any], receipts: dict[str, Any]) -> str:
+def overall_status(
+    queue: dict[str, Any], failures: dict[str, Any], receipts: dict[str, Any]
+) -> str:
     totals = queue.get("totals") or {}
-    shadow_totals = (queue.get("shadow_totals") or {})
     if int(receipts.get("invalid", 0) or 0) > 0:
         return "fail"
     if int(totals.get("running", 0) or 0) > 0:
@@ -361,14 +495,20 @@ def build_ops_report() -> dict[str, Any]:
     }
 
 
-def recommendations(status: str, queue: dict[str, Any], failures: dict[str, Any], receipts: dict[str, Any]) -> list[str]:
+def recommendations(
+    status: str,
+    queue: dict[str, Any],
+    failures: dict[str, Any],
+    receipts: dict[str, Any],
+) -> list[str]:
     notes: list[str] = []
     totals = queue.get("totals") or {}
-    shadow_totals = (queue.get("shadow_totals") or {})
     if int(receipts.get("invalid", 0) or 0) > 0:
         notes.append("回执校验失败：需要检查 mini/Hermes 回执是否被截断或字段被改写。")
     if int(totals.get("running", 0) or 0) > 0:
-        notes.append("存在 running 状态订单：需要确认执行器是否卡在处理中或回调未写回。")
+        notes.append(
+            "存在 running 状态订单：需要确认执行器是否卡在处理中或回调未写回。"
+        )
     if int(totals.get("failed", 0) or 0) > 0:
         top = failures.get("by_category") or {}
         top_name = max(top, key=top.get) if top else "unknown"
@@ -382,7 +522,9 @@ def recommendations(status: str, queue: dict[str, Any], failures: dict[str, Any]
 
 def write_report(report: dict[str, Any]) -> dict[str, str]:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    LATEST.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    LATEST.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     with HISTORY.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(report, ensure_ascii=False) + "\n")
     return {"latest": str(LATEST), "history": str(HISTORY)}
@@ -406,19 +548,32 @@ def _email_text(report: dict[str, Any]) -> tuple[str, str, str]:
     ]
     lines.extend(f"- {item}" for item in report.get("recommendations") or [])
     body = "\n".join(lines)
-    html = "<br/>".join(line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") for line in lines)
+    html = "<br/>".join(
+        line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        for line in lines
+    )
     return subject, body, f"<!DOCTYPE html><html><body><pre>{html}</pre></body></html>"
 
 
-def send_alert_if_needed(report: dict[str, Any], send_on: str = "fail") -> dict[str, Any]:
+def send_alert_if_needed(
+    report: dict[str, Any], send_on: str = "fail"
+) -> dict[str, Any]:
     status = str(report.get("overall_status") or "unknown")
     levels = {"pass": 0, "warn": 1, "fail": 2}
     threshold = levels.get(send_on, 99)
     if send_on == "never" or levels.get(status, 0) < threshold:
         return {"status": "skipped", "reason": f"status={status}, send_on={send_on}"}
     from shared.notify.email_sender import send_email
+
     subject, body, html = _email_text(report)
-    return send_email("soc@coze.email", subject, body, html, channel="system", rate_limit_type="tradings_ops_report")
+    return send_email(
+        "soc@coze.email",
+        subject,
+        body,
+        html,
+        channel="system",
+        rate_limit_type="tradings_ops_report",
+    )
 
 
 def main() -> int:

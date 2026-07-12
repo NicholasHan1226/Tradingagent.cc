@@ -13,12 +13,18 @@ score_stock(ts_code, date) → {macro, event, fundamental, capital, technical, s
 score_stock(market, ts_code, reader, date, config) → same result with market-aware reader queries
 score_universe(date) → list of (ts_code, scores)
 """
+
 from __future__ import annotations
 
+from copy import deepcopy
+from hashlib import sha256
+import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from shared.data.reader import TradingagentDataReader
 
 try:
     import yaml
@@ -39,8 +45,6 @@ _DEFAULT_MISSING = 0.5
 
 _WEIGHTS_PATH = Path(__file__).resolve().parent / "weights.yaml"
 
-from shared.data.reader import TradingagentDataReader
-
 _DATA_READER: TradingagentDataReader | None = None
 logger = logging.getLogger(__name__)
 
@@ -54,13 +58,22 @@ def _load_weights() -> dict[str, Any]:
             data = yaml.safe_load(f)
         if isinstance(data, dict):
             result: dict[str, Any] = {}
-            for k in ("macro", "event", "fundamental", "capital", "technical", "sentiment"):
+            for k in (
+                "macro",
+                "event",
+                "fundamental",
+                "capital",
+                "technical",
+                "sentiment",
+            ):
                 result[k] = float(data.get(k, _DEFAULT_WEIGHTS[k]))
             result["dimensions"] = data.get("dimensions", {})
             combined = data.get("combined", {})
             result["combined"] = {
                 "normalize": combined.get("normalize", True),
-                "missing_default": float(combined.get("missing_default", _DEFAULT_MISSING)),
+                "missing_default": float(
+                    combined.get("missing_default", _DEFAULT_MISSING)
+                ),
             }
             return result
     except (OSError, yaml.YAMLError, ValueError):
@@ -100,7 +113,33 @@ def _mark_evidence(
     }
 
 
+def _record_base_dimension(
+    config: dict[str, Any],
+    dimension: str,
+    value: float,
+) -> None:
+    """Freeze the SharedSignals-only dimension before any MG enhancement."""
+
+    config.setdefault("_base_dimension_scores", {})[dimension] = _clamp(value)
+    current = (config.get("_dimension_evidence") or {}).get(dimension)
+    if isinstance(current, dict):
+        config.setdefault("_base_dimension_evidence", {})[dimension] = deepcopy(current)
+
+
+def _canonical_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+        default=str,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
 # ── 六维打分函数 (各维度从真实数据源读取) ──
+
 
 def _get_data_reader(config: dict[str, Any] | None = None) -> TradingagentDataReader:
     """Return the configured fail-safe data reader."""
@@ -163,11 +202,15 @@ def _reader_market(config: dict[str, Any]) -> str:
 
 def _direction_score(impact_hint: Any) -> float:
     direction = str(impact_hint or "").split(":", 1)[0].strip().lower()
-    return {"positive": 1.0, "negative": 0.0, "mixed": 0.5, "neutral": 0.5}.get(direction, 0.5)
+    return {"positive": 1.0, "negative": 0.0, "mixed": 0.5, "neutral": 0.5}.get(
+        direction, 0.5
+    )
 
 
 def _text_direction_hint(row: dict[str, Any]) -> str:
-    text = " ".join(str(row.get(key) or "") for key in ("title", "content", "summary", "raw_json")).lower()
+    text = " ".join(
+        str(row.get(key) or "") for key in ("title", "content", "summary", "raw_json")
+    ).lower()
     if not text:
         return ""
     positive_tokens = (
@@ -210,21 +253,40 @@ def _text_direction_hint(row: dict[str, Any]) -> str:
 
 
 def _metric_name(row: dict[str, Any]) -> str:
-    raw = str(row.get("factor_name") or row.get("name") or row.get("metric") or "").strip().lower()
+    raw = (
+        str(row.get("factor_name") or row.get("name") or row.get("metric") or "")
+        .strip()
+        .lower()
+    )
     return raw.split(":", 1)[1] if ":" in raw else raw
 
 
 def _is_amount_metric(name: str) -> bool:
-    return "amount" in name or name.endswith("_amt") or name.endswith("moneyflow") or name in {
-        "moneyflow",
-        "capital_flow",
-        "main_net_inflow",
-        "main_moneyflow",
-    }
+    return (
+        "amount" in name
+        or name.endswith("_amt")
+        or name.endswith("moneyflow")
+        or name
+        in {
+            "moneyflow",
+            "capital_flow",
+            "main_net_inflow",
+            "main_moneyflow",
+        }
+    )
 
 
 def _date_from_row(row: dict[str, Any]) -> str:
-    for key in ("event_time", "trade_date", "end_date", "report_date", "ann_date", "date", "period", "collected_at"):
+    for key in (
+        "event_time",
+        "trade_date",
+        "end_date",
+        "report_date",
+        "ann_date",
+        "date",
+        "period",
+        "collected_at",
+    ):
         value = str(row.get(key) or "").strip()
         if value:
             digits = "".join(ch for ch in value[:10] if ch.isdigit())
@@ -261,7 +323,9 @@ def _rows_from_reader(method: Any, *args: Any, **kwargs: Any) -> list[dict[str, 
     return [dict(row) for row in rows if isinstance(row, dict)]
 
 
-def _macro_score_from_row(row: dict[str, Any], regime_scores: dict[str, Any]) -> float | None:
+def _macro_score_from_row(
+    row: dict[str, Any], regime_scores: dict[str, Any]
+) -> float | None:
     """Return a normalized macro score from one SharedSignals/MG macro row."""
     for key in ("score", "macro_score", "risk_on_score"):
         if key in row and row.get(key) not in ("", None):
@@ -270,7 +334,11 @@ def _macro_score_from_row(row: dict[str, Any], regime_scores: dict[str, Any]) ->
                 score /= 100.0
             return _clamp(score)
 
-    factor_name = str(row.get("factor_name") or row.get("metric") or row.get("name") or "").strip().lower()
+    factor_name = (
+        str(row.get("factor_name") or row.get("metric") or row.get("name") or "")
+        .strip()
+        .lower()
+    )
     if "score" in factor_name and row.get("value") not in ("", None):
         score = _safe_float(row.get("value"), 0.5)
         if score > 1.0:
@@ -289,18 +357,45 @@ def _macro_score_from_row(row: dict[str, Any], regime_scores: dict[str, Any]) ->
             score_value = regime_scores.get(prefix)
         if score_value is not None:
             regime_score = _safe_float(score_value, 0.5)
-            confidence = _clamp(_safe_float(row.get("regime_confidence") or row.get("confidence"), 1.0))
+            confidence = _clamp(
+                _safe_float(row.get("regime_confidence") or row.get("confidence"), 1.0)
+            )
             return _clamp(0.5 + (regime_score - 0.5) * confidence)
 
-    if factor_name in {"repo_daily:close", "repo_daily:weight", "shibor:on", "shibor:1w"}:
+    if factor_name in {
+        "repo_daily:close",
+        "repo_daily:weight",
+        "shibor:on",
+        "shibor:1w",
+    }:
         value = _safe_float(row.get("value"), -1.0)
         if 0.0 <= value <= 20.0:
             return _score_low(value, 1.0, 4.0)
 
     text = " ".join(str(value).lower() for value in row.values())
-    if any(token in text for token in ("easing", "rate_down", "liquidity_up", "宽松", "降息", "流动性改善")):
+    if any(
+        token in text
+        for token in (
+            "easing",
+            "rate_down",
+            "liquidity_up",
+            "宽松",
+            "降息",
+            "流动性改善",
+        )
+    ):
         return 0.60
-    if any(token in text for token in ("tightening", "rate_up", "liquidity_down", "收紧", "加息", "流动性收缩")):
+    if any(
+        token in text
+        for token in (
+            "tightening",
+            "rate_up",
+            "liquidity_down",
+            "收紧",
+            "加息",
+            "流动性收缩",
+        )
+    ):
         return 0.40
     return None
 
@@ -310,7 +405,10 @@ def _preferred_macro_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     preferred = [
         row
         for row in rows
-        if str(row.get("factor_name") or row.get("metric") or row.get("name") or "").strip().lower() in preferred_names
+        if str(row.get("factor_name") or row.get("metric") or row.get("name") or "")
+        .strip()
+        .lower()
+        in preferred_names
     ]
     return preferred or rows
 
@@ -330,26 +428,55 @@ def _score_macro(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
             date,
         )
         if not macro_rows:
-            macro_rows = _rows_from_reader(getattr(data_reader, "get_macro_factors", None))
+            macro_rows = _rows_from_reader(
+                getattr(data_reader, "get_macro_factors", None)
+            )
         for row in reversed(_preferred_macro_rows(macro_rows)):
             score = _macro_score_from_row(row, regime_scores)
             if score is not None:
-                _mark_evidence(config, "macro", source="SharedSignals macro", rows=len(macro_rows))
+                _mark_evidence(
+                    config, "macro", source="SharedSignals macro", rows=len(macro_rows)
+                )
+                _record_base_dimension(config, "macro", score)
                 return score
 
+        base_reason = (
+            "missing_macro_rows" if not macro_rows else "no_supported_macro_rows"
+        )
+        _mark_evidence(
+            config,
+            "macro",
+            source="SharedSignals macro",
+            rows=0,
+            reason=base_reason,
+        )
+        _record_base_dimension(config, "macro", 0.5)
         row = data_reader.get_regime()
         if not row:
-            reason = "missing_macro_rows" if not macro_rows else "no_supported_macro_rows"
-            _mark_evidence(config, "macro", source="SharedSignals macro / MarketGraph regime", rows=0, reason=reason)
+            _mark_evidence(
+                config,
+                "macro",
+                source="MarketGraph regime",
+                rows=0,
+                reason="missing_marketgraph_regime",
+            )
             return 0.5
         regime_score = _macro_score_from_row(row, regime_scores)
         if regime_score is None:
-            _mark_evidence(config, "macro", source="MarketGraph regime", rows=0, reason="unsupported_regime")
+            _mark_evidence(
+                config,
+                "macro",
+                source="MarketGraph regime",
+                rows=0,
+                reason="unsupported_regime",
+            )
             return 0.5
         _mark_evidence(config, "macro", source="MarketGraph regime", rows=1)
         return regime_score
     except Exception as exc:
-        logger.error("macro scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        logger.error(
+            "macro scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True
+        )
         return None
 
 
@@ -381,7 +508,11 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
 
         for symbol in _symbol_variants(ts_code):
             get_events = getattr(data_reader, "get_events", None)
-            rows = get_events(market, symbol, start_date, date) if callable(get_events) else []
+            rows = (
+                get_events(market, symbol, start_date, date)
+                if callable(get_events)
+                else []
+            )
             candidate_rows = 0
             for row in rows:
                 event_key = (
@@ -426,9 +557,32 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
                 weighted += _direction_score(impact) * conf
                 total_weight += conf
             if total_weight > 1e-9:
-                _mark_evidence(config, "event", source="SharedSignals events", rows=candidate_rows)
-                return _clamp(weighted / total_weight)
+                _mark_evidence(
+                    config, "event", source="SharedSignals events", rows=candidate_rows
+                )
+                base_value = _clamp(weighted / total_weight)
+                _record_base_dimension(config, "event", base_value)
+                return base_value
 
+        base_reason_parts = ["no_matched_event_evidence"]
+        if sharedsignals_raw_rows:
+            base_reason_parts.append(f"ss_rows={sharedsignals_raw_rows}")
+        if sharedsignals_skipped_no_impact:
+            base_reason_parts.append(
+                f"skipped_no_impact={sharedsignals_skipped_no_impact}"
+            )
+        if sharedsignals_skipped_low_conf:
+            base_reason_parts.append(
+                f"skipped_low_conf={sharedsignals_skipped_low_conf}"
+            )
+        _mark_evidence(
+            config,
+            "event",
+            source="SharedSignals events",
+            rows=0,
+            reason="; ".join(base_reason_parts),
+        )
+        _record_base_dimension(config, "event", 0.5)
         candidate_rows = 0
         for row in _get_data_reader(config).get_event_candidates():
             if not _row_matches_ts_code(row, ts_code):
@@ -444,24 +598,24 @@ def _score_event(ts_code: str, date: str, config: dict[str, Any]) -> float | Non
             weighted += _direction_score(row.get("proposed_impact_hint")) * conf
             total_weight += conf
         if total_weight <= 1e-9:
-            reason_parts = ["no_matched_event_evidence"]
-            if sharedsignals_raw_rows:
-                reason_parts.append(f"ss_rows={sharedsignals_raw_rows}")
-            if sharedsignals_skipped_no_impact:
-                reason_parts.append(f"skipped_no_impact={sharedsignals_skipped_no_impact}")
-            if sharedsignals_skipped_low_conf:
-                reason_parts.append(f"skipped_low_conf={sharedsignals_skipped_low_conf}")
-            _mark_evidence(
-                config, "event",
-                source="MarketGraph event candidates",
-                rows=0,
-                reason="; ".join(reason_parts),
-            )
+            # No MG overlay means the effective dimension is still the
+            # SharedSignals base.  Keep its diagnostic reason visible instead
+            # of replacing it with a second missing-evidence marker.
+            config.setdefault("_marketgraph_dimension_evidence", {})["event"] = {
+                "has_evidence": False,
+                "source": "MarketGraph event candidates",
+                "row_count": 0,
+                "reason": "no_matched_marketgraph_event_evidence",
+            }
             return 0.5
-        _mark_evidence(config, "event", source="MarketGraph event candidates", rows=candidate_rows)
+        _mark_evidence(
+            config, "event", source="MarketGraph event candidates", rows=candidate_rows
+        )
         return _clamp(weighted / total_weight)
     except Exception as exc:
-        logger.error("event scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        logger.error(
+            "event scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True
+        )
         return None
 
 
@@ -469,18 +623,29 @@ def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float
     """基本面维度 — 从 market_factors 读取最新因子值。"""
     try:
         dim_cfg = config.get("dimensions", {}).get("fundamental", {})
-        factor_weights = dim_cfg.get("factors", {"value": 0.30, "growth": 0.30, "quality": 0.20, "momentum": 0.20})
+        factor_weights = dim_cfg.get(
+            "factors",
+            {"value": 0.30, "growth": 0.30, "quality": 0.20, "momentum": 0.20},
+        )
         rows: list[dict[str, Any]] = []
         data_reader = _get_data_reader(config)
         market = _reader_market(config)
         for symbol in _symbol_variants(ts_code):
             rows = data_reader.get_factors(market, symbol)
             if not rows:
-                rows = _rows_from_reader(getattr(data_reader, "get_fundamentals", None), symbol, date)
+                rows = _rows_from_reader(
+                    getattr(data_reader, "get_fundamentals", None), symbol, date
+                )
             if rows:
                 break
         if not rows:
-            _mark_evidence(config, "fundamental", source="SharedSignals factors/fundamentals", rows=0, reason="missing_fundamental_rows")
+            _mark_evidence(
+                config,
+                "fundamental",
+                source="SharedSignals factors/fundamentals",
+                rows=0,
+                reason="missing_fundamental_rows",
+            )
             return 0.5
         latest_by_factor: dict[str, float] = {}
         derived: dict[str, list[float]] = {"value": [], "growth": [], "quality": []}
@@ -496,7 +661,14 @@ def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float
                 derived["value"].append(_score_low(raw_value, 0.0, 80.0))
             elif factor in {"pb", "pb_mrq"}:
                 derived["value"].append(_score_low(raw_value, 0.0, 10.0))
-            elif factor in {"roe", "roe_dt", "roa", "grossprofit_margin", "netprofit_margin", "profit_to_gr"}:
+            elif factor in {
+                "roe",
+                "roe_dt",
+                "roa",
+                "grossprofit_margin",
+                "netprofit_margin",
+                "profit_to_gr",
+            }:
                 derived["quality"].append(_score_high(raw_value, 0.0, 30.0))
             elif "yoy" in factor or "growth" in factor or factor.endswith("_qoq"):
                 derived["growth"].append(_score_high(raw_value, -30.0, 80.0))
@@ -513,12 +685,29 @@ def _score_fundamental(ts_code: str, date: str, config: dict[str, Any]) -> float
             weighted += latest_by_factor[name] * w
             total_w += w
         if total_w <= 1e-9:
-            _mark_evidence(config, "fundamental", source="SharedSignals factors/fundamentals", rows=len(rows), reason="no_supported_fundamental_factors")
+            _mark_evidence(
+                config,
+                "fundamental",
+                source="SharedSignals factors/fundamentals",
+                rows=len(rows),
+                reason="no_supported_fundamental_factors",
+            )
             return 0.5
-        _mark_evidence(config, "fundamental", source="SharedSignals factors/fundamentals", rows=len(rows))
+        _mark_evidence(
+            config,
+            "fundamental",
+            source="SharedSignals factors/fundamentals",
+            rows=len(rows),
+        )
         return _clamp(weighted / total_w)
     except Exception as exc:
-        logger.error("fundamental scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        logger.error(
+            "fundamental scoring failed for %s on %s: %s",
+            ts_code,
+            date,
+            exc,
+            exc_info=True,
+        )
         return None
 
 
@@ -542,15 +731,32 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float | N
         }
         for symbol in _symbol_variants(ts_code):
             factor_rows = data_reader.get_factors(market, symbol)
-            capital_rows = _rows_from_reader(getattr(data_reader, "get_capital_flow", None), symbol, start_date.strftime("%Y%m%d"), date)
+            capital_rows = _rows_from_reader(
+                getattr(data_reader, "get_capital_flow", None),
+                symbol,
+                start_date.strftime("%Y%m%d"),
+                date,
+            )
             source_rows = capital_rows or factor_rows
             matched_rows = 0
             seen_keys: set[tuple[str, str, float]] = set()
             for row in source_rows:
                 factor_name = _metric_name(row)
-                is_direct_net = factor_name in moneyflow_names or "net_mf" in factor_name or "net_amount" in factor_name
-                is_main_buy = factor_name in {"buy_lg_amount", "buy_elg_amount", "buy_md_amount"}
-                is_main_sell = factor_name in {"sell_lg_amount", "sell_elg_amount", "sell_md_amount"}
+                is_direct_net = (
+                    factor_name in moneyflow_names
+                    or "net_mf" in factor_name
+                    or "net_amount" in factor_name
+                )
+                is_main_buy = factor_name in {
+                    "buy_lg_amount",
+                    "buy_elg_amount",
+                    "buy_md_amount",
+                }
+                is_main_sell = factor_name in {
+                    "sell_lg_amount",
+                    "sell_elg_amount",
+                    "sell_md_amount",
+                }
                 if not (is_direct_net or is_main_buy or is_main_sell):
                     continue
                 if not _is_amount_metric(factor_name):
@@ -572,10 +778,21 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float | N
                     found = True
                     matched_rows += 1
             if found:
-                _mark_evidence(config, "capital", source="SharedSignals capital flow/factors", rows=matched_rows)
+                _mark_evidence(
+                    config,
+                    "capital",
+                    source="SharedSignals capital flow/factors",
+                    rows=matched_rows,
+                )
                 break
         if not found:
-            _mark_evidence(config, "capital", source="SharedSignals capital flow/factors", rows=0, reason="missing_capital_flow_rows")
+            _mark_evidence(
+                config,
+                "capital",
+                source="SharedSignals capital flow/factors",
+                rows=0,
+                reason="missing_capital_flow_rows",
+            )
             return 0.5
         if total_net > 0:
             score = 0.6 + _clamp(total_net / 1e5, 0.0, 0.4)
@@ -583,7 +800,9 @@ def _score_capital(ts_code: str, date: str, config: dict[str, Any]) -> float | N
             score = 0.4 + _clamp(total_net / 1e5, -0.4, 0.2)
         return _clamp(score)
     except Exception as exc:
-        logger.error("capital scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        logger.error(
+            "capital scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True
+        )
         return None
 
 
@@ -605,25 +824,51 @@ def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float |
             if len(rows) >= ma_long:
                 break
         if len(rows) < ma_long:
-            _mark_evidence(config, "technical", source="SharedSignals daily bars", rows=len(rows), reason="insufficient_daily_bars")
+            _mark_evidence(
+                config,
+                "technical",
+                source="SharedSignals daily bars",
+                rows=len(rows),
+                reason="insufficient_daily_bars",
+            )
             return 0.5
         closes = [_safe_float(row.get("close"), 0.0) for row in rows]
         closes = [c for c in closes if c > 0]
         if len(closes) < needed:
-            _mark_evidence(config, "technical", source="SharedSignals daily bars", rows=len(closes), reason="insufficient_priced_daily_bars")
+            _mark_evidence(
+                config,
+                "technical",
+                source="SharedSignals daily bars",
+                rows=len(closes),
+                reason="insufficient_priced_daily_bars",
+            )
             return 0.5
         base = closes[-window]
         if base <= 1e-9:
-            _mark_evidence(config, "technical", source="SharedSignals daily bars", rows=len(closes), reason="invalid_momentum_base_price")
+            _mark_evidence(
+                config,
+                "technical",
+                source="SharedSignals daily bars",
+                rows=len(closes),
+                reason="invalid_momentum_base_price",
+            )
             return 0.5
         momentum = (closes[-1] - base) / base
         ma_s = sum(closes[-ma_short:]) / ma_short
         ma_l = sum(closes[-ma_long:]) / ma_long
         trend_bonus = 0.1 if ma_s > ma_l else -0.1
-        _mark_evidence(config, "technical", source="SharedSignals daily bars", rows=len(closes))
+        _mark_evidence(
+            config, "technical", source="SharedSignals daily bars", rows=len(closes)
+        )
         return _clamp(0.5 + _clamp(momentum / 0.20, -0.5, 0.5) + trend_bonus)
     except Exception as exc:
-        logger.error("technical scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        logger.error(
+            "technical scoring failed for %s on %s: %s",
+            ts_code,
+            date,
+            exc,
+            exc_info=True,
+        )
         return None
 
 
@@ -639,11 +884,18 @@ def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float |
         end_date = datetime.strptime(date, "%Y%m%d")
         start_date = (end_date - timedelta(days=14)).strftime("%Y%m%d")
         data_reader = _get_data_reader(config)
-        sentiment_rows = _rows_from_reader(getattr(data_reader, "get_sentiment", None), start_date, date)
+        sentiment_rows = _rows_from_reader(
+            getattr(data_reader, "get_sentiment", None), start_date, date
+        )
         if not sentiment_rows:
-            sentiment_rows = _rows_from_reader(getattr(data_reader, "get_sentiment", None))
+            sentiment_rows = _rows_from_reader(
+                getattr(data_reader, "get_sentiment", None)
+            )
         for row in sentiment_rows:
-            has_subject = any(row.get(key) for key in ("subject_code", "ts_code", "symbol", "code", "asset_code"))
+            has_subject = any(
+                row.get(key)
+                for key in ("subject_code", "ts_code", "symbol", "code", "asset_code")
+            )
             if has_subject:
                 if not _row_matches_ts_code(row, ts_code):
                     continue
@@ -652,7 +904,12 @@ def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float |
                 impact_hint = row.get("proposed_impact_hint")
                 default_conf = 0.0
             else:
-                impact_hint = row.get("proposed_impact_hint") or row.get("direction") or row.get("sentiment") or _text_direction_hint(row)
+                impact_hint = (
+                    row.get("proposed_impact_hint")
+                    or row.get("direction")
+                    or row.get("sentiment")
+                    or _text_direction_hint(row)
+                )
                 if not impact_hint:
                     continue
                 default_conf = 0.25
@@ -667,15 +924,29 @@ def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float |
             weighted += _direction_score(impact_hint) * conf
             total_weight += conf
         if total_weight <= 1e-9:
-            _mark_evidence(config, "sentiment", source="SharedSignals sentiment", rows=0, reason="missing_sentiment_rows")
+            _mark_evidence(
+                config,
+                "sentiment",
+                source="SharedSignals sentiment",
+                rows=0,
+                reason="missing_sentiment_rows",
+            )
             return 0.5
-        _mark_evidence(config, "sentiment", source="SharedSignals sentiment", rows=matched_rows)
+        _mark_evidence(
+            config, "sentiment", source="SharedSignals sentiment", rows=matched_rows
+        )
         raw = _clamp(weighted / total_weight)
         if raw > extreme_threshold:
             return _clamp(0.5 - (raw - extreme_threshold) * 2.0)
         return raw
     except Exception as exc:
-        logger.error("sentiment scoring failed for %s on %s: %s", ts_code, date, exc, exc_info=True)
+        logger.error(
+            "sentiment scoring failed for %s on %s: %s",
+            ts_code,
+            date,
+            exc,
+            exc_info=True,
+        )
         return None
 
 
@@ -687,6 +958,51 @@ _DIMENSION_FUNCS = {
     "technical": _score_technical,
     "sentiment": _score_sentiment,
 }
+
+
+def _finalize_score_values(
+    values: dict[str, Any],
+    *,
+    config: dict[str, Any],
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    result = {
+        dim: _clamp(_safe_float(values.get(dim), _DEFAULT_MISSING))
+        for dim in _DEFAULT_WEIGHTS
+    }
+    combined = 0.0
+    total_weight = 0.0
+    for dim, weight in _DEFAULT_WEIGHTS.items():
+        configured_weight = _safe_float(config.get(dim, weight), weight)
+        combined += result[dim] * configured_weight
+        total_weight += configured_weight
+    result["combined"] = _clamp(
+        combined / total_weight if total_weight > 1e-9 else _DEFAULT_MISSING
+    )
+    result["moneyflow"] = result["capital"]
+    normalized_evidence = {
+        dim: deepcopy(evidence.get(dim))
+        for dim in _DEFAULT_WEIGHTS
+        if isinstance(evidence.get(dim), dict)
+    }
+    missing_evidence = [
+        dim
+        for dim in _DEFAULT_WEIGHTS
+        if not normalized_evidence.get(dim, {}).get("has_evidence")
+    ]
+    default_like = [
+        dim
+        for dim in _DEFAULT_WEIGHTS
+        if 0.49 <= _safe_float(result.get(dim), _DEFAULT_MISSING) <= 0.51
+    ]
+    result["evidence_coverage"] = round(
+        (len(_DEFAULT_WEIGHTS) - len(missing_evidence)) / max(1, len(_DEFAULT_WEIGHTS)),
+        4,
+    )
+    result["evidence_sources"] = normalized_evidence
+    result["missing_evidence_dimensions"] = missing_evidence
+    result["default_like_dimensions"] = default_like
+    return result
 
 
 def score_stock(
@@ -761,50 +1077,84 @@ def score_stock(
     config["_market"] = market_name
     if data_reader is not None:
         config["_data_reader"] = data_reader
-    missing_default = config.get("combined", {}).get("missing_default", _DEFAULT_MISSING)
+    missing_default = config.get("combined", {}).get(
+        "missing_default", _DEFAULT_MISSING
+    )
 
     config["_dimension_evidence"] = {}
+    config["_base_dimension_scores"] = {}
+    config["_base_dimension_evidence"] = {}
     scores: dict[str, Any] = {}
     for dim, func in _DIMENSION_FUNCS.items():
         try:
             score = func(ts_code, date, config)
             scores[dim] = missing_default if score is None else _clamp(score)
             if score is None:
-                _mark_evidence(config, dim, source="scorer", rows=0, reason="scoring_returned_none")
+                _mark_evidence(
+                    config, dim, source="scorer", rows=0, reason="scoring_returned_none"
+                )
         except Exception as exc:
-            logger.error("%s scoring raised unexpectedly for %s on %s: %s", dim, ts_code, date, exc, exc_info=True)
+            logger.error(
+                "%s scoring raised unexpectedly for %s on %s: %s",
+                dim,
+                ts_code,
+                date,
+                exc,
+                exc_info=True,
+            )
             scores[dim] = missing_default
-            _mark_evidence(config, dim, source="scorer", rows=0, reason="scoring_exception")
+            _mark_evidence(
+                config, dim, source="scorer", rows=0, reason="scoring_exception"
+            )
 
-    # 加权综合
-    combined = 0.0
-    total_weight = 0.0
-    for dim, weight in _DEFAULT_WEIGHTS.items():
-        w = _safe_float(config.get(dim, weight), weight)
-        combined += scores.get(dim, missing_default) * w
-        total_weight += w
-
-    if total_weight > 1e-9:
-        combined /= total_weight
-    else:
-        combined = missing_default
-
-    scores["combined"] = _clamp(combined)
-    scores["moneyflow"] = scores["capital"]
-    evidence = dict(config.get("_dimension_evidence") or {})
-    missing_evidence = [
-        dim for dim in _DEFAULT_WEIGHTS
-        if not evidence.get(dim, {}).get("has_evidence")
+    enhanced_evidence = dict(config.get("_dimension_evidence") or {})
+    enhanced_score = _finalize_score_values(
+        scores,
+        config=config,
+        evidence=enhanced_evidence,
+    )
+    base_values = dict(scores)
+    base_values.update(dict(config.get("_base_dimension_scores") or {}))
+    base_evidence = dict(enhanced_evidence)
+    base_evidence.update(dict(config.get("_base_dimension_evidence") or {}))
+    base_score = _finalize_score_values(
+        base_values,
+        config=config,
+        evidence=base_evidence,
+    )
+    used_dimensions = [
+        dim
+        for dim in _DEFAULT_WEIGHTS
+        if abs(
+            _safe_float(enhanced_score.get(dim), _DEFAULT_MISSING)
+            - _safe_float(base_score.get(dim), _DEFAULT_MISSING)
+        )
+        > 1e-12
     ]
-    default_like = [
-        dim for dim in _DEFAULT_WEIGHTS
-        if 0.49 <= _safe_float(scores.get(dim), missing_default) <= 0.51
-    ]
-    scores["evidence_coverage"] = round((len(_DEFAULT_WEIGHTS) - len(missing_evidence)) / max(1, len(_DEFAULT_WEIGHTS)), 4)
-    scores["evidence_sources"] = evidence
-    scores["missing_evidence_dimensions"] = missing_evidence
-    scores["default_like_dimensions"] = default_like
-    return scores
+    pairing_payload = {
+        "pairing_version": "six-dimension-mg-pair-v1",
+        "same_scoring_snapshot": True,
+        "base_score_sha256": _canonical_sha256(base_score),
+        "marketgraph_score_sha256": _canonical_sha256(enhanced_score),
+        "used_dimensions": used_dimensions,
+    }
+    # A-share decisions and mg_off samples always consume the SharedSignals-only
+    # score.  The separately named enhanced score is available only to the
+    # explicit paired ablation path.
+    result = deepcopy(
+        base_score
+        if str(market_name or "").strip().lower() in {"ashare", "a", "a_share"}
+        else enhanced_score
+    )
+    result["base_score"] = deepcopy(base_score)
+    result["marketgraph_score"] = deepcopy(enhanced_score)
+    result["marketgraph_pairing"] = pairing_payload
+    result["top_level_score_role"] = (
+        "sharedsignals_base"
+        if str(market_name or "").strip().lower() in {"ashare", "a", "a_share"}
+        else "marketgraph_enhanced_legacy"
+    )
+    return result
 
 
 def score_universe(
@@ -828,6 +1178,7 @@ def score_universe(
     if universe is None:
         try:
             from .universe_filter import filter_universe
+
             universe = filter_universe(date)
         except ImportError:
             universe = []
@@ -861,12 +1212,18 @@ def score_universe(
                 inactive_dimensions.append(dim)
 
     if inactive_dimensions:
-        active_dimensions = [dim for dim in _DEFAULT_WEIGHTS if dim not in inactive_dimensions]
+        active_dimensions = [
+            dim for dim in _DEFAULT_WEIGHTS if dim not in inactive_dimensions
+        ]
         active_weight = sum(_DEFAULT_WEIGHTS[dim] for dim in active_dimensions)
         for _, scores in results:
             if active_weight > 0:
                 scores["combined"] = _clamp(
-                    sum(_safe_float(scores.get(dim), _DEFAULT_MISSING) * _DEFAULT_WEIGHTS[dim] for dim in active_dimensions)
+                    sum(
+                        _safe_float(scores.get(dim), _DEFAULT_MISSING)
+                        * _DEFAULT_WEIGHTS[dim]
+                        for dim in active_dimensions
+                    )
                     / active_weight
                 )
             scores["batch_inactive_dimensions"] = list(inactive_dimensions)
@@ -890,6 +1247,8 @@ if __name__ == "__main__":
     test_universe = ["600519.SH", "000858.SZ", "601318.SH"]
     results = score_universe("20260629", test_universe)
     for code, scores in results:
-        print(f"  {code}: combined={scores['combined']:.4f}  "
-              f"m={scores['macro']:.2f} e={scores['event']:.2f} f={scores['fundamental']:.2f} "
-              f"c={scores['capital']:.2f} t={scores['technical']:.2f} s={scores['sentiment']:.2f}")
+        print(
+            f"  {code}: combined={scores['combined']:.4f}  "
+            f"m={scores['macro']:.2f} e={scores['event']:.2f} f={scores['fundamental']:.2f} "
+            f"c={scores['capital']:.2f} t={scores['technical']:.2f} s={scores['sentiment']:.2f}"
+        )

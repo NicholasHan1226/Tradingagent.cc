@@ -26,16 +26,22 @@ def assert_shadow_or_sim_only(config: Any) -> None:
 def assert_no_real_execution(config: Any) -> None:
     safety = config.safety
     if getattr(safety, "real_money_enabled", False):
-        raise SafetyViolation(f"{config.market}: real-money execution is disabled in shared market tools")
+        raise SafetyViolation(
+            f"{config.market}: real-money execution is disabled in shared market tools"
+        )
     if getattr(safety, "direct_execution_enabled", False):
-        raise SafetyViolation(f"{config.market}: direct execution is disabled in shared market tools")
+        raise SafetyViolation(
+            f"{config.market}: direct execution is disabled in shared market tools"
+        )
     assert_shadow_or_sim_only(config)
 
 
 def assert_no_live_broker(config: Any) -> None:
     safety = config.safety
     if getattr(safety, "live_broker_enabled", False):
-        raise SafetyViolation(f"{config.market}: live broker access is disabled in shared market tools")
+        raise SafetyViolation(
+            f"{config.market}: live broker access is disabled in shared market tools"
+        )
 
 
 def assert_public_data_only(config: Any) -> None:
@@ -43,7 +49,9 @@ def assert_public_data_only(config: Any) -> None:
     assert_no_real_execution(config)
 
 
-def reject_real_execution_payload(payload: dict[str, Any] | None, *, context: str) -> None:
+def reject_real_execution_payload(
+    payload: dict[str, Any] | None, *, context: str
+) -> None:
     """Reject order/account/config fields that imply live or real execution."""
 
     payload = dict(payload or {})
@@ -61,9 +69,11 @@ def reject_real_execution_payload(payload: dict[str, Any] | None, *, context: st
         "live_broker",
         "live_broker_enabled",
         "real_money_enabled",
+        "real_trading_enabled",
         "real_execution",
         "direct_execution",
         "direct_execution_enabled",
+        "live_execution_enabled",
         "live",
     }
     present = sorted(
@@ -78,7 +88,13 @@ def reject_real_execution_payload(payload: dict[str, Any] | None, *, context: st
         )
 
     for path, key, raw_value in _iter_payload_items(payload):
-        if key not in {"capital_layer", "account_type", "execution_mode", "mode", "broker_mode"}:
+        if key not in {
+            "capital_layer",
+            "account_type",
+            "execution_mode",
+            "mode",
+            "broker_mode",
+        }:
             continue
         value = str(raw_value or "").strip().lower()
         if value in {"real", "live", "broker", "exchange"}:
@@ -104,5 +120,13 @@ def _is_truthy_payload_value(value: Any) -> bool:
     if value in (None, "", False):
         return False
     if isinstance(value, str):
-        return value.strip().lower() not in {"", "0", "false", "no", "off", "none", "null"}
+        return value.strip().lower() not in {
+            "",
+            "0",
+            "false",
+            "no",
+            "off",
+            "none",
+            "null",
+        }
     return bool(value)
