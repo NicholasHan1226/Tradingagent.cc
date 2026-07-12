@@ -15,6 +15,8 @@ class CronCoverageTest(unittest.TestCase):
                 "CRON_TZ=Asia/Shanghai",
                 "TZ=Asia/Shanghai",
                 "REAL_TRADING_ENABLED=false",
+                "ASHARE_SIM_HERMES_ENABLED=0",
+                "ASHARE_SIM_WEBHOOK_ENABLED=0",
                 "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh",
             )
         )
@@ -179,6 +181,8 @@ class CronCoverageTest(unittest.TestCase):
             "CRON_TZ=Asia/Shanghai\n"
             "TZ=Asia/Shanghai\n"
             "REAL_TRADING_ENABLED=false\n"
+            "ASHARE_SIM_HERMES_ENABLED=0\n"
+            "ASHARE_SIM_WEBHOOK_ENABLED=0\n"
             "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh\n" + schedules
         )
 
@@ -201,6 +205,8 @@ class CronCoverageTest(unittest.TestCase):
             "CRON_TZ=Asia/Shanghai",
             "TZ=Asia/Shanghai",
             "REAL_TRADING_ENABLED=false",
+            "ASHARE_SIM_HERMES_ENABLED=0",
+            "ASHARE_SIM_WEBHOOK_ENABLED=0",
             "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh",
         ):
             self.assertEqual(template.splitlines().count(assignment), 1)
@@ -218,6 +224,16 @@ class CronCoverageTest(unittest.TestCase):
             ),
             ("CRON_TZ=Asia/Shanghai", "CRON_TZ=UTC", "cron_tz"),
             ("TZ=Asia/Shanghai", "TZ=UTC", "timezone"),
+            (
+                "ASHARE_SIM_HERMES_ENABLED=0",
+                "ASHARE_SIM_HERMES_ENABLED=1",
+                "ashare_sim_hermes_enabled",
+            ),
+            (
+                "ASHARE_SIM_WEBHOOK_ENABLED=0",
+                "ASHARE_SIM_WEBHOOK_ENABLED=1",
+                "ashare_sim_webhook_enabled",
+            ),
         ):
             with self.subTest(expected_field=expected_field):
                 report = cron_coverage.check_cron_coverage(

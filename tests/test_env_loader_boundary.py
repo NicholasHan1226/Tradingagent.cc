@@ -25,6 +25,8 @@ def _source_loader(
     env = dict(os.environ)
     env.pop("TRADINGAGENT_ENV_LOADER_READY", None)
     env.pop("REAL_TRADING_ENABLED", None)
+    env.pop("ASHARE_SIM_HERMES_ENABLED", None)
+    env.pop("ASHARE_SIM_WEBHOOK_ENABLED", None)
     if inherited_real is not None:
         env["REAL_TRADING_ENABLED"] = inherited_real
     env.update(
@@ -45,7 +47,7 @@ def _source_loader(
         [
             "bash",
             "-c",
-            'source "$1"; printf "%s|%s" "$REAL_TRADING_ENABLED" "$TZ"',
+            'source "$1"; printf "%s|%s|%s|%s" "$REAL_TRADING_ENABLED" "$TZ" "$ASHARE_SIM_HERMES_ENABLED" "$ASHARE_SIM_WEBHOOK_ENABLED"',
             "bash",
             str(ENV_LOADER),
         ],
@@ -98,7 +100,23 @@ def test_env_loader_normalizes_unset_or_false_to_explicit_sim_only(
     result = _source_loader(tmp_path, inherited_real=inherited)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "false|Asia/Shanghai"
+    assert result.stdout == "false|Asia/Shanghai|0|0"
+
+
+@pytest.mark.parametrize("variable_name", ["ASHARE_SIM_HERMES_ENABLED", "ASHARE_SIM_WEBHOOK_ENABLED"])
+@pytest.mark.parametrize("dangerous_value", ["1", "true", "yes", "on", "enabled"])
+def test_env_loader_rejects_external_sim_bridge_enablement_from_env(
+    tmp_path: Path, variable_name: str, dangerous_value: str
+) -> None:
+    result = _source_loader(
+        tmp_path,
+        tradingagent_env=f"export {variable_name}={dangerous_value}\n",
+    )
+
+    assert result.returncode != 0
+    assert variable_name in result.stderr
+    assert "external Mini/Hermes simulation bridge" in result.stderr
+    assert result.stdout == ""
 
 
 def test_env_loader_rechecks_sim_only_gate_when_ready_marker_is_preseeded(

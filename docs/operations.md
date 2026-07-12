@@ -91,6 +91,10 @@ export ASHARE_SIM_HERMES_ENABLED=0
 export ASHARE_SIM_WEBHOOK_ENABLED=0
 ```
 
+当前 production cron/env loader 将这两个变量作为必须关闭的发布门禁：`.env`
+或共享环境中出现 truthy/未知值时，任务在正文启动前 fail closed。恢复 Mini/Hermes
+模拟第二路径需要单独发布授权和新的门禁审计，不能只改服务器环境变量。
+
 盘前与 opening 验收是只读检查：
 
 ```bash

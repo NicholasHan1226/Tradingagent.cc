@@ -29,7 +29,7 @@
 
 ## Hermes/Mini
 
-- 默认 server-local 模拟闭环不依赖 Mini；只有 `ASHARE_SIM_HERMES_ENABLED=1` 才启用 GUI 模拟对照。
+- 默认 server-local 模拟闭环不依赖 Mini；当前 production cron/env loader 强制 `ASHARE_SIM_HERMES_ENABLED=0` 与 `ASHARE_SIM_WEBHOOK_ENABLED=0`，truthy/未知值会在任务正文前 fail closed。恢复 GUI 模拟对照需要单独发布授权和门禁审计，不能只改服务器环境变量。
 - Mini 不判断买卖、不分配资本、不修改 capital authority。点击不是成交；无法用委托/成交/持仓证据严格确认时必须 failed + halt，禁止自动重试下单。
 - 拟议邮件 → Nicholas → 同花顺人工复核实盘仍是设计，未实现、未授权；Mini 不发送邮件、不读取真实账户、不点击真实交易。
 

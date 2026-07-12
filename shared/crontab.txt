@@ -20,6 +20,8 @@ SHELL=/bin/bash
 CRON_TZ=Asia/Shanghai
 TZ=Asia/Shanghai
 REAL_TRADING_ENABLED=false
+ASHARE_SIM_HERMES_ENABLED=0
+ASHARE_SIM_WEBHOOK_ENABLED=0
 BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
 # A-share observation/real-review signal digest belongs to MarketGraph-owned

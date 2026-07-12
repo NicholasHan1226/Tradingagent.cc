@@ -21,6 +21,8 @@ required_vars=(
     TRADINGS_CRON_LOG_ROOT
     TRADINGS_REPAIR_QUEUE
     REAL_TRADING_ENABLED
+    ASHARE_SIM_HERMES_ENABLED
+    ASHARE_SIM_WEBHOOK_ENABLED
     TZ
 )
 
@@ -33,6 +35,8 @@ for var_name in "${required_vars[@]}"; do
 done
 
 [[ "${REAL_TRADING_ENABLED}" == "false" ]]
+[[ "${ASHARE_SIM_HERMES_ENABLED}" == "0" ]]
+[[ "${ASHARE_SIM_WEBHOOK_ENABLED}" == "0" ]]
 [[ "${TZ}" == "Asia/Shanghai" ]]
 
 echo "env_loader smoke ok"

@@ -24,8 +24,33 @@ _tradingagent_require_sim_only() {
     esac
 }
 
+_tradingagent_require_disabled_sim_bridge() {
+    local variable_name="$1"
+    local raw_value="${!variable_name:-}"
+    local normalized_value=""
+    normalized_value="$(printf '%s' "${raw_value}" | tr '[:upper:]' '[:lower:]')"
+    case "${normalized_value}" in
+        ""|0|false|no|off|disabled)
+            export "${variable_name}=0"
+            return 0
+            ;;
+        1|true|yes|on|enabled|live|real|production)
+            printf 'TradingAgent cron blocked: %s=%q enables the external Mini/Hermes simulation bridge\n' \
+                "${variable_name}" "${raw_value}" >&2
+            return 2
+            ;;
+        *)
+            printf 'TradingAgent cron blocked: %s=%q is not an accepted disabled bridge value\n' \
+                "${variable_name}" "${raw_value}" >&2
+            return 2
+            ;;
+    esac
+}
+
 if [[ -n "${TRADINGAGENT_ENV_LOADER_READY:-}" ]]; then
-    if ! _tradingagent_require_sim_only; then
+    if ! _tradingagent_require_sim_only \
+        || ! _tradingagent_require_disabled_sim_bridge ASHARE_SIM_HERMES_ENABLED \
+        || ! _tradingagent_require_disabled_sim_bridge ASHARE_SIM_WEBHOOK_ENABLED; then
         exit 2
     fi
     export TZ=Asia/Shanghai
@@ -54,7 +79,9 @@ fi
 # Re-check after both env files are sourced. A truthy or unrecognized value is
 # an operator/configuration error and must stop the job; never overwrite a live
 # request with a simulated value and continue silently.
-if ! _tradingagent_require_sim_only; then
+if ! _tradingagent_require_sim_only \
+    || ! _tradingagent_require_disabled_sim_bridge ASHARE_SIM_HERMES_ENABLED \
+    || ! _tradingagent_require_disabled_sim_bridge ASHARE_SIM_WEBHOOK_ENABLED; then
     unset TRADINGAGENT_ENV_LOADER_READY
     exit 2
 fi

@@ -25,6 +25,8 @@ SHELL=/bin/bash
 CRON_TZ=Asia/Shanghai
 TZ=Asia/Shanghai
 REAL_TRADING_ENABLED=false
+ASHARE_SIM_HERMES_ENABLED=0
+ASHARE_SIM_WEBHOOK_ENABLED=0
 BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
 # A-share simulated execution
@@ -73,12 +75,14 @@ class MergeTests(unittest.TestCase):
             "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh",
         )
         self.assertEqual(
-            lines[first_ta - 5 : first_ta],
+            lines[first_ta - 7 : first_ta],
             [
                 "SHELL=/bin/bash",
                 "CRON_TZ=Asia/Shanghai",
                 "TZ=Asia/Shanghai",
                 "REAL_TRADING_ENABLED=false",
+                "ASHARE_SIM_HERMES_ENABLED=0",
+                "ASHARE_SIM_WEBHOOK_ENABLED=0",
                 "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh",
             ],
         )
@@ -94,6 +98,8 @@ class MergeTests(unittest.TestCase):
             "CRON_TZ=Asia/Shanghai",
             "TZ=Asia/Shanghai",
             "REAL_TRADING_ENABLED=false",
+            "ASHARE_SIM_HERMES_ENABLED=0",
+            "ASHARE_SIM_WEBHOOK_ENABLED=0",
         ):
             self.assertEqual(twice.count(assignment), once.count(assignment))
 
@@ -138,6 +144,18 @@ class MergeTests(unittest.TestCase):
                 TA_TEMPLATE,
             )
         )
+        self.assertFalse(
+            _ta_coverage_ok(
+                merged.replace("ASHARE_SIM_HERMES_ENABLED=0", "ASHARE_SIM_HERMES_ENABLED=1"),
+                TA_TEMPLATE,
+            )
+        )
+        self.assertFalse(
+            _ta_coverage_ok(
+                merged.replace("ASHARE_SIM_WEBHOOK_ENABLED=0", "ASHARE_SIM_WEBHOOK_ENABLED=1"),
+                TA_TEMPLATE,
+            )
+        )
 
     def test_template_with_mismatched_bash_env_fails_closed(self):
         mismatched = TA_TEMPLATE.replace(
@@ -153,6 +171,8 @@ class MergeTests(unittest.TestCase):
             "CRON_TZ=Asia/Shanghai\n",
             "TZ=Asia/Shanghai\n",
             "REAL_TRADING_ENABLED=false\n",
+            "ASHARE_SIM_HERMES_ENABLED=0\n",
+            "ASHARE_SIM_WEBHOOK_ENABLED=0\n",
             "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh\n",
         ):
             with self.subTest(assignment=assignment.strip()):
