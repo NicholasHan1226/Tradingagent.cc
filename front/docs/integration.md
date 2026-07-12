@@ -20,14 +20,23 @@ gated and must not trigger execution from the front layer.
 
 > **A股模拟盘默认走服务器本地闭环**：`Ashare/sim_executor.py` 生成 simulated fill 后直接进入 `signals/filled/` 与 `signals/positions/`；`signals/pending/` 仅在显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时用于 Hermes/同花顺 GUI 第二路径。
 | Performance | `shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl` or `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl` | `shared/review/daily/daily_brief.jsonl` return fields, then `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
-| Market summaries | `shared/review/*/style_comparison.json` | `shared/review/*/style_performance.jsonl`, `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}` | Ready |
+| Generic market summaries | US/Crypto/PM `shared/review/*/style_comparison.json` | their own `style_performance.jsonl` and sim ledgers; A-share/CNFutures use their dedicated authorities below | Ready |
+| A-share capital | `shared/logs/capital/ashare/ashare_sim_capital_latest.json` | unavailable; never infer from another market | Ready; strict authority/generation/fresh/reconcile/checksum |
+| CNFutures capital | `shared/logs/capital/cn_futures/cn_futures_sim_capital_latest.json` | unavailable; never infer from A-share | Ready; strict authority/generation/fresh/reconcile/checksum |
 | A-share research evidence | `shared/review/ashare/research_evidence_latest.json` | omitted from snapshot when missing or malformed | Ready |
-| A-share forward validation | `shared/review/ashare/forward_validation_latest.json` | omitted from snapshot when missing or malformed | Ready |
+| A-share sample KPI / maturity | `shared/review/ashare/{sample_kpi_latest,market_maturity_latest}.json` | omitted when missing; never fall back to retired evolution projections | Ready |
+| CNFutures maturity | `shared/review/cn_futures/market_maturity_latest.json` | omitted when canonical `projection_sha256`, authority, lineage, or sim-only contract is invalid | Ready |
 | Optional market pulse | Bounded SharedSignals HTTP reads selected from current holdings/signals | `marketPulses[]` is omitted per unavailable/degraded series while `marketPulseCoverage` retains exact source coverage | Ready |
 | CNFutures replay evidence | `shared/review/cn_futures/replay_latest.json` | omitted from market summary when missing or malformed | Ready |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
 | Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
 | Live readiness | execution schemas and filled signal writeback | manual authorization state | Gated |
+
+The homepage maturity panel never aggregates capital across markets. It shows
+the A-share fresh 50,000 CNY account with Day 5 / Day 10 evidence reviews and
+the independent CNFutures fresh 50,000 CNY account with longer-horizon
+simulation maturity. Missing or invalid projections stay in an evidence-pending
+state. The panel always states that automatic promotion is disabled.
 
 ## Read-Only Contract
 
@@ -85,7 +94,7 @@ Display-ready fields used by the homepage:
   portfolio return is based on simulated-ledger mark-to-market instead of the
   old entry-price estimate.
 - When A-share local simulation account files exist under
-  `shared/logs/local_sim/`, the snapshot may attach
+  current fresh lineage root `shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/`, the snapshot may attach
   `portfolio.ashareAccount`. This object is a display-only account fact layer
   with `cashAvailable`, `marketValue`, `accountEquity`, `accountTotalPnl`,
   `accountReturnPct`, `openPositionCount`, `totalSampleCount`,
@@ -108,11 +117,11 @@ Display-ready fields used by the homepage:
   `ashare_local_sim_account`, `ashare_local_sim_mark_to_market`, and
   `ashare_local_sim_trade_price_fallback`. These are read-only display labels;
   the front layer must not turn them into execution actions.
-- If the entire `portfolio` summary is built from the A-share local simulation
-  account fallback, it carries `pnlCurrency=CNY`. If an existing mixed or
-  multi-market portfolio summary is present, attaching `ashareAccount` must not
-  change the top-level portfolio currency; only the A-share account detail grid
-  should show CNY values.
+- If the `portfolio` summary is built from the A-share local simulation
+  account fallback, it carries `pnlCurrency=CNY` and is valid only for the
+  `A-share` view. A mixed/multi-market monetary portfolio is not a supported
+  authority. Attaching `ashareAccount` must not leak A-share money into another
+  market or the `All Markets` view.
 - Trade journals and position cost are not valid performance sources by
   themselves. When only those files exist, `domains.performance.status` remains
   `empty` with a message explaining the missing PnL / return series.
@@ -146,10 +155,10 @@ Display-ready fields used by the homepage:
 - Market switching is strict. Selecting `A-share`, `US`, `Crypto`, `PM`, or
   `CNFutures` filters signals and holdings to that market. It must not fall
   back to all-market rows when the selected market has no records.
-- The all-market performance curve remains a portfolio aggregate. For a
-  selected market, the front may show a single current-return point from
-  `marketSummaries[]`; it must not display the all-market curve as if it were
-  that market's own history.
+- `All Markets` never has a monetary performance curve. It may aggregate only
+  non-monetary counts and health. A selected market may show its own history or
+  a single current-return point from its `marketSummaries[]` row; it must never
+  use another market's curve or a cross-market capital base.
 - Supported dashboard market labels include `A-share`, `US`, `Crypto`, `HK`,
   `PM`, and `CNFutures`. CN futures symbols such as `IF2601.CFFEX` and backend
   market labels such as `cn_futures` map to `CNFutures`.
@@ -198,23 +207,23 @@ Display-ready fields used by the homepage:
   rows alone are only a completed-trade replay. This prevents old fills from
   pretending to be a live screening funnel.
 - Homepage view portfolio: the browser derives the visible portfolio from the
-  active market. `All Markets` aggregates `marketSummaries[]` capital and PnL
-  when the top-level `portfolio` only represents one local account fallback.
-  `A-share` may show `portfolio.ashareAccount`; selected non-A-share markets
-  derive a compact portfolio view from their own `marketSummaries[]` row. This
-  keeps the header, realtime return panel, and summary rail on one result
-  number.
+  active market. `All Markets` returns no monetary portfolio; it displays
+  non-monetary counts/health only. `A-share` may show
+  `portfolio.ashareAccount`; CNFutures and other selected markets derive a
+  compact portfolio from their own `marketSummaries[]` row. The header,
+  realtime-return panel, and summary rail must use that same single-market
+  identity.
 - `ashareResearchEvidence`: optional read-only homepage rail input from
   `shared/review/ashare/research_evidence_latest.json`. It summarizes opening
-  auction or `first_5m_proxy` evidence, closing momentum candidates and
-  next-day labels, 204001 reverse repo estimate, and the current 50,000 CNY virtual
-  style budget allocation. The front layer must treat it as display evidence
-  only and must never turn it into orders, queue writes, emails, or callbacks.
-- `ashareForwardValidation`: optional read-only homepage rail input from
-  `shared/review/ashare/forward_validation_latest.json`. It summarizes how many
-  strategy-valid A-share fills have forward labels, how many remain pending,
-  and which validation horizons are available. It is evidence for review and
-  strategy learning only; it must not trigger queue writes or execution.
+  auction or `first_5m_proxy` evidence, closing momentum candidates, labels,
+  204001 cash-management suggestions, and style shadow attribution. Shadow
+  attribution is not spendable capital. The front layer must treat all of it
+  as display evidence only and must never turn it into orders, queue writes,
+  emails, or callbacks.
+- Canonical A-share sample evidence is `sample_kpi_latest.json` plus
+  `market_maturity_latest.json`, both derived from SampleJournal. The retired
+  forward-validation projection is not an evolution authority and must not be
+  used to authorize risk or live transition.
 - The homepage trading funnel is designed to animate real stage movement. If
   the API only exposes completed simulated-ledger trade journals, the UI will
   show a completed-trade replay instead of inventing upstream drop-off. To show
@@ -288,7 +297,7 @@ Recommended production shape on the TradingAgent production host:
 3. The Node snapshot service reads the verified TradingAgent workspace.
 4. The API returns only display-ready snapshot JSON.
 
-Current production deployment:
+Last documented deployment shape (not revalidated by the local capital-growth refactor):
 
 - Host: `8.138.181.177`
 - Workspace: `/opt/investment/tradingagent`
@@ -299,8 +308,8 @@ Current production deployment:
 - Internal API: `127.0.0.1:8787`
 - Public server names: `dashboard.tradingagent.cc`, `tradingagent.cc`,
   `www.tradingagent.cc`
-- DNS status: the Nginx site is ready, but the domain A records must point to
-  `8.138.181.177` before normal browser access reaches this server.
+- DNS, Tunnel, service, and Nginx runtime state must be verified independently
+  during an explicitly authorized release; repository text is not production proof.
 
 When the frontend and API share the same domain, the frontend can use the
 same-origin route:
@@ -444,7 +453,7 @@ The route may read:
 - `shared/review/*/style_performance.jsonl`
 - `shared/review/attribution/*.jsonl`
 - `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}`
-- `shared/logs/local_sim/local_sim_trades.jsonl`
+- `shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/local_sim_trades.jsonl`
 - `shared/risk/risk_limits.yaml`
 
 The route must not:
@@ -457,16 +466,18 @@ The route must not:
 
 ## Current Gap
 
-The local Vite dev, preview runtimes, Cloudflare Pages route, and server-side
-read-only API now use the same snapshot contract. The React app uses local
-preview data only when the endpoint is unavailable. If the endpoint is
-available but a domain returns an empty array, the UI must show a real empty
-state instead of substituting sample returns, opportunities, or holdings.
+The local Vite dev/preview runtimes and server-side read-only API use the same
+snapshot contract. Local preview data is allowed only in development or when
+`VITE_TRADING_AGENT_DEMO_PREVIEW=1` is explicitly set. A production endpoint
+failure must render unavailable/waiting state; it must never activate preview
+returns, opportunities, or holdings. A valid empty domain remains a real empty
+state.
 
-The production boundary is currently Cloudflare Pages for the static frontend
-plus Cloudflare Tunnel to the server-side snapshot API. The same read-only rule
-must be preserved: no execution, callback, or order mutation routes belong to
-this dashboard.
+The repository supports a static frontend plus the server-side snapshot API,
+but this refactor did not verify which hosting path is currently live. Pages,
+Tunnel, Nginx, service runtime, DNS, and public route are separate release
+checks. Every shape must preserve the same read-only boundary: no execution,
+callback, or order mutation route belongs to this dashboard.
 
 The data gap is now narrower: server-local simulated ledger positions and trade
 journals feed the homepage holdings and signal funnel, and

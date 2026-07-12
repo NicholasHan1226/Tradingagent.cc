@@ -2,7 +2,17 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
-import { readTradingAgentSnapshot } from './tradingAgentSnapshot'
+import {
+  canonicalCNFuturesMaturityProjectionSha256,
+  readTradingAgentSnapshot,
+} from './tradingAgentSnapshot'
+
+function sealCNFuturesMaturity<T extends Record<string, unknown>>(payload: T) {
+  return {
+    ...payload,
+    projection_sha256: canonicalCNFuturesMaturityProjectionSha256(payload),
+  }
+}
 
 async function createWorkspace() {
   const root = join(tmpdir(), `tad-read-model-${Date.now()}-${Math.random().toString(16).slice(2)}`)
@@ -16,7 +26,115 @@ async function createWorkspace() {
   return root
 }
 
+function marketCapitalSnapshot(
+  market: 'ashare' | 'cn_futures',
+  overrides: Record<string, unknown> = {},
+) {
+  const isAshare = market === 'ashare'
+  return {
+    source: 'market_capital_ledger',
+    schema_version: 'market-capital-snapshot.v2',
+    authority_id: isAshare ? 'ashare-capital-v1' : 'cn-futures-capital-v1',
+    authority_generation: 1,
+    account_name: isAshare ? 'ashare_sim' : 'cn_futures_sim',
+    market,
+    currency: 'CNY',
+    initial_equity_cny: 50_000,
+    equity_cny: 50_000,
+    cash_balance_cny: 50_000,
+    positions_market_value_cny: 0,
+    margin_used_cny: 0,
+    realized_pnl_cny: 0,
+    unrealized_pnl_cny: 0,
+    stock_gross_exposure_limit_cny: isAshare ? 45_000 : 0,
+    margin_utilization_limit_cny: isAshare ? 0 : 25_000,
+    positions_quantity_by_risk_unit: {},
+    execution_lineage_id: isAshare
+      ? 'ashare-sim-fresh-20260712-v1'
+      : 'cn-futures-sim-fresh-20260712-v1',
+    updated_at: '2026-07-13T08:00:00+00:00',
+    real_trading_enabled: false,
+    ...overrides,
+  }
+}
+
+async function writeCurrentMarketCapitalAuthorities(
+  root: string,
+  overrides: {
+    ashare?: Record<string, unknown>
+    cnFutures?: Record<string, unknown>
+  } = {},
+) {
+  const ashareDir = join(root, 'TradingAgent/shared/logs/capital/ashare')
+  const cnDir = join(root, 'TradingAgent/shared/logs/capital/cn_futures')
+  await mkdir(ashareDir, { recursive: true })
+  await mkdir(cnDir, { recursive: true })
+  await writeFile(
+    join(ashareDir, 'ashare_sim_capital_latest.json'),
+    JSON.stringify(marketCapitalSnapshot('ashare', overrides.ashare)),
+  )
+  await writeFile(
+    join(cnDir, 'cn_futures_sim_capital_latest.json'),
+    JSON.stringify(marketCapitalSnapshot('cn_futures', overrides.cnFutures)),
+  )
+}
+
+async function writeCurrentASharePositions(
+  root: string,
+  positions: Array<Record<string, unknown>>,
+) {
+  const projectRoot = root.endsWith('/TradingAgent') ? root : join(root, 'TradingAgent')
+  const capitalDir = join(projectRoot, 'shared/logs/capital/ashare')
+  const executionDir = join(
+    projectRoot,
+    'shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1',
+  )
+  const positionsQuantity = Object.fromEntries(
+    positions.map((position) => [
+      String(position.ts_code ?? ''),
+      Number(position.quantity ?? 0),
+    ]),
+  )
+  const positionsMarketValue = positions.reduce(
+    (total, position) => total + Number(position.market_value ?? 0),
+    0,
+  )
+  await mkdir(capitalDir, { recursive: true })
+  await mkdir(executionDir, { recursive: true })
+  await writeFile(
+    join(capitalDir, 'ashare_sim_capital_latest.json'),
+    JSON.stringify(marketCapitalSnapshot('ashare', {
+      equity_cny: 50_000,
+      cash_balance_cny: 50_000 - positionsMarketValue,
+      positions_market_value_cny: positionsMarketValue,
+      positions_quantity_by_risk_unit: positionsQuantity,
+    })),
+  )
+  await writeFile(
+    join(executionDir, 'simulated_ashare_positions.json'),
+    JSON.stringify({
+      capital_authority_id: 'ashare-capital-v1',
+      authority_generation: 1,
+      execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
+      capital_layer: 'simulated',
+      account_type: 'simulated',
+      positions,
+      real_trading_enabled: false,
+    }),
+  )
+}
+
 describe('TradingAgent snapshot reader', () => {
+  it('matches the cross-runtime CNFutures maturity projection hash vector', () => {
+    expect(canonicalCNFuturesMaturityProjectionSha256({
+      pool_cny: 50_000,
+      margin: 25_000,
+      ratios: [1, 0.125, -0],
+      nested: { b: 2.5, a: 3 },
+      enabled: false,
+    })).toBe('6092993cd591aa8dfda7c94f0134811cc4433afc53ccf7b4ab48728076c686f8')
+  })
+
   it('reads position plan, review rows and signal queue without touching live execution', async () => {
     const root = await createWorkspace()
 
@@ -65,6 +183,9 @@ describe('TradingAgent snapshot reader', () => {
   it('can read directly from the TradingAgent project root used by production deployment', async () => {
     const root = join(await createWorkspace(), 'TradingAgent')
     await mkdir(join(root, 'signals/pending'), { recursive: true })
+    await writeCurrentASharePositions(root, [
+      { ts_code: '600519.SH', quantity: 100, market_value: 12000, realized_pnl: 8200 },
+    ])
 
     await writeFile(
       join(root, 'shared/accounting/position_plan.jsonl'),
@@ -364,13 +485,11 @@ describe('TradingAgent snapshot reader', () => {
         },
         style_evidence: {
           summary: {
-            styles: 7,
-            active_sample: 3,
-            degraded: 2,
-            paused: 1,
-            virtual_capital: 200000,
-            allocated_capital: 200000,
-            unallocated_capital: 0,
+            styles: 4,
+            prediction_count: 16,
+            exploration_fill_count: 1,
+            exploitation_fill_count: 2,
+            completed_round_trip_count: 1,
           },
         },
       }),
@@ -398,9 +517,11 @@ describe('TradingAgent snapshot reader', () => {
       },
       styleEvidence: {
         summary: {
-          styles: 7,
-          virtualCapital: 200000,
-          allocatedCapital: 200000,
+          styles: 4,
+          predictionCount: 16,
+          explorationFillCount: 1,
+          exploitationFillCount: 2,
+          completedRoundTripCount: 1,
         },
       },
     })
@@ -409,6 +530,451 @@ describe('TradingAgent snapshot reader', () => {
       labelState: 'pending_next_day_bar',
     })
     expect(snapshot.sourceRefs.ashareResearchEvidence).toBe('shared/review/ashare/research_evidence_latest.json')
+  })
+
+  it('reads A-share sample and maturity projections from the current SampleJournal authority', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
+    const reviewDir = join(root, 'TradingAgent/shared/review/ashare')
+    await mkdir(reviewDir, { recursive: true })
+    const authority = {
+      capital_authority_id: 'ashare-capital-v1',
+      authority_generation: 1,
+      execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
+    }
+    await writeFile(
+      join(reviewDir, 'sample_kpi_latest.json'),
+      JSON.stringify({
+        report_type: 'sample_journal_kpi',
+        evidence_source: 'sample_journal_kpi',
+        generated_at: '2026-07-13T08:00:00+00:00',
+        trade_date: '20260713',
+        authority_scope: authority,
+        journal_event_count: 12,
+        sample_layer_totals: {
+          observation_counterfactual: 8,
+          exploration_fill: 1,
+          exploitation_fill: 0,
+          completed_round_trip: 1,
+        },
+        styles: {
+          trend_breakout: {
+            prediction_count: 8,
+            forward_label_counts: {
+              m30: { ready: 5 },
+              m60: { pending_not_due: 3 },
+            },
+          },
+        },
+        scientific_evidence: { promotion_evidence_ready: false },
+        automatic_promotion_enabled: false,
+        automatic_risk_expansion_enabled: false,
+        real_trading_enabled: false,
+      }),
+    )
+    await writeFile(
+      join(reviewDir, 'market_maturity_latest.json'),
+      JSON.stringify({
+        report_type: 'ashare_market_maturity_v1',
+        evidence_source: 'sample_journal_kpi',
+        generated_at: '2026-07-13T08:00:02+00:00',
+        trade_date: '20260713',
+        authority_scope: authority,
+        stage: 'stage_collecting',
+        total_trading_days: 1,
+        checkpoint_due: null,
+        promotion_evidence_ready: false,
+        live_transition_authorized: false,
+        automatic_promotion_enabled: false,
+        automatic_risk_expansion_enabled: false,
+        real_trading_enabled: false,
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-13T08:05:00.000Z'),
+    })
+    const current = snapshot as unknown as {
+      ashareSampleKpi?: Record<string, unknown>
+      ashareMarketMaturity?: Record<string, unknown>
+    }
+
+    expect(current.ashareSampleKpi).toMatchObject({
+      source: 'sample_journal_kpi',
+      tradeDate: '20260713',
+      candidateCount: 0,
+      predictionCount: 8,
+      observationCounterfactualCount: 8,
+      explorationFillCount: 1,
+      completedRoundTripCount: 1,
+      readyForwardLabelCount: 5,
+      pendingForwardLabelCount: 3,
+      automaticPromotionEnabled: false,
+      automaticRiskExpansionEnabled: false,
+      realTradingEnabled: false,
+      styles: [{
+        styleId: 'trend_breakout',
+        candidateCount: 0,
+        predictionCount: 8,
+        observationCounterfactualCount: 0,
+        readyForwardLabelCount: 5,
+        pendingForwardLabelCount: 3,
+        riskRejectCount: 0,
+      }],
+    })
+    expect(current.ashareMarketMaturity).toMatchObject({
+      source: 'sample_journal_kpi',
+      stage: 'stage_collecting',
+      totalTradingDays: 1,
+      liveTransitionAuthorized: false,
+      automaticPromotionEnabled: false,
+      automaticRiskExpansionEnabled: false,
+      realTradingEnabled: false,
+    })
+    expect(snapshot.ashareForwardValidation).toMatchObject({
+      date: '20260713',
+      tradeCount: 1,
+      strategyLabelCount: 5,
+      pendingCount: 3,
+      realTradingEnabled: false,
+    })
+    expect(snapshot.sourceRefs).toMatchObject({
+      ashareSampleKpi: 'shared/review/ashare/sample_kpi_latest.json',
+      ashareMarketMaturity: 'shared/review/ashare/market_maturity_latest.json',
+    })
+  })
+
+  it('reads CNFutures maturity beside A-share without sharing days, samples, or authority', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
+    const ashareReviewDir = join(root, 'TradingAgent/shared/review/ashare')
+    const futuresReviewDir = join(root, 'TradingAgent/shared/review/cn_futures')
+    await mkdir(ashareReviewDir, { recursive: true })
+    await mkdir(futuresReviewDir, { recursive: true })
+    const ashareAuthority = {
+      capital_authority_id: 'ashare-capital-v1',
+      authority_generation: 1,
+      execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
+    }
+    await writeFile(
+      join(ashareReviewDir, 'sample_kpi_latest.json'),
+      JSON.stringify({
+        report_type: 'sample_journal_kpi',
+        evidence_source: 'sample_journal_kpi',
+        authority_scope: ashareAuthority,
+        styles: {},
+        sample_layer_totals: {},
+        real_trading_enabled: false,
+      }),
+    )
+    await writeFile(
+      join(ashareReviewDir, 'market_maturity_latest.json'),
+      JSON.stringify({
+        report_type: 'ashare_market_maturity_v1',
+        evidence_source: 'sample_journal_kpi',
+        generated_at: '2026-07-14T08:00:00+00:00',
+        trade_date: '20260714',
+        authority_scope: ashareAuthority,
+        stage: 'stage_collecting',
+        total_trading_days: 2,
+        promotion_evidence_ready: false,
+        live_transition_authorized: false,
+        automatic_promotion_enabled: false,
+        automatic_risk_expansion_enabled: false,
+        real_trading_enabled: false,
+      }),
+    )
+    await writeFile(
+      join(futuresReviewDir, 'market_maturity_latest.json'),
+      JSON.stringify(sealCNFuturesMaturity({
+        report_type: 'cn_futures_market_maturity_v1',
+        evidence_source: 'cn_futures_review_journal+sample_kpi',
+        generated_at: '2026-07-25T08:00:00+00:00',
+        trade_date: '20260725',
+        authority_scope: {
+          capital_authority_id: 'cn-futures-capital-v1',
+          authority_generation: 1,
+          execution_lineage_id: 'cn-futures-sim-fresh-20260712-v1',
+        },
+        pool_cny: 50_000,
+        margin_utilization_limit_cny: 25_000,
+        fresh_start_trade_date: '20260713',
+        simulation_trading_days: ['20260713', '20260714', '20260715'],
+        total_simulation_trading_days: 3,
+        stage: 'stage_coverage_building',
+        sample_counts: {
+          valid_sample_count: 24,
+          observation_counterfactual_count: 15,
+          counterfactual_only_count: 8,
+          execution_eligible_sample_count: 9,
+          completed_round_trip_count: 4,
+          forward_label_count: 21,
+          pending_forward_label_count: 3,
+          risk_reject_count: 6,
+        },
+        coverage: {
+          products: ['au', 'rb', 'cu'],
+          product_count: 3,
+          volatility_regimes: ['high', 'low'],
+          volatility_regime_count: 2,
+          night_session_sample_count: 7,
+          rollover_sample_count: 1,
+          margin_evidence_sample_count: 9,
+          fee_evidence_sample_count: 4,
+          slippage_evidence_sample_count: 9,
+          extreme_risk_sample_count: 2,
+        },
+        performance: {
+          win_rate: 0.5,
+          expectancy_cny: 12.5,
+          post_cost_pnl_cny: 50,
+          max_drawdown_cny: 80,
+          stability_score: null,
+        },
+        blocking_reasons: ['missing_independent_stability_evidence'],
+        promotion_evidence_ready: false,
+        automatic_promotion_enabled: false,
+        automatic_risk_expansion_enabled: false,
+        live_transition_authorized: false,
+        real_trading_enabled: false,
+      })),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-25T08:05:00.000Z'),
+    })
+
+    expect(snapshot.ashareMarketMaturity).toMatchObject({
+      totalTradingDays: 2,
+      authorityScope: { capitalAuthorityId: 'ashare-capital-v1' },
+    })
+    expect(snapshot.cnFuturesMarketMaturity).toMatchObject({
+      source: 'cn_futures_review_journal+sample_kpi',
+      totalSimulationTradingDays: 3,
+      capitalPoolCny: 50_000,
+      marginUtilizationLimitCny: 25_000,
+      authorityScope: {
+        capitalAuthorityId: 'cn-futures-capital-v1',
+        authorityGeneration: 1,
+        executionLineageId: 'cn-futures-sim-fresh-20260712-v1',
+      },
+      sampleCounts: {
+        validSampleCount: 24,
+        observationCounterfactualCount: 15,
+        executionEligibleSampleCount: 9,
+        completedRoundTripCount: 4,
+        forwardLabelCount: 21,
+      },
+      coverage: {
+        products: ['au', 'rb', 'cu'],
+        volatilityRegimes: ['high', 'low'],
+        nightSessionSampleCount: 7,
+        rolloverSampleCount: 1,
+        marginEvidenceSampleCount: 9,
+        feeEvidenceSampleCount: 4,
+        slippageEvidenceSampleCount: 9,
+        extremeRiskSampleCount: 2,
+      },
+      blockingReasons: ['missing_independent_stability_evidence'],
+      automaticPromotionEnabled: false,
+      automaticRiskExpansionEnabled: false,
+      liveTransitionAuthorized: false,
+      realTradingEnabled: false,
+    })
+    const ashareSummary = snapshot.marketSummaries?.find((item) => item.market === 'A-share')
+    const futuresSummary = snapshot.marketSummaries?.find((item) => item.market === 'CNFutures')
+    expect(ashareSummary).toMatchObject({
+      capitalBase: 50_000,
+      capitalAuthorityId: 'ashare-capital-v1',
+      authorityGeneration: 1,
+      maturity: 'stage_collecting',
+    })
+    expect(futuresSummary).toMatchObject({
+      capitalBase: 50_000,
+      capitalAuthorityId: 'cn-futures-capital-v1',
+      authorityGeneration: 1,
+      maturity: 'stage_coverage_building',
+    })
+    expect(snapshot.sourceRefs.cnFuturesMarketMaturity).toBe(
+      'shared/review/cn_futures/market_maturity_latest.json',
+    )
+  })
+
+  it('rejects unsafe or mismatched CNFutures maturity projections', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
+    const reviewDir = join(root, 'TradingAgent/shared/review/cn_futures')
+    await mkdir(reviewDir, { recursive: true })
+    await writeFile(
+      join(reviewDir, 'market_maturity_latest.json'),
+      JSON.stringify({
+        report_type: 'cn_futures_market_maturity_v1',
+        evidence_source: 'cn_futures_review_journal+sample_kpi',
+        authority_scope: {
+          capital_authority_id: 'retired-shared-master',
+          authority_generation: 2,
+          execution_lineage_id: 'retired-epoch-2',
+        },
+        pool_cny: 100_000,
+        margin_utilization_limit_cny: 50_000,
+        stage: 'stage_eligible_pending_confirmation',
+        automatic_promotion_enabled: true,
+        live_transition_authorized: true,
+        real_trading_enabled: true,
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-25T08:05:00.000Z'),
+    })
+
+    expect(snapshot.cnFuturesMarketMaturity).toBeUndefined()
+    const futuresSummary = snapshot.marketSummaries?.find((item) => item.market === 'CNFutures')
+    expect(futuresSummary?.maturity).toBeNull()
+  })
+
+  it('rejects a tampered CNFutures maturity projection after sealing', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
+    const reviewDir = join(root, 'TradingAgent/shared/review/cn_futures')
+    await mkdir(reviewDir, { recursive: true })
+    const sealed = sealCNFuturesMaturity({
+      report_type: 'cn_futures_market_maturity_v1',
+      evidence_source: 'cn_futures_review_journal+sample_kpi',
+      generated_at: '2026-07-25T08:00:00+00:00',
+      trade_date: '20260725',
+      fresh_start_trade_date: '20260713',
+      authority_scope: {
+        capital_authority_id: 'cn-futures-capital-v1',
+        authority_generation: 1,
+        execution_lineage_id: 'cn-futures-sim-fresh-20260712-v1',
+      },
+      pool_cny: 50_000,
+      margin_utilization_limit_cny: 25_000,
+      simulation_trading_days: ['20260713'],
+      total_simulation_trading_days: 1,
+      stage: 'stage_collecting',
+      sample_counts: {},
+      coverage: {
+        products: [],
+        product_count: 0,
+        volatility_regimes: [],
+        volatility_regime_count: 0,
+      },
+      performance: {},
+      blocking_reasons: [],
+      automatic_promotion_enabled: false,
+      automatic_risk_expansion_enabled: false,
+      live_transition_authorized: false,
+      real_trading_enabled: false,
+    })
+    sealed.stage = 'stage_eligible_pending_confirmation'
+    await writeFile(
+      join(reviewDir, 'market_maturity_latest.json'),
+      JSON.stringify(sealed),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-25T08:05:00.000Z'),
+    })
+
+    expect(snapshot.cnFuturesMarketMaturity).toBeUndefined()
+  })
+
+  it('ignores retired A-share forward-validation and tier-experiment projections', async () => {
+    const root = await createWorkspace()
+    const reviewDir = join(root, 'TradingAgent/shared/review/ashare')
+    await mkdir(reviewDir, { recursive: true })
+    await writeFile(
+      join(reviewDir, 'forward_validation_latest.json'),
+      JSON.stringify({
+        generated_at: '2099-01-01T00:00:00+00:00',
+        date: '20990101',
+        trade_count: 999,
+        strategy_label_count: 999,
+        pending_count: 0,
+        real_trading_enabled: false,
+      }),
+    )
+    await writeFile(
+      join(reviewDir, 'tier_experiments_latest.json'),
+      JSON.stringify({
+        accounts: [{ account: 'ashare_200000', capital: 200_000, trade_count: 999 }],
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-13T08:05:00.000Z'),
+    })
+    const refs = snapshot.sourceRefs as unknown as Record<string, string>
+    const current = snapshot as unknown as {
+      ashareSampleKpi?: unknown
+      ashareMarketMaturity?: unknown
+    }
+
+    expect(snapshot.ashareForwardValidation).toBeUndefined()
+    expect(current.ashareSampleKpi).toBeUndefined()
+    expect(current.ashareMarketMaturity).toBeUndefined()
+    expect(refs.ashareForwardValidation).toBeUndefined()
+    expect(refs.ashareTierExperiments).toBeUndefined()
+    expect(Object.values(refs).join('\n')).not.toContain('forward_validation_latest.json')
+    expect(Object.values(refs).join('\n')).not.toContain('tier_experiments_latest.json')
+  })
+
+  it('does not combine a maturity projection from another capital authority', async () => {
+    const root = await createWorkspace()
+    const reviewDir = join(root, 'TradingAgent/shared/review/ashare')
+    await mkdir(reviewDir, { recursive: true })
+    await writeFile(
+      join(reviewDir, 'sample_kpi_latest.json'),
+      JSON.stringify({
+        report_type: 'sample_journal_kpi',
+        evidence_source: 'sample_journal_kpi',
+        generated_at: '2026-07-13T08:00:00+00:00',
+        trade_date: '20260713',
+        authority_scope: {
+          capital_authority_id: 'ashare-capital-v1',
+          authority_generation: 1,
+          execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
+        },
+        styles: {},
+        sample_layer_totals: {},
+        real_trading_enabled: false,
+      }),
+    )
+    await writeFile(
+      join(reviewDir, 'market_maturity_latest.json'),
+      JSON.stringify({
+        report_type: 'ashare_market_maturity_v1',
+        evidence_source: 'sample_journal_kpi',
+        authority_scope: {
+          capital_authority_id: 'retired-shared-master',
+          authority_generation: 2,
+          execution_lineage_id: 'retired-epoch-2',
+        },
+        stage: 'stage_eligible_pending_confirmation',
+        real_trading_enabled: false,
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-13T08:05:00.000Z'),
+    })
+    const current = snapshot as unknown as { ashareMarketMaturity?: unknown }
+
+    expect(current.ashareMarketMaturity).toBeUndefined()
   })
 
   it('expands style performance into a trade-timed return curve when ledger timestamps are available', async () => {
@@ -694,25 +1260,17 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T12:00:00.000Z'),
     })
 
-    expect(snapshot.performance).toEqual([
-      { day: '7月3日 10:00', timestamp: '2026-07-03T10:00:05+08:00', simulated: 0.03, target: 2.67, benchmark: 0, opportunity: 0 },
-      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:09+08:00', simulated: 0.07, target: 5.33, benchmark: 0, opportunity: 0 },
-      { day: '现在', timestamp: '2026-07-04T10:06:10+08:00', simulated: 0.1, target: 8, benchmark: 0, opportunity: 0 },
-    ])
-    expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 151.2,
-      returnPct: 0.1,
-      capitalBase: 144000,
-      maxDrawdownPct: 1.4,
-      tradeCount: 8,
-      pointCount: 3,
-      pnlSource: 'sim_ledger_mark_to_market',
-      realizedPnl: 79.2,
-      unrealizedPnl: 72,
-    })
+    // Cross-market monetary aggregation is decommissioned.
+    // Multi-market equity snapshots produce no combined portfolio or performance curve.
+    // Per-market data is in marketSummaries.
+    expect(snapshot.portfolio).toBeUndefined()
+    expect(snapshot.performance).toEqual([])
+    // Market summaries still carry independent per-market monetary identity
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({ market: 'Crypto' }))
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({ market: 'US' }))
   })
 
-  it('forward-fills missing simulated ledger sources so all-market returns keep one capital base', async () => {
+  it('rejects cross-market forward-fill aggregation and keeps independent market identity', async () => {
     const root = await createWorkspace()
     const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
     const usLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/us/momentum')
@@ -786,17 +1344,10 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T12:00:00.000Z'),
     })
 
-    expect(snapshot.performance).toEqual([
-      { day: '7月4日 10:00', timestamp: '2026-07-04T10:00:05+08:00', simulated: 0.03, target: 2.67, benchmark: 0, opportunity: 0 },
-      { day: '7月4日 10:06', timestamp: '2026-07-04T10:06:01+08:00', simulated: 0.08, target: 5.33, benchmark: 0, opportunity: 0 },
-      { day: '现在', timestamp: '2026-07-04T10:12:10+08:00', simulated: 0.1, target: 8, benchmark: 0, opportunity: 0 },
-    ])
-    expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 151.2,
-      returnPct: 0.1,
-      capitalBase: 144000,
-      tradeCount: 5,
-    })
+    // Cross-market monetary aggregation is decommissioned; multi-market
+    // equity snapshots produce no combined portfolio or performance curve.
+    expect(snapshot.portfolio).toBeUndefined()
+    expect(snapshot.performance).toEqual([])
   })
 
   it('keeps capital-base rebase history normal with the market-aware default floor', async () => {
@@ -849,6 +1400,7 @@ describe('TradingAgent snapshot reader', () => {
 
   it('uses only the canonical A-share server-local ledger for dashboard equity', async () => {
     const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
     const legacyAshareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/aggressive')
     const canonicalAshareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
     await mkdir(legacyAshareRoot, { recursive: true })
@@ -886,11 +1438,15 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.portfolio).toMatchObject({
-      capitalBase: 200000,
+      capitalBase: 50000,
       pnlAmount: 0,
-      pnlSource: 'ashare_local_sim_mark_to_market',
+      pnlSource: 'ashare_local_sim_account',
       returnPct: 0,
       tradeCount: 0,
+      ashareAccount: {
+        capitalAuthorityId: 'ashare-capital-v1',
+        authorityGeneration: 1,
+      },
     })
   })
 
@@ -1045,13 +1601,29 @@ describe('TradingAgent snapshot reader', () => {
 
   it('adds A-share local account cash, holdings and sample quality to the portfolio summary', async () => {
     const root = await createWorkspace()
-    const localSimRoot = join(root, 'TradingAgent/shared/logs/local_sim')
+    await writeCurrentMarketCapitalAuthorities(root, {
+      ashare: {
+        equity_cny: 49_935,
+        cash_balance_cny: 20_000,
+        positions_market_value_cny: 29_935,
+        realized_pnl_cny: -20,
+        unrealized_pnl_cny: -45,
+        positions_quantity_by_risk_unit: {
+          '000001.SZ': 700,
+          '000002.SZ': 1600,
+        },
+      },
+    })
+    const localSimRoot = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
     await mkdir(localSimRoot, { recursive: true })
 
     await writeFile(
       join(localSimRoot, 'local_sim_pnl.json'),
       JSON.stringify({
         ashare_sim: {
+          capital_authority_id: 'ashare-capital-v1',
+          authority_generation: 1,
+          execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
           cash_available: 101397.47,
           market_value: 98537.53,
           total_pnl: -65,
@@ -1065,13 +1637,19 @@ describe('TradingAgent snapshot reader', () => {
     await writeFile(
       join(localSimRoot, 'local_sim_trades.jsonl'),
       [
-        JSON.stringify({ market: 'ashare', side: 'buy', status: 'filled', ts_code: '000001.SZ' }),
-        JSON.stringify({ market: 'ashare', side: 'buy', status: 'filled', ts_code: '000002.SZ' }),
+        JSON.stringify({ market: 'ashare', side: 'buy', status: 'filled', ts_code: '000001.SZ', capital_authority_id: 'ashare-capital-v1', authority_generation: 1, execution_lineage_id: 'ashare-sim-fresh-20260712-v1' }),
+        JSON.stringify({ market: 'ashare', side: 'buy', status: 'filled', ts_code: '000002.SZ', capital_authority_id: 'ashare-capital-v1', authority_generation: 1, execution_lineage_id: 'ashare-sim-fresh-20260712-v1' }),
       ].join('\n') + '\n',
     )
     await writeFile(
-      join(root, 'TradingAgent/signals/positions/simulated_ashare_positions.json'),
+      join(localSimRoot, 'simulated_ashare_positions.json'),
       JSON.stringify({
+        capital_authority_id: 'ashare-capital-v1',
+        authority_generation: 1,
+        execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
+        capital_layer: 'simulated',
+        account_type: 'simulated',
+        real_trading_enabled: false,
         positions: [
           {
             ts_code: '000001.SZ',
@@ -1108,15 +1686,15 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.portfolio).toMatchObject({
-      capitalBase: 200000,
+      capitalBase: 50000,
       pnlAmount: -65,
       pnlCurrency: 'CNY',
-      returnPct: -0.03,
+      returnPct: -0.13,
       tradeCount: 2,
       ashareAccount: {
-        accountEquity: 199935,
-        cashAvailable: 101397.47,
-        marketValue: 98537.53,
+        accountEquity: 49935,
+        cashAvailable: 20000,
+        marketValue: 29935,
         accountTotalPnl: -65,
         totalSampleCount: 2,
         validationSampleCount: 2,
@@ -1134,13 +1712,17 @@ describe('TradingAgent snapshot reader', () => {
 
   it('treats after-hours A-share local sim fills as validation samples in the dashboard', async () => {
     const root = await createWorkspace()
-    const localSimRoot = join(root, 'TradingAgent/shared/logs/local_sim')
+    await writeCurrentMarketCapitalAuthorities(root)
+    const localSimRoot = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
     await mkdir(localSimRoot, { recursive: true })
 
     await writeFile(
       join(localSimRoot, 'local_sim_pnl.json'),
       JSON.stringify({
         ashare_sim: {
+          capital_authority_id: 'ashare-capital-v1',
+          authority_generation: 1,
+          execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
           cash_available: 82683.89,
           market_value: 117228,
           total_pnl: -88.11,
@@ -1161,6 +1743,9 @@ describe('TradingAgent snapshot reader', () => {
         candidate_pool_layer: 'candidate',
         execution_source: 'ashare_candidate_layer',
         created_at: '2026-07-07T08:26:30+00:00',
+        capital_authority_id: 'ashare-capital-v1',
+        authority_generation: 1,
+        execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
       }) + '\n',
     )
 
@@ -1226,10 +1811,25 @@ describe('TradingAgent snapshot reader', () => {
 
   it('keeps same-day A-share no-trade evidence visible when historical trades exist', async () => {
     const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
     const logRoot = join(root, 'TradingAgent/shared/logs')
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
+    const localSimRoot = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
     await mkdir(logRoot, { recursive: true })
     await mkdir(ledgerRoot, { recursive: true })
+    await mkdir(localSimRoot, { recursive: true })
+    await writeFile(
+      join(localSimRoot, 'local_sim_trades.jsonl'),
+      [0, 1].map((index) => JSON.stringify({
+        market: 'ashare',
+        side: 'buy',
+        status: 'filled',
+        ts_code: `60000${index}.SH`,
+        capital_authority_id: 'ashare-capital-v1',
+        authority_generation: 1,
+        execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
+      })).join('\n') + '\n',
+    )
     await writeFile(
       join(logRoot, 'ashare_no_trade_explanations.jsonl'),
       JSON.stringify({
@@ -1282,11 +1882,11 @@ describe('TradingAgent snapshot reader', () => {
         evidenceStatus: 'ready',
         candidateCount: 3,
         orderCount: 0,
-        strategyCashAvailable: 200000,
-        accountCashAvailable: 82683.89,
+        strategyCashAvailable: undefined,
+        accountCashAvailable: 50000,
         ignoredValidationSampleCount: 2,
-        strategyPositionCount: 0,
-        accountPositionCount: 2,
+        strategyPositionCount: undefined,
+        accountPositionCount: 0,
       }),
     }))
   })
@@ -1656,17 +2256,14 @@ describe('TradingAgent snapshot reader', () => {
 
   it('preserves explicit position opportunity and PnL fields for read-only attribution', async () => {
     const root = await createWorkspace()
-    await writeFile(
-      join(root, 'TradingAgent/signals/positions/ashare.json'),
-      JSON.stringify([{
+    await writeCurrentASharePositions(root, [{
         ts_code: '600519.SH',
         quantity: 1,
         market_value: 1500,
         realized_pnl: 40,
         unrealized_pnl: 12,
         opportunity_id: 'opp-ashare-001',
-      }]),
-    )
+    }])
 
     const snapshot = await readTradingAgentSnapshot({ workspaceRoot: root, signalQueueDir: join(root, 'signals'), now: new Date('2026-07-11T04:00:00.000Z') })
 
@@ -1695,10 +2292,9 @@ describe('TradingAgent snapshot reader', () => {
         fill: { filled_at: '2026-07-06T01:30:00.000Z', filled_price: 1500, filled_qty: 1 },
       }),
     )
-    await writeFile(
-      join(root, 'TradingAgent/signals/positions/ashare.json'),
-      JSON.stringify([{ ts_code: '600519.SH', quantity: 1, market_value: 1500, realized_pnl: 0 }]),
-    )
+    await writeCurrentASharePositions(root, [
+      { ts_code: '600519.SH', quantity: 1, market_value: 1500, realized_pnl: 0 },
+    ])
     await writeFile(
       join(ledgerRoot, 'positions.json'),
       JSON.stringify({
@@ -2160,7 +2756,7 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
-  it('uses market-aware default capital when no ledger capital is provided', async () => {
+  it('does not invent A-share or CNFutures capital without fresh market authority', async () => {
     const root = await createWorkspace()
     const usReviewRoot = join(root, 'TradingAgent/shared/review/us')
     const cryptoReviewRoot = join(root, 'TradingAgent/shared/review/crypto')
@@ -2207,7 +2803,8 @@ describe('TradingAgent snapshot reader', () => {
     }))
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'CNFutures',
-      capitalBase: 50_000,
+      capitalBase: undefined,
+      capitalAuthorityId: null,
     }))
   })
 
@@ -2244,7 +2841,7 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
-  it('uses the sum of market defaults for the all-markets portfolio floor', async () => {
+  it('rejects the sum of market defaults as a cross-market portfolio floor', async () => {
     const root = await createWorkspace()
     const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
     const usLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/us/momentum')
@@ -2284,18 +2881,24 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T12:00:00.000Z'),
     })
 
-    expect(snapshot.portfolio).toMatchObject({
-      capitalBase: 144_000,
-      pnlAmount: 36,
-      returnPct: 0.03,
-    })
+    // Cross-market monetary aggregation is decommissioned.
+    // The old behavior summed default floors (72000+72000=144000); now multi-market
+    // produces no combined portfolio.
+    expect(snapshot.portfolio).toBeUndefined()
   })
 
   it('shows only the current A-share main account and ignores historical tier ledgers', async () => {
     const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root, {
+      ashare: {
+        equity_cny: 51_200,
+        cash_balance_cny: 51_200,
+        realized_pnl_cny: 1_200,
+      },
+    })
     const ashareReview = join(root, 'TradingAgent/shared/review/ashare')
     const tiersRoot = join(root, 'TradingAgent/shared/logs/local_sim_tiers')
-    const localSimDir = join(root, 'TradingAgent/shared/logs/local_sim')
+    const localSimDir = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
     await mkdir(ashareReview, { recursive: true })
     await mkdir(join(tiersRoot, 'ashare_50000'), { recursive: true })
     await mkdir(join(tiersRoot, 'ashare_100000'), { recursive: true })
@@ -2304,7 +2907,7 @@ describe('TradingAgent snapshot reader', () => {
     await writeFile(
       join(localSimDir, 'local_sim_pnl.json'),
       JSON.stringify({
-        ashare_server_sim: {
+        ashare_sim: {
           cash_available: 50_200,
           market_value: 151_000,
           total_pnl: 1_200,
@@ -2358,18 +2961,19 @@ describe('TradingAgent snapshot reader', () => {
 
     expect(snapshot.ashareTierSummaries).toHaveLength(1)
     expect(snapshot.ashareTierSummaries?.[0]).toMatchObject({
-      account: 'ashare_server_sim',
-      label: '20万主账户',
-      capital: 200_000,
+      account: 'ashare_sim',
+      label: '5万主账户',
+      capital: 50_000,
       totalPnl: 1_200,
-      returnPct: 0.6,
-      tradeCount: 5,
+      returnPct: 2.4,
+      tradeCount: 0,
     })
   })
 
   it('uses the current A-share account for realized and unrealized PnL instead of stale style performance', async () => {
     const root = await createWorkspace()
-    const localSimDir = join(root, 'TradingAgent/shared/logs/local_sim')
+    await writeCurrentMarketCapitalAuthorities(root)
+    const localSimDir = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
     const reviewDir = join(root, 'TradingAgent/shared/review/ashare')
     await mkdir(localSimDir, { recursive: true })
     await mkdir(reviewDir, { recursive: true })
@@ -2409,10 +3013,11 @@ describe('TradingAgent snapshot reader', () => {
         reverse_repo: {},
         style_evidence: {
           summary: {
-            styles: 7,
-            virtual_capital: 200_000,
-            allocated_capital: 120_000,
-            unallocated_capital: 80_000,
+            styles: 4,
+            prediction_count: 8,
+            exploration_fill_count: 1,
+            exploitation_fill_count: 0,
+            completed_round_trip_count: 0,
           },
         },
       }),
@@ -2431,13 +3036,17 @@ describe('TradingAgent snapshot reader', () => {
       realizedPnl: 0,
       unrealizedPnl: 0,
       tradeCount: 0,
-      source: 'shared/logs/local_sim/local_sim_trades.jsonl',
+      source: 'shared/logs/capital/ashare/ashare_sim_capital_latest.json',
     })
     expect(snapshot.ashareResearchEvidence?.styleEvidence.summary).toMatchObject({
-      virtualCapital: 50_000,
-      allocatedCapital: 30_000,
-      unallocatedCapital: 20_000,
+      styles: 4,
+      predictionCount: 8,
+      explorationFillCount: 1,
+      exploitationFillCount: 0,
+      completedRoundTripCount: 0,
     })
+    expect(snapshot.ashareResearchEvidence?.styleEvidence.summary).not.toHaveProperty('virtualCapital')
+    expect(snapshot.ashareResearchEvidence?.styleEvidence.summary).not.toHaveProperty('allocatedCapital')
   })
 
   it('returns no A-share tier summaries when no main or tier ledgers exist', async () => {
@@ -2450,5 +3059,375 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.ashareTierSummaries).toBeUndefined()
+  })
+})
+
+describe('cross-market monetary segregation', () => {
+  it('refuses to sum A-share and CNFutures equity into a combined 100000 capital base', async () => {
+    const root = await createWorkspace()
+    const ashareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
+    const cnRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/cn_futures/index_intraday_directional')
+    await mkdir(ashareRoot, { recursive: true })
+    await mkdir(cnRoot, { recursive: true })
+
+    await writeFile(
+      join(ashareRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-11T10:00:00+08:00',
+        date: '20260711',
+        capital_base: 50000,
+        total_pnl: 600,
+        realized_pnl: 200,
+        unrealized_pnl: 400,
+        max_drawdown_pct: 0.5,
+        target_return_pct: 8,
+        trade_count: 3,
+        pnl_source: 'ashare_local_sim_mark_to_market',
+      }) + '\n',
+    )
+    await writeFile(
+      join(cnRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-11T10:00:00+08:00',
+        date: '20260711',
+        capital_base: 50000,
+        total_pnl: -300,
+        realized_pnl: -100,
+        unrealized_pnl: -200,
+        max_drawdown_pct: 1.2,
+        target_return_pct: 8,
+        trade_count: 2,
+        pnl_source: 'cn_futures_mark_to_market',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-11T12:00:00.000Z'),
+    })
+
+    // Cross-market monetary aggregation is decommissioned.
+    // Portfolio must be undefined when multiple independent markets contribute.
+    expect(snapshot.portfolio).toBeUndefined()
+  })
+
+  it('never nets A-share profit with CNFutures loss into a combined PnL or return', async () => {
+    const root = await createWorkspace()
+    const ashareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
+    const cnRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/cn_futures/index_intraday_directional')
+    await mkdir(ashareRoot, { recursive: true })
+    await mkdir(cnRoot, { recursive: true })
+
+    await writeFile(
+      join(ashareRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-11T10:00:00+08:00',
+        date: '20260711',
+        capital_base: 50000,
+        total_pnl: 5000,
+        trade_count: 5,
+        pnl_source: 'ashare_local_sim_mark_to_market',
+      }) + '\n',
+    )
+    await writeFile(
+      join(cnRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-11T10:00:05+08:00',
+        date: '20260711',
+        capital_base: 50000,
+        total_pnl: -4000,
+        trade_count: 3,
+        pnl_source: 'cn_futures_mark_to_market',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-11T12:00:00.000Z'),
+    })
+
+    // Cross-market PnL aggregation is decommissioned; portfolio must be undefined.
+    expect(snapshot.portfolio).toBeUndefined()
+  })
+
+  it('never produces a combined max drawdown from two independent markets', async () => {
+    const root = await createWorkspace()
+    const ashareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
+    const cnRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/cn_futures/index_intraday_directional')
+    await mkdir(ashareRoot, { recursive: true })
+    await mkdir(cnRoot, { recursive: true })
+
+    await writeFile(
+      join(ashareRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-11T10:00:00+08:00',
+        date: '20260711',
+        capital_base: 50000,
+        total_pnl: 100,
+        max_drawdown_pct: 3.0,
+        trade_count: 1,
+        pnl_source: 'ashare_local_sim_mark_to_market',
+      }) + '\n',
+    )
+    await writeFile(
+      join(cnRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-11T10:00:00+08:00',
+        date: '20260711',
+        capital_base: 50000,
+        total_pnl: -50,
+        max_drawdown_pct: 5.0,
+        trade_count: 2,
+        pnl_source: 'cn_futures_mark_to_market',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-11T12:00:00.000Z'),
+    })
+
+    // Cross-market drawdown aggregation is decommissioned; portfolio must be undefined.
+    expect(snapshot.portfolio).toBeUndefined()
+  })
+
+  it('preserves independent per-market monetary identity in marketSummaries', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root, {
+      ashare: {
+        equity_cny: 50_600,
+        cash_balance_cny: 40_200,
+        positions_market_value_cny: 10_400,
+        realized_pnl_cny: 200,
+        unrealized_pnl_cny: 400,
+      },
+      cnFutures: {
+        equity_cny: 49_700,
+        cash_balance_cny: 49_700,
+        realized_pnl_cny: -300,
+        unrealized_pnl_cny: 0,
+      },
+    })
+    const ashareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
+    const cnRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/cn_futures/index_intraday_directional')
+    await mkdir(ashareRoot, { recursive: true })
+    await mkdir(cnRoot, { recursive: true })
+
+    await writeFile(
+      join(ashareRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-11T10:00:00+08:00',
+        date: '20260711',
+        capital_base: 50000,
+        total_pnl: 600,
+        realized_pnl: 200,
+        unrealized_pnl: 400,
+        max_drawdown_pct: 0.5,
+        trade_count: 3,
+        pnl_source: 'ashare_local_sim_mark_to_market',
+      }) + '\n',
+    )
+    await writeFile(
+      join(cnRoot, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-11T10:00:00+08:00',
+        date: '20260711',
+        capital_base: 50000,
+        total_pnl: -300,
+        max_drawdown_pct: 1.2,
+        trade_count: 2,
+        pnl_source: 'cn_futures_mark_to_market',
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-11T12:00:00.000Z'),
+    })
+
+    const ashare = snapshot.marketSummaries?.find((s) => s.market === 'A-share')
+    const cn = snapshot.marketSummaries?.find((s) => s.market === 'CNFutures')
+
+    // Each market must retain its own independent monetary identity
+    expect(ashare).toMatchObject({
+      capitalBase: 50000,
+      pnlAmount: 600,
+      maxDrawdownPct: 0,
+      capitalAuthorityId: 'ashare-capital-v1',
+    })
+    expect(cn).toMatchObject({
+      capitalBase: 50000,
+      pnlAmount: -300,
+      maxDrawdownPct: 0.6,
+      capitalAuthorityId: 'cn-futures-capital-v1',
+    })
+  })
+
+  it('uses each fresh market-capital authority instead of summing same-market style ledgers', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root, {
+      ashare: {
+        equity_cny: 50_120,
+        cash_balance_cny: 35_120,
+        positions_market_value_cny: 15_000,
+        frozen_order_cash_cny: 500,
+        reserved_exposure_cny: 2_500,
+        available_to_reserve_cny: 27_000,
+        capital_utilization_rate: 0.36,
+        realized_pnl_cny: 40,
+        unrealized_pnl_cny: 80,
+      },
+      cnFutures: {
+        equity_cny: 49_700,
+        cash_balance_cny: 49_800,
+        margin_used_cny: 9_000,
+        frozen_order_margin_cny: 500,
+        reserved_margin_cny: 500,
+        available_to_reserve_cny: 15_000,
+        capital_utilization_rate: 0.2,
+        realized_pnl_cny: -200,
+        unrealized_pnl_cny: -100,
+      },
+    })
+    for (const style of ['trend', 'reversal']) {
+      const ashareRoot = join(root, `TradingAgent/shared/logs/sim_ledger/ashare/${style}`)
+      const futuresRoot = join(root, `TradingAgent/shared/logs/sim_ledger/cn_futures/${style}`)
+      await mkdir(ashareRoot, { recursive: true })
+      await mkdir(futuresRoot, { recursive: true })
+      await writeFile(
+        join(ashareRoot, 'daily_mark_to_market.jsonl'),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-14T10:00:00+08:00',
+          capital_base: 50_000,
+          total_pnl: 9_999,
+          realized_pnl: 9_999,
+          unrealized_pnl: 0,
+          max_drawdown_pct: 9,
+          trade_count: 10,
+        }) + '\n',
+      )
+      await writeFile(
+        join(futuresRoot, 'daily_mark_to_market.jsonl'),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-14T10:00:00+08:00',
+          capital_base: 50_000,
+          total_pnl: 8_888,
+          realized_pnl: 8_888,
+          unrealized_pnl: 0,
+          max_drawdown_pct: 8,
+          trade_count: 10,
+        }) + '\n',
+      )
+    }
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-14T12:00:00.000Z'),
+    })
+
+    const ashare = snapshot.marketSummaries?.find((item) => item.market === 'A-share')
+    const futures = snapshot.marketSummaries?.find((item) => item.market === 'CNFutures')
+    expect(ashare).toMatchObject({
+      capitalBase: 50_000,
+      pnlAmount: 120,
+      realizedPnl: 40,
+      unrealizedPnl: 80,
+      capitalAuthorityId: 'ashare-capital-v1',
+      authorityGeneration: 1,
+      capitalUtilizationPct: 36,
+      deployedCapitalCny: 18_000,
+      availableToReserveCny: 27_000,
+      riskUsedCny: 18_000,
+      riskLimitCny: 45_000,
+    })
+    expect(futures).toMatchObject({
+      capitalBase: 50_000,
+      pnlAmount: -300,
+      realizedPnl: -200,
+      unrealizedPnl: -100,
+      capitalAuthorityId: 'cn-futures-capital-v1',
+      authorityGeneration: 1,
+      capitalUtilizationPct: 20,
+      deployedCapitalCny: 10_000,
+      availableToReserveCny: 15_000,
+      riskUsedCny: 10_000,
+      riskLimitCny: 25_000,
+    })
+    expect(ashare?.capitalBase).not.toBe(100_000)
+    expect(futures?.capitalBase).not.toBe(100_000)
+    expect(ashare?.pnlAmount).not.toBe(19_998)
+    expect(futures?.pnlAmount).not.toBe(17_776)
+  })
+
+  it('rejects local A-share money and CN style money when fresh authority identity is invalid', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root, {
+      ashare: { authority_generation: 2 },
+      cnFutures: { execution_lineage_id: '', initial_equity_cny: 100_000 },
+    })
+    const localSimDir = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
+    const cnStyleDir = join(root, 'TradingAgent/shared/logs/sim_ledger/cn_futures/trend')
+    await mkdir(localSimDir, { recursive: true })
+    await mkdir(cnStyleDir, { recursive: true })
+    await writeFile(
+      join(localSimDir, 'local_sim_pnl.json'),
+      JSON.stringify({
+        ashare_sim: {
+          capital_authority_id: 'retired-shared-master',
+          authority_generation: 2,
+          execution_lineage_id: 'retired-epoch-2',
+          cash_available: 150_000,
+          market_value: 50_000,
+          total_pnl: 10_000,
+        },
+      }),
+    )
+    await writeFile(
+      join(cnStyleDir, 'daily_mark_to_market.jsonl'),
+      JSON.stringify({
+        capital_layer: 'simulated',
+        timestamp: '2026-07-14T10:00:00+08:00',
+        capital_base: 100_000,
+        total_pnl: 12_000,
+        trade_count: 99,
+      }) + '\n',
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-14T12:00:00.000Z'),
+    })
+
+    expect(snapshot.portfolio?.ashareAccount).toBeUndefined()
+    const ashare = snapshot.marketSummaries?.find((item) => item.market === 'A-share')
+    const futures = snapshot.marketSummaries?.find((item) => item.market === 'CNFutures')
+    expect(ashare).toMatchObject({
+      capitalBase: undefined,
+      pnlAmount: undefined,
+      capitalAuthorityId: null,
+      authorityGeneration: null,
+    })
+    expect(futures).toMatchObject({
+      capitalBase: undefined,
+      pnlAmount: undefined,
+      capitalAuthorityId: null,
+      authorityGeneration: null,
+    })
   })
 })

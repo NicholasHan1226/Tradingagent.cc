@@ -1,9 +1,10 @@
 import { access, readFile, readdir } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
-import type { AShareForwardValidation, AShareNoTradeEvidence, AShareResearchEvidence, AShareTierSummary, CNFuturesReplayEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
+import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareNoTradeEvidence, AShareProjectionAuthority, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, CNFuturesMarketMaturityProjection, CNFuturesProjectionAuthority, CNFuturesReplayEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
 import { readSharedSignalsMarketPulses } from './sharedSignalsMarketPulse.ts'
 
 type SnapshotOptions = {
@@ -94,9 +95,15 @@ type LocalSimTradeRow = {
   side?: string
   status?: string
   timestamp?: string
+  capital_authority_id?: string
+  authority_generation?: number | string
+  execution_lineage_id?: string
 }
 
 type LocalSimAccountPnl = {
+  capital_authority_id?: string
+  authority_generation?: number | string
+  execution_lineage_id?: string
   cash_available?: number | string
   market_value?: number | string
   realized_pnl?: number | string
@@ -104,6 +111,28 @@ type LocalSimAccountPnl = {
   total_pnl?: number | string
   total_trades?: number | string
   positions?: Record<string, unknown>
+}
+
+type MarketCapitalProjection = {
+  market: 'A-share' | 'CNFutures'
+  authorityId: 'ashare-capital-v1' | 'cn-futures-capital-v1'
+  authorityGeneration: 1
+  executionLineageId: string
+  initialEquityCny: 50000
+  equityCny: number
+  cashBalanceCny: number
+  positionsMarketValueCny: number
+  marginUsedCny: number
+  realizedPnlCny: number
+  unrealizedPnlCny: number
+  updatedAt: string
+  openPositionCount: number
+  deployedCapitalCny: number
+  availableToReserveCny: number
+  capitalUtilizationPct: number
+  riskUsedCny: number
+  riskLimitCny: number
+  source: string
 }
 
 type AShareNoTradeExplanation = {
@@ -374,6 +403,24 @@ type MarketPerformanceSummary = {
   unrealizedPnl: number
 }
 
+function marketCapitalPerformanceSummary(
+  capital: MarketCapitalProjection,
+): MarketPerformanceSummary {
+  const pnl = roundMoney(capital.equityCny - capital.initialEquityCny)
+  const currentDrawdownPct = capital.initialEquityCny > 0
+    ? Math.max(0, ((capital.initialEquityCny - capital.equityCny) / capital.initialEquityCny) * 100)
+    : 0
+  return {
+    capitalBase: capital.initialEquityCny,
+    latestAt: capital.updatedAt,
+    maxDrawdown: roundMetric(currentDrawdownPct),
+    pnl,
+    realizedPnl: capital.realizedPnlCny,
+    trades: 0,
+    unrealizedPnl: capital.unrealizedPnlCny,
+  }
+}
+
 type MarketStyleSummary = {
   activeStyleCount?: number
   degradedStyleCount?: number
@@ -524,30 +571,74 @@ export async function readTradingAgentSnapshot({
   const queueRoot = signalQueueDir ?? join(projectRoot, 'signals')
   const generatedAt = now.toISOString()
   const positionsPath = join(projectRoot, 'signals/positions')
+  const ashareExecutionPositionPath = join(
+    projectRoot,
+    'shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/simulated_ashare_positions.json',
+  )
   const positionPlanPath = toProjectPath(projectRoot, tradingAgentReadModelSources.capitalPlan)
   const filledSignalsPath = join(projectRoot, 'signals/filled')
   const reviewPath = toProjectPath(projectRoot, tradingAgentReadModelSources.review)
   const reviewFallbackPath = join(projectRoot, 'shared/review/data/daily_reviews.jsonl')
   const performanceTrackerRoot = join(projectRoot, 'shared/review')
   const simLedgerRoot = join(projectRoot, 'shared/logs/sim_ledger')
-  const holdings = await readPositionSnapshots(positionsPath)
+  const nonAuthoritativeHoldings = await readPositionSnapshots(positionsPath)
   const planHoldings = await readPositionPlan(positionPlanPath)
   const simLedgerHoldings = await readSimLedgerHoldings(simLedgerRoot)
-  const fallbackHoldings = mergeHoldings(holdings, planHoldings, simLedgerHoldings)
   const queueSignals = await readSignalQueue(queueRoot, now)
   const simLedgerSignals = await readSimLedgerSignals(simLedgerRoot, now)
   const signals = mergeSignals(queueSignals, simLedgerSignals)
   const opportunityFunnelEvents = await readOpportunityFunnelEvents(projectRoot)
   const funnelEvents = mergeFunnelEvents(opportunityFunnelEvents, buildFunnelEvents([...queueSignals, ...simLedgerSignals]))
   const reviewPerformance = firstNonEmpty(await readPerformanceSeries(reviewPath), await readPerformanceSeries(reviewFallbackPath))
+  const ashareMarketCapital = await readMarketCapitalProjection(
+    toProjectPath(projectRoot, tradingAgentReadModelSources.ashareMarketCapital),
+    'A-share',
+  )
+  const cnFuturesMarketCapital = await readMarketCapitalProjection(
+    toProjectPath(projectRoot, tradingAgentReadModelSources.cnFuturesMarketCapital),
+    'CNFutures',
+  )
+  const authoritativeAShareHoldings = await readAuthoritativeASharePositions(
+    ashareExecutionPositionPath,
+    ashareMarketCapital,
+  )
+  const fallbackHoldings = mergeHoldings(
+    [
+      ...nonAuthoritativeHoldings.filter((holding) => holding.market !== 'A-share'),
+      ...authoritativeAShareHoldings,
+    ],
+    planHoldings.filter((holding) => holding.market !== 'A-share'),
+    simLedgerHoldings.filter((holding) => holding.market !== 'A-share'),
+  )
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
-  const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt)
+  const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt, ashareMarketCapital)
   const ashareTierSummaries = readAShareTierSummaries(generatedAt, ashareAccount)
   const ashareNoTradeExplanation = await readLatestAShareNoTradeExplanation(projectRoot, now)
-  const rawAShareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
-  const ashareResearchEvidence = alignAShareResearchCapital(rawAShareResearchEvidence, ashareAccount)
-  const ashareForwardValidation = await readAShareForwardValidation(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareForwardValidation))
+  const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
+  const rawAShareSampleKpi = await readAShareSampleKpi(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareSampleKpi))
+  const ashareSampleKpi = rawAShareSampleKpi && ashareMarketCapital
+    && sameAShareCapitalAuthority(rawAShareSampleKpi.authorityScope, ashareMarketCapital)
+    ? rawAShareSampleKpi
+    : undefined
+  const rawAShareMarketMaturity = await readAShareMarketMaturity(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareMarketMaturity))
+  const ashareMarketMaturity = rawAShareMarketMaturity && ashareSampleKpi
+    && sameAShareProjectionAuthority(rawAShareMarketMaturity.authorityScope, ashareSampleKpi.authorityScope)
+    && ashareMarketCapital
+    && sameAShareCapitalAuthority(rawAShareMarketMaturity.authorityScope, ashareMarketCapital)
+    ? rawAShareMarketMaturity
+    : undefined
+  const rawCNFuturesMarketMaturity = await readCNFuturesMarketMaturity(
+    toProjectPath(projectRoot, tradingAgentReadModelSources.cnFuturesMarketMaturity),
+  )
+  const cnFuturesMarketMaturity = rawCNFuturesMarketMaturity && cnFuturesMarketCapital
+    && sameCNFuturesCapitalAuthority(
+      rawCNFuturesMarketMaturity.authorityScope,
+      cnFuturesMarketCapital,
+    )
+    ? rawCNFuturesMarketMaturity
+    : undefined
+  const ashareForwardValidation = sampleKpiCompatibilityView(ashareSampleKpi)
   const cnFuturesReplayEvidence = await readCNFuturesReplayEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.cnFuturesReplay))
   const equityPerformance = ashareAccount && isAShareLegacyEquitySummary(equityPortfolio.summary) ? [] : equityPortfolio.performance
   const performance = annotatePerformanceQuality(firstNonEmpty(equityPerformance, reviewPerformance, trackerPortfolio.performance))
@@ -562,6 +653,10 @@ export async function readTradingAgentSnapshot({
     signals,
     simLedgerRoot,
     cnFuturesReplayEvidence,
+    ashareMarketCapital,
+    cnFuturesMarketCapital,
+    ashareMarketMaturity,
+    cnFuturesMarketMaturity,
     now,
   })
   const marketPulseRead = await readSharedSignalsMarketPulses({
@@ -602,30 +697,45 @@ export async function readTradingAgentSnapshot({
     marketPulseCoverage: marketPulseRead.coverage,
     marketPulseCoverageHistory: marketPulseRead.coverageHistory,
     ashareResearchEvidence,
+    ashareSampleKpi,
+    ashareMarketMaturity,
+    cnFuturesMarketMaturity,
     ashareForwardValidation,
     ashareTierSummaries,
     sourceRefs: tradingAgentReadModelSources,
   }
 }
 
-async function readAShareAccountSummary(projectRoot: string, generatedAt: string): Promise<PortfolioSummary['ashareAccount'] | undefined> {
-  const localSimDir = join(projectRoot, 'shared/logs/local_sim')
+async function readAShareAccountSummary(
+  projectRoot: string,
+  generatedAt: string,
+  marketCapital: MarketCapitalProjection | undefined,
+): Promise<PortfolioSummary['ashareAccount'] | undefined> {
+  if (!marketCapital || marketCapital.market !== 'A-share') return undefined
+  const localSimDir = join(projectRoot, 'shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
   const pnlPayload = await readOptionalJson(join(localSimDir, 'local_sim_pnl.json'))
   const pnlRows = asRecord(pnlPayload)
   const accountPnl = selectASharePnlAccount(pnlRows)
-  const cashAvailable = parseFiniteNumber(accountPnl?.cash_available) ?? 0
-  const marketValue = parseFiniteNumber(accountPnl?.market_value) ?? 0
-  const accountTotalPnl = parseFiniteNumber(accountPnl?.total_pnl) ?? 0
-  const accountRealizedPnl = parseFiniteNumber(accountPnl?.realized_pnl) ?? 0
-  const accountUnrealizedPnl = parseFiniteNumber(accountPnl?.unrealized_pnl)
-    ?? roundMoney(accountTotalPnl - accountRealizedPnl)
-  const accountEquity = roundMoney(cashAvailable + marketValue)
-  const capitalBase = accountEquity - accountTotalPnl
-  const sampleQuality = await readAShareSampleQuality(join(localSimDir, 'local_sim_trades.jsonl'))
-
-  if (accountEquity <= 0 && sampleQuality.totalSampleCount === 0) return undefined
+  const localScopeMatches = accountPnl?.capital_authority_id === marketCapital.authorityId
+    && parseFiniteNumber(accountPnl.authority_generation) === marketCapital.authorityGeneration
+    && accountPnl.execution_lineage_id === marketCapital.executionLineageId
+  const cashAvailable = marketCapital.cashBalanceCny
+  const marketValue = marketCapital.positionsMarketValueCny
+  const accountEquity = marketCapital.equityCny
+  const capitalBase = marketCapital.initialEquityCny
+  const accountTotalPnl = roundMoney(accountEquity - capitalBase)
+  const accountRealizedPnl = marketCapital.realizedPnlCny
+  const accountUnrealizedPnl = marketCapital.unrealizedPnlCny
+  const sampleQuality = await readAShareSampleQuality(
+    join(localSimDir, 'local_sim_trades.jsonl'),
+    marketCapital,
+  )
+  const openPositionCount = marketCapital.openPositionCount
 
   return {
+    capitalAuthorityId: 'ashare-capital-v1',
+    authorityGeneration: 1,
+    executionLineageId: marketCapital.executionLineageId,
     cashAvailable: roundMoney(cashAvailable),
     marketValue: roundMoney(marketValue),
     accountEquity,
@@ -633,27 +743,27 @@ async function readAShareAccountSummary(projectRoot: string, generatedAt: string
     accountRealizedPnl: roundMoney(accountRealizedPnl),
     accountUnrealizedPnl: roundMoney(accountUnrealizedPnl),
     accountReturnPct: roundMetric(capitalBase > 0 ? (accountTotalPnl / capitalBase) * 100 : 0),
-    openPositionCount: Object.keys(accountPnl?.positions ?? {}).length,
+    openPositionCount,
     totalSampleCount: sampleQuality.totalSampleCount,
     validationSampleCount: sampleQuality.validationSampleCount,
     strategySampleValidCount: sampleQuality.strategySampleValidCount,
-    strategyTotalPnl: sampleQuality.strategySampleValidCount === sampleQuality.totalSampleCount
+    strategyTotalPnl: localScopeMatches && sampleQuality.strategySampleValidCount === sampleQuality.totalSampleCount
       ? roundMoney(accountTotalPnl)
       : sampleQuality.strategySampleValidCount === 0
         ? 0
         : undefined,
-    strategyMarketValue: sampleQuality.strategySampleValidCount === sampleQuality.totalSampleCount
+    strategyMarketValue: localScopeMatches && sampleQuality.strategySampleValidCount === sampleQuality.totalSampleCount
       ? roundMoney(marketValue)
       : sampleQuality.strategySampleValidCount === 0
         ? 0
         : undefined,
-    strategyOpenPositionCount: sampleQuality.strategySampleValidCount === sampleQuality.totalSampleCount
-      ? Object.keys(accountPnl?.positions ?? {}).length
+    strategyOpenPositionCount: localScopeMatches && sampleQuality.strategySampleValidCount === sampleQuality.totalSampleCount
+      ? openPositionCount
       : sampleQuality.strategySampleValidCount === 0
         ? 0
         : undefined,
-    source: tradingAgentReadModelSources.localSimLedger,
-    updatedAt: generatedAt,
+    source: marketCapital.source,
+    updatedAt: marketCapital.updatedAt || generatedAt,
   }
 }
 
@@ -694,7 +804,7 @@ function attachAShareAccountSummary(
     maxDrawdownPct: Math.max(0, -ashareAccount.accountReturnPct),
     tradeCount: ashareAccount.totalSampleCount,
     pointCount: 1,
-    source: tradingAgentReadModelSources.localSimLedger,
+    source: ashareAccount.source,
     pnlSource: 'ashare_local_sim_account',
     pnlCurrency: 'CNY',
     realizedPnl: ashareAccount.accountRealizedPnl ?? 0,
@@ -711,7 +821,7 @@ function readAShareTierSummaries(
   const summaries: AShareTierSummary[] = []
   if (mainAccount) {
     summaries.push({
-      account: 'ashare_server_sim',
+      account: 'ashare_sim',
       label: `${Math.round((mainAccount.accountEquity - mainAccount.accountTotalPnl) / 10_000)}万主账户`,
       capital: roundMoney(mainAccount.accountEquity - mainAccount.accountTotalPnl),
       totalPnl: mainAccount.accountTotalPnl,
@@ -719,7 +829,7 @@ function readAShareTierSummaries(
       marketValue: mainAccount.marketValue,
       cashAvailable: mainAccount.cashAvailable,
       tradeCount: mainAccount.totalSampleCount,
-      source: tradingAgentReadModelSources.localSimLedger,
+      source: mainAccount.source,
       updatedAt: generatedAt,
     })
   }
@@ -765,6 +875,10 @@ async function buildMarketSummaries({
   signals,
   simLedgerRoot,
   cnFuturesReplayEvidence,
+  ashareMarketCapital,
+  cnFuturesMarketCapital,
+  ashareMarketMaturity,
+  cnFuturesMarketMaturity,
   now,
 }: {
   generatedAt: string
@@ -776,6 +890,10 @@ async function buildMarketSummaries({
   signals: SignalRow[]
   simLedgerRoot: string
   cnFuturesReplayEvidence?: CNFuturesReplayEvidence
+  ashareMarketCapital?: MarketCapitalProjection
+  cnFuturesMarketCapital?: MarketCapitalProjection
+  ashareMarketMaturity?: AShareMarketMaturityProjection
+  cnFuturesMarketMaturity?: CNFuturesMarketMaturityProjection
   now: Date
 }): Promise<MarketSummary[]> {
   const styleSummaries = await readStyleComparisonMarketSummaries(performanceRoot)
@@ -796,14 +914,25 @@ async function buildMarketSummaries({
       : baseStyleSummary && reviewStyleSummary
         ? mergeMarketStyleSummary(baseStyleSummary, reviewStyleSummary)
         : baseStyleSummary ?? reviewStyleSummary
-    const performanceSummary = equitySummaries.get(market) ?? performanceSummaries.get(market)
+    const marketCapital = market === 'A-share'
+      ? ashareMarketCapital
+      : market === 'CNFutures'
+        ? cnFuturesMarketCapital
+        : undefined
+    const performanceSummary = marketCapital
+      ? marketCapitalPerformanceSummary(marketCapital)
+      : market === 'A-share' || market === 'CNFutures'
+        ? undefined
+        : equitySummaries.get(market) ?? performanceSummaries.get(market)
     const isAshare = market === 'A-share'
     const ashareAccount = isAshare ? portfolio?.ashareAccount : undefined
-    const rawCapitalBase = ashareAccount
+    const rawCapitalBase = marketCapital?.initialEquityCny ?? (ashareAccount
       ? roundMoney(ashareAccount.accountEquity - ashareAccount.accountTotalPnl)
-      : performanceSummary?.capitalBase ?? capitalBaseByMarket.get(market)
-    const capitalBase = defaultMarketCapitalBase(market, rawCapitalBase)
-    const pnlAmount = ashareAccount?.accountTotalPnl ?? performanceSummary?.pnl
+      : performanceSummary?.capitalBase ?? capitalBaseByMarket.get(market))
+    const capitalBase = defaultMarketCapitalBase(market, rawCapitalBase, Boolean(marketCapital))
+    const pnlAmount = marketCapital
+      ? roundMoney(marketCapital.equityCny - marketCapital.initialEquityCny)
+      : ashareAccount?.accountTotalPnl ?? performanceSummary?.pnl
     const returnPct = ashareAccount
       ? ashareAccount.accountReturnPct
       : pnlAmount !== undefined && capitalBase && capitalBase > 0
@@ -811,7 +940,7 @@ async function buildMarketSummaries({
         : undefined
     const tradeCount = ashareAccount
       ? ashareAccount.totalSampleCount
-      : executedCount > 0 ? executedCount : performanceSummary?.trades ?? styleSummary?.filledCount ?? 0
+      : executedCount > 0 ? executedCount : styleSummary?.filledCount ?? performanceSummary?.trades ?? 0
     const styleCount = Math.max(styleSummary?.styleCount ?? 0, styleSummary?.activeStyleCount ?? 0)
     const hasMeaningfulPnl = pnlAmount !== undefined && (pnlAmount !== 0 || (capitalBase ?? 0) > 0 || (performanceSummary?.trades ?? 0) > 0)
       const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || hasMeaningfulPnl
@@ -829,7 +958,7 @@ async function buildMarketSummaries({
       })
       const healthSummary = healthSummaries.get(market)
       const runtimeState = healthSummary ? runtimeStateFromHealth(healthSummary, evidenceRuntimeState) : evidenceRuntimeState
-      const latestAt = latestIso(styleSummary?.latestAt, performanceSummary?.latestAt, ashareAccount?.updatedAt, generatedAt)
+      const latestAt = latestIso(styleSummary?.latestAt, performanceSummary?.latestAt, marketCapital?.updatedAt, ashareAccount?.updatedAt, generatedAt)
       const baseHeadline = buildMarketSummaryHeadline(market, status, holdingCount, marketSignals.length, tradeCount, styleCount)
       const baseDetail = buildMarketSummaryDetail({
         activeStyleCount: styleSummary?.activeStyleCount,
@@ -848,8 +977,20 @@ async function buildMarketSummaries({
         runtimeState,
         executionFault: healthSummary?.executionFault ?? runtimeState === 'needs_attention',
         runtimeReason: healthSummary?.reasons[0],
-        noTradeEvidence: isAshare ? buildAShareNoTradeEvidence(ashareNoTradeExplanation) : undefined,
+        noTradeEvidence: isAshare
+          ? buildAShareNoTradeEvidence(ashareNoTradeExplanation, marketCapital)
+          : undefined,
         cnFuturesReplayEvidence: market === 'CNFutures' ? cnFuturesReplayEvidence : undefined,
+        cnFuturesMaturityEvidence: market === 'CNFutures' ? cnFuturesMarketMaturity : undefined,
+        capitalUtilizationPct: marketCapital?.capitalUtilizationPct,
+        deployedCapitalCny: marketCapital?.deployedCapitalCny,
+        availableToReserveCny: marketCapital?.availableToReserveCny,
+        riskUsedCny: marketCapital?.riskUsedCny,
+        riskLimitCny: marketCapital?.riskLimitCny,
+        undeployedReasons: buildMarketUndeployedReasons({
+          ashareNoTradeExplanation: isAshare ? ashareNoTradeExplanation : undefined,
+          cnFuturesMarketMaturity: market === 'CNFutures' ? cnFuturesMarketMaturity : undefined,
+        }),
         holdingCount,
       signalCount: marketSignals.length,
       tradeCount,
@@ -868,18 +1009,72 @@ async function buildMarketSummaries({
         : performanceSummary ? roundMetric(Math.abs(performanceSummary.maxDrawdown)) : undefined,
       realizedPnl: ashareAccount
         ? ashareAccount.accountRealizedPnl ?? 0
-        : performanceSummary ? roundMoney(performanceSummary.realizedPnl) : undefined,
+        : marketCapital
+          ? roundMoney(marketCapital.realizedPnlCny)
+          : performanceSummary ? roundMoney(performanceSummary.realizedPnl) : undefined,
       unrealizedPnl: ashareAccount
         ? ashareAccount.accountUnrealizedPnl ?? ashareAccount.accountTotalPnl
-        : performanceSummary ? roundMoney(performanceSummary.unrealizedPnl) : undefined,
+        : marketCapital
+          ? roundMoney(marketCapital.unrealizedPnlCny)
+          : performanceSummary ? roundMoney(performanceSummary.unrealizedPnl) : undefined,
       latestAt,
-      source: isAshare && ashareAccount
-        ? tradingAgentReadModelSources.localSimLedger
+      source: marketCapital
+        ? marketCapital.source
+        : isAshare && ashareAccount
+          ? ashareAccount.source
         : styleSummary?.source ?? (performanceSummary ? tradingAgentReadModelSources.performanceTracker : tradingAgentReadModelSources.simLedger),
+      capitalAuthorityId: marketCapital?.authorityId ?? null,
+      authorityGeneration: marketCapital?.authorityGeneration ?? null,
+      executionLineageId: marketCapital?.executionLineageId ?? null,
+      maturity: market === 'A-share'
+        ? ashareMarketMaturity?.stage ?? null
+        : market === 'CNFutures'
+          ? cnFuturesMarketMaturity?.stage ?? null
+          : null,
       headline: healthSummary ? buildHealthAwareHeadline(market, healthSummary, baseHeadline) : baseHeadline,
       detail: healthSummary ? buildHealthAwareDetail(healthSummary, baseDetail) : baseDetail,
       }
   })
+}
+
+function buildMarketUndeployedReasons({
+  ashareNoTradeExplanation,
+  cnFuturesMarketMaturity,
+}: {
+  ashareNoTradeExplanation?: AShareNoTradeExplanation
+  cnFuturesMarketMaturity?: CNFuturesMarketMaturityProjection
+}): MarketSummary['undeployedReasons'] {
+  const rows: NonNullable<MarketSummary['undeployedReasons']> = []
+  const capitalPlan = asRecord(ashareNoTradeExplanation?.capital_plan_decision)
+  const capitalPlanAudit = asRecord(capitalPlan.audit)
+  const rawReasons = Array.isArray(capitalPlan.undeployed_reasons)
+    ? capitalPlan.undeployed_reasons
+    : Array.isArray(capitalPlanAudit.undeployed_reasons)
+      ? capitalPlanAudit.undeployed_reasons
+      : []
+  for (const rawReason of rawReasons) {
+    const reason = asRecord(rawReason)
+    const code = optionalString(reason.code)
+    if (!code) continue
+    const amountCny = parseFiniteNumber(reason.amount_cny as number | string | undefined)
+    const details = optionalString(reason.details)
+    rows.push({
+      code,
+      ...(amountCny === undefined ? {} : { amountCny: roundMoney(amountCny) }),
+      ...(details ? { details } : {}),
+    })
+  }
+  if (!rows.length && ashareNoTradeExplanation?.category) {
+    rows.push({ code: ashareNoTradeExplanation.category })
+  }
+  for (const code of cnFuturesMarketMaturity?.blockingReasons ?? []) {
+    rows.push({ code })
+  }
+  const unique = new Map<string, (typeof rows)[number]>()
+  for (const row of rows) {
+    if (!unique.has(row.code)) unique.set(row.code, row)
+  }
+  return unique.size ? [...unique.values()] : undefined
 }
 
 async function readSimMarketHealthSummaries(projectRoot: string, now: Date): Promise<Map<Market, SimMarketHealthSummary>> {
@@ -1064,6 +1259,7 @@ async function readStylePerformanceMarketSummaries(root: string): Promise<Map<Ma
   for (const file of files) {
     const market = normalizeMarketFolder(file.market)
     if (market === 'All Markets' || market === 'HK') continue
+    if (market === 'A-share' || market === 'CNFutures') continue
     try {
       const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
       for (const line of lines) {
@@ -1110,6 +1306,7 @@ async function readEquitySnapshotMarketSummaries(root: string): Promise<Map<Mark
   for (const file of await listSimLedgerFiles(root, 'daily_mark_to_market.jsonl')) {
     const market = normalizeMarketFolder(file.market)
     if (market === 'All Markets' || market === 'HK') continue
+    if (market === 'A-share' || market === 'CNFutures') continue
     try {
       const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
       for (const line of lines) {
@@ -1165,6 +1362,7 @@ async function readSimLedgerCapitalBaseByMarket(root: string): Promise<Map<Marke
     try {
       const market = normalizeMarketFolder(file.market)
       if (market === 'All Markets' || market === 'HK') continue
+      if (market === 'A-share' || market === 'CNFutures') continue
       const payload = JSON.parse(await readFile(file.path, 'utf8')) as SimLedgerPositionsFile
       if (isDashboardExcluded(payload as Record<string, unknown>)) continue
       let capitalBase = parseFiniteNumber(payload.cash) ?? 0
@@ -1295,7 +1493,10 @@ function buildMarketSummaryDetail({
   return facts.length ? facts.join(' · ') : '等待该市场写入模拟成交、持仓或风格收益。'
 }
 
-function buildAShareNoTradeEvidence(explanation?: AShareNoTradeExplanation): AShareNoTradeEvidence | undefined {
+function buildAShareNoTradeEvidence(
+  explanation?: AShareNoTradeExplanation,
+  marketCapital?: MarketCapitalProjection,
+): AShareNoTradeEvidence | undefined {
   if (!explanation?.category) return undefined
   const counts = asRecord(explanation.counts)
   const candidateCount = firstParsedNumber(counts.candidates)
@@ -1328,10 +1529,12 @@ function buildAShareNoTradeEvidence(explanation?: AShareNoTradeExplanation): ASh
     targetPositions: firstParsedNumber(capitalPlan.target_positions),
     riskMode: optionalString(capitalPlan.risk_mode),
     allowedBuyCount: firstParsedNumber(portfolioDecision.allowed_buy_count),
-    accountCashAvailable: firstParsedNumber(capitalPlan.account_cash_available, sampleAdjustment.account_cash_available),
-    strategyCashAvailable: firstParsedNumber(capitalPlan.strategy_cash_available, capitalPlan.available_cash, sampleAdjustment.strategy_cash_available),
-    accountPositionCount: firstParsedNumber(sampleAdjustment.account_position_count),
-    strategyPositionCount: firstParsedNumber(sampleAdjustment.strategy_position_count),
+    accountCashAvailable: marketCapital?.cashBalanceCny
+      ?? firstParsedNumber(capitalPlan.account_cash_available, sampleAdjustment.account_cash_available),
+    strategyCashAvailable: marketCapital ? undefined : firstParsedNumber(capitalPlan.strategy_cash_available, capitalPlan.available_cash, sampleAdjustment.strategy_cash_available),
+    accountPositionCount: marketCapital?.openPositionCount
+      ?? firstParsedNumber(sampleAdjustment.account_position_count),
+    strategyPositionCount: marketCapital ? undefined : firstParsedNumber(sampleAdjustment.strategy_position_count),
     ignoredValidationSampleCount: firstParsedNumber(sampleAdjustment.ignored_validation_sample_count),
     strategySampleValidCount: firstParsedNumber(sampleAdjustment.strategy_sample_valid_count),
   }
@@ -1439,7 +1642,10 @@ function isLocalSimAccountPnl(value: LocalSimAccountPnl | undefined) {
   return value.cash_available !== undefined || value.market_value !== undefined || value.total_pnl !== undefined || value.positions !== undefined
 }
 
-async function readAShareSampleQuality(path: string) {
+async function readAShareSampleQuality(
+  path: string,
+  marketCapital: MarketCapitalProjection,
+) {
   const rows: LocalSimTradeRow[] = []
   try {
     const lines = (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean)
@@ -1447,6 +1653,11 @@ async function readAShareSampleQuality(path: string) {
       try {
         const row = JSON.parse(line) as LocalSimTradeRow
         if (row.status && String(row.status).toLowerCase() !== 'filled') continue
+        if (
+          row.capital_authority_id !== marketCapital.authorityId
+          || parseFiniteNumber(row.authority_generation) !== marketCapital.authorityGeneration
+          || row.execution_lineage_id !== marketCapital.executionLineageId
+        ) continue
         rows.push(row)
       } catch {
         // Ignore malformed append-only rows.
@@ -1584,12 +1795,10 @@ async function readAShareResearchEvidence(path: string): Promise<AShareResearchE
       styleEvidence: {
         summary: {
           styles: Math.max(0, Math.trunc(parseFiniteNumber(styleSummary.styles as number | string | undefined) ?? 0)),
-          activeSample: parseFiniteNumber(styleSummary.active_sample as number | string | undefined),
-          degraded: parseFiniteNumber(styleSummary.degraded as number | string | undefined),
-          paused: parseFiniteNumber(styleSummary.paused as number | string | undefined),
-          virtualCapital: parseFiniteNumber(styleSummary.virtual_capital as number | string | undefined),
-          allocatedCapital: parseFiniteNumber(styleSummary.allocated_capital as number | string | undefined),
-          unallocatedCapital: parseFiniteNumber(styleSummary.unallocated_capital as number | string | undefined),
+          predictionCount: parseFiniteNumber(styleSummary.prediction_count as number | string | undefined),
+          explorationFillCount: parseFiniteNumber(styleSummary.exploration_fill_count as number | string | undefined),
+          exploitationFillCount: parseFiniteNumber(styleSummary.exploitation_fill_count as number | string | undefined),
+          completedRoundTripCount: parseFiniteNumber(styleSummary.completed_round_trip_count as number | string | undefined),
         },
       },
     }
@@ -1598,50 +1807,452 @@ async function readAShareResearchEvidence(path: string): Promise<AShareResearchE
   }
 }
 
-function alignAShareResearchCapital(
-  evidence: AShareResearchEvidence | undefined,
-  account: PortfolioSummary['ashareAccount'] | undefined,
-): AShareResearchEvidence | undefined {
-  if (!evidence || !account) return evidence
+async function readMarketCapitalProjection(
+  path: string,
+  expectedMarket: 'A-share' | 'CNFutures',
+): Promise<MarketCapitalProjection | undefined> {
+  const payload = asRecord(await readOptionalJson(path))
+  const isAshare = expectedMarket === 'A-share'
+  const expectedAuthorityId = isAshare ? 'ashare-capital-v1' : 'cn-futures-capital-v1'
+  const expectedAccountName = isAshare ? 'ashare_sim' : 'cn_futures_sim'
+  const expectedMarketName = isAshare ? 'ashare' : 'cn_futures'
+  const initialEquityCny = parseFiniteNumber(payload.initial_equity_cny as number | string | undefined)
+  const equityCny = parseFiniteNumber(payload.equity_cny as number | string | undefined)
+  const cashBalanceCny = parseFiniteNumber(payload.cash_balance_cny as number | string | undefined)
+  const positionsMarketValueCny = parseFiniteNumber(payload.positions_market_value_cny as number | string | undefined)
+  const marginUsedCny = parseFiniteNumber(payload.margin_used_cny as number | string | undefined)
+  const realizedPnlCny = parseFiniteNumber(payload.realized_pnl_cny as number | string | undefined)
+  const unrealizedPnlCny = parseFiniteNumber(payload.unrealized_pnl_cny as number | string | undefined)
+  const executionLineageId = optionalString(payload.execution_lineage_id)
+  const authorityGeneration = parseFiniteNumber(payload.authority_generation as number | string | undefined)
+  const exposureLimit = parseFiniteNumber(payload.stock_gross_exposure_limit_cny as number | string | undefined)
+  const marginLimit = parseFiniteNumber(payload.margin_utilization_limit_cny as number | string | undefined)
+  const frozenOrderCashCny = parseFiniteNumber(payload.frozen_order_cash_cny as number | string | undefined) ?? 0
+  const frozenOrderMarginCny = parseFiniteNumber(payload.frozen_order_margin_cny as number | string | undefined) ?? 0
+  const reservedCashCny = parseFiniteNumber(payload.reserved_cash_cny as number | string | undefined) ?? 0
+  const reservedExposureCny = parseFiniteNumber(payload.reserved_exposure_cny as number | string | undefined) ?? 0
+  const reservedMarginCny = parseFiniteNumber(payload.reserved_margin_cny as number | string | undefined) ?? 0
+  const reportedAvailableToReserveCny = parseFiniteNumber(payload.available_to_reserve_cny as number | string | undefined)
+  const reportedUtilizationRate = parseFiniteNumber(payload.capital_utilization_rate as number | string | undefined)
+  if (
+    payload.source !== 'market_capital_ledger'
+    || payload.schema_version !== 'market-capital-snapshot.v2'
+    || payload.authority_id !== expectedAuthorityId
+    || authorityGeneration !== 1
+    || payload.account_name !== expectedAccountName
+    || payload.market !== expectedMarketName
+    || payload.currency !== 'CNY'
+    || initialEquityCny !== DEFAULT_SIM_CAPITAL_CNY
+    || !executionLineageId
+    || payload.real_trading_enabled !== false
+    || equityCny === undefined
+    || cashBalanceCny === undefined
+    || positionsMarketValueCny === undefined
+    || marginUsedCny === undefined
+    || realizedPnlCny === undefined
+    || unrealizedPnlCny === undefined
+    || [
+      frozenOrderCashCny,
+      frozenOrderMarginCny,
+      reservedCashCny,
+      reservedExposureCny,
+      reservedMarginCny,
+    ].some((value) => value < 0)
+    || (isAshare && exposureLimit !== 45_000)
+    || (!isAshare && marginLimit !== 25_000)
+  ) return undefined
 
-  const capitalBase = roundMoney(account.accountEquity - account.accountTotalPnl)
-  const legacyBudget = evidence.styleEvidence.summary.virtualCapital
-  const legacyAllocated = evidence.styleEvidence.summary.allocatedCapital
-  const allocationRatio = legacyBudget && legacyBudget > 0
-    ? Math.min(1, Math.max(0, (legacyAllocated ?? 0) / legacyBudget))
-    : 0
-  const allocatedCapital = roundMoney(capitalBase * allocationRatio)
-
+  const derivedEquity = isAshare
+    ? cashBalanceCny + positionsMarketValueCny
+    : cashBalanceCny + unrealizedPnlCny
+  if (Math.abs(derivedEquity - equityCny) > 0.011) return undefined
+  const quantities = asRecord(payload.positions_quantity_by_risk_unit)
+  const openPositionCount = Object.values(quantities).filter(
+    (value) => (parseFiniteNumber(value as number | string | undefined) ?? 0) !== 0,
+  ).length
+  const riskUsedCny = isAshare
+    ? positionsMarketValueCny + frozenOrderCashCny + reservedExposureCny
+    : marginUsedCny + frozenOrderMarginCny + reservedMarginCny
+  const riskLimitCny = isAshare ? exposureLimit! : marginLimit!
+  if (riskUsedCny > riskLimitCny + 0.011) return undefined
+  const derivedCashCapacity = isAshare
+    ? cashBalanceCny - frozenOrderCashCny - reservedCashCny
+    : cashBalanceCny - frozenOrderCashCny - frozenOrderMarginCny - reservedCashCny - reservedMarginCny
+  const derivedAvailableToReserveCny = Math.max(
+    0,
+    Math.min(derivedCashCapacity, riskLimitCny - riskUsedCny),
+  )
+  const derivedUtilizationRate = riskUsedCny / DEFAULT_SIM_CAPITAL_CNY
+  if (
+    reportedAvailableToReserveCny !== undefined
+    && Math.abs(reportedAvailableToReserveCny - derivedAvailableToReserveCny) > 0.011
+  ) return undefined
+  if (
+    reportedUtilizationRate !== undefined
+    && Math.abs(reportedUtilizationRate - derivedUtilizationRate) > 0.000001
+  ) return undefined
   return {
-    ...evidence,
-    styleEvidence: {
-      summary: {
-        ...evidence.styleEvidence.summary,
-        virtualCapital: capitalBase,
-        allocatedCapital,
-        unallocatedCapital: roundMoney(capitalBase - allocatedCapital),
-      },
-    },
+    market: expectedMarket,
+    authorityId: expectedAuthorityId,
+    authorityGeneration: 1,
+    executionLineageId,
+    initialEquityCny: 50_000,
+    equityCny,
+    cashBalanceCny,
+    positionsMarketValueCny,
+    marginUsedCny,
+    realizedPnlCny,
+    unrealizedPnlCny,
+    updatedAt: String(payload.updated_at ?? ''),
+    openPositionCount,
+    deployedCapitalCny: roundMoney(riskUsedCny),
+    availableToReserveCny: roundMoney(derivedAvailableToReserveCny),
+    capitalUtilizationPct: roundMetric(derivedUtilizationRate * 100),
+    riskUsedCny: roundMoney(riskUsedCny),
+    riskLimitCny: roundMoney(riskLimitCny),
+    source: isAshare
+      ? tradingAgentReadModelSources.ashareMarketCapital
+      : tradingAgentReadModelSources.cnFuturesMarketCapital,
   }
 }
 
-async function readAShareForwardValidation(path: string): Promise<AShareForwardValidation | undefined> {
-  try {
-    const payload = asRecord(await readOptionalJson(path))
-    if (!Object.keys(payload).length) return undefined
-    if (payload.real_trading_enabled === true) return undefined
-    return {
-      generatedAt: String(payload.generated_at ?? ''),
-      date: String(payload.date ?? ''),
-      readOnly: payload.read_only === true,
-      realTradingEnabled: false,
-      tradeCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.trade_count as number | string | undefined) ?? 0)),
-      strategyLabelCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.strategy_label_count as number | string | undefined) ?? 0)),
-      pendingCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.pending_count as number | string | undefined) ?? 0)),
+function sameAShareCapitalAuthority(
+  scope: AShareProjectionAuthority,
+  capital: MarketCapitalProjection,
+) {
+  return capital.market === 'A-share'
+    && scope.capitalAuthorityId === capital.authorityId
+    && scope.authorityGeneration === capital.authorityGeneration
+    && scope.executionLineageId === capital.executionLineageId
+}
+
+function sameCNFuturesCapitalAuthority(
+  scope: CNFuturesProjectionAuthority,
+  capital: MarketCapitalProjection,
+) {
+  return capital.market === 'CNFutures'
+    && scope.capitalAuthorityId === capital.authorityId
+    && scope.authorityGeneration === capital.authorityGeneration
+    && scope.executionLineageId === capital.executionLineageId
+}
+
+function parseAShareProjectionAuthority(value: unknown): AShareProjectionAuthority | undefined {
+  const authority = asRecord(value)
+  const capitalAuthorityId = optionalString(authority.capital_authority_id)
+  const authorityGeneration = parseFiniteNumber(authority.authority_generation as number | string | undefined)
+  const executionLineageId = optionalString(authority.execution_lineage_id)
+  if (
+    capitalAuthorityId !== 'ashare-capital-v1'
+    || authorityGeneration !== 1
+    || !executionLineageId
+  ) return undefined
+  return {
+    capitalAuthorityId,
+    authorityGeneration,
+    executionLineageId,
+  }
+}
+
+function parseCNFuturesProjectionAuthority(value: unknown): CNFuturesProjectionAuthority | undefined {
+  const authority = asRecord(value)
+  const capitalAuthorityId = optionalString(authority.capital_authority_id)
+  const authorityGeneration = parseFiniteNumber(authority.authority_generation as number | string | undefined)
+  const executionLineageId = optionalString(authority.execution_lineage_id)
+  if (
+    capitalAuthorityId !== 'cn-futures-capital-v1'
+    || authorityGeneration !== 1
+    || !executionLineageId
+  ) return undefined
+  return {
+    capitalAuthorityId,
+    authorityGeneration: 1,
+    executionLineageId,
+  }
+}
+
+function sameAShareProjectionAuthority(
+  left: AShareProjectionAuthority,
+  right: AShareProjectionAuthority,
+) {
+  return left.capitalAuthorityId === right.capitalAuthorityId
+    && left.authorityGeneration === right.authorityGeneration
+    && left.executionLineageId === right.executionLineageId
+}
+
+function ashareProjectionIsSimOnly(payload: Record<string, unknown>) {
+  return payload.real_trading_enabled !== true
+    && payload.live_execution_enabled !== true
+    && payload.automatic_promotion_enabled !== true
+    && payload.automatic_risk_expansion_enabled !== true
+}
+
+async function readAShareSampleKpi(path: string): Promise<AShareSampleKpiProjection | undefined> {
+  const payload = asRecord(await readOptionalJson(path))
+  const authorityScope = parseAShareProjectionAuthority(payload.authority_scope)
+  if (
+    payload.report_type !== 'sample_journal_kpi'
+    || payload.evidence_source !== 'sample_journal_kpi'
+    || !authorityScope
+    || !ashareProjectionIsSimOnly(payload)
+  ) return undefined
+
+  const layers = asRecord(payload.sample_layer_totals)
+  const styles = asRecord(payload.styles)
+  const styleProjections: AShareSampleKpiProjection['styles'] = []
+  let candidateCount = 0
+  let predictionCount = 0
+  let riskRejectCount = 0
+  let readyForwardLabelCount = 0
+  let pendingForwardLabelCount = 0
+  for (const [styleId, rawStyle] of Object.entries(styles)) {
+    const style = asRecord(rawStyle)
+    const styleCandidateCount = nonnegativeInteger(style.candidate_count)
+    const stylePredictionCount = nonnegativeInteger(style.prediction_count)
+    const styleRiskRejectCount = nonnegativeInteger(style.risk_reject_count)
+    let styleReadyForwardLabelCount = 0
+    let stylePendingForwardLabelCount = 0
+    candidateCount += styleCandidateCount
+    predictionCount += stylePredictionCount
+    riskRejectCount += styleRiskRejectCount
+    const horizons = asRecord(style.forward_label_counts)
+    for (const rawStatuses of Object.values(horizons)) {
+      const statuses = asRecord(rawStatuses)
+      for (const [status, rawCount] of Object.entries(statuses)) {
+        const count = nonnegativeInteger(rawCount)
+        if (status === 'ready' || status === 'labeled') {
+          readyForwardLabelCount += count
+          styleReadyForwardLabelCount += count
+        } else {
+          pendingForwardLabelCount += count
+          stylePendingForwardLabelCount += count
+        }
+      }
     }
-  } catch {
+    const rejectionDistribution = asRecord(style.rejection_reason_distribution)
+    styleProjections.push({
+      styleId,
+      candidateCount: styleCandidateCount,
+      predictionCount: stylePredictionCount,
+      observationCounterfactualCount: nonnegativeInteger(style.observation_counterfactual_count),
+      explorationFillCount: nonnegativeInteger(style.exploration_fill_count),
+      exploitationFillCount: nonnegativeInteger(style.exploitation_fill_count),
+      completedRoundTripCount: nonnegativeInteger(style.completed_round_trip_count),
+      readyForwardLabelCount: styleReadyForwardLabelCount,
+      pendingForwardLabelCount: stylePendingForwardLabelCount,
+      riskRejectCount: styleRiskRejectCount,
+      winRate: parseNullableNumber(style.win_rate),
+      expectancyCny: parseNullableNumber(style.expectancy_cny),
+      postCostPnlCny: parseNullableNumber(style.post_cost_pnl_cny),
+      maxDrawdownCny: parseNullableNumber(style.max_drawdown_cny),
+      rejectionReasons: Object.entries(rejectionDistribution)
+        .map(([reason, count]) => ({ reason, count: nonnegativeInteger(count) }))
+        .filter((item) => item.count > 0)
+        .sort((left, right) => right.count - left.count || left.reason.localeCompare(right.reason)),
+    })
+  }
+  styleProjections.sort((left, right) => left.styleId.localeCompare(right.styleId))
+  const scientificEvidence = asRecord(payload.scientific_evidence)
+  return {
+    source: 'sample_journal_kpi',
+    generatedAt: String(payload.generated_at ?? ''),
+    tradeDate: String(payload.trade_date ?? ''),
+    authorityScope,
+    journalEventCount: nonnegativeInteger(payload.journal_event_count),
+    candidateCount,
+    predictionCount,
+    observationCounterfactualCount: nonnegativeInteger(layers.observation_counterfactual),
+    explorationFillCount: nonnegativeInteger(layers.exploration_fill),
+    exploitationFillCount: nonnegativeInteger(layers.exploitation_fill),
+    completedRoundTripCount: nonnegativeInteger(layers.completed_round_trip),
+    riskRejectCount: nonnegativeInteger(layers.risk_reject) || riskRejectCount,
+    readyForwardLabelCount,
+    pendingForwardLabelCount,
+    styles: styleProjections,
+    promotionEvidenceReady: scientificEvidence.promotion_evidence_ready === true,
+    automaticPromotionEnabled: false,
+    automaticRiskExpansionEnabled: false,
+    realTradingEnabled: false,
+  }
+}
+
+async function readAShareMarketMaturity(path: string): Promise<AShareMarketMaturityProjection | undefined> {
+  const payload = asRecord(await readOptionalJson(path))
+  const authorityScope = parseAShareProjectionAuthority(payload.authority_scope)
+  if (
+    payload.report_type !== 'ashare_market_maturity_v1'
+    || payload.evidence_source !== 'sample_journal_kpi'
+    || !authorityScope
+    || !ashareProjectionIsSimOnly(payload)
+    || payload.live_transition_authorized === true
+  ) return undefined
+  const checkpointDue = parseFiniteNumber(payload.checkpoint_due as number | string | undefined)
+  return {
+    source: 'sample_journal_kpi',
+    generatedAt: String(payload.generated_at ?? ''),
+    tradeDate: String(payload.trade_date ?? ''),
+    authorityScope,
+    stage: String(payload.stage ?? 'missing'),
+    totalTradingDays: nonnegativeInteger(payload.total_trading_days),
+    checkpointDue: checkpointDue === undefined ? undefined : Math.max(0, Math.trunc(checkpointDue)),
+    promotionEvidenceReady: payload.promotion_evidence_ready === true,
+    liveTransitionAuthorized: false,
+    automaticPromotionEnabled: false,
+    automaticRiskExpansionEnabled: false,
+    realTradingEnabled: false,
+  }
+}
+
+async function readCNFuturesMarketMaturity(
+  path: string,
+): Promise<CNFuturesMarketMaturityProjection | undefined> {
+  const payload = asRecord(await readOptionalJson(path))
+  const authorityScope = parseCNFuturesProjectionAuthority(payload.authority_scope)
+  if (
+    !hasValidCNFuturesMaturityProjectionHash(payload)
+    || payload.report_type !== 'cn_futures_market_maturity_v1'
+    || payload.evidence_source !== 'cn_futures_review_journal+sample_kpi'
+    || !authorityScope
+    || parseFiniteNumber(payload.pool_cny as number | string | undefined) !== 50_000
+    || parseFiniteNumber(payload.margin_utilization_limit_cny as number | string | undefined) !== 25_000
+    || payload.automatic_promotion_enabled !== false
+    || payload.automatic_risk_expansion_enabled !== false
+    || payload.live_transition_authorized !== false
+    || payload.real_trading_enabled !== false
+  ) return undefined
+
+  const sampleCounts = asRecord(payload.sample_counts)
+  const coverage = asRecord(payload.coverage)
+  const performance = asRecord(payload.performance)
+  const simulationTradingDays = Array.isArray(payload.simulation_trading_days)
+    ? payload.simulation_trading_days.map(String).filter((value) => /^\d{8}$/.test(value))
+    : []
+  const totalSimulationTradingDays = nonnegativeInteger(payload.total_simulation_trading_days)
+  if (simulationTradingDays.length !== totalSimulationTradingDays) return undefined
+  const products = Array.isArray(coverage.products)
+    ? coverage.products.map(String).filter(Boolean)
+    : []
+  const volatilityRegimes = Array.isArray(coverage.volatility_regimes)
+    ? coverage.volatility_regimes.map(String).filter(Boolean)
+    : []
+  const productCount = nonnegativeInteger(coverage.product_count)
+  const volatilityRegimeCount = nonnegativeInteger(coverage.volatility_regime_count)
+  if (productCount !== products.length || volatilityRegimeCount !== volatilityRegimes.length) {
     return undefined
   }
+  const blockingReasons = Array.isArray(payload.blocking_reasons)
+    ? payload.blocking_reasons.map(String).filter(Boolean)
+    : []
+  return {
+    source: 'cn_futures_review_journal+sample_kpi',
+    generatedAt: String(payload.generated_at ?? ''),
+    tradeDate: String(payload.trade_date ?? ''),
+    freshStartTradeDate: String(payload.fresh_start_trade_date ?? ''),
+    authorityScope,
+    capitalPoolCny: 50_000,
+    marginUtilizationLimitCny: 25_000,
+    stage: String(payload.stage ?? 'missing'),
+    simulationTradingDays,
+    totalSimulationTradingDays,
+    sampleCounts: {
+      validSampleCount: nonnegativeInteger(sampleCounts.valid_sample_count),
+      observationCounterfactualCount: nonnegativeInteger(sampleCounts.observation_counterfactual_count),
+      counterfactualOnlyCount: nonnegativeInteger(sampleCounts.counterfactual_only_count),
+      executionEligibleSampleCount: nonnegativeInteger(sampleCounts.execution_eligible_sample_count),
+      completedRoundTripCount: nonnegativeInteger(sampleCounts.completed_round_trip_count),
+      forwardLabelCount: nonnegativeInteger(sampleCounts.forward_label_count),
+      pendingForwardLabelCount: nonnegativeInteger(sampleCounts.pending_forward_label_count),
+      riskRejectCount: nonnegativeInteger(sampleCounts.risk_reject_count),
+    },
+    coverage: {
+      products,
+      productCount,
+      volatilityRegimes,
+      volatilityRegimeCount,
+      nightSessionSampleCount: nonnegativeInteger(coverage.night_session_sample_count),
+      rolloverSampleCount: nonnegativeInteger(coverage.rollover_sample_count),
+      marginEvidenceSampleCount: nonnegativeInteger(coverage.margin_evidence_sample_count),
+      feeEvidenceSampleCount: nonnegativeInteger(coverage.fee_evidence_sample_count),
+      slippageEvidenceSampleCount: nonnegativeInteger(coverage.slippage_evidence_sample_count),
+      extremeRiskSampleCount: nonnegativeInteger(coverage.extreme_risk_sample_count),
+    },
+    performance: {
+      winRate: parseNullableNumber(performance.win_rate),
+      expectancyCny: parseNullableNumber(performance.expectancy_cny),
+      postCostPnlCny: parseNullableNumber(performance.post_cost_pnl_cny),
+      maxDrawdownCny: parseNullableNumber(performance.max_drawdown_cny),
+      stabilityScore: parseNullableNumber(performance.stability_score),
+    },
+    blockingReasons,
+    promotionEvidenceReady: payload.promotion_evidence_ready === true,
+    automaticPromotionEnabled: false,
+    automaticRiskExpansionEnabled: false,
+    liveTransitionAuthorized: false,
+    realTradingEnabled: false,
+  }
+}
+
+function normalizeCNFuturesMaturityProjectionValue(value: unknown): unknown {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError('projection_number_must_be_finite')
+    return Object.is(value, -0) ? 0 : value
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeCNFuturesMaturityProjectionValue)
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, normalizeCNFuturesMaturityProjectionValue(record[key])]),
+    )
+  }
+  throw new TypeError(`projection_value_not_json_safe:${typeof value}`)
+}
+
+export function canonicalCNFuturesMaturityProjectionSha256(
+  projection: Record<string, unknown>,
+): string {
+  const payload = Object.fromEntries(
+    Object.entries(projection).filter(([key]) => key !== 'projection_sha256'),
+  )
+  const canonical = JSON.stringify(normalizeCNFuturesMaturityProjectionValue(payload))
+  return createHash('sha256').update(canonical, 'utf8').digest('hex')
+}
+
+function hasValidCNFuturesMaturityProjectionHash(
+  projection: Record<string, unknown>,
+): boolean {
+  const provided = String(projection.projection_sha256 ?? '').trim().toLowerCase()
+  if (!/^[a-f0-9]{64}$/.test(provided)) return false
+  try {
+    return canonicalCNFuturesMaturityProjectionSha256(projection) === provided
+  } catch {
+    return false
+  }
+}
+
+function sampleKpiCompatibilityView(
+  sampleKpi: AShareSampleKpiProjection | undefined,
+): AShareForwardValidation | undefined {
+  if (!sampleKpi) return undefined
+  return {
+    generatedAt: sampleKpi.generatedAt,
+    date: sampleKpi.tradeDate,
+    readOnly: true,
+    realTradingEnabled: false,
+    tradeCount: sampleKpi.completedRoundTripCount,
+    strategyLabelCount: sampleKpi.readyForwardLabelCount,
+    pendingCount: sampleKpi.pendingForwardLabelCount,
+  }
+}
+
+function nonnegativeInteger(value: unknown) {
+  return Math.max(
+    0,
+    Math.trunc(parseFiniteNumber(value as number | string | undefined) ?? 0),
+  )
 }
 
 async function readCNFuturesReplayEvidence(path: string): Promise<CNFuturesReplayEvidence | undefined> {
@@ -1725,6 +2336,10 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
     .filter((row) => !isDashboardExcluded(row as Record<string, unknown>))
     .map(parseEquitySnapshotRecord)
     .filter((row): row is ParsedEquitySnapshot => Boolean(row))
+    .filter((row) => !(
+      row.isSimLedgerSnapshot
+      && [...row.markets].some((market) => market === 'A-share' || market === 'CNFutures')
+    ))
     .sort((a, b) => a.timestampMs - b.timestampMs)
 
   if (!snapshots.length) return { performance: [] }
@@ -1755,6 +2370,14 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
   })
   const latest = grouped.get(timestamps.at(-1)!)!
   const latestCapitalBase = normalizedCapitalBaseForMarkets(latest.capitalBase, latest.markets)
+
+  // DECOMMISSIONED: When multiple independent markets contribute equity
+  // snapshots, do not produce a combined monetary portfolio summary or
+  // cross-market performance curve. Per-market identity is in marketSummaries.
+  const uniqueMarkets = [...latest.markets].filter((m) => m !== 'All Markets')
+  if (uniqueMarkets.length > 1) {
+    return { performance: [] }
+  }
 
   return {
     performance,
@@ -1863,6 +2486,19 @@ function limitPerformanceGroups(grouped: Map<number, ParsedEquitySnapshot>, maxP
 }
 
 function mergeEquitySnapshot(current: ParsedEquitySnapshot, snapshot: ParsedEquitySnapshot) {
+  // DECOMMISSIONED: Cross-market monetary aggregation is forbidden.
+  // capitalBase, pnl, realizedPnl, unrealizedPnl must never be summed
+  // across independent markets. Only merge when markets overlap (same market).
+  const sameMarket = [...current.markets].some((m) => snapshot.markets.has(m))
+  if (!sameMarket) {
+    // Cross-market: only merge non-monetary counts and market tracking.
+    // maxDrawdownPct is per-market and must not be merged across markets.
+    current.tradeCount += snapshot.tradeCount
+    for (const market of snapshot.markets) current.markets.add(market)
+    for (const source of snapshot.sources) current.sources.add(source)
+    return
+  }
+
   const previousCapitalBase = current.capitalBase
   current.capitalBase += snapshot.capitalBase
   current.pnl += snapshot.pnl
@@ -1979,18 +2615,30 @@ function isUsdCapitalMarket(market: Market) {
   return market === 'US' || market === 'Crypto' || market === 'PM'
 }
 
-function defaultMarketCapitalBase(market: Market, current?: number) {
+function defaultMarketCapitalBase(
+  market: Market,
+  current?: number,
+  freshAuthorityValidated = false,
+) {
   if (market === 'All Markets' || market === 'HK') return current
+  if (market === 'A-share' || market === 'CNFutures') {
+    return freshAuthorityValidated && current !== undefined && current > 0
+      ? current
+      : undefined
+  }
   if (isUsdCapitalMarket(market)) return marketDefaultCapitalBase(market)
   if (current !== undefined && current > 0) return current
   return marketDefaultCapitalBase(market)
 }
 
 function normalizedCapitalBaseForMarkets(current: number, markets: Set<Market>) {
+  // DECOMMISSIONED: Must never create cross-market composite capital base,
+  // even via max-of-floors. When multiple independent markets contribute,
+  // return the actual data value unchanged — no normalization.
   const activeMarkets = [...markets].filter((market) => market !== 'All Markets' && market !== 'HK')
+  if (activeMarkets.length > 1) return current
   if (!activeMarkets.length) return current
-  const floor = activeMarkets.reduce((sum, market) => sum + marketDefaultCapitalBase(market), 0)
-  if (activeMarkets.some(isUsdCapitalMarket)) return floor
+  const floor = marketDefaultCapitalBase(activeMarkets[0])
   return Math.max(current, floor)
 }
 
@@ -2067,6 +2715,13 @@ async function readStylePerformancePortfolio(root: string, simLedgerRoot: string
   }
 
   if (!byDay.size) return { performance: [] }
+
+  // DECOMMISSIONED: Cross-market PnL/capital aggregation is forbidden.
+  // When multiple independent markets contribute, do not produce a combined
+  // monetary summary. Per-market data is available via marketSummaries.
+  if (markets.size > 1) {
+    return { performance: [] }
+  }
 
   const capitalBase = normalizedCapitalBaseForMarkets(await readSimLedgerCapitalBase(simLedgerRoot), markets)
   const dates = [...byDay.keys()].sort()
@@ -2190,6 +2845,21 @@ async function readPositionSnapshots(root: string): Promise<HoldingRow[]> {
   } catch {
     return []
   }
+}
+
+async function readAuthoritativeASharePositions(
+  path: string,
+  capital: MarketCapitalProjection | undefined,
+): Promise<HoldingRow[]> {
+  if (!capital || capital.market !== 'A-share') return []
+  const payload = asRecord(await readOptionalJson(path))
+  const scope = parseAShareProjectionAuthority(payload)
+  if (
+    !scope
+    || !sameAShareCapitalAuthority(scope, capital)
+    || !ashareProjectionIsSimOnly(payload)
+  ) return []
+  return parsePositionSnapshot(payload).filter((holding) => holding.market === 'A-share')
 }
 
 async function readPositionPlan(path: string): Promise<HoldingRow[]> {

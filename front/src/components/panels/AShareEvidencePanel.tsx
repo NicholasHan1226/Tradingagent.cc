@@ -9,7 +9,7 @@ export function AShareEvidencePanel({ evidence, forwardValidation }: { evidence?
         <PanelTitle kicker="A股研究" title="开盘准备" />
         <div className="empty-panel-copy compact-copy">
           <strong>等待研究记录</strong>
-          <span>集合竞价、尾盘观察和资金分配写入后会自动显示。</span>
+          <span>集合竞价、尾盘观察和风格样本写入后会自动显示。</span>
         </div>
         {forwardValidation ? <ForwardValidationRows validation={forwardValidation} /> : null}
       </section>
@@ -18,8 +18,9 @@ export function AShareEvidencePanel({ evidence, forwardValidation }: { evidence?
 
   const openingLabel = formatOpeningState(evidence.openingAuction)
   const closingLabel = formatClosingState(evidence)
-  const budget = evidence.styleEvidence.summary.virtualCapital ?? 0
-  const allocated = evidence.styleEvidence.summary.allocatedCapital ?? 0
+  const predictions = evidence.styleEvidence.summary.predictionCount ?? 0
+  const fills = (evidence.styleEvidence.summary.explorationFillCount ?? 0)
+    + (evidence.styleEvidence.summary.exploitationFillCount ?? 0)
 
   return (
     <section className="panel rail-panel ashare-evidence-panel">
@@ -28,7 +29,7 @@ export function AShareEvidencePanel({ evidence, forwardValidation }: { evidence?
         <SummaryRow label="集合竞价" value={openingLabel} tone={evidence.openingAuction.anomalyCount > 0 ? 'amber' : undefined} />
         <SummaryRow label="尾盘观察" value={closingLabel} tone={evidence.closingMomentum.candidateCount > 0 ? 'cyan' : undefined} />
         <SummaryRow label="逆回购" value={`${formatMoney(evidence.reverseRepo.amount)} / ${formatPercent(evidence.reverseRepo.annualizedYield)}`} />
-        <SummaryRow label="资金分配" value={`${formatMoney(allocated)} / ${formatMoney(budget)}`} tone="cyan" />
+        <SummaryRow label="风格样本" value={`${Math.trunc(predictions)} 预测 · ${Math.trunc(fills)} 成交`} tone="cyan" />
       </div>
       {forwardValidation ? <ForwardValidationRows validation={forwardValidation} /> : null}
       {evidence.closingMomentum.candidates.length > 0 && (

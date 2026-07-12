@@ -107,7 +107,15 @@ function App() {
   const visibleSignals = useMemo(() => getVisibleSignals(signalRows, activeMarket), [activeMarket, signalRows])
   const visibleHoldings = useMemo(() => getVisibleHoldings(holdingRows, activeMarket), [activeMarket, holdingRows])
   const marketPerformanceData = useMemo(() => {
-    if (activeMarket === 'All Markets') return livePerformanceData
+    // DECOMMISSIONED: All Markets must never render a combined multi-market
+    // monetary performance chart. When only one market has data, its curve
+    // carries the single-market identity (not combined). When multiple
+    // independent markets are active, prompt the user to select one.
+    if (activeMarket === 'All Markets') {
+      const activeCount = marketSummaries.filter((s) => s.status !== 'empty').length
+      if (activeCount > 1) return []
+      return livePerformanceData
+    }
     if (selectedMarketSummary?.returnPct === undefined) return []
     return [{
       day: '现在',
@@ -116,7 +124,7 @@ function App() {
       benchmark: 0,
       opportunity: selectedMarketSummary.maxDrawdownPct === undefined ? 0 : -Math.abs(selectedMarketSummary.maxDrawdownPct),
     }]
-  }, [activeMarket, livePerformanceData, portfolioSummary?.targetPct, selectedMarketSummary])
+  }, [activeMarket, livePerformanceData, marketSummaries, portfolioSummary?.targetPct, selectedMarketSummary])
   const hasPerformanceData = activeMarket === 'All Markets'
     ? hasGlobalPerformanceData
     : hasMarketPerformanceResult(selectedMarketSummary)
@@ -219,8 +227,11 @@ function App() {
             activeSignals={observatory.running}
             activeMarket={activeMarket}
             ashareForwardValidation={readModelSnapshot?.ashareForwardValidation}
+            ashareMarketMaturity={readModelSnapshot?.ashareMarketMaturity}
             ashareResearchEvidence={readModelSnapshot?.ashareResearchEvidence}
+            ashareSampleKpi={readModelSnapshot?.ashareSampleKpi}
             ashareTierSummaries={readModelSnapshot?.ashareTierSummaries}
+            cnFuturesMarketMaturity={readModelSnapshot?.cnFuturesMarketMaturity}
             data={visiblePerformanceData}
             hasPerformanceData={hasPerformanceData}
             hasSignalData={hasSignalData}

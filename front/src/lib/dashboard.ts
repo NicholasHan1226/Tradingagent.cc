@@ -35,48 +35,23 @@ export function getPortfolioForView({
   marketSummaries: MarketSummary[]
   portfolio: PortfolioSummary | null
 }) {
-  if (activeMarket === 'All Markets') {
-    return getAllMarketPortfolio(portfolio, marketSummaries)
-  }
+  // DECOMMISSIONED: All Markets must never aggregate monetary values
+  // (capital, equity, PnL, return, drawdown) across independent markets.
+  // Only per-market views carry monetary authority.
+  if (activeMarket === 'All Markets') return null
 
-  if (activeMarket === 'A-share') return portfolio
+  if (activeMarket === 'A-share') {
+    const targetPct = portfolio?.targetPct ?? 8
+    if (portfolio) return portfolio
+    const summary = marketSummaries.find((row) => row.market === 'A-share')
+    if (!summary) return null
+    return marketSummaryToPortfolio(summary, targetPct)
+  }
 
   const summary = marketSummaries.find((row) => row.market === activeMarket)
   if (!summary) return null
 
   return marketSummaryToPortfolio(summary, portfolio?.targetPct ?? 8)
-}
-
-function getAllMarketPortfolio(portfolio: PortfolioSummary | null, marketSummaries: MarketSummary[]) {
-  if (!marketSummaries.length) return portfolio
-
-  const capitalRows = marketSummaries.filter((row) => typeof row.capitalBase === 'number' && row.capitalBase > 0)
-  const pnlRows = marketSummaries.filter((row) => typeof row.pnlAmount === 'number')
-  const capitalBase = capitalRows.reduce((sum, row) => sum + (row.capitalBase ?? 0), 0)
-  const pnlAmount = pnlRows.reduce((sum, row) => sum + (row.pnlAmount ?? 0), 0)
-
-  if (capitalBase <= 0 && !portfolio) return null
-
-  const maxDrawdownPct = Math.max(
-    portfolio?.maxDrawdownPct ?? 0,
-    ...marketSummaries.map((row) => Math.abs(row.maxDrawdownPct ?? 0)),
-  )
-
-  return {
-    pnlAmount: pnlRows.length ? pnlAmount : portfolio?.pnlAmount ?? 0,
-    returnPct: capitalBase > 0 ? Number(((pnlAmount / capitalBase) * 100).toFixed(2)) : portfolio?.returnPct ?? 0,
-    capitalBase: capitalBase || portfolio?.capitalBase || 0,
-    targetPct: portfolio?.targetPct ?? 8,
-    maxDrawdownPct,
-    tradeCount: marketSummaries.reduce((sum, row) => sum + row.tradeCount, 0),
-    pointCount: marketSummaries.length,
-    source: 'marketSummaries aggregate',
-    pnlSource: portfolio?.pnlSource ?? 'market_summary_aggregate',
-    pnlCurrency: 'CNY' as const,
-    realizedPnl: marketSummaries.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0),
-    unrealizedPnl: marketSummaries.reduce((sum, row) => sum + (row.unrealizedPnl ?? 0), 0),
-    updatedAt: portfolio?.updatedAt ?? new Date().toISOString(),
-  }
 }
 
 function marketSummaryToPortfolio(summary: MarketSummary, targetPct: number): PortfolioSummary {

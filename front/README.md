@@ -1,6 +1,6 @@
 # TradingAgent Front
 
-TradingAgent 的前端看板层。它是全自动交易系统的只读观测台，只展示自动运行
+TradingAgent 的前端看板层。它是自动模拟/影子交易与研究系统的只读观测台，只展示自动运行
 过程与结果：收益、过程、持仓、风险和复盘。
 
 本目录不是交易执行系统，也不是账户控制台。任何 agent 接手这里时，默认只做
@@ -24,7 +24,7 @@ TradingAgent signals / positions / review / risk
 
 首页优先展示三件事：
 
-- 收益结果：模拟盘当前收益、收益率、目标差、回撤和收益曲线放在同一主面板。全市场默认按 `marketSummaries[]` 聚合各市场资金和盈亏；切到单一市场时，只展示该市场口径。A股/CNFutures 当前按 50,000 CNY 展示，A股旧 200,000 元 epoch 1 账本不进入当前汇总；US/Crypto/PM 默认按 10,000 USD/USDT/USDC 原币运行并折算成人民币汇总，历史账本本金不得覆盖各市场规范本金。
+- 收益结果：模拟盘当前收益、收益率、目标差、回撤和收益曲线按所选市场展示。A股与 CNFutures 分别是独立 fresh-start 50,000 CNY authority；A股 gross 上限 45,000 CNY、单票 7,500 CNY，期货保证金上限 25,000 CNY。`All Markets` 只汇总信号/持仓/健康等非货币计数，资本、权益、PnL、收益率、回撤和利用率必须显示 `—` 或提示选择市场，禁止生成跨市场组合资本、净额风险或风格 shadow 资本。
 - 自动化过程：展示 `发现 → 研究 → 风控 → 模拟执行 → 结果写回`。优先使用真实 `funnelEvents[]`；没有运行中过程但有持仓时切换为持仓跟踪，不伪造过程吞吐。
 - 运行与结果：右轨展示当前自动任务、阶段、状态、证据和更新时间；底部明细分为运行中、持仓、已完成和自动复盘。
 
@@ -38,7 +38,7 @@ TradingAgent signals / positions / review / risk
 - 选择 `实盘` 时进入覆盖整个工作区的 `实盘待接入` 门禁；切换顶部页面也不会绕过门禁。页面只说明账户授权、风险校验和成交回执要求，不展示真实资金或任何买卖、下单、撤单、确认交易控件。
 - `partial` 队列记录属于已完成/自动复盘结果，并以“部分成交”展示，不进入运行中，也不误写为风险保护。
 - 顶部新鲜度和收益曲线底部时间使用同一快照时间；`performance` 为 `stale` 时明确显示“快照滞后 / 数据滞后”，不使用本机当前时间伪装更新。
-- 市场头下方增加连续市场状态带，集中显示全市场/A股/美股/加密/预测/中国期货的收益、持仓、运行态和时间；右侧证据健康区同步展示收益、信号、持仓、复盘和风险五域，不把空数据包装成正常。
+- 市场头下方增加连续市场状态带，按市场显示收益、持仓、运行态和时间；`All Markets` 的收益保持 `—`，只汇总非货币运行信息。右侧证据健康区同步展示收益、信号、持仓、复盘和风险五域，不把空数据包装成正常。
 - 收益归因缺少明确非零贡献时显示真实空状态；后台 runtime code 统一翻译为用户文案，不原样展示下划线错误码。
 - 运行中/已完成/自动复盘由统一状态解析器决定：只有 `pending` 是运行中，`executed`/`partial` 是完成，`blocked`/`missed`/`cancelled` 进入复盘；异步快照变化时自动切到可用结果页签，但保留用户主动查看空页签的能力。
 - 顶部导航、市场头、二级页指标和检查器共用同一运行心跳：明确区分“自动过程运行中”“调度正常、当前空闲”“快照滞后”和“证据读取异常”，不再用固定“自动化运行中”覆盖真实空闲状态。
@@ -85,9 +85,14 @@ TradingAgent signals / positions / review / risk
 - `../shared/accounting/position_plan.jsonl`
 - `../shared/review/daily/daily_brief.jsonl`
 - `../shared/review/ashare/research_evidence_latest.json`
+- `../shared/review/ashare/{sample_kpi_latest,market_maturity_latest}.json`
+- `../shared/review/cn_futures/market_maturity_latest.json`
+- `../shared/logs/capital/{ashare,cn_futures}/*_capital_latest.json`
 - `../shared/review/attribution/*.jsonl`
 - `../shared/risk/risk_limits.yaml`
 - `SHAREDSIGNALS_API_URL` 暴露的只读 HTTP read model，用于可选 `marketPulses[]` 与 `marketPulseCoverage`。A股/CNFutures 使用 5 分钟接口，US/HK 使用日线接口，Crypto 使用 `/crypto`；PM 只采用明确的 canonical YES outcome，无法识别 outcome 时保持空值。
+
+首页“成熟度与资金”面板并列显示 A股独立 5 万模拟账户的 Day 5 / Day 10 证据复核，以及 CNFutures 独立 5 万模拟账户的长期模拟成熟度；两者不相加、不互相补资。投影缺失或 hash/authority 无效时保持“等待证据”，并始终显示自动晋级关闭。
 
 不得执行：
 
@@ -97,9 +102,9 @@ TradingAgent signals / positions / review / risk
 - 读取或暴露账号凭据、2FA、私钥、资金权限。
 - 把不同账户层的收益混成一个数字。
 
-## 生产形态
+## 部署形态与验证边界
 
-当前用户访问入口已经切到 Cloudflare Tunnel + 生产服务器 Nginx：
+仓库支持 Cloudflare Tunnel + 服务器 Nginx 的部署形态：
 
 ```text
 dashboard.tradingagent.cc
@@ -109,7 +114,7 @@ dashboard.tradingagent.cc
       /api/trading-agent/snapshot -> 127.0.0.1:8787
 ```
 
-TradingAgent 服务器 Nginx 是当前生产入口：
+下列服务器参数来自既有部署说明，本轮 capital-growth 重构未做生产核验；是否仍为当前入口必须在获准发布前按 [STATUS.md](../STATUS.md) 现场验证：
 
 ```text
 8.138.181.177
@@ -145,10 +150,10 @@ Cloudflare 部署说明见 [docs/cloudflare.md](docs/cloudflare.md)。当前形�
 - 只读 snapshot API 运行在 TradingAgent 服务器内侧 `127.0.0.1:8787`，同样通过 Cloudflare Tunnel/Nginx 接入。
 - API 仍只读，不暴露交易执行、队列写入、账户、回调或密钥。
 
-当前域名说明：
+既有域名规划如下，不能据此断言本轮代码已同步或路由仍在线：
 
-- `dashboard.tradingagent.cc`、`tradingagent.cc` 和 `www.tradingagent.cc` 已通过 Cloudflare Tunnel 指向 TradingAgent 生产服务器 Nginx。
-- `api.tradingagent.cc` 已通过同一 Cloudflare Tunnel 指向 TradingAgent 生产服务器内侧 `127.0.0.1:8787`。
+- `dashboard.tradingagent.cc`、`tradingagent.cc`、`www.tradingagent.cc` 规划经 Cloudflare Tunnel 指向服务器 Nginx。
+- `api.tradingagent.cc` 规划经同一 Tunnel 指向服务器内侧只读 API。
 - Cloudflare Pages 项目 `tradingagent-front` 是历史/回滚入口；若重新启用 Pages，必须先完成最新构建部署并重新绑定自定义域，避免公开域名继续服务旧静态资源。
 
 ## 本地运行
@@ -180,19 +185,19 @@ npm run build:api
 - 模拟盘持仓和已成交信号已接入 `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}`。
 - 收益曲线现在优先读取显式权益快照：`shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl`
   或 `shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl`。如果后端尚未写入权益快照，snapshot 才回退到 `shared/review/daily/daily_brief.jsonl` 的明确 return 字段，再回退到 `shared/review/*/style_performance.jsonl` 的真实 simulated PnL，并用模拟账本本金换算为收益率；当同市场/同策略/同日期存在模拟账本成交时间戳时，snapshot 会把日级 PnL 展开成交易时间线曲线。若只存在成交日志或持仓成本，snapshot 会保持收益为空并给出缺口说明，前端不得用成交额或成本冒充收益。
-- `style_performance.jsonl` 作为回退收益来源时，US/Crypto/PM 的 `pnl`、`realized_pnl`、`unrealized_pnl` 和 `max_dd` 默认按 10,000 USD/USDT/USDC 原币账户折算成人民币后再进入 `marketSummaries[]` 与全市场收益曲线；若行内已有 `*_cny` 或 `fx_to_cny`，优先使用行内字段。不得用原币 PnL 除以人民币本金，也不得让旧账本本金覆盖规范本金。
+- `style_performance.jsonl` 作为回退收益来源时，US/Crypto/PM 的 money fields 可按其显式币种/汇率归一化到各自 `marketSummaries[]`；不得跨市场相加生成全市场收益曲线，也不得用一个市场的本金归一化另一个市场的 PnL。
 - 维护、回补、烟测或修复重跑样本不得进入用户收益和交易量口径。只读 snapshot 会跳过带 `exclude_from_dashboard=true`、`dashboard_excluded=true`、`excluded_from_dashboard=true`，或 `run_context/run_mode/run_source/sample_type` 包含 `maintenance/backfill/smoke/repair/bootstrap/dry-run` 的模拟账本、权益快照、风格绩效和风格对比记录。
-- A股研究证据卡片读取 `shared/review/ashare/research_evidence_latest.json`，只展示集合竞价/09:30 代理、尾盘候选、204001 逆回购估算和风格虚拟预算；该卡片不写队列、不触发交易、不发送邮件。
-- A股服务器本地模拟账本读取 `shared/logs/local_sim/local_sim_pnl.json` 和 `shared/logs/local_sim/local_sim_trades.jsonl`，首页收益和持仓摘要会展示账户事实、现金、持仓市值、账户盈亏、可复盘样本和链路验证样本。缺少候选层来源或成交价来源字段的历史成交只作账户事实和链路验证，不计入策略收益、自我进化或胜率归因。新的 A股 server-local 成交会在账本和签名回执中保留 `fill_price_source`、`fill_price_source_class` 与 `fill_evidence`，用于证明模拟成交价来自市场快照而不是信号卡兜底价格。
+- A股研究证据卡片读取 `shared/review/ashare/research_evidence_latest.json`，只展示集合竞价/09:30 代理、尾盘候选、204001 现金管理建议和四个正交风格的 SampleJournal 归因计数；风格没有可相加的虚拟本金。该卡片不写队列、不触发交易、不发送邮件。
+- A股服务器本地模拟账本读取当前 fresh lineage 下的 `shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/{local_sim_pnl.json,local_sim_trades.jsonl}`，首页收益和持仓摘要会展示单一 `ashare_sim` 账户事实。冻结的 `shared/logs/local_sim/` 不得作为当前读取回退。
 - 后端已预留并提供权益快照生成入口：`shared/runtime_test/write_equity_snapshots.py`。生产运行时应由服务器定时或手动调用该入口，把模拟账本的已实现收益、未实现收益、本金、回撤、持仓数和价格缺失状态写入 `daily_mark_to_market.jsonl`，供首页收益主面板优先读取。
 - 机会漏斗优先读取后端显式事件日志 `shared/review/opportunities/funnel_events.jsonl`，也兼容 `shared/logs/opportunities/funnel_events.jsonl`。每行表示一个真实机会在某个阶段的变化，支持 `opportunity_id/opportunityId`、`symbol/ts_code`、`market`、`stage`、`status`、`timestamp`、`sequence`、`latency_minutes/latencyMinutes`、`terminal`、`label` 和 `reason`。读模型会归一化为 `funnelEvents[]`，供首页动态机会漏斗按真实事件展示。
 - 没有显式事件日志时，机会漏斗才从 signal 状态和模拟账本成交路径派生 `发现 / 研判 / 风控 / 待确认 / 结果` 阶段。首页机会漏斗把 `opportunity_log` 与 `signal_queue` 都视为真实阶段事件；如果同一标的后续有 `sim_ledger` 成交结果，可以补到“结果”阶段。纯模拟账本成交只能展示为“历史结果”，不得标成正在筛选的机会漏斗。没有真实事件时，只显示等待态或已有信号推导，不用静态样例或占位粒子伪装成真实筛选。若只有持仓，漏斗必须切换为持仓监控板，显示“暂无新机会”、持仓数量、正贡献、需观察和当前状态，不再硬套五段漏斗。没有真实机会、信号或持仓时，漏斗保持轻量等待态，不展示五段零值漏斗。
 - 首页收益口径必须区分“真实 0 收益”和“收益尚未写入”：只有成交、非零收益、连续收益点或 A 股账户事实存在时，才把数字展示为收益结果；空账本或单个零值快照显示为等待收益。
 - 首页右轨只展示最高优先级的自动运行状态，不再重复收益卡已有的账户、收益和风险数字；收益页曲线只展示走势、事件和区间切换，当前收益/目标差/回撤由页面摘要板承载。
-- 多市场收益曲线按账本来源逐条前向补齐最新权益快照，避免某个市场短暂没有 5 分钟快照时把总本金缩小、导致收益曲线出现不真实跳变。
+- 每个市场的收益曲线只使用该市场自己的 authority/equity snapshots；多个独立市场同时存在时，`All Markets` 不绘制货币收益曲线。
 - 午盘复盘、策略归因和风险限额文件已列为可用来源，但仍需补充到 snapshot 构建后才能作为完整面板展示。
 - 实盘只保留未来接入口；未验证账户授权前，前端不得展示为已接入。
-- 首页顶部和收益主面板必须使用同一 `portfolio` 视图口径：全市场看聚合组合，A股看 A股模拟账户，其它市场看该市场摘要。不要再次拆成“模拟盘收益”和“现在收益”两个数字。
+- 首页顶部和收益主面板必须使用同一“所选市场”口径：A股看 A股独立模拟账户，CNFutures 看期货独立摘要，其它市场看自身摘要；`All Markets` 不显示货币 portfolio。不要再次拆成“模拟盘收益”和“现在收益”两个数字。
 - 首页右轨只展示过程、阶段、状态、证据、更新时间和简短结果说明，不展示人工建议、内部错误码或调试文案。
 - 市场状态带会从当前持仓或信号中为每个市场选择一个代表标的，并由只读 snapshot API 通过 `SHAREDSIGNALS_API_URL` 查询 SharedSignals。只展示真实返回的价格、短走势、区间、成交量和新鲜度；无代表标的、读取超时、上游降级或字段缺失时保持 `—`/“暂无代表行情”，不得生成样例价格。`marketPulseCoverage` 明确展示已取到、待映射、不可用和降级范围。请求限制为每个代表标的最多 24 个点、900ms 超时和 15 秒进程缓存。
 - 过程页选择机会周期后，URL 增加 `opportunity=<opportunityId>`，周期行进入选中态，原始事件账本只展示该机会的显式事件；关联条在其它页面继续显示标的、阶段、结果、完整度、关联信号/持仓与可归因盈亏。后两项只接受相同的显式 `opportunityId`，无匹配持仓时保持 `—`。清除关联只改变浏览器展示状态。

@@ -41,10 +41,34 @@ describe('market tape view model', () => {
     expect(rows.find((row) => row.market === 'US')).toEqual(expect.objectContaining({ returnLabel: '—', runtimeLabel: '等待数据' }))
   })
 
-  it('builds an all-market CNY return from normalized summaries', () => {
+  it('builds an all-market row with non-monetary aggregates only', () => {
     const all = createMarketTapeRows(summaries, 'All Markets', '2026-07-11T04:00:00Z')[0]
 
-    expect(all).toEqual(expect.objectContaining({ market: 'All Markets', selected: true, returnLabel: '+0.35%', holdingsLabel: '3 持仓' }))
+    // Monetary aggregation is decommissioned; All Markets shows '—' for return
+    expect(all).toEqual(expect.objectContaining({ market: 'All Markets', selected: true, returnLabel: '—', holdingsLabel: '3 持仓', runtimeLabel: '正常', tone: 'positive' }))
+  })
+
+  it('refuses to aggregate monetary return across markets in All Markets row', () => {
+    const dualSummaries: MarketSummary[] = [
+      { market: 'A-share', status: 'ready', runtimeState: 'normal', holdingCount: 2, signalCount: 1, tradeCount: 3, styleCount: 1, capitalBase: 50000, pnlAmount: 600, returnPct: 1.2, latestAt: '2026-07-11T04:00:00Z', source: 'ashare', headline: '正常', detail: '已更新' },
+      { market: 'CNFutures', status: 'ready', runtimeState: 'normal', holdingCount: 1, signalCount: 1, tradeCount: 2, styleCount: 1, capitalBase: 50000, pnlAmount: -300, returnPct: -0.6, latestAt: '2026-07-11T04:00:00Z', source: 'cnfutures', headline: '正常', detail: '已更新' },
+    ]
+    const all = createMarketTapeRows(dualSummaries, 'All Markets', '2026-07-11T04:00:00Z')[0]
+
+    // Must NOT show a combined monetary return; individual market rows carry their own
+    expect(all.returnLabel).toBe('—')
+    // Non-monetary counts may be aggregated
+    expect(all.holdingsLabel).toBe('3 持仓')
+  })
+
+  it('never substitutes one market monetary return when the other is missing', () => {
+    const singleSummary: MarketSummary[] = [
+      { market: 'A-share', status: 'ready', runtimeState: 'normal', holdingCount: 2, signalCount: 1, tradeCount: 3, styleCount: 1, capitalBase: 50000, pnlAmount: 600, returnPct: 1.2, latestAt: '2026-07-11T04:00:00Z', source: 'ashare', headline: '正常', detail: '已更新' },
+    ]
+    const all = createMarketTapeRows(singleSummary, 'All Markets', '2026-07-11T04:00:00Z')[0]
+
+    // Should not show +1.20% as the "All Markets" return — that's A-share's, not a composite
+    expect(all.returnLabel).toBe('—')
   })
 
   it('adds a real representative instrument pulse without fabricating missing markets', () => {

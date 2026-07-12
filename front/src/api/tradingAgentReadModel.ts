@@ -1,5 +1,5 @@
 import type { ApiStatus, DashboardApiResponse } from './types.ts'
-import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, FunnelEvent, HoldingRow, MarketPulse, MarketPulseCoverage, MarketPulseCoverageObservation, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
+import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, CNFuturesMarketMaturityProjection, FunnelEvent, HoldingRow, MarketPulse, MarketPulseCoverage, MarketPulseCoverageObservation, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
 import type { DataDomain } from '../types/status.ts'
 
 export const tradingAgentReadModelSources = {
@@ -15,7 +15,9 @@ export const tradingAgentReadModelSources = {
   factorAttribution: 'shared/review/attribution/factor_attribution.jsonl',
   strategyVersion: 'shared/review/strategies/strategy_version.jsonl',
   simLedger: 'shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}',
-  localSimLedger: 'shared/logs/local_sim/local_sim_trades.jsonl',
+  localSimLedger: 'shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/local_sim_trades.jsonl',
+  ashareMarketCapital: 'shared/logs/capital/ashare/ashare_sim_capital_latest.json',
+  cnFuturesMarketCapital: 'shared/logs/capital/cn_futures/cn_futures_sim_capital_latest.json',
   equitySnapshots: 'shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl and shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl',
   performanceTracker: 'shared/review/*/style_performance.jsonl',
   styleComparison: 'shared/review/*/style_comparison.json',
@@ -23,8 +25,9 @@ export const tradingAgentReadModelSources = {
   capitalFlow: 'SharedSignals /capital_flow via TradingAgent signal scores',
   cnFuturesReview: 'shared/review/data/cn_futures_sim_reviews.jsonl',
   ashareResearchEvidence: 'shared/review/ashare/research_evidence_latest.json',
-  ashareForwardValidation: 'shared/review/ashare/forward_validation_latest.json',
-  ashareTierExperiments: 'shared/review/ashare/tier_experiments_latest.json',
+  ashareSampleKpi: 'shared/review/ashare/sample_kpi_latest.json',
+  ashareMarketMaturity: 'shared/review/ashare/market_maturity_latest.json',
+  cnFuturesMarketMaturity: 'shared/review/cn_futures/market_maturity_latest.json',
   cnFuturesReplay: 'shared/review/cn_futures/replay_latest.json',
   sharedSignalsMarketPulse: 'SharedSignals HTTP read model via SHAREDSIGNALS_API_URL',
 } as const
@@ -49,6 +52,10 @@ export type TradingAgentReadModelSnapshot = {
   marketPulseCoverage?: MarketPulseCoverage
   marketPulseCoverageHistory?: MarketPulseCoverageObservation[]
   ashareResearchEvidence?: AShareResearchEvidence
+  ashareSampleKpi?: AShareSampleKpiProjection
+  ashareMarketMaturity?: AShareMarketMaturityProjection
+  cnFuturesMarketMaturity?: CNFuturesMarketMaturityProjection
+  /** Compatibility view derived only from ashareSampleKpi; never a legacy file read. */
   ashareForwardValidation?: AShareForwardValidation
   ashareTierSummaries?: AShareTierSummary[]
   sourceRefs: typeof tradingAgentReadModelSources

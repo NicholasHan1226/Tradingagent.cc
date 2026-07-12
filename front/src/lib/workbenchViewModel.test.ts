@@ -41,7 +41,7 @@ const signals: SignalRow[] = [
 ]
 
 describe('createWorkbenchViewModel', () => {
-  it('forces the chart latest point to equal the selected headline return', () => {
+  it('returns the per-market headline return via market summary when All Markets portfolio is decommissioned', () => {
     const view = createWorkbenchViewModel({
       accountMode: 'simulated',
       activeMarket: 'All Markets',
@@ -54,9 +54,11 @@ describe('createWorkbenchViewModel', () => {
       generatedAt: '2026-07-11T09:00:00+08:00',
     })
 
+    // All Markets portfolio is decommissioned (null); falls back to performance data
+    expect(view.portfolio).toBeNull()
     expect(view.performance.at(-1)?.simulated).toBe(view.headline.returnPct)
     expect(view.performance.at(-1)?.target).toBe(view.headline.targetPct)
-    expect(view.headline.returnPct).toBe(3.47)
+    expect(view.headline.returnPct).toBe(-0.03)
   })
 
   it('separates active opportunities from terminal outcomes', () => {

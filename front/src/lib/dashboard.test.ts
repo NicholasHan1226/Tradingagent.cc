@@ -3,12 +3,13 @@ import {
   getActionableSignals,
   getClosedSignals,
   getLivePerformanceData,
+  getPortfolioForView,
   getVisibleHoldings,
   getSignalFunnel,
   getVisibleSignals,
   slicePerformanceData,
 } from './dashboard'
-import type { HoldingRow, PerformancePoint, SignalRow } from '../types/dashboard'
+import type { HoldingRow, MarketSummary, PerformancePoint, SignalRow } from '../types/dashboard'
 
 const rows: SignalRow[] = [
   {
@@ -163,5 +164,104 @@ describe('dashboard view rules', () => {
     expect(funnel.mode).toBe('screening')
     expect(funnel.hasScreeningEvidence).toBe(true)
     expect(funnel.stageDrops.some((drop) => drop > 0)).toBe(true)
+  })
+})
+
+describe('portfolio view segregation', () => {
+  const ashareSummary: MarketSummary = {
+    market: 'A-share', status: 'ready', runtimeState: 'normal',
+    holdingCount: 2, signalCount: 3, tradeCount: 5, styleCount: 1,
+    capitalBase: 50000, pnlAmount: 600, returnPct: 1.2,
+    maxDrawdownPct: 0.5, realizedPnl: 200, unrealizedPnl: 400,
+    source: 'local-sim', headline: '正常', detail: 'A股',
+    latestAt: '2026-07-11T04:00:00Z',
+  }
+  const cnSummary: MarketSummary = {
+    market: 'CNFutures', status: 'ready', runtimeState: 'normal',
+    holdingCount: 1, signalCount: 2, tradeCount: 3, styleCount: 1,
+    capitalBase: 50000, pnlAmount: -300, returnPct: -0.6,
+    maxDrawdownPct: 1.2, realizedPnl: -100, unrealizedPnl: -200,
+    source: 'cn-futures', headline: '正常', detail: '期货',
+    latestAt: '2026-07-11T04:00:00Z',
+  }
+
+  it('returns null for All Markets instead of aggregating monetary values', () => {
+    const result = getPortfolioForView({
+      activeMarket: 'All Markets',
+      marketSummaries: [ashareSummary, cnSummary],
+      portfolio: null,
+    })
+    expect(result).toBeNull()
+  })
+
+  it('never sums capitalBase across markets into 100000', () => {
+    const result = getPortfolioForView({
+      activeMarket: 'All Markets',
+      marketSummaries: [ashareSummary, cnSummary],
+      portfolio: null,
+    })
+    expect(result?.capitalBase).toBeUndefined()
+  })
+
+  it('never nets A-share profit with CNFutures loss into combined PnL', () => {
+    const result = getPortfolioForView({
+      activeMarket: 'All Markets',
+      marketSummaries: [ashareSummary, cnSummary],
+      portfolio: null,
+    })
+    expect(result?.pnlAmount).toBeUndefined()
+  })
+
+  it('never combines max drawdown across markets', () => {
+    const result = getPortfolioForView({
+      activeMarket: 'All Markets',
+      marketSummaries: [ashareSummary, cnSummary],
+      portfolio: null,
+    })
+    expect(result?.maxDrawdownPct).toBeUndefined()
+  })
+
+  it('falls back to A-share MarketSummary when authoritative portfolio is null', () => {
+    const result = getPortfolioForView({
+      activeMarket: 'A-share',
+      marketSummaries: [ashareSummary, cnSummary],
+      portfolio: null,
+    })
+    // A-share falls back to MarketSummary when portfolio is null
+    expect(result).not.toBeNull()
+    expect(result).toMatchObject({
+      capitalBase: 50000,
+      pnlAmount: 600,
+      returnPct: 1.2,
+      maxDrawdownPct: 0.5,
+    })
+  })
+
+  it('returns null for A-share when both portfolio and summary are absent', () => {
+    const result = getPortfolioForView({
+      activeMarket: 'A-share',
+      marketSummaries: [],
+      portfolio: null,
+    })
+    expect(result).toBeNull()
+  })
+
+  it('returns null for a market with no matching summary', () => {
+    const result = getPortfolioForView({
+      activeMarket: 'US',
+      marketSummaries: [ashareSummary],
+      portfolio: null,
+    })
+    expect(result).toBeNull()
+  })
+
+  it('does not substitute another market capital when a market is missing data', () => {
+    const result = getPortfolioForView({
+      activeMarket: 'CNFutures',
+      marketSummaries: [ashareSummary],
+      portfolio: null,
+    })
+    // CNFutures summary not in the list — should not fall back to A-share's capital
+    expect(result).toBeNull()
   })
 })

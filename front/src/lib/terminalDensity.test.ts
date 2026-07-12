@@ -6,6 +6,8 @@ const flatPortfolio: PortfolioSummary = {
   pnlAmount: 0, returnPct: 0, capitalBase: 50000, targetPct: 8, maxDrawdownPct: 0,
   tradeCount: 0, pointCount: 1, source: 'local_sim', updatedAt: '2026-07-11T05:20:00.000Z',
   pnlCurrency: 'CNY', ashareAccount: {
+    capitalAuthorityId: 'ashare-capital-v1', authorityGeneration: 1,
+    executionLineageId: 'ashare-sim-fresh-20260712-v1',
     cashAvailable: 50000, marketValue: 0, accountEquity: 50000, accountTotalPnl: 0,
     accountReturnPct: 0, openPositionCount: 0, totalSampleCount: 0, validationSampleCount: 0,
     strategySampleValidCount: 0, source: 'local_sim', updatedAt: '2026-07-11T05:20:00.000Z',

@@ -6,21 +6,25 @@ import { AShareMoneyflowPanel } from '../components/panels/AShareMoneyflowPanel'
 import { AShareTierComparisonPanel } from '../components/panels/AShareTierComparisonPanel'
 import { ClosedLoopProofPanel } from '../components/panels/ClosedLoopProofPanel'
 import { MarketSummaryPanel } from '../components/panels/MarketSummaryPanel'
+import { MarketMaturityPanel } from '../components/panels/MarketMaturityPanel'
 import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
 import { WorkbenchShell } from '../components/workbench/WorkbenchShell'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
 import type { AutomationRuntimeItem } from '../lib/automationObservatoryViewModel'
-import type { AShareForwardValidation, AShareResearchEvidence, AShareTierSummary, AccountMode, ChartEvent, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
+import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, AccountMode, ChartEvent, CNFuturesMarketMaturityProjection, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
 export function HomeDashboard({
   accountMode,
   ashareForwardValidation,
+  ashareMarketMaturity,
   activeMarket,
   ashareResearchEvidence,
+  ashareSampleKpi,
   ashareTierSummaries,
+  cnFuturesMarketMaturity,
   data,
   latestPoint,
   hasPerformanceData,
@@ -48,8 +52,11 @@ export function HomeDashboard({
   accountMode: AccountMode
   activeMarket: Market
   ashareForwardValidation?: AShareForwardValidation
+  ashareMarketMaturity?: AShareMarketMaturityProjection
   ashareResearchEvidence?: AShareResearchEvidence
+  ashareSampleKpi?: AShareSampleKpiProjection
   ashareTierSummaries?: AShareTierSummary[]
+  cnFuturesMarketMaturity?: CNFuturesMarketMaturityProjection
   data: PerformancePoint[]
   events: ChartEvent[]
   hasPerformanceData: boolean
@@ -138,6 +145,13 @@ export function HomeDashboard({
   const evidence = (
     <div className="home-rail">
         <MarketSummaryPanel activeMarket={activeMarket} summary={marketSummary} />
+        <MarketMaturityPanel
+          activeMarket={activeMarket}
+          ashareMaturity={ashareMarketMaturity}
+          ashareSampleKpi={ashareSampleKpi}
+          cnFuturesMaturity={cnFuturesMarketMaturity}
+          marketSummaries={marketSummaries}
+        />
         <ClosedLoopProofPanel summaries={marketSummaries} />
         <AShareMoneyflowPanel activeMarket={activeMarket} signals={signals} />
         {(activeMarket === 'All Markets' || activeMarket === 'A-share') && (

@@ -111,17 +111,19 @@ export function createMarketPulseHealth(coverage?: MarketPulseCoverage, history:
 }
 
 function createAllMarketsRow(summaries: MarketSummary[], activeMarket: Market, generatedAt: string | null): MarketTapeRow {
-  const capital = summaries.reduce((sum, row) => sum + (row.capitalBase ?? 0), 0)
-  const pnl = summaries.reduce((sum, row) => sum + (row.pnlAmount ?? 0), 0)
-  const returnPct = capital > 0 ? (pnl / capital) * 100 : undefined
+  // DECOMMISSIONED: All Markets must never aggregate monetary values
+  // (capital, PnL, return) across independent markets.
+  // Only non-monetary counts (holdings, signals) may be aggregated.
   const hasAttention = summaries.some((row) => row.executionFault || row.runtimeState === 'needs_attention')
   const isWaiting = summaries.length > 0 && summaries.every((row) => row.runtimeState === 'strategy_wait' || row.runtimeState === 'empty')
+  const hasRuntime = summaries.some((row) => row.runtimeState === 'normal' || row.status === 'ready')
   return {
     market: 'All Markets', label: marketLabels['All Markets'], selected: activeMarket === 'All Markets',
-    returnLabel: returnPct === undefined ? '—' : signedPercent(returnPct),
+    returnLabel: '—',
     holdingsLabel: `${summaries.reduce((sum, row) => sum + row.holdingCount, 0)} 持仓`,
     runtimeLabel: hasAttention ? '需要关注' : isWaiting ? '策略等待' : summaries.length ? '正常' : '等待数据',
-    freshnessLabel: snapshotTime(generatedAt), tone: hasAttention ? 'negative' : isWaiting ? 'warning' : summaries.length ? returnPct !== undefined && returnPct < 0 ? 'negative' : 'positive' : 'muted',
+    freshnessLabel: snapshotTime(generatedAt),
+    tone: hasAttention ? 'negative' : isWaiting ? 'warning' : hasRuntime ? 'positive' : 'muted',
   }
 }
 

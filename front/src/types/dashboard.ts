@@ -72,6 +72,29 @@ export type MarketSummary = {
   source: string
   headline: string
   detail: string
+  /** Nullable slot for per-market capital authority identity. null when source does not yet expose it; never invent values. */
+  capitalAuthorityId?: string | null
+  /** Nullable slot for authority generation number. null when source does not yet expose it. */
+  authorityGeneration?: number | null
+  /** Current market-capital execution lineage. Never inferred from a style ledger. */
+  executionLineageId?: string | null
+  /** Nullable slot for maturity label. null when source does not yet expose it. */
+  maturity?: string | null
+  /** CNFutures-only maturity evidence; never attached to another market. */
+  cnFuturesMaturityEvidence?: CNFuturesMarketMaturityProjection
+  /** Current-market capital deployment only; never summed across style shadow ledgers. */
+  capitalUtilizationPct?: number
+  deployedCapitalCny?: number
+  availableToReserveCny?: number
+  riskUsedCny?: number
+  riskLimitCny?: number
+  undeployedReasons?: MarketUndeployedReason[]
+}
+
+export type MarketUndeployedReason = {
+  code: string
+  amountCny?: number
+  details?: string
 }
 
 export type MarketPulse = {
@@ -150,6 +173,9 @@ export type AShareNoTradeEvidence = {
 }
 
 export type AShareAccountSummary = {
+  capitalAuthorityId: 'ashare-capital-v1'
+  authorityGeneration: 1
+  executionLineageId: string
   cashAvailable: number
   marketValue: number
   accountEquity: number
@@ -176,6 +202,127 @@ export type AShareForwardValidation = {
   tradeCount: number
   strategyLabelCount: number
   pendingCount: number
+}
+
+export type AShareProjectionAuthority = {
+  capitalAuthorityId: string
+  authorityGeneration: number
+  executionLineageId: string
+}
+
+export type CNFuturesProjectionAuthority = {
+  capitalAuthorityId: 'cn-futures-capital-v1'
+  authorityGeneration: 1
+  executionLineageId: string
+}
+
+export type AShareSampleKpiProjection = {
+  source: 'sample_journal_kpi'
+  generatedAt: string
+  tradeDate: string
+  authorityScope: AShareProjectionAuthority
+  journalEventCount: number
+  candidateCount: number
+  predictionCount: number
+  observationCounterfactualCount: number
+  explorationFillCount: number
+  exploitationFillCount: number
+  completedRoundTripCount: number
+  riskRejectCount: number
+  readyForwardLabelCount: number
+  pendingForwardLabelCount: number
+  styles: AShareStyleKpiProjection[]
+  promotionEvidenceReady: boolean
+  automaticPromotionEnabled: false
+  automaticRiskExpansionEnabled: false
+  realTradingEnabled: false
+}
+
+export type AShareStyleKpiProjection = {
+  styleId: string
+  candidateCount: number
+  predictionCount: number
+  observationCounterfactualCount: number
+  explorationFillCount: number
+  exploitationFillCount: number
+  completedRoundTripCount: number
+  readyForwardLabelCount: number
+  pendingForwardLabelCount: number
+  riskRejectCount: number
+  winRate: number | null
+  expectancyCny: number | null
+  postCostPnlCny: number | null
+  maxDrawdownCny: number | null
+  rejectionReasons: Array<{ reason: string; count: number }>
+}
+
+export type AShareMarketMaturityProjection = {
+  source: 'sample_journal_kpi'
+  generatedAt: string
+  tradeDate: string
+  authorityScope: AShareProjectionAuthority
+  stage: string
+  totalTradingDays: number
+  checkpointDue?: number
+  promotionEvidenceReady: boolean
+  liveTransitionAuthorized: false
+  automaticPromotionEnabled: false
+  automaticRiskExpansionEnabled: false
+  realTradingEnabled: false
+}
+
+export type CNFuturesMaturitySampleCounts = {
+  validSampleCount: number
+  observationCounterfactualCount: number
+  counterfactualOnlyCount: number
+  executionEligibleSampleCount: number
+  completedRoundTripCount: number
+  forwardLabelCount: number
+  pendingForwardLabelCount: number
+  riskRejectCount: number
+}
+
+export type CNFuturesMaturityCoverage = {
+  products: string[]
+  productCount: number
+  volatilityRegimes: string[]
+  volatilityRegimeCount: number
+  nightSessionSampleCount: number
+  rolloverSampleCount: number
+  marginEvidenceSampleCount: number
+  feeEvidenceSampleCount: number
+  slippageEvidenceSampleCount: number
+  extremeRiskSampleCount: number
+}
+
+export type CNFuturesMaturityPerformance = {
+  winRate: number | null
+  expectancyCny: number | null
+  postCostPnlCny: number | null
+  maxDrawdownCny: number | null
+  stabilityScore: number | null
+}
+
+export type CNFuturesMarketMaturityProjection = {
+  source: 'cn_futures_review_journal+sample_kpi'
+  generatedAt: string
+  tradeDate: string
+  freshStartTradeDate: string
+  authorityScope: CNFuturesProjectionAuthority
+  capitalPoolCny: 50000
+  marginUtilizationLimitCny: 25000
+  stage: string
+  simulationTradingDays: string[]
+  totalSimulationTradingDays: number
+  sampleCounts: CNFuturesMaturitySampleCounts
+  coverage: CNFuturesMaturityCoverage
+  performance: CNFuturesMaturityPerformance
+  blockingReasons: string[]
+  promotionEvidenceReady: boolean
+  automaticPromotionEnabled: false
+  automaticRiskExpansionEnabled: false
+  liveTransitionAuthorized: false
+  realTradingEnabled: false
 }
 
 export type AShareTierSummary = {
@@ -317,12 +464,10 @@ export type AShareResearchEvidence = {
   styleEvidence: {
     summary: {
       styles: number
-      activeSample?: number
-      degraded?: number
-      paused?: number
-      virtualCapital?: number
-      allocatedCapital?: number
-      unallocatedCapital?: number
+      predictionCount?: number
+      explorationFillCount?: number
+      exploitationFillCount?: number
+      completedRoundTripCount?: number
     }
   }
 }
