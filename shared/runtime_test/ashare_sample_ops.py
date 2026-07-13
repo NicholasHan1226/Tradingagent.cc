@@ -261,10 +261,18 @@ def _ready_forward_label_count(kpi: Mapping[str, Any]) -> int:
 def _scientific_evidence(
     records: Sequence[Mapping[str, Any]], kpi: Mapping[str, Any]
 ) -> dict[str, Any]:
-    predictions = [
+    all_predictions = [
         record
         for record in records
         if record.get("journal_event_type") == "prediction_snapshot"
+    ]
+    # Data-quality rejected observations remain immutable audit evidence, but
+    # must not permanently poison the scientific gate for later valid samples
+    # in the same authority generation.
+    predictions = [
+        record
+        for record in all_predictions
+        if record.get("forward_label_eligibility") == "eligible"
     ]
     fills = [
         record
@@ -381,6 +389,10 @@ def _scientific_evidence(
         and float(sample_size_metrics.get("N_eff") or 0.0) >= 10.0
         and drawdown_metrics.get("status") == "available"
         and positive_style_count >= 1
+    )
+    base["prediction_audit_total_count"] = len(all_predictions)
+    base["prediction_data_quality_excluded_count"] = len(all_predictions) - len(
+        predictions
     )
     return base
 

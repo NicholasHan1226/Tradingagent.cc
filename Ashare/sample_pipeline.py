@@ -265,6 +265,27 @@ def _bar_source(row: Mapping[str, Any]) -> str:
     return str(row.get("provider") or row.get("source") or "").strip()
 
 
+def _normalized_ashare_timestamp(value: Any) -> str | None:
+    """Make A-share timestamps explicit without inventing an earlier time.
+
+    SharedSignals stores A-share ``bar_time`` in local exchange time while its
+    ``collected_at`` receipt is timezone-aware UTC.  The sample journal needs
+    both sides explicit before comparing the observation with the prediction
+    boundary.
+    """
+
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return raw
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=CN_TZ)
+    return parsed.isoformat()
+
+
 def _intraday_reference(
     reader: Any, market: str, symbol: str, date_key: str
 ) -> dict[str, Any] | None:
@@ -279,13 +300,26 @@ def _intraday_reference(
         if not isinstance(raw, Mapping):
             continue
         price = _positive(raw.get("close", raw.get("last_price", raw.get("price"))))
-        observed_at = str(
-            raw.get("bar_time") or raw.get("trade_time") or raw.get("timestamp") or ""
-        ).strip()
+        observed_at = _normalized_ashare_timestamp(
+            raw.get("bar_time") or raw.get("trade_time") or raw.get("timestamp")
+        )
         source = _bar_source(raw)
         volume = _positive(raw.get("volume", raw.get("vol", raw.get("bar_volume"))))
         if price is None or not observed_at or not source or volume is None:
             continue
+        collected_at = _normalized_ashare_timestamp(
+            raw.get("collected_at") or raw.get("collected_at_dt")
+        )
+        # The canonical SharedSignals intraday row has one durable provider
+        # receipt marker (collected_at).  If distinct availability fields are
+        # absent, that observed receipt is the conservative availability and
+        # ingestion boundary; no earlier timestamp is synthesized.
+        available_at = _normalized_ashare_timestamp(
+            raw.get("available_at") or raw.get("published_at")
+        ) or collected_at
+        ingested_at = _normalized_ashare_timestamp(
+            raw.get("ingested_at") or raw.get("received_at")
+        ) or collected_at
         return {
             "price": price,
             "price_timestamp": observed_at,
@@ -293,8 +327,8 @@ def _intraday_reference(
             "volume": volume,
             "frequency": "5m",
             "evidence_class": "verified_intraday_market_data",
-            "available_at": raw.get("available_at") or raw.get("published_at"),
-            "ingested_at": raw.get("ingested_at") or raw.get("received_at"),
+            "available_at": available_at,
+            "ingested_at": ingested_at,
         }
     return None
 
@@ -403,6 +437,7 @@ def _style_features(score: Mapping[str, Any]) -> dict[str, float]:
 def _prediction_snapshot(
     *,
     symbol: str,
+    trade_date: str,
     prediction_at: str,
     reference: Mapping[str, Any],
     style: Mapping[str, Any],
@@ -462,6 +497,7 @@ def _prediction_snapshot(
     raw = {
         "snapshot_id": "prediction:" + _canonical_sha256(snapshot_identity)[:32],
         "market": "ashare",
+        "trade_date": str(trade_date),
         "symbol": symbol,
         "style": style.get("style_id"),
         "style_id": style.get("style_id"),
@@ -705,6 +741,7 @@ def build_candidate_observation(
             snapshots.append(
                 _prediction_snapshot(
                     symbol=normalized_symbol,
+                    trade_date=date_key,
                     prediction_at=predicted_at,
                     reference=reference,
                     style=style,

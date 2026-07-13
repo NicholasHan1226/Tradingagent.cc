@@ -36,6 +36,22 @@ class ReliableReader:
         return []
 
 
+class ProductionShapedIntradayReader:
+    def get_bars_intraday(self, market, symbol, interval, start, end):
+        return [
+            {
+                "close": 53.95,
+                "bar_time": "2026-07-13 13:40:00",
+                "collected_at": "2026-07-13T05:45:02+00:00",
+                "volume": 2_920_166,
+                "provider": "tushare_rt_min",
+            }
+        ]
+
+    def get_bars_daily(self, market, symbol, start, end):
+        return []
+
+
 class MissingPriceReader:
     def get_bars_intraday(self, market, symbol, interval, start, end):
         return []
@@ -125,6 +141,31 @@ def test_prediction_snapshots_use_v2_field_names_not_probability():
         assert row["forward_label_eligibility"] == "eligible"
         assert "expected_return_distribution" not in row
         assert "uncalibrated_return_prior" in row
+
+
+def test_production_intraday_timestamp_and_receipt_form_complete_pit_lineage():
+    observation = build_candidate_observation(
+        symbol="000021.SZ",
+        trade_date="20260713",
+        mapped_market="ashare",
+        mapped_symbol="000021.SZ",
+        score=_score(0.68),
+        reader=ProductionShapedIntradayReader(),
+        prediction_at="2026-07-13T13:46:00+08:00",
+        mg_enabled=False,
+    )
+
+    for row in observation["prediction_snapshots"]:
+        assert row["trade_date"] == "20260713"
+        assert row["data_quality"]["price_timestamp"] == (
+            "2026-07-13T13:40:00+08:00"
+        )
+        assert row["event_time"] == "2026-07-13T13:40:00+08:00"
+        assert row["available_at"] == "2026-07-13T05:45:02+00:00"
+        assert row["ingested_at"] == "2026-07-13T05:45:02+00:00"
+        assert row["point_in_time_lineage_validation"]["status"] == "valid"
+        assert row["point_in_time_lineage_validation"]["complete"] is True
+        assert row["forward_label_eligibility"] == "eligible"
 
 
 def test_prediction_snapshots_have_embedded_conservative_costs():

@@ -279,6 +279,43 @@ def test_scientific_evidence_recomputes_calibration_instead_of_trusting_bool() -
     assert evidence["promotion_evidence_ready"] is False
 
 
+def test_scientific_evidence_excludes_immutable_data_quality_rejections() -> None:
+    module = _module()
+    rejected = {
+        **_prediction(),
+        "journal_event_type": "prediction_snapshot",
+        "forward_label_eligibility": "rejected_data_quality",
+    }
+    eligible = {
+        **_prediction(),
+        "journal_event_type": "prediction_snapshot",
+        "forward_label_eligibility": "eligible",
+        "point_in_time_lineage": {
+            "event_time": "2026-07-13T09:25:00+08:00",
+            "available_at": "2026-07-13T09:30:00+08:00",
+            "ingested_at": "2026-07-13T09:30:00+08:00",
+            "retrieved_as_of": "2026-07-13T09:30:00+08:00",
+        },
+        "point_in_time_as_of": "2026-07-13T09:30:00+08:00",
+        "source_snapshot_sha256": "a" * 64,
+    }
+    kpi = {
+        "sample_layer_totals": {},
+        "styles": {},
+        "maturity_duplicate_count": 0,
+        "sample_size_evidence": {},
+        "calibration_evidence": {},
+        "account_drawdown_evidence": {},
+    }
+
+    evidence = module._scientific_evidence([rejected, eligible], kpi)
+
+    assert evidence["prediction_audit_total_count"] == 2
+    assert evidence["prediction_data_quality_excluded_count"] == 1
+    assert evidence["prediction_pit_total_count"] == 1
+    assert evidence["prediction_pit_valid_count"] == 1
+
+
 def test_due_labels_without_market_evidence_are_an_explicit_warning(
     tmp_path: Path,
 ) -> None:

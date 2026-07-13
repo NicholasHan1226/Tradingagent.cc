@@ -210,6 +210,8 @@ Exploration selection 保存：`exploration_policy_version`、top-K/pool、seed�
 
 路径：`shared/review/ashare/sample_journal.jsonl`。每行 append-only、fingerprinted、拒绝 symlink/live markers；相同 identity + 相同 payload 幂等，冲突 payload fail closed。
 
+A股 canonical intraday row 的 `bar_time` 是交易所本地时间、`collected_at` 是带时区的 provider receipt。写 prediction 前必须把无时区 `bar_time` 显式绑定 `Asia/Shanghai`；当上游没有更细的 `available_at/ingested_at` 时，只允许把已有 `collected_at` 同时作为保守 availability/ingestion receipt，不能生成更早时间。data-quality rejected prediction 永久保留为审计样本并在 KPI 显示排除数量，但不应永久污染同一 authority 后续有效样本的 scientific PIT denominator。
+
 当前样本层：
 
 | record/journal event | sample layer |
