@@ -50,6 +50,22 @@ python3 tools/market_capital_ops.py reconcile-dry-run --market cn_futures --trad
 
 日常 actual MTM writer 已统一为 `job_market_capital_reconcile.sh`。它先从 SharedSignals 刷新 PIT mark，再从 fresh execution snapshot、durable outbox 和 capital event chain 证明 cash/position/reservation/fill watermark 守恒，最后提交 `mtm_reconcile()`：
 
+当既有 A 股 capital bootstrap 的随机 lineage 与 canonical execution lineage 不一致、且尚无首个策略样本时，不得手写 manifest 或修改 append-only event。先用 staging-only CLI 生成一对新的 zero-import authority；该命令默认 dry run，拒绝生产默认 root、非 50,000 CNY、任何持仓/预留/盈亏、未来 PIT 和 `REAL_TRADING_ENABLED=true`：
+
+```bash
+python3 tools/ashare_fresh_authority_bootstrap.py \
+  --capital-root /path/to/staging/capital/ashare \
+  --execution-root /path/to/staging/execution/ashare-sim-fresh-20260712-v1 \
+  --source-opening-manifest /path/to/operator/opening_manifest.json \
+  --legacy-freeze-manifest /path/to/operator/legacy_freeze_manifest.json \
+  --output-opening-manifest /path/to/new/evidence/opening_manifest.json \
+  --lineage-started-at YYYY-MM-DDTHH:MM:SS+08:00 \
+  --point-in-time-as-of YYYY-MM-DDTHH:MM:SS+08:00 \
+  --confirm-zero-import
+```
+
+只有 dry run、`--apply`、capital checksum、execution manifest、非 root 用户读写和隔离 reconcile 均通过后，才可在独立备份下把两个 staging root 原子切换为 production default。CLI 本身不激活 production root，也不写 fresh/reconciled 状态。
+
 ```bash
 REAL_TRADING_ENABLED=false \
   shared/wrappers/job_market_capital_reconcile.sh ashare opening
