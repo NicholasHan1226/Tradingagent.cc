@@ -252,6 +252,14 @@ def build_prediction_snapshot(candidate: Mapping[str, Any]) -> dict[str, Any]:
         raise TypeError("candidate must be a mapping")
     snapshot = deepcopy(dict(candidate))
     reliable, reason = _prediction_data_quality(snapshot)
+    pit_validation = validate_point_in_time_lineage(snapshot)
+    pit_status = str(pit_validation.get("status") or "")
+    # Missing optional PIT fields remains audit-visible and label-collectable,
+    # but a present-yet-invalid chain is positive evidence of an unsafe time
+    # relationship and must fail closed.
+    if reliable and pit_status not in {"valid", "missing_timestamps"}:
+        reliable = False
+        reason = "point_in_time_lineage_%s" % (pit_status or "invalid")
 
     snapshot["snapshot_id"] = str(
         snapshot.get("snapshot_id") or _stable_snapshot_id(snapshot)
@@ -273,9 +281,7 @@ def build_prediction_snapshot(candidate: Mapping[str, Any]) -> dict[str, Any]:
         snapshot.get("sample_science_contract_version")
         or SAMPLE_SCIENCE_CONTRACT_VERSION
     )
-    snapshot["point_in_time_lineage_validation"] = validate_point_in_time_lineage(
-        snapshot
-    )
+    snapshot["point_in_time_lineage_validation"] = pit_validation
     snapshot["capital_layer"] = "simulated"
     snapshot["account_type"] = "simulated"
     for field in _LIVE_BOOLEAN_FIELDS:

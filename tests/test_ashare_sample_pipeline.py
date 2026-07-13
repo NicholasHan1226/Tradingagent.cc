@@ -168,6 +168,52 @@ def test_production_intraday_timestamp_and_receipt_form_complete_pit_lineage():
         assert row["forward_label_eligibility"] == "eligible"
 
 
+@pytest.mark.parametrize(
+    ("collected_at", "expected_status"),
+    [
+        ("2026-07-13T05:39:00+00:00", "invalid_timestamp_order"),
+        ("2026-07-13T05:47:00+00:00", "invalid_timestamp_order"),
+        ("not-a-timestamp", "invalid_or_timezone_naive_timestamps"),
+    ],
+)
+def test_invalid_intraday_receipt_time_fails_closed(
+    collected_at, expected_status
+):
+    class InvalidReceiptReader:
+        def get_bars_intraday(self, market, symbol, interval, start, end):
+            return [
+                {
+                    "close": 53.95,
+                    "bar_time": "2026-07-13 13:40:00",
+                    "collected_at": collected_at,
+                    "volume": 2_920_166,
+                    "provider": "tushare_rt_min",
+                }
+            ]
+
+        def get_bars_daily(self, market, symbol, start, end):
+            return []
+
+    observation = build_candidate_observation(
+        symbol="000021.SZ",
+        trade_date="20260713",
+        mapped_market="ashare",
+        mapped_symbol="000021.SZ",
+        score=_score(0.68),
+        reader=InvalidReceiptReader(),
+        prediction_at="2026-07-13T13:46:00+08:00",
+        mg_enabled=False,
+    )
+
+    for row in observation["prediction_snapshots"]:
+        assert row["point_in_time_lineage_validation"]["status"] == expected_status
+        assert row["point_in_time_lineage_validation"]["complete"] is False
+        assert row["forward_label_eligibility"] == "rejected_data_quality"
+        assert row["forward_label_rejection_reason"] == (
+            "point_in_time_lineage_%s" % expected_status
+        )
+
+
 def test_prediction_snapshots_have_embedded_conservative_costs():
     observation = _observation("600000.SH", 0.43)
 
