@@ -1487,6 +1487,19 @@ class TestProjection:
         assert proj["authority_id"] == "ashare-capital-v1"
         assert proj["reserved_capital_cny"] == 7_500.0
 
+    def test_read_apis_do_not_rewrite_latest_projection(self, tmp_path: Path) -> None:
+        ledger = _init_ledger(tmp_path, "ashare")
+        latest = tmp_path / "ashare_sim_capital_latest.json"
+        sentinel = '{"sentinel":true}\n'
+        latest.write_text(sentinel, encoding="utf-8")
+
+        snapshot = ledger.snapshot()
+        provider = ledger.provider_state(TRADE_DATE)
+
+        assert snapshot.equity_cny == 50_000.0
+        assert provider["equity_cny"] == 50_000.0
+        assert latest.read_text(encoding="utf-8") == sentinel
+
 
 class TestSymlink:
     def test_policy_rejects(self, tmp_path: Path) -> None:

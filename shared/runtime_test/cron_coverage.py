@@ -154,6 +154,16 @@ def _runtime_permission_candidate_paths() -> set[Path]:
     """Return active runtime paths that marketgraph cron needs to write."""
     candidates: set[Path] = {
         ROOT / "runtime/state",
+        ROOT / "shared/logs/capital/ashare",
+        ROOT / "shared/logs/capital/ashare/ashare_sim_capital_events.jsonl",
+        ROOT / "shared/logs/capital/ashare/ashare_sim_capital_latest.json",
+        ROOT / "shared/logs/capital/ashare/.ashare_sim_capital.lock",
+        ROOT / "shared/logs/capital/cn_futures",
+        ROOT / "shared/logs/capital/cn_futures/cn_futures_sim_capital_events.jsonl",
+        ROOT / "shared/logs/capital/cn_futures/cn_futures_sim_capital_latest.json",
+        ROOT / "shared/logs/capital/cn_futures/.cn_futures_sim_capital.lock",
+        ROOT
+        / "shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1",
         ROOT / "shared/review/ashare",
         ROOT / "shared/review/ashare/sample_journal.jsonl",
         ROOT / "shared/review/ashare/sample_kpi_latest.json",
@@ -163,6 +173,9 @@ def _runtime_permission_candidate_paths() -> set[Path]:
         ROOT / "shared/review/ashare/market_maturity_latest.json",
         ROOT / "shared/review/ashare/market_maturity_log.jsonl",
         ROOT / "shared/review/opportunities",
+        ROOT / "shared/review/cn_futures",
+        ROOT / "shared/review/cn_futures/replay_latest.json",
+        ROOT / "shared/review/cn_futures/replay_history.jsonl",
         ROOT / "shared/logs/trade_audit_trail.jsonl",
         ROOT / "shared/logs/cron/sim_market_health.log",
         ROOT / "shared/logs/cron/equity_snapshots.log",
@@ -170,8 +183,13 @@ def _runtime_permission_candidate_paths() -> set[Path]:
     candidates.update(_template_log_targets(ROOT / "shared/crontab.txt"))
     for pattern in (
         "runtime/state/*.lock",
+        "shared/logs/capital/ashare/*",
+        "shared/logs/capital/cn_futures/*",
+        "shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/*",
         "shared/review/ashare/*.json",
         "shared/review/ashare/*.jsonl",
+        "shared/review/cn_futures/*.json",
+        "shared/review/cn_futures/*.jsonl",
         "shared/review/opportunities/*.jsonl",
         "shared/logs/cron/job_*.log",
     ):

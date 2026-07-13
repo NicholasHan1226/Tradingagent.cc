@@ -345,6 +345,30 @@ class CronCoverageTest(unittest.TestCase):
             self.assertNotIn(legacy, candidates)
         self.assertIn("shared/logs/trade_audit_trail.jsonl", candidates)
 
+    def test_runtime_permission_candidates_include_capital_and_replay_outputs(
+        self,
+    ) -> None:
+        candidates = {
+            str(path.relative_to(cron_coverage.ROOT))
+            for path in cron_coverage._runtime_permission_candidate_paths()
+        }
+
+        for current in (
+            "shared/logs/capital/ashare",
+            "shared/logs/capital/ashare/ashare_sim_capital_events.jsonl",
+            "shared/logs/capital/ashare/ashare_sim_capital_latest.json",
+            "shared/logs/capital/ashare/.ashare_sim_capital.lock",
+            "shared/logs/capital/cn_futures",
+            "shared/logs/capital/cn_futures/cn_futures_sim_capital_events.jsonl",
+            "shared/logs/capital/cn_futures/cn_futures_sim_capital_latest.json",
+            "shared/logs/capital/cn_futures/.cn_futures_sim_capital.lock",
+            "shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1",
+            "shared/review/cn_futures",
+            "shared/review/cn_futures/replay_latest.json",
+            "shared/review/cn_futures/replay_history.jsonl",
+        ):
+            self.assertIn(current, candidates)
+
     # -- Review cadence coverage: 07:30 / 11:45 / 15:30 / 22:00 wrappers --
 
     _REVIEW_CADENCE_ENTRIES = {

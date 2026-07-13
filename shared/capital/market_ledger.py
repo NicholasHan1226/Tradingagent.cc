@@ -1544,7 +1544,6 @@ class MarketCapitalLedger:
         self._ensure_init()
         with self._lock():
             r = self._replay(self._load_events_unlocked())
-            self._write_projection_unlocked(r.snapshot)
             return r.snapshot
 
     def _risk_metrics(
@@ -1609,7 +1608,6 @@ class MarketCapitalLedger:
         with self._lock():
             ev = self._load_events_unlocked()
             r = self._replay(ev)
-            self._write_projection_unlocked(r.snapshot)
         risk = self._risk_metrics(ev, r, trade_date=nd)
         s = r.snapshot
         # fresh only after actual current-day reconcile

@@ -358,6 +358,26 @@ class TestStatus:
         output = _run("status", "--market", "ashare", "--root", str(tmp_path / "x"))
         assert output["status"] == "market_capital_unavailable"
 
+    def test_does_not_rewrite_latest_projection(self, tmp_path: Path) -> None:
+        root = tmp_path / "cap"
+        _setup_ledger(root, "ashare", tmp_path)
+        latest = root / "ashare_sim_capital_latest.json"
+        sentinel = '{"sentinel":true}\n'
+        latest.write_text(sentinel, encoding="utf-8")
+
+        output = _run(
+            "status",
+            "--market",
+            "ashare",
+            "--trade-date",
+            TRADE_DATE,
+            "--root",
+            str(root),
+        )
+
+        assert output["status"] == "market_capital_available"
+        assert latest.read_text(encoding="utf-8") == sentinel
+
 
 # ===========================================================================
 # Verify
@@ -425,6 +445,9 @@ class TestReconcileDryRun:
         root = tmp_path / "cap"
         _setup_ledger(root, "ashare", tmp_path)
         ep = root / "ashare_sim_capital_events.jsonl"
+        latest = root / "ashare_sim_capital_latest.json"
+        sentinel = '{"sentinel":true}\n'
+        latest.write_text(sentinel, encoding="utf-8")
         before = len(ep.read_text("utf-8").splitlines())
         output = _run(
             "reconcile-dry-run",
@@ -437,6 +460,7 @@ class TestReconcileDryRun:
         )
         assert output["status"] == "dry_run_ok"
         assert len(ep.read_text("utf-8").splitlines()) == before
+        assert latest.read_text(encoding="utf-8") == sentinel
 
 
 # ===========================================================================
@@ -465,9 +489,13 @@ class TestCutoverAudit:
     def test_audit_with_authority(self, tmp_path: Path) -> None:
         root = tmp_path / "cap"
         _setup_ledger(root, "ashare", tmp_path)
+        latest = root / "ashare_sim_capital_latest.json"
+        sentinel = '{"sentinel":true}\n'
+        latest.write_text(sentinel, encoding="utf-8")
         output = _run("cutover-audit", "--market", "ashare", "--root", str(root))
         assert output["status"] == "cutover_audit"
         assert output["authority_initialized"] is True
+        assert latest.read_text(encoding="utf-8") == sentinel
 
 
 # ===========================================================================
@@ -481,6 +509,11 @@ class TestDualStatus:
         cr = tmp_path / "c"
         _setup_ledger(ar, "ashare", tmp_path)
         _setup_ledger(cr, "cn_futures", tmp_path)
+        a_latest = ar / "ashare_sim_capital_latest.json"
+        c_latest = cr / "cn_futures_sim_capital_latest.json"
+        sentinel = '{"sentinel":true}\n'
+        a_latest.write_text(sentinel, encoding="utf-8")
+        c_latest.write_text(sentinel, encoding="utf-8")
         env = os.environ.copy()
         env["TRADINGAGENT_ASHARE_CAPITAL_ROOT"] = str(ar)
         env["TRADINGAGENT_CN_FUTURES_CAPITAL_ROOT"] = str(cr)
@@ -496,6 +529,8 @@ class TestDualStatus:
             assert output["markets"]["ashare"]["initial_equity_cny"] == 50_000.0
             assert output["markets"]["cn_futures"]["initial_equity_cny"] == 50_000.0
         assert "100000" not in result.stdout
+        assert a_latest.read_text(encoding="utf-8") == sentinel
+        assert c_latest.read_text(encoding="utf-8") == sentinel
 
 
 # ===========================================================================
