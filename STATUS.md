@@ -1,6 +1,6 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-12。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-13 09:38 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。
 
 ## 结论
 
@@ -11,9 +11,10 @@
 - A股执行现实统一为 `ashare-execution-reality-20260706-v1`：主板风险警示股 10%、独立收盘集合竞价/盘后固定价 session、价格笼子、100 股整手、卖方印花税 5bps、双向过户费各 0.1bps；华创佣金仍是待合同/交割单核实的保守临时口径。
 - 样本科学口径已区分 label cells、raw N、unique decision clusters、独立交易日与 N_eff；PIT、校准、benchmark null、逐日 MTM 回撤和 universe recall 均不再由布尔字段或默认 0 自证。
 - CNFutures 已加入 append-only order events、checksum projection 与 startup reconcile；目录漂移只 HALT 新增模拟风险，observation/counterfactual 继续。旧伪 Sharpe 已改为诊断比率，`sharpe=null` 且不得用于 DSR/晋级。
-- `REAL_TRADING_ENABLED=false`；TradingAgent 已合入并 push GitHub main `5817457`，但尚未 deploy、restart 或 apply cron，也没有邮件、同花顺操作、broker 接入或真实交易。
-- 本地 production cron/env 门禁同时要求 `ASHARE_SIM_HERMES_ENABLED=0` 与 `ASHARE_SIM_WEBHOOK_ENABLED=0`；`.env` 或共享环境中的 truthy/未知值会在任务正文前 fail closed。该门禁尚未部署，不能据此声称服务器第二路径已关闭。
-- 当前是“本地与 GitHub main 已完成，生产发布停在 SharedSignals SQLite 迁移确认门禁”；不是已发布，也没有连续真实交易日的模拟绩效证据，不能宣称正期望或稳定盈利。
+- `REAL_TRADING_ENABLED=false`；生产 systemd 已显式设置 `ASHARE_SIM_HERMES_ENABLED=0` 与 `ASHARE_SIM_WEBHOOK_ENABLED=0`，没有邮件、同花顺操作、broker 接入或真实交易。
+- 2026-07-13 P0 本地修复已合入并 push GitHub main `773b0a5`：`status`、`dual-status`、`reconcile-dry-run` 与 `cutover-audit` 不再重写 capital latest 投影；cron permission coverage 已纳入两个 capital root、A股 fresh execution root 与 CNFutures replay。定向 143 项通过；全套 1751 项通过、3 项因测试把 10:00/10:05 行情放在本轮 09:07 当前时间之后而失败，无改动 `a558495` 基线精确复现同样 3 项失败。
+- 生产曾同步到 `a558495` 并安装 sim-only service/managed cron，但新 P0 `773b0a5` 尚未生产同步。2026-07-12 20:53 fresh 证据确认两个 `*_latest.json` 已从误写的 `root:root 0600` 精确恢复为 `marketgraph:marketgraph 0600`，投影与 event SHA 均未变化；随后生产 SSH 在密钥交换阶段持续被远端关闭，CNFutures replay 权限、生产代码与后续门禁尚未处理。
+- 当前不是“首日启用完成”：A股 production capital bootstrap 使用随机 `mcap-ashare-g1-...` lineage，但执行合同固定为 `ashare-sim-fresh-20260712-v1`，且默认 fresh execution root 不存在；09:25 硬切点已错过，不得声称捕捉 A股开盘，也不得补造期货 09:02/opening 证据。全部 P0 绿后只可从普通日内周期开始真实 PIT 模拟采样，并明确标记 missed opening。
 
 ## 当前资本 authority
 
@@ -24,7 +25,7 @@
 
 - 两市场各自持有现金、预约、持仓/保证金、MTM、PnL、回撤、checksum chain 与 execution lineage；总览不做货币聚合。
 - 5% 回撤仅收紧到 0.75 倍风险预算；7% 回撤暂停。日亏与连续亏损也按市场独立触发。
-- 旧资本事件、持仓和 PnL 已定义为只读冻结源；新 authority 不继承、不导入。生产默认 root 尚未由本工作树初始化或切换。
+- 旧资本事件、持仓和 PnL 已定义为只读冻结源；新 authority 不继承、不导入。生产两个默认 root 已初始化为各 50,000 CNY、零持仓/预约/PnL、`real=false`，但 A股 active root 在首个有效样本前必须通过新隔离 root 重新建立与固定 execution lineage 一致的 authority；旧 append-only root 只归档保留，禁止改写。
 
 ## A股本地证据
 
@@ -65,18 +66,19 @@
 
 ## 当前阻塞与下一门禁
 
-1. 仓库模板尚未安装到服务器，两个生产 root 尚未初始化或切换，SharedSignals 真实 runtime mark/reconcile smoke 尚未执行；这些动作需要单独发布授权。
-2. 下个有效交易日起验证仓库外真实运行证据：每日 A股 prediction/探索或具体硬拒绝/标签/回合/closing MTM，以及长期 CNFutures 多会话、多品种和极端场景覆盖。
-3. A股 Day 5/Day 10 只做人工复核；没有 Nicholas 明确确认不得进入 20%–30% 人工试运行。期货继续长期 sim-only。
-4. 已冻结的生产启用、进化终端、邮件/同花顺规格与长期统计工作见 [docs/BACKLOG.md](docs/BACKLOG.md)，不在本任务继续实现。
+1. 先恢复生产 SSH；当前连接在认证前的 `kex_exchange_identification` 阶段被远端关闭，不能用凭据、GitHub main 或外部 HTTP 替代生产写入/回读证据。
+2. 同步 `773b0a5` 后，以 `marketgraph` 验证只读 capital 命令不再改写投影；精确恢复并验证 `shared/review/cn_futures/replay_{latest.json,history.jsonl}`，运行更新后的 cron permission coverage，禁止批量 chown。
+3. 在没有首个有效样本前保留旧 A股 event root，使用项目 `market_capital_ops.py init` 在新隔离 root 建立固定 `ashare-sim-fresh-20260712-v1` lineage 的 50,000 CNY zero-position authority，再用唯一 zero-import execution bootstrap 建立同名执行 root；manifest/checksum/owner/mode/reconcile 全部通过后才可原子切换。不得改写旧 event 或手写 production ledger/lineage JSON。
+4. SharedSignals DuckDB P0 已在其 main `2f2d881` 修复，但仍需生产部署并证明 16 表无失败/mismatch、58,698 条 event identity 完整、三行业空表 0 行合法且 source status 无 red。
+5. 以上任一 P0 不绿继续 fail closed。恢复后只能验证普通日内 A股/期货真实 PIT 样本、15:32 closing MTM、KPI/maturity 与资金守恒；开盘证据已错过且不得补造。A股 Day 5/Day 10 仍只做人工复核，期货长期 sim-only。
 
 ## 环境层级
 
 | 层级 | 当前事实 |
 |---|---|
-| 本地工作树 | `codex/capital-growth-engine`，固定验收通过；本任务按逻辑切片只做本地提交 |
-| GitHub | 本任务不 push；本地提交不能推断为远端分支或主线已存在 |
-| 生产文件/runtime | 未同步、未重启、未切换 authority |
-| 生产 cron | 未 apply；仓库模板不代表用户 crontab 已生效 |
+| 本地工作树 | `main` clean，HEAD `773b0a5`；P0 定向 143 项通过，完整套件 1751 passed + 3 个无改动基线同现的时钟依赖失败 |
+| GitHub | `origin/main` 已回读为 `773b0a5` |
+| 生产文件/runtime | 旧发布 `a558495` 曾运行；本轮 P0 尚未同步。服务此前为 `marketgraph` 且 sim-only env 明确，SSH 恢复后必须 fresh 回读 |
+| 生产 cron | managed merge 已安装且旧覆盖报告 56/56，但该报告存在已修复的权限路径盲区；新 coverage 未生产运行，不能算绿 |
 | 外部邮件/同花顺/broker | 未实现、未发送、未连接 |
-| 真实市场样本 | 新架构尚待下个有效交易日连续验证 |
+| 真实市场样本 | 2026-07-13 opening 已错过且不补造；普通日内、closing MTM、KPI/maturity 尚待生产 P0 全绿后验证 |
