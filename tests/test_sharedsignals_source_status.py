@@ -153,6 +153,45 @@ def test_market_related_red_source_status_blocks_trading() -> None:
     assert result["blocking_checks"] == ["health_sla_summary"]
 
 
+def test_opening_gate_red_blocks_ashare_instead_of_inferencing_us_from_status() -> None:
+    result = sharedsignals_source_status.check_source_status(
+        "http://ss.local",
+        market="ashare",
+        http_json_func=_http_payload(
+            {
+                "data": {
+                    "status": "red",
+                    "summary": {"red_checks": 1},
+                    "checks": [
+                        {
+                            "name": "opening_gate",
+                            "status": "red",
+                            "evidence": {
+                                "phase": "afternoon_resume",
+                                "runtime_status": "red",
+                                "failed_tables": [],
+                            },
+                        }
+                    ],
+                }
+            }
+        ),
+    )
+
+    assert result["status"] == "critical"
+    assert result["blocking"] is True
+    assert result["blocking_checks"] == ["opening_gate"]
+
+
+def test_runtime_status_text_does_not_false_match_us_market() -> None:
+    assert (
+        sharedsignals_source_status._market_from_text(
+            {"runtime_status": "red", "phase": "afternoon_resume"}
+        )
+        == ""
+    )
+
+
 def test_unreachable_source_status_blocks_trading() -> None:
     def fail(_url: str, _timeout: float) -> tuple[int, dict]:
         raise URLError("connection refused")

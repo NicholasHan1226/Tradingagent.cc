@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -112,9 +113,19 @@ def _normalize_market(value: Any) -> str:
 
 def _market_from_text(value: Any) -> str:
     text = str(value or "").strip().lower()
-    for candidate in ("ashare", "a-share", "a_share", "crypto", "pm", "polymarket", "us", "usa", "cn_futures", "futures"):
-        if candidate in text:
-            return _normalize_market(candidate)
+    patterns = (
+        ("ashare", r"(?<![a-z0-9])(?:ashare|ashares|a[-_ ]share)(?![a-z0-9])"),
+        ("crypto", r"(?<![a-z0-9])crypto(?![a-z0-9])"),
+        ("pm", r"(?<![a-z0-9])(?:pm|polymarket)(?![a-z0-9])"),
+        ("us", r"(?<![a-z0-9])(?:us|usa)(?![a-z0-9])"),
+        (
+            "cn_futures",
+            r"(?<![a-z0-9])(?:cn[-_ ]?futures?|china[-_ ]futures?|futures)(?![a-z0-9])",
+        ),
+    )
+    for market, pattern in patterns:
+        if re.search(pattern, text):
+            return market
     return ""
 
 
