@@ -36,6 +36,8 @@
 - 买入通过 durable outbox 原子提交 `fill_commit`；卖出原子提交 `ashare_sell_commit`。capital commit 成功/幂等成功前不得把成交计入策略绩效。
 - partial 只消费实际成交部分；终态原子释放未使用预约。pending commit 保守占用风险并在重启后重放。
 - 盘后 MTM reconcile 必须以完整成交/持仓和 exact reservation manifest 验证现金、持仓、冻结额、outbox watermark 与 ledger head CAS。
+- planning/risk/rebalance 前必须从 current A股 market capital ledger 建立唯一持仓 authority，并按 capital A → 全部 position sources → capital B 双读绑定。任一 source 缺 authority/generation/lineage/checksum/trade date/count/fingerprint，或规范化持仓不一致，统一 `capital_position_source_mismatch`；不得默认空仓、读取 legacy/strategy 后继续，或生成普通 8 仓容量拒绝。
+- position authority validity 与 new-risk eligibility 分开：日亏/连亏/7% 回撤只阻断 buy/open/add，并保留 verified positions 供 sell/trim/exit 的 T+1、幂等、成交与 `ashare_sell_commit`；authority/source 失效时才全阻断。
 - 资金计划输出 `deployed_utilization_rate`、`committed_utilization_rate`、`planned_stock_utilization_rate`、`undeployed_capital_cny`、`undeployed_reasons`、`position_capacity` 和 `remaining_position_slots`。
 - 204001 等现金管理只作人工建议，`auto_order=false`，收益归入 `cash_management_yield` 并排除于股票 alpha。
 

@@ -97,6 +97,54 @@ CNFutures 使用相同初始权益和 generation，并以 `margin_utilization_li
 
 Provider 另包含 trade date/freshness、daily MTM/realized PnL、loss streak、high-water、drawdown limits 和本市场容量。A股提供 `single_name_cap_cny`/`stock_gross_exposure_limit_cny`；期货提供 `margin_utilization_limit_cny`/`available_margin`。总览只能并列，不能新增 combined equity/PnL/DD 字段。
 
+### A股当前持仓 authority view
+
+A股在 planning/risk/rebalance 前把 capital provider state 固化为唯一可重放 view。除上述字段外，以下字段全部必填且必须内部一致：
+
+```json
+{
+  "trade_date": "20260714",
+  "authority_id": "ashare-capital-v1",
+  "authority_generation": 1,
+  "execution_lineage_id": "immutable-lineage-id",
+  "event_checksum": "64-hex",
+  "checksum_status": "valid",
+  "checksum_last": "same-64-hex",
+  "checksum_event_count": 3,
+  "positions_quantity_by_risk_unit": {},
+  "position_count": 0,
+  "positions_fingerprint": "sha256-of-canonical-normalized-positions"
+}
+```
+
+- `checksum_event_count` 是非 bool 的正整数；`checksum_last` 必须等于 `event_checksum`。任一 checksum 字段缺失、非法或不一致均 fail closed。
+- `positions_quantity_by_risk_unit` 必须显式为 mapping；缺失不能解释为空仓。股票代码规范化后必须是六位代码加 `.SH`/`.SZ`/`.BJ`；别名规范化后重复也非法。数量必须是有限、非负整数，零数量从 canonical positions 中排除，负数、bool 和小数均非法。
+- `position_count` 必须等于 canonical positions 的键数；`positions_fingerprint` 必须等于 canonical JSON 的 SHA-256。不得信任来源自报 count/fingerprint。
+- source 与 final capital state 在同一门禁中双读；trade date、完整 capital state SHA 或 authority view checksum 任一漂移均视为并发绑定失败。
+
+每个 server-local、adapter、strategy 或 generic snapshot 必须携带完整 position-source envelope：
+
+```json
+{
+  "source": "server_local",
+  "position_source_status": "ready",
+  "positions": [],
+  "authority_id": "ashare-capital-v1",
+  "authority_generation": 1,
+  "execution_lineage_id": "immutable-lineage-id",
+  "authority_checksum": "64-hex",
+  "trade_date": "20260714",
+  "position_count": 0,
+  "positions_fingerprint": "sha256-of-canonical-normalized-positions"
+}
+```
+
+字段缺失与非空不等同样阻断；只接受上述 canonical 键，不接受 `capital_authority_id`、`capital_authority_checksum` 等别名补齐，也不得在读取 snapshot 后从 current capital state 反向绑定 identity。所有 envelope 的 identity、canonical positions、count 和 fingerprint 必须与唯一 authority view 全等。失败结果固定为 `capital_position_source_mismatch`，审计至少保留 source name/status、source SHA-256、authority/state checksum、execution lineage、声明值、重算值与 mismatch fields。失败后不得进入普通 position-capacity risk reject 或动态 capital/rebalance 计算。
+
+server-local lot snapshot 与 PnL projection 必须分别有显式 positions mapping，规范化 quantity view 全等后才可形成 server-local envelope。调用方必须把预先验证的 authority A context 作为读取参数交给 native producer；`local_sim_ledger` 从 append-only trade facts 重放并生成 source-owned identity/count/fingerprint，adapter 仅透传这份 live envelope。open lot 同时输出 `oldest_open_date` 与同值 canonical `entry_date`，供 T+1 风险检查直接消费，不得由 wrapper 猜测日期。`shared.accounting.position_ledger.get_positions` 返回的裸 `list` 不包含 source-owned identity，A股 current gate 不接受它，也不得在读取后补 authority 字段。磁盘 reporting snapshot、缺 context、缺 positions、非法 row 或 blocked status 均不得在读取后绑定为 ready；若 adapter 同时暴露 `strategy_positions`，该 strategy view 需要自己的完整 envelope，不能借用 adapter 主 positions 的 count/fingerprint。
+
+position authority validity 与 new-risk eligibility 分开发布。authority/source 全部验证后，日亏、连亏或 7% 回撤令 view 保持 `status=verified`、原 positions/count/fingerprint 不变，并输出 `new_risk_allowed=false`、`new_risk_reason=<capital blocker>`、`risk_multiplier=0`。buy/open/add 不进入普通 risk、position capacity 或 replacement buy；sell/trim/exit 使用 verified position detail 继续执行 T+1、幂等、成交和 capital commit。authority 缺失/陈旧/校验失败或 source mismatch 仍输出 blocked + 空 positions，并阻断全部方向。门禁通过后 capital plan 的 `cash_source=market_capital_authority`，available cash 取 `cash_balance_cny` 与 `available_to_reserve_cny` 的保守较小值；普通 risk 的 current total exposure 取已验证 capital state 的 `positions_market_value_cny / 50000`，不能因 adapter/source 缺 weight 而默认为零。其它来源 cash/weight 字段仅保留诊断。任何 `filled` 或 `partial` 持仓变化后的 post-execution refresh 必须重新双读并使用 `cash_source=market_capital_authority_post_execution`；新 source envelope 未同步或不一致时 refresh 为 blocked，不得回退 adapter cash/positions。
+
 ### Opening/reconcile manifests
 
 Fresh-start opening manifest 包含 market/authority/cutover decision、`mode=fresh_start`、50,000 CNY opening cash/equity、零继承持仓/预约/PnL、source SHA、execution lineage 和 `real=false`。初始化还必须验证真实 legacy freeze manifest；freeze 只证明旧源不可写，不导入旧数据。

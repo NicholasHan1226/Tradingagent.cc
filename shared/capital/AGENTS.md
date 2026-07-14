@@ -20,7 +20,9 @@
 - 日亏达到 3% 或连续亏损达到 3 次：该市场暂停新增风险。
 - MTM 回撤达到 5%：`risk_multiplier=0.75`，不是禁止所有新仓。
 - MTM 回撤达到 7%：该市场暂停并复核。
+- 上述“暂停”只改变 new-risk eligibility；若 position authority 与全部来源仍 verified，必须保留 positions 供 sell/trim/exit、T+1、幂等和 close commit。authority/source 无效或不一致才全方向阻断。
 - A股按 risk unit 聚合持仓市值、pending reservations 和新订单校验单票 15%，并校验 90% gross。
+- A股 provider state 必须显式输出 checksum status/last/正整数 event count 和 positions mapping/count/fingerprint；缺字段、非法股票/数量或声明冲突不得推断为空仓。所有 position source 必须与 current authority/generation/lineage/checksum/trade date 和 canonical positions 全等，并用同轮前后双读防止并发绑定漂移。
 - CNFutures 保证金使用上限 50%；止损损失预算由执行/风险层另行校验。
 - 风险以 current MTM equity/high-water 计算，不能只看 realized PnL。
 

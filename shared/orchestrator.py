@@ -15,6 +15,14 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import shared.capital as market_capital
+from shared.capital.ashare_position_authority import (
+    CAPITAL_POSITION_SOURCE_MISMATCH,
+    ashare_capital_state_audit,
+    build_ashare_capital_position_authority_view,
+    canonical_sha256,
+    normalize_ashare_positions,
+    reconcile_ashare_position_sources,
+)
 from shared.execution import local_sim_ledger
 from shared.execution.execution_reality import ashare_execution_reality
 from shared.markets.base import MarketAdapter
@@ -2015,63 +2023,53 @@ def _write_ashare_capital_plan_log(
 
 def _write_ashare_post_execution_capital_plan_refresh(
     *,
-    adapter: MarketAdapter,
     market: str,
     date: str,
     account: str,
     capital_plan: dict[str, Any],
+    position_authority: dict[str, Any],
     capital_layer: str,
     account_type: str,
-    filled_count: int,
+    position_change_count: int,
     review_root: Path | None = None,
 ) -> dict[str, Any]:
     if str(market).lower() != "ashare":
         return {"status": "skipped", "reason": "non_ashare_market"}
-    if filled_count <= 0:
-        return {"status": "skipped", "reason": "no_filled_orders"}
-    try:
-        refreshed_account = adapter.get_sim_account()
-    except Exception as exc:  # noqa: BLE001
+    if position_change_count <= 0:
+        return {"status": "skipped", "reason": "no_position_changes"}
+    if position_authority.get("status") != "verified":
         return {
-            "status": "degraded",
-            "reason": f"account_snapshot_unavailable:{exc.__class__.__name__}: {exc}",
-        }
-    if not isinstance(refreshed_account, dict):
-        return {"status": "degraded", "reason": "account_snapshot_invalid"}
-    strategy_positions = refreshed_account.get("strategy_positions")
-    if not isinstance(strategy_positions, list):
-        strategy_positions = (
-            refreshed_account.get("positions")
-            if isinstance(refreshed_account.get("positions"), list)
-            else []
-        )
-    cash = _safe_float(
-        refreshed_account.get(
-            "strategy_cash_available",
-            refreshed_account.get(
-                "cash_available", capital_plan.get("available_cash", 0.0)
+            "status": "blocked",
+            "reason": str(
+                position_authority.get("reason")
+                or "ashare_post_execution_position_authority_invalid"
             ),
-        ),
-        0.0,
-    )
-    position_count = len(
-        {
-            str(row.get("ts_code") or row.get("code") or row.get("symbol") or "")
-            for row in strategy_positions
-            if isinstance(row, dict)
+            "source_audit": position_authority.get("source_audit", []),
+            "position_source_mismatches": position_authority.get("mismatches", []),
         }
-    )
-    sample_adjustment = (
-        refreshed_account.get("capital_plan_sample_adjustment")
-        if isinstance(refreshed_account.get("capital_plan_sample_adjustment"), dict)
-        else capital_plan.get("sample_adjustment", {})
-    )
+    cash = _strict_finite_number(position_authority.get("capital_cash_available"))
+    position_count = position_authority.get("position_count")
+    if (
+        cash is None
+        or cash < 0.0
+        or isinstance(position_count, bool)
+        or not isinstance(position_count, int)
+        or position_count < 0
+    ):
+        return {
+            "status": "blocked",
+            "reason": "ashare_post_execution_position_authority_incomplete",
+            "source_audit": position_authority.get("source_audit", []),
+        }
+    sample_adjustment = capital_plan.get("sample_adjustment", {})
     refreshed_plan = {
         "enabled": True,
         "refresh_phase": "post_execution",
-        "refresh_reason": "filled_orders",
+        "refresh_reason": "executed_position_changes",
         "available_cash": round(cash, 2),
-        "cash_source": "account_snapshot_post_execution",
+        "cash_source": "market_capital_authority_post_execution",
+        "capital_authority_checksum": position_authority.get("authority_checksum"),
+        "positions_fingerprint": position_authority.get("positions_fingerprint"),
         "existing_position_count": position_count,
         "target_positions": capital_plan.get("target_positions", position_count),
         "max_new_positions": 0,
@@ -2200,6 +2198,26 @@ def _account_name(account: Any, default: str) -> str:
     return value or default
 
 
+def _load_sim_account_for_trade_date(
+    getter: Callable[..., Any],
+    trade_date: str,
+    *,
+    position_authority: dict[str, Any] | None = None,
+) -> Any:
+    """Pass pre-read authority inputs only to adapters that support them."""
+
+    try:
+        signature = inspect.signature(getter)
+    except (TypeError, ValueError):
+        return getter()
+    kwargs: dict[str, Any] = {}
+    if "trade_date" in signature.parameters:
+        kwargs["trade_date"] = trade_date
+    if "position_authority" in signature.parameters:
+        kwargs["position_authority"] = position_authority
+    return getter(**kwargs)
+
+
 def _account_positions(account: Any, config: dict[str, Any]) -> list[dict[str, Any]]:
     sources: list[Any] = []
     if isinstance(account, dict):
@@ -2269,6 +2287,8 @@ def _account_available_cash(
 def _ashare_authoritative_account_view(
     account: Any,
     trade_date: str,
+    *,
+    position_authority: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load the one server-local A-share strategy account used for planning."""
 
@@ -2281,12 +2301,26 @@ def _ashare_authoritative_account_view(
     account_name = _account_name(account, "ashare_sim")
     if account_name != "ashare_sim":
         raise RuntimeError("ashare_authoritative_account_must_be_ashare_sim")
+    if position_authority is None:
+        raw_capital_state = market_capital.load_market_capital_provider_state(
+            "ashare", trade_date
+        )
+        position_authority = build_ashare_capital_position_authority_view(
+            raw_capital_state, trade_date
+        )
+    if position_authority.get("status") != "verified":
+        raise RuntimeError("ashare_capital_position_authority_invalid")
     snapshot = local_sim_ledger.get_local_sim_account_snapshot(
         account_name,
         trade_date=trade_date,
         starting_cash=50_000.0,
+        position_authority=position_authority,
     )
-    pnl = local_sim_ledger.get_local_sim_pnl(account_name)
+    pnl = local_sim_ledger.get_local_sim_pnl(
+        account_name,
+        trade_date=trade_date,
+        position_authority=position_authority,
+    )
     expected_authority = {
         "capital_authority_id": ASHARE_CAPITAL_AUTHORITY_ID,
         "authority_generation": ASHARE_AUTHORITY_GENERATION,
@@ -2301,10 +2335,74 @@ def _ashare_authoritative_account_view(
             raise RuntimeError(f"ashare_local_account_{source_name}_lineage_mismatch")
     lot_positions = snapshot.get("positions") if isinstance(snapshot, dict) else {}
     pnl_positions = pnl.get("positions") if isinstance(pnl, dict) else {}
-    if not isinstance(lot_positions, dict):
-        lot_positions = {}
-    if not isinstance(pnl_positions, dict):
-        pnl_positions = {}
+    if not isinstance(lot_positions, dict) or not isinstance(pnl_positions, dict):
+        raise RuntimeError("ashare_local_account_positions_unavailable")
+    normalized_lots, _, lot_reason = normalize_ashare_positions(lot_positions)
+    normalized_pnl, _, pnl_reason = normalize_ashare_positions(pnl_positions)
+    if normalized_lots is None:
+        raise RuntimeError(f"ashare_local_account_snapshot_invalid:{lot_reason}")
+    if normalized_pnl is None:
+        raise RuntimeError(f"ashare_local_account_pnl_invalid:{pnl_reason}")
+    if canonical_sha256(normalized_lots) != canonical_sha256(normalized_pnl):
+        raise RuntimeError("ashare_local_account_position_sources_mismatch")
+    expected_date = _compact_date_key(trade_date)
+    expected_fingerprint = canonical_sha256(normalized_lots)
+    expected_count = len(normalized_lots)
+    envelope_fields = (
+        "source",
+        "position_source_status",
+        "authority_id",
+        "authority_generation",
+        "execution_lineage_id",
+        "authority_checksum",
+        "trade_date",
+        "position_count",
+        "positions_fingerprint",
+    )
+    for source_name, payload in (("snapshot", snapshot), ("pnl", pnl)):
+        if any(field not in payload for field in envelope_fields):
+            raise RuntimeError(
+                f"ashare_local_account_{source_name}_position_envelope_missing"
+            )
+        if not str(payload.get("source") or "").strip():
+            raise RuntimeError(f"ashare_local_account_{source_name}_source_missing")
+        if payload.get("position_source_status") != "ready":
+            raise RuntimeError(
+                f"ashare_local_account_{source_name}_position_source_not_ready"
+            )
+        if payload.get("authority_id") != ASHARE_CAPITAL_AUTHORITY_ID:
+            raise RuntimeError(f"ashare_local_account_{source_name}_authority_mismatch")
+        if (
+            isinstance(payload.get("authority_generation"), bool)
+            or payload.get("authority_generation") != ASHARE_AUTHORITY_GENERATION
+        ):
+            raise RuntimeError(
+                f"ashare_local_account_{source_name}_generation_mismatch"
+            )
+        if payload.get("execution_lineage_id") != ASHARE_EXECUTION_LINEAGE_ID:
+            raise RuntimeError(f"ashare_local_account_{source_name}_lineage_mismatch")
+        checksum = str(payload.get("authority_checksum") or "").lower()
+        if len(checksum) != 64 or any(ch not in "0123456789abcdef" for ch in checksum):
+            raise RuntimeError(f"ashare_local_account_{source_name}_checksum_invalid")
+        if _compact_date_key(payload.get("trade_date")) != expected_date:
+            raise RuntimeError(
+                f"ashare_local_account_{source_name}_trade_date_mismatch"
+            )
+        if (
+            isinstance(payload.get("position_count"), bool)
+            or payload.get("position_count") != expected_count
+        ):
+            raise RuntimeError(
+                f"ashare_local_account_{source_name}_position_count_mismatch"
+            )
+        if str(payload.get("positions_fingerprint") or "").lower() != (
+            expected_fingerprint
+        ):
+            raise RuntimeError(
+                f"ashare_local_account_{source_name}_positions_fingerprint_mismatch"
+            )
+    if snapshot["authority_checksum"] != pnl["authority_checksum"]:
+        raise RuntimeError("ashare_local_account_authority_checksum_mismatch")
     positions: list[dict[str, Any]] = []
     for symbol in sorted(set(lot_positions) | set(pnl_positions)):
         lots = (
@@ -2359,7 +2457,7 @@ def _ashare_authoritative_account_view(
     cash_available = _safe_float(snapshot.get("cash_available"), -1.0)
     if cash_available < 0:
         raise RuntimeError("ashare_local_account_cash_unavailable")
-    return {
+    view = {
         "account": account_name,
         "capital_cny": 50_000.0,
         "cash_available": round(cash_available, 2),
@@ -2367,8 +2465,60 @@ def _ashare_authoritative_account_view(
         "source": "server_local_sim_ledger",
         "trade_date": _compact_date_key(trade_date),
         **expected_authority,
+        "authority_id": snapshot["authority_id"],
+        "authority_checksum": snapshot["authority_checksum"],
+        "position_count": expected_count,
+        "positions_fingerprint": expected_fingerprint,
+        "position_source_status": "ready",
         "real_trading_enabled": False,
     }
+    return view
+
+
+def _ashare_position_sources_from_account(
+    account_obj: Any,
+    local_account_view: dict[str, Any],
+) -> dict[str, Any]:
+    """Preserve only source-owned canonical envelopes for reconciliation."""
+
+    raw_account = account_obj if isinstance(account_obj, dict) else {}
+    adapter_source: dict[str, Any] = {
+        "source": str(raw_account.get("source") or "ashare_adapter_position_snapshot"),
+        "position_source_status": raw_account.get("position_source_status"),
+        "positions": raw_account.get("positions")
+        if "positions" in raw_account
+        else None,
+    }
+    for key in (
+        "authority_id",
+        "authority_generation",
+        "execution_lineage_id",
+        "authority_checksum",
+        "trade_date",
+        "position_count",
+        "positions_fingerprint",
+    ):
+        if key in raw_account:
+            adapter_source[key] = raw_account[key]
+    sources: dict[str, Any] = {
+        "server_local": dict(local_account_view),
+        "strategy_adapter": adapter_source,
+    }
+    if "strategy_positions" in raw_account:
+        strategy_envelope = raw_account.get("strategy_position_envelope")
+        sources["strategy_positions"] = (
+            dict(strategy_envelope)
+            if isinstance(strategy_envelope, dict)
+            else {
+                "source": str(
+                    raw_account.get("strategy_position_source")
+                    or "ashare_adapter_strategy_positions"
+                ),
+                "position_source_status": "blocked",
+                "positions": raw_account.get("strategy_positions"),
+            }
+        )
+    return sources
 
 
 def _strict_finite_number(value: Any) -> float | None:
@@ -2534,6 +2684,228 @@ def _validate_ashare_market_capital_state(
     return validated, (
         "approved_drawdown_tightened" if validated["drawdown_tightened"] else "approved"
     )
+
+
+_ASHARE_NEW_RISK_PAUSE_REASONS = frozenset(
+    {
+        "ashare_capital_daily_loss_pause",
+        "ashare_capital_consecutive_loss_pause",
+        "ashare_capital_drawdown_halt",
+    }
+)
+
+
+def _validate_ashare_position_capital_state(
+    state: Any,
+    trade_date: str,
+) -> tuple[dict[str, Any] | None, str]:
+    """Keep structurally valid capital state available to position authority.
+
+    The legacy capital validator intentionally returns ``None`` for the three
+    policy states that pause *new* risk.  Those states occur only after every
+    authority, reconciliation, date, policy, and numeric contract check has
+    passed, so position replay remains valid while buy/open/add eligibility is
+    false.  Every other validation failure remains a full fail-closed block.
+    """
+
+    validated, reason = _validate_ashare_market_capital_state(state, trade_date)
+    if validated is not None:
+        result = dict(validated)
+        result["new_risk_allowed"] = True
+        result["new_risk_reason"] = ""
+        return result, reason
+    if reason not in _ASHARE_NEW_RISK_PAUSE_REASONS or not isinstance(state, dict):
+        return None, reason
+
+    policy = market_capital.MarketPolicy.load("ashare")
+    drawdown = max(
+        0.0,
+        _safe_float(state.get("high_water_equity"), 0.0)
+        - _safe_float(state.get("equity_cny"), 0.0),
+    )
+    result = dict(state)
+    result["drawdown_cny"] = round(drawdown, 2)
+    result["drawdown_tightened"] = (
+        drawdown >= policy.initial_equity_cny * policy.drawdown_tighten_pct
+    )
+    result["new_risk_allowed"] = False
+    result["new_risk_reason"] = reason
+    result["risk_multiplier"] = 0.0
+    return result, reason
+
+
+def _resolve_ashare_position_authority_for_entry(
+    market_adapter: MarketAdapter,
+    date: str,
+    *,
+    errors: list[dict[str, Any]],
+    stage_calls: list[str],
+    stage_prefix: str,
+    capital_layer: str,
+) -> dict[str, Any]:
+    """Resolve every A-share position source before an entry may call risk."""
+
+    before_stage = f"{stage_prefix}.market_capital_before"
+    raw_before = _safe_stage(
+        before_stage,
+        errors,
+        lambda: market_capital.load_market_capital_provider_state("ashare", date),
+        default=None,
+        capital_layer=capital_layer,
+    )
+    stage_calls.append(before_stage)
+    validated_before, validation_reason = _validate_ashare_position_capital_state(
+        raw_before, date
+    )
+    authority_before = build_ashare_capital_position_authority_view(raw_before, date)
+    if validated_before is None or authority_before.get("status") != "verified":
+        reason = (
+            str(
+                validation_reason
+                if validated_before is None
+                else authority_before.get("reason")
+            )
+            or "ashare_capital_state_invalid"
+        )
+        return {
+            **authority_before,
+            "status": "blocked",
+            "reason": reason,
+            "source_audit": [
+                ashare_capital_state_audit(
+                    raw_before,
+                    authority_before,
+                    source_name="market_capital_before",
+                )
+            ],
+            "mismatches": [],
+            "positions": [],
+        }
+
+    getter = getattr(market_adapter, "get_sim_account", None)
+    account_stage = f"{stage_prefix}.adapter_position_source"
+    account_obj = _safe_stage(
+        account_stage,
+        errors,
+        (
+            lambda: (
+                _load_sim_account_for_trade_date(
+                    getter, date, position_authority=authority_before
+                )
+                if callable(getter)
+                else {"account": "ashare_sim", "position_source_status": "blocked"}
+            )
+        ),
+        default={
+            "account": "ashare_sim",
+            "positions": None,
+            "position_source_status": "blocked",
+        },
+        capital_layer=capital_layer,
+    )
+    stage_calls.append(account_stage)
+    if _account_name(account_obj, "ashare_sim") != "ashare_sim":
+        return {
+            **authority_before,
+            "status": "blocked",
+            "reason": CAPITAL_POSITION_SOURCE_MISMATCH,
+            "source_audit": [
+                ashare_capital_state_audit(
+                    raw_before,
+                    authority_before,
+                    source_name="market_capital_before",
+                )
+            ],
+            "mismatches": [
+                {
+                    "source_name": "strategy_adapter",
+                    "fields": ["account_identity"],
+                    "source_sha256": canonical_sha256(account_obj),
+                    "execution_lineage_id": "",
+                }
+            ],
+            "positions": [],
+        }
+
+    local_stage = f"{stage_prefix}.server_local_position_source"
+    local_view = _safe_stage(
+        local_stage,
+        errors,
+        lambda: _ashare_authoritative_account_view(
+            account_obj, date, position_authority=authority_before
+        ),
+        default={
+            "account": "ashare_sim",
+            "source": "server_local_sim_ledger_unavailable",
+            "position_source_status": "blocked",
+            "positions": None,
+            "trade_date": _compact_date_key(date),
+            "real_trading_enabled": False,
+        },
+        capital_layer=capital_layer,
+    )
+    stage_calls.append(local_stage)
+    sources = _ashare_position_sources_from_account(account_obj, local_view)
+
+    after_stage = f"{stage_prefix}.market_capital_after"
+    raw_after = _safe_stage(
+        after_stage,
+        errors,
+        lambda: market_capital.load_market_capital_provider_state("ashare", date),
+        default=None,
+        capital_layer=capital_layer,
+    )
+    stage_calls.append(after_stage)
+    final_validated, final_reason = _validate_ashare_position_capital_state(
+        raw_after, date
+    )
+    result = reconcile_ashare_position_sources(
+        raw_before,
+        date,
+        sources=sources,
+        preferred_source="server_local",
+        final_capital_state=raw_after,
+    )
+    if final_validated is None and result.get("status") == "verified":
+        return {
+            **result,
+            "status": "blocked",
+            "reason": CAPITAL_POSITION_SOURCE_MISMATCH,
+            "positions": [],
+            "mismatches": [
+                {
+                    "source_name": "market_capital_after",
+                    "fields": ["capital_state_validation"],
+                    "source_sha256": canonical_sha256(raw_after),
+                    "execution_lineage_id": str(
+                        (raw_after or {}).get("execution_lineage_id")
+                        if isinstance(raw_after, dict)
+                        else ""
+                    ),
+                    "detail": final_reason,
+                }
+            ],
+        }
+    if result.get("status") == "verified":
+        positions_market_value = max(
+            0.0,
+            _safe_float(final_validated.get("positions_market_value_cny"), 0.0),
+        )
+        result = {
+            **result,
+            "capital_cash_available": max(
+                0.0,
+                min(
+                    _safe_float(final_validated.get("cash_balance_cny"), 0.0),
+                    _safe_float(final_validated.get("available_to_reserve_cny"), 0.0),
+                ),
+            ),
+            "capital_positions_market_value_cny": positions_market_value,
+            "capital_total_exposure": min(1.0, positions_market_value / 50_000.0),
+            "new_risk_allowed": bool(final_validated.get("new_risk_allowed")),
+            "new_risk_reason": str(final_validated.get("new_risk_reason") or ""),
+        }
+    return result
 
 
 def _ashare_price_limit_pct(order: dict[str, Any]) -> float:
@@ -3954,6 +4326,35 @@ def run_shadow_loop(
         default=f"{market}_shadow",
     )
     config = _strategy_config(market_adapter)
+    is_ashare = str(market).lower() == "ashare"
+    shadow_position_authority: dict[str, Any] = {
+        "status": "not_applicable",
+        "reason": "non_ashare_market",
+        "source_audit": [],
+        "mismatches": [],
+        "positions": [],
+    }
+    if is_ashare:
+        shadow_position_authority = _resolve_ashare_position_authority_for_entry(
+            market_adapter,
+            date,
+            errors=errors,
+            stage_calls=stage_calls,
+            stage_prefix="capital.ashare_shadow_position_authority",
+            capital_layer="shadow",
+        )
+    shadow_position_authority_reason = str(
+        shadow_position_authority.get("reason")
+        or "ashare_capital_position_authority_invalid"
+    )
+    shadow_new_risk_allowed = not is_ashare or (
+        shadow_position_authority.get("status") == "verified"
+        and shadow_position_authority.get("new_risk_allowed") is True
+    )
+    shadow_new_risk_reason = str(
+        shadow_position_authority.get("new_risk_reason")
+        or shadow_position_authority_reason
+    )
     capital = _safe_float(
         config.get("shadow_capital"), _default_capital_for_market(market)
     )
@@ -4112,17 +4513,59 @@ def run_shadow_loop(
             "turnover_wan": _safe_float(score.get("turnover_wan"), 0.0),
             "capital_layer": "shadow",
         }
-        risk = _safe_stage(
-            "risk.pre_trade_check",
-            errors,
-            lambda: deps.risk_check(risk_order, {"positions": []}),
-            default={
+        if is_ashare and shadow_position_authority.get("status") != "verified":
+            risk = {
                 "approved": False,
                 "adjusted_weight": 0.0,
-                "reasons": ["degraded"],
-            },
-        )
-        stage_calls.append("risk.pre_trade_check")
+                "reasons": [shadow_position_authority_reason],
+                "reason_code": shadow_position_authority_reason,
+                "position_authority_status": "blocked",
+                "position_source_audit": shadow_position_authority.get(
+                    "source_audit", []
+                ),
+                "position_source_mismatches": shadow_position_authority.get(
+                    "mismatches", []
+                ),
+            }
+            stage_calls.append("capital.ashare_shadow_position_authority_gate")
+        elif is_ashare and not shadow_new_risk_allowed:
+            risk = {
+                "approved": False,
+                "adjusted_weight": 0.0,
+                "reasons": [shadow_new_risk_reason],
+                "reason_code": shadow_new_risk_reason,
+                "position_authority_status": "verified",
+                "new_risk_allowed": False,
+                "position_source_audit": shadow_position_authority.get(
+                    "source_audit", []
+                ),
+            }
+            stage_calls.append("capital.ashare_shadow_new_risk_gate")
+        else:
+            risk = _safe_stage(
+                "risk.pre_trade_check",
+                errors,
+                lambda: deps.risk_check(
+                    risk_order,
+                    {
+                        "positions": shadow_position_authority.get("positions", [])
+                        if is_ashare
+                        else [],
+                        "total_exposure": _safe_float(
+                            shadow_position_authority.get("capital_total_exposure"),
+                            0.0,
+                        )
+                        if is_ashare
+                        else 0.0,
+                    },
+                ),
+                default={
+                    "approved": False,
+                    "adjusted_weight": 0.0,
+                    "reasons": ["degraded"],
+                },
+            )
+            stage_calls.append("risk.pre_trade_check")
         if not isinstance(risk, dict):
             risk = {
                 "approved": False,
@@ -4303,7 +4746,12 @@ def run_shadow_loop(
         "date": date,
         "capital_layer": "shadow",
         "account": account,
-        "state": "degraded" if errors else "ok",
+        "state": (
+            "degraded"
+            if errors
+            or (is_ashare and shadow_position_authority.get("status") != "verified")
+            else "ok"
+        ),
         "stage_calls": stage_calls,
         "universe_count": len(universe),
         "candidate_count": len(candidates),
@@ -4319,6 +4767,8 @@ def run_shadow_loop(
         "errors": errors,
         "review": review,
         "condition_lifecycle": condition_lifecycle,
+        "ashare_position_authority": shadow_position_authority,
+        "ashare_position_authority_reason": shadow_position_authority_reason,
         "generated_at": _now_iso(),
     }
 
@@ -4564,34 +5014,44 @@ def run_sim_loop(
         default="unknown",
         capital_layer=capital_layer,
     )
-    sim_account_getter = getattr(market_adapter, "get_sim_account", None)
-    if callable(sim_account_getter):
-        account_obj = _safe_stage(
-            "adapter.get_sim_account",
-            errors,
-            sim_account_getter,
-            default={"account": f"{market}_simulated"},
-            capital_layer=capital_layer,
-        )
-    else:
-        account_obj = _safe_stage(
-            "adapter.get_shadow_account",
-            errors,
-            market_adapter.get_shadow_account,
-            default=f"{market}_simulated",
-            capital_layer=capital_layer,
-        )
     config = _strategy_config(market_adapter)
     sample_journal_path = _ashare_sample_journal_path(signals_dir)
-    account = _account_name(account_obj, f"{market}_simulated")
-    adapter_positions = _account_positions(account_obj, config)
-    adapter_capital = _account_capital(account_obj, config)
-    adapter_cash_available = _account_available_cash(
-        account_obj,
-        config,
-        adapter_capital,
-        adapter_positions,
-    )
+    is_ashare = str(market).lower() == "ashare"
+    sim_account_getter = getattr(market_adapter, "get_sim_account", None)
+    if is_ashare:
+        # The adapter may read stale/legacy position files.  Do not invoke it
+        # until the market-capital authority has passed its own strict gate.
+        account_obj: Any = {"account": "ashare_sim"}
+        account = "ashare_sim"
+        adapter_positions: list[dict[str, Any]] = []
+        adapter_capital = 50_000.0
+        adapter_cash_available = 0.0
+    else:
+        if callable(sim_account_getter):
+            account_obj = _safe_stage(
+                "adapter.get_sim_account",
+                errors,
+                sim_account_getter,
+                default={"account": f"{market}_simulated"},
+                capital_layer=capital_layer,
+            )
+        else:
+            account_obj = _safe_stage(
+                "adapter.get_shadow_account",
+                errors,
+                market_adapter.get_shadow_account,
+                default=f"{market}_simulated",
+                capital_layer=capital_layer,
+            )
+        account = _account_name(account_obj, f"{market}_simulated")
+        adapter_positions = _account_positions(account_obj, config)
+        adapter_capital = _account_capital(account_obj, config)
+        adapter_cash_available = _account_available_cash(
+            account_obj,
+            config,
+            adapter_capital,
+            adapter_positions,
+        )
     existing_positions = adapter_positions
     capital = adapter_capital
     account_cash_available = adapter_cash_available
@@ -4612,6 +5072,16 @@ def run_sim_loop(
     }
     ashare_capital_state: dict[str, Any] | None = None
     ashare_capital_state_reason = "non_ashare_market"
+    ashare_position_authority: dict[str, Any] = {
+        "status": "not_applicable",
+        "reason": "non_ashare_market",
+        "source_audit": [],
+        "mismatches": [],
+        "positions": [],
+    }
+    ashare_position_authority_reason = "non_ashare_market"
+    ashare_new_risk_allowed = not is_ashare
+    ashare_new_risk_reason = "non_ashare_market"
     local_exploration_state: dict[str, Any] = {
         "new_position_count": 0,
         "open_exposure_cny": 0.0,
@@ -4619,20 +5089,11 @@ def run_sim_loop(
         "daily_loss_cny": 0.0,
         "real_trading_enabled": False,
     }
-    if str(market).lower() == "ashare":
-        if account != "ashare_sim":
-            errors.append(
-                {
-                    "stage": "capital.ashare_account_authority",
-                    "status": "blocked",
-                    "error": "ashare_authoritative_account_must_be_ashare_sim",
-                    "capital_layer": capital_layer,
-                }
-            )
+    if is_ashare:
         ashare_capital_outbox = _safe_stage(
             "capital.ashare_market_outbox_replay",
             errors,
-            lambda: _dispatch_ashare_market_outbox(account),
+            lambda: _dispatch_ashare_market_outbox("ashare_sim"),
             default={
                 "status": "outbox_unavailable",
                 "action_count": 0,
@@ -4641,52 +5102,331 @@ def run_sim_loop(
             capital_layer=capital_layer,
         )
         stage_calls.append("capital.ashare_market_outbox_replay")
-        authoritative_account_view = _safe_stage(
-            "capital.ashare_authoritative_account",
+        raw_ashare_capital_state = _safe_stage(
+            "capital.ashare_market_state_before_positions",
             errors,
-            lambda: _ashare_authoritative_account_view(account_obj, date),
-            default={
+            lambda: market_capital.load_market_capital_provider_state("ashare", date),
+            default=None,
+            capital_layer=capital_layer,
+        )
+        stage_calls.append("capital.ashare_market_state_before_positions")
+        ashare_capital_state, ashare_capital_state_reason = (
+            _validate_ashare_position_capital_state(raw_ashare_capital_state, date)
+        )
+        authority_before = build_ashare_capital_position_authority_view(
+            raw_ashare_capital_state, date
+        )
+        authority_status = authority_before.get("status")
+        if ashare_capital_state is None or authority_status != "verified":
+            capital_gate_reason = (
+                str(
+                    authority_before.get("reason")
+                    if authority_status != "verified"
+                    else ashare_capital_state_reason
+                )
+                or "ashare_capital_state_invalid"
+            )
+            ashare_capital_state = None
+            ashare_capital_state_reason = capital_gate_reason
+            ashare_position_authority = {
+                **authority_before,
+                "status": "blocked",
+                "reason": capital_gate_reason,
+                "source_audit": [
+                    ashare_capital_state_audit(
+                        raw_ashare_capital_state,
+                        authority_before,
+                        source_name="market_capital_before",
+                    )
+                ],
+                "mismatches": [],
+                "positions": [],
+            }
+        else:
+            ashare_position_authority = {
+                **authority_before,
+                "source_audit": [
+                    ashare_capital_state_audit(
+                        raw_ashare_capital_state,
+                        authority_before,
+                        source_name="market_capital_before",
+                    )
+                ],
+                "mismatches": [],
+                "positions": [],
+            }
+
+        if ashare_capital_state is not None:
+            if callable(sim_account_getter):
+                account_obj = _safe_stage(
+                    "adapter.get_sim_account_after_capital_gate",
+                    errors,
+                    lambda: _load_sim_account_for_trade_date(
+                        sim_account_getter,
+                        date,
+                        position_authority=authority_before,
+                    ),
+                    default={
+                        "account": "ashare_sim",
+                        "positions": [],
+                        "position_source_status": "blocked",
+                    },
+                    capital_layer=capital_layer,
+                )
+            else:
+                account_obj = _safe_stage(
+                    "adapter.get_shadow_account_after_capital_gate",
+                    errors,
+                    market_adapter.get_shadow_account,
+                    default={
+                        "account": "ashare_sim",
+                        "positions": [],
+                        "position_source_status": "blocked",
+                    },
+                    capital_layer=capital_layer,
+                )
+            account = _account_name(account_obj, "ashare_sim")
+            adapter_positions = _account_positions(account_obj, config)
+            adapter_capital = _account_capital(account_obj, config)
+            adapter_cash_available = _account_available_cash(
+                account_obj,
+                config,
+                adapter_capital,
+                adapter_positions,
+            )
+            if account != "ashare_sim":
+                ashare_position_authority = {
+                    **authority_before,
+                    "status": "blocked",
+                    "reason": "ashare_authoritative_account_must_be_ashare_sim",
+                    "source_audit": ashare_position_authority.get("source_audit", []),
+                    "mismatches": [],
+                    "positions": [],
+                }
+                errors.append(
+                    {
+                        "stage": "capital.ashare_account_authority",
+                        "status": "blocked",
+                        "error": "ashare_authoritative_account_must_be_ashare_sim",
+                        "capital_layer": capital_layer,
+                    }
+                )
+            else:
+                local_account_view = _safe_stage(
+                    "capital.ashare_authoritative_account",
+                    errors,
+                    lambda: _ashare_authoritative_account_view(
+                        account_obj, date, position_authority=authority_before
+                    ),
+                    default={
+                        "account": account,
+                        "capital_cny": 50_000.0,
+                        "cash_available": 0.0,
+                        "positions": [],
+                        "source": "server_local_sim_ledger_unavailable",
+                        "trade_date": _compact_date_key(date),
+                        "position_source_status": "blocked",
+                        "real_trading_enabled": False,
+                    },
+                    capital_layer=capital_layer,
+                )
+                stage_calls.append("capital.ashare_authoritative_account")
+                position_sources = _ashare_position_sources_from_account(
+                    account_obj, local_account_view
+                )
+
+                raw_ashare_capital_state_after = _safe_stage(
+                    "capital.ashare_market_state_after_positions",
+                    errors,
+                    lambda: market_capital.load_market_capital_provider_state(
+                        "ashare", date
+                    ),
+                    default=None,
+                    capital_layer=capital_layer,
+                )
+                stage_calls.append("capital.ashare_market_state_after_positions")
+                final_validated_state, final_state_reason = (
+                    _validate_ashare_position_capital_state(
+                        raw_ashare_capital_state_after, date
+                    )
+                )
+                ashare_position_authority = reconcile_ashare_position_sources(
+                    raw_ashare_capital_state,
+                    date,
+                    sources=position_sources,
+                    preferred_source="server_local",
+                    final_capital_state=raw_ashare_capital_state_after,
+                )
+                if (
+                    final_validated_state is None
+                    and ashare_position_authority.get("status") == "verified"
+                ):
+                    ashare_position_authority = {
+                        **ashare_position_authority,
+                        "status": "blocked",
+                        "reason": CAPITAL_POSITION_SOURCE_MISMATCH,
+                        "positions": [],
+                        "mismatches": [
+                            {
+                                "source_name": "market_capital_after",
+                                "fields": ["capital_state_validation"],
+                                "source_sha256": "",
+                                "execution_lineage_id": "",
+                                "detail": final_state_reason,
+                            }
+                        ],
+                    }
+                if ashare_position_authority.get("status") == "verified":
+                    ashare_capital_state = final_validated_state
+                    ashare_capital_state_reason = final_state_reason
+                    capital_cash_available = min(
+                        _safe_float(ashare_capital_state.get("cash_balance_cny"), 0.0),
+                        _safe_float(
+                            ashare_capital_state.get("available_to_reserve_cny"), 0.0
+                        ),
+                    )
+                    capital_positions_market_value = max(
+                        0.0,
+                        _safe_float(
+                            ashare_capital_state.get("positions_market_value_cny"),
+                            0.0,
+                        ),
+                    )
+                    ashare_position_authority = {
+                        **ashare_position_authority,
+                        "capital_cash_available": max(0.0, capital_cash_available),
+                        "capital_positions_market_value_cny": (
+                            capital_positions_market_value
+                        ),
+                        "capital_total_exposure": min(
+                            1.0, capital_positions_market_value / 50_000.0
+                        ),
+                        "new_risk_allowed": bool(
+                            ashare_capital_state.get("new_risk_allowed")
+                        ),
+                        "new_risk_reason": str(
+                            ashare_capital_state.get("new_risk_reason") or ""
+                        ),
+                    }
+                    authoritative_account_view = {
+                        **local_account_view,
+                        "reported_server_local_cash_available_cny": _safe_float(
+                            local_account_view.get("cash_available"), 0.0
+                        ),
+                        "cash_available": max(0.0, capital_cash_available),
+                        "positions": [
+                            dict(row)
+                            for row in ashare_position_authority.get("positions", [])
+                            if isinstance(row, dict)
+                        ],
+                        "position_authority_status": "verified",
+                        "position_count": ashare_position_authority.get(
+                            "position_count"
+                        ),
+                        "positions_fingerprint": ashare_position_authority.get(
+                            "positions_fingerprint"
+                        ),
+                        "capital_authority_checksum": ashare_position_authority.get(
+                            "authority_checksum"
+                        ),
+                        "authority_view_checksum": ashare_position_authority.get(
+                            "authority_view_checksum"
+                        ),
+                        "source_audit": ashare_position_authority.get(
+                            "source_audit", []
+                        ),
+                    }
+                else:
+                    authoritative_account_view = {
+                        "account": account,
+                        "capital_cny": 50_000.0,
+                        "cash_available": 0.0,
+                        "positions": [],
+                        "source": "market_capital_position_authority_blocked",
+                        "trade_date": _compact_date_key(date),
+                        "position_authority_status": "blocked",
+                        "position_authority_reason": ashare_position_authority.get(
+                            "reason"
+                        ),
+                        "source_audit": ashare_position_authority.get(
+                            "source_audit", []
+                        ),
+                        "position_source_mismatches": ashare_position_authority.get(
+                            "mismatches", []
+                        ),
+                        "real_trading_enabled": False,
+                    }
+
+        ashare_position_authority_reason = str(
+            ashare_position_authority.get("reason")
+            or ashare_capital_state_reason
+            or "ashare_capital_position_authority_invalid"
+        )
+        ashare_new_risk_allowed = bool(
+            ashare_position_authority.get("status") == "verified"
+            and isinstance(ashare_capital_state, dict)
+            and ashare_capital_state.get("new_risk_allowed") is True
+        )
+        ashare_new_risk_reason = (
+            str(
+                (ashare_capital_state or {}).get("new_risk_reason")
+                if isinstance(ashare_capital_state, dict)
+                else ""
+            )
+            or ashare_position_authority_reason
+        )
+        if ashare_position_authority.get("status") != "verified":
+            authoritative_account_view = {
                 "account": account,
                 "capital_cny": 50_000.0,
                 "cash_available": 0.0,
                 "positions": [],
-                "source": "server_local_sim_ledger_unavailable",
+                "source": "market_capital_position_authority_blocked",
                 "trade_date": _compact_date_key(date),
+                "position_authority_status": "blocked",
+                "position_authority_reason": ashare_position_authority_reason,
+                "source_audit": ashare_position_authority.get("source_audit", []),
+                "position_source_mismatches": ashare_position_authority.get(
+                    "mismatches", []
+                ),
                 "real_trading_enabled": False,
-            },
-            capital_layer=capital_layer,
-        )
-        stage_calls.append("capital.ashare_authoritative_account")
-        local_exploration_state = _safe_stage(
-            "capital.ashare_exploration_state",
-            errors,
-            lambda: local_sim_ledger.get_local_sim_exploration_state(
-                account,
-                trade_date=date,
-                starting_cash=50_000.0,
-            ),
-            default={
-                "new_position_count": 1,
-                "open_exposure_cny": 7_500.0,
-                "daily_realized_pnl_cny": -225.0,
-                "daily_loss_cny": 225.0,
-                "real_trading_enabled": False,
-                "status": "unavailable_fail_closed",
-            },
-            capital_layer=capital_layer,
-        )
-        stage_calls.append("capital.ashare_exploration_state")
+            }
+        if ashare_position_authority.get("status") == "verified":
+            local_exploration_state = _safe_stage(
+                "capital.ashare_exploration_state",
+                errors,
+                lambda: local_sim_ledger.get_local_sim_exploration_state(
+                    account,
+                    trade_date=date,
+                    starting_cash=50_000.0,
+                ),
+                default={
+                    "new_position_count": 1,
+                    "open_exposure_cny": 7_500.0,
+                    "daily_realized_pnl_cny": -225.0,
+                    "daily_loss_cny": 225.0,
+                    "real_trading_enabled": False,
+                    "status": "unavailable_fail_closed",
+                },
+                capital_layer=capital_layer,
+            )
+            stage_calls.append("capital.ashare_exploration_state")
         existing_positions = [
             dict(row)
-            for row in (authoritative_account_view.get("positions") or [])
+            for row in (ashare_position_authority.get("positions") or [])
             if isinstance(row, dict)
         ]
         capital = 50_000.0
-        account_cash_available = min(
-            50_000.0,
-            max(
-                0.0, _safe_float(authoritative_account_view.get("cash_available"), 0.0)
-            ),
+        account_cash_available = (
+            min(
+                50_000.0,
+                max(
+                    0.0,
+                    _safe_float(authoritative_account_view.get("cash_available"), 0.0),
+                ),
+            )
+            if ashare_position_authority.get("status") == "verified"
+            else 0.0
         )
         strategy_positions = existing_positions
         strategy_cash_available = account_cash_available
@@ -4789,22 +5529,6 @@ def run_sim_loop(
                 ),
             }
         )
-        raw_ashare_capital_state = _safe_stage(
-            "capital.ashare_market_state",
-            errors,
-            lambda: market_capital.load_market_capital_provider_state("ashare", date),
-            default=None,
-            capital_layer=capital_layer,
-        )
-        stage_calls.append("capital.ashare_market_state")
-        ashare_capital_state, ashare_capital_state_reason = (
-            _validate_ashare_market_capital_state(raw_ashare_capital_state, date)
-        )
-        if account != "ashare_sim":
-            ashare_capital_state = None
-            ashare_capital_state_reason = (
-                "ashare_authoritative_account_must_be_ashare_sim"
-            )
     method = str(config.get("portfolio_method", "conviction_weighted"))
     regime = str(config.get("regime", "unknown"))
     max_candidates = max(1, int(config.get("max_candidates", 20)))
@@ -4966,6 +5690,10 @@ def run_sim_loop(
         safety_blockers: list[str] = []
         if ashare_capital_state is None:
             safety_blockers.append(ashare_capital_state_reason)
+        if ashare_position_authority.get("status") != "verified":
+            safety_blockers.append(ashare_position_authority_reason)
+        if not ashare_new_risk_allowed:
+            safety_blockers.append(ashare_new_risk_reason)
         if _safe_float(authoritative_account_view.get("cash_available"), 0.0) <= 0.0:
             safety_blockers.append("authoritative_cash_unavailable")
         if capital_plan_sample_adjustment.get("sample_authority_reliable") is not True:
@@ -5022,8 +5750,13 @@ def run_sim_loop(
     }
     risk_portfolio = {
         "positions": list(strategy_positions),
-        "total_exposure": sum(
-            _safe_float(position.get("weight"), 0.0) for position in strategy_positions
+        "total_exposure": (
+            _safe_float(ashare_position_authority.get("capital_total_exposure"), 0.0)
+            if is_ashare
+            else sum(
+                _safe_float(position.get("weight"), 0.0)
+                for position in strategy_positions
+            )
         ),
         "capital_layer": capital_layer,
         "account_type": account_type,
@@ -5140,18 +5873,52 @@ def run_sim_loop(
             "capital_layer": capital_layer,
             "account_type": account_type,
         }
-        risk = _safe_stage(
-            "risk.pre_trade_check",
-            errors,
-            lambda: deps.risk_check(risk_order, risk_portfolio),
-            default={
+        position_authority_blocked = (
+            is_ashare and ashare_position_authority.get("status") != "verified"
+        )
+        if position_authority_blocked:
+            risk = {
                 "approved": False,
                 "adjusted_weight": 0.0,
-                "reasons": ["degraded"],
-            },
-            capital_layer=capital_layer,
-        )
-        stage_calls.append("risk.pre_trade_check")
+                "adjustments": [],
+                "reasons": [ashare_position_authority_reason],
+                "reason_code": ashare_position_authority_reason,
+                "position_authority_status": "blocked",
+                "position_source_audit": ashare_position_authority.get(
+                    "source_audit", []
+                ),
+                "position_source_mismatches": ashare_position_authority.get(
+                    "mismatches", []
+                ),
+            }
+            stage_calls.append("capital.ashare_position_authority_gate")
+        elif is_ashare and not ashare_new_risk_allowed:
+            risk = {
+                "approved": False,
+                "adjusted_weight": 0.0,
+                "adjustments": [],
+                "reasons": [ashare_new_risk_reason],
+                "reason_code": ashare_new_risk_reason,
+                "position_authority_status": "verified",
+                "new_risk_allowed": False,
+                "position_source_audit": ashare_position_authority.get(
+                    "source_audit", []
+                ),
+            }
+            stage_calls.append("capital.ashare_new_risk_gate")
+        else:
+            risk = _safe_stage(
+                "risk.pre_trade_check",
+                errors,
+                lambda: deps.risk_check(risk_order, risk_portfolio),
+                default={
+                    "approved": False,
+                    "adjusted_weight": 0.0,
+                    "reasons": ["degraded"],
+                },
+                capital_layer=capital_layer,
+            )
+            stage_calls.append("risk.pre_trade_check")
         if not isinstance(risk, dict):
             risk = {
                 "approved": False,
@@ -5189,13 +5956,23 @@ def run_sim_loop(
                     "approved": bool(risk.get("approved")),
                     "adjusted_weight": _safe_float(risk.get("adjusted_weight"), 0.0),
                     "reasons": risk.get("reasons", []),
+                    "reason_code": risk.get("reason_code", ""),
+                    "position_authority_status": risk.get(
+                        "position_authority_status", ""
+                    ),
                     "capital_layer": capital_layer,
                     "sample_intent": candidate_sample_intent,
                     **candidate_attribution,
                 }
             )
             candidate_decisions[symbol]["status"] = "dropped"
-            candidate_decisions[symbol]["drop_reason"] = "risk_rejected"
+            candidate_decisions[symbol]["drop_reason"] = (
+                ashare_position_authority_reason
+                if position_authority_blocked
+                else ashare_new_risk_reason
+                if is_ashare and not ashare_new_risk_allowed
+                else "risk_rejected"
+            )
             continue
         candidate_decisions[symbol]["status"] = "risk_approved"
         orders_for_portfolio.append(
@@ -5302,114 +6079,182 @@ def run_sim_loop(
         ),
         reverse=True,
     )
-    capital_plan = _ashare_dynamic_capital_plan(
-        market=market,
-        date=date,
-        capital=capital,
-        existing_positions=strategy_positions,
-        available_cash=strategy_cash_available,
-        orders=orders_for_portfolio,
-        scores_by_symbol=scores_by_symbol,
-        skipped_candidates=skipped_candidates,
-        risk_rejections=risk_rejections,
-        sample_adjustment=capital_plan_sample_adjustment,
+    position_gate_blocked = (
+        is_ashare and ashare_position_authority.get("status") != "verified"
     )
-    if capital_plan_sample_adjustment:
-        capital_plan["sample_adjustment"] = capital_plan_sample_adjustment
-    if str(market).lower() == "ashare":
-        new_risk_block_reason = ""
-        if account != "ashare_sim":
-            new_risk_block_reason = "ashare_authoritative_account_must_be_ashare_sim"
-        elif ashare_capital_state is None:
-            new_risk_block_reason = ashare_capital_state_reason
-        if new_risk_block_reason:
-            capital_plan["max_new_positions"] = 0
-            capital_plan["position_budget_by_symbol"] = {}
-            capital_plan["capacity_reason"] = new_risk_block_reason
-            capital_plan["new_risk_allowed"] = False
-            capital_plan["risk_tightening_active"] = False
-        elif ashare_capital_state.get("drawdown_tightened") is True:
-            risk_multiplier = min(
-                1.0,
-                max(
-                    0.0,
-                    _safe_float(ashare_capital_state.get("risk_multiplier"), 0.0),
-                ),
+    if position_gate_blocked:
+        # Do not call dynamic planning, capacity, or rebalance with an unknown
+        # position set.  None is intentional: zero would fabricate empty risk.
+        capital_plan = {
+            "enabled": True,
+            "status": "blocked",
+            "reason": ashare_position_authority_reason,
+            "risk_mode": "authority_blocked",
+            "target_positions": None,
+            "existing_position_count": None,
+            "position_capacity": None,
+            "remaining_position_slots": None,
+            "max_new_positions": 0,
+            "position_budget_by_symbol": {},
+            "available_cash": 0.0,
+            "cash_reserve": 0.0,
+            "capacity_reason": ashare_position_authority_reason,
+            "new_risk_allowed": False,
+            "risk_tightening_active": False,
+            "reasons": [ashare_position_authority_reason],
+            "notes": ["position authority failed before ordinary capital planning"],
+            "source_audit": ashare_position_authority.get("source_audit", []),
+            "position_source_mismatches": ashare_position_authority.get(
+                "mismatches", []
+            ),
+        }
+        if capital_plan_sample_adjustment:
+            capital_plan["sample_adjustment"] = capital_plan_sample_adjustment
+        rebalance = {
+            "enabled": True,
+            "status": "blocked",
+            "reason": ashare_position_authority_reason,
+            "target_positions": None,
+            "existing_position_count": None,
+            "planned_sell_count": 0,
+            "sells": [],
+            "dynamic_thresholds": {},
+        }
+        planned_sell_symbols: set[str] = set()
+        base_position_capacity = 0
+        replacement_capacity = 0
+        position_capacity = 0
+        capacity_reason = ashare_position_authority_reason
+        stage_calls.append("capital.ashare_position_authority_plan_gate")
+    else:
+        capital_plan = _ashare_dynamic_capital_plan(
+            market=market,
+            date=date,
+            capital=capital,
+            existing_positions=strategy_positions,
+            available_cash=strategy_cash_available,
+            orders=orders_for_portfolio,
+            scores_by_symbol=scores_by_symbol,
+            skipped_candidates=skipped_candidates,
+            risk_rejections=risk_rejections,
+            sample_adjustment=capital_plan_sample_adjustment,
+        )
+        if is_ashare:
+            capital_plan["cash_source"] = "market_capital_authority"
+            capital_plan["capital_authority_checksum"] = ashare_position_authority.get(
+                "authority_checksum"
             )
-            budgets = capital_plan.get("position_budget_by_symbol")
-            if isinstance(budgets, dict):
-                capital_plan["position_budget_by_symbol"] = {
-                    str(symbol): round(
-                        max(0.0, _safe_float(value, 0.0)) * risk_multiplier,
-                        2,
-                    )
-                    for symbol, value in budgets.items()
-                }
-            capital_plan["max_new_positions"] = min(
-                1,
-                max(0, _safe_int(capital_plan.get("max_new_positions"), 0)),
-            )
-            capital_plan["new_risk_allowed"] = risk_multiplier > 0.0
-            capital_plan["risk_tightening_active"] = True
-            capital_plan["risk_multiplier"] = risk_multiplier
-            capital_plan["risk_tightening_reason"] = "ashare_drawdown_5_to_7pct_derisk"
-    stage_calls.append("portfolio.capital_plan")
-    rebalance = _ashare_rebalance_plan(
-        market=market,
-        date=date,
-        reader=reader,
-        existing_positions=strategy_positions,
-        capital_plan=capital_plan,
-        scores_by_symbol=scores_by_symbol,
-        max_portfolio_positions=max_portfolio_positions,
-        default_price=default_price,
-        capital=capital,
-        buy_candidates=ranked_orders_for_portfolio,
-    )
-    stage_calls.append("portfolio.rebalance_plan")
-    planned_sell_symbols = {
-        str(row.get("ts_code") or "")
-        for row in (rebalance.get("sells", []) or [])
-        if isinstance(row, dict)
-    }
-    base_position_capacity = _max_new_positions(
-        existing_positions, max_portfolio_positions
-    )
-    if str(market).lower() == "ashare":
+        if capital_plan_sample_adjustment:
+            capital_plan["sample_adjustment"] = capital_plan_sample_adjustment
+        if is_ashare and ashare_capital_state is not None:
+            if not ashare_new_risk_allowed:
+                reasons = [
+                    str(reason)
+                    for reason in (capital_plan.get("reasons") or [])
+                    if str(reason)
+                ]
+                if ashare_new_risk_reason not in reasons:
+                    reasons.append(ashare_new_risk_reason)
+                capital_plan.update(
+                    {
+                        "risk_mode": "new_risk_paused",
+                        "max_new_positions": 0,
+                        "position_budget_by_symbol": {},
+                        "capacity_reason": ashare_new_risk_reason,
+                        "new_risk_allowed": False,
+                        "risk_tightening_active": True,
+                        "risk_multiplier": 0.0,
+                        "risk_tightening_reason": ashare_new_risk_reason,
+                        "reasons": reasons,
+                    }
+                )
+            elif ashare_capital_state.get("drawdown_tightened") is True:
+                risk_multiplier = min(
+                    1.0,
+                    max(
+                        0.0,
+                        _safe_float(ashare_capital_state.get("risk_multiplier"), 0.0),
+                    ),
+                )
+                budgets = capital_plan.get("position_budget_by_symbol")
+                if isinstance(budgets, dict):
+                    capital_plan["position_budget_by_symbol"] = {
+                        str(symbol): round(
+                            max(0.0, _safe_float(value, 0.0)) * risk_multiplier,
+                            2,
+                        )
+                        for symbol, value in budgets.items()
+                    }
+                capital_plan["max_new_positions"] = min(
+                    1,
+                    max(0, _safe_int(capital_plan.get("max_new_positions"), 0)),
+                )
+                capital_plan["new_risk_allowed"] = risk_multiplier > 0.0
+                capital_plan["risk_tightening_active"] = True
+                capital_plan["risk_multiplier"] = risk_multiplier
+                capital_plan["risk_tightening_reason"] = (
+                    "ashare_drawdown_5_to_7pct_derisk"
+                )
+        stage_calls.append("portfolio.capital_plan")
+        rebalance = _ashare_rebalance_plan(
+            market=market,
+            date=date,
+            reader=reader,
+            existing_positions=strategy_positions,
+            capital_plan=capital_plan,
+            scores_by_symbol=scores_by_symbol,
+            max_portfolio_positions=max_portfolio_positions,
+            default_price=default_price,
+            capital=capital,
+            buy_candidates=ranked_orders_for_portfolio,
+        )
+        stage_calls.append("portfolio.rebalance_plan")
+        planned_sell_symbols = {
+            str(row.get("ts_code") or "")
+            for row in (rebalance.get("sells", []) or [])
+            if isinstance(row, dict)
+        }
         base_position_capacity = _max_new_positions(
-            strategy_positions, max_portfolio_positions
+            existing_positions, max_portfolio_positions
         )
-    if capital_plan.get("enabled"):
-        base_position_capacity = min(
-            base_position_capacity, _safe_int(capital_plan.get("max_new_positions"), 0)
+        if is_ashare:
+            base_position_capacity = _max_new_positions(
+                strategy_positions, max_portfolio_positions
+            )
+        if capital_plan.get("enabled"):
+            base_position_capacity = min(
+                base_position_capacity,
+                _safe_int(capital_plan.get("max_new_positions"), 0),
+            )
+        replacement_capacity = _ashare_post_sell_buy_capacity(
+            market=market,
+            existing_positions=strategy_positions,
+            capital_plan=capital_plan,
+            rebalance=rebalance,
+            max_portfolio_positions=max_portfolio_positions,
         )
-    replacement_capacity = _ashare_post_sell_buy_capacity(
-        market=market,
-        existing_positions=strategy_positions,
-        capital_plan=capital_plan,
-        rebalance=rebalance,
-        max_portfolio_positions=max_portfolio_positions,
-    )
-    position_capacity = max(base_position_capacity, replacement_capacity)
-    capacity_reason = str(capital_plan.get("capacity_reason") or "")
-    if not capacity_reason and position_capacity <= 0:
-        target_positions_for_reason = _safe_int(capital_plan.get("target_positions"), 0)
-        existing_for_reason = len(
-            strategy_positions
-            if str(market).lower() == "ashare"
-            else existing_positions
-        )
-        if (
-            target_positions_for_reason > 0
-            and existing_for_reason >= target_positions_for_reason
-        ):
-            capacity_reason = "target_positions_reached"
-        elif _safe_float(capital_plan.get("available_cash"), 0.0) <= _safe_float(
-            capital_plan.get("cash_reserve"), 0.0
-        ):
-            capacity_reason = "insufficient_investable_cash"
-        else:
-            capacity_reason = "capital_plan_capacity_zero"
+        if is_ashare and not ashare_new_risk_allowed:
+            replacement_capacity = 0
+        position_capacity = max(base_position_capacity, replacement_capacity)
+        capacity_reason = str(capital_plan.get("capacity_reason") or "")
+        if not capacity_reason and position_capacity <= 0:
+            target_positions_for_reason = _safe_int(
+                capital_plan.get("target_positions"), 0
+            )
+            existing_for_reason = len(
+                strategy_positions if is_ashare else existing_positions
+            )
+            if (
+                target_positions_for_reason > 0
+                and existing_for_reason >= target_positions_for_reason
+            ):
+                capacity_reason = "target_positions_reached"
+            elif _safe_float(capital_plan.get("available_cash"), 0.0) <= _safe_float(
+                capital_plan.get("cash_reserve"), 0.0
+            ):
+                capacity_reason = "insufficient_investable_cash"
+            else:
+                capacity_reason = "capital_plan_capacity_zero"
     allowed_buy_symbols = {
         str(order.get("ts_code") or "")
         for order in [
@@ -5439,14 +6284,15 @@ def run_sim_loop(
         for order in ranked_orders_for_portfolio
         if str(order.get("ts_code") or "") not in planned_sell_symbols
     ][:position_capacity]
-    capital_plan = _augment_ashare_replacement_budgets(
-        market=market,
-        capital_plan=capital_plan,
-        rebalance=rebalance,
-        orders_for_portfolio=orders_for_portfolio,
-        replacement_capacity=replacement_capacity,
-        capital=capital,
-    )
+    if not position_gate_blocked:
+        capital_plan = _augment_ashare_replacement_budgets(
+            market=market,
+            capital_plan=capital_plan,
+            rebalance=rebalance,
+            orders_for_portfolio=orders_for_portfolio,
+            replacement_capacity=replacement_capacity,
+            capital=capital,
+        )
 
     portfolio = _safe_stage(
         "portfolio.constructor",
@@ -5507,13 +6353,17 @@ def run_sim_loop(
         "risk_mode": capital_plan.get("risk_mode"),
         "target_positions": capital_plan.get("target_positions"),
         "max_new_positions": capital_plan.get("max_new_positions"),
-        "position_capacity": position_capacity,
-        "base_position_capacity": base_position_capacity,
-        "replacement_capacity": replacement_capacity,
-        "existing_position_count": len(
-            strategy_positions
-            if str(market).lower() == "ashare"
-            else existing_positions
+        "position_capacity": None if position_gate_blocked else position_capacity,
+        "base_position_capacity": (
+            None if position_gate_blocked else base_position_capacity
+        ),
+        "replacement_capacity": (
+            None if position_gate_blocked else replacement_capacity
+        ),
+        "existing_position_count": (
+            None
+            if position_gate_blocked
+            else len(strategy_positions if is_ashare else existing_positions)
         ),
         "capacity_reason": capacity_reason,
         "available_cash": round(strategy_cash_available, 2),
@@ -6090,18 +6940,31 @@ def run_sim_loop(
         "reason": "non_ashare_market",
     }
     if str(market).lower() == "ashare":
+        post_execution_position_authority = ashare_position_authority
+        position_change_count = filled_count + partial_count
+        if position_change_count > 0:
+            post_execution_position_authority = (
+                _resolve_ashare_position_authority_for_entry(
+                    market_adapter,
+                    date,
+                    errors=errors,
+                    stage_calls=stage_calls,
+                    stage_prefix="capital.ashare_post_execution_position_authority",
+                    capital_layer=capital_layer,
+                )
+            )
         post_execution_capital_plan_refresh = _safe_stage(
             "review.post_execution_capital_plan_refresh",
             errors,
             lambda: _write_ashare_post_execution_capital_plan_refresh(
-                adapter=market_adapter,
                 market=market,
                 date=date,
                 account=account,
                 capital_plan=capital_plan,
+                position_authority=post_execution_position_authority,
                 capital_layer=capital_layer,
                 account_type=account_type,
-                filled_count=filled_count,
+                position_change_count=position_change_count,
                 review_root=signals_dir.parent / "shared" / "review",
             ),
             default={"status": "degraded", "rows": 0},
@@ -6188,6 +7051,8 @@ def run_sim_loop(
         },
         "ashare_capital_state": ashare_capital_state,
         "ashare_capital_state_reason": ashare_capital_state_reason,
+        "ashare_position_authority": ashare_position_authority,
+        "ashare_position_authority_reason": ashare_position_authority_reason,
         "ashare_capital_outbox": ashare_capital_outbox,
         "sample_pipeline": sample_pipeline,
         "rebalance": rebalance,

@@ -12,6 +12,10 @@ from Ashare import adapter as ashare_adapter_module
 from Ashare.adapter import AshareAdapter
 from shared.accounting import trade_audit_trail
 import shared.capital as market_capital
+from shared.capital.ashare_position_authority import (
+    canonical_sha256,
+    normalize_ashare_positions,
+)
 from shared.execution import local_sim_ledger, shadow_broker, sim_executor_registry
 from shared.execution.execution_lineage import (
     ASHARE_AUTHORITY_GENERATION,
@@ -165,7 +169,61 @@ class StubReader:
         return [{"close": 9.8}, {"close": 10.0}, {"close": 10.2}]
 
 
-def _ashare_market_state(trade_date: str, **overrides: object) -> dict[str, object]:
+def _authority_position_evidence(
+    trade_date: str,
+    positions: list[dict[str, object]] | dict[str, object] | None = None,
+) -> dict[str, object]:
+    raw_positions: object = positions or []
+    normalized, _, reason = normalize_ashare_positions(raw_positions)
+    if normalized is None:
+        raise AssertionError(reason)
+    quantity_map = {str(row["ts_code"]): int(row["quantity"]) for row in normalized}
+    fingerprint = canonical_sha256(normalized)
+    checksum = canonical_sha256(
+        {
+            "authority_id": "ashare-capital-v1",
+            "authority_generation": 1,
+            "execution_lineage_id": "ashare-sim-fresh-20260712-v1",
+            "positions": normalized,
+            "trade_date": str(trade_date).replace("-", ""),
+        }
+    )
+    return {
+        "authority_id": "ashare-capital-v1",
+        "authority_generation": 1,
+        "execution_lineage_id": "ashare-sim-fresh-20260712-v1",
+        "authority_checksum": checksum,
+        "trade_date": str(trade_date).replace("-", ""),
+        "position_count": len(normalized),
+        "positions_fingerprint": fingerprint,
+        "positions_quantity_by_risk_unit": quantity_map,
+        "position_source_status": "ready",
+    }
+
+
+def _ashare_market_state(
+    trade_date: str,
+    *,
+    positions: list[dict[str, object]] | dict[str, object] | None = None,
+    **overrides: object,
+) -> dict[str, object]:
+    position_evidence = _authority_position_evidence(trade_date, positions)
+    normalized_positions, _, _ = normalize_ashare_positions(positions or [])
+    market_value = 0.0
+    raw_rows = positions if isinstance(positions, list) else []
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            continue
+        row_value = row.get("market_value")
+        if isinstance(row_value, (int, float)) and not isinstance(row_value, bool):
+            market_value += float(row_value)
+        else:
+            market_value += float(row.get("quantity") or 0) * float(
+                row.get("last_price") or row.get("avg_price") or 0
+            )
+    market_value = round(market_value, 2)
+    cash_balance = round(50_000.0 - market_value, 2)
+    event_checksum = str(position_evidence["authority_checksum"])
     state: dict[str, object] = {
         "source": "market_capital_ledger",
         "schema_version": "market-capital-snapshot.v2",
@@ -176,21 +234,27 @@ def _ashare_market_state(trade_date: str, **overrides: object) -> dict[str, obje
         "currency": "CNY",
         "initial_equity_cny": 50_000.0,
         "equity_cny": 50_000.0,
-        "cash_balance_cny": 50_000.0,
-        "positions_market_value_cny": 0.0,
+        "cash_balance_cny": cash_balance,
+        "positions_market_value_cny": market_value,
         "frozen_order_cash_cny": 0.0,
         "realized_pnl_cny": 0.0,
         "unrealized_pnl_cny": 0.0,
         "reserved_capital_cny": 0.0,
         "active_reservations_cny": 0.0,
-        "available_to_reserve_cny": 45_000.0,
+        "available_to_reserve_cny": max(
+            0.0, min(cash_balance, 45_000.0 - market_value)
+        ),
         "stock_gross_exposure_limit_cny": 45_000.0,
         "single_name_cap_cny": 7_500.0,
-        "capital_utilization_rate": 0.0,
+        "capital_utilization_rate": round(market_value / 50_000.0, 8),
         "reconciled": True,
         "fresh": True,
         "trade_date": str(trade_date).replace("-", ""),
         "event_id": f"MCAP-{str(trade_date).replace('-', '')}-RECONCILED",
+        "event_checksum": event_checksum,
+        "checksum_status": "valid",
+        "checksum_event_count": 2,
+        "checksum_last": event_checksum,
         "execution_lineage_id": "ashare-sim-fresh-20260712-v1",
         "daily_mtm_change": 0.0,
         "daily_realized_pnl": 0.0,
@@ -200,6 +264,11 @@ def _ashare_market_state(trade_date: str, **overrides: object) -> dict[str, obje
         "high_water_equity": 50_000.0,
         "max_drawdown": 3_500.0,
         "real_trading_enabled": False,
+        "positions_quantity_by_risk_unit": position_evidence[
+            "positions_quantity_by_risk_unit"
+        ],
+        "position_count": len(normalized_positions or []),
+        "positions_fingerprint": position_evidence["positions_fingerprint"],
     }
     state.update(overrides)
     return state
@@ -255,6 +324,7 @@ class MultiCandidateSimAdapter(StubSimAdapter):
         strategy_positions: list[dict[str, object]] | None = None,
         strategy_cash_available: float | None = None,
         sample_adjustment: dict[str, object] | None = None,
+        trade_date: str = "20260713",
     ) -> None:
         self.symbols = symbols
         self.max_candidates = max_candidates
@@ -265,6 +335,7 @@ class MultiCandidateSimAdapter(StubSimAdapter):
         self.strategy_positions = strategy_positions
         self.strategy_cash_available = strategy_cash_available
         self.sample_adjustment = sample_adjustment
+        self.trade_date = trade_date
 
     def get_universe(self, date: str) -> list[str]:
         return list(self.symbols)
@@ -284,15 +355,26 @@ class MultiCandidateSimAdapter(StubSimAdapter):
         }
 
     def get_sim_account(self) -> dict[str, object]:
+        envelope = _authority_position_evidence(self.trade_date, self.positions)
         payload: dict[str, object] = {
             "account": "ashare_sim",
             "sim_capital": 50_000.0,
             "positions": list(self.positions),
+            "source": "test_strategy_adapter",
+            **envelope,
         }
         if self.cash_available is not None:
             payload["cash_available"] = self.cash_available
         if self.strategy_positions is not None:
             payload["strategy_positions"] = list(self.strategy_positions)
+            strategy_evidence = _authority_position_evidence(
+                self.trade_date, self.strategy_positions
+            )
+            payload["strategy_position_envelope"] = {
+                "source": "test_strategy_position_snapshot",
+                "positions": list(self.strategy_positions),
+                **strategy_evidence,
+            }
         if self.strategy_cash_available is not None:
             payload["strategy_cash_available"] = self.strategy_cash_available
         if self.sample_adjustment is not None:
@@ -531,7 +613,7 @@ class SimLoopTest(unittest.TestCase):
         self.local_trade_lookup = self._local_trade_lookup_patcher.start()
         self.addCleanup(self._local_trade_lookup_patcher.stop)
 
-        def authoritative_account_view(account, trade_date):
+        def authoritative_account_view(account, trade_date, *, position_authority=None):
             payload = account if isinstance(account, dict) else {}
             positions = payload.get("strategy_positions")
             if not isinstance(positions, list):
@@ -543,7 +625,7 @@ class SimLoopTest(unittest.TestCase):
                 payload.get("cash_available", 50_000.0),
             )
             cash = min(50_000.0, max(0.0, float(raw_cash)))
-            return {
+            view = {
                 "account": str(payload.get("account") or "ashare_sim"),
                 "capital_cny": 50_000.0,
                 "cash_available": cash,
@@ -551,6 +633,8 @@ class SimLoopTest(unittest.TestCase):
                 "source": "test_server_local_authority",
                 "trade_date": str(trade_date).replace("-", ""),
             }
+            evidence = _authority_position_evidence(trade_date, positions)
+            return {**view, **evidence}
 
         self._authoritative_account_patcher = patch.object(
             orchestrator_module,
@@ -564,6 +648,16 @@ class SimLoopTest(unittest.TestCase):
     def _restore_sim_executors(self) -> None:
         sim_executor_registry._SIM_EXECUTORS.clear()
         sim_executor_registry._SIM_EXECUTORS.update(self._sim_executor_snapshot)
+
+    def _use_authority_positions(
+        self,
+        positions: list[dict[str, object]],
+        *,
+        trade_date: str = "20260713",
+    ) -> None:
+        self.master_state_loader.side_effect = lambda market, requested_date: (
+            _ashare_market_state(requested_date, positions=positions)
+        )
 
     def _deps(self) -> OrchestratorDeps:
         def score_stock(
@@ -942,6 +1036,31 @@ class SimLoopTest(unittest.TestCase):
             payload["market_capital_settlement"]["status"],
             "fill_committed",
         )
+        self.assertEqual(
+            result["post_execution_capital_plan_refresh"]["status"], "written"
+        )
+        for stage in (
+            "capital.ashare_post_execution_position_authority.market_capital_before",
+            "capital.ashare_post_execution_position_authority.adapter_position_source",
+            "capital.ashare_post_execution_position_authority.server_local_position_source",
+            "capital.ashare_post_execution_position_authority.market_capital_after",
+        ):
+            self.assertIn(stage, result["stage_calls"])
+        post_refresh_rows = [
+            json.loads(line)
+            for line in Path(result["post_execution_capital_plan_refresh"]["path"])
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(
+            post_refresh_rows[-1]["capital_plan"]["cash_source"],
+            "market_capital_authority_post_execution",
+        )
+        self.assertEqual(
+            post_refresh_rows[-1]["capital_plan"]["capital_authority_checksum"],
+            result["ashare_position_authority"]["authority_checksum"],
+        )
 
     def test_ashare_fill_commit_pending_preserves_observation_but_blocks_execution_eligibility(
         self,
@@ -1068,6 +1187,91 @@ class SimLoopTest(unittest.TestCase):
         self.assertTrue(settlement["reservation_retained"])
         self.assertFalse(settlement["terminal"])
         self.assertFalse(settled_receipt["execution_eligible"])
+
+        deps = self._multi_candidate_deps()
+        base_construct = deps.construct
+        base_execute = deps.execute_sim_order
+        self.assertIsNotNone(base_construct)
+        self.assertIsNotNone(base_execute)
+
+        def construct_partial_order(orders, capital, method, regime):
+            portfolio = base_construct(orders, capital, method, regime)
+            portfolio["positions"][0]["shares"] = 200
+            portfolio["positions"][0]["amount"] = 2_000.0
+            return portfolio
+
+        def execute_partial_order(order, account=None):
+            partial_receipt = base_execute(order, account)
+            backup = partial_receipt["raw_response"]["local_sim_backup"]
+            partial_receipt.update(
+                {
+                    "status": "partial",
+                    "filled_quantity": 100,
+                    "filled_qty": 100,
+                }
+            )
+            backup.update(
+                {
+                    "status": "partial",
+                    "quantity": 100,
+                    "filled_qty": 100,
+                    "net_amount": 1_010.0,
+                    "market_retained_gross_cny": 1_010.0,
+                    "partial_terminal": False,
+                }
+            )
+            return partial_receipt
+
+        def replay_partial_outbox():
+            executed_order = self.executed_orders[-1]
+            return {
+                "status": "replayed",
+                "pending_count": 0,
+                "action_count": 1,
+                "actions": [
+                    {
+                        "action": "fill_commit",
+                        "reservation_id": executed_order[
+                            "market_capital_reservation_id"
+                        ],
+                        "idempotency_key": executed_order["idempotency_key"],
+                        "status": "completed",
+                        "last_result": {
+                            "committed": True,
+                            "status": "committed",
+                            "reason": "fill_committed",
+                        },
+                    }
+                ],
+                "real_trading_enabled": False,
+            }
+
+        deps.construct = construct_partial_order
+        deps.execute_sim_order = execute_partial_order
+        self.market_outbox_replay.side_effect = replay_partial_outbox
+        authority_resolver = (
+            orchestrator_module._resolve_ashare_position_authority_for_entry
+        )
+        with patch.object(
+            orchestrator_module,
+            "_resolve_ashare_position_authority_for_entry",
+            wraps=authority_resolver,
+        ) as resolve_authority:
+            result = self._run_one_ashare_buy(
+                deps=deps,
+                signals_name="signals_partial_post_execution_authority",
+            )
+
+        self.assertEqual(result["filled_count"], 0, result)
+        self.assertEqual(result["partial_count"], 1, result)
+        self.assertEqual(resolve_authority.call_count, 1)
+        self.assertEqual(
+            result["post_execution_capital_plan_refresh"]["status"], "written"
+        )
+        self.assertIn(
+            "capital.ashare_post_execution_position_authority.market_capital_before",
+            result["stage_calls"],
+        )
 
     def test_five_percent_drawdown_derisks_but_still_allows_small_sim_sample(
         self,
@@ -1304,7 +1508,7 @@ class SimLoopTest(unittest.TestCase):
             "idempotent_reservation",
         )
 
-    def test_risk_reducing_ashare_sell_runs_when_market_state_is_unavailable(
+    def test_ashare_rebalance_does_not_read_positions_without_market_authority(
         self,
     ) -> None:
         self.master_state_loader.side_effect = lambda market, trade_date: None
@@ -1320,29 +1524,36 @@ class SimLoopTest(unittest.TestCase):
             }
         ]
 
-        result = run_sim_loop(
-            MultiCandidateSimAdapter(
-                ["AAA"],
-                max_candidates=1,
-                score_universe_limit=1,
-                max_portfolio_positions=3,
-                positions=positions,
-            ),
-            "20260713",
-            StubReader(),
-            deps=deps,
-            signals_dir=self.tmp_path / "signals_sell_without_master_state",
+        adapter = MultiCandidateSimAdapter(
+            ["AAA"],
+            max_candidates=1,
+            score_universe_limit=1,
+            max_portfolio_positions=3,
+            positions=positions,
         )
+        with patch.object(
+            adapter, "get_sim_account", wraps=adapter.get_sim_account
+        ) as account_loader:
+            result = run_sim_loop(
+                adapter,
+                "20260713",
+                StubReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / "signals_sell_without_master_state",
+            )
 
         sell_orders = [row for row in self.executed_orders if row["side"] == "sell"]
         buy_orders = [row for row in self.executed_orders if row["side"] == "buy"]
-        self.assertEqual([row["ts_code"] for row in sell_orders], ["000010.SZ"])
+        account_loader.assert_not_called()
+        self.assertEqual(sell_orders, [])
         self.assertEqual(buy_orders, [])
         self.assertEqual(self.master_reserver.call_count, 0)
         self.assertEqual(
             result["ashare_capital_state_reason"], "ashare_capital_unavailable"
         )
-        self.assertEqual(result["filled_count"], 1)
+        self.assertEqual(result["filled_count"], 0)
+        self.assertEqual(result["rebalance"]["status"], "blocked")
+        self.assertIsNone(result["capital_plan"]["existing_position_count"])
 
     def test_ashare_market_outbox_replays_release_and_realized_pnl_idempotently(
         self,
@@ -1443,23 +1654,34 @@ class SimLoopTest(unittest.TestCase):
     def test_authoritative_ashare_account_view_reads_local_ledger_not_adapter_balances(
         self,
     ) -> None:
+        source_positions = [
+            {
+                "ts_code": "600000.SH",
+                "quantity": 600,
+                "market_value": 6_480.0,
+                "last_price": 10.80,
+            }
+        ]
+        source_evidence = _authority_position_evidence("20260713", source_positions)
         with (
             patch.object(
                 local_sim_ledger,
                 "get_local_sim_account_snapshot",
                 return_value={
                     "status": "ready",
+                    "source": "test_local_snapshot",
                     "capital_authority_id": "ashare-capital-v1",
                     "authority_generation": 1,
                     "execution_lineage_id": "ashare-sim-fresh-20260712-v1",
                     "real_trading_enabled": False,
-                    "cash_available": 42_495.0,
+                    "cash_available": 43_520.0,
                     "positions": {
                         "600000.SH": {
-                            "quantity": 700,
-                            "sellable_quantity": 600,
+                            "quantity": 600,
+                            "sellable_quantity": 500,
                         }
                     },
+                    **source_evidence,
                 },
             ),
             patch.object(
@@ -1467,19 +1689,21 @@ class SimLoopTest(unittest.TestCase):
                 "get_local_sim_pnl",
                 return_value={
                     "status": "ready",
+                    "source": "test_local_pnl",
                     "capital_authority_id": "ashare-capital-v1",
                     "authority_generation": 1,
                     "execution_lineage_id": "ashare-sim-fresh-20260712-v1",
                     "real_trading_enabled": False,
                     "positions": {
                         "600000.SH": {
-                            "quantity": 700,
+                            "quantity": 600,
                             "avg_cost": 10.72,
                             "last_price": 10.80,
                             "mark_price": 10.80,
-                            "market_value": 7_560.0,
+                            "market_value": 6_480.0,
                         }
                     },
+                    **source_evidence,
                 },
             ),
         ):
@@ -1494,9 +1718,9 @@ class SimLoopTest(unittest.TestCase):
             )
 
         self.assertEqual(view["capital_cny"], 50_000.0)
-        self.assertEqual(view["cash_available"], 42_495.0)
+        self.assertEqual(view["cash_available"], 43_520.0)
         self.assertEqual([row["ts_code"] for row in view["positions"]], ["600000.SH"])
-        self.assertEqual(view["positions"][0]["sellable_quantity"], 600)
+        self.assertEqual(view["positions"][0]["sellable_quantity"], 500)
         self.assertEqual(view["source"], "server_local_sim_ledger")
         self.assertEqual(view["capital_authority_id"], "ashare-capital-v1")
         self.assertEqual(view["authority_generation"], 1)
@@ -2791,7 +3015,7 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["filled_count"], 0)
         self.assertEqual(self.executed_orders, [])
 
-    def test_real_adapter_opening_uses_missing_journal_debt_for_one_safe_exploration(
+    def test_real_adapter_missing_position_snapshot_blocks_exploration_risk(
         self,
     ) -> None:
         signals_dir = self.tmp_path / "signals_real_adapter_opening"
@@ -2890,9 +3114,13 @@ class SimLoopTest(unittest.TestCase):
             )
 
         self.assertIs(account["capital_plan_sample_adjustment"]["sample_debt"], True)
-        self.assertEqual(result["candidate_count"], 1)
-        self.assertEqual(result["filled_count"], 1, result)
-        self.assertEqual(self.executed_orders[0]["sample_intent"], "exploration")
+        self.assertEqual(result["candidate_count"], 0)
+        self.assertEqual(result["filled_count"], 0, result)
+        self.assertEqual(self.executed_orders, [])
+        self.assertEqual(
+            result["ashare_position_authority_reason"],
+            "capital_position_source_mismatch",
+        )
 
     def test_sample_debt_activates_safe_exploration_when_normal_candidate_has_no_order(
         self,
@@ -3309,7 +3537,7 @@ class SimLoopTest(unittest.TestCase):
         )
         self.assertEqual(self.executed_orders, [])
 
-    def test_run_sim_loop_uses_account_snapshot_cash_for_ashare_capital_plan(
+    def test_run_sim_loop_uses_market_capital_cash_for_ashare_capital_plan(
         self,
     ) -> None:
         deps = self._multi_candidate_deps()
@@ -3349,8 +3577,10 @@ class SimLoopTest(unittest.TestCase):
             signals_dir=self.tmp_path / "signals_cash_snapshot",
         )
 
-        self.assertEqual(result["capital_plan"]["available_cash"], 12000.0)
-        self.assertEqual(result["capital_plan"]["cash_source"], "account_snapshot")
+        self.assertEqual(result["capital_plan"]["available_cash"], 45_000.0)
+        self.assertEqual(
+            result["capital_plan"]["cash_source"], "market_capital_authority"
+        )
         self.assertEqual(result["capital_plan"]["max_new_positions"], 1)
         self.assertEqual(result["filled_count"], 1)
         self.assertLessEqual(
@@ -3362,7 +3592,7 @@ class SimLoopTest(unittest.TestCase):
             12_000.0,
         )
 
-    def test_run_sim_loop_excludes_validation_samples_from_ashare_capital_plan(
+    def test_run_sim_loop_uses_unified_positions_for_ashare_capital_plan(
         self,
     ) -> None:
         deps = self._multi_candidate_deps()
@@ -3394,7 +3624,7 @@ class SimLoopTest(unittest.TestCase):
                 "sellable_quantity": 100,
                 "avg_price": 10.0,
                 "last_price": 10.0,
-                "market_value": 10000.0,
+                "market_value": 1_000.0,
             },
             {
                 "ts_code": "000102.SZ",
@@ -3402,7 +3632,7 @@ class SimLoopTest(unittest.TestCase):
                 "sellable_quantity": 100,
                 "avg_price": 10.0,
                 "last_price": 10.0,
-                "market_value": 10000.0,
+                "market_value": 1_000.0,
             },
             {
                 "ts_code": "000103.SZ",
@@ -3410,9 +3640,10 @@ class SimLoopTest(unittest.TestCase):
                 "sellable_quantity": 100,
                 "avg_price": 10.0,
                 "last_price": 10.0,
-                "market_value": 10000.0,
+                "market_value": 1_000.0,
             },
         ]
+        self._use_authority_positions(validation_positions)
 
         result = run_sim_loop(
             MultiCandidateSimAdapter(
@@ -3421,9 +3652,9 @@ class SimLoopTest(unittest.TestCase):
                 score_universe_limit=3,
                 max_portfolio_positions=3,
                 positions=validation_positions,
-                cash_available=150000.0,  # Below strategy_cash to trigger cap, but enough for a buy
-                strategy_positions=[],
-                strategy_cash_available=200000.0,
+                cash_available=47_000.0,
+                strategy_positions=validation_positions,
+                strategy_cash_available=47_000.0,
                 sample_adjustment={
                     "view": "strategy_valid_samples_only",
                     "ignored_validation_sample_count": 3,
@@ -3436,10 +3667,8 @@ class SimLoopTest(unittest.TestCase):
             signals_dir=self.tmp_path / "signals_validation_capital_view",
         )
 
-        # Adapter balances and validation positions are non-authoritative; the
-        # single server-local account remains the only 50k planning source.
-        self.assertEqual(result["capital_plan"]["available_cash"], 50000.0)
-        self.assertEqual(result["capital_plan"]["existing_position_count"], 0)
+        self.assertEqual(result["capital_plan"]["available_cash"], 42_000.0)
+        self.assertEqual(result["capital_plan"]["existing_position_count"], 3)
         self.assertEqual(
             result["capital_plan"]["sample_adjustment"][
                 "ignored_validation_sample_count"
@@ -3451,10 +3680,10 @@ class SimLoopTest(unittest.TestCase):
             result["capital_plan"]["sample_adjustment"],
         )
         self.assertEqual(
-            result["capital_plan_decision"]["account_cash_available"], 50000.0
+            result["capital_plan_decision"]["account_cash_available"], 42_000.0
         )
         self.assertEqual(
-            result["adapter_account_diagnostics"]["cash_available"], 150000.0
+            result["adapter_account_diagnostics"]["cash_available"], 47_000.0
         )
         self.assertFalse(result["adapter_account_diagnostics"]["authoritative"])
         self.assertGreater(
@@ -3503,6 +3732,7 @@ class SimLoopTest(unittest.TestCase):
                 "market_value": 5_000.0,
             },
         ]
+        self._use_authority_positions(strategy_positions)
 
         result = run_sim_loop(
             MultiCandidateSimAdapter(
@@ -3728,6 +3958,7 @@ class SimLoopTest(unittest.TestCase):
             }
             for index in range(1, 9)
         ]
+        self._use_authority_positions(strategy_positions)
         decision = {
             "report_type": "ashare_evolution_decision_v2",
             "evidence_source": "sample_journal_kpi",
@@ -3839,6 +4070,7 @@ class SimLoopTest(unittest.TestCase):
             }
             for i in range(5)
         ]
+        self._use_authority_positions(positions)
 
         with self._approved_expansion_evidence("20260713"):
             result = run_sim_loop(
@@ -3910,6 +4142,7 @@ class SimLoopTest(unittest.TestCase):
                 "weight": 0.08,
             }
         ]
+        self._use_authority_positions(positions)
 
         result = run_sim_loop(
             MultiCandidateSimAdapter(
@@ -3932,7 +4165,85 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(sell_orders[0]["ts_code"], "000010.SZ")
         self.assertIn("stop_loss", sell_orders[0]["note"])
 
-    def test_run_sim_loop_merges_duplicate_lot_rows_into_one_sell_order(self) -> None:
+    def test_run_sim_loop_pause_preserves_sell_and_blocks_new_buy(self) -> None:
+        deps = self._multi_candidate_deps()
+
+        def score_universe(
+            date: str,
+            universe: list[str],
+            data_reader: object = None,
+            market: str = "ashare",
+        ) -> list[tuple[str, dict[str, object]]]:
+            return [
+                (
+                    symbol,
+                    {
+                        "combined": 0.86,
+                        "sector": "unit",
+                        "turnover_wan": 10_000,
+                        "capital_layer": "simulated",
+                    },
+                )
+                for symbol in universe
+            ]
+
+        deps.score_universe = score_universe
+        positions = [
+            {
+                "ts_code": "000010.SZ",
+                "quantity": 100,
+                "sellable_quantity": 100,
+                "avg_price": 12.0,
+                "last_price": 10.0,
+                "weight": 0.02,
+            }
+        ]
+        self.master_state_loader.side_effect = lambda market, requested_date: (
+            _ashare_market_state(
+                requested_date,
+                positions=positions,
+                daily_mtm_change=-1_500.0,
+            )
+        )
+
+        result = run_sim_loop(
+            MultiCandidateSimAdapter(
+                ["000020.SZ"],
+                max_candidates=1,
+                score_universe_limit=1,
+                max_portfolio_positions=3,
+                positions=positions,
+            ),
+            "20260713",
+            StubReader(),
+            deps=deps,
+            signals_dir=self.tmp_path / "signals_pause_preserves_sell",
+        )
+
+        sell_orders = [
+            order for order in self.executed_orders if order["side"] == "sell"
+        ]
+        buy_orders = [order for order in self.executed_orders if order["side"] == "buy"]
+        self.assertEqual(result["ashare_position_authority"]["status"], "verified")
+        self.assertEqual(result["ashare_position_authority"]["position_count"], 1)
+        self.assertFalse(result["ashare_capital_state"]["new_risk_allowed"])
+        self.assertEqual(
+            result["ashare_capital_state_reason"],
+            "ashare_capital_daily_loss_pause",
+        )
+        self.assertFalse(result["capital_plan"]["new_risk_allowed"])
+        self.assertEqual(result["capital_plan"]["max_new_positions"], 0)
+        self.assertEqual(result["rebalance"]["planned_sell_count"], 1)
+        self.assertEqual(len(sell_orders), 1)
+        self.assertEqual(sell_orders[0]["ts_code"], "000010.SZ")
+        self.assertIn("stop_loss", sell_orders[0]["note"])
+        self.assertEqual(buy_orders, [])
+        self.assertNotIn("risk", self.calls)
+        self.assertEqual(self.master_reserver.call_count, 0)
+
+    def test_run_sim_loop_uses_authority_aggregated_position_for_sell_order(
+        self,
+    ) -> None:
         deps = self._multi_candidate_deps()
 
         def score_universe(
@@ -3958,21 +4269,14 @@ class SimLoopTest(unittest.TestCase):
         positions = [
             {
                 "ts_code": "000010.SZ",
-                "quantity": 3000,
-                "sellable_quantity": 3000,
-                "avg_price": 12.0,
-                "last_price": 10.0,
-                "weight": 0.15,
-            },
-            {
-                "ts_code": "000010.SZ",
-                "quantity": 2000,
-                "sellable_quantity": 2000,
+                "quantity": 500,
+                "sellable_quantity": 500,
                 "avg_price": 12.0,
                 "last_price": 10.0,
                 "weight": 0.10,
             },
         ]
+        self._use_authority_positions(positions)
 
         result = run_sim_loop(
             MultiCandidateSimAdapter(
@@ -3994,7 +4298,7 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["rebalance"]["planned_sell_count"], 1)
         self.assertEqual(len(sell_orders), 1)
         self.assertEqual(sell_orders[0]["ts_code"], "000010.SZ")
-        self.assertEqual(sell_orders[0]["quantity"], 5000)
+        self.assertEqual(sell_orders[0]["quantity"], 500)
 
     def test_run_sim_loop_does_not_liquidate_normal_positions_without_exit_trigger(
         self,
@@ -4039,6 +4343,7 @@ class SimLoopTest(unittest.TestCase):
                 "weight": 0.08,
             },
         ]
+        self._use_authority_positions(positions)
 
         result = run_sim_loop(
             MultiCandidateSimAdapter(
@@ -4096,6 +4401,7 @@ class SimLoopTest(unittest.TestCase):
                 "weight": 0.08,
             }
         ]
+        self._use_authority_positions(positions)
 
         with self._approved_expansion_evidence("20260713"):
             result = run_sim_loop(
@@ -4173,6 +4479,7 @@ class SimLoopTest(unittest.TestCase):
                 "weight": 0.10,
             },
         ]
+        self._use_authority_positions(positions)
 
         with self._approved_expansion_evidence("20260713"):
             result = run_sim_loop(
@@ -4232,13 +4539,14 @@ class SimLoopTest(unittest.TestCase):
         positions = [
             {
                 "ts_code": "000010.SZ",
-                "quantity": 5000,
-                "sellable_quantity": 5000,
+                "quantity": 500,
+                "sellable_quantity": 500,
                 "avg_price": 10.0,
                 "last_price": 10.0,
-                "market_value": 200000.0,
+                "market_value": 5_000.0,
             }
         ]
+        self._use_authority_positions(positions)
 
         result = run_sim_loop(
             MultiCandidateSimAdapter(
@@ -4262,9 +4570,11 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(sell_orders[0]["ts_code"], "000010.SZ")
         self.assertIn("opportunity_cost", sell_orders[0]["note"])
         self.assertEqual([order["ts_code"] for order in buy_orders], ["000013.SZ"])
-        self.assertEqual(
-            result["capital_plan"]["replacement_budget"]["allocations"][0]["ts_code"],
-            "000013.SZ",
+        self.assertLessEqual(
+            buy_orders[0]["quantity"] * buy_orders[0]["price"], 7_500.0
+        )
+        self.assertLessEqual(
+            result["capital_plan"]["planned_stock_exposure_cny"], 45_000.0
         )
 
     def test_run_sim_loop_keeps_full_position_when_opportunity_gap_is_small(
@@ -4296,13 +4606,14 @@ class SimLoopTest(unittest.TestCase):
         positions = [
             {
                 "ts_code": "000010.SZ",
-                "quantity": 5000,
-                "sellable_quantity": 5000,
+                "quantity": 500,
+                "sellable_quantity": 500,
                 "avg_price": 10.0,
                 "last_price": 10.0,
-                "weight": 0.25,
+                "weight": 0.10,
             }
         ]
+        self._use_authority_positions(positions)
 
         result = run_sim_loop(
             MultiCandidateSimAdapter(
@@ -4405,35 +4716,37 @@ class SimLoopTest(unittest.TestCase):
 
         deps.score_universe = score_universe
 
-        # Strategy reports 200,000 cash (clean strategy view), but the real
-        # account only has 12,000 available cash after existing positions.
+        positions = [
+            {
+                "ts_code": "300759.SZ",
+                "quantity": 100,
+                "sellable_quantity": 0,
+                "avg_price": 30.34,
+                "last_price": 30.31,
+                "market_value": 3_031.0,
+            },
+            {
+                "ts_code": "600030.SH",
+                "quantity": 100,
+                "sellable_quantity": 0,
+                "avg_price": 28.03,
+                "last_price": 28.00,
+                "market_value": 2_800.0,
+            },
+        ]
+        self._use_authority_positions(positions)
+        # Every source replays the same sub-50k account; adapter cash remains
+        # diagnostic and cannot fabricate the retired 200k strategy account.
         result = run_sim_loop(
             MultiCandidateSimAdapter(
                 ["300418.SZ"],
                 max_candidates=1,
                 score_universe_limit=1,
                 max_portfolio_positions=3,
-                positions=[
-                    {
-                        "ts_code": "300759.SZ",
-                        "quantity": 1900,
-                        "sellable_quantity": 0,
-                        "avg_price": 30.34,
-                        "last_price": 30.31,
-                        "market_value": 57589.0,
-                    },
-                    {
-                        "ts_code": "600030.SH",
-                        "quantity": 2100,
-                        "sellable_quantity": 0,
-                        "avg_price": 28.03,
-                        "last_price": 28.00,
-                        "market_value": 58800.0,
-                    },
-                ],
-                cash_available=12_000.0,
-                strategy_positions=[],
-                strategy_cash_available=200_000.0,
+                positions=positions,
+                cash_available=44_169.0,
+                strategy_positions=positions,
+                strategy_cash_available=44_169.0,
                 sample_adjustment={
                     "view": "strategy_valid_samples_only",
                     "ignored_validation_sample_count": 0,
@@ -4446,13 +4759,15 @@ class SimLoopTest(unittest.TestCase):
             signals_dir=self.tmp_path / "signals_strategy_cash_capped",
         )
 
-        self.assertEqual(result["capital_plan"]["available_cash"], 50000.0)
-        self.assertEqual(result["capital_plan"]["cash_source"], "account_snapshot")
+        self.assertEqual(result["capital_plan"]["available_cash"], 39_169.0)
+        self.assertEqual(
+            result["capital_plan"]["cash_source"], "market_capital_authority"
+        )
         self.assertGreaterEqual(result["capital_plan"]["max_new_positions"], 0)
         sample_adj = result["capital_plan"].get("sample_adjustment", {})
         self.assertNotIn("original_strategy_cash_available", sample_adj)
         self.assertEqual(
-            result["adapter_account_diagnostics"]["cash_available"], 12000.0
+            result["adapter_account_diagnostics"]["cash_available"], 44_169.0
         )
         self.assertFalse(result["adapter_account_diagnostics"]["authoritative"])
 
@@ -4487,13 +4802,14 @@ class SimLoopTest(unittest.TestCase):
         positions = [
             {
                 "ts_code": "000010.SZ",
-                "quantity": 5000,
-                "sellable_quantity": 5000,
+                "quantity": 500,
+                "sellable_quantity": 500,
                 "avg_price": 10.0,
                 "last_price": 10.0,
-                "market_value": 200000.0,
+                "market_value": 5_000.0,
             }
         ]
+        self._use_authority_positions(positions)
 
         run_sim_loop(
             MultiCandidateSimAdapter(

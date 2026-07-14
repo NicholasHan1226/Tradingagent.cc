@@ -10,6 +10,8 @@
 
 - `Ashare/sim_executor.py → sim_broker.py → local_sim_ledger.py` 是唯一 A股模拟执行链；当前 fresh lineage root `shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/` 保存现金、持仓、T+1 和 actual fills，旧 `shared/logs/local_sim/` 只读冻结。
 - 完整 append-only 账户事实校验现金和可卖持仓；过滤后的策略视图不能放行透支或超卖。
+- current position source 只能在读取本地交易事实之前接收已验证的 market-capital authority context，由 `local_sim_ledger` 自己重放 positions 并计算 count/fingerprint/envelope；调用方不得在读取后补 identity。磁盘 reporting snapshot 没有 current envelope 时只作诊断，不能进入普通 risk。
+- producer 重放的 open lot 必须发布 source-owned `oldest_open_date` 与同值 `entry_date`，使 sell/trim/exit 统一执行 T+1；调用方不得凭当前日期或未验证 snapshot 猜测开仓日。
 - `filled/partial` 只使用 actual quantity/price/time/fee/slippage 与 verified 5-minute evidence；请求价格、请求数量、pending/unknown 不可伪造成交。
 - immutable local fill 与 capital `fill_commit`/`ashare_sell_commit` 通过 durable outbox 关联。capital commit 成功或幂等重放成功前，策略样本不能标记 execution-eligible。
 - partial 只消费实际预约；终态原子释放剩余。outbox pending 保守占用风险并在重启后重放。

@@ -1621,6 +1621,12 @@ class MarketCapitalLedger:
             **s.as_dict(),
             "trade_date": nd,
             "fresh": is_fresh,
+            # The replay above validates every event checksum and previous-head
+            # link under the same ledger lock used to build this state.  These
+            # fields are mandatory inputs to the A-share position authority.
+            "checksum_status": "valid",
+            "checksum_event_count": len(ev),
+            "checksum_last": s.event_checksum,
             "last_reconciled_trade_date": (
                 r.mtm_equity_history[-1]["as_of"] if r.mtm_equity_history else ""
             ),
@@ -1639,9 +1645,27 @@ class MarketCapitalLedger:
             "real_trading_enabled": False,
         }
         if self.policy.market == "ashare":
+            from .ashare_position_authority import normalize_ashare_positions
+
+            normalized_positions, _, normalization_reason = normalize_ashare_positions(
+                s.positions_quantity_by_risk_unit
+            )
+            if normalized_positions is None:
+                raise MarketCapitalLedgerError(
+                    f"ashare_position_projection_invalid:{normalization_reason}"
+                )
             state["single_name_cap_cny"] = self.policy.single_name_cap_cny
             state["stock_gross_exposure_limit_cny"] = (
                 self.policy.stock_gross_exposure_limit_cny
+            )
+            state["position_count"] = len(normalized_positions)
+            state["positions_fingerprint"] = _sha256_hex(
+                json.dumps(
+                    normalized_positions,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
             )
         else:
             state["margin_utilization_limit_cny"] = (

@@ -123,6 +123,12 @@ python3 -m shared.runtime_test.ashare_opening_validator \
 
 盘前至少检查 SharedSignals 来源/覆盖/新鲜度、普通 A股与流动性、A股 capital fresh/reconciled、server-local cash/positions、outbox 和 simulation-only flags。失败不应阻断 observation 写入，但必须阻断新增风险。
 
+A股 position authority 的排障必须先查看 market capital provider 的 `checksum_status/checksum_last/checksum_event_count` 与显式 positions/count/fingerprint，再核对 server-local、adapter、strategy、generic 各 source-owned canonical envelope 的 authority/generation/lineage/checksum/trade date。运行时使用 capital A → sources → capital B 双读；A/B 漂移、任一来源缺字段或内容不一致均报告 `capital_position_source_mismatch`。此时普通 risk checker、position-capacity、dynamic capital plan 和 rebalance 不应被调用；若仍看到“持仓数 8 已达上限”等普通拒绝，视为门禁顺序回归。修复方式是让 producer 恢复同一 current authority 的完整可验证 envelope 后重跑，不得用字段别名、读取后 identity 绑定、空仓默认值、旧 ledger 或手工放宽风险。
+
+审计时还要确认 `capital_plan.cash_source=market_capital_authority`，其 available cash 不高于 current `cash_balance_cny` 与 `available_to_reserve_cny` 任一值；普通 risk 的 `total_exposure` 必须等于已验证 `positions_market_value_cny / 50000`，不能从缺失 source weight 推成 0。adapter/server-local/strategy cash/weight 只能出现在 diagnostics；若它们改变下单容量，按资金 authority 回归处理。原生路径应显示 authority A 先于 `get_local_sim_account_snapshot/get_local_sim_pnl`，两者 envelope 由 producer 计算且零仓/非零仓 fingerprint 与 capital 一致；若 adapter 仍读取无 current envelope 的 reporting snapshot，按 source 回归处理。
+
+`run_gate_review` 遇到日亏、连亏或 7% 回撤 blocker 时，先确认 server-local producer 仍在 verified authority context 下完成 A/source/B，且 view 保存 positions 并显示 `new_risk_allowed=false`。buy/open/add 不得调用普通 risk，也不得出现普通持仓容量拒绝；sell/trim/exit 应调用普通 risk 并用 producer 的 `entry_date` 执行 T+1，同日持仓仍必须拒绝。main loop 应保留 planned sell、把 replacement/new-buy capacity 置 0，并继续验证成交/幂等/`ashare_sell_commit`。若 authority/source 失效，则所有方向都在普通 risk 前 blocked。若入口读取 `position_ledger.get_positions` 裸 list 或测试用该 API 伪造 dict envelope，按 current-source 回归处理。`filled` 或 `partial` 只要改变持仓，post-execution refresh 就必须出现一轮新的 A/source/B 审计并标记 `cash_source=market_capital_authority_post_execution`；source 尚未同步时应 blocked，不能从 adapter snapshot 生成 refresh。
+
 统一 sample ops 会追加到期标签并写 KPI、manual-only evolution decision 和 maturity 投影；它不创建订单、账户、邮件或 live transition：
 
 ```bash
@@ -270,6 +276,7 @@ python3 tools/merge_tradingagent_crontab.py --current-file /path/to/exported-cro
 | 现象 | 新增风险 | Observation | 处理 |
 |---|---|---|---|
 | capital authority 不可读/非 fresh | 阻断 | 继续 | 保留具体 blocker，修复后 MTM reconcile |
+| A股 position source 缺失/陈旧/与 authority 不一致 | 阻断；不进入普通容量判断 | 继续 | 保留所有 source hash/lineage 与 A/B 双读审计，修复 envelope 后重跑 |
 | outbox pending/CAS 冲突 | 阻断 | 继续 | 停止重复提交，重放同一 action，不新建 identity |
 | 数据陈旧/无来源/PIT 不完整 | 阻断 | 保存但 label rejected | 修复 SharedSignals/source lineage |
 | 无合格候选 | 不下单 | 继续 | 记录 universe/coverage bias 与 undeployed reason |

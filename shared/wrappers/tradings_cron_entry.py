@@ -9,6 +9,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import shared.capital as market_capital
+from shared.capital.ashare_position_authority import (
+    ashare_capital_state_audit,
+    build_ashare_capital_position_authority_view,
+    reconcile_ashare_position_sources,
+)
 from shared.markets.sim_capital import DEFAULT_SIM_CAPITAL_CNY, default_sim_capital
 from shared.notify.email_sender import send_email, send_template_email
 from shared.notify.email_templates import CHANNELS, wrap_html
@@ -227,6 +233,50 @@ def _load_position_snapshot(as_of_date: str) -> list[dict[str, Any]]:
         )
         snapshot.append(entry)
     return snapshot
+
+
+def _load_ashare_generic_position_source(
+    as_of_date: str,
+    position_authority: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Replay the current server-local source under a pre-read authority view.
+
+    ``position_ledger.get_positions`` is a retired, generic bare-list API and
+    cannot prove which capital generation/checksum its rows belong to.  The
+    active A-share producer owns both the execution replay and its complete
+    source envelope, so callers must provide the already-verified authority
+    context before any local execution facts are read.
+    """
+
+    blocked = {
+        "source": "server_local_sim_account_snapshot",
+        "position_source_status": "blocked",
+        "positions": None,
+        "position_source_reason": "position_authority_context_invalid",
+    }
+    requested_date = _compact_date(as_of_date)
+    if (
+        not requested_date
+        or not isinstance(position_authority, dict)
+        or position_authority.get("status") != "verified"
+        or _compact_date(position_authority.get("trade_date")) != requested_date
+    ):
+        return blocked
+
+    from shared.execution import local_sim_ledger
+
+    snapshot = local_sim_ledger.get_local_sim_account_snapshot(
+        "ashare_sim",
+        trade_date=requested_date,
+        starting_cash=default_sim_capital("ashare"),
+        position_authority=position_authority,
+    )
+    if not isinstance(snapshot, dict):
+        return {
+            **blocked,
+            "position_source_reason": "server_local_position_snapshot_invalid",
+        }
+    return dict(snapshot)
 
 
 def _load_shadow_trades_for_date(target_date: str) -> list[dict[str, Any]]:
@@ -2208,29 +2258,251 @@ def _pending_signal_orders() -> list[dict[str, Any]]:
     return rows
 
 
+_ASHARE_RISK_REDUCING_SIDES = frozenset({"sell", "trim", "exit", "close", "reduce"})
+
+
+def _ashare_order_is_risk_reducing(order: dict[str, Any]) -> bool:
+    return str(order.get("side") or "").strip().lower() in (_ASHARE_RISK_REDUCING_SIDES)
+
+
+def _ashare_order_for_risk_check(order: dict[str, Any]) -> dict[str, Any]:
+    """Normalize risk-reducing aliases so T+1 is never bypassed."""
+
+    if not _ashare_order_is_risk_reducing(order):
+        return order
+    if str(order.get("side") or "").strip().lower() == "sell":
+        return order
+    return {**order, "side": "sell"}
+
+
 def run_gate_review(job_name: str, output_rel: str, phase: str) -> dict[str, Any]:
+    from shared.orchestrator import _validate_ashare_position_capital_state
     from shared.risk.pre_trade_check import check
 
     orders = _pending_signal_orders()
-    positions = _load_position_snapshot(trade_date())
-    total_notional = sum(_position_notional(row) for row in positions)
-    portfolio = {
-        "positions": positions,
-        "total_exposure": min(1.0, total_notional / DAILY_BRIEF_CAPITAL_BASE)
-        if DAILY_BRIEF_CAPITAL_BASE
-        else 0.0,
+    current_trade_date = trade_date()
+    ashare_orders = [
+        order
+        for order in orders
+        if _normalize_market(
+            order.get("market") or _market_from_symbol(order.get("ts_code"))
+        )
+        == "Ashare"
+    ]
+    non_ashare_orders = [order for order in orders if order not in ashare_orders]
+
+    ashare_position_authority: dict[str, Any] = {
+        "status": "not_applicable",
+        "reason": "no_ashare_orders",
+        "source_audit": [],
+        "mismatches": [],
+        "positions": [],
+    }
+    if ashare_orders:
+        try:
+            capital_state_before = market_capital.load_market_capital_provider_state(
+                "ashare", current_trade_date
+            )
+        except Exception as exc:  # noqa: BLE001
+            capital_state_before = {
+                "position_authority_load_error": f"{exc.__class__.__name__}: {exc}"
+            }
+        authority_before = build_ashare_capital_position_authority_view(
+            capital_state_before, current_trade_date
+        )
+        validated_capital_before, capital_reason_before = (
+            _validate_ashare_position_capital_state(
+                capital_state_before, current_trade_date
+            )
+        )
+        if (
+            authority_before.get("status") != "verified"
+            or validated_capital_before is None
+        ):
+            # Do not read server-local execution facts when the authority itself
+            # is missing, stale, invalid, or already over a broader capital gate.
+            gate_reason = str(
+                authority_before.get("reason")
+                if authority_before.get("status") != "verified"
+                else capital_reason_before
+            )
+            ashare_position_authority = {
+                **authority_before,
+                "status": "blocked",
+                "reason": gate_reason,
+                "source_audit": [
+                    ashare_capital_state_audit(
+                        capital_state_before,
+                        authority_before,
+                        source_name="market_capital_before",
+                    )
+                ],
+                "mismatches": [],
+                "positions": [],
+            }
+        else:
+            try:
+                server_local_source = _load_ashare_generic_position_source(
+                    current_trade_date,
+                    authority_before,
+                )
+            except Exception as exc:  # noqa: BLE001
+                server_local_source = {
+                    "source": "server_local_sim_account_snapshot",
+                    "position_source_status": "blocked",
+                    "positions": None,
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                }
+            try:
+                capital_state_after = market_capital.load_market_capital_provider_state(
+                    "ashare", current_trade_date
+                )
+            except Exception as exc:  # noqa: BLE001
+                capital_state_after = {
+                    "position_authority_load_error": (
+                        f"{exc.__class__.__name__}: {exc}"
+                    )
+                }
+            reconciled_authority = reconcile_ashare_position_sources(
+                capital_state_before,
+                current_trade_date,
+                sources={"server_local_sim": server_local_source},
+                preferred_source="server_local_sim",
+                final_capital_state=capital_state_after,
+            )
+            validated_capital_after, capital_reason_after = (
+                _validate_ashare_position_capital_state(
+                    capital_state_after, current_trade_date
+                )
+            )
+            if (
+                reconciled_authority.get("status") == "verified"
+                and validated_capital_after is None
+            ):
+                ashare_position_authority = {
+                    **reconciled_authority,
+                    "status": "blocked",
+                    "reason": capital_reason_after,
+                    "positions": [],
+                }
+            elif reconciled_authority.get("status") == "verified":
+                ashare_position_authority = {
+                    **reconciled_authority,
+                    "new_risk_allowed": bool(
+                        validated_capital_after.get("new_risk_allowed")
+                    ),
+                    "new_risk_reason": str(
+                        validated_capital_after.get("new_risk_reason") or ""
+                    ),
+                }
+            else:
+                ashare_position_authority = reconciled_authority
+
+    other_positions = (
+        _load_position_snapshot(current_trade_date) if non_ashare_orders else []
+    )
+    other_positions = [
+        row
+        for row in other_positions
+        if _normalize_market(
+            row.get("market") or _market_from_symbol(row.get("ts_code"))
+        )
+        != "Ashare"
+    ]
+    other_total_notional = sum(_position_notional(row) for row in other_positions)
+    other_portfolio = {
+        "positions": other_positions,
+        "total_exposure": (
+            min(1.0, other_total_notional / DAILY_BRIEF_CAPITAL_BASE)
+            if DAILY_BRIEF_CAPITAL_BASE
+            else 0.0
+        ),
         "daily_pnl_pct": 0.0,
+    }
+    ashare_positions = [
+        dict(row)
+        for row in (ashare_position_authority.get("positions") or [])
+        if isinstance(row, dict)
+    ]
+    ashare_capital_state = (
+        capital_state_before
+        if ashare_orders and isinstance(capital_state_before, dict)
+        else {}
+    )
+    ashare_portfolio = {
+        "positions": ashare_positions,
+        "total_exposure": min(
+            1.0,
+            _safe_float(ashare_capital_state.get("positions_market_value_cny"))
+            / 50_000.0,
+        ),
+        "daily_pnl_pct": 0.0,
+        "position_authority": ashare_position_authority,
     }
     decisions: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for order in orders:
-        try:
-            decision = check(order, portfolio)
-        except Exception as exc:  # noqa: BLE001
-            decision = {"approved": False, "error": f"{exc.__class__.__name__}: {exc}"}
-            errors.append(
-                {"order_id": str(order.get("order_id", "")), "error": decision["error"]}
+        order_is_ashare = (
+            _normalize_market(
+                order.get("market") or _market_from_symbol(order.get("ts_code"))
             )
+            == "Ashare"
+        )
+        if order_is_ashare and ashare_position_authority.get("status") != "verified":
+            reason = str(
+                ashare_position_authority.get("reason")
+                or "ashare_capital_position_authority_invalid"
+            )
+            decision = {
+                "approved": False,
+                "adjusted_weight": 0.0,
+                "reasons": [reason],
+                "reason_code": reason,
+                "position_authority_status": "blocked",
+                "position_source_audit": ashare_position_authority.get(
+                    "source_audit", []
+                ),
+                "position_source_mismatches": ashare_position_authority.get(
+                    "mismatches", []
+                ),
+            }
+        elif (
+            order_is_ashare
+            and ashare_position_authority.get("new_risk_allowed") is False
+            and not _ashare_order_is_risk_reducing(order)
+        ):
+            reason = str(
+                ashare_position_authority.get("new_risk_reason")
+                or "ashare_capital_new_risk_paused"
+            )
+            decision = {
+                "approved": False,
+                "adjusted_weight": 0.0,
+                "reasons": [reason],
+                "reason_code": reason,
+                "position_authority_status": "verified",
+                "new_risk_allowed": False,
+                "position_source_audit": ashare_position_authority.get(
+                    "source_audit", []
+                ),
+            }
+        else:
+            try:
+                decision = check(
+                    _ashare_order_for_risk_check(order) if order_is_ashare else order,
+                    ashare_portfolio if order_is_ashare else other_portfolio,
+                )
+            except Exception as exc:  # noqa: BLE001
+                decision = {
+                    "approved": False,
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                }
+                errors.append(
+                    {
+                        "order_id": str(order.get("order_id", "")),
+                        "error": decision["error"],
+                    }
+                )
         decisions.append(
             {
                 "order_id": order.get("order_id", ""),
@@ -2240,14 +2512,19 @@ def run_gate_review(job_name: str, output_rel: str, phase: str) -> dict[str, Any
         )
     payload = {
         "job": job_name,
-        "state": _state_from_errors(errors),
+        "state": (
+            "degraded"
+            if ashare_orders and ashare_position_authority.get("status") != "verified"
+            else _state_from_errors(errors)
+        ),
         "generated_at": now_iso(),
-        "trade_date": trade_date(),
+        "trade_date": current_trade_date,
         "phase": phase,
         "capital_layer": "shadow",
         "pending_order_count": len(orders),
         "decisions": decisions,
         "errors": errors,
+        "ashare_position_authority": ashare_position_authority,
     }
     append_jsonl(SHARED / output_rel, payload)
     return payload

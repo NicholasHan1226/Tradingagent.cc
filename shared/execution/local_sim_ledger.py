@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
+from shared.capital.ashare_position_authority import (
+    canonical_sha256,
+    normalize_ashare_positions,
+)
 from shared.execution.execution_lineage import (
     ASHARE_AUTHORITY_GENERATION,
     ASHARE_CAPITAL_AUTHORITY_ID,
@@ -860,6 +864,59 @@ def _starting_cash_for_bootstrap(value: Any = None) -> float:
     return _starting_cash(value)
 
 
+def _position_source_envelope(
+    positions: Any,
+    *,
+    trade_date: str,
+    position_authority: Any,
+    source: str,
+) -> dict[str, Any]:
+    """Build a source-owned envelope from a pre-read current authority view."""
+
+    blocked = {
+        "source": source,
+        "position_source_status": "blocked",
+        "position_source_reason": "position_authority_context_invalid",
+    }
+    if not isinstance(position_authority, dict):
+        return blocked
+    if position_authority.get("status") != "verified":
+        return blocked
+    authority_id = str(position_authority.get("authority_id") or "")
+    generation = position_authority.get("authority_generation")
+    lineage_id = str(position_authority.get("execution_lineage_id") or "")
+    authority_checksum = str(position_authority.get("authority_checksum") or "").lower()
+    requested_date = _trade_date(trade_date).replace("-", "")
+    authority_date = _trade_date(position_authority.get("trade_date")).replace("-", "")
+    if (
+        authority_id != ASHARE_CAPITAL_AUTHORITY_ID
+        or isinstance(generation, bool)
+        or generation != ASHARE_AUTHORITY_GENERATION
+        or lineage_id != ASHARE_EXECUTION_LINEAGE_ID
+        or len(authority_checksum) != 64
+        or any(ch not in "0123456789abcdef" for ch in authority_checksum)
+        or authority_date != requested_date
+    ):
+        return blocked
+    normalized, _, reason = normalize_ashare_positions(positions)
+    if normalized is None:
+        return {
+            **blocked,
+            "position_source_reason": f"position_source_invalid:{reason}",
+        }
+    return {
+        "source": source,
+        "position_source_status": "ready",
+        "authority_id": authority_id,
+        "authority_generation": generation,
+        "execution_lineage_id": lineage_id,
+        "authority_checksum": authority_checksum,
+        "trade_date": requested_date,
+        "position_count": len(normalized),
+        "positions_fingerprint": canonical_sha256(normalized),
+    }
+
+
 def _sim_account_snapshot_unlocked(
     trades: list[dict[str, Any]],
     *,
@@ -938,6 +995,11 @@ def _sim_account_snapshot_unlocked(
             sample_intent = "exploration"
         else:
             sample_intent = "mixed"
+        oldest_open_date = min(
+            str(lot.get("trade_date") or "")
+            for lot in open_lots
+            if lot.get("trade_date")
+        )
         positions[code] = {
             "quantity": int(quantity)
             if abs(quantity - round(quantity)) < 1e-12
@@ -945,11 +1007,8 @@ def _sim_account_snapshot_unlocked(
             "sellable_quantity": int(sellable_quantity)
             if abs(sellable_quantity - round(sellable_quantity)) < 1e-12
             else round(sellable_quantity, 6),
-            "oldest_open_date": min(
-                str(lot.get("trade_date") or "")
-                for lot in open_lots
-                if lot.get("trade_date")
-            ),
+            "oldest_open_date": oldest_open_date,
+            "entry_date": oldest_open_date,
             "sample_intent": sample_intent,
             "exploration_quantity": int(exploration_quantity)
             if abs(exploration_quantity - round(exploration_quantity)) < 1e-12
@@ -974,6 +1033,7 @@ def get_local_sim_account_snapshot(
     trade_date: str = "",
     starting_cash: Any = ASHARE_SIM_DEFAULT_CASH,
     include_validation_samples: bool = False,
+    position_authority: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return server-local simulated cash and T+1 sellable quantity snapshot."""
 
@@ -1023,6 +1083,12 @@ def get_local_sim_account_snapshot(
             {
                 "status": "ready",
                 **_latest_lineage_projection(trades, manifest),
+                **_position_source_envelope(
+                    snapshot.get("positions"),
+                    trade_date=trade_date,
+                    position_authority=position_authority,
+                    source="server_local_sim_account_snapshot",
+                ),
                 "real_trading_enabled": False,
             }
         )
@@ -3193,6 +3259,9 @@ def get_local_sim_pnl(
     mark_prices: dict[str, float] | None = None,
     trade_filter: Any | None = None,
     include_validation_samples: bool = False,
+    *,
+    trade_date: str = "",
+    position_authority: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if account is not None:
         try:
@@ -3221,9 +3290,16 @@ def get_local_sim_pnl(
             trades = [trade for trade in trades if trade_filter(trade)]
         elif not include_validation_samples:
             trades = _strategy_trades_only(trades)
+        projection = _replay_account(trades, account, mark_prices=mark_prices)
         return {
-            **_replay_account(trades, account, mark_prices=mark_prices),
+            **projection,
             **_latest_lineage_projection(trades, manifest),
             "status": "ready",
+            **_position_source_envelope(
+                projection.get("positions"),
+                trade_date=trade_date,
+                position_authority=position_authority,
+                source="server_local_sim_pnl",
+            ),
             "real_trading_enabled": False,
         }

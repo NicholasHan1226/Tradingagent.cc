@@ -33,7 +33,8 @@ A股 exploration 另有：每日最多一个新增头寸、累计敞口 7,500 CN
 ## 结果与退出
 
 - 每次拒绝保存具体 reason、market、style、sample intent、authority/generation、execution lineage 和相关证据。
+- A股普通 risk、仓位容量、动态 capital plan 和 rebalance 之前必须先通过唯一 position authority gate；来源缺失、陈旧、identity/checksum/count/fingerprint 不一致或并发双读漂移统一拒绝为 `capital_position_source_mismatch`。此拒绝不得伪装成普通“8 仓已满”，也不得通过默认零仓或 legacy/strategy snapshot 放宽风险。
 - 资金未部署保存 deployed/committed/planned utilization、dynamic operating cash、undeployed amount 和 reason distribution；弱市或无合格机会不等于系统故障。
 - 5% 回撤不能被实现成“禁止所有新仓”；7% 才暂停。两个市场独立触发，禁止互相净额。
-- 有真实持仓与成交证据的风险降低型退出单独评估，不能因为新增风险 authority 暂不可用而自动阻断；仍必须满足 T+1/会话、幂等和 capital commit。
+- position authority verified 但日亏/连亏/回撤令 `new_risk_allowed=false` 时，只阻断 buy/open/add；保留 verified positions 供 sell/trim/exit 单独评估，且仍必须满足 T+1/会话、幂等和 capital commit。authority 缺失、非法或 source mismatch 时所有方向均 fail closed。
 - 任何未知状态保守处理，不伪造可用资金、释放、成交或收益。

@@ -237,6 +237,58 @@ def _strategy_view_from_local_sim_trades(
     }
 
 
+def _prepare_adapter_position_authority(
+    payload: dict[str, Any], trade_date: str
+) -> dict[str, Any]:
+    """Preserve a source-owned envelope; never manufacture current identity."""
+
+    expected_date = "".join(ch for ch in str(trade_date or "") if ch.isdigit())
+    required = (
+        "source",
+        "position_source_status",
+        "positions",
+        "authority_id",
+        "authority_generation",
+        "execution_lineage_id",
+        "authority_checksum",
+        "trade_date",
+        "position_count",
+        "positions_fingerprint",
+    )
+    missing = [field for field in required if field not in payload]
+    if len(expected_date) != 8:
+        return {
+            **payload,
+            "position_source_status": "blocked",
+            "position_source_reason": "ashare_position_trade_date_missing",
+        }
+    if missing:
+        return {
+            **payload,
+            "position_source_status": "blocked",
+            "position_source_reason": "ashare_adapter_position_envelope_missing",
+            "position_source_missing_fields": missing,
+        }
+    source_date = "".join(
+        ch for ch in str(payload.get("trade_date") or "") if ch.isdigit()
+    )
+    if source_date != expected_date:
+        return {
+            **payload,
+            "position_source_status": "blocked",
+            "position_source_reason": "ashare_adapter_position_trade_date_mismatch",
+        }
+    if "strategy_positions" in payload and not isinstance(
+        payload.get("strategy_position_envelope"), dict
+    ):
+        return {
+            **payload,
+            "position_source_status": "blocked",
+            "position_source_reason": "ashare_strategy_position_envelope_missing",
+        }
+    return dict(payload)
+
+
 def _current_sample_authority_scope() -> dict[str, Any]:
     from shared.execution.execution_lineage import (
         ASHARE_AUTHORITY_GENERATION,
@@ -494,7 +546,12 @@ class AshareAdapter(MarketAdapter):
     def get_shadow_account(self) -> str:
         return "ashare_shadow"
 
-    def get_sim_account(self) -> dict[str, Any]:
+    def get_sim_account(
+        self,
+        *,
+        trade_date: str = "",
+        position_authority: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         account = "ashare_sim"
         default_capital = default_sim_capital(MARKET)
         current_sample_adjustment = build_current_sample_adjustment()
@@ -504,36 +561,151 @@ class AshareAdapter(MarketAdapter):
             "cash_available": default_capital,
             "positions": [],
             "source": "ashare_adapter_empty_sim_account",
+            "position_source_status": "blocked",
+            "position_source_reason": "ashare_adapter_position_snapshot_unavailable",
             "capital_plan_sample_adjustment": current_sample_adjustment,
         }
+        if isinstance(position_authority, dict):
+            try:
+                from shared.execution import local_sim_ledger
+
+                snapshot_source = local_sim_ledger.get_local_sim_account_snapshot(
+                    account,
+                    trade_date=trade_date,
+                    starting_cash=default_capital,
+                    position_authority=position_authority,
+                )
+                pnl_source = local_sim_ledger.get_local_sim_pnl(
+                    account,
+                    trade_date=trade_date,
+                    position_authority=position_authority,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Unable to load current A-share local position sources: %s", exc
+                )
+                return _prepare_adapter_position_authority(fallback, trade_date)
+            envelope_fields = (
+                "authority_id",
+                "authority_generation",
+                "execution_lineage_id",
+                "authority_checksum",
+                "trade_date",
+                "position_count",
+                "positions_fingerprint",
+            )
+            if (
+                snapshot_source.get("position_source_status") != "ready"
+                or pnl_source.get("position_source_status") != "ready"
+                or any(
+                    snapshot_source.get(field) != pnl_source.get(field)
+                    for field in envelope_fields
+                )
+            ):
+                return _prepare_adapter_position_authority(
+                    {
+                        **fallback,
+                        "source": "ashare_adapter_live_local_sim",
+                        "position_source_reason": (
+                            "ashare_local_position_sources_mismatch"
+                        ),
+                    },
+                    trade_date,
+                )
+            snapshot_positions = snapshot_source.get("positions")
+            snapshot_positions = (
+                snapshot_positions if isinstance(snapshot_positions, dict) else {}
+            )
+            positions = _positions_from_pnl(account, pnl_source.get("positions"))
+            for position in positions:
+                lots = snapshot_positions.get(position.get("ts_code"))
+                lots = lots if isinstance(lots, dict) else {}
+                position["sellable_quantity"] = lots.get(
+                    "sellable_quantity", position.get("sellable_quantity", 0)
+                )
+            snapshot_cash = _safe_float(snapshot_source.get("cash_available"), -1.0)
+            pnl_cash = _safe_float(pnl_source.get("cash_available"), -1.0)
+            if (
+                snapshot_cash < 0.0
+                or pnl_cash < 0.0
+                or abs(snapshot_cash - pnl_cash) > 0.01
+            ):
+                return _prepare_adapter_position_authority(
+                    {
+                        **fallback,
+                        "source": "ashare_adapter_live_local_sim",
+                        "position_source_reason": "ashare_local_cash_sources_mismatch",
+                    },
+                    trade_date,
+                )
+            result = {
+                "account": account,
+                "sim_capital": default_capital,
+                "cash_available": snapshot_cash,
+                "available_cash": snapshot_cash,
+                "positions": positions,
+                "pnl": pnl_source,
+                "source": "ashare_adapter_live_local_sim",
+                "position_source_status": "ready",
+                **{field: snapshot_source[field] for field in envelope_fields},
+                "strategy_positions": [dict(row) for row in positions],
+                "strategy_cash_available": snapshot_cash,
+                "strategy_position_envelope": {
+                    "source": "ashare_strategy_live_local_sim",
+                    "position_source_status": "ready",
+                    "positions": [dict(row) for row in positions],
+                    **{field: pnl_source[field] for field in envelope_fields},
+                },
+                "capital_plan_sample_adjustment": current_sample_adjustment,
+            }
+            return _prepare_adapter_position_authority(result, trade_date)
         try:
             from shared.execution.local_sim_ledger import LOCAL_SIM_POSITIONS_SNAPSHOT
 
             if not LOCAL_SIM_POSITIONS_SNAPSHOT.exists():
-                return fallback
+                return _prepare_adapter_position_authority(fallback, trade_date)
             payload = json.loads(
                 LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(encoding="utf-8")
             )
         except Exception as exc:
             logger.warning("Unable to load A-share local sim snapshot: %s", exc)
-            return fallback
+            return _prepare_adapter_position_authority(fallback, trade_date)
         if not isinstance(payload, dict):
-            return fallback
+            return _prepare_adapter_position_authority(fallback, trade_date)
 
         raw_positions = payload.get("positions")
+        if not isinstance(raw_positions, list):
+            return _prepare_adapter_position_authority(
+                {
+                    **fallback,
+                    "source": str(
+                        payload.get("source") or "ashare_adapter_position_snapshot"
+                    ),
+                    "position_source_reason": "ashare_adapter_positions_missing",
+                },
+                trade_date,
+            )
         positions: list[dict[str, Any]] = []
-        if isinstance(raw_positions, list):
-            for row in raw_positions:
-                if not isinstance(row, dict):
-                    continue
-                row_account = str(row.get("account") or account)
-                if row_account != account:
-                    continue
-                position = dict(row)
-                position.setdefault("account", account)
-                position.setdefault("sellable_quantity", position.get("quantity", 0))
-                position.setdefault("value", position.get("market_value", 0.0))
-                positions.append(position)
+        for row in raw_positions:
+            if not isinstance(row, dict):
+                return _prepare_adapter_position_authority(
+                    {
+                        **fallback,
+                        "source": str(
+                            payload.get("source") or "ashare_adapter_position_snapshot"
+                        ),
+                        "position_source_reason": "ashare_adapter_position_row_invalid",
+                    },
+                    trade_date,
+                )
+            row_account = str(row.get("account") or account)
+            if row_account != account:
+                continue
+            position = dict(row)
+            position.setdefault("account", account)
+            position.setdefault("sellable_quantity", position.get("quantity", 0))
+            position.setdefault("value", position.get("market_value", 0.0))
+            positions.append(position)
 
         pnl = payload.get("pnl") if isinstance(payload.get("pnl"), dict) else {}
         account_pnl = pnl.get(account) if isinstance(pnl.get(account), dict) else {}
@@ -563,7 +735,7 @@ class AshareAdapter(MarketAdapter):
             }
         }
         sample_adjustment.update(current_sample_adjustment)
-        return {
+        result = {
             "account": account,
             "sim_capital": default_capital,
             "cash_available": cash_available,
@@ -575,6 +747,20 @@ class AshareAdapter(MarketAdapter):
             **strategy_view,
             "capital_plan_sample_adjustment": sample_adjustment,
         }
+        for field in (
+            "position_source_status",
+            "authority_id",
+            "authority_generation",
+            "execution_lineage_id",
+            "authority_checksum",
+            "trade_date",
+            "position_count",
+            "positions_fingerprint",
+            "strategy_position_envelope",
+        ):
+            if field in payload:
+                result[field] = payload[field]
+        return _prepare_adapter_position_authority(result, trade_date)
 
     def _get_assets(self) -> list[dict[str, Any]]:
         get_assets = getattr(self.reader, "get_assets", None)
