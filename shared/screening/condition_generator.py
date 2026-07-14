@@ -86,7 +86,6 @@ def _gen_breakout(
         return None
 
     n_high = max(highs[1:])  # 排除最近一天
-    last_close = _safe_float(bars[0].get("close", 0.0))
 
     return {
         "type": "breakout",

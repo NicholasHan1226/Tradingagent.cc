@@ -262,15 +262,23 @@ class Wave2IntegrationTest(unittest.TestCase):
                     deps=self._deps_for_market(market),
                     signals_dir=self.tmp_path / "signals",
                 )
-                expected_state = "degraded" if market == "ashare" else "ok"
-                self.assertEqual(result["state"], expected_state)
                 self.assertEqual(result["capital_layer"], "shadow")
-                expected_records = 0 if market == "ashare" else 1
-                self.assertEqual(result["recorded_count"], expected_records)
-                if expected_records:
-                    self.assertEqual(result["records"][0]["symbol"], symbol)
+                if market == "ashare":
+                    self.assertEqual(result["state"], "degraded")
+                    self.assertEqual(result["order_count"], 0)
+                    self.assertEqual(result["recorded_count"], 0)
+                    authority = result["ashare_position_authority"]
+                    self.assertEqual(authority["status"], "blocked")
+                    self.assertEqual(authority["reason"], "ashare_capital_unavailable")
+                    self.assertTrue(authority["source_audit"])
+                    self.assertNotIn("risk.pre_trade_check", result["stage_calls"])
+                    self.assertNotIn("execution.shadow_broker", result["stage_calls"])
                 else:
-                    self.assertEqual(result["errors"][0]["reason"], "non-positive quantity or price")
+                    self.assertEqual(result["state"], "ok")
+                    self.assertEqual(result["recorded_count"], 1)
+                    self.assertEqual(result["records"][0]["symbol"], symbol)
+                    self.assertIn("risk.pre_trade_check", result["stage_calls"])
+                    self.assertIn("execution.shadow_broker", result["stage_calls"])
                 self.assertEqual(result["review"]["capital_layer"], "shadow")
                 self.assertIn("review.daily_review", result["stage_calls"])
 
