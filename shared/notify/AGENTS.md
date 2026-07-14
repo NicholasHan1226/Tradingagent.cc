@@ -28,16 +28,13 @@
 - 固定模版, 图表>文字, 总结性语言
 - 减少系统术语, 不出agent名字
 - 紧急告警10分钟自愈期, 不行人工
+- delivery、fallback 和审计状态不得改写上游业务 PASS/FAIL；调用方必须分别保留业务结论与通知结果。
+- 本地 fallback 遇到 `PermissionError` 或其它 `OSError` 时，必须返回结构化 `degraded` 结果并带明确的审计错误；不得把异常静默为已送达。
+- 业务 FAIL 仍由调用方以原有业务语义和退出码保持失败；通知降级不得伪造业务成功或通知已送达。
 
-## 2026-07-01 邮件链路修复
-- Cloudflare 发送接口使用 Email Service endpoint `/email/sending/send`，旧的 `/email/routing/messages` 会导致 404/鉴权失败。
-- 交易邮件固定：`notice@tradingagent.cc -> tradingadviser@coze.email`；系统邮件固定：`notice@tradingagent.cc -> soc@coze.email`。
-- 发送失败时仍保存到 `shared/notify/logs/email_fallback/`，但修复后必须用真实模板邮件验证 `status=sent`，不能只看 fallback 文件存在。
+## 发送、路由与降级边界
 
-## 2026-07-04 系统邮件 smoke
-- 主服务器已实测 TradingAgent 系统邮件：Cloudflare Email Service 从 `notice@tradingagent.cc` 发往 `soc@coze.email` 成功，主题含 `[SMOKE][TradingAgent][系统]`。
-- 后续健康检查、异常告警、自愈和对账类邮件继续走系统通道；交易信号、规划、复盘、日报、周报和成交回执继续走交易通道。
-
-## 2026-07-04 路由残留修复
-- `.env.example`、alert router 注释和 simulated evolution guard 已统一到 `notice@tradingagent.cc`。
-- 模板发送时显式 `channel="system"` 会优先使用系统通道默认收件人 `soc@coze.email`，除非调用方显式传入 `to`。
+- Cloudflare Email Service 发送只使用 `/email/sending/send`；`/email/routing/messages` 不是发送入口，禁止作为 fallback。
+- 交易与系统通知分别使用本文件通道表中的默认发件人与收件人；健康、告警、自愈和对账属于系统通道，其余交易信号、规划、复盘、报告和回执属于交易通道。
+- 调用方显式指定 `channel="system"` 时，优先使用系统通道默认收件人，除非同时显式传入 `to`。
+- 发送失败可保存到 `shared/notify/logs/email_fallback/` 作为审计 fallback；只有 `status=sent` 能证明已送达，fallback 文件存在不构成发送成功。

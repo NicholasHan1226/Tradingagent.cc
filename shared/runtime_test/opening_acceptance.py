@@ -500,6 +500,38 @@ def _maybe_send_alert(report: dict[str, Any], rendered_text: str, send_on: str) 
     return _send_alert(report, rendered_text)
 
 
+def _notification_outcome(email_result: dict[str, Any]) -> dict[str, Any]:
+    """Keep optional alert delivery observable without changing acceptance truth."""
+    delivery_status = str(email_result.get("status") or "degraded").lower()
+    audit_status = str(email_result.get("audit_status") or "").lower()
+    if delivery_status == "sent" and audit_status != "degraded":
+        notification_status = "sent"
+    elif delivery_status == "skipped":
+        notification_status = "skipped"
+    else:
+        notification_status = "degraded"
+    return {
+        "notification_status": notification_status,
+        "delivery_status": delivery_status,
+        "provider": email_result.get("provider"),
+        "audit_status": email_result.get("audit_status"),
+        "error": email_result.get("fallback_error") or email_result.get("error"),
+        "result": email_result,
+    }
+
+
+def _send_notification(report: dict[str, Any], rendered_text: str, send_on: str) -> dict[str, Any]:
+    try:
+        email_result = _maybe_send_alert(report, rendered_text, send_on)
+    except Exception as exc:
+        email_result = {
+            "status": "degraded",
+            "provider": "unknown",
+            "error": f"{exc.__class__.__name__}: {exc}",
+        }
+    return _notification_outcome(email_result)
+
+
 def _next_actions(checks: list[AcceptanceCheck]) -> list[str]:
     actions: list[str] = []
     by_name = {check.name: check for check in checks}
@@ -586,15 +618,21 @@ def main(argv: list[str] | None = None) -> int:
         sqlite_db=args.sqlite_db,
     )
     rendered = render_text(report)
-    email_result = _maybe_send_alert(report, rendered, args.send_on)
-    report["email"] = email_result
+    notification = _send_notification(report, rendered, args.send_on)
+    # Keep the legacy field for callers that already consume it.  Business
+    # acceptance remains solely in overall_status/checks.
+    report["email"] = notification["result"]
+    report["notification_status"] = notification["notification_status"]
+    report["notification"] = notification
     _write_outputs(report)
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
     else:
         print(rendered)
-        if email_result.get("status") not in {"skipped", "rate_limited"}:
-            print(f"邮件: {email_result.get('status')} -> {email_result.get('to')}")
+        if notification["delivery_status"] not in {"skipped", "rate_limited"}:
+            print(f"邮件: {notification['delivery_status']} -> {notification['result'].get('to')}")
+        if notification["notification_status"] == "degraded":
+            print(f"通知状态: degraded；{notification.get('error') or notification['delivery_status']}")
     if args.exit_zero:
         return 0
     return 2 if report["overall_status"] == "fail" else 0

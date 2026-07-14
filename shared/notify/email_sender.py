@@ -64,6 +64,17 @@ def _append_email_log(record: dict[str, Any]) -> None:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _record_notification_audit(record: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort audit append without hiding an already-known delivery outcome."""
+    record["audit_status"] = "recorded"
+    try:
+        _append_email_log(record)
+    except OSError as exc:
+        record["audit_status"] = "degraded"
+        record["audit_error"] = f"{exc.__class__.__name__}: {exc}"
+    return record
+
+
 def _rate_limit_state_path() -> Path:
     return RATE_LIMIT_STATE or (EMAIL_LOG.parent / "email_rate_limit.json")
 
@@ -298,8 +309,7 @@ def send_email(
     if limited is not None:
         limited["from"] = resolved_from
         limited["loaded_env_keys"] = loaded_env
-        _append_email_log(limited)
-        return limited
+        return _record_notification_audit(limited)
     try:
         dispatch = _send_via_cloudflare(to, subject, body, rendered_html, resolved_from)
         result = {
@@ -315,29 +325,45 @@ def send_email(
             "attempted_at": _now_iso(),
             "loaded_env_keys": loaded_env,
         }
-        _append_email_log(result)
-        return result
+        return _record_notification_audit(result)
     except Exception as exc:
         errors_seen.append(f"cloudflare: {exc}")
         errors_seen.append("deadsimple: removed from delivery chain")
         errors_seen.append("smtp: removed from delivery chain")
 
-    saved = _save_local_email(to, subject, body, rendered_html, resolved_from, errors_seen)
-    result = {
-        "status": "saved_local",
-        "provider": saved["provider"],
-        "saved_to": saved["saved_to"],
-        "to": to,
-        "from": resolved_from,
-        "subject": subject,
-        "channel": channel,
-        "rate_limit_type": rate_limit_type or subject,
-        "attempted_at": _now_iso(),
-        "loaded_env_keys": loaded_env,
-        "errors": errors_seen,
-    }
-    _append_email_log(result)
-    return result
+    try:
+        saved = _save_local_email(to, subject, body, rendered_html, resolved_from, errors_seen)
+    except OSError as exc:
+        fallback_error = f"{exc.__class__.__name__}: {exc}"
+        errors_seen.append(f"local_file: {fallback_error}")
+        result = {
+            "status": "degraded",
+            "provider": "local_file",
+            "to": to,
+            "from": resolved_from,
+            "subject": subject,
+            "channel": channel,
+            "rate_limit_type": rate_limit_type or subject,
+            "attempted_at": _now_iso(),
+            "loaded_env_keys": loaded_env,
+            "errors": errors_seen,
+            "fallback_error": fallback_error,
+        }
+    else:
+        result = {
+            "status": "saved_local",
+            "provider": saved["provider"],
+            "saved_to": saved["saved_to"],
+            "to": to,
+            "from": resolved_from,
+            "subject": subject,
+            "channel": channel,
+            "rate_limit_type": rate_limit_type or subject,
+            "attempted_at": _now_iso(),
+            "loaded_env_keys": loaded_env,
+            "errors": errors_seen,
+        }
+    return _record_notification_audit(result)
 
 
 def _channel_key_for_template(template_name: str) -> str:

@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "shared"
 DAILY_BRIEF_MARKETS = ("Ashare", "Crypto", "US", "PM")
 DAILY_BRIEF_CAPITAL_BASE = DEFAULT_SIM_CAPITAL_CNY
+NOTIFICATION_STATES = frozenset({"sent", "saved_local", "rate_limited", "degraded"})
 
 
 def now_iso() -> str:
@@ -44,6 +45,25 @@ def trade_date() -> str:
 
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def normalize_notification_result(email_result: Any) -> dict[str, Any]:
+    """Fail closed when a sender violates the structured result contract."""
+    if isinstance(email_result, dict):
+        return email_result
+    return {
+        "status": "degraded",
+        "provider": "unknown",
+        "audit_status": "degraded",
+        "error": f"invalid sender result type: {type(email_result).__name__}",
+    }
+
+
+def notification_state(email_result: Any) -> str:
+    """Return the sender outcome without promoting unknown delivery to fallback."""
+    normalized = normalize_notification_result(email_result)
+    status = str(normalized.get("status") or "").strip().lower()
+    return status if status in NOTIFICATION_STATES else "degraded"
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -1597,9 +1617,8 @@ def run_daily_brief_morning() -> dict[str, Any]:
     payload = {
         "job": "job_daily_brief_morning",
         "phase": "morning",
-        "state": "email_sent"
-        if email_result.get("status") == "sent"
-        else "saved_local",
+        "state": notification_state(email_result),
+        "notification_status": notification_state(email_result),
         "generated_at": now_iso(),
         "trade_date": current_trade_date,
         "capital_layer": _preferred_report_layer(_trade_count_by_layer(trades).keys()),
@@ -1630,9 +1649,8 @@ def run_daily_brief_day() -> dict[str, Any]:
     result.update(
         {
             "job": "job_daily_brief_day",
-            "state": "email_sent"
-            if email_result.get("status") == "sent"
-            else "saved_local",
+            "state": notification_state(email_result),
+            "notification_status": notification_state(email_result),
             "phase": "lunch",
             "generated_at": now_iso(),
             "trade_date": current_trade_date,
@@ -1663,9 +1681,8 @@ def run_daily_brief_night() -> dict[str, Any]:
     result.update(
         {
             "job": "job_daily_brief_night",
-            "state": "email_sent"
-            if email_result.get("status") == "sent"
-            else "saved_local",
+            "state": notification_state(email_result),
+            "notification_status": notification_state(email_result),
             "phase": "close",
             "generated_at": now_iso(),
             "trade_date": current_trade_date,
@@ -1792,9 +1809,8 @@ def run_weekly_review(job_name: str, output_rel: str) -> dict[str, Any]:
     result.update(
         {
             "job": job_name,
-            "state": "email_sent"
-            if email_result.get("status") == "sent"
-            else "saved_local",
+            "state": notification_state(email_result),
+            "notification_status": notification_state(email_result),
             "generated_at": now_iso(),
             "capital_layer": layer_key,
             "market": market_scope or "all",
@@ -2072,9 +2088,8 @@ def run_alert() -> dict[str, Any]:
     email_result = send_template_email("system_health", email_data, channel="system")
     result = {
         "job": "job_alert",
-        "state": "email_sent"
-        if email_result.get("status") == "sent"
-        else "saved_local",
+        "state": notification_state(email_result),
+        "notification_status": notification_state(email_result),
         "generated_at": now_iso(),
         "trade_date": trade_date(),
         "self_heal": self_heal_snapshot,
@@ -2530,19 +2545,21 @@ def _resolve_daily_summary_recipient() -> str:
 
 def run_email_notify() -> dict[str, Any]:
     subject, body, html_body = _build_email_notify_payload()
-    result = send_email(
+    raw_result = send_email(
         _resolve_daily_summary_recipient(),
         subject,
         body,
         html_body,
         channel="trading",
     )
+    result = normalize_notification_result(raw_result)
     result.update(
         {
             "job": "job_email_notify",
             "generated_at": now_iso(),
             "trade_date": trade_date(),
-            "state": "sent" if result.get("status") == "sent" else "saved_local",
+            "state": notification_state(result),
+            "notification_status": notification_state(result),
         }
     )
     return result

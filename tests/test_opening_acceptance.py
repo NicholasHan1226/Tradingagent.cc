@@ -211,6 +211,74 @@ def test_send_alert_uses_system_channel(monkeypatch):
     assert sent["rate_limit_type"] == "opening_acceptance:fail"
 
 
+def _acceptance_report(status: str) -> dict[str, object]:
+    return {
+        "overall_status": status,
+        "generated_at": "2026-07-14T09:35:00+08:00",
+        "summary": {"pass": 1 if status == "pass" else 0, "warn": 0, "fail": 1 if status == "fail" else 0},
+        "checks": [],
+        "next_actions": [],
+    }
+
+
+def test_main_keeps_business_pass_when_notification_fails(tmp_path, monkeypatch, capsys):
+    latest = tmp_path / "latest.json"
+    history = tmp_path / "history.jsonl"
+    monkeypatch.setattr(opening_acceptance, "LATEST", latest)
+    monkeypatch.setattr(opening_acceptance, "HISTORY", history)
+    monkeypatch.setattr(opening_acceptance, "run_acceptance", lambda **_kwargs: _acceptance_report("pass"))
+    monkeypatch.setattr(
+        opening_acceptance,
+        "_maybe_send_alert",
+        lambda *_args: (_ for _ in ()).throw(PermissionError("fallback denied")),
+    )
+
+    exit_code = opening_acceptance.main(["--send-on", "warn", "--json"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert report["overall_status"] == "pass"
+    assert report["notification_status"] == "degraded"
+    assert report["notification"]["delivery_status"] == "degraded"
+    assert report["notification"]["error"] == "PermissionError: fallback denied"
+    assert json.loads(latest.read_text(encoding="utf-8"))["overall_status"] == "pass"
+
+
+def test_main_keeps_business_fail_when_notification_fails(tmp_path, monkeypatch, capsys):
+    latest = tmp_path / "latest.json"
+    history = tmp_path / "history.jsonl"
+    monkeypatch.setattr(opening_acceptance, "LATEST", latest)
+    monkeypatch.setattr(opening_acceptance, "HISTORY", history)
+    monkeypatch.setattr(opening_acceptance, "run_acceptance", lambda **_kwargs: _acceptance_report("fail"))
+    monkeypatch.setattr(
+        opening_acceptance,
+        "_maybe_send_alert",
+        lambda *_args: (_ for _ in ()).throw(PermissionError("fallback denied")),
+    )
+
+    exit_code = opening_acceptance.main(["--send-on", "warn", "--json"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert report["overall_status"] == "fail"
+    assert report["notification_status"] == "degraded"
+    assert report["notification"]["error"] == "PermissionError: fallback denied"
+    assert json.loads(latest.read_text(encoding="utf-8"))["overall_status"] == "fail"
+
+
+def test_notification_outcome_marks_sent_and_saved_local_separately():
+    sent = opening_acceptance._notification_outcome({"status": "sent", "provider": "cloudflare"})
+    fallback = opening_acceptance._notification_outcome({"status": "saved_local", "provider": "local_file"})
+    audit_failed = opening_acceptance._notification_outcome(
+        {"status": "sent", "provider": "cloudflare", "audit_status": "degraded"},
+    )
+
+    assert sent["notification_status"] == "sent"
+    assert fallback["notification_status"] == "degraded"
+    assert fallback["delivery_status"] == "saved_local"
+    assert audit_failed["notification_status"] == "degraded"
+
+
 def test_ashare_lunch_routes_to_afternoon_pre_open(monkeypatch):
     from shared.runtime_test import ashare_opening_validator
 

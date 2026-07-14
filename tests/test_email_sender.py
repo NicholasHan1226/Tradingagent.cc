@@ -81,6 +81,25 @@ class EmailSenderTest(unittest.TestCase):
         self.assertEqual(len(log_rows), 1)
         self.assertEqual(log_rows[0]["status"], "saved_local")
 
+    def test_send_email_reports_degraded_when_local_fallback_cannot_be_written(self) -> None:
+        with (
+            patch.object(email_sender, "load_env_from_file", return_value=[]),
+            patch.object(email_sender, "_send_via_cloudflare", side_effect=RuntimeError("cf down")),
+            patch.object(email_sender, "_save_local_email", side_effect=PermissionError("fallback denied")),
+        ):
+            result = email_sender.send_email(
+                "ops@example.com",
+                "System alert",
+                "fallback body",
+                channel="system",
+            )
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["provider"], "local_file")
+        self.assertIn("PermissionError: fallback denied", result["fallback_error"])
+        self.assertIn("local_file: PermissionError: fallback denied", result["errors"])
+        self.assertEqual(result["audit_status"], "recorded")
+
     def test_send_template_email_renders_html_and_dispatches(self) -> None:
         captured: dict[str, str] = {}
 

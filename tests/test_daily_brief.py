@@ -153,7 +153,7 @@ class DailyBriefTest(unittest.TestCase):
             result = cron.run_daily_brief_morning()
 
         self.assertEqual(result["job"], "job_daily_brief_morning")
-        self.assertEqual(result["state"], "email_sent")
+        self.assertEqual(result["state"], "sent")
         self.assertEqual(sent[0]["template_name"], "pre_market_plan")
         data = sent[0]["data"]
         self.assertEqual(len(data["sector_focus"]), 4)
@@ -169,7 +169,7 @@ class DailyBriefTest(unittest.TestCase):
             result = cron.run_daily_brief_day()
 
         self.assertEqual(result["job"], "job_daily_brief_day")
-        self.assertEqual(result["state"], "email_sent")
+        self.assertEqual(result["state"], "sent")
         self.assertEqual(sent[0]["template_name"], "midday_review")
         data = sent[0]["data"]
         self.assertEqual(len(data["morning_trades"]), 2)
@@ -185,7 +185,7 @@ class DailyBriefTest(unittest.TestCase):
             result = cron.run_daily_brief_night()
 
         self.assertEqual(result["job"], "job_daily_brief_night")
-        self.assertEqual(result["state"], "email_sent")
+        self.assertEqual(result["state"], "sent")
         self.assertEqual(sent[0]["template_name"], "daily_report")
         data = sent[0]["data"]
         self.assertEqual(len(data["trades"]), 4)
@@ -194,6 +194,30 @@ class DailyBriefTest(unittest.TestCase):
         self.assertIn("vs benchmark", data["summary"])
         review_rows = (self.shared_dir / "review" / "daily" / "daily_brief.jsonl").read_text(encoding="utf-8").splitlines()
         self.assertTrue(review_rows)
+
+    def test_daily_briefs_keep_degraded_notification_outcome(self) -> None:
+        notification = {
+            "status": "degraded",
+            "provider": "local_file",
+            "fallback_error": "PermissionError: fallback denied",
+            "audit_status": "degraded",
+        }
+
+        with (
+            patch.object(cron, "send_template_email", return_value=notification),
+            patch.object(daily_review, "run_daily_review", side_effect=lambda *_args, **_kwargs: {}),
+        ):
+            results = [
+                cron.run_daily_brief_morning(),
+                cron.run_daily_brief_day(),
+                cron.run_daily_brief_night(),
+            ]
+
+        for result in results:
+            self.assertEqual(result["state"], "degraded")
+            self.assertEqual(result["notification_status"], "degraded")
+            self.assertEqual(result["email_notification"]["fallback_error"], notification["fallback_error"])
+            self.assertEqual(result["email_notification"]["audit_status"], "degraded")
 
 
 if __name__ == "__main__":

@@ -128,7 +128,9 @@ class FinalCronHandlersTest(unittest.TestCase):
         forbidden_states = {"planned" + "_only", "scaff" + "olded"}
         for result in results:
             self.assertNotIn(result["state"], forbidden_states)
-            self.assertIn(result["state"], {"ok", "degraded", "saved_local", "email_sent"})
+            self.assertIn(result["state"], {"ok", "degraded", "saved_local", "sent"})
+
+        self.assertEqual(morning["state"], "saved_local")
 
         self.assertGreaterEqual(auto_position["source_position_count"], 2)
         self.assertGreaterEqual(len(auto_position["positions"]), 2)
@@ -150,6 +152,50 @@ class FinalCronHandlersTest(unittest.TestCase):
         self.assertTrue((self.shared / "review" / "strategies" / "strategy_version.jsonl").exists())
         self.assertTrue((self.shared / "review" / "attribution" / "strategy_attribution.jsonl").exists())
         self.assertTrue((self.shared / "review" / "heal" / "heal_report.json").exists())
+
+    def test_run_email_notify_preserves_sender_status_fail_closed(self) -> None:
+        cases = (
+            ({"status": "sent", "provider": "cloudflare"}, "sent", "cloudflare"),
+            ({"status": "saved_local", "provider": "local_file"}, "saved_local", "local_file"),
+            ({"status": "rate_limited", "provider": "rate_limit"}, "rate_limited", "rate_limit"),
+            (
+                {
+                    "status": "degraded",
+                    "provider": "local_file",
+                    "fallback_error": "PermissionError: fallback denied",
+                    "audit_status": "degraded",
+                    "audit_error": "OSError: audit write denied",
+                },
+                "degraded",
+                "local_file",
+            ),
+            ({"status": "unexpected", "provider": "unknown"}, "degraded", "unknown"),
+            ({"provider": "unknown"}, "degraded", "unknown"),
+            (None, "degraded", "unknown"),
+            ("sender contract violation", "degraded", "unknown"),
+            ([], "degraded", "unknown"),
+        )
+
+        with patch.object(
+            cron,
+            "_build_email_notify_payload",
+            return_value=("subject", "body", "<p>body</p>"),
+        ):
+            for sender_result, expected_state, expected_provider in cases:
+                with self.subTest(sender_result=sender_result):
+                    with patch.object(cron, "send_email", return_value=sender_result):
+                        result = cron.run_email_notify()
+
+                    self.assertEqual(result["state"], expected_state)
+                    self.assertEqual(result["notification_status"], expected_state)
+                    self.assertEqual(result.get("provider"), expected_provider)
+                    if isinstance(sender_result, dict) and sender_result.get("fallback_error"):
+                        self.assertEqual(result["fallback_error"], sender_result["fallback_error"])
+                        self.assertEqual(result["audit_status"], "degraded")
+                        self.assertEqual(result["audit_error"], sender_result["audit_error"])
+                    if not isinstance(sender_result, dict):
+                        self.assertEqual(result["audit_status"], "degraded")
+                        self.assertIn("invalid sender result type", result["error"])
 
     def test_no_final_handler_terms_remain_and_legacy_jobs_are_routed(self) -> None:
         source = Path(cron.__file__).read_text(encoding="utf-8")

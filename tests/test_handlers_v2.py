@@ -242,7 +242,7 @@ class CronHandlersV2Test(unittest.TestCase):
             )
 
         self.assertEqual(result["job"], "job_weekly_review")
-        self.assertEqual(result["state"], "email_sent")
+        self.assertEqual(result["state"], "sent")
         self.assertEqual(result["shadow_trade_count"], 4)
         self.assertEqual(result["email_notification"]["status"], "sent")
         self.assertEqual(len(sent), 1)
@@ -337,7 +337,7 @@ class CronHandlersV2Test(unittest.TestCase):
             result = cron.run_alert()
 
         self.assertEqual(result["job"], "job_alert")
-        self.assertEqual(result["state"], "email_sent")
+        self.assertEqual(result["state"], "sent")
         self.assertEqual(result["email_data"]["overall_status"], "critical")
         self.assertEqual(len(sent), 1)
         self.assertEqual(sent[0]["channel"], "system")
@@ -349,6 +349,27 @@ class CronHandlersV2Test(unittest.TestCase):
         self.assertTrue(
             (self.shared_dir / "notify" / "logs" / "alert_log.jsonl").exists()
         )
+
+    def test_weekly_and_system_health_keep_degraded_notification_outcome(self) -> None:
+        self._seed_week_trades()
+        notification = {
+            "status": "degraded",
+            "provider": "local_file",
+            "fallback_error": "PermissionError: fallback denied",
+            "audit_status": "degraded",
+        }
+
+        with patch.object(cron, "send_template_email", return_value=notification):
+            weekly = cron.run_weekly_review(
+                "job_weekly_review", "review/weekly/weekly_review.json"
+            )
+            system_health = cron.run_alert()
+
+        for result in (weekly, system_health):
+            self.assertEqual(result["state"], "degraded")
+            self.assertEqual(result["notification_status"], "degraded")
+            self.assertEqual(result["email_notification"]["fallback_error"], notification["fallback_error"])
+            self.assertEqual(result["email_notification"]["audit_status"], "degraded")
 
     def test_run_self_heal_executes_real_cycle_and_logs_result(self) -> None:
         pending_dir = self.tmp_path / "signals" / "pending"
