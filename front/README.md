@@ -85,7 +85,7 @@ TradingAgent signals / positions / review / risk
 - `../shared/accounting/position_plan.jsonl`
 - `../shared/review/daily/daily_brief.jsonl`
 - `../shared/review/ashare/research_evidence_latest.json`
-- `../shared/review/ashare/{sample_kpi_latest,market_maturity_latest}.json`
+- `../shared/review/ashare/projection_current.json` 指向的 `projection_generations/<generation_id>/{sample_kpi_latest,evolution_decision_latest,market_maturity_latest}.json`；reader 先校验 manifest content SHA、三个 projection SHA、共同 input SHA、authority 与显式 sim-only 安全字段，再从 input SHA + canonical projection SHA map 重算 generation ID 并要求 pointer/directory/manifest 全等；generation 存在但 pointer 缺失/非法时保持 unavailable，不回退根目录 mirrors
 - `../shared/review/cn_futures/market_maturity_latest.json`
 - `../shared/logs/capital/{ashare,cn_futures}/*_capital_latest.json`
 - `../shared/review/attribution/*.jsonl`

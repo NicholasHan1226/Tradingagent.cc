@@ -10,7 +10,12 @@ from Ashare.sample_pipeline import (
     persist_simulation_outcomes,
     select_exploration_candidate,
 )
-from shared.review.sample_journal import SampleJournal
+from shared.review.sample_journal import (
+    SampleJournal,
+    build_strict_execution_evidence_index,
+    prediction_source_payload_sha256,
+    validate_strict_completed_round_trip_evidence,
+)
 
 
 AUTHORITY = {
@@ -19,6 +24,13 @@ AUTHORITY = {
     "execution_lineage_id": "ashare-sim-fresh-20260712-v1",
 }
 EXECUTION_SNAPSHOT_ID = "linked-execution-snapshot"
+EXECUTION_SOURCE_PAYLOAD = {
+    "source": "sharedsignals.5min",
+    "symbol": "600001.SH",
+    "prediction_at": "2026-07-13T10:00:00+08:00",
+    "reference_price": 10.0,
+}
+EXECUTION_SOURCE_SHA256 = prediction_source_payload_sha256(EXECUTION_SOURCE_PAYLOAD)
 
 
 class ReliableReader:
@@ -27,6 +39,7 @@ class ReliableReader:
             {
                 "close": 10.25,
                 "bar_time": "2026-07-13T10:00:00+08:00",
+                "collected_at": "2026-07-13T10:00:01+08:00",
                 "volume": 88_000,
                 "provider": "sharedsignals_api_realtime_5min",
             }
@@ -68,6 +81,7 @@ class LowPriceReader:
             {
                 "close": 10.0,
                 "bar_time": "2026-07-13T10:00:00+08:00",
+                "collected_at": "2026-07-13T10:00:01+08:00",
                 "volume": 50_000,
                 "provider": "sharedsignals_api_realtime_5min",
             }
@@ -85,6 +99,7 @@ class HighPriceReader:
             {
                 "close": 200.0,
                 "bar_time": "2026-07-13T10:00:00+08:00",
+                "collected_at": "2026-07-13T10:00:01+08:00",
                 "volume": 100_000,
                 "provider": "sharedsignals_api_realtime_5min",
             }
@@ -137,7 +152,7 @@ def test_prediction_snapshots_use_v2_field_names_not_probability():
         assert row["score_semantics"] == "uncalibrated_rank_score"
         assert row["primary_label_horizon"] in {"1d", "close"}
         assert row["primary_horizon_policy_version"] == "ashare-primary-horizon-v1"
-        assert row["point_in_time_lineage_validation"]["complete"] is False
+        assert row["point_in_time_lineage_validation"]["complete"] is True
         assert row["forward_label_eligibility"] == "eligible"
         assert "expected_return_distribution" not in row
         assert "uncalibrated_return_prior" in row
@@ -157,27 +172,186 @@ def test_production_intraday_timestamp_and_receipt_form_complete_pit_lineage():
 
     for row in observation["prediction_snapshots"]:
         assert row["trade_date"] == "20260713"
-        assert row["data_quality"]["price_timestamp"] == (
-            "2026-07-13T13:40:00+08:00"
-        )
+        assert row["data_quality"]["price_timestamp"] == ("2026-07-13T13:40:00+08:00")
         assert row["event_time"] == "2026-07-13T13:40:00+08:00"
         assert row["available_at"] == "2026-07-13T05:45:02+00:00"
         assert row["ingested_at"] == "2026-07-13T05:45:02+00:00"
         assert row["point_in_time_lineage_validation"]["status"] == "valid"
         assert row["point_in_time_lineage_validation"]["complete"] is True
         assert row["forward_label_eligibility"] == "eligible"
+        assert row["data_as_of"] == "2026-07-13T13:46:00+08:00"
+        assert row["reference_timestamp_lineage"]["source_field"] == "bar_time"
+        assert row["reference_timestamp_lineage"]["raw_value"] == (
+            "2026-07-13 13:40:00"
+        )
+        assert row["reference_timestamp_lineage"]["normalized_value"] == (
+            "2026-07-13T13:40:00+08:00"
+        )
+        assert row["reference_timestamp_lineage"]["valid"] is True
+        assert row["reference_timestamp_lineage"]["reason"] is None
+        assert row["reference_timestamp_lineage"]["source_event_time_fields"] == {
+            "bar_time": "2026-07-13 13:40:00"
+        }
+        assert row["decision_timestamp_lineage"]["prediction_at"]["raw_value"] == (
+            "2026-07-13T13:46:00+08:00"
+        )
 
 
 @pytest.mark.parametrize(
-    ("collected_at", "expected_status"),
+    "secondary_timestamp",
+    ("2026-07-13T10:30:00+08:00", "2026-07-13T10:30:00"),
+)
+def test_reference_adapter_conflicting_or_naive_secondary_event_fails_closed(
+    secondary_timestamp,
+):
+    class ConflictingReferenceReader:
+        def get_bars_intraday(self, market, symbol, interval, start, end):
+            return [
+                {
+                    "close": 10.25,
+                    "bar_time": "2026-07-13T09:30:00+08:00",
+                    "timestamp": secondary_timestamp,
+                    "available_at": "2026-07-13T09:30:01+08:00",
+                    "ingested_at": "2026-07-13T09:30:02+08:00",
+                    "retrieved_at": "2026-07-13T09:30:03+08:00",
+                    "volume": 88_000,
+                    "provider": "sharedsignals_api_realtime_5min",
+                }
+            ]
+
+        def get_bars_daily(self, market, symbol, start, end):
+            return []
+
+    observation = build_candidate_observation(
+        symbol="600000.SH",
+        trade_date="20260713",
+        mapped_market="ashare",
+        mapped_symbol="600000.SH",
+        score=_score(0.68),
+        reader=ConflictingReferenceReader(),
+        prediction_at="2026-07-13T10:00:00+08:00",
+        mg_enabled=False,
+    )
+
+    assert observation["reference_price"] is None
+    assert observation["data_quality"]["qualified"] is False
+    assert {
+        row["forward_label_eligibility"] for row in observation["prediction_snapshots"]
+    } == {"pending_reference_evidence"}
+    assert all(
+        row["forward_label_pending_reason"] == "missing_reference_price"
+        for row in observation["prediction_snapshots"]
+    )
+    assert observation["reference_evidence"]["rejected_sibling_count"] == 1
+    assert (
+        select_exploration_candidate(
+            [observation], normal_candidate_symbols=[], sample_debt=True
+        )["status"]
+        == "not_selected"
+    )
+
+
+def test_reference_adapter_equivalent_shanghai_and_utc_events_are_eligible():
+    class EquivalentReferenceReader:
+        def get_bars_intraday(self, market, symbol, interval, start, end):
+            return [
+                {
+                    "close": 10.25,
+                    "bar_time": "2026-07-13T09:30:00+08:00",
+                    "timestamp": "2026-07-13T01:30:00+00:00",
+                    "available_at": "2026-07-13T09:30:01+08:00",
+                    "ingested_at": "2026-07-13T09:30:02+08:00",
+                    "retrieved_at": "2026-07-13T09:30:03+08:00",
+                    "volume": 88_000,
+                    "provider": "sharedsignals_api_realtime_5min",
+                }
+            ]
+
+        def get_bars_daily(self, market, symbol, start, end):
+            return []
+
+    observation = build_candidate_observation(
+        symbol="600000.SH",
+        trade_date="20260713",
+        mapped_market="ashare",
+        mapped_symbol="600000.SH",
+        score=_score(0.68),
+        reader=EquivalentReferenceReader(),
+        prediction_at="2026-07-13T10:00:00+08:00",
+        mg_enabled=False,
+    )
+
+    assert {
+        row["forward_label_eligibility"] for row in observation["prediction_snapshots"]
+    } == {"eligible"}
+
+
+def test_reference_adapter_hidden_future_receipts_are_pending_not_eligible():
+    class FutureReceiptReferenceReader:
+        def get_bars_intraday(self, market, symbol, interval, start, end):
+            return [
+                {
+                    "close": 10.25,
+                    "bar_time": "2026-07-13T09:30:00+08:00",
+                    "available_at": "2026-07-13T09:30:01+08:00",
+                    "published_at": "2026-07-13T10:30:00+08:00",
+                    "ingested_at": "2026-07-13T09:30:02+08:00",
+                    "received_at": "2026-07-13T10:31:00+08:00",
+                    "retrieved_at": "2026-07-13T10:32:00+08:00",
+                    "volume": 88_000,
+                    "provider": "sharedsignals_api_realtime_5min",
+                }
+            ]
+
+        def get_bars_daily(self, market, symbol, start, end):
+            return []
+
+    observation = build_candidate_observation(
+        symbol="600000.SH",
+        trade_date="20260713",
+        mapped_market="ashare",
+        mapped_symbol="600000.SH",
+        score=_score(0.68),
+        reader=FutureReceiptReferenceReader(),
+        prediction_at="2026-07-13T10:00:00+08:00",
+        mg_enabled=False,
+    )
+
+    assert {
+        row["forward_label_eligibility"] for row in observation["prediction_snapshots"]
+    } == {"pending_reference_evidence"}
+    assert all(
+        row["forward_label_pending_reason"] == "missing_reference_price"
+        for row in observation["prediction_snapshots"]
+    )
+    assert observation["reference_price"] is None
+    assert observation["data_quality"]["qualified"] is False
+    assert (
+        observation["reference_evidence"]["rejected_sibling_evidence"][0]["reason"]
+        == "invalid_receipt_order"
+    )
+    assert (
+        select_exploration_candidate(
+            [observation], normal_candidate_symbols=[], sample_debt=True
+        )["status"]
+        == "not_selected"
+    )
+
+
+@pytest.mark.parametrize(
+    ("collected_at", "expected_rejection_reason"),
     [
-        ("2026-07-13T05:39:00+00:00", "invalid_timestamp_order"),
-        ("2026-07-13T05:47:00+00:00", "invalid_timestamp_order"),
-        ("not-a-timestamp", "invalid_or_timezone_naive_timestamps"),
+        ("2026-07-13T05:39:00+00:00", "invalid_receipt_order"),
+        ("2026-07-13T05:47:00+00:00", "receipt_after_boundary"),
+        ("not-a-timestamp", "invalid_or_timezone_naive_timestamp"),
+        (
+            "2026-07-13T05:45:02",
+            "invalid_or_timezone_naive_timestamp",
+        ),
     ],
 )
 def test_invalid_intraday_receipt_time_fails_closed(
-    collected_at, expected_status
+    collected_at, expected_rejection_reason
 ):
     class InvalidReceiptReader:
         def get_bars_intraday(self, market, symbol, interval, start, end):
@@ -205,13 +379,119 @@ def test_invalid_intraday_receipt_time_fails_closed(
         mg_enabled=False,
     )
 
+    assert observation["reference_price"] is None
+    assert observation["data_quality"]["qualified"] is False
+    assert (
+        observation["reference_evidence"]["rejected_sibling_evidence"][0]["reason"]
+        == expected_rejection_reason
+    )
     for row in observation["prediction_snapshots"]:
-        assert row["point_in_time_lineage_validation"]["status"] == expected_status
-        assert row["point_in_time_lineage_validation"]["complete"] is False
-        assert row["forward_label_eligibility"] == "rejected_data_quality"
-        assert row["forward_label_rejection_reason"] == (
-            "point_in_time_lineage_%s" % expected_status
+        assert row["forward_label_eligibility"] == "pending_reference_evidence"
+        assert row["forward_label_pending_reason"] == "missing_reference_price"
+
+
+def _raw_reference_observation(rows):
+    class RawRowsReader:
+        def get_bars_intraday(self, market, symbol, interval, start, end):
+            return deepcopy(rows)
+
+        def get_bars_daily(self, market, symbol, start, end):
+            return []
+
+    return build_candidate_observation(
+        symbol="600000.SH",
+        trade_date="20260713",
+        mapped_market="ashare",
+        mapped_symbol="600000.SH",
+        score=_score(0.68),
+        reader=RawRowsReader(),
+        prediction_at="2026-07-13T11:30:00+08:00",
+        mg_enabled=False,
+    )
+
+
+def _valid_low_reference_row():
+    return {
+        "close": 10.1,
+        "bar_time": "2026-07-13T10:01:00+08:00",
+        "timestamp": "2026-07-13T02:01:00+00:00",
+        "available_at": "2026-07-13T10:01:01+08:00",
+        "ingested_at": "2026-07-13T10:01:02+08:00",
+        "retrieved_at": "2026-07-13T10:01:03+08:00",
+        "volume": 88_000,
+        "provider": "sharedsignals_api_realtime_5min",
+    }
+
+
+def _invalid_high_reference_row(kind):
+    row = {
+        "close": 99.0,
+        "bar_time": "2026-07-13T10:00:00+08:00",
+        "available_at": "2026-07-13T10:00:01+08:00",
+        "ingested_at": "2026-07-13T10:00:02+08:00",
+        "retrieved_at": "2026-07-13T10:00:03+08:00",
+        "volume": 99_000,
+        "provider": "sharedsignals_api_realtime_5min",
+    }
+    if kind == "event_conflict":
+        row["timestamp"] = "2026-07-13T11:00:00+08:00"
+    elif kind == "future_receipt":
+        row.update(
+            {
+                "published_at": "2026-07-13T12:00:00+08:00",
+                "received_at": "2026-07-13T12:01:00+08:00",
+                "retrieved_at": "2026-07-13T12:02:00+08:00",
+            }
         )
+    else:
+        raise AssertionError("unknown invalid reference kind")
+    return row
+
+
+@pytest.mark.parametrize("kind", ("event_conflict", "future_receipt"))
+@pytest.mark.parametrize("invalid_first", (False, True))
+def test_reference_selection_filters_invalid_sibling_before_price_and_exploration(
+    kind, invalid_first
+):
+    valid = _valid_low_reference_row()
+    invalid = _invalid_high_reference_row(kind)
+    rows = [invalid, valid] if invalid_first else [valid, invalid]
+
+    observation = _raw_reference_observation(rows)
+
+    assert observation["reference_price"] == pytest.approx(10.1)
+    assert observation["reference_evidence"]["price"] == pytest.approx(10.1)
+    assert observation["reference_evidence"]["rejected_sibling_count"] == 1
+    assert observation["data_quality"]["qualified"] is True
+    assert {
+        row["forward_label_eligibility"] for row in observation["prediction_snapshots"]
+    } == {"eligible"}
+    selection = select_exploration_candidate(
+        [observation], normal_candidate_symbols=[], sample_debt=True
+    )
+    assert selection["status"] == "selected"
+    assert selection["symbol"] == "600000.SH"
+
+
+@pytest.mark.parametrize("kind", ("event_conflict", "future_receipt"))
+def test_reference_selection_with_no_valid_row_stays_pending_and_not_selected(kind):
+    observation = _raw_reference_observation([_invalid_high_reference_row(kind)])
+
+    assert observation["reference_price"] is None
+    assert observation["data_quality"]["qualified"] is False
+    assert observation["reference_evidence"]["rejected_sibling_count"] == 1
+    assert {
+        row["forward_label_eligibility"] for row in observation["prediction_snapshots"]
+    } == {"pending_reference_evidence"}
+    assert all(
+        row["forward_label_pending_reason"] == "missing_reference_price"
+        for row in observation["prediction_snapshots"]
+    )
+    selection = select_exploration_candidate(
+        [observation], normal_candidate_symbols=[], sample_debt=True
+    )
+    assert selection["status"] == "not_selected"
+    assert selection["reason"] == "no_data_qualified_exploration_candidate"
 
 
 def test_prediction_snapshots_have_embedded_conservative_costs():
@@ -323,7 +603,11 @@ def test_missing_real_price_keeps_predictions_but_never_becomes_exploration_elig
     assert observation["data_quality"]["qualified"] is False
     assert len(observation["prediction_snapshots"]) == 4
     assert all(
-        row["forward_label_eligibility"] == "rejected_data_quality"
+        row["forward_label_eligibility"] == "pending_reference_evidence"
+        for row in observation["prediction_snapshots"]
+    )
+    assert all(
+        row["forward_label_pending_reason"] == "missing_reference_price"
         for row in observation["prediction_snapshots"]
     )
 
@@ -467,6 +751,9 @@ def test_simulation_outcomes_keep_exploration_fill_and_risk_reject_separate(tmp_
                     "commission": 5.0,
                     "slippage_cny": 1.0,
                     "filled_at": "2026-07-13T10:05:00+08:00",
+                    "available_at": "2026-07-13T10:05:00+08:00",
+                    "received_at": "2026-07-13T10:05:00+08:00",
+                    "retrieved_as_of": "2026-07-13T10:05:00+08:00",
                 },
             }
         ],
@@ -535,6 +822,9 @@ def _filled_execution(
     slippage_cny: float = 1.0,
     exit_reason: str = "",
 ) -> dict[str, object]:
+    filled_at = (
+        "2026-07-14T14:30:00+08:00" if side == "sell" else "2026-07-13T10:00:00+08:00"
+    )
     return {
         "symbol": symbol,
         "account": account,
@@ -551,7 +841,7 @@ def _filled_execution(
             "exit_reason": exit_reason,
             "prediction_snapshot_id": EXECUTION_SNAPSHOT_ID,
             **AUTHORITY,
-            "prediction_source_snapshot_sha256": "a" * 64,
+            "prediction_source_snapshot_sha256": EXECUTION_SOURCE_SHA256,
             "selection_probability": 1.0,
             "propensity": 1.0,
             "exploration_policy_version": "ashare-safe-top-k-epsilon-greedy-v1",
@@ -566,9 +856,8 @@ def _filled_execution(
             "filled_price": price,
             "fee_cny": fee_cny,
             "slippage_cny": slippage_cny,
-            "filled_at": "2026-07-14T14:30:00+08:00"
-            if side == "sell"
-            else "2026-07-13T10:00:00+08:00",
+            "filled_at": filled_at,
+            "received_at": filled_at,
         },
     }
 
@@ -586,6 +875,8 @@ def _append_execution_prediction(path) -> None:
             "direction": "long",
             "raw_style_score": 0.7,
             "marketgraph": {"ablation_group": "mg_off"},
+            "source_snapshot_payload": deepcopy(EXECUTION_SOURCE_PAYLOAD),
+            "source_snapshot_sha256": EXECUTION_SOURCE_SHA256,
             **AUTHORITY,
             "data_quality": {
                 "reliable": True,
@@ -739,6 +1030,47 @@ def test_partial_exit_stays_unfinished_until_later_sell_closes_buy_identity(tmp_
     ]
     assert completed[0]["gross_pnl_cny"] == pytest.approx(150.0)
     assert completed[0]["net_pnl_cny"] == pytest.approx(130.0)
+    evidence_index = build_strict_execution_evidence_index(events)
+    baseline_validation = validate_strict_completed_round_trip_evidence(
+        completed[0],
+        prediction_snapshot_id=EXECUTION_SNAPSHOT_ID,
+        evidence_index=evidence_index,
+    )
+    assert baseline_validation["valid"] is True, baseline_validation
+
+    mutations = {
+        "receipt_order": lambda row: row.__setitem__(
+            "exit_receipt_sha256s", list(reversed(row["exit_receipt_sha256s"]))
+        ),
+        "local_trade_order": lambda row: row.__setitem__(
+            "exit_local_trade_sha256s",
+            list(reversed(row["exit_local_trade_sha256s"])),
+        ),
+        "receipt_element": lambda row: row["exit_receipt_sha256s"].__setitem__(
+            1, "a" * 64
+        ),
+        "local_trade_element": lambda row: row["exit_local_trade_sha256s"].__setitem__(
+            1, "b" * 64
+        ),
+        "receipt_length": lambda row: row.__setitem__(
+            "exit_receipt_sha256s", row["exit_receipt_sha256s"][:-1]
+        ),
+        "local_trade_length": lambda row: row.__setitem__(
+            "exit_local_trade_sha256s", row["exit_local_trade_sha256s"][:-1]
+        ),
+    }
+    for case_name, mutate in mutations.items():
+        candidate = deepcopy(completed[0])
+        mutate(candidate)
+        validation = validate_strict_completed_round_trip_evidence(
+            candidate,
+            prediction_snapshot_id=EXECUTION_SNAPSHOT_ID,
+            evidence_index=evidence_index,
+        )
+        assert validation == {
+            "valid": False,
+            "reason": "execution_fingerprint_content_mismatch",
+        }, case_name
 
 
 def test_unmatched_sell_is_explicit_chain_rejection_not_fake_round_trip(tmp_path):

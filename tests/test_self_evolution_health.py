@@ -9,6 +9,10 @@ from CNFutures.sample_maturity import (
     canonical_futures_maturity_projection_sha256,
 )
 from shared.runtime_test.self_evolution_health import evaluate_self_evolution_health
+from shared.review.projection_generation import (
+    CURRENT_MANIFEST,
+    publish_projection_generation,
+)
 
 
 def _seal_maturity(payload: dict[str, object]) -> dict[str, object]:
@@ -56,6 +60,7 @@ class SelfEvolutionHealthTest(unittest.TestCase):
                     "automatic_promotion_enabled": False,
                     "automatic_risk_expansion_enabled": False,
                     "real_trading_enabled": False,
+                    "live_execution_enabled": False,
                 }
             ),
             encoding="utf-8",
@@ -71,7 +76,9 @@ class SelfEvolutionHealthTest(unittest.TestCase):
                     "authority_scope": authority,
                     "automatic_promotion_enabled": False,
                     "automatic_risk_expansion_enabled": False,
+                    "live_transition_authorized": False,
                     "real_trading_enabled": False,
+                    "live_execution_enabled": False,
                 }
             ),
             encoding="utf-8",
@@ -86,7 +93,9 @@ class SelfEvolutionHealthTest(unittest.TestCase):
                     "authority_scope": authority,
                     "automatic_promotion_enabled": False,
                     "automatic_risk_expansion_enabled": False,
+                    "live_transition_authorized": False,
                     "real_trading_enabled": False,
+                    "live_execution_enabled": False,
                 }
             ),
             encoding="utf-8",
@@ -140,6 +149,33 @@ class SelfEvolutionHealthTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _publish_current_ashare_generation(self, root: Path) -> dict[str, object]:
+        self._write_current_ashare_projections(root)
+        review = (root / "ashare").resolve()
+        input_sha = "a" * 64
+        projections: dict[str, dict[str, object]] = {}
+        for filename in (
+            "sample_kpi_latest.json",
+            "evolution_decision_latest.json",
+            "market_maturity_latest.json",
+        ):
+            payload = json.loads((review / filename).read_text(encoding="utf-8"))
+            payload["projection_input_sha256"] = input_sha
+            payload["H0"] = {"event_count": 1, "sha256": "b" * 64}
+            payload["H1"] = {
+                "event_count": 2,
+                "sha256": "c" * 64,
+                "task_owned_delta_event_count": 1,
+            }
+            projections[filename] = payload
+        return publish_projection_generation(
+            review_dir=review,
+            projections=projections,
+            projection_input_sha256=input_sha,
+            run_id="self-evolution-health-test",
+            generated_at="2026-07-13T08:00:03+00:00",
+        )
+
     def test_flags_strategy_samples_missing_from_current_sample_projection(
         self,
     ) -> None:
@@ -188,7 +224,14 @@ class SelfEvolutionHealthTest(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(report["overall_status"], "pass")
+            self.assertEqual(report["overall_status"], "warn")
+            self.assertIn(
+                "legacy_projection_mode_degraded", report["markets"][0]["issues"]
+            )
+            self.assertEqual(
+                report["markets"][0]["current_projection"]["projection_mode"],
+                "legacy_compatibility_degraded",
+            )
             self.assertEqual(
                 report["markets"][0]["evolution_source"], "sample_journal_kpi"
             )
@@ -198,9 +241,84 @@ class SelfEvolutionHealthTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["markets"][0]["current_projection"]["maturity_stage"],
-                "stage_collecting",
+                "legacy_degraded",
+            )
+            self.assertFalse(
+                report["markets"][0]["current_projection"]["promotion_evidence_ready"]
             )
             self.assertFalse(report["markets"][0]["positive_evolution_proven"])
+
+    def test_legacy_mature_mirrors_cannot_expose_green_maturity_or_promotion(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_current_ashare_projections(root)
+            review = root / "ashare"
+            kpi_path = review / "sample_kpi_latest.json"
+            kpi = json.loads(kpi_path.read_text(encoding="utf-8"))
+            kpi["scientific_evidence"] = {"promotion_evidence_ready": True}
+            kpi_path.write_text(json.dumps(kpi), encoding="utf-8")
+            maturity_path = review / "market_maturity_latest.json"
+            maturity = json.loads(maturity_path.read_text(encoding="utf-8"))
+            maturity["stage"] = "stage_mature"
+            maturity["promotion_evidence_ready"] = True
+            maturity_path.write_text(json.dumps(maturity), encoding="utf-8")
+
+            report = evaluate_self_evolution_health(
+                review_root=root,
+                markets=["ashare"],
+                pnl_summary={
+                    "ashare": {"sample_quality": {"strategy_sample_valid_count": 2}}
+                },
+            )
+
+            projection = report["markets"][0]["current_projection"]
+            self.assertEqual(report["overall_status"], "warn")
+            self.assertEqual(
+                projection["projection_mode"], "legacy_compatibility_degraded"
+            )
+            self.assertEqual(projection["maturity_stage"], "legacy_degraded")
+            self.assertFalse(projection["maturity_evidence_trusted"])
+            self.assertFalse(projection["promotion_evidence_ready"])
+
+    def test_canonical_generation_is_accepted_but_missing_pointer_fails_closed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            self._publish_current_ashare_generation(root)
+
+            current = evaluate_self_evolution_health(
+                review_root=root,
+                markets=["ashare"],
+                pnl_summary={
+                    "ashare": {"sample_quality": {"strategy_sample_valid_count": 2}}
+                },
+            )
+            self.assertEqual(current["overall_status"], "pass")
+            self.assertEqual(
+                current["markets"][0]["current_projection"]["projection_mode"],
+                "canonical_generation",
+            )
+
+            (root / "ashare" / CURRENT_MANIFEST).unlink()
+            missing = evaluate_self_evolution_health(
+                review_root=root,
+                markets=["ashare"],
+                pnl_summary={
+                    "ashare": {"sample_quality": {"strategy_sample_valid_count": 2}}
+                },
+            )
+            market = missing["markets"][0]
+            self.assertEqual(missing["overall_status"], "warn")
+            self.assertIn("missing_current_projection_manifest", market["issues"])
+            self.assertEqual(
+                market["current_projection"]["projection_mode"],
+                "canonical_generation_missing_current",
+            )
+            self.assertEqual(market["ranking_trade_sum"], 0)
+            self.assertEqual(market["current_projection"]["maturity_stage"], "missing")
 
     def test_forged_legacy_portfolio_evolution_cannot_replace_current_projection(
         self,
@@ -234,7 +352,10 @@ class SelfEvolutionHealthTest(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(report["overall_status"], "pass")
+            self.assertEqual(report["overall_status"], "warn")
+            self.assertIn(
+                "legacy_projection_mode_degraded", report["markets"][0]["issues"]
+            )
             self.assertEqual(
                 report["markets"][0]["evolution_source"], "sample_journal_kpi"
             )
@@ -278,7 +399,7 @@ class SelfEvolutionHealthTest(unittest.TestCase):
             self.assertEqual(report["overall_status"], "warn")
             self.assertIn("invalid_current_evolution_decision", market["issues"])
             self.assertIn("unsafe_current_projection_policy", market["issues"])
-            self.assertEqual(market["latest_evolution_state"], "missing")
+            self.assertEqual(market["latest_evolution_state"], "evidence_pending")
             self.assertEqual(
                 market["current_projection"]["recommended_action"],
                 "observe_and_label_candidates",

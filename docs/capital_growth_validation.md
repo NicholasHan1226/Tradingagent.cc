@@ -68,6 +68,20 @@
 - 标签格不等于独立样本：验收同时展示 `ready_label_cell_count/raw_N/unique decision clusters/independent trading days/N_eff`，成熟度只使用预先指定主 horizon 的独立 decision cluster。
 - PIT 必须重算 `event_time/available_at/ingested_at/retrieved_as_of` 的完整性与顺序；字段存在或布尔自述不算通过。
 
+sample ops P0 还必须证明以下 frozen-input 与性能不变量：
+
+- 14:19/14:21 cutoff 区分 prediction time 与晚到 receipt/availability；顶层与 nested PIT receipt/availability 均取最晚，任一存在但非法/无时区 fail closed；
+- 运行中追加 4,001 条时，本轮 H0 不变化，下一轮可见；frozen head 后未知 append 阻断，task-owned delta 仅包含本任务 label；
+- 同日 1,999 terminal + 1 pending 时只选择 1 个 snapshot ID，不能重跑整日 2,000 个 predictions；
+- 2,000 snapshots、250 symbol-date、8 variants 的行情调用有确定上界，logical/physical/cache 指标可核对；
+- provider timeout/degraded 保留 observation 和 retryable pending，不生成 terminal；
+- 每 100–250 labels 一批，批前/批后 crash replay 均不重复 event，前缀冲突 fail closed；
+- labels、KPI、decision、maturity 来自同一 H1 与 `projection_input_sha256`；最后 label batch 与 pointer publish 之间的未知 append 被最终 CAS 阻断；原子发布中断后 current 仍是旧完整 generation；pointer 的 manifest SHA 能检测任意 manifest 字段篡改；reader 重算 generation ID，复制三投影并重签 manifest/pointer 到伪造 ID 仍必须拒绝；
+- generation 存在但 current 缺失/非法时健康检查与前端 fail closed；仅明确无 generation 的 legacy 健康回退标 degraded，并强制 non-mature stage、maturity evidence untrusted、promotion false；安全字段缺失不能被当作 false；
+- 对固定 immutable evidence，新旧 label/KPI/maturity 逐字段一致；所有双 50k、authority/lineage、live marker、`REAL_TRADING_ENABLED=true` 与自动晋级门禁仍 fail closed。reference selection 还必须证明两种 provider 输入顺序下 invalid/future sibling 不能覆盖合法 row，无合法 row 全链 pending/not-selected；projection publication 必须证明 final validation 后的 generation in-place/rename/hardlink 与同字节、同 mode、不同 inode 替换，以及 mirror/log 各自的 rename/symlink/hardlink，都不能改变旧 current bytes。
+
+阶段报告至少包含 wall/CPU、Journal events/bytes/parse、锁等待/持锁、append batches/fsync、pending/selected/terminal、HTTP logical/physical/cache/timeout/retry/latency、as-of drift 和 projection generation。合成本地 benchmark 只证明算法调用上界与回归，不代表生产延迟、provider 容量或策略收益。
+
 ## 5. KPI 必须分层
 
 按 style、market 和 sample intent 显示：

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,12 @@ from Ashare.sample_pipeline import (
     persist_simulation_outcomes,
     select_exploration_candidate,
 )
-from shared.review.sample_journal import SampleJournal
+from shared.review.sample_journal import (
+    SampleJournal,
+    build_strict_execution_evidence_index,
+    prediction_source_payload_sha256,
+    validate_strict_completed_round_trip_evidence,
+)
 from shared.orchestrator import _ashare_order_attribution
 
 
@@ -31,6 +37,9 @@ class ReliableReader:
                 "bar_time": "2026-07-13T10:00:00+08:00",
                 "volume": 88_000,
                 "provider": "sharedsignals_api_realtime_5min",
+                "available_at": "2026-07-13T10:00:00+08:00",
+                "ingested_at": "2026-07-13T10:00:00+08:00",
+                "retrieved_as_of": "2026-07-13T10:00:00+08:00",
             }
         ]
 
@@ -120,6 +129,7 @@ def _execution_record(
         receipt["filled_quantity"] = actual_quantity
     if receipt_quantity_only is not None:
         receipt["quantity"] = receipt_quantity_only
+    receipt["received_at"] = receipt["filled_at"]
     return {
         "symbol": "600001.SH",
         "account": "ashare_sim",
@@ -146,6 +156,10 @@ def test_prediction_chain_has_current_authority_pit_and_content_hashes() -> None
         assert snapshot["execution_lineage_id"] == AUTHORITY["execution_lineage_id"]
         assert snapshot["as_of"] == "2026-07-13T10:01:00+08:00"
         assert snapshot["point_in_time_as_of"] == snapshot["as_of"]
+        assert snapshot["source_snapshot_payload"]
+        assert snapshot["source_snapshot_sha256"] == prediction_source_payload_sha256(
+            snapshot["source_snapshot_payload"]
+        )
         assert len(snapshot["source_snapshot_sha256"]) == 64
         assert len(snapshot["content_sha256"]) == 64
 
@@ -409,6 +423,53 @@ def test_partial_fill_uses_only_actual_quantity_and_never_requested_fallback(
     ]
 
 
+@pytest.mark.parametrize("claim_field", ["receipt_sha256", "local_trade_sha256"])
+def test_execution_source_hash_claim_must_match_canonical_fill_payload(
+    tmp_path: Path,
+    claim_field: str,
+) -> None:
+    observation = _observation()
+    path = tmp_path / ("%s.jsonl" % claim_field)
+    persist_candidate_observations([observation], journal_path=path)
+    attribution = execution_attribution(
+        observation,
+        sample_intent="exploration",
+        selection=_selection(observation),
+    )
+    record = _execution_record(
+        attribution,
+        order_id="CLAIM-1",
+        trade_id="TRADE-CLAIM-1",
+        side="buy",
+        actual_quantity=100,
+    )
+    if claim_field == "receipt_sha256":
+        record["receipt"][claim_field] = "a" * 64
+    else:
+        record[claim_field] = "b" * 64
+
+    report = persist_simulation_outcomes(
+        journal_path=path,
+        trade_date="20260713",
+        records=[record],
+        risk_rejections=[],
+        authority_scope=AUTHORITY,
+    )
+
+    assert report["exploration_fill_count"] == 0
+    assert report["skipped_outcomes"] == [
+        {
+            "symbol": "600001.SH",
+            "order_id": "CLAIM-1",
+            "reason": "%s_content_mismatch" % claim_field,
+        }
+    ]
+    assert all(
+        event.get("record_type") != "fill"
+        for event in SampleJournal(path).read_events()
+    )
+
+
 def test_pairing_requires_exact_prediction_and_lineage_and_round_trip_cost_contract(
     tmp_path: Path,
 ) -> None:
@@ -502,6 +563,19 @@ def test_pairing_requires_exact_prediction_and_lineage_and_round_trip_cost_contr
     assert round_trip["slippage_cny"] == pytest.approx(2.0)
     assert len(round_trip["source_snapshot_sha256"]) == 64
     assert len(round_trip["content_sha256"]) == 64
+    assert len(round_trip["entry_receipt_sha256"]) == 64
+    assert len(round_trip["entry_local_trade_sha256"]) == 64
+    assert all(len(value) == 64 for value in round_trip["exit_receipt_sha256s"])
+    assert all(len(value) == 64 for value in round_trip["exit_local_trade_sha256s"])
+    assert round_trip["point_in_time_lineage"]["complete"] is True
+    assert round_trip["evidence_envelope_validation"]["status"] == "valid"
+    strict_validation = validate_strict_completed_round_trip_evidence(
+        round_trip,
+        boundary=datetime.fromisoformat("2026-07-14T16:00:00+08:00"),
+        prediction_snapshot_id=entry_attribution["prediction_snapshot_id"],
+        evidence_index=build_strict_execution_evidence_index(events),
+    )
+    assert strict_validation["valid"] is True, strict_validation
 
 
 def _journal_prediction(

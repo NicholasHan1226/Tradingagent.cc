@@ -9,9 +9,16 @@ import json
 import os
 import re
 from collections import defaultdict
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+
+from shared.review.forward_labels import (
+    EVIDENCE_ENVELOPE_GROUPS,
+    canonicalize_evidence_record,
+    evidence_envelope_from_record,
+)
 
 from .contract_rules import normalize_product
 from .execution_evidence import validate_execution_evidence
@@ -1310,6 +1317,47 @@ def _value_from_nested(source: dict[str, Any], key: str, default: Any = None) ->
     return default
 
 
+def _session_evidence_record(source: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge raw evidence from every prediction container without collapsing aliases."""
+
+    containers: list[tuple[str, Mapping[str, Any]]] = [("source", source)]
+    for name in ("prediction_snapshot", "prediction", "decision_snapshot"):
+        value = source.get(name)
+        if isinstance(value, Mapping):
+            containers.append((name, value))
+    merged: dict[str, dict[str, Any]] = {
+        group: {} for group in EVIDENCE_ENVELOPE_GROUPS
+    }
+    structure_errors: list[str] = []
+    for name, container in containers:
+        envelope = evidence_envelope_from_record(container)
+        for group in EVIDENCE_ENVELOPE_GROUPS:
+            values = envelope.get(group)
+            if not isinstance(values, Mapping):
+                structure_errors.append(f"{name}.{group}")
+                continue
+            for path, value in values.items():
+                merged[group][f"{name}.{path}"] = value
+        errors = envelope.get("structure_errors")
+        if isinstance(errors, list):
+            structure_errors.extend(f"{name}.{error}" for error in errors)
+    merged["structure_errors"] = structure_errors  # type: ignore[assignment]
+
+    raw_boundary = _value_from_nested(dict(source), "point_in_time_as_of", "")
+    try:
+        boundary = datetime.fromisoformat(str(raw_boundary).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        boundary = None
+    if boundary is not None and (
+        boundary.tzinfo is None or boundary.utcoffset() is None
+    ):
+        boundary = None
+    return canonicalize_evidence_record(
+        {"evidence_envelope": merged},
+        boundary=boundary,
+    )
+
+
 def _build_session_row(
     *,
     trade_date: str,
@@ -1335,6 +1383,7 @@ def _build_session_row(
         else {}
     )
 
+    evidence = _session_evidence_record(source)
     row: dict[str, Any] = {
         "_row_type": _SESSION_ROW_TYPE,
         "trade_date": trade_date,
@@ -1376,6 +1425,11 @@ def _build_session_row(
             _value_from_nested(source, "point_in_time_as_of", "")
         ),
         "source_event_time": str(_value_from_nested(source, "source_event_time", "")),
+        "evidence_envelope": deepcopy(evidence.get("evidence_envelope") or {}),
+        "evidence_envelope_validation": deepcopy(
+            evidence.get("evidence_envelope_validation") or {}
+        ),
+        "point_in_time_lineage": deepcopy(evidence.get("point_in_time_lineage") or {}),
         "source_snapshot_id": str(_value_from_nested(source, "source_snapshot_id", "")),
         "source_snapshot_sha256": str(
             _value_from_nested(source, "source_snapshot_sha256", "")
@@ -1403,6 +1457,17 @@ def _build_session_row(
             _value_from_nested(source, "weight_multiplier", 0.0), 0.0
         ),
     }
+    evidence_validation = row["evidence_envelope_validation"]
+    if (
+        isinstance(evidence_validation, Mapping)
+        and evidence_validation.get("complete") is True
+        and evidence_validation.get("status") == "valid"
+    ):
+        canonical = evidence_validation.get("canonical_timestamps")
+        if isinstance(canonical, Mapping):
+            row["source_event_time"] = str(
+                canonical.get("event_time") or row["source_event_time"]
+            )
     # Eligible execution facts are never backward compatible: both complete
     # current PIT lineage and hash-bound execution evidence are mandatory.
     lineage_complete = bool(

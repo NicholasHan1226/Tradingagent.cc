@@ -7,11 +7,15 @@ import hashlib
 import json
 import math
 import os
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from shared.review.forward_labels import materialize_forward_labels
+from shared.review.forward_labels import (
+    canonicalize_evidence_record,
+    materialize_forward_labels,
+)
 
 from .margin_model import estimate_order_cost
 from .review import load_review_rows
@@ -186,21 +190,28 @@ def _price_evidence(
     for raw in intraday or []:
         if not isinstance(raw, Mapping):
             continue
-        point_at = _aware(
-            raw.get("bar_time") or raw.get("timestamp") or raw.get("trade_time")
-        )
         price = _positive(raw.get("close") or raw.get("price"))
         source = str(raw.get("source") or raw.get("provider") or "").strip()
-        if point_at is None or price is None or not source:
+        if price is None or not source:
             continue
-        points.append(
+        point = canonicalize_evidence_record(raw, boundary=as_of)
+        validation = point.get("evidence_envelope_validation")
+        if (
+            isinstance(validation, Mapping)
+            and validation.get("complete") is True
+            and validation.get("status") == "valid"
+        ):
+            canonical = validation.get("canonical_timestamps")
+            if isinstance(canonical, Mapping):
+                point["timestamp"] = canonical.get("event_time")
+        point.update(
             {
-                "timestamp": point_at.isoformat(timespec="seconds"),
                 "price": price,
                 "source": source,
-                "reliable": True,
+                "reliable": raw.get("reliable") is not False,
             }
         )
+        points.append(point)
 
     daily_rows: list[tuple[datetime, Mapping[str, Any]]] = []
     for raw in daily or []:
@@ -211,16 +222,33 @@ def _price_evidence(
         source = str(raw.get("source") or raw.get("provider") or "").strip()
         if point_at is None or price is None or not source or point_at <= prediction_at:
             continue
-        daily_rows.append((point_at, raw))
-        points.append(
+        point = canonicalize_evidence_record(
+            raw,
+            boundary=as_of,
+            extra_event_fields={
+                "trade_date_close": point_at.isoformat(timespec="seconds")
+            },
+        )
+        validation = point.get("evidence_envelope_validation")
+        is_valid = bool(
+            isinstance(validation, Mapping)
+            and validation.get("complete") is True
+            and validation.get("status") == "valid"
+        )
+        if is_valid:
+            canonical = validation.get("canonical_timestamps")
+            if isinstance(canonical, Mapping):
+                point["timestamp"] = canonical.get("event_time")
+            daily_rows.append((point_at, raw))
+        point.update(
             {
-                "timestamp": point_at.isoformat(timespec="seconds"),
                 "price": price,
                 "source": source,
-                "reliable": True,
+                "reliable": raw.get("reliable") is not False,
                 "eligible_horizons": ["1d", "3d", "5d"],
             }
         )
+        points.append(point)
     daily_rows.sort(key=lambda item: item[0])
     active_trade_close = _date_timestamp(trade_date)
     if active_trade_close is None or active_trade_close <= prediction_at:
@@ -327,20 +355,23 @@ def materialize_cn_futures_forward_labels(
             continue
         points, targets = _price_evidence(reader, row, as_of=current_as_of)
         costs = _costs(row, entry_price)
-        snapshot = {
-            "snapshot_id": str(row.get("_identity") or ""),
-            "market": "cn_futures",
-            "symbol": str(row.get("symbol") or ""),
-            "style": str(row.get("style") or "unknown"),
-            "style_version": str(row.get("style_version") or ""),
-            "prediction_at": prediction_at.isoformat(timespec="seconds"),
-            "reference_price": entry_price,
-            "direction": direction,
-            "forward_label_eligibility": "eligible",
-            "forward_label_rejection_reason": None,
-            "costs": costs,
-            "real_trading_enabled": False,
-        }
+        snapshot = deepcopy(dict(row))
+        snapshot.update(
+            {
+                "snapshot_id": str(row.get("_identity") or ""),
+                "market": "cn_futures",
+                "symbol": str(row.get("symbol") or ""),
+                "style": str(row.get("style") or "unknown"),
+                "style_version": str(row.get("style_version") or ""),
+                "prediction_at": prediction_at.isoformat(timespec="seconds"),
+                "reference_price": entry_price,
+                "direction": direction,
+                "forward_label_eligibility": "eligible",
+                "forward_label_rejection_reason": None,
+                "costs": costs,
+                "real_trading_enabled": False,
+            }
+        )
         materialized = materialize_forward_labels(
             snapshot,
             points,

@@ -11,7 +11,11 @@ from pathlib import Path
 from shared.execution.execution_lineage import ASHARE_EXECUTION_LINEAGE_ID
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "ashare_fresh_authority_bootstrap.py"
+SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "tools"
+    / "ashare_fresh_authority_bootstrap.py"
+)
 DECISION_ID = "nicholas-fresh-start-019f5040-20260712"
 
 
@@ -19,7 +23,7 @@ def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _inputs(tmp_path: Path) -> tuple[Path, Path]:
+def _inputs(tmp_path: Path, *, trade_date: str = "20260713") -> tuple[Path, Path]:
     source = tmp_path / "opening_source.json"
     source.write_text('{"cash":50000,"positions":{}}\n', encoding="utf-8")
     opening = tmp_path / "opening_manifest.json"
@@ -30,7 +34,7 @@ def _inputs(tmp_path: Path) -> tuple[Path, Path]:
                 "authority_id": "ashare-capital-v1",
                 "cutover_decision_id": DECISION_ID,
                 "mode": "fresh_start",
-                "as_of": "20260713",
+                "as_of": trade_date,
                 "cash_balance_cny": 50000.0,
                 "opening_equity_cny": 50000.0,
                 "active_reservations_cny": 0.0,
@@ -73,9 +77,12 @@ def _inputs(tmp_path: Path) -> tuple[Path, Path]:
     return opening, legacy
 
 
-def _run(tmp_path: Path, *extra: str, env: dict[str, str] | None = None) -> tuple[subprocess.CompletedProcess[str], dict]:
-    opening, legacy = _inputs(tmp_path)
-    now = datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
+def _run(
+    tmp_path: Path, *extra: str, env: dict[str, str] | None = None
+) -> tuple[subprocess.CompletedProcess[str], dict]:
+    now_at = datetime.now(timezone(timedelta(hours=8)))
+    opening, legacy = _inputs(tmp_path, trade_date=now_at.strftime("%Y%m%d"))
+    now = now_at.isoformat(timespec="seconds")
     result = subprocess.run(
         [
             sys.executable,
@@ -154,11 +161,12 @@ def test_apply_builds_two_zero_import_fixed_lineage_authorities(tmp_path: Path) 
 
 
 def test_rejects_nonzero_opening_state_before_writing(tmp_path: Path) -> None:
-    opening, _ = _inputs(tmp_path)
+    now_at = datetime.now(timezone(timedelta(hours=8)))
+    opening, _ = _inputs(tmp_path, trade_date=now_at.strftime("%Y%m%d"))
     payload = json.loads(opening.read_text("utf-8"))
     payload["positions_by_risk_unit"] = {"600000.SH": 100.0}
     opening.write_text(json.dumps(payload), encoding="utf-8")
-    now = datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
+    now = now_at.isoformat(timespec="seconds")
     result = subprocess.run(
         [
             sys.executable,

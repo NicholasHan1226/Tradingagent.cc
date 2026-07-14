@@ -1,4 +1,4 @@
-import { access, readFile, readdir } from 'node:fs/promises'
+import { access, lstat, readFile, readdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -616,12 +616,19 @@ export async function readTradingAgentSnapshot({
   const ashareTierSummaries = readAShareTierSummaries(generatedAt, ashareAccount)
   const ashareNoTradeExplanation = await readLatestAShareNoTradeExplanation(projectRoot, now)
   const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
-  const rawAShareSampleKpi = await readAShareSampleKpi(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareSampleKpi))
+  const ashareCanonicalProjectionSet = await readCurrentAShareProjectionSet(
+    join(projectRoot, 'shared/review/ashare'),
+  )
+  const rawAShareSampleKpi = ashareCanonicalProjectionSet
+    ? readAShareSampleKpi(ashareCanonicalProjectionSet.sampleKpi)
+    : undefined
   const ashareSampleKpi = rawAShareSampleKpi && ashareMarketCapital
     && sameAShareCapitalAuthority(rawAShareSampleKpi.authorityScope, ashareMarketCapital)
     ? rawAShareSampleKpi
     : undefined
-  const rawAShareMarketMaturity = await readAShareMarketMaturity(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareMarketMaturity))
+  const rawAShareMarketMaturity = ashareCanonicalProjectionSet
+    ? readAShareMarketMaturity(ashareCanonicalProjectionSet.marketMaturity)
+    : undefined
   const ashareMarketMaturity = rawAShareMarketMaturity && ashareSampleKpi
     && sameAShareProjectionAuthority(rawAShareMarketMaturity.authorityScope, ashareSampleKpi.authorityScope)
     && ashareMarketCapital
@@ -1980,14 +1987,144 @@ function sameAShareProjectionAuthority(
 }
 
 function ashareProjectionIsSimOnly(payload: Record<string, unknown>) {
-  return payload.real_trading_enabled !== true
-    && payload.live_execution_enabled !== true
-    && payload.automatic_promotion_enabled !== true
-    && payload.automatic_risk_expansion_enabled !== true
+  return payload.real_trading_enabled === false
+    && payload.live_execution_enabled === false
+    && payload.automatic_promotion_enabled === false
+    && payload.automatic_risk_expansion_enabled === false
 }
 
-async function readAShareSampleKpi(path: string): Promise<AShareSampleKpiProjection | undefined> {
-  const payload = asRecord(await readOptionalJson(path))
+type AShareCanonicalProjectionSet = {
+  sampleKpi: Record<string, unknown>
+  evolutionDecision: Record<string, unknown>
+  marketMaturity: Record<string, unknown>
+}
+
+const ashareProjectionFilenames = [
+  'sample_kpi_latest.json',
+  'evolution_decision_latest.json',
+  'market_maturity_latest.json',
+] as const
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+}
+
+export function canonicalAShareProjectionGenerationId(
+  projectionInputSha256: string,
+  projectionSha256: Record<string, unknown>,
+) {
+  if (!isSha256(projectionInputSha256)) throw new Error('projection_input_sha256_invalid')
+  const filenames = [...ashareProjectionFilenames].sort()
+  if (Object.keys(projectionSha256).sort().join(',') !== filenames.join(',')) {
+    throw new Error('projection_sha_map_missing')
+  }
+  const canonicalProjectionShas: Record<string, string> = {}
+  for (const filename of filenames) {
+    const digest = projectionSha256[filename]
+    if (!isSha256(digest)) throw new Error(`projection_sha_map_invalid:${filename}`)
+    canonicalProjectionShas[filename] = digest
+  }
+  const canonicalIdentity = `${JSON.stringify({
+    projection_input_sha256: projectionInputSha256,
+    projection_sha256: canonicalProjectionShas,
+  })}\n`
+  return `ashare-sample-projection-${createHash('sha256').update(canonicalIdentity).digest('hex')}`
+}
+
+async function readRegularFile(path: string): Promise<Buffer> {
+  const metadata = await lstat(path)
+  if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('projection_file_not_regular')
+  return readFile(path)
+}
+
+async function readCurrentAShareProjectionSet(
+  reviewDir: string,
+): Promise<AShareCanonicalProjectionSet | undefined> {
+  try {
+    const currentRaw = await readRegularFile(join(reviewDir, 'projection_current.json'))
+    const current = asRecord(JSON.parse(currentRaw.toString('utf8')) as unknown)
+    const generationId = String(current.generation_id ?? '')
+    const generationPath = `projection_generations/${generationId}`
+    const manifestSha256 = current.generation_manifest_sha256
+    const projectionInputSha256 = current.projection_input_sha256
+    const expectedShas = asRecord(current.projection_sha256)
+    if (
+      current.schema_version !== 1
+      || !/^ashare-sample-projection-[a-f0-9]{64}$/.test(generationId)
+      || current.generation_path !== generationPath
+      || current.generation_manifest !== 'generation_manifest.json'
+      || !isSha256(manifestSha256)
+      || !isSha256(projectionInputSha256)
+      || current.real_trading_enabled !== false
+      || Object.keys(expectedShas).sort().join(',') !== [...ashareProjectionFilenames].sort().join(',')
+      || ashareProjectionFilenames.some((filename) => !isSha256(expectedShas[filename]))
+    ) return undefined
+    if (
+      canonicalAShareProjectionGenerationId(projectionInputSha256, expectedShas)
+      !== generationId
+    ) return undefined
+
+    const generationsDir = join(reviewDir, 'projection_generations')
+    const generationsMetadata = await lstat(generationsDir)
+    if (!generationsMetadata.isDirectory() || generationsMetadata.isSymbolicLink()) return undefined
+    const generationDir = join(generationsDir, generationId)
+    const generationMetadata = await lstat(generationDir)
+    if (!generationMetadata.isDirectory() || generationMetadata.isSymbolicLink()) return undefined
+    const manifestRaw = await readRegularFile(join(generationDir, 'generation_manifest.json'))
+    if (createHash('sha256').update(manifestRaw).digest('hex') !== manifestSha256) return undefined
+    const manifest = asRecord(JSON.parse(manifestRaw.toString('utf8')) as unknown)
+    const manifestShas = asRecord(manifest.projection_sha256)
+    if (
+      manifest.schema_version !== 1
+      || manifest.generation_id !== generationId
+      || manifest.projection_input_sha256 !== projectionInputSha256
+      || manifest.run_id !== current.run_id
+      || manifest.generated_at !== current.generated_at
+      || manifest.real_trading_enabled !== false
+      || ashareProjectionFilenames.some(
+        (filename) => manifestShas[filename] !== expectedShas[filename],
+      )
+    ) return undefined
+
+    const projections: Record<string, Record<string, unknown>> = {}
+    for (const filename of ashareProjectionFilenames) {
+      const raw = await readRegularFile(join(generationDir, filename))
+      if (createHash('sha256').update(raw).digest('hex') !== expectedShas[filename]) return undefined
+      const payload = asRecord(JSON.parse(raw.toString('utf8')) as unknown)
+      if (
+        payload.projection_input_sha256 !== projectionInputSha256
+        || !ashareProjectionIsSimOnly(payload)
+      ) return undefined
+      projections[filename] = payload
+    }
+    const sampleKpi = projections['sample_kpi_latest.json']
+    const evolutionDecision = projections['evolution_decision_latest.json']
+    const marketMaturity = projections['market_maturity_latest.json']
+    if (
+      sampleKpi.report_type !== 'sample_journal_kpi'
+      || sampleKpi.evidence_source !== 'sample_journal_kpi'
+      || evolutionDecision.report_type !== 'ashare_evolution_decision_v2'
+      || evolutionDecision.evidence_source !== 'sample_journal_kpi'
+      || evolutionDecision.live_transition_authorized !== false
+      || marketMaturity.report_type !== 'ashare_market_maturity_v1'
+      || marketMaturity.evidence_source !== 'sample_journal_kpi'
+      || marketMaturity.live_transition_authorized !== false
+    ) return undefined
+    const authorities = [sampleKpi, evolutionDecision, marketMaturity]
+      .map((payload) => parseAShareProjectionAuthority(payload.authority_scope))
+    if (
+      authorities.some((authority) => !authority)
+      || !sameAShareProjectionAuthority(authorities[0]!, authorities[1]!)
+      || !sameAShareProjectionAuthority(authorities[0]!, authorities[2]!)
+    ) return undefined
+    return { sampleKpi, evolutionDecision, marketMaturity }
+  } catch {
+    return undefined
+  }
+}
+
+function readAShareSampleKpi(value: unknown): AShareSampleKpiProjection | undefined {
+  const payload = asRecord(value)
   const authorityScope = parseAShareProjectionAuthority(payload.authority_scope)
   if (
     payload.report_type !== 'sample_journal_kpi'
@@ -2075,15 +2212,15 @@ async function readAShareSampleKpi(path: string): Promise<AShareSampleKpiProject
   }
 }
 
-async function readAShareMarketMaturity(path: string): Promise<AShareMarketMaturityProjection | undefined> {
-  const payload = asRecord(await readOptionalJson(path))
+function readAShareMarketMaturity(value: unknown): AShareMarketMaturityProjection | undefined {
+  const payload = asRecord(value)
   const authorityScope = parseAShareProjectionAuthority(payload.authority_scope)
   if (
     payload.report_type !== 'ashare_market_maturity_v1'
     || payload.evidence_source !== 'sample_journal_kpi'
     || !authorityScope
     || !ashareProjectionIsSimOnly(payload)
-    || payload.live_transition_authorized === true
+    || payload.live_transition_authorized !== false
   ) return undefined
   const checkpointDue = parseFiniteNumber(payload.checkpoint_due as number | string | undefined)
   return {
@@ -2857,7 +2994,7 @@ async function readAuthoritativeASharePositions(
   if (
     !scope
     || !sameAShareCapitalAuthority(scope, capital)
-    || !ashareProjectionIsSimOnly(payload)
+    || payload.real_trading_enabled !== false
   ) return []
   return parsePositionSnapshot(payload).filter((holding) => holding.market === 'A-share')
 }

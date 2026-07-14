@@ -20,6 +20,7 @@ from shared.execution.signal_state_machine import (
 )
 from shared.execution.sim_broker import execute_sim_order
 from shared.markets.sim_capital import default_sim_capital
+from shared.review.forward_labels import canonicalize_evidence_record
 
 from . import MARKET
 from .adapter import CNFuturesAdapter, READER_MARKET
@@ -1605,6 +1606,25 @@ def _prediction_snapshot_before_risk(
     immutable_source_bars = [
         dict(row) for row in (source_bars or []) if isinstance(row, dict)
     ]
+    source_evidence: dict[str, Any] = {}
+    if immutable_source_bars:
+        source_evidence = canonicalize_evidence_record(
+            immutable_source_bars[-1],
+            boundary=datetime.now(timezone.utc),
+            extra_event_fields={"bar_time": bar_time},
+        )
+        source_validation = source_evidence.get("evidence_envelope_validation")
+        if (
+            isinstance(source_validation, dict)
+            and source_validation.get("complete") is True
+            and source_validation.get("status") == "valid"
+        ):
+            canonical = source_validation.get("canonical_timestamps")
+            if isinstance(canonical, dict):
+                source_event_time = str(canonical.get("event_time") or pit_as_of)
+                pit_as_of = str(
+                    source_validation.get("max_evidence_receipt_at") or pit_as_of
+                )
     source_rule: dict[str, Any] = {}
     source_rule_version = ""
     if resolved_symbol:
@@ -1665,6 +1685,7 @@ def _prediction_snapshot_before_risk(
         "authority": resolved_authority,
         "point_in_time_as_of": pit_as_of,
         "source_event_time": source_event_time,
+        "source_evidence": source_evidence,
         "source": {
             "name": resolved_source_name,
             "market": READER_MARKET,
@@ -1757,6 +1778,13 @@ def _prediction_snapshot_before_risk(
         # PIT lineage fields
         "point_in_time_as_of": pit_as_of,
         "source_event_time": source_event_time,
+        "evidence_envelope": dict(source_evidence.get("evidence_envelope") or {}),
+        "evidence_envelope_validation": dict(
+            source_evidence.get("evidence_envelope_validation") or {}
+        ),
+        "point_in_time_lineage": dict(
+            source_evidence.get("point_in_time_lineage") or {}
+        ),
         "source_snapshot_id": source_snapshot_id,
         "source_snapshot_sha256": source_snapshot_sha256,
         "source_name": resolved_source_name,
@@ -3490,6 +3518,11 @@ def build_affordability_hold(
         "weight_multiplier": _safe_float(snapshot.get("weight_multiplier"), 0.0),
         "point_in_time_as_of": str(snapshot.get("point_in_time_as_of") or ""),
         "source_event_time": str(snapshot.get("source_event_time") or ""),
+        "evidence_envelope": dict(snapshot.get("evidence_envelope") or {}),
+        "evidence_envelope_validation": dict(
+            snapshot.get("evidence_envelope_validation") or {}
+        ),
+        "point_in_time_lineage": dict(snapshot.get("point_in_time_lineage") or {}),
         "source_snapshot_id": str(snapshot.get("source_snapshot_id") or ""),
         "source_snapshot_sha256": str(snapshot.get("source_snapshot_sha256") or ""),
         "authority": str(snapshot.get("authority") or ""),
@@ -4967,6 +5000,15 @@ def run_multi_style_simulation(
                     # PIT lineage
                     "point_in_time_as_of": prediction_snapshot["point_in_time_as_of"],
                     "source_event_time": prediction_snapshot["source_event_time"],
+                    "evidence_envelope": dict(
+                        prediction_snapshot.get("evidence_envelope") or {}
+                    ),
+                    "evidence_envelope_validation": dict(
+                        prediction_snapshot.get("evidence_envelope_validation") or {}
+                    ),
+                    "point_in_time_lineage": dict(
+                        prediction_snapshot.get("point_in_time_lineage") or {}
+                    ),
                     "source_snapshot_id": prediction_snapshot["source_snapshot_id"],
                     "source_snapshot_sha256": prediction_snapshot[
                         "source_snapshot_sha256"

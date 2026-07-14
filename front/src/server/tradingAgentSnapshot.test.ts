@@ -1,8 +1,10 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { readFile, mkdir, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import {
+  canonicalAShareProjectionGenerationId,
   canonicalCNFuturesMaturityProjectionSha256,
   readTradingAgentSnapshot,
 } from './tradingAgentSnapshot'
@@ -12,6 +14,138 @@ function sealCNFuturesMaturity<T extends Record<string, unknown>>(payload: T) {
     ...payload,
     projection_sha256: canonicalCNFuturesMaturityProjectionSha256(payload),
   }
+}
+
+async function writeCurrentAShareProjectionGeneration(
+  root: string,
+  overrides: {
+    sampleKpi?: Record<string, unknown>
+    evolutionDecision?: Record<string, unknown>
+    marketMaturity?: Record<string, unknown>
+    writeCurrent?: boolean
+  } = {},
+) {
+  const reviewDir = join(root, 'TradingAgent/shared/review/ashare')
+  const authority = {
+    capital_authority_id: 'ashare-capital-v1',
+    authority_generation: 1,
+    execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
+  }
+  const projectionInputSha256 = 'a'.repeat(64)
+  const common = {
+    projection_input_sha256: projectionInputSha256,
+    data_as_of: '2026-07-13T16:00:00+08:00',
+    generated_at: '2026-07-13T08:00:00+00:00',
+    run_id: 'front-canonical-reader-test',
+    H0: { event_count: 12, sha256: 'b'.repeat(64) },
+    H1: { event_count: 12, sha256: 'b'.repeat(64), task_owned_delta_event_count: 0 },
+    authority_scope: authority,
+    automatic_promotion_enabled: false,
+    automatic_risk_expansion_enabled: false,
+    real_trading_enabled: false,
+    live_execution_enabled: false,
+  }
+  const projections: Record<string, Record<string, unknown>> = {
+    'sample_kpi_latest.json': {
+      ...common,
+      report_type: 'sample_journal_kpi',
+      evidence_source: 'sample_journal_kpi',
+      trade_date: '20260713',
+      journal_event_count: 12,
+      sample_layer_totals: {
+        observation_counterfactual: 8,
+        exploration_fill: 1,
+        exploitation_fill: 0,
+        completed_round_trip: 1,
+      },
+      styles: {
+        trend_breakout: {
+          prediction_count: 8,
+          forward_label_counts: {
+            m30: { ready: 5 },
+            m60: { pending_not_due: 3 },
+          },
+        },
+      },
+      scientific_evidence: { promotion_evidence_ready: false },
+      ...overrides.sampleKpi,
+    },
+    'evolution_decision_latest.json': {
+      ...common,
+      report_type: 'ashare_evolution_decision_v2',
+      evidence_source: 'sample_journal_kpi',
+      trade_date: '20260713',
+      state: 'evidence_pending',
+      recommended_action: 'observe_and_label_candidates',
+      live_transition_authorized: false,
+      ...overrides.evolutionDecision,
+    },
+    'market_maturity_latest.json': {
+      ...common,
+      report_type: 'ashare_market_maturity_v1',
+      evidence_source: 'sample_journal_kpi',
+      generated_at: '2026-07-13T08:00:02+00:00',
+      trade_date: '20260713',
+      stage: 'stage_collecting',
+      total_trading_days: 1,
+      checkpoint_due: null,
+      promotion_evidence_ready: false,
+      live_transition_authorized: false,
+      ...overrides.marketMaturity,
+    },
+  }
+  const projectionBytes = Object.fromEntries(
+    Object.entries(projections).map(([filename, payload]) => [
+      filename,
+      `${JSON.stringify(payload, null, 2)}\n`,
+    ]),
+  )
+  const projectionSha256 = Object.fromEntries(
+    Object.entries(projectionBytes).map(([filename, raw]) => [
+      filename,
+      createHash('sha256').update(raw, 'utf8').digest('hex'),
+    ]),
+  )
+  const generationId = canonicalAShareProjectionGenerationId(
+    projectionInputSha256,
+    projectionSha256,
+  )
+  const generationDir = join(reviewDir, 'projection_generations', generationId)
+  await mkdir(generationDir, { recursive: true })
+  for (const [filename, raw] of Object.entries(projectionBytes)) {
+    await writeFile(join(generationDir, filename), raw)
+    await writeFile(join(reviewDir, filename), raw)
+  }
+  const generationManifest = {
+    schema_version: 1,
+    generation_id: generationId,
+    projection_input_sha256: projectionInputSha256,
+    projection_sha256: projectionSha256,
+    run_id: 'front-canonical-reader-test',
+    generated_at: '2026-07-13T08:00:03+00:00',
+    real_trading_enabled: false,
+  }
+  const generationManifestRaw = `${JSON.stringify(generationManifest, null, 2)}\n`
+  const generationManifestPath = join(generationDir, 'generation_manifest.json')
+  await writeFile(generationManifestPath, generationManifestRaw)
+  if (overrides.writeCurrent !== false) {
+    await writeFile(
+      join(reviewDir, 'projection_current.json'),
+      JSON.stringify({
+        schema_version: 1,
+        generation_id: generationId,
+        generation_path: `projection_generations/${generationId}`,
+        generation_manifest: 'generation_manifest.json',
+        generation_manifest_sha256: createHash('sha256').update(generationManifestRaw).digest('hex'),
+        projection_input_sha256: projectionInputSha256,
+        projection_sha256: projectionSha256,
+        run_id: 'front-canonical-reader-test',
+        generated_at: '2026-07-13T08:00:03+00:00',
+        real_trading_enabled: false,
+      }),
+    )
+  }
+  return { reviewDir, generationId, generationManifestPath }
 }
 
 async function createWorkspace() {
@@ -125,6 +259,15 @@ async function writeCurrentASharePositions(
 }
 
 describe('TradingAgent snapshot reader', () => {
+  it('matches the canonical cross-language A-share generation ID golden vector', () => {
+    expect(canonicalAShareProjectionGenerationId('0'.repeat(64), {
+      'sample_kpi_latest.json': '1'.repeat(64),
+      'evolution_decision_latest.json': '2'.repeat(64),
+      'market_maturity_latest.json': '3'.repeat(64),
+    })).toBe(
+      'ashare-sample-projection-3d4cd18ef52c0b6cc3d7b34a2a3da8aeafb92a65fd0a54b8336017827cadcfdf',
+    )
+  })
   it('matches the cross-runtime CNFutures maturity projection hash vector', () => {
     expect(canonicalCNFuturesMaturityProjectionSha256({
       pool_cny: 50_000,
@@ -535,61 +678,7 @@ describe('TradingAgent snapshot reader', () => {
   it('reads A-share sample and maturity projections from the current SampleJournal authority', async () => {
     const root = await createWorkspace()
     await writeCurrentMarketCapitalAuthorities(root)
-    const reviewDir = join(root, 'TradingAgent/shared/review/ashare')
-    await mkdir(reviewDir, { recursive: true })
-    const authority = {
-      capital_authority_id: 'ashare-capital-v1',
-      authority_generation: 1,
-      execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
-    }
-    await writeFile(
-      join(reviewDir, 'sample_kpi_latest.json'),
-      JSON.stringify({
-        report_type: 'sample_journal_kpi',
-        evidence_source: 'sample_journal_kpi',
-        generated_at: '2026-07-13T08:00:00+00:00',
-        trade_date: '20260713',
-        authority_scope: authority,
-        journal_event_count: 12,
-        sample_layer_totals: {
-          observation_counterfactual: 8,
-          exploration_fill: 1,
-          exploitation_fill: 0,
-          completed_round_trip: 1,
-        },
-        styles: {
-          trend_breakout: {
-            prediction_count: 8,
-            forward_label_counts: {
-              m30: { ready: 5 },
-              m60: { pending_not_due: 3 },
-            },
-          },
-        },
-        scientific_evidence: { promotion_evidence_ready: false },
-        automatic_promotion_enabled: false,
-        automatic_risk_expansion_enabled: false,
-        real_trading_enabled: false,
-      }),
-    )
-    await writeFile(
-      join(reviewDir, 'market_maturity_latest.json'),
-      JSON.stringify({
-        report_type: 'ashare_market_maturity_v1',
-        evidence_source: 'sample_journal_kpi',
-        generated_at: '2026-07-13T08:00:02+00:00',
-        trade_date: '20260713',
-        authority_scope: authority,
-        stage: 'stage_collecting',
-        total_trading_days: 1,
-        checkpoint_due: null,
-        promotion_evidence_ready: false,
-        live_transition_authorized: false,
-        automatic_promotion_enabled: false,
-        automatic_risk_expansion_enabled: false,
-        real_trading_enabled: false,
-      }),
-    )
+    await writeCurrentAShareProjectionGeneration(root)
 
     const snapshot = await readTradingAgentSnapshot({
       workspaceRoot: root,
@@ -641,51 +730,167 @@ describe('TradingAgent snapshot reader', () => {
       realTradingEnabled: false,
     })
     expect(snapshot.sourceRefs).toMatchObject({
-      ashareSampleKpi: 'shared/review/ashare/sample_kpi_latest.json',
-      ashareMarketMaturity: 'shared/review/ashare/market_maturity_latest.json',
+      ashareSampleKpi: 'shared/review/ashare/projection_current.json -> projection_generations/*/sample_kpi_latest.json',
+      ashareMarketMaturity: 'shared/review/ashare/projection_current.json -> projection_generations/*/market_maturity_latest.json',
     })
+  })
+
+  it('fails closed when A-share generations exist without a current pointer despite compatibility mirrors', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
+    await writeCurrentAShareProjectionGeneration(root, { writeCurrent: false })
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-13T08:05:00.000Z'),
+    })
+
+    expect(snapshot.ashareSampleKpi).toBeUndefined()
+    expect(snapshot.ashareMarketMaturity).toBeUndefined()
+    expect(snapshot.ashareForwardValidation).toBeUndefined()
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'A-share')?.maturity).toBeNull()
+  })
+
+  it('does not expose mature or promotion-ready fields from legacy-only mirrors', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
+    const reviewDir = join(root, 'TradingAgent/shared/review/ashare')
+    await mkdir(reviewDir, { recursive: true })
+    const authorityScope = {
+      capital_authority_id: 'ashare-capital-v1',
+      authority_generation: 1,
+      execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
+    }
+    await writeFile(join(reviewDir, 'sample_kpi_latest.json'), JSON.stringify({
+      report_type: 'sample_journal_kpi',
+      evidence_source: 'sample_journal_kpi',
+      authority_scope: authorityScope,
+      scientific_evidence: { promotion_evidence_ready: true },
+      automatic_promotion_enabled: false,
+      automatic_risk_expansion_enabled: false,
+      real_trading_enabled: false,
+      live_execution_enabled: false,
+    }))
+    await writeFile(join(reviewDir, 'market_maturity_latest.json'), JSON.stringify({
+      report_type: 'ashare_market_maturity_v1',
+      evidence_source: 'sample_journal_kpi',
+      authority_scope: authorityScope,
+      stage: 'stage_mature',
+      promotion_evidence_ready: true,
+      automatic_promotion_enabled: false,
+      automatic_risk_expansion_enabled: false,
+      live_transition_authorized: false,
+      real_trading_enabled: false,
+      live_execution_enabled: false,
+    }))
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-13T08:05:00.000Z'),
+    })
+
+    expect(snapshot.ashareSampleKpi).toBeUndefined()
+    expect(snapshot.ashareMarketMaturity).toBeUndefined()
+    expect(snapshot.ashareForwardValidation).toBeUndefined()
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'A-share')?.maturity).toBeNull()
+  })
+
+  it('rejects an A-share generation after any sealed manifest field is tampered', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
+    const { generationManifestPath } = await writeCurrentAShareProjectionGeneration(root)
+    const manifest = JSON.parse(await readFile(generationManifestPath, 'utf8')) as Record<string, unknown>
+    manifest.run_id = 'tampered-after-publication'
+    await writeFile(generationManifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-13T08:05:00.000Z'),
+    })
+
+    expect(snapshot.ashareSampleKpi).toBeUndefined()
+    expect(snapshot.ashareMarketMaturity).toBeUndefined()
+  })
+
+  it('rejects a hash-consistent generation copied under a forged generation ID', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
+    const { reviewDir, generationId, generationManifestPath } = await writeCurrentAShareProjectionGeneration(root)
+    const forgedGenerationId = `ashare-sample-projection-${'f'.repeat(64)}`
+    expect(forgedGenerationId).not.toBe(generationId)
+    const forgedGenerationDir = join(reviewDir, 'projection_generations', forgedGenerationId)
+    await mkdir(forgedGenerationDir, { recursive: true })
+    for (const filename of [
+      'sample_kpi_latest.json',
+      'evolution_decision_latest.json',
+      'market_maturity_latest.json',
+    ]) {
+      await writeFile(
+        join(forgedGenerationDir, filename),
+        await readFile(join(reviewDir, 'projection_generations', generationId, filename)),
+      )
+    }
+    const forgedManifest = JSON.parse(
+      await readFile(generationManifestPath, 'utf8'),
+    ) as Record<string, unknown>
+    forgedManifest.generation_id = forgedGenerationId
+    const forgedManifestRaw = `${JSON.stringify(forgedManifest, null, 2)}\n`
+    await writeFile(join(forgedGenerationDir, 'generation_manifest.json'), forgedManifestRaw)
+    const currentPath = join(reviewDir, 'projection_current.json')
+    const forgedCurrent = JSON.parse(await readFile(currentPath, 'utf8')) as Record<string, unknown>
+    forgedCurrent.generation_id = forgedGenerationId
+    forgedCurrent.generation_path = `projection_generations/${forgedGenerationId}`
+    forgedCurrent.generation_manifest_sha256 = createHash('sha256')
+      .update(forgedManifestRaw)
+      .digest('hex')
+    await writeFile(currentPath, JSON.stringify(forgedCurrent))
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-13T08:05:00.000Z'),
+    })
+
+    expect(snapshot.ashareSampleKpi).toBeUndefined()
+    expect(snapshot.ashareMarketMaturity).toBeUndefined()
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'A-share')?.maturity).toBeNull()
+  })
+
+  it('rejects a hash-consistent A-share generation with a missing explicit safety field', async () => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root)
+    await writeCurrentAShareProjectionGeneration(root, {
+      marketMaturity: { live_execution_enabled: undefined },
+    })
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-13T08:05:00.000Z'),
+    })
+
+    expect(snapshot.ashareSampleKpi).toBeUndefined()
+    expect(snapshot.ashareMarketMaturity).toBeUndefined()
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'A-share')?.maturity).toBeNull()
   })
 
   it('reads CNFutures maturity beside A-share without sharing days, samples, or authority', async () => {
     const root = await createWorkspace()
     await writeCurrentMarketCapitalAuthorities(root)
-    const ashareReviewDir = join(root, 'TradingAgent/shared/review/ashare')
     const futuresReviewDir = join(root, 'TradingAgent/shared/review/cn_futures')
-    await mkdir(ashareReviewDir, { recursive: true })
     await mkdir(futuresReviewDir, { recursive: true })
-    const ashareAuthority = {
-      capital_authority_id: 'ashare-capital-v1',
-      authority_generation: 1,
-      execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
-    }
-    await writeFile(
-      join(ashareReviewDir, 'sample_kpi_latest.json'),
-      JSON.stringify({
-        report_type: 'sample_journal_kpi',
-        evidence_source: 'sample_journal_kpi',
-        authority_scope: ashareAuthority,
-        styles: {},
-        sample_layer_totals: {},
-        real_trading_enabled: false,
-      }),
-    )
-    await writeFile(
-      join(ashareReviewDir, 'market_maturity_latest.json'),
-      JSON.stringify({
-        report_type: 'ashare_market_maturity_v1',
-        evidence_source: 'sample_journal_kpi',
+    await writeCurrentAShareProjectionGeneration(root, {
+      sampleKpi: { trade_date: '20260714', styles: {}, sample_layer_totals: {} },
+      evolutionDecision: { trade_date: '20260714' },
+      marketMaturity: {
         generated_at: '2026-07-14T08:00:00+00:00',
         trade_date: '20260714',
-        authority_scope: ashareAuthority,
-        stage: 'stage_collecting',
         total_trading_days: 2,
-        promotion_evidence_ready: false,
-        live_transition_authorized: false,
-        automatic_promotion_enabled: false,
-        automatic_risk_expansion_enabled: false,
-        real_trading_enabled: false,
-      }),
-    )
+      },
+    })
     await writeFile(
       join(futuresReviewDir, 'market_maturity_latest.json'),
       JSON.stringify(sealCNFuturesMaturity({

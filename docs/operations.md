@@ -131,12 +131,38 @@ python3 -m shared.runtime_test.ashare_sample_ops \
   --review-dir shared/review/ashare \
   --trade-date YYYYMMDD \
   --as-of YYYY-MM-DDTHH:MM:SS+08:00 \
+  --label-batch-size 200 \
   --pretty
 ```
 
-预期投影：`sample_kpi_latest.json`/log、`evolution_decision_latest.json`/log、`market_maturity_latest.json`/log。Journal 是 authority；latest 丢失时从 journal 重建，禁止反向改写 journal。
+`--as-of` 是 evidence availability/receipt cutoff。Journal 任一纳入候选行在顶层或 `point_in_time_lineage[.timestamps]` 中出现非法/无时区 receipt/availability，或没有任何可用 receipt 时，任务必须在写 label/投影前 fail closed。运行报告应检查 frozen head、pending/selected/terminal、Journal parse/bytes/lock/fsync、HTTP logical/physical/cache/timeout/retry/latency、as-of drift、task-owned delta、最终 physical-H1 CAS、共同 `projection_input_sha256` 与 generation ID。
+
+reference 时间诊断必须同时查看 `data_quality.price_timestamp`、reference timestamp lineage、`prediction_at`、`data_as_of`、decision timestamp lineage 与 PIT receipt chain。reference/decision lineage 必须显式存在，并保存 source/raw/normalized/semantics/rule/valid；缺失或字段不完整只能 pending/degraded，present-but-invalid、raw/normalized 冲突或 instant 不匹配必须 data-quality fail closed，不能回退为 `verified_reference_data`。只有字段名明确为 A股交易所 `bar_time`/`trade_time` 的无偏移原值可按 `Asia/Shanghai` 标准化；通用 timestamp、prediction、data-as-of 或 receipt 无时区时继续 fail closed。`missing_reference_price` 是 retryable/degraded pending，不得用收盘价、前值或零值代填，也不得伪造成 terminal label。
+
+forward-label 验收必须从 provider/bar/reference 原始入口检查统一 EvidenceEnvelope，而不能只直接调用 materializer。所有 present event aliases 必须保留原始路径、逐一解析并表示同一 UTC instant；`bar_time/trade_time` 的明确 A股墙钟可绑定 `Asia/Shanghai`，通用 secondary timestamp 无时区则阻断。root、PIT root、PIT `timestamps` 的 21 条 Journal receipt/availability 路径以及 provider `published_at/retrieved_at/collected_at_dt` 均须逐一解析；取最晚 evidence receipt 与 prediction/label boundary 比较，任一 future/invalid/naive 阻断，不能用较早别名或任务 `as_of` 覆盖。跨 stage 还必须验证 `event <= min(all receipts)`、`max(availability) <= min(ingestion)`、`max(ingestion) <= min(retrieval)`；单个同组晚值不能掩盖较早的反序 alias。embedded `structure_errors` 要在首次、二次和多次 canonicalization 后始终 invalid 且去重。reference collector 必须逐 row 传入真实 prediction boundary 并在选择价格前过滤无效行；合法低价与冲突/未来高价 sibling 的两种输入顺序都必须得到同一合法 reference。无合法 row 时应看到 null reference、`qualified=false`、snapshot pending/degraded、exploration not-selected；被过滤 sibling 只能在 rejection audit 中出现，不能进入 candidate/snapshot PIT。只有完整 envelope 验证后才允许合成 nested 四钟，并保留原始字段审计。测试还必须覆盖 only-conflict、naive secondary、`+08:00`/UTC 同义、hidden future published/received、future retrieved_at，以及 21 receipt 路径逐一 future 全部 non-ready。
+
+CNFutures 的同一验收必须从 SharedSignals HTTP response 开始：确认实际 response receipt 在 cache 前写入合法 row envelope；provider envelope 或 retrieval group 非 mapping 时必须原样保留非法值，并在 sibling `sharedsignals_response_lineage` 保存真实 HTTP endpoint/received-at，cache 第二读一致且 HTTP 只发生一次。transport audit 不得让下游变 ready。prediction snapshot、session review 和 `_price_evidence` 保留所有原始 event/receipt aliases、structure errors 与 nested PIT。valid receipt 的 reference/exit 可形成六个 horizon；missing/invalid/naive/future/conflicting receipt 全部 non-ready，provider 输入顺序不改变合法 point 的选择，历史缺 receipt 不得用 `as_of` 或 bar/prediction time 修补。
+
+SampleJournal 文件与 `.<journal>.lock` 的安全验收必须覆盖 journal hardlink、lock hardlink、journal/parent symlink，以及取得协作锁并封存既有 inode 后的 path replacement。每项都应在 append 前失败，并逐字节确认外部 target 未变化；普通 append/batch/crash replay、frozen H0/H1 与 projection-head guard 仍需通过。不要为修复 hardlink 去改写或删除既有 Journal。
+
+actual-cost 验收必须用同一 frozen Journal view 中的真实 prediction、entry fill、exit stop 与 completed-round-trip fixture。validator 要从权威 prediction event 保存的 canonical `source_snapshot_payload` 重算 source SHA 与 canonical content SHA，从 fill/stop 的显式 canonical receipt/local-trade payload 重算 fingerprint，再重算 round-trip source/content SHA；supplied SHA 必须 constant-time 等于重算结果，不能只验 64-hex 形状。随后分别测试任意 64hex + 缺 source payload、source payload 错绑、prediction SHA 错绑、显式空 envelope + 顶层便利字段、payload 改而 hash 不改、hash 改而 payload 不改，以及 entry/exit fingerprint 错配。多腿 exit 还要覆盖 receipt/local-trade SHA 数组换序、单元素漂移与长度差，并继续覆盖 invalid/naive/future/conflicting receipt。每项都必须确认 `actual_execution_cost_used=0`、`actual_execution_costs_v1` 不被选用、版本化保守成本仍在。历史 prediction 缺 source payload 时应继续 conservative，不得补造。maturity 与 cost path 必须调用同一 strict validator 和同一 frozen evidence index，禁止各自维护较松规则。
+
+canonical 投影入口是 `projection_current.json` 指向的 `projection_generations/<generation_id>/`；reader 必须先用 pointer 的 `generation_manifest_sha256` 校验 manifest 原始内容，再校验 manifest metadata、共同 input SHA、显式 false 的全部安全字段与三个 projection SHA。随后必须按 data contract 的 canonical identity 算法从 input SHA + 三 projection SHA map 重算 generation ID，并与 pointer、directory 和 manifest 全等；复制 projection 并重签 manifest/pointer 到伪造 ID 必须阻断。publisher 遇到已存在 generation 时必须在写 mirrors/current 前调用同一个完整 validator：目录只能有 manifest + 三投影四个 regular non-symlink/single-link 文件，逐文件 raw SHA、JSON、input lineage 与安全字段全通过；manifest-only、缺文件、extra、symlink、hardlink、可写 generation 或 tamper 均不得改变旧 current bytes。完整同内容幂等复用必须先封存为只读。整个 generation/mirror/log/final validation/pointer swap 在 `.projection_publish.lock` 独占锁内；final generation validation 必须封存目录及四文件的 path/dev/inode/mode/nlink/size/mtime_ns/ctime_ns/content-SHA，三 mirrors + 三 logs 写完后也保存相同身份。pointer 临时文件 fsync 后、`os.replace` 前在同一 callback 内重新 FD 校验并与两组快照逐项相等。运维负例必须在 final-validation seam 注入 generation 同字节、同 mode、不同 inode 替换，并分别对 mirror 和 log 注入 rename、symlink、hardlink；每项都必须断言 publisher 失败、旧 pointer bytes 完全不变。只重算内容 hash 或仅在 append 时检查 link count 都不足以关闭窗口。`sample_kpi_latest.json`/log、`evolution_decision_latest.json`/log、`market_maturity_latest.json`/log 继续写出供旧消费者兼容，但不能作为跨三文件原子发布证明。generation 已存在或 `TRADINGAGENT_ASHARE_CANONICAL_PROJECTIONS_REQUIRED=true` 时，current 缺失/非法必须报警并 fail closed，不能回退 latest；操作员可从 Journal 重建新的完整 generation，禁止反向改写 journal。
+
+明确 legacy-only 且从未出现 generation 体系时，health 可只读 mirrors 统计诊断量，但必须输出 degraded/legacy 证据，并强制 `maturity_stage=legacy_degraded`、`maturity_evidence_trusted=false`、`promotion_evidence_ready=false`、自动晋级/扩风险/live 全部 false。前端不把 legacy mirrors 作为 active maturity/KPI reader；missing/invalid current 必须返回无 canonical maturity，而不是展示成熟绿灯。
+
+若 generation 构建中断且 current 未替换，保持旧 current，不手工拼接三份 latest。若发现已污染投影，只追加 `invalid`/`superseded` audit；本地候选代码不授权修改生产 history。SharedSignals batch API、HTTP 并发、持久化 sidecar index 和增量 KPI 均未在此 P0 实现。
 
 `job_ashare_sample_ops.sh` 是唯一活跃 A股 labels/KPI/evolution-assessment/maturity wrapper。旧 sample-learning、旧 forward-validation、旧 portfolio-evolution 和重复监控入口不得恢复。
+
+当前由运行证据指出的两条 sample-ops cron 保持禁用；本候选不恢复或应用 cron。未来重新启用前必须一次性满足并留存以下门禁：
+
+1. 在隔离副本或获批的 sim-only 单次受控运行中，新增 label update 的 `reference_timestamp_timezone_mismatch` 为 0；非法/未来/冲突 fixture 仍按预期拒绝，缺价仍为 retryable degraded。
+2. canonical `projection_current.json` 通过 manifest/content/projection SHA 校验；KPI `data_as_of` 追平批准的 Journal cutoff，`H1` 与该次运行结束时 physical Journal fresh head 一致，三份投影共享同一 `projection_input_sha256`，且没有未解释的 cutoff/exclusion 漂移。
+3. 该轮使用的既有 SharedSignals `source_status` 中与 A股行情/receipt 相关的来源均无 red；本门禁只消费现有状态，不扩展 SharedSignals schema。
+4. 执行前明确记录单次资源预算：frozen Journal 事件/字节上限、exact pending IDs/unique symbol-date 数量、wall/CPU/RSS 上限、HTTP physical request 上限（不得超过 `2 × unique symbol-date`）、timeout/retry 上限、batch size 100–250 与预计 fsync 次数；运行实际指标必须在预算内且不得开启 P1 请求并发。
+5. 上述证据经人工复核后，才可按独立 cron 变更流程做 export、diff、backup、apply/readback 和 rollback 验证；本地候选测试、latest mirrors 或单个 health=200 均不能替代该授权。
+6. 完成 production writer inventory：逐项列出会写 SampleJournal、generation、current、compatibility mirrors/logs 的 cron/service/手工入口并确认全部使用协作锁；read back 每个 writer 的 UID/GID、目标路径 owner/mode/ACL、mount options、filesystem 类型与 rename/link 语义。任何未登记 writer、锁绕过或权限证据缺失都保持 cron disabled。最后一次用户态 validation 返回到 kernel rename 间的非协作同 UID 窗口按 P1 OS 隔离处理，当前锁协议不宣称覆盖该威胁。
 
 ## 5. CNFutures 日内与会话验收
 
@@ -262,7 +288,8 @@ python3 tools/merge_tradingagent_crontab.py --current-file /path/to/exported-cro
 4. 切回能理解现有 event schema 的已验证代码。若旧代码不能读取新事件，保持停机，不得通过恢复旧共享 ledger 绕过。
 5. 对 capital ledger 运行 `verify`，对 local execution/receipt/journal 做 checksum 与 lineage 审计，再决定是否恢复 sim-only 任务。
 6. KPI/maturity latest 损坏时从 append-only SampleJournal 重建；不得修改 journal 历史。
-7. 前端可独立回滚到旧只读 build，但仍不得展示跨市场货币聚合或写入接口。
+7. generation 发布失败时保留上一 `projection_current.json`；不要通过逐个覆盖三份 current 文件“补齐”。回退只能把 current 原子指向已校验的完整旧 generation，并追加 superseded audit，不能删除 generation。
+8. 前端可独立回滚到旧只读 build，但仍不得展示跨市场货币聚合或写入接口。
 
 禁止的“回滚”：删除/改写 capital events、清空 PnL/持仓、改变 generation、导入历史冻结数据、把两个账户合并、恢复退役 cron/writer、发送补偿邮件或开启真实交易。
 

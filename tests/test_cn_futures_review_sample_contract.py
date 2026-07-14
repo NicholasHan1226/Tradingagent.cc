@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from CNFutures.review import (
+    _session_evidence_record,
     append_review,
     build_observation_samples,
     score_records,
@@ -14,6 +15,35 @@ from CNFutures.review import (
     summarize_records,
 )
 from CNFutures.sim_runner import build_affordability_hold
+from shared.review.forward_labels import canonicalize_evidence_record
+
+
+def test_session_merge_preserves_embedded_structure_errors_irreversibly() -> None:
+    invalid = canonicalize_evidence_record(
+        {
+            "event_time": "2026-07-13T02:00:00+00:00",
+            "available_at": "2026-07-13T02:00:01+00:00",
+            "ingested_at": "2026-07-13T02:00:02+00:00",
+            "retrieved_as_of": "2026-07-13T02:00:03+00:00",
+            "evidence_envelope": {"retrieval_time_fields": "not-a-mapping"},
+        }
+    )
+    merged = _session_evidence_record(
+        {
+            "point_in_time_as_of": "2026-07-13T02:01:00+00:00",
+            "prediction_snapshot": invalid,
+        }
+    )
+    repeated = canonicalize_evidence_record(merged)
+
+    for state in (invalid, merged, repeated):
+        validation = state["evidence_envelope_validation"]
+        assert validation["status"] == "invalid_envelope_structure"
+        assert validation["complete"] is False
+    assert any(
+        "prediction_snapshot" in error
+        for error in merged["evidence_envelope"]["structure_errors"]
+    )
 
 
 @pytest.mark.parametrize(

@@ -789,6 +789,33 @@ class SimLoopTest(unittest.TestCase):
         deps.construct = construct
         return deps
 
+    def _ordered_sample_deps(self) -> OrchestratorDeps:
+        deps = self._multi_candidate_deps()
+        execute = deps.execute_sim_order
+        self.assertIsNotNone(execute)
+
+        def execute_after_prediction(
+            order: dict[str, object], account: object = None
+        ) -> dict[str, object]:
+            receipt = dict(execute(order, account))  # type: ignore[misc]
+            # The broker fixture represents a provider-confirmed execution,
+            # so persist its real event and receipt clocks explicitly.  The
+            # sample pipeline must never infer these from prediction/as-of.
+            execution_at = "2026-07-13T10:02:00+08:00"
+            receipt.update(
+                {
+                    "fill_time": execution_at,
+                    "filled_at": execution_at,
+                    "available_at": execution_at,
+                    "ingested_at": execution_at,
+                    "retrieved_as_of": execution_at,
+                }
+            )
+            return receipt
+
+        deps.execute_sim_order = execute_after_prediction
+        return deps
+
     def _high_score_deps(self) -> OrchestratorDeps:
         deps = self._multi_candidate_deps()
 
@@ -2402,7 +2429,7 @@ class SimLoopTest(unittest.TestCase):
     def test_sample_debt_selects_one_relative_rank_exploration_below_mature_threshold(
         self,
     ) -> None:
-        deps = self._multi_candidate_deps()
+        deps = self._ordered_sample_deps()
 
         def build_pool(
             date: str,
@@ -2454,27 +2481,35 @@ class SimLoopTest(unittest.TestCase):
                     {
                         "close": 10.0,
                         "bar_time": "2026-07-13T10:00:00+08:00",
+                        "available_at": "2026-07-13T10:00:00+08:00",
+                        "ingested_at": "2026-07-13T10:00:00+08:00",
+                        "retrieved_as_of": "2026-07-13T10:00:00+08:00",
                         "volume": 100_000,
                         "provider": "sharedsignals_api_realtime_5min",
                     }
                 ]
 
-        result = run_sim_loop(
-            MultiCandidateSimAdapter(
-                ["600001.SH", "600002.SH", "600003.SH"],
-                max_candidates=3,
-                score_universe_limit=3,
-                max_portfolio_positions=3,
-                sample_adjustment={
-                    "strategy_sample_valid_count": 0,
-                    "min_strategy_samples": 5,
-                },
-            ),
-            "20260713",
-            VerifiedReader(),
-            deps=deps,
-            signals_dir=self.tmp_path / "signals_relative_exploration",
-        )
+        with patch.object(
+            orchestrator_module,
+            "_now_iso",
+            return_value="2026-07-13T10:01:00+08:00",
+        ):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(
+                    ["600001.SH", "600002.SH", "600003.SH"],
+                    max_candidates=3,
+                    score_universe_limit=3,
+                    max_portfolio_positions=3,
+                    sample_adjustment={
+                        "strategy_sample_valid_count": 0,
+                        "min_strategy_samples": 5,
+                    },
+                ),
+                "20260713",
+                VerifiedReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / "signals_relative_exploration",
+            )
 
         selection = result["sample_pipeline"]["exploration_selection"]
         self.assertEqual(selection["status"], "selected", result)
@@ -2538,6 +2573,9 @@ class SimLoopTest(unittest.TestCase):
                         "bar_time": "2026-07-13T10:00:00+08:00",
                         "volume": 100_000,
                         "provider": "sharedsignals_api_realtime_5min",
+                        "available_at": "2026-07-13T10:00:00+08:00",
+                        "ingested_at": "2026-07-13T10:00:00+08:00",
+                        "retrieved_as_of": "2026-07-13T10:00:00+08:00",
                     }
                 ]
 
@@ -2590,7 +2628,7 @@ class SimLoopTest(unittest.TestCase):
                 "real_trading_enabled": False,
             }
         )
-        deps = self._multi_candidate_deps()
+        deps = self._ordered_sample_deps()
         deps.build_pool = lambda date, universe, market=None, reader=None: {
             "candidate": [],
             "watch": list(universe),
@@ -2623,6 +2661,9 @@ class SimLoopTest(unittest.TestCase):
                     {
                         "close": 10.0,
                         "bar_time": "2026-07-13T10:00:00+08:00",
+                        "available_at": "2026-07-13T10:00:00+08:00",
+                        "ingested_at": "2026-07-13T10:00:00+08:00",
+                        "retrieved_as_of": "2026-07-13T10:00:00+08:00",
                         "volume": 100_000,
                         "provider": "sharedsignals_api_realtime_5min",
                     }
@@ -2634,13 +2675,18 @@ class SimLoopTest(unittest.TestCase):
             score_universe_limit=1,
             max_portfolio_positions=1,
         )
-        result = run_sim_loop(
-            adapter,
-            "20260713",
-            VerifiedReader(),
-            deps=deps,
-            signals_dir=signals_dir,
-        )
+        with patch.object(
+            orchestrator_module,
+            "_now_iso",
+            return_value="2026-07-13T10:01:00+08:00",
+        ):
+            result = run_sim_loop(
+                adapter,
+                "20260713",
+                VerifiedReader(),
+                deps=deps,
+                signals_dir=signals_dir,
+            )
 
         self.assertEqual(
             result["capital_plan"]["sample_adjustment"][
@@ -2651,13 +2697,18 @@ class SimLoopTest(unittest.TestCase):
         self.assertEqual(result["filled_count"], 1, result)
         self.assertEqual(self.executed_orders[0]["sample_intent"], "exploration")
 
-        second = run_sim_loop(
-            adapter,
-            "20260713",
-            VerifiedReader(),
-            deps=deps,
-            signals_dir=signals_dir,
-        )
+        with patch.object(
+            orchestrator_module,
+            "_now_iso",
+            return_value="2026-07-13T10:01:00+08:00",
+        ):
+            second = run_sim_loop(
+                adapter,
+                "20260713",
+                VerifiedReader(),
+                deps=deps,
+                signals_dir=signals_dir,
+            )
         self.assertEqual(second["filled_count"], 0)
         self.assertEqual(len(self.executed_orders), 1)
         self.assertEqual(
@@ -2780,6 +2831,9 @@ class SimLoopTest(unittest.TestCase):
                         "bar_time": "2026-07-13T10:00:00+08:00",
                         "volume": 100_000,
                         "provider": "sharedsignals_api_realtime_5min",
+                        "available_at": "2026-07-13T10:00:00+08:00",
+                        "ingested_at": "2026-07-13T10:00:00+08:00",
+                        "retrieved_as_of": "2026-07-13T10:00:00+08:00",
                     }
                 ]
 
@@ -2843,7 +2897,7 @@ class SimLoopTest(unittest.TestCase):
     def test_sample_debt_activates_safe_exploration_when_normal_candidate_has_no_order(
         self,
     ) -> None:
-        deps = self._multi_candidate_deps()
+        deps = self._ordered_sample_deps()
 
         def build_pool(
             date: str,
@@ -2914,27 +2968,35 @@ class SimLoopTest(unittest.TestCase):
                     {
                         "close": 10.0,
                         "bar_time": "2026-07-13T10:00:00+08:00",
+                        "available_at": "2026-07-13T10:00:00+08:00",
+                        "ingested_at": "2026-07-13T10:00:00+08:00",
+                        "retrieved_as_of": "2026-07-13T10:00:00+08:00",
                         "volume": 100_000,
                         "provider": "sharedsignals_api_realtime_5min",
                     }
                 ]
 
-        result = run_sim_loop(
-            MultiCandidateSimAdapter(
-                ["600001.SH", "600002.SH", "600003.SH"],
-                max_candidates=3,
-                score_universe_limit=3,
-                max_portfolio_positions=3,
-                sample_adjustment={
-                    "strategy_sample_valid_count": 0,
-                    "min_strategy_samples": 5,
-                },
-            ),
-            "20260713",
-            VerifiedReader(),
-            deps=deps,
-            signals_dir=self.tmp_path / "signals_exploration_fallback",
-        )
+        with patch.object(
+            orchestrator_module,
+            "_now_iso",
+            return_value="2026-07-13T10:01:00+08:00",
+        ):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(
+                    ["600001.SH", "600002.SH", "600003.SH"],
+                    max_candidates=3,
+                    score_universe_limit=3,
+                    max_portfolio_positions=3,
+                    sample_adjustment={
+                        "strategy_sample_valid_count": 0,
+                        "min_strategy_samples": 5,
+                    },
+                ),
+                "20260713",
+                VerifiedReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / "signals_exploration_fallback",
+            )
 
         selection = result["sample_pipeline"]["exploration_selection"]
         self.assertIn(selection["symbol"], {"600002.SH", "600003.SH"})
@@ -2962,7 +3024,7 @@ class SimLoopTest(unittest.TestCase):
     def test_normal_risk_approved_order_keeps_exploration_as_unfunded_standby(
         self,
     ) -> None:
-        deps = self._multi_candidate_deps()
+        deps = self._ordered_sample_deps()
 
         def build_pool(
             date: str,
@@ -3014,27 +3076,35 @@ class SimLoopTest(unittest.TestCase):
                     {
                         "close": 10.0,
                         "bar_time": "2026-07-13T10:00:00+08:00",
+                        "available_at": "2026-07-13T10:00:00+08:00",
+                        "ingested_at": "2026-07-13T10:00:00+08:00",
+                        "retrieved_as_of": "2026-07-13T10:00:00+08:00",
                         "volume": 100_000,
                         "provider": "sharedsignals_api_realtime_5min",
                     }
                 ]
 
-        result = run_sim_loop(
-            MultiCandidateSimAdapter(
-                ["600001.SH", "600002.SH"],
-                max_candidates=2,
-                score_universe_limit=2,
-                max_portfolio_positions=2,
-                sample_adjustment={
-                    "strategy_sample_valid_count": 0,
-                    "min_strategy_samples": 5,
-                },
-            ),
-            "20260713",
-            VerifiedReader(),
-            deps=deps,
-            signals_dir=self.tmp_path / "signals_exploration_standby",
-        )
+        with patch.object(
+            orchestrator_module,
+            "_now_iso",
+            return_value="2026-07-13T10:01:00+08:00",
+        ):
+            result = run_sim_loop(
+                MultiCandidateSimAdapter(
+                    ["600001.SH", "600002.SH"],
+                    max_candidates=2,
+                    score_universe_limit=2,
+                    max_portfolio_positions=2,
+                    sample_adjustment={
+                        "strategy_sample_valid_count": 0,
+                        "min_strategy_samples": 5,
+                    },
+                ),
+                "20260713",
+                VerifiedReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / "signals_exploration_standby",
+            )
 
         selection = result["sample_pipeline"]["exploration_selection"]
         self.assertEqual(selection["status"], "not_activated")

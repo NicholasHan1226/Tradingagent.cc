@@ -19,11 +19,17 @@ class FakeAshareReader:
             {
                 "close": 10.2,
                 "bar_time": "2026-07-13T10:00:00+08:00",
+                "available_at": "2026-07-13T10:00:00+08:00",
+                "ingested_at": "2026-07-13T10:00:00+08:00",
+                "retrieved_as_of": "2026-07-13T10:00:00+08:00",
                 "source": "SharedSignals/realtime_5min",
             },
             {
                 "close": 10.4,
                 "bar_time": "2026-07-13T10:30:00+08:00",
+                "available_at": "2026-07-13T10:30:00+08:00",
+                "ingested_at": "2026-07-13T10:30:00+08:00",
+                "retrieved_as_of": "2026-07-13T10:30:00+08:00",
                 "source": "SharedSignals/realtime_5min",
             },
         ]
@@ -33,11 +39,17 @@ class FakeAshareReader:
             {
                 "close": 10.5,
                 "trade_date": "20260713",
+                "available_at": "2026-07-13T15:00:00+08:00",
+                "ingested_at": "2026-07-13T15:00:00+08:00",
+                "retrieved_as_of": "2026-07-13T15:00:00+08:00",
                 "source": "SharedSignals/market_data",
             },
             {
                 "close": 10.6,
                 "trade_date": "20260714",
+                "available_at": "2026-07-14T15:00:00+08:00",
+                "ingested_at": "2026-07-14T15:00:00+08:00",
+                "retrieved_as_of": "2026-07-14T15:00:00+08:00",
                 "source": "SharedSignals/market_data",
             },
         ]
@@ -63,6 +75,18 @@ def _prediction() -> dict[str, object]:
         "style": "trend_breakout",
         "strategy_version": "trend-v1",
         "prediction_at": prediction_at,
+        "event_time": prediction_at,
+        "available_at": prediction_at,
+        "ingested_at": prediction_at,
+        "retrieved_as_of": prediction_at,
+        "point_in_time_lineage": {
+            "timestamps": {
+                "event_time": prediction_at,
+                "available_at": prediction_at,
+                "ingested_at": prediction_at,
+                "retrieved_as_of": prediction_at,
+            }
+        },
         "reference_price": 10.0,
         "direction": "long",
         "trade_date": "20260713",
@@ -79,6 +103,25 @@ def _prediction() -> dict[str, object]:
             "reliable": True,
             "source": "SharedSignals/reference",
             "price_timestamp": prediction_at,
+            "reference_timestamp_lineage": {
+                "source_field": "bar_time",
+                "raw_value": prediction_at,
+                "normalized_value": prediction_at,
+                "timezone_semantics": "ashare_exchange_event_time",
+                "normalization_rule": "convert_aware_instant_to_asia_shanghai",
+                "valid": True,
+            },
+        },
+        "decision_timestamp_lineage": {
+            field: {
+                "source_field": field,
+                "raw_value": prediction_at,
+                "normalized_value": prediction_at,
+                "timezone_semantics": "ashare_decision_time",
+                "normalization_rule": "convert_aware_instant_to_asia_shanghai",
+                "valid": True,
+            }
+            for field in ("prediction_at", "data_as_of")
         },
         "real_trading_enabled": False,
         "live_execution_enabled": False,
@@ -391,6 +434,7 @@ def test_sample_ops_has_no_email_broker_or_live_dispatch_path() -> None:
     )
     for marker in forbidden:
         assert marker not in source
-    assert "write_evolution_decision" in source
+    assert "build_evolution_decision" in source
+    assert "publish_projection_generation" in source
     assert "assess_ashare_maturity" in source
     assert "run_ashare_forward_label_backlog" in source

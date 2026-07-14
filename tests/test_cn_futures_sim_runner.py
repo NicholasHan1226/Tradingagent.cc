@@ -2838,6 +2838,54 @@ def test_prediction_snapshot_includes_pit_lineage_fields() -> None:
     assert snapshot["source_symbol"] == "RB2610.SHF"
     assert snapshot["source_bar_count"] == 1
     assert snapshot["source_rule_version"]
+    assert snapshot["evidence_envelope_validation"]["status"] == (
+        "missing_receipt_timestamps"
+    )
+    assert snapshot["point_in_time_lineage"] == {}
+
+
+def test_prediction_snapshot_persists_real_provider_receipt_lineage() -> None:
+    snapshot = sim_runner._prediction_snapshot_before_risk(
+        style_name="trend",
+        style={"style_version": "trend-v8"},
+        signal={
+            "side": "buy",
+            "action": "buy",
+            "price": 3500.0,
+            "score": 0.015,
+            "probability": 0.75,
+        },
+        scenario_tags={"market_regime": "directional_up"},
+        exit_plan={
+            "prediction_horizon_bars": 3,
+            "time_stop_bars": 3,
+            "max_hold_bars": 6,
+            "no_overnight": True,
+        },
+        forward_outcome={"status": "pending_future_bars"},
+        bar_time="2026-07-10 09:35:00",
+        authority="market_capital_ledger",
+        symbol="RB2610.SHF",
+        source_name="sharedsignals_futures_bars",
+        source_cadence="5min",
+        source_bars=[
+            {
+                "symbol": "RB2610.SHF",
+                "bar_time": "2026-07-10 09:35:00",
+                "close": 3500.0,
+                "available_at": "2026-07-10T09:35:01+08:00",
+                "ingested_at": "2026-07-10T09:35:02+08:00",
+                "retrieved_as_of": "2026-07-10T09:35:03+08:00",
+            }
+        ],
+    )
+
+    assert snapshot["evidence_envelope_validation"]["status"] == "valid"
+    assert snapshot["point_in_time_lineage"]["complete"] is True
+    assert snapshot["point_in_time_as_of"] == "2026-07-10T01:35:03+00:00"
+    assert snapshot["source_event_time"] == "2026-07-10T09:35:00+08:00"
+    retrieval = snapshot["evidence_envelope"]["retrieval_time_fields"]
+    assert retrieval["retrieved_as_of"] == "2026-07-10T09:35:03+08:00"
 
 
 def test_prediction_snapshot_hash_binds_bar_source_signal_style_rule_and_pit() -> None:

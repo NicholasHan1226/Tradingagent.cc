@@ -1,6 +1,31 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-13 15:34 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-14 08:18 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。
+
+## 隔离候选：A股 sample ops P0（未集成）
+
+- 候选 worktree：`/Users/nicholashan/Projects/Finance/.worktrees/tradingagent-sample-ops-p0`；分支 `codex/ashare-sample-ops-p0`；基线 `6c12fbed29db925019f85a6016774626f63b857a`。这是本地未提交候选，不代表 `main`、GitHub、生产文件/runtime、外部路由或真实业务写入已变化。
+- 候选实现固定 evidence availability/receipt cutoff 与 canonical Journal head；同轮 labels/KPI/decision/maturity 共用 frozen H0 + 显式 task-owned delta H1，未知并发 append fail closed。
+- exact pending snapshot IDs 消除 backlog 放大；单次 Journal parse/index、同 symbol/date/run-as-of 行情复用与 100–250 条批量 label append 降低重复扫描、调用、锁和 fsync。
+- KPI/decision/maturity 共用 `projection_input_sha256`，通过内容寻址 generation + 单一原子 current pointer 发布；提供 append-only invalid/superseded audit，不修改历史。
+- 独立验收复现的 5 个 reader/publication 缺口已在候选修复：final physical-H1 CAS 持锁穿过 pointer publish；pointer 封存 manifest content SHA；generation 已存在但 current 缺失/非法时健康检查 fail closed；nested PIT receipt/availability 全量校验；前端从 canonical current generation 读取并要求安全字段显式 false，绝不把 root mirrors 当事务点。
+- Nicholas 提供的 Storage migration final evidence（本隔离任务未访问生产独立复核）显示：production A股 Journal 尾部 1,000 条 label update 全部 rejected，其中 996 条 `reference_timestamp_timezone_mismatch`、4 条 `missing_reference_price`；KPI cutoff 停在 14:20，Journal 延续到 19:03，`ready_labels=0`、`N_eff=0`、current-epoch trades=0，两条 sample-ops cron 仍按计划禁用。
+- 候选诊断定位到 reference timestamp 与 prediction/data-as-of 的 naive/aware 比较路径。当前候选只把契约明确的 A股 `bar_time`/`trade_time` 无偏移原值绑定 `Asia/Shanghai`，统一按 UTC instant 比较并保留 raw/normalized/rule lineage；通用 timestamp、prediction、data-as-of、receipt 无时区以及未来/冲突证据仍 fail closed。`missing_reference_price` 改为 retryable/degraded pending，不伪造价格或 terminal label。
+- 最新独立 review P0 已修：reference/entry 和每个 exit point 在候选排序前统一重算 PIT Evidence Gate；只有 `complete=true,status=valid` 且 receipts 不晚于冻结边界的证据可生成 ready label。非法/未来/nested-naive exit 保持 retryable pending/degraded，高价非法 point 不能影响合法 point 选择；不再先选 point 后仅附加 invalid lineage。
+- 后续独立 review 的 generation/lineage/legacy 缺口也已在候选修复：publisher/Python/front 共用同一 generation identity 合同且 reader 从 input SHA + canonical 三投影 SHA map 重算 ID；reference/decision lineage 缺失、字段不全或不一致不再得到 verified；legacy-only health 强制 `legacy_degraded`、maturity evidence untrusted、promotion false，前端不读取 legacy mirrors。已补跨语言 golden、hash-consistent forged-ID、strict-lineage 与 legacy-green 负例。
+- 最新双时钟 P0 已同时在 materializer 与所有原始入口收口：provider/bar/reference 在任何 first-nonempty 归一化前先构建 EvidenceEnvelope，保留 root、PIT root、PIT timestamps 与 adapter 的全部 event/receipt aliases 和来源路径。event aliases 必须解析为同一 UTC instant；所有 present receipt aliases 必须合法、带时区、顺序一致且最晚 receipt 不晚于边界。不能再用较早 `available_at` 覆盖晚到 `published_at`、用任务 `as_of` 填造 provider retrieval，或把首选 clock 复制成伪一致 nested lineage。顶层/nested 窗口、排序、`evidence_at` 与 lineage 只使用 validated canonical instant；冲突高价 point、naive secondary clock、hidden future receipt 均不能生成 ready，同一 instant 的 `+08:00`/UTC 表示通过，entry/reference 使用相同合同。
+- `8eefddff...` 冻结候选被后续 independent acceptance 判定 FAIL，现已作废。该轮新增 reference selection P0 已修复：collector 对每个原始 row 传入真实 prediction boundary，先排除 invalid/future sibling，再从合法 rows 按 canonical event instant 选价；provider 输入顺序和无效高价不能控制 reference。没有合法 row 时 price 为空、`qualified=false`、snapshot pending/degraded、exploration not-selected；被过滤 row 只保留在 rejection audit，不进入 candidate/snapshot PIT。
+- `fe2c5a69...` 冻结候选的 reference Phase A 通过，但 projection Phase A 复现 mirror-log 在 final generation validation 后被换成 hardlink 仍切换 current，因此 fe2c 已作废。六份 compatibility mirrors/logs 现已在写完后冻结完整身份，并在 pointer pre-`os.replace` callback 内逐项复验；mirror/log 任一 rename、symlink、hardlink、内容或 metadata 漂移都使 publisher 失败，旧 pointer bytes 逐字节保持。
+- `2f4b5856...` 随后的 compatibility 矩阵通过，但 fresh projection reviewer 又复现 final generation validation 后把投影换成同字节、同 mode、不同 inode 仍可切换 current，因此 2f4b 也已作废。当前修复从同一次 final validation 封存 generation 目录及 manifest + 三投影的 path/dev/inode/mode/nlink/size/mtime_ns/ctime_ns/content SHA，并在 pointer callback 重验内容后与该身份逐项比较；内容相同不再能替代对象身份，失败保持旧 pointer 原始 bytes 不变。
+- `2b982b62366d7daa3043e12a5ab3662cf52737b4c81d70e163d4679e7563e6fc` 随后被 backend Phase B 判定 FAIL，已正式作废，不能再作为 PASS 或主集成接手指纹。该轮全后端为 `1836 passed / 21 failed / 12 skipped`：8 项 localhost sandbox、6 项 base 同样失败、7 项候选新增；候选新增包括 CNFutures forward-label/maturity、3 项 A股 sample-lineage/exploration 与 2 项 sim-loop receipt fixture。
+- `f02183b5...` 冻结候选虽曾得到完整后端 `1872 passed / 0 failed / 12 skipped`，但 fresh Phase A 后续复现 5 个 P1，因此该指纹和其“可接手”结论已作废。当前未冻结工作树正在修复这些缺口：非法 provider envelope 仍原样进入 Gate，同时保存独立 HTTP transport audit 并进入 cache；embedded `structure_errors` 在重复 canonicalization 中不可逆传播；receipt 顺序改为逐 alias 跨 stage 上下界校验；SampleJournal/lock 要求 single-link regular FD/path identity；maturity 与 actual-cost 共用 strict completed-round-trip validator。没有放松 PIT、data-quality、sim-only、authority 或 conservative-cost 门禁。
+- 后续 `9dbe...` provisional 包又被独立复核证明 strict actual-cost 只验 SHA 形状而未绑定内容，因此同样作废且未冻结。当前修复要求 maturity 与 actual-cost 从同一 frozen view 唯一关联 prediction、entry fill、exit stop：重算 prediction canonical content/source binding、fill/stop canonical receipt/local-trade payload SHA，以及 round-trip source/content SHA；显式空 envelope、任意 64hex、payload/hash 任一方向漂移和 entry/exit fingerprint 错配全部回退 conservative cost。Fresh strict-cost 复验又发现 prediction source SHA 未与 frozen Journal 内容重算绑定、多腿 exit SHA 数组只做普通 list equality；当前未冻结工作树已让新 prediction append 保存 canonical source payload，validator 从 frozen event 重算并 constant-time 校验，历史缺 payload 继续 conservative；exit receipt/local-trade 数组改为等长、同序、逐元素 constant-time 校验。Journal identity/hardlink 复核已独立 PASS，本轮没有扩大该实现；非协作同 UID 窗口继续按既有 P1 OS 隔离边界处理。
+- Fresh strict-cost 终审已独立 PASS（P0/P1=0）：决定性 5 节点 `5 passed`、0.31s，producer、frozen evidence index、constant-time digest、历史 conservative 回退和 production 同 frozen view 全部核对。`a6e86ab16eca6bb5689ea683dc117a4f679ac78d7bc209cb2eab4e214798af83` 仅是完整候选验收开始前的 historical strict-cost checkpoint，不是当前全候选的自证指纹；后续完整验收与 `STATUS.md` 自身的文档修订均会改变 diff。当前候选身份以仓外冻结 manifest 与交付报告为准。
+- 首轮完整后端在 97% 处发现 4 个 sim-loop fixture 迁移漏项：模拟 broker 回执仅有 `fill_time`，没有可审计 execution receipt clocks，因此被未放松的 Evidence Gate 正确拒绝。只在测试自有 fixture 补入明确的 `filled_at/available_at/ingested_at/retrieved_as_of`，不从 prediction、`as_of` 或 wall clock 补造；4 节点 `4 passed`，整个 `test_sim_loop.py` 为 `65 passed / 6 subtests passed`、12.10s。修复后第二轮完整后端终态为 `1889 passed / 0 failed / 12 skipped / 101 subtests passed`、1105.24s（0:18:25）。12 个 skip 全部是 clean overlay 中明确缺少兄弟仓 SharedSignals `reader.py/api_server.py` 或 MarketGraph `_api_server.py` 的条件性跨仓 P1 edge-case，不是候选失败。
+- Quick sim-only acceptance 为 `216 passed / 35 subtests passed`、67.94s。`2000 snapshots / 250 symbol-date / 8 variants` 性能基准为 `1 passed`、4.26s：logical/physical/cache-hit 分别为 4000/500/3500，Journal append batch/fsync 均为 10。Front canonical 为 `63/63`，front full 为 `218/218`；client build、API build 和 oxlint 全部通过。改动的 27 个 Python 文件 Ruff check/format 通过，仓内 361 个 Python 文件 compile 通过，7 个改动 Markdown 文件的 14 个本地链接目标全部存在。所有测试、cache、temp、JUnit、npm dependencies 和 build 产物均位于 `/private/tmp/tradingagent-freeze-20260714.OEZ4mh` 及仓外 artifacts，未写入源工作树 ignored 路径。
+- 本候选未访问生产、数据库、cron、邮件、同花顺、broker 或真实交易；未 commit、merge、push、deploy，也未删除任何 worktree、Journal、ledger 或历史。
+
+本节以下的生产与真实市场叙述继承自基线 STATUS，未由本隔离任务刷新；本轮只把本地候选、测试与版本控制层作为新鲜证据。
 
 ## 结论
 
@@ -60,11 +85,11 @@
 
 ## 本地验证层级
 
-- P0 固定聚焦套件：`719 passed`。
-- 后端修复后全量：`1729 passed, 12 skipped`；skip 为既有条件性用例。
-- fresh-lineage opening/ops 默认读取与机械格式化后的定向回归：`532 passed`。
-- 前端：40 个 test files、`212 passed`；`npm run lint`、client build 与 API build 通过。
-- 135 个变更 Python 文件的 compile/Ruff/format、shell syntax、`git diff --check`、21 个 Markdown 文件的本地链接、双 50k/sim-only/fresh-lineage authority 静态检查按固定矩阵通过。
+- 完整后端：`1889 passed, 12 skipped, 101 subtests passed`，0 failed；skip 为 clean overlay 缺兄弟仓源文件的 12 个条件性跨仓 P1 edge-case。
+- Quick sim-only acceptance：`216 passed, 35 subtests passed`。
+- A股 sample-ops 性能基准：2,000 predictions / 250 symbol-date / 8 variants，physical provider calls 上界 500，`1 passed`。
+- 前端：canonical `63 passed`，40 个 test files / `218 passed`；oxlint、client build 与 API build 通过。
+- 改动的 27 个 Python 文件 Ruff/format、仓内 361 个 Python 文件 compile、`git diff --check` 和改动 Markdown 本地链接检查通过。
 - 测试 fixture、隔离临时账本和浏览器截图不是真实市场样本，也不证明策略正期望。
 
 ## 当前阻塞与下一门禁
@@ -78,9 +103,9 @@
 
 | 层级 | 当前事实 |
 |---|---|
-| 本地工作树 | `main` HEAD `7db5a3c`；本轮 PIT/forward-label 105/105、gate 11/11、capital/bootstrap 176/176 通过；文档状态更新待本轮提交 |
-| GitHub | `origin/main` 已回读为 `7db5a3c` |
-| 生产文件/runtime | production HEAD `7db5a3c`；相关生产测试 105/105；服务/cron 用户为 `marketgraph`，sim-only env 明确；cron 每次加载当前 Python |
-| 生产 cron | merge-tool backup/dry-run/apply/readback SHA 一致；56/56、missing/drift/env/root residual/permission blocker 均为 0 |
+| 本地工作树 | 主工作树 `main` 干净、HEAD `6c12fbe`；本隔离候选同基线、37 个 tracked+untracked 改动/新增文件，未提交 |
+| GitHub | 开工 fetch 后 `origin/main=6c12fbe`；本候选未 push，任务结束时未再次联网刷新 |
+| 生产文件/runtime | 本隔离任务禁止访问，未验证、未改变；不能从本地候选或测试推断 |
+| 生产 cron | 本隔离任务禁止访问/apply，未验证、未改变 |
 | 外部邮件/同花顺/broker | 未实现、未发送、未连接 |
 | 真实市场样本 | 2026-07-13 opening 已错过且不补造；14:46 普通日内新增 2,000 predictions，1,996 eligible/PIT-complete、4 rejected、0 fill/live；15:32 唯一 MTM/50,000 CNY 守恒已验证；17:40 KPI/maturity 待实际产物 |

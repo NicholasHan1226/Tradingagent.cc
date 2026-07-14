@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,12 @@ from shared.runtime_test.cn_futures_live_check import (
     validate_cn_futures_maturity_projection,
 )
 from shared.review.pnl_summary import sim_ledger_pnl_summary
+from shared.review.projection_generation import (
+    CURRENT_MANIFEST,
+    GENERATIONS_DIR,
+    ProjectionGenerationError,
+    load_current_projection_set,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -118,12 +125,24 @@ def _authority_scope(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _valid_ashare_projection(payload: dict[str, Any], *, report_type: str) -> bool:
     authority = _authority_scope(payload)
+    safety_fields_false = all(
+        payload.get(field) is False
+        for field in (
+            "real_trading_enabled",
+            "live_execution_enabled",
+            "automatic_promotion_enabled",
+            "automatic_risk_expansion_enabled",
+        )
+    )
+    if report_type != "sample_journal_kpi":
+        safety_fields_false = (
+            safety_fields_false and payload.get("live_transition_authorized") is False
+        )
     return bool(
         payload
         and payload.get("report_type") == report_type
         and payload.get("evidence_source") == "sample_journal_kpi"
-        and payload.get("real_trading_enabled") is not True
-        and payload.get("live_execution_enabled") is not True
+        and safety_fields_false
         and authority.get("capital_authority_id") == "ashare-capital-v1"
         and authority.get("authority_generation") == 1
         and str(authority.get("execution_lineage_id") or "").strip()
@@ -151,10 +170,42 @@ def _ashare_kpi_pnl(styles: dict[str, Any]) -> float:
 
 
 def _ashare_current_projection(review_dir: Path) -> dict[str, Any]:
-    kpi = _read_current_projection(review_dir / "sample_kpi_latest.json")
-    decision = _read_current_projection(review_dir / "evolution_decision_latest.json")
-    maturity = _read_current_projection(review_dir / "market_maturity_latest.json")
     issues: list[str] = []
+    current_path = review_dir / CURRENT_MANIFEST
+    generations_path = review_dir / GENERATIONS_DIR
+    canonical_required = str(
+        os.environ.get("TRADINGAGENT_ASHARE_CANONICAL_PROJECTIONS_REQUIRED", "")
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    current_present = os.path.lexists(str(current_path))
+    generation_system_present = os.path.lexists(str(generations_path))
+    projection_mode = "missing"
+    legacy_projection_degraded = False
+    if current_present:
+        projection_mode = "canonical_generation"
+        try:
+            generation = load_current_projection_set(review_dir)
+            projections = generation["projections"]
+            kpi = projections["sample_kpi_latest.json"]
+            decision = projections["evolution_decision_latest.json"]
+            maturity = projections["market_maturity_latest.json"]
+        except ProjectionGenerationError as exc:
+            kpi = decision = maturity = {}
+            issues.append("invalid_current_projection_generation:%s" % exc)
+    elif generation_system_present or canonical_required:
+        projection_mode = "canonical_generation_missing_current"
+        kpi = decision = maturity = {}
+        issues.append("missing_current_projection_manifest")
+    else:
+        # Explicitly degraded compatibility for pre-generation history only.
+        kpi = _read_current_projection(review_dir / "sample_kpi_latest.json")
+        decision = _read_current_projection(
+            review_dir / "evolution_decision_latest.json"
+        )
+        maturity = _read_current_projection(review_dir / "market_maturity_latest.json")
+        if any((kpi, decision, maturity)):
+            projection_mode = "legacy_compatibility_degraded"
+            legacy_projection_degraded = True
+            issues.append("legacy_projection_mode_degraded")
 
     kpi_valid = _valid_ashare_projection(kpi, report_type="sample_journal_kpi")
     decision_valid = _valid_ashare_projection(
@@ -198,16 +249,33 @@ def _ashare_current_projection(review_dir: Path) -> dict[str, Any]:
     if scopes and any(scope != scopes[0] for scope in scopes[1:]):
         issues.append("current_projection_authority_mismatch")
     if any(
-        payload.get("automatic_promotion_enabled") is True
-        or payload.get("automatic_risk_expansion_enabled") is True
-        or payload.get("real_trading_enabled") is True
+        payload
+        and not all(
+            payload.get(field) is False
+            for field in (
+                "automatic_promotion_enabled",
+                "automatic_risk_expansion_enabled",
+                "real_trading_enabled",
+                "live_execution_enabled",
+            )
+        )
         for payload in (kpi, decision, maturity)
+    ) or any(
+        payload and payload.get("live_transition_authorized") is not False
+        for payload in (decision, maturity)
     ):
         issues.append("unsafe_current_projection_policy")
 
     current_kpi = kpi if kpi_valid else {}
     current_decision = decision if decision_valid else {}
     current_maturity = maturity if maturity_valid else {}
+    canonical_maturity_trusted = bool(
+        projection_mode == "canonical_generation"
+        and kpi_valid
+        and decision_valid
+        and maturity_valid
+        and not issues
+    )
     styles = (
         current_kpi.get("styles") if isinstance(current_kpi.get("styles"), dict) else {}
     )
@@ -231,27 +299,56 @@ def _ashare_current_projection(review_dir: Path) -> dict[str, Any]:
 
     return {
         "issues": list(dict.fromkeys(issues)),
+        "projection_mode": projection_mode,
+        "legacy_projection_degraded": legacy_projection_degraded,
+        "canonical_projection_required": canonical_required,
         "generated_at": str(
             current_decision.get("generated_at")
             or current_maturity.get("generated_at")
             or current_kpi.get("generated_at")
             or ""
         ),
-        "state": str(current_decision.get("state") or "missing"),
+        "state": str(
+            (current_decision.get("state") or "missing")
+            if canonical_maturity_trusted
+            else (
+                "evidence_pending"
+                if projection_mode == "legacy_compatibility_degraded"
+                else "missing"
+            )
+        ),
         "recommended_action": str(
-            current_decision.get("recommended_action") or "observe_and_label_candidates"
+            (
+                current_decision.get("recommended_action")
+                or "observe_and_label_candidates"
+            )
+            if canonical_maturity_trusted
+            else "observe_and_label_candidates"
         ),
         "prediction_count": prediction_count,
         "completed_round_trip_count": completed_round_trips,
         "post_cost_pnl_cny": _ashare_kpi_pnl(styles),
         "style_count": len(styles),
-        "maturity_stage": str(current_maturity.get("stage") or "missing"),
+        "maturity_stage": str(
+            current_maturity.get("stage")
+            if canonical_maturity_trusted
+            else (
+                "legacy_degraded"
+                if projection_mode == "legacy_compatibility_degraded"
+                else "missing"
+            )
+        ),
+        "maturity_evidence_trusted": canonical_maturity_trusted,
         "authority_scope": _authority_scope(current_kpi),
         "promotion_evidence_ready": bool(
-            current_kpi.get("scientific_evidence", {}).get("promotion_evidence_ready")
-        )
-        if isinstance(current_kpi.get("scientific_evidence"), dict)
-        else False,
+            canonical_maturity_trusted
+            and isinstance(current_kpi.get("scientific_evidence"), dict)
+            and current_kpi.get("scientific_evidence", {}).get(
+                "promotion_evidence_ready"
+            )
+            is True
+            and current_maturity.get("promotion_evidence_ready") is True
+        ),
         "automatic_promotion_enabled": False,
         "automatic_risk_expansion_enabled": False,
         "real_trading_enabled": False,

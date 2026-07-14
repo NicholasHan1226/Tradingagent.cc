@@ -11,23 +11,34 @@ live transition path.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 import json
 import math
 import os
 from pathlib import Path
-import tempfile
+from time import perf_counter, process_time
 from typing import Any, Mapping, Optional, Sequence
+from uuid import uuid4
 
 from Ashare.evolution_controller import (
     build_evolution_decision,
-    write_evolution_decision,
 )
 from shared.review.market_maturity import AshareEvidence, assess_ashare_maturity
 from shared.review.forward_labels import validate_point_in_time_lineage
-from shared.review.sample_journal import JournalSafetyError, SampleJournal
+from shared.review.sample_journal import (
+    JournalConflictError,
+    JournalSafetyError,
+    SampleJournal,
+)
+from shared.review.projection_generation import (
+    CURRENT_MANIFEST,
+    ProjectionGenerationError,
+    publish_projection_generation,
+)
 from shared.runtime_test.ashare_forward_label_ops import (
     DEFAULT_BACKLOG_WINDOW_DAYS,
     ForwardLabelOpsSafetyError,
@@ -109,6 +120,8 @@ def _review_output_paths(review_dir: Path) -> tuple[Path, ...]:
         review_dir / "evolution_decision_log.jsonl",
         review_dir / MATURITY_LATEST,
         review_dir / MATURITY_LOG,
+        review_dir / CURRENT_MANIFEST,
+        review_dir / "projection_generations",
     )
 
 
@@ -118,54 +131,46 @@ def _assert_output_paths_safe(review_dir: Path) -> None:
         _check_no_symlink(path, label=path.name)
 
 
-def _json_bytes(payload: Mapping[str, Any], *, pretty: bool) -> bytes:
-    return (
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            indent=2 if pretty else None,
-            sort_keys=True,
-            allow_nan=False,
-            default=str,
-        )
-        + "\n"
+def _canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+        default=str,
     ).encode("utf-8")
 
 
-def _write_latest(path: Path, payload: Mapping[str, Any]) -> None:
-    _check_no_symlink(path, label=path.name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary_name = tempfile.mkstemp(
-        prefix=".%s." % path.name,
-        suffix=".tmp",
-        dir=str(path.parent),
-    )
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(_json_bytes(payload, pretty=True))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, str(path))
-    except Exception:
-        try:
-            os.unlink(temporary_name)
-        except FileNotFoundError:
-            pass
-        raise
+def _projection_input_sha256(
+    events: Sequence[Mapping[str, Any]], *, data_as_of: str
+) -> str:
+    event_fingerprints: list[str] = []
+    for sequence, event in enumerate(events, start=1):
+        fingerprint = str(event.get("journal_payload_sha256") or "").strip().lower()
+        if not _is_sha256(fingerprint):
+            raise JournalSafetyError(
+                "projection input event %d has no canonical fingerprint" % sequence
+            )
+        event_fingerprints.append(fingerprint)
+    payload = {
+        "data_as_of": data_as_of,
+        "journal_event_fingerprints": event_fingerprints,
+    }
+    return sha256(_canonical_json_bytes(payload)).hexdigest()
 
 
-def _append_log(path: Path, payload: Mapping[str, Any]) -> None:
-    _check_no_symlink(path, label=path.name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(str(path), flags, 0o600)
+@contextmanager
+def _measure_stage(metrics: dict[str, Any], name: str):
+    wall_started = perf_counter()
+    cpu_started = process_time()
     try:
-        os.write(fd, _json_bytes(payload, pretty=False))
-        os.fsync(fd)
+        yield
     finally:
-        os.close(fd)
+        metrics[name] = {
+            "wall_seconds": round(perf_counter() - wall_started, 6),
+            "cpu_seconds": round(process_time() - cpu_started, 6),
+        }
 
 
 def _in_authority(record: Mapping[str, Any], scope: Mapping[str, Any]) -> bool:
@@ -602,6 +607,7 @@ def run_ashare_sample_ops(
     environ: Optional[Mapping[str, Any]] = None,
     safety_flags: Optional[Mapping[str, Any]] = None,
     backlog_window_days: int = DEFAULT_BACKLOG_WINDOW_DAYS,
+    label_batch_size: int = 200,
 ) -> dict[str, Any]:
     """Run one bounded, sim-only label/KPI/decision/maturity cycle."""
 
@@ -618,30 +624,40 @@ def run_ashare_sample_ops(
     )
     _assert_output_paths_safe(selected_review_dir)
 
+    run_id = "ashare-sample-ops:%s" % uuid4().hex
+    generated_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    stage_metrics: dict[str, Any] = {}
     journal = SampleJournal(journal_path)
     try:
-        full_events_before = journal.read_events()
+        with _measure_stage(stage_metrics, "journal_freeze"):
+            frozen = journal.read_frozen(as_of=current_as_of)
+            full_events_before = frozen.copy_events()
         live_journal_marker = _find_live_marker(full_events_before, "journal")
         if live_journal_marker:
             raise AshareSampleOpsSafetyError(
                 "live trading journal marker rejected at %s" % live_journal_marker
             )
-        initial_kpi = journal.build_kpi()
+        initial_kpi = journal.build_kpi_from_events(full_events_before)
         authority_scope = initial_kpi["authority_scope"]
-        scoped_journal = _AuthorityScopedJournal(journal, authority_scope)
-        label_ops = run_ashare_forward_label_backlog(
-            journal_path=journal_path,
-            anchor_trade_date=selected_trade_date,
-            as_of=current_as_of,
-            window_days=backlog_window_days,
-            reader=reader,
-            environ=active_environ,
-            safety_flags=safety_flags,
-            journal=scoped_journal,
-        )
-        events = journal.read_events()
-        records = journal.latest_sample_records()
-        kpi = journal.build_kpi()
+        with _measure_stage(stage_metrics, "forward_labels"):
+            label_ops = run_ashare_forward_label_backlog(
+                journal_path=journal_path,
+                anchor_trade_date=selected_trade_date,
+                as_of=current_as_of,
+                window_days=backlog_window_days,
+                reader=reader,
+                environ=active_environ,
+                safety_flags=safety_flags,
+                journal=journal,
+                frozen_view=frozen,
+                authority_scope=authority_scope,
+                batch_size=label_batch_size,
+            )
+        task_owned_delta_events = list(label_ops.pop("task_owned_delta_events", []))
+        events = full_events_before + deepcopy(task_owned_delta_events)
+        with _measure_stage(stage_metrics, "projection_build"):
+            records = journal.project_sample_records(events)
+            kpi = journal.build_kpi_from_events(events, authority_scope=authority_scope)
     except ForwardLabelOpsSafetyError as exc:
         raise AshareSampleOpsSafetyError(str(exc)) from exc
 
@@ -654,12 +670,34 @@ def run_ashare_sample_ops(
         if record.get("journal_event_type") == "prediction_snapshot"
         and _record_trade_date(record) == selected_trade_date
     ]
-    generated_at = current_as_of.isoformat(timespec="seconds")
+    data_as_of = current_as_of.isoformat(timespec="seconds")
+    projection_input_sha = _projection_input_sha256(events, data_as_of=data_as_of)
+    h0 = {
+        "event_count": frozen.journal_head_event_count,
+        "sha256": frozen.journal_head_sha256,
+    }
+    h1 = {
+        **journal.canonical_head(events),
+        "task_owned_delta_event_count": len(task_owned_delta_events),
+    }
+    common_projection_metadata = {
+        "data_as_of": data_as_of,
+        "generated_at": generated_at,
+        "journal_head_event_count": frozen.journal_head_event_count,
+        "journal_head_sha256": frozen.journal_head_sha256,
+        "max_evidence_available_at": frozen.max_evidence_available_at,
+        "excluded_after_as_of_count": frozen.excluded_after_as_of_count,
+        "projection_input_sha256": projection_input_sha,
+        "run_id": run_id,
+        "H0": h0,
+        "H1": h1,
+        "task_owned_delta_event_count": len(task_owned_delta_events),
+    }
     kpi.update(
         {
             "report_type": "sample_journal_kpi",
             "evidence_source": "sample_journal_kpi",
-            "generated_at": generated_at,
+            **common_projection_metadata,
             "trade_date": selected_trade_date,
             "journal_event_count": len(current_events),
             "journal_total_event_count": len(events),
@@ -670,16 +708,18 @@ def run_ashare_sample_ops(
             "automatic_risk_expansion_enabled": False,
             "real_trading_enabled": False,
             "live_execution_enabled": False,
+            "journal_metrics": journal.metrics_snapshot(),
+            "stage_metrics": deepcopy(stage_metrics),
         }
     )
 
-    # Build all projections before writing any projection file.  Label updates
-    # are already append-only facts and cannot be rolled back or overwritten.
-    build_evolution_decision(
+    decision = build_evolution_decision(
         kpi,
         authority_scope=scope,
         target_trade_date=selected_trade_date,
     )
+    decision.update(common_projection_metadata)
+    decision["live_execution_enabled"] = False
     maturity = _build_maturity(
         records=current_records,
         kpi=kpi,
@@ -687,17 +727,64 @@ def run_ashare_sample_ops(
         trade_date=selected_trade_date,
         generated_at=generated_at,
     )
+    maturity.update(common_projection_metadata)
 
-    _write_latest(selected_review_dir / KPI_LATEST, kpi)
-    _append_log(selected_review_dir / KPI_LOG, kpi)
-    decision = write_evolution_decision(
-        kpi,
-        authority_scope=scope,
-        review_dir=selected_review_dir,
-        target_trade_date=selected_trade_date,
-    )
-    _write_latest(selected_review_dir / MATURITY_LATEST, maturity)
-    _append_log(selected_review_dir / MATURITY_LOG, maturity)
+    with journal.guard_projection_head(
+        frozen, task_owned_delta_events
+    ) as projection_head_cas:
+        if projection_head_cas["H1"] != {
+            "event_count": h1["event_count"],
+            "sha256": h1["sha256"],
+        }:
+            raise JournalConflictError(
+                "projection H1 does not match guarded journal head"
+            )
+        with _measure_stage(stage_metrics, "projection_publish"):
+            generation = publish_projection_generation(
+                review_dir=selected_review_dir,
+                projections={
+                    KPI_LATEST: kpi,
+                    "evolution_decision_latest.json": decision,
+                    MATURITY_LATEST: maturity,
+                },
+                projection_input_sha256=projection_input_sha,
+                run_id=run_id,
+                generated_at=generated_at,
+            )
+    stage_metrics["total"] = {
+        "wall_seconds": round(
+            sum(float(value["wall_seconds"]) for value in stage_metrics.values()), 6
+        ),
+        "cpu_seconds": round(
+            sum(float(value["cpu_seconds"]) for value in stage_metrics.values()), 6
+        ),
+    }
+    label_ops["performance"] = {
+        "http": deepcopy(label_ops.get("http_metrics") or {}),
+        "journal_append": deepcopy(label_ops.get("journal_append") or {}),
+        "pending_snapshot_count": int(
+            (label_ops.get("backlog") or {}).get("pending_snapshot_count") or 0
+        ),
+        "selected_snapshot_count": int(
+            (label_ops.get("counts") or {}).get("prediction_count") or 0
+        ),
+        "terminal_snapshot_count": int(
+            (label_ops.get("backlog") or {}).get("terminal_snapshot_count") or 0
+        ),
+    }
+    performance = {
+        "stages": stage_metrics,
+        "journal": journal.metrics_snapshot(),
+        "http": deepcopy(label_ops.get("http_metrics") or {}),
+        "as_of_drift_seconds": round(
+            (
+                datetime.fromisoformat(generated_at)
+                - current_as_of.astimezone(timezone.utc)
+            ).total_seconds(),
+            6,
+        ),
+        "projection_generation": generation["generation_id"],
+    }
 
     counts = label_ops.get("counts")
     label_counts = counts if isinstance(counts, Mapping) else {}
@@ -722,7 +809,17 @@ def run_ashare_sample_ops(
         "warning_reasons": warning_reasons,
         "market": "Ashare",
         "trade_date": selected_trade_date,
-        "as_of": generated_at,
+        "as_of": data_as_of,
+        "data_as_of": data_as_of,
+        "generated_at": generated_at,
+        "journal_head_event_count": frozen.journal_head_event_count,
+        "journal_head_sha256": frozen.journal_head_sha256,
+        "max_evidence_available_at": frozen.max_evidence_available_at,
+        "excluded_after_as_of_count": frozen.excluded_after_as_of_count,
+        "projection_input_sha256": projection_input_sha,
+        "run_id": run_id,
+        "H0": h0,
+        "H1": h1,
         "journal_path": str(Path(journal_path).absolute()),
         "review_dir": str(selected_review_dir.absolute()),
         "current_trade_date_prediction_count": len(current_predictions),
@@ -730,6 +827,9 @@ def run_ashare_sample_ops(
         "sample_kpi": kpi,
         "evolution_decision": decision,
         "market_maturity": maturity,
+        "projection_generation": generation,
+        "projection_head_cas": projection_head_cas,
+        "performance": performance,
         "orders_created": 0,
         "emails_sent": 0,
         "accounts_created": 0,
@@ -754,6 +854,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         type=int,
         default=DEFAULT_BACKLOG_WINDOW_DAYS,
     )
+    parser.add_argument(
+        "--label-batch-size",
+        type=int,
+        default=200,
+        help="Forward-label append batch size (100-250).",
+    )
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -763,9 +869,15 @@ def main(argv: Optional[list[str]] = None) -> int:
             trade_date=args.trade_date,
             as_of=args.as_of,
             backlog_window_days=args.backlog_window_days,
+            label_batch_size=args.label_batch_size,
         )
         exit_code = 0
-    except (AshareSampleOpsSafetyError, JournalSafetyError, ValueError) as exc:
+    except (
+        AshareSampleOpsSafetyError,
+        JournalSafetyError,
+        ProjectionGenerationError,
+        ValueError,
+    ) as exc:
         report = {
             "operation": "ashare_sample_ops",
             "overall_status": "blocked",

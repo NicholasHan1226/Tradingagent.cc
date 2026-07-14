@@ -18,14 +18,19 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
 DEFAULT_API_URL = os.environ.get("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082")
 DEFAULT_API_KEY = os.environ.get("SHAREDSIGNALS_API_KEY", "")
 DEFAULT_TIMEOUT = float(os.environ.get("SHAREDSIGNALS_API_TIMEOUT", "10"))
-DEFAULT_RETRIES = int(os.environ.get("SHAREDSIGNALS_API_RETRIES", os.environ.get("SHAREDSIGNALS_API_MAX_RETRIES", "1")))
+DEFAULT_RETRIES = int(
+    os.environ.get(
+        "SHAREDSIGNALS_API_RETRIES",
+        os.environ.get("SHAREDSIGNALS_API_MAX_RETRIES", "1"),
+    )
+)
 DEFAULT_RETRY_BACKOFF = float(os.environ.get("SHAREDSIGNALS_API_RETRY_BACKOFF", "0.5"))
 
 CANONICAL_ENDPOINTS: dict[str, str] = {
@@ -70,7 +75,9 @@ class SharedSignalsAPIClient:
         self.api_key = api_key or DEFAULT_API_KEY
         self.timeout = timeout if timeout is not None else DEFAULT_TIMEOUT
         self.max_retries = max_retries if max_retries is not None else DEFAULT_RETRIES
-        self.retry_backoff = retry_backoff if retry_backoff is not None else DEFAULT_RETRY_BACKOFF
+        self.retry_backoff = (
+            retry_backoff if retry_backoff is not None else DEFAULT_RETRY_BACKOFF
+        )
         self.errors: list[str] = []
 
     @classmethod
@@ -90,7 +97,55 @@ class SharedSignalsAPIClient:
     def _cache_set(cls, key: str, data: list[dict[str, Any]]) -> None:
         cls._cache[key] = (time.monotonic(), data)
 
-    def _get(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    @staticmethod
+    def _attach_http_response_receipt(
+        rows: list[dict[str, Any]], *, path: str, received_at: str
+    ) -> list[dict[str, Any]]:
+        """Bind rows to the actual HTTP response receipt without overwriting source PIT."""
+
+        enriched: list[dict[str, Any]] = []
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            row = dict(raw)
+            row["sharedsignals_response_lineage"] = {
+                "transport": "http_response",
+                "endpoint": path,
+                "received_at": received_at,
+            }
+            existing_envelope = row.get("evidence_envelope")
+            if existing_envelope is None:
+                envelope: dict[str, Any] = {}
+            elif isinstance(existing_envelope, dict):
+                envelope = {
+                    key: dict(value) if isinstance(value, dict) else value
+                    for key, value in existing_envelope.items()
+                }
+            else:
+                # Preserve an invalid provider envelope so the downstream gate
+                # rejects it.  The sibling transport lineage still audits this
+                # concrete HTTP response without laundering provider evidence.
+                enriched.append(row)
+                continue
+            retrieval = envelope.get("retrieval_time_fields")
+            if retrieval is None:
+                retrieval_fields: dict[str, Any] = {}
+            elif isinstance(retrieval, dict):
+                retrieval_fields = dict(retrieval)
+            else:
+                # As above, preserve the invalid provider group byte-for-byte
+                # while retaining the independently observed transport audit.
+                enriched.append(row)
+                continue
+            retrieval_fields["sharedsignals_http_response.received_at"] = received_at
+            envelope["retrieval_time_fields"] = retrieval_fields
+            row["evidence_envelope"] = envelope
+            enriched.append(row)
+        return enriched
+
+    def _get(
+        self, path: str, params: dict[str, str] | None = None
+    ) -> list[dict[str, Any]]:
         """Execute GET request with retry. Returns decoded data list on success."""
         if not self.base_url:
             self.errors.append(f"{path}: SHAREDSIGNALS_API_URL is not configured")
@@ -118,10 +173,18 @@ class SharedSignalsAPIClient:
                 req = urllib.request.Request(url, headers=headers, method="GET")
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     raw = resp.read().decode("utf-8", errors="replace")
+                    received_at = datetime.now(timezone.utc).isoformat(
+                        timespec="seconds"
+                    )
                 result = json.loads(raw)
                 data = result.get("data", [])
                 if not isinstance(data, list):
                     data = []
+                data = self._attach_http_response_receipt(
+                    data,
+                    path=path,
+                    received_at=received_at,
+                )
                 self._cache_set(cache_key, data)
                 return data
             except urllib.error.HTTPError as exc:
@@ -130,7 +193,12 @@ class SharedSignalsAPIClient:
                     break
                 if attempt < self.max_retries:
                     time.sleep(self.retry_backoff * (attempt + 1))
-            except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            except (
+                urllib.error.URLError,
+                TimeoutError,
+                OSError,
+                json.JSONDecodeError,
+            ) as exc:
                 last_error = str(exc)
                 if attempt < self.max_retries:
                     time.sleep(self.retry_backoff * (attempt + 1))
@@ -150,14 +218,25 @@ class SharedSignalsAPIClient:
         return False
 
     def get_market_data(
-        self, ts_code: str, start: str | None = None, end: str | None = None,
+        self,
+        ts_code: str,
+        start: str | None = None,
+        end: str | None = None,
         freq: str = "daily",
     ) -> list[dict[str, Any]]:
-        return self._get("/market_data", {
-            "ts_code": ts_code, "start": start or "", "end": end or "", "freq": freq,
-        })
+        return self._get(
+            "/market_data",
+            {
+                "ts_code": ts_code,
+                "start": start or "",
+                "end": end or "",
+                "freq": freq,
+            },
+        )
 
-    def get_fundamentals(self, ts_code: str, end_date: str | None = None) -> list[dict[str, Any]]:
+    def get_fundamentals(
+        self, ts_code: str, end_date: str | None = None
+    ) -> list[dict[str, Any]]:
         params: dict[str, str] = {"ts_code": ts_code}
         if end_date:
             params["end_date"] = end_date
@@ -167,16 +246,26 @@ class SharedSignalsAPIClient:
         return self._get("/reference", {"table": table})
 
     def get_macro_factors(
-        self, start: str | None = None, end: str | None = None,
+        self,
+        start: str | None = None,
+        end: str | None = None,
     ) -> list[dict[str, Any]]:
         return self._get("/macro", {"start": start or "", "end": end or ""})
 
     def get_capital_flow(
-        self, ts_code: str | None = None, start: str | None = None, end: str | None = None,
+        self,
+        ts_code: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._get("/capital_flow", {
-            "ts_code": ts_code or "", "start": start or "", "end": end or "",
-        })
+        return self._get(
+            "/capital_flow",
+            {
+                "ts_code": ts_code or "",
+                "start": start or "",
+                "end": end or "",
+            },
+        )
 
     def get_events(
         self,
@@ -200,11 +289,15 @@ class SharedSignalsAPIClient:
         )
 
     def get_sentiment(
-        self, start: str | None = None, end: str | None = None,
+        self,
+        start: str | None = None,
+        end: str | None = None,
     ) -> list[dict[str, Any]]:
         return self._get("/sentiment", {"start": start or "", "end": end or ""})
 
-    def get_crypto_klines(self, symbol: str, limit: int | None = None) -> list[dict[str, Any]]:
+    def get_crypto_klines(
+        self, symbol: str, limit: int | None = None
+    ) -> list[dict[str, Any]]:
         params: dict[str, str] = {"symbol": symbol}
         if limit is not None:
             params["limit"] = str(limit)
@@ -220,27 +313,44 @@ class SharedSignalsAPIClient:
         end_date: str | None = None,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
-        return self._get("/pm_prices", {"market_id": market_id or "", "limit": str(limit)})
+        return self._get(
+            "/pm_prices", {"market_id": market_id or "", "limit": str(limit)}
+        )
 
     def get_associations(
-        self, ts_code: str | None = None, event_id: str | None = None,
+        self,
+        ts_code: str | None = None,
+        event_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._get("/associations", {
-            "ts_code": ts_code or "", "event_id": event_id or "",
-        })
+        return self._get(
+            "/associations",
+            {
+                "ts_code": ts_code or "",
+                "event_id": event_id or "",
+            },
+        )
 
     def get_impacts(
-        self, event_type: str | None = None, target: str | None = None,
+        self,
+        event_type: str | None = None,
+        target: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._get("/impacts", {
-            "event_type": event_type or "", "target": target or "",
-        })
+        return self._get(
+            "/impacts",
+            {
+                "event_type": event_type or "",
+                "target": target or "",
+            },
+        )
 
     def get_industry(self, ts_code: str) -> list[dict[str, Any]]:
         return self._get("/industry", {"ts_code": ts_code})
 
     def get_realtime_5min(
-        self, ts_code: str = "", date: str | None = None, market: str | None = None,
+        self,
+        ts_code: str = "",
+        date: str | None = None,
+        market: str | None = None,
     ) -> list[dict[str, Any]]:
         date_value = date or ""
         return self._get(
@@ -255,8 +365,11 @@ class SharedSignalsAPIClient:
         )
 
     def get_tushare(
-        self, api_name: str, ts_code: str | None = None,
-        start_date: str | None = None, end_date: str | None = None,
+        self,
+        api_name: str,
+        ts_code: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         params: dict[str, str] = {"api_name": api_name}
@@ -273,7 +386,9 @@ class SharedSignalsAPIClient:
         """Get API health status (uncached)."""
         try:
             url = f"{self.base_url}/health"
-            req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+            req = urllib.request.Request(
+                url, headers={"Accept": "application/json"}, method="GET"
+            )
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 return json.loads(resp.read().decode("utf-8", errors="replace"))
         except Exception as e:

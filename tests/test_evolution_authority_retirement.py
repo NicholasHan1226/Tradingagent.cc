@@ -86,7 +86,8 @@ def test_sample_ops_uses_only_sample_journal_manual_decision_and_maturity() -> N
         encoding="utf-8"
     )
     assert "SampleJournal" in source
-    assert "write_evolution_decision" in source
+    assert "build_evolution_decision" in source
+    assert "publish_projection_generation" in source
     assert "assess_ashare_maturity" in source
     assert "portfolio_evolution" not in source
     assert "sample_learning" not in source

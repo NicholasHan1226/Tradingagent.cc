@@ -21,8 +21,22 @@ from Ashare.style_samples import (
     build_style_sample_contract,
     compute_ashare_conservative_costs,
 )
-from shared.review.forward_labels import build_prediction_snapshot
-from shared.review.sample_journal import SampleJournal
+from shared.review.forward_labels import (
+    EVIDENCE_ENVELOPE_GROUPS,
+    PIT_TIMESTAMP_FIELDS,
+    build_prediction_snapshot,
+    canonicalize_evidence_record,
+    evidence_envelope_from_record,
+    validate_evidence_envelope,
+)
+from shared.review.sample_journal import (
+    SampleJournal,
+    prediction_content_sha256,
+    prediction_source_payload_sha256,
+    seal_strict_execution_event,
+    strict_round_trip_content_sha256,
+    strict_round_trip_source_sha256,
+)
 from shared.execution.execution_lineage import (
     ASHARE_AUTHORITY_GENERATION,
     ASHARE_CAPITAL_AUTHORITY_ID,
@@ -265,85 +279,192 @@ def _bar_source(row: Mapping[str, Any]) -> str:
     return str(row.get("provider") or row.get("source") or "").strip()
 
 
-def _normalized_ashare_timestamp(value: Any) -> str | None:
-    """Make A-share timestamps explicit without inventing an earlier time.
+def _timestamp_lineage(
+    value: Any,
+    *,
+    source_field: str,
+    semantics: str,
+    allow_exchange_local_naive: bool = False,
+) -> dict[str, Any]:
+    """Normalize a timestamp while retaining its exact source representation.
 
-    SharedSignals stores A-share ``bar_time`` in local exchange time while its
-    ``collected_at`` receipt is timezone-aware UTC.  The sample journal needs
-    both sides explicit before comparing the observation with the prediction
-    boundary.
+    Only documented A-share exchange ``bar_time``/``trade_time`` fields may
+    arrive without an offset. Receipt, generic timestamp, prediction, and
+    data-as-of values must already be timezone-aware.
     """
 
     raw = str(value or "").strip()
+    lineage: dict[str, Any] = {
+        "source_field": source_field,
+        "raw_value": raw or None,
+        "normalized_value": None,
+        "timezone_semantics": semantics,
+        "normalization_rule": "none",
+        "valid": False,
+    }
     if not raw:
-        return None
+        lineage["reason"] = "missing_timestamp"
+        return lineage
     try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw.replace(" ", "T", 1).replace("Z", "+00:00"))
     except (TypeError, ValueError):
-        return raw
+        lineage["reason"] = "invalid_timestamp"
+        return lineage
     if parsed.tzinfo is None or parsed.utcoffset() is None:
+        if not allow_exchange_local_naive:
+            lineage["reason"] = "timezone_naive_timestamp"
+            return lineage
         parsed = parsed.replace(tzinfo=CN_TZ)
-    return parsed.isoformat()
+        lineage["normalization_rule"] = "ashare_exchange_local_attach_asia_shanghai"
+    elif semantics in {"ashare_exchange_event_time", "ashare_decision_time"}:
+        parsed = parsed.astimezone(CN_TZ)
+        lineage["normalization_rule"] = "convert_aware_instant_to_asia_shanghai"
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+        lineage["normalization_rule"] = "convert_aware_instant_to_utc"
+    lineage["normalized_value"] = parsed.isoformat(timespec="seconds")
+    lineage["valid"] = True
+    lineage["reason"] = None
+    return lineage
 
 
 def _intraday_reference(
-    reader: Any, market: str, symbol: str, date_key: str
-) -> dict[str, Any] | None:
+    reader: Any,
+    market: str,
+    symbol: str,
+    date_key: str,
+    *,
+    decision_boundary: datetime,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     getter = getattr(reader, "get_bars_intraday", None)
     if not callable(getter):
-        return None
+        return None, []
     try:
         rows = getter(market, symbol, "5m", date_key, date_key)
     except Exception:
-        return None
-    for raw in reversed(rows or []):
+        return None, []
+    candidates: list[dict[str, Any]] = []
+    rejections: list[dict[str, Any]] = []
+    for raw in rows or []:
         if not isinstance(raw, Mapping):
             continue
         price = _positive(raw.get("close", raw.get("last_price", raw.get("price"))))
-        observed_at = _normalized_ashare_timestamp(
-            raw.get("bar_time") or raw.get("trade_time") or raw.get("timestamp")
+        evidence_envelope = evidence_envelope_from_record(raw)
+        envelope_validation = validate_evidence_envelope(
+            evidence_envelope,
+            boundary=decision_boundary,
+            require_receipts=True,
         )
         source = _bar_source(raw)
         volume = _positive(raw.get("volume", raw.get("vol", raw.get("bar_volume"))))
-        if price is None or not observed_at or not source or volume is None:
+        if (
+            price is None
+            or not source
+            or volume is None
+            or envelope_validation.get("status") != "valid"
+            or envelope_validation.get("complete") is not True
+        ):
+            rejections.append(
+                {
+                    "frequency": "5m",
+                    "reason": (
+                        str(envelope_validation.get("status") or "invalid")
+                        if price is not None and source and volume is not None
+                        else "missing_reference_fields"
+                    ),
+                    "price": price,
+                    "source": source or None,
+                    "evidence_envelope": deepcopy(evidence_envelope),
+                    "evidence_envelope_validation": deepcopy(envelope_validation),
+                }
+            )
             continue
-        collected_at = _normalized_ashare_timestamp(
-            raw.get("collected_at") or raw.get("collected_at_dt")
+        event_fields = evidence_envelope.get("event_time_fields") or {}
+        observed_field = next(iter(event_fields), "bar_time")
+        observed_raw = event_fields.get(observed_field)
+        observed_field_basename = observed_field.rsplit(".", 1)[-1]
+        reference_timestamp_lineage = _timestamp_lineage(
+            observed_raw,
+            source_field=observed_field_basename,
+            semantics="ashare_exchange_event_time",
+            allow_exchange_local_naive=observed_field_basename
+            in {"bar_time", "trade_time"},
         )
-        # The canonical SharedSignals intraday row has one durable provider
-        # receipt marker (collected_at).  If distinct availability fields are
-        # absent, that observed receipt is the conservative availability and
-        # ingestion boundary; no earlier timestamp is synthesized.
-        available_at = _normalized_ashare_timestamp(
-            raw.get("available_at") or raw.get("published_at")
-        ) or collected_at
-        ingested_at = _normalized_ashare_timestamp(
-            raw.get("ingested_at") or raw.get("received_at")
-        ) or collected_at
-        return {
-            "price": price,
-            "price_timestamp": observed_at,
-            "source": source,
-            "volume": volume,
-            "frequency": "5m",
-            "evidence_class": "verified_intraday_market_data",
-            "available_at": available_at,
-            "ingested_at": ingested_at,
-        }
-    return None
+        reference_timestamp_lineage.update(
+            {
+                "normalized_value": (
+                    (envelope_validation.get("canonical_timestamps") or {}).get(
+                        "event_time"
+                    )
+                    if envelope_validation.get("status") == "valid"
+                    else None
+                ),
+                "valid": envelope_validation.get("status") == "valid",
+                "reason": (
+                    None
+                    if envelope_validation.get("status") == "valid"
+                    else envelope_validation.get("status")
+                ),
+                "source_event_time_fields": deepcopy(dict(event_fields)),
+                "evidence_envelope_validation": deepcopy(envelope_validation),
+            }
+        )
+        observed_at = reference_timestamp_lineage.get("normalized_value")
+        canonical_timestamps = envelope_validation.get("canonical_timestamps") or {}
+        candidates.append(
+            {
+                "price": price,
+                "price_timestamp": observed_at,
+                "source": source,
+                "volume": volume,
+                "frequency": "5m",
+                "evidence_class": "verified_intraday_market_data",
+                "available_at": canonical_timestamps.get("available_at"),
+                "ingested_at": canonical_timestamps.get("ingested_at"),
+                "retrieved_as_of": canonical_timestamps.get("retrieved_as_of"),
+                "reference_timestamp_lineage": reference_timestamp_lineage,
+                "receipt_timestamp_lineage": deepcopy(
+                    envelope_validation.get("fields") or {}
+                ),
+                "evidence_envelope": evidence_envelope,
+                "evidence_envelope_validation": envelope_validation,
+                "_selection_key": (
+                    datetime.fromisoformat(str(observed_at)).astimezone(timezone.utc),
+                    _canonical_sha256(
+                        {
+                            "price": price,
+                            "source": source,
+                            "evidence_envelope": evidence_envelope,
+                        }
+                    ),
+                ),
+            }
+        )
+    if not candidates:
+        return None, rejections
+    selected = max(candidates, key=lambda candidate: candidate["_selection_key"])
+    selected.pop("_selection_key", None)
+    return selected, rejections
 
 
 def _daily_reference(
-    reader: Any, market: str, symbol: str, date_key: str
-) -> dict[str, Any] | None:
+    reader: Any,
+    market: str,
+    symbol: str,
+    date_key: str,
+    *,
+    decision_boundary: datetime,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     getter = getattr(reader, "get_bars_daily", None)
     if not callable(getter):
-        return None
+        return None, []
     try:
         rows = getter(market, symbol, date_key, date_key)
     except Exception:
-        return None
-    for raw in reversed(rows or []):
+        return None, []
+    candidates: list[dict[str, Any]] = []
+    rejections: list[dict[str, Any]] = []
+    for raw in rows or []:
         if not isinstance(raw, Mapping):
             continue
         price = _positive(raw.get("close", raw.get("price")))
@@ -354,28 +475,126 @@ def _daily_reference(
         compact = trade_date.replace("-", "")
         if compact != date_key:
             continue
-        return {
-            "price": price,
-            "price_timestamp": "%sT15:00:00+08:00"
-            % ("%s-%s-%s" % (date_key[:4], date_key[4:6], date_key[6:])),
-            "source": source,
-            "volume": _number(raw.get("volume", raw.get("vol"))),
-            "frequency": "daily",
-            "evidence_class": "verified_daily_market_data",
-            "available_at": raw.get("available_at") or raw.get("published_at"),
-            "ingested_at": raw.get("ingested_at") or raw.get("received_at"),
-        }
-    return None
+        price_timestamp = "%sT15:00:00+08:00" % (
+            "%s-%s-%s" % (date_key[:4], date_key[4:6], date_key[6:])
+        )
+        evidence_envelope = evidence_envelope_from_record(raw)
+        event_fields = evidence_envelope.get("event_time_fields") or {}
+        event_fields["derived.trade_date_close"] = price_timestamp
+        evidence_envelope["event_time_fields"] = event_fields
+        envelope_validation = validate_evidence_envelope(
+            evidence_envelope,
+            boundary=decision_boundary,
+            require_receipts=True,
+        )
+        if (
+            envelope_validation.get("status") != "valid"
+            or envelope_validation.get("complete") is not True
+        ):
+            rejections.append(
+                {
+                    "frequency": "daily",
+                    "reason": str(envelope_validation.get("status") or "invalid"),
+                    "price": price,
+                    "source": source,
+                    "evidence_envelope": deepcopy(evidence_envelope),
+                    "evidence_envelope_validation": deepcopy(envelope_validation),
+                }
+            )
+            continue
+        canonical_timestamps = envelope_validation.get("canonical_timestamps") or {}
+        candidates.append(
+            {
+                "price": price,
+                "price_timestamp": canonical_timestamps.get("event_time"),
+                "source": source,
+                "volume": _number(raw.get("volume", raw.get("vol"))),
+                "frequency": "daily",
+                "evidence_class": "verified_daily_market_data",
+                "available_at": canonical_timestamps.get("available_at"),
+                "ingested_at": canonical_timestamps.get("ingested_at"),
+                "retrieved_as_of": canonical_timestamps.get("retrieved_as_of"),
+                "reference_timestamp_lineage": {
+                    "source_field": "trade_date",
+                    "raw_value": trade_date,
+                    "normalized_value": price_timestamp,
+                    "timezone_semantics": "ashare_daily_close",
+                    "normalization_rule": "ashare_trade_date_to_15_00_asia_shanghai",
+                    "valid": True,
+                    "reason": None,
+                    "source_event_time_fields": deepcopy(dict(event_fields)),
+                    "evidence_envelope_validation": deepcopy(envelope_validation),
+                },
+                "receipt_timestamp_lineage": deepcopy(
+                    envelope_validation.get("fields") or {}
+                ),
+                "evidence_envelope": evidence_envelope,
+                "evidence_envelope_validation": envelope_validation,
+                "_selection_key": (
+                    datetime.fromisoformat(
+                        str(canonical_timestamps.get("event_time"))
+                    ).astimezone(timezone.utc),
+                    _canonical_sha256(
+                        {
+                            "price": price,
+                            "source": source,
+                            "evidence_envelope": evidence_envelope,
+                        }
+                    ),
+                ),
+            }
+        )
+    if not candidates:
+        return None, rejections
+    selected = max(candidates, key=lambda candidate: candidate["_selection_key"])
+    selected.pop("_selection_key", None)
+    return selected, rejections
 
 
 def _reference_evidence(
-    reader: Any, market: str, symbol: str, date_key: str
+    reader: Any,
+    market: str,
+    symbol: str,
+    date_key: str,
+    *,
+    decision_boundary: datetime,
 ) -> dict[str, Any]:
-    evidence = _intraday_reference(reader, market, symbol, date_key)
+    evidence, intraday_rejections = _intraday_reference(
+        reader,
+        market,
+        symbol,
+        date_key,
+        decision_boundary=decision_boundary,
+    )
+    rejections = list(intraday_rejections)
     if evidence is None:
-        evidence = _daily_reference(reader, market, symbol, date_key)
+        evidence, daily_rejections = _daily_reference(
+            reader,
+            market,
+            symbol,
+            date_key,
+            decision_boundary=decision_boundary,
+        )
+        rejections.extend(daily_rejections)
     if evidence is not None:
-        return {**evidence, "reliable": True, "reason": "verified_market_price"}
+        valid_envelope = (evidence.get("evidence_envelope_validation") or {}).get(
+            "status"
+        ) == "valid"
+        return {
+            **evidence,
+            "rejected_sibling_evidence": rejections,
+            "rejected_sibling_count": len(rejections),
+            "reliable": valid_envelope,
+            "reason": (
+                "verified_market_price"
+                if valid_envelope
+                else "invalid_evidence_envelope_%s"
+                % str(
+                    (evidence.get("evidence_envelope_validation") or {}).get("status")
+                    or "invalid"
+                )
+            ),
+        }
     return {
         "price": None,
         "price_timestamp": None,
@@ -384,7 +603,13 @@ def _reference_evidence(
         "frequency": None,
         "evidence_class": "unverified",
         "reliable": False,
-        "reason": "missing_reliable_market_price",
+        "reason": (
+            "missing_valid_reference_evidence"
+            if rejections
+            else "missing_reliable_market_price"
+        ),
+        "rejected_sibling_evidence": rejections,
+        "rejected_sibling_count": len(rejections),
     }
 
 
@@ -443,6 +668,7 @@ def _prediction_snapshot(
     style: Mapping[str, Any],
     decision_policy_version: str,
     authority_scope: Mapping[str, Any],
+    source_snapshot_payload: Mapping[str, Any],
     source_snapshot_sha256: str,
     base_snapshot_sha256: str,
     pair_id: str,
@@ -470,6 +696,18 @@ def _prediction_snapshot(
             costs = None
     else:
         cost_rejection = "rejected_missing_cost_evidence"
+
+    reference_envelope = deepcopy(reference.get("evidence_envelope") or {})
+    reference_envelope_validation = deepcopy(
+        reference.get("evidence_envelope_validation") or {}
+    )
+    envelope_is_valid = (
+        reference_envelope_validation.get("status") == "valid"
+        and reference_envelope_validation.get("complete") is True
+    )
+    canonical_reference_timestamps = (
+        reference_envelope_validation.get("canonical_timestamps") or {}
+    )
 
     marketgraph = deepcopy(style.get("marketgraph") or {})
     marketgraph.update(
@@ -504,19 +742,21 @@ def _prediction_snapshot(
         "style_version": style.get("style_version"),
         "strategy_version": style.get("style_version"),
         "prediction_at": prediction_at,
+        "data_as_of": prediction_at,
         "as_of": prediction_at,
         "point_in_time_as_of": prediction_at,
+        "decision_timestamp_lineage": {
+            "prediction_at": deepcopy(
+                reference.get("prediction_timestamp_lineage") or {}
+            ),
+            "data_as_of": deepcopy(reference.get("data_as_of_lineage") or {}),
+        },
         "source_event_time": reference.get("price_timestamp"),
         "event_time": reference.get("price_timestamp"),
         "available_at": reference.get("available_at"),
         "ingested_at": reference.get("ingested_at"),
-        "retrieved_as_of": prediction_at,
-        "point_in_time_lineage": {
-            "event_time": reference.get("price_timestamp"),
-            "available_at": reference.get("available_at"),
-            "ingested_at": reference.get("ingested_at"),
-            "retrieved_as_of": prediction_at,
-        },
+        "retrieved_as_of": reference.get("retrieved_as_of"),
+        "source_snapshot_payload": deepcopy(dict(source_snapshot_payload)),
         "source_snapshot_sha256": source_snapshot_sha256,
         "base_snapshot_sha256": base_snapshot_sha256,
         "pair_id": pair_id,
@@ -553,7 +793,13 @@ def _prediction_snapshot(
             "reliable": reliable,
             "source": reference.get("source"),
             "price_timestamp": reference.get("price_timestamp"),
+            "reference_timestamp_lineage": deepcopy(
+                reference.get("reference_timestamp_lineage") or {}
+            ),
         },
+        "reference_timestamp_lineage": deepcopy(
+            reference.get("reference_timestamp_lineage") or {}
+        ),
         "real_trading_enabled": False,
         "live_execution_enabled": False,
         "costs": costs,
@@ -561,6 +807,21 @@ def _prediction_snapshot(
         if costs is not None
         else cost_rejection,
     }
+    if reference_envelope:
+        raw["evidence_envelope"] = reference_envelope
+        raw["evidence_envelope_validation"] = reference_envelope_validation
+        raw["data_quality"]["evidence_envelope"] = reference_envelope
+        raw["data_quality"]["evidence_envelope_validation"] = (
+            reference_envelope_validation
+        )
+    if envelope_is_valid:
+        raw["point_in_time_lineage"] = {
+            "timestamps": {
+                field: canonical_reference_timestamps.get(field)
+                for field in PIT_TIMESTAMP_FIELDS
+            },
+            "evidence_envelope_validation": reference_envelope_validation,
+        }
     return _content_sha_record(build_prediction_snapshot(raw))
 
 
@@ -585,17 +846,35 @@ def build_candidate_observation(
     if not isinstance(score, Mapping):
         raise TypeError("score must be a mapping")
     date_key, date_iso = _normalized_date(trade_date)
-    predicted_at = _aware_iso(
-        prediction_at or datetime.now(CN_TZ).replace(microsecond=0).isoformat(),
-        field="prediction_at",
+    raw_prediction_at = str(
+        prediction_at or datetime.now(CN_TZ).replace(microsecond=0).isoformat()
     )
+    prediction_lineage = _timestamp_lineage(
+        raw_prediction_at,
+        source_field="prediction_at",
+        semantics="ashare_decision_time",
+    )
+    if prediction_lineage.get("valid") is not True:
+        raise ValueError("prediction_at must include a timezone")
+    predicted_at = str(prediction_lineage["normalized_value"])
+    data_as_of_lineage = {
+        **prediction_lineage,
+        "source_field": "data_as_of",
+        "derived_from": "prediction_at",
+    }
     current_authority = _current_authority_scope(authority_scope)
     reference = _reference_evidence(
         reader,
         str(mapped_market or "ashare"),
         str(mapped_symbol or normalized_symbol),
         date_key,
+        decision_boundary=datetime.fromisoformat(predicted_at),
     )
+    reference = {
+        **reference,
+        "prediction_timestamp_lineage": prediction_lineage,
+        "data_as_of_lineage": data_as_of_lineage,
+    }
     score_ok, score_reason = _score_quality(score)
     qualified = reference.get("reliable") is True and score_ok
     quality_reason = (
@@ -656,15 +935,14 @@ def build_candidate_observation(
         and mg_overlay
         and (bool(explicit_mg_overlay) or same_snapshot_enhanced)
     )
-    source_snapshot_sha256 = _canonical_sha256(
-        {
-            "mapped_market": str(mapped_market or "ashare"),
-            "mapped_symbol": str(mapped_symbol or normalized_symbol),
-            "score": deepcopy(dict(score)),
-            "reference": deepcopy(dict(reference)),
-            "prediction_at": predicted_at,
-        }
-    )
+    source_snapshot_payload = {
+        "mapped_market": str(mapped_market or "ashare"),
+        "mapped_symbol": str(mapped_symbol or normalized_symbol),
+        "score": deepcopy(dict(score)),
+        "reference": deepcopy(dict(reference)),
+        "prediction_at": predicted_at,
+    }
+    source_snapshot_sha256 = prediction_source_payload_sha256(source_snapshot_payload)
     base_snapshot_payload = {
         **current_authority,
         "market": "ashare",
@@ -687,8 +965,14 @@ def build_candidate_observation(
             predicted_at,
         ),
         **current_authority,
+        "data_as_of": predicted_at,
         "as_of": predicted_at,
         "point_in_time_as_of": predicted_at,
+        "decision_timestamp_lineage": {
+            "prediction_at": deepcopy(prediction_lineage),
+            "data_as_of": deepcopy(data_as_of_lineage),
+        },
+        "source_snapshot_payload": deepcopy(source_snapshot_payload),
         "source_snapshot_sha256": source_snapshot_sha256,
         "base_snapshot_sha256": base_snapshot_sha256,
         "data_quality": {
@@ -696,6 +980,9 @@ def build_candidate_observation(
             "reason": quality_reason,
             "source": reference.get("source"),
             "price_timestamp": reference.get("price_timestamp"),
+            "reference_timestamp_lineage": deepcopy(
+                reference.get("reference_timestamp_lineage") or {}
+            ),
         },
         "features": deepcopy(base_features),
         "marketgraph_features": deepcopy(mg_overlay),
@@ -749,6 +1036,7 @@ def build_candidate_observation(
                         observation_contract["decision_policy_version"]
                     ),
                     authority_scope=current_authority,
+                    source_snapshot_payload=source_snapshot_payload,
                     source_snapshot_sha256=source_snapshot_sha256,
                     base_snapshot_sha256=base_snapshot_sha256,
                     pair_id=pair_id,
@@ -770,6 +1058,7 @@ def build_candidate_observation(
         "as_of": predicted_at,
         "point_in_time_as_of": predicted_at,
         **current_authority,
+        "source_snapshot_payload": deepcopy(source_snapshot_payload),
         "source_snapshot_sha256": source_snapshot_sha256,
         "base_snapshot_sha256": base_snapshot_sha256,
         "combined_score": _number(score.get("combined")),
@@ -895,6 +1184,30 @@ def select_exploration_candidate(
             continue
         quality = observation.get("data_quality")
         if not isinstance(quality, Mapping) or quality.get("qualified") is not True:
+            continue
+        reference = observation.get("reference_evidence")
+        reference_validation = (
+            reference.get("evidence_envelope_validation")
+            if isinstance(reference, Mapping)
+            else None
+        )
+        snapshots = observation.get("prediction_snapshots")
+        if (
+            not isinstance(reference, Mapping)
+            or reference.get("reliable") is not True
+            or _positive(reference.get("price")) is None
+            or not isinstance(reference_validation, Mapping)
+            or reference_validation.get("status") != "valid"
+            or reference_validation.get("complete") is not True
+            or not isinstance(snapshots, Sequence)
+            or isinstance(snapshots, (str, bytes))
+            or not snapshots
+            or any(
+                not isinstance(snapshot, Mapping)
+                or snapshot.get("forward_label_eligibility") != "eligible"
+                for snapshot in snapshots
+            )
+        ):
             continue
         contracts = observation.get("sample_contracts")
         exploration = (
@@ -1171,6 +1484,104 @@ def _lineage_value(record: Mapping[str, Any], field: str) -> Any:
     return first
 
 
+def _execution_evidence(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Preserve real execution clocks and deterministic source fingerprints."""
+
+    order = record.get("order") if isinstance(record.get("order"), Mapping) else {}
+    receipt = (
+        record.get("receipt") if isinstance(record.get("receipt"), Mapping) else {}
+    )
+    envelope: dict[str, Any] = {group: {} for group in EVIDENCE_ENVELOPE_GROUPS}
+    envelope["structure_errors"] = []
+    for prefix, source in (("record", record), ("order", order), ("receipt", receipt)):
+        for group, aliases in EVIDENCE_ENVELOPE_GROUPS.items():
+            for alias in aliases:
+                value = source.get(alias)
+                if value not in (None, ""):
+                    envelope[group]["%s.%s" % (prefix, alias)] = value
+        filled_at = source.get("filled_at")
+        if filled_at not in (None, ""):
+            envelope["event_time_fields"]["%s.filled_at" % prefix] = filled_at
+
+        if "evidence_envelope" in source:
+            embedded = source.get("evidence_envelope")
+            if not isinstance(embedded, Mapping) or not embedded:
+                envelope["structure_errors"].append("%s.evidence_envelope" % prefix)
+            else:
+                for group in EVIDENCE_ENVELOPE_GROUPS:
+                    values = embedded.get(group)
+                    if values is None:
+                        continue
+                    if not isinstance(values, Mapping):
+                        envelope["structure_errors"].append(
+                            "%s.evidence_envelope.%s" % (prefix, group)
+                        )
+                        continue
+                    for path, value in values.items():
+                        if value not in (None, ""):
+                            envelope[group][
+                                "%s.evidence_envelope.%s" % (prefix, path)
+                            ] = value
+                embedded_errors = embedded.get("structure_errors")
+                if isinstance(embedded_errors, Sequence) and not isinstance(
+                    embedded_errors, (str, bytes, bytearray)
+                ):
+                    envelope["structure_errors"].extend(
+                        str(value).strip()
+                        for value in embedded_errors
+                        if str(value).strip()
+                    )
+                elif embedded_errors not in (None, [], ()):
+                    envelope["structure_errors"].append(
+                        "%s.evidence_envelope.structure_errors" % prefix
+                    )
+    envelope["structure_errors"] = list(dict.fromkeys(envelope["structure_errors"]))
+
+    canonical = canonicalize_evidence_record({"evidence_envelope": envelope})
+    validation = canonical.get("evidence_envelope_validation")
+    if (
+        not isinstance(validation, Mapping)
+        or validation.get("complete") is not True
+        or validation.get("status") != "valid"
+    ):
+        validation_status = (
+            str(validation.get("status") or "invalid")
+            if isinstance(validation, Mapping)
+            else "invalid"
+        )
+        raise ValueError("execution_evidence_envelope_%s" % validation_status)
+    supplied_receipt_sha256 = (
+        str(receipt.get("receipt_sha256") or record.get("receipt_sha256") or "")
+        .strip()
+        .lower()
+    )
+    supplied_local_trade_sha256 = (
+        str(record.get("local_trade_sha256") or receipt.get("local_trade_sha256") or "")
+        .strip()
+        .lower()
+    )
+
+    evidence: dict[str, Any] = {
+        "evidence_envelope": deepcopy(canonical["evidence_envelope"]),
+        "evidence_envelope_validation": deepcopy(
+            canonical["evidence_envelope_validation"]
+        ),
+        "supplied_receipt_sha256": supplied_receipt_sha256 or None,
+        "supplied_local_trade_sha256": supplied_local_trade_sha256 or None,
+    }
+    for field_name in (
+        "event_time",
+        "source_event_time",
+        "available_at",
+        "ingested_at",
+        "retrieved_as_of",
+        "point_in_time_lineage",
+    ):
+        if canonical.get(field_name) not in (None, ""):
+            evidence[field_name] = deepcopy(canonical[field_name])
+    return evidence
+
+
 def _execution_lineage(
     record: Mapping[str, Any], expected_authority: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -1200,7 +1611,10 @@ def _execution_lineage(
         field="fill point_in_time_as_of",
     )
     prediction_source_sha = str(
-        _lineage_value(record, "prediction_source_snapshot_sha256") or ""
+        _lineage_value(record, "prediction_source_snapshot_sha256")
+        or order.get("source_snapshot_sha256")
+        or record.get("source_snapshot_sha256")
+        or ""
     ).strip()
     if prediction_source_sha and (
         len(prediction_source_sha) != 64
@@ -1219,6 +1633,7 @@ def _execution_lineage(
         )
     ):
         raise ValueError("execution_source_snapshot_sha256_invalid")
+    evidence = _execution_evidence(record)
     return {
         **dict(expected_authority),
         "prediction_snapshot_id": prediction_snapshot_id,
@@ -1232,6 +1647,7 @@ def _execution_lineage(
                 "receipt": deepcopy(dict(receipt)),
             }
         ),
+        **evidence,
     }
 
 
@@ -1396,6 +1812,13 @@ def _build_buy_fill_event(
         "selection_method": order.get("selection_method"),
         "real_trading_enabled": False,
     }
+    supplied_receipt_sha256 = event.pop("supplied_receipt_sha256", None)
+    supplied_local_trade_sha256 = event.pop("supplied_local_trade_sha256", None)
+    event = seal_strict_execution_event(
+        event,
+        supplied_receipt_sha256=supplied_receipt_sha256,
+        supplied_local_trade_sha256=supplied_local_trade_sha256,
+    )
     return _content_sha_record(event)
 
 
@@ -1419,6 +1842,7 @@ def _build_stop_event(
         "symbol": symbol,
         "trade_date": date_key,
         "sample_intent": str(buy_event.get("sample_intent") or "exploration"),
+        "execution_eligible": True,
         "fill_identity": sell_fill_identity,
         "entry_fill_identity": buy_event["fill_identity"],
         "filled_quantity": alloc_qty,
@@ -1446,9 +1870,20 @@ def _build_stop_event(
         "as_of": sell_lineage.get("as_of"),
         "point_in_time_as_of": sell_lineage.get("point_in_time_as_of"),
         "source_snapshot_sha256": sell_lineage.get("source_snapshot_sha256"),
+        "event_time": sell_lineage.get("event_time"),
+        "source_event_time": sell_lineage.get("source_event_time"),
+        "available_at": sell_lineage.get("available_at"),
+        "ingested_at": sell_lineage.get("ingested_at"),
+        "retrieved_as_of": sell_lineage.get("retrieved_as_of"),
+        "point_in_time_lineage": deepcopy(sell_lineage.get("point_in_time_lineage")),
+        "evidence_envelope": deepcopy(sell_lineage.get("evidence_envelope")),
+        "evidence_envelope_validation": deepcopy(
+            sell_lineage.get("evidence_envelope_validation")
+        ),
         "prediction_source_snapshot_sha256": buy_event.get(
             "prediction_source_snapshot_sha256"
         ),
+        "prediction_content_sha256": buy_event.get("prediction_content_sha256"),
         "primary_style": buy_event.get("primary_style"),
         "supporting_styles": deepcopy(buy_event.get("supporting_styles") or []),
         "style_scores": deepcopy(buy_event.get("style_scores") or {}),
@@ -1456,12 +1891,17 @@ def _build_stop_event(
         "decision_policy_version": buy_event.get("decision_policy_version"),
         "real_trading_enabled": False,
     }
+    event = seal_strict_execution_event(
+        event,
+        supplied_receipt_sha256=sell_lineage.get("supplied_receipt_sha256"),
+        supplied_local_trade_sha256=sell_lineage.get("supplied_local_trade_sha256"),
+    )
     return _content_sha_record(event)
 
 
 def _build_round_trip_event(
     buy_event: Mapping[str, Any],
-    exit_fill_identities: Sequence[str],
+    exit_events: Sequence[Mapping[str, Any]],
     gross_pnl: float,
     total_fee: float,
     total_slip: float,
@@ -1469,15 +1909,20 @@ def _build_round_trip_event(
     closed_at: str,
 ) -> dict[str, Any]:
     buy_fi = buy_event["fill_identity"]
-    source_snapshot_sha256 = _canonical_sha256(
-        {
-            "entry_content_sha256": buy_event.get("content_sha256"),
-            "exit_fill_identities": list(exit_fill_identities),
-            "closed_at": closed_at,
-        }
-    )
+    exit_fill_identities = [
+        str(event.get("fill_identity") or "").strip() for event in exit_events
+    ]
     entry_quantity = int(buy_event.get("filled_quantity") or 0)
     entry_price = float(buy_event.get("filled_price") or 0.0)
+    latest_exit = next(
+        (
+            event
+            for event in exit_events
+            if str(event.get("point_in_time_as_of") or event.get("as_of") or "")
+            == closed_at
+        ),
+        exit_events[-1],
+    )
     event = {
         "event_id": "ashare_round_trip:%s" % buy_fi,
         "record_type": "completed_round_trip",
@@ -1492,10 +1937,17 @@ def _build_round_trip_event(
         "closed_at": closed_at,
         "as_of": closed_at,
         "point_in_time_as_of": closed_at,
-        "source_snapshot_sha256": source_snapshot_sha256,
         "sample_intent": str(buy_event.get("sample_intent") or "exploration"),
         "entry_fill_identity": buy_fi,
         "exit_fill_identities": list(exit_fill_identities),
+        "entry_receipt_sha256": buy_event.get("receipt_sha256"),
+        "entry_local_trade_sha256": buy_event.get("local_trade_sha256"),
+        "exit_receipt_sha256s": [
+            exit_event.get("receipt_sha256") for exit_event in exit_events
+        ],
+        "exit_local_trade_sha256s": [
+            exit_event.get("local_trade_sha256") for exit_event in exit_events
+        ],
         "entry_quantity": entry_quantity,
         "entry_price": entry_price,
         "notional_cny": round(entry_quantity * entry_price, 4),
@@ -1503,6 +1955,16 @@ def _build_round_trip_event(
         "fee_cny": round(total_fee, 4),
         "slippage_cny": round(total_slip, 4),
         "net_pnl_cny": round(net_pnl, 4),
+        "event_time": latest_exit.get("event_time"),
+        "source_event_time": latest_exit.get("source_event_time"),
+        "available_at": latest_exit.get("available_at"),
+        "ingested_at": latest_exit.get("ingested_at"),
+        "retrieved_as_of": latest_exit.get("retrieved_as_of"),
+        "point_in_time_lineage": deepcopy(latest_exit.get("point_in_time_lineage")),
+        "evidence_envelope": deepcopy(latest_exit.get("evidence_envelope")),
+        "evidence_envelope_validation": deepcopy(
+            latest_exit.get("evidence_envelope_validation")
+        ),
         **{
             key: buy_event.get(key)
             for key in (
@@ -1519,6 +1981,7 @@ def _build_round_trip_event(
                 "selection_seed_sha256",
                 "selection_method",
                 "prediction_source_snapshot_sha256",
+                "prediction_content_sha256",
             )
         },
         "primary_style": buy_event.get("primary_style"),
@@ -1528,7 +1991,9 @@ def _build_round_trip_event(
         "decision_policy_version": buy_event.get("decision_policy_version"),
         "real_trading_enabled": False,
     }
-    return _content_sha_record(event)
+    event["source_snapshot_sha256"] = strict_round_trip_source_sha256(event)
+    event["content_sha256"] = strict_round_trip_content_sha256(event)
+    return event
 
 
 def _build_chain_validation_event(
@@ -1715,6 +2180,37 @@ def persist_simulation_outcomes(
                 }
             )
             continue
+        authoritative_prediction_content_sha256 = prediction_content_sha256(
+            prediction_event
+        )
+        authoritative_prediction_source_sha256 = (
+            str(prediction_event.get("source_snapshot_sha256") or "").strip().lower()
+        )
+        if (
+            str(prediction_event.get("prediction_content_sha256") or "").strip().lower()
+            != authoritative_prediction_content_sha256
+            or len(authoritative_prediction_source_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in authoritative_prediction_source_sha256
+            )
+            or str(lineage.get("prediction_source_snapshot_sha256") or "")
+            .strip()
+            .lower()
+            != authoritative_prediction_source_sha256
+        ):
+            skipped.append(
+                {
+                    "symbol": symbol,
+                    "order_id": order_id,
+                    "reason": "prediction_snapshot_content_or_source_mismatch",
+                }
+            )
+            continue
+        lineage["prediction_source_snapshot_sha256"] = (
+            authoritative_prediction_source_sha256
+        )
+        lineage["prediction_content_sha256"] = authoritative_prediction_content_sha256
         try:
             prediction_as_of = datetime.fromisoformat(
                 str(
@@ -1783,21 +2279,31 @@ def persist_simulation_outcomes(
                         }
                     )
                     continue
-            event = _build_buy_fill_event(
-                date_key,
-                order_id,
-                symbol,
-                sample_intent,
-                fi,
-                receipt,
-                order,
-                lineage,
-                prediction_event,
-                actual_quantity,
-                actual_price,
-                fee_cny,
-                slippage_cny,
-            )
+            try:
+                event = _build_buy_fill_event(
+                    date_key,
+                    order_id,
+                    symbol,
+                    sample_intent,
+                    fi,
+                    receipt,
+                    order,
+                    lineage,
+                    prediction_event,
+                    actual_quantity,
+                    actual_price,
+                    fee_cny,
+                    slippage_cny,
+                )
+            except ValueError as exc:
+                skipped.append(
+                    {
+                        "symbol": symbol,
+                        "order_id": order_id,
+                        "reason": str(exc),
+                    }
+                )
+                continue
             new_samples.append(event)
             counts["%s_fill" % sample_intent] += 1
             pk = _pairing_key(fi)
@@ -1851,7 +2357,6 @@ def persist_simulation_outcomes(
                     continue
                 alloc_qty = min(remaining, open_qty)
                 allocated.append((buy_event, alloc_qty))
-                inflight_cum_sold[buy_fi] = already_sold + alloc_qty
                 remaining -= alloc_qty
 
             if not allocated:
@@ -1872,22 +2377,43 @@ def persist_simulation_outcomes(
                 inflight_stop_sell_ids.add(fi)
                 continue
 
-            unfinished = 0
-            for buy_event, alloc_qty in allocated:
-                buy_fi = buy_event["fill_identity"]
-                ratio = alloc_qty / sell_qty if sell_qty > 0 else 1.0
-                stop_event = _build_stop_event(
-                    date_key,
-                    symbol,
-                    fi,
-                    buy_event,
-                    alloc_qty,
-                    sell_price,
-                    sell_fee * ratio,
-                    sell_slip * ratio,
-                    exit_reason,
-                    lineage,
+            pending_stop_events: list[tuple[dict[str, Any], int, dict[str, Any]]] = []
+            try:
+                for buy_event, alloc_qty in allocated:
+                    ratio = alloc_qty / sell_qty if sell_qty > 0 else 1.0
+                    pending_stop_events.append(
+                        (
+                            buy_event,
+                            alloc_qty,
+                            _build_stop_event(
+                                date_key,
+                                symbol,
+                                fi,
+                                buy_event,
+                                alloc_qty,
+                                sell_price,
+                                sell_fee * ratio,
+                                sell_slip * ratio,
+                                exit_reason,
+                                lineage,
+                            ),
+                        )
+                    )
+            except ValueError as exc:
+                skipped.append(
+                    {
+                        "symbol": symbol,
+                        "order_id": order_id,
+                        "reason": str(exc),
+                    }
                 )
+                continue
+
+            unfinished = 0
+            for buy_event, alloc_qty, stop_event in pending_stop_events:
+                buy_fi = buy_event["fill_identity"]
+                already_sold = inflight_cum_sold.get(buy_fi, 0)
+                inflight_cum_sold[buy_fi] = already_sold + alloc_qty
                 new_samples.append(stop_event)
                 new_stop_events.append(stop_event)
                 counts["exit_stop"] += 1
@@ -1957,36 +2483,37 @@ def persist_simulation_outcomes(
             continue
 
         stops = all_stop_events.get(buy_fi, [])
-        exit_fis: list[str] = []
         total_gross = 0.0
         total_fee = float(buy_event.get("fee_cny") or 0)
         total_slip = float(buy_event.get("slippage_cny") or 0)
         buy_price = float(buy_event.get("filled_price") or 0)
-        last_closed_at = "%s-%s-%sT15:00:00+08:00" % (
-            date_key[:4],
-            date_key[4:6],
-            date_key[6:],
-        )
+        last_closed_at: str | None = None
+        last_closed_instant: datetime | None = None
 
         for stop in stops:
-            exit_fi = str(stop.get("fill_identity") or "")
-            if exit_fi and exit_fi not in exit_fis:
-                exit_fis.append(exit_fi)
             qty = int(stop.get("filled_quantity") or 0)
             price = float(stop.get("filled_price") or 0)
             total_gross += qty * (price - buy_price)
             total_fee += float(stop.get("fee_cny") or 0)
             total_slip += float(stop.get("slippage_cny") or 0)
-            stop_as_of = str(
-                stop.get("point_in_time_as_of") or stop.get("as_of") or last_closed_at
-            )
-            if stop_as_of > last_closed_at:
+            stop_as_of = str(stop.get("point_in_time_as_of") or stop.get("as_of") or "")
+            try:
+                stop_instant = datetime.fromisoformat(
+                    stop_as_of.replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
+            except (TypeError, ValueError):
+                continue
+            if last_closed_instant is None or stop_instant > last_closed_instant:
                 last_closed_at = stop_as_of
+                last_closed_instant = stop_instant
+
+        if last_closed_at is None:
+            continue
 
         net_pnl = total_gross - total_fee - total_slip
         rt_event = _build_round_trip_event(
             buy_event,
-            exit_fis,
+            stops,
             total_gross,
             total_fee,
             total_slip,

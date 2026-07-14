@@ -3,9 +3,11 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import multiprocessing
+import os
 
 import pytest
 
+import shared.review.sample_journal as sample_journal_module
 from shared.review.sample_journal import (
     JOURNAL_SCHEMA_VERSION,
     JournalConflictError,
@@ -29,6 +31,10 @@ def _candidate(*, style: str = "trend_breakout", **overrides):
         "style": style,
         "strategy_version": "%s-v1" % style,
         "prediction_at": "2026-07-13T01:30:00+00:00",
+        "event_time": "2026-07-13T01:30:00+00:00",
+        "available_at": "2026-07-13T01:30:00+00:00",
+        "ingested_at": "2026-07-13T01:30:00+00:00",
+        "retrieved_as_of": "2026-07-13T01:30:00+00:00",
         "reference_price": 10.0,
         "direction": "long",
         "raw_style_score": 0.42,
@@ -54,6 +60,47 @@ def _candidate(*, style: str = "trend_breakout", **overrides):
         **AUTHORITY,
     }
     candidate.update(overrides)
+    prediction_at = str(candidate.get("prediction_at") or "")
+    data_as_of = str(candidate.get("data_as_of") or prediction_at)
+    if "decision_timestamp_lineage" not in overrides:
+        candidate["decision_timestamp_lineage"] = {
+            field: {
+                "source_field": field,
+                "raw_value": value,
+                "normalized_value": value,
+                "timezone_semantics": "ashare_decision_time",
+                "normalization_rule": "convert_aware_instant_to_asia_shanghai",
+                "valid": True,
+            }
+            for field, value in (
+                ("prediction_at", prediction_at),
+                ("data_as_of", data_as_of),
+            )
+        }
+    quality = dict(candidate.get("data_quality") or {})
+    if "reference_timestamp_lineage" not in quality:
+        price_timestamp = quality.get("price_timestamp")
+        quality["reference_timestamp_lineage"] = {
+            "source_field": "bar_time",
+            "raw_value": price_timestamp,
+            "normalized_value": price_timestamp,
+            "timezone_semantics": "ashare_exchange_event_time",
+            "normalization_rule": "convert_aware_instant_to_asia_shanghai",
+            "valid": price_timestamp not in (None, ""),
+        }
+    candidate["data_quality"] = quality
+    if "point_in_time_lineage" not in overrides:
+        candidate["point_in_time_lineage"] = {
+            "timestamps": {
+                field: candidate.get(field)
+                for field in (
+                    "event_time",
+                    "available_at",
+                    "ingested_at",
+                    "retrieved_as_of",
+                )
+            }
+        }
     return candidate
 
 
@@ -65,6 +112,28 @@ def _targets(start: datetime) -> dict[str, datetime]:
         "1d": start + timedelta(days=1),
         "3d": start + timedelta(days=3),
         "5d": start + timedelta(days=5),
+    }
+
+
+def _point(timestamp: datetime, price: float) -> dict[str, object]:
+    timestamp_iso = timestamp.isoformat()
+    return {
+        "timestamp": timestamp,
+        "event_time": timestamp_iso,
+        "available_at": timestamp_iso,
+        "ingested_at": timestamp_iso,
+        "retrieved_as_of": timestamp_iso,
+        "price": price,
+        "reliable": True,
+        "source": "sharedsignals.5min",
+        "point_in_time_lineage": {
+            "timestamps": {
+                "event_time": timestamp_iso,
+                "available_at": timestamp_iso,
+                "ingested_at": timestamp_iso,
+                "retrieved_as_of": timestamp_iso,
+            }
+        },
     }
 
 
@@ -104,14 +173,7 @@ def test_label_update_includes_cost_model_version(tmp_path):
 
     update = journal.materialize_labels(
         prediction["snapshot_id"],
-        [
-            {
-                "timestamp": start + timedelta(minutes=30),
-                "price": 10.2,
-                "reliable": True,
-                "source": "sharedsignals.5min",
-            }
-        ],
+        [_point(start + timedelta(minutes=30), 10.2)],
         as_of=start + timedelta(minutes=30),
         horizon_targets=_targets(start),
     )["record"]
@@ -128,14 +190,7 @@ def test_cost_versioned_idempotency_prevent_old_zero_cost_collision(tmp_path):
     journal = SampleJournal(tmp_path / "samples.jsonl")
     prediction = journal.append_prediction(_candidate())["record"]
     start = datetime(2026, 7, 13, 1, 30, tzinfo=UTC)
-    points = [
-        {
-            "timestamp": start + timedelta(minutes=30),
-            "price": 10.2,
-            "reliable": True,
-            "source": "sharedsignals.5min",
-        }
-    ]
+    points = [_point(start + timedelta(minutes=30), 10.2)]
 
     # Label with conservative costs
     r1 = journal.materialize_labels(
@@ -375,14 +430,7 @@ def test_label_materialization_is_append_idempotent_and_latest_projection_feeds_
         "as_of": start + timedelta(minutes=30),
         "horizon_targets": _targets(start),
     }
-    points = [
-        {
-            "timestamp": start + timedelta(minutes=30),
-            "price": 10.2,
-            "reliable": True,
-            "source": "sharedsignals.5min",
-        }
-    ]
+    points = [_point(start + timedelta(minutes=30), 10.2)]
 
     assert (
         journal.materialize_labels(prediction["snapshot_id"], points, **kwargs)[
@@ -417,32 +465,15 @@ def test_latest_label_projection_compares_timezone_offsets_chronologically(tmp_p
     targets = _targets(start)
     journal.materialize_labels(
         prediction["snapshot_id"],
-        [
-            {
-                "timestamp": start + timedelta(minutes=30),
-                "price": 10.1,
-                "reliable": True,
-                "source": "sharedsignals.5min",
-            }
-        ],
+        [_point(start + timedelta(minutes=30), 10.1)],
         as_of="2026-07-13T10:00:00+08:00",
         horizon_targets=targets,
     )
     journal.materialize_labels(
         prediction["snapshot_id"],
         [
-            {
-                "timestamp": start + timedelta(minutes=30),
-                "price": 10.1,
-                "reliable": True,
-                "source": "sharedsignals.5min",
-            },
-            {
-                "timestamp": start + timedelta(minutes=60),
-                "price": 10.3,
-                "reliable": True,
-                "source": "sharedsignals.5min",
-            },
+            _point(start + timedelta(minutes=30), 10.1),
+            _point(start + timedelta(minutes=60), 10.3),
         ],
         as_of="2026-07-13T02:30:00+00:00",
         horizon_targets=targets,
@@ -557,19 +588,83 @@ def test_journal_parent_symlink_fails_closed(tmp_path):
     assert list(real_parent.iterdir()) == []
 
 
+def test_journal_hardlink_blocks_append_and_read_without_mutating_target(tmp_path):
+    external = tmp_path / "external.jsonl"
+    external.write_bytes(b"")
+    journal_path = tmp_path / "samples.jsonl"
+    os.link(external, journal_path)
+    before = external.read_bytes()
+
+    journal = SampleJournal(journal_path)
+    with pytest.raises(JournalSafetyError, match="hardlink count"):
+        journal.append_prediction(_candidate())
+    with pytest.raises(JournalSafetyError, match="hardlink count"):
+        journal.read_events()
+
+    assert external.read_bytes() == before
+    assert journal_path.read_bytes() == before
+
+
+def test_journal_lock_hardlink_blocks_append_without_mutating_target(tmp_path):
+    journal = SampleJournal(tmp_path / "samples.jsonl")
+    external_lock = tmp_path / "external.lock"
+    external_lock.write_bytes(b"lock-sentinel")
+    os.link(external_lock, journal.lock_path)
+    before = external_lock.read_bytes()
+
+    with pytest.raises(JournalSafetyError, match="hardlink count"):
+        journal.append_prediction(_candidate())
+
+    assert external_lock.read_bytes() == before
+    assert not journal.path.exists()
+
+
+def test_journal_path_replacement_after_lock_snapshot_fails_before_write(
+    tmp_path, monkeypatch
+):
+    journal = SampleJournal(tmp_path / "samples.jsonl")
+    journal.append_prediction(_candidate())
+    original_bytes = journal.path.read_bytes()
+    displaced = tmp_path / "displaced.jsonl"
+    replacement = tmp_path / "replacement.jsonl"
+    replacement.write_bytes(original_bytes)
+    original_identity = sample_journal_module._unique_regular_path_identity
+    replaced = False
+
+    def replace_after_snapshot(path, *, role):
+        nonlocal replaced
+        identity = original_identity(path, role=role)
+        if path == journal.path and role == "sample journal" and not replaced:
+            replaced = True
+            os.replace(journal.path, displaced)
+            os.replace(replacement, journal.path)
+        return identity
+
+    monkeypatch.setattr(
+        sample_journal_module,
+        "_unique_regular_path_identity",
+        replace_after_snapshot,
+    )
+
+    with pytest.raises(JournalSafetyError, match="identity changed"):
+        journal.append_prediction(
+            _candidate(
+                style="event_catalyst",
+                prediction_at="2026-07-13T01:31:00+00:00",
+            )
+        )
+
+    assert replaced is True
+    assert displaced.read_bytes() == original_bytes
+    assert journal.path.read_bytes() == original_bytes
+
+
 def test_actual_cost_evidence_id_fingerprint_is_respected(tmp_path):
     """Labels with different execution evidence ids must not silently collide."""
     journal = SampleJournal(tmp_path / "samples.jsonl")
     prediction = journal.append_prediction(_candidate())["record"]
     start = datetime(2026, 7, 13, 1, 30, tzinfo=UTC)
-    points = [
-        {
-            "timestamp": start + timedelta(minutes=30),
-            "price": 10.2,
-            "reliable": True,
-            "source": "sharedsignals.5min",
-        }
-    ]
+    points = [_point(start + timedelta(minutes=30), 10.2)]
     base_kwargs = {
         "as_of": start + timedelta(minutes=30),
         "horizon_targets": _targets(start),

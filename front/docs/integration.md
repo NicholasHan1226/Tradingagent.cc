@@ -24,7 +24,7 @@ gated and must not trigger execution from the front layer.
 | A-share capital | `shared/logs/capital/ashare/ashare_sim_capital_latest.json` | unavailable; never infer from another market | Ready; strict authority/generation/fresh/reconcile/checksum |
 | CNFutures capital | `shared/logs/capital/cn_futures/cn_futures_sim_capital_latest.json` | unavailable; never infer from A-share | Ready; strict authority/generation/fresh/reconcile/checksum |
 | A-share research evidence | `shared/review/ashare/research_evidence_latest.json` | omitted from snapshot when missing or malformed | Ready |
-| A-share sample KPI / maturity | `shared/review/ashare/{sample_kpi_latest,market_maturity_latest}.json` | omitted when missing; never fall back to retired evolution projections | Ready |
+| A-share sample KPI / maturity | `shared/review/ashare/projection_current.json` -> hash-verified `projection_generations/<generation_id>/{sample_kpi_latest,evolution_decision_latest,market_maturity_latest}.json` | entire set omitted when pointer/manifest/file hash, recomputed generation ID, shared input SHA, authority, or explicit sim-only fields are missing/invalid; root mirrors are never a transaction fallback | Ready |
 | CNFutures maturity | `shared/review/cn_futures/market_maturity_latest.json` | omitted when canonical `projection_sha256`, authority, lineage, or sim-only contract is invalid | Ready |
 | Optional market pulse | Bounded SharedSignals HTTP reads selected from current holdings/signals | `marketPulses[]` is omitted per unavailable/degraded series while `marketPulseCoverage` retains exact source coverage | Ready |
 | CNFutures replay evidence | `shared/review/cn_futures/replay_latest.json` | omitted from market summary when missing or malformed | Ready |
@@ -220,8 +220,15 @@ Display-ready fields used by the homepage:
   attribution is not spendable capital. The front layer must treat all of it
   as display evidence only and must never turn it into orders, queue writes,
   emails, or callbacks.
-- Canonical A-share sample evidence is `sample_kpi_latest.json` plus
-  `market_maturity_latest.json`, both derived from SampleJournal. The retired
+- Canonical A-share sample evidence is the complete generation selected by
+  `projection_current.json`, including `sample_kpi_latest.json`,
+  `evolution_decision_latest.json`, and `market_maturity_latest.json`, all
+  derived from one SampleJournal input hash. The pointer seals the generation
+  manifest content SHA, and the reader recomputes the generation ID from that
+  input SHA plus the canonical three-file SHA map; a missing/invalid pointer,
+  forged ID, any manifest/file tamper, or a missing explicit false safety field
+  omits the whole set. Root-level mirrors are compatibility outputs, not a
+  frontend transaction point. The retired
   forward-validation projection is not an evolution authority and must not be
   used to authorize risk or live transition.
 - The homepage trading funnel is designed to animate real stage movement. If

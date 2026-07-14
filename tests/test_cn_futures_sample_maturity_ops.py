@@ -29,6 +29,14 @@ CURRENT_AUTHORITY = {
 }
 
 
+def _receipts(timestamp: str) -> dict[str, str]:
+    return {
+        "available_at": timestamp,
+        "ingested_at": timestamp,
+        "retrieved_as_of": timestamp,
+    }
+
+
 def test_projection_hash_has_cross_runtime_integer_float_canonical_vector() -> None:
     vector = {
         "pool_cny": 50_000.0,
@@ -57,16 +65,19 @@ class _ForwardLabelReader:
                 "bar_time": "2026-07-13T10:05:00+08:00",
                 "close": 3_510.0,
                 "source": "sharedsignals_futures_bars",
+                **_receipts("2026-07-13T10:05:00+08:00"),
             },
             {
                 "bar_time": "2026-07-13T10:35:00+08:00",
                 "close": 3_520.0,
                 "source": "sharedsignals_futures_bars",
+                **_receipts("2026-07-13T10:35:00+08:00"),
             },
             {
                 "bar_time": "2026-07-13T15:00:00+08:00",
                 "close": 3_530.0,
                 "source": "sharedsignals_futures_bars",
+                **_receipts("2026-07-13T15:00:00+08:00"),
             },
         ]
 
@@ -82,6 +93,9 @@ class _ForwardLabelReader:
                 "trade_date": trade_date,
                 "close": 3_540.0 + index * 10,
                 "source": "sharedsignals_futures_daily",
+                **_receipts(
+                    f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}T15:00:00+08:00"
+                ),
             }
             for index, trade_date in enumerate(
                 ["20260714", "20260715", "20260716", "20260717", "20260720"]
@@ -559,6 +573,7 @@ def test_sample_ops_materializes_counterfactual_labels_before_maturity_and_is_id
                 "execution_class": "counterfactual_only",
                 "point_in_time_as_of": "2026-07-13T09:35:00+08:00",
                 "source_event_time": "2026-07-13T09:35:00+08:00",
+                **_receipts("2026-07-13T09:35:00+08:00"),
                 "source_snapshot_id": "CNF-SNAP-" + source_sha[:16],
                 "source_snapshot_sha256": source_sha,
                 "authority": "market_capital_ledger",

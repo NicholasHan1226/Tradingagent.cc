@@ -33,6 +33,8 @@
 
 行情是证据，不是交易信号。数据不可用、陈旧、缺来源或 PIT 不完整时，新增风险 fail closed；observation 仍保存并明确 data-quality/label eligibility。市场治理隔离：无关市场故障不能误停 A股或 CNFutures。
 
+每次真实 HTTP response 都在 cache 前保存独立 `sharedsignals_response_lineage`，至少含 `transport=http_response`、endpoint 与带时区 `received_at`。provider 自带 `evidence_envelope` 或其中任一 group 结构非法时，原非法值必须原样保留供 Evidence Gate 拒绝；transport lineage 只能作为本次网络响应审计，不能覆盖、修复或洗白 provider lineage。cache 命中必须返回同一审计事实且不能再次发起 HTTP。
+
 ### MarketGraph
 
 `MARKETGRAPH_API_URL` 只提供 regime、事件、行业/供应链传播等研究增强。它不提供账户、资本、订单或成交 authority。
@@ -208,9 +210,23 @@ Exploration selection 保存：`exploration_policy_version`、top-K/pool、seed�
 
 ## SampleJournal
 
-路径：`shared/review/ashare/sample_journal.jsonl`。每行 append-only、fingerprinted、拒绝 symlink/live markers；相同 identity + 相同 payload 幂等，冲突 payload fail closed。
+路径：`shared/review/ashare/sample_journal.jsonl`。每行 append-only、fingerprinted、拒绝 symlink/live markers；相同 identity + 相同 payload 幂等，冲突 payload fail closed。Journal 与对应 lock 在持锁读写临界区都必须是 single-link regular file：`lstat(path)` 与打开 FD 的 device/inode 相等且 `st_nlink=1`，写前、读后/写后仍保持同一身份。hardlink、path replacement 或非 regular file 一律在修改历史前 fail closed；新建普通文件仍允许。
 
-A股 canonical intraday row 的 `bar_time` 是交易所本地时间、`collected_at` 是带时区的 provider receipt。写 prediction 前必须把无时区 `bar_time` 显式绑定 `Asia/Shanghai`；当上游没有更细的 `available_at/ingested_at` 时，只允许把已有 `collected_at` 同时作为保守 availability/ingestion receipt，不能生成更早时间。data-quality rejected prediction 永久保留为审计样本并在 KPI 显示排除数量，但不应永久污染同一 authority 后续有效样本的 scientific PIT denominator。
+sample ops 每轮必须先通过 `SampleJournal.read_frozen(as_of=...)` 固定一个不可变输入视图。cutoff 使用 evidence availability/receipt 时间，而不是仅看 prediction/event time；顶层和 `point_in_time_lineage`（包括 `timestamps`）内所有契约 receipt/availability 字段都要校验并取最晚值，任一存在但非法或无时区即 fail closed。frozen head 至少固定并输出：
+
+- `data_as_of`；
+- `journal_head_event_count` 与 canonical `journal_head_sha256`；
+- `max_evidence_available_at`；
+- `excluded_after_as_of_count`；
+- 用于并发前缀校验的 source inode、字节数与原始前缀 SHA-256。
+
+同一轮 labels、KPI、decision 与 maturity 只能读取该 frozen view。label writer 自身追加的事件作为显式 task-owned delta 合并；frozen head 后出现的未知 append 必须阻断本轮批量写入，由下一轮以新 cutoff 重建，不能静默混入。最后一批 label 返回后，publisher 还必须对 physical Journal fresh head 做最终 CAS，并持有 Journal 共享锁直到 current pointer 原子替换结束，关闭“最终校验后、发布前”的竞态窗口。批量 label append 每批 100–250 条，只允许一次锁、一次前缀校验和一次 fsync；稳定 event ID、append-only 历史、幂等 crash replay 与冲突 payload fail-closed 规则不变。
+
+A股 canonical intraday row 的 `bar_time`/`trade_time` 是交易所本地时间、`collected_at` 是带时区的 provider receipt。写 prediction 前只允许按这一显式字段契约把无偏移 `bar_time`/`trade_time` 绑定 `Asia/Shanghai`；`prediction_at`、`data_as_of`、receipt/availability/ingestion 与通用 `timestamp` 必须原生带时区，非法、无时区或语义冲突一律 fail closed。reference timestamp、prediction 与 data-as-of 比较时统一换算为 UTC instant，不比较字符串或墙钟字面值；reference 不得晚于 data-as-of 或 prediction。
+
+prediction 必须同时保存 reference/decision timestamp lineage，至少包括 source field、原始值、标准化值、时区语义、normalization rule、valid/reason。缺整个 lineage、缺任一必需字段、`valid!=true`、raw/normalized instant 不一致或 normalized instant 与 `data_quality.price_timestamp`/prediction/data-as-of 不一致时均不得成为 `verified_reference_data`；可补齐的缺失保持 `pending_reference_evidence`/degraded，已进入 candidate/snapshot 的 present-but-conflicting 证据 fail closed 为 data-quality rejection。raw source 不得被标准化值覆盖。A股日线仅允许把带明确 `trade_date` 语义的日期标准化为当日 `15:00 Asia/Shanghai`。provider/bar/reference 在任何归一化前必须构造 EvidenceEnvelope，保留所有 present event aliases 与 receipt/availability aliases 的原始路径和值；不能先取首个非空值再复制成四钟 lineage。embedded `structure_errors` 是不可逆审计事实，重复或嵌套 canonicalization 必须确定性继承并去重，不能被 root convenience fields 洗成 valid。collector 必须给每个原始 row 传入真实 prediction/decision boundary，先过滤 invalid、naive、冲突、future receipt 或字段不完整的 row，再从有效 rows 按 canonical event instant 选择 reference；provider 返回顺序和无效 sibling 的价格都不得控制结果。被过滤 row 只能进入独立 `rejected_sibling_evidence` audit，不能成为 candidate price/PIT lineage；若没有有效 row，reference price 为 null、snapshot 为 retryable pending/degraded、`data_quality.qualified=false` 且 exploration 不可 selected。receipt 顺序按所有 present aliases 验证：`event <= min(all receipts)`、`max(availability) <= min(ingestion)`、`max(ingestion) <= min(retrieval)`；缺 stage 只能从真实 present receipt 作保守派生。单个晚值不能掩盖同组较早的跨 stage 反序，任务 `as_of`、wall clock 或更早别名都不得补造。
+
+缺失 `reference_price` 不得伪造价格，也不得写成 terminal data-quality rejection；prediction 保持 `pending_reference_evidence`，到期 label 保持可重试 `missing_exit_evidence/missing_reference_price` 并在 sample-ops 输出 degraded/retryable。非法价格、未来 reference、时区冲突或不可靠的已存在证据仍为 `rejected_data_quality`。data-quality rejected prediction 永久保留为审计样本并在 KPI 显示排除数量，但不应永久污染同一 authority 后续有效样本的 scientific PIT denominator。
 
 当前样本层：
 
@@ -227,6 +243,8 @@ A股 canonical intraday row 的 `bar_time` 是交易所本地时间、`collected
 | label update | prediction 的 append-only label evidence |
 
 5 分钟重复 cluster 的原始事件保留，但 KPI 权重只允许一个有效样本。只有当前 authority scope 进入 KPI；`excluded_legacy_event_count` 必须可见。
+
+`completed_round_trip` 只有通过统一 strict evolution validator 才能进入 maturity 或作为 `actual_execution_costs_v1`。同一 validator 必须从同一个 frozen Journal view 解析唯一 prediction、entry fill 和全部 exit stop：prediction append 必须保存最小 canonical `source_snapshot_payload`，validator 从权威 prediction event 重算该 payload 的 source SHA 和 canonical event content SHA；从 fill/stop 的明确 `execution_receipt_payload` 与 `execution_local_trade_payload` 重算 receipt/local-trade SHA；再从这些内容绑定 fingerprint 重算 round-trip source/content SHA。所有 supplied SHA 均使用 constant-time 等值校验，多腿 exit receipt/local-trade SHA 数组还必须与 `exit_fill_identities` 完全等长、同序，并按元素 constant-time 对应。64-hex 形状本身不构成证据。entry/exit identity、round-trip 数值和成本还必须与关联的不可变 fill/stop 逐项一致，显式非空 EvidenceEnvelope 与 PIT 四钟均 valid/aware/ordered 且不晚于本轮 cost boundary。任一 payload、hash、关联事件、字段、时间或顺序缺失/非法/future/conflict 时保留事件审计，但 actual cost 使用量为 0，并继续使用版本化保守成本；历史 prediction 缺少 source payload 时同样保守回退，不得补造。显式空/非法 envelope 不能由顶层 convenience fields 洗白，也不能从 wrapper、任务时间、prediction time 或 `as_of` 补造 receipt/source。
 
 A股逐日正式回撤证据只在盘后固定价格交易结束后的 `15:31` 起写入。`ops` reconcile 以稳定日级 identity 向 SampleJournal 追加至多一条 `account_daily_mtm_equity`，保存账户权益、capital reconcile event、canonical snapshot SHA、PIT 时间链和当前 authority/lineage；更早的 opening/盘中 reconcile 只是资本 checkpoint，不得冒充收盘权益。仓库 cron 模板在 `15:32` 触发该 checkpoint，但模板未安装不等于运行证据存在。
 
@@ -255,10 +273,20 @@ A股逐日正式回撤证据只在盘后固定价格交易结束后的 `15:31` �
 每个 label 保存 target time、status、exit evidence、market/direction-adjusted gross return、cost model/version、fees/slippage 和 `net_return_after_costs`。状态至少区分 ready/labeled、pending-not-due、missing evidence、rejected data quality 与 rejected missing cost evidence。
 
 - `as_of` 限制可见数据；日线不能伪造 m30/m60，晚到价格不能回填更早 horizon。
-- 科学 PIT 证据必须同时保存并重新校验 `event_time <= available_at <= ingested_at <= retrieved_as_of <= prediction/label as_of`；source SHA 或任意 `as_of` 字段不能单独证明 PIT。缺这些时间戳不阻断 observation/label 写入，但该 cluster 不进入晋级证据。
+- 科学 PIT 证据必须同时保存并重新校验 `event_time <= available_at <= ingested_at <= retrieved_as_of <= prediction/label as_of`；source SHA 或任意 `as_of` 字段不能单独证明 PIT。reference/entry 与每个 exit candidate 都必须在排序、选价和计算收益前通过同一个 Evidence Gate，且 validation 必须 `complete=true,status=valid`。EvidenceEnvelope 在 record root、PIT root、PIT `timestamps` 与 adapter 原始 envelope 收集所有 present event aliases（包括 `event_time/source_event_time/timestamp/observed_at/bar_time/trade_time/datetime`）；它们必须换算到同一 UTC instant，同义 `+08:00`/UTC 允许，任一非法、naive 或冲突 fail closed。receipt/availability aliases 至少覆盖 Journal 的 21 条 root/nested 路径，并额外覆盖 provider `published_at/retrieved_at/collected_at_dt`；每个 present 值必须带时区且可解析，最晚证据时刻不得晚于本轮边界，较早字段不能覆盖较晚字段。validated envelope 的 canonical 四钟必须与 nested lineage 一致；窗口资格、排序、`evidence_at` 与写出 lineage 只使用该 canonical instant。任一顺序冲突、future receipt 或 canonical instant 超窗的 point 不能影响候选排序，也绝不能生成 `ready/verified_exit_evidence`。
+- 原始 reference/entry collector 在选择前排除 PIT 失败 row；如果没有任何合法 row，候选保持 retryable `pending_reference_evidence`/degraded，不携带无效价格或 PIT。若一个已选中/已持久化的 reference/entry 声称有价格但其 lineage present-invalid，则为 `rejected_data_quality`。exit PIT 失败在可能由后续合法行情恢复时保持 retryable `missing_exit_evidence`/degraded。缺或非法 PIT 不删除 observation，也不伪造 terminal price/label；只有后来到达且独立通过 Evidence Gate 的合法 point 才能恢复该 horizon。
+- CNFutures prediction writer 必须把 SharedSignals 实际 HTTP response receipt 连同 source event aliases、原始 bar 和 nested PIT 持久化到 immutable source snapshot；session review 与 forward-label adapter 必须原样传递该 envelope。合法 receipt 参与 prediction/data-as-of 边界，reference 与 exit 都可 ready；missing/invalid/naive/future/conflicting receipt 一律 non-ready。HTTP receipt 是 transport 实际接收事实，不得由任务 `as_of`、prediction/bar time 或当前墙钟代填。历史缺 receipt 的记录保持 pending/degraded。
 - observation/counterfactual 使用版本化保守成本假设。
 - actual round trip 使用真实 commission/stamp duty/transfer fee/slippage；缺 actual costs 不进入绩效或 promotion evidence。
 - completed round trip 必须同时有有限数值 `gross_pnl_cny` 与 `net_pnl_cny`/`post_cost_pnl_cny`，不得把缺失值回落为 0 或静默用 gross-cost 推导。
+
+### Projection generation identity
+
+canonical generation ID 由唯一跨语言算法计算：取 `projection_input_sha256` 与恰好三项、按 filename 排序的 canonical projection SHA-256 map，编码为 compact recursively-key-sorted UTF-8 JSON 并追加一个 LF，再计算 SHA-256，前缀为 `ashare-sample-projection-`。publisher、Python reader 与前端 reader 都必须重算该 ID，并要求 pointer ID、directory basename、manifest ID 与重算值全等；manifest/pointer 即使重新签名也不能授权复制到任意伪造 generation ID。
+
+若 content-addressed generation 目录已存在，publisher 必须在写任何 compatibility mirror 或 current pointer 前，使用与 active reader 相同的完整 validator 校验 exact 四文件集合、regular/no-symlink/no-hardlink、manifest 原始 SHA、三投影原始 SHA/JSON、共同 input lineage 与所有 sim-only 安全字段；manifest-only、缺文件、extra file、symlink、hardlink、可写 generation 或 hash mismatch 都是 collision/corruption。完整同内容 generation 才允许幂等复用。一次 publication 必须在 review root 独占协作锁内完成；generation 在可见前封存为目录/文件只读，validator 以 single-link file descriptor 读取并检查 inode/size/mtime/ctime 在读取期间未变。最终 generation validation 必须从同一次 FD validation 返回目录及 manifest + 三投影的 path、device、inode、mode、nlink、size、mtime_ns、ctime_ns 与 raw-content SHA-256 身份；pointer replace callback 重新验证完整内容后还必须与这份 final identity 逐项相等，不能把 content hash 相同视为同一个对象。三份 compatibility mirror 和三份 append-only log 在本轮写完后也必须分别保存相同字段的身份快照。pointer 临时文件 fsync 与最终 `os.replace` 均在该锁内；pointer replace callback 必须重新以 FD 读取 generation 和全部六份 compatibility 文件，并与各自快照逐项相等后才可切换。final validation 后发生 mirror 或 log 的 rename replacement、symlink、hardlink、内容/metadata 漂移，或 generation in-place/rename/hardlink/同字节不同 inode 替换任一变化，都必须使 publisher 失败并保持旧 current bytes 逐字节不变。reader 后续 fail closed 不能替代该 publisher 保证。
+
+`.projection_publish.lock` 与 Journal lock 只约束已登记、遵守协议的授权 writers。合同不宣称能消除最后一次验证返回到 kernel rename 之间由非协作同 UID 写入造成的所有用户态 TOCTOU；该剩余面属于 P1 OS 隔离。任何生产启用必须附 writer inventory 与实际 readback：每个可写进程/cron/service 的命令、UID/GID，相关目录与文件的 owner/mode/ACL，mount options、filesystem 类型及 rename/link 语义。缺少任一证据或存在绕过锁的 writer 时，canonical publication 不满足生产门禁，sample-ops cron 继续禁用。
 
 ## CNFutures session contract
 
@@ -267,6 +295,14 @@ A股逐日正式回撤证据只在盘后固定价格交易结束后的 `15:31` �
 不适配一手时 `quantity=0`、`counterfactual_only=true`。适配成交必须有 explicit `execution_eligible=true`、actual fill、capital commit identity 和 complete PIT lineage；正数量本身不能证明 execution-eligible。
 
 ## KPI 与成熟度 projections
+
+同一轮三份投影必须共享相同 `projection_input_sha256`，并通过内容寻址 generation 发布。完整 generation 写入 `projection_generations/<generation_id>/` 后，最后只原子替换 `projection_current.json`；pointer 必须保存 `generation_manifest_sha256`。canonical reader 先按该 SHA 校验 manifest 原始内容，成功后才信任 manifest 中的 projection SHA、共同 input SHA、run metadata 和 sim-only 字段，再校验三个文件。任一步在 pointer swap 前失败时，reader 继续看到上一完整 generation。generation 体系已存在或配置要求 canonical 时，current 缺失/非法必须 fail closed；`*_latest.json`/log 仅保留为向后兼容镜像，不是事务提交点。明确的 pre-generation legacy 健康检查回退必须标记 `legacy_compatibility_degraded`，不能输出成熟度绿或可晋级；活跃前端 reader 不使用该回退。
+
+所有 canonical projection 必须显式保存 `real_trading_enabled=false`、`live_execution_enabled=false`、`automatic_promotion_enabled=false` 和 `automatic_risk_expansion_enabled=false`；decision/maturity 还必须显式保存 `live_transition_authorized=false`。字段缺失与字段为 true 同样 fail closed。
+
+KPI、decision、maturity 与 sample-ops report 向后兼容新增：`data_as_of`、真实 wall-clock `generated_at`、`journal_head_event_count`、`journal_head_sha256`、`max_evidence_available_at`、`excluded_after_as_of_count`、`projection_input_sha256`、`run_id`、`H0` 和 `H1`。`H0={event_count,sha256}` 表示本轮 frozen canonical head；`H1={event_count,sha256,task_owned_delta_event_count}` 表示显式 task-owned label delta 后的本轮投影视图；未知外部 append 不得进入 H1。
+
+既有污染投影只能通过 `projection_generation_audit.jsonl` 追加 `invalid` 或 `superseded` 审计事件；不得删除或改写旧 generation、Journal 或 ledger。本机制只提供代码级审计入口，不授权在生产历史上执行修复。
 
 `sample_kpi_latest.json` 按 style 和 sample intent 输出 counts、horizon statuses、completed round trips、win rate、average win/loss/PnL、expectancy、gross/cost/post-cost PnL、rejection reasons、missing evidence 与 scientific evidence。交易 PnL 序列的 `trade_pnl_sequence_max_drawdown_cny` 仅为辅助诊断；正式最大回撤来自 `account_drawdown_evidence` 的逐日 authoritative MTM equity 曲线。`shadow_capital_aggregated=false`。
 

@@ -16,11 +16,22 @@ import json
 import math
 import os
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Mapping, Optional, Sequence
 
 from shared.data.reader import TradingagentDataReader
-from shared.review.forward_labels import CANONICAL_HORIZONS
-from shared.review.sample_journal import JournalSafetyError, SampleJournal
+from shared.review.forward_labels import (
+    CANONICAL_HORIZONS,
+    evidence_envelope_from_record,
+    validate_evidence_envelope,
+)
+from shared.review.sample_journal import (
+    FrozenJournalView,
+    JournalSafetyError,
+    SampleJournal,
+    build_strict_execution_evidence_index,
+    validate_strict_completed_round_trip_evidence,
+)
 
 
 CN_TZ = timezone(timedelta(hours=8))
@@ -141,8 +152,8 @@ def _parse_datetime(value: Any, *, field: str) -> datetime:
             )
         except (TypeError, ValueError):
             raise ValueError("%s must be an ISO timestamp" % field)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=CN_TZ)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("%s must include a timezone" % field)
     return parsed.astimezone(CN_TZ)
 
 
@@ -189,22 +200,75 @@ def _bar_source(row: Mapping[str, Any]) -> str:
     return ""
 
 
-def _explicit_bar_timestamp(row: Mapping[str, Any]) -> Optional[str]:
-    for key in ("bar_time", "timestamp", "datetime", "observed_at"):
-        raw = row.get(key)
-        if raw in (None, ""):
-            continue
-        try:
-            return _parse_datetime(raw, field=key).isoformat(timespec="seconds")
-        except ValueError:
-            return None
-    return None
+def _explicit_bar_timestamp(
+    row: Mapping[str, Any], *, with_lineage: bool = False
+) -> Optional[str] | tuple[Optional[str], dict[str, Any]]:
+    full_envelope = evidence_envelope_from_record(row)
+    event_fields = dict(full_envelope.get("event_time_fields") or {})
+    event_envelope = {
+        "event_time_fields": event_fields,
+        "availability_time_fields": {},
+        "ingestion_time_fields": {},
+        "retrieval_time_fields": {},
+        "structure_errors": list(full_envelope.get("structure_errors") or []),
+    }
+    validation = validate_evidence_envelope(event_envelope, require_receipts=False)
+    preferred_field = next(
+        (
+            key
+            for key in (
+                "bar_time",
+                "trade_time",
+                "timestamp",
+                "datetime",
+                "observed_at",
+                "event_time",
+                "source_event_time",
+            )
+            if row.get(key) not in (None, "")
+        ),
+        None,
+    )
+    result = (
+        (validation.get("canonical_timestamps") or {}).get("event_time")
+        if validation.get("status") == "valid"
+        else None
+    )
+    if preferred_field is not None:
+        preferred_validation = (validation.get("fields") or {}).get(preferred_field, {})
+        lineage = {
+            "source_field": preferred_field,
+            "raw_value": str(row.get(preferred_field)),
+            "normalized_value": result,
+            "timezone_semantics": "ashare_exchange_event_time",
+            "normalization_rule": preferred_validation.get(
+                "normalization_rule", "none"
+            ),
+            "valid": validation.get("status") == "valid",
+            "reason": (
+                None
+                if validation.get("status") == "valid"
+                else validation.get("status")
+            ),
+            "source_event_time_fields": event_fields,
+            "evidence_envelope_validation": validation,
+        }
+        return (result, lineage) if with_lineage else result
+    lineage = {
+        "source_field": None,
+        "raw_value": None,
+        "normalized_value": None,
+        "normalization_rule": "none",
+        "valid": False,
+        "reason": "missing_timestamp",
+    }
+    return (None, lineage) if with_lineage else None
 
 
 def _daily_close_timestamp(row: Mapping[str, Any]) -> Optional[str]:
-    explicit = _explicit_bar_timestamp(row)
-    if explicit:
-        return explicit
+    event_fields = evidence_envelope_from_record(row).get("event_time_fields") or {}
+    if event_fields:
+        return _explicit_bar_timestamp(row)
     trade_date = _compact_date(
         row.get("trade_date") or row.get("date") or row.get("bar_date")
     )
@@ -255,11 +319,40 @@ def price_points_from_bars(
             reason = _row_quality_rejection(row)
             price = _bar_price(row)
             source = _bar_source(row)
-            timestamp = (
-                _explicit_bar_timestamp(row)
-                if kind == "intraday_5m"
-                else _daily_close_timestamp(row)
+            evidence_envelope = evidence_envelope_from_record(row)
+            timestamp_lineage: dict[str, Any]
+            if kind == "intraday_5m":
+                timestamp, timestamp_lineage = _explicit_bar_timestamp(
+                    row, with_lineage=True
+                )
+            else:
+                timestamp = _daily_close_timestamp(row)
+                if not evidence_envelope.get("event_time_fields") and timestamp:
+                    evidence_envelope["event_time_fields"] = {
+                        "derived.trade_date_close": timestamp
+                    }
+                timestamp_lineage = {
+                    "source_field": "trade_date",
+                    "raw_value": row.get("trade_date")
+                    or row.get("date")
+                    or row.get("bar_date"),
+                    "normalized_value": timestamp,
+                    "timezone_semantics": "ashare_daily_close",
+                    "normalization_rule": "ashare_trade_date_to_15_00_asia_shanghai",
+                    "valid": timestamp is not None,
+                    "reason": None if timestamp is not None else "missing_timestamp",
+                }
+            envelope_validation = validate_evidence_envelope(
+                evidence_envelope, require_receipts=False
             )
+            if envelope_validation.get("status") == "valid":
+                timestamp = (envelope_validation.get("canonical_timestamps") or {}).get(
+                    "event_time"
+                )
+            elif reason is None:
+                reason = "evidence_envelope_%s" % str(
+                    envelope_validation.get("status") or "invalid"
+                )
             if reason is None and price is None:
                 reason = "invalid_price"
             if reason is None and not source:
@@ -277,25 +370,36 @@ def price_points_from_bars(
                             or row.get("date")
                             or row.get("bar_date")
                         ),
+                        "evidence_envelope": evidence_envelope,
+                        "evidence_envelope_validation": envelope_validation,
                     }
                 )
                 continue
+            canonical_timestamps = envelope_validation.get("canonical_timestamps") or {}
             point = {
                 "price": price,
                 "timestamp": timestamp,
                 "event_time": timestamp,
-                "available_at": row.get("available_at") or row.get("published_at"),
-                "ingested_at": row.get("ingested_at") or row.get("received_at"),
-                "retrieved_as_of": row.get("retrieved_as_of"),
+                "available_at": canonical_timestamps.get("available_at"),
+                "ingested_at": canonical_timestamps.get("ingested_at"),
+                "retrieved_as_of": canonical_timestamps.get("retrieved_as_of"),
                 "source": source,
                 "reliable": True,
                 "bar_kind": kind,
+                "timestamp_lineage": timestamp_lineage,
+                "evidence_envelope": evidence_envelope,
+                "evidence_envelope_validation": envelope_validation,
                 "eligible_horizons": (
                     ["m30", "m60", "close"]
                     if kind == "intraday_5m"
                     else ["close", "1d", "3d", "5d"]
                 ),
             }
+            nested_lineage = row.get("point_in_time_lineage")
+            if not isinstance(nested_lineage, Mapping):
+                nested_lineage = row.get("pit_lineage")
+            if isinstance(nested_lineage, Mapping):
+                point["point_in_time_lineage"] = deepcopy(dict(nested_lineage))
             symbol = str(row.get("ts_code") or row.get("symbol") or "").strip().upper()
             if symbol:
                 point["symbol"] = symbol
@@ -394,17 +498,15 @@ def _compatible_as_of(snapshot: Mapping[str, Any], as_of: datetime) -> str:
         )
     except (TypeError, ValueError):
         return as_of.isoformat(timespec="seconds")
-    if prediction.tzinfo is None:
-        return (
-            as_of.astimezone(CN_TZ).replace(tzinfo=None).isoformat(timespec="seconds")
-        )
+    if prediction.tzinfo is None or prediction.utcoffset() is None:
+        raise ValueError("prediction_at must include a timezone")
     return as_of.astimezone(prediction.tzinfo).isoformat(timespec="seconds")
 
 
 def _compatible_price_points(
     snapshot: Mapping[str, Any], price_points: Sequence[Mapping[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Match bar timestamp awareness to the immutable prediction timestamp."""
+    """Convert aware bar instants to the immutable prediction timezone."""
 
     raw_prediction = str(snapshot.get("prediction_at") or "").strip()
     try:
@@ -424,20 +526,25 @@ def _compatible_price_points(
         except (TypeError, ValueError):
             compatible.append(point)
             continue
-        if prediction.tzinfo is None:
-            if timestamp.tzinfo is not None:
-                timestamp = timestamp.astimezone(CN_TZ).replace(tzinfo=None)
-        else:
-            if timestamp.tzinfo is None:
-                timestamp = timestamp.replace(tzinfo=CN_TZ)
-            timestamp = timestamp.astimezone(prediction.tzinfo)
+        if (
+            prediction.tzinfo is None
+            or prediction.utcoffset() is None
+            or timestamp.tzinfo is None
+            or timestamp.utcoffset() is None
+        ):
+            continue
+        timestamp = timestamp.astimezone(prediction.tzinfo)
         point["timestamp"] = timestamp.isoformat(timespec="seconds")
         compatible.append(point)
     return compatible
 
 
 def _collect_price_points(
-    snapshot: Mapping[str, Any], *, reader: Any, as_of: datetime
+    snapshot: Mapping[str, Any],
+    *,
+    reader: Any,
+    as_of: datetime,
+    request_metrics: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     symbol = (
         str(snapshot.get("symbol") or snapshot.get("ts_code") or "").strip().upper()
@@ -452,18 +559,74 @@ def _collect_price_points(
             {"dataset": "all", "reason": "missing_symbol_or_prediction_date"}
         )
     else:
+        started = perf_counter()
+        if request_metrics is not None:
+            request_metrics["physical_request_count"] += 1
         try:
             intraday = _call_intraday(reader, symbol, prediction_date)
         except Exception as exc:  # noqa: BLE001 - external reader boundary
             read_errors.append({"dataset": "intraday_5m", "reason": str(exc)})
+            if request_metrics is not None:
+                request_metrics["error_count"] += 1
+                if (
+                    isinstance(exc, (TimeoutError, ConnectionError))
+                    or "timeout" in str(exc).lower()
+                ):
+                    request_metrics["timeout_count"] += 1
+        finally:
+            if request_metrics is not None:
+                elapsed = perf_counter() - started
+                request_metrics["latency_seconds"] += elapsed
+                request_metrics["latencies_seconds"].append(elapsed)
+        started = perf_counter()
+        if request_metrics is not None:
+            request_metrics["physical_request_count"] += 1
         try:
             daily = _call_daily(reader, symbol, prediction_date, as_of_date)
         except Exception as exc:  # noqa: BLE001 - external reader boundary
             read_errors.append({"dataset": "daily", "reason": str(exc)})
+            if request_metrics is not None:
+                request_metrics["error_count"] += 1
+                if (
+                    isinstance(exc, (TimeoutError, ConnectionError))
+                    or "timeout" in str(exc).lower()
+                ):
+                    request_metrics["timeout_count"] += 1
+        finally:
+            if request_metrics is not None:
+                elapsed = perf_counter() - started
+                request_metrics["latency_seconds"] += elapsed
+                request_metrics["latencies_seconds"].append(elapsed)
     converted = price_points_from_bars(intraday_rows=intraday, daily_rows=daily)
     for point in converted["price_points"]:
-        if point.get("retrieved_as_of") in (None, ""):
-            point["retrieved_as_of"] = as_of.isoformat(timespec="seconds")
+        envelope = evidence_envelope_from_record(point)
+        envelope_validation = validate_evidence_envelope(
+            envelope, boundary=as_of, require_receipts=True
+        )
+        point["evidence_envelope"] = envelope
+        point["evidence_envelope_validation"] = envelope_validation
+        nested = point.get("point_in_time_lineage")
+        if (
+            not isinstance(nested, Mapping)
+            and envelope_validation.get("status") == "valid"
+            and envelope_validation.get("complete") is True
+        ):
+            canonical_timestamps = envelope_validation["canonical_timestamps"]
+            # Synthetic lineage is permitted only after every original event
+            # and receipt alias has passed the shared EvidenceEnvelope gate.
+            # No missing provider receipt is replaced with task ``as_of``.
+            point["point_in_time_lineage"] = {
+                "timestamps": {
+                    field: canonical_timestamps.get(field)
+                    for field in (
+                        "event_time",
+                        "available_at",
+                        "ingested_at",
+                        "retrieved_as_of",
+                    )
+                },
+                "evidence_envelope_validation": deepcopy(envelope_validation),
+            }
     converted["daily_trade_dates"] = sorted(
         {
             value
@@ -743,6 +906,8 @@ def _build_actual_execution_costs(
     events: Sequence[Mapping[str, Any]],
     snapshot: Mapping[str, Any],
     as_of: datetime,
+    *,
+    evidence_index: Mapping[str, Any],
 ) -> dict[str, Any] | None:
     """Return complete, point-in-time *actual round-trip* costs for a snapshot.
 
@@ -767,17 +932,18 @@ def _build_actual_execution_costs(
         return None
 
     candidates: list[tuple[datetime, dict[str, Any]]] = []
-
     for event in events:
         if not isinstance(event, Mapping):
             continue
         if str(event.get("record_type") or "") != "completed_round_trip":
             continue
-        if event.get("round_trip_complete") is not True:
-            continue
-        if event.get("execution_eligible") is not True:
-            continue
-        if str(event.get("costs_cover") or "") != "round_trip":
+        strict_validation = validate_strict_completed_round_trip_evidence(
+            event,
+            boundary=as_of,
+            prediction_snapshot_id=snapshot_id,
+            evidence_index=evidence_index,
+        )
+        if strict_validation.get("valid") is not True:
             continue
         if str(event.get("symbol") or "").strip().upper() != symbol:
             continue
@@ -867,6 +1033,36 @@ def _build_actual_execution_costs(
     }
 
 
+def _index_actual_execution_cost_events(
+    events: Sequence[Mapping[str, Any]], *, as_of: datetime
+) -> dict[str, list[dict[str, Any]]]:
+    """Index point-in-time completed round trips once by prediction snapshot."""
+
+    indexed: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        if not isinstance(event, Mapping):
+            continue
+        if str(event.get("record_type") or "") != "completed_round_trip":
+            continue
+        snapshot_id = str(event.get("prediction_snapshot_id") or "").strip()
+        if not snapshot_id:
+            continue
+        raw_event_at = str(
+            event.get("closed_at")
+            or event.get("event_at")
+            or event.get("created_at")
+            or ""
+        ).strip()
+        try:
+            event_at = _parse_datetime(raw_event_at, field="cost_evidence_event_at")
+        except ValueError:
+            continue
+        if event_at > as_of:
+            continue
+        indexed.setdefault(snapshot_id, []).append(dict(event))
+    return indexed
+
+
 def run_ashare_forward_label_ops(
     *,
     journal_path: Path | str,
@@ -876,8 +1072,12 @@ def run_ashare_forward_label_ops(
     environ: Optional[Mapping[str, Any]] = None,
     safety_flags: Optional[Mapping[str, Any]] = None,
     journal: SampleJournal | None = None,
+    frozen_view: FrozenJournalView | None = None,
+    snapshot_ids: Optional[Sequence[str]] = None,
+    evidence_cache: Optional[dict[tuple[str, str, str], dict[str, Any]]] = None,
+    batch_size: int = 200,
 ) -> dict[str, Any]:
-    """Read prediction snapshots and append idempotent label updates only."""
+    """Materialize an exact frozen set of prediction snapshots."""
 
     active_environ = os.environ if environ is None else environ
     _assert_sim_only(active_environ, safety_flags)
@@ -885,24 +1085,62 @@ def run_ashare_forward_label_ops(
     current_as_of = _parse_datetime(as_of, field="as_of")
     active_journal = journal or SampleJournal(journal_path)
 
-    # Reading the journal also verifies every event fingerprint and recursively
-    # rejects live markers before any market read or label append.
-    events = active_journal.read_events()
+    active_view = frozen_view
+    if active_view is None and hasattr(active_journal, "read_frozen"):
+        active_view = active_journal.read_frozen(as_of=current_as_of)
+    events = (
+        active_view.copy_events()
+        if active_view is not None
+        else active_journal.read_events()
+    )
     live_journal_marker = _find_live_marker(events, "journal")
     if live_journal_marker:
         raise ForwardLabelOpsSafetyError(
             "live trading journal marker rejected at %s" % live_journal_marker
         )
+    if active_view is None:
+        raise ValueError("frozen_journal_view_required_for_label_append")
     predictions = [
         event
         for event in events
         if event.get("journal_event_type") == "prediction_snapshot"
     ]
-    selected = [
-        event
-        for event in predictions
-        if _is_ashare(event) and _prediction_trade_date(event) == selected_trade_date
-    ]
+    if snapshot_ids is None:
+        selected = []
+        for event in predictions:
+            if not _is_ashare(event):
+                continue
+            explicit_trade_date = str(event.get("trade_date") or "").strip()
+            if explicit_trade_date:
+                try:
+                    event_trade_date = _validated_trade_date(explicit_trade_date)
+                except ValueError as exc:
+                    raise ValueError(
+                        "invalid_prediction_trade_date:%s"
+                        % str(event.get("snapshot_id") or "")
+                    ) from exc
+            else:
+                event_trade_date = _prediction_trade_date(event)
+            if event_trade_date == selected_trade_date:
+                selected.append(event)
+    else:
+        requested_ids = [str(value or "").strip() for value in snapshot_ids]
+        if any(not value for value in requested_ids):
+            raise ValueError("snapshot_ids cannot contain an empty identity")
+        if len(set(requested_ids)) != len(requested_ids):
+            raise ValueError("snapshot_ids must be unique")
+        by_id = {str(event.get("snapshot_id") or ""): event for event in predictions}
+        missing = [
+            snapshot_id for snapshot_id in requested_ids if snapshot_id not in by_id
+        ]
+        if missing:
+            raise ValueError("pending_snapshot_missing:%s" % missing[0])
+        selected = [by_id[snapshot_id] for snapshot_id in requested_ids]
+        for event in selected:
+            if not _is_ashare(event):
+                raise ValueError(
+                    "pending_snapshot_not_ashare:%s" % event.get("snapshot_id")
+                )
     filtered_count = len(predictions) - len(selected)
     active_reader = reader
     if selected and active_reader is None:
@@ -926,6 +1164,21 @@ def run_ashare_forward_label_ops(
         }
     )
     results: list[dict[str, Any]] = []
+    materialization_requests: list[dict[str, Any]] = []
+    materialization_context: list[dict[str, Any]] = []
+    cache = evidence_cache if evidence_cache is not None else {}
+    request_metrics: dict[str, Any] = {
+        "logical_request_count": 0,
+        "physical_request_count": 0,
+        "cache_hit_count": 0,
+        "timeout_count": 0,
+        "retry_count": 0,
+        "error_count": 0,
+        "latency_seconds": 0.0,
+        "latencies_seconds": [],
+    }
+    actual_cost_index = _index_actual_execution_cost_events(events, as_of=current_as_of)
+    strict_execution_evidence_index = build_strict_execution_evidence_index(events)
 
     for snapshot in selected:
         snapshot_id = str(snapshot.get("snapshot_id") or "")
@@ -961,9 +1214,23 @@ def run_ashare_forward_label_ops(
             )
             continue
 
-        evidence = _collect_price_points(
-            snapshot, reader=active_reader, as_of=current_as_of
+        cache_key = (
+            symbol,
+            _prediction_trade_date(snapshot),
+            current_as_of.isoformat(timespec="seconds"),
         )
+        request_metrics["logical_request_count"] += 2
+        if cache_key in cache:
+            evidence = deepcopy(cache[cache_key])
+            request_metrics["cache_hit_count"] += 2
+        else:
+            evidence = _collect_price_points(
+                snapshot,
+                reader=active_reader,
+                as_of=current_as_of,
+                request_metrics=request_metrics,
+            )
+            cache[cache_key] = deepcopy(evidence)
         counts["bar_quality_rejections"] += len(evidence["rejections"])
         counts["market_read_errors"] += len(evidence["read_errors"])
 
@@ -971,24 +1238,58 @@ def run_ashare_forward_label_ops(
         # Fall back to the conservative model embedded at prediction time.
         # Observation/counterfactual snapshots have no actual fills, so they
         # naturally degrade to the conservative model.
-        actual_costs = _build_actual_execution_costs(events, snapshot, current_as_of)
+        actual_costs = _build_actual_execution_costs(
+            actual_cost_index.get(snapshot_id, []),
+            snapshot,
+            current_as_of,
+            evidence_index=strict_execution_evidence_index,
+        )
         if actual_costs is not None:
             explicit_costs = actual_costs
             counts["actual_execution_cost_used"] += 1
         else:
             explicit_costs = snapshot.get("costs")
 
-        materialized = active_journal.materialize_labels(
-            snapshot_id,
-            _compatible_price_points(snapshot, evidence["price_points"]),
-            as_of=_compatible_as_of(snapshot, current_as_of),
-            horizon_targets=_ashare_horizon_targets(
-                snapshot,
-                as_of=current_as_of,
-                daily_trade_dates=evidence.get("daily_trade_dates") or [],
-            ),
-            costs=explicit_costs,
+        materialization_requests.append(
+            {
+                "snapshot_id": snapshot_id,
+                "price_points": _compatible_price_points(
+                    snapshot, evidence["price_points"]
+                ),
+                "as_of": _compatible_as_of(snapshot, current_as_of),
+                "horizon_targets": _ashare_horizon_targets(
+                    snapshot,
+                    as_of=current_as_of,
+                    daily_trade_dates=evidence.get("daily_trade_dates") or [],
+                ),
+                "costs": explicit_costs,
+            }
         )
+        materialization_context.append(
+            {
+                "snapshot_id": snapshot_id,
+                "symbol": symbol,
+                "pending_reference_evidence": (
+                    snapshot.get("forward_label_eligibility")
+                    == "pending_reference_evidence"
+                ),
+                "pending_reference_reason": snapshot.get(
+                    "forward_label_pending_reason"
+                ),
+                "price_point_count": evidence["accepted_points"],
+                "bar_quality_rejections": deepcopy(evidence["rejections"]),
+                "market_read_errors": deepcopy(evidence["read_errors"]),
+            }
+        )
+
+    batch_report = active_journal.materialize_label_batch(
+        active_view,
+        materialization_requests,
+        batch_size=batch_size,
+    )
+    if len(materialization_context) != len(batch_report["results"]):
+        raise ForwardLabelOpsError("label_batch_result_count_mismatch")
+    for context, materialized in zip(materialization_context, batch_report["results"]):
         if materialized["status"] == "appended":
             counts["new_label_updates"] += 1
         else:
@@ -1004,17 +1305,63 @@ def run_ashare_forward_label_ops(
         counts["data_quality_rejected"] += statuses["rejected_data_quality"]
         counts["missing_evidence"] += statuses["missing_exit_evidence"]
         counts["cost_evidence_rejected"] += statuses["rejected_missing_cost_evidence"]
+        missing_evidence_reason = next(
+            (
+                str(label.get("reason") or "missing_exit_evidence")
+                for label in labels.values()
+                if isinstance(label, Mapping)
+                and str(label.get("status") or "") == "missing_exit_evidence"
+            ),
+            None,
+        )
+        retryable_degraded = bool(
+            context["market_read_errors"]
+            or context["pending_reference_evidence"]
+            or statuses["missing_exit_evidence"]
+        )
         results.append(
             {
-                "snapshot_id": snapshot_id,
-                "symbol": symbol,
+                "snapshot_id": context["snapshot_id"],
+                "symbol": context["symbol"],
                 "status": materialized["status"],
-                "price_point_count": evidence["accepted_points"],
-                "bar_quality_rejections": deepcopy(evidence["rejections"]),
-                "market_read_errors": deepcopy(evidence["read_errors"]),
+                "retryable": retryable_degraded,
+                "degraded": retryable_degraded,
+                "degraded_reason": (
+                    context["pending_reference_reason"]
+                    or missing_evidence_reason
+                    or (
+                        "market_data_read_errors"
+                        if context["market_read_errors"]
+                        else None
+                    )
+                ),
+                "price_point_count": context["price_point_count"],
+                "bar_quality_rejections": context["bar_quality_rejections"],
+                "market_read_errors": context["market_read_errors"],
                 "label_status_counts": dict(sorted(statuses.items())),
             }
         )
+
+    latencies = sorted(
+        float(value) for value in request_metrics.pop("latencies_seconds")
+    )
+    physical_count = int(request_metrics["physical_request_count"])
+    request_metrics["latency_seconds"] = round(
+        float(request_metrics["latency_seconds"]), 6
+    )
+    request_metrics["mean_latency_seconds"] = (
+        round(sum(latencies) / physical_count, 6) if physical_count else 0.0
+    )
+    request_metrics["max_latency_seconds"] = (
+        round(max(latencies), 6) if latencies else 0.0
+    )
+    request_metrics["p95_latency_seconds"] = (
+        round(
+            latencies[min(len(latencies) - 1, math.ceil(len(latencies) * 0.95) - 1)], 6
+        )
+        if latencies
+        else 0.0
+    )
 
     return {
         "status": "pass",
@@ -1025,6 +1372,14 @@ def run_ashare_forward_label_ops(
         "journal_path": str(Path(journal_path).absolute()),
         "counts": dict(counts),
         "results": results,
+        "http_metrics": request_metrics,
+        "journal_append": {
+            key: value
+            for key, value in batch_report.items()
+            if key not in {"results", "appended_events"}
+        },
+        "task_owned_delta_events": batch_report["appended_events"],
+        "frozen_head": active_view.metadata(),
         "market_data_access": "read_only",
         "journal_write_scope": "forward_label_updates_only",
         "orders_created": 0,
@@ -1044,21 +1399,44 @@ def run_ashare_forward_label_backlog(
     environ: Optional[Mapping[str, Any]] = None,
     safety_flags: Optional[Mapping[str, Any]] = None,
     journal: SampleJournal | None = None,
+    frozen_view: FrozenJournalView | None = None,
+    authority_scope: Optional[Mapping[str, Any]] = None,
+    batch_size: int = 200,
 ) -> dict[str, Any]:
-    """Discover and materialize every pending A-share date in a bounded window."""
+    """Discover and materialize only the exact pending frozen snapshot IDs."""
 
     active_environ = os.environ if environ is None else environ
     _assert_sim_only(active_environ, safety_flags)
     current_as_of = _parse_datetime(as_of, field="as_of")
     active_journal = journal or SampleJournal(journal_path)
-    events = active_journal.read_events()
+    active_view = frozen_view
+    if active_view is None and hasattr(active_journal, "read_frozen"):
+        active_view = active_journal.read_frozen(as_of=current_as_of)
+    events = (
+        active_view.copy_events()
+        if active_view is not None
+        else active_journal.read_events()
+    )
     live_journal_marker = _find_live_marker(events, "journal")
     if live_journal_marker:
         raise ForwardLabelOpsSafetyError(
             "live trading journal marker rejected at %s" % live_journal_marker
         )
+    scoped_events = [
+        event
+        for event in events
+        if authority_scope is None
+        or (
+            event.get("capital_authority_id")
+            == authority_scope.get("capital_authority_id")
+            and event.get("authority_generation")
+            == authority_scope.get("authority_generation")
+            and event.get("execution_lineage_id")
+            == authority_scope.get("execution_lineage_id")
+        )
+    ]
     backlog = enumerate_ashare_forward_label_backlog(
-        events,
+        scoped_events,
         anchor_trade_date=anchor_trade_date,
         as_of=current_as_of,
         window_days=window_days,
@@ -1067,42 +1445,26 @@ def run_ashare_forward_label_backlog(
     active_reader = reader
     if pending_dates and active_reader is None:
         active_reader = TradingagentDataReader()
+    if active_view is None:
+        raise ValueError("frozen_journal_view_required_for_label_append")
 
-    aggregate_keys = (
-        "prediction_count",
-        "new_label_updates",
-        "idempotent_label_updates",
-        "ready_labels",
-        "pending_not_due",
-        "data_quality_rejected",
-        "missing_evidence",
-        "cost_evidence_rejected",
-        "actual_execution_cost_used",
-        "bar_quality_rejections",
-        "market_read_errors",
-        "future_predictions",
+    pending_snapshot_ids = [
+        str(row["snapshot_id"]) for row in backlog["pending_snapshots"]
+    ]
+    label_report = run_ashare_forward_label_ops(
+        journal_path=journal_path,
+        trade_date=backlog["anchor_trade_date"],
+        as_of=current_as_of,
+        reader=active_reader,
+        environ=active_environ,
+        safety_flags=safety_flags,
+        journal=active_journal,
+        frozen_view=active_view,
+        snapshot_ids=pending_snapshot_ids,
+        evidence_cache={},
+        batch_size=batch_size,
     )
-    counts: Counter[str] = Counter({key: 0 for key in aggregate_keys})
-    date_reports: list[dict[str, Any]] = []
-    results: list[dict[str, Any]] = []
-    for pending_date in pending_dates:
-        report = run_ashare_forward_label_ops(
-            journal_path=journal_path,
-            trade_date=pending_date,
-            as_of=current_as_of,
-            reader=active_reader,
-            environ=active_environ,
-            safety_flags=safety_flags,
-            journal=active_journal,
-        )
-        for key in aggregate_keys:
-            counts[key] += int(report["counts"].get(key) or 0)
-        date_reports.append(report)
-        for result in report["results"]:
-            results.append({"trade_date": pending_date, **deepcopy(result)})
-    counts["filtered_predictions"] = max(
-        0, int(backlog["ashare_prediction_count"]) - counts["prediction_count"]
-    )
+    counts: Counter[str] = Counter(label_report["counts"])
     counts["backlog_date_count"] = len(pending_dates)
     counts["terminal_snapshot_count"] = int(backlog["terminal_snapshot_count"])
     counts["outside_window_prediction_count"] = int(
@@ -1122,8 +1484,12 @@ def run_ashare_forward_label_backlog(
         "backlog": backlog,
         "processed_trade_dates": pending_dates,
         "counts": dict(counts),
-        "date_reports": date_reports,
-        "results": results,
+        "date_reports": [label_report] if pending_snapshot_ids else [],
+        "results": deepcopy(label_report["results"]),
+        "http_metrics": deepcopy(label_report["http_metrics"]),
+        "journal_append": deepcopy(label_report["journal_append"]),
+        "task_owned_delta_events": deepcopy(label_report["task_owned_delta_events"]),
+        "frozen_head": active_view.metadata(),
         "market_data_access": "read_only",
         "journal_write_scope": "forward_label_updates_only",
         "orders_created": 0,
@@ -1146,6 +1512,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=DEFAULT_BACKLOG_WINDOW_DAYS,
         help="Bounded calendar-day lookback for unresolved prediction dates (1-31).",
     )
+    parser.add_argument(
+        "--label-batch-size",
+        type=int,
+        default=200,
+        help="Append batch size for task-owned label deltas (100-250).",
+    )
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -1154,6 +1526,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             anchor_trade_date=args.trade_date,
             as_of=args.as_of,
             window_days=args.backlog_window_days,
+            batch_size=args.label_batch_size,
         )
         exit_code = 0
     except (ForwardLabelOpsSafetyError, JournalSafetyError, ValueError) as exc:
