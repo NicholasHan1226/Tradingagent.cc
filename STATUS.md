@@ -1,10 +1,16 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-14 21:44 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-14 22:22 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。
 
-## 隔离重放候选：A股 sector flow confirmation（ece93a1，v5 待独立 review）
+## 当前 GitHub 集成状态（本地/GitHub 层）
 
-- replay worktree 为 `/private/tmp/tradingagent-sector-flow-v4-replay-ece93a1`，detached 基线 `ece93a1712851cb8aaee9469c125eecbfeb8357d`。本地 `main`、remote-tracking `origin/main`、GitHub `refs/heads/main` 与 replay HEAD 已 fresh 核对为该 SHA；仓库没有命名 `live` ref，生产按本任务禁区未访问。候选未 commit、merge、push 或 deploy。
+- 2026-07-14 22:22 CST fresh fetch、`ls-remote` 与分叉审计：本地 `main`、`origin/main`、live GitHub `main` 均为 `5689c95383244b689ced7d6c19a3ba2fc5c08bc4`，`behind/ahead=0/0`。main tracked/index clean；仅保留既有 `.codegraphcontext/db/falkordb` 与 `.codegraphcontext/db/falkordb.settings` untracked/占用，未触碰。
+- 已串行集成并普通 push：sample-ops `4a220ef5f15390bfdc3b600a349a9cbe8b74da94`、notification `9b243208a2584867df4431336d26af7cb9da1c6f`、capital authority `af078070a57de9a806d009dcbdb7ea32f9ac97b2`、baseline hygiene `ece93a1712851cb8aaee9469c125eecbfeb8357d`、sector-flow shadow `5689c95383244b689ced7d6c19a3ba2fc5c08bc4`。
+- 上述仅证明本地/GitHub 代码层；本轮没有部署、cron、数据库、Journal/sample_ops、邮件、broker 或真实交易操作，不能替代生产文件/runtime、外部路由或真实样本验收。
+
+## 已集成 GitHub、未生产：A股 sector flow confirmation（v5）
+
+- replay worktree 为 `/private/tmp/tradingagent-sector-flow-v4-replay-ece93a1`，detached 基线 `ece93a1712851cb8aaee9469c125eecbfeb8357d`，仅保留为重放证据。v5 已两路 fresh 独立 PASS，并以普通 commit/push 集成为 `5689c95383244b689ced7d6c19a3ba2fc5c08bc4`；本地/GitHub 层已 readback，生产按本任务禁区未访问或部署。
 - ece93a 基线卫生事实继续保留：Wave2 A股 position authority 按 fail-closed 合同阻断非法 authority；`shared/screening/condition_generator.py` 没有带回历史未使用 `last_close`。Capital、notification 及下方当前状态章节均未被旧 9b 文本覆盖。
 - 旧 ece93a 候选 aggregate `cc6a043e74b50282323139bc67541759d2f30aaef438b8af2325fecb1d84cf8e`、manifest SHA `6bd682727ebf8931bd8e9142710772f5a7b814d823aece513b2354ae34202f4c` 与 full diff SHA `fdaca8d3987219b68e0a83a18efa87832e331473ba5b594d82b977471f17c240` 已因 fresh review P1 作废，不得交 main 或归档为通过证据。缺口是请求/快照 sector ID、snapshot ID、taxonomy 和 scope 在验证前经 `str()` 隐式转换，bool/number 可形成 confirmed 记录。
 - v5 仍严格限定原精确 8 文件。修复只收紧 identity 入口：scope、请求/快照 sector ID、snapshot ID 与 taxonomy 在任何 trim/coercion 前必须是原生非空 string；非法类型或空值一律 degraded，`pair_identity_valid=false`、pair SHA 为 `null`，off/on 回执绑定同一个空 identity 且始终 `consumed=false`。没有增加 decision consumer、资本、风险或执行 authority。
@@ -12,13 +18,13 @@
 - TDD 证据：新增 scope/request sector/snapshot sector/snapshot ID/taxonomy × bool/int/float/list/mapping/None/empty/blank 的 40 项矩阵在修复前 `40 failed / 22 deselected`，修复后 `40 passed / 22 deselected`。缺 scope 的历史 reason 兼容性回归曾使独立包 `63 passed / 1 failed`，最小兼容调整后重新得到 `64 passed`；`None` 仍被拒绝且不能形成 pair identity。
 - 最终代码上的 sector 验收全部通过：rank16 `16 passed / 46 deselected`、core21 `21 passed / 46 deselected`、feature62 `62 passed`、core67 `67 passed`、Fresh `8 passed`、独立包 `64 passed`、expanded107 `107 passed / 46 deselected`、expanded153 `153 passed`、Wave2 `4 passed`。expanded 使用历史精确 10 文件组成；两次漏收集的 62/108 与 65/111 结果不冒充 expanded，也不进入冻结验收清单。
 - Capital/notification 组合全部通过：position-source/pause `29 passed`、capital authority `14 passed`、sim-loop `66 passed`、notification+opening+sim-loop+capital `118 passed`、Wave2/condition/moneyflow/capital 精确组合 `55 passed`。
-- Ruff 0.15.14 对 4 个 candidate Python 文件通过；4 文件 compile 与 tracked `git diff --check` 已通过。最终冻结前仍须在本 STATUS 字节落定后复核完整 8 文件 diff、Markdown 本地链接、禁止路径和 worktree hygiene。新鲜 JUnit/cache/pyc/basetemp 位于 `/private/tmp/tradingagent-sector-flow-v5-ece93a1-tests.KLUXkx`，最终 manifest 只列入明确验收的 JUnit，不把中间误收集结果当作通过证据。
-- 最终身份以 `/private/tmp/tradingagent-sector-flow-v5-ece93a1-freeze-20260714.manifest.txt` 与 `/private/tmp/tradingagent-sector-flow-v5-ece93a1.full.diff` 为准。当前只冻结本地 shadow 候选等待全新独立 review；未访问或修改 orchestrator、wrapper、capital/risk、sample_ops/projection、forecast、生产、cron、数据库、Journal、broker、邮件或真实交易。
+- Ruff 0.15.14 对 4 个候选 Python 文件、4 文件 compile、完整 8 文件 diff、Markdown 本地链接、禁止路径和 worktree hygiene 已在集成前后复核通过。新鲜 JUnit/cache/pyc/basetemp 位于仓外临时目录；最终 manifest 只列入明确验收的 JUnit，不把中间误收集结果当作通过证据。
+- 冻结身份仍以 `/private/tmp/tradingagent-sector-flow-v5-ece93a1-freeze-20260714.manifest.txt` 与 `/private/tmp/tradingagent-sector-flow-v5-ece93a1.full.diff` 为准；其 v5 aggregate `71f71a5e0e9bad8f6dd1175f3c9238c4be3e2c1f99ed748005d0ecf8094b4e74` 与 full diff SHA `13b1ec555fe1d63830cb0a9ab0d93a61cb523d11d080586ce6a9aaecbb1ee859` 已匹配 GitHub commit。仍未访问或修改 orchestrator、wrapper、capital/risk、sample_ops/projection、forecast、生产、cron、数据库、Journal、broker、邮件或真实交易。
 - shadow 接口说明见 [docs/sector_flow_confirmation_shadow_handoff.md](docs/sector_flow_confirmation_shadow_handoff.md)。
 
-## 隔离候选：A股 capital position authority / risk P0 v2（未集成）
+## 历史候选/失败验收记录：A股 capital position authority / risk P0 v2（最终已集成 GitHub `af078070`，未生产）
 
-- 正式组合验收 overlay：`/private/tmp/tradingagent-capital-v2-main9b-overlay.ek6O2K`，detached fresh clean main 基线 `9b243208a2584867df4431336d26af7cb9da1c6f`。它先以普通 `git apply --check` + `git apply` 从完整 source patch `9e4ae65fd074cd9b17b1a42c270c6d1d7a2ab72345fddb2dc32869c1b94527ad` 重放 14 文件，再只在该 overlay 结构性修复 fresh review 缺口，当前待冻结范围为 14 tracked + 3 untracked。与 notification 提交唯一共享文件仍为 `shared/wrappers/tradings_cron_entry.py`，只应用 capital hunks，没有整文件覆盖。组合回归全绿后仍需全新独立只读验收，因此此处不自行给 PASS。
+- 以下 overlay、作废指纹与“未 commit/push”措辞均为历史候选审计证据。最终通过的 capital authority 结果已集成 GitHub `af078070a57de9a806d009dcbdb7ea32f9ac97b2`；该 GitHub 状态不表示生产已部署或生产 runtime 已刷新。
 - v2 源 worktree：`/Users/nicholashan/Projects/Finance/.worktrees/tradingagent-capital-authority-risk-p0-v2`；分支 `codex/capital-authority-risk-p0-v2`；原始基线 `4a220ef5f15390bfdc3b600a349a9cbe8b74da94`。源候选仅保留 patch 来源，不再作为最终组合证据；本地未提交 overlay 不代表 main、GitHub、生产文件/runtime、cron、broker、邮件或真实交易发生变化。
 - 旧 `/Users/nicholashan/Projects/Finance/.worktrees/tradingagent-capital-authority-risk-p0` 候选经 fresh reviewer 判定 FAIL/NO-GO，按原样冻结，仅作失败证据；v2 没有在其上叠补，也不得提交旧候选。
 - v2 首轮冻结的 content aggregate `56dd533396ed759223889fb4ce4ffba69e730dbd55e687c645804f825027a855` 与 full diff `36ccc3326a9655f2afee2f982c990d76b966960f15cd80dc39a47e127ef96623` 经 fresh reviewer 判定 2P0+1P1 FAIL/NO-GO，已作废且不得复用：shadow A股入口仍可进入普通 risk、adapter 会在读取后制造 current identity/接受别名、generic loader 没有真实 complete-envelope 通过路径。第二轮已将 shadow 纳入同一前置门禁，删除 after-the-fact binder/别名回退，并让 generic loader 只透传 producer 自有完整 dict envelope；legacy list 保持 unbound fail closed。
@@ -33,9 +39,9 @@
 - 冲突审计：本地 `main`、`origin/main` 与 overlay base 都是 `9b243208a2584867df4431336d26af7cb9da1c6f`；主工作树另有本任务未创建、未读取、未修改的 untracked `.codegraphcontext/`，因此不宣称 main working tree clean。sector-flow 候选也基于 9b，与 capital 文件级交集为 `STATUS.md`、`docs/data_contract.md`；data contract 是不同 hunk，`STATUS.md` 因双方都修改首行时间并在其后插入候选章节而存在真实文本 hunk 冲突，串行接手必须手工保留两节，禁止整文件覆盖。生产代码、wrapper、risk/capital/execution 与 sector 候选无文件交集。
 - notification 集成的原保护路径及其 notification 测试均未修改；本候选的测试改动仅为 `tests/test_sim_loop.py`、全新 capital-authority 专测和全新真实 producer 矩阵。双方共有文件仅为 `shared/wrappers/tradings_cron_entry.py`，本候选 hunk 限于 capital authority/server-local source/risk gate，未改 email 映射、`run_email_notify` 或 morning/day/night/weekly/system-health 通知状态语义。本候选未访问生产、默认数据库、Journal/ledger、cron、broker、邮件或同花顺，且未 commit、merge、push、deploy。
 
-## 隔离候选：A股 sample ops P0（未集成）
+## 历史候选/失败验收记录：A股 sample ops P0（最终已集成 GitHub `4a220ef`，未生产）
 
-- 候选 worktree：`/Users/nicholashan/Projects/Finance/.worktrees/tradingagent-sample-ops-p0`；分支 `codex/ashare-sample-ops-p0`；基线 `6c12fbed29db925019f85a6016774626f63b857a`。这是本地未提交候选，不代表 `main`、GitHub、生产文件/runtime、外部路由或真实业务写入已变化。
+- 以下 source worktree、作废指纹与“未 commit/push”措辞均为历史候选审计证据。最终通过的 sample-ops 结果已集成 GitHub `4a220ef5f15390bfdc3b600a349a9cbe8b74da94`；该 GitHub 状态不表示生产已部署或生产 runtime 已刷新。
 - 候选实现固定 evidence availability/receipt cutoff 与 canonical Journal head；同轮 labels/KPI/decision/maturity 共用 frozen H0 + 显式 task-owned delta H1，未知并发 append fail closed。
 - exact pending snapshot IDs 消除 backlog 放大；单次 Journal parse/index、同 symbol/date/run-as-of 行情复用与 100–250 条批量 label append 降低重复扫描、调用、锁和 fsync。
 - KPI/decision/maturity 共用 `projection_input_sha256`，通过内容寻址 generation + 单一原子 current pointer 发布；提供 append-only invalid/superseded audit，不修改历史。
@@ -123,14 +129,33 @@
 - 改动的 27 个 Python 文件 Ruff/format、仓内 361 个 Python 文件 compile、`git diff --check` 和改动 Markdown 本地链接检查通过。
 - 测试 fixture、隔离临时账本和浏览器截图不是真实市场样本，也不证明策略正期望。
 
-## 当前阻塞与下一门禁
+## 当前阻塞与下一门禁（生产截至 2026-07-14 18:05–18:10 CST 的只读事实）
+
+1. 生产仍为 **NO-GO**，没有稳定的当日学习闭环：SharedSignals `/source_status` 为 RED（9 green / 2 yellow / 1 red，red=`opening_gate`）；`/opening_gate` 为 red/closed，`phase=afternoon_resume`，A股 5 分钟当前阶段样本缺失。接口 runtime 同为 yellow（empty 19 / unobserved 35 / observed 79；`SW2021` yellow）。服务 active、8082/8080/8787 HTTP 200 不能替代这些 source/gate 事实。
+2. 截至该只读时点，production TradingAgent 仍为 `6c12fbed` 且有 7 个 untracked；不得把当前 GitHub `5689c953`、本地测试或 HTTP 200 误称为生产发布。生产文件/runtime 本轮未重新访问，以上只读时间点之后的变化未验证。
+3. A股与 CNFutures 两个独立 50,000 CNY authority 当时均 fresh/reconciled、checksum 有效、`real=false`，且 0 positions / 0 fills；这只证明 simulated authority 的该时点账面，不证明可交易或学习闭环。
+4. 两条 A股 `sample_ops` cron 当时仍禁用；Journal 为 19,806 条、最后事件 09:36，KPI/evolution/maturity 最后产物停在 2026-07-13 17:36。不得手工补造 opening、恢复 cron 或以旧产物冒充当前学习证据。
+5. 下一门禁是经单独授权的 SharedSignals opening/5min P0 根因修复、source/interface/gate 复验，以及同日真实时序产物的只读验收；在全部闭合前维持 sim-only / production NO-GO。
+
+## 历史阻塞快照（2026-07-13；不代表当前 production 结论）
 
 1. A股普通日内首样本门禁已完成：14:46 周期新增 2,000 条 observation/prediction，1,996 条 eligible/PIT-complete；早先 17 条 risk reject 保留，0 fill。明确 `missed_opening=true`，不得补造 09:30 证据。
 2. CNFutures `day_afternoon` 已通过真实有效会话验收，11:35 replay 有 636 windows/3 counterfactual rejects；`day_morning` 缺失与 opening 错过必须保留为缺口，不得补造。
 3. A股 15:32 daily MTM、资金守恒与唯一日级 SampleJournal 已验证；17:40 sample ops 后验证 forward labels、KPI、maturity，未到时点只等待不伪造。
 4. 只有上述运行证据、三仓文档、GitHub/production readback 与 rollback 证据齐全后才评估 worktree/本地分支清理；append-only ledger、样本、归档和运行证据不得删除。
 
-## 环境层级
+## 环境层级（2026-07-14 22:22 CST 当前本地/GitHub；生产为 18:05–18:10 CST 只读快照）
+
+| 层级 | 当前事实 |
+|---|---|
+| 本地工作树 | `main=5689c95383244b689ced7d6c19a3ba2fc5c08bc4`，tracked/index clean；仅既有 `.codegraphcontext` 两项 untracked 且由本地 CodeGraph 占用，本轮未触碰 |
+| GitHub | fresh fetch + `ls-remote`：`origin/main` 与 live GitHub `main` 均为 `5689c95383244b689ced7d6c19a3ba2fc5c08bc4`，`behind/ahead=0/0` |
+| 生产文件/runtime | 本轮禁止访问/部署，未验证、未改变。最后只读事实为 2026-07-14 18:05–18:10 CST：TA `6c12fbed` + 7 untracked，source/interface/opening 阻断，production NO-GO；不得由 GitHub 或 HTTP 200 推断同步 |
+| 生产 cron | 本轮禁止访问/apply；截至上述时点，A股两条 `sample_ops` cron 禁用，未恢复 |
+| 外部邮件/同花顺/broker | 本轮未实现、未发送、未连接 |
+| 真实市场样本 | 截至上述时点双 50,000 CNY authority 均 `real=false`、0 positions / 0 fills；A股当前阶段 opening/5min 与 KPI/maturity 时序证据未闭合，不能声称稳定学习闭环 |
+
+## 历史环境层级（2026-07-13；不代表当前 GitHub 或 production）
 
 | 层级 | 当前事实 |
 |---|---|
