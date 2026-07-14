@@ -269,9 +269,10 @@ def _gen_rotation(
     reader: Any | None = None,
     market: str = "ashare",
 ) -> dict[str, Any] | None:
-    """轮动条件 — 板块轮动信号。
+    """轮动条件 — 板块轮动分数 + 个股资金确认。
 
-    触发: 该股所在板块资金净流入排名前 3
+    ``moneyflow`` rows are symbol-scoped. They confirm the individual stock and
+    must never be described as sector-level fund flow.
     """
     try:
         data_reader = _get_data_reader(reader)
@@ -297,12 +298,14 @@ def _gen_rotation(
             latest_by_factor.get("sector_rotation", latest_by_factor.get("rotation", latest_by_factor.get("rotation_score", 0.0))),
             0.0,
         )
-        net_inflow = _safe_float(
+        individual_net_inflow = _safe_float(
             latest_by_factor.get("main_net_inflow", latest_by_factor.get("net_mf_amount", latest_by_factor.get("moneyflow", 0.0))),
             0.0,
         )
 
-        rotation_hit = (rank <= 3 and net_inflow > 0) or (rotation_score >= 0.7 and net_inflow > 0)
+        rotation_hit = (rank <= 3 and individual_net_inflow > 0) or (
+            rotation_score >= 0.7 and individual_net_inflow > 0
+        )
         if rotation_hit:
             sector_label = sector or "unknown"
             rank_text = f" 排名#{rank}" if rank < 999 else ""
@@ -312,12 +315,16 @@ def _gen_rotation(
                 "date": date,
                 "trigger_price": None,
                 "direction": "long",
-                "description": f"板块轮动: {sector_label}{rank_text} 净流入{net_inflow/1e8:.2f}亿",
+                "description": (
+                    f"轮动观察: {sector_label}{rank_text} "
+                    f"个股资金净流入{individual_net_inflow/1e8:.2f}亿"
+                ),
                 "scores": scores,
                 "params": {
                     "sector": sector_label,
                     "rank": rank,
-                    "net_inflow": net_inflow,
+                    "flow_scope": "individual_stock",
+                    "individual_net_inflow": individual_net_inflow,
                     "rotation_score": rotation_score,
                 },
                 "valid_until": _add_days(date, 5),

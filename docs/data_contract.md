@@ -35,6 +35,33 @@
 
 每次真实 HTTP response 都在 cache 前保存独立 `sharedsignals_response_lineage`，至少含 `transport=http_response`、endpoint 与带时区 `received_at`。provider 自带 `evidence_envelope` 或其中任一 group 结构非法时，原非法值必须原样保留供 Evidence Gate 拒绝；transport lineage 只能作为本次网络响应审计，不能覆盖、修复或洗白 provider lineage。cache 命中必须返回同一审计事实且不能再次发起 HTTP。
 
+### Sector flow confirmation（shadow-only）
+
+个股 `/capital_flow` / `moneyflow:*` 行的 scope 是 individual stock，只能描述为“个股资金确认”。资产上的 sector/industry 标签不能把个股净流入提升为板块净流入。
+
+`sector_flow_confirmation` v1 是独立影子特征。on 侧只接受：
+
+```json
+{
+  "scope": "sector",
+  "sector_id": "801780.SI",
+  "sector_name": "银行",
+  "taxonomy": "SW2021",
+  "snapshot_id": "immutable-snapshot-id",
+  "net_inflow_cny": 320000000,
+  "rank": 2,
+  "event_time": "2026-07-14T09:35:00+08:00",
+  "available_at": "2026-07-14T09:35:30+08:00",
+  "source_snapshot_sha256": "64-hex"
+}
+```
+
+- off/on 使用同一 `base_snapshot_sha256`、规范化 `decision_as_of` 和 `pair_identity_sha256`，`pairing_version=sector-flow-confirmation-pair-v1`；off 不读取 sector snapshot。只有请求/快照 identity 全部合格时才生成 paired identity；否则 `pair_identity_valid=false`、`pair_identity_sha256=null`，off/on 回执绑定同一个空 identity，不能把非法输入包装成合法配对。
+- source SHA 不是格式声明。实现固定按 `scope,sector_id,sector_name,taxonomy,snapshot_id,net_inflow_cny,rank,event_time,available_at` 的 canonical JSON 重算 SHA-256，并使用 constant-time compare 与声明值比较。任一 payload 字段变化而 SHA 未同步必须 degraded。
+- `event_time <= available_at <= decision_as_of`，三者必须可解析且带时区。`scope`、请求/快照两侧 `sector_id`、`snapshot_id` 与 `taxonomy` 必须在任何 `strip` 或其它转换前先满足 Python `type(value) is str`，trim 后仍须非空；请求/快照 `sector_id` 再做精确比较，空/空不能视为匹配。bool、int、float、list、mapping、`None` 和空字符串均不得隐式转换为 identity。`net_inflow_cny` 必须是 JSON/Python 原生 number，Python 合同为 `type(value) in {int,float}`，明确拒绝 bool、numeric string 和其它隐式可转数值类型，之后再校验 finite。rank 必须是 JSON/Python 类型级原生 integer 且 `>=1`：Python 合同为 `type(rank) is int`，明确拒绝 bool、所有 float（包括数学上等于整数的 `2.0`）及所有 numeric string（包括 `"2"` / `"2.0"`），不得先 coercion 再验值。缺快照、错 scope/sector、非法或空 identity、未来 availability、无时区、坏或不匹配 SHA、非法资金类型、NaN/Infinity、非严格整数 rank 全部 `status=degraded`、`confirmation=null`、`applied=false`、`consumed=false`。
+- 当前 consumer 固定为 `shadow_observation_only` 且 `consumed=false`。消费回执必须逐项记录 `changed_candidate_membership=false`、`changed_ranking=false`、`changed_playbook=false`、`changed_strategy=false`、`changed_execution_eligibility=false`、`execution_gate_bypassed=false`，并保存内容相同的 `before_identity` / `after_identity`（base snapshot、decision time、pair identity）。
+- 该特征没有资本、风险或执行 authority。未来如需影响候选、排名或策略，必须另行修改 decision consumer、定义可归因回执并重新通过既有数据/风险/执行门禁；本合同不构成该授权。
+
 ### MarketGraph
 
 `MARKETGRAPH_API_URL` 只提供 regime、事件、行业/供应链传播等研究增强。它不提供账户、资本、订单或成交 authority。

@@ -1,6 +1,20 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-14 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-14 21:44 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。
+
+## 隔离重放候选：A股 sector flow confirmation（ece93a1，v5 待独立 review）
+
+- replay worktree 为 `/private/tmp/tradingagent-sector-flow-v4-replay-ece93a1`，detached 基线 `ece93a1712851cb8aaee9469c125eecbfeb8357d`。本地 `main`、remote-tracking `origin/main`、GitHub `refs/heads/main` 与 replay HEAD 已 fresh 核对为该 SHA；仓库没有命名 `live` ref，生产按本任务禁区未访问。候选未 commit、merge、push 或 deploy。
+- ece93a 基线卫生事实继续保留：Wave2 A股 position authority 按 fail-closed 合同阻断非法 authority；`shared/screening/condition_generator.py` 没有带回历史未使用 `last_close`。Capital、notification 及下方当前状态章节均未被旧 9b 文本覆盖。
+- 旧 ece93a 候选 aggregate `cc6a043e74b50282323139bc67541759d2f30aaef438b8af2325fecb1d84cf8e`、manifest SHA `6bd682727ebf8931bd8e9142710772f5a7b814d823aece513b2354ae34202f4c` 与 full diff SHA `fdaca8d3987219b68e0a83a18efa87832e331473ba5b594d82b977471f17c240` 已因 fresh review P1 作废，不得交 main 或归档为通过证据。缺口是请求/快照 sector ID、snapshot ID、taxonomy 和 scope 在验证前经 `str()` 隐式转换，bool/number 可形成 confirmed 记录。
+- v5 仍严格限定原精确 8 文件。修复只收紧 identity 入口：scope、请求/快照 sector ID、snapshot ID 与 taxonomy 在任何 trim/coercion 前必须是原生非空 string；非法类型或空值一律 degraded，`pair_identity_valid=false`、pair SHA 为 `null`，off/on 回执绑定同一个空 identity 且始终 `consumed=false`。没有增加 decision consumer、资本、风险或执行 authority。
+- rotation 数值触发保持不变，只把 symbol-scoped `moneyflow` 明确为 `flow_scope=individual_stock` / `individual_net_inflow`，不再误称板块资金。canonical payload SHA constant-time binding、finite 原生资金值、严格整数 rank、PIT chronology、paired base/decision identity 和完整消费回执均保持原合同。
+- TDD 证据：新增 scope/request sector/snapshot sector/snapshot ID/taxonomy × bool/int/float/list/mapping/None/empty/blank 的 40 项矩阵在修复前 `40 failed / 22 deselected`，修复后 `40 passed / 22 deselected`。缺 scope 的历史 reason 兼容性回归曾使独立包 `63 passed / 1 failed`，最小兼容调整后重新得到 `64 passed`；`None` 仍被拒绝且不能形成 pair identity。
+- 最终代码上的 sector 验收全部通过：rank16 `16 passed / 46 deselected`、core21 `21 passed / 46 deselected`、feature62 `62 passed`、core67 `67 passed`、Fresh `8 passed`、独立包 `64 passed`、expanded107 `107 passed / 46 deselected`、expanded153 `153 passed`、Wave2 `4 passed`。expanded 使用历史精确 10 文件组成；两次漏收集的 62/108 与 65/111 结果不冒充 expanded，也不进入冻结验收清单。
+- Capital/notification 组合全部通过：position-source/pause `29 passed`、capital authority `14 passed`、sim-loop `66 passed`、notification+opening+sim-loop+capital `118 passed`、Wave2/condition/moneyflow/capital 精确组合 `55 passed`。
+- Ruff 0.15.14 对 4 个 candidate Python 文件通过；4 文件 compile 与 tracked `git diff --check` 已通过。最终冻结前仍须在本 STATUS 字节落定后复核完整 8 文件 diff、Markdown 本地链接、禁止路径和 worktree hygiene。新鲜 JUnit/cache/pyc/basetemp 位于 `/private/tmp/tradingagent-sector-flow-v5-ece93a1-tests.KLUXkx`，最终 manifest 只列入明确验收的 JUnit，不把中间误收集结果当作通过证据。
+- 最终身份以 `/private/tmp/tradingagent-sector-flow-v5-ece93a1-freeze-20260714.manifest.txt` 与 `/private/tmp/tradingagent-sector-flow-v5-ece93a1.full.diff` 为准。当前只冻结本地 shadow 候选等待全新独立 review；未访问或修改 orchestrator、wrapper、capital/risk、sample_ops/projection、forecast、生产、cron、数据库、Journal、broker、邮件或真实交易。
+- shadow 接口说明见 [docs/sector_flow_confirmation_shadow_handoff.md](docs/sector_flow_confirmation_shadow_handoff.md)。
 
 ## 隔离候选：A股 capital position authority / risk P0 v2（未集成）
 

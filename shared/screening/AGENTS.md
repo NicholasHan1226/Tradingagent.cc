@@ -32,6 +32,7 @@ TradingAgent 自身负责短周期机会发现；SharedSignals API/read model �
 - 当某一维度在同一轮全部评分标的中都缺证据时，`score_universe` 必须对整批统一移除该维度权重并记录 `batch_inactive_dimensions` / `batch_evidence_availability`；不得让缺证据的中性默认分参与排名，也不得按个股缺失情况重加权。
 - A股 no-trade、盘前和看板诊断必须透出上述批次字段；看到 event/sentiment 为 0.5 时，应能确认它是被批次降权后的中性展示，而不是仍参与 `combined` 的伪证据。
 - A股盘前 dry-run、模拟主循环和开盘验收必须复用同一套 `candidate_pool.build_pool` 分层口径；不得在验收脚本里自行按 `combined >= 0.55` 拼 candidate。
+- `moneyflow` / `net_mf_amount` 是个股口径，只能称为个股资金确认，不得与资产的行业标签拼接后称为板块资金。`sector_flow_confirmation` 只接受 `scope=sector`、请求和快照两侧均非空且匹配的 canonical sector identity、非空 snapshot identity/taxonomy、有限资金值、类型级严格正整数 rank、带时区 PIT event/availability，以及与固定 canonical snapshot payload 重算结果 constant-time 相等的 source SHA；缺失或不合格必须 degraded。scope、请求/快照 sector ID、snapshot ID 与 taxonomy 必须在任何 trim/coercion 前就是原生非空 string；bool、number、list、mapping、`None` 或空字符串不得形成合法 pair identity。`net_inflow_cny` 只接受原生 int/float，明确拒绝 bool 和 numeric string；rank 只接受原生 integer，明确拒绝 bool、float（包括 `2.0`）和 numeric string。非法 identity 必须令 `pair_identity_valid=false`、identity SHA 为空，off/on 仍 `consumed=false`。当前该特征仅生成 shadow 配对和 before/after 消费回执，不得改变 candidate membership、ranking、playbook、strategy 或 execution eligibility。
 
 ## 接口
 ```python

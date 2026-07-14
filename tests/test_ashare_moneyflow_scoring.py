@@ -77,7 +77,13 @@ def test_rotation_condition_accepts_prefixed_moneyflow_factor_names() -> None:
 
     assert condition is not None
     assert condition["type"] == "rotation"
-    assert condition["params"]["net_inflow"] == pytest.approx(200_000_000)
+    assert "板块净流入" not in condition["description"]
+    assert "个股资金净流入" in condition["description"]
+    assert condition["params"]["flow_scope"] == "individual_stock"
+    assert condition["params"]["individual_net_inflow"] == pytest.approx(
+        200_000_000
+    )
+    assert "net_inflow" not in condition["params"]
 
 
 def test_fundamental_pool_accepts_prefixed_value_quality_factor_names() -> None:
