@@ -7,7 +7,8 @@
 当前唯一开发位置是 `TradingAgent/.worktrees/ta-v1-data-client`，分支 `codex/ta-v1-data-client`。本地候选门已经关闭，架构候选已在提交 `a27d323473fc11a7e57ba4334da6d29bb25e4408` 中写入该分支并推送到 `origin/codex/ta-v1-data-client`；远端 `main` 仍为基线 `3b3aab41bcf1fee046da169f6fd582b4f2818cba`。它不是 Phase 1 通过、Git 主线、SharedSignals live API、生产文件/runtime、已安装 scheduler/cron、真实模拟盘样本或真实交易完成证明。
 
 - `REAL_TRADING_ENABLED=false`；隔离候选分支已在秘密扫描与发布前检查通过后提交/推送。仍未授权 merge/main、deploy、apply cron、发邮件、连接 broker、操作 GUI 或真实交易；生产密钥与服务器变更另设门禁。
-- 产品边界已确认为 Nicholas 个人内部使用。`tradingagent.cc`保留为个人远程访问入口，但必须由Cloudflare Access或等价单用户认证保护；API继续只监听localhost，禁止匿名公网访问或API直出。本轮未修改DNS、Tunnel、Pages或Access policy，现网权限状态仍未验证。
+- 产品边界已确认为 Nicholas 个人内部使用。`tradingagent.cc`保留为个人远程访问入口，但必须由Cloudflare Access或等价单用户认证保护；API继续只监听localhost，禁止匿名公网访问或API直出。本轮未修改DNS、Tunnel、Pages或Access policy；最新只读现网权限证据见下条。
+- 2026-07-16 23:50 CST 只读现网探测补充了反向证据：未携带登录态或认证头时，`www.tradingagent.cc`与`dashboard.tradingagent.cc`均返回`200`页面，`GET https://tradingagent.cc/api/trading-agent/snapshot`返回`200`、约34KB JSON，并暴露`holdings/signals/portfolio`等顶层字段。CORS不能替代身份认证，因此现网不满足单用户内部入口要求；在Cloudflare Access（或等价策略）与API公网路径完成拒绝/重定向及Nicholas登录readback前，禁止部署本候选。此次探测未修改任何线上配置。
 - SharedSignals 完全由上游唯一 writer/reviewer 管理。TA 不读取或修改 SS 仓，只消费显式 fixture/port 的 `GET /v1/catalog` 与 `POST /v1/query` 合同。
 - 本线程的交付目标是 TradingAgent 本地候选，不包含 SharedSignals 服务端重构、测试、集成或验收；任何把“SS 与 TA 重构”并列为本线程 Goal 的旧表述均以本条 ownership correction 为准。
 - TA ownership 门禁已进一步收紧：本仓测试不得定位/导入/执行兄弟仓 reader、API server、SQLite 私有函数或复刻上游 HTTP server；current-v1 consumer 与候选清单不得依赖旧 reader、旧 runtime gate 或专用 SS 路由。原跨仓 edge/server 测试已从 TA 验收面清除，SS 服务端行为由上游自己的验收线负责。
