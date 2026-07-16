@@ -35,6 +35,44 @@
 
 每次真实 HTTP response 都在 cache 前保存独立 `sharedsignals_response_lineage`，至少含 `transport=http_response`、endpoint 与带时区 `received_at`。provider 自带 `evidence_envelope` 或其中任一 group 结构非法时，原非法值必须原样保留供 Evidence Gate 拒绝；transport lineage 只能作为本次网络响应审计，不能覆盖、修复或洗白 provider lineage。cache 命中必须返回同一审计事实且不能再次发起 HTTP。
 
+#### Provider-neutral V1 bulk consumer
+
+A股两个批量读取入口固定使用 `POST /v1/query`：市场级日线批次解析为
+`cn.equity.daily`，证券主数据全集解析为 `cn.equity.security_master`；两者均请求
+`schema_major=1`。请求省略 `fields`、`filters`、`as_of` 和 `order`，分别使用 registry
+默认投影与确定性默认排序；每页 `limit` 为 `1..500`，`cursor` 只作为 opaque signed token
+原样回传。调用方不得发送 SQL、table、provider 字段，也不得为这两个入口调用
+`/tushare` 或 `/reference`。非本节列出的消费者继续保持原有兼容路径。
+
+V1 查询不复用旧 GET-only cache。客户端沿用同一 HTTP auth/retry transport，发送 canonical
+UTF-8 JSON、`Authorization: Bearer ...`、`Content-Type: application/json; charset=utf-8` 和精确
+`Content-Length`。同一 signed-cursor 查询链的 wire `limit` 在首个请求冻结且后页不得改变：
+总量大于等于 500 时通常固定为 500，总量小于 500 时固定为该初始总量。客户端持续读取完整
+healthy pages，达到调用总量后才对聚合结果切片，或在 `next_cursor=null` 时停止；证券全集在无
+调用总量时必须耗尽 cursor。改变后页 `limit` 会改变上游 `query_hash`，不得用“剩余条数”生成
+不同请求。
+
+每个返回 row 新增独立 `sharedsignals_v1_page_evidence`，保存该 row 所属原始页的完整快照：
+`api_version`、`catalog_version`、`request_id`、`dataset_id`、`schema_version`、
+`next_cursor` 与完整 `metadata`。`metadata` 包含 `state`、`runtime_state`、`degraded`、
+`freshness`、`quality`、`lineage`、`receipt_id`、`data_through`、`observed_at`、
+`requested_as_of`、`resolved_as_of` 和 `reasons`；未知的 metadata 扩展字段也必须原样保留。
+该页证据是 provider-neutral query envelope，不替代 provider 自带 `evidence_envelope`；既有
+`sharedsignals_response_lineage` 仍单独记录该次 HTTP response 的 transport receipt。
+
+批量结果只有在所有已请求页均为完整、非 degraded 的 healthy `success` 时才成立。缺失或
+结构非法 metadata、非 `success` runtime state（包括 `empty`、`unobserved`、`paused`、
+`failed`、`stale`）、`degraded=true`、不完整 freshness/quality/lineage/receipt 时间证据、
+空页携带 cursor、重复或类型非法 cursor、跨页 dataset/schema 漂移，以及超过有界最大页数，
+均记录 client error 并返回空 bulk result；此前已读到的 partial rows 不得作为完整批次或全集返回。
+这两个已迁移 V1 bulk 入口都禁止 SQLite diagnostic fallback；即使调用方注入 local reader，V1
+异常或新增 client error 也只能返回空结果，不能返回缺少 `sharedsignals_v1_page_evidence` 的本地行。
+
+本合同描述的是 TradingAgent 隔离 worktree 中的本地 consumer candidate。它不证明 GitHub
+主线已合入、SharedSignals/TradingAgent 生产文件或 runtime 已更新、外部 `/v1/query` route
+可调用、credential 已生效、真实数据健康，亦不授权生产、cron、provider、资本、策略、风险、
+执行或真实交易变化。
+
 ### Sector flow confirmation（shadow-only）
 
 个股 `/capital_flow` / `moneyflow:*` 行的 scope 是 individual stock，只能描述为“个股资金确认”。资产上的 sector/industry 标签不能把个股净流入提升为板块净流入。
