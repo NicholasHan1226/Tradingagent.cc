@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
@@ -12,6 +13,60 @@ from shared.runtime_test import ashare_preopen_dry_run
 def _test_symbol(index: int) -> str:
     prefix = (600, 601, 603, 605, 688)[index // 1000]
     return f"{prefix * 1000 + (index % 1000):06d}.SH"
+
+
+def _healthy_v1_daily_row(
+    symbol: str,
+    *,
+    amount: float = 100_000.0,
+    request_id: str = "request-1",
+) -> dict:
+    return {
+        "market": "Ashare",
+        "symbol": symbol,
+        "trade_date": "20260716",
+        "close": 10.0,
+        "amount": amount,
+        "sharedsignals_response_lineage": {
+            "transport": "http_response",
+            "endpoint": "/v1/query",
+            "received_at": "2026-07-16T15:35:01+08:00",
+        },
+        "sharedsignals_v1_page_evidence": {
+            "api_version": "v1",
+            "catalog_version": "v1-contract-1",
+            "request_id": request_id,
+            "dataset_id": "cn.equity.daily",
+            "schema_version": "1.0.0",
+            "next_cursor": None,
+            "metadata": {
+                "state": "ready",
+                "runtime_state": "success",
+                "degraded": False,
+                "freshness": {
+                    "state": "fresh",
+                    "stale": False,
+                    "sla_seconds": 259200,
+                },
+                "quality": {"state": "valid", "valid": True, "evidence": []},
+                "lineage": {
+                    "state": "complete",
+                    "complete": True,
+                    "provider_neutral": True,
+                    "authority": "sqlite_ingest_receipts",
+                    "dataset_id": "cn.equity.daily",
+                    "providers": ["tushare"],
+                    "receipt_watermark": "receipt-watermark-1",
+                },
+                "receipt_id": f"receipt-{request_id}",
+                "data_through": "2026-07-16T00:00:00+08:00",
+                "observed_at": "2026-07-16T15:35:00+08:00",
+                "requested_as_of": None,
+                "resolved_as_of": None,
+                "reasons": [],
+            },
+        },
+    }
 
 
 def _ashare_market_state(trade_date: str, **changes: object) -> dict[str, object]:
@@ -1412,6 +1467,116 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         )
         self.assertEqual(report["data"]["symbol_count"], 1000)
 
+    def test_empty_v1_daily_batch_never_falls_back_to_legacy_tushare(self) -> None:
+        class EmptyV1DailyReader:
+            def __init__(self, *, record_v1_error: bool) -> None:
+                self.errors: list[str] = []
+                self.record_v1_error = record_v1_error
+                self.legacy_calls = 0
+
+            def get_latest_daily_batch(
+                self, market: str = "Ashare", *, limit: int = 5000
+            ) -> list[dict]:
+                if self.record_v1_error:
+                    self.errors.append("/v1/query: unhealthy metadata")
+                return []
+
+            def get_tushare(self, api_name: str, *, limit: int = 5000) -> list[dict]:
+                self.legacy_calls += 1
+                return [
+                    {
+                        "symbol": "600000.SH",
+                        "trade_date": "20260716",
+                        "close": 10.0,
+                    }
+                ]
+
+        for record_v1_error in (False, True):
+            with self.subTest(record_v1_error=record_v1_error):
+                reader = EmptyV1DailyReader(record_v1_error=record_v1_error)
+
+                rows = ashare_preopen_dry_run._latest_daily_rows_from_reader(reader)
+
+                self.assertEqual(rows, [])
+                self.assertEqual(reader.legacy_calls, 0)
+
+    def test_missing_v1_daily_batch_never_uses_legacy_tushare(self) -> None:
+        class LegacyOnlyReader:
+            def __init__(self) -> None:
+                self.legacy_calls = 0
+
+            def get_tushare(self, api_name: str, *, limit: int = 5000) -> list[dict]:
+                self.legacy_calls += 1
+                return [
+                    {
+                        "symbol": "600000.SH",
+                        "trade_date": "20260716",
+                        "close": 10.0,
+                    }
+                ]
+
+        reader = LegacyOnlyReader()
+
+        rows = ashare_preopen_dry_run._latest_daily_rows_from_reader(reader)
+
+        self.assertEqual(rows, [])
+        self.assertEqual(reader.legacy_calls, 0)
+
+    def test_v1_daily_batch_exception_is_explicit_without_legacy_fallback(
+        self,
+    ) -> None:
+        class ExplodingV1DailyReader:
+            def __init__(self) -> None:
+                self.legacy_calls = 0
+
+            def get_latest_daily_batch(
+                self, market: str = "Ashare", *, limit: int = 5000
+            ) -> list[dict]:
+                raise ConnectionError("V1 daily unavailable")
+
+            def get_tushare(self, api_name: str, *, limit: int = 5000) -> list[dict]:
+                self.legacy_calls += 1
+                return [
+                    {
+                        "symbol": "600000.SH",
+                        "trade_date": "20260716",
+                        "close": 10.0,
+                    }
+                ]
+
+        reader = ExplodingV1DailyReader()
+
+        with self.assertRaisesRegex(
+            RuntimeError, "ConnectionError: V1 daily unavailable"
+        ):
+            ashare_preopen_dry_run._latest_daily_rows_from_reader(reader)
+
+        self.assertEqual(reader.legacy_calls, 0)
+
+    def test_healthy_v1_daily_batch_preserves_page_evidence_contract(self) -> None:
+        healthy_row = _healthy_v1_daily_row("600000.SH")
+
+        class HealthyV1DailyReader:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, int]] = []
+
+            def get_latest_daily_batch(
+                self, market: str = "Ashare", *, limit: int = 5000
+            ) -> list[dict]:
+                self.calls.append((market, limit))
+                return [healthy_row]
+
+        reader = HealthyV1DailyReader()
+
+        rows = ashare_preopen_dry_run._latest_daily_rows_from_reader(reader)
+
+        self.assertEqual(rows, [healthy_row])
+        self.assertEqual(reader.calls, [("Ashare", 5000)])
+        self.assertEqual(
+            rows[0]["sharedsignals_v1_page_evidence"]["dataset_id"],
+            "cn.equity.daily",
+        )
+
     def test_warns_and_safe_empty_when_no_candidate_passes_threshold(self) -> None:
         reader = FakeAshareReader()
         with (
@@ -1499,6 +1664,166 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         )
 
         self.assertEqual(universe, ["300750.SZ", "600000.SH", "000002.SZ"])
+
+    def test_reader_universe_fails_closed_for_unavailable_v1_batch(self) -> None:
+        class LegacyFallbackTrap:
+            def __init__(self) -> None:
+                self.bars_calls = 0
+                self.tushare_calls = 0
+                self.reference_calls = 0
+
+            def get_assets(self, market: str | None = None) -> list[dict]:
+                return [
+                    {"symbol": "000001.SZ", "name": "A", "status": "active"},
+                    {"symbol": "600000.SH", "name": "B", "status": "active"},
+                    {"symbol": "000002.SZ", "name": "C", "status": "active"},
+                    {"symbol": "600519.SH", "name": "D", "status": "active"},
+                ]
+
+            def get_bars_daily(
+                self,
+                market: str,
+                symbol: str,
+                start_date: str = "",
+                end_date: str = "",
+            ) -> list[dict]:
+                self.bars_calls += 1
+                return [
+                    {
+                        "market": market,
+                        "symbol": symbol,
+                        "trade_date": "20260716",
+                        "close": 10.0,
+                        "amount": 300_000.0,
+                    }
+                ]
+
+            def get_tushare(self, api_name: str, *, limit: int = 5000) -> list[dict]:
+                self.tushare_calls += 1
+                return []
+
+            def get_reference(self, dataset: str) -> list[dict]:
+                self.reference_calls += 1
+                return []
+
+        class MissingV1BatchReader(LegacyFallbackTrap):
+            pass
+
+        class EmptyV1BatchReader(LegacyFallbackTrap):
+            def get_latest_daily_batch(
+                self, market: str = "Ashare", *, limit: int = 5000
+            ) -> list[dict]:
+                return []
+
+        class ExplodingV1BatchReader(LegacyFallbackTrap):
+            def get_latest_daily_batch(
+                self, market: str = "Ashare", *, limit: int = 5000
+            ) -> list[dict]:
+                raise ConnectionError("V1 daily unavailable")
+
+        observed: dict[str, dict[str, object]] = {}
+        for reader_type in (
+            MissingV1BatchReader,
+            EmptyV1BatchReader,
+            ExplodingV1BatchReader,
+        ):
+            reader = reader_type()
+            universe = ashare_preopen_dry_run._latest_liquid_universe_from_reader(
+                reader,
+                limit=3,
+            )
+            observed[reader_type.__name__] = {
+                "universe": universe,
+                "bars_calls": reader.bars_calls,
+                "tushare_calls": reader.tushare_calls,
+                "reference_calls": reader.reference_calls,
+            }
+
+        safe_empty = {
+            "universe": [],
+            "bars_calls": 0,
+            "tushare_calls": 0,
+            "reference_calls": 0,
+        }
+        self.assertEqual(
+            observed,
+            {
+                "MissingV1BatchReader": safe_empty,
+                "EmptyV1BatchReader": safe_empty,
+                "ExplodingV1BatchReader": safe_empty,
+            },
+        )
+
+    def test_reader_universe_uses_healthy_v1_amounts_without_mutating_evidence(
+        self,
+    ) -> None:
+        class HealthyV1UniverseReader:
+            def __init__(self) -> None:
+                self.batch_calls: list[tuple[str, int]] = []
+                self.bars_calls = 0
+                self.tushare_calls = 0
+                self.reference_calls = 0
+                self.batch_rows = [
+                    _healthy_v1_daily_row(
+                        "000001.SZ", amount=60_000.0, request_id="request-1"
+                    ),
+                    _healthy_v1_daily_row(
+                        "600000.SH", amount=300_000.0, request_id="request-2"
+                    ),
+                    _healthy_v1_daily_row(
+                        "000002.SZ", amount=120_000.0, request_id="request-3"
+                    ),
+                    _healthy_v1_daily_row(
+                        "600519.SH", amount=45_000.0, request_id="request-4"
+                    ),
+                ]
+
+            def get_assets(self, market: str | None = None) -> list[dict]:
+                return [
+                    {"symbol": "000001.SZ", "name": "A", "status": "active"},
+                    {"symbol": "600000.SH", "name": "B", "status": "active"},
+                    {"symbol": "000002.SZ", "name": "C", "status": "active"},
+                    {"symbol": "600519.SH", "name": "D", "status": "active"},
+                ]
+
+            def get_latest_daily_batch(
+                self, market: str = "Ashare", *, limit: int = 5000
+            ) -> list[dict]:
+                self.batch_calls.append((market, limit))
+                return self.batch_rows
+
+            def get_bars_daily(
+                self,
+                market: str,
+                symbol: str,
+                start_date: str = "",
+                end_date: str = "",
+            ) -> list[dict]:
+                self.bars_calls += 1
+                return []
+
+            def get_tushare(self, api_name: str, *, limit: int = 5000) -> list[dict]:
+                self.tushare_calls += 1
+                return []
+
+            def get_reference(self, dataset: str) -> list[dict]:
+                self.reference_calls += 1
+                return []
+
+        reader = HealthyV1UniverseReader()
+        original_rows = deepcopy(reader.batch_rows)
+
+        universe = ashare_preopen_dry_run._latest_liquid_universe_from_reader(
+            reader,
+            limit=3,
+        )
+
+        self.assertEqual(universe, ["600000.SH", "000002.SZ", "000001.SZ"])
+        self.assertEqual(reader.batch_calls, [("Ashare", 5000)])
+        self.assertEqual(reader.bars_calls, 0)
+        self.assertEqual(reader.tushare_calls, 0)
+        self.assertEqual(reader.reference_calls, 0)
+        self.assertEqual(reader.batch_rows, original_rows)
 
     def test_execution_gate_observes_when_capital_plan_has_no_new_budget(self) -> None:
         ashare_state = {
