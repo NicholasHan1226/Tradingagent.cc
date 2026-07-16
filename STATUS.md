@@ -2,7 +2,7 @@
 
 > 最后更新：2026-07-16 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。旧提交、旧生产快照和作废候选从 Git 历史审计，不在现役状态文件重复维护。
 
-## 当前结论：本地候选完成，隔离分支已提交并推送
+## 当前结论：本地候选完成，隔离分支已推送并通过干净 Ubuntu CI
 
 当前唯一开发位置是 `TradingAgent/.worktrees/ta-v1-data-client`，分支 `codex/ta-v1-data-client`。本地候选门已经关闭，架构候选已在提交 `a27d323473fc11a7e57ba4334da6d29bb25e4408` 中写入该分支并推送到 `origin/codex/ta-v1-data-client`；远端 `main` 仍为基线 `3b3aab41bcf1fee046da169f6fd582b4f2818cba`。它不是 Phase 1 通过、Git 主线、SharedSignals live API、生产文件/runtime、已安装 scheduler/cron、真实模拟盘样本或真实交易完成证明。
 
@@ -11,7 +11,7 @@
 - 2026-07-16 23:50 CST 只读现网探测补充了反向证据：未携带登录态或认证头时，`www.tradingagent.cc`与`dashboard.tradingagent.cc`均返回`200`页面，`GET https://tradingagent.cc/api/trading-agent/snapshot`返回`200`、约34KB JSON，并暴露`holdings/signals/portfolio`等顶层字段。CORS不能替代身份认证，因此现网不满足单用户内部入口要求；在Cloudflare Access（或等价策略）与API公网路径完成拒绝/重定向及Nicholas登录readback前，禁止部署本候选。此次探测未修改任何线上配置。
 - 同轮只读生产核查确认`tradingagent-front-api.service`为`active`，本机`127.0.0.1:8787/healthz`返回`200`且端口只监听loopback。生产仓HEAD为`6c12fbed29db925019f85a6016774626f63b857a`；以`marketgraph`身份只读导出的Git bundle对比证明它是当前候选的祖先，`production-only=0`、`candidate-only=9`，没有遗漏生产独有提交。生产机的回滚目录和`shared/review/ashare/`运行资产保持未跟踪、未修改；未来部署必须继续保留。
 - 本机Wrangler `4.110.0`的OAuth凭据已过期且环境中没有Cloudflare token；`whoami`无法通过，所以Pages、Tunnel与Access控制面仍不可读写。在Nicholas重新完成Cloudflare交互登录前，不得声称已验证或已部署认证入口。
-- GitHub Actions run `29513481320` 在干净 Ubuntu runner 暴露了15个真实缺口：运行态`signals/`被误当作clean-clone源码、Linux Bash的`BASH_ENV`在退役门禁前执行环境文件、以及CNFutures兼容读取在显式空URL下构造相对地址。当前修复已把源码路径与Git忽略的`runtime_paths`分开并限制其只能是仓库内相对路径、用不可由环境预置绕过的Bash source-stack识别预加载、统一hard-block旧opportunity writer，并让CNFutures显式空authority在旧reader前端到端fail closed；SQLite仅能通过显式诊断开关与已存在的诊断数据库启用。后续Ubuntu runs `29515041266`、`29515351966`均只剩同一T+1测试跨时区缺陷：测试用runner本地日期建仓，而业务按Asia/Shanghai交易日判断，在UTC/CST跨日窗口产生假失败；当前候选冻结交易日、显式传入`as_of`并隔离两处calendar adapter。CI同环境本地全量`2928 passed in 38.14s`，独立只读复核无P0/P1/P2。本条仍须由推送后的新Ubuntu run复验，不能把本地结果替代远端绿灯。
+- GitHub Actions run `29513481320` 在干净 Ubuntu runner 暴露了15个真实缺口：运行态`signals/`被误当作clean-clone源码、Linux Bash的`BASH_ENV`在退役门禁前执行环境文件、以及CNFutures兼容读取在显式空URL下构造相对地址。当前修复已把源码路径与Git忽略的`runtime_paths`分开并限制其只能是仓库内相对路径、用不可由环境预置绕过的Bash source-stack识别预加载、统一hard-block旧opportunity writer，并让CNFutures显式空authority在旧reader前端到端fail closed；SQLite仅能通过显式诊断开关与已存在的诊断数据库启用。后续Ubuntu runs `29515041266`、`29515351966`均只剩同一T+1测试跨时区缺陷：测试用runner本地日期建仓，而业务按Asia/Shanghai交易日判断，在UTC/CST跨日窗口产生假失败；当前候选冻结交易日、显式传入`as_of`并隔离两处calendar adapter。CI同环境本地全量`2928 passed in 38.14s`，独立只读复核无P0/P1/P2；提交`aecd625f9f3b09e0f724ba2badb788fc7b24fe5d`已由干净Ubuntu run `29515839273`完整通过（job 1m33s）。该run仅有GitHub Actions自身Node 20弃用提示，未出现测试或项目代码失败。
 - SharedSignals 完全由上游唯一 writer/reviewer 管理。TA 不读取或修改 SS 仓，只消费显式 fixture/port 的 `GET /v1/catalog` 与 `POST /v1/query` 合同。
 - 本线程的交付目标是 TradingAgent 本地候选，不包含 SharedSignals 服务端重构、测试、集成或验收；任何把“SS 与 TA 重构”并列为本线程 Goal 的旧表述均以本条 ownership correction 为准。
 - TA ownership 门禁已进一步收紧：本仓测试不得定位/导入/执行兄弟仓 reader、API server、SQLite 私有函数或复刻上游 HTTP server；current-v1 consumer 与候选清单不得依赖旧 reader、旧 runtime gate 或专用 SS 路由。原跨仓 edge/server 测试已从 TA 验收面清除，SS 服务端行为由上游自己的验收线负责。
