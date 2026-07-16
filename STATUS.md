@@ -1,17 +1,18 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-16 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。旧提交、旧生产快照和作废候选从 Git 历史审计，不在现役状态文件重复维护。
+> 最后更新：2026-07-17 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。旧提交、旧生产快照和作废候选从 Git 历史审计，不在现役状态文件重复维护。
 
-## 当前结论：本地候选完成，隔离分支已推送并通过干净 Ubuntu CI
+## 当前结论：候选已完成本地、干净 Ubuntu CI 与服务器旁路验收；现网未激活
 
-当前唯一开发位置是 `TradingAgent/.worktrees/ta-v1-data-client`，分支 `codex/ta-v1-data-client`。本地候选门已经关闭，架构候选已在提交 `a27d323473fc11a7e57ba4334da6d29bb25e4408` 中写入该分支并推送到 `origin/codex/ta-v1-data-client`；远端 `main` 仍为基线 `3b3aab41bcf1fee046da169f6fd582b4f2818cba`。它不是 Phase 1 通过、Git 主线、SharedSignals live API、生产文件/runtime、已安装 scheduler/cron、真实模拟盘样本或真实交易完成证明。
+当前唯一开发位置是 `TradingAgent/.worktrees/ta-v1-data-client`，分支 `codex/ta-v1-data-client`。可执行候选冻结在提交 `4d495322675bfdfe603fb6a4edcc7b07a728fe68`，已推送到 `origin/codex/ta-v1-data-client`，Draft PR #2 的 GitHub base 仍为 `3b3aab41bcf1fee046da169f6fd582b4f2818cba`。同一提交已在服务器独立目录staged并完成临时旁路canary，`active_production_activated=false`；现役生产源码仍为 `6c12fbed29db925019f85a6016774626f63b857a`。这些证据不是 Phase 1 通过、Git 主线、SharedSignals live API、现役生产激活、已安装 scheduler/cron、真实模拟盘样本或真实交易完成证明。
 
-- `REAL_TRADING_ENABLED=false`；隔离候选分支已在秘密扫描与发布前检查通过后提交/推送。仍未授权 merge/main、deploy、apply cron、发邮件、连接 broker、操作 GUI 或真实交易；生产密钥与服务器变更另设门禁。
+- `REAL_TRADING_ENABLED=false`；Nicholas 本轮只授权服务器旁路候选部署。该授权已使用且没有扩大到 merge/main、现役源码切换、服务/cron变更、页面/公网路由、生产密钥、发邮件、连接 broker、GUI 或真实交易；后续每一层仍需独立门禁。
 - 产品边界已确认为 Nicholas 个人内部使用。`tradingagent.cc`保留为个人远程访问入口，但必须由Cloudflare Access或等价单用户认证保护；API继续只监听localhost，禁止匿名公网访问或API直出。本轮未修改DNS、Tunnel、Pages或Access policy；最新只读现网权限证据见下条。
-- 2026-07-16 23:50 CST 只读现网探测补充了反向证据：未携带登录态或认证头时，`www.tradingagent.cc`与`dashboard.tradingagent.cc`均返回`200`页面，`GET https://tradingagent.cc/api/trading-agent/snapshot`返回`200`、约34KB JSON，并暴露`holdings/signals/portfolio`等顶层字段。CORS不能替代身份认证，因此现网不满足单用户内部入口要求；在Cloudflare Access（或等价策略）与API公网路径完成拒绝/重定向及Nicholas登录readback前，禁止部署本候选。此次探测未修改任何线上配置。
-- 同轮只读生产核查确认`tradingagent-front-api.service`为`active`，本机`127.0.0.1:8787/healthz`返回`200`且端口只监听loopback。生产仓HEAD为`6c12fbed29db925019f85a6016774626f63b857a`；以`marketgraph`身份只读导出的Git bundle对比证明它是当前候选的祖先，`production-only=0`、`candidate-only=9`，没有遗漏生产独有提交。生产机的回滚目录和`shared/review/ashare/`运行资产保持未跟踪、未修改；未来部署必须继续保留。
+- 2026-07-16 23:50 CST 只读现网探测补充了反向证据：未携带登录态或认证头时，`www.tradingagent.cc`与`dashboard.tradingagent.cc`均返回`200`页面，`GET https://tradingagent.cc/api/trading-agent/snapshot`返回`200`、约34KB JSON，并暴露`holdings/signals/portfolio`等顶层字段。CORS不能替代身份认证，因此现网不满足单用户内部入口要求；在Cloudflare Access（或等价策略）与API公网路径完成拒绝/重定向及Nicholas登录readback前，禁止把候选接入公网入口或切换现役前端/API。该限制不阻断无公网、无现役切换的服务器旁路验证。此次探测未修改任何线上配置。
+- 同轮只读生产核查确认`tradingagent-front-api.service`为`active`，本机`127.0.0.1:8787/healthz`返回`200`且端口只监听loopback。生产仓HEAD为`6c12fbed29db925019f85a6016774626f63b857a`；以`marketgraph`身份只读导出的Git bundle对比证明它是当前候选的祖先，候选`4d49532`相对该生产点为`production-only=0`、`candidate-only=14`，没有遗漏生产独有提交。生产机的回滚目录和`shared/review/ashare/`运行资产保持未跟踪、未修改；未来部署必须继续保留。
+- 2026-07-17 CST 已在 `/opt/investment/tradingagent-candidates/ta-v1-data-client-4d49532` staged detached 候选，并使用独立 venv、独立前端依赖、独立 canary 输出与受限证据目录完成服务器原生验收。Python 3.12.3 / pytest 9.1.1 下为 `2928 passed`、`161 subtests passed`；前端为 43 个测试文件、`276 passed`、lint `0 warnings / 0 errors`、`build:all`通过。候选 API 仅临时监听`127.0.0.1:18787`，返回`mode=simulated`、全部真实交易标志为false，POST返回405、未知路由404，验证后已停止且端口无残留。离线fixture同根重放幂等、跨根产物字节一致，仍为`non_authority/local_candidate/production_verified=false`。证据保存在`/opt/investment/release-evidence/tradingagent/20260716T164035Z-ta-v1-data-client`；`deployment-receipt.json` SHA-256为`8c03a77f0ab8445ce1039ac1ce95749823c8b86a2c1d50367e51c4c65620aba5`，`final-sha256.txt` SHA-256为`edb0d149d3bf9881f9848c7a2a005de63a56fb1a2cb388b078d796d00ac64540`。最终pre/post inventory未发现部署造成的非预期差异：现役HEAD、systemd unit、服务、crontab与生产git status保持基线，既有未跟踪运行资产被保留且部署命令未清理或覆盖。
 - 本机Wrangler `4.110.0`的OAuth凭据已过期且环境中没有Cloudflare token；`whoami`无法通过，所以Pages、Tunnel与Access控制面仍不可读写。在Nicholas重新完成Cloudflare交互登录前，不得声称已验证或已部署认证入口。
-- GitHub Actions run `29513481320` 在干净 Ubuntu runner 暴露了15个真实缺口：运行态`signals/`被误当作clean-clone源码、Linux Bash的`BASH_ENV`在退役门禁前执行环境文件、以及CNFutures兼容读取在显式空URL下构造相对地址。当前修复已把源码路径与Git忽略的`runtime_paths`分开并限制其只能是仓库内相对路径、用不可由环境预置绕过的Bash source-stack识别预加载、统一hard-block旧opportunity writer，并让CNFutures显式空authority在旧reader前端到端fail closed；SQLite仅能通过显式诊断开关与已存在的诊断数据库启用。后续Ubuntu runs `29515041266`、`29515351966`均只剩同一T+1测试跨时区缺陷：测试用runner本地日期建仓，而业务按Asia/Shanghai交易日判断，在UTC/CST跨日窗口产生假失败；当前候选冻结交易日、显式传入`as_of`并隔离两处calendar adapter。CI同环境本地全量`2928 passed in 38.14s`，独立只读复核无P0/P1/P2；提交`aecd625f9f3b09e0f724ba2badb788fc7b24fe5d`已由干净Ubuntu run `29515839273`完整通过（job 1m33s）。该run仅有GitHub Actions自身Node 20弃用提示，未出现测试或项目代码失败。
+- GitHub Actions run `29513481320` 在干净 Ubuntu runner 暴露了15个真实缺口：运行态`signals/`被误当作clean-clone源码、Linux Bash的`BASH_ENV`在退役门禁前执行环境文件、以及CNFutures兼容读取在显式空URL下构造相对地址。当前修复已把源码路径与Git忽略的`runtime_paths`分开并限制其只能是仓库内相对路径、用不可由环境预置绕过的Bash source-stack识别预加载、统一hard-block旧opportunity writer，并让CNFutures显式空authority在旧reader前端到端fail closed；SQLite仅能通过显式诊断开关与已存在的诊断数据库启用。后续Ubuntu runs `29515041266`、`29515351966`均只剩同一T+1测试跨时区缺陷：测试用runner本地日期建仓，而业务按Asia/Shanghai交易日判断，在UTC/CST跨日窗口产生假失败；当前候选冻结交易日、显式传入`as_of`并隔离两处calendar adapter。CI同环境本地全量`2928 passed in 38.14s`，独立只读复核无P0/P1/P2；提交`4d495322675bfdfe603fb6a4edcc7b07a728fe68`已由干净Ubuntu run `29516030155`完整通过。该run仅有GitHub Actions自身Node 20弃用提示，未出现测试或项目代码失败。
 - SharedSignals 完全由上游唯一 writer/reviewer 管理。TA 不读取或修改 SS 仓，只消费显式 fixture/port 的 `GET /v1/catalog` 与 `POST /v1/query` 合同。
 - 本线程的交付目标是 TradingAgent 本地候选，不包含 SharedSignals 服务端重构、测试、集成或验收；任何把“SS 与 TA 重构”并列为本线程 Goal 的旧表述均以本条 ownership correction 为准。
 - TA ownership 门禁已进一步收紧：本仓测试不得定位/导入/执行兄弟仓 reader、API server、SQLite 私有函数或复刻上游 HTTP server；current-v1 consumer 与候选清单不得依赖旧 reader、旧 runtime gate 或专用 SS 路由。原跨仓 edge/server 测试已从 TA 验收面清除，SS 服务端行为由上游自己的验收线负责。
@@ -48,16 +49,16 @@
 
 ## 当前验证状态
 
-- 当前后端收集集合为`179`个`tests/test_*.py`、`2928 tests`。GitHub CI等价显式空`SHAREDSIGNALS_API_URL`环境下的最终单进程完整回归为`2928 passed in 36.52s`、0 failed；V1唯一候选清单在本轮治理测试补充后为`1383 passed in 26.93s`、0 failed。此前DeepSeek/LLM/架构专项`176 passed`及Router专项`52 passed`仍是本地候选证据。测试只证明本地候选，不代表GitHub Ubuntu、生产runtime或真实业务动作。
+- 当前后端收集集合为`179`个`tests/test_*.py`、`2928 tests`。GitHub run `29516030155`已在干净Ubuntu验证提交`4d49532`；服务器原生回归为`2928 passed`并额外通过`161`个subtests。V1唯一候选清单在本轮治理测试补充后为`1383 passed in 26.93s`、0 failed；此前DeepSeek/LLM/架构专项`176 passed`及Router专项`52 passed`仍是本地候选证据。这些测试证明候选能在本地、CI和服务器旁路环境运行，不代表现役生产、真实市场样本或真实业务动作。
 - 前端只读面：43 个测试文件、`276 passed`；`npm run lint` 与 `npm run build:all` 通过。新增单用户部署负例证明服务拒绝非loopback监听与`*` CORS。另以本地`vite preview`和headed Playwright真实渲染检查总览空态、状态标签、布局与文字溢出，检查后关闭浏览器/服务并清理临时截图。
 - 初始架构候选的154个现存Python文件曾全部通过Ruff check与Ruff format check；本轮CI修复涉及的Python文件再次通过Ruff 0.15.14 check，生产模块按Ruff格式化，既有CNFutures测试文件保留仓库原始排版以避免无关整文件改写。当前相关shell文件通过`bash -n`，`git diff --check`通过。credential-shaped扫描只命中显式合成的负例canary，`.env.example`中的`DEEPSEEK_API_KEY`保持空值，未发现真实凭据入仓。
 - 仓外 CLI 三次实跑均 `completed`：同输入跨两个不同真实 `/private/tmp` 输出根的 run ID、bundle SHA 和 artifact bytes 相同；同根第二次 `idempotent=true` 且 `transport_calls=[]`。本轮 run ID 为`ashare-paper-day-7c1b170499742adff759247b992ceb00`，bundle SHA-256 为`03c690274af36dd8e72196a6b831395401f0dd5e1c853e5bf09d9825f0877027`，但该产物仍是`non_authority`、`production_verified=false`。
 - 四轮独立科学复核累计发现并关闭：commit后崩溃恢复P1、时间链/失败原因缺口、跨订单预约归属P1、“半额release仍被对账成功”的资金冻结P1，以及重新签名后把同一股票改换六维风险组规避cap的P1。当前authority、optimizer与day loop都拒绝同symbol group重分类；day-loop对有效重签后的proof、final map和decision mirror也独立fail closed，嵌套fixture proof不能用外层非晋级标记掩盖。最新专项复核无P0，确认的group-binding P1已关闭；论点风险/optimizer/stage/day-loop/composition/架构九文件专项`255 passed in 6.97s`。本地hash仍是进程内完整性绑定，不是外部密码学签名；生产trust root继续列为阻塞。
-- SS live、真实 paper session、生产 calendar/account/market-evidence/Champion-feature/metrics/time verifier、受信 ValidationPlan registry、生产 scheduler/cron、生产 runtime、真实市场样本、真实 DeepSeek transport 和 live broker 外部副作用门禁未验证。会话中曾暴露的 DeepSeek credential 未被TA保存或调用，但供应商侧 revoke/rotate 与新凭据 readback 尚未验证，继续作为外部阻塞。
+- SS live、真实 paper session、生产 calendar/account/market-evidence/Champion-feature/metrics/time verifier、受信 ValidationPlan registry、生产 scheduler/cron、现役生产 runtime切换、真实市场样本、真实 DeepSeek transport 和 live broker 外部副作用门禁未验证。服务器旁路验收只关闭“候选能否在目标服务器环境安装、测试、构建和离线运行”的门，不关闭这些上游与生产authority门。会话中曾暴露的 DeepSeek credential 未被TA保存或调用，但供应商侧 revoke/rotate 与新凭据 readback 尚未验证，继续作为外部阻塞。
 
 ## 第一阶段出口门禁
 
-1. 本地架构重构候选的精确diff、完整后端、最终候选清单、前端lint/test/build/真实渲染、变更Python静态检查、shell语法、离线CLI三跑、文档对账和独立安全/科学复核均已完成；当前用户授权只扩展到隔离候选分支的commit/push，不授权merge/main、deploy、scheduler、live SS、真实paper或实盘；
+1. 架构重构候选的精确diff、完整后端、最终候选清单、前端lint/test/build/真实渲染、变更Python静态检查、shell语法、离线CLI三跑、文档对账、独立安全/科学复核及服务器旁路验收均已完成；当前授权只覆盖隔离分支commit/push与已完成的服务器sidecar，不授权merge/main、现役切换、scheduler、live SS、真实paper或实盘；
 2. 等待 SS 上游冻结 catalog version、dataset IDs、auth、receipt authority 与 runtime readback，再做同 `as_of` parity；
 3. 按消费者分批切 V1；每批同时删除旧 import、URL、env、调度、测试和文档引用，并保留 runtime no-fallback 负例，不建立长期双轨；
 4. 用真实 SS V1 与新鲜 50,000 CNY 模拟 authority 连续运行 20 个交易日，要求 0 未来数据、0 同 bar 成交、0 重复订单/成交、0 scope 泄漏、0 旧链 fallback、0 未解释账务差异；

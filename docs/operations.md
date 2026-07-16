@@ -1,6 +1,6 @@
-# TradingAgent V1 本地运行、验收与回滚
+# TradingAgent V1 本地与服务器旁路运行、验收及回滚
 
-> 本文是 A 股 V1 **本地隔离、simulation-only** 候选的唯一现役操作入口。当前用户授权只允许把已验证候选提交并推送到隔离分支；仍不授权网络联调、merge/main、broker、真实交易、邮件、GUI、scheduler/cron、生产密钥或部署。仓库模板、fixture、本地测试和候选分支成功均不代表 Git 主线、SharedSignals runtime 或生产已生效。当前证据见 [STATUS.md](../STATUS.md)。
+> 本文是 A 股 V1 **simulation-only** 候选在本地与服务器旁路环境中的唯一现役操作入口。服务器sidecar只可在任务级明确授权后，以版本化、隔离、无公网切换的方式执行；该授权不自动扩展到merge/main、现役源码/API/页面切换、网络数据联调、broker、真实交易、邮件、GUI、scheduler/cron或生产密钥。仓库模板、fixture、本地测试、候选分支和服务器旁路成功均不代表 Git 主线、SharedSignals runtime 或现役生产已生效。当前授权与执行证据只见 [STATUS.md](../STATUS.md)。
 
 ## 1. 不可突破的边界
 
@@ -11,6 +11,238 @@
 - A 股个股只允许沪深主板普通股。创业板、科创板及北京市场个股不得进入候选、预测、目标仓位、订单、成交或持仓；双创指数与全市场行业聚合只作 `context_only` 环境证据。
 - 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是本地隔离shadow合同，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。真实DeepSeek transport和live paper scheduler仍是计划项。
 - 模拟日即使阻断新增风险，也必须尽量继续减仓/退出、对账、账本、学习到期检查和报告，并以 `completed_with_blocks` 明示结束；不得伪装成功，也不得切回旧链。
+
+## 1.1 服务器旁路候选部署
+
+服务器旁路部署只用于回答“冻结候选能否在目标服务器环境安装、测试、构建和运行”。它不改变现役代码、服务、定时任务、网页、路由或任何authority。每次执行都必须有独立授权、精确提交SHA和新的版本化目录；禁止把本节变成默认自动发布路径。
+
+目录约定：
+
+```text
+/opt/investment/tradingagent                         # 现役工作树不切换；Git管理元数据仅作受控fetch/worktree登记
+/opt/investment/tradingagent-candidates/<release-id> # detached候选代码
+/opt/investment/tradingagent-venvs/<release-id>      # 候选专用Python环境
+/opt/investment/tradingagent-canary-output/<run-id>  # fixture/canary输出
+/opt/investment/release-evidence/tradingagent/<id>   # 受限发布证据
+```
+
+### 1.1.1 部署前冻结与取证
+
+在创建候选目录前，至少保存并校验：
+
+- 现役仓HEAD、remote ref与完整`git status --porcelain=v1 --untracked-files=all`；
+- `tradingagent-front-api.service` unit、状态、PID与`127.0.0.1:8787/healthz`；
+- `marketgraph`用户crontab及其哈希；
+- 现役未跟踪运行资产、回滚目录和磁盘余量；
+- 候选远端分支的精确SHA、工作树干净状态和回退目录。
+
+生产仓可能包含不受Git跟踪的append-only运行证据和前端回滚副本。禁止`git clean`、`reset --hard`、覆盖式checkout或`rsync --delete`；也禁止把现役仓切到候选分支。只允许从精确SHA创建detached worktree，例如：
+
+```bash
+set -euo pipefail
+umask 077
+
+ACTIVE=/opt/investment/tradingagent
+RELEASE_SHA='<approved-full-commit-sha>'
+APPROVED_BRANCH='<approved-candidate-branch>'
+RELEASE_ID="ta-v1-data-client-$(printf '%s' "$RELEASE_SHA" | cut -c1-7)"
+CANDIDATE="/opt/investment/tradingagent-candidates/$RELEASE_ID"
+VENV="/opt/investment/tradingagent-venvs/$RELEASE_ID"
+EVIDENCE_ID="$(date -u +%Y%m%dT%H%M%SZ)-$RELEASE_ID"
+EVIDENCE="/opt/investment/release-evidence/tradingagent/$EVIDENCE_ID"
+
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+test ! -e "$CANDIDATE"
+test ! -e "$VENV"
+sudo install -d -o marketgraph -g marketgraph /opt/investment/tradingagent-candidates
+sudo install -d -o marketgraph -g marketgraph /opt/investment/tradingagent-venvs
+sudo install -d -m 0700 -o marketgraph -g marketgraph "$EVIDENCE"
+sudo -u marketgraph git -C "$ACTIVE" fetch --no-tags origin "$APPROVED_BRANCH"
+FETCHED_SHA="$(sudo -u marketgraph git -C "$ACTIVE" rev-parse FETCH_HEAD)"
+test "$FETCHED_SHA" = "$RELEASE_SHA"
+sudo -u marketgraph git -C "$ACTIVE" cat-file -e "$RELEASE_SHA^{commit}"
+sudo -u marketgraph git -C "$ACTIVE" worktree add --detach "$CANDIDATE" "$RELEASE_SHA"
+test "$(sudo -u marketgraph git -C "$CANDIDATE" rev-parse HEAD)" = "$RELEASE_SHA"
+CANDIDATE_STATUS="$(sudo -u marketgraph git -C "$CANDIDATE" status --porcelain)"
+test -z "$CANDIDATE_STATUS"
+```
+
+### 1.1.2 隔离安装与验收
+
+候选使用自己的venv与`front/node_modules`，不得借用或修改现役依赖。服务器验收至少包括：
+
+```bash
+set -euo pipefail
+umask 077
+: "${CANDIDATE:?}" "${VENV:?}" "${EVIDENCE:?}"
+
+MARKETGRAPH_HOME="$(getent passwd marketgraph | cut -d: -f6)"
+SAFE_PATH=/opt/investment/tools/node-v24.4.1/bin:/usr/local/bin:/usr/bin:/bin
+SAFE_ENV=(
+  env -i
+  HOME="$MARKETGRAPH_HOME"
+  PATH="$SAFE_PATH"
+  LANG=C.UTF-8
+  TZ=Asia/Shanghai
+  REAL_TRADING_ENABLED=false
+  TRADINGAGENT_LLM_NETWORK_ENABLED=false
+  PYTHONDONTWRITEBYTECODE=1
+)
+
+sudo -u marketgraph "${SAFE_ENV[@]}" python3 -m venv "$VENV"
+sudo -u marketgraph "${SAFE_ENV[@]}" \
+  "$VENV/bin/python" -m pip install -r "$CANDIDATE/requirements.txt"
+sha256sum "$CANDIDATE/requirements.txt" > "$EVIDENCE/requirements.sha256"
+sudo -u marketgraph "${SAFE_ENV[@]}" \
+  "$VENV/bin/python" -m pip freeze > "$EVIDENCE/python-freeze.txt"
+
+cd "$CANDIDATE"
+sudo -u marketgraph "${SAFE_ENV[@]}" \
+  "$VENV/bin/python" -m pytest -q
+PYCACHE_ROOT="$(mktemp -d /tmp/ta-pycache.XXXXXX)"
+sudo chown marketgraph:marketgraph "$PYCACHE_ROOT"
+sudo -u marketgraph "${SAFE_ENV[@]}" PYTHONPYCACHEPREFIX="$PYCACHE_ROOT" \
+  "$VENV/bin/python" -m compileall -q shared Ashare tools
+sudo rm -rf -- "$PYCACHE_ROOT"
+
+cd "$CANDIDATE/front"
+sha256sum package-lock.json > "$EVIDENCE/package-lock.sha256"
+sudo -u marketgraph "${SAFE_ENV[@]}" npm ci
+sudo -u marketgraph "${SAFE_ENV[@]}" npm test
+sudo -u marketgraph "${SAFE_ENV[@]}" npm run lint
+sudo -u marketgraph "${SAFE_ENV[@]}" npm run build:all
+sudo -u marketgraph "${SAFE_ENV[@]}" node --version > "$EVIDENCE/node-version.txt"
+sudo -u marketgraph "${SAFE_ENV[@]}" npm --version > "$EVIDENCE/npm-version.txt"
+```
+
+`env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、SharedSignals URL/catalog/dataset/auth或DeepSeek credential。依赖范围未完全锁hash时，receipt必须保存Python/pip/Node/npm版本、完整`pip freeze`、requirements与`package-lock.json`哈希；未保存这些证据不得声称复现了同一环境。
+
+只读API canary必须使用非现役、loopback-only端口，显式保持`REAL_TRADING_ENABLED=false`，记录精确PID并在停止前核对其cmdline指向候选`dist-server`。禁止通配`pkill`或占用8787。以下生命周期在同一个fail-fast Bash进程中执行；`FINANCE_WORKSPACE_ROOT`只指向候选的显式别名，不读取现役workspace：
+
+```bash
+set -euo pipefail
+umask 077
+: "${CANDIDATE:?}" "${EVIDENCE:?}" "${VENV:?}" "${SAFE_PATH:?}" "${MARKETGRAPH_HOME:?}"
+
+CANARY_PORT=18787
+test "$CANARY_PORT" -ne 8787
+! ss -ltn | grep -Fq "127.0.0.1:$CANARY_PORT"
+CANARY_OUTPUT="/opt/investment/tradingagent-canary-output/${RELEASE_ID}-api"
+WORKSPACE_LINK="$CANARY_OUTPUT/TradingAgent"
+PID_FILE="$EVIDENCE/canary.pid"
+SERVER_JS="$CANDIDATE/front/dist-server/server/tradingAgentSnapshotHttp.js"
+NODE_BIN="$(sudo -u marketgraph env -i PATH="$SAFE_PATH" sh -c 'command -v node')"
+test -f "$SERVER_JS"
+test ! -e "$CANARY_OUTPUT"
+sudo install -d -m 0700 -o marketgraph -g marketgraph "$CANARY_OUTPUT"
+sudo -u marketgraph ln -s "$CANDIDATE" "$WORKSPACE_LINK"
+
+CANARY_PID=''
+SUDO_PID=''
+cleanup_canary() {
+  local stopped=0
+  if [[ -n "${CANARY_PID:-}" && -r "/proc/$CANARY_PID/cmdline" ]] &&
+     tr '\0' '\n' < "/proc/$CANARY_PID/cmdline" | grep -Fxq "$SERVER_JS"; then
+    kill "$CANARY_PID"
+    stopped=1
+  fi
+  if [[ "$stopped" -eq 1 && -n "${SUDO_PID:-}" ]]; then
+    wait "$SUDO_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_canary EXIT
+
+sudo -u marketgraph env -i \
+  HOME="$MARKETGRAPH_HOME" PATH="$SAFE_PATH" LANG=C.UTF-8 TZ=Asia/Shanghai \
+  REAL_TRADING_ENABLED=false TRADINGAGENT_LLM_NETWORK_ENABLED=false \
+  FINANCE_WORKSPACE_ROOT="$WORKSPACE_LINK" \
+  TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1 \
+  TRADING_AGENT_SNAPSHOT_PORT="$CANARY_PORT" \
+  sh -c 'set -eu; printf "%s\n" "$$" > "$1"; exec "$2" "$3"' \
+  sh "$PID_FILE" "$NODE_BIN" "$SERVER_JS" \
+  > "$EVIDENCE/canary-api.log" 2>&1 &
+SUDO_PID=$!
+
+for _ in $(seq 1 50); do
+  test -s "$PID_FILE" && break
+  sleep 0.1
+done
+CANARY_PID="$(cat "$PID_FILE")"
+[[ "$CANARY_PID" =~ ^[0-9]+$ ]]
+test -r "/proc/$CANARY_PID/cmdline"
+tr '\0' '\n' < "/proc/$CANARY_PID/cmdline" | grep -Fxq "$SERVER_JS"
+
+for _ in $(seq 1 50); do
+  curl -fsS "http://127.0.0.1:$CANARY_PORT/healthz" >/dev/null && break
+  sleep 0.1
+done
+curl -fsS "http://127.0.0.1:$CANARY_PORT/healthz" >/dev/null
+curl -fsS -D "$EVIDENCE/canary-snapshot-headers.txt" \
+  "http://127.0.0.1:$CANARY_PORT/api/trading-agent/snapshot" \
+  > "$EVIDENCE/canary-snapshot.json"
+test -r "/proc/$CANARY_PID/cmdline"
+tr '\0' '\n' < "/proc/$CANARY_PID/cmdline" | grep -Fxq "$SERVER_JS"
+LISTENER="$(ss -ltnp | grep -F "127.0.0.1:$CANARY_PORT")"
+printf '%s\n' "$LISTENER" | grep -Fq "pid=$CANARY_PID,"
+grep -Eiq '^cache-control:.*no-store' "$EVIDENCE/canary-snapshot-headers.txt"
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  "http://127.0.0.1:$CANARY_PORT/api/trading-agent/snapshot")" = 405
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:$CANARY_PORT/not-a-route")" = 404
+
+"$VENV/bin/python" - "$EVIDENCE/canary-snapshot.json" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert payload.get("mode") == "simulated"
+paper_day = payload.get("paperDayRun")
+if isinstance(paper_day, dict):
+    assert paper_day.get("realTradingEnabled") is False
+    assert paper_day.get("productionVerified") is False
+
+def visit(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = key.replace("_", "").lower()
+            if normalized in {"realtradingenabled", "livetradingenabled"}:
+                assert child is False
+            visit(child)
+    elif isinstance(value, list):
+        for child in value:
+            visit(child)
+
+visit(payload)
+PY
+
+cleanup_canary
+trap - EXIT
+for _ in $(seq 1 50); do
+  if ! ss -ltn | grep -Fq "127.0.0.1:$CANARY_PORT"; then
+    break
+  fi
+  sleep 0.1
+done
+! ss -ltn | grep -Fq "127.0.0.1:$CANARY_PORT"
+curl -fsS http://127.0.0.1:8787/healthz >/dev/null
+```
+
+验收至少证明：
+
+- `GET /healthz`与只读snapshot可用，`Cache-Control: no-store`；
+- 顶层`mode=simulated`且所有真实交易标志为false；
+- snapshot的POST返回405，未知路由返回404；
+- canary停止后备用端口无监听；
+- 现役8787服务始终健康。
+
+冻结fixture必须写到独立canary output root，至少完成同根幂等重放和跨根字节一致性检查；输出必须保持`non_authority`、`local_candidate`、`production_verified=false`、`real_trading_enabled=false`。不得写正式SampleJournal、活动runtime根或前端投影根。
+
+### 1.1.3 最终readback与回滚
+
+部署完成后重新读取并逐字节或逐哈希比较现役仓状态、systemd unit、crontab和健康检查；同时确认候选精确SHA、候选工作树干净、备用端口已关闭。发布receipt必须把`server_sidecar_canary`与`active_production_activated=false`明确写开，不能用“已部署”省略层级。证据目录内除最终manifest自身外的文件应生成排序后的SHA-256清单，再单独记录该清单的SHA-256；receipt至少保存候选/现役SHA、依赖版本、测试结果、canary状态、fixture状态、现役变更布尔值和未验证项。
+
+因为sidecar从未接管现役服务，回滚只需停止候选进程并保留证据。候选worktree、venv与输出目录只有在留存期结束且获得清理授权后才可移除；不得删除现役未跟踪资产、append-only账本、模拟样本或既有回滚目录。若未来要切换现役源码/API、cron、页面或公网路由，必须重新进行独立发布授权、备份、原子切换和真实回退演练，不能沿用本次sidecar授权。
 
 ## 2. 安全环境与显式配置
 
@@ -225,4 +457,4 @@ preopen
 7. DeepSeek若启用，会话中曾暴露的credential必须先由供应商侧revoke/rotate，新值不得入仓；还需真实模型/请求字段readback、quota/限流/重试/幂等/数据留存核验、敏感数据门、提示注入语义/编码变体、引用绑定、typed receipt持久化、成本/延迟和冻结增量评测，且仍保持evidence-only；
 8. 独立发布授权、preflight、回退方案，以及本地、Git、远端、生产文件、生产 runtime 和外部路由分别验收。
 
-本轮没有这些证据，因此状态只能是 `local_isolated_candidate / simulation-only / nonpromotion`。
+当前服务器sidecar没有提供上述外部authority证据，因此业务能力仍只能是`local_isolated_candidate / simulation-only / nonpromotion`；`server_validated_non_authority_simulation_only`只描述目标服务器环境的安装与旁路运行证据，不能提升为现役生产状态。

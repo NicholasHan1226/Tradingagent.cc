@@ -11,7 +11,7 @@
 | [system_state_matrix.md](system_state_matrix.md) | current、local candidate、target、兼容、历史与退役状态的人工可读投影；机器状态未同步前不得自行晋级 |
 | [universe_contract.md](universe_contract.md) | 市场环境池、账户可交易池、5万元可行池及主板个股零泄漏边界 |
 | [capital_growth_validation.md](capital_growth_validation.md) | 样本、费用后结果、回撤、MG 消融和人工复核验收 |
-| [operations.md](operations.md) | A股 V1 本地 sim-only 运行、候选验收、故障、退役与回滚；不证明 CNFutures 或生产状态 |
+| [operations.md](operations.md) | A股 V1 本地与服务器旁路 sim-only 运行、候选验收、故障、退役与回滚；不证明 CNFutures 或现役生产状态 |
 | [BACKLOG.md](BACKLOG.md) | 范围冻结后移出的发布、终端、人工实盘规格和长期统计工作 |
 
 根 `README.md` 只做入口；根/模块 `AGENTS.md` 保存长期规则；`STATUS.md` 保存当前证据和阻塞。不要重新创建重复的 infrastructure、data-source、write-end、事故日记或实施计划文档。
