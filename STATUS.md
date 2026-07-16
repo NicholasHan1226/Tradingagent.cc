@@ -2,11 +2,11 @@
 
 > 最后更新：2026-07-16 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。旧提交、旧生产快照和作废候选从 Git 历史审计，不在现役状态文件重复维护。
 
-## 当前结论：本地候选完成，隔离分支发布准备中
+## 当前结论：本地候选完成，隔离分支已提交并推送
 
-当前唯一开发位置是 `TradingAgent/.worktrees/ta-v1-data-client`，分支 `codex/ta-v1-data-client`。本地候选门已经关闭；当前发布授权只允许把同一候选提交并推送到该隔离分支。它不是 Phase 1 通过、Git 主线、SharedSignals live API、生产文件/runtime、已安装 scheduler/cron、真实模拟盘样本或真实交易完成证明。
+当前唯一开发位置是 `TradingAgent/.worktrees/ta-v1-data-client`，分支 `codex/ta-v1-data-client`。本地候选门已经关闭，架构候选已在提交 `a27d323473fc11a7e57ba4334da6d29bb25e4408` 中写入该分支并推送到 `origin/codex/ta-v1-data-client`；远端 `main` 仍为基线 `3b3aab41bcf1fee046da169f6fd582b4f2818cba`。它不是 Phase 1 通过、Git 主线、SharedSignals live API、生产文件/runtime、已安装 scheduler/cron、真实模拟盘样本或真实交易完成证明。
 
-- `REAL_TRADING_ENABLED=false`；候选分支提交/推送必须在秘密扫描与发布前检查通过后执行。仍未授权 merge/main、deploy、apply cron、发邮件、连接 broker、操作 GUI 或真实交易；生产密钥与服务器变更另设门禁。
+- `REAL_TRADING_ENABLED=false`；隔离候选分支已在秘密扫描与发布前检查通过后提交/推送。仍未授权 merge/main、deploy、apply cron、发邮件、连接 broker、操作 GUI 或真实交易；生产密钥与服务器变更另设门禁。
 - 产品边界已确认为 Nicholas 个人内部使用。`tradingagent.cc`保留为个人远程访问入口，但必须由Cloudflare Access或等价单用户认证保护；API继续只监听localhost，禁止匿名公网访问或API直出。本轮未修改DNS、Tunnel、Pages或Access policy，现网权限状态仍未验证。
 - SharedSignals 完全由上游唯一 writer/reviewer 管理。TA 不读取或修改 SS 仓，只消费显式 fixture/port 的 `GET /v1/catalog` 与 `POST /v1/query` 合同。
 - 本线程的交付目标是 TradingAgent 本地候选，不包含 SharedSignals 服务端重构、测试、集成或验收；任何把“SS 与 TA 重构”并列为本线程 Goal 的旧表述均以本条 ownership correction 为准。
