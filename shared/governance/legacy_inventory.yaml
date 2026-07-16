@@ -151,6 +151,7 @@ entries:
       - shared/review/opportunity_funnel.py
       - shared/runtime_test/sync_opportunity_funnel_events.py
       - shared/wrappers/job_opportunity_funnel_sync.sh
+    runtime_paths:
       - shared/review/opportunities/funnel_events.jsonl
       - shared/logs/opportunities/funnel_events.jsonl
       - signals/

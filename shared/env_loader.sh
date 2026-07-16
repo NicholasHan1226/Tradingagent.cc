@@ -88,9 +88,15 @@ _tradingagent_probe_env_file_safety() {
 # Bash sources BASH_ENV before it exposes the pending script path.  This pass
 # therefore cannot decide wrapper retirement.  It still enforces the universal
 # sim-only front door and safely inspects only protected assignments in env
-# files; it never executes arbitrary env-file commands.  The wrapper-level
-# retirement guard runs next, before the explicit full env load.
-if [[ -n "${BASH_ENV:-}" && "${BASH_SOURCE[0]}" == "${BASH_ENV}" && "${0##*/}" == "bash" ]]; then
+# files; it never executes arbitrary env-file commands.  Bash versions differ
+# in the value exposed through $0 during BASH_ENV loading, so the source-stack
+# depth distinguishes this automatic top-level pass from the wrapper's later
+# explicit load without trusting an externally seedable environment marker.
+# The wrapper-level retirement guard runs between the two loads.
+if [[ -n "${BASH_ENV:-}" \
+    && -r "${BASH_ENV}" \
+    && "${BASH_SOURCE[0]}" -ef "${BASH_ENV}" \
+    && "${#BASH_SOURCE[@]}" -eq 1 ]]; then
     _tradingagent_env_root="${TRADINGAGENT_ROOT:-/opt/investment/tradingagent}"
     _tradingagent_env_file="${TRADINGAGENT_ENV_FILE:-${_tradingagent_env_root}/.env}"
     _tradingagent_shared_env_file="${FINANCE_SHARED_ENV_FILE:-/opt/tradingagent/.env}"

@@ -154,6 +154,7 @@ ASHARE_LEGACY_RUNTIME_WRAPPERS = (
     "shared/wrappers/job_ashare_research_evidence.sh",
     "shared/wrappers/job_ashare_sample_ops.sh",
     "shared/wrappers/job_ashare_sim_exec.sh",
+    "shared/wrappers/job_opportunity_funnel_sync.sh",
 )
 
 
@@ -608,10 +609,18 @@ def test_declared_tradingagent_legacy_paths_are_real_and_still_timeboxed() -> No
             "retirement_pending_verification",
         }
         for relative_path in entry.paths:
-            if relative_path.endswith(".jsonl"):
-                continue
             assert (ROOT / relative_path).exists(), (
                 f"declared legacy path does not exist: {relative_path}"
+            )
+        for relative_path in entry.runtime_paths:
+            ignored = subprocess.run(
+                ["git", "check-ignore", "--no-index", "--quiet", "--", relative_path],
+                cwd=ROOT,
+                check=False,
+            )
+            assert ignored.returncode == 0, (
+                "declared legacy runtime path must be intentionally ignored: "
+                f"{relative_path}"
             )
 
 
@@ -817,7 +826,11 @@ def test_retained_legacy_endpoint_and_sharedsignals_sqlite_paths_are_in_inventor
     None
 ):
     inventory = load_legacy_inventory()
-    inventoried_paths = {path for entry in inventory.entries for path in entry.paths}
+    inventoried_paths = {
+        path
+        for entry in inventory.entries
+        for path in (*entry.paths, *entry.runtime_paths)
+    }
     retained_legacy_paths = {
         "CNFutures/adapter.py",
         "CNFutures/opening_validator.py",
@@ -937,6 +950,50 @@ def test_mixed_legacy_entrypoints_with_ashare_data_or_email_are_fail_closed(
     assert not python_sentinel.exists()
     assert not runtime_root.exists()
     assert not logs_root.exists()
+
+
+def test_linux_style_bash_env_preflight_cannot_source_retired_wrapper_env(
+    tmp_path: Path,
+) -> None:
+    """BASH_ENV must stay side-effect free when Bash exposes the script as $0."""
+
+    env_sentinel = tmp_path / "env-was-sourced"
+    env_file = tmp_path / "malicious.env"
+    env_file.write_text(
+        f"touch {env_sentinel!s}\nexport REAL_TRADING_ENABLED=false\n",
+        encoding="utf-8",
+    )
+    wrapper = ROOT / ASHARE_LEGACY_RUNTIME_WRAPPERS[0]
+    env = os.environ.copy()
+    env.pop("TRADINGAGENT_ENV_LOADER_READY", None)
+    env.update(
+        {
+            "BASH_ENV": str(ROOT / "shared" / "env_loader.sh"),
+            "TRADINGAGENT_BASH_ENV_PREFLIGHT_DONE": "externally-seeded",
+            "TRADINGAGENT_ROOT": str(ROOT),
+            "TRADINGAGENT_ENV_FILE": str(env_file),
+            "FINANCE_SHARED_ENV_FILE": str(tmp_path / "missing.env"),
+            "REAL_TRADING_ENABLED": "false",
+        }
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"',
+            str(wrapper),
+            str(wrapper),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 78
+    assert "blocked=retired_ashare_runtime" in result.stderr
+    assert not env_sentinel.exists()
 
 
 def test_sourced_retired_ashare_entrypoints_block_before_env_file_side_effects(

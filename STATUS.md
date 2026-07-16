@@ -11,6 +11,7 @@
 - 2026-07-16 23:50 CST 只读现网探测补充了反向证据：未携带登录态或认证头时，`www.tradingagent.cc`与`dashboard.tradingagent.cc`均返回`200`页面，`GET https://tradingagent.cc/api/trading-agent/snapshot`返回`200`、约34KB JSON，并暴露`holdings/signals/portfolio`等顶层字段。CORS不能替代身份认证，因此现网不满足单用户内部入口要求；在Cloudflare Access（或等价策略）与API公网路径完成拒绝/重定向及Nicholas登录readback前，禁止部署本候选。此次探测未修改任何线上配置。
 - 同轮只读生产核查确认`tradingagent-front-api.service`为`active`，本机`127.0.0.1:8787/healthz`返回`200`且端口只监听loopback。生产仓HEAD为`6c12fbed29db925019f85a6016774626f63b857a`；以`marketgraph`身份只读导出的Git bundle对比证明它是当前候选的祖先，`production-only=0`、`candidate-only=9`，没有遗漏生产独有提交。生产机的回滚目录和`shared/review/ashare/`运行资产保持未跟踪、未修改；未来部署必须继续保留。
 - 本机Wrangler `4.110.0`的OAuth凭据已过期且环境中没有Cloudflare token；`whoami`无法通过，所以Pages、Tunnel与Access控制面仍不可读写。在Nicholas重新完成Cloudflare交互登录前，不得声称已验证或已部署认证入口。
+- GitHub Actions run `29513481320` 在干净 Ubuntu runner 暴露了15个真实缺口：运行态`signals/`被误当作clean-clone源码、Linux Bash的`BASH_ENV`在退役门禁前执行环境文件、以及CNFutures兼容读取在显式空URL下构造相对地址。当前修复已把源码路径与Git忽略的`runtime_paths`分开、用不可由环境预置绕过的Bash source-stack识别预加载、统一hard-block旧opportunity writer，并让CNFutures显式空authority结构化fail closed；CI同环境本地全量`2926 passed`。本条仍须由推送后的新Ubuntu run复验，不能把本地结果替代远端绿灯。
 - SharedSignals 完全由上游唯一 writer/reviewer 管理。TA 不读取或修改 SS 仓，只消费显式 fixture/port 的 `GET /v1/catalog` 与 `POST /v1/query` 合同。
 - 本线程的交付目标是 TradingAgent 本地候选，不包含 SharedSignals 服务端重构、测试、集成或验收；任何把“SS 与 TA 重构”并列为本线程 Goal 的旧表述均以本条 ownership correction 为准。
 - TA ownership 门禁已进一步收紧：本仓测试不得定位/导入/执行兄弟仓 reader、API server、SQLite 私有函数或复刻上游 HTTP server；current-v1 consumer 与候选清单不得依赖旧 reader、旧 runtime gate 或专用 SS 路由。原跨仓 edge/server 测试已从 TA 验收面清除，SS 服务端行为由上游自己的验收线负责。
@@ -47,9 +48,9 @@
 
 ## 当前验证状态
 
-- 当前后端收集集合为`179`个`tests/test_*.py`、`2923 tests`。发布前单进程完整回归在最终后端代码上`2923 passed`、0 failed、0 skipped，pytest时间`936.65s`；V1唯一候选清单在最终文档/产品边界更新后再次复跑为`1380 passed in 27.14s`，DeepSeek/LLM/架构专项`176 passed`并另有最终Router专项`52 passed`，均为0 failed。测试只证明本地候选，不代表生产runtime。
+- 当前后端收集集合为`179`个`tests/test_*.py`、`2926 tests`。GitHub CI等价显式空`SHAREDSIGNALS_API_URL`环境下的最终单进程完整回归为`2926 passed in 36.93s`、0 failed；V1唯一候选清单在本轮治理测试补充后为`1382 passed in 29.67s`、0 failed。此前DeepSeek/LLM/架构专项`176 passed`及Router专项`52 passed`仍是本地候选证据。测试只证明本地候选，不代表GitHub Ubuntu、生产runtime或真实业务动作。
 - 前端只读面：43 个测试文件、`276 passed`；`npm run lint` 与 `npm run build:all` 通过。新增单用户部署负例证明服务拒绝非loopback监听与`*` CORS。另以本地`vite preview`和headed Playwright真实渲染检查总览空态、状态标签、布局与文字溢出，检查后关闭浏览器/服务并清理临时截图。
-- 当前变更/未跟踪 Python 项共157个，其中154个现存文件全部通过Ruff check与Ruff format check，另3个是明确删除的旧文件；27个变更shell文件通过`bash -n`，`git diff --check`通过。credential-shaped扫描只命中显式合成的负例canary，`.env.example`中的`DEEPSEEK_API_KEY`保持空值，未发现真实凭据入仓。
+- 初始架构候选的154个现存Python文件曾全部通过Ruff check与Ruff format check；本轮CI修复涉及的Python文件再次通过Ruff 0.15.14 check，生产模块按Ruff格式化，既有CNFutures测试文件保留仓库原始排版以避免无关整文件改写。当前相关shell文件通过`bash -n`，`git diff --check`通过。credential-shaped扫描只命中显式合成的负例canary，`.env.example`中的`DEEPSEEK_API_KEY`保持空值，未发现真实凭据入仓。
 - 仓外 CLI 三次实跑均 `completed`：同输入跨两个不同真实 `/private/tmp` 输出根的 run ID、bundle SHA 和 artifact bytes 相同；同根第二次 `idempotent=true` 且 `transport_calls=[]`。本轮 run ID 为`ashare-paper-day-7c1b170499742adff759247b992ceb00`，bundle SHA-256 为`03c690274af36dd8e72196a6b831395401f0dd5e1c853e5bf09d9825f0877027`，但该产物仍是`non_authority`、`production_verified=false`。
 - 四轮独立科学复核累计发现并关闭：commit后崩溃恢复P1、时间链/失败原因缺口、跨订单预约归属P1、“半额release仍被对账成功”的资金冻结P1，以及重新签名后把同一股票改换六维风险组规避cap的P1。当前authority、optimizer与day loop都拒绝同symbol group重分类；day-loop对有效重签后的proof、final map和decision mirror也独立fail closed，嵌套fixture proof不能用外层非晋级标记掩盖。最新专项复核无P0，确认的group-binding P1已关闭；论点风险/optimizer/stage/day-loop/composition/架构九文件专项`255 passed in 6.97s`。本地hash仍是进程内完整性绑定，不是外部密码学签名；生产trust root继续列为阻塞。
 - SS live、真实 paper session、生产 calendar/account/market-evidence/Champion-feature/metrics/time verifier、受信 ValidationPlan registry、生产 scheduler/cron、生产 runtime、真实市场样本、真实 DeepSeek transport 和 live broker 外部副作用门禁未验证。会话中曾暴露的 DeepSeek credential 未被TA保存或调用，但供应商侧 revoke/rotate 与新凭据 readback 尚未验证，继续作为外部阻塞。

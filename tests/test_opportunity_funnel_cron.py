@@ -11,7 +11,7 @@ def test_legacy_opportunity_funnel_writer_is_unscheduled_and_hard_blocked() -> N
 
     text = script.read_text(encoding="utf-8")
 
-    assert 'source "${SHARED_DIR}/env_loader.sh"' in text
+    assert 'source "${SHARED_DIR}/env_loader.sh"' not in text
     assert 'source "${WRAPPER_DIR}/_common.sh"' in text
     assert 'JOB_NAME="job_opportunity_funnel_sync"' in text
     assert "legacy_opportunity_funnel_writer_retired" in text

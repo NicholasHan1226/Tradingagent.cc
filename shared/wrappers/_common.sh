@@ -25,7 +25,7 @@ retired_ashare_runtime_job_for() {
     local entrypoint_name="${1##*/}"
     local market_arg="${2:-}"
     case "${entrypoint_name}" in
-        job_ashare_first_sample_alert.sh|job_ashare_health_check.sh|job_ashare_night_calibration.sh|job_ashare_opening_validation.sh|job_ashare_pre_open_validation.sh|job_ashare_preopen_dry_run.sh|job_ashare_research_evidence.sh|job_ashare_sample_ops.sh|job_ashare_sim_exec.sh)
+        job_ashare_first_sample_alert.sh|job_ashare_health_check.sh|job_ashare_night_calibration.sh|job_ashare_opening_validation.sh|job_ashare_pre_open_validation.sh|job_ashare_preopen_dry_run.sh|job_ashare_research_evidence.sh|job_ashare_sample_ops.sh|job_ashare_sim_exec.sh|job_opportunity_funnel_sync.sh)
             printf '%s' "${entrypoint_name%.sh}"
             ;;
         job_premarket_signals.sh)

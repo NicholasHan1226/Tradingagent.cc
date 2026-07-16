@@ -58,6 +58,17 @@ def _strings(value: Any, field: str) -> tuple[str, ...]:
     return result
 
 
+def _optional_strings(value: Any, field: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a list")
+    result = tuple(_text(item, f"{field}[]") for item in value)
+    if len(result) != len(set(result)):
+        raise ValueError(f"{field} must not contain duplicates")
+    return result
+
+
 def _load(path: Path) -> Mapping[str, Any]:
     candidate = Path(path)
     if not candidate.is_file() or candidate.is_symlink():
@@ -92,6 +103,7 @@ class LegacyEntry:
     legacy_id: str
     owner: str
     paths: tuple[str, ...]
+    runtime_paths: tuple[str, ...]
     replacement: str
     compatibility_mode: str
     sunset_phase: str
@@ -178,11 +190,19 @@ def load_legacy_inventory(
         compatibility_mode = _text(item.get("compatibility_mode"), "compatibility_mode")
         if compatibility_mode not in ALLOWED_COMPATIBILITY_MODES:
             raise ValueError(f"unsupported compatibility_mode: {compatibility_mode}")
+        paths = _strings(item.get("paths"), "paths")
+        runtime_paths = _optional_strings(item.get("runtime_paths"), "runtime_paths")
+        overlap = set(paths).intersection(runtime_paths)
+        if overlap:
+            raise ValueError(
+                f"legacy paths and runtime_paths must not overlap: {sorted(overlap)}"
+            )
         entries.append(
             LegacyEntry(
                 legacy_id=legacy_id,
                 owner=_text(item.get("owner"), "owner"),
-                paths=_strings(item.get("paths"), "paths"),
+                paths=paths,
+                runtime_paths=runtime_paths,
                 replacement=_text(item.get("replacement"), "replacement"),
                 compatibility_mode=compatibility_mode,
                 sunset_phase=_text(item.get("sunset_phase"), "sunset_phase"),

@@ -2,6 +2,8 @@
 
 > 本文解释系统状态治理；当前能力状态的机器可读事实源是 `shared/governance/system_state_matrix.yaml`，旧链消费者与退役门的机器可读事实源是 `shared/governance/legacy_inventory.yaml`。本地候选、Git 主线、生产文件、生产 runtime、已安装 cron、真实数据与真实交易动作必须分别验证。当前YAML已把若干构件标为`CURRENT_VERIFIED`，但其`layer=local_isolated_candidate`且`production_verified=false`；这只证明对应本地allowed uses，不能静默提升为仓库主线或runtime。
 
+`legacy_inventory.yaml` 中的 `paths` 只登记干净克隆必须存在的源码或配置；`runtime_paths` 单独登记可能尚未生成、不得纳入 Git 的安装态/运行态历史路径，并要求由 `.gitignore` 明确覆盖。运行目录在某台开发机上存在或不存在都不能证明生产消费者已经退役，生产裁决仍需独立的 installed-runtime readback。
+
 ## 状态语义
 
 | 状态 | 含义 | 可以做什么 | 不能推断什么 |

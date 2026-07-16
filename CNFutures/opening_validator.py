@@ -460,6 +460,14 @@ def _query_session_bars_via_api(
         .strip()
         .rstrip("/")
     )
+    if not base_url:
+        return {
+            "error": "sharedsignals_api_url_missing",
+            "symbol_count": 0,
+            "bar_count": 0,
+            "query_source": "SharedSignals API",
+            "url": None,
+        }
     url = (
         f"{base_url}/realtime_5min?{urllib.parse.urlencode({'market': READER_MARKET})}"
     )
@@ -474,6 +482,7 @@ def _query_session_bars_via_api(
         urllib.error.URLError,
         urllib.error.HTTPError,
         json.JSONDecodeError,
+        ValueError,
     ) as exc:
         return {
             "error": f"sharedsignals_api_error:{exc.__class__.__name__}: {exc}",

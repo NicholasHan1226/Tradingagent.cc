@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -634,6 +635,14 @@ class CNFuturesOpeningValidatorTest(unittest.TestCase):
 class QuerySessionBarsViaApiTest(unittest.TestCase):
     """Tests for _query_session_bars_via_api — the fix ensures no date param."""
 
+    def setUp(self) -> None:
+        self.api_environment = patch.dict(
+            os.environ,
+            {"SHAREDSIGNALS_API_URL": "http://sharedsignals.fixture.invalid"},
+        )
+        self.api_environment.start()
+        self.addCleanup(self.api_environment.stop)
+
     def _mock_response(self, data: list[dict[str, object]], code: int = 200) -> object:
         class Resp:
             def __init__(self, data: list[dict[str, object]], code: int):
@@ -750,6 +759,22 @@ class QuerySessionBarsViaApiTest(unittest.TestCase):
         self.assertIn("sharedsignals_api_error", result["error"])
         self.assertEqual(result["symbol_count"], 0)
         self.assertEqual(result["bar_count"], 0)
+
+    def test_empty_api_url_is_explicitly_fail_closed(self) -> None:
+        """An explicit empty authority must not become a relative or local URL."""
+
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+        with patch.dict(os.environ, {"SHAREDSIGNALS_API_URL": ""}), patch(
+            "urllib.request.urlopen"
+        ) as urlopen:
+            result = _query_session_bars_via_api(start, now, min_symbols=4)
+
+        self.assertEqual(result.get("error"), "sharedsignals_api_url_missing")
+        self.assertEqual(result["symbol_count"], 0)
+        self.assertEqual(result["bar_count"], 0)
+        self.assertIsNone(result["url"])
+        urlopen.assert_not_called()
 
     def test_api_empty_response_fail_closed(self) -> None:
         """Empty API response must fail-closed with bar_count=0."""

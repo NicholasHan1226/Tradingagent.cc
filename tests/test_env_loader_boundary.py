@@ -132,6 +132,15 @@ def test_env_loader_does_not_reexport_legacy_deepseek_secret_name() -> None:
     assert "TRADINGS_" + "DEEPSEEK_API_KEY" not in source
 
 
+def test_bash_env_preflight_is_not_keyed_to_platform_specific_zero_value() -> None:
+    source = ENV_LOADER.read_text(encoding="utf-8")
+
+    assert "${0##*/}" not in source
+    assert '"${BASH_SOURCE[0]}" -ef "${BASH_ENV}"' in source
+    assert '"${#BASH_SOURCE[@]}" -eq 1' in source
+    assert "TRADINGAGENT_BASH_ENV_PREFLIGHT_DONE" not in source
+
+
 def test_sharedsignals_v1_configuration_has_no_implicit_localhost_default() -> None:
     forbidden_default = "http://127.0.0.1:8082"
 
