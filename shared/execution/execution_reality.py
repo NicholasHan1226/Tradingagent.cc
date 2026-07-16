@@ -25,6 +25,8 @@ _VERIFIED_COMMISSION_STATUSES = {
     "broker_statement_verified",
 }
 
+_ASHARE_SELL_LOT_SIZE = 100
+
 
 def _finite_non_negative(value: Any, *, name: str) -> float:
     try:
@@ -34,6 +36,49 @@ def _finite_non_negative(value: Any, *, name: str) -> float:
     if not math.isfinite(parsed) or parsed < 0:
         raise ValueError(f"{name} must be finite and non-negative")
     return parsed
+
+
+def _whole_share_quantity(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0 or not parsed.is_integer():
+        return None
+    return int(parsed)
+
+
+def ashare_sell_quantity_rejection_reason(
+    *,
+    current_shares: Any,
+    sellable_shares: Any,
+    requested_shares: Any,
+) -> str | None:
+    """Return the canonical A-share sell-lot rejection reason, if any.
+
+    A round-lot sale is always valid when covered by both current and T+1
+    sellable holdings.  If a holding contains an odd-lot remainder, that
+    remainder may be submitted only in full.  A full-position exit remains
+    valid.  Callers must reject a non-``None`` result; they must not round or
+    rewrite the requested sale.
+    """
+
+    current = _whole_share_quantity(current_shares)
+    sellable = _whole_share_quantity(sellable_shares)
+    requested = _whole_share_quantity(requested_shares)
+    if current is None or sellable is None or requested is None or requested <= 0:
+        return "ashare_sell_quantity_invalid"
+    if sellable > current:
+        return "ashare_sellable_quantity_invalid"
+    if requested > sellable:
+        return "insufficient_sellable_qty_t1"
+    if requested > current:
+        return "ashare_sell_quantity_exceeds_current"
+    if requested == current or requested % _ASHARE_SELL_LOT_SIZE == 0:
+        return None
+    odd_lot_remainder = current % _ASHARE_SELL_LOT_SIZE
+    if odd_lot_remainder and requested == odd_lot_remainder:
+        return None
+    return "ashare_odd_lot_sell_quantity_invalid"
 
 
 def _symbol_digits(symbol: str) -> str:
@@ -337,5 +382,6 @@ __all__ = [
     "ASHARE_EXECUTION_REALITY_VERSION",
     "EXECUTION_REALITY_SCHEMA_VERSION",
     "ExecutionRealityModel",
+    "ashare_sell_quantity_rejection_reason",
     "ashare_execution_reality",
 ]

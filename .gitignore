@@ -47,6 +47,8 @@ Users/
 
 # Trading runtime state
 runtime/
+!shared/runtime/
+!shared/runtime/*.py
 signals/
 shared/logs/
 shared/accounting/position_plan.jsonl

@@ -23,18 +23,15 @@ class CronCoverageTest(unittest.TestCase):
         schedules = "\n".join(cron_coverage.tradingagent_entries(template))
         return environment + "\n" + schedules
 
-    def test_slow_market_sim_loops_are_half_hour_staggered(self) -> None:
-        expected = {
-            "10,40 10-14,22-23,0-4 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_us_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/us_sim.log 2>&1",
-            "8,38 * * * * /opt/investment/tradingagent/shared/wrappers/job_crypto_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/crypto_sim.log 2>&1",
+    def test_unmigrated_market_sim_wrappers_are_unscheduled(self) -> None:
+        retained = {
             "4,34 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_research_probability.sh >> /opt/investment/tradingagent/shared/logs/cron/job_pm_research_probability.log 2>&1",
-            "7,37 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_sim.sh >> /opt/investment/tradingagent/shared/logs/cron/pm_sim.log 2>&1",
         }
-        forbidden = {
-            "*/5 10-14,22-23,0-4 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_us_sim.sh",
-            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_crypto_sim.sh",
-            "2-59/10 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_research_probability.sh",
-            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_sim.sh",
+        blocked_wrappers = {
+            "job_us_sim.sh",
+            "job_crypto_sim.sh",
+            "job_pm_sim.sh",
+            "job_cn_futures_sim.sh",
         }
 
         for path in (
@@ -42,10 +39,15 @@ class CronCoverageTest(unittest.TestCase):
             cron_coverage.ROOT / "shared/crontab.txt",
         ):
             text = path.read_text()
-            for line in expected:
+            for line in retained:
                 self.assertIn(line, text)
-            for line in forbidden:
-                self.assertNotIn(line, text)
+            active_lines = [
+                line.strip()
+                for line in text.splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
+            for wrapper in blocked_wrappers:
+                self.assertTrue(all(wrapper not in line for line in active_lines))
 
     def test_template_entries_are_in_sync(self) -> None:
         report = cron_coverage.check_cron_coverage(
@@ -64,28 +66,18 @@ class CronCoverageTest(unittest.TestCase):
         self.assertEqual(report["template_drift_count"], 0)
         self.assertNotIn("template_drift", report["failures"])
 
-    def test_ashare_sample_ops_has_required_label_and_review_checkpoints(self) -> None:
-        expected = {
-            "20 10,11,13,14,15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_ops.log 2>&1",
-            "40 17,22 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_ops.log 2>&1",
-        }
-
+    def test_retired_ashare_sample_ops_is_absent_from_active_templates(self) -> None:
         for path in (
             cron_coverage.ROOT / "crontab.txt",
             cron_coverage.ROOT / "shared/crontab.txt",
         ):
             text = path.read_text()
-            for line in expected:
-                self.assertIn(line, text)
+            self.assertNotIn("job_ashare_sample_ops.sh", text)
 
-    def test_dual_market_reconcile_runs_before_opening_and_at_session_checkpoints(
+    def test_cn_futures_reconcile_runs_before_opening_and_at_session_checkpoints(
         self,
     ) -> None:
         expected = {
-            "32 9 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh ashare opening >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_ashare.log 2>&1",
-            "2 13 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh ashare ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_ashare.log 2>&1",
-            "58 14 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh ashare ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_ashare.log 2>&1",
-            "32 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh ashare ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_ashare.log 2>&1",
             "58 8,20 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures preopen >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1",
             "2 9,13,21 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures opening >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1",
             "32 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1",
@@ -100,6 +92,7 @@ class CronCoverageTest(unittest.TestCase):
             text = path.read_text()
             for line in expected:
                 self.assertIn(line, text)
+            self.assertNotIn("job_market_capital_reconcile.sh ashare", text)
 
     def test_retired_ashare_sample_jobs_are_absent_from_active_templates(self) -> None:
         forbidden = {
@@ -369,43 +362,30 @@ class CronCoverageTest(unittest.TestCase):
         ):
             self.assertIn(current, candidates)
 
-    # -- Review cadence coverage: 07:30 / 11:45 / 15:30 / 22:00 wrappers --
+    # -- Retired A-share review/email jobs remain available only as blocked
+    # compatibility entrypoints; recurring cron must not invoke them. --
 
-    _REVIEW_CADENCE_ENTRIES = {
-        "30 7 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_daily_brief_morning.sh >> /opt/investment/tradingagent/shared/logs/cron/job_daily_brief_morning.log 2>&1",
-        "45 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_daily_brief_day.sh >> /opt/investment/tradingagent/shared/logs/cron/job_daily_brief_day.log 2>&1",
-        "30 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_daily_brief_night.sh >> /opt/investment/tradingagent/shared/logs/cron/job_daily_brief_night.log 2>&1",
-        "0 22 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_night_calibration.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_night_calibration.log 2>&1",
+    _FORBIDDEN_RETIRED_ENTRYPOINTS = {
+        "cron/daily_review.sh",
+        "cron/health_check.sh",
+        "shared/wrappers/job_ashare_night_calibration.sh",
+        "shared/wrappers/job_daily_brief_morning.sh",
+        "shared/wrappers/job_daily_brief_day.sh",
+        "shared/wrappers/job_daily_brief_night.sh",
+        "shared/wrappers/job_opening_acceptance.sh",
     }
 
-    _FORBIDDEN_DEPRECATED_ENTRIES = {
-        "0 16 * * 1-5 /opt/investment/tradingagent/cron/daily_review.sh",
-    }
-
-    def test_review_cadence_wrappers_are_in_both_templates(self) -> None:
+    def test_retired_review_and_generic_jobs_are_absent_from_both_templates(
+        self,
+    ) -> None:
         for path in (
             cron_coverage.ROOT / "crontab.txt",
             cron_coverage.ROOT / "shared/crontab.txt",
         ):
             text = path.read_text()
-            for entry in self._REVIEW_CADENCE_ENTRIES:
-                with self.subTest(path=str(path), entry=entry):
-                    self.assertIn(entry, text)
-
-    def test_deprecated_1600_daily_review_is_forbidden(self) -> None:
-        for path in (
-            cron_coverage.ROOT / "crontab.txt",
-            cron_coverage.ROOT / "shared/crontab.txt",
-        ):
-            text = path.read_text()
-            for entry in self._FORBIDDEN_DEPRECATED_ENTRIES:
-                with self.subTest(path=str(path), entry=entry):
-                    self.assertNotIn(entry, text)
-
-    def test_night_calibration_wrapper_is_not_legacy(self) -> None:
-        wrapper = cron_coverage.ROOT / "shared/wrappers/job_ashare_night_calibration.sh"
-        text = wrapper.read_text()
-        self.assertNotIn("LEGACY / NOT ACTIVE", text)
+            for entrypoint in self._FORBIDDEN_RETIRED_ENTRYPOINTS:
+                with self.subTest(path=str(path), entrypoint=entrypoint):
+                    self.assertNotIn(entrypoint, text)
 
     def test_template_sync_includes_review_cadence(self) -> None:
         report = cron_coverage.check_cron_coverage(

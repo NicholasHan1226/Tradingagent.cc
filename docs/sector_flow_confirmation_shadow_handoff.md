@@ -5,7 +5,7 @@
 - 当前 replay worktree: `/private/tmp/tradingagent-sector-flow-v4-replay-ece93a1`
 - 当前 detached base: `ece93a1712851cb8aaee9469c125eecbfeb8357d`
 - 历史 source worktree: `/Users/nicholashan/Projects/Finance/.worktrees/tradingagent-sector-flow-v2`（branch `codex/ashare-sector-flow-v2`，base `9b243208a2584867df4431336d26af7cb9da1c6f`）；只作语义来源，不是当前候选身份。
-- 仅本地未提交候选；禁止 commit、push、deploy、生产/cron/账户/真实交易写入。
+- 该历史 replay 在交接当时仅为本地未提交候选；当时禁止 commit、push、deploy、生产/cron/账户/真实交易写入。当前发布事实以仓库根 [STATUS.md](../STATUS.md) 为准。
 - 冲突区保持零 diff：`shared/orchestrator.py`、`shared/wrappers/`、`shared/capital/`、`shared/risk/`、`shared/runtime_test/*sample_ops.py`、`shared/review/projection_generation.py` 和既有 forecast worktree。
 
 ## 改动面

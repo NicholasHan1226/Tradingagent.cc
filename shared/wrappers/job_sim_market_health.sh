@@ -2,9 +2,14 @@
 # Read-only simulated market health probe. Writes logs only; does not place or modify orders.
 set -euo pipefail
 
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${WRAPPER_DIR}/_common.sh"
+
 ROOT="${TRADINGAGENT_ROOT:-/opt/investment/tradingagent}"
 PYTHON_BIN="${TRADINGAGENT_PYTHON:-/opt/tradingagent/venv/bin/python3}"
 TIMEOUT="${TRADINGAGENT_SIM_HEALTH_TIMEOUT:-120}"
+export TRADINGAGENT_SIM_MARKETS="crypto,pm,us,cn_futures"
 LOG_DIR="${ROOT}/shared/logs/cron"
 LOCK_DIR="${ROOT}/shared/logs/locks"
 LOG_FILE="${LOG_DIR}/sim_market_health.log"
@@ -19,13 +24,6 @@ if ! flock -n 200; then
 fi
 
 cd "${ROOT}"
-
-if [ -r "${ROOT}/.env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "${ROOT}/.env"
-  set +a
-fi
 
 export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
 export PYTHONPATH="${ROOT}:${PYTHONPATH:-}"

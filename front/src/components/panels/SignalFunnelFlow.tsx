@@ -491,7 +491,7 @@ function getPipelineEvents(events: FunnelEvent[], queueEvents: FunnelEvent[]) {
 }
 
 function isOpportunityFlowEvent(event: FunnelEvent) {
-  return event.source === 'signal_queue' || event.source === 'opportunity_log'
+  return event.source === 'opportunity_log'
 }
 
 function getEventFlow(events: FunnelEvent[]): EventFlow | null {

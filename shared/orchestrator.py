@@ -25,6 +25,7 @@ from shared.capital.ashare_position_authority import (
 )
 from shared.execution import local_sim_ledger
 from shared.execution.execution_reality import ashare_execution_reality
+from shared.llm.schema import normalize_observation as normalize_llm_observation
 from shared.markets.base import MarketAdapter
 from shared.notify import email_sender
 
@@ -67,6 +68,21 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return result if result == result else default
     except (TypeError, ValueError):
         return default
+
+
+def _deterministic_decision_score(score: Any, default: float = 0.5) -> float:
+    """Return a deterministic rank score; never inspect LLM evidence."""
+
+    if not isinstance(score, dict):
+        return max(0.0, min(1.0, default))
+    value: Any = None
+    for key in ("rank_score", "combined", "composite"):
+        if score.get(key) is not None:
+            value = score.get(key)
+            break
+    if isinstance(value, dict):
+        value = value.get("score", value.get("value"))
+    return max(0.0, min(1.0, _safe_float(value, default)))
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -4459,26 +4475,23 @@ def run_shadow_loop(
             {"combined": 0.5, "market": mapped_market, "capital_layer": "shadow"},
         )
         parent = signal_audit_by_symbol.get(symbol, {}).get("audit_id", "")
-        debate = _safe_stage(
+        llm_result = _safe_stage(
             "adversarial.bull_bear_debate",
             errors,
             lambda symbol=mapped_symbol, score=score: deps.debate(symbol, score),
-            default={
-                "ts_code": mapped_symbol,
-                "belief_score": 0.5,
-                "bull_case": "degraded",
-                "bear_case": "degraded",
-            },
+            default=None,
         )
         stage_calls.append("adversarial.bull_bear_debate")
-        if not isinstance(debate, dict):
-            debate = {"belief_score": 0.5}
+        llm_evidence = normalize_llm_observation(llm_result, entity_id=mapped_symbol)
         decision_audit = _record_audit(
             deps,
             "decision",
             symbol,
             parent_audit_id=parent,
-            payload={"debate": debate, "capital_layer": "shadow"},
+            payload={
+                "llm_evidence_observation": llm_evidence,
+                "capital_layer": "shadow",
+            },
             metadata={"date": date, "account": account},
         )
         audits.append(decision_audit)
@@ -4497,11 +4510,12 @@ def run_shadow_loop(
                 }
             )
             continue
+        decision_score = _deterministic_decision_score(score)
         proposed_weight = _safe_stage(
             "portfolio.position_sizer",
             errors,
-            lambda debate=debate, volatility=volatility: deps.size_position(
-                _safe_float(debate.get("belief_score"), 0.5), volatility, regime
+            lambda decision_score=decision_score, volatility=volatility: (
+                deps.size_position(decision_score, volatility, regime)
             ),
             default=0.0,
         )
@@ -4589,7 +4603,11 @@ def run_shadow_loop(
         orders_for_portfolio.append(
             {
                 "ts_code": symbol,
-                "belief_score": _safe_float(debate.get("belief_score"), 0.5),
+                "rank_score": decision_score,
+                # Legacy constructor reads ``conviction``.  The value is the
+                # deterministic rank score, never an LLM output.
+                "conviction": decision_score,
+                "score_semantics": "uncalibrated_deterministic_rank_score",
                 "volatility": volatility,
                 "sector": str(score.get("sector", "unknown")),
                 "price": price,
@@ -5798,30 +5816,22 @@ def run_sim_loop(
                 ),
             )
         parent = signal_audit_by_symbol.get(symbol, {}).get("audit_id", "")
-        debate = _safe_stage(
+        llm_result = _safe_stage(
             "adversarial.bull_bear_debate",
             errors,
             lambda symbol=mapped_symbol, score=score: deps.debate(symbol, score),
-            default={
-                "ts_code": mapped_symbol,
-                "belief_score": 0.5,
-                "bull_case": "degraded",
-                "bear_case": "degraded",
-            },
+            default=None,
             capital_layer=capital_layer,
         )
         stage_calls.append("adversarial.bull_bear_debate")
-        if not isinstance(debate, dict):
-            debate = {"belief_score": 0.5}
-        debate["capital_layer"] = capital_layer
-        debate["account_type"] = account_type
+        llm_evidence = normalize_llm_observation(llm_result, entity_id=mapped_symbol)
         decision_audit = _record_audit(
             deps,
             "decision",
             symbol,
             parent_audit_id=parent,
             payload={
-                "debate": debate,
+                "llm_evidence_observation": llm_evidence,
                 "capital_layer": capital_layer,
                 "account_type": account_type,
             },
@@ -5852,14 +5862,16 @@ def run_sim_loop(
         candidate_decisions.setdefault(symbol, {"symbol": symbol})["price"] = round(
             price, 4
         )
-        candidate_decisions[symbol]["belief_score"] = round(
-            _safe_float(debate.get("belief_score"), 0.5), 4
+        decision_score = _deterministic_decision_score(score)
+        candidate_decisions[symbol]["rank_score"] = round(decision_score, 4)
+        candidate_decisions[symbol]["score_semantics"] = (
+            "uncalibrated_deterministic_rank_score"
         )
         proposed_weight = _safe_stage(
             "portfolio.position_sizer",
             errors,
-            lambda debate=debate, volatility=volatility: deps.size_position(
-                _safe_float(debate.get("belief_score"), 0.5), volatility, regime
+            lambda decision_score=decision_score, volatility=volatility: (
+                deps.size_position(decision_score, volatility, regime)
             ),
             default=0.0,
             capital_layer=capital_layer,
@@ -5978,7 +5990,11 @@ def run_sim_loop(
         orders_for_portfolio.append(
             {
                 "ts_code": symbol,
-                "belief_score": _safe_float(debate.get("belief_score"), 0.5),
+                "rank_score": decision_score,
+                # Legacy constructor reads ``conviction``.  This is the
+                # deterministic rank score and is not LLM-derived.
+                "conviction": decision_score,
+                "score_semantics": "uncalibrated_deterministic_rank_score",
                 "volatility": volatility,
                 "sector": str(score.get("sector", "unknown")),
                 "price": price,
@@ -6075,7 +6091,7 @@ def run_sim_loop(
             _safe_float(
                 scores_by_symbol.get(str(row.get("ts_code")), {}).get("combined"), 0.0
             ),
-            _safe_float(row.get("belief_score"), 0.0),
+            _safe_float(row.get("rank_score"), 0.0),
         ),
         reverse=True,
     )

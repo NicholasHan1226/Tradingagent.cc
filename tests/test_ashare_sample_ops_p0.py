@@ -23,12 +23,15 @@ from shared.review.sample_journal import (
     SampleJournal,
 )
 from shared.runtime_test.ashare_forward_label_ops import (
-    run_ashare_forward_label_backlog,
+    run_ashare_forward_label_backlog as _run_ashare_forward_label_backlog,
 )
 from shared.runtime_test.ashare_sample_ops import (
     AshareSampleOpsSafetyError,
     _build_maturity,
-    run_ashare_sample_ops,
+    run_ashare_sample_ops as _run_ashare_sample_ops,
+)
+from tests._ashare_validation_plan_fixture import (
+    build_non_production_ashare_validation_plan,
 )
 
 
@@ -38,6 +41,20 @@ AUTHORITY = {
     "authority_generation": 1,
     "execution_lineage_id": "ashare-sim-fresh-20260712-v1",
 }
+
+
+def run_ashare_forward_label_backlog(**kwargs):
+    """Test-only adapter makes the non-production plan explicit."""
+
+    kwargs.setdefault("validation_plan", build_non_production_ashare_validation_plan())
+    return _run_ashare_forward_label_backlog(**kwargs)
+
+
+def run_ashare_sample_ops(**kwargs):
+    """Test-only adapter makes the non-production plan explicit."""
+
+    kwargs.setdefault("validation_plan", build_non_production_ashare_validation_plan())
+    return _run_ashare_sample_ops(**kwargs)
 
 
 def _candidate(
@@ -378,14 +395,21 @@ def test_unknown_append_blocks_batch_but_task_owned_delta_advances_prefix(
     frozen = blocked.read_frozen(as_of="2026-07-20T16:00:00+08:00")
     blocked.append_prediction(_candidate("unknown", symbol="000002.SZ"))
     with pytest.raises(JournalConflictError, match="unknown journal append"):
-        blocked.materialize_label_batch(frozen, [_label_request("base")])
+        blocked.materialize_label_batch(
+            frozen,
+            [_label_request("base")],
+            validation_plan=build_non_production_ashare_validation_plan(),
+        )
     assert len(blocked.read_events()) == 2
 
     owned = SampleJournal(tmp_path / "owned.jsonl")
     owned.append_prediction(_candidate("base"))
     owned_frozen = owned.read_frozen(as_of="2026-07-20T16:00:00+08:00")
     report = owned.materialize_label_batch(
-        owned_frozen, [_label_request("base")], batch_size=100
+        owned_frozen,
+        [_label_request("base")],
+        batch_size=100,
+        validation_plan=build_non_production_ashare_validation_plan(),
     )
     assert report["task_owned_delta_event_count"] == 1
     assert report["append_batch_count"] == report["fsync_count"] == 1
@@ -504,7 +528,11 @@ def test_batch_crash_before_and_after_append_replays_without_duplicates(
 
     monkeypatch.setattr(before, "_append_many_unlocked", fail_before)
     with pytest.raises(OSError, match="before append"):
-        before.materialize_label_batch(frozen_before, [_label_request("before")])
+        before.materialize_label_batch(
+            frozen_before,
+            [_label_request("before")],
+            validation_plan=build_non_production_ashare_validation_plan(),
+        )
     assert len(before.read_events()) == 1
 
     after = SampleJournal(tmp_path / "after.jsonl")
@@ -518,12 +546,20 @@ def test_batch_crash_before_and_after_append_replays_without_duplicates(
 
     monkeypatch.setattr(after, "_append_many_unlocked", fail_after)
     with pytest.raises(OSError, match="after append"):
-        after.materialize_label_batch(frozen_after, [_label_request("after")])
+        after.materialize_label_batch(
+            frozen_after,
+            [_label_request("after")],
+            validation_plan=build_non_production_ashare_validation_plan(),
+        )
     assert len(after.read_events()) == 2
 
     replay = SampleJournal(after.path)
     replay_view = replay.read_frozen(as_of="2026-07-20T16:00:00+08:00")
-    replayed = replay.materialize_label_batch(replay_view, [_label_request("after")])
+    replayed = replay.materialize_label_batch(
+        replay_view,
+        [_label_request("after")],
+        validation_plan=build_non_production_ashare_validation_plan(),
+    )
     assert replayed["results"][0]["status"] == "idempotent"
     assert replayed["task_owned_delta_event_count"] == 0
     assert len(replay.read_events()) == 2
@@ -1033,10 +1069,13 @@ def test_new_batch_and_legacy_single_append_match_labels_kpi_and_maturity(
         as_of="2026-07-20T16:00:00+08:00",
         horizon_targets=_targets(),
         costs=_label_request("equivalent")["costs"],
+        validation_plan=build_non_production_ashare_validation_plan(),
     )
     modern_view = modern.read_frozen(as_of="2026-07-20T16:00:00+08:00")
     modern_result = modern.materialize_label_batch(
-        modern_view, [_label_request("equivalent")]
+        modern_view,
+        [_label_request("equivalent")],
+        validation_plan=build_non_production_ashare_validation_plan(),
     )
 
     assert modern_result["results"][0]["record"] == legacy_result["record"]

@@ -23,6 +23,10 @@ CANONICAL_AUTHORITY_GENERATION = 1
 CANONICAL_INITIAL_EQUITY_CNY = 50_000.0
 CANONICAL_SINGLE_NAME_MAX_PCT = 0.15
 CANONICAL_STOCK_GROSS_EXPOSURE_LIMIT_PCT = 0.90
+CANONICAL_ASHARE_MAX_POSITIONS = 8
+CANONICAL_ASHARE_BUY_LOT_SIZE_SHARES = 100
+CANONICAL_ASHARE_MINIMUM_ECONOMIC_ORDER_CNY = 2_000.0
+CANONICAL_ASHARE_NO_TRADE_BAND_CNY = 1_000.0
 CANONICAL_MARGIN_UTILIZATION_LIMIT_PCT = 0.50
 CANONICAL_DAILY_LOSS_PAUSE_PCT = 0.03
 CANONICAL_DRAWDOWN_TIGHTEN_PCT = 0.05
@@ -81,6 +85,10 @@ class MarketPolicy:
     single_name_max_pct: float | None
     stock_gross_exposure_limit_pct: float | None
     margin_utilization_limit_pct: float | None
+    max_positions: int | None
+    buy_lot_size_shares: int | None
+    minimum_economic_order_cny: float | None
+    no_trade_band_cny: float | None
     daily_loss_pause_pct: float
     drawdown_tighten_pct: float
     drawdown_tighten_risk_multiplier: float
@@ -184,6 +192,10 @@ class MarketPolicy:
         snmp: float | None = None
         gelp: float | None = None
         mulp: float | None = None
+        max_positions: int | None = None
+        buy_lot_size_shares: int | None = None
+        minimum_economic_order_cny: float | None = None
+        no_trade_band_cny: float | None = None
         if mk == "ashare":
             snmp = _number(
                 p.get("single_name_max_pct"),
@@ -201,7 +213,40 @@ class MarketPolicy:
                 raise MarketPolicyError("gross_exposure_limit_90pct")
             if p.get("margin_utilization_limit_pct") is not None:
                 raise MarketPolicyError("ashare_no_margin_pct")
+            portfolio = _mapping(p.get("portfolio"), field="portfolio")
+            max_positions = _integer(
+                portfolio.get("max_positions"), field="max_positions"
+            )
+            if max_positions != CANONICAL_ASHARE_MAX_POSITIONS:
+                raise MarketPolicyError("ashare_max_positions_8")
+            buy_lot_size_shares = _integer(
+                portfolio.get("buy_lot_size_shares"),
+                field="buy_lot_size_shares",
+            )
+            if buy_lot_size_shares != CANONICAL_ASHARE_BUY_LOT_SIZE_SHARES:
+                raise MarketPolicyError("ashare_buy_lot_size_100")
+            minimum_economic_order_cny = _number(
+                portfolio.get("minimum_economic_order_cny"),
+                field="minimum_economic_order_cny",
+                allow_zero=False,
+            )
+            if (
+                minimum_economic_order_cny
+                != CANONICAL_ASHARE_MINIMUM_ECONOMIC_ORDER_CNY
+            ):
+                raise MarketPolicyError("ashare_minimum_economic_order_2000")
+            no_trade_band_cny = _number(
+                portfolio.get("no_trade_band_cny"),
+                field="no_trade_band_cny",
+                allow_zero=False,
+            )
+            if no_trade_band_cny != CANONICAL_ASHARE_NO_TRADE_BAND_CNY:
+                raise MarketPolicyError("ashare_no_trade_band_1000")
+            if minimum_economic_order_cny < no_trade_band_cny:
+                raise MarketPolicyError("minimum_order_must_cover_no_trade_band")
         else:
+            if p.get("portfolio") is not None:
+                raise MarketPolicyError("cn_no_ashare_portfolio")
             mulp = _number(
                 p.get("margin_utilization_limit_pct"),
                 field="margin_utilization_limit_pct",
@@ -270,6 +315,10 @@ class MarketPolicy:
             single_name_max_pct=snmp,
             stock_gross_exposure_limit_pct=gelp,
             margin_utilization_limit_pct=mulp,
+            max_positions=max_positions,
+            buy_lot_size_shares=buy_lot_size_shares,
+            minimum_economic_order_cny=minimum_economic_order_cny,
+            no_trade_band_cny=no_trade_band_cny,
             daily_loss_pause_pct=dl,
             drawdown_tighten_pct=dt,
             drawdown_tighten_risk_multiplier=CANONICAL_DRAWDOWN_TIGHTEN_RISK_MULTIPLIER,
@@ -286,6 +335,13 @@ def _normalize_market(v: str) -> str:
 
 __all__ = [
     "ALLOWED_MARKETS",
+    "CANONICAL_ASHARE_BUY_LOT_SIZE_SHARES",
+    "CANONICAL_ASHARE_MAX_POSITIONS",
+    "CANONICAL_ASHARE_MINIMUM_ECONOMIC_ORDER_CNY",
+    "CANONICAL_ASHARE_NO_TRADE_BAND_CNY",
+    "CANONICAL_INITIAL_EQUITY_CNY",
+    "CANONICAL_SINGLE_NAME_MAX_PCT",
+    "CANONICAL_STOCK_GROSS_EXPOSURE_LIMIT_PCT",
     "MarketPolicy",
     "MarketPolicyError",
     "POLICY_DIR",

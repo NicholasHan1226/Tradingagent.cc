@@ -1830,6 +1830,117 @@ class SimLoopTest(unittest.TestCase):
         )
         self.assertFalse(shadow_broker.SHADOW_TRADES.exists())
 
+    def test_sim_loop_llm_output_cannot_change_paper_decision_or_order(self) -> None:
+        def run_with_llm_output(llm_output: object, suffix: str) -> dict[str, object]:
+            captured: dict[str, object] = {}
+            deps = self._deps()
+            deps.debate = lambda symbol, scores: llm_output
+
+            def size_position(
+                deterministic_score: float, volatility: float, regime: str
+            ) -> float:
+                captured["position_score"] = deterministic_score
+                return round(deterministic_score * 0.05, 6)
+
+            def risk_check(
+                order: dict[str, object], portfolio: dict[str, object]
+            ) -> dict[str, object]:
+                captured["risk_order"] = dict(order)
+                return {
+                    "approved": True,
+                    "adjusted_weight": order["weight"],
+                    "adjustments": [],
+                    "reasons": [],
+                }
+
+            def construct(
+                orders: list[dict[str, object]],
+                capital: float,
+                method: str,
+                regime: str,
+            ) -> dict[str, object]:
+                captured["portfolio_orders"] = [
+                    {
+                        key: value
+                        for key, value in order.items()
+                        if key != "risk_audit_id"
+                    }
+                    for order in orders
+                ]
+                return {
+                    "method": method,
+                    "capital": capital,
+                    "positions": [
+                        {
+                            "ts_code": order["ts_code"],
+                            "weight": order["weight"],
+                            "shares": 10,
+                            "amount": 100.0,
+                            "sector": "unit",
+                            "price": 10.0,
+                        }
+                        for order in orders
+                    ],
+                    "total_weight": sum(float(order["weight"]) for order in orders),
+                    "cash_weight": 0.95,
+                }
+
+            deps.size_position = size_position
+            deps.risk_check = risk_check
+            deps.construct = construct
+            before = len(self.executed_orders)
+            result = run_sim_loop(
+                StubSimAdapter(),
+                "20260713",
+                StubReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / f"signals_llm_{suffix}",
+            )
+            executed = self.executed_orders[before:]
+            captured["execution_orders"] = [
+                {
+                    key: order.get(key)
+                    for key in (
+                        "ts_code",
+                        "side",
+                        "quantity",
+                        "price",
+                        "capital_layer",
+                        "account_type",
+                    )
+                }
+                for order in executed
+            ]
+            captured["state"] = result["state"]
+            return captured
+
+        bearish = run_with_llm_output(
+            {
+                "belief_score": 0.0,
+                "target_weight": 0.0,
+                "bull_case": "provider bearish payload",
+            },
+            "bearish",
+        )
+        bullish = run_with_llm_output(
+            {
+                "belief_score": 1.0,
+                "target_weight": 1.0,
+                "bull_case": "provider bullish payload",
+            },
+            "bullish",
+        )
+
+        for snapshot in (bearish, bullish):
+            self.assertEqual(snapshot["state"], "ok")
+            self.assertAlmostEqual(float(snapshot["position_score"]), 0.72)
+            self.assertEqual(snapshot["risk_order"], bearish["risk_order"])
+            self.assertEqual(snapshot["portfolio_orders"], bearish["portfolio_orders"])
+            self.assertEqual(snapshot["execution_orders"], bearish["execution_orders"])
+            authority_paths = json.dumps(snapshot, ensure_ascii=False)
+            self.assertNotIn("provider bearish", authority_paths)
+            self.assertNotIn("provider bullish", authority_paths)
+
     def test_write_execution_signal_does_not_duplicate_successful_mini_webhook(
         self,
     ) -> None:

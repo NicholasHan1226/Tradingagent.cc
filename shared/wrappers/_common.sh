@@ -1,6 +1,62 @@
 #!/bin/bash
 set -euo pipefail
 
+timestamp() {
+    date '+%Y-%m-%dT%H:%M:%S%z'
+}
+
+# The fresh A-share architecture is not allowed to fall back to the retired
+# wrappers/readers.  This is intentionally not controlled by an environment
+# opt-in: reactivation requires an explicit reviewed code change and a fresh
+# retirement/cutover audit.
+block_retired_ashare_runtime() {
+    local job_name="${1:-legacy_ashare_job}"
+    printf '[%s] %s blocked=retired_ashare_runtime action=use_fresh_day_loop_or_fixture\n' \
+        "$(timestamp)" "${job_name}" >&2
+    return 78
+}
+
+# One shell authority for entrypoints that may no longer execute.  Keep this
+# list limited to A-share-only wrappers plus generic jobs whose whole legacy
+# behavior (old A-share readers or external email) is retired.  Mixed jobs with
+# useful Crypto/US/PM/CNFutures branches must filter A-share instead of joining
+# this list.
+retired_ashare_runtime_job_for() {
+    local entrypoint_name="${1##*/}"
+    local market_arg="${2:-}"
+    case "${entrypoint_name}" in
+        job_ashare_first_sample_alert.sh|job_ashare_health_check.sh|job_ashare_night_calibration.sh|job_ashare_opening_validation.sh|job_ashare_pre_open_validation.sh|job_ashare_preopen_dry_run.sh|job_ashare_research_evidence.sh|job_ashare_sample_ops.sh|job_ashare_sim_exec.sh)
+            printf '%s' "${entrypoint_name%.sh}"
+            ;;
+        job_premarket_signals.sh)
+            printf '%s' "job_premarket_signals_legacy_ashare_data"
+            ;;
+        health_check.sh|daily_review.sh|job_opening_acceptance.sh)
+            printf '%s' "${entrypoint_name%.sh}_mixed_legacy_data"
+            ;;
+        job_daily_brief_morning.sh|job_daily_brief_day.sh|job_daily_brief_night.sh|job_email_notify.sh)
+            printf '%s' "${entrypoint_name%.sh}_legacy_data_and_email"
+            ;;
+        job_market_capital_reconcile.sh)
+            if [[ "${market_arg}" == "ashare" ]]; then
+                printf '%s' "job_market_capital_reconcile_ashare"
+            fi
+            ;;
+    esac
+}
+
+_tradingagent_calling_entrypoint="${BASH_SOURCE[1]:-}"
+_tradingagent_retired_job="$(
+    retired_ashare_runtime_job_for \
+        "${_tradingagent_calling_entrypoint}" \
+        "${1:-}"
+)"
+if [[ -n "${_tradingagent_retired_job}" ]]; then
+    block_retired_ashare_runtime "${_tradingagent_retired_job}"
+    exit 78
+fi
+unset _tradingagent_calling_entrypoint _tradingagent_retired_job
+
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARED_DIR="$(cd "${WRAPPER_DIR}/.." && pwd)"
 
@@ -8,10 +64,6 @@ if [[ -z "${TRADINGAGENT_ENV_LOADER_READY:-}" ]]; then
     # shellcheck disable=SC1091
     source "${SHARED_DIR}/env_loader.sh"
 fi
-
-timestamp() {
-    date '+%Y-%m-%dT%H:%M:%S%z'
-}
 
 ensure_cron_paths() {
     mkdir -p "${TRADINGS_CRON_LOG_ROOT}" "${TRADINGS_STATE_ROOT}" "$(dirname "${TRADINGS_REPAIR_QUEUE}")"
@@ -27,32 +79,56 @@ record_level3_queue() {
         "$(timestamp)" "${job_name}" "${phase}" "${fallback_target}" "${exit_code}" >> "${TRADINGS_REPAIR_QUEUE}"
 }
 
-sharedsignals_source_gate() {
+sharedsignals_v1_runtime_gate() {
     local job_name="${1:-trading_job}"
     local phase="${2:-intraday}"
     local market="${3:-}"
-    local gate_enabled="${TRADINGAGENT_SOURCE_STATUS_GATE:-1}"
-    if [[ "${gate_enabled}" == "0" ]]; then
-        return 0
-    fi
-
     ensure_cron_paths
     local log_file="${TRADINGS_CRON_LOG_ROOT}/${job_name}.log"
-    local api_url="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
+    local -a required_config=(
+        SHAREDSIGNALS_API_URL
+        SHAREDSIGNALS_CATALOG_VERSION
+        SHAREDSIGNALS_ACCESS_POLICY_ID
+        SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON
+        SHAREDSIGNALS_SCHEMA_MAJOR
+        SHAREDSIGNALS_RUNTIME_TRANSPORT
+    )
+    local variable_name=""
+    for variable_name in "${required_config[@]}"; do
+        if [[ -z "${!variable_name:-}" ]]; then
+            printf '[%s] %s blocked=missing_v1_config variable=%s phase=%s market=%s\n' \
+                "$(timestamp)" "${job_name}" "${variable_name}" "${phase}" "${market}" \
+                | tee -a "${log_file}" >&2
+            return 78
+        fi
+    done
+
     local output=""
     local exit_code=0
     set +e
-    output="$(PYTHONPATH="${TRADINGAGENT_ROOT}" "${PYTHON_BIN}" -m shared.runtime_test.sharedsignals_source_status --base-url "${api_url}" --market "${market}" --require-not-red --json 2>&1)"
+    output="$(PYTHONPATH="${TRADINGAGENT_ROOT}" "${PYTHON_BIN}" -m shared.runtime_test.sharedsignals_v1_gate --market "${market}" --json 2>&1)"
     exit_code=$?
     set -e
     if (( exit_code != 0 )); then
-        printf '[%s] %s blocked=sharedsignals_source_status phase=%s market=%s detail=%q\n' \
-            "$(timestamp)" "${job_name}" "${phase}" "${market}" "${output}" >> "${log_file}"
-        return "${exit_code}"
+        printf '[%s] %s blocked=sharedsignals_v1_runtime_gate phase=%s market=%s detail=%q\n' \
+            "$(timestamp)" "${job_name}" "${phase}" "${market}" "${output}" \
+            | tee -a "${log_file}" >&2
+        return 78
     fi
-    printf '[%s] %s sharedsignals_source_status=%q phase=%s market=%s action=continue\n' \
+    printf '[%s] %s sharedsignals_v1_runtime_gate=%q phase=%s market=%s action=evidence_ready\n' \
         "$(timestamp)" "${job_name}" "${output}" "${phase}" "${market}" >> "${log_file}"
     return 0
+}
+
+block_unmigrated_sharedsignals_consumer() {
+    local job_name="${1:-trading_job}"
+    local market="${2:-}"
+    ensure_cron_paths
+    local log_file="${TRADINGS_CRON_LOG_ROOT}/${job_name}.log"
+    printf '[%s] %s blocked=legacy_consumer_retirement_pending market=%s action=migrate_business_reader_to_v1_before_reenable\n' \
+        "$(timestamp)" "${job_name}" "${market}" \
+        | tee -a "${log_file}" >&2
+    return 78
 }
 
 run_job() {

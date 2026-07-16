@@ -1,0 +1,224 @@
+version: 1
+entries:
+  - legacy_id: sharedsignals_implicit_environment_defaults
+    owner: TradingAgent
+    paths:
+      - .env.example
+      - shared/env_loader.sh
+    replacement: explicit_sharedsignals_v1_environment_configuration
+    compatibility_mode: retirement_pending_verification
+    sunset_phase: phase_3
+    remaining_consumers:
+      - installed_env_files_and_legacy_wrappers_unknown
+    deletion_preconditions:
+      - v1_explicit_configuration_readback_passes
+      - localhost_default_scan_is_zero_in_active_environment_entrypoints
+      - installed_runtime_environment_inventory_is_complete
+    rollback: restore_only_operator_supplied_v1_values_without_reintroducing_inferred_defaults
+  - legacy_id: ashare_classic_sharedsignals_client
+    owner: TradingAgent
+    paths:
+      - shared/data/shared_signals_api.py
+    replacement: shared/data/sharedsignals_v1.py
+    compatibility_mode: retirement_pending_verification
+    sunset_phase: phase_3
+    remaining_consumers:
+      - hard_blocked_ashare_wrappers_for_forensic_reference
+      - legacy_regression_tests_not_in_v1_candidate
+    deletion_preconditions:
+      - v1_parity_same_as_of_passes
+      - no_fallback_tests_pass
+      - active_reference_scan_is_zero
+      - ta_tests_do_not_import_or_execute_sibling_repositories
+    rollback: restore_the_last_verified_v1_client_candidate_not_the_provider_path
+  - legacy_id: ashare_direct_sqlite_reader
+    owner: TradingAgent
+    paths:
+      - shared/data/reader.py
+    replacement: shared/data/sharedsignals_v1.py
+    compatibility_mode: retirement_pending_verification
+    sunset_phase: phase_3
+    remaining_consumers:
+      - legacy_ashare_manual_research_not_in_v1_candidate
+      - cnfutures_and_non_ashare_active_compatibility
+      - legacy_regression_tests_not_in_v1_candidate
+    deletion_preconditions:
+      - ashare_v1_cutover_passes
+      - cnfutures_uses_explicit_non_ashare_compatibility
+      - sibling_sqlite_reference_scan_is_zero_for_ashare
+      - ta_tests_do_not_import_or_execute_sibling_repositories
+    rollback: stop_new_v1_runs_and_keep_existing_append_only_facts
+  - legacy_id: ashare_legacy_adapter_and_market_phases
+    owner: TradingAgent
+    paths:
+      - Ashare/adapter.py
+      - Ashare/research_evidence.py
+      - Ashare/market_phases/opening_auction.py
+      - Ashare/market_phases/closing_auction.py
+      - Ashare/t_plus_1.py
+    replacement: shared/runtime/composition.py
+    compatibility_mode: retirement_pending_verification
+    sunset_phase: phase_3
+    remaining_consumers:
+      - hard_blocked_ashare_wrappers
+      - legacy_runtime_tests_not_in_v1_candidate
+    deletion_preconditions:
+      - frozen_stage_ports_cover_each_required_behavior
+      - fixture_and_shadow_parity_passes
+      - active_reference_scan_is_zero
+      - rollback_bundle_is_preserved
+    rollback: restore_only_the_last_verified_compatibility_adapter_without_v1_data_fallback
+  - legacy_id: ashare_legacy_screening_and_research_stack
+    owner: TradingAgent
+    paths:
+      - shared/screening/condition_generator.py
+      - shared/screening/universe_filter.py
+      - shared/screening/fundamental_analyzer.py
+      - shared/screening/candidate_pool.py
+      - shared/screening/patrol.py
+      - shared/screening/six_dimension_scorer.py
+      - shared/screening/condition_monitor.py
+      - shared/markets/base_tools.py
+      - shared/research/multi_perspective.py
+    replacement: shared/universe/policy.py_and_shared/runtime/stage_ports.py
+    compatibility_mode: retirement_pending_verification
+    sunset_phase: phase_3
+    remaining_consumers:
+      - legacy_orchestrator_and_manual_research_not_in_v1_candidate
+      - non_ashare_active_compatibility_consumers
+    deletion_preconditions:
+      - mainboard_universe_parity_is_explained
+      - no_legacy_data_access_remains
+      - frozen_champion_ablation_and_shadow_comparison_pass
+      - active_reference_scan_is_zero
+    rollback: retain_read_only_legacy_research_outputs_without_restoring_execution_authority
+  - legacy_id: ashare_legacy_review_and_runtime_wrappers
+    owner: TradingAgent
+    paths:
+      - shared/review/pnl_summary.py
+      - shared/review/daily_review.py
+      - shared/review/benchmark.py
+      - shared/wrappers/run_sim.py
+      - shared/wrappers/tradings_cron_entry.py
+      - shared/execution/auto_pipeline.py
+      - shared/runtime_test/ashare_preopen_dry_run.py
+      - shared/runtime_test/sharedsignals_evidence_contract.py
+    replacement: shared/runtime/composition.py_and_shared/review/decision_ledger.py
+    compatibility_mode: timeboxed_read_only
+    sunset_phase: phase_3
+    remaining_consumers:
+      - forensic_manual_reference
+      - hard_blocked_ashare_wrappers
+      - legacy_runtime_tests_not_in_v1_candidate
+    deletion_preconditions:
+      - complete_paper_day_bundle_is_recoverable
+      - decision_and_label_readback_passes
+      - repository_wrappers_remain_executable_fail_closed
+      - no_installed_scheduler_depends_on_legacy_wrappers
+      - active_reference_scan_is_zero
+    rollback: preserve_local_read_only_reports_without_reenabling_legacy_runs
+  - legacy_id: ashare_legacy_belief_sizing_stack
+    owner: TradingAgent
+    paths:
+      - shared/adversarial/stress_test.py
+      - shared/adversarial/historical_analogy.py
+      - shared/portfolio/constructor.py
+      - shared/portfolio/position_sizer.py
+      - shared/portfolio/rebalancer.py
+      - shared/portfolio/exit_manager.py
+      - shared/markets/style_config.py
+      - shared/markets/style_runner.py
+      - shared/markets/evolution_engine.py
+      - shared/execution/decision_engine.py
+      - shared/execution/auto_pipeline.py
+      - shared/orchestrator.py
+    replacement: shared/strategy_router/shadow_router.py_and_shared/portfolio/small_account_optimizer.py
+    compatibility_mode: retirement_pending_verification
+    sunset_phase: phase_3
+    remaining_consumers:
+      - legacy_multi_market_orchestrator_not_in_v1_candidate
+      - legacy_runtime_and_regression_tests_not_in_v1_candidate
+      - forensic_read_only_reports
+    deletion_preconditions:
+      - v1_static_dataflow_guard_passes
+      - llm_evidence_ablation_remains_non_authoritative
+      - active_ashare_reference_scan_is_zero
+      - legacy_regression_rollback_bundle_is_preserved
+    rollback: preserve_read_only_legacy_reports_without_restoring_belief_sizing_authority
+  - legacy_id: ashare_legacy_opportunity_funnel
+    owner: TradingAgent
+    paths:
+      - shared/review/opportunity_funnel.py
+      - shared/runtime_test/sync_opportunity_funnel_events.py
+      - shared/wrappers/job_opportunity_funnel_sync.sh
+      - shared/review/opportunities/funnel_events.jsonl
+      - shared/logs/opportunities/funnel_events.jsonl
+      - signals/
+    replacement: shared/opportunity/ledger.py_then_future_read_only_projection
+    compatibility_mode: retirement_pending_verification
+    sunset_phase: phase_3
+    remaining_consumers:
+      - frontend_and_non_ashare_consumers_not_yet_proven_migrated
+      - installed_cron_state_not_readback_verified
+      - forensic_read_only_history
+    deletion_preconditions:
+      - frontend_and_non_ashare_consumers_use_read_only_opportunity_projection
+      - append_only_ledger_projection_parity_is_verified
+      - installed_cron_reference_count_is_zero
+      - active_reference_scan_is_zero
+    rollback: preserve_read_only_legacy_funnel_history_without_restoring_write_authority
+  - legacy_id: cnfutures_direct_data_compatibility
+    owner: TradingAgent
+    paths:
+      - CNFutures/adapter.py
+      - CNFutures/opening_validator.py
+      - CNFutures/replay.py
+      - shared/data/reader.py
+      - shared/runtime_test/cn_futures_live_check.py
+      - shared/runtime_test/market_health.py
+      - shared/runtime_test/opening_acceptance.py
+    replacement: shared/data/sharedsignals_v1.py
+    compatibility_mode: timeboxed_read_only
+    sunset_phase: phase_5
+    remaining_consumers:
+      - cnfutures_runtime
+    deletion_preconditions:
+      - cnfutures_dataset_contract_is_complete
+      - cnfutures_same_as_of_parity_passes
+      - runtime_no_fallback_test_passes
+    rollback: preserve_explicit_cnfutures_only_compatibility_without_ashare_fallback
+  - legacy_id: multi_market_legacy_sim_wrappers
+    owner: TradingAgent
+    paths:
+      - shared/wrappers/job_us_sim.sh
+      - shared/wrappers/job_crypto_sim.sh
+      - shared/wrappers/job_pm_sim.sh
+      - shared/wrappers/job_cn_futures_sim.sh
+      - shared/crontab.txt
+      - crontab.txt
+    replacement: shared/runtime_test/sharedsignals_v1_gate.py_then_market_specific_v1_compositions
+    compatibility_mode: retirement_pending_verification
+    sunset_phase: phase_5
+    remaining_consumers:
+      - migration_probe_only_not_scheduled
+      - installed_runtime_entries_not_readback_verified
+    deletion_preconditions:
+      - each_market_has_frozen_v1_dataset_contract
+      - each_market_business_reader_has_no_legacy_fallback
+      - installed_crontab_readback_has_no_blocked_wrapper_entries
+      - market_specific_simulation_parity_passes
+    rollback: keep_wrappers_unscheduled_and_fail_closed_without_restoring_old_endpoints
+  - legacy_id: historical_desktop_investment_runtime
+    owner: Nicholas
+    paths:
+      - ~/Desktop/Investment
+    replacement: Projects/Finance/TradingAgent
+    compatibility_mode: historical_read_only
+    sunset_phase: post_phase_3_audit
+    remaining_consumers:
+      - unknown_external_launchagents_and_historical_tools
+    deletion_preconditions:
+      - external_consumer_inventory_complete
+      - runtime_reference_scan_zero
+      - backup_and_rollback_evidence_captured
+    rollback: preserve_read_only_archive_until_external_dependency_audit_passes

@@ -475,6 +475,12 @@ class _ReplayState:
     unreconciled_fill_commit_ids: list[str] = field(default_factory=list)
 
 
+@dataclass
+class _AshareQuantityLot:
+    acquired_on: str
+    remaining_quantity: int
+
+
 # ---- legacy freeze verification ----
 
 
@@ -1283,6 +1289,16 @@ class MarketCapitalLedger:
                 r.remaining_amount_cny = (
                     r.remaining_cash_cny if mk == "ashare" else r.remaining_margin_cny
                 )
+                if (
+                    r.remaining_cash_cny <= 1e-9
+                    and r.remaining_exposure_cny <= 1e-9
+                    and r.remaining_margin_cny <= 1e-9
+                ):
+                    r.remaining_cash_cny = 0.0
+                    r.remaining_exposure_cny = 0.0
+                    r.remaining_margin_cny = 0.0
+                    r.remaining_amount_cny = 0.0
+                    r.terminal = True
 
             elif et == "realized_pnl":
                 rpnl += amt
@@ -1529,6 +1545,121 @@ class MarketCapitalLedger:
             unreconciled_fill_commit_ids=pending_fill_commit_ids,
         )
 
+    def _project_ashare_sellable_quantity_unlocked(
+        self,
+        events: list[dict[str, Any]],
+        replay: _ReplayState,
+        *,
+        as_of: datetime,
+    ) -> dict[str, int]:
+        """Rebuild A-share T+1 inventory from immutable fill/sell events."""
+
+        if self.policy.market != "ashare":
+            raise MarketCapitalLedgerError("ashare_sellable_projection_only_ashare")
+        as_of_cn = as_of.astimezone(CN_TZ)
+        lots_by_risk_unit: dict[str, list[_AshareQuantityLot]] = {}
+        previous_filled_at: datetime | None = None
+
+        for index, row in enumerate(events, 1):
+            event_type = str(row.get("event_type") or "")
+            if event_type not in {"fill_commit", "ashare_sell_commit"}:
+                continue
+            risk_unit = str(row.get("risk_unit_key") or "").strip().upper()
+            if not risk_unit:
+                raise MarketCapitalLedgerError(
+                    f"ashare_sellable_risk_unit_missing:{index}"
+                )
+            quantity_field = (
+                "actual_filled_quantity"
+                if event_type == "fill_commit"
+                else "actual_closed_quantity"
+            )
+            quantity = row.get(quantity_field)
+            if (
+                not isinstance(quantity, int)
+                or isinstance(quantity, bool)
+                or quantity <= 0
+            ):
+                raise MarketCapitalLedgerError(
+                    f"ashare_sellable_quantity_invalid:{index}"
+                )
+            side = str(row.get("side") or "").strip().lower()
+            expected_side = "buy" if event_type == "fill_commit" else "sell"
+            if side != expected_side:
+                raise MarketCapitalLedgerError(f"ashare_sellable_side_invalid:{index}")
+            filled_at = _parse_timestamp(
+                str(row.get("filled_at") or ""),
+                field="ashare_sellable_filled_at",
+            ).astimezone(CN_TZ)
+            if filled_at > as_of_cn:
+                raise MarketCapitalLedgerError(
+                    "ashare_sellable_as_of_before_ledger_fill"
+                )
+            if previous_filled_at is not None and filled_at < previous_filled_at:
+                raise MarketCapitalLedgerError(
+                    f"ashare_sellable_filled_at_regression:{index}"
+                )
+            previous_filled_at = filled_at
+            event_trade_date = filled_at.strftime("%Y%m%d")
+            lots = lots_by_risk_unit.setdefault(risk_unit, [])
+
+            if event_type == "fill_commit":
+                lots.append(
+                    _AshareQuantityLot(
+                        acquired_on=event_trade_date,
+                        remaining_quantity=quantity,
+                    )
+                )
+                continue
+
+            remaining_to_close = quantity
+            for lot in lots:
+                if remaining_to_close <= 0:
+                    break
+                if lot.acquired_on >= event_trade_date:
+                    continue
+                consumed = min(lot.remaining_quantity, remaining_to_close)
+                lot.remaining_quantity -= consumed
+                remaining_to_close -= consumed
+            if remaining_to_close:
+                raise MarketCapitalLedgerError(
+                    f"ashare_sellable_history_t1_violation:{index}"
+                )
+
+        projected_positions = {
+            risk_unit: sum(lot.remaining_quantity for lot in lots)
+            for risk_unit, lots in lots_by_risk_unit.items()
+            if sum(lot.remaining_quantity for lot in lots) > 0
+        }
+        latest_positions: dict[str, int] = {}
+        for raw_risk_unit, quantity in replay.latest_position_quantity.items():
+            risk_unit = str(raw_risk_unit or "").strip().upper()
+            if (
+                not risk_unit
+                or risk_unit in latest_positions
+                or not isinstance(quantity, int)
+                or isinstance(quantity, bool)
+                or quantity <= 0
+            ):
+                raise MarketCapitalLedgerError(
+                    "ashare_sellable_latest_position_invalid"
+                )
+            latest_positions[risk_unit] = quantity
+        if projected_positions != latest_positions:
+            raise MarketCapitalLedgerError(
+                "ashare_sellable_projection_position_mismatch"
+            )
+
+        query_trade_date = as_of_cn.strftime("%Y%m%d")
+        return {
+            risk_unit: sum(
+                lot.remaining_quantity
+                for lot in lots_by_risk_unit.get(risk_unit, [])
+                if lot.acquired_on < query_trade_date
+            )
+            for risk_unit in latest_positions
+        }
+
     # ---- public API ----
 
     def _dec(
@@ -1545,6 +1676,37 @@ class MarketCapitalLedger:
         with self._lock():
             r = self._replay(self._load_events_unlocked())
             return r.snapshot
+
+    def ashare_sellable_quantities(self, trade_date: str) -> dict[str, int]:
+        """Return T+1 sellable quantities for every currently held A-share.
+
+        ``trade_date`` is the exchange-local date (``YYYYMMDD`` or
+        ``YYYY-MM-DD``).  The projection remains derived exclusively from the
+        immutable fill/sell event stream and is cross-checked against the
+        ledger's current position quantities before it is returned.
+        """
+
+        self._ensure_init()
+        normalized_trade_date = _validate_trade_date(trade_date)
+        try:
+            query_date = datetime.strptime(normalized_trade_date, "%Y%m%d")
+        except ValueError as exc:
+            raise MarketCapitalLedgerError("invalid_trade_date") from exc
+        end_of_trade_date = query_date.replace(
+            hour=23,
+            minute=59,
+            second=59,
+            microsecond=999999,
+            tzinfo=CN_TZ,
+        )
+        with self._lock():
+            events = self._load_events_unlocked()
+            replay = self._replay(events)
+            return self._project_ashare_sellable_quantity_unlocked(
+                events,
+                replay,
+                as_of=end_of_trade_date,
+            )
 
     def _risk_metrics(
         self, events: list[dict], replay: _ReplayState, *, trade_date: str
@@ -3436,6 +3598,16 @@ class MarketCapitalLedger:
                 return self._ashare_sell_decision(
                     committed=False, reason="sell_quantity_exceeds_position"
                 )
+            sellable_quantity = self._project_ashare_sellable_quantity_unlocked(
+                events,
+                replay,
+                as_of=filled_at,
+            ).get(request.risk_unit_key.strip().upper(), 0)
+            if request.actual_closed_quantity > sellable_quantity:
+                return self._ashare_sell_decision(
+                    committed=False,
+                    reason="ashare_sell_quantity_exceeds_t1_sellable",
+                )
             current_exposure = float(
                 replay.latest_positions_mv.get(request.risk_unit_key, 0.0)
             )
@@ -3492,6 +3664,11 @@ class MarketCapitalLedger:
             }
             event["checksum"] = _compute_event_checksum(event)
             updated = self._replay([*events, event])
+            self._project_ashare_sellable_quantity_unlocked(
+                [*events, event],
+                updated,
+                as_of=filled_at,
+            )
             self._append_event_unlocked(event)
             self._write_projection_unlocked(updated.snapshot)
             return self._ashare_sell_decision(
@@ -3931,6 +4108,112 @@ class MarketCapitalLedger:
                 "real_trading_enabled": False,
             }
 
+    def verify_release(
+        self,
+        *,
+        reservation_id: str,
+        amount_cny: float,
+        reason: str,
+        reference_id: str,
+        expected_event_id: str,
+        authority_id: str,
+        authority_generation: int,
+        execution_lineage_id: str,
+        risk_unit_key: str,
+        require_terminal: bool = False,
+    ) -> dict:
+        """Verify one exact release event and its immediate post-event state."""
+
+        self._ensure_init()
+        reservation = str(reservation_id or "").strip()
+        release_reason = str(reason or "").strip()
+        reference = str(reference_id or "").strip()
+        event_id = str(expected_event_id or "").strip()
+        lineage = str(execution_lineage_id or "").strip()
+        risk_unit = str(risk_unit_key or "").strip()
+        try:
+            amount = _strict_number(amount_cny, field="amount", positive=True)
+        except MarketCapitalLedgerError:
+            return self._vf("invalid_amount")
+        if not all(
+            (reservation, release_reason, reference, event_id, lineage, risk_unit)
+        ):
+            return self._vf("release_identity_required")
+        if authority_id != self.policy.capital_authority_id:
+            return self._vf("aid_mismatch")
+        if authority_generation != self.policy.authority_generation:
+            return self._vf("gen_mismatch")
+        if not isinstance(require_terminal, bool):
+            return self._vf("invalid_terminal_requirement")
+        with self._lock():
+            events = self._load_events_unlocked()
+            self._replay(events)
+            matches = [
+                (index, row)
+                for index, row in enumerate(events)
+                if row.get("event_type") == "release"
+                and str(row.get("event_id") or "") == event_id
+            ]
+        if len(matches) != 1:
+            return self._vf("release_event_not_found")
+        event_index, row = matches[0]
+        if (
+            str(row.get("reservation_id") or "") != reservation
+            or str(row.get("reference_id") or "") != reference
+            or str(row.get("reason") or "") != release_reason
+            or not math.isclose(float(row.get("amount_cny", 0.0)), amount, abs_tol=1e-9)
+            or str(row.get("authority_id") or "") != authority_id
+            or row.get("authority_generation") != authority_generation
+            or str(row.get("execution_lineage_id") or "") != lineage
+            or str(row.get("risk_unit_key") or "") != risk_unit
+            or row.get("real_trading_enabled") is not False
+        ):
+            return self._vf("release_event_mismatch")
+        post_release = self._replay(events[: event_index + 1])
+        reservation_state = post_release.reservations.get(reservation)
+        if reservation_state is None or (
+            reservation_state.authority_id != authority_id
+            or reservation_state.authority_generation != authority_generation
+            or reservation_state.execution_lineage_id != lineage
+            or reservation_state.risk_unit_key != risk_unit
+        ):
+            return self._vf("release_reservation_identity_mismatch")
+        terminal = bool(
+            reservation_state.terminal
+            and reservation_state.remaining_cash_cny <= 1e-9
+            and reservation_state.remaining_exposure_cny <= 1e-9
+            and reservation_state.remaining_margin_cny <= 1e-9
+        )
+        if require_terminal and not terminal:
+            return self._vf("release_not_terminal")
+        return {
+            "verified": True,
+            "reason": "verified",
+            "event_id": event_id,
+            "reservation_id": reservation,
+            "reference_id": reference,
+            "amount_cny": round(amount, 6),
+            "release_reason": release_reason,
+            "authority_id": authority_id,
+            "authority_generation": authority_generation,
+            "execution_lineage_id": lineage,
+            "risk_unit_key": risk_unit,
+            "terminal_after_event": terminal,
+            "remaining_cash_cny_after_event": round(
+                reservation_state.remaining_cash_cny,
+                6,
+            ),
+            "remaining_exposure_cny_after_event": round(
+                reservation_state.remaining_exposure_cny,
+                6,
+            ),
+            "remaining_margin_cny_after_event": round(
+                reservation_state.remaining_margin_cny,
+                6,
+            ),
+            "real_trading_enabled": False,
+        }
+
     # ---- PnL ----
 
     def record_realized_pnl(
@@ -4011,6 +4294,78 @@ class MarketCapitalLedger:
             }
 
     # ---- verify reservation ----
+
+    def verify_reservation_identity(
+        self,
+        *,
+        reservation_id: str,
+        reference_id: str,
+        market: str,
+        authority_id: str,
+        authority_generation: int,
+        execution_lineage_id: str,
+        risk_unit_key: str,
+        expected_event_id: str,
+    ) -> dict:
+        """Verify immutable reservation identity even after full release."""
+
+        self._ensure_init()
+        rid = str(reservation_id or "").strip()
+        ref = str(reference_id or "").strip()
+        mk = _normalize_market(market)
+        lineage = str(execution_lineage_id or "").strip()
+        risk_unit = str(risk_unit_key or "").strip()
+        event_id = str(expected_event_id or "").strip()
+        if not all((rid, ref, lineage, risk_unit, event_id)):
+            return self._vf("reservation_identity_required")
+        if mk != self.policy.market:
+            return self._vf("market_mismatch")
+        if authority_id != self.policy.capital_authority_id:
+            return self._vf("aid_mismatch")
+        if authority_generation != self.policy.authority_generation:
+            return self._vf("gen_mismatch")
+        with self._lock():
+            replay = self._replay(self._load_events_unlocked())
+            reservation = replay.reservations.get(rid)
+        if reservation is None:
+            return self._vf("unknown")
+        if (
+            reservation.reference_id != ref
+            or reservation.market != mk
+            or reservation.authority_id != authority_id
+            or reservation.authority_generation != authority_generation
+            or reservation.execution_lineage_id != lineage
+            or reservation.risk_unit_key != risk_unit
+            or reservation.event_id != event_id
+        ):
+            return self._vf("reservation_identity_mismatch")
+        return {
+            "verified": True,
+            "reason": "verified",
+            "reservation_id": rid,
+            "reference_id": ref,
+            "market": mk,
+            "authority_id": authority_id,
+            "authority_generation": authority_generation,
+            "execution_lineage_id": lineage,
+            "lineage_sha256": reservation.lineage_sha256,
+            "risk_unit_key": risk_unit,
+            "event_id": event_id,
+            "original_cash_cny": round(reservation.original_cash_cny, 6),
+            "remaining_cash_cny": round(reservation.remaining_cash_cny, 6),
+            "original_exposure_cny": round(
+                reservation.original_exposure_cny,
+                6,
+            ),
+            "remaining_exposure_cny": round(
+                reservation.remaining_exposure_cny,
+                6,
+            ),
+            "original_margin_cny": round(reservation.original_margin_cny, 6),
+            "remaining_margin_cny": round(reservation.remaining_margin_cny, 6),
+            "terminal": reservation.terminal,
+            "real_trading_enabled": False,
+        }
 
     def verify_reservation(
         self,

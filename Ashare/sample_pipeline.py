@@ -1634,8 +1634,22 @@ def _execution_lineage(
     ):
         raise ValueError("execution_source_snapshot_sha256_invalid")
     evidence = _execution_evidence(record)
+    source_run_id = str(record.get("source_run_id") or "").strip()
+    source_input_bundle_sha256 = (
+        str(record.get("source_input_bundle_sha256") or "").strip().lower()
+    )
+    if source_input_bundle_sha256 and (
+        len(source_input_bundle_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in source_input_bundle_sha256
+        )
+    ):
+        raise ValueError("source_input_bundle_sha256_invalid")
     return {
         **dict(expected_authority),
+        "source_run_id": source_run_id or None,
+        "source_input_bundle_sha256": source_input_bundle_sha256 or None,
         "prediction_snapshot_id": prediction_snapshot_id,
         "as_of": as_of,
         "point_in_time_as_of": as_of,

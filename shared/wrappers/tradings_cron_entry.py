@@ -5,19 +5,87 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import shared.capital as market_capital
-from shared.capital.ashare_position_authority import (
+
+RETIRED_RUNTIME_JOBS = frozenset(
+    {
+        "job_premarket_signals",
+        "job_ashare_sim_exec",
+        "job_ashare_night_calibration",
+        "job_daily_brief_morning",
+        "job_daily_brief_day",
+        "job_daily_brief_night",
+        "job_email_notify",
+    }
+)
+
+
+def is_retired_runtime_job(job_name: Any) -> bool:
+    return str(job_name or "").strip() in RETIRED_RUNTIME_JOBS
+
+
+def _requested_cli_job(argv: list[str]) -> str:
+    """Mirror argparse's final-value rule before importing project modules.
+
+    Abbreviated spellings are recognized conservatively here so a retired job
+    cannot use them to reach imports.  The formal parser still rejects every
+    abbreviation with ``allow_abbrev=False``.
+    """
+
+    requested_job = ""
+    index = 0
+    while index < len(argv):
+        value = argv[index]
+        option, separator, inline_value = value.partition("=")
+        is_job_option = option == "--job" or (
+            option.startswith("--j") and "--job".startswith(option)
+        )
+        if not is_job_option:
+            index += 1
+            continue
+        if separator:
+            requested_job = inline_value
+        elif index + 1 < len(argv):
+            index += 1
+            requested_job = argv[index]
+        index += 1
+    return requested_job
+
+
+def _block_retired_runtime_job(job_name: str) -> None:
+    print(
+        "[retired-runtime] "
+        f"{job_name} blocked=retired_ashare_runtime "
+        "action=use_fresh_day_loop_or_fixture",
+        file=sys.stderr,
+    )
+    raise SystemExit(78)
+
+
+# A direct Python invocation bypasses every shell wrapper.  Stop known retired
+# jobs using stdlib-only code, before importing accounting, market, or email
+# modules that belong to the old runtime.
+if __name__ == "__main__":
+    _early_job = _requested_cli_job(sys.argv[1:])
+    if is_retired_runtime_job(_early_job):
+        _block_retired_runtime_job(_early_job)
+
+import shared.capital as market_capital  # noqa: E402
+from shared.capital.ashare_position_authority import (  # noqa: E402
     ashare_capital_state_audit,
     build_ashare_capital_position_authority_view,
     reconcile_ashare_position_sources,
 )
-from shared.markets.sim_capital import DEFAULT_SIM_CAPITAL_CNY, default_sim_capital
-from shared.notify.email_sender import send_email, send_template_email
-from shared.notify.email_templates import CHANNELS, wrap_html
+from shared.markets.sim_capital import (  # noqa: E402
+    DEFAULT_SIM_CAPITAL_CNY,
+    default_sim_capital,
+)
+from shared.notify.email_sender import send_email, send_template_email  # noqa: E402
+from shared.notify.email_templates import CHANNELS, wrap_html  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "shared"
@@ -1638,7 +1706,7 @@ _register_default_adapters()
 def run_all_market_trading_signals() -> dict[str, Any]:
     results = [
         run_shadow_orchestrator(f"job_trading_signals_{market.lower()}", market)
-        for market in ("Ashare", "Crypto", "US", "PM")
+        for market in ("Crypto", "US", "PM")
     ]
     payload = {
         "job": "job_trading_signals",
@@ -2928,9 +2996,12 @@ JOB_HANDLERS: dict[str, Any] = {
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--job", required=True)
     args = parser.parse_args()
+
+    if is_retired_runtime_job(args.job):
+        _block_retired_runtime_job(args.job)
 
     if args.job in JOB_HANDLERS:
         payload = JOB_HANDLERS[args.job]()

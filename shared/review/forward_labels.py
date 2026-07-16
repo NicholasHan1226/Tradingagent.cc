@@ -13,6 +13,9 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from typing import Any, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
+
+from shared.models.lifecycle import ValidationPlan
 
 
 CANONICAL_HORIZONS = ("m30", "m60", "close", "1d", "3d", "5d")
@@ -66,6 +69,10 @@ _LIVE_BOOLEAN_FIELDS = (
     "direct_execution_enabled",
     "is_live",
 )
+
+_ASHARE_MARKETS = frozenset({"ashare", "a_share", "a-share", "a股", "cn", "china"})
+_ASIA_SHANGHAI = ZoneInfo("Asia/Shanghai")
+_ASHARE_SESSION_HORIZONS = ("close", "1d", "3d", "5d")
 
 
 def canonical_horizon(value: Any) -> str:
@@ -897,6 +904,99 @@ def _normalized_targets(
     return targets
 
 
+def _ashare_authority_targets(
+    prediction_at: datetime,
+    validation_plan: Optional[ValidationPlan],
+    horizon_targets: Optional[Mapping[str, Any]],
+) -> tuple[dict[str, datetime], dict[str, str]]:
+    """Derive A-share daily targets from one verified frozen calendar plan.
+
+    Caller-provided daily targets are assertions only: they must equal the
+    calendar-derived instants and can never replace the authority calculation.
+    """
+
+    if not isinstance(validation_plan, ValidationPlan):
+        raise ValueError("ashare_validation_plan_required")
+    if validation_plan.market.strip().lower() not in _ASHARE_MARKETS:
+        raise ValueError("ashare_validation_plan_market_mismatch")
+    if prediction_at.tzinfo is None or prediction_at.utcoffset() is None:
+        raise ValueError("ashare_prediction_at_timezone_required")
+    if validation_plan.frozen_at > prediction_at:
+        raise ValueError("ashare_validation_plan_frozen_after_prediction")
+
+    calendar = validation_plan.trading_session_calendar
+    verification = validation_plan.trading_session_calendar_verification
+    if calendar is None or verification is None:
+        raise ValueError("ashare_verified_trading_session_calendar_required")
+    if (
+        verification.accepted is not True
+        or verification.calendar_sha256 != calendar.calendar_sha256
+        or verification.source_receipt_id != calendar.source_receipt_id
+        or verification.source_receipt_sha256 != calendar.source_receipt_sha256
+        or verification.frozen_at != validation_plan.frozen_at
+        or verification.verified_at > validation_plan.frozen_at
+        or calendar.available_at > validation_plan.frozen_at
+    ):
+        raise ValueError("ashare_calendar_authority_binding_invalid")
+
+    prediction_local = prediction_at.astimezone(_ASIA_SHANGHAI)
+    prediction_date = prediction_local.date()
+    sessions = calendar.sessions
+    future_sessions = [session for session in sessions if session > prediction_date]
+    if len(future_sessions) < 5:
+        raise ValueError("ashare_calendar_coverage_insufficient_for_5d_label")
+
+    same_day_close = datetime(
+        prediction_date.year,
+        prediction_date.month,
+        prediction_date.day,
+        15,
+        tzinfo=_ASIA_SHANGHAI,
+    )
+    close_session = (
+        prediction_date
+        if prediction_date in sessions and prediction_local < same_day_close
+        else future_sessions[0]
+    )
+
+    def session_close(session: Any) -> datetime:
+        return datetime(
+            session.year,
+            session.month,
+            session.day,
+            15,
+            tzinfo=_ASIA_SHANGHAI,
+        )
+
+    authoritative = {
+        "close": session_close(close_session),
+        "1d": session_close(future_sessions[0]),
+        "3d": session_close(future_sessions[2]),
+        "5d": session_close(future_sessions[4]),
+    }
+    if horizon_targets is not None:
+        for raw_name, raw_target in horizon_targets.items():
+            name = canonical_horizon(raw_name)
+            if name not in authoritative:
+                continue
+            parsed = _parse_datetime(raw_target)
+            if parsed is None or parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError("ashare_horizon_target_timezone_required:%s" % name)
+            if parsed.astimezone(timezone.utc) != authoritative[name].astimezone(
+                timezone.utc
+            ):
+                raise ValueError("ashare_horizon_target_authority_mismatch:%s" % name)
+
+    proof_binding = {
+        "validation_plan_sha256": validation_plan.sha256(),
+        "trading_session_calendar_sha256": calendar.calendar_sha256,
+        "trading_session_calendar_verification_proof_sha256": (
+            verification.proof_sha256
+        ),
+    }
+    return authoritative, proof_binding
+
+
 def _direction_multiplier(value: Any) -> int:
     normalized = str(value or "long").strip().lower()
     if normalized in {"long", "buy", "bullish", "up", "1", "+1"}:
@@ -1267,11 +1367,14 @@ def materialize_forward_labels(
     as_of: Any,
     horizon_targets: Optional[Mapping[str, Any]] = None,
     costs: Optional[Mapping[str, Any]] = None,
+    validation_plan: Optional[ValidationPlan] = None,
 ) -> dict[str, Any]:
     """Materialize only labels due at ``as_of`` without looking into the future.
 
-    Requires versioned cost evidence.  Fails closed with
-    ``rejected_missing_cost_evidence`` when no cost model version is present.
+    Requires versioned cost evidence.  A-share close/day horizons are derived
+    from a verified frozen ``ValidationPlan`` calendar; caller targets can
+    only assert the same instants.  Missing target-session bars remain missing
+    evidence and never shift the target to a later session.
     """
 
     if not isinstance(snapshot, Mapping):
@@ -1288,7 +1391,17 @@ def materialize_forward_labels(
     except TypeError:
         raise ValueError("as_of and prediction_at must use compatible timezones")
 
+    market = str(snapshot.get("market") or "").strip().lower()
+    authority_binding: Optional[dict[str, str]] = None
+    authoritative_session_targets: dict[str, datetime] = {}
+    if market in _ASHARE_MARKETS:
+        authoritative_session_targets, authority_binding = _ashare_authority_targets(
+            prediction_at,
+            validation_plan,
+            horizon_targets,
+        )
     targets = _normalized_targets(prediction_at, horizon_targets)
+    targets.update(authoritative_session_targets)
     entry_price = _as_positive_float(snapshot.get("reference_price"))
     multiplier = _direction_multiplier(snapshot.get("direction"))
 
@@ -1410,10 +1523,17 @@ def materialize_forward_labels(
                     # A valid earlier point belongs to an earlier horizon and
                     # is not evidence for this one.
                     continue
-                in_window = bool(
-                    canonical_event_at <= current_as_of
-                    and canonical_event_at <= latest_eligible
-                )
+                if market in _ASHARE_MARKETS and name in _ASHARE_SESSION_HORIZONS:
+                    in_window = bool(
+                        canonical_event_at <= current_as_of
+                        and canonical_event_at.astimezone(timezone.utc)
+                        == target.astimezone(timezone.utc)
+                    )
+                else:
+                    in_window = bool(
+                        canonical_event_at <= current_as_of
+                        and canonical_event_at <= latest_eligible
+                    )
             except TypeError:
                 in_window = False
             if not in_window:
@@ -1490,6 +1610,10 @@ def materialize_forward_labels(
         }
 
     result["labels_as_of"] = _iso(current_as_of)
+    if authority_binding is not None:
+        for label in labels.values():
+            label.update(authority_binding)
+        result["forward_label_authority_binding"] = authority_binding
     result["labels"] = labels
     result["label_aliases"] = dict(HORIZON_ALIASES)
     result["real_trading_enabled"] = False

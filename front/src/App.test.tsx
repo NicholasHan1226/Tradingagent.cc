@@ -25,7 +25,7 @@ describe('App navigation and result-first dashboard', () => {
   it('uses six result-and-process destinations without decision pages', () => {
     render(<App />)
 
-    expect(document.querySelector('.hyper-shell')).toHaveAttribute('data-build', '20260711-explicit-market-attribution')
+    expect(document.querySelector('.hyper-shell')).toHaveAttribute('data-build', '20260716-today-paper-run-candidate')
     const navigation = screen.getByRole('navigation', { name: '主导航' })
     expect(within(navigation).getAllByRole('button')).toHaveLength(6)
     expect(within(navigation).getByRole('button', { name: '总览' })).toBeInTheDocument()
@@ -774,7 +774,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
   })
 
-  it('renders snapshot funnel events as a real trading flow', async () => {
+  it('renders queue projections and completed results without requiring a live opportunity source', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
@@ -846,7 +846,10 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('风控').length).toBeGreaterThan(0)
     expect(screen.getAllByText('模拟执行').length).toBeGreaterThan(0)
     expect(screen.getAllByText('结果写回').length).toBeGreaterThan(0)
-    expect(screen.getByText(/1 条安全拦截/)).toBeInTheDocument()
+    const process = screen.getByLabelText('自动化过程')
+    expect(process).toHaveTextContent('2 条过程进入')
+    expect(process).not.toHaveTextContent('实时运行')
+    expect(process).not.toHaveTextContent('1 条安全拦截')
     expect(screen.getByLabelText('最近管道事件')).toHaveTextContent('600519.SH')
   })
 
@@ -913,5 +916,58 @@ describe('App navigation and result-first dashboard', () => {
 
     expect(screen.getByRole('dialog', { name: '终端命令面板' })).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: '搜索终端命令' })).toHaveFocus()
+  })
+
+  it('renders the optional paper-day RunBundle as a non-production read-only summary', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({
+        mode: 'simulated',
+        generatedAt: '2026-07-16T08:00:00.000Z',
+        domains: {
+          performance: { status: 'empty', updatedAt: '2026-07-16T08:00:00.000Z' },
+          signals: { status: 'empty', updatedAt: '2026-07-16T08:00:00.000Z' },
+          holdings: { status: 'empty', updatedAt: '2026-07-16T08:00:00.000Z' },
+          decisions: { status: 'ready', updatedAt: '2026-07-16T08:00:00.000Z' },
+          risk: { status: 'ready', updatedAt: '2026-07-16T08:00:00.000Z' },
+        },
+        performance: [],
+        holdings: [],
+        signals: [],
+        funnelEvents: [],
+        paperDayRun: {
+          environment: 'local_candidate',
+          productionVerified: false,
+          contractId: 'tradingagent.paper_day_loop.v1',
+          runId: 'ashare-paper-day-fixture',
+          tradeDate: '2026-07-16',
+          status: 'completed',
+          currentStage: 'reported',
+          completedStageCount: 9,
+          totalStageCount: 9,
+          dataEvidenceState: 'ready',
+          simulationExecutionState: 'eligible',
+          candidateCount: 2,
+          decisionCount: 1,
+          simulatedOrderCount: 1,
+          simulatedFillCount: 1,
+          noTradeReasons: [],
+          riskBlocks: [],
+          championManifestSha256: 'c'.repeat(64),
+          llmEvidenceState: 'evidence_only',
+          source: 'shared/runtime/run_bundles/latest.json',
+        },
+        sourceRefs: tradingAgentReadModelSources,
+      }), { status: 200 })),
+    )
+
+    render(<App />)
+
+    const panel = await screen.findByRole('region', { name: '今日自动模拟盘状态' })
+    expect(panel).toHaveTextContent('本地候选 · 非生产')
+    expect(panel).toHaveTextContent('候选 2')
+    expect(panel).toHaveTextContent('模拟成交 1')
+    expect(panel).toHaveTextContent('LLM 仅作证据')
+    expect(panel).not.toHaveTextContent('生产已验证')
   })
 })

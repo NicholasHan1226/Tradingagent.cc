@@ -177,6 +177,54 @@ def test_checksum_envelope_fields_are_all_mandatory() -> None:
         }
 
 
+def test_explicit_current_authority_accepts_rotated_generation_and_lineage() -> None:
+    rotated_lineage = "ashare-sim-rotated-generation-2"
+    state = _capital_state(
+        authority_generation=2,
+        execution_lineage_id=rotated_lineage,
+    )
+    checksum = canonical_sha256(
+        {
+            "authority_id": "ashare-capital-v1",
+            "authority_generation": 2,
+            "execution_lineage_id": rotated_lineage,
+            "positions": [],
+            "trade_date": TRADE_DATE,
+        }
+    )
+    state.update(event_checksum=checksum, checksum_last=checksum)
+
+    result = build_ashare_capital_position_authority_view(
+        state,
+        TRADE_DATE,
+        current_authority_scope={
+            "capital_authority_id": "ashare-capital-v1",
+            "authority_generation": 2,
+            "execution_lineage_id": rotated_lineage,
+        },
+    )
+
+    assert result["status"] == "verified"
+    assert result["authority_generation"] == 2
+    assert result["execution_lineage_id"] == rotated_lineage
+
+
+def test_explicit_current_authority_scope_never_fills_missing_lineage() -> None:
+    result = build_ashare_capital_position_authority_view(
+        _capital_state(),
+        TRADE_DATE,
+        current_authority_scope={
+            "capital_authority_id": "ashare-capital-v1",
+            "authority_generation": 1,
+        },
+    )
+
+    assert result == {
+        "status": "blocked",
+        "reason": "ashare_current_authority_scope_invalid",
+    }
+
+
 def test_checksum_status_last_and_event_count_must_be_consistent() -> None:
     cases = (
         {"checksum_status": "unknown"},

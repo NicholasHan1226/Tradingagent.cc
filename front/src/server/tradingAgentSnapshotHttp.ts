@@ -28,6 +28,8 @@ export function createSnapshotRequestHandler({
   workspaceRoot = process.env.FINANCE_WORKSPACE_ROOT ?? defaultWorkspaceRoot,
   readSnapshot = () => readTradingAgentSnapshot({ workspaceRoot }),
 }: SnapshotHttpServerOptions = {}) {
+  assertRestrictedCorsOrigins(allowedOrigins)
+
   return async function handleSnapshotRequest(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const origin = req.headers.origin
@@ -85,13 +87,19 @@ function applyCors({
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
 
   if (!origin) return true
-  if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+  if (allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin)
     return true
   }
 
   sendJson(res, req.method === 'OPTIONS' ? 204 : 403, req.method === 'OPTIONS' ? null : { error: 'Origin not allowed' })
   return false
+}
+
+function assertRestrictedCorsOrigins(allowedOrigins: string[]) {
+  if (allowedOrigins.includes('*')) {
+    throw new Error('TRADING_AGENT_SNAPSHOT_CORS_ORIGINS must not contain wildcard origins')
+  }
 }
 
 function isAuthorized(req: IncomingMessage, apiToken: string | undefined) {
@@ -113,8 +121,16 @@ function parseList(value: string | undefined) {
     .filter(Boolean)
 }
 
+export function resolveSnapshotListenHost(value: string | undefined) {
+  const host = (value ?? '127.0.0.1').trim()
+  if (!['127.0.0.1', '::1', 'localhost'].includes(host)) {
+    throw new Error('TRADING_AGENT_SNAPSHOT_HOST must be a loopback host')
+  }
+  return host
+}
+
 if (isMainModule()) {
-  const host = process.env.TRADING_AGENT_SNAPSHOT_HOST ?? '127.0.0.1'
+  const host = resolveSnapshotListenHost(process.env.TRADING_AGENT_SNAPSHOT_HOST)
   const port = Number(process.env.TRADING_AGENT_SNAPSHOT_PORT ?? 8787)
   const server = createTradingAgentSnapshotHttpServer()
   server.listen(port, host, () => {

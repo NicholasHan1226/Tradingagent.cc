@@ -12,14 +12,14 @@ export type TradingAgentCapability = {
 export const tradingAgentCapabilities: TradingAgentCapability[] = [
   {
     id: 'signals',
-    display: '自动运行过程',
-    status: 'ready',
+    display: '兼容队列只读投影',
+    status: 'partial',
     dashboardSurface: '过程页 / 收益图事件',
     readableSources: [
       'signals/{pending,claimed,running}/*.json',
       'signals/{filled,cancelled,expired,failed,partial}/*.json',
     ],
-    note: '信号队列已有真实文件，可只读展示自动过程、状态、阶段与证据；claimed/running 会作为运行中过程显示。',
+    note: 'signals/ 是迁移期兼容队列；只作非A股法证投影。未绑定V1 authority的A股 pending 行不进入当前状态，未来由OpportunityLedger只读投影替代。',
   },
   {
     id: 'positions',

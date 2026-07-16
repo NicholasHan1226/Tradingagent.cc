@@ -21,6 +21,7 @@ from typing import Any
 from shared.execution.execution_reality import (
     ASHARE_CANCEL_POLICY_VERSION,
     ExecutionRealityModel,
+    ashare_sell_quantity_rejection_reason,
     ashare_execution_reality,
 )
 from shared.execution.real_trading_gate import validate_real_trading_enabled
@@ -828,6 +829,18 @@ class SimExecutionEngine:
             sellable_qty = _safe_float(snapshot.get("sellable_qty"), -1.0)
             if sellable_qty >= 0 and order.quantity > sellable_qty + 1e-12:
                 return "insufficient_sellable_qty_t1"
+            if self.market == "ashare":
+                current_holdings = self.positions.get(
+                    order.symbol,
+                    SimPosition(symbol=order.symbol),
+                ).current_holdings
+                sell_quantity_rejection = ashare_sell_quantity_rejection_reason(
+                    current_shares=current_holdings,
+                    sellable_shares=sellable_qty,
+                    requested_shares=order.quantity,
+                )
+                if sell_quantity_rejection is not None:
+                    return sell_quantity_rejection
 
         lower_limit = _safe_float(snapshot.get("lower_limit"), 0.0)
         upper_limit = _safe_float(snapshot.get("upper_limit"), 0.0)

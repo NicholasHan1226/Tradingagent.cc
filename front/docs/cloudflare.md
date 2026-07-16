@@ -1,5 +1,13 @@
 # TradingAgent Front Cloudflare Deployment
 
+> **Historical migration record, not current authorization.** TradingAgent is a
+> Nicholas-only internal system. `tradingagent.cc` may remain the convenient
+> remote entry only when Cloudflare Access (or an equivalent single-user policy)
+> denies anonymous users before the page and same-origin snapshot route. The
+> API must stay on `127.0.0.1` and must not have an anonymously reachable public
+> hostname. Historical “Done” statements below do not prove the current DNS,
+> Tunnel, Access policy, service or route state; all require fresh readback.
+
 This document records the Cloudflare migration shape for the TradingAgent front
 layer. It is a deployment preparation note, not a trading runtime change.
 

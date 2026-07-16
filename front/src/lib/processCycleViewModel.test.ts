@@ -26,7 +26,15 @@ describe('process cycle view model', () => {
   it('does not infer missing stages or leak raw source codes', () => {
     const [row] = createProcessCycles([events[1]])
     expect(row.evidence).toBe('1/5 阶段')
-    expect(row.source).toBe('信号队列')
+    expect(row.source).toBe('队列状态投影')
     expect(JSON.stringify(row)).not.toContain('signal_queue')
+  })
+
+  it('keeps retired funnel rows visibly frozen instead of presenting them as current events', () => {
+    const [row] = createProcessCycles([
+      { ...events[0], source: 'legacy_frozen_opportunity_log' },
+    ])
+
+    expect(row.source).toBe('旧漏斗冻结历史')
   })
 })

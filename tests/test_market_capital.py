@@ -991,6 +991,22 @@ class TestPolicyBasics:
     def test_no_account_epoch(self) -> None:
         assert not hasattr(MarketPolicy.load("ashare"), "account_epoch")
 
+    def test_ashare_small_account_execution_policy_has_one_authority(self) -> None:
+        policy = MarketPolicy.load("ashare")
+
+        assert policy.max_positions == 8
+        assert policy.buy_lot_size_shares == 100
+        assert policy.minimum_economic_order_cny == 2_000.0
+        assert policy.no_trade_band_cny == 1_000.0
+
+    def test_cn_futures_cannot_inherit_ashare_small_account_fields(self) -> None:
+        policy = MarketPolicy.load("cn_futures")
+
+        assert policy.max_positions is None
+        assert policy.buy_lot_size_shares is None
+        assert policy.minimum_economic_order_cny is None
+        assert policy.no_trade_band_cny is None
+
 
 class TestNoAutoBootstrap:
     def test_construct_no_create(self, tmp_path: Path) -> None:

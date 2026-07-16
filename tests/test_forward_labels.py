@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from shared.models.lifecycle import (
+    TradingSessionCalendarAuthority,
+    TradingSessionCalendarAuthorityVerification,
+    ValidationPlan,
+    build_validation_plan,
+)
 from shared.review.forward_labels import (
     CANONICAL_HORIZONS,
     PIT_TIMESTAMP_FIELDS,
@@ -12,7 +18,7 @@ from shared.review.forward_labels import (
     canonicalize_evidence_record,
     canonical_horizon,
     evidence_envelope_from_record,
-    materialize_forward_labels,
+    materialize_forward_labels as _materialize_forward_labels,
     validate_evidence_envelope,
     validate_point_in_time_lineage,
     _stable_label_update_id,
@@ -20,6 +26,123 @@ from shared.review.forward_labels import (
 
 
 UTC = timezone.utc
+
+
+def _calendar_sessions() -> tuple[date, ...]:
+    current = date(2024, 12, 2)
+    end = date(2026, 7, 31)
+    closed_dates = {
+        date(2025, 1, 1),
+        # Explicit fixture holiday proves targets are session-based, not weekdays.
+        date(2026, 7, 20),
+    }
+    sessions: list[date] = []
+    while current <= end:
+        if current.weekday() < 5 and current not in closed_dates:
+            sessions.append(current)
+        current += timedelta(days=1)
+    return tuple(sessions)
+
+
+def _calendar_authority() -> TradingSessionCalendarAuthority:
+    return TradingSessionCalendarAuthority(
+        market="ashare",
+        calendar_id="sse-szse-joint-trading-sessions",
+        calendar_version="fixture-through-20260731-v1",
+        source_dataset_id="fixture.ashare.trade_calendar",
+        source_receipt_id="receipt-fixture-forward-label-calendar-001",
+        source_receipt_sha256="e" * 64,
+        available_at=datetime(2025, 4, 1, tzinfo=UTC),
+        sessions=_calendar_sessions(),
+    )
+
+
+class _FixtureCalendarAuthorityVerifier:
+    verifier_id = "fixture-forward-label-calendar-verifier"
+    verifier_version = "1.0.0"
+
+    def verify(
+        self,
+        calendar: TradingSessionCalendarAuthority,
+        *,
+        frozen_at: datetime,
+    ) -> TradingSessionCalendarAuthorityVerification:
+        return TradingSessionCalendarAuthorityVerification(
+            accepted=True,
+            verifier_id=self.verifier_id,
+            verifier_version=self.verifier_version,
+            proof_sha256="f" * 64,
+            verified_at=frozen_at - timedelta(minutes=1),
+            frozen_at=frozen_at,
+            calendar_sha256=calendar.calendar_sha256,
+            source_receipt_id=calendar.source_receipt_id,
+            source_receipt_sha256=calendar.source_receipt_sha256,
+        )
+
+
+def _validation_plan(
+    *,
+    frozen_at: datetime = datetime(2025, 4, 2, tzinfo=UTC),
+) -> ValidationPlan:
+    return build_validation_plan(
+        train_start=date(2024, 12, 2),
+        train_end=date(2024, 12, 31),
+        validation_start=date(2025, 1, 9),
+        validation_end=date(2025, 2, 28),
+        test_start=date(2025, 3, 10),
+        test_end=date(2025, 3, 31),
+        purge_days=5,
+        embargo_days=5,
+        label_horizon_days=5,
+        max_feature_lookback_days=5,
+        event_cluster_embargo_days=5,
+        decision_cluster_key="decision_cluster_id",
+        decision_cluster_deduplicated=True,
+        registered_trial_count=1,
+        multiple_testing_trial_budget=20,
+        pbo_required=True,
+        deflated_sharpe_required=True,
+        oos_reuse_count=0,
+        max_oos_reuse_count=1,
+        oos_used_for_tuning=False,
+        oos_authority_receipt_sha256="d" * 64,
+        experiment_family_id="ashare-forward-label-v1",
+        experiment_id="ashare-forward-label-fixture-001",
+        frozen_test_set_id="ashare-forward-label-oos-fixture-v1",
+        market="ashare",
+        trading_session_calendar=_calendar_authority(),
+        frozen_at=frozen_at,
+        calendar_authority_verifier=_FixtureCalendarAuthorityVerifier(),
+    )
+
+
+def materialize_forward_labels(
+    snapshot,
+    price_points,
+    *,
+    as_of,
+    horizon_targets=None,
+    costs=None,
+    validation_plan=None,
+):
+    """Test helper supplies the verified A-share fixture authority by default."""
+
+    market = str(snapshot.get("market") or "").strip().lower()
+    if market in {"ashare", "a_share", "a-share", "a股", "cn", "china"}:
+        validation_plan = validation_plan or _validation_plan()
+        horizon_targets = {
+            name: target
+            for name, target in (horizon_targets or {}).items()
+            if canonical_horizon(name) in {"m30", "m60"}
+        }
+    return _materialize_forward_labels(
+        snapshot,
+        price_points,
+        as_of=as_of,
+        horizon_targets=horizon_targets,
+        costs=costs,
+        validation_plan=validation_plan,
+    )
 
 
 def test_embedded_structure_errors_are_irreversible_across_canonicalization():
@@ -1158,3 +1281,223 @@ def test_materialization_does_not_mutate_snapshot_or_price_points():
 
     assert snapshot == before_snapshot
     assert points == before_points
+
+
+def test_ashare_materialization_requires_verified_validation_plan():
+    start = datetime(2026, 7, 10, 1, 30, tzinfo=UTC)
+    snapshot = build_prediction_snapshot(
+        _candidate(
+            prediction_at=start.isoformat(),
+            event_time=start.isoformat(),
+            available_at=start.isoformat(),
+            ingested_at=start.isoformat(),
+            retrieved_as_of=start.isoformat(),
+            data_quality={
+                "reliable": True,
+                "source": "sharedsignals.5min",
+                "price_timestamp": start.isoformat(),
+            },
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="ashare_validation_plan_required",
+    ):
+        _materialize_forward_labels(
+            snapshot,
+            [],
+            as_of=start + timedelta(days=5),
+            horizon_targets=_targets(start),
+        )
+
+
+def test_ashare_calendar_authority_computes_close_and_session_targets():
+    start = datetime(2026, 7, 17, 1, 30, tzinfo=UTC)
+    snapshot = build_prediction_snapshot(
+        _candidate(
+            prediction_at=start.isoformat(),
+            event_time=start.isoformat(),
+            available_at=start.isoformat(),
+            ingested_at=start.isoformat(),
+            retrieved_as_of=start.isoformat(),
+            data_quality={
+                "reliable": True,
+                "source": "sharedsignals.5min",
+                "price_timestamp": start.isoformat(),
+            },
+        )
+    )
+
+    result = materialize_forward_labels(
+        snapshot,
+        [],
+        as_of=datetime(2026, 7, 27, 15, 30, tzinfo=timezone(timedelta(hours=8))),
+        validation_plan=_validation_plan(),
+    )
+
+    assert result["labels"]["close"]["target_at"] == "2026-07-17T15:00:00+08:00"
+    # 2026-07-20 is an explicit calendar holiday in the authority fixture.
+    assert result["labels"]["1d"]["target_at"] == "2026-07-21T15:00:00+08:00"
+    assert result["labels"]["3d"]["target_at"] == "2026-07-23T15:00:00+08:00"
+    assert result["labels"]["5d"]["target_at"] == "2026-07-27T15:00:00+08:00"
+
+
+def test_ashare_caller_target_must_equal_calendar_authority_target():
+    start = datetime(2026, 7, 17, 1, 30, tzinfo=UTC)
+    snapshot = build_prediction_snapshot(_candidate(prediction_at=start.isoformat()))
+
+    with pytest.raises(
+        ValueError,
+        match="ashare_horizon_target_authority_mismatch:1d",
+    ):
+        _materialize_forward_labels(
+            snapshot,
+            [],
+            as_of=start + timedelta(days=5),
+            validation_plan=_validation_plan(),
+            horizon_targets={"1d": start + timedelta(days=3)},
+        )
+
+
+def test_ashare_validation_plan_must_be_frozen_before_prediction():
+    start = datetime(2026, 7, 10, 1, 30, tzinfo=UTC)
+    snapshot = build_prediction_snapshot(_candidate(prediction_at=start.isoformat()))
+
+    with pytest.raises(
+        ValueError,
+        match="ashare_validation_plan_frozen_after_prediction",
+    ):
+        materialize_forward_labels(
+            snapshot,
+            [],
+            as_of=start + timedelta(days=5),
+            validation_plan=_validation_plan(frozen_at=start + timedelta(minutes=1)),
+        )
+
+
+def test_ashare_label_binds_plan_calendar_and_detached_proof_hashes():
+    start = datetime(2026, 7, 10, 1, 30, tzinfo=UTC)
+    plan = _validation_plan()
+    snapshot = build_prediction_snapshot(_candidate(prediction_at=start.isoformat()))
+
+    result = materialize_forward_labels(
+        snapshot,
+        [],
+        as_of=start,
+        validation_plan=plan,
+    )
+
+    expected = {
+        "validation_plan_sha256": plan.sha256(),
+        "trading_session_calendar_sha256": (
+            plan.trading_session_calendar.calendar_sha256
+        ),
+        "trading_session_calendar_verification_proof_sha256": (
+            plan.trading_session_calendar_verification.proof_sha256
+        ),
+    }
+    assert result["forward_label_authority_binding"] == expected
+    for label in result["labels"].values():
+        assert {field: label[field] for field in expected} == expected
+
+
+def test_ashare_missing_target_session_evidence_does_not_shift_label():
+    start = datetime(2026, 7, 17, 1, 30, tzinfo=UTC)
+    snapshot = build_prediction_snapshot(
+        _candidate(
+            prediction_at=start.isoformat(),
+            event_time=start.isoformat(),
+            available_at=start.isoformat(),
+            ingested_at=start.isoformat(),
+            retrieved_as_of=start.isoformat(),
+            data_quality={
+                "reliable": True,
+                "source": "sharedsignals.5min",
+                "price_timestamp": start.isoformat(),
+            },
+        )
+    )
+    next_session_close = datetime(
+        2026,
+        7,
+        22,
+        15,
+        tzinfo=timezone(timedelta(hours=8)),
+    )
+
+    result = materialize_forward_labels(
+        snapshot,
+        [_point(next_session_close, 11.0, eligible_horizons=["1d"])],
+        as_of=next_session_close,
+        validation_plan=_validation_plan(),
+    )
+
+    label = result["labels"]["1d"]
+    assert label["target_at"] == "2026-07-21T15:00:00+08:00"
+    assert label["status"] == "missing_exit_evidence"
+    assert label["exit_price"] is None
+
+
+def test_ashare_next_session_open_cannot_backfill_missing_close():
+    start = datetime(2026, 7, 17, 1, 30, tzinfo=UTC)
+    snapshot = build_prediction_snapshot(
+        _candidate(
+            prediction_at=start.isoformat(),
+            event_time=start.isoformat(),
+            available_at=start.isoformat(),
+            ingested_at=start.isoformat(),
+            retrieved_as_of=start.isoformat(),
+            data_quality={
+                "reliable": True,
+                "source": "sharedsignals.5min",
+                "price_timestamp": start.isoformat(),
+            },
+        )
+    )
+    next_session_open = datetime(
+        2026,
+        7,
+        22,
+        9,
+        tzinfo=timezone(timedelta(hours=8)),
+    )
+
+    result = materialize_forward_labels(
+        snapshot,
+        [_point(next_session_open, 11.0, eligible_horizons=["1d"])],
+        as_of=next_session_open,
+        validation_plan=_validation_plan(),
+    )
+
+    label = result["labels"]["1d"]
+    assert label["target_at"] == "2026-07-21T15:00:00+08:00"
+    assert label["status"] == "missing_exit_evidence"
+    assert label["exit_price"] is None
+
+
+def test_non_ashare_materialization_retains_generic_calendar_targets():
+    start = datetime(2026, 7, 10, 1, 30, tzinfo=UTC)
+    candidate = _candidate(
+        market="cn_futures",
+        prediction_at=start.isoformat(),
+        event_time=start.isoformat(),
+        available_at=start.isoformat(),
+        ingested_at=start.isoformat(),
+        retrieved_as_of=start.isoformat(),
+        data_quality={
+            "reliable": True,
+            "source": "fixture.cn_futures",
+            "price_timestamp": start.isoformat(),
+        },
+    )
+
+    result = materialize_forward_labels(
+        build_prediction_snapshot(candidate),
+        [],
+        as_of=start + timedelta(days=5),
+    )
+
+    assert (
+        result["labels"]["1d"]["target_at"] == (start + timedelta(days=1)).isoformat()
+    )

@@ -9,38 +9,90 @@
 - 第 5、10 个 A股交易日是人工 review checkpoint，不是自动实盘日期。
 - `promotion_evidence_ready`、短期盈利或胜率均不构成授权；自动 champion、自动风险扩张、自动 live transition 始终关闭。
 - CNFutures 长期模拟，无实盘时间表。
+- “月收益 20%”只能作为收益分布上尾的 stretch scenario，报告 `P(monthly_return>=20%)`、负月概率、尾部亏损与风险毁灭概率；不得作为第一阶段 PASS、最低交易频率或强迫交易条件。
 
-## 2. 样本通道验收
+本轮主板小资金架构仅是本地未提交候选；没有真实 SS V1 runtime、生产 scheduler 和真实 paper samples 时，只可评价契约/故障负例，不可评价策略正期望。A股个股样本仅限沪深主板普通 A 股；创业板、科创板指数和全市场行业聚合只作 `context_only` 环境证据。环境汇总缺失时行业宽度 degraded，不得用主板子集补分母。
 
-### Observation/counterfactual
+### 1.1 第一阶段四层验收
 
-- 所有 data-qualified 候选生成 prediction snapshot；成熟策略阈值和执行门禁不阻断。
-- 每个 A股候选包含四类正交风格，并基于同一 immutable snapshot 生成 paired MG on/off。
-- 未成交风格也生成 forward labels；避免只学习成交样本。
-- 数据不可靠时仍保存 prediction，但 label eligibility 明确 rejected；不能把坏数据混成有效标签。
+| 层级 | 需要的证据 | 不能推断 |
+|---|---|---|
+| 契约层 | SS fixture/catalog/query、PIT gate、三层 Universe、50k plan binding、rank score、Opportunity/Ledger、forecast、三风格shadow router、RunBundle、ledger/OOS/LLM负例 | SS live、真实模拟成交、shadow预测有效性 |
+| 本地闭环层 | 受控离线 replay、crash/restart、现金/持仓/冻结额守恒、原子 readback | 生产 scheduler 或稳定运维 |
+| 20 交易日工程层 | 真实 SS V1 数据下 0 未来数据、0同 bar、0重复 order/fill、0权限泄漏、0旧链 fallback、0未解释账务差异 | 策略正期望或实盘准备 |
+| 60–120 交易日科学层 | 冻结 OOS、独立 decision clusters/N_eff、多市场状态、完整成本/未成交、可发布的校准或排序证据 | 自动晋级、扩风险或 live |
 
-### Exploration
+第一阶段 Champion 是 `uncalibrated_deterministic_rank_score`。只验收排序一致性、分组结果、稳定性、与现金/简单可行基线的费用后增量和尾部风险。没有冻结 calibrator 时，概率、Brier、Log Loss 和 ECE 都不在Champion验收面中；分离的forecast shadow可以保存带detached proof的校准研究artifact，但不能把概率回写Champion或订单链。
 
-- 只在硬门禁合格集合内运行 top-K stratified random/epsilon-greedy。
-- 保存 policy version、seed、pool、selection probability/propensity 和选择/未选择原因。
-- A股每日最多新增一个探索头寸；累计探索敞口不超过 7,500 CNY；探索日亏不超过 225 CNY。
-- 只可降低 raw-score/min-edge/research-completeness 等策略门槛；所有数据、执行、资金和风险硬门禁不变。
-- 无 exploration 时，理由只能是无 data-qualified candidate 或具体安全门禁；“样本不足”不能单独解释零交易。
+`ValidationPlan` 本地合同已要求标签期限、最大特征回看、purge/embargo、事件簇隔离、decision-cluster 去重、注册试验数与总预算、PBO/Deflated Sharpe、OOS 重用上限和冻结 OOS authority receipt。A股另要求无默认calendar verifier，detached proof绑定dataset/receipt、完整交易会话与计划冻结时点；SampleJournal与A股label/sample ops必须显式接收该计划，CLI只通过`--validation-plan-path`加载外部预冻结的内容寻址artifact，不运行verifier或自签proof；`close/1d/3d/5d` target从同一会话authority派生且不得顺延。它只能证明本地输入绑定与错误配置会被拒绝；生产calendar authority、受信artifact registry、真实exit/总回报/公司行动真值、purged/nested walk-forward、PBO、DSR、多重试验和结果artifact尚未完成时，科学层仍是blocked。
 
-### Exploitation
+### 1.2 自我进化验收边界
 
-- 使用成熟策略门槛和组合预算；与 exploration 分开统计。
-- 同一股票同日只有一份真实规格模拟订单；多风格只作 attribution。
-- 新风格只进 shadow/exploration，不能因短样本表现进入自动 champion。
+学习环可以自动做的事只有：生成候选实验、影子评估、漂移/质量检测，以及隔离、reduce-only、stop-new-risk 或 require-review 等负向动作。以下任意一项可自动发生即为失败：
+
+- Challenger 取代 Champion；
+- 放大单票/总敞口、改账户权限或扩大个股板块范围；
+- 把 paper/shadow/audit-only Decision Ledger 事件伪装成 market-truth 标签；
+- 在无外部 frozen label authority、冻结OOS registry、总回报/公司行动真值和精确 content/receipt/time binding 时发布 predictive eligibility；
+- 用调用方自报`healthy`、短样本或旧metrics清除已经持久化的负向风险latch；
+- 修改 `REAL_TRADING_ENABLED`、broker、邮件、GUI 或真实账户路由。
+
+负向控制器必须显式使用`TrustedEvolutionClock`复核metrics freshness并把clock identity/read time写入结果；当前只有冻结、不可继承、`production_eligible=false`的fixture clock。当前metrics verifier也只对固定本地实现和内容binding做复核，不是第二套独立数值重算系统。因此“clock通过”和“detached receipt通过”都不能推断生产时间authority、指标正确或可自动解除latch；metrics超过14天、clock倒退或任一binding漂移只能保持/收紧风险。
+
+### 1.3 LLM 增量价值怎样验收
+
+DeepSeek等provider仅生成证据sidecar。在进入任何结构化研究输入前，要用冻结数据集比较“不用LLM”与“使用LLM证据”，至少评估：
+
+- 实体、数值、事件、时点和影响路径抽取正确率；
+- 固定Prompt版本、source span/hash、document hash、PIT时点、实体解析版本和EvidenceArtifact验证覆盖；
+- 矛盾发现率、无依据断言率和非法 schema 率；
+- 已知提示注入模式的阻断率、正常文本误报率、人工复核率，以及语义/编码变体的明确未覆盖率；
+- 延迟、token/费用、敏感载荷拒绝和 outage 降级；
+- 人工审核时间是否下降，以及给冻结基线模型带来的样本外增量是否足以覆盖复杂度。
+
+LLM 输出不能直接作为 rank score、概率、仓位乘数、风险豁免或订单字段。动态Prompt、未验证artifact、未知引用、敏感payload或显式source-span提示注入模式必须在transport前阻断。typed source proof/provider receipt只证明离线合同和内容绑定，不证明真实DeepSeek transport或生产verifier。成功fixture可进入CAS/hash-chain本地journal，但本地`.head`不是外部密封；同时替换或删除journal与head仍不能由本机自证。模式门也不是完整语义安全保证，所以当前不能宣称LLM已提高收益、研究质量或已解决prompt injection。
+
+## 2. V1 样本与决策账本验收
+
+### 冻结 Champion observation/counterfactual
+
+- 所有 data-qualified 主板候选由同一冻结 rank-score Champion 生成 prediction snapshot；组合、风险和执行门禁可以拒单，但不能抹掉 observation 或拒绝原因。
+- 当前 V1订单链不运行多风格路由，不输出校准概率，也不接受 LLM/行业/opportunity/forecast/style shadow改写 rank score。三风格router虽已形成内容寻址本地shadow receipt，但只写反事实研究；paired MG on/off 也仅可作为绑定同一 base snapshot 的研究消融。
+- 数据/PIT 不可靠时 prediction 只作审计，label eligibility 必须 rejected/unavailable；不能把坏数据混成有效 market-truth 标签。
+
+### Decision Ledger 四态
+
+- 每个候选最终只能形成 `PAPER_FILLED`、`PAPER_NOT_FILLED`、`REJECTED` 或 `OBSERVATION_ONLY`，并绑定 run、input bundle、capital authority/generation、execution lineage、prediction cluster、plan 和 drift constraint。
+- Decision Ledger 是 audit-only 事实；paper、fixture、shadow 或人工拒绝结果不能因时间经过而自动成为 predictive label 或晋级证据。
+- 同一股票同日最多一份 authority-bound 模拟订单；无交易必须给出数据、经济性、现金/T+1、风险、漂移、scope 或执行等具体 reason code。
+- 每次risk评估和网络关闭的simulation副作用前都必须重读最新drift latch；任何运行中收紧都不得被缓存结果放宽。未来live broker仍需在真实外部副作用前给出同等authority证据。
+
+### 多风格与 exploration 的状态
+
+仓库旧四风格、exploration/exploitation 样本字段属于 time-boxed legacy/历史投影，不得恢复。当前新router仅含`industry_trend / event_surprise / cross_market_dislocation`三个shadow sleeve，按evidence group去重；支持与反对冲突时abstain，并固定无决策、资本、订单、自动晋级、自动扩风险或live authority。它可以进入单独shadow KPI，但不得混入V1当前订单或Champion绩效。未来若影响真实候选，必须发布新consumer合同和独立冻结验证，不能把旧路径或shadow receipt直接接回。
+
+### Opportunity / forecast / router 科学晋级门
+
+合同通过不等于发现能力、预测能力或多风格增量成立。后续只在冻结shadow样本中逐层消融：
+
+- OpportunityRadar：报告真实可验证分母、`Capture@K`、`PreTriggerCapture`、`TimeToDetect`、precision/false-discovery、状态迁移稳定性、可成交比例和错失原因；只有scanned universe完整时才能声称全Universe覆盖；
+- 多期限forecast：逐horizon、market regime、行业和流动性桶报告quantile loss、区间覆盖/宽度、Brier、Log Loss、ECE、base-rate skill、hazard censoring/competing-risk处理和成本后决策增量；禁止用同一OOS反复调参；
+- 三风格router：比较Champion、Champion+单sleeve、Champion+去重router，报告evidence-group消融、abstain coverage/价值、费用后expectancy、tail loss、回撤、换手、风格与论点相关性以及冲突样本结果；
+- 任一层只在独立decision clusters、冻结OOS和相同可成交/成本口径下比较。若收益主要来自少数日期、股票、行业或一个共同价格证据组，结论保持`insufficient_evidence`。
 
 ## 3. Execution-eligible 验收
 
 ### A股
 
-- 真实 SharedSignals price/volume/source/timestamp，成交时段，普通 A股与流动性，T+1、涨跌停、100 股整手、cash/positions、幂等全部通过。
+- 真实SharedSignals price/volume/source/timestamp，成交时段，普通A股与流动性，T+1、涨跌停、方向正确的整手/零股卖出规则、cash/positions、幂等全部通过。
+- risk/order绑定同一`tradingagent.small_account_plan_receipt.v1`；无默认`AccountAuthorityVerifier`已逐项复核模拟capital generation、完整账户内容、position receipt/hash、cash/gross、mark、sellable数量和有效期，订单的symbol/side/quantity/reservation price/fee逐项相等。fixture proof不可晋级，也不证明真实账户。
+- optimizer与day loop还必须共同证明六维论点风险：显式人工policy、逐成员detached proof和完整候选/持仓/open-or-increase-pending exposure set在决策时有效；每笔notional delta、同股票group连续性、pre/post/final exposure map与plan hash可独立复算。缺成员、重复成员、过期proof、运行时自签、替换policy后重签、pending漏记或跨决策清零都必须拒绝；超cap不得锁死经过验证的reduce/exit。fixture authority不可晋级，也不证明生产风险上限合理。
+- plan必须绑定`cost_policy_id`，day loop按canonical佣金、过户费和卖出印花税独立复算；篡改费用后重新签名仍须拒绝。
+- 买入只允许100股整数倍；卖出只允许100股整数倍、完整零股余额或全部退出，并受T+1可卖量约束。非法数量不得自动取整或改写。
 - 单票累计“当前持仓市值 + pending reservations + 新订单”不超过 7,500 CNY；组合 gross 不超过 45,000 CNY；容量最多 8 且可支持至少 7 个不同股票。
 - actual fill quantity/price/time、commission/stamp duty/slippage 和 receipt/local-trade fingerprints 完整。
 - 买入 `fill_commit` 或卖出 `ashare_sell_commit` 成功/幂等成功；outbox pending、CAS/lineage 冲突或请求值兜底只能进入 chain validation。
+- 决策、fill/terminal和reconcile时钟单调；任何fill早于decision或reconcile早于terminal均不形成execution-eligible样本。
 
 ### CNFutures
 
@@ -64,6 +116,7 @@
 - 反事实使用版本化保守成本模型；输出 cost version、fee/slippage assumptions 和 net return。
 - 真实成交绩效只使用 actual commission、stamp duty、slippage 和 actual fills；默认 0 成本或估算请求价格不进入绩效。
 - 前向标签按 ready/pending/missing/rejected 分类；missing/rejected 原因分布必须可见。
+- A股`close/1d/3d/5d` targets必须由同一verified frozen calendar proof派生，调用方不一致立即fail closed，缺目标会话日线不得顺延。A股label/sample ops缺显式计划时必须在读取行情前阻断；CLI加载artifact只校验合同/内容绑定，不重新证明上游authority。当前仅有本地/fixture verifier且无受信artifact registry，target authority也不等于真实exit price、总回报或公司行动真值，因此不能单独作为predictive发布证明。
 - 5 分钟重复 cluster 只给一个有效 KPI 权重；原始事件仍保持 append-only。
 - 标签格不等于独立样本：验收同时展示 `ready_label_cell_count/raw_N/unique decision clusters/independent trading days/N_eff`，成熟度只使用预先指定主 horizon 的独立 decision cluster。
 - PIT 必须重算 `event_time/available_at/ingested_at/retrieved_as_of` 的完整性与顺序；字段存在或布尔自述不算通过。
@@ -84,10 +137,10 @@ sample ops P0 还必须证明以下 frozen-input 与性能不变量：
 
 ## 5. KPI 必须分层
 
-按 style、market 和 sample intent 显示：
+V1 当前至少按 market、决策四态、主 horizon、数据状态和 reason code 显示：
 
 - candidates、predictions、observation/counterfactual；
-- exploration fills、exploitation fills；
+- paper filled/not-filled、rejected、observation-only；
 - completed round trips、exit/stops；
 - risk rejects、chain-validation samples；
 - 每个 horizon 的状态；
@@ -96,11 +149,16 @@ sample ops P0 还必须证明以下 frozen-input 与性能不变量：
 - rejection/missing-evidence distributions；
 - authority/generation/execution lineage 和 excluded legacy count。
 
-Exploration 与 exploitation 收益不能混算。风格 shadow 不产生资本；A股与 CNFutures 货币指标不能相加。
+历史 exploration/exploitation 或风格字段若仍存在，必须单列为 legacy/excluded，不能混入 V1 结果。风格 shadow 与行业 shadow 都不产生资本；A股与 CNFutures 货币指标不能相加。
 
 completed round trip 缺 gross 或 net 数值时计入 invalid evidence，不得进入胜率/expectancy/PnL。交易 PnL 序列回撤只作为辅助字段，不能替代账户逐日 MTM equity 曲线。
 
 ## 6. 资金利用率验收
+
+当前 `minimum_economic_order_cny=2,000` 与 `no_trade_band_cny=1,000` 是 Phase 1
+首版保守、版本化的工程假设，不是统计最优值。真实模拟成交积累后，必须按账户实际最低佣金、
+印花税/过户费、滑点、未成交损失、信号半衰期和整数股误差做冻结OOS敏感性分析；只能由新 policy
+版本和人工复核调整，不能为提高交易频率或回测收益在线调参。
 
 A股资金计划每天保存：
 
@@ -141,7 +199,7 @@ Calibration 必须输出独立 cluster 的 Brier、log loss、base-rate Brier/sk
 
 当前 evidence-readiness 实现至少检查：当前 authority/lineage、20 个 execution-eligible samples、预先指定主 horizon 的 20 个 unique decision clusters、至少 5 个独立交易日、`N_eff >= 10`、10 个 completed round trips、chain consistency ≥0.85、data integrity ≥0.90、完整 actual-cost/PIT/fill-revalidation/dedup/calibration evidence、至少一个费用后正 expectancy 风格，以及账户逐日 MTM 最大回撤不超过 5%。style×horizon label cells 只展示，不计作独立 N。
 
-这些数值只是当前 evidence-readiness 最低工程门槛：样本量仍很小，不能据此声称统计显著或自动实盘。任何缺失项显示 blocker，不阻断 observation/exploration 的安全采样。
+这些数值只是旧成熟度投影与当前工程验收的最低门槛：样本量仍很小，不能据此声称统计显著或自动实盘。任何缺失项显示 blocker，但不阻断安全 observation；是否重新引入 exploration 必须由未来版本另行批准。
 
 潜力股捕捉率验收同时列出 full eligible universe、实际 scanned universe 与 top-K。若 full universe 不完整，报告只能声称 scanned-universe recall；benchmark 缺失则 alpha/excess return 保持 null/status unavailable，禁止用 0 代替。
 
@@ -151,9 +209,9 @@ Calibration 必须输出独立 cluster 的 Brier、log loss、base-rate Brier/sk
 
 这些门槛只用于成熟度分类，不设置实盘日期，也不自动扩保证金或风险。持续补充不同品种、波动、会话、夜盘、换月、费用/滑点和极端行情证据。
 
-## 10. 实盘门禁（与模拟探索分离）
+## 10. 实盘门禁（与模拟样本分离）
 
-模拟 exploration 的作用是避免长期零样本；实盘晋级门禁负责阻止真钱风险，两者不能共用一套过严阈值。
+模拟 observation/paper 的作用是验证数据、决策和执行链；实盘晋级门禁负责阻止真钱风险，两者不能共用“运行过/有收益”这一类宽松阈值。
 
 A股只有同时满足以下条件并经 Nicholas 明确确认，才可另行设计人工试运行：
 

@@ -4,7 +4,13 @@
 
 ## 目标
 六维加权打分，不设硬门禁。维度：宏观/事件/基本面/资金/技术/情绪。主动发现机会。
-TradingAgent 自身负责短周期机会发现；SharedSignals API/read model 是基础数据入口，覆盖宏观、事件、基本面、资金、技术行情和情绪；MarketGraph 只作为宏观、事件、情绪和中长线图谱研究补充，不作为 A股/CNFutures 的执行信号入口。
+
+## 当前分类与 ownership
+
+- 本目录是 TradingAgent 所有的 **active-compatibility / retirement-pending** 研究栈，不是 SharedSignals 服务端实现，也不是 A股 current-v1 决策链。
+- 这些模块仍可能被非 A 股兼容消费者、人工研究或回归测试读取；旧 A 股 wrapper/cron 已硬阻断。任何仍会自行构造 `TradingagentDataReader` 的路径都不得进入 V1 candidate、scheduler、Champion、风险或订单链。
+- A股 current-v1 只消费 TA 内的 provider-neutral `GET /v1/catalog`、`POST /v1/query` 客户端产物和不可变 research snapshot。不得从本目录回退到旧 reader、兄弟仓 SQLite 或专用路由。
+- MarketGraph 只可作为可关闭的只读研究补充，不是 A股/CNFutures 的执行信号入口。
 
 ## 文件
 - `six_dimension_scorer.py` — 六维打分: macro/event/fundamental/capital/technical/sentiment → combined score。
@@ -20,10 +26,9 @@ TradingAgent 自身负责短周期机会发现；SharedSignals API/read model �
 - 降权不硬拒, 主动发现机会
 - 条件驱动, 而非实时全量扫描
 - 六维互补: 宏观定方向, 事件找催化, 基本面定底, 资金确认, 技术择时, 情绪防雷
-- 六维评分必须 SS-first、MG-enhanced：基础评分先消费 SharedSignals API；MarketGraph 缺失时只能记录 evidence debt 或中性降级，不得阻断 TradingAgent 自有交易闭环。
-- A股个股事件维度通过 SharedSignals `/events` 读取最近 3 个自然日；显式方向/置信度优先，标题或正文关键词推断只使用固定 0.30 审慎置信度，不能随着 `min_confidence` 门槛提高而自动抬高。无方向公告保留为原始事件计数但不算催化证据；诊断必须区分无事件、无方向和低置信度。
-- A股宏观维度必须能消费 SharedSignals 原始宏观因子：PMI 等 `factor_name/value` 行可转成市场级 macro 分数；不得因为没有 MarketGraph regime 就把 macro 全量标为缺失。
-- A股 sentiment 可消费 SharedSignals 市场新闻流作为弱市场情绪，但只有明确利好/利空关键词或显式方向字段时才计入；无个股代码的新闻不能伪造成个股 event 催化。
+- 以下六维评分语义只描述兼容研究行为，不构成 current-v1 接口：宏观、事件、基本面、资金、技术和情绪必须来自调用方注入的带 PIT/lineage 证据；MarketGraph 缺失只能记录 evidence debt 或中性降级。
+- 兼容事件读侧只接受最近 3 个自然日的结构化事件行；显式方向/置信度优先，标题或正文关键词推断只使用固定 0.30 审慎置信度，不能随着 `min_confidence` 门槛提高而自动抬高。无方向公告保留为原始事件计数但不算催化证据。
+- 兼容宏观维度可消费 PMI 等 `factor_name/value` 行；不得因为没有 MarketGraph regime 就把 macro 全量标为缺失。兼容 sentiment 只能把有明确方向的市场新闻作为弱证据，无个股代码的新闻不能伪造成个股 event 催化。
 - 当前 candidate_pool 是动态重建池，不是持久化状态机；没有落地 demote/退出、层内停留时间、复盘驱动迁移前，不得声称每层独立升降级闭环已完成。
 - A股可执行 universe 必须同时满足普通 A股代码段、非 ST/非停牌/非新股、近期日线 close > 0 和流动性要求；无日线覆盖不得用默认价格补位。
 - `candidate_pool` 若接收预计算 scores，必须直接按该评分分层并保留 candidate/watch 阈值，不得再次逐票重算造成候选层、排序、复盘诊断口径不一致。
@@ -46,6 +51,7 @@ from screening.patrol import patrol
 
 ## 依赖
 - weights.yaml (本目录)
-- SharedSignals / ShareChannel API (assets, bars, factors, moneyflow, events, sentiment)
+- active-compatibility: `shared/data/reader.py` 与调用方注入的测试/研究 reader；该依赖必须继续登记在 `shared/governance/legacy_inventory.yaml`，且不得进入 A股 V1 candidate
+- current-v1 successor: `shared/data/sharedsignals_v1.py` → immutable research snapshot → `shared/runtime/stage_ports.py`，只使用 catalog/query 合同
 - MarketGraph API (regime/event/news/impact) 为可选增强；缺失时必须记录 evidence debt 或回到中性/安全空跑，不得绕过 candidate/执行门禁。
 - Ashare data (moneyflow/scores/signals/forecasts)

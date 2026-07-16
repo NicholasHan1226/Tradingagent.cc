@@ -10,6 +10,5 @@ source "${SHARED_DIR}/env_loader.sh"
 source "${WRAPPER_DIR}/_common.sh"
 
 export SIM_MARKET=pm
-sharedsignals_source_gate "pm_sim" "intraday" "pm"
-cd "${TRADINGAGENT_ROOT}"
-PYTHONPATH="${TRADINGAGENT_ROOT}" "${PYTHON_BIN}" shared/wrappers/run_sim.py
+sharedsignals_v1_runtime_gate "pm_sim" "intraday" "pm"
+block_unmigrated_sharedsignals_consumer "pm_sim" "pm"

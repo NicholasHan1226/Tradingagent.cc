@@ -54,12 +54,19 @@ TRADINGAGENT_ENVIRONMENT_LINES = (
     f"ASHARE_SIM_WEBHOOK_ENABLED={TRADINGAGENT_ASHARE_SIM_WEBHOOK_ENABLED}",
     TRADINGAGENT_BASH_ENV,
 )
-REQUIRED_SAMPLE_OPS_MARKER = "job_ashare_sample_ops.sh"
-RETIRED_ASHARE_SAMPLE_JOB_MARKERS = (
-    "job_ashare_sample_learning.sh",
-    "job_ashare_formal_close_refresh.sh",
-    "job_ashare_forward_validation.sh",
-    "job_ashare_sample_target_monitor.sh",
+RETIRED_GENERIC_SCHEDULE_MARKERS = (
+    "/cron/health_check.sh",
+    "/cron/daily_review.sh",
+    "/job_opening_acceptance.sh",
+    "/job_daily_brief_morning.sh",
+    "/job_daily_brief_day.sh",
+    "/job_daily_brief_night.sh",
+    "/job_email_notify.sh",
+    "/job_premarket_signals.sh",
+    "/job_us_sim.sh",
+    "/job_crypto_sim.sh",
+    "/job_pm_sim.sh",
+    "/job_cn_futures_sim.sh",
 )
 
 
@@ -71,6 +78,16 @@ RETIRED_ASHARE_SAMPLE_JOB_MARKERS = (
 def _is_ta_schedule_line(line: str) -> bool:
     """Return whether a line is a TradingAgent cron schedule entry."""
     return bool(tradingagent_entries(line))
+
+
+def _is_retired_ta_schedule_line(line: str) -> bool:
+    """Reject recurring work whose compatibility entrypoint is fail-closed."""
+
+    return (
+        "/job_ashare_" in line
+        or "/job_market_capital_reconcile.sh ashare" in line
+        or any(marker in line for marker in RETIRED_GENERIC_SCHEDULE_MARKERS)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -122,12 +139,7 @@ def merge(current_text: str, template_text: str) -> str | None:
         or any(
             template_lines.count(line) != 1 for line in TRADINGAGENT_ENVIRONMENT_LINES
         )
-        or not any(REQUIRED_SAMPLE_OPS_MARKER in line for line in ta_raw)
-        or any(
-            marker in line
-            for line in ta_raw
-            for marker in RETIRED_ASHARE_SAMPLE_JOB_MARKERS
-        )
+        or any(_is_retired_ta_schedule_line(line) for line in ta_raw)
     ):
         return None
     unmanaged = _without_existing_managed_block(current_text.splitlines())

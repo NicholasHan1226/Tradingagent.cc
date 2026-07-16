@@ -15,6 +15,7 @@ export type LinkedEvidenceContextModel = {
   holdingCount: number
   attributablePnl?: number
   updatedAt: string
+  legacyFrozen?: boolean
 }
 
 export function createLinkedEvidenceContext(events: FunnelEvent[], opportunityId: string | null, signals: SignalRow[] = [], holdings: HoldingRow[] = []): LinkedEvidenceContextModel | null {
@@ -24,8 +25,9 @@ export function createLinkedEvidenceContext(events: FunnelEvent[], opportunityId
   const ordered = [...related].sort((left, right) => eventTime(left) - eventTime(right) || (left.sequence ?? 0) - (right.sequence ?? 0))
   const latest = ordered[ordered.length - 1]
   const stages = new Set(ordered.map((event) => event.stage))
-  const relatedSignals = signals.filter((signal) => signal.opportunityId === opportunityId)
-  const relatedHoldings = holdings.filter((holding) => holding.opportunityId === opportunityId)
+  const legacyFrozen = ordered.some((event) => event.source === 'legacy_frozen_opportunity_log')
+  const relatedSignals = legacyFrozen ? [] : signals.filter((signal) => signal.opportunityId === opportunityId)
+  const relatedHoldings = legacyFrozen ? [] : holdings.filter((holding) => holding.opportunityId === opportunityId)
   const pnlValues = relatedHoldings
     .map((holding) => holding.realizedPnl === undefined && holding.unrealizedPnl === undefined ? undefined : (holding.realizedPnl ?? 0) + (holding.unrealizedPnl ?? 0))
     .filter((value): value is number => value !== undefined)
@@ -41,6 +43,7 @@ export function createLinkedEvidenceContext(events: FunnelEvent[], opportunityId
     holdingCount: relatedHoldings.length,
     attributablePnl: pnlValues.length ? roundMoney(pnlValues.reduce((total, value) => total + value, 0)) : undefined,
     updatedAt: formatTimestamp(latest.at),
+    legacyFrozen,
   }
 }
 

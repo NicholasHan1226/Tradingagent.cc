@@ -31,4 +31,24 @@ describe('linked evidence context', () => {
 
     expect(createLinkedEvidenceContext(events, 'opp-1', signals, holdings)).toEqual(expect.objectContaining({ signalCount: 1, holdingCount: 1, attributablePnl: 10 }))
   })
+
+  it('keeps a frozen legacy opportunity namespace detached from current signal and PnL attribution', () => {
+    const legacyEvents: FunnelEvent[] = [{
+      ...events[0],
+      source: 'legacy_frozen_opportunity_log',
+    }]
+    const signals: SignalRow[] = [{
+      market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-1', method: '候选', status: 'executed', impact: '—', confidence: '—', age: '1m', reason: '—', next: '—', steps: 5,
+    }]
+    const holdings: HoldingRow[] = [{
+      market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-1', weight: '¥1,000', pnl: '+¥10', realizedPnl: 10, risk: '正常', role: '模拟盘持仓',
+    }]
+
+    expect(createLinkedEvidenceContext(legacyEvents, 'opp-1', signals, holdings)).toEqual(expect.objectContaining({
+      legacyFrozen: true,
+      signalCount: 0,
+      holdingCount: 0,
+      attributablePnl: undefined,
+    }))
+  })
 })

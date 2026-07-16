@@ -9,11 +9,12 @@ import { MarketSummaryPanel } from '../components/panels/MarketSummaryPanel'
 import { MarketMaturityPanel } from '../components/panels/MarketMaturityPanel'
 import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
+import { TodayRunPanel } from '../components/panels/TodayRunPanel'
 import { WorkbenchShell } from '../components/workbench/WorkbenchShell'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
 import type { AutomationRuntimeItem } from '../lib/automationObservatoryViewModel'
-import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, AccountMode, ChartEvent, CNFuturesMarketMaturityProjection, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
+import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, AccountMode, ChartEvent, CNFuturesMarketMaturityProjection, FunnelEvent, HoldingRow, Market, MarketSummary, Page, PaperDayRunSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 import type { DataDomain, DomainStatus } from '../types/status'
 
 export function HomeDashboard({
@@ -48,6 +49,7 @@ export function HomeDashboard({
   snapshotGeneratedAt,
   runningCount,
   runtimeItem,
+  paperDayRun,
 }: {
   accountMode: AccountMode
   activeMarket: Market
@@ -80,6 +82,7 @@ export function HomeDashboard({
   snapshotGeneratedAt: string | null
   runningCount: number
   runtimeItem: AutomationRuntimeItem
+  paperDayRun?: PaperDayRunSummary
 }) {
   const signalFunnel = getSignalFunnel(signals)
   const liveProfit = portfolio?.pnlAmount ?? 0
@@ -144,6 +147,7 @@ export function HomeDashboard({
   )
   const evidence = (
     <div className="home-rail">
+        <TodayRunPanel run={paperDayRun} />
         <MarketSummaryPanel activeMarket={activeMarket} summary={marketSummary} />
         <MarketMaturityPanel
           activeMarket={activeMarket}

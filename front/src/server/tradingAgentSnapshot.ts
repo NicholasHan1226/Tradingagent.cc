@@ -1,10 +1,9 @@
 import { access, lstat, readFile, readdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
-import { basename, join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { basename, dirname, join } from 'node:path'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import type { ApiStatus } from '../api/types.ts'
-import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareNoTradeEvidence, AShareProjectionAuthority, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, CNFuturesMarketMaturityProjection, CNFuturesProjectionAuthority, CNFuturesReplayEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
+import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareNoTradeEvidence, AShareProjectionAuthority, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, CNFuturesMarketMaturityProjection, CNFuturesProjectionAuthority, CNFuturesReplayEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PaperDayRunSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
 import { readSharedSignalsMarketPulses } from './sharedSignalsMarketPulse.ts'
 
 type SnapshotOptions = {
@@ -116,7 +115,7 @@ type LocalSimAccountPnl = {
 type MarketCapitalProjection = {
   market: 'A-share' | 'CNFutures'
   authorityId: 'ashare-capital-v1' | 'cn-futures-capital-v1'
-  authorityGeneration: 1
+  authorityGeneration: number
   executionLineageId: string
   initialEquityCny: 50000
   equityCny: number
@@ -127,12 +126,20 @@ type MarketCapitalProjection = {
   unrealizedPnlCny: number
   updatedAt: string
   openPositionCount: number
+  positionsQuantityByRiskUnit: Record<string, number>
   deployedCapitalCny: number
   availableToReserveCny: number
   capitalUtilizationPct: number
   riskUsedCny: number
   riskLimitCny: number
   source: string
+}
+
+type ASharePositionAuthorityState = 'ready' | 'empty' | 'unavailable' | 'not_applicable'
+
+type ASharePositionAuthorityRead = {
+  holdings: HoldingRow[]
+  state: ASharePositionAuthorityState
 }
 
 type AShareNoTradeExplanation = {
@@ -558,6 +565,8 @@ const DEFAULT_USD_CAPITAL = 10_000
 const SIM_LEDGER_EQUITY_BUCKET_MS = 5 * 60 * 1000
 const MAX_EQUITY_PERFORMANCE_POINTS = 360
 const MAX_SIM_MARKET_HEALTH_AGE_MS = 30 * 60 * 1000
+const MAX_CAPITAL_AUTHORITY_AGE_MS = 36 * 60 * 60 * 1000
+const MAX_POSITION_AUTHORITY_AGE_MS = 36 * 60 * 60 * 1000
 const DASHBOARD_MARKETS: Market[] = ['A-share', 'US', 'Crypto', 'PM', 'CNFutures']
 const DEFAULT_USD_CNY = 7.2
 const DEFAULT_HKD_CNY = 0.92
@@ -571,10 +580,6 @@ export async function readTradingAgentSnapshot({
   const queueRoot = signalQueueDir ?? join(projectRoot, 'signals')
   const generatedAt = now.toISOString()
   const positionsPath = join(projectRoot, 'signals/positions')
-  const ashareExecutionPositionPath = join(
-    projectRoot,
-    'shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/simulated_ashare_positions.json',
-  )
   const positionPlanPath = toProjectPath(projectRoot, tradingAgentReadModelSources.capitalPlan)
   const filledSignalsPath = join(projectRoot, 'signals/filled')
   const reviewPath = toProjectPath(projectRoot, tradingAgentReadModelSources.review)
@@ -593,15 +598,15 @@ export async function readTradingAgentSnapshot({
   const ashareMarketCapital = await readMarketCapitalProjection(
     toProjectPath(projectRoot, tradingAgentReadModelSources.ashareMarketCapital),
     'A-share',
+    now,
   )
   const cnFuturesMarketCapital = await readMarketCapitalProjection(
     toProjectPath(projectRoot, tradingAgentReadModelSources.cnFuturesMarketCapital),
     'CNFutures',
+    now,
   )
-  const authoritativeAShareHoldings = await readAuthoritativeASharePositions(
-    ashareExecutionPositionPath,
-    ashareMarketCapital,
-  )
+  const asharePositionAuthority = await readAuthoritativeASharePositions(projectRoot, ashareMarketCapital, now)
+  const authoritativeAShareHoldings = asharePositionAuthority.holdings
   const fallbackHoldings = mergeHoldings(
     [
       ...nonAuthoritativeHoldings.filter((holding) => holding.market !== 'A-share'),
@@ -612,8 +617,8 @@ export async function readTradingAgentSnapshot({
   )
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
   const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
-  const ashareAccount = await readAShareAccountSummary(projectRoot, generatedAt, ashareMarketCapital)
-  const ashareTierSummaries = readAShareTierSummaries(generatedAt, ashareAccount)
+  const ashareAccount = await readAShareAccountSummary(projectRoot, ashareMarketCapital)
+  const ashareTierSummaries = readAShareTierSummaries(ashareAccount)
   const ashareNoTradeExplanation = await readLatestAShareNoTradeExplanation(projectRoot, now)
   const ashareResearchEvidence = await readAShareResearchEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.ashareResearchEvidence))
   const ashareCanonicalProjectionSet = await readCurrentAShareProjectionSet(
@@ -646,12 +651,14 @@ export async function readTradingAgentSnapshot({
     ? rawCNFuturesMarketMaturity
     : undefined
   const ashareForwardValidation = sampleKpiCompatibilityView(ashareSampleKpi)
+  const paperDayRun = await readPaperDayRunSummary(
+    toProjectPath(projectRoot, tradingAgentReadModelSources.paperDayRunBundle),
+  )
   const cnFuturesReplayEvidence = await readCNFuturesReplayEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.cnFuturesReplay))
   const equityPerformance = ashareAccount && isAShareLegacyEquitySummary(equityPortfolio.summary) ? [] : equityPortfolio.performance
   const performance = annotatePerformanceQuality(firstNonEmpty(equityPerformance, reviewPerformance, trackerPortfolio.performance))
-  const portfolio = attachAShareAccountSummary(equityPortfolio.summary ?? trackerPortfolio.summary, ashareAccount, generatedAt)
+  const portfolio = attachAShareAccountSummary(equityPortfolio.summary ?? trackerPortfolio.summary, ashareAccount)
   const marketSummaries = await buildMarketSummaries({
-    generatedAt,
     holdings: fallbackHoldings,
     ashareNoTradeExplanation,
     performanceRoot: performanceTrackerRoot,
@@ -661,6 +668,7 @@ export async function readTradingAgentSnapshot({
     simLedgerRoot,
     cnFuturesReplayEvidence,
     ashareMarketCapital,
+    asharePositionAuthorityState: asharePositionAuthority.state,
     cnFuturesMarketCapital,
     ashareMarketMaturity,
     cnFuturesMarketMaturity,
@@ -668,6 +676,9 @@ export async function readTradingAgentSnapshot({
   })
   const marketPulseRead = await readSharedSignalsMarketPulses({
     baseUrl: process.env.SHAREDSIGNALS_API_URL,
+    expectedCatalogVersion: process.env.SHAREDSIGNALS_CATALOG_VERSION,
+    accessPolicyId: process.env.SHAREDSIGNALS_ACCESS_POLICY_ID,
+    datasetIds: parseMarketPulseDatasetIds(process.env.SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON),
     holdings: fallbackHoldings,
     signals,
     now,
@@ -676,7 +687,6 @@ export async function readTradingAgentSnapshot({
   const hasPlan = await fileExists(positionPlanPath)
   const hasReview = await fileExists(reviewPath) || await fileExists(reviewFallbackPath)
   const hasSimLedger = simLedgerHoldings.length > 0 || simLedgerSignals.length > 0
-  const hasOpportunityEvents = opportunityFunnelEvents.length > 0
   const hasPerformanceEvidence = hasReview || equityPortfolio.summary !== undefined || trackerPortfolio.summary !== undefined
   const performanceMessage = performance.length > 0
     ? undefined
@@ -689,10 +699,10 @@ export async function readTradingAgentSnapshot({
     generatedAt,
     domains: {
       performance: domainHealth(performance.length > 0 ? 'ready' : 'empty', generatedAt, performanceMessage),
-      signals: domainHealth(signals.length > 0 || hasOpportunityEvents ? 'ready' : 'empty', generatedAt),
+      signals: domainHealth(signals.length > 0 ? 'ready' : 'empty', generatedAt),
       holdings: domainHealth(fallbackHoldings.length > 0 ? 'ready' : 'empty', generatedAt),
       decisions: domainHealth(hasPerformanceEvidence ? 'ready' : 'empty', generatedAt),
-      risk: domainHealth(fallbackHoldings.length > 0 || signals.length > 0 || hasOpportunityEvents ? 'ready' : 'empty', generatedAt),
+      risk: domainHealth(fallbackHoldings.length > 0 || signals.length > 0 ? 'ready' : 'empty', generatedAt),
     },
     performance,
     portfolio,
@@ -709,17 +719,816 @@ export async function readTradingAgentSnapshot({
     cnFuturesMarketMaturity,
     ashareForwardValidation,
     ashareTierSummaries,
+    paperDayRun,
     sourceRefs: tradingAgentReadModelSources,
+  }
+}
+
+const PAPER_DAY_STAGE_ORDER = [
+  'preopen',
+  'evidence_ready',
+  'universe_ready',
+  'decision_ready',
+  'risk_checked',
+  'orders_simulated',
+  'reconciled',
+  'learning_recorded',
+  'reported',
+] as const
+
+const PAPER_DAY_STATUSES = new Set([
+  'incomplete',
+  'incomplete_with_blocks',
+  'completed',
+  'completed_with_blocks',
+])
+
+type PaperDayReceipt = {
+  stage: string
+  status: string
+  idempotencyKey: string
+  component: PaperDayComponent
+  inputBundleSha256: string
+  payload: Record<string, unknown>
+  payloadSha256: string
+  reasonCodes: string[]
+  receiptId: string
+}
+
+type PaperDayComponent = {
+  stage: string | null
+  componentId: string
+  version: string
+  artifactSha256: string
+}
+
+const PAPER_DAY_EXECUTION_POSITION_INVALIDATING_REASONS = new Set([
+  'execution_authority_proof_invalid',
+  'execution_receipt_state_invalid',
+  'execution_receipt_time_invalid',
+  'execution_risk_order_mismatch',
+  'execution_time_precedes_decision',
+  'execution_without_risk_order',
+  'fill_quantity_conservation_invalid',
+  'non_mainboard_execution_leak',
+  'order_receipt_missing',
+  'unfilled_receipt_proof_invalid',
+  'unknown_simulated_order',
+])
+
+async function readPaperDayRunSummary(path: string): Promise<PaperDayRunSummary | undefined> {
+  let encoded: Buffer
+  try {
+    encoded = await readRegularFile(path)
+  } catch {
+    return undefined
+  }
+  let payload: Record<string, unknown>
+  try {
+    payload = asRecord(JSON.parse(encoded.toString('utf8')) as unknown)
+  } catch {
+    return undefined
+  }
+  const context = asRecord(payload.context)
+  const projection = asRecord(payload._projection)
+  if (
+    !hasExactKeys(payload, [
+      '_projection',
+      'block_reasons',
+      'component_manifest_sha256',
+      'components',
+      'context',
+      'contract_id',
+      'exit_evaluation_allowed',
+      'permitted_order_ids',
+      'position_authority_valid',
+      'run_id',
+      'stage_receipts',
+      'status',
+      'stop_new_risk',
+    ])
+    || payload.contract_id !== 'tradingagent.paper_day_loop.v1'
+    || !isContractText(payload.run_id)
+    || !hasExactKeys(context, [
+      'account_type',
+      'authority_generation',
+      'authority_id',
+      'champion_manifest_sha256',
+      'decision_as_of',
+      'execution_lineage',
+      'market',
+      'real_trading_enabled',
+      'trade_date',
+    ])
+    || context.market !== 'ashare'
+    || !isContractText(context.authority_id)
+    || !Number.isInteger(context.authority_generation)
+    || Number(context.authority_generation) <= 0
+    || !isContractText(context.execution_lineage)
+    || context.account_type !== 'simulated'
+    || context.real_trading_enabled !== false
+    || !isIsoDate(context.trade_date)
+    || !canonicalShanghaiDecisionAsOf(context.decision_as_of, context.trade_date)
+    || !isSha256(context.champion_manifest_sha256)
+    || !hasExactKeys(projection, [
+      'authority',
+      'bundle_sha256',
+      'environment',
+      'production_verified',
+      'record_type',
+      'schema_version',
+    ])
+    || projection.authority !== 'non_authority'
+    || !isSha256(projection.bundle_sha256)
+    || projection.environment !== 'local_candidate'
+    || projection.production_verified !== false
+    || projection.record_type !== 'run_bundle_projection'
+    || projection.schema_version !== 1
+    || !isSha256(payload.component_manifest_sha256)
+    || typeof payload.stop_new_risk !== 'boolean'
+    || typeof payload.position_authority_valid !== 'boolean'
+    || payload.exit_evaluation_allowed !== payload.position_authority_valid
+    || !PAPER_DAY_STATUSES.has(String(payload.status))
+  ) return undefined
+
+  const components = readPaperDayComponents(payload.components)
+  if (!components) return undefined
+  if (sha256Text(canonicalJson(components.map(componentRecord))) !== payload.component_manifest_sha256) return undefined
+  const expectedRunId = canonicalPaperDayRunId(context)
+  if (!expectedRunId || payload.run_id !== expectedRunId) return undefined
+  const canonicalRoot = canonicalRootFromPublishedProjection(encoded.toString('utf8'), projection)
+  if (!canonicalRoot || sha256Text(canonicalRoot) !== projection.bundle_sha256) return undefined
+  try {
+    const immutable = await readRegularFile(join(
+      dirname(path),
+      'runs',
+      String(payload.run_id),
+      `${String(projection.bundle_sha256)}.json`,
+    ))
+    if (!immutable.equals(encoded)) return undefined
+  } catch {
+    return undefined
+  }
+  const blockReasons = stringArrayStrict(payload.block_reasons)
+  const permittedOrderIds = stringArrayStrict(payload.permitted_order_ids)
+  if (!blockReasons || !permittedOrderIds) return undefined
+  const receipts = readPaperDayReceipts(payload.stage_receipts, components, canonicalRoot, payload, context)
+  if (!receipts) return undefined
+  const accumulatedReasons = uniqueStrings(receipts.flatMap((receipt) => receipt.reasonCodes))
+  if (!sameStringArray(blockReasons, accumulatedReasons)) return undefined
+  const derivedStopNewRisk = receipts.some((receipt) => paperDayReceiptStopsNewRisk(receipt))
+  if (payload.stop_new_risk !== derivedStopNewRisk) return undefined
+  const expectedStatus = receipts.length === PAPER_DAY_STAGE_ORDER.length
+    ? payload.stop_new_risk ? 'completed_with_blocks' : 'completed'
+    : payload.stop_new_risk ? 'incomplete_with_blocks' : 'incomplete'
+  if (payload.status !== expectedStatus) return undefined
+  const receipt = (stage: string) => receipts.find((row) => row.stage === stage)
+  const evidencePayload = receipt('evidence_ready')?.payload
+  const universePayload = receipt('universe_ready')?.payload
+  const decisionPayload = receipt('decision_ready')?.payload
+  const riskPayload = receipt('risk_checked')?.payload
+  const ordersPayload = receipt('orders_simulated')?.payload
+  if (
+    decisionPayload
+    && decisionPayload.champion_manifest_sha256 !== undefined
+    && decisionPayload.champion_manifest_sha256 !== context.champion_manifest_sha256
+  ) return undefined
+
+  const datasets = recordArray(evidencePayload?.datasets)
+  const dataEvidenceState: PaperDayRunSummary['dataEvidenceState'] = datasets.length === 0
+    ? 'unavailable'
+    : datasets.every((row) => row.state === 'ready' && row.evidence_action === 'accept')
+      ? 'ready'
+      : 'degraded'
+  const requiredDatasets = datasets.filter((row) => row.role === 'required_execution')
+  const executionEvidenceEligible = evidencePayload?.execution_eligible === true
+    && requiredDatasets.length > 0
+    && requiredDatasets.every((row) => (
+      row.state === 'ready'
+      && row.evidence_action === 'accept'
+      && row.effective_weight === 1
+      && isContractText(row.receipt_id)
+    ))
+  const candidates = stringArray(universePayload?.feasible_symbols)
+  const decisions = recordArray(decisionPayload?.decisions)
+  const approvedOrders = recordArray(riskPayload?.approved_orders)
+  const orderReceipts = recordArray(ordersPayload?.order_receipts)
+  const riskBlocks = uniqueStrings([
+    ...stringArray(payload.block_reasons),
+    ...(payload.position_authority_valid ? [] : ['position_authority_invalid']),
+  ])
+  const noTradeReasons = uniqueStrings([
+    ...stringArray(riskPayload?.no_trade_reasons),
+    ...stringArray(decisionPayload?.no_trade_reasons),
+    ...stringArray(receipt('reported')?.payload.no_trade_reasons),
+  ])
+  const blocked = payload.stop_new_risk || !executionEvidenceEligible || riskBlocks.length > 0
+  const simulationExecutionState: PaperDayRunSummary['simulationExecutionState'] = blocked
+    ? 'blocked'
+    : approvedOrders.length > 0
+      ? 'eligible'
+      : 'no_orders'
+  const llmEvidence = asRecord(decisionPayload?.llm_evidence)
+
+  return {
+    environment: 'local_candidate',
+    productionVerified: false,
+    contractId: 'tradingagent.paper_day_loop.v1',
+    runId: payload.run_id,
+    tradeDate: context.trade_date as string,
+    status: payload.status as PaperDayRunSummary['status'],
+    currentStage: receipts.at(-1)?.stage,
+    completedStageCount: receipts.length,
+    totalStageCount: 9,
+    dataEvidenceState,
+    simulationExecutionState,
+    candidateCount: candidates.length,
+    decisionCount: decisions.length,
+    simulatedOrderCount: orderReceipts.length,
+    simulatedFillCount: orderReceipts.filter((row) => ['filled', 'partial'].includes(String(row.status))).length,
+    noTradeReasons,
+    riskBlocks,
+    championManifestSha256: context.champion_manifest_sha256 as string,
+    llmEvidenceState: llmEvidence.role === 'evidence_only' ? 'evidence_only' : 'unavailable',
+    source: 'shared/runtime/run_bundles/latest.json',
+  }
+}
+
+function readPaperDayComponents(value: unknown): PaperDayComponent[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const components: PaperDayComponent[] = []
+  const stageComponents: string[] = []
+  const identities = new Set<string>()
+  for (const candidate of value) {
+    const row = asRecord(candidate)
+    if (!hasExactKeys(row, ['artifact_sha256', 'component_id', 'stage', 'version'])) return undefined
+    const stage = row.stage === null ? null : isPaperDayStage(row.stage) ? row.stage : undefined
+    const componentId = isContractText(row.component_id) ? row.component_id : undefined
+    const version = isContractText(row.version) ? row.version : undefined
+    const artifactSha256 = isSha256(row.artifact_sha256) ? row.artifact_sha256 : undefined
+    if (stage === undefined || !componentId || !version || !artifactSha256) return undefined
+    const identity = `${stage ?? 'null'}:${componentId}`
+    if (identities.has(identity)) return undefined
+    identities.add(identity)
+    if (stage) stageComponents.push(stage)
+    components.push({ stage, componentId, version, artifactSha256 })
+  }
+  if (!sameStringArray(stageComponents, [...PAPER_DAY_STAGE_ORDER])) return undefined
+  return components
+}
+
+function readPaperDayReceipts(
+  value: unknown,
+  components: PaperDayComponent[],
+  canonicalRoot: string,
+  root: Record<string, unknown>,
+  context: Record<string, unknown>,
+): PaperDayReceipt[] | undefined {
+  if (!Array.isArray(value) || value.length > PAPER_DAY_STAGE_ORDER.length) return undefined
+  const finalBlockReasons = stringArrayStrict(root.block_reasons)
+  const finalPermittedOrderIds = stringArrayStrict(root.permitted_order_ids)
+  if (!finalBlockReasons || !finalPermittedOrderIds) return undefined
+  const rawReceiptArray = rawTopLevelProperty(canonicalRoot, 'stage_receipts')
+  const rawReceipts = rawReceiptArray ? splitRawJsonArray(rawReceiptArray) : undefined
+  if (!rawReceipts || rawReceipts.length !== value.length) return undefined
+  const receipts: PaperDayReceipt[] = []
+  const sealedReceipts: Record<string, unknown>[] = []
+  let stopNewRisk = false
+  let positionAuthorityValid = false
+  let blockReasons: string[] = []
+  let permittedOrderIds: string[] = []
+  for (const [index, candidate] of value.entries()) {
+    const row = asRecord(candidate)
+    const reasonCodes = stringArrayStrict(row.reason_codes)
+    const expectedComponent = components.find((component) => component.stage === PAPER_DAY_STAGE_ORDER[index])
+    const rawPayload = rawTopLevelProperty(rawReceipts[index], 'payload')
+    if (
+      !hasExactKeys(row, [
+        'component',
+        'idempotency_key',
+        'input_bundle_sha256',
+        'payload',
+        'payload_sha256',
+        'reason_codes',
+        'receipt_id',
+        'stage',
+        'status',
+      ])
+      || row.stage !== PAPER_DAY_STAGE_ORDER[index]
+      || !['completed', 'completed_with_blocks'].includes(String(row.status))
+      || !isSha256(row.idempotency_key)
+      || !isSha256(row.input_bundle_sha256)
+      || !isSha256(row.payload_sha256)
+      || !isSha256(row.receipt_id)
+      || !reasonCodes
+      || !expectedComponent
+      || canonicalJson(asRecord(row.component)) !== canonicalJson(componentRecord(expectedComponent))
+      || !rawPayload
+      || sha256Text(rawPayload) !== row.payload_sha256
+      || (reasonCodes.length === 0) !== (row.status === 'completed')
+    ) return undefined
+    const expectedInputBundleSha256 = sha256Text(canonicalJson(paperDayBundleRecord({
+      root,
+      context,
+      components,
+      stageReceipts: sealedReceipts,
+      stopNewRisk,
+      positionAuthorityValid,
+      blockReasons,
+      permittedOrderIds,
+    })))
+    if (row.input_bundle_sha256 !== expectedInputBundleSha256) return undefined
+    const expectedIdempotencyKey = sha256Text(canonicalJson({
+      run_id: root.run_id,
+      stage: row.stage,
+      input_bundle_sha256: expectedInputBundleSha256,
+      component_id: expectedComponent.componentId,
+      component_version: expectedComponent.version,
+      component_artifact_sha256: expectedComponent.artifactSha256,
+    }))
+    if (row.idempotency_key !== expectedIdempotencyKey) return undefined
+    const receiptIdentity = {
+      stage: row.stage,
+      status: row.status,
+      idempotency_key: row.idempotency_key,
+      component: componentRecord(expectedComponent),
+      input_bundle_sha256: row.input_bundle_sha256,
+      payload_sha256: row.payload_sha256,
+      reason_codes: reasonCodes,
+    }
+    if (sha256Text(canonicalJson(receiptIdentity)) !== row.receipt_id) return undefined
+    const receipt = {
+      stage: String(row.stage),
+      status: String(row.status),
+      idempotencyKey: row.idempotency_key,
+      component: expectedComponent,
+      inputBundleSha256: row.input_bundle_sha256,
+      payload: asRecord(row.payload),
+      payloadSha256: row.payload_sha256,
+      reasonCodes,
+      receiptId: row.receipt_id,
+    } satisfies PaperDayReceipt
+    const priorStopNewRisk = stopNewRisk
+    receipts.push(receipt)
+    sealedReceipts.push(row)
+    blockReasons = uniqueStrings([...blockReasons, ...reasonCodes])
+    stopNewRisk = stopNewRisk || paperDayReceiptStopsNewRisk(receipt)
+    positionAuthorityValid = paperDayPositionAuthorityAfter(
+      positionAuthorityValid,
+      receipt,
+    )
+    if (receipt.stage === 'risk_checked') {
+      const validated = validatedPaperDayPermittedOrderIds({
+        payload: receipt.payload,
+        reasonCodes,
+        priorStopNewRisk,
+        positionAuthorityValid,
+        persistedOrderIds: finalPermittedOrderIds,
+      })
+      if (!validated) return undefined
+      permittedOrderIds = validated
+    }
+  }
+  const rebuiltRoot = paperDayBundleRecord({
+    root,
+    context,
+    components,
+    stageReceipts: sealedReceipts,
+    stopNewRisk,
+    positionAuthorityValid,
+    blockReasons,
+    permittedOrderIds,
+  })
+  if (canonicalJson(rebuiltRoot) !== canonicalRoot) return undefined
+  return receipts
+}
+
+function paperDayBundleRecord({
+  root,
+  context,
+  components,
+  stageReceipts,
+  stopNewRisk,
+  positionAuthorityValid,
+  blockReasons,
+  permittedOrderIds,
+}: {
+  root: Record<string, unknown>
+  context: Record<string, unknown>
+  components: PaperDayComponent[]
+  stageReceipts: Record<string, unknown>[]
+  stopNewRisk: boolean
+  positionAuthorityValid: boolean
+  blockReasons: string[]
+  permittedOrderIds: string[]
+}) {
+  const complete = stageReceipts.length === PAPER_DAY_STAGE_ORDER.length
+  return {
+    contract_id: root.contract_id,
+    run_id: root.run_id,
+    context,
+    components: components.map(componentRecord),
+    component_manifest_sha256: root.component_manifest_sha256,
+    stage_receipts: stageReceipts,
+    stop_new_risk: stopNewRisk,
+    position_authority_valid: positionAuthorityValid,
+    exit_evaluation_allowed: positionAuthorityValid,
+    block_reasons: blockReasons,
+    permitted_order_ids: permittedOrderIds,
+    status: complete
+      ? stopNewRisk ? 'completed_with_blocks' : 'completed'
+      : stopNewRisk ? 'incomplete_with_blocks' : 'incomplete',
+  }
+}
+
+function paperDayReceiptStopsNewRisk(receipt: PaperDayReceipt) {
+  if (receipt.reasonCodes.length > 0) return true
+  return receipt.stage === 'risk_checked'
+    && asRecord(receipt.payload.drift_constraint).stop_new_orders === true
+}
+
+function paperDayPositionAuthorityAfter(
+  current: boolean,
+  receipt: PaperDayReceipt,
+) {
+  if (receipt.stage === 'preopen') {
+    return receipt.payload.position_authority_valid === true
+  }
+  if (receipt.stage === 'orders_simulated') {
+    const hasPositionChangingFill = recordArray(receipt.payload.order_receipts)
+      .some((row) => ['filled', 'partial'].includes(String(row.status).toLowerCase()))
+    const invalidated = receipt.reasonCodes.some((reason) => (
+      PAPER_DAY_EXECUTION_POSITION_INVALIDATING_REASONS.has(reason)
+    ))
+    return hasPositionChangingFill || invalidated ? false : current
+  }
+  if (receipt.stage === 'reconciled') {
+    return receipt.reasonCodes.length === 0
+      && receipt.payload.position_authority_valid === true
+  }
+  return current
+}
+
+function validatedPaperDayPermittedOrderIds({
+  payload,
+  reasonCodes,
+  priorStopNewRisk,
+  positionAuthorityValid,
+  persistedOrderIds,
+}: {
+  payload: Record<string, unknown>
+  reasonCodes: string[]
+  priorStopNewRisk: boolean
+  positionAuthorityValid: boolean
+  persistedOrderIds: string[]
+}): string[] | undefined {
+  const driftStopsRisk = asRecord(payload.drift_constraint).stop_new_orders === true
+  const seenOrderIds = new Set<string>()
+  const candidateOrders: Array<{ orderId: string, intent: string }> = []
+  let riskOrderContractInvalid = !Array.isArray(payload.approved_orders)
+  const rawOrders = Array.isArray(payload.approved_orders) ? payload.approved_orders : []
+  for (const candidate of rawOrders) {
+    const order = asRecord(candidate)
+    const orderId = isContractText(order.order_id) ? order.order_id : undefined
+    const intent = typeof order.intent === 'string' ? order.intent.toLowerCase() : undefined
+    if (
+      !orderId
+      || seenOrderIds.has(orderId)
+      || !intent
+      || !['open', 'increase', 'reduce', 'exit'].includes(intent)
+    ) {
+      riskOrderContractInvalid = true
+      continue
+    }
+    seenOrderIds.add(orderId)
+    candidateOrders.push({ orderId, intent })
+  }
+  const blockNewRisk = priorStopNewRisk
+    || reasonCodes.length > 0
+    || driftStopsRisk
+    || riskOrderContractInvalid
+  const derivedOrderIds: string[] = []
+  for (const { orderId, intent } of candidateOrders) {
+    if (['open', 'increase'].includes(intent)) {
+      if (blockNewRisk) continue
+    } else if (['reduce', 'exit'].includes(intent)) {
+      if (!positionAuthorityValid) continue
+    } else {
+      continue
+    }
+    derivedOrderIds.push(orderId)
+  }
+  return sameStringArray(derivedOrderIds, persistedOrderIds)
+    ? derivedOrderIds
+    : undefined
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(asRecord).filter((row) => Object.keys(row).length > 0) : []
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((row): row is string => typeof row === 'string' && row.length > 0)
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)]
+}
+
+function isIsoDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
+
+function isAwareIsoInstant(value: unknown): value is string {
+  if (
+    typeof value !== 'string'
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+  ) return false
+  return !Number.isNaN(new Date(value).getTime())
+}
+
+function canonicalShanghaiDecisionAsOf(
+  value: unknown,
+  tradeDate: unknown,
+): string | undefined {
+  if (
+    typeof value !== 'string'
+    || typeof tradeDate !== 'string'
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00$/.test(value)
+  ) return undefined
+  const instant = Date.parse(value)
+  if (!Number.isFinite(instant)) return undefined
+  const shanghaiWallClock = new Date(instant + 8 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 19)
+  const canonical = `${shanghaiWallClock}+08:00`
+  if (canonical !== value || value.slice(0, 10) !== tradeDate) return undefined
+  return canonical
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
+  const actual = Object.keys(value).sort()
+  const wanted = [...expected].sort()
+  return actual.length === wanted.length
+    && actual.every((key, index) => key === wanted[index])
+}
+
+function isPaperDayStage(value: unknown): value is typeof PAPER_DAY_STAGE_ORDER[number] {
+  return typeof value === 'string' && (PAPER_DAY_STAGE_ORDER as readonly string[]).includes(value)
+}
+
+function componentRecord(component: PaperDayComponent) {
+  return {
+    stage: component.stage,
+    component_id: component.componentId,
+    version: component.version,
+    artifact_sha256: component.artifactSha256,
+  }
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const rows = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
+    return `{${rows.join(',')}}`
+  }
+  if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('non-finite JSON number')
+  const encoded = JSON.stringify(value)
+  if (encoded === undefined) throw new Error('non-JSON value')
+  return encoded
+}
+
+function sha256Text(value: string) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function canonicalPaperDayRunId(context: Record<string, unknown>) {
+  try {
+    const identity = {
+      contract_id: 'tradingagent.paper_day_loop.v1',
+      trade_date: context.trade_date,
+      decision_as_of: context.decision_as_of,
+      market: context.market,
+      authority_id: context.authority_id,
+      authority_generation: context.authority_generation,
+      execution_lineage: context.execution_lineage,
+      account_type: context.account_type,
+      real_trading_enabled: context.real_trading_enabled,
+    }
+    return `ashare-paper-day-${sha256Text(canonicalJson(identity)).slice(0, 32)}`
+  } catch {
+    return undefined
+  }
+}
+
+function canonicalRootFromPublishedProjection(
+  encoded: string,
+  projection: Record<string, unknown>,
+) {
+  if (!encoded.endsWith('\n') || encoded.slice(0, -1).includes('\n')) return undefined
+  const body = encoded.slice(0, -1)
+  let projectionCanonical: string
+  try {
+    projectionCanonical = canonicalJson(projection)
+  } catch {
+    return undefined
+  }
+  const prefix = `{"_projection":${projectionCanonical},`
+  if (!body.startsWith(prefix) || !body.endsWith('}')) return undefined
+  return `{${body.slice(prefix.length)}`
+}
+
+function stringArrayStrict(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const rows: string[] = []
+  for (const candidate of value) {
+    if (!isContractText(candidate) || rows.includes(candidate)) return undefined
+    rows.push(candidate)
+  }
+  return rows
+}
+
+function sameStringArray(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function rawTopLevelProperty(objectText: string, expectedKey: string): string | undefined {
+  let cursor = skipJsonWhitespace(objectText, 0)
+  if (objectText[cursor] !== '{') return undefined
+  cursor += 1
+  while (cursor < objectText.length) {
+    cursor = skipJsonWhitespace(objectText, cursor)
+    if (objectText[cursor] === '}') return undefined
+    if (objectText[cursor] !== '"') return undefined
+    const keyEnd = scanJsonStringEnd(objectText, cursor)
+    if (keyEnd === undefined) return undefined
+    let key: string
+    try {
+      key = JSON.parse(objectText.slice(cursor, keyEnd)) as string
+    } catch {
+      return undefined
+    }
+    cursor = skipJsonWhitespace(objectText, keyEnd)
+    if (objectText[cursor] !== ':') return undefined
+    cursor = skipJsonWhitespace(objectText, cursor + 1)
+    const valueEnd = scanJsonValueEnd(objectText, cursor)
+    if (valueEnd === undefined) return undefined
+    if (key === expectedKey) return objectText.slice(cursor, valueEnd)
+    cursor = skipJsonWhitespace(objectText, valueEnd)
+    if (objectText[cursor] === ',') {
+      cursor += 1
+      continue
+    }
+    if (objectText[cursor] === '}') return undefined
+    return undefined
+  }
+  return undefined
+}
+
+function splitRawJsonArray(arrayText: string): string[] | undefined {
+  let cursor = skipJsonWhitespace(arrayText, 0)
+  if (arrayText[cursor] !== '[') return undefined
+  cursor += 1
+  const rows: string[] = []
+  while (cursor < arrayText.length) {
+    cursor = skipJsonWhitespace(arrayText, cursor)
+    if (arrayText[cursor] === ']') return rows
+    const valueEnd = scanJsonValueEnd(arrayText, cursor)
+    if (valueEnd === undefined) return undefined
+    rows.push(arrayText.slice(cursor, valueEnd))
+    cursor = skipJsonWhitespace(arrayText, valueEnd)
+    if (arrayText[cursor] === ',') {
+      cursor += 1
+      continue
+    }
+    if (arrayText[cursor] === ']') return rows
+    return undefined
+  }
+  return undefined
+}
+
+function skipJsonWhitespace(value: string, start: number) {
+  let cursor = start
+  while (cursor < value.length && /\s/.test(value[cursor])) cursor += 1
+  return cursor
+}
+
+function scanJsonStringEnd(value: string, start: number): number | undefined {
+  if (value[start] !== '"') return undefined
+  let escaped = false
+  for (let cursor = start + 1; cursor < value.length; cursor += 1) {
+    const character = value[cursor]
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (character === '\\') {
+      escaped = true
+      continue
+    }
+    if (character === '"') return cursor + 1
+  }
+  return undefined
+}
+
+function scanJsonValueEnd(value: string, start: number): number | undefined {
+  const first = value[start]
+  if (first === '"') return scanJsonStringEnd(value, start)
+  if (first === '{' || first === '[') {
+    const stack = [first]
+    let inString = false
+    let escaped = false
+    for (let cursor = start + 1; cursor < value.length; cursor += 1) {
+      const character = value[cursor]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (character === '\\') escaped = true
+        else if (character === '"') inString = false
+        continue
+      }
+      if (character === '"') {
+        inString = true
+        continue
+      }
+      if (character === '{' || character === '[') stack.push(character)
+      else if (character === '}' || character === ']') {
+        const opening = stack.pop()
+        if ((opening === '{' && character !== '}') || (opening === '[' && character !== ']')) return undefined
+        if (stack.length === 0) return cursor + 1
+      }
+    }
+    return undefined
+  }
+  let cursor = start
+  while (cursor < value.length && ![',', '}', ']'].includes(value[cursor])) cursor += 1
+  const raw = value.slice(start, cursor).trim()
+  if (!raw) return undefined
+  try {
+    JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+  return start + value.slice(start, cursor).lastIndexOf(raw) + raw.length
+}
+
+function isContractText(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length > 0
+    && value === value.trim()
+    && /^[A-Za-z0-9._:-]+$/.test(value)
+}
+
+function isSafeExecutionLineageId(value: unknown): value is string {
+  return isContractText(value)
+    && value !== '.'
+    && value !== '..'
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)
+}
+
+function executionLineageDir(projectRoot: string, executionLineageId: string) {
+  if (!isSafeExecutionLineageId(executionLineageId)) return undefined
+  return join(projectRoot, 'shared/logs/execution_lineages', executionLineageId)
+}
+
+function parseMarketPulseDatasetIds(
+  raw: string | undefined,
+): Partial<Record<Exclude<Market, 'All Markets'>, string>> | undefined {
+  if (!raw?.trim()) return undefined
+  try {
+    const payload = asRecord(JSON.parse(raw))
+    const allowedMarkets = new Set<Exclude<Market, 'All Markets'>>([
+      'A-share',
+      'US',
+      'Crypto',
+      'HK',
+      'PM',
+      'CNFutures',
+    ])
+    const datasetIds: Partial<Record<Exclude<Market, 'All Markets'>, string>> = {}
+    for (const [market, value] of Object.entries(payload)) {
+      if (!allowedMarkets.has(market as Exclude<Market, 'All Markets'>)) return undefined
+      const datasetId = optionalString(value)
+      if (!datasetId || !/^[a-z0-9][a-z0-9._-]*$/.test(datasetId)) return undefined
+      datasetIds[market as Exclude<Market, 'All Markets'>] = datasetId
+    }
+    return Object.keys(datasetIds).length ? datasetIds : undefined
+  } catch {
+    return undefined
   }
 }
 
 async function readAShareAccountSummary(
   projectRoot: string,
-  generatedAt: string,
   marketCapital: MarketCapitalProjection | undefined,
 ): Promise<PortfolioSummary['ashareAccount'] | undefined> {
   if (!marketCapital || marketCapital.market !== 'A-share') return undefined
-  const localSimDir = join(projectRoot, 'shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
+  const localSimDir = executionLineageDir(projectRoot, marketCapital.executionLineageId)
+  if (!localSimDir) return undefined
   const pnlPayload = await readOptionalJson(join(localSimDir, 'local_sim_pnl.json'))
   const pnlRows = asRecord(pnlPayload)
   const accountPnl = selectASharePnlAccount(pnlRows)
@@ -741,7 +1550,7 @@ async function readAShareAccountSummary(
 
   return {
     capitalAuthorityId: 'ashare-capital-v1',
-    authorityGeneration: 1,
+    authorityGeneration: marketCapital.authorityGeneration,
     executionLineageId: marketCapital.executionLineageId,
     cashAvailable: roundMoney(cashAvailable),
     marketValue: roundMoney(marketValue),
@@ -770,7 +1579,7 @@ async function readAShareAccountSummary(
         ? 0
         : undefined,
     source: marketCapital.source,
-    updatedAt: marketCapital.updatedAt || generatedAt,
+    updatedAt: marketCapital.updatedAt,
   }
 }
 
@@ -799,7 +1608,6 @@ async function readLatestAShareNoTradeExplanation(projectRoot: string, now: Date
 function attachAShareAccountSummary(
   summary: PortfolioSummary | undefined,
   ashareAccount: PortfolioSummary['ashareAccount'] | undefined,
-  generatedAt: string,
 ): PortfolioSummary | undefined {
   if (!ashareAccount) return summary
   if (summary && !isAShareLegacyEquitySummary(summary)) return { ...summary, ashareAccount }
@@ -817,12 +1625,11 @@ function attachAShareAccountSummary(
     realizedPnl: ashareAccount.accountRealizedPnl ?? 0,
     unrealizedPnl: ashareAccount.accountUnrealizedPnl ?? ashareAccount.accountTotalPnl,
     ashareAccount,
-    updatedAt: generatedAt,
+    updatedAt: ashareAccount.updatedAt,
   }
 }
 
 function readAShareTierSummaries(
-  generatedAt: string,
   mainAccount?: PortfolioSummary['ashareAccount'],
 ): AShareTierSummary[] | undefined {
   const summaries: AShareTierSummary[] = []
@@ -837,7 +1644,7 @@ function readAShareTierSummaries(
       cashAvailable: mainAccount.cashAvailable,
       tradeCount: mainAccount.totalSampleCount,
       source: mainAccount.source,
-      updatedAt: generatedAt,
+      updatedAt: mainAccount.updatedAt,
     })
   }
 
@@ -873,7 +1680,6 @@ function mergeSignals(...sources: SignalRow[][]): SignalRow[] {
 }
 
 async function buildMarketSummaries({
-  generatedAt,
   holdings,
   ashareNoTradeExplanation,
   performanceRoot,
@@ -883,12 +1689,12 @@ async function buildMarketSummaries({
   simLedgerRoot,
   cnFuturesReplayEvidence,
   ashareMarketCapital,
+  asharePositionAuthorityState,
   cnFuturesMarketCapital,
   ashareMarketMaturity,
   cnFuturesMarketMaturity,
   now,
 }: {
-  generatedAt: string
   holdings: HoldingRow[]
   ashareNoTradeExplanation?: AShareNoTradeExplanation
   performanceRoot: string
@@ -898,6 +1704,7 @@ async function buildMarketSummaries({
   simLedgerRoot: string
   cnFuturesReplayEvidence?: CNFuturesReplayEvidence
   ashareMarketCapital?: MarketCapitalProjection
+  asharePositionAuthorityState: ASharePositionAuthorityState
   cnFuturesMarketCapital?: MarketCapitalProjection
   ashareMarketMaturity?: AShareMarketMaturityProjection
   cnFuturesMarketMaturity?: CNFuturesMarketMaturityProjection
@@ -953,7 +1760,9 @@ async function buildMarketSummaries({
       const hasRuntime = holdingCount > 0 || marketSignals.length > 0 || tradeCount > 0 || styleCount > 0 || hasMeaningfulPnl
       const hasPartialEvidence = Boolean(performanceSummary || styleSummary)
       const hasOnlyStyleSummary = styleCount > 0 && holdingCount === 0 && marketSignals.length === 0 && pnlAmount === undefined
-      const status: MarketSummary['status'] = hasRuntime ? hasOnlyStyleSummary ? 'partial' : 'ready' : hasPartialEvidence ? 'partial' : 'empty'
+      const positionAuthorityUnavailable = isAshare && asharePositionAuthorityState === 'unavailable'
+      const evidenceStatus: MarketSummary['status'] = hasRuntime ? hasOnlyStyleSummary ? 'partial' : 'ready' : hasPartialEvidence ? 'partial' : 'empty'
+      const status: MarketSummary['status'] = positionAuthorityUnavailable ? 'paused' : evidenceStatus
       const evidenceRuntimeState = marketRuntimeState({
         errorCount: styleSummary?.errorCount,
         filledCount: styleSummary?.filledCount,
@@ -964,8 +1773,10 @@ async function buildMarketSummaries({
         tradeCount,
       })
       const healthSummary = healthSummaries.get(market)
-      const runtimeState = healthSummary ? runtimeStateFromHealth(healthSummary, evidenceRuntimeState) : evidenceRuntimeState
-      const latestAt = latestIso(styleSummary?.latestAt, performanceSummary?.latestAt, marketCapital?.updatedAt, ashareAccount?.updatedAt, generatedAt)
+      const runtimeState = positionAuthorityUnavailable
+        ? 'needs_attention'
+        : healthSummary ? runtimeStateFromHealth(healthSummary, evidenceRuntimeState) : evidenceRuntimeState
+      const latestAt = latestIso(styleSummary?.latestAt, performanceSummary?.latestAt, marketCapital?.updatedAt, ashareAccount?.updatedAt)
       const baseHeadline = buildMarketSummaryHeadline(market, status, holdingCount, marketSignals.length, tradeCount, styleCount)
       const baseDetail = buildMarketSummaryDetail({
         activeStyleCount: styleSummary?.activeStyleCount,
@@ -982,8 +1793,10 @@ async function buildMarketSummaries({
         market,
         status,
         runtimeState,
-        executionFault: healthSummary?.executionFault ?? runtimeState === 'needs_attention',
-        runtimeReason: healthSummary?.reasons[0],
+        executionFault: positionAuthorityUnavailable || (healthSummary?.executionFault ?? runtimeState === 'needs_attention'),
+        runtimeReason: positionAuthorityUnavailable
+          ? 'ashare_position_authority_unavailable'
+          : healthSummary?.reasons[0],
         noTradeEvidence: isAshare
           ? buildAShareNoTradeEvidence(ashareNoTradeExplanation, marketCapital)
           : undefined,
@@ -1038,8 +1851,12 @@ async function buildMarketSummaries({
         : market === 'CNFutures'
           ? cnFuturesMarketMaturity?.stage ?? null
           : null,
-      headline: healthSummary ? buildHealthAwareHeadline(market, healthSummary, baseHeadline) : baseHeadline,
-      detail: healthSummary ? buildHealthAwareDetail(healthSummary, baseDetail) : baseDetail,
+      headline: positionAuthorityUnavailable
+        ? 'A-share 持仓权威不可用'
+        : healthSummary ? buildHealthAwareHeadline(market, healthSummary, baseHeadline) : baseHeadline,
+      detail: positionAuthorityUnavailable
+        ? '当前资本快照存在持仓，但匹配的 execution lineage 持仓回执缺失、损坏或冲突；未回退旧账本。'
+        : healthSummary ? buildHealthAwareDetail(healthSummary, baseDetail) : baseDetail,
       }
   })
 }
@@ -1817,8 +2634,14 @@ async function readAShareResearchEvidence(path: string): Promise<AShareResearchE
 async function readMarketCapitalProjection(
   path: string,
   expectedMarket: 'A-share' | 'CNFutures',
+  now: Date,
 ): Promise<MarketCapitalProjection | undefined> {
-  const payload = asRecord(await readOptionalJson(path))
+  let payload: Record<string, unknown>
+  try {
+    payload = asRecord(JSON.parse((await readRegularFile(path)).toString('utf8')))
+  } catch {
+    return undefined
+  }
   const isAshare = expectedMarket === 'A-share'
   const expectedAuthorityId = isAshare ? 'ashare-capital-v1' : 'cn-futures-capital-v1'
   const expectedAccountName = isAshare ? 'ashare_sim' : 'cn_futures_sim'
@@ -1841,17 +2664,22 @@ async function readMarketCapitalProjection(
   const reservedMarginCny = parseFiniteNumber(payload.reserved_margin_cny as number | string | undefined) ?? 0
   const reportedAvailableToReserveCny = parseFiniteNumber(payload.available_to_reserve_cny as number | string | undefined)
   const reportedUtilizationRate = parseFiniteNumber(payload.capital_utilization_rate as number | string | undefined)
+  const updatedAt = optionalString(payload.updated_at)
   if (
     payload.source !== 'market_capital_ledger'
     || payload.schema_version !== 'market-capital-snapshot.v2'
     || payload.authority_id !== expectedAuthorityId
-    || authorityGeneration !== 1
+    || authorityGeneration === undefined
+    || !Number.isInteger(authorityGeneration)
+    || authorityGeneration <= 0
     || payload.account_name !== expectedAccountName
     || payload.market !== expectedMarketName
     || payload.currency !== 'CNY'
     || initialEquityCny !== DEFAULT_SIM_CAPITAL_CNY
-    || !executionLineageId
+    || !isSafeExecutionLineageId(executionLineageId)
     || payload.real_trading_enabled !== false
+    || !updatedAt
+    || !isFreshEvidenceInstant(updatedAt, now, MAX_CAPITAL_AUTHORITY_AGE_MS)
     || equityCny === undefined
     || cashBalanceCny === undefined
     || positionsMarketValueCny === undefined
@@ -1874,9 +2702,13 @@ async function readMarketCapitalProjection(
     : cashBalanceCny + unrealizedPnlCny
   if (Math.abs(derivedEquity - equityCny) > 0.011) return undefined
   const quantities = asRecord(payload.positions_quantity_by_risk_unit)
-  const openPositionCount = Object.values(quantities).filter(
-    (value) => (parseFiniteNumber(value as number | string | undefined) ?? 0) !== 0,
-  ).length
+  const positionsQuantityByRiskUnit: Record<string, number> = {}
+  for (const [riskUnit, rawQuantity] of Object.entries(quantities)) {
+    const quantity = parseFiniteNumber(rawQuantity as number | string | undefined)
+    if (!isContractText(riskUnit) || quantity === undefined || (isAshare && quantity < 0)) return undefined
+    positionsQuantityByRiskUnit[riskUnit] = quantity
+  }
+  const openPositionCount = Object.values(positionsQuantityByRiskUnit).filter((value) => value !== 0).length
   const riskUsedCny = isAshare
     ? positionsMarketValueCny + frozenOrderCashCny + reservedExposureCny
     : marginUsedCny + frozenOrderMarginCny + reservedMarginCny
@@ -1901,7 +2733,7 @@ async function readMarketCapitalProjection(
   return {
     market: expectedMarket,
     authorityId: expectedAuthorityId,
-    authorityGeneration: 1,
+    authorityGeneration,
     executionLineageId,
     initialEquityCny: 50_000,
     equityCny,
@@ -1910,8 +2742,9 @@ async function readMarketCapitalProjection(
     marginUsedCny,
     realizedPnlCny,
     unrealizedPnlCny,
-    updatedAt: String(payload.updated_at ?? ''),
+    updatedAt,
     openPositionCount,
+    positionsQuantityByRiskUnit,
     deployedCapitalCny: roundMoney(riskUsedCny),
     availableToReserveCny: roundMoney(derivedAvailableToReserveCny),
     capitalUtilizationPct: roundMetric(derivedUtilizationRate * 100),
@@ -1950,8 +2783,10 @@ function parseAShareProjectionAuthority(value: unknown): AShareProjectionAuthori
   const executionLineageId = optionalString(authority.execution_lineage_id)
   if (
     capitalAuthorityId !== 'ashare-capital-v1'
-    || authorityGeneration !== 1
-    || !executionLineageId
+    || authorityGeneration === undefined
+    || !Number.isInteger(authorityGeneration)
+    || authorityGeneration <= 0
+    || !isSafeExecutionLineageId(executionLineageId)
   ) return undefined
   return {
     capitalAuthorityId,
@@ -2985,18 +3820,62 @@ async function readPositionSnapshots(root: string): Promise<HoldingRow[]> {
 }
 
 async function readAuthoritativeASharePositions(
-  path: string,
+  projectRoot: string,
   capital: MarketCapitalProjection | undefined,
-): Promise<HoldingRow[]> {
-  if (!capital || capital.market !== 'A-share') return []
-  const payload = asRecord(await readOptionalJson(path))
+  now: Date,
+): Promise<ASharePositionAuthorityRead> {
+  if (!capital || capital.market !== 'A-share') return { holdings: [], state: 'not_applicable' }
+  const lineageDir = executionLineageDir(projectRoot, capital.executionLineageId)
+  if (!lineageDir) return { holdings: [], state: 'unavailable' }
+  const path = join(lineageDir, 'simulated_ashare_positions.json')
+  let payload: Record<string, unknown>
+  try {
+    payload = asRecord(JSON.parse((await readRegularFile(path)).toString('utf8')))
+  } catch {
+    const requiresReceipt = capital.openPositionCount > 0 || Math.abs(capital.positionsMarketValueCny) > 0.011
+    return {
+      holdings: [],
+      state: requiresReceipt || await fileExists(path) ? 'unavailable' : 'empty',
+    }
+  }
   const scope = parseAShareProjectionAuthority(payload)
+  const positionUpdatedAt = optionalString(payload.synced_at) ?? optionalString(payload.updated_at)
   if (
     !scope
     || !sameAShareCapitalAuthority(scope, capital)
     || payload.real_trading_enabled !== false
-  ) return []
-  return parsePositionSnapshot(payload).filter((holding) => holding.market === 'A-share')
+    || !positionUpdatedAt
+    || !isFreshEvidenceInstant(positionUpdatedAt, now, MAX_POSITION_AUTHORITY_AGE_MS)
+    || !Array.isArray(payload.positions)
+    || !positionsMatchCapital(payload.positions, capital.positionsQuantityByRiskUnit)
+  ) return { holdings: [], state: 'unavailable' }
+  const holdings = parsePositionSnapshot(payload).filter((holding) => holding.market === 'A-share')
+  if (holdings.length !== capital.openPositionCount) return { holdings: [], state: 'unavailable' }
+  return { holdings, state: holdings.length ? 'ready' : 'empty' }
+}
+
+function isFreshEvidenceInstant(value: string, now: Date, maxAgeMs: number) {
+  if (!isAwareIsoInstant(value)) return false
+  const ageMs = now.getTime() - Date.parse(value)
+  return ageMs >= 0 && ageMs <= maxAgeMs
+}
+
+function positionsMatchCapital(rawPositions: unknown[], expectedRaw: Record<string, number>) {
+  const expected = new Map(
+    Object.entries(expectedRaw).filter(([, quantity]) => quantity !== 0),
+  )
+  const actual = new Map<string, number>()
+  for (const value of rawPositions) {
+    const position = asRecord(value)
+    const symbol = optionalString(position.ts_code)
+    const quantity = parseFiniteNumber(position.quantity as number | string | undefined)
+    if (!symbol || inferMarket(symbol) !== 'A-share' || quantity === undefined || !Number.isInteger(quantity) || quantity < 0) return false
+    if (quantity === 0) continue
+    if (actual.has(symbol)) return false
+    actual.set(symbol, quantity)
+  }
+  if (actual.size !== expected.size) return false
+  return [...expected].every(([symbol, quantity]) => actual.get(symbol) === quantity)
 }
 
 async function readPositionPlan(path: string): Promise<HoldingRow[]> {
@@ -3005,7 +3884,7 @@ async function readPositionPlan(path: string): Promise<HoldingRow[]> {
     const latest = JSON.parse(lines.at(-1) ?? '{}') as PositionPlanFile
     return (latest.positions ?? []).map((row) => parsePositionRow(row)).filter((row): row is HoldingRow => Boolean(row))
   } catch {
-    return readLegacySimulatedPositions(path)
+    return []
   }
 }
 
@@ -3042,18 +3921,6 @@ async function readSimLedgerCapitalBase(root: string): Promise<number> {
   }
 
   return capitalBase
-}
-
-function readLegacySimulatedPositions(path: string): HoldingRow[] {
-  try {
-    const db = new DatabaseSync(path, { readOnly: true })
-    const rows = db.prepare('SELECT * FROM position_ledger_simulated').all() as PositionRow[]
-    db.close()
-
-    return rows.map((row) => parsePositionRow(row, 'legacy_position_ledger')).filter((row): row is HoldingRow => Boolean(row))
-  } catch {
-    return []
-  }
 }
 
 function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, marketHint: string, strategy: string): HoldingRow | null {
@@ -3463,7 +4330,10 @@ function isSignalQueueRowVisible(signal: SignalFile, market: Market) {
     || signal.fill !== undefined
     || signal.simulated_fill !== undefined
     || signal.filled_at !== undefined
-  if (!isExecutionState) return true
+  // `signals/pending` is a retired compatibility queue, not the V1 decision
+  // authority.  Until an authority-bound read-only projection exists, an
+  // A-share pending row cannot drive current/live dashboard state.
+  if (!isExecutionState) return false
   if (direction === 'sell') return String(signal.execution_source ?? '').toLowerCase() === 'ashare_rebalance_sell'
   return String(signal.candidate_pool_layer ?? '').toLowerCase() === 'candidate'
     && String(signal.execution_source ?? '').toLowerCase() === 'ashare_candidate_layer'
@@ -3614,7 +4484,7 @@ async function readOpportunityFunnelEvents(projectRoot: string): Promise<FunnelE
         }
       })
     } catch {
-      // Opportunity event logs are optional until backend writers are connected.
+      // Retired opportunity-writer logs are optional frozen forensic history.
     }
   }
 
@@ -3649,7 +4519,7 @@ function parseOpportunityFunnelEvent(row: OpportunityFunnelEventRow, index: numb
   const explicitTerminal = row.terminal === undefined ? metadata.terminal : row.terminal
 
   return {
-    id: firstString(row.event_id, row.id, metadata.event_id, metadata.id) ?? `opportunity_log:${opportunityId}:${sequence}:${index}`,
+    id: firstString(row.event_id, row.id, metadata.event_id, metadata.id) ?? `legacy_frozen_opportunity_log:${opportunityId}:${sequence}:${index}`,
     symbol,
     market,
     opportunityId,
@@ -3658,7 +4528,7 @@ function parseOpportunityFunnelEvent(row: OpportunityFunnelEventRow, index: numb
     status,
     label,
     at: formatClock(timestamp),
-    source: 'opportunity_log',
+    source: 'legacy_frozen_opportunity_log',
     reason: firstString(row.reason, metadata.reason),
     latencyMinutes: parseFiniteNumber(row.latencyMinutes ?? row.latency_minutes) ?? parseFiniteNumber(metadata.latencyMinutes as number | string | undefined) ?? parseFiniteNumber(metadata.latency_minutes as number | string | undefined),
     terminal: explicitTerminal === undefined ? stage === '结果' || status === '成交' || status === '拦截' || status === '复盘' : boolish(explicitTerminal),
