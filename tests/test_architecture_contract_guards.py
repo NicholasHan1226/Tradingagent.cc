@@ -624,6 +624,38 @@ def test_declared_tradingagent_legacy_paths_are_real_and_still_timeboxed() -> No
             )
 
 
+def test_legacy_runtime_paths_cannot_escape_the_repository(tmp_path: Path) -> None:
+    inventory_path = tmp_path / "legacy_inventory.yaml"
+    inventory_path.write_text(
+        """\
+version: 1
+entries:
+  - legacy_id: unsafe_runtime_path
+    owner: TradingAgent
+    paths:
+      - README.md
+    runtime_paths:
+      - ../outside-runtime
+    replacement: safe_replacement
+    compatibility_mode: timeboxed_read_only
+    sunset_phase: phase_3
+    remaining_consumers:
+      - none_verified
+    deletion_preconditions:
+      - installed_runtime_readback
+    rollback: preserve_read_only_evidence
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        load_legacy_inventory(inventory_path)
+    except ValueError as exc:
+        assert "repository-relative" in str(exc)
+    else:
+        raise AssertionError("escaping runtime path must fail closed")
+
+
 def test_contract_ids_are_synchronized_with_active_docs() -> None:
     architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
     data_contract = (ROOT / "docs" / "data_contract.md").read_text(encoding="utf-8")

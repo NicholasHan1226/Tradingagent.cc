@@ -121,7 +121,9 @@ Canonical-capital 的 mark/quote freshness 另有硬边界：非空持仓 mark �
 adapter/research/T+1/opening/closing、`shared/screening/*`、`shared/research/*`、
 `shared/execution/auto_pipeline.py`、wrapper/runtime-test/review 工具仍有
 `TradingagentDataReader`、专用端点或旧配置引用，CNFutures 也仍有明示 SQLite/旧 endpoint
-兼容。其余路径在同 `as_of` parity、消费者切换、运行时 no-fallback 负例、文档/环境/调度扫描
+兼容；但显式空`SHAREDSIGNALS_API_URL`必须在旧reader前fail closed，SQLite仅能在隔离诊断中以
+`TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1`和已存在的诊断数据库同时明示启用。其余路径在同
+`as_of` parity、消费者切换、运行时 no-fallback 负例、文档/环境/调度扫描
 全部通过前，只能标记 `COMPATIBILITY_TIMEBOXED` 或 `RETIREMENT_PENDING_VERIFICATION`。
 新链失败时 fail closed，不回退旧链。
 

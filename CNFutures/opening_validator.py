@@ -547,16 +547,10 @@ def _query_session_bars_via_api(
 
 
 def _allow_sqlite_fallback(sqlite_db: Path) -> bool:
-    if not sqlite_db.exists():
-        return False
-    try:
-        if sqlite_db.resolve() != DEFAULT_SQLITE_DB.resolve():
-            return True
-    except OSError:
-        if str(sqlite_db) != str(DEFAULT_SQLITE_DB):
-            return True
     value = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+    if str(value).strip().lower() not in {"1", "true", "yes", "on"}:
+        return False
+    return sqlite_db.exists()
 
 
 def _query_daily_bars(
@@ -589,6 +583,10 @@ def _query_session_bars(
     min_symbols: int = 4,
 ) -> dict[str, Any]:
     api_payload = _query_session_bars_via_api(start, now, min_symbols=min_symbols)
+    if api_payload.get(
+        "error"
+    ) == "sharedsignals_api_url_missing" and not _allow_sqlite_fallback(db_path):
+        return api_payload
     if (
         not api_payload.get("error")
         and int(api_payload.get("bar_count") or 0) > 0

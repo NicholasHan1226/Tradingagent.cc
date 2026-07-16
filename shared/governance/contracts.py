@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 import yaml
@@ -66,6 +66,20 @@ def _optional_strings(value: Any, field: str) -> tuple[str, ...]:
     result = tuple(_text(item, f"{field}[]") for item in value)
     if len(result) != len(set(result)):
         raise ValueError(f"{field} must not contain duplicates")
+    return result
+
+
+def _optional_repository_paths(value: Any, field: str) -> tuple[str, ...]:
+    result = _optional_strings(value, field)
+    for raw_path in result:
+        candidate = PurePosixPath(raw_path.rstrip("/"))
+        if (
+            raw_path.startswith(("/", "~"))
+            or "\\" in raw_path
+            or candidate.is_absolute()
+            or any(part in {".", ".."} for part in candidate.parts)
+        ):
+            raise ValueError(f"{field}[] must be a repository-relative path")
     return result
 
 
@@ -191,7 +205,9 @@ def load_legacy_inventory(
         if compatibility_mode not in ALLOWED_COMPATIBILITY_MODES:
             raise ValueError(f"unsupported compatibility_mode: {compatibility_mode}")
         paths = _strings(item.get("paths"), "paths")
-        runtime_paths = _optional_strings(item.get("runtime_paths"), "runtime_paths")
+        runtime_paths = _optional_repository_paths(
+            item.get("runtime_paths"), "runtime_paths"
+        )
         overlap = set(paths).intersection(runtime_paths)
         if overlap:
             raise ValueError(

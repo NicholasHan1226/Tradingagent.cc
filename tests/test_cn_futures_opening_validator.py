@@ -12,6 +12,7 @@ from unittest.mock import patch
 from CNFutures.opening_validator import (
     _opening_30m_review,
     _query_daily_bars_via_reader,
+    _query_session_bars,
     _query_session_bars_via_api,
     _reader_symbols,
     first_sample_alerts,
@@ -21,6 +22,14 @@ from CNFutures.opening_validator import (
 
 
 class CNFuturesOpeningValidatorTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sqlite_diagnostic_environment = patch.dict(
+            os.environ,
+            {"TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE": "1"},
+        )
+        self.sqlite_diagnostic_environment.start()
+        self.addCleanup(self.sqlite_diagnostic_environment.stop)
+
     def test_sparse_night_bars_with_product_coverage_hold_are_strategy_hold(self) -> None:
         report = _opening_30m_review(
             bars={"bar_count": 2, "symbol_count": 2},
@@ -638,7 +647,10 @@ class QuerySessionBarsViaApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.api_environment = patch.dict(
             os.environ,
-            {"SHAREDSIGNALS_API_URL": "http://sharedsignals.fixture.invalid"},
+            {
+                "SHAREDSIGNALS_API_URL": "http://sharedsignals.fixture.invalid",
+                "TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE": "",
+            },
         )
         self.api_environment.start()
         self.addCleanup(self.api_environment.stop)
@@ -775,6 +787,31 @@ class QuerySessionBarsViaApiTest(unittest.TestCase):
         self.assertEqual(result["bar_count"], 0)
         self.assertIsNone(result["url"])
         urlopen.assert_not_called()
+
+    def test_empty_api_url_blocks_legacy_reader_end_to_end(self) -> None:
+        """Missing authority cannot be washed into a successful legacy read."""
+
+        start = datetime.fromisoformat("2026-07-06T09:00:00+08:00")
+        now = datetime.fromisoformat("2026-07-06T09:15:00+08:00")
+        with patch.dict(
+            os.environ,
+            {
+                "SHAREDSIGNALS_API_URL": "",
+                "TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE": "",
+            },
+        ), patch(
+            "CNFutures.opening_validator._query_session_bars_via_reader"
+        ) as reader_query:
+            result = _query_session_bars(
+                Path("/nonexistent/sharedsignals.sqlite"),
+                start,
+                now,
+                reader=object(),
+                min_symbols=4,
+            )
+
+        self.assertEqual(result.get("error"), "sharedsignals_api_url_missing")
+        reader_query.assert_not_called()
 
     def test_api_empty_response_fail_closed(self) -> None:
         """Empty API response must fail-closed with bar_count=0."""
