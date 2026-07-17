@@ -86,6 +86,8 @@ SAFE_ENV=(
   TZ=Asia/Shanghai
   REAL_TRADING_ENABLED=false
   TRADINGAGENT_LLM_NETWORK_ENABLED=false
+  SHAREDSIGNALS_API_URL=
+  MARKETGRAPH_API_URL=
   PYTHONDONTWRITEBYTECODE=1
 )
 
@@ -115,7 +117,7 @@ sudo -u marketgraph "${SAFE_ENV[@]}" node --version > "$EVIDENCE/node-version.tx
 sudo -u marketgraph "${SAFE_ENV[@]}" npm --version > "$EVIDENCE/npm-version.txt"
 ```
 
-`env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、SharedSignals URL/catalog/dataset/auth或DeepSeek credential。依赖范围未完全锁hash时，receipt必须保存Python/pip/Node/npm版本、完整`pip freeze`、requirements与`package-lock.json`哈希；未保存这些证据不得声称复现了同一环境。
+`env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、SharedSignals catalog/dataset/auth或DeepSeek credential。`SHAREDSIGNALS_API_URL`与`MARKETGRAPH_API_URL`在旁路验收中必须显式为空，避免未退役旧reader把“变量缺失”解释为localhost默认地址并读取现役服务；这两个空值不是V1联调配置。依赖范围未完全锁hash时，receipt必须保存Python/pip/Node/npm版本、完整`pip freeze`、requirements与`package-lock.json`哈希；未保存这些证据不得声称复现了同一环境。
 
 只读API canary必须使用非现役、loopback-only端口，显式保持`REAL_TRADING_ENABLED=false`，记录精确PID并在停止前核对其cmdline指向候选`dist-server`。禁止通配`pkill`或占用8787。以下生命周期在同一个fail-fast Bash进程中执行；`FINANCE_WORKSPACE_ROOT`只指向候选的显式别名，不读取现役workspace：
 

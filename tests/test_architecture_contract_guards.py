@@ -1280,6 +1280,14 @@ def test_active_operations_do_not_recommend_retired_ashare_entrypoints() -> None
         assert retired_text not in operations
 
 
+def test_server_sidecar_safe_env_disables_legacy_localhost_clients() -> None:
+    operations = (ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+    safe_env = operations.split("SAFE_ENV=(", 1)[1].split("\n)", 1)[0]
+
+    assert "SHAREDSIGNALS_API_URL=" in safe_env
+    assert "MARKETGRAPH_API_URL=" in safe_env
+
+
 def test_human_state_matrix_names_every_machine_governance_entry() -> None:
     matrix = load_system_state_matrix()
     human_matrix = (ROOT / "docs" / "system_state_matrix.md").read_text(
