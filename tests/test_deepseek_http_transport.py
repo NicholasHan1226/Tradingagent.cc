@@ -5,14 +5,29 @@ import importlib
 import io
 import json
 import ssl
+import tempfile
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from datetime import datetime
 from email.message import Message
 from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
+
+
+@pytest.fixture
+def tmp_path() -> Iterator[Path]:
+    """Create credentials below a portable, owner-controlled parent chain."""
+
+    with tempfile.TemporaryDirectory(
+        prefix=".ta-deepseek-test-",
+        dir=Path.home(),
+    ) as directory:
+        secure_path = Path(directory)
+        secure_path.chmod(0o700)
+        yield secure_path
 
 
 def _http_module() -> Any:
