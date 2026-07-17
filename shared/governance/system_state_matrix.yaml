@@ -31,6 +31,28 @@ entries:
       - claim_sharedsignals_runtime_available
       - fallback_to_legacy_endpoint_or_sqlite
     successor: sharedsignals.query_result.v1
+  - entry_id: tradingagent_sharedsignals_v1_integration_probe
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime_test/sharedsignals_v1_integration_probe.py
+    production_verified: false
+    last_verified_at: "2026-07-17"
+    evidence:
+      - tests/test_sharedsignals_v1_integration_probe.py
+      - docs/operations.md
+      - docs/data_contract.md
+    allowed_uses:
+      - explicit_fixture_or_authorized_read_only_v1_integration_probe
+      - same_as_of_semantic_consistency_and_row_pit_validation
+      - content_addressed_non_authority_readiness_receipt
+    prohibited_uses:
+      - claim_sharedsignals_live_runtime_available
+      - infer_production_or_trading_authority
+      - follow_unfrozen_pagination_contract
+      - store_credentials_in_probe_manifest_or_receipt
+      - fallback_to_legacy_endpoint_sqlite_or_provider
+    successor: tradingagent.sharedsignals.integration-readiness.v1
   - entry_id: tradingagent_mainboard_scope
     state: CURRENT_VERIFIED
     layer: local_isolated_candidate

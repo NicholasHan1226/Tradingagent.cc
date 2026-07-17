@@ -84,6 +84,78 @@ HTTP 200 仅证明 transport 完成，不给 dataset 授权。每个 dataset 根
 
 当前 endpoint base URL、catalog version 和 dataset IDs 仍只是显式配置/fixture；上游 SS 冻结前不得臆造生产值。
 
+#### TA integration-readiness profile 与回执
+
+`tradingagent.sharedsignals.integration-readiness.v1` 是 TA 对冻结 V1 consumer 合同的只读验收回执，不是 SharedSignals 服务端 receipt、生产健康证明或交易 authority。输入 manifest 必须显式且 secret-free，至少绑定：
+
+```yaml
+manifest_version: 1
+profile_id: explicit-profile-id
+base_url: explicit-authority-url
+catalog_version: explicit-frozen-version
+access_policy_id: explicit-identity-not-a-secret
+transport_id: http-json-v1
+timeout_seconds: 10
+as_of: timezone-aware-decision-time
+expected_probe_roles: [trade_calendar, equity_master, daily_bars, industry_context]
+datasets:
+  - probe_role: trade_calendar
+    dataset_id: provider-neutral-id
+    schema_major: 1
+    requirement_role: required_execution
+    fields: [market, trade_date, is_open, event_time, available_time, revision_id, receipt_id]
+    filters: {}
+    limit: 100
+    minimum_row_count: 1
+    row_event_time_field: event_time
+    row_available_time_field: available_time
+    row_revision_id_field: revision_id
+    row_receipt_id_field: receipt_id
+```
+
+`expected_probe_roles` 与 `datasets[].probe_role` 的顺序和集合必须完全相等；dataset ID 唯一，limit 为 `1..10000`，四个行级 PIT 字段必须全部显式包含在 `fields` 中，`order` 未配置时从 QueryRequest 省略。响应每行也必须与显式 fields 精确投影一致：缺字段以`requested_field_missing`阻断，多出任何未声明字段以`undeclared_field_present`阻断且只保存字段集合哈希，不把上游未知字段名或值写入回执。`industry_context` 可标为 `optional_context`，但它仍必须通过显式 dataset policy；无 proof 的 optional response 不能被健康必需数据洗白，聚合查询也不能夹带个股字段。
+
+验收器对每个 dataset 使用同一 QueryRequest 连续读取两次。双跑语义比较包含 data、`next_cursor` 和完整 metadata，排除每次 transport 独有的 `request_id`；因此 request ID 变化不造成误报，而 receipt、lineage、data-through、observed-at、行值、默认排序或状态变化都会触发 `same_as_of_semantic_mismatch`。两次 exact response identity 仍分别保留在 snapshot SHA 中，不能用稳定语义哈希替代原始 trace。
+
+当前 research port 不具备经 SS owner 冻结的跨页 receipt/排序/snapshot identity。`next_cursor` 非空时只能输出 `pagination_complete=false` 与 `pagination_contract_unfrozen`，不得自动拼页、截取第一页或本地重排。待上游合同冻结后，分页扩展必须继续绑定每页 query identity、cursor 连续性、统一 source snapshot 与完整 readback。
+
+回执至少包含：
+
+```yaml
+schema_id: tradingagent.sharedsignals.integration-readiness.v1
+probe_version: 1
+authority: non_authority
+production_verified: false
+real_trading_enabled: false
+profile_id: explicit-profile-id
+as_of: timezone-aware-decision-time
+manifest_sha256: sha256
+authority_sha256: sha256
+catalog:
+  request_id: trace-id
+  catalog_sha256: sha256
+datasets:
+  - probe_role: trade_calendar
+    dataset_id: provider-neutral-id
+    schema_major: 1
+    query_sha256: sha256
+    request_ids: [first, second]
+    state: ready
+    evidence_action: accept
+    receipt_id: source-receipt
+    source_proof_complete: true
+    row_count: 1
+    semantic_response_sha256: sha256
+    same_as_of_match: true
+    pagination_complete: true
+    reason_codes: []
+same_as_of_match: true
+blocking: false
+receipt_sha256: sha256
+```
+
+回执不得包含 base URL、access policy 原值、cursor、manifest正文、HTTP header、credential、异常原文或上游自由文本 `metadata.reasons`。自由文本只进入 `evidence_reasons_sha256` 与完整响应语义哈希；对外 `reason_codes` 只保留 TA Evidence Gate 产生的受控代码。`receipt_sha256`覆盖除自身外的 canonical JSON，并绑定本次 request trace；完全相同的 trace 产生相同回执，新的 request ID 会形成新的精确回执。跨重试的业务一致性看 `semantic_snapshot_sha256` 与每个 dataset 的 `semantic_response_sha256`，它们排除 request ID；任一 authority/config/source/data/PIT/状态变化必须改变对应哈希或阻断。
+
 `as_of` 不是防止回填偏差的充分条件。任何进入predictive validation的dataset还必须保存首次可见`available_at`、release ID、revision ID、每次修订链、first-seen receipt和训练时实际可见vintage；供应商事后批量回填但无法还原历史发布版本时，只能作当前观察或风险证据，不能回写历史训练样本。cache、ResearchDataSnapshot、ValidationPlan和label truth都必须绑定所用vintage/revision identity。
 
 ### A股三层 Universe 契约

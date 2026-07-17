@@ -6,7 +6,7 @@ TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复�
 
 ## 当前开发状态（2026-07-17）
 
-当前 `codex/ta-v1-data-client` 是**已完成本地验收、仅允许提交/推送到隔离分支的候选**。候选已包含 SS V1 严格客户端、内容寻址 `CoverageReceipt`、三层 Universe、Phase 1.5 行业 shadow 薄切片、PIT OpportunityRadar/append-only Ledger、多期限 forecast 研究合同、三风格 shadow router、50,000 CNY 小资金可行池与账户证明绑定合同、六维投资论点风险 authority、A股零股卖出规则、当前选择与数值 PIT 特征双重绑定的冻结 rank-score Champion、mark/quote 证据 authority、逐副作用可信时钟、持久 drift 约束、模拟日 RunBundle、Decision Ledger、外部冻结交易日历 proof/`ValidationPlan`/冻结OOS/总回报标签门、负向模型保护，以及带本地CAS journal的 LLM 证据 sidecar。但这不表示预测有效、概率已校准、Phase 1、Git 主线、SharedSignals live API、生产 runtime、已安装 scheduler/cron 或真实模拟盘已完成。
+当前 `codex/ta-v1-data-client` 是**已完成既有冻结候选验收、正在增加本地接入门的隔离候选**。候选已包含 SS V1 严格客户端、显式manifest驱动的V1 integration-readiness probe、内容寻址 `CoverageReceipt`、三层 Universe、Phase 1.5 行业 shadow 薄切片、PIT OpportunityRadar/append-only Ledger、多期限 forecast 研究合同、三风格 shadow router、50,000 CNY 小资金可行池与账户证明绑定合同、六维投资论点风险 authority、A股零股卖出规则、当前选择与数值 PIT 特征双重绑定的冻结 rank-score Champion、mark/quote 证据 authority、逐副作用可信时钟、持久 drift 约束、模拟日 RunBundle、Decision Ledger、外部冻结交易日历 proof/`ValidationPlan`/冻结OOS/总回报标签门、负向模型保护，以及带本地CAS journal的 LLM 证据 sidecar。integration probe当前只有fixture测试，未调用live SS，且只生成`non_authority`回执；这不表示预测有效、概率已校准、Phase 1、Git 主线、SharedSignals live API、生产 runtime、已安装 scheduler/cron 或真实模拟盘已完成。
 
 当前固定范围：
 
@@ -25,7 +25,7 @@ TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复�
 ### 数据 ownership 与迁移分类
 
 - SharedSignals 是独立上游数据平台；本仓只实现和验证 TA consumer。TA 测试不得定位、导入、执行或复刻兄弟仓 `reader.py`、`api_server.py`、SQLite 私有函数或 HTTP server。
-- **current-v1**：`shared/data/sharedsignals_v1.py`、Evidence Gate、immutable research snapshot、stage ports 和只读前端 SS market-context reader；只允许 `/v1/catalog` 与 `/v1/query`。
+- **current-v1**：`shared/data/sharedsignals_v1.py`、Evidence Gate、immutable research snapshot、`sharedsignals_v1_integration_probe.py`、stage ports 和只读前端 SS market-context reader；只允许 `/v1/catalog` 与 `/v1/query`。integration probe对统一`as_of`做双跑语义/PIT/receipt验收，分页合同未冻结时阻断，不自行拼页。
 - **active-compatibility**：旧 `shared/data/reader.py`、screening/benchmark 和非 A 股消费者仍有明确历史/兼容用途，但不在 A股 V1 candidate、Champion、scheduler、风险或订单路径。
 - **hard-blocked / retirement-pending**：旧 A股 wrappers/cron、旧机会漏斗writer与专用 SS 路由不得恢复；旧漏斗文件只作冻结法证历史，未经V1 authority绑定的A股 `signals/pending` 不进入当前前端状态。物理删除要等消费者、安装态、同 `as_of` parity、OpportunityLedger只读投影和外部依赖清零，不能用长期双轨代替退役。
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 import sys
@@ -22,11 +23,13 @@ from shared.data.evidence_gate import (
     DataEvidenceGate,
     DatasetEvidencePolicy,
     EvidenceAction,
+    EvidenceDecision,
 )
 from shared.data.sharedsignals_v1 import (
     ContractViolation,
     HTTPResponse,
     HTTPTransport,
+    QueryEnvelope,
     QueryRequest,
     SharedSignalsV1Client,
     SharedSignalsV1Config,
@@ -225,7 +228,10 @@ class UrllibJSONV1Transport:
     """Small explicit HTTP transport for the already-frozen V1 client port."""
 
     def __init__(self) -> None:
-        self._opener = urllib.request.build_opener(RejectRedirectHandler())
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            RejectRedirectHandler(),
+        )
 
     def __call__(
         self,
@@ -290,8 +296,64 @@ def _critical_result(reason: str, *, error: Exception | None = None) -> dict[str
     }
     if error is not None:
         result["error_type"] = type(error).__name__
-        result["error"] = str(error)
     return result
+
+
+def _source_proof_complete(envelope: QueryEnvelope) -> bool:
+    metadata = envelope.metadata
+    return bool(
+        isinstance(metadata.lineage, Mapping)
+        and metadata.lineage
+        and isinstance(metadata.receipt_id, str)
+        and metadata.receipt_id
+        and isinstance(metadata.data_through, str)
+        and metadata.data_through
+        and isinstance(metadata.observed_at, str)
+        and metadata.observed_at
+    )
+
+
+def _controlled_reason_codes(
+    envelope: QueryEnvelope,
+    decision: EvidenceDecision,
+) -> list[str]:
+    """Report local state-machine codes, never provider-supplied free text."""
+
+    if not _source_proof_complete(envelope):
+        top_state = envelope.metadata.state.strip().lower()
+        hard_failed = {
+            "failed",
+            "error",
+            "invalid",
+            "unavailable",
+            "unobserved",
+            "paused",
+            "empty",
+        }
+        return [
+            "dataset_failed"
+            if top_state in hard_failed
+            else "dataset_evidence_incomplete"
+        ]
+    if decision.effective_state == "degraded":
+        return ["dataset_degraded"]
+    if decision.effective_state == "stale":
+        return ["dataset_stale"]
+    if decision.effective_state == "failed":
+        return ["dataset_failed"]
+    if decision.effective_state == "unknown":
+        return ["dataset_state_unknown"]
+    return []
+
+
+def _reason_digest(decision: EvidenceDecision) -> str:
+    encoded = json.dumps(
+        list(decision.reasons),
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def check_v1_runtime_gate(
@@ -339,7 +401,8 @@ def check_v1_runtime_gate(
                     "receipt_id": envelope.metadata.receipt_id,
                     "data_through": envelope.metadata.data_through,
                     "observed_at": envelope.metadata.observed_at,
-                    "reasons": list(decision.reasons),
+                    "reasons": _controlled_reason_codes(envelope, decision),
+                    "reasons_sha256": _reason_digest(decision),
                 }
             )
     except (SharedSignalsV1Error, OSError, urllib.error.URLError) as exc:

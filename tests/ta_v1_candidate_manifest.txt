@@ -4,6 +4,7 @@ tests/test_architecture_contract_guards.py
 tests/test_env_loader_boundary.py
 tests/test_sharedsignals_v1.py
 tests/test_sharedsignals_v1_runtime_gate.py
+tests/test_sharedsignals_v1_integration_probe.py
 tests/test_data_evidence_gate.py
 tests/test_research_data_snapshot.py
 tests/test_research_snapshot_store.py

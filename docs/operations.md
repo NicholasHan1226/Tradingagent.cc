@@ -268,6 +268,39 @@ export SHAREDSIGNALS_RUNTIME_TRANSPORT='http-json-v1'
 
 缺任一配置时保持 unavailable；不得猜测 localhost、生产地址、catalog version、schema major 或 dataset ID。`http-json-v1` 只表示显式 TA consumer transport，拒绝 30x 重定向，且不能解除未迁移业务 reader 的 retirement block；当前不授权配置或运行 live endpoint。
 
+### 2.1 SharedSignals V1 接入验收器
+
+轻量的 `sharedsignals_v1_gate.py` 继续负责任务启动前逐 dataset 的即时可用性门；`sharedsignals_v1_integration_probe.py` 负责首次接入、SS 发布或 catalog/profile 变化、消费者切换和故障恢复后的完整只读验收。二者均是 TA consumer，不实现或验收 SS 服务端；两者输出的 reason code 都由 TA 本地状态机推导，上游 `metadata.reasons` 自由文本只保存哈希，不能伪装成本地门禁结论或进入日志。
+
+模板见 [sharedsignals_v1_integration_probe.example.json](examples/sharedsignals_v1_integration_probe.example.json)。模板中的 `.invalid` 地址、`fixture.*` dataset ID、catalog 与 policy 只用于说明结构，不是生产默认值。SS owner 正式交接后，应复制到仓外绝对路径并逐项替换；manifest 只允许保存 base URL 与访问策略**身份**，禁止写 API key、token、密码或其它 credential。真实认证协议尚未冻结，验收器不会自行发明 Bearer/Header 或读取 `.env` 密钥。
+
+首批显式功能角色为：
+
+- `trade_calendar`：交易日历，执行必需；
+- `equity_master`：主板证券主数据与历史可交易状态，执行必需；
+- `daily_bars`：主板日线与行级 PIT，执行必需；
+- `industry_context`：全市场行业及创业板/科创板指数聚合，只作环境上下文，不允许输出双创个股。
+
+获批只读联调时，从目标 TA 隔离工作树执行：
+
+```bash
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+export REAL_TRADING_ENABLED=false
+
+python3 -m shared.runtime_test.sharedsignals_v1_integration_probe \
+  --manifest /absolute/path/sharedsignals-integration.json \
+  --output /absolute/path/evidence/sharedsignals-integration-receipt.json \
+  --json
+```
+
+验收器只调用一次 `GET /v1/catalog`，随后对每个数据角色用同一显式 `as_of`、fields、filters、schema major、limit 与默认 registry order 连续执行两次 `POST /v1/query`。它复用 `DataEvidenceGate` 与 `ResearchDataProfile` 检查 metadata、source proof、精确字段投影、最小行数和行级 `event_time / available_time / revision_id / receipt_id`，并比较排除 transport request ID 后的完整响应语义哈希。缺少显式字段或出现未声明字段均阻断；后者只保存数量与字段集合哈希，避免行业聚合响应夹带个股字段或把未知字段写进回执。
+
+当前跨页 receipt、默认排序快照和拼页 identity 仍由 SS owner 待冻结。因此任一响应出现 `next_cursor != null` 时，首版固定返回 `pagination_contract_unfrozen` 并阻断；不会抓第二页后自行拼成研究快照。SS 合同补齐前，不得通过增大 limit、截取第一页或本地排序绕过。
+
+回执固定标注 `authority=non_authority`、`production_verified=false`、`real_trading_enabled=false`，隐藏 base URL、access policy 值、cursor、异常原文与上游自由文本 reason，只保存其 authority/config 哈希、catalog/query trace、dataset evidence、双跑一致性、PIT/内容哈希和 TA 受控 reason codes；上游 reason 原文只参与哈希。退出码为：`0=通过`、`2=数据或合同阻断`、`64=manifest/transport配置无效`、`74=回执落盘失败`。回执通过只证明该次显式只读输入满足 TA 接入合同，不证明 SS 服务端整体通过、生产 runtime 已切换、旧链 parity 已完成、每日数据持续健康或交易获授权。
+
+未来可把该命令放在自动模拟盘启动前作为 fail-closed 前置门，但当前没有注册 scheduler/cron，也未调用任何 live SS 地址。每次 catalog/dataset/schema、PIT 字段或 access policy identity 变化都必须生成新 manifest 与新回执，不能复用旧 PASS。
+
 DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：
 
 `TRADINGAGENT_LLM_API_KEY_ENV`只能取固定值`DEEPSEEK_API_KEY`；它不是让系统选择任意密钥变量的开关。任意模型映射只允许作为`fixture_only`离线测试路由，不能替代严格配置或授权网络出口。

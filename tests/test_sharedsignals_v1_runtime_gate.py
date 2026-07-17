@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -13,6 +14,7 @@ from shared.runtime_test.sharedsignals_v1_gate import (
     RejectRedirectHandler,
     RuntimeGateConfigurationError,
     SharedSignalsV1RuntimeGateConfig,
+    UrllibJSONV1Transport,
     check_v1_runtime_gate,
     config_from_environment,
 )
@@ -225,6 +227,56 @@ def test_runtime_http_transport_refuses_redirects() -> None:
     )
 
     assert redirected is None
+
+
+def test_runtime_http_transport_disables_environment_proxy(monkeypatch) -> None:
+    captured_handlers: list[object] = []
+
+    def fake_build_opener(*handlers):
+        captured_handlers.extend(handlers)
+        return object()
+
+    monkeypatch.setattr(urllib.request, "build_opener", fake_build_opener)
+
+    UrllibJSONV1Transport()
+
+    proxy_handlers = [
+        handler
+        for handler in captured_handlers
+        if isinstance(handler, urllib.request.ProxyHandler)
+    ]
+    assert len(proxy_handlers) == 1
+    assert proxy_handlers[0].proxies == {}
+
+
+def test_runtime_gate_redacts_transport_error_details() -> None:
+    def failing_transport(**_kwargs):
+        raise OSError("https://user:sk-secret@sharedsignals.invalid/private")
+
+    result = check_v1_runtime_gate(_config(), transport=failing_transport)
+
+    assert result["blocking"] is True
+    assert result["reason"] == "v1_contract_or_transport_failure"
+    assert result["error_type"] == "OSError"
+    assert "error" not in result
+    assert "sk-secret" not in str(result)
+
+
+def test_runtime_gate_hashes_provider_reason_text_and_derives_local_codes() -> None:
+    payload = _ready_query_payload()
+    sentinel = "provider-debug-secret-sk-0123456789abcdef0123456789abcdef"
+    payload["metadata"]["reasons"] = ["dataset_failed", sentinel]
+
+    result = check_v1_runtime_gate(
+        _config(),
+        transport=RecordingTransport(payload),
+    )
+
+    dataset = result["datasets"][0]
+    assert result["blocking"] is False
+    assert dataset["reasons"] == []
+    assert len(dataset["reasons_sha256"]) == 64
+    assert sentinel not in json.dumps(result, ensure_ascii=False, sort_keys=True)
 
 
 def test_active_sim_wrappers_stop_before_unmigrated_legacy_readers() -> None:

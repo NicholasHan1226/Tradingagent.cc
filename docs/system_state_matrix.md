@@ -20,7 +20,7 @@
 
 - SharedSignals `/v1/catalog` 和 `/v1/query` 由上游唯一 writer/reviewer 负责；TA 只实现可配置 fixture/port consumer，不读取或修改 SharedSignals 仓，也不把 HTTP 200 当成 dataset 可用。
 - A股资本、执行 lineage 与 SampleJournal 是仓库契约层当前能力；它们不证明生产 runtime、cron 或真实市场样本已验证。
-- 主板 scope、Phase 1.5 行业 shadow 薄切片、OpportunityRadar/Ledger、多期限 forecast 合同、三风格 shadow router、LLM evidence与本地CAS journal、无密钥DeepSeek候选配置、默认关闭的DeepSeek HTTPS transport候选、V1 client、小资金 optimizer、六维论点风险authority、canonical simulated account authority、当前Champion/数值PIT特征绑定、mark/quote evidence authority、逐副作用trusted clock、fixture evolution clock、固定trust-root metrics verifier、authority-bound plan、negative-only evolution、automatic day loop、capital-backed paper composition、fixture CLI、RunBundle store、Decision Ledger和label maturity已在YAML中登记为`CURRENT_VERIFIED`的`local_isolated_candidate`。这不表示预测有效、概率已校准、阶段通过、Git主线、scheduler、live SS、真实paper session、真实DeepSeek调用或生产可用。coverage/industry score/account/thesis-risk/calendar/market evidence/Champion registry/feature/metrics/clock 的生产 verifier 均未接入；本地proof只证明完整输入绑定，不是外部签名、外部密封或真实市场/账户readback。行业薄切片只动态选择 1 个深研行业和 2 个观察行业；新增机会/预测/风格链只输出shadow审计，均不能改变 Champion、仓位、风险或订单。
+- 主板 scope、Phase 1.5 行业 shadow 薄切片、OpportunityRadar/Ledger、多期限 forecast 合同、三风格 shadow router、LLM evidence与本地CAS journal、无密钥DeepSeek候选配置、默认关闭的DeepSeek HTTPS transport候选、V1 client、V1 integration-readiness probe、小资金 optimizer、六维论点风险authority、canonical simulated account authority、当前Champion/数值PIT特征绑定、mark/quote evidence authority、逐副作用trusted clock、fixture evolution clock、固定trust-root metrics verifier、authority-bound plan、negative-only evolution、automatic day loop、capital-backed paper composition、fixture CLI、RunBundle store、Decision Ledger和label maturity已在YAML中登记为`CURRENT_VERIFIED`的`local_isolated_candidate`。这不表示预测有效、概率已校准、阶段通过、Git主线、scheduler、live SS、真实paper session、真实DeepSeek调用或生产可用。integration probe只生成非authority回执；未获准的live endpoint不会被调用，分页receipt/排序/snapshot语义未冻结时继续阻断。coverage/industry score/account/thesis-risk/calendar/market evidence/Champion registry/feature/metrics/clock 的生产 verifier 均未接入；本地proof只证明完整输入绑定，不是外部签名、外部密封或真实市场/账户readback。行业薄切片只动态选择 1 个深研行业和 2 个观察行业；新增机会/预测/风格链只输出shadow审计，均不能改变 Champion、仓位、风险或订单。
 - 当前 DeepSeek 候选接受两种精确类型：同时绑定request/outbound identity的冻结离线响应fixture，以及默认关闭、固定官方HTTPS地址、禁代理/重定向/自动重试的`DeepSeekHTTPTransport`。HTTP路径仅用本地fake opener验证，未读取真实credential、未发起真实请求。2026-07-16已核对官方公开base URL、V4 Flash/Pro模型ID、JSON与thinking说明；认证readback、真实canary、quota/限流/成本和数据留存仍未验证。
 - `shared/crontab.txt` 是仓库调度模板，不是已安装 cron。模板已移除显式旧A股调度；仍保留的wrapper由不可环境覆盖的kill switch阻断（退出码78），只能用于识别历史安装依赖与退役审计。`/opt/investment/tradingagent`和安装态cron本轮不访问、不修改，状态保持historical/unverified。
 
@@ -30,6 +30,7 @@
 |---|---|---|---|
 | SS V1 upstream query | TA不写SS；等待上游唯一owner冻结 | `TARGET_CONTRACT` | 不代表SS runtime |
 | TA SS V1 client + Evidence Gate | 实现与契约测试候选存在 | `CURRENT_VERIFIED / local_isolated_candidate / production=false` | 仅fixture/contract；不代表SS runtime |
+| TA SS V1 integration-readiness probe | 显式manifest、统一`as_of`双跑、必需字段/行级PIT/receipt/内容哈希与脱敏回执；`next_cursor`在跨页合同冻结前阻断 | `CURRENT_VERIFIED / local_isolated_candidate / production=false` | 仅fixture或另行授权的只读联调；不是SS验收owner、每日监控、生产或交易authority |
 | 主板三层 Universe | 本地policy/snapshots/zero-leakage候选存在；环境宽度由内容寻址CoverageReceipt及外部verifier派生，过期/数量/双创聚合/authority缺口降级 | `CURRENT_VERIFIED / local_isolated_candidate / production=false` | 仅模拟scope与cash+policy upper bound；真实coverage verifier、broker和ledger订单量均未证明 |
 | Phase 1.5 行业 shadow 薄切片 | PIT taxonomy、成分、score方法/有效期、score/coverage receipts和独立proof绑定；动态 1 深研 + 2 观察 | `CURRENT_VERIFIED / local_isolated_candidate / production=false` | 仅fixture研究聚焦；真实score verifier缺失；无个股、无position effect、无晋级资格 |
 | 50k optimizer + plan binding | 可行池负责cash+policy上界；无默认account verifier复核账户；Champion score另绑定当前selection/artifact/model/spec与经独立port复核的数值PIT特征；plan再绑定T+1、cost、现金顺序、零股卖出与订单量 | `CURRENT_VERIFIED / local_isolated_candidate / production=false` | rank只排序、固定probe sizing；fixture proof不证明真实账户、Champion/feature registry或broker |
@@ -51,6 +52,7 @@
 |---|---|---|
 | `sharedsignals_v1_query` | `TARGET_CONTRACT / local_isolated_candidate` | 上游 SS owner 负责；TA 仅等待冻结合同 |
 | `tradingagent_sharedsignals_v1_client` | `CURRENT_VERIFIED / local_isolated_candidate` | mock-first V1 consumer，不证明 live SS |
+| `tradingagent_sharedsignals_v1_integration_probe` | `CURRENT_VERIFIED / local_isolated_candidate` | 显式manifest的同`as_of`只读接入门与非authority回执；未运行live SS，分页合同未冻结时阻断 |
 | `tradingagent_mainboard_scope` | `CURRENT_VERIFIED / local_isolated_candidate` | 主板个股；双创指数与行业聚合仅环境参考；覆盖 authority 需外部复核 |
 | `tradingagent_small_account_optimizer` | `CURRENT_VERIFIED / local_isolated_candidate` | 50k、账户输入/proof绑定、整数股/零股卖出、费用与现金的模拟优化器；不证明真实账户 |
 | `tradingagent_thesis_risk_authority` | `CURRENT_VERIFIED / local_isolated_candidate` | 行业/论点/原材料/政策事件/拥挤/模型家族六维风险完整性门；fixture policy/proof不可晋级 |

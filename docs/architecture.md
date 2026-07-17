@@ -34,6 +34,7 @@ flowchart LR
 ### V1 契约与权限边界
 
 - `sharedsignals.query_result.v1`：SharedSignals 的 provider-neutral 查询结果契约。当前仅是隔离工作树中的目标契约，未经生产 runtime 和真实数据新鲜度验证前，不得描述为生产可用，也不得回退到 Tushare 直连或兄弟仓 SQLite。
+- `tradingagent.sharedsignals.integration-readiness.v1`：TradingAgent 侧的可复用接入验收回执。它只从显式、无密钥 manifest 读取冻结的 endpoint、catalog、dataset、schema、PIT 与角色要求，通过同一 `SharedSignalsV1Client` 对每个数据集执行同 `as_of` 的两次独立查询，并复用 `DataEvidenceGate` 与 research snapshot 验证状态、freshness、lineage、receipt、字段及逐行 PIT。任一分页游标会按 `pagination_contract_unfrozen` 阻断，不能由客户端擅自拼页。通过结果仍是 `non_authority`，不证明生产可用、真实交易可用或未来结果可复现。
 - `tradingagent.universe_scope.v1`：A股第一阶段只允许沪深主板个股进入候选、组合和模拟订单；创业板、科创板的指数及行业聚合数据只允许作为市场环境证据，不能升级为可交易个股。两个 paper composition root 只接受精确、无实例可变状态且由冻结 manifest 内容寻址的 `CanonicalMainboardScopePolicy`；伪 duck type、callable 与 subclass 一律在组装阶段拒绝。
 - `tradingagent.llm_evidence.v1`：LLM/DeepSeek 只生成固定Prompt、内容寻址且可重新验证的证据观察。source span 被包在明确的不可信数据边界，显式中英文及部分常见编码/同形混淆提示注入会在transport前阻断；artifact hash只证明内容完整性，外部来源authority仍必须由receipt和独立verifier复核。typed provider receipt分别绑定本地完整transport material、实际供应商outbound、原始HTTPS response hash或离线fixture response hash、操作元数据与标准化evidence hash；内部proof metadata不发送给供应商。成功且完整验证的证据可进入显式head-CAS的本地hash-chain journal，`.head`仅为本地完整性锚点，不是外部密封、tamper-proof authority或production durable sink。默认关闭的官方HTTPS transport已是本地隔离候选，但没有真实provider调用、认证readback或生产部署。它不能直接改变候选成员、预测分数、风险请求、目标仓位或订单。
 - `tradingagent.small_account_plan_receipt.v1`：5万元可行池只给出cash+policy上界；决策阶段必须另以无默认实现的`AccountAuthorityVerifier`复核完整账户内容、position receipt/hash、现金、gross、T+1可卖量、价格时点和有效期，再生成不可变plan receipt。A股卖出还必须符合整手、仅卖出不足100股余额或全部退出之一；risk与订单逐项绑定其SHA。
@@ -44,6 +45,9 @@ flowchart LR
 ### 本地候选纵向链（非生产）
 
 ```text
+IntegrationReadinessProbe（显式 fixture/移交 manifest；非 authority）
+  -> catalog + 同 as_of 双查询 + 语义一致性/PIT/内容回执
+  -> 通过后才允许进入下方本地研究链的下一层人工验收
 SharedSignalsV1Client（fixture transport）
   -> DataEvidenceGate
   -> immutable ResearchDataSnapshot
@@ -63,7 +67,7 @@ SharedSignalsV1Client（fixture transport）
   -> front read-only Today panel
 ```
 
-这条图中 Opportunity/forecast/router 是与资本链隔离的shadow支路，最终只汇入审计/反事实，不接入 Champion、SmallCapitalFeasible、risk或OMS；其模块存在不表示预测有效或概率可发布。整条链也不表示已有真实 SS 数据、券商权限、真实持仓/可卖数量、生产 scheduler 或真实模拟样本。`CoverageReceipt` 以 taxonomy、PIT membership、板块/行业 expected-vs-observed、双创环境对象、来源 generation/receipt/lineage 和内容 hash 证明本次环境覆盖，并要求无默认实现的外部 `CoverageAuthorityVerifier` 在构造与消费两处复验 denominator；调用方不能自报 `full_market`。Phase 1.5 行业薄切片还要求独立 `IndustryScoreAuthorityVerifier` 绑定评分方法、有效期、score/coverage receipts 与内容 hash，才动态选出 1 个深研行业和 2 个观察行业。两类真实 verifier 均未接入，因此当前只具备 fixture 合同，不能产生当前可交易symbol或仓位影响。
+这条图中 Opportunity/forecast/router 是与资本链隔离的shadow支路，最终只汇入审计/反事实，不接入 Champion、SmallCapitalFeasible、risk或OMS；其模块存在不表示预测有效或概率可发布。IntegrationReadinessProbe 当前也只有 fixture manifest 与本地合同测试，尚未获得 SharedSignals 所有者移交的真实 endpoint、catalog、dataset、认证及分页冻结合同，因此不能证明已有 live SS 数据。整条链同样不表示已有券商权限、真实持仓/可卖数量、生产 scheduler 或真实模拟样本。`CoverageReceipt` 以 taxonomy、PIT membership、板块/行业 expected-vs-observed、双创环境对象、来源 generation/receipt/lineage 和内容 hash 证明本次环境覆盖，并要求无默认实现的外部 `CoverageAuthorityVerifier` 在构造与消费两处复验 denominator；调用方不能自报 `full_market`。Phase 1.5 行业薄切片还要求独立 `IndustryScoreAuthorityVerifier` 绑定评分方法、有效期、score/coverage receipts 与内容 hash，才动态选出 1 个深研行业和 2 个观察行业。两类真实 verifier 均未接入，因此当前只具备 fixture 合同，不能产生当前可交易symbol或仓位影响。
 
 当前 `AccountTradable` 只是模拟scope历史类型名；SmallCapital快照的 `max_buyable_shares` 只是在`position_state_applied=false`下的cash+policy upper bound，不能直接成为订单量。Decision stage 强制注入独立账户verifier，proof逐项绑定capital generation、账户时点、完整持仓、mark、sellable数量、现金、gross、position receipt/hash与有效期；本地重算会检查这些输入与proof一致。canonical 候选另须提交内容寻址的 Champion score receipt，绑定当前人工选择 manifest、精确冻结 spec、symbol、PIT decision time、数值特征 namespace/快照及数据 receipt/vintage/lineage；调用方 raw rank、篡改 receipt、过期/非当前 Champion 或 fixture evidence 冒充 canonical authority 均 fail closed。fixture路径只证明输入与不可晋级proof/evidence一致；canonical-capital测试路径从同一simulated ledger head派生并复读账户状态，current generation/lineage轮换必须随snapshot传播。两条路径都不证明账户、持仓或可卖量来自真实broker。随后plan从唯一 A股 policy 重算100股整手、15%单票、90% gross、最多8仓、最低经济订单、无交易区、`cost_policy_id`、费用、现金和完整digest；未校准 rank 只决定候选排序，新仓目标金额采用与 rank 无关的固定最小经济 probe，并标注为 engineering simulation。估值价与保守预留价分开。卖出100股整数倍、一次性卖出不足100股余额和全部退出之外的数量被optimizer、day loop及模拟撮合三处拒绝，调用方不得自动取整或改写。Day loop还会独立复算佣金、过户费和卖出印花税，重新签名不能洗白错费用。
 

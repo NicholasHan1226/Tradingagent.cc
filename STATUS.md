@@ -22,11 +22,12 @@
 - 本线程的交付目标是 TradingAgent 本地候选，不包含 SharedSignals 服务端重构、测试、集成或验收；任何把“SS 与 TA 重构”并列为本线程 Goal 的旧表述均以本条 ownership correction 为准。
 - TA ownership 门禁已进一步收紧：本仓测试不得定位/导入/执行兄弟仓 reader、API server、SQLite 私有函数或复刻上游 HTTP server；current-v1 consumer 与候选清单不得依赖旧 reader、旧 runtime gate 或专用 SS 路由。原跨仓 edge/server 测试已从 TA 验收面清除，SS 服务端行为由上游自己的验收线负责。
 - HTTP 200 不能覆盖逐 dataset 的 `state/degraded/freshness/quality/lineage/receipt` 失败；V1 QueryRequest 已要求 `schema_major`，`order` 省略时不发送并由 registry 默认排序。impaired dataset 可如实返回 null source proof，TA 不补造且 Evidence Gate fail closed；禁止 Tushare、SS SQLite、旧状态/数据专用端点和缓存数据 fallback。
+- 本工作树新增 `sharedsignals_v1_integration_probe.py` 本地候选：从仓外绝对路径读取secret-free manifest，对交易日历、证券主数据、主板日线和全市场行业/双创指数聚合等显式角色执行统一`as_of`双跑，复用Evidence Gate与ResearchDataSnapshot检查必需字段、最小行数、行级PIT和source proof，并输出脱敏、内容寻址的`non_authority`回执。当前只完成fixture/transport-port测试，未调用live SS；跨页receipt/默认排序/snapshot identity未由SS冻结，`next_cursor`非空固定阻断而不自行拼页。该能力不改变任何scheduler、模拟订单或交易authority。
 - 机器状态见 `shared/governance/system_state_matrix.yaml`；其中 local candidate 的 `CURRENT_VERIFIED` 只在明确 allowed uses 内成立，全部 `production_verified=false`。
 
 ## 本地候选能力
 
-1. **SS V1 client 与证据门**：provider-neutral catalog/query、显式 base URL/catalog/dataset/access policy、完整 envelope、分页/缓存身份与 fail-closed 负例；当前只有 fixture/合同证据。
+1. **SS V1 client、轻量运行门与接入验收器**：provider-neutral catalog/query、显式 base URL/catalog/dataset/access policy、完整 envelope、缓存身份与 fail-closed 负例；新增secret-free profile manifest、统一`as_of`双跑语义检查、必需字段/行级PIT/receipt验证和非authority回执。当前只有 fixture/合同证据，分页未冻结时阻断，不证明live SS。
 2. **主板三层 Universe**：主板普通 A 股是唯一可进入个股分析、候选、预测、影子、仓位、订单、成交和持仓的 scope。创业板/科创板指数及行业聚合只作 `context_only` 环境证据。
 3. **CoverageReceipt**：行业宽度由内容寻址 taxonomy、PIT membership、板块/行业 expected-vs-observed、双创环境对象和来源 generation/receipt/lineage 派生；构造与消费均要求无默认实现的外部 verifier 复核 denominator，调用方不能自报 full-market，缺失/过期/异常/未验证只可拒绝或 degraded。
 4. **Phase 1.5 行业 shadow v2**：动态选择 1 个深研行业和 2 个观察行业，绑定 PIT taxonomy、score method/version/validity、score/coverage receipts、内容 hash 和独立 authority proof；不输出个股，不改变 Champion、仓位、风险、订单或晋级状态。当前只有 fixture verifier。
@@ -55,7 +56,7 @@ DeepSeek 官方 HTTPS 客户端现已是 `CURRENT_VERIFIED/local_isolated_candid
 
 ## 当前验证状态
 
-- 当前集合为`180`个`tests/test_*.py`、`3002 tests`。本地用互不重叠的`1-60`、`61-120`、`121-180`固定分片执行为`1025 passed + 63 subtests`、`1134 passed + 92 subtests`、`842 passed + 20 subtests`；新增的服务器SAFE_ENV架构门在分片收集后加入，并由139项专项单独覆盖，因此当前3002项均至少执行一次、0 failed、0 skipped；14条warning均为既有多进程测试的`os.fork()`弃用提示。V1唯一候选清单为`1455 passed + 108 subtests`，GitHub run`29549692274`和服务器原生单次全量`3002 passed + 175 subtests`均通过。此前DeepSeek/LLM/架构专项与独立安全复审仍保留，但不替代本轮全量证据。这些结果证明候选在本地、干净GitHub runner与服务器旁路的Python 3.12网络关闭环境通过，不代表现役生产、真实市场样本、真实DeepSeek调用或真实业务动作。
+- 当前工作树集合为`181`个`tests/test_*.py`、`3030 tests`。本轮未提交的integration-readiness probe最终候选已在本机单进程新鲜通过`3030 passed in 952.67s`；唯一V1候选清单新鲜通过`1483 passed in 28.13s`，probe/runtime-gate/架构门专项为`85 passed in 4.24s`。独立只读复核发现并关闭两项P1：上游自由文本reason伪装成本地门禁代码，以及轻量runtime gate打印上游reason；最终冻结快照为P0=0、P1=0。本轮相关Python文件的Ruff check/format、compileall和`git diff --check`通过；仓库级Ruff也已尝试，但被60项不在本轮变更路径内的既有legacy lint债务阻断，未擅自扩范围修复。本轮未重跑前端，因为没有前端文件变化。此前基线的本地分片、GitHub run`29549692274`和服务器原生`3002 passed + 175 subtests`证据继续保留，但它们属于既有提交，不替代本轮3030项本机结果。这些结果证明本地合同与旧兼容测试未回归，不代表已提交、GitHub/服务器已同步、现役生产、live SS、真实市场样本、真实DeepSeek调用或真实业务动作。
 - 前端只读面：43 个测试文件、`276 passed`；`npm run lint` 与 `npm run build:all` 通过。新增单用户部署负例证明服务拒绝非loopback监听与`*` CORS。另以本地`vite preview`和headed Playwright真实渲染检查总览空态、状态标签、布局与文字溢出，检查后关闭浏览器/服务并清理临时截图。
 - 初始架构候选的154个现存Python文件曾全部通过Ruff check与Ruff format check；本轮DeepSeek overlay的13个相关Python文件又通过Ruff 0.15.14 check/format check和Python 3.12 `compileall`，`git diff --check`通过。更宽松的`sk-*`扫描仅命中CSS/测试中的`risk-*`、fixture字段等字符串；带凭据边界的严格扫描在仓库与完整diff中均为0，`.env.example`中的`DEEPSEEK_API_KEY`保持空值，未发现真实凭据入仓。前端本轮无代码变更；本机未因这组Python改动再次运行前端，服务器对同一`be2c455` SHA的新鲜前端测试、lint与build证据见上文，不把服务器证据冒充本机重跑。
 - 仓外 CLI 三次实跑均 `completed`：同输入跨两个不同真实 `/private/tmp` 输出根的 run ID、bundle SHA 和 artifact bytes 相同；同根第二次 `idempotent=true` 且 `transport_calls=[]`。本轮 run ID 为`ashare-paper-day-7c1b170499742adff759247b992ceb00`，bundle SHA-256 为`03c690274af36dd8e72196a6b831395401f0dd5e1c853e5bf09d9825f0877027`，但该产物仍是`non_authority`、`production_verified=false`。
@@ -65,7 +66,7 @@ DeepSeek 官方 HTTPS 客户端现已是 `CURRENT_VERIFIED/local_isolated_candid
 ## 第一阶段出口门禁
 
 1. 架构重构与DeepSeek HTTPS客户端的干净CI、服务器detached旁路、前端、canary和离线fixture证据均已收集；当前仍不授权merge/main、现役切换、scheduler、live SS、真实provider canary、真实paper或实盘。下一技术门是等待SS上游冻结并提供只读runtime，再做显式配置的同`as_of`联调；真实DeepSeek canary另受密钥轮换与独立网络授权阻断；
-2. 等待 SS 上游冻结 catalog version、dataset IDs、auth、receipt authority 与 runtime readback，再做同 `as_of` parity；
+2. 等待 SS 上游冻结 catalog version、dataset IDs、auth、receipt authority、跨页语义与 runtime readback；随后生成仓外显式manifest，先运行integration-readiness probe，再做新旧同 `as_of` parity。当前probe只有fixture证据，不可作为SS已准备好的证明；
 3. 按消费者分批切 V1；每批同时删除旧 import、URL、env、调度、测试和文档引用，并保留 runtime no-fallback 负例，不建立长期双轨；
 4. 用真实 SS V1 与新鲜 50,000 CNY 模拟 authority 连续运行 20 个交易日，要求 0 未来数据、0 同 bar 成交、0 重复订单/成交、0 scope 泄漏、0 旧链 fallback、0 未解释账务差异；
 5. 再积累 60–120 交易日冻结 OOS 与多状态样本，执行真实 purged/nested walk-forward、PBO/DSR、成本/未成交、尾部和校准/排序验证；
