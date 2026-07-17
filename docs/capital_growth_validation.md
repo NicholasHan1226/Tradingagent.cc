@@ -50,7 +50,7 @@ DeepSeek等provider仅生成证据sidecar。在进入任何结构化研究输入
 - 延迟、token/费用、敏感载荷拒绝和 outage 降级；
 - 人工审核时间是否下降，以及给冻结基线模型带来的样本外增量是否足以覆盖复杂度。
 
-LLM 输出不能直接作为 rank score、概率、仓位乘数、风险豁免或订单字段。动态Prompt、未验证artifact、未知引用、敏感payload或显式source-span提示注入模式必须在transport前阻断。typed source proof/provider receipt只证明离线合同和内容绑定，不证明真实DeepSeek transport或生产verifier。成功fixture可进入CAS/hash-chain本地journal，但本地`.head`不是外部密封；同时替换或删除journal与head仍不能由本机自证。模式门也不是完整语义安全保证，所以当前不能宣称LLM已提高收益、研究质量或已解决prompt injection。
+LLM 输出不能直接作为 rank score、概率、仓位乘数、风险豁免或订单字段。动态Prompt、未验证artifact、未知引用、敏感payload或显式source-span提示注入模式必须在transport前阻断。typed source proof/provider receipt只证明对应offline或HTTPS transport的内容与操作元数据绑定，不证明provider输出正确、真实账户可用、生产verifier或收益增量。成功且完整验证的fixture/HTTPS evidence可进入CAS/hash-chain本地journal，但本地`.head`不是外部密封；同时替换或删除journal与head仍不能由本机自证。模式门也不是完整语义安全保证，所以当前不能宣称LLM已提高收益、研究质量或已解决prompt injection。
 
 ## 2. V1 样本与决策账本验收
 

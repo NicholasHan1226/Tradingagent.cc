@@ -260,7 +260,7 @@ entries:
       - send_unverified_or_unbound_source_spans
       - claim_llm_alpha_improvement
       - claim_complete_semantic_or_encoded_prompt_injection_coverage
-      - claim_real_provider_transport_or_production_durable_receipt_store
+      - claim_real_provider_call_or_production_durable_receipt_store
     successor: tradingagent.llm_evidence.v1
   - entry_id: tradingagent_llm_evidence_journal
     state: CURRENT_VERIFIED
@@ -300,15 +300,17 @@ entries:
       - route_slow_research_to_configured_pro_role
       - publish_secret_free_provider_descriptor
       - use_only_request_and_outbound_bound_OfflineDeepSeekFixtureTransport
+      - require_explicit_in_process_authorization_for_network_candidate_routing
       - use_arbitrary_model_mapping_only_as_explicit_offline_fixture_router
     prohibited_uses:
       - read_or_persist_api_key_value_in_config
       - select_any_api_key_environment_name_other_than_DEEPSEEK_API_KEY
       - treat_fixture_only_router_as_provider_egress_authority
-      - make_network_calls
+      - make_network_calls_from_provider_config
+      - infer_network_transport_authority_from_environment_flag_alone
       - accept_arbitrary_injected_transport_callable
       - accept_legacy_deepseek_model_aliases
-      - claim_real_network_transport_implemented
+      - claim_real_network_transport_from_config_alone
       - claim_provider_transport_or_alpha_improvement
       - claim_authenticated_model_availability_or_real_request_canary
       - change_score_position_risk_or_order
@@ -581,21 +583,34 @@ entries:
       - influence_frozen_champion_risk_or_execution
     successor: tradingagent.multistyle_router.v1
   - entry_id: tradingagent_deepseek_provider_transport
-    state: PLANNED_NOT_IMPLEMENTED
-    layer: architecture_target
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
     owner: TradingAgent
-    canonical_path: planned:shared/llm/providers/deepseek
+    canonical_path: shared/llm/providers/deepseek_http.py
     production_verified: false
-    last_verified_at: "2026-07-16"
+    last_verified_at: "2026-07-17"
     evidence:
-      - docs/architecture.md
+      - tests/test_deepseek_http_transport.py
+      - tests/test_deepseek_provider_config.py
+      - tests/test_llm_sidecar.py
+      - docs/operations.md
     allowed_uses:
-      - provider_contract_and_offline_evaluation_design
+      - construct_an_explicit_disabled_by_default_provider_transport_candidate
+      - test_exact_official_https_post_with_fake_local_http_opener
+      - bind_raw_response_hash_and_safe_http_facts_to_typed_transport_receipt
+      - require_gateway_minted_hmac_bound_egress_capability_before_wire_io
+      - reject_public_transport_send_and_direct_http_adapter_invocation_before_secret_or_socket
+      - reject_proxy_redirect_retry_streaming_and_non_json_provider_responses
+      - keep_llm_output_evidence_only_without_trading_authority
     prohibited_uses:
-      - make_network_calls
+      - claim_any_real_provider_request_or_authenticated_model_readback
+      - enable_network_from_ambient_environment_flag_alone
+      - load_or_reuse_any_credential_exposed_in_chat_or_env_style_secret_file
       - treat_offline_fixture_transport_as_network_transport
       - send_account_strategy_or_nonpublic_data
+      - invoke_http_transport_or_adapter_outside_llm_evidence_gateway
       - claim_deepseek_runtime_active
+      - claim_production_deployment_or_durable_receipt_authority
       - change_score_position_risk_or_order
     successor: tradingagent.llm_provider_transport.v1
   - entry_id: tradingagent_live_paper_scheduler

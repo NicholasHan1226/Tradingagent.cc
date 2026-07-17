@@ -125,6 +125,18 @@ def _components(*, request_id: str = "REQ-JOURNAL-001"):
         normalized_evidence_sha256=observation["output_sha256"],
         provider_response_id="fixture-response-001",
         received_at=RECEIVED_AT,
+        transport_metadata={
+            "kind": "offline_fixture",
+            "endpoint": "offline://deepseek-fixture",
+            "method": "FIXTURE_RESOLVE",
+            "egress_policy_version": "offline-fixture-v1",
+            "http_status": 0,
+            "content_type": "application/json",
+            "request_bytes": 128,
+            "response_bytes": 256,
+            "attempt_count": 1,
+            "retry_disposition": "not_applicable",
+        },
     )
     return request, verifier, receipt, observation
 
@@ -154,6 +166,18 @@ def test_envelope_binds_request_source_proofs_transport_and_observation() -> Non
         == envelope.transport_receipt["transport_material_sha256"]
     )
     assert envelope.observation["status"] == "available"
+    assert envelope.transport_receipt["transport_metadata"] == {
+        "kind": "offline_fixture",
+        "endpoint": "offline://deepseek-fixture",
+        "method": "FIXTURE_RESOLVE",
+        "egress_policy_version": "offline-fixture-v1",
+        "http_status": 0,
+        "content_type": "application/json",
+        "request_bytes": 128,
+        "response_bytes": 256,
+        "attempt_count": 1,
+        "retry_disposition": "not_applicable",
+    }
     assert envelope.shadow_only is True
     assert envelope.production_eligible is False
     assert all(value is False for value in envelope.authority.values())
@@ -212,6 +236,7 @@ def test_envelope_rejects_same_request_different_response_receipt_swap() -> None
         normalized_evidence_sha256=alternate_observation["output_sha256"],
         provider_response_id="fixture-response-002",
         received_at=receipt.received_at,
+        transport_metadata=receipt.transport_metadata,
     )
 
     with pytest.raises(

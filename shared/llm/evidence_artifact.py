@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
 import re
+import unicodedata
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -43,6 +46,40 @@ _PROMPT_INJECTION_PATTERNS = (
     re.compile(r"(?:你现在是|扮演|充当).{0,12}(?:系统|开发者|助手)"),
     re.compile(r"(?:系统|开发者)(?:提示|消息|指令)"),
     re.compile(r"(?:泄露|显示|输出).{0,24}(?:系统|开发者)(?:提示|消息|指令)"),
+    re.compile(
+        r"(?is)[\"']?(?:role|from)[\"']?\s*:\s*"
+        r"[\"']?(?:system|developer|assistant)\b.{0,96}"
+        r"\b(?:ignore|override|obey|instructions?|prompts?|policy)\b"
+    ),
+)
+_PROMPT_INJECTION_COMPACT_PATTERNS = (
+    re.compile(
+        r"(?i)(?:ignore|disregard|override)(?:all|the)?"
+        r"(?:previous|prior|above)(?:instructions?|prompts?|messages?)"
+    ),
+    re.compile(r"(?i)(?:youarenow|actas|behaveas)(?:the)?(?:system|developer)"),
+)
+_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
+_PROMPT_SCAN_HOMOGLYPHS = str.maketrans(
+    {
+        "і": "i",  # Cyrillic
+        "І": "I",
+        "ı": "i",
+        "ο": "o",  # Greek
+        "Ο": "O",
+        "о": "o",  # Cyrillic
+        "О": "O",
+        "а": "a",
+        "А": "A",
+        "е": "e",
+        "Е": "E",
+        "с": "c",
+        "С": "C",
+        "р": "p",
+        "Р": "P",
+        "х": "x",
+        "Х": "X",
+    }
 )
 
 
@@ -72,11 +109,37 @@ def sha256_document(value: str) -> str:
 def source_prompt_injection_signals(value: str) -> tuple[str, ...]:
     """Return stable signal codes without copying poisoned text downstream."""
 
-    text = _strict_text(value, field_name="source_span")
-    return tuple(
+    text = _normalise_prompt_scan_text(_strict_text(value, field_name="source_span"))
+    pattern_signals = tuple(
         f"source_prompt_injection_pattern_{index + 1}"
         for index, pattern in enumerate(_PROMPT_INJECTION_PATTERNS)
         if pattern.search(text)
+    )
+    compact = "".join(character for character in text.casefold() if character.isalnum())
+    compact_signals = tuple(
+        f"source_prompt_injection_compact_pattern_{index + 1}"
+        for index, pattern in enumerate(_PROMPT_INJECTION_COMPACT_PATTERNS)
+        if pattern.search(compact)
+    )
+    return pattern_signals + compact_signals
+
+
+def _normalise_prompt_scan_text(value: str) -> str:
+    """Decode common visual/transport obfuscation only for safety scanning."""
+
+    text = value
+    for _ in range(3):
+        text = html.unescape(urllib.parse.unquote_plus(text))
+        text = _UNICODE_ESCAPE_RE.sub(
+            lambda match: chr(int(match.group(1), 16)),
+            text,
+        )
+    text = unicodedata.normalize("NFKD", text).translate(_PROMPT_SCAN_HOMOGLYPHS)
+    return "".join(
+        character
+        for character in text
+        if unicodedata.category(character) not in {"Cf", "Cc", "Mn", "Me"}
+        or character in {"\n", "\r", "\t"}
     )
 
 

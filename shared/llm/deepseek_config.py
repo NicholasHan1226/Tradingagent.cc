@@ -1,15 +1,15 @@
-"""Public, secret-free DeepSeek V4 configuration for the LLM sidecar.
+"""Public, secret-free DeepSeek V4 routing configuration.
 
-This module intentionally does not implement HTTP.  It records only the
-official OpenAI-compatible endpoint, logical model-role mapping, and the name
-of the environment variable that a separately authorised transport would read.
-The credential value is never loaded into this object or its descriptors.
+The network implementation lives in :mod:`shared.llm.providers.deepseek_http`.
+This object never reads or stores credential material.  An ambient environment
+flag is deliberately insufficient to enable egress: the caller must also pass
+an explicit in-process authority when constructing a network candidate.
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
 
 from .router import (
@@ -17,12 +17,14 @@ from .router import (
     DEEPSEEK_V4_FLASH_MODEL,
     DEEPSEEK_V4_PRO_MODEL,
     LLMRouter,
+    _NETWORK_AUTHORITY_SEAL,
 )
 
 
 OFFICIAL_DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com"
 _LEGACY_MODELS = frozenset({"deepseek-chat", "deepseek-reasoner"})
 _API_KEY_ENV = "DEEPSEEK_API_KEY"
+_PROVIDER_NETWORK_AUTHORITY_SEAL = object()
 
 
 class DeepSeekProviderConfigError(ValueError):
@@ -40,12 +42,16 @@ def _strict_text(value: object, *, field_name: str) -> str:
     return value
 
 
-def _disabled(value: object) -> bool:
+def _network_flag(value: object, *, allow_network_transport: bool) -> bool:
     normalized = str(value or "false").strip().casefold()
     if normalized in {"false", "0", "no", "off"}:
         return False
     if normalized in {"true", "1", "yes", "on"}:
-        raise DeepSeekProviderConfigError("network_transport_not_installed")
+        if allow_network_transport is not True:
+            raise DeepSeekProviderConfigError(
+                "network_transport_requires_explicit_authorization"
+            )
+        return True
     raise DeepSeekProviderConfigError("network_enabled_invalid")
 
 
@@ -59,7 +65,12 @@ class DeepSeekProviderConfig:
     flash_model: str
     pro_model: str
     network_enabled: bool = False
-    transport_state: str = "not_installed"
+    transport_state: str = "candidate_installed_network_disabled"
+    _network_authority_seal: object | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if _strict_text(self.provider, field_name="provider") != DEEPSEEK_PROVIDER:
@@ -79,19 +90,37 @@ class DeepSeekProviderConfig:
             raise DeepSeekProviderConfigError("flash_model_role_invalid")
         if pro != DEEPSEEK_V4_PRO_MODEL:
             raise DeepSeekProviderConfigError("pro_model_role_invalid")
-        if type(self.network_enabled) is not bool or self.network_enabled:
-            raise DeepSeekProviderConfigError("network_transport_not_installed")
-        if self.transport_state != "not_installed":
+        if type(self.network_enabled) is not bool:
+            raise DeepSeekProviderConfigError("network_enabled_invalid")
+        if self.network_enabled:
+            if self._network_authority_seal is not _PROVIDER_NETWORK_AUTHORITY_SEAL:
+                raise DeepSeekProviderConfigError(
+                    "network_transport_requires_explicit_authorization"
+                )
+        elif self._network_authority_seal is not None:
+            raise DeepSeekProviderConfigError("network_authority_state_invalid")
+        expected_transport_state = (
+            "candidate_enabled"
+            if self.network_enabled
+            else "candidate_installed_network_disabled"
+        )
+        if self.transport_state != expected_transport_state:
             raise DeepSeekProviderConfigError("transport_state_invalid")
 
     @classmethod
     def from_environment(
         cls,
         environ: Mapping[str, str] | None = None,
+        *,
+        allow_network_transport: bool = False,
     ) -> "DeepSeekProviderConfig":
         """Read public routing values only; never read the credential value."""
 
         source = os.environ if environ is None else environ
+        network_enabled = _network_flag(
+            source.get("TRADINGAGENT_LLM_NETWORK_ENABLED", "false"),
+            allow_network_transport=allow_network_transport,
+        )
         return cls(
             provider=str(source.get("TRADINGAGENT_LLM_PROVIDER", DEEPSEEK_PROVIDER)),
             base_url=str(
@@ -115,8 +144,14 @@ class DeepSeekProviderConfig:
                     DEEPSEEK_V4_PRO_MODEL,
                 )
             ),
-            network_enabled=_disabled(
-                source.get("TRADINGAGENT_LLM_NETWORK_ENABLED", "false")
+            network_enabled=network_enabled,
+            transport_state=(
+                "candidate_enabled"
+                if network_enabled
+                else "candidate_installed_network_disabled"
+            ),
+            _network_authority_seal=(
+                _PROVIDER_NETWORK_AUTHORITY_SEAL if network_enabled else None
             ),
         )
 
@@ -125,6 +160,20 @@ class DeepSeekProviderConfig:
         return f"{self.base_url}/chat/completions"
 
     def router(self) -> LLMRouter:
+        if self.network_enabled:
+            if (
+                self.transport_state != "candidate_enabled"
+                or self._network_authority_seal is not _PROVIDER_NETWORK_AUTHORITY_SEAL
+            ):
+                raise DeepSeekProviderConfigError("network_authority_state_invalid")
+            router_authority_seal: object | None = _NETWORK_AUTHORITY_SEAL
+        else:
+            if (
+                self.transport_state != "candidate_installed_network_disabled"
+                or self._network_authority_seal is not None
+            ):
+                raise DeepSeekProviderConfigError("network_authority_state_invalid")
+            router_authority_seal = None
         return LLMRouter._from_validated_deepseek_v4_mapping(
             {
                 "bulk_extraction": {
@@ -135,7 +184,8 @@ class DeepSeekProviderConfig:
                     "provider": self.provider,
                     "model": self.pro_model,
                 },
-            }
+            },
+            network_authority_seal=router_authority_seal,
         )
 
     def to_public_descriptor(self) -> dict[str, object]:

@@ -306,7 +306,7 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
         "CURRENT_VERIFIED"
     )
     assert entries["tradingagent_deepseek_provider_config"].production_verified is False
-    assert "make_network_calls" in (
+    assert "make_network_calls_from_provider_config" in (
         entries["tradingagent_deepseek_provider_config"].prohibited_uses
     )
     assert "accept_arbitrary_injected_transport_callable" in (
@@ -361,11 +361,16 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
         assert entries[shadow_candidate].state == "CURRENT_VERIFIED"
         assert entries[shadow_candidate].layer == "local_isolated_candidate"
         assert entries[shadow_candidate].production_verified is False
-    for planned in (
-        "tradingagent_deepseek_provider_transport",
-        "tradingagent_live_paper_scheduler",
-    ):
-        assert entries[planned].state == "PLANNED_NOT_IMPLEMENTED"
+    transport = entries["tradingagent_deepseek_provider_transport"]
+    assert transport.state == "CURRENT_VERIFIED"
+    assert transport.layer == "local_isolated_candidate"
+    assert transport.production_verified is False
+    assert "claim_any_real_provider_request_or_authenticated_model_readback" in (
+        transport.prohibited_uses
+    )
+    assert (
+        entries["tradingagent_live_paper_scheduler"].state == "PLANNED_NOT_IMPLEMENTED"
+    )
     assert entries["tradingagent_capital_authority"].state == "CURRENT_VERIFIED"
     assert all(entry.owner and entry.canonical_path for entry in matrix.entries)
 

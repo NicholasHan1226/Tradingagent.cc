@@ -36,6 +36,7 @@ tests/test_llm_evidence_artifact.py
 tests/test_llm_evidence_journal.py
 tests/test_llm_evaluation.py
 tests/test_deepseek_provider_config.py
+tests/test_deepseek_http_transport.py
 tests/test_opportunity_radar_contracts.py
 tests/test_opportunity_ledger.py
 tests/test_opportunity_funnel_cron.py

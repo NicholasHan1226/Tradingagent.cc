@@ -1,7 +1,7 @@
-"""Provider-neutral, transport-injected LLM evidence gateway.
+"""Provider-neutral, explicitly transport-injected LLM evidence gateway.
 
-No HTTP client is created here.  A caller must explicitly inject a transport,
-which keeps the deterministic/paper path network-free by default.
+The default remains network-free. A caller may inject only the exact offline
+fixture type or the exact audited DeepSeek HTTPS transport type.
 """
 
 from __future__ import annotations
@@ -20,8 +20,23 @@ from .evidence_artifact import (
     EvidenceSourceAuthorityVerifier,
     SourceArtifactPromptInjectionError,
 )
+from .providers.deepseek_http import (
+    DEEPSEEK_EGRESS_POLICY_VERSION,
+    DEEPSEEK_HTTP_TRANSPORT_ID,
+    DEEPSEEK_HTTP_TRANSPORT_VERSION,
+    DeepSeekHTTPTransport,
+    DeepSeekHTTPTransportError,
+    _create_validated_deepseek_egress,
+    _GATEWAY_EGRESS_AUTHORITY_SEAL,
+)
+from .router import (
+    DEEPSEEK_PROVIDER,
+    DEEPSEEK_V4_FLASH_MODEL,
+    DEEPSEEK_V4_PRO_MODEL,
+    LLMRouter,
+    ModelRoute,
+)
 from .deepseek_config import DeepSeekProviderConfig
-from .router import LLMRouter, ModelRoute
 from .schema import (
     EvidenceSchemaError,
     LLMEvidenceRequest,
@@ -58,6 +73,22 @@ _DEEPSEEK_MAX_TOKENS = {
     "bulk_extraction": 4096,
     "slow_research": 8192,
 }
+OFFLINE_DEEPSEEK_TRANSPORT_ID = "offline-deepseek-fixture"
+OFFLINE_DEEPSEEK_TRANSPORT_VERSION = "offline-fixture-v1"
+OFFLINE_DEEPSEEK_EGRESS_POLICY_VERSION = "offline-fixture-v1"
+_TRANSPORT_METADATA_FIELDS = {
+    "attempt_count",
+    "content_type",
+    "egress_policy_version",
+    "endpoint",
+    "http_status",
+    "kind",
+    "method",
+    "request_bytes",
+    "response_bytes",
+    "retry_disposition",
+}
+_ADAPTER_GATEWAY_AUTHORITY_SEAL = object()
 
 
 class ProviderTransportReceiptError(ValueError):
@@ -70,6 +101,10 @@ class ProviderEvidenceBindingError(EvidenceSchemaError):
 
 class ProviderOutputSensitiveError(EvidenceSchemaError):
     """Raised when provider evidence contains credential-shaped output."""
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _reject_secret_shaped_provider_output(value: object, *, path: str) -> None:
@@ -169,6 +204,103 @@ def _aware_instant(value: object, *, field_name: str) -> str:
     return canonical
 
 
+def _transport_metadata(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != _TRANSPORT_METADATA_FIELDS:
+        raise ProviderTransportReceiptError("transport_metadata_invalid")
+    kind = _strict_text(value.get("kind"), field_name="transport_kind")
+    endpoint = _strict_text(value.get("endpoint"), field_name="transport_endpoint")
+    method = _strict_text(value.get("method"), field_name="transport_method")
+    policy_version = _strict_text(
+        value.get("egress_policy_version"),
+        field_name="egress_policy_version",
+    )
+    content_type = _strict_text(
+        value.get("content_type"),
+        field_name="transport_content_type",
+    )
+    retry_disposition = _strict_text(
+        value.get("retry_disposition"),
+        field_name="retry_disposition",
+    )
+    integer_fields: dict[str, int] = {}
+    for field_name in (
+        "http_status",
+        "request_bytes",
+        "response_bytes",
+        "attempt_count",
+    ):
+        candidate = value.get(field_name)
+        if type(candidate) is not int or candidate < 0:
+            raise ProviderTransportReceiptError(f"{field_name}_invalid")
+        integer_fields[field_name] = candidate
+    if kind == "offline_fixture":
+        if (
+            endpoint != "offline://deepseek-fixture"
+            or method != "FIXTURE_RESOLVE"
+            or integer_fields["http_status"] != 0
+            or retry_disposition != "not_applicable"
+        ):
+            raise ProviderTransportReceiptError("transport_metadata_invalid")
+    elif kind == "https":
+        if (
+            endpoint != "https://api.deepseek.com/chat/completions"
+            or method != "POST"
+            or integer_fields["http_status"] != 200
+            or retry_disposition != "not_retried"
+        ):
+            raise ProviderTransportReceiptError("transport_metadata_invalid")
+    else:
+        raise ProviderTransportReceiptError("transport_kind_invalid")
+    if content_type != "application/json" or integer_fields["attempt_count"] != 1:
+        raise ProviderTransportReceiptError("transport_metadata_invalid")
+    return {
+        "kind": kind,
+        "endpoint": endpoint,
+        "method": method,
+        "egress_policy_version": policy_version,
+        "http_status": integer_fields["http_status"],
+        "content_type": content_type,
+        "request_bytes": integer_fields["request_bytes"],
+        "response_bytes": integer_fields["response_bytes"],
+        "attempt_count": integer_fields["attempt_count"],
+        "retry_disposition": retry_disposition,
+    }
+
+
+def _validate_transport_receipt_binding(
+    *,
+    provider: str,
+    model: str,
+    transport_id: str,
+    transport_version: str,
+    transport_metadata: Mapping[str, object],
+) -> None:
+    if transport_metadata["kind"] == "offline_fixture":
+        if (
+            provider != DEEPSEEK_PROVIDER
+            or transport_id != OFFLINE_DEEPSEEK_TRANSPORT_ID
+            or transport_version != OFFLINE_DEEPSEEK_TRANSPORT_VERSION
+            or transport_metadata["egress_policy_version"]
+            != OFFLINE_DEEPSEEK_EGRESS_POLICY_VERSION
+            or int(transport_metadata["request_bytes"]) <= 0
+            or int(transport_metadata["response_bytes"]) <= 0
+        ):
+            raise ProviderTransportReceiptError(
+                "offline_transport_receipt_binding_invalid"
+            )
+        return
+    if (
+        provider != DEEPSEEK_PROVIDER
+        or model not in {DEEPSEEK_V4_FLASH_MODEL, DEEPSEEK_V4_PRO_MODEL}
+        or transport_id != DEEPSEEK_HTTP_TRANSPORT_ID
+        or transport_version != DEEPSEEK_HTTP_TRANSPORT_VERSION
+        or transport_metadata["egress_policy_version"] != DEEPSEEK_EGRESS_POLICY_VERSION
+        or int(transport_metadata["request_bytes"]) <= 0
+        or int(transport_metadata["response_bytes"]) <= 0
+    ):
+        raise ProviderTransportReceiptError("https_transport_receipt_binding_invalid")
+
+
 @dataclass(frozen=True)
 class ProviderTransportReceipt:
     """Content-addressed receipt emitted by the injected transport boundary."""
@@ -186,7 +318,15 @@ class ProviderTransportReceipt:
     normalized_evidence_sha256: str
     provider_response_id: str
     received_at: str
+    transport_metadata: Mapping[str, object]
     receipt_sha256: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "transport_metadata",
+            MappingProxyType(_transport_metadata(self.transport_metadata)),
+        )
 
     @classmethod
     def create(
@@ -205,15 +345,31 @@ class ProviderTransportReceipt:
         normalized_evidence_sha256: str,
         provider_response_id: str,
         received_at: str,
+        transport_metadata: Mapping[str, object],
     ) -> "ProviderTransportReceipt":
+        normalized_provider = _strict_text(provider, field_name="provider")
+        normalized_model = _strict_text(model, field_name="model")
+        normalized_transport_id = _strict_text(
+            transport_id,
+            field_name="transport_id",
+        )
+        normalized_transport_version = _strict_text(
+            transport_version,
+            field_name="transport_version",
+        )
+        normalized_transport_metadata = _transport_metadata(transport_metadata)
+        _validate_transport_receipt_binding(
+            provider=normalized_provider,
+            model=normalized_model,
+            transport_id=normalized_transport_id,
+            transport_version=normalized_transport_version,
+            transport_metadata=normalized_transport_metadata,
+        )
         identity = {
-            "provider": _strict_text(provider, field_name="provider"),
-            "model": _strict_text(model, field_name="model"),
-            "transport_id": _strict_text(transport_id, field_name="transport_id"),
-            "transport_version": _strict_text(
-                transport_version,
-                field_name="transport_version",
-            ),
+            "provider": normalized_provider,
+            "model": normalized_model,
+            "transport_id": normalized_transport_id,
+            "transport_version": normalized_transport_version,
             "verified_at": _aware_instant(verified_at, field_name="verified_at"),
             "request_sha256": str(request_sha256),
             "source_authority_proof_set_sha256": str(source_authority_proof_set_sha256),
@@ -223,6 +379,7 @@ class ProviderTransportReceipt:
             "normalized_evidence_sha256": str(normalized_evidence_sha256),
             "provider_response_id": _provider_response_id(provider_response_id),
             "received_at": _aware_instant(received_at, field_name="received_at"),
+            "transport_metadata": normalized_transport_metadata,
         }
         receipt = cls(
             **identity,
@@ -231,7 +388,7 @@ class ProviderTransportReceipt:
         receipt.verify_integrity()
         return receipt
 
-    def _identity_payload(self) -> dict[str, str]:
+    def _identity_payload(self) -> dict[str, object]:
         return {
             "provider": self.provider,
             "model": self.model,
@@ -248,6 +405,7 @@ class ProviderTransportReceipt:
             "normalized_evidence_sha256": self.normalized_evidence_sha256,
             "provider_response_id": self.provider_response_id,
             "received_at": self.received_at,
+            "transport_metadata": dict(self.transport_metadata),
         }
 
     def verify_integrity(self) -> None:
@@ -256,6 +414,14 @@ class ProviderTransportReceipt:
         _strict_text(self.transport_id, field_name="transport_id")
         _strict_text(self.transport_version, field_name="transport_version")
         _provider_response_id(self.provider_response_id)
+        normalized_transport_metadata = _transport_metadata(self.transport_metadata)
+        _validate_transport_receipt_binding(
+            provider=self.provider,
+            model=self.model,
+            transport_id=self.transport_id,
+            transport_version=self.transport_version,
+            transport_metadata=normalized_transport_metadata,
+        )
         verified_at = datetime.fromisoformat(
             _aware_instant(self.verified_at, field_name="verified_at")
         )
@@ -280,7 +446,7 @@ class ProviderTransportReceipt:
         ) or not hmac.compare_digest(self.receipt_sha256, expected):
             raise ProviderTransportReceiptError("transport_receipt_sha256_mismatch")
 
-    def to_descriptor(self) -> dict[str, str]:
+    def to_descriptor(self) -> dict[str, object]:
         self.verify_integrity()
         return {**self._identity_payload(), "receipt_sha256": self.receipt_sha256}
 
@@ -394,9 +560,9 @@ class OfflineDeepSeekFixtureTransport:
 
 @dataclass
 class DeepSeekAdapter:
-    """DeepSeek-compatible adapter limited to an offline fixture transport."""
+    """DeepSeek adapter limited to two exact, audited transport classes."""
 
-    transport: OfflineDeepSeekFixtureTransport | None = field(
+    transport: OfflineDeepSeekFixtureTransport | DeepSeekHTTPTransport | None = field(
         default=None,
         repr=False,
     )
@@ -405,28 +571,39 @@ class DeepSeekAdapter:
         repr=False,
     )
     clock: Callable[[], str] | None = field(default=None, repr=False)
-    transport_id: str = "offline-deepseek-fixture"
-    transport_version: str = "offline-fixture-v1"
     receipt_sink: Callable[[ProviderTransportReceipt], None] | None = field(
         default=None,
         repr=False,
     )
 
     def invoke(
-        self, request: LLMEvidenceRequest, route: ModelRoute
+        self,
+        request: LLMEvidenceRequest,
+        route: ModelRoute,
+        *,
+        _gateway_authority_seal: object | None = None,
     ) -> ProviderInvocationResult:
         if self.transport is None:
             raise RuntimeError("deepseek_transport_unavailable")
-        if type(self.transport) is not OfflineDeepSeekFixtureTransport:
+        transport_type = type(self.transport)
+        if transport_type not in {
+            OfflineDeepSeekFixtureTransport,
+            DeepSeekHTTPTransport,
+        }:
             raise RuntimeError("deepseek_transport_policy_rejected")
+        if (
+            transport_type is DeepSeekHTTPTransport
+            and _gateway_authority_seal is not _ADAPTER_GATEWAY_AUTHORITY_SEAL
+        ):
+            raise DeepSeekHTTPTransportError("deepseek_http_gateway_authority_required")
         # Re-check immediately before transport. This binds the fixed prompt,
         # verified point-in-time evidence and structured payload to the model.
         # It also catches mutations inside an otherwise frozen request object.
-        verified_at = (
-            self.clock()
-            if self.clock is not None
-            else datetime.now(timezone.utc).isoformat()
-        )
+        if transport_type is OfflineDeepSeekFixtureTransport:
+            verified_at = self.clock() if self.clock is not None else _utc_now_iso()
+        else:
+            # A real network receipt cannot inherit a caller-controlled clock.
+            verified_at = _utc_now_iso()
         verified_at = _aware_instant(verified_at, field_name="verified_at")
         material = request.validate_for_transport(
             route.model,
@@ -467,11 +644,50 @@ class DeepSeekAdapter:
         # they are not sent as undocumented provider request fields.
         validate_cloud_egress(outbound)
         outbound_sha = _sha256_json(outbound)
-        raw = OfflineDeepSeekFixtureTransport.resolve(
-            self.transport,
-            request_sha256=material["metadata"]["request_sha256"],
-            outbound_sha256=outbound_sha,
-        )
+        if transport_type is OfflineDeepSeekFixtureTransport:
+            raw = OfflineDeepSeekFixtureTransport.resolve(
+                self.transport,
+                request_sha256=material["metadata"]["request_sha256"],
+                outbound_sha256=outbound_sha,
+            )
+            received_at = self.clock() if self.clock is not None else _utc_now_iso()
+            response_sha = _sha256_json(raw)
+            transport_id = OFFLINE_DEEPSEEK_TRANSPORT_ID
+            transport_version = OFFLINE_DEEPSEEK_TRANSPORT_VERSION
+            transport_metadata = {
+                "kind": "offline_fixture",
+                "endpoint": "offline://deepseek-fixture",
+                "method": "FIXTURE_RESOLVE",
+                "egress_policy_version": OFFLINE_DEEPSEEK_EGRESS_POLICY_VERSION,
+                "http_status": 0,
+                "content_type": "application/json",
+                "request_bytes": len(_canonical_json(outbound).encode("utf-8")),
+                "response_bytes": len(_canonical_json(raw).encode("utf-8")),
+                "attempt_count": 1,
+                "retry_disposition": "not_applicable",
+            }
+        else:
+            egress = _create_validated_deepseek_egress(
+                outbound,
+                outbound_sha256=outbound_sha,
+                model=route.model,
+                request_sha256=material["metadata"]["request_sha256"],
+                source_authority_proof_set_sha256=material["metadata"][
+                    "source_authority_proof_set_sha256"
+                ],
+                transport_material_sha256=transport_material_sha,
+                authority_seal=_GATEWAY_EGRESS_AUTHORITY_SEAL,
+            )
+            http_response = DeepSeekHTTPTransport._send_validated(
+                self.transport,
+                egress,
+            )
+            raw = http_response.payload
+            received_at = http_response.received_at
+            response_sha = http_response.raw_response_sha256
+            transport_id = http_response.transport_id
+            transport_version = http_response.transport_version
+            transport_metadata = http_response.to_transport_metadata()
         if not isinstance(raw, Mapping):
             raise EvidenceSchemaError("provider transport returned a non-object")
         # Accept either direct evidence JSON or a DeepSeek-compatible envelope,
@@ -508,18 +724,12 @@ class DeepSeekAdapter:
             sort_keys=True,
             separators=(",", ":"),
         )
-        received_at = (
-            self.clock()
-            if self.clock is not None
-            else datetime.now(timezone.utc).isoformat()
-        )
         received_at = _aware_instant(received_at, field_name="received_at")
-        response_sha = _sha256_json(raw)
         receipt = ProviderTransportReceipt.create(
             provider=route.provider,
             model=route.model,
-            transport_id=self.transport_id,
-            transport_version=self.transport_version,
+            transport_id=transport_id,
+            transport_version=transport_version,
             verified_at=verified_at,
             request_sha256=material["metadata"]["request_sha256"],
             source_authority_proof_set_sha256=material["metadata"][
@@ -531,6 +741,7 @@ class DeepSeekAdapter:
             normalized_evidence_sha256=sha256_text(normalized_evidence_json),
             provider_response_id=str(raw.get("id") or "unavailable"),
             received_at=received_at,
+            transport_metadata=transport_metadata,
         )
         if self.receipt_sink is not None:
             self.receipt_sink(receipt)
@@ -562,7 +773,8 @@ class LLMEvidenceGateway:
     @staticmethod
     def _candidate_router_policy_valid(candidate: object) -> bool:
         return type(candidate) is LLMRouter and (
-            candidate.fixture_only or candidate.validated_deepseek_v4
+            (candidate.fixture_only and not candidate.network_authorized)
+            or candidate.validated_deepseek_v4
         )
 
     def _router_policy_valid(self) -> bool:
@@ -676,11 +888,39 @@ class LLMEvidenceGateway:
                 model=route.model,
                 entity_id=entity_id,
             )
+        if type(adapter.transport) is DeepSeekHTTPTransport and (
+            not self.router.validated_deepseek_v4 or not self.router.network_authorized
+        ):
+            return unavailable_observation(
+                request,
+                reason_code="llm_network_router_policy_rejected",
+                provider=route.provider,
+                model=route.model,
+                entity_id=entity_id,
+            )
         try:
             # Do not use instance dispatch: a per-instance ``invoke`` override
             # would otherwise recover the full request before canonical
             # source-proof and DLP checks run.
-            result = DeepSeekAdapter.invoke(adapter, request, route)
+            result = DeepSeekAdapter.invoke(
+                adapter,
+                request,
+                route,
+                _gateway_authority_seal=_ADAPTER_GATEWAY_AUTHORITY_SEAL,
+            )
+        except DeepSeekHTTPTransportError as exc:
+            observation_factory = (
+                invalid_observation
+                if exc.observation_status == "invalid"
+                else unavailable_observation
+            )
+            return observation_factory(
+                request,
+                reason_code=exc.reason_code,
+                provider=route.provider,
+                model=route.model,
+                entity_id=entity_id,
+            )
         except SourceArtifactPromptInjectionError:
             return invalid_observation(
                 request,

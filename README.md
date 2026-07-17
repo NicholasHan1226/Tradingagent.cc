@@ -4,7 +4,7 @@ TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复�
 
 > 接手顺序：[AGENTS.md](AGENTS.md) → [STATUS.md](STATUS.md) → [docs/AGENTS.md](docs/AGENTS.md)。
 
-## 当前开发状态（2026-07-16）
+## 当前开发状态（2026-07-17）
 
 当前 `codex/ta-v1-data-client` 是**已完成本地验收、仅允许提交/推送到隔离分支的候选**。候选已包含 SS V1 严格客户端、内容寻址 `CoverageReceipt`、三层 Universe、Phase 1.5 行业 shadow 薄切片、PIT OpportunityRadar/append-only Ledger、多期限 forecast 研究合同、三风格 shadow router、50,000 CNY 小资金可行池与账户证明绑定合同、六维投资论点风险 authority、A股零股卖出规则、当前选择与数值 PIT 特征双重绑定的冻结 rank-score Champion、mark/quote 证据 authority、逐副作用可信时钟、持久 drift 约束、模拟日 RunBundle、Decision Ledger、外部冻结交易日历 proof/`ValidationPlan`/冻结OOS/总回报标签门、负向模型保护，以及带本地CAS journal的 LLM 证据 sidecar。但这不表示预测有效、概率已校准、Phase 1、Git 主线、SharedSignals live API、生产 runtime、已安装 scheduler/cron 或真实模拟盘已完成。
 
@@ -15,12 +15,12 @@ TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复�
 - 系统仅供 Nicholas 个人内部使用；看板/API默认只监听localhost，`tradingagent.cc`只作为经过Cloudflare Access或等价单用户认证的个人远程入口，禁止匿名公网访问和API直出；
 - TA 只按显式配置消费 `GET /v1/catalog` 和 `POST /v1/query`，禁止回退 Tushare、SS SQLite、旧专用端点或缓存拼装；当前仅使用 fixture/port，不臆造 SS runtime 已可用；
 - 自动模拟盘有两条严格分开的本地候选：仓外 fixture CLI 可执行但使用不可晋级的 fixture account/proof；`compose_capital_backed_paper_runtime` 从 canonical simulated ledger 读取 current generation/lineage，并贯穿 Champion、六维论点风险 authority、mark/quote authority、逐副作用可信时钟、risk、capital outbox、模拟成交和reconcile。崩溃恢复只会优先补写已经由canonical ledger证明为幂等已提交的outbox settlement；只有pending intent而没有对应commit事实时，最新risk/drift门仍可阻止新增风险。目前该composition只有测试装配，没有 CLI、scheduler、生产行情/时钟/论点风险 verifier 或真实 paper session。自动模型晋级、恢复风险、扩风险和 live transition 永久不由学习环自行授权；
-- 第一阶段只有一个冻结的未校准 rank-score Champion；score receipt 必须同时绑定当前人工选择 manifest、artifact/model/spec 和经独立 port 复核的数值 PIT 特征快照，rank 只排序且不控制仓位。`OpportunityRadar`/Ledger、多期限 forecast 和三风格 router 已实现本地隔离 shadow 合同，只能写反事实研究证据；真实 DeepSeek transport 和 live paper scheduler 仍为 `PLANNED_NOT_IMPLEMENTED`；
+- 第一阶段只有一个冻结的未校准 rank-score Champion；score receipt 必须同时绑定当前人工选择 manifest、artifact/model/spec 和经独立 port 复核的数值 PIT 特征快照，rank 只排序且不控制仓位。`OpportunityRadar`/Ledger、多期限 forecast 和三风格 router 已实现本地隔离 shadow 合同，只能写反事实研究证据；默认关闭的 DeepSeek 官方 HTTPS transport 已是本地隔离候选，但真实provider调用、服务器/生产启用均未验证，live paper scheduler 仍为 `PLANNED_NOT_IMPLEMENTED`；
 - Phase 1.5 行业薄切片只根据 PIT taxonomy、覆盖与证据动态选择 1 个深研行业和 2 个观察行业；它不输出个股、不改变排名/仓位/风险/订单，也不证明所选行业有 alpha；
 - 仓库中保留的旧 A股 wrapper/cron 名称只供迁移审计，入口已统一硬阻断且不能用环境变量恢复；新 day loop 尚未注册或应用 scheduler；
-- LLM产品角色`flash_extract`/`pro_thinking`分别映射代码路由`bulk_extraction`/`slow_research`，只做固定Prompt、内容寻址证据抽取和研究复核；source span 作为不可信引用数据处理，显式中英文提示注入模式会在transport前阻断并要求人工复核。2026-07-16已从DeepSeek官方公开文档核对OpenAI格式base URL、V4 Flash/Pro模型ID、JSON与thinking能力；这只证明公开接口目标，不证明当前账户的认证`/models` readback、额度、限流、字段响应或真实可用性。默认Gateway通过严格、无密钥配置构造；当前adapter只接受同时绑定request/outbound hash的`OfflineDeepSeekFixtureTransport`，任意普通callable在调用前拒绝，因此不存在真实网络路径。成功的离线证据可写入带CAS、hash-chain和本地`.head`锚点的shadow journal；它只能发现本地不一致，不是外部密封或tamper-proof生产authority。vendor model ID不进入领域合同，也不参与个股排名、仓位、风险、订单或账户操作。
+- LLM产品角色`flash_extract`/`pro_thinking`分别映射代码路由`bulk_extraction`/`slow_research`，只做固定Prompt、内容寻址证据抽取和研究复核；source span 作为不可信引用数据处理，显式中英文及部分NFKC、零宽、HTML/URL编码、角色标签和常见同形字混淆会在transport前阻断并要求人工复核，但不声称覆盖所有语义攻击。2026-07-16已从DeepSeek官方公开文档核对OpenAI格式base URL、V4 Flash/Pro模型ID、JSON与thinking能力；这只证明公开接口目标，不证明当前账户认证、额度、限流、字段响应或真实可用性。默认Gateway仍无网络；adapter只接受精确的`OfflineDeepSeekFixtureTransport`或`DeepSeekHTTPTransport`，任意普通callable在调用前拒绝。HTTP transport的公开`send`和脱离Gateway的Adapter调用同样拒绝；真正wire path只接受Gateway在source proof、Prompt注入和全树DLP验证后铸造、以进程内HMAC绑定body、模型及request/proof/material/outbound hash的内部capability。HTTPS候选固定官方endpoint、系统TLS、禁环境代理/重定向/自动重试并严格限制请求、响应和JSON，当前仅通过fake opener测试，没有真实provider请求。成功且完整验证的证据可写入带CAS、hash-chain和本地`.head`锚点的shadow journal；它只能发现本地不一致，不是外部密封或tamper-proof生产authority。vendor model ID不进入领域合同，也不参与个股排名、仓位、风险、订单或账户操作。
 
-- DeepSeek密钥变量名固定为`DEEPSEEK_API_KEY`且配置对象不读取其值；任意模型映射只能通过显式`fixture_only`离线路由构造，不能授权provider egress。独立的宽松环境变量路由入口和旧wrapper中的DeepSeek超时/重试假配置均已移除，避免把尚不存在的网络能力误读成已实现。
+- DeepSeek公开配置保留固定密钥变量名`DEEPSEEK_API_KEY`但绝不读取其值；HTTP transport只在最终边界读取显式绝对路径的受限raw-secret文件，ambient环境变量不会自动提供credential。任意模型映射只能通过显式`fixture_only`离线路由构造；网络候选还必须同时取得进程内显式授权和启用的精确HTTP transport，单独把环境变量设为`true`会fail closed。独立的宽松环境变量路由入口和旧wrapper中的DeepSeek超时/重试假配置均已移除。
 
 ### 数据 ownership 与迁移分类
 

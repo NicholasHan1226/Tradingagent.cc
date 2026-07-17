@@ -25,12 +25,24 @@ from .evidence_journal import (
     LLMEvidenceJournalReadback,
 )
 from .router import LLMRouter, ModelRoute
+from .providers.deepseek_http import (
+    DeepSeekCredentialFile,
+    DeepSeekHTTPResponse,
+    DeepSeekHTTPTransport,
+    DeepSeekHTTPTransportConfig,
+    DeepSeekHTTPTransportError,
+)
 from .schema import LLMEvidenceRequest
 
 __all__ = [
     "DeepSeekAdapter",
     "DeepSeekProviderConfig",
     "DeepSeekProviderConfigError",
+    "DeepSeekCredentialFile",
+    "DeepSeekHTTPResponse",
+    "DeepSeekHTTPTransport",
+    "DeepSeekHTTPTransportConfig",
+    "DeepSeekHTTPTransportError",
     "EMPTY_LLM_EVIDENCE_JOURNAL_HEAD_SHA256",
     "GatewayAnalysisResult",
     "LLMEvidenceEnvelope",

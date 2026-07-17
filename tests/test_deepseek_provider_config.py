@@ -31,6 +31,7 @@ def test_official_v4_configuration_routes_roles_without_reading_secret() -> None
     assert config.chat_completions_url == ("https://api.deepseek.com/chat/completions")
     assert config.api_key_env == "DEEPSEEK_API_KEY"
     assert config.network_enabled is False
+    assert config.router().network_authorized is False
     assert config.router().resolve("bulk_extraction").model == "deepseek-v4-flash"
     assert config.router().resolve("slow_research").model == "deepseek-v4-pro"
     descriptor = config.to_public_descriptor()
@@ -41,7 +42,7 @@ def test_official_v4_configuration_routes_roles_without_reading_secret() -> None
         "flash_model": "deepseek-v4-flash",
         "pro_model": "deepseek-v4-pro",
         "network_enabled": False,
-        "transport_state": "not_installed",
+        "transport_state": "candidate_installed_network_disabled",
     }
     assert "must-never-enter-config" not in repr(config)
     assert "must-never-enter-config" not in repr(descriptor)
@@ -88,6 +89,40 @@ def test_model_roles_are_exact_and_not_interchangeable() -> None:
         )
 
 
+def test_network_enablement_requires_an_explicit_non_environment_authority() -> None:
+    environment = _environment(TRADINGAGENT_LLM_NETWORK_ENABLED="true")
+
+    with pytest.raises(
+        DeepSeekProviderConfigError,
+        match="network_transport_requires_explicit_authorization",
+    ):
+        DeepSeekProviderConfig.from_environment(environment)
+
+    config = DeepSeekProviderConfig.from_environment(
+        environment,
+        allow_network_transport=True,
+    )
+
+    assert config.network_enabled is True
+    assert config.router().network_authorized is True
+    assert config.transport_state == "candidate_enabled"
+    assert config.to_public_descriptor()["network_enabled"] is True
+
+    with pytest.raises(
+        DeepSeekProviderConfigError,
+        match="network_transport_requires_explicit_authorization",
+    ):
+        DeepSeekProviderConfig(
+            provider="deepseek",
+            base_url="https://api.deepseek.com",
+            api_key_env="DEEPSEEK_API_KEY",
+            flash_model="deepseek-v4-flash",
+            pro_model="deepseek-v4-pro",
+            network_enabled=True,
+            transport_state="candidate_enabled",
+        )
+
+
 def test_default_gateway_uses_strict_public_config_and_rejects_network_enablement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -102,6 +137,30 @@ def test_default_gateway_uses_strict_public_config_and_rejects_network_enablemen
     monkeypatch.setenv("TRADINGAGENT_LLM_NETWORK_ENABLED", "true")
     with pytest.raises(DeepSeekProviderConfigError, match="network_transport"):
         LLMEvidenceGateway()
+
+
+def test_post_construction_network_flag_mutation_cannot_mint_router_authority() -> None:
+    config = DeepSeekProviderConfig.from_environment(_environment())
+    object.__setattr__(config, "network_enabled", True)
+
+    with pytest.raises(
+        DeepSeekProviderConfigError,
+        match="network_authority_state_invalid",
+    ):
+        config.router()
+
+    authorized = DeepSeekProviderConfig.from_environment(
+        _environment(TRADINGAGENT_LLM_NETWORK_ENABLED="true"),
+        allow_network_transport=True,
+    )
+    object.__setattr__(
+        authorized, "transport_state", "candidate_installed_network_disabled"
+    )
+    with pytest.raises(
+        DeepSeekProviderConfigError,
+        match="network_authority_state_invalid",
+    ):
+        authorized.router()
 
 
 def test_router_has_no_independent_environment_bypass() -> None:
@@ -121,6 +180,28 @@ def test_router_has_no_independent_environment_bypass() -> None:
             },
             fixture_only=False,
         )
+
+    exact_routes = {
+        "bulk_extraction": ModelRoute(
+            route="bulk_extraction",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        ),
+        "slow_research": ModelRoute(
+            route="slow_research",
+            provider="deepseek",
+            model="deepseek-v4-pro",
+        ),
+    }
+    with pytest.raises(TypeError, match="network_authorized"):
+        LLMRouter(
+            exact_routes,
+            fixture_only=False,
+            network_authorized=True,  # type: ignore[call-arg]
+        )
+    public_router = LLMRouter(exact_routes, fixture_only=False)
+    assert public_router.validated_deepseek_v4 is True
+    assert public_router.network_authorized is False
 
     strict_router = DeepSeekProviderConfig.from_environment(_environment()).router()
     with pytest.raises(AttributeError, match="immutable"):

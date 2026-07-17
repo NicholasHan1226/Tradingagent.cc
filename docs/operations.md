@@ -9,7 +9,7 @@
 - TradingAgent 只消费显式配置的 `GET /v1/catalog` 与 `POST /v1/query` 契约；不读取 SharedSignals 数据库，不实现其服务端，不使用旧专用接口或数据商回退。
 - HTTP 成功不代表数据可用。每个 dataset 独立检查 `state`、`degraded`、`freshness`、`quality`、`lineage`、`receipt_id`、`data_through`、`observed_at` 和 `reasons`；impaired state 允许后四项为 null，TA 不补造。无完整 source proof 时固定 fail closed；只有证据完整且 policy 明确允许的 impaired evidence 才可降权。
 - A 股个股只允许沪深主板普通股。创业板、科创板及北京市场个股不得进入候选、预测、目标仓位、订单、成交或持仓；双创指数与全市场行业聚合只作 `context_only` 环境证据。
-- 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是本地隔离shadow合同，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。真实DeepSeek transport和live paper scheduler仍是计划项。
+- 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是本地隔离shadow合同，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。默认关闭的DeepSeek HTTPS transport已是本地候选，但真实provider调用与生产激活未验证；live paper scheduler仍是计划项。
 - 模拟日即使阻断新增风险，也必须尽量继续减仓/退出、对账、账本、学习到期检查和报告，并以 `completed_with_blocks` 明示结束；不得伪装成功，也不得切回旧链。
 
 ## 1.1 服务器旁路候选部署
@@ -266,7 +266,7 @@ export SHAREDSIGNALS_RUNTIME_TRANSPORT='http-json-v1'
 
 缺任一配置时保持 unavailable；不得猜测 localhost、生产地址、catalog version、schema major 或 dataset ID。`http-json-v1` 只表示显式 TA consumer transport，拒绝 30x 重定向，且不能解除未迁移业务 reader 的 retirement block；当前不授权配置或运行 live endpoint。
 
-DeepSeek 当前仅登记2026-07-16已从官方公开文档核对的路由目标，且网络固定关闭：
+DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：
 
 `TRADINGAGENT_LLM_API_KEY_ENV`只能取固定值`DEEPSEEK_API_KEY`；它不是让系统选择任意密钥变量的开关。任意模型映射只允许作为`fixture_only`离线测试路由，不能替代严格配置或授权网络出口。
 
@@ -279,7 +279,44 @@ export TRADINGAGENT_LLM_PRO_MODEL=deepseek-v4-pro
 export TRADINGAGENT_LLM_NETWORK_ENABLED=false
 ```
 
-本地候选不会读取`DEEPSEEK_API_KEY`值，也没有HTTP transport；只接受同时绑定request与最终outbound hash的显式离线fixture transport。官方文档核对不替代认证`/models` readback或真实canary。任何在聊天、工单、日志或提交中暴露过的key都必须先在供应商侧废止并轮换，新的值只能注入未跟踪的本机环境，不能写入`.env.example`、测试、RunBundle或文档。启用真实network transport属于新的独立授权与验收任务，不得通过把`TRADINGAGENT_LLM_NETWORK_ENABLED`改成`true`绕过。
+默认Gateway不会读取`DEEPSEEK_API_KEY`值，也不会自行安装HTTP transport。只把`TRADINGAGENT_LLM_NETWORK_ENABLED`改成`true`会因缺少进程内显式授权而fail closed；ambient `DEEPSEEK_API_KEY`也不会被transport读取。HTTP候选必须同时满足两个独立门：
+
+1. `DeepSeekProviderConfig.from_environment(..., allow_network_transport=True)`显式批准validated router；
+2. 调用方显式构造`DeepSeekHTTPTransportConfig(network_enabled=True, credential=DeepSeekCredentialFile(...))`并注入精确的`DeepSeekHTTPTransport`类型。
+
+这两步只完成安全装配，不授权直接调用transport。公开`DeepSeekHTTPTransport.send(...)`以及脱离`LLMEvidenceGateway`的HTTP Adapter调用固定在读取credential/创建socket前失败；只有Gateway完成request/source proof、Prompt注入、全树DLP和router authority复核后，才会内部铸造以进程内HMAC绑定全部关键字段的验证egress capability并进入wire path。
+
+未来经独立网络canary授权后，装配形状固定如下；本段是代码合同，不是本轮运行命令：
+
+```python
+from pathlib import Path
+
+from shared.llm import (
+    DeepSeekCredentialFile,
+    DeepSeekHTTPTransport,
+    DeepSeekHTTPTransportConfig,
+    DeepSeekProviderConfig,
+)
+
+provider_config = DeepSeekProviderConfig.from_environment(
+    {"TRADINGAGENT_LLM_NETWORK_ENABLED": "true"},
+    allow_network_transport=True,
+)
+transport = DeepSeekHTTPTransport(
+    DeepSeekHTTPTransportConfig(
+        network_enabled=True,
+        credential=DeepSeekCredentialFile(
+            Path("<absolute-path-to-rotated-raw-secret>")
+        ),
+    )
+)
+```
+
+raw-secret必须是显式绝对路径、当前进程euid所有的regular file，禁止symlink且link count必须为1，权限只能为`0400`或`0600`，ASCII内容必须是单一`sk-...`值且不超过512 bytes；不得有换行、NUL、`=`或`DEEPSEEK_API_KEY=`前缀。任何在聊天、工单、日志或提交中暴露过的key都必须先在供应商侧废止并轮换。历史服务器候选中的env格式秘密文件只保留为旧证据，不能直接复用为raw-secret。新值不得写入仓库、`.env.example`、测试、RunBundle、receipt或文档。
+
+密钥父路径也是安全边界：客户端使用目录descriptor逐级打开，拒绝任一symlink父目录、非root/当前进程用户所有目录以及group/world-writable目录，避免最终文件合格但父目录可被替换。
+
+transport固定`POST https://api.deepseek.com/chat/completions`，使用系统TLS验证，禁环境代理、重定向、自动重试和fallback。禁止把上面的`transport`对象直接作为通用HTTP客户端；它只能注入`LLMEvidenceGateway`的DeepSeek Adapter。当前仅用本地fake opener验证；官方文档核对不替代认证readback或真实canary。真实网络启用仍属于新的独立授权与验收任务。
 
 ## 3. 唯一聚焦候选检查
 
@@ -454,7 +491,7 @@ preopen
 4. PIT证券主数据覆盖上市/退市、板块迁移、ST/风险警示、停复牌和历史指数/行业成员，证明没有用当前存续集合回填过去Universe；
 5. 生产market-evidence verifier、Champion/数值特征registry verifier、独立metrics重算authority与长驻可信时钟，以及真实交易会话中的自动模拟盘、crash/restart、对账和 20 个以上交易日运行证据；
 6. 60–120 个交易日影子/模拟观察、费用后统计置信度、回撤与状态分层；
-7. DeepSeek若启用，会话中曾暴露的credential必须先由供应商侧revoke/rotate，新值不得入仓；还需真实模型/请求字段readback、quota/限流/重试/幂等/数据留存核验、敏感数据门、提示注入语义/编码变体、引用绑定、typed receipt持久化、成本/延迟和冻结增量评测，且仍保持evidence-only；
+7. DeepSeek若启用，会话中曾暴露的credential必须先由供应商侧revoke/rotate，新值不得入仓；还需真实模型/请求字段readback、quota/限流/幂等/数据留存核验、敏感数据门、提示注入语义/编码变体、引用绑定、typed receipt持久化、成本/延迟和冻结增量评测，且仍保持evidence-only。首版固定单次调用、无自动重试；未来是否保留或变更该策略必须另立评审，不能在运行时静默开启；
 8. 独立发布授权、preflight、回退方案，以及本地、Git、远端、生产文件、生产 runtime 和外部路由分别验收。
 
 当前服务器sidecar没有提供上述外部authority证据，因此业务能力仍只能是`local_isolated_candidate / simulation-only / nonpromotion`；`server_validated_non_authority_simulation_only`只描述目标服务器环境的安装与旁路运行证据，不能提升为现役生产状态。

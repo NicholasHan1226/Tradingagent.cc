@@ -143,7 +143,7 @@ class LLMEvidenceEnvelope:
     provider: str
     model: str
     transport_material_sha256: str
-    transport_receipt: Mapping[str, str]
+    transport_receipt: Mapping[str, object]
     observation: Mapping[str, Any]
     observation_sha256: str
     received_at: str
