@@ -15,7 +15,7 @@ LLM 仅提供证据：多空对辩、矛盾检查、压力情景草案和历史�
 - provider/model 是显式配置与冻结评估对象，不在项目规则中硬编码为长期事实。
 - LLM 不得接收账户、持仓、策略秘密、密钥、未脱敏日志或其它敏感数据。
 - source span是`untrusted_artifact_data`；显式中英文角色覆盖/忽略指令等已知模式在transport前阻断并转人工复核。该模式门不能声称覆盖所有语义、混淆或编码型注入。
-- typed source proof/provider receipt只证明离线内容绑定；没有生产verifier、真实provider transport和durable sink时不得描述为生产provenance。
+- accepted typed source proof/provider receipt只证明对应离线或HTTPS内容与操作元数据绑定；audit-only rejected-attempt receipt只证明schema拒绝的本地审计事实。一次隔离真实调用不构成accepted evidence、生产verifier、durable sink或生产provenance。
 - 模型离线、输出不合法或检测到提示注入时，交易决策链继续使用非 LLM 的冻结 Champion；不得把 LLM 故障伪装成中性交易分。
 
 ## 文件

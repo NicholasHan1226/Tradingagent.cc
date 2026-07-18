@@ -1,8 +1,8 @@
 """Append-only provenance journal for successful evidence-only LLM runs.
 
 This journal is an isolated shadow artifact.  It binds one immutable request,
-externally verified source proofs, an offline provider transport receipt and a
-safe observation.  It has no candidate, capital, risk, position or order
+externally verified source proofs, an accepted provider transport receipt and
+a safe observation.  It has no candidate, capital, risk, position or order
 authority and deliberately has no default runtime path.
 """
 
@@ -22,7 +22,11 @@ from types import MappingProxyType
 from typing import Any, Mapping, Tuple
 
 from .evidence_artifact import EvidenceSourceAuthorityVerifier
-from .gateway import ProviderTransportReceipt, ProviderTransportReceiptError
+from .gateway import (
+    ProviderTransportReceipt,
+    ProviderTransportReceiptError,
+    validate_provider_transport_receipt_descriptor,
+)
 from .schema import (
     AUTHORITY_DENIED,
     LLMEvidenceRequest,
@@ -73,6 +77,44 @@ class LLMEvidenceJournalError(RuntimeError):
     """Raised when the local append-only LLM journal is not trustworthy."""
 
 
+class _FrozenJSONMapping(Mapping[str, Any]):
+    """Immutable JSON snapshot that returns defensive nested copies."""
+
+    __slots__ = ("_canonical_json", "_keys")
+
+    def __init__(self, value: Mapping[str, Any]) -> None:
+        try:
+            canonical = json.dumps(
+                dict(value),
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            payload = json.loads(canonical)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise LLMEvidenceEnvelopeError("payload_not_canonical_json") from exc
+        if not isinstance(payload, dict):
+            raise LLMEvidenceEnvelopeError("payload_not_canonical_json")
+        self._canonical_json = canonical
+        self._keys = tuple(payload)
+
+    def _payload(self) -> dict[str, Any]:
+        payload = json.loads(self._canonical_json)
+        if not isinstance(payload, dict):  # pragma: no cover - constructor invariant
+            raise LLMEvidenceEnvelopeError("payload_not_canonical_json")
+        return payload
+
+    def __getitem__(self, key: str) -> Any:
+        return self._payload()[key]
+
+    def __iter__(self):
+        return iter(self._keys)
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+
 def _canonical_json(value: object) -> str:
     try:
         return json.dumps(
@@ -116,19 +158,25 @@ def _time_text(value: object, *, field_name: str) -> str:
     return value
 
 
-def _receipt_from_descriptor(value: object) -> ProviderTransportReceipt:
+def _receipt_from_descriptor(value: object) -> Mapping[str, object]:
     if not isinstance(value, dict):
         raise LLMEvidenceEnvelopeError("transport_receipt_invalid")
     try:
-        receipt = ProviderTransportReceipt(**value)
-        receipt.verify_integrity()
+        receipt = validate_provider_transport_receipt_descriptor(value)
     except (TypeError, ProviderTransportReceiptError) as exc:
         raise LLMEvidenceEnvelopeError("transport_receipt_invalid") from exc
     return receipt
 
 
-def _run_id_for_receipt(receipt: ProviderTransportReceipt) -> str:
-    return f"llm-run-{receipt.receipt_sha256}"
+def _run_id_for_receipt(
+    receipt: ProviderTransportReceipt | Mapping[str, object],
+) -> str:
+    receipt_sha256 = (
+        receipt.receipt_sha256
+        if isinstance(receipt, ProviderTransportReceipt)
+        else receipt.get("receipt_sha256")
+    )
+    return f"llm-run-{receipt_sha256}"
 
 
 @dataclass(frozen=True)
@@ -152,6 +200,13 @@ class LLMEvidenceEnvelope:
     production_eligible: bool
     envelope_sha256: str
     schema_version: str = "tradingagent.llm_evidence_envelope.v1"
+
+    def __post_init__(self) -> None:
+        for field_name in ("transport_receipt", "observation", "authority"):
+            value = getattr(self, field_name)
+            if not isinstance(value, Mapping):
+                raise LLMEvidenceEnvelopeError(f"{field_name}_invalid")
+            object.__setattr__(self, field_name, _FrozenJSONMapping(value))
 
     @classmethod
     def create(
@@ -308,14 +363,14 @@ class LLMEvidenceEnvelope:
             raise LLMEvidenceEnvelopeError("envelope_time_order_invalid")
         receipt = _receipt_from_descriptor(dict(self.transport_receipt))
         if (
-            receipt.provider != self.provider
-            or receipt.model != self.model
-            or receipt.request_sha256 != self.request_sha256
-            or receipt.source_authority_proof_set_sha256
+            receipt["provider"] != self.provider
+            or receipt["model"] != self.model
+            or receipt["request_sha256"] != self.request_sha256
+            or receipt["source_authority_proof_set_sha256"]
             != self.source_authority_proof_set_sha256
-            or receipt.transport_material_sha256 != self.transport_material_sha256
-            or receipt.verified_at != self.source_verified_at
-            or receipt.received_at != self.received_at
+            or receipt["transport_material_sha256"] != self.transport_material_sha256
+            or receipt["verified_at"] != self.source_verified_at
+            or receipt["received_at"] != self.received_at
         ):
             raise LLMEvidenceEnvelopeError("transport_receipt_binding_invalid")
         if self.run_id != _run_id_for_receipt(receipt):
@@ -335,7 +390,7 @@ class LLMEvidenceEnvelope:
         ):
             raise LLMEvidenceEnvelopeError("observation_binding_invalid")
         if not hmac.compare_digest(
-            receipt.normalized_evidence_sha256,
+            str(receipt["normalized_evidence_sha256"]),
             str(self.observation.get("output_sha256") or ""),
         ):
             raise LLMEvidenceEnvelopeError("observation_receipt_binding_invalid")

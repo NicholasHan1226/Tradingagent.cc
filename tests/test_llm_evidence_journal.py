@@ -275,6 +275,26 @@ def test_envelope_integrity_rejects_post_creation_mutation() -> None:
         forged.verify_integrity()
 
 
+def test_envelope_keeps_defensive_nested_json_snapshots() -> None:
+    envelope = _envelope()
+
+    transport_metadata = envelope.transport_receipt["transport_metadata"]
+    transport_metadata["request_bytes"] = 999
+    evidence = envelope.observation["evidence"]
+    evidence["bull_case"] = "tampered"
+
+    assert envelope.transport_receipt["transport_metadata"]["request_bytes"] == 128
+    assert envelope.observation["evidence"]["bull_case"] != "tampered"
+    envelope.verify_integrity()
+
+    reloaded = LLMEvidenceEnvelope.from_payload(envelope.canonical_payload())
+    reloaded_metadata = reloaded.transport_receipt["transport_metadata"]
+    reloaded_metadata["request_bytes"] = 777
+
+    assert reloaded.transport_receipt["transport_metadata"]["request_bytes"] == 128
+    reloaded.verify_integrity()
+
+
 def test_persisted_observation_cannot_drop_bound_citation_and_rehash() -> None:
     request, verifier, _, observation = _components()
     forged_evidence = {**observation["evidence"], "evidence_refs": []}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import unittest
@@ -50,6 +51,45 @@ def _source_verifier(**kwargs: object) -> bool:
 
 
 class BullBearDebateFastModeTest(unittest.TestCase):
+    def test_ashare_v1_prompt_is_byte_frozen_and_v2_is_registered(self) -> None:
+        schema = importlib.import_module("shared.llm.schema")
+        v1 = schema.resolve_prompt_template(
+            template_id="ashare-bull-bear-evidence",
+            version="bull-bear-evidence.v1",
+        )
+        self.assertEqual(
+            schema.sha256_text(v1.text),
+            "a50cab40df5e79243a86c7d5c1ac9f5878de196f9947dbb732a3a945296da4f2",
+        )
+
+        v2 = schema.resolve_prompt_template(
+            template_id="ashare-bull-bear-evidence",
+            version="bull-bear-evidence.v2",
+        )
+
+        self.assertEqual(
+            schema.sha256_text(v2.text),
+            "e120f2e480350f43629ebc675aeba924252dd9c2ca4afdd3d94b063082709698",
+        )
+        self.assertIn("必须恰好包含以下七个字段", v2.text)
+        self.assertIn("响应不得包含Markdown", v2.text)
+        self.assertIn("每一项必须逐字复制", v2.text)
+
+    def test_ashare_request_uses_fixed_v2_template(self) -> None:
+        request = bull_bear_debate._request(
+            "600519.SH",
+            {"macro": 0.7, "event": 0.3},
+            route="bulk_extraction",
+            artifacts=(_artifact(),),
+        )
+
+        self.assertEqual(request.prompt_template_id, "ashare-bull-bear-evidence")
+        self.assertEqual(request.prompt_version, "bull-bear-evidence.v2")
+        self.assertEqual(
+            request.prompt_sha256,
+            "e120f2e480350f43629ebc675aeba924252dd9c2ca4afdd3d94b063082709698",
+        )
+
     def test_missing_evidence_artifacts_never_becomes_available(self) -> None:
         scores = {"combined": 0.68, "macro": 0.7, "event": 0.3, "technical": 0.61}
         with patch.dict(os.environ, {"TRADINGS_DEBATE_MODE": "fast"}, clear=False):
@@ -133,7 +173,6 @@ class BullBearDebateFastModeTest(unittest.TestCase):
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        receipts = []
         fixture = OfflineDeepSeekFixtureTransport.from_response(
             request_sha256=request.request_sha256("configured-pro-model"),
             outbound_sha256=outbound_sha256,
@@ -141,7 +180,10 @@ class BullBearDebateFastModeTest(unittest.TestCase):
                 "bull_case": "公开证据支持合同增量",
                 "bear_case": "验收时间仍不确定",
                 "key_risk": "收入兑现可能延迟",
+                "contradictions": [],
+                "material_facts": [],
                 "evidence_refs": [artifact.artifact_id],
+                "confidence_note": "仅基于已校验证据片段。",
             },
         )
 
@@ -158,7 +200,6 @@ class BullBearDebateFastModeTest(unittest.TestCase):
                 "deepseek": DeepSeekAdapter(
                     transport=fixture,
                     source_authority_verifier=_source_verifier,
-                    receipt_sink=receipts.append,
                 )
             },
         )
@@ -172,10 +213,182 @@ class BullBearDebateFastModeTest(unittest.TestCase):
                 )
 
         self.assertEqual(result["status"], "available")
-        self.assertEqual(len(receipts), 1)
-        self.assertEqual(receipts[0].provider, "deepseek")
-        self.assertEqual(receipts[0].model, "configured-pro-model")
-        self.assertEqual(receipts[0].request_sha256, fixture.request_sha256)
+
+    def test_v2_bulk_extraction_fixture_preserves_exact_evidence_contract(self) -> None:
+        artifact = _artifact()
+        request = bull_bear_debate._request(
+            "600519.SH",
+            {"macro": 0.7, "event": 0.3},
+            route="bulk_extraction",
+            artifacts=(artifact,),
+        )
+        outbound = {
+            "model": "configured-flash-model",
+            "messages": [
+                {"role": "system", "content": request.prompt_text},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "payload": request.payload,
+                            "untrusted_artifact_data": [
+                                item.to_request_descriptor()
+                                for item in request.artifacts
+                            ],
+                        },
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                },
+            ],
+            "response_format": {"type": "json_object"},
+            "stream": False,
+            "max_tokens": 4096,
+            "thinking": {"type": "disabled"},
+        }
+        outbound_sha256 = hashlib.sha256(
+            json.dumps(
+                outbound,
+                ensure_ascii=True,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        fixture = OfflineDeepSeekFixtureTransport.from_response(
+            request_sha256=request.request_sha256("configured-flash-model"),
+            outbound_sha256=outbound_sha256,
+            response={
+                "bull_case": "证据片段显示新增合同已签署。",
+                "bear_case": "证据片段未提供合同后续履约结果。",
+                "key_risk": "单一片段不足以验证合同是否完成履约。",
+                "contradictions": [],
+                "material_facts": [],
+                "evidence_refs": [artifact.artifact_id],
+                "confidence_note": "仅基于一个已校验证据片段。",
+            },
+        )
+        gateway = LLMEvidenceGateway(
+            router=LLMRouter.from_offline_fixture_mapping(
+                {
+                    "bulk_extraction": {
+                        "provider": "deepseek",
+                        "model": "configured-flash-model",
+                    }
+                }
+            ),
+            adapters={
+                "deepseek": DeepSeekAdapter(
+                    transport=fixture,
+                    source_authority_verifier=_source_verifier,
+                )
+            },
+        )
+
+        result = gateway.analyze_with_provenance(request, entity_id="600519.SH")
+
+        self.assertEqual(result.observation["status"], "available")
+        self.assertEqual(
+            set(result.observation["evidence"]),
+            {
+                "bull_case",
+                "bear_case",
+                "key_risk",
+                "contradictions",
+                "material_facts",
+                "evidence_refs",
+                "confidence_note",
+            },
+        )
+        self.assertEqual(result.observation["evidence"]["contradictions"], [])
+        self.assertEqual(result.observation["evidence"]["material_facts"], [])
+        self.assertEqual(
+            result.observation["evidence"]["evidence_refs"],
+            [artifact.artifact_id],
+        )
+        self.assertTrue(
+            all(value is False for value in result.observation["authority"].values())
+        )
+        self.assertIsNotNone(result.transport_receipt)
+        self.assertEqual(
+            result.transport_receipt.transport_metadata["kind"],
+            "offline_fixture",
+        )
+        self.assertIsNone(result.rejected_attempt_receipt)
+
+        for invalid_response in (
+            {
+                "bull_case": "证据片段显示新增合同已签署。",
+                "bear_case": "证据片段未提供合同后续履约结果。",
+                "key_risk": "单一片段不足以验证合同是否完成履约。",
+                "evidence_refs": [artifact.artifact_id],
+            },
+            {
+                "bull_case": "证据片段显示新增合同已签署。",
+                " BULL_CASE ": "归一化别名不得绕过精确字段合同。",
+                "bear_case": "证据片段未提供合同后续履约结果。",
+                "key_risk": "单一片段不足以验证合同是否完成履约。",
+                "contradictions": [],
+                "material_facts": [],
+                "evidence_refs": [artifact.artifact_id],
+                "confidence_note": "",
+            },
+            {
+                "bull_case": "证据片段显示新增合同已签署。",
+                "bear_case": "证据片段未提供合同后续履约结果。",
+                "key_risk": "单一片段不足以验证合同是否完成履约。",
+                "contradictions": None,
+                "material_facts": [],
+                "evidence_refs": [artifact.artifact_id],
+                "confidence_note": "",
+            },
+            {
+                "bull_case": "证据片段显示新增合同已签署。",
+                "bear_case": "证据片段未提供合同后续履约结果。",
+                "key_risk": "单一片段不足以验证合同是否完成履约。",
+                "contradictions": [],
+                "material_facts": None,
+                "evidence_refs": [artifact.artifact_id],
+                "confidence_note": "",
+            },
+            {
+                "bull_case": "证据片段显示新增合同已签署。",
+                "bear_case": "证据片段未提供合同后续履约结果。",
+                "key_risk": "单一片段不足以验证合同是否完成履约。",
+                "contradictions": [],
+                "material_facts": [],
+                "evidence_refs": [artifact.artifact_id],
+                "confidence_note": None,
+            },
+        ):
+            invalid_fixture = OfflineDeepSeekFixtureTransport.from_response(
+                request_sha256=request.request_sha256("configured-flash-model"),
+                outbound_sha256=outbound_sha256,
+                response=invalid_response,
+            )
+            invalid_gateway = LLMEvidenceGateway(
+                router=gateway.router,
+                adapters={
+                    "deepseek": DeepSeekAdapter(
+                        transport=invalid_fixture,
+                        source_authority_verifier=_source_verifier,
+                    )
+                },
+            )
+
+            invalid_result = invalid_gateway.analyze_with_provenance(
+                request,
+                entity_id="600519.SH",
+            )
+
+            self.assertEqual(invalid_result.observation["status"], "invalid")
+            self.assertEqual(
+                invalid_result.observation["reason_code"],
+                "llm_evidence_schema_invalid",
+            )
+            self.assertIsNone(invalid_result.transport_receipt)
 
 
 if __name__ == "__main__":

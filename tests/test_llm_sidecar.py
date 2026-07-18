@@ -6,6 +6,7 @@ import json
 from copy import deepcopy
 from dataclasses import replace
 import unittest
+from unittest.mock import patch
 from typing import Any
 
 
@@ -433,8 +434,6 @@ class LLMSidecarTest(unittest.TestCase):
                 "evidence_refs": list(request.evidence_refs),
             },
         )
-        receipts: list[Any] = []
-
         sidecar = gateway.LLMEvidenceGateway(
             router=router.LLMRouter.from_offline_fixture_mapping(
                 {
@@ -448,16 +447,20 @@ class LLMSidecarTest(unittest.TestCase):
                 "deepseek": gateway.DeepSeekAdapter(
                     transport=fixture,
                     source_authority_verifier=self._VersionedSourceVerifier(),
-                    receipt_sink=receipts.append,
                 )
             },
         )
 
-        observation = sidecar.analyze(request)
+        result = sidecar.analyze_with_provenance(request)
+        observation = result.observation
 
         self.assertEqual(observation["status"], "available")
         self.assertFalse(callable(fixture))
-        self.assertEqual(receipts[0].transport_version, "offline-fixture-v1")
+        self.assertIsNotNone(result.transport_receipt)
+        self.assertEqual(
+            result.transport_receipt.transport_version,
+            "offline-fixture-v1",
+        )
 
     def _artifact(self) -> Any:
         artifact_module = importlib.import_module("shared.llm.evidence_artifact")
@@ -778,7 +781,6 @@ class LLMSidecarTest(unittest.TestCase):
     ) -> None:
         schema, router, gateway = _load_sidecar()
         request = self._request()
-        transport_receipts: list[Any] = []
         clock_values = iter(
             (
                 "2026-07-16T08:20:00+08:00",
@@ -830,19 +832,19 @@ class LLMSidecarTest(unittest.TestCase):
                     transport=fixture,
                     source_authority_verifier=verifier,
                     clock=lambda: next(clock_values),
-                    receipt_sink=transport_receipts.append,
                 )
             },
         )
 
-        observation = sidecar.analyze(request)
+        result = sidecar.analyze_with_provenance(request)
+        observation = result.observation
 
         self.assertEqual(observation["status"], "available")
         self.assertNotIn("metadata", outbound)
         self.assertNotIn("user_id", outbound)
         self.assertEqual(outbound["max_tokens"], 8192)
-        self.assertEqual(len(transport_receipts), 1)
-        receipt = transport_receipts[0].to_descriptor()
+        self.assertIsNotNone(result.transport_receipt)
+        receipt = result.transport_receipt.to_descriptor()
         self.assertEqual(receipt["provider"], "deepseek")
         self.assertEqual(receipt["model"], "configured-pro-model")
         self.assertEqual(receipt["transport_id"], "offline-deepseek-fixture")
@@ -856,8 +858,8 @@ class LLMSidecarTest(unittest.TestCase):
         self.assertEqual(receipt["outbound_sha256"], _outbound_sha256(outbound))
         self.assertRegex(receipt["response_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(receipt["receipt_sha256"], r"^[0-9a-f]{64}$")
-        transport_receipts[0].verify_integrity()
-        forged = replace(transport_receipts[0], receipt_sha256="0" * 64)
+        result.transport_receipt.verify_integrity()
+        forged = replace(result.transport_receipt, receipt_sha256="0" * 64)
         with self.assertRaises(gateway.ProviderTransportReceiptError):
             forged.verify_integrity()
 
@@ -1235,7 +1237,6 @@ class LLMSidecarTest(unittest.TestCase):
             model="configured-pro-model",
             route="slow_research",
         )
-        receipts: list[Any] = []
         fixture = _offline_transport(
             gateway,
             request=request,
@@ -1261,11 +1262,11 @@ class LLMSidecarTest(unittest.TestCase):
                 "deepseek": gateway.DeepSeekAdapter(
                     transport=fixture,
                     source_authority_verifier=self._source_verifier,
-                    receipt_sink=receipts.append,
                 )
             },
         )
-        observation = sidecar.analyze(request)
+        result = sidecar.analyze_with_provenance(request)
+        observation = result.observation
 
         self.assertEqual(observation["status"], "available")
         self.assertEqual(observation["model"], "configured-pro-model")
@@ -1277,8 +1278,9 @@ class LLMSidecarTest(unittest.TestCase):
         self.assertEqual(outbound["max_tokens"], 8192)
         self.assertNotIn("metadata", outbound)
         self.assertNotIn("SUPER_SECRET", repr(outbound))
+        self.assertIsNotNone(result.transport_receipt)
         self.assertEqual(
-            receipts[0].outbound_sha256,
+            result.transport_receipt.outbound_sha256,
             _outbound_sha256(outbound),
         )
         self.assertTrue(
@@ -1353,6 +1355,59 @@ class LLMSidecarTest(unittest.TestCase):
         invalid = invalid_sidecar.analyze_with_provenance(request)
         self.assertEqual(invalid.observation["status"], "invalid")
         self.assertIsNone(invalid.transport_receipt)
+        self.assertIsNone(invalid.rejected_attempt_receipt)
+
+    def test_gateway_does_not_expose_receipt_before_observation_binding(
+        self,
+    ) -> None:
+        schema, router, gateway = _load_sidecar()
+        request = self._request()
+        fixture = _offline_transport(
+            gateway,
+            request=request,
+            response={
+                "bull_case": "订单有可核验增量",
+                "bear_case": "估值偏高",
+                "key_risk": "兑现延迟",
+                "evidence_refs": list(request.evidence_refs),
+            },
+        )
+        sidecar = gateway.LLMEvidenceGateway(
+            router=router.LLMRouter.from_offline_fixture_mapping(
+                {
+                    "slow_research": {
+                        "provider": "deepseek",
+                        "model": "configured-pro-model",
+                    }
+                }
+            ),
+            adapters={
+                "deepseek": gateway.DeepSeekAdapter(
+                    transport=fixture,
+                    source_authority_verifier=self._source_verifier,
+                )
+            },
+        )
+
+        with patch.object(
+            gateway,
+            "available_observation",
+            side_effect=schema.EvidenceSchemaError("forced_binding_failure"),
+        ):
+            result = sidecar.analyze_with_provenance(request)
+
+        self.assertEqual(result.observation["status"], "invalid")
+        self.assertEqual(
+            result.observation["reason_code"], "llm_evidence_schema_invalid"
+        )
+        self.assertIsNone(result.transport_receipt)
+        self.assertIsNone(result.rejected_attempt_receipt)
+
+    def test_adapter_has_no_external_receipt_sink_callback(self) -> None:
+        _, _, gateway = _load_sidecar()
+
+        with self.assertRaises(TypeError):
+            gateway.DeepSeekAdapter(receipt_sink=lambda _receipt: None)
 
     def test_provider_response_id_cannot_persist_secret_shaped_text(self) -> None:
         _, router, gateway = _load_sidecar()
@@ -1442,6 +1497,7 @@ class LLMSidecarTest(unittest.TestCase):
             "llm_provider_sensitive_output",
         )
         self.assertIsNone(result.transport_receipt)
+        self.assertIsNone(result.rejected_attempt_receipt)
         self.assertNotIn("sk-example", repr(result.observation))
 
     def test_bulk_extraction_explicitly_disables_reasoning_mode(self) -> None:
@@ -1452,7 +1508,6 @@ class LLMSidecarTest(unittest.TestCase):
             model="configured-flash-model",
             route="bulk_extraction",
         )
-        receipts: list[Any] = []
         fixture = _offline_transport(
             gateway,
             request=request,
@@ -1478,20 +1533,21 @@ class LLMSidecarTest(unittest.TestCase):
                 "deepseek": gateway.DeepSeekAdapter(
                     transport=fixture,
                     source_authority_verifier=self._source_verifier,
-                    receipt_sink=receipts.append,
                 )
             },
         )
 
-        observation = sidecar.analyze(request)
+        result = sidecar.analyze_with_provenance(request)
+        observation = result.observation
 
         self.assertEqual(observation["status"], "available")
         self.assertEqual(outbound["thinking"], {"type": "disabled"})
         self.assertEqual(outbound["max_tokens"], 4096)
         self.assertNotIn("metadata", outbound)
         self.assertNotIn("reasoning_effort", outbound)
+        self.assertIsNotNone(result.transport_receipt)
         self.assertEqual(
-            receipts[0].outbound_sha256,
+            result.transport_receipt.outbound_sha256,
             _outbound_sha256(outbound),
         )
 

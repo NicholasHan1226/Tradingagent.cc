@@ -9,7 +9,7 @@
 - TradingAgent 只消费显式配置的 `GET /v1/catalog` 与 `POST /v1/query` 契约；不读取 SharedSignals 数据库，不实现其服务端，不使用旧专用接口或数据商回退。
 - HTTP 成功不代表数据可用。每个 dataset 独立检查 `state`、`degraded`、`freshness`、`quality`、`lineage`、`receipt_id`、`data_through`、`observed_at` 和 `reasons`；impaired state 允许后四项为 null，TA 不补造。无完整 source proof 时固定 fail closed；只有证据完整且 policy 明确允许的 impaired evidence 才可降权。
 - A 股个股只允许沪深主板普通股。创业板、科创板及北京市场个股不得进入候选、预测、目标仓位、订单、成交或持仓；双创指数与全市场行业聚合只作 `context_only` 环境证据。
-- 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是本地隔离shadow合同，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。默认关闭的DeepSeek HTTPS transport已是本地候选，但真实provider调用与生产激活未验证；live paper scheduler仍是计划项。
+- 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是本地隔离shadow合同，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。默认关闭的DeepSeek HTTPS transport已是本地候选；2026-07-18仅有一次隔离真实请求到达provider后被本地evidence schema拒绝，accepted evidence、稳定认证和生产激活仍未验证。live paper scheduler仍是计划项。
 - 模拟日即使阻断新增风险，也必须尽量继续减仓/退出、对账、账本、学习到期检查和报告，并以 `completed_with_blocks` 明示结束；不得伪装成功，也不得切回旧链。
 
 ## 1.1 服务器旁路候选部署
@@ -321,7 +321,7 @@ export TRADINGAGENT_LLM_NETWORK_ENABLED=false
 
 这两步只完成安全装配，不授权直接调用transport。公开`DeepSeekHTTPTransport.send(...)`以及脱离`LLMEvidenceGateway`的HTTP Adapter调用固定在读取credential/创建socket前失败；只有Gateway完成request/source proof、Prompt注入、全树DLP和router authority复核后，才会内部铸造以进程内HMAC绑定全部关键字段的验证egress capability并进入wire path。
 
-未来经独立网络canary授权后，装配形状固定如下；本段是代码合同，不是本轮运行命令：
+任何后续网络canary取得新的独立授权后，装配形状固定如下；本段是代码合同，不是可直接复制执行的运行命令：
 
 ```python
 from pathlib import Path
@@ -351,7 +351,9 @@ raw-secret必须是显式绝对路径、当前进程euid所有的regular file，
 
 密钥父路径也是安全边界：客户端使用目录descriptor逐级打开，拒绝任一symlink父目录、非root/当前进程用户所有目录以及group/world-writable目录，避免最终文件合格但父目录可被替换。
 
-transport固定`POST https://api.deepseek.com/chat/completions`，使用系统TLS验证，禁环境代理、重定向、自动重试和fallback。禁止把上面的`transport`对象直接作为通用HTTP客户端；它只能注入`LLMEvidenceGateway`的DeepSeek Adapter。当前仅用本地fake opener验证；官方文档核对不替代认证readback或真实canary。真实网络启用仍属于新的独立授权与验收任务。
+transport固定`POST https://api.deepseek.com/chat/completions`，使用系统TLS验证，禁环境代理、重定向、自动重试和fallback。禁止把上面的`transport`对象直接作为通用HTTP客户端；它只能注入`LLMEvidenceGateway`的DeepSeek Adapter。2026-07-18一次旧A股v1 Prompt的隔离真实请求到达HTTP 200 provider envelope，但evidence binding以`llm_evidence_schema_invalid`失败；没有accepted `ProviderTransportReceipt`、Journal或生产切换。该历史canary早于当前`ProviderRejectedAttemptReceipt`，不得追溯包装为新typed receipt。A股v2只通过离线fixture合同测试，没有进行第二次真实调用。
+
+后续真实canary必须使用`LLMEvidenceGateway.analyze_with_provenance()`，固定单次请求、无retry、无fallback，失败后不得自动补发。Gateway返回前会重算原request/source/material摘要并精确复核canonical observation字段集；额外字段、元数据重绑和内容hash漂移均拒绝。若精确HTTPS路径已验证HTTP 200、MIME/JSON和provider envelope，但evidence schema或Gateway observation binding失败，只可保存`ProviderRejectedAttemptReceipt.to_descriptor()`的脱敏审计字段；不得保存Prompt、响应正文、parsed/normalized evidence、credential或credential fingerprint。该回执固定`audit_only=true`、`evidence_journal_eligible=false`且全部authority为false，绝不能写入`LLMEvidenceJournal`、样本、成熟度或交易链。accepted Journal回读只能消费非权威、深层不可变的descriptor校验视图，不得重建typed HTTPS receipt。其它网络、协议、DLP、敏感输出或前置门禁失败不伪造这类回执。任何后续真实网络启用仍是新的独立授权与验收任务。
 
 ## 3. 唯一聚焦候选检查
 

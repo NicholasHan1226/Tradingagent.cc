@@ -366,8 +366,9 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
     assert transport.state == "CURRENT_VERIFIED"
     assert transport.layer == "local_isolated_candidate"
     assert transport.production_verified is False
-    assert "claim_any_real_provider_request_or_authenticated_model_readback" in (
-        transport.prohibited_uses
+    assert (
+        "infer_accepted_evidence_stable_auth_quota_cost_or_model_quality_from_schema_rejected_real_canary"
+        in (transport.prohibited_uses)
     )
     assert (
         entries["tradingagent_live_paper_scheduler"].state == "PLANNED_NOT_IMPLEMENTED"
@@ -552,6 +553,7 @@ def test_llm_package_exports_only_stable_evidence_contracts() -> None:
 
     required = {
         "GatewayAnalysisResult",
+        "ProviderRejectedAttemptReceipt",
         "ProviderTransportReceipt",
         "ProviderTransportReceiptError",
         "ProviderEvidenceBindingError",
@@ -677,6 +679,15 @@ def test_contract_ids_are_synchronized_with_active_docs() -> None:
     assert "system_state_matrix.yaml" in system_state_doc
     assert UNIVERSE_SCOPE_CONTRACT_ID in universe_doc
     assert "context_only=true" in universe_doc
+
+
+def test_deepseek_docs_preserve_real_canary_three_state_boundary() -> None:
+    architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+
+    assert "一次旧A股v1 Prompt的隔离真实请求" in architecture
+    assert "A股v2只完成离线fixture合同验证" in architecture
+    assert "没有真实网络调用" not in architecture
+    assert "没有accepted receipt、Journal或生产切换" in architecture
 
 
 def test_new_ashare_architecture_has_no_legacy_data_import_or_endpoint() -> None:

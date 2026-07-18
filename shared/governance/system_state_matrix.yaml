@@ -6,7 +6,7 @@ entries:
     owner: SharedSignals
     canonical_path: SharedSignals:/v1/query
     production_verified: false
-    last_verified_at: "2026-07-16"
+    last_verified_at: "2026-07-18"
     evidence:
       - docs/superpowers/plans/2026-07-16-mainboard-paper-architecture-v1.md
     allowed_uses:
@@ -264,17 +264,20 @@ entries:
     owner: TradingAgent
     canonical_path: shared/llm/schema.py
     production_verified: false
-    last_verified_at: "2026-07-16"
+    last_verified_at: "2026-07-18"
     evidence:
       - tests/test_llm_sidecar.py
       - tests/test_llm_evidence_artifact.py
       - tests/test_llm_evaluation.py
+      - tests/test_deepseek_http_transport.py
+      - tests/test_bull_bear_debate_fast.py
     allowed_uses:
       - evidence_extraction_and_shadow_analysis
       - frozen_offline_evaluation
       - fixed_prompt_content_addressed_public_evidence
       - reject_explicit_source_span_prompt_injection_before_transport
       - emit_typed_content_addressed_provider_receipt_contract
+      - emit_a_separate_audit_only_schema_rejected_attempt_receipt_contract
       - expose_validated_request_observation_and_transport_provenance_as_one_shadow_result
     prohibited_uses:
       - change_score_risk_position_or_order
@@ -282,7 +285,8 @@ entries:
       - send_unverified_or_unbound_source_spans
       - claim_llm_alpha_improvement
       - claim_complete_semantic_or_encoded_prompt_injection_coverage
-      - claim_real_provider_call_or_production_durable_receipt_store
+      - infer_accepted_evidence_model_availability_or_production_readiness_from_schema_rejected_canary
+      - claim_production_durable_receipt_store
     successor: tradingagent.llm_evidence.v1
   - entry_id: tradingagent_llm_evidence_journal
     state: CURRENT_VERIFIED
@@ -290,7 +294,7 @@ entries:
     owner: TradingAgent
     canonical_path: shared/llm/evidence_journal.py
     production_verified: false
-    last_verified_at: "2026-07-16"
+    last_verified_at: "2026-07-18"
     evidence:
       - tests/test_llm_evidence_journal.py
       - tests/test_llm_sidecar.py
@@ -312,7 +316,7 @@ entries:
     owner: TradingAgent
     canonical_path: shared/llm/deepseek_config.py
     production_verified: false
-    last_verified_at: "2026-07-16"
+    last_verified_at: "2026-07-18"
     evidence:
       - tests/test_deepseek_provider_config.py
       - tests/test_llm_sidecar.py
@@ -334,7 +338,7 @@ entries:
       - accept_legacy_deepseek_model_aliases
       - claim_real_network_transport_from_config_alone
       - claim_provider_transport_or_alpha_improvement
-      - claim_authenticated_model_availability_or_real_request_canary
+      - infer_authenticated_model_availability_from_config_or_schema_rejected_canary
       - change_score_position_risk_or_order
     successor: tradingagent.llm_provider_transport.v1
   - entry_id: tradingagent_model_lifecycle
@@ -610,7 +614,7 @@ entries:
     owner: TradingAgent
     canonical_path: shared/llm/providers/deepseek_http.py
     production_verified: false
-    last_verified_at: "2026-07-17"
+    last_verified_at: "2026-07-18"
     evidence:
       - tests/test_deepseek_http_transport.py
       - tests/test_deepseek_provider_config.py
@@ -620,12 +624,14 @@ entries:
       - construct_an_explicit_disabled_by_default_provider_transport_candidate
       - test_exact_official_https_post_with_fake_local_http_opener
       - bind_raw_response_hash_and_safe_http_facts_to_typed_transport_receipt
+      - emit_audit_only_rejected_receipt_after_http_envelope_schema_or_binding_failure
+      - preserve_one_schema_rejected_real_canary_as_non_authority_history
       - require_gateway_minted_hmac_bound_egress_capability_before_wire_io
       - reject_public_transport_send_and_direct_http_adapter_invocation_before_secret_or_socket
       - reject_proxy_redirect_retry_streaming_and_non_json_provider_responses
       - keep_llm_output_evidence_only_without_trading_authority
     prohibited_uses:
-      - claim_any_real_provider_request_or_authenticated_model_readback
+      - infer_accepted_evidence_stable_auth_quota_cost_or_model_quality_from_schema_rejected_real_canary
       - enable_network_from_ambient_environment_flag_alone
       - load_or_reuse_any_credential_exposed_in_chat_or_env_style_secret_file
       - treat_offline_fixture_transport_as_network_transport

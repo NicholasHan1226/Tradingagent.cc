@@ -20,8 +20,8 @@
 
 - SharedSignals `/v1/catalog` 和 `/v1/query` 由上游唯一 writer/reviewer 负责；TA 只实现可配置 fixture/port consumer，不读取或修改 SharedSignals 仓，也不把 HTTP 200 当成 dataset 可用。
 - A股资本、执行 lineage 与 SampleJournal 是仓库契约层当前能力；它们不证明生产 runtime、cron 或真实市场样本已验证。
-- 主板 scope、Phase 1.5 行业 shadow 薄切片、OpportunityRadar/Ledger、多期限 forecast 合同、三风格 shadow router、LLM evidence与本地CAS journal、无密钥DeepSeek候选配置、默认关闭的DeepSeek HTTPS transport候选、V1 client、V1 integration-readiness probe、小资金 optimizer、六维论点风险authority、canonical simulated account authority、当前Champion/数值PIT特征绑定、mark/quote evidence authority、逐副作用trusted clock、fixture evolution clock、固定trust-root metrics verifier、authority-bound plan、negative-only evolution、automatic day loop、capital-backed paper composition、fixture CLI、RunBundle store、Decision Ledger和label maturity已在YAML中登记为`CURRENT_VERIFIED`的`local_isolated_candidate`。这不表示预测有效、概率已校准、阶段通过、Git主线、scheduler、live SS、真实paper session、真实DeepSeek调用或生产可用。integration probe只生成非authority回执；未获准的live endpoint不会被调用，分页receipt/排序/snapshot语义未冻结时继续阻断。coverage/industry score/account/thesis-risk/calendar/market evidence/Champion registry/feature/metrics/clock 的生产 verifier 均未接入；本地proof只证明完整输入绑定，不是外部签名、外部密封或真实市场/账户readback。行业薄切片只动态选择 1 个深研行业和 2 个观察行业；新增机会/预测/风格链只输出shadow审计，均不能改变 Champion、仓位、风险或订单。
-- 当前 DeepSeek 候选接受两种精确类型：同时绑定request/outbound identity的冻结离线响应fixture，以及默认关闭、固定官方HTTPS地址、禁代理/重定向/自动重试的`DeepSeekHTTPTransport`。HTTP路径仅用本地fake opener验证，未读取真实credential、未发起真实请求。2026-07-16已核对官方公开base URL、V4 Flash/Pro模型ID、JSON与thinking说明；认证readback、真实canary、quota/限流/成本和数据留存仍未验证。
+- 主板 scope、Phase 1.5 行业 shadow 薄切片、OpportunityRadar/Ledger、多期限 forecast 合同、三风格 shadow router、LLM evidence与本地CAS journal、无密钥DeepSeek候选配置、默认关闭的DeepSeek HTTPS transport候选、V1 client、V1 integration-readiness probe、小资金 optimizer、六维论点风险authority、canonical simulated account authority、当前Champion/数值PIT特征绑定、mark/quote evidence authority、逐副作用trusted clock、fixture evolution clock、固定trust-root metrics verifier、authority-bound plan、negative-only evolution、automatic day loop、capital-backed paper composition、fixture CLI、RunBundle store、Decision Ledger和label maturity已在YAML中登记为`CURRENT_VERIFIED`的`local_isolated_candidate`。这不表示预测有效、概率已校准、阶段通过、Git主线、scheduler、live SS、真实paper session、accepted DeepSeek evidence或生产可用。integration probe只生成非authority回执；未获准的live endpoint不会被调用，分页receipt/排序/snapshot语义未冻结时继续阻断。coverage/industry score/account/thesis-risk/calendar/market evidence/Champion registry/feature/metrics/clock 的生产 verifier 均未接入；本地proof只证明完整输入绑定，不是外部签名、外部密封或真实市场/账户readback。行业薄切片只动态选择 1 个深研行业和 2 个观察行业；新增机会/预测/风格链只输出shadow审计，均不能改变 Champion、仓位、风险或订单。
+- 当前 DeepSeek 候选接受两种精确transport：同时绑定request/outbound identity的冻结离线响应fixture，以及默认关闭、固定官方HTTPS地址、禁代理/重定向/自动重试的`DeepSeekHTTPTransport`。2026-07-18一次旧A股v1 Prompt的隔离真实请求到达HTTP 200 provider envelope，但evidence binding被本地schema拒绝；没有accepted receipt、Journal或生产切换。当前代码另有互斥的audit-only rejected-attempt receipt合同，A股v2 Prompt只完成离线fixture验证，二者都不能追溯包装该旧canary。accepted evidence、认证稳定性、quota/限流/成本、数据留存和生产可用性仍未验证。
 - `shared/crontab.txt` 是仓库调度模板，不是已安装 cron。模板已移除显式旧A股调度；仍保留的wrapper由不可环境覆盖的kill switch阻断（退出码78），只能用于识别历史安装依赖与退役审计。`/opt/investment/tradingagent`和安装态cron本轮不访问、不修改，状态保持historical/unverified。
 
 ## 本地候选与机器门禁对照
@@ -40,7 +40,7 @@
 | model lifecycle/labels | metrics v2 由固定本地trust-root verifier重读完整artifact/receipt并绑定实现/标签/成本/窗口/horizon/regime/source receipts；负向动作持久锁存；A股ValidationPlan经无默认calendar verifier并冻结proof，SampleJournal/ops显式贯穿plan，CLI只加载外部内容寻址artifact且不自签，forward targets从同一会话authority派生 | `CURRENT_VERIFIED / local_isolated_candidate / production=false` | 只允许自动收紧；metrics proof是本地完整性hash而非签名/真实独立重算authority；生产calendar、真实market-truth和受信artifact registry仍缺；恢复、晋级和扩风险均需人工 |
 | fixture paper day loop/CLI/store | `compose_paper_runtime`、fixture-only ports/账户proof、仓外CLI、原子RunBundle和Decision Ledger候选存在 | `CURRENT_VERIFIED / local_isolated_candidate / production=false` | 可执行但非authority；不是scheduler/live runtime，fixture不得写正式晋级样本 |
 | capital-backed composition | canonical simulated account、current generation/lineage、人工选定Champion、逐副作用authority门、capital outbox、risk/execution/reconcile组合候选存在 | `CURRENT_VERIFIED / local_isolated_candidate / production=false` | 仅test-only装配；无CLI、scheduler、live SS或真实paper sample |
-| DeepSeek HTTPS transport | 固定官方endpoint、显式凭据文件、系统TLS、禁代理/重定向/自动重试、严格JSON与typed HTTP receipt；公开send/脱离Gateway的Adapter拒绝，wire path只接受Gateway验证后铸造、由进程内HMAC绑定关键字段的capability；仅fake opener验收 | `CURRENT_VERIFIED / local_isolated_candidate / production=false` | evidence-only；默认关闭；真实credential、认证readback、quota、成本、延迟和真实provider请求均未验证 |
+| DeepSeek HTTPS transport | 固定官方endpoint、显式凭据文件、系统TLS、禁代理/重定向/自动重试、严格JSON与互斥的accepted/rejected typed receipts；公开send/脱离Gateway的Adapter拒绝，wire path只接受Gateway验证后铸造、由进程内HMAC绑定关键字段的capability；fake opener合同通过，另有一次旧v1 schema-rejected真实canary | `CURRENT_VERIFIED / local_isolated_candidate / production=false` | evidence-only；默认关闭；accepted evidence、认证稳定性、quota、成本、延迟和生产激活均未验证 |
 | Today 面板 | 只读reader与publisher相对路径一致 | front/local candidate only | 活动根无当日投影时显示unavailable |
 | 旧 A股 cron/wrappers | 仓库模板已删除调度；wrapper入口统一硬阻断 | repository contract / production=false | wrapper不可运行；安装态依赖仍需独立只读盘点 |
 
@@ -62,9 +62,9 @@
 | `tradingagent_market_evidence_authority` | `CURRENT_VERIFIED / local_isolated_candidate` | mark/quote完整本地authority绑定；fixture hash不是签名或live市场readback |
 | `tradingagent_trusted_execution_clock` | `CURRENT_VERIFIED / local_isolated_candidate` | 逐副作用fixture时钟重验quote；无默认/生产时钟 |
 | `tradingagent_phase1_industry_shadow_slice` | `CURRENT_VERIFIED / local_isolated_candidate` | v2：1 深研 + 2 观察，score authority proof，仅 shadow |
-| `tradingagent_llm_evidence` | `CURRENT_VERIFIED / local_isolated_candidate` | evidence-only sidecar；有离线fixture与严格HTTPS候选的typed transport receipt合同，无真实DeepSeek调用或durable sink |
-| `tradingagent_llm_evidence_journal` | `CURRENT_VERIFIED / local_isolated_candidate` | 本地CAS、hash-chain与`.head`完整性锚点；不是外部密封、tamper-proof authority或生产durable sink |
-| `tradingagent_deepseek_provider_config` | `CURRENT_VERIFIED / local_isolated_candidate` | 官方公开接口目标已核对；配置不读取密钥值，环境布尔值不能单独启用网络；任意模型映射仅为`fixture_only`，认证readback/canary仍不存在 |
+| `tradingagent_llm_evidence` | `CURRENT_VERIFIED / local_isolated_candidate` | evidence-only sidecar；accepted与audit-only rejected receipt合同互斥；一次旧v1真实请求schema拒绝，无accepted evidence或durable sink |
+| `tradingagent_llm_evidence_journal` | `CURRENT_VERIFIED / local_isolated_candidate` | 本地CAS、hash-chain、`.head`完整性锚点和深层不可变readback；descriptor只作非权威结构校验，不重建typed receipt；不是外部密封、tamper-proof authority或生产durable sink |
+| `tradingagent_deepseek_provider_config` | `CURRENT_VERIFIED / local_isolated_candidate` | 官方公开接口目标已核对；配置不读取密钥值，环境布尔值不能单独启用网络；任意模型映射仅为`fixture_only`；一次schema-rejected canary不证明accepted readback或认证稳定性 |
 | `tradingagent_model_lifecycle` | `CURRENT_VERIFIED / local_isolated_candidate` | 只允许自动收紧，人工恢复/晋级 |
 | `tradingagent_metrics_verification_authority` | `CURRENT_VERIFIED / local_isolated_candidate` | 固定本地implementation trust root并全字段复核；不等于签名或外部独立重算 |
 | `tradingagent_trusted_evolution_clock` | `CURRENT_VERIFIED / local_isolated_candidate` | 仅接受显式冻结fixture时钟并绑定证据；无默认wall clock或生产调度时间authority |
@@ -77,7 +77,7 @@
 | `tradingagent_opportunity_intelligence` | `CURRENT_VERIFIED / local_isolated_candidate` | PIT机会发现、状态迁移和append-only ledger的shadow合同；不证明机会有效或可交易 |
 | `tradingagent_multihorizon_forecast` | `CURRENT_VERIFIED / local_isolated_candidate` | 未校准分位数/hazard与detached calibration研究artifact合同；不发布概率、不进决策 |
 | `tradingagent_multistyle_router` | `CURRENT_VERIFIED / local_isolated_candidate` | 产业趋势/事件预期差/跨市场错配三袖套的去重与abstain shadow receipt；无资本authority |
-| `tradingagent_deepseek_provider_transport` | `CURRENT_VERIFIED / local_isolated_candidate` | 默认关闭的严格官方HTTPS evidence transport；仅本地fake opener验收，无真实调用、生产部署或交易authority |
+| `tradingagent_deepseek_provider_transport` | `CURRENT_VERIFIED / local_isolated_candidate` | 默认关闭的严格官方HTTPS evidence transport；fake opener合同及一次旧v1 schema-rejected真实canary，不证明accepted evidence、生产部署或交易authority |
 | `tradingagent_live_paper_scheduler` | `PLANNED_NOT_IMPLEMENTED / architecture_target` | live 自动模拟调度未实现 |
 | `tradingagent_run_bundle_store` | `CURRENT_VERIFIED / local_isolated_candidate` | 本地不可变事件与恢复 |
 | `tradingagent_decision_ledger` | `CURRENT_VERIFIED / local_isolated_candidate` | 成交、未成交、拒绝和观察四态账本 |

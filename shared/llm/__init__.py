@@ -13,6 +13,7 @@ from .gateway import (
     OfflineDeepSeekFixtureTransport,
     ProviderEvidenceBindingError,
     ProviderOutputSensitiveError,
+    ProviderRejectedAttemptReceipt,
     ProviderTransportReceipt,
     ProviderTransportReceiptError,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "OfflineDeepSeekFixtureTransport",
     "ProviderEvidenceBindingError",
     "ProviderOutputSensitiveError",
+    "ProviderRejectedAttemptReceipt",
     "ProviderTransportReceipt",
     "ProviderTransportReceiptError",
 ]

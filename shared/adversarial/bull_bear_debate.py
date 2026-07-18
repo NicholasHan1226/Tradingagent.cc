@@ -28,13 +28,8 @@ from shared.llm.schema import (
 )
 
 _DIMENSIONS = ["macro", "event", "fundamental", "capital", "technical", "sentiment"]
-_PROMPT_VERSION = "bull-bear-evidence.v1"
-_PROMPT_TEXT = (
-    "你是A股研究证据审阅员。仅依据输入事实输出 JSON 证据摘要。"
-    "字段只能是 bull_case、bear_case、key_risk、contradictions、"
-    "material_facts、evidence_refs、confidence_note。"
-    "禁止输出买卖动作、概率、belief/conviction、仓位、风险预算或订单建议。"
-)
+_PROMPT_TEMPLATE_ID = "ashare-bull-bear-evidence"
+_PROMPT_VERSION = "bull-bear-evidence.v2"
 
 
 def _call_deepseek(*_: Any, **__: Any) -> dict[str, Any]:
@@ -102,8 +97,8 @@ def _request(
         request_id=f"LLM-{uuid.uuid4().hex[:16]}",
         task_type="adversarial_review",
         route=route,
+        prompt_template_id=_PROMPT_TEMPLATE_ID,
         prompt_version=_PROMPT_VERSION,
-        prompt_text=_PROMPT_TEXT,
         document_cutoff=cutoff,
         evidence_refs=tuple(artifact.artifact_id for artifact in artifacts),
         artifacts=artifacts,

@@ -9,6 +9,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime
 from email.message import Message
 from pathlib import Path
@@ -1317,6 +1318,537 @@ def test_gateway_accepts_only_exact_http_transport_and_binds_raw_http_receipt(
         module.OFFICIAL_DEEPSEEK_CHAT_COMPLETIONS_URL
     )
     assert receipt["transport_metadata"]["attempt_count"] == 1
+    assert result.rejected_attempt_receipt is None
+    journal_module = importlib.import_module("shared.llm.evidence_journal")
+    envelope = journal_module.LLMEvidenceEnvelope.create(
+        run_id=f"llm-run-{result.transport_receipt.receipt_sha256}",
+        request=request,
+        source_authority_verifier=_VersionedSourceVerifier(),
+        transport_receipt=result.transport_receipt,
+        observation=result.observation,
+    )
+    envelope.verify_integrity()
+    reloaded = journal_module.LLMEvidenceEnvelope.from_payload(
+        envelope.canonical_payload()
+    )
+    reloaded.verify_integrity()
+    assert not hasattr(
+        gateway_module,
+        "_provider_transport_receipt_from_descriptor",
+    )
+    persisted_descriptor = (
+        gateway_module.validate_provider_transport_receipt_descriptor(receipt)
+    )
+    assert not isinstance(
+        persisted_descriptor,
+        gateway_module.ProviderTransportReceipt,
+    )
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="accepted_receipt_transport_authority_required",
+    ):
+        replace(result.transport_receipt)
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_analysis_authority_required",
+    ):
+        replace(result)
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_analysis_authority_required",
+    ):
+        replace(
+            result,
+            observation={"status": "invalid"},
+        )
+    tampered_output = dict(result.observation)
+    tampered_output["output_sha256"] = "0" * 64
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_analysis_authority_required",
+    ):
+        replace(result, observation=tampered_output)
+    tampered_provider = dict(result.observation)
+    tampered_provider["provider"] = "other-provider"
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_analysis_authority_required",
+    ):
+        replace(result, observation=tampered_provider)
+    tampered_evidence = dict(result.observation)
+    tampered_evidence["evidence"] = {
+        **tampered_evidence["evidence"],
+        "bull_case": "tampered but stale output hash",
+    }
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_analysis_authority_required",
+    ):
+        replace(result, observation=tampered_evidence)
+    nested_evidence = result.observation["evidence"]
+    nested_evidence["bull_case"] = "tampered"
+    nested_authority = result.observation["authority"]
+    nested_authority["order_eligible"] = True
+    assert result.observation["evidence"]["bull_case"] != "tampered"
+    assert result.observation["authority"]["order_eligible"] is False
+
+    def _emit_tampered_observation(
+        _self: object,
+        _request: object,
+        *,
+        entity_id: str = "",
+        accepted_receipt_sink: object = None,
+        rejected_attempt_receipt_sink: object = None,
+    ) -> dict[str, object]:
+        del entity_id, rejected_attempt_receipt_sink
+        assert callable(accepted_receipt_sink)
+        accepted_receipt_sink(result.transport_receipt)
+        return tampered_evidence
+
+    monkeypatch.setattr(
+        gateway_module.LLMEvidenceGateway,
+        "_analyze",
+        _emit_tampered_observation,
+    )
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_accepted_observation_output_invalid",
+    ):
+        sidecar.analyze_with_provenance(request, entity_id="600000.SH")
+
+    rebound_observation = dict(result.observation)
+    rebound_observation["request_id"] = "REQ-FORGED-BINDING"
+
+    def _emit_rebound_observation(
+        _self: object,
+        _request: object,
+        *,
+        entity_id: str = "",
+        accepted_receipt_sink: object = None,
+        rejected_attempt_receipt_sink: object = None,
+    ) -> dict[str, object]:
+        del entity_id, rejected_attempt_receipt_sink
+        assert callable(accepted_receipt_sink)
+        accepted_receipt_sink(result.transport_receipt)
+        return rebound_observation
+
+    monkeypatch.setattr(
+        gateway_module.LLMEvidenceGateway,
+        "_analyze",
+        _emit_rebound_observation,
+    )
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_observation_request_binding_invalid",
+    ):
+        sidecar.analyze_with_provenance(request, entity_id="600000.SH")
+
+    extra_field_observation = dict(result.observation)
+    extra_field_observation["order_eligible"] = True
+
+    def _emit_extra_field_observation(
+        _self: object,
+        _request: object,
+        *,
+        entity_id: str = "",
+        accepted_receipt_sink: object = None,
+        rejected_attempt_receipt_sink: object = None,
+    ) -> dict[str, object]:
+        del entity_id, rejected_attempt_receipt_sink
+        assert callable(accepted_receipt_sink)
+        accepted_receipt_sink(result.transport_receipt)
+        return extra_field_observation
+
+    monkeypatch.setattr(
+        gateway_module.LLMEvidenceGateway,
+        "_analyze",
+        _emit_extra_field_observation,
+    )
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_observation_request_binding_invalid",
+    ):
+        sidecar.analyze_with_provenance(request, entity_id="600000.SH")
+
+    self_mint_values = dict(receipt)
+    self_mint_values.pop("receipt_sha256")
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="accepted_receipt_transport_authority_required",
+    ):
+        gateway_module.ProviderTransportReceipt.create(**self_mint_values)
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="accepted_receipt_transport_authority_required",
+    ):
+        gateway_module.ProviderTransportReceipt(**receipt)
+
+
+def test_gateway_preserves_rejected_http_attempt_receipt_without_response_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _http_module()
+    gateway_module = importlib.import_module("shared.llm.gateway")
+    provider_config_module = importlib.import_module("shared.llm.deepseek_config")
+    request = _llm_request()
+    envelope = _provider_envelope_for_request(request)
+    invalid_evidence = {
+        "bull_case": "合同事实有已验证来源",
+        "bear_case": "客户验收仍有不确定性",
+        "key_risk": "收入确认可能延后",
+        "evidence_refs": list(request.evidence_refs),
+        "belief_score": 0.99,
+    }
+    envelope["choices"][0]["message"]["content"] = json.dumps(
+        invalid_evidence,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    raw = json.dumps(
+        envelope,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    opener = _FakeOpener(_FakeResponse(raw))
+    path, _ = _write_credential(tmp_path)
+    transport = _transport_with_fake(
+        monkeypatch,
+        module,
+        _config(module, path),
+        opener,
+    )
+    provider_config = provider_config_module.DeepSeekProviderConfig.from_environment(
+        {"TRADINGAGENT_LLM_NETWORK_ENABLED": "true"},
+        allow_network_transport=True,
+    )
+    sidecar = gateway_module.LLMEvidenceGateway(
+        router=provider_config.router(),
+        adapters={
+            "deepseek": gateway_module.DeepSeekAdapter(
+                transport=transport,
+                source_authority_verifier=_VersionedSourceVerifier(),
+            )
+        },
+    )
+
+    result = sidecar.analyze_with_provenance(request, entity_id="600000.SH")
+
+    assert result.observation["status"] == "invalid"
+    assert result.observation["reason_code"] == "llm_evidence_schema_invalid"
+    assert all(value is False for value in result.observation["authority"].values())
+    assert result.transport_receipt is None
+    rejected = getattr(result, "rejected_attempt_receipt", None)
+    assert rejected is not None
+    descriptor = rejected.to_descriptor()
+    assert descriptor["receipt_kind"] == "provider_rejected_attempt"
+    assert descriptor["outcome"] == "rejected"
+    assert descriptor["rejection_stage"] == "provider_evidence_validation"
+    assert descriptor["reason_code"] == "llm_evidence_schema_invalid"
+    assert descriptor["evidence_accepted"] is False
+    assert descriptor["evidence_journal_eligible"] is False
+    assert descriptor["production_eligible"] is False
+    assert descriptor["audit_only"] is True
+    assert all(value is False for value in descriptor["authority"].values())
+    assert descriptor["response_sha256"] == _sha256(raw)
+    assert descriptor["transport_metadata"]["http_status"] == 200
+    assert descriptor["transport_metadata"]["attempt_count"] == 1
+    assert descriptor["transport_metadata"]["retry_disposition"] == "not_retried"
+    request_bytes = opener.calls[0][0].data
+    assert isinstance(request_bytes, bytes)
+    assert descriptor["outbound_sha256"] == _sha256(request_bytes)
+    assert descriptor["transport_metadata"]["request_bytes"] == len(request_bytes)
+    assert "normalized_evidence_sha256" not in descriptor
+    assert "合同事实有已验证来源" not in repr(descriptor)
+    assert "客户验收仍有不确定性" not in repr(descriptor)
+    assert len(opener.calls) == 1
+    for changes in (
+        {"response_sha256": "0" * 64},
+        {"audit_only": False},
+        {},
+    ):
+        with pytest.raises(
+            gateway_module.ProviderTransportReceiptError,
+            match="rejected_attempt_transport_authority_required",
+        ):
+            replace(rejected, **changes)
+    journal_module = importlib.import_module("shared.llm.evidence_journal")
+    with pytest.raises(
+        journal_module.LLMEvidenceEnvelopeError,
+        match="transport_receipt_required",
+    ):
+        journal_module.LLMEvidenceEnvelope.create(
+            run_id=f"llm-run-{rejected.receipt_sha256}",
+            request=request,
+            source_authority_verifier=_VersionedSourceVerifier(),
+            transport_receipt=rejected,
+            observation=result.observation,
+        )
+    observation_override: dict[str, object] = {"status": "available"}
+
+    def _emit_rejected_with_override(
+        _self: object,
+        _request: object,
+        *,
+        entity_id: str = "",
+        accepted_receipt_sink: object = None,
+        rejected_attempt_receipt_sink: object = None,
+    ) -> dict[str, object]:
+        del entity_id, accepted_receipt_sink
+        assert callable(rejected_attempt_receipt_sink)
+        rejected_attempt_receipt_sink(rejected)
+        return dict(observation_override)
+
+    monkeypatch.setattr(
+        gateway_module.LLMEvidenceGateway,
+        "_analyze",
+        _emit_rejected_with_override,
+    )
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_rejected_receipt_status_invalid",
+    ):
+        sidecar.analyze_with_provenance(request, entity_id="600000.SH")
+    observation_override.clear()
+    observation_override.update({"status": "invalid", "reason_code": "other_failure"})
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_rejected_receipt_reason_invalid",
+    ):
+        sidecar.analyze_with_provenance(request, entity_id="600000.SH")
+    observation_override.clear()
+    observation_override.update(dict(result.observation))
+    observation_override["request_id"] = "REQ-FORGED-REJECTED-BINDING"
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_observation_request_binding_invalid",
+    ):
+        sidecar.analyze_with_provenance(request, entity_id="600000.SH")
+    observation_override.clear()
+    observation_override.update(dict(result.observation))
+    observation_override["provider_raw_response"] = {"unsafe": True}
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_observation_request_binding_invalid",
+    ):
+        sidecar.analyze_with_provenance(request, entity_id="600000.SH")
+
+
+def test_gateway_binding_failure_converts_https_success_receipt_to_rejected_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _http_module()
+    gateway_module = importlib.import_module("shared.llm.gateway")
+    provider_config_module = importlib.import_module("shared.llm.deepseek_config")
+    request = _llm_request()
+    raw = json.dumps(
+        _provider_envelope_for_request(request),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    opener = _FakeOpener(_FakeResponse(raw))
+    path, _ = _write_credential(tmp_path)
+    transport = _transport_with_fake(
+        monkeypatch,
+        module,
+        _config(module, path),
+        opener,
+    )
+    provider_config = provider_config_module.DeepSeekProviderConfig.from_environment(
+        {"TRADINGAGENT_LLM_NETWORK_ENABLED": "true"},
+        allow_network_transport=True,
+    )
+    sidecar = gateway_module.LLMEvidenceGateway(
+        router=provider_config.router(),
+        adapters={
+            "deepseek": gateway_module.DeepSeekAdapter(
+                transport=transport,
+                source_authority_verifier=_VersionedSourceVerifier(),
+            )
+        },
+    )
+
+    def _reject_binding(*_args: object, **_kwargs: object) -> object:
+        raise gateway_module.EvidenceSchemaError("forced_gateway_binding_failure")
+
+    monkeypatch.setattr(gateway_module, "available_observation", _reject_binding)
+
+    result = sidecar.analyze_with_provenance(request, entity_id="600000.SH")
+
+    assert result.observation["status"] == "invalid"
+    assert result.observation["reason_code"] == "llm_evidence_schema_invalid"
+    assert result.transport_receipt is None
+    assert result.rejected_attempt_receipt is not None
+    descriptor = result.rejected_attempt_receipt.to_descriptor()
+    assert descriptor["rejection_stage"] == "gateway_observation_binding"
+    assert descriptor["response_sha256"] == _sha256(raw)
+    assert "normalized_evidence_sha256" not in descriptor
+    assert "provider_response_id" not in descriptor
+    assert len(opener.calls) == 1
+
+
+def test_gateway_analysis_result_rejects_accepted_and_rejected_receipts_together() -> (
+    None
+):
+    gateway_module = importlib.import_module("shared.llm.gateway")
+
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_receipt_outcome_ambiguous",
+    ):
+        gateway_module.GatewayAnalysisResult(
+            observation={"status": "available"},
+            transport_receipt=object(),
+            rejected_attempt_receipt=object(),
+        )
+
+
+def test_gateway_analysis_result_with_receipt_requires_internal_gateway_authority() -> (
+    None
+):
+    gateway_module = importlib.import_module("shared.llm.gateway")
+
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_analysis_authority_required",
+    ):
+        gateway_module.GatewayAnalysisResult(
+            observation={"status": "available"},
+            transport_receipt=object(),
+        )
+
+
+def test_gateway_analysis_result_freezes_observation_snapshot() -> None:
+    gateway_module = importlib.import_module("shared.llm.gateway")
+    observation = {"status": "unavailable"}
+
+    result = gateway_module.GatewayAnalysisResult(
+        observation=observation,
+        transport_receipt=None,
+    )
+    observation["status"] = "available"
+
+    assert result.observation["status"] == "unavailable"
+    with pytest.raises(TypeError):
+        result.observation["status"] = "invalid"
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_available_receipt_required",
+    ):
+        gateway_module.GatewayAnalysisResult(
+            observation={"status": "available"},
+            transport_receipt=None,
+        )
+
+
+def test_rejected_attempt_receipt_cannot_be_self_minted_as_https_evidence() -> None:
+    module = _http_module()
+    gateway_module = importlib.import_module("shared.llm.gateway")
+
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="rejected_attempt_transport_authority_required",
+    ):
+        gateway_module.ProviderRejectedAttemptReceipt.create(
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            transport_id=module.DEEPSEEK_HTTP_TRANSPORT_ID,
+            transport_version=module.DEEPSEEK_HTTP_TRANSPORT_VERSION,
+            verified_at="2026-07-17T08:20:00+08:00",
+            received_at="2026-07-17T08:20:01+08:00",
+            request_sha256="a" * 64,
+            source_authority_proof_set_sha256="b" * 64,
+            transport_material_sha256="c" * 64,
+            outbound_sha256="d" * 64,
+            response_sha256="e" * 64,
+            transport_metadata={
+                "kind": "https",
+                "endpoint": module.OFFICIAL_DEEPSEEK_CHAT_COMPLETIONS_URL,
+                "method": "POST",
+                "egress_policy_version": module.DEEPSEEK_EGRESS_POLICY_VERSION,
+                "http_status": 200,
+                "content_type": "application/json",
+                "request_bytes": 128,
+                "response_bytes": 256,
+                "attempt_count": 1,
+                "retry_disposition": "not_retried",
+            },
+        )
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="rejected_attempt_transport_authority_required",
+    ):
+        gateway_module.ProviderRejectedAttemptReceipt(
+            schema_version=("tradingagent.llm_provider_rejected_attempt_receipt.v1"),
+            receipt_kind="provider_rejected_attempt",
+            outcome="rejected",
+            rejection_stage="provider_evidence_validation",
+            reason_code="llm_evidence_schema_invalid",
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            transport_id=module.DEEPSEEK_HTTP_TRANSPORT_ID,
+            transport_version=module.DEEPSEEK_HTTP_TRANSPORT_VERSION,
+            verified_at="2026-07-17T08:20:00+08:00",
+            received_at="2026-07-17T08:20:01+08:00",
+            request_sha256="a" * 64,
+            source_authority_proof_set_sha256="b" * 64,
+            transport_material_sha256="c" * 64,
+            outbound_sha256="d" * 64,
+            response_sha256="e" * 64,
+            transport_metadata={
+                "kind": "https",
+                "endpoint": module.OFFICIAL_DEEPSEEK_CHAT_COMPLETIONS_URL,
+                "method": "POST",
+                "egress_policy_version": module.DEEPSEEK_EGRESS_POLICY_VERSION,
+                "http_status": 200,
+                "content_type": "application/json",
+                "request_bytes": 128,
+                "response_bytes": 256,
+                "attempt_count": 1,
+                "retry_disposition": "not_retried",
+            },
+            evidence_accepted=False,
+            evidence_journal_eligible=False,
+            production_eligible=False,
+            audit_only=True,
+            authority=dict(gateway_module.AUTHORITY_DENIED),
+            receipt_sha256="f" * 64,
+        )
+
+
+def test_gateway_fails_closed_if_internal_path_emits_multiple_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway_module = importlib.import_module("shared.llm.gateway")
+    sidecar = gateway_module.LLMEvidenceGateway()
+
+    def _emit_multiple(
+        _self: object,
+        _request: object,
+        *,
+        entity_id: str = "",
+        accepted_receipt_sink: object = None,
+        rejected_attempt_receipt_sink: object = None,
+    ) -> dict[str, object]:
+        del entity_id, accepted_receipt_sink
+        assert callable(rejected_attempt_receipt_sink)
+        rejected_attempt_receipt_sink(object())
+        rejected_attempt_receipt_sink(object())
+        return {"status": "invalid", "reason_code": "llm_evidence_schema_invalid"}
+
+    monkeypatch.setattr(gateway_module.LLMEvidenceGateway, "_analyze", _emit_multiple)
+
+    with pytest.raises(
+        gateway_module.ProviderTransportReceiptError,
+        match="gateway_receipt_cardinality_invalid",
+    ):
+        sidecar.analyze_with_provenance(_llm_request())
 
 
 def test_fixture_router_rejects_http_transport_before_network_or_secret_read(
