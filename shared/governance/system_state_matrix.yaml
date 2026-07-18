@@ -53,6 +53,29 @@ entries:
       - store_credentials_in_probe_manifest_or_receipt
       - fallback_to_legacy_endpoint_sqlite_or_provider
     successor: tradingagent.sharedsignals.integration-readiness.v1
+  - entry_id: tradingagent_integration_readiness_local_gate
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime_test/integration_readiness_gate.py
+    production_verified: false
+    last_verified_at: "2026-07-17"
+    evidence:
+      - tests/test_integration_readiness_gate.py
+      - docs/architecture.md
+      - docs/data_contract.md
+      - docs/operations.md
+    allowed_uses:
+      - verify_private_local_receipt_content_integrity
+      - verify_exact_probe_and_runtime_config_compatibility
+      - emit_process_local_non_authority_binding
+    prohibited_uses:
+      - authenticate_receipt_origin_or_prove_probe_execution
+      - replace_per_dataset_runtime_data_evidence_gate
+      - authorize_capital_position_order_or_sample_journal_writes
+      - import_or_be_imported_by_trading_authority_modules
+      - claim_live_sharedsignals_production_or_trading_readiness
+    successor: tradingagent.integration_readiness_local_gate.v1
   - entry_id: tradingagent_mainboard_scope
     state: CURRENT_VERIFIED
     layer: local_isolated_candidate
@@ -284,6 +307,29 @@ entries:
       - claim_complete_semantic_or_encoded_prompt_injection_coverage
       - claim_real_provider_call_or_production_durable_receipt_store
     successor: tradingagent.llm_evidence.v1
+  - entry_id: tradingagent_llm_ashare_frozen_evaluation
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/llm/evaluation.py
+    production_verified: false
+    last_verified_at: "2026-07-17"
+    evidence:
+      - tests/test_llm_ashare_frozen_evaluation.py
+      - tests/fixtures/llm_evidence/ashare_gold_v1.json
+      - tests/fixtures/llm_evidence/ashare_candidate_outputs_v1.json
+      - docs/capital_growth_validation.md
+    allowed_uses:
+      - compare_separate_content_addressed_gold_and_offline_candidate_fixtures
+      - enforce_frozen_dev_oos_membership_and_attempt_budgets
+      - measure_citation_fact_contradiction_time_and_safety_dimensions
+      - report_provider_call_verified_false_for_offline_capture
+    prohibited_uses:
+      - claim_authenticated_deepseek_model_quality_or_live_provider_call
+      - use_oos_cases_for_tuning_or_expand_attempt_budget
+      - let_llm_generated_labels_act_as_independent_release_authority
+      - change_rank_position_risk_order_or_model_promotion
+    successor: tradingagent.llm_ashare_frozen_evaluation.v1
   - entry_id: tradingagent_llm_evidence_journal
     state: CURRENT_VERIFIED
     layer: local_isolated_candidate
@@ -435,6 +481,54 @@ entries:
       - mint_or_resign_calendar_proof_inside_runtime_cli
       - claim_plan_artifact_content_hash_as_external_authority_verification
     successor: tradingagent.validation_plan.v1
+  - entry_id: tradingagent_offline_science_projection
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime_test/ashare_offline_science.py
+    production_verified: false
+    last_verified_at: "2026-07-18"
+    evidence:
+      - tests/test_outcome_evaluation.py
+      - tests/test_counterfactual_books.py
+      - tests/test_offline_metrics_recomputer.py
+      - tests/test_ashare_offline_science_paths.py
+      - tests/test_calibration_ablation_report.py
+      - tests/test_small_account_sensitivity_lab.py
+      - tests/test_sample_journal.py
+      - docs/capital_growth_validation.md
+    allowed_uses:
+      - read_one_explicit_frozen_sample_journal_view
+      - reconstruct_one_exact_frozen_view_source_partition_cutoff_and_counts
+      - bind_raw_source_digest_byte_count_and_internal_indexes_with_process_local_seal
+      - require_independent_expected_as_of_and_authority_scope_for_exact_verification
+      - publish_content_addressed_projection_bundle_outside_repository
+      - recompute_outcome_counterfactual_cost_calibration_and_mg_ablation_reports
+      - report_deduplicated_clusters_observed_days_kish_n_eff_and_dependence_adjusted_count
+      - rebuild_all_reports_from_exact_source_events_and_frozen_validation_plan
+      - preserve_exact_validation_plan_artifact_provenance_without_self_elevation
+      - require_no_default_plan_provenance_and_market_truth_verifiers_for_statistical_eligibility
+      - exclude_inline_labels_and_use_only_same_authority_same_identity_forward_label_updates
+      - derive_trade_date_from_shanghai_time_and_frozen_calendar
+      - require_exact_ashare_target_and_evidence_time
+      - use_one_unambiguous_eligible_outcome_per_decision_cluster_for_science_and_calibration
+      - verify_the_exact_five_file_bundle_against_sources
+      - use_moving_observed_trade_date_blocks_for_overlapping_horizons
+      - scan_fixed_small_account_engineering_sensitivity_grid_without_winner_selection
+    prohibited_uses:
+      - append_or_modify_sample_journal_facts
+      - create_capital_position_order_or_market_evidence_authority
+      - treat_label_cells_as_independent_samples
+      - auto_select_sensitivity_winner_or_tune_on_frozen_oos
+      - authorize_model_promotion_risk_expansion_or_live_transition
+      - claim_offline_projection_as_empirical_strategy_validation
+      - treat_artifact_self_asserted_production_eligibility_as_trusted_provenance
+      - treat_missing_market_truth_verifier_as_statistical_evidence
+      - count_ambiguous_or_foreign_label_updates_in_performance_or_calibration
+      - derive_expected_cutoff_or_authority_scope_from_the_report_under_verification
+      - combine_events_with_an_unbound_or_unverified_journal_head_mapping
+      - treat_process_local_frozen_view_seal_as_external_signature_or_durable_authority
+    successor: tradingagent.offline_science_projection.v1
   - entry_id: tradingagent_drift_runtime_binding
     state: CURRENT_VERIFIED
     layer: local_isolated_candidate

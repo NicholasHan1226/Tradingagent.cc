@@ -258,6 +258,50 @@ def load_validation_plan_artifact(path: Path | str | None) -> ValidationPlan:
     return plan
 
 
+def load_validation_plan_artifact_with_provenance(
+    path: Path | str | None,
+) -> tuple[ValidationPlan, dict[str, Any]]:
+    """Load the plan plus immutable top-level authority metadata.
+
+    Metadata is preserved for downstream no-default verification; this loader
+    does not itself elevate an artifact to trusted or production authority.
+    """
+
+    plan = load_validation_plan_artifact(path)
+    artifact_path = Path(path)  # type: ignore[arg-type]
+    try:
+        raw = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ForwardLabelOpsSafetyError("validation_plan_artifact_unreadable") from exc
+    if not isinstance(raw, Mapping):
+        raise ForwardLabelOpsSafetyError("validation_plan_artifact_must_be_mapping")
+    authority_tier = str(raw.get("authority_tier") or "").strip()
+    production_eligible = raw.get("production_eligible")
+    receipt_sha = str(raw.get("verification_receipt_sha256") or "").strip().lower()
+    if (
+        not authority_tier
+        or not isinstance(production_eligible, bool)
+        or len(receipt_sha) != 64
+        or any(character not in "0123456789abcdef" for character in receipt_sha)
+        or str(raw.get("validation_plan_sha256") or "").strip().lower() != plan.sha256()
+    ):
+        raise ForwardLabelOpsSafetyError("validation_plan_artifact_provenance_invalid")
+    canonical_artifact = json.dumps(
+        raw,
+        ensure_ascii=True,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return plan, {
+        "validation_plan_sha256": plan.sha256(),
+        "artifact_sha256": sha256(canonical_artifact).hexdigest(),
+        "authority_tier": authority_tier,
+        "production_eligible": production_eligible,
+        "verification_receipt_sha256": receipt_sha,
+    }
+
+
 def _is_truthy(value: Any) -> bool:
     if value is True:
         return True
@@ -1711,6 +1755,8 @@ __all__ = [
     "ForwardLabelOpsSafetyError",
     "MAX_BACKLOG_WINDOW_DAYS",
     "enumerate_ashare_forward_label_backlog",
+    "load_validation_plan_artifact",
+    "load_validation_plan_artifact_with_provenance",
     "main",
     "price_points_from_bars",
     "run_ashare_forward_label_backlog",

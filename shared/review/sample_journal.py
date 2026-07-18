@@ -72,6 +72,7 @@ _MUTUALLY_EXCLUSIVE_LAYERS = {
     "risk_reject",
     "chain_validation",
 }
+_FROZEN_VIEW_HMAC_KEY = os.urandom(32)
 
 
 class JournalError(RuntimeError):
@@ -105,6 +106,7 @@ class FrozenJournalView:
     journal_source_sha256: str
     journal_source_inode: Optional[int]
     _events: tuple[dict[str, Any], ...] = field(repr=False)
+    _source_events: tuple[dict[str, Any], ...] = field(repr=False, compare=False)
     _source_hasher: Any = field(repr=False, compare=False)
     _predictions_by_id: Mapping[str, dict[str, Any]] = field(repr=False, compare=False)
     _events_by_id: Mapping[str, dict[str, Any]] = field(repr=False, compare=False)
@@ -114,6 +116,7 @@ class FrozenJournalView:
     _cost_events_by_snapshot: Mapping[str, tuple[dict[str, Any], ...]] = field(
         repr=False, compare=False
     )
+    _integrity_seal: str = field(repr=False, compare=False)
 
     def copy_events(self) -> list[dict[str, Any]]:
         return deepcopy(list(self._events))
@@ -133,6 +136,63 @@ class FrozenJournalView:
             "journal_source_byte_count": self.journal_source_byte_count,
             "journal_source_sha256": self.journal_source_sha256,
         }
+
+    def verify_integrity(self) -> bool:
+        """Recompute the frozen head and reject forged view metadata."""
+
+        cutoff = _parse_aware_timestamp(
+            self.data_as_of,
+            field_name="data_as_of",
+            line_number=0,
+        )
+        expected_seal = _frozen_view_integrity_seal(self)
+        if not isinstance(self._integrity_seal, str) or not hmac.compare_digest(
+            self._integrity_seal,
+            expected_seal,
+        ):
+            raise JournalSafetyError("frozen journal source partition seal mismatch")
+
+        included: list[dict[str, Any]] = []
+        excluded_after = 0
+        max_evidence: Optional[datetime] = None
+        for sequence, event in enumerate(self._source_events, start=1):
+            evidence_at = _event_evidence_available_at(event, sequence)
+            if evidence_at > cutoff:
+                excluded_after += 1
+                continue
+            included.append(event)
+            if max_evidence is None or evidence_at > max_evidence:
+                max_evidence = evidence_at
+        expected_max_evidence = (
+            max_evidence.isoformat(timespec="seconds")
+            if max_evidence is not None
+            else None
+        )
+        if (
+            tuple(included) != self._events
+            or excluded_after != self.excluded_after_as_of_count
+            or expected_max_evidence != self.max_evidence_available_at
+        ):
+            raise JournalSafetyError("frozen journal source partition mismatch")
+        if (
+            isinstance(self.journal_head_event_count, bool)
+            or self.journal_head_event_count != len(self._events)
+            or self.journal_head_sha256 != _events_sha256(self._events)
+        ):
+            raise JournalSafetyError("frozen journal head identity mismatch")
+        if (
+            isinstance(self.excluded_after_as_of_count, bool)
+            or self.excluded_after_as_of_count < 0
+            or isinstance(self.journal_source_event_count, bool)
+            or self.journal_source_event_count != len(self._source_events)
+            or self.journal_source_event_count
+            != self.journal_head_event_count + self.excluded_after_as_of_count
+            or isinstance(self.journal_source_byte_count, bool)
+            or self.journal_source_byte_count < 0
+            or self.journal_source_sha256 != self._source_hasher.copy().hexdigest()
+        ):
+            raise JournalSafetyError("frozen journal source identity mismatch")
+        return True
 
 
 @dataclass
@@ -175,6 +235,34 @@ def _events_payload(events: Sequence[Mapping[str, Any]]) -> bytes:
 
 def _events_sha256(events: Sequence[Mapping[str, Any]]) -> str:
     return sha256(_events_payload(events)).hexdigest()
+
+
+def _frozen_view_integrity_seal(view: FrozenJournalView) -> str:
+    """Bind one process-local view to its full parsed source and raw prefix."""
+
+    material = {
+        "data_as_of": view.data_as_of,
+        "journal_head_event_count": view.journal_head_event_count,
+        "journal_head_sha256": view.journal_head_sha256,
+        "max_evidence_available_at": view.max_evidence_available_at,
+        "excluded_after_as_of_count": view.excluded_after_as_of_count,
+        "journal_source_event_count": view.journal_source_event_count,
+        "journal_source_byte_count": view.journal_source_byte_count,
+        "journal_source_sha256": view.journal_source_sha256,
+        "journal_source_inode": view.journal_source_inode,
+        "included_events_sha256": _events_sha256(view._events),
+        "source_events_sha256": _events_sha256(view._source_events),
+        "source_hasher_sha256": view._source_hasher.copy().hexdigest(),
+        "predictions_by_id": view._predictions_by_id,
+        "events_by_id": view._events_by_id,
+        "label_updates_by_snapshot": view._label_updates_by_snapshot,
+        "cost_events_by_snapshot": view._cost_events_by_snapshot,
+    }
+    return hmac.new(
+        _FROZEN_VIEW_HMAC_KEY,
+        _canonical_json(material).encode("utf-8"),
+        sha256,
+    ).hexdigest()
 
 
 def _parse_aware_timestamp(
@@ -2247,7 +2335,7 @@ class SampleJournal:
             ):
                 cost_events.setdefault(prediction_snapshot_id, []).append(event)
 
-        return FrozenJournalView(
+        view = FrozenJournalView(
             data_as_of=cutoff.isoformat(timespec="seconds"),
             journal_head_event_count=len(included),
             journal_head_sha256=_events_sha256(included),
@@ -2262,6 +2350,7 @@ class SampleJournal:
             journal_source_sha256=file_sha,
             journal_source_inode=inode,
             _events=tuple(deepcopy(included)),
+            _source_events=tuple(deepcopy(events)),
             _source_hasher=source_hasher.copy(),
             _predictions_by_id=deepcopy(predictions),
             _events_by_id=deepcopy(events_by_id),
@@ -2271,7 +2360,11 @@ class SampleJournal:
             _cost_events_by_snapshot={
                 key: tuple(deepcopy(value)) for key, value in cost_events.items()
             },
+            _integrity_seal="",
         )
+        object.__setattr__(view, "_integrity_seal", _frozen_view_integrity_seal(view))
+        view.verify_integrity()
+        return view
 
     @staticmethod
     def _label_update_sort_key(

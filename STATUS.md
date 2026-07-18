@@ -1,10 +1,20 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-17 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。旧提交、旧生产快照和作废候选从 Git 历史审计，不在现役状态文件重复维护。
+> 最后更新：2026-07-18 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。旧提交与作废候选以 Git 历史为主；下文仅保留仍影响当前权限、回滚或阻塞判断的历史证据，不能当作本轮验收。
 
-## 当前结论：DeepSeek HTTPS 候选与隔离修复已通过 GitHub 和服务器旁路验收；现役生产未激活
+## 当前结论：本地离线闭环候选正在冻结验收；历史服务器旁路与现役生产均未改变
 
-当前唯一开发位置是 `TradingAgent/.worktrees/ta-v1-data-client`，分支 `codex/ta-v1-data-client`。DeepSeek HTTPS 直连客户端与后续隔离修复已推进到提交 `be2c45595f671413b6078093e8bec21f06e9ba54`，GitHub Actions run `29549692274`通过；同一精确 SHA 已作为 detached、network-disabled、simulation-only 服务器候选完成后端、前端、canary与离线fixture验收，`active_production_activated=false`。现役生产源码仍为`6c12fbed29db925019f85a6016774626f63b857a`。这些证据不是 Phase 1 通过、Git 主线、SharedSignals live API、真实 DeepSeek 调用、现役生产激活、已安装 scheduler/cron、真实模拟盘样本或真实交易完成证明。
+当前唯一开发写域是 `TradingAgent/.worktrees/ta-v1-offline-closed-loop`，分支 `codex/ta-v1-offline-closed-loop`，基线为已推送的 consumer/probe 候选 `da2e9cc2dd69a31fd2f55dd714d0091a8a86f1f6`。本轮新增的只读 integration-readiness 内容/配置复核、SampleJournal 离线科学投影和 DeepSeek A股冻结评测均仍是**未提交的本地候选**；2026-07-18 对最新实现字节完成候选清单 `1561 passed`、全仓回归 `3108 passed in 967.12s`、23 个本轮 Python 文件 Ruff format/check、compileall、`git diff --check` 与 YAML 解析，并由独立只读科学终审确认 `P0=0/P1=0/P2=0`。这些证据没有运行 live SS、真实 DeepSeek、生产 runtime 或 scheduler；本轮授权最多允许提交并推送隔离候选分支，不包含 merge/main、部署、cron、生产密钥、provider调用、broker或真实交易。
+
+当前候选的新增边界：
+
+- readiness PASS receipt 仍为 `non_authority`；`shared/runtime_test/integration_readiness_gate.py`与profile helper只验证私有文件内容完整性和exact runtime config兼容，不认证回执来源、不证明probe真实执行，也不授权capital/Journal writer；架构门禁止交易authority模块导入这两个preflight模块，每个实际数据集未来仍须由当次`DataEvidenceGate`独立fail closed；
+- 本轮曾实现的 canonical-capital no-action CLI 因独立审计发现会让离线 fixture 追加唯一模拟资本事件和 SampleJournal 事实，已从候选删除；canonical-capital composition 继续保持 test-only，无 CLI、scheduler 或生产入口；
+- 离线 science CLI 只读冻结 SampleJournal 视图并写仓外内容寻址投影，不回写 authority；outcome/counterfactual/calibration/50k敏感性没有资金、仓位、订单、晋级或扩风险权限；
+- LLM冻结评测的黄金集与候选输出分离，dev/OOS预算固定且禁止OOS调参；当前分数只验证评估器和固定fixture，`provider_call_verified=false`，不证明 `deepseek-v4-flash` 或 `deepseek-v4-pro` 的真实质量或增量；
+- `REAL_TRADING_ENABLED=false`；SharedSignals所有worktree继续由上游唯一owner管理，本线程未读写SS服务端。
+
+下文关于 `be2c45595f671413b6078093e8bec21f06e9ba54`、GitHub run `29549692274` 和服务器旁路的内容是上一候选的已验证历史层；它不能替代本轮尚待完成的冻结验收，也不代表现役生产激活。现役生产源码的上次只读记录仍为`6c12fbed29db925019f85a6016774626f63b857a`，本轮未重新readback。
 
 - `REAL_TRADING_ENABLED=false`；Nicholas 本轮授权服务器旁路候选部署，并另行明确授权把指定 DeepSeek credential 放入隔离候选秘密区。两项授权均已使用，没有扩大到 merge/main、现役源码切换、服务/cron变更、页面/公网路由、网络传输启用、真实模型调用、发邮件、连接 broker、GUI 或真实交易；后续每一层仍需独立门禁。
 - 产品边界已确认为 Nicholas 个人内部使用。`tradingagent.cc`保留为个人远程访问入口，但必须由Cloudflare Access或等价单用户认证保护；API继续只监听localhost，禁止匿名公网访问或API直出。本轮未修改DNS、Tunnel、Pages或Access policy；最新只读现网权限证据见下条。
@@ -56,16 +66,13 @@ DeepSeek 官方 HTTPS 客户端现已是 `CURRENT_VERIFIED/local_isolated_candid
 
 ## 当前验证状态
 
-- 当前工作树集合为`181`个`tests/test_*.py`、`3030 tests`。本轮未提交的integration-readiness probe最终候选已在本机单进程新鲜通过`3030 passed in 952.67s`；唯一V1候选清单新鲜通过`1483 passed in 28.13s`，probe/runtime-gate/架构门专项为`85 passed in 4.24s`。独立只读复核发现并关闭两项P1：上游自由文本reason伪装成本地门禁代码，以及轻量runtime gate打印上游reason；最终冻结快照为P0=0、P1=0。本轮相关Python文件的Ruff check/format、compileall和`git diff --check`通过；仓库级Ruff也已尝试，但被60项不在本轮变更路径内的既有legacy lint债务阻断，未擅自扩范围修复。本轮未重跑前端，因为没有前端文件变化。此前基线的本地分片、GitHub run`29549692274`和服务器原生`3002 passed + 175 subtests`证据继续保留，但它们属于既有提交，不替代本轮3030项本机结果。这些结果证明本地合同与旧兼容测试未回归，不代表已提交、GitHub/服务器已同步、现役生产、live SS、真实市场样本、真实DeepSeek调用或真实业务动作。
-- 前端只读面：43 个测试文件、`276 passed`；`npm run lint` 与 `npm run build:all` 通过。新增单用户部署负例证明服务拒绝非loopback监听与`*` CORS。另以本地`vite preview`和headed Playwright真实渲染检查总览空态、状态标签、布局与文字溢出，检查后关闭浏览器/服务并清理临时截图。
-- 初始架构候选的154个现存Python文件曾全部通过Ruff check与Ruff format check；本轮DeepSeek overlay的13个相关Python文件又通过Ruff 0.15.14 check/format check和Python 3.12 `compileall`，`git diff --check`通过。更宽松的`sk-*`扫描仅命中CSS/测试中的`risk-*`、fixture字段等字符串；带凭据边界的严格扫描在仓库与完整diff中均为0，`.env.example`中的`DEEPSEEK_API_KEY`保持空值，未发现真实凭据入仓。前端本轮无代码变更；本机未因这组Python改动再次运行前端，服务器对同一`be2c455` SHA的新鲜前端测试、lint与build证据见上文，不把服务器证据冒充本机重跑。
-- 仓外 CLI 三次实跑均 `completed`：同输入跨两个不同真实 `/private/tmp` 输出根的 run ID、bundle SHA 和 artifact bytes 相同；同根第二次 `idempotent=true` 且 `transport_calls=[]`。本轮 run ID 为`ashare-paper-day-7c1b170499742adff759247b992ceb00`，bundle SHA-256 为`03c690274af36dd8e72196a6b831395401f0dd5e1c853e5bf09d9825f0877027`，但该产物仍是`non_authority`、`production_verified=false`。
-- 四轮独立科学复核累计发现并关闭：commit后崩溃恢复P1、时间链/失败原因缺口、跨订单预约归属P1、“半额release仍被对账成功”的资金冻结P1，以及重新签名后把同一股票改换六维风险组规避cap的P1。当前authority、optimizer与day loop都拒绝同symbol group重分类；day-loop对有效重签后的proof、final map和decision mirror也独立fail closed，嵌套fixture proof不能用外层非晋级标记掩盖。最新专项复核无P0，确认的group-binding P1已关闭；论点风险/optimizer/stage/day-loop/composition/架构九文件专项`255 passed in 6.97s`。本轮DeepSeek发布前复审又发现并关闭两项P1：公共transport可绕过Gateway直接发送任意payload，以及合法capability可同步篡改body与outbound hash；前者改为公开send/direct Adapter固定拒绝，后者以进程内私有HMAC绑定body、model、request/proof/material/outbound hash并在opener/credential前复核。DeepSeek transport安全复审范围内最终为P0=0、P1=0、P2=0；这不覆盖上文已登记的旧localhost默认与缓存身份绑定退役债务。同进程HMAC仍不是隔离恶意Python插件的安全沙箱，生产不得加载不可信同进程扩展。
-- SS live、真实 paper session、生产 calendar/account/market-evidence/Champion-feature/metrics/time verifier、受信 ValidationPlan registry、生产 scheduler/cron、现役生产 runtime切换、真实市场样本、真实 DeepSeek provider 调用/认证readback 和 live broker 外部副作用门禁未验证。最新服务器旁路验收只关闭“`be2c455`能否在目标服务器环境安装、测试、构建和离线运行”的门，不关闭这些上游与生产authority门。会话中曾暴露的 DeepSeek credential 未进入Git、未被现役服务加载、未被最新候选读取或调用；供应商侧 revoke/rotate、新凭据以 raw-secret 文件重新注入以及真实模型readback仍是启用网络canary前的外部阻塞。
+- 本轮多轮独立科学审计持续暴露并修复了精确验收链缺口。当前候选已改为：精确source events + 冻结ValidationPlan/provenance重建；无默认plan-provenance与market-truth verifier；内联标签永不进入统计；label update同authority/同identity绑定；上海交易日与冻结calendar复核；A股`evidence_at == target_at`；reference/exit payload、hash、PIT、价格、收益与成本逐项重算；统计/calibration只消费无歧义且每decision cluster一条的共同cohort；下游四份报告与五文件bundle均做精确source重建；公开exact verifier强制调用方独立传入预期cutoff与权限范围；整包构建/验收只消费精确类型的同一`FrozenJournalView`，从完整source events重建cutoff分区、excluded/max evidence与included head，再用进程内HMAC seal绑定物理source digest/byte count和内部索引；3d/5d按最长主horizon使用1/3/5日移动观察交易日块并在不足两个完整块时拒绝推断。这个seal用于检测普通`dataclasses.replace`、意外突变和未重新封印的协调替换；它不能隔离可访问同进程私有key/helper的恶意代码，也不是外部签名、外部密封或生产durable authority。2026-07-18 最新字节已完成候选清单 `1561 passed`、全仓回归 `3108 passed in 967.12s`、23 个本轮 Python 文件 Ruff format/check、compileall、`git diff --check`、YAML 解析和独立只读终审 `P0=0/P1=0/P2=0`；本段证据写回后的最终文档字节也必须通过同一候选清单与静态门禁，才允许提交。
+- 本轮没有前端文件变化，因此不把旧候选的前端、GitHub Actions或服务器旁路结果当作本轮新鲜证据，也不重复运行与本轮无关的线上验证。历史证据仍可从对应Git提交、Actions run和服务器证据目录审计。
+- SS live、真实 paper session、生产 calendar/account/market-evidence/Champion-feature/metrics/time verifier、受信 ValidationPlan registry、生产 scheduler/cron、现役生产 runtime切换、真实市场样本、真实 DeepSeek provider 调用/认证readback和 live broker 外部副作用门禁均未验证。会话中曾暴露的 DeepSeek credential 未进入本候选Git或被本候选调用；供应商侧 revoke/rotate、新凭据以raw-secret文件重新注入以及真实模型readback仍是未来网络canary的独立阻塞。
 
 ## 第一阶段出口门禁
 
-1. 架构重构与DeepSeek HTTPS客户端的干净CI、服务器detached旁路、前端、canary和离线fixture证据均已收集；当前仍不授权merge/main、现役切换、scheduler、live SS、真实provider canary、真实paper或实盘。下一技术门是等待SS上游冻结并提供只读runtime，再做显式配置的同`as_of`联调；真实DeepSeek canary另受密钥轮换与独立网络授权阻断；
+1. 架构重构与DeepSeek HTTPS客户端的干净CI、服务器detached旁路、前端、canary和离线fixture证据均已收集；当前仍不授权merge/main、现役切换、scheduler、live SS、真实provider canary、真实paper或实盘。本轮冻结验收完成后的下一跨系统技术门，才是等待SS上游冻结并提供只读runtime，再做显式配置的同`as_of`联调；真实DeepSeek canary另受密钥轮换与独立网络授权阻断；
 2. 等待 SS 上游冻结 catalog version、dataset IDs、auth、receipt authority、跨页语义与 runtime readback；随后生成仓外显式manifest，先运行integration-readiness probe，再做新旧同 `as_of` parity。当前probe只有fixture证据，不可作为SS已准备好的证明；
 3. 按消费者分批切 V1；每批同时删除旧 import、URL、env、调度、测试和文档引用，并保留 runtime no-fallback 负例，不建立长期双轨；
 4. 用真实 SS V1 与新鲜 50,000 CNY 模拟 authority 连续运行 20 个交易日，要求 0 未来数据、0 同 bar 成交、0 重复订单/成交、0 scope 泄漏、0 旧链 fallback、0 未解释账务差异；

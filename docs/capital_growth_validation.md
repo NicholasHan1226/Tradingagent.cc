@@ -20,7 +20,7 @@
 | 契约层 | SS fixture/catalog/query、PIT gate、三层 Universe、50k plan binding、rank score、Opportunity/Ledger、forecast、三风格shadow router、RunBundle、ledger/OOS/LLM负例 | SS live、真实模拟成交、shadow预测有效性 |
 | 本地闭环层 | 受控离线 replay、crash/restart、现金/持仓/冻结额守恒、原子 readback | 生产 scheduler 或稳定运维 |
 | 20 交易日工程层 | 真实 SS V1 数据下 0 未来数据、0同 bar、0重复 order/fill、0权限泄漏、0旧链 fallback、0未解释账务差异 | 策略正期望或实盘准备 |
-| 60–120 交易日科学层 | 冻结 OOS、独立 decision clusters/N_eff、多市场状态、完整成本/未成交、可发布的校准或排序证据 | 自动晋级、扩风险或 live |
+| 60–120 交易日科学层 | 冻结 OOS、去重decision clusters、交易日覆盖/Kish N_eff/时间依赖修正、多市场状态、完整成本/未成交、可发布的校准或排序证据 | 自动晋级、扩风险或 live |
 
 第一阶段 Champion 是 `uncalibrated_deterministic_rank_score`。只验收排序一致性、分组结果、稳定性、与现金/简单可行基线的费用后增量和尾部风险。没有冻结 calibrator 时，概率、Brier、Log Loss 和 ECE 都不在Champion验收面中；分离的forecast shadow可以保存带detached proof的校准研究artifact，但不能把概率回写Champion或订单链。
 
@@ -39,6 +39,21 @@
 
 负向控制器必须显式使用`TrustedEvolutionClock`复核metrics freshness并把clock identity/read time写入结果；当前只有冻结、不可继承、`production_eligible=false`的fixture clock。当前metrics verifier也只对固定本地实现和内容binding做复核，不是第二套独立数值重算系统。因此“clock通过”和“detached receipt通过”都不能推断生产时间authority、指标正确或可自动解除latch；metrics超过14天、clock倒退或任一binding漂移只能保持/收紧风险。
 
+离线科学套件只能从一次显式`SampleJournal.read_frozen(as_of=...)`读取不可变视图，并把outcome、counterfactual、费用后metrics、calibration/MG paired ablation与run receipt发布到仓外内容寻址目录。科学验收至少要求：
+
+- 构建与验收使用精确类型的同一个`FrozenJournalView`；从完整source events重建cutoff分区、excluded/max evidence与included head，再用进程内HMAC seal绑定原始source digest/byte count和内部索引。该seal只是进程内完整性边界，不是外部签名或durable authority；禁止调用方分别传入可互相不一致的日志事件与head声明；
+- exact verifier必须由调用方独立传入预期`as_of`与`authority_scope`，报告内自报的同名字段不能作为自身验收标准；
+- label必须来自同authority/identity的独立forward-label update；内联ready字段只作不可信观察，不能进入统计；
+- plan artifact provenance与reference/exit market truth都必须经无默认detached verifier复核。调用方或artifact自报`production_eligible`无效；缺verifier保持observation-only；
+- trade date从prediction的上海本地日期与冻结calendar推导，A股target/evidence精确同刻，并对reference/exit payload/hash、evidence/PIT、authority scope、价格、收益、费用和数据质量逐项fail closed；
+- 只从eligible结果中取每个decision cluster恰好一条无歧义记录形成共同science/calibration cohort，同时分别展示eligible cluster数、观察交易日数、propensity权重Kish `N_eff`、按最长主horizon取1/3/5日移动观察交易日块的bootstrap，以及据此保守折算的`dependence_adjusted_sample_count`；这些字段都不自证统计独立，不把style×horizon label cells重复计数；
+- counterfactual只报告可追溯费用后结果，不构造虚拟capital、position或PnL authority；
+- MG on/off只接受同一PIT、成本、decision cluster和pair identity；缺配对保持`unavailable`；
+- 50k敏感性只扫描预注册的四个工程轴，固定50k/15%/90%/100股硬策略，发布全部方案并禁止winner selection；
+- 所有报告都必须是read-only projection，`automatic_promotion_enabled=false`、`automatic_risk_expansion_enabled=false`、`live_transition_authorized=false`。
+
+这些本地报告可帮助发现标签泄漏、重复样本、成本吞噬、校准缺口和参数脆弱性，但不能替代独立frozen OOS、真实市场状态覆盖或外部数值复核，也不能回写SampleJournal、Champion或policy。当前手工CLI只保留plan provenance而不配置生产plan-provenance/market-truth verifier，所以它的现实作用是生成可审计observation-only bundle；真实统计cohort仍为空，直到外部authority以独立任务接入并验证。
+
 ### 1.3 LLM 增量价值怎样验收
 
 DeepSeek等provider仅生成证据sidecar。在进入任何结构化研究输入前，要用冻结数据集比较“不用LLM”与“使用LLM证据”，至少评估：
@@ -51,6 +66,8 @@ DeepSeek等provider仅生成证据sidecar。在进入任何结构化研究输入
 - 人工审核时间是否下降，以及给冻结基线模型带来的样本外增量是否足以覆盖复杂度。
 
 LLM 输出不能直接作为 rank score、概率、仓位乘数、风险豁免或订单字段。动态Prompt、未验证artifact、未知引用、敏感payload或显式source-span提示注入模式必须在transport前阻断。typed source proof/provider receipt只证明对应offline或HTTPS transport的内容与操作元数据绑定，不证明provider输出正确、真实账户可用、生产verifier或收益增量。成功且完整验证的fixture/HTTPS evidence可进入CAS/hash-chain本地journal，但本地`.head`不是外部密封；同时替换或删除journal与head仍不能由本机自证。模式门也不是完整语义安全保证，所以当前不能宣称LLM已提高收益、研究质量或已解决prompt injection。
+
+当前A股冻结评测还必须满足以下更窄的本地门：gold labels与candidate outputs物理分离并分别内容寻址；`flash_extract`和`pro_thinking`的模型/Prompt/route身份冻结；dev/OOS membership与每角色尝试预算不可变；`oos_used_for_tuning=false`；覆盖事件生命周期、矛盾、时点泄漏、Prompt注入、敏感信息和交易越权负例；报告固定`candidate_capture_mode=offline_fixture`与`provider_call_verified=false`。任何分数只证明评估器对这批固定fixture的行为，不证明DeepSeek真实调用、模型质量、研究增量或收益提升。gold若由同一待评模型生成，不能作为独立release authority。
 
 ## 2. V1 样本与决策账本验收
 
@@ -118,7 +135,7 @@ LLM 输出不能直接作为 rank score、概率、仓位乘数、风险豁免�
 - 前向标签按 ready/pending/missing/rejected 分类；missing/rejected 原因分布必须可见。
 - A股`close/1d/3d/5d` targets必须由同一verified frozen calendar proof派生，调用方不一致立即fail closed，缺目标会话日线不得顺延。A股label/sample ops缺显式计划时必须在读取行情前阻断；CLI加载artifact只校验合同/内容绑定，不重新证明上游authority。当前仅有本地/fixture verifier且无受信artifact registry，target authority也不等于真实exit price、总回报或公司行动真值，因此不能单独作为predictive发布证明。
 - 5 分钟重复 cluster 只给一个有效 KPI 权重；原始事件仍保持 append-only。
-- 标签格不等于独立样本：验收同时展示 `ready_label_cell_count/raw_N/unique decision clusters/independent trading days/N_eff`，成熟度只使用预先指定主 horizon 的独立 decision cluster。
+- 标签格不等于独立样本：验收同时展示 `ready_label_cell_count/raw_N/unique decision clusters/independent_trading_day_count/N_eff`；后两个是历史字段名，分别只表示不同交易日覆盖与propensity权重Kish有效样本量。成熟度使用预先指定主horizon的去重decision cluster，科学推断另做重叠horizon时间依赖修正。
 - PIT 必须重算 `event_time/available_at/ingested_at/retrieved_as_of` 的完整性与顺序；字段存在或布尔自述不算通过。
 
 sample ops P0 还必须证明以下 frozen-input 与性能不变量：
@@ -183,7 +200,7 @@ A股资金计划每天保存：
 - 同一 horizon、label source、cost model 与样本去重规则；
 - 比较 calibration、net-after-cost expectancy、drawdown 和 regime robustness，而非只看短期胜率。
 
-Calibration 必须输出独立 cluster 的 Brier、log loss、base-rate Brier/skill 与 reliability ECE；任意 `calibration_evidence_sufficient=true` 字段不得直接通过门禁。未校准 score 保持 `rank_score` 语义。
+Calibration 必须输出按decision cluster去重后的 Brier、log loss、base-rate Brier/skill 与 reliability ECE；去重不等于统计独立，任意 `calibration_evidence_sufficient=true` 字段不得直接通过门禁。未校准 score 保持 `rank_score` 语义。
 
 缺少 paired samples 或样本外证据时，结论只能是“未验证”，不能据此扩风险。
 
@@ -197,7 +214,7 @@ Calibration 必须输出独立 cluster 的 Brier、log loss、base-rate Brier/sk
 | 10 | day-10 review due | 第二次人工复核；仍需 Nicholas 单独授权 |
 | 11+ | post-day-10 evidence | 持续积累样本外证据；没有自动 live |
 
-当前 evidence-readiness 实现至少检查：当前 authority/lineage、20 个 execution-eligible samples、预先指定主 horizon 的 20 个 unique decision clusters、至少 5 个独立交易日、`N_eff >= 10`、10 个 completed round trips、chain consistency ≥0.85、data integrity ≥0.90、完整 actual-cost/PIT/fill-revalidation/dedup/calibration evidence、至少一个费用后正 expectancy 风格，以及账户逐日 MTM 最大回撤不超过 5%。style×horizon label cells 只展示，不计作独立 N。
+当前 evidence-readiness 实现至少检查：当前 authority/lineage、20 个 execution-eligible samples、预先指定主 horizon 的 20 个去重unique decision clusters、至少覆盖 5 个不同交易日、propensity权重Kish `N_eff >= 10`、10 个 completed round trips、chain consistency ≥0.85、data integrity ≥0.90、完整 actual-cost/PIT/fill-revalidation/dedup/calibration evidence、至少一个费用后正 expectancy 风格，以及账户逐日 MTM 最大回撤不超过 5%。这些是既有成熟度最低门，不构成统计独立证明；style×horizon label cells 只展示，不计作独立 N。
 
 这些数值只是旧成熟度投影与当前工程验收的最低门槛：样本量仍很小，不能据此声称统计显著或自动实盘。任何缺失项显示 blocker，但不阻断安全 observation；是否重新引入 exploration 必须由未来版本另行批准。
 

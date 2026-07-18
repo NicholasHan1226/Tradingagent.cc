@@ -5,6 +5,7 @@ tests/test_env_loader_boundary.py
 tests/test_sharedsignals_v1.py
 tests/test_sharedsignals_v1_runtime_gate.py
 tests/test_sharedsignals_v1_integration_probe.py
+tests/test_integration_readiness_gate.py
 tests/test_data_evidence_gate.py
 tests/test_research_data_snapshot.py
 tests/test_research_snapshot_store.py
@@ -36,6 +37,7 @@ tests/test_llm_sidecar.py
 tests/test_llm_evidence_artifact.py
 tests/test_llm_evidence_journal.py
 tests/test_llm_evaluation.py
+tests/test_llm_ashare_frozen_evaluation.py
 tests/test_deepseek_provider_config.py
 tests/test_deepseek_http_transport.py
 tests/test_opportunity_radar_contracts.py
@@ -58,6 +60,12 @@ tests/test_decision_ledger_persistence.py
 tests/test_label_maturity.py
 tests/test_forward_labels.py
 tests/test_sample_journal.py
+tests/test_outcome_evaluation.py
+tests/test_counterfactual_books.py
+tests/test_offline_metrics_recomputer.py
+tests/test_ashare_offline_science_paths.py
+tests/test_calibration_ablation_report.py
+tests/test_small_account_sensitivity_lab.py
 tests/test_ashare_forward_label_ops.py
 tests/test_ashare_sample_ops.py
 tests/test_ashare_sample_ops_p0.py

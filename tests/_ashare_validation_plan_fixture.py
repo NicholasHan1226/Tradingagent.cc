@@ -107,6 +107,7 @@ def write_non_production_validation_plan_artifact(path: Path) -> Path:
         "artifact_type": "ashare_validation_plan_v1",
         "authority_tier": "non_production_fixture",
         "production_eligible": False,
+        "verification_receipt_sha256": "8" * 64,
         "validation_plan": plan.canonical_payload(),
         "validation_plan_sha256": plan.sha256(),
     }

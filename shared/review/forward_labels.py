@@ -75,6 +75,34 @@ _ASIA_SHANGHAI = ZoneInfo("Asia/Shanghai")
 _ASHARE_SESSION_HORIZONS = ("close", "1d", "3d", "5d")
 
 
+def _canonical_sha256(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=True,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def _canonical_evidence_payload(value: Any) -> Any:
+    """Make immutable price evidence JSON-safe without mutating its source."""
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {
+            str(key): _canonical_evidence_payload(nested)
+            for key, nested in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_canonical_evidence_payload(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError("unsupported evidence payload type: %s" % type(value).__name__)
+
+
 def canonical_horizon(value: Any) -> str:
     """Return the canonical horizon name, accepting the next-day alias."""
 
@@ -860,6 +888,23 @@ def build_prediction_snapshot(candidate: Mapping[str, Any]) -> dict[str, Any]:
         or SAMPLE_SCIENCE_CONTRACT_VERSION
     )
     snapshot["point_in_time_lineage_validation"] = pit_validation
+    quality = snapshot.get("data_quality")
+    reference_payload = _canonical_evidence_payload(
+        {
+            "price": snapshot.get("reference_price"),
+            "source": quality.get("source") if isinstance(quality, Mapping) else None,
+            "reliable": (
+                quality.get("reliable") if isinstance(quality, Mapping) else None
+            ),
+            "event_time": snapshot.get("event_time"),
+            "available_at": snapshot.get("available_at"),
+            "ingested_at": snapshot.get("ingested_at"),
+            "retrieved_as_of": snapshot.get("retrieved_as_of"),
+            "evidence_envelope": evidence_envelope_from_record(snapshot),
+        }
+    )
+    snapshot["reference_evidence_payload"] = reference_payload
+    snapshot["reference_evidence_sha256"] = _canonical_sha256(reference_payload)
     snapshot["capital_layer"] = "simulated"
     snapshot["account_type"] = "simulated"
     for field in _LIVE_BOOLEAN_FIELDS:
@@ -1585,6 +1630,7 @@ def materialize_forward_labels(
         applied_slippage_bps = slippage_bps if multiplier else 0.0
         total_cost_bps = applied_fee_bps + applied_slippage_bps
         net_return = gross_return - (total_cost_bps / 10_000.0)
+        exit_evidence_payload = _canonical_evidence_payload(dict(point))
         labels[name] = {
             "horizon": name,
             "target_at": _iso(target),
@@ -1593,6 +1639,8 @@ def materialize_forward_labels(
             "evidence_at": _iso(point_at),
             "evidence_source": str(point.get("source")),
             "exit_price": exit_price,
+            "exit_evidence_payload": exit_evidence_payload,
+            "exit_evidence_sha256": _canonical_sha256(exit_evidence_payload),
             "market_return": market_return,
             "gross_return_after_direction": gross_return,
             "fee_bps": applied_fee_bps,

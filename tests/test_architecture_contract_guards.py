@@ -50,6 +50,12 @@ CURRENT_V1_SS_CONSUMER_PATHS = (
 )
 
 
+INTEGRATION_READINESS_PREFLIGHT_PATHS = (
+    "shared/runtime_test/integration_readiness_gate.py",
+    "shared/runtime_test/integration_readiness_profile.py",
+)
+
+
 FORBIDDEN_CURRENT_V1_SS_ROUTES = (
     "/source_status",
     "/cache/status",
@@ -189,6 +195,8 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
     assert {
         "sharedsignals_v1_query",
         "tradingagent_sharedsignals_v1_client",
+        "tradingagent_sharedsignals_v1_integration_probe",
+        "tradingagent_integration_readiness_local_gate",
         "tradingagent_mainboard_scope",
         "tradingagent_small_account_optimizer",
         "tradingagent_thesis_risk_authority",
@@ -205,6 +213,7 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
         "tradingagent_metrics_verification_authority",
         "tradingagent_trusted_evolution_clock",
         "tradingagent_scientific_validation_contract",
+        "tradingagent_offline_science_projection",
         "tradingagent_drift_runtime_binding",
         "tradingagent_day_loop",
         "tradingagent_paper_runtime_composition",
@@ -224,11 +233,25 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
         "tradingagent_multihorizon_forecast",
         "tradingagent_multistyle_router",
         "tradingagent_deepseek_provider_transport",
+        "tradingagent_llm_ashare_frozen_evaluation",
         "tradingagent_live_paper_scheduler",
     }.issubset(entries)
     assert entries["sharedsignals_v1_query"].state == "TARGET_CONTRACT"
     assert entries["sharedsignals_v1_query"].production_verified is False
     assert entries["tradingagent_sharedsignals_v1_client"].state == ("CURRENT_VERIFIED")
+    readiness = entries["tradingagent_integration_readiness_local_gate"]
+    assert readiness.state == "CURRENT_VERIFIED"
+    assert readiness.layer == "local_isolated_candidate"
+    assert readiness.canonical_path == (
+        "shared/runtime_test/integration_readiness_gate.py"
+    )
+    assert readiness.production_verified is False
+    assert "authenticate_receipt_origin_or_prove_probe_execution" in (
+        readiness.prohibited_uses
+    )
+    assert "authorize_capital_position_order_or_sample_journal_writes" in (
+        readiness.prohibited_uses
+    )
     assert entries["tradingagent_small_account_optimizer"].state == ("CURRENT_VERIFIED")
     assert entries["tradingagent_thesis_risk_authority"].state == ("CURRENT_VERIFIED")
     assert entries["tradingagent_thesis_risk_authority"].production_verified is False
@@ -329,6 +352,14 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
     assert "claim_production_calendar_authority_or_real_market_truth_verified" in (
         entries["tradingagent_scientific_validation_contract"].prohibited_uses
     )
+    offline_science = entries["tradingagent_offline_science_projection"]
+    assert offline_science.state == "CURRENT_VERIFIED"
+    assert offline_science.layer == "local_isolated_candidate"
+    assert offline_science.production_verified is False
+    assert "read_one_explicit_frozen_sample_journal_view" in (
+        offline_science.allowed_uses
+    )
+    assert "append_or_modify_sample_journal_facts" in (offline_science.prohibited_uses)
     assert entries["tradingagent_metrics_verification_authority"].state == (
         "CURRENT_VERIFIED"
     )
@@ -368,6 +399,16 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
     assert transport.production_verified is False
     assert "claim_any_real_provider_request_or_authenticated_model_readback" in (
         transport.prohibited_uses
+    )
+    llm_frozen_eval = entries["tradingagent_llm_ashare_frozen_evaluation"]
+    assert llm_frozen_eval.state == "CURRENT_VERIFIED"
+    assert llm_frozen_eval.layer == "local_isolated_candidate"
+    assert llm_frozen_eval.production_verified is False
+    assert "report_provider_call_verified_false_for_offline_capture" in (
+        llm_frozen_eval.allowed_uses
+    )
+    assert "claim_authenticated_deepseek_model_quality_or_live_provider_call" in (
+        llm_frozen_eval.prohibited_uses
     )
     assert (
         entries["tradingagent_live_paper_scheduler"].state == "PLANNED_NOT_IMPLEMENTED"
@@ -503,6 +544,50 @@ def test_shadow_research_sidecars_cannot_import_or_enter_trading_authority() -> 
             for dependency in dependencies
             for prefix in forbidden_shadow_prefixes
         ), path.relative_to(ROOT)
+
+
+def test_integration_readiness_preflight_is_disconnected_from_trading_authority() -> (
+    None
+):
+    """Receipt compatibility checks must remain preflight-only and read-only."""
+
+    forbidden_preflight_dependencies = (
+        *TRADING_AUTHORITY_MODULE_PREFIXES,
+        "shared.review.sample_journal",
+        "shared.review.projection_generation",
+    )
+    for relative_path in INTEGRATION_READINESS_PREFLIGHT_PATHS:
+        path = ROOT / relative_path
+        assert path.is_file(), relative_path
+        dependencies = _python_dependency_names(path)
+        assert not any(
+            _matches_module_prefix(dependency, prefix)
+            for dependency in dependencies
+            for prefix in forbidden_preflight_dependencies
+        ), relative_path
+
+    preflight_prefixes = (
+        "shared.runtime_test.integration_readiness_gate",
+        "shared.runtime_test.integration_readiness_profile",
+    )
+    violations: dict[str, list[str]] = {}
+    for relative_directory in TRADING_AUTHORITY_DIRECTORIES:
+        for path in sorted((ROOT / relative_directory).rglob("*.py")):
+            blocked = sorted(
+                dependency
+                for dependency in _python_dependency_names(path)
+                if any(
+                    _matches_module_prefix(dependency, prefix)
+                    for prefix in preflight_prefixes
+                )
+            )
+            if blocked:
+                violations[str(path.relative_to(ROOT))] = blocked
+
+    assert violations == {}, (
+        "integration readiness is a runtime_test preflight only; trading "
+        f"authority modules must not import it: {violations}"
+    )
 
 
 def test_trading_authority_modules_cannot_depend_on_llm_sidecar() -> None:
@@ -1321,6 +1406,8 @@ def test_machine_state_test_evidence_is_closed_by_candidate_manifest() -> None:
         for entry in matrix.entries
         for evidence in entry.evidence
         if evidence.startswith("tests/")
+        and evidence.endswith(".py")
+        and Path(evidence).name.startswith("test_")
     }
 
     assert referenced_tests.issubset(entries)

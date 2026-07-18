@@ -156,6 +156,20 @@ receipt_sha256: sha256
 
 回执不得包含 base URL、access policy 原值、cursor、manifest正文、HTTP header、credential、异常原文或上游自由文本 `metadata.reasons`。自由文本只进入 `evidence_reasons_sha256` 与完整响应语义哈希；对外 `reason_codes` 只保留 TA Evidence Gate 产生的受控代码。`receipt_sha256`覆盖除自身外的 canonical JSON，并绑定本次 request trace；完全相同的 trace 产生相同回执，新的 request ID 会形成新的精确回执。跨重试的业务一致性看 `semantic_snapshot_sha256` 与每个 dataset 的 `semantic_response_sha256`，它们排除 request ID；任一 authority/config/source/data/PIT/状态变化必须改变对应哈希或阻断。
 
+##### 本地 receipt 复核不是运行 authority
+
+`shared/runtime_test/integration_readiness_profile.py`只把显式probe配置投影为精确`IntegrationReadinessExpectation`；`shared/runtime_test/integration_readiness_gate.py`只允许从私有、single-link、非symlink的绝对路径重读回执，复核canonical schema、`receipt_sha256`、PASS/非阻断状态、完整source proof、query/policy identity、`as_of`与上海交易日，以及base URL、access policy、catalog和dataset集合的exact runtime compatibility。成功结果的固定声明为：
+
+```yaml
+authority: non_authority
+verification_scope: local_content_integrity_and_config_compatibility
+expectation_sha256: sha256
+receipt_sha256: sha256
+semantic_snapshot_sha256: sha256
+```
+
+该结果的进程内attestation不是外部签名或来源认证：它不能证明probe实际运行，不能证明回执由SS、可信主机或可信操作者产生，不能替代当次逐dataset的`DataEvidenceGate`，也不能创建或授权capital、position、order、market evidence、SampleJournal事实或任何writer。为防止后续把preflight能力误接进交易链，`shared/runtime|portfolio|capital|risk|execution`禁止导入`integration_readiness_*`，这两个模块也禁止依赖交易authority或SampleJournal writer。当前没有CLI、scheduler或composition自动消费该本地复核结果。
+
 `as_of` 不是防止回填偏差的充分条件。任何进入predictive validation的dataset还必须保存首次可见`available_at`、release ID、revision ID、每次修订链、first-seen receipt和训练时实际可见vintage；供应商事后批量回填但无法还原历史发布版本时，只能作当前观察或风险证据，不能回写历史训练样本。cache、ResearchDataSnapshot、ValidationPlan和label truth都必须绑定所用vintage/revision identity。
 
 ### A股三层 Universe 契约
@@ -201,6 +215,8 @@ offline receipt必须使用固定offline transport ID/version/policy，不能声
 `ProviderTransportReceipt`绑定provider/model、transport ID/version、request hash、包含本地source-authority proof的`transport_material_sha256`、provider outbound的`outbound_sha256`、response hash、标准化evidence hash、provider response ID、verified/received time与receipt hash。`transport_metadata`是receipt identity的一部分，精确包含`kind`、`endpoint`、`method`、`egress_policy_version`、`http_status`、`content_type`、`request_bytes`、`response_bytes`、`attempt_count`和`retry_disposition`。HTTPS只允许DeepSeek两个批准模型、官方transport ID/version/policy、固定endpoint、`POST`、HTTP 200、`application/json`、正请求/响应字节数、attempt 1和`not_retried`；离线fixture使用独立固定元数据。HTTPS的`response_sha256`按原始HTTP body bytes计算，不对解析后对象重新序列化；非200、非法MIME/编码/JSON/envelope、敏感输出或引用绑定失败均不产生成功receipt。内部proof/审计metadata只参与本地内容绑定，不进入outbound；JSON mode、thinking、`reasoning_effort`与bulk/pro 4,096/8,192 token上限仍只是本候选请求构造合同，不是当前账户接受证明。当前只有本地fake opener和fixture verifier证据；没有真实DeepSeek调用或生产verifier。
 
 成功且完整验证的offline或HTTPS结果可以封装为`tradingagent.llm_evidence_envelope.v1`并写入显式路径的`LLMEvidenceJournal`。`run_id`由typed transport receipt确定性派生；envelope同时绑定请求、outbound、response hash/标准化evidence、source authority proof、artifact set、provider receipt和观察结果。Journal采用append-only canonical JSONL、事件checksum chain、expected-head CAS、同run幂等/冲突拒绝、single-link regular-file检查以及本地`.head`锚点。该journal和head只能发现本地断链、交换、截断或单侧篡改；它们不是外部签名、远程密封、production durable receipt authority，也不能抵抗journal与head被同时替换或删除。模式门不能被描述成覆盖全部语义型、混淆型或编码型prompt injection。任何LLM输出或journal记录都无候选成员、排名、概率、仓位、风险豁免、订单和账户authority。
+
+A股冻结评测使用两个物理分离、各自内容寻址的fixture：`llm-ashare-gold-set.v1`只保存expected disposition/reason/citation/material fact/contradiction和dev/OOS policy；`llm-ashare-candidate-outputs.v1`只保存被捕获的observation、角色身份、attempt使用量和gold-set hash。两者必须精确覆盖同一case集合，并冻结`flash_extract`/`pro_thinking`的provider/model/Prompt/route。报告`llm-ashare-frozen-eval-report.v1`必须保留split、attempt budget、dimension/role metrics、`candidate_capture_mode=offline_fixture`、`provider_call_verified=false`和全部decision-use false。OOS用于调参、尝试超预算、gold/candidate hash或角色漂移、缺失/重复输出、未来引用、敏感信息或交易authority字段都必须fail closed。该报告是research-only artifact，不是模型注册、provider readback、rank、calibration、promotion或交易authority。
 
 输入包括 assets、日线/5 分钟行情、交易日历、合约元数据、基本面/因子/资金流/宏观/情绪、事件、行业 taxonomy/membership/snapshot 以及数据覆盖/新鲜度/source status。
 
@@ -634,11 +650,29 @@ A股逐日正式回撤证据只在盘后固定价格交易结束后的 `15:31` �
 
 - `ready_label_cell_count`：style×horizon 展示格数，仅诊断；
 - `raw_N`：主 horizon ready 的预测行数；
-- `unique_decision_cluster_count`：成熟度使用的独立 cluster 数；
-- `independent_trading_day_count`；
-- `N_eff`：按 cluster 去重并结合 propensity 权重计算的 Kish 有效样本量。
+- `unique_decision_cluster_count`：成熟度使用的去重 cluster 数；它是计数单位，不自证不同cluster在统计上独立；
+- `independent_trading_day_count`：既有成熟度字段名，语义仅为有资格样本覆盖的不同交易日数，不得解释为收益序列已独立；
+- `N_eff`：既有成熟度字段名，语义为按cluster去重并结合propensity权重计算的Kish有效样本量，不包含重叠horizon的时间依赖修正。
 
 禁止使用 `ready_label_cell_count` 代替独立样本 N。
+
+### Offline science projection bundle
+
+`ashare-offline-science-run.v1`只绑定一个`SampleJournal.read_frozen(as_of=...)`视图、精确capital authority/generation/execution lineage、预测前冻结的`ValidationPlan`/calendar/proof、完整plan artifact provenance及其detached verification、source event hash、bootstrap次数和四个报告hash。公开构建/验收边界必须接收一个`FrozenJournalView`，并在派生events与metadata前从完整source events重建cutoff分区、excluded/max evidence与included head，再以进程内HMAC seal绑定原始source SHA/byte count和内部索引；精确类型检查拒绝可覆写方法的subclass。该seal不构成外部签名、外部密封或production durable authority。所有outcome及下游exact verifier另必须接收由调用方独立提供的`expected_as_of`和`expected_authority_scope`；不得从待验报告反向取值后重新哈希通过。仓外内容寻址目录必须恰好包含：
+
+```text
+outcome_evaluation.json
+counterfactual_books.json
+offline_metrics.json
+calibration_ablation.json
+run_receipt.json
+```
+
+run receipt固定`projection_only=true`、`journal_write_count=0`、`network_call_count=0`，并把capital/position/order authority、自动晋级、自动扩风险、live transition和real trading全部标为false。Outcome必须从精确source events、ValidationPlan和原始artifact provenance完整重建；预期cutoff与权限范围只来自调用方的独立参数，待验报告中的`as_of/authority_scope`仅是需被比对的内容；计划文件自报`production_eligible=true`没有效力，只有无默认`ValidationPlanProvenanceVerifier`返回绑定plan SHA、artifact SHA和verification receipt SHA的detached proof才可解除plan provenance排除项。内联ready label永不进入统计；只有同authority/identity的独立forward-label update可被投影，非法foreign update不能覆盖已有合法update。trade date从prediction上海本地日期与冻结calendar推导并与上报值复核，`close/1d/3d/5d`要求`evidence_at == target_at`。reference/exit evidence payload和hash、PIT原始envelope、价格、成本、方向收益及label结果必须逐项重算一致，并由无默认`OutcomeMarketTruthVerifier`对精确reference/exit payload返回detached proof；缺任一verifier都只能observation-only。统计、performance和calibration只消费eligible且每个decision cluster恰好一条无歧义结果的共同cohort；counterfactual不创建资金账本，MG ablation另要求相同PIT、成本与pair identity。下游不得只检查报告自哈希，必须以同一已验`FrozenJournalView`派生的source events与metadata、独立expected cutoff/scope、plan、provenance和同一verifier重建并逐字节比对；五文件bundle也必须作为精确集合整体重建，多文件、少文件或重算后不等均阻断。相同run identity只能字节一致复用，existing directory内容不一致必须阻断。
+
+离线metrics同时发布不混淆的样本量：`eligible_unique_decision_cluster_count`、`eligible_unambiguous_decision_cluster_count`、`observed_trading_day_count`、`propensity_weight_kish_n_eff`和`dependence_adjusted_sample_count`；另保留canonical SampleJournal KPI中的原始诊断计数，但不能将其冒充科学cohort。置信区间使用`moving_observed_trade_date_block_bootstrap.v1`：先按同一交易日保留完整cluster组，再按主horizon中最长重叠窗口选择1/3/5个观察交易日的移动块。少于两个完整块（即观察日数小于`2 × block_length`）时，推断状态必须unavailable且区间为null。该近似只缓解观察交易日序列与重叠收益依赖，不证明cluster、交易日或市场状态真正独立。
+
+独立的50k sensitivity report只允许`max_positions / minimum_economic_order_cny / no_trade_band_cny / cost_stress_multiplier`四轴固定网格，硬绑定`initial_equity_cny=50000`、`single_name_max_pct=0.15`、`gross_limit_pct=0.90`、`lot_size=100`。排除`minimum_economic_order_cny < no_trade_band_cny`的无效组合后，预注册网格固定为96格；缺少、重复或替换任一格都必须阻断。报告必须写明`prespecified_scenario_count=96`、`prespecified_grid_complete=true`和`winner_selection_allowed=false`；不得发布“最优参数”、回写policy或消费frozen OOS选择结果。
 
 ## Forward labels 与成本
 
@@ -682,7 +716,7 @@ KPI、decision、maturity 与 sample-ops report 向后兼容新增：`data_as_of
 
 `sample_kpi_latest.json` 按 style 和 sample intent 输出 counts、horizon statuses、completed round trips、win rate、average win/loss/PnL、expectancy、gross/cost/post-cost PnL、rejection reasons、missing evidence 与 scientific evidence。交易 PnL 序列的 `trade_pnl_sequence_max_drawdown_cny` 仅为辅助诊断；正式最大回撤来自 `account_drawdown_evidence` 的逐日 authoritative MTM equity 曲线。`shadow_capital_aggregated=false`。
 
-`calibration_evidence` 必须从预先指定主 horizon 的独立 cluster 真实计算 Brier score、log loss、base rate、base-rate Brier、Brier skill 与 reliability bins/ECE。布尔字段或任一 chain row 不能自证 calibration。当前最低证据为 20 个独立 cluster、5 个独立交易日、正 Brier skill 且 ECE 不高于 0.15；不满足时 status 明确为 unavailable/insufficient，原始分数仍只称 `rank_score`。
+`calibration_evidence` 必须从预先指定主 horizon 的去重cluster真实计算 Brier score、log loss、base rate、base-rate Brier、Brier skill 与 reliability bins/ECE。布尔字段或任一 chain row 不能自证 calibration。当前最低证据为 20 个去重cluster、覆盖5个不同交易日、正 Brier skill 且 ECE 不高于 0.15；这些计数不自证时间独立。不满足时 status 明确为 unavailable/insufficient，原始分数仍只称 `rank_score`。
 
 benchmark 缺真实同期证据时，`benchmark_return/alpha/excess_return/beat_benchmark` 必须为 `null` 并带 `status=unavailable`；显式的真实 0 回报与 unavailable 是两种不同状态。
 

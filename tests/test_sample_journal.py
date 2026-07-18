@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import multiprocessing
 import os
@@ -260,6 +261,40 @@ def test_ashare_label_batch_uses_one_explicit_frozen_plan(tmp_path):
         event["forward_label_authority_binding"]["validation_plan_sha256"]
         for event in report["appended_events"]
     } == {plan.sha256()}
+
+
+def test_frozen_view_rejects_coordinated_event_head_rebase(tmp_path):
+    journal = SampleJournal(tmp_path / "frozen-rebase.jsonl")
+    journal.append_predictions(
+        [_candidate(symbol="600000.SH"), _candidate(symbol="600001.SH")]
+    )
+    view = journal.read_frozen(as_of=datetime(2026, 7, 13, 2, 0, tzinfo=UTC))
+    forged_events = view.copy_events()[:-1]
+    forged_head = SampleJournal.canonical_head(forged_events)
+    forged = replace(
+        view,
+        journal_head_event_count=forged_head["event_count"],
+        journal_head_sha256=forged_head["sha256"],
+        excluded_after_as_of_count=view.excluded_after_as_of_count + 1,
+        _events=tuple(forged_events),
+    )
+
+    with pytest.raises(JournalSafetyError, match="frozen journal source partition"):
+        forged.verify_integrity()
+
+
+def test_frozen_view_rejects_cutoff_rebase_with_hidden_max_evidence(tmp_path):
+    journal = SampleJournal(tmp_path / "frozen-cutoff-rebase.jsonl")
+    journal.append_prediction(_candidate(symbol="600000.SH"))
+    view = journal.read_frozen(as_of=datetime(2026, 7, 13, 2, 0, tzinfo=UTC))
+    forged = replace(
+        view,
+        data_as_of="2026-07-13T01:00:00+00:00",
+        max_evidence_available_at=None,
+    )
+
+    with pytest.raises(JournalSafetyError, match="frozen journal source partition"):
+        forged.verify_integrity()
 
 
 def test_non_ashare_label_materialization_remains_plan_optional(tmp_path):

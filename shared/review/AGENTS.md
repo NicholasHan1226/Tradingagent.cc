@@ -32,7 +32,7 @@ chain validation、盘外、缺来源/lineage、弱成交证据或 capital commi
 - horizon 固定为 `m30/m60/close/1d/3d/5d`；`next_day` 仅是 `1d` 兼容别名。
 - `as_of` 防止未来泄漏；日线不能伪造 m30/m60。反事实标签使用版本化保守成本，真实 round trip 使用 actual fee/slippage。
 - 5 分钟重复样本按 cluster 去重；未成交风格同样生成标签，避免选择偏差。
-- 同一决策时点的 style×MG×horizon 共用 `decision_cluster_id`；成熟度使用预先指定主 horizon 的 unique clusters、独立交易日与 N_eff，不使用 label-cell 总数。
+- 同一决策时点的 style×MG×horizon 共用 `decision_cluster_id`；成熟度使用预先指定主 horizon 的去重unique clusters、不同交易日覆盖与propensity权重Kish N_eff，不使用label-cell总数，也不把这些计数解释为收益序列已独立。
 - PIT 重新校验 event/available/ingested/retrieved 时间链；calibration 真实计算 Brier/log loss/base-rate skill/reliability，布尔字段不能自证。
 
 ## KPI 与成熟度
@@ -45,4 +45,15 @@ chain validation、盘外、缺来源/lineage、弱成交证据或 capital commi
 - `promotion_evidence_ready` 只表示证据检查结果；`automatic_promotion_enabled=false`、`automatic_risk_expansion_enabled=false`、`live_transition_authorized=false` 始终保持。
 - 短样本正收益不等于可重复盈利；机械闭环通过也不等于策略成熟。
 
+## 离线科学投影
+
+- `shared/runtime_test/ashare_offline_science.py`只从显式`SampleJournal.read_frozen(as_of=...)`视图读取，构建与验收只能消费精确类型的同一`FrozenJournalView`，从完整source events重建cutoff分区、excluded/max evidence与included head，并用进程内HMAC seal绑定原始source digest/byte count和内部索引。该seal不是外部签名或durable authority。调用方必须独立提供预期cutoff和authority scope；报告内自报值不能成为自身验收标准。向仓外内容寻址目录发布outcome、counterfactual、费用后metrics、calibration/MG ablation和run receipt；不得追加或改写Journal。
+- unique decision cluster是去重计数单位，不自证统计独立；必须分别展示观察交易日数、propensity权重Kish有效样本量与按最长主horizon移动观察交易日块估计的依赖修正样本量，不得把style×horizon label cells或字段名中的`independent`当作扩大N的依据。少于两个完整依赖块时置信区间保持unavailable。
+- Outcome及所有下游科学报告必须携带精确source events与预测前冻结的ValidationPlan重建复核；只重算报告自哈希、跨authority label update、缺日历目标、缺真实exit/PIT/成本证据或label算术不一致均fail closed。
+- counterfactual book是描述性研究投影，不是capital、position、order或PnL账本；MG消融必须共享PIT、成本和pair identity，缺配对保持unavailable。
+- 小账户敏感性只允许预注册的`max_positions / minimum_economic_order_cny / no_trade_band_cny / cost_stress_multiplier`固定网格，并固定50,000 CNY、15%单票、90% gross和100股整手；排除最低经济订单小于无交易区的无效组合后必须发布全部96格，缺格/重复/替换均阻断，禁止从结果挑选winner或回写policy。
+- 所有离线科学产物均无promotion、risk expansion或live transition authority；通过本地报告不能替代冻结OOS、外部label truth、生产metrics authority或人工复核。
+
 统一运行入口是 `python3 -m shared.runtime_test.ashare_sample_ops`；它只生成标签和投影，不创建订单、账户、邮件或 live transition。字段见 [../../docs/data_contract.md](../../docs/data_contract.md)，验收见 [../../docs/capital_growth_validation.md](../../docs/capital_growth_validation.md)。
+
+手工离线科学入口另为`python3 -m shared.runtime_test.ashare_offline_science`；它不是sample-ops替代品，不注册scheduler，也不能写默认Journal根。

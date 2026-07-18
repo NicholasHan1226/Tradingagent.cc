@@ -301,6 +301,12 @@ python3 -m shared.runtime_test.sharedsignals_v1_integration_probe \
 
 未来可把该命令放在自动模拟盘启动前作为 fail-closed 前置门，但当前没有注册 scheduler/cron，也未调用任何 live SS 地址。每次 catalog/dataset/schema、PIT 字段或 access policy identity 变化都必须生成新 manifest 与新回执，不能复用旧 PASS。
 
+### 2.2 本地 readiness receipt 兼容复核（preflight only）
+
+`shared/runtime_test/integration_readiness_profile.py`与`shared/runtime_test/integration_readiness_gate.py`只用于人工控制的本地preflight：先从同一显式probe配置生成exact expectation，再从权限不宽于`0600`的single-link regular file重读回执，最后检查交易日和runtime配置是否完全一致。成功结果仍固定为`authority=non_authority`和`verification_scope=local_content_integrity_and_config_compatibility`。
+
+当前没有为该复核注册CLI、composition、scheduler或cron。不得把它插入`shared/runtime|portfolio|capital|risk|execution`，不得让它创建capital/position/order/market evidence/SampleJournal事实，也不得因为本地SHA和进程attestation通过就声称回执来源可信、probe实际执行或live SS可用。未来即便有人工批准的模拟日runner，也必须在每次实际query后继续用`DataEvidenceGate`逐dataset验证；本地readiness结果只能证明“这份私有文件与这组显式配置相容”。
+
 DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：
 
 `TRADINGAGENT_LLM_API_KEY_ENV`只能取固定值`DEEPSEEK_API_KEY`；它不是让系统选择任意密钥变量的开关。任意模型映射只允许作为`fixture_only`离线测试路由，不能替代严格配置或授权网络出口。
@@ -444,6 +450,28 @@ A股 forward-label CLI 与 sample-ops CLI 合同都要求：
 该文件必须是预测前由外部calendar verifier生成并冻结的内容寻址`ashare_validation_plan_v1` artifact。CLI只加载、重建并校验canonical payload、plan/calendar/proof SHA和时点绑定；它不会调用verifier、不会自签proof，也不会从当天bar生成交易会话。缺参数、symlink、缺proof、hash漂移或非canonical payload时，会在读取行情前阻断。
 
 这两个模块当前仍位于`runtime_test`且默认reader尚在旧消费者退役清单中，所以不得把参数合同写成已接通SS V1的实时运行入口，也不得对默认review/Journal根执行。现阶段只允许通过注入reader的测试或显式隔离fixture验证；待同`as_of` V1 cutover、受信artifact registry和生产calendar readback完成后，才能另行登记scheduler命令。顶层fixture tier、`production_eligible=false`和内容hash都不能自行证明calendar来源真实。
+
+### 4.3 A股离线科学投影（手工、只读、仓外）
+
+只有在明确选择frozen SampleJournal cutoff和精确authority scope后，才可手工运行：
+
+```bash
+export REAL_TRADING_ENABLED=false
+
+python3 -m shared.runtime_test.ashare_offline_science \
+  --journal-path /absolute/path/to/sample_journal.jsonl \
+  --authority-manifest /absolute/path/to/authority-scope.json \
+  --validation-plan-path /absolute/path/to/ashare-validation-plan-v1.json \
+  --as-of 2026-07-17T16:00:00+08:00 \
+  --output-root /private/tmp/tradingagent-offline-science \
+  --bootstrap-iterations 1000
+```
+
+authority manifest只允许`capital_authority_id / authority_generation / execution_lineage_id`三个字段；validation plan必须是预测前冻结、由既有loader校验且内容寻址的`ashare_validation_plan_v1` artifact。loader会原样保留plan SHA、artifact SHA、authority tier、eligibility声明与verification receipt SHA，但不会把这些字段认证成可信authority。命令通过`SampleJournal.read_frozen(as_of=...)`一次性读取指定视图，并在使用前从完整source events重建`FrozenJournalView`的cutoff分区、excluded/max evidence与included head，再用进程内HMAC seal绑定原始source digest/byte count和内部索引；精确类型检查拒绝subclass。该seal不是外部签名或durable authority；构建与整包验收只从这一已验视图派生events和metadata。CLI参数中的`--as-of`和authority manifest作为独立预期锚点逐级传入exact verifier，不允许从待验报告内取出同名字段完成自证。命令重新从Journal事件、plan和provenance构建全部报告，并把这些绑定写入run identity；向仓外以run SHA为目录发布`outcome_evaluation.json`、`counterfactual_books.json`、`offline_metrics.json`、`calibration_ablation.json`和`run_receipt.json`。四份报告和五文件bundle都会从精确source重建；同identity只能字节一致重放，额外/缺失文件、仓库内输出、直接或祖先symlink、内容冲突、非法authority或绑定漂移必须阻断。
+
+当前CLI没有配置生产`ValidationPlanProvenanceVerifier`或`OutcomeMarketTruthVerifier`。因此即使输入文件自报`production_eligible=true`，结果也只能保留为observation-only，performance/calibration共同的eligible cohort为空；这不是故障，也不能被改成宽松fallback。只有未来独立任务把受信计划registry与真实reference/exit市场truth authority通过显式port接入、并完成对应readback后，才允许生成统计eligible样本。当前命令不调用网络、不追加Journal、不创建资本/持仓/订单，也没有scheduler和自动晋级权限。
+
+`shared/review/small_account_sensitivity.py`是同一离线科学套件中的独立固定网格实验库，当前没有CLI。它只允许扫描`max_positions / minimum_economic_order_cny / no_trade_band_cny / cost_stress_multiplier`四个工程轴，同时固定50,000 CNY、15%单票、90%gross与100股整手；排除最低经济订单小于无交易区的无效组合后，必须一次提交全部96个预注册方案。缺格、重复组合或替换组合均阻断，输出固定`prespecified_grid_complete=true`与`winner_selection_allowed=false`，不得把当前fixture中最好的一格写回policy或Champion。
 
 ## 5. 每个模拟日的验收顺序
 
