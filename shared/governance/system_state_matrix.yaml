@@ -817,35 +817,35 @@ entries:
       - execute_retired_ashare_wrappers
     successor: shared/crontab.txt
   - entry_id: tradingagent_installed_cron
-    state: HISTORICAL_READ_ONLY
-    layer: production_runtime_unverified_this_turn
+    state: CURRENT_VERIFIED
+    layer: production_runtime_read_only_snapshot
     owner: TradingAgent
     canonical_path: marketgraph-user-crontab
     production_verified: false
-    last_verified_at: "2026-07-14"
+    last_verified_at: "2026-07-19"
     evidence:
       - STATUS.md
     allowed_uses:
-      - historical_reference_only
+      - compare_read_only_crontab_digest_during_release
     prohibited_uses:
-      - infer_current_schedule
+      - infer_candidate_schedule_or_activation
       - mutate_or_install_cron
-    successor: authorized_readback_required
+    successor: separately_authorized_activation_required
   - entry_id: tradingagent_production_runtime
-    state: HISTORICAL_READ_ONLY
-    layer: production_runtime_unverified_this_turn
+    state: CURRENT_VERIFIED
+    layer: production_runtime_read_only_snapshot
     owner: TradingAgent
     canonical_path: /opt/investment/tradingagent
     production_verified: false
-    last_verified_at: "2026-07-14"
+    last_verified_at: "2026-07-19"
     evidence:
       - STATUS.md
     allowed_uses:
-      - historical_reference_only
+      - compare_read_only_runtime_inventory_during_release
     prohibited_uses:
-      - infer_current_runtime
+      - infer_candidate_deployed_or_activated
       - deploy_or_write_production
-    successor: authorized_runtime_readback_required
+    successor: separately_authorized_activation_required
   - entry_id: tradingagent_front
     state: CURRENT_VERIFIED
     layer: repository_contract

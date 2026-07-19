@@ -22,7 +22,7 @@
 - A股资本、执行 lineage 与 SampleJournal 是仓库契约层当前能力；它们不证明生产 runtime、cron 或真实市场样本已验证。
 - 主板 scope、Phase 1.5 行业 shadow 薄切片、OpportunityRadar/Ledger、多期限 forecast 合同、三风格 shadow router、LLM evidence、accepted/rejected物理隔离结果Journal与独立provider-invocation仲裁Journal组成的本地CAS provenance router、无密钥DeepSeek候选配置、默认关闭的DeepSeek HTTPS transport候选、V1 client、V1 integration-readiness probe、小资金 optimizer、六维投资论点风险authority、canonical simulated account authority、当前Champion/数值PIT特征绑定、mark/quote evidence authority、逐副作用trusted clock、fixture evolution clock、固定trust-root metrics verifier、authority-bound plan、negative-only evolution、automatic day loop、capital-backed paper composition、fixture CLI、RunBundle store、Decision Ledger和label maturity已在YAML中登记为`CURRENT_VERIFIED`的`local_isolated_candidate`。这不表示预测有效、概率已校准、阶段通过、Git主线、scheduler、live SS、真实paper session、accepted DeepSeek evidence或生产可用。integration probe只生成非authority回执；未获准的live endpoint不会被调用，分页receipt/排序/snapshot语义未冻结时继续阻断。coverage/industry score/account/thesis-risk/calendar/market evidence/Champion registry/feature/metrics/clock 的生产 verifier 均未接入；本地proof只证明完整输入绑定，不是外部签名、外部密封或真实市场/账户readback。行业薄切片只动态选择 1 个深研行业和 2 个观察行业；新增机会/预测/风格链只输出shadow审计，均不能改变 Champion、仓位、风险或订单。
 - 当前 DeepSeek 候选接受两种精确transport：同时绑定request/outbound identity的冻结离线响应fixture，以及默认关闭、固定官方HTTPS地址、禁代理/重定向/自动重试的`DeepSeekHTTPTransport`。2026-07-18一次旧A股v1 Prompt的隔离真实请求到达HTTP 200 provider envelope，但evidence binding被本地schema拒绝；没有accepted receipt、Journal或生产切换。当前代码另有互斥的audit-only rejected-attempt receipt合同和独立audit Journal，A股v2 Prompt只完成离线fixture验证，二者都不能追溯包装该旧canary。Bull/Bear provider模式要求显式typed recorder、稳定request ID、同source verifier，以及由一个显式绝对accepted锚点派生的canonical accepted/rejected/provider-invocation Journal family；invocation逻辑键不依赖调用方ID，网络前落`in_flight`并持跨进程锁至唯一终态。非canonical family、相对路径、Unicode/大小写/真实路径或物理别名、未知mode、伪recorder、换ID重发、冲突、未知in-flight或持久化失败均fail closed。三类readback只属`local-integrity-only`；跨主机/生产worker共享同一锚点尚未装配验证，accepted evidence、认证稳定性、quota/限流/成本、数据留存和生产可用性仍未验证。
-- `shared/crontab.txt` 是仓库调度模板，不是已安装 cron。模板已移除显式旧A股调度；仍保留的wrapper由不可环境覆盖的kill switch阻断（退出码78），只能用于识别历史安装依赖与退役审计。`/opt/investment/tradingagent`和安装态cron本轮不访问、不修改，状态保持historical/unverified。
+- `shared/crontab.txt` 是仓库调度模板，不是已安装 cron。模板已移除显式旧A股调度；仍保留的wrapper由不可环境覆盖的kill switch阻断（退出码78），只能用于识别历史安装依赖与退役审计。2026-07-19 已对 `/opt/investment/tradingagent`、现役 service/loopback health 和安装态 cron 做只读摘要 readback，因此机器矩阵只在 `production_runtime_read_only_snapshot` 层标记新鲜；`production_verified=false`，候选仍未部署或激活。
 
 ## 本地候选与机器门禁对照
 
@@ -88,8 +88,8 @@
 | `tradingagent_execution_lineage` | `CURRENT_VERIFIED / repository_contract` | 模拟订单/成交/对账 lineage |
 | `tradingagent_sample_journal` | `CURRENT_VERIFIED / repository_contract` | append-only 学习事实，不自动晋级 |
 | `tradingagent_repository_cron_template` | `CURRENT_VERIFIED / repository_contract` | 只读调度设计；不代表已安装 |
-| `tradingagent_installed_cron` | `HISTORICAL_READ_ONLY / production_runtime_unverified_this_turn` | 本轮未 readback |
-| `tradingagent_production_runtime` | `HISTORICAL_READ_ONLY / production_runtime_unverified_this_turn` | 本轮未 readback、未写入 |
+| `tradingagent_installed_cron` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | 2026-07-19 只读摘要 readback；未安装、修改或激活候选调度 |
+| `tradingagent_production_runtime` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | 2026-07-19 只读 readback；现役仍为旧 SHA，候选未部署、未激活 |
 | `tradingagent_front` | `CURRENT_VERIFIED / repository_contract` | 只读模拟看板；`tradingagent.cc`仅作待验收的单用户认证入口，不写订单或资金、不允许匿名访问/API直出 |
 
 ## 阶段出口前的必需证据

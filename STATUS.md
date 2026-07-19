@@ -1,74 +1,59 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-18 CST。本文件只记录当前工作树证据、阻塞和下一门禁；长期规则见 [AGENTS.md](AGENTS.md)，运行命令见 [docs/operations.md](docs/operations.md)。旧提交、旧生产快照和作废候选从 Git 历史审计，不在现役状态文件重复维护。
+> 最后更新：2026-07-19 CST。本文件只记录当前候选、主线、服务器与外部依赖的分层事实；长期规则见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。历史事故、旧候选和作废证据从 Git 与服务器只读证据目录审计，不在这里维护流水账。
 
-## 当前结论：DeepSeek 单次隔离真实 canary 已到达 provider但证据 schema 拒绝；现役生产未激活
+## 当前结论
 
-当前唯一开发位置是 `TradingAgent/.worktrees/ta-v1-data-client`，分支 `codex/ta-v1-data-client`。DeepSeek HTTPS 直连客户端与后续隔离修复的服务器基线为 `be2c45595f671413b6078093e8bec21f06e9ba54`，GitHub Actions run `29549692274`通过。2026-07-18 对该基线的 tracked-only 隔离副本执行了一次`deepseek-v4-flash` Gateway 真实请求；provider envelope已通过，但A股v1输出在evidence binding阶段以`llm_evidence_schema_invalid`失败。因此没有accepted `ProviderTransportReceipt`，也没有证据Journal、模拟订单或交易权限。现役生产源码仍为`6c12fbed29db925019f85a6016774626f63b857a`且`active_production_activated=false`。这些证据不是 Phase 1 通过、Git 主线、SharedSignals live API、可用的DeepSeek证据产品、现役生产激活、已安装 scheduler/cron、真实模拟盘样本或真实交易完成证明。
+TradingAgent A股 V1 已形成一个本地集成候选，仍是 **fixture/mock-first、simulation-only、无真实交易权限**。集成候选代码冻结锚点为 `f1a0387`，位于 `TradingAgent/.worktrees/ta-v1-integrated-release` 的 `codex/ta-v1-integrated-release` 分支；状态文档提交本身由所在 Git 提交识别，不把自引用 commit hash 写入文件。
 
-- `REAL_TRADING_ENABLED=false`；Nicholas 已分层授权服务器旁路候选、隔离credential和一次无重试/无fallback的真实 canary。该三项授权已使用，没有扩大到 merge/main、现役源码切换、服务/cron变更、页面/公网路由、第二次模型请求、发邮件、连接 broker、GUI 或真实交易；后续每一层仍需独立门禁。
-- 产品边界已确认为 Nicholas 个人内部使用。`tradingagent.cc`保留为个人远程访问入口，但必须由Cloudflare Access或等价单用户认证保护；API继续只监听localhost，禁止匿名公网访问或API直出。本轮未修改DNS、Tunnel、Pages或Access policy；最新只读现网权限证据见下条。
-- 2026-07-16 23:50 CST 只读现网探测补充了反向证据：未携带登录态或认证头时，`www.tradingagent.cc`与`dashboard.tradingagent.cc`均返回`200`页面，`GET https://tradingagent.cc/api/trading-agent/snapshot`返回`200`、约34KB JSON，并暴露`holdings/signals/portfolio`等顶层字段。CORS不能替代身份认证，因此现网不满足单用户内部入口要求；在Cloudflare Access（或等价策略）与API公网路径完成拒绝/重定向及Nicholas登录readback前，禁止把候选接入公网入口或切换现役前端/API。该限制不阻断无公网、无现役切换的服务器旁路验证。此次探测未修改任何线上配置。
-- 同轮只读生产核查确认`tradingagent-front-api.service`为`active`，本机`127.0.0.1:8787/healthz`返回`200`且端口只监听loopback。生产仓HEAD为`6c12fbed29db925019f85a6016774626f63b857a`；以`marketgraph`身份只读导出的Git bundle对比证明它是当前候选的祖先，候选`4d49532`相对该生产点为`production-only=0`、`candidate-only=14`，没有遗漏生产独有提交。生产机的回滚目录和`shared/review/ashare/`运行资产保持未跟踪、未修改；未来部署必须继续保留。
-- 2026-07-17 CST 已在 `/opt/investment/tradingagent-candidates/ta-v1-data-client-4d49532` staged detached 候选，并使用独立 venv、独立前端依赖、独立 canary 输出与受限证据目录完成服务器原生验收。Python 3.12.3 / pytest 9.1.1 下为 `2928 passed`、`161 subtests passed`；前端为 43 个测试文件、`276 passed`、lint `0 warnings / 0 errors`、`build:all`通过。候选 API 仅临时监听`127.0.0.1:18787`，返回`mode=simulated`、全部真实交易标志为false，POST返回405、未知路由404，验证后已停止且端口无残留。离线fixture同根重放幂等、跨根产物字节一致，仍为`non_authority/local_candidate/production_verified=false`。证据保存在`/opt/investment/release-evidence/tradingagent/20260716T164035Z-ta-v1-data-client`；`deployment-receipt.json` SHA-256为`8c03a77f0ab8445ce1039ac1ce95749823c8b86a2c1d50367e51c4c65620aba5`，`final-sha256.txt` SHA-256为`edb0d149d3bf9881f9848c7a2a005de63a56fb1a2cb388b078d796d00ac64540`。最终pre/post inventory未发现部署造成的非预期差异：现役HEAD、systemd unit、服务、crontab与生产git status保持基线，既有未跟踪运行资产被保留且部署命令未清理或覆盖。
-- 2026-07-17 CST 按 Nicholas 明确指示，将指定 DeepSeek credential 仅保存到服务器候选专用文件 `/opt/investment/tradingagent-secrets/ta-v1-data-client-4d49532/deepseek.env`；目录权限`0700`、文件权限`0600`，owner为`marketgraph:marketgraph`，仓库、候选目录、现役通用`.env`和验收凭证均不含credential或其指纹。公开配置固定为官方base URL、`deepseek-v4-flash`/`deepseek-v4-pro`和`TRADINGAGENT_LLM_NETWORK_ENABLED=false`。独立readback证明现役`tradingagent-front-api.service`没有加载该变量、unit与现役源码未变化且health仍通过；候选仍只有离线fixture transport，`transport_state=not_installed`，因此没有发生provider认证、模型调用或额度验证。非秘密配置凭证保存在`/opt/investment/release-evidence/tradingagent/20260716T171930Z-deepseek-secret-config-4d49532`。该credential曾在会话中暴露，当前只能保持惰性隔离；任何未来网络transport或真实canary之前仍必须在供应商侧revoke/rotate并以新值重新注入。
-- 上条历史服务器秘密文件是旧 env-style 候选证据。本轮新 HTTP 客户端只接受不含键名和换行的 raw-secret 文件，不兼容也未读取该旧文件。credential曾在会话中暴露；Nicholas已明确授权本次隔离 canary 作为安全例外，但这不消除供应商侧rotate的剩余风险。后续请求仍需新的独立网络授权，不得从本次例外推导常驻网络权限。
-- 2026-07-18 真实 canary 证据位于`/opt/investment/release-evidence/tradingagent/20260718T061511Z-deepseek-real-canary-be2c455`。`canary-receipt.json` SHA-256为`50e40bc859b2425abd883771c519053eeea1e35d98ab3155a126ed7a4bc8609a`，`postflight-verification.json` SHA-256为`17226be20c08643dc5460bba2ad8dfd7102e71ecdabb9a71713650d74ada4639`。回执只记录失败状态、安全hash与生产后检，不含密钥或provider正文；原始响应未持久化，所以不能确定精确违规字段。临时secret目录已清除，现役service/PID/unit/`127.0.0.1:8787`与源候选SHA前后一致。一次性 runner 在导入项目模块前未完成stdlib-only hermetic bootstrap，因此该runner不得晋级或复用为生产发布工具。
-- 本机Wrangler `4.110.0`的OAuth凭据已过期且环境中没有Cloudflare token；`whoami`无法通过，所以Pages、Tunnel与Access控制面仍不可读写。在Nicholas重新完成Cloudflare交互登录前，不得声称已验证或已部署认证入口。
-- GitHub Actions run `29513481320` 在干净 Ubuntu runner 暴露了15个真实缺口：运行态`signals/`被误当作clean-clone源码、Linux Bash的`BASH_ENV`在退役门禁前执行环境文件、以及CNFutures兼容读取在显式空URL下构造相对地址。当前修复已把源码路径与Git忽略的`runtime_paths`分开并限制其只能是仓库内相对路径、用不可由环境预置绕过的Bash source-stack识别预加载、统一hard-block旧opportunity writer，并让CNFutures显式空authority在旧reader前端到端fail closed；SQLite仅能通过显式诊断开关与已存在的诊断数据库启用。后续Ubuntu runs `29515041266`、`29515351966`均只剩同一T+1测试跨时区缺陷：测试用runner本地日期建仓，而业务按Asia/Shanghai交易日判断，在UTC/CST跨日窗口产生假失败；当前候选冻结交易日、显式传入`as_of`并隔离两处calendar adapter。CI同环境本地全量`2928 passed in 38.14s`，独立只读复核无P0/P1/P2；提交`4d495322675bfdfe603fb6a4edcc7b07a728fe68`已由干净Ubuntu run `29516030155`完整通过。该run仅有GitHub Actions自身Node 20弃用提示，未出现测试或项目代码失败。
-- 提交`85c6363`的首次GitHub run `29548459313`为`31 failed / 2968 passed / 175 subtests`；31项都由同一根因产生：pytest在Ubuntu把`tmp_path`放到共享`/tmp`父链，credential安全策略按设计返回`deepseek_credential_parent_untrusted`，使后续HTTP负例无法到达各自断言。最小修复只覆盖该测试模块的`tmp_path` fixture，在当前用户HOME下创建并自动清理`0700`目录；未放宽生产父目录、symlink、owner或权限检查。提交`1a41d595f3b56ba2c129bc7a648d32345a6ffcf6`已由GitHub run`29548695412`验证通过。
-- `1a41d59`首次服务器旁路全量测试为`1 failed / 2998 passed / 175 subtests`，唯一失败是MG配对测试的base macro从预期`0.5`变为`0.694666...`。只读取证证明旧`TradingagentDataReader`把显式`api_client=None`误解为自动连接`127.0.0.1:8082`，从而读取服务器本机旧API数据并污染隔离测试；该失败候选、venv及证据目录`/opt/investment/release-evidence/tradingagent/20260717T015835Z-ta-v1-data-client-1a41d59`均原样保留，未运行前端、canary或生产动作。修复提交`be2c45595f671413b6078093e8bec21f06e9ba54`用sentinel区分“省略参数”和“显式None”，不改变37个省略参数的旧消费者；服务器SAFE_ENV同时显式清空SS/MG URL，避免其它旧reader读取现役localhost。旧默认地址和未绑定endpoint/identity的类级缓存已登记退役backlog，不在本次DeepSeek发布中扩大迁移。
-- `be2c455`已由GitHub run`29549692274`验证通过，并在服务器新建`/opt/investment/tradingagent-candidates/ta-v1-data-client-be2c455`与独立venv；后端为`3002 passed + 175 subtests`、compileall通过，前端43文件`276 passed`、lint`0 warnings / 0 errors`、`build:all`通过。临时API仅监听`127.0.0.1:18787`，验证`mode=simulated`、全部真实交易标志为false、POST 405、未知路由404，随后停止且端口关闭；fixture同根重放幂等、跨根业务artifact字节一致。证据目录为`/opt/investment/release-evidence/tradingagent/20260717T022353Z-ta-v1-data-client-be2c455`，`deployment-receipt.json` SHA-256为`df7c8d12ed3bd9c3ef73a92e6b6ab7dcb0fd45bccb53c95f0df7c3fbc88ba8aa`，`final-sha256.txt` SHA-256为`fbaaf1ab2cb098fb7eb0d02ec9b7147b9bff59fa4eddde6bc9a63ee97c39f12c`。该次旁路验收本身没有DeepSeek credential且未调用provider；随后2026-07-18的单次真实canary使用独立tracked-only副本和独立secret目录，未改动该原候选。现役HEAD、完整git status、systemd unit/PID、crontab与8787健康状态前后相同。
-- SharedSignals 完全由上游唯一 writer/reviewer 管理。TA 不读取或修改 SS 仓，只消费显式 fixture/port 的 `GET /v1/catalog` 与 `POST /v1/query` 合同。
-- 本线程的交付目标是 TradingAgent 本地候选，不包含 SharedSignals 服务端重构、测试、集成或验收；任何把“SS 与 TA 重构”并列为本线程 Goal 的旧表述均以本条 ownership correction 为准。
-- TA ownership 门禁已进一步收紧：本仓测试不得定位/导入/执行兄弟仓 reader、API server、SQLite 私有函数或复刻上游 HTTP server；current-v1 consumer 与候选清单不得依赖旧 reader、旧 runtime gate 或专用 SS 路由。原跨仓 edge/server 测试已从 TA 验收面清除，SS 服务端行为由上游自己的验收线负责。
-- HTTP 200 不能覆盖逐 dataset 的 `state/degraded/freshness/quality/lineage/receipt` 失败；V1 QueryRequest 已要求 `schema_major`，`order` 省略时不发送并由 registry 默认排序。impaired dataset 可如实返回 null source proof，TA 不补造且 Evidence Gate fail closed；禁止 Tushare、SS SQLite、旧状态/数据专用端点和缓存数据 fallback。
-- 本工作树新增 `sharedsignals_v1_integration_probe.py` 本地候选：从仓外绝对路径读取secret-free manifest，对交易日历、证券主数据、主板日线和全市场行业/双创指数聚合等显式角色执行统一`as_of`双跑，复用Evidence Gate与ResearchDataSnapshot检查必需字段、最小行数、行级PIT和source proof，并输出脱敏、内容寻址的`non_authority`回执。当前只完成fixture/transport-port测试，未调用live SS；跨页receipt/默认排序/snapshot identity未由SS冻结，`next_cursor`非空固定阻断而不自行拼页。该能力不改变任何scheduler、模拟订单或交易authority。
-- 机器状态见 `shared/governance/system_state_matrix.yaml`；其中 local candidate 的 `CURRENT_VERIFIED` 只在明确 allowed uses 内成立，全部 `production_verified=false`。
+该候选合并了原 `ta-v1-data-client` 候选与本地主板 fail-closed 修复，并撤回了旧 `SharedSignalsAPIClient` 对 V1 的错误 ownership。A股 current-v1 只允许显式配置、显式 transport 的 `GET /v1/catalog` 与 `POST /v1/query`；旧 reader 只按 `active-compatibility` / `retirement-pending` 服务非 A 股兼容与法证路径，旧 A股 writer/wrapper 保持 `hard-blocked`，都不得拥有或自动接线 V1。
 
-## 本地候选能力
+## 五层事实
 
-1. **SS V1 client、轻量运行门与接入验收器**：provider-neutral catalog/query、显式 base URL/catalog/dataset/access policy、完整 envelope、缓存身份与 fail-closed 负例；新增secret-free profile manifest、统一`as_of`双跑语义检查、必需字段/行级PIT/receipt验证和非authority回执。当前只有 fixture/合同证据，分页未冻结时阻断，不证明live SS。
-2. **主板三层 Universe**：主板普通 A 股是唯一可进入个股分析、候选、预测、影子、仓位、订单、成交和持仓的 scope。创业板/科创板指数及行业聚合只作 `context_only` 环境证据。
-3. **CoverageReceipt**：行业宽度由内容寻址 taxonomy、PIT membership、板块/行业 expected-vs-observed、双创环境对象和来源 generation/receipt/lineage 派生；构造与消费均要求无默认实现的外部 verifier 复核 denominator，调用方不能自报 full-market，缺失/过期/异常/未验证只可拒绝或 degraded。
-4. **Phase 1.5 行业 shadow v2**：动态选择 1 个深研行业和 2 个观察行业，绑定 PIT taxonomy、score method/version/validity、score/coverage receipts、内容 hash 和独立 authority proof；不输出个股，不改变 Champion、仓位、风险、订单或晋级状态。当前只有 fixture verifier。
-5. **50,000 CNY 小账户决策与论点风险**：唯一A股policy定义15%单票、90% gross、最多8仓、最低经济订单2,000 CNY和无交易区1,000 CNY。optimizer强制无默认`AccountAuthorityVerifier`，proof绑定完整账户内容、verifier身份与有效期；当前只有不可晋级fixture verifier，所以这里只证明输入/proof绑定，不证明真实账户、券商持仓或可卖数量。新增`ThesisRiskRuntimeAuthority`按行业、投资论点、原材料、政策/事件、拥挤、模型家族六维绑定显式人工policy、逐成员detached proof和完整候选/持仓/pending exposure-set receipt；运行时不能自签、漏记pending或跨决策重置，同一symbol的candidate/position/pending也不能改换group规避cap。只有open/increase受上限阻断，合法reduce/exit保留。买入为100股整数倍；卖出只允许100股整数倍、完整零股余额或全部退出且受T+1约束。canonical非空持仓mark与非空执行quote现强制嵌入完整`MarketEvidenceAuthority`，绑定dataset/catalog/source receipt/lineage、calendar、capital generation、execution lineage与时点；当前唯一具体verifier明确`production_eligible=false`，hash只证明本地完整性。day loop另行把每笔六维group绑定回权威exposure receipt，并复算论点暴露、佣金、过户费和卖出印花税。
-6. **冻结 Champion**：第一阶段只有 `uncalibrated_deterministic_rank_score` 与现金基线。score receipt同时绑定当前人工selection manifest、artifact SHA、model ID/version、冻结spec和经独立port复核的数值PIT feature snapshot；future/LLM/过早或调用方自证feature拒绝。rank只排序，新仓保持与rank无关的固定probe；不声称概率、正期望或收益保证。生产Champion registry与数值feature authority verifier尚未接入。
-7. **自动模拟日候选**：网络关闭的 `FrozenFixtureStagePort`、authority-bound plan、sim OMS、reconcile、Decision Ledger、RunBundle event store/publisher 和仓外 fixture CLI 支持幂等 replay。业务 receipt 排除本机绝对 Journal 路径并使用相对 publisher-root 的稳定 artifact 定位，因此相同输入跨不同输出根得到相同 run/bundle identity 与 artifact bytes；CLI 顶层仍返回可操作的绝对路径。fixture 永不进入正式 SampleJournal 或晋级证据。
-8. **模型与科学治理**：`ValidationPlan`除实验预算/PBO/DSR/OOS外，强制无默认calendar verifier、预测前冻结的detached proof与完整交易会话；SampleJournal及A股label/sample ops已显式贯穿该计划，CLI要求`--validation-plan-path`加载预先生成且内容寻址的artifact，不在运行时调用verifier或铸造proof。A股`close/1d/3d/5d` target从同一authority派生、调用方不一致即拒绝、缺日线不顺延。metrics verifier现固定本地implementation trust root，重读canonical artifact/receipt并复核全部label/cost/source/window/horizon/regime/journal/model/sample-count绑定；proof仍只是本地完整性hash，不是签名或真实独立重算authority。生产calendar、受信artifact registry、真实exit/总回报/公司行动真值和统计实证仍未完成。
-9. **持久 drift、恢复顺序与执行TOCTOU约束**：自动化只允许隔离、reduce-only、stop-new-risk或require-review。最新latch与Champion authority在每次risk评估及网络关闭的模拟副作用前重读；capital commit在时钟校验后、账务提交前还会做最终重读。显式`TrustedExecutionClock`在`sim_submit`与`capital_commit`前分别重验quote freshness/session，并以不截断的ISO时点强制`quote <= submit <= fill/terminal <= commit <= reconcile`。模拟fill使用submit副作用时间而不是较早quote时间；commit时钟倒退、跨交易日或quote失效会保留坏reading、把terminal停在最后合法时点、释放预约且不提交capital账务，并产生可严格对账的`not_committed`失败回执。回执固化market session、available/data-through与统一30秒TTL；日循环和对账按生产器相同优先级复核唯一失败原因、精确terminal、零成交、完整残量、无fill/commit ID及释放证明。零成交释放还要求订单cash/exposure等于canonical完整剩余预约，首次释放服从effect guard；精确release event在其事件前缀中必须立即得到terminal与cash/exposure/margin全零，部分释放、后补归零、legacy别名或terminal fill冒充release均阻断，同一reference只可幂等恢复既有终态event。崩溃恢复先校验pending outbox/完整receipt seed，并仅在canonical ledger返回对应commit的`idempotent=true`时补settlement；intent已落盘但commit未发生时不会绕过最新收紧门。当前仅有冻结fixture clock；生产time authority、原子化外部authority+commit和未来live broker副作用门禁仍未验证。
-10. **影子机会、预测与三风格合同**：`OpportunityRadar`以外部复核的PIT coverage denominator扫描主板，`OpportunityBatch`绑定完整扫描集合，OpportunityLedger按CAS/hash-chain保存不可变状态迁移并拒绝伪造/回退/无新证据更新；多期限合同输出`m30/m60/close/1d/3d/5d`未校准quantile/hazard，detached calibration artifact必须回绑同一forecast/PIT/model/OOS proof；三风格router仅组合`industry_trend/event_surprise/cross_market_dislocation`的去重证据并可abstain。三者都是shadow-only，不证明预测有效或可发布概率，且由静态依赖门禁止进入Champion、optimizer、risk或execution。
-11. **LLM evidence sidecar**：固定Prompt、`untrusted_artifact_data`、内容寻址source span、PIT、source proof/verifier、全树输入/输出敏感数据门，并对全角、零宽、HTML/URL/JSON Unicode、齐尔里字母与组合符等常见混淆提示注入 fail closed。A股v1模板字节冻结，v2固定要求原始JSON、恰好七字段、非空核心字符串、字符串数组和逐字复制的`artifact_id`引用；当前A股请求已在本地候选切到v2，但没有执行第二次真实provider调用。适配器只允许类型化离线 fixture 或固定 `POST https://api.deepseek.com/chat/completions` 的默认关闭 HTTPS 客户端；后者禁止代理、重定向、重试和fallback，强制系统 TLS/主机名校验、raw-secret文件权限、严格 UTF-8/JSON/字节上限。成功证据生成accepted `ProviderTransportReceipt`；真实HTTP 200 envelope已通过但evidence schema/binding失败时，只能生成独立、互斥、`audit_only=true`且全部authority为false的`ProviderRejectedAttemptReceipt`，不得进入accepted evidence Journal或任何样本/决策链，也不得追溯包装2026-07-18旧canary。Bull/Bear provider入口现要求显式typed recorder、与Adapter同对象的source verifier、稳定request ID，以及由一个显式绝对accepted锚点派生的canonical accepted/rejected/provider-invocation Journal family。输入路径必须原始绝对，三类Journal端点构造后封闭不可改；另配invocation锁、相对路径、端点改写及Unicode/大小写/真实路径或物理文件别名均拒绝。invocation Journal以不依赖调用方ID的逻辑内容键在网络前持久化`in_flight`，并持跨进程锁覆盖双结果检查、provider调用与唯一终态；同一canonical family内的并发同请求只调用一次provider，换ID重发、unknown mode、伪recorder、冲突、未知in-flight或任一read/CAS/文件身份/持久化失败均fail closed。provider调用后崩溃且没有可验证终态时禁止自动补发。accepted只写`LLMEvidenceJournal`，rejected只写物理分离的`LLMRejectedAttemptAuditJournal`，invocation只记录本地仲裁；只有已持久化唯一终态的精确重放不重复调用provider。Gateway现在对完整request/source/material摘要、canonical observation精确字段集和evidence正文hash做最终重绑；三类Journal回读只提供`local-integrity-only`、深层不可变的非权威descriptor视图，不重建typed HTTPS receipt。公开send和脱离Gateway的Adapter均在副作用前拒绝，wire path只接受Gateway验证后铸造的内部capability。该本地锚点和两类receipt都不是provider签名、外部密封或production durable authority；跨主机/生产worker共享同一锚点尚未装配验证。单次真实schema-rejected调用不证明认证稳定性、模型可用性、生产verifier、durable sink或增量价值，LLM无交易权限。
-12. **只读前端**：Today/market context 只读本地安全投影；旧机会漏斗文件只标为冻结法证历史，不能提升signals/risk readiness、heartbeat或当前持仓/PnL归因；无V1 authority的A股legacy pending queue行不进入当前signals。证据缺失显示 unavailable/degraded，不提供任何写资金、队列、订单、邮件或回调能力。
+| 层级 | 2026-07-19 当前事实 | 不能据此推断 |
+|---|---|---|
+| 本地集成候选 | `codex/ta-v1-integrated-release`；代码锚点 `f1a0387`；本文件提交后以 `git rev-parse HEAD` 和 clean status 为最终字节证据 | 不等于 GitHub、主线或服务器 |
+| GitHub 候选 | 集成分支尚未 push，尚无对应 PR/CI；Draft PR #2 仅对应旧源候选 `codex/ta-v1-data-client@de57a71` | PR #2 不代表本集成候选 |
+| Git 主线 | `origin/main@3b3aab41bcf1fee046da169f6fd582b4f2818cba`；尚未合入本集成候选 | 本地 main 的额外提交不等于远端主线 |
+| 服务器现役 | 只读 readback：`/opt/investment/tradingagent@6c12fbed29db925019f85a6016774626f63b857a`；`tradingagent-front-api.service=active`，PID `1043`，仅监听 `127.0.0.1:8787`，`/healthz` 为 200；`127.0.0.1:18787` 无监听 | 现役代码未切换，候选未部署、未激活 |
+| 外部能力 | 未连接 live SharedSignals、真实 DeepSeek、broker、邮件、同花顺、GUI、Cloudflare 控制面或公开 API | 不能声称真实数据闭环、真实模型可用或真实交易 |
 
-## 明确尚未实现
+服务器只读快照同时记录：现役 Git status 有 49 条既有运行/回滚资产，内容摘要为 `2ac8dc6a...74f9`；systemd unit 摘要为 `9128f159...2307`；marketgraph 用户 crontab 摘要为 `af3605a8...fc9a`。这些值只用于本次发布前后差异比较，不能成为候选能力或生产激活凭证。
 
-以下条目在机器状态中仍是 `PLANNED_NOT_IMPLEMENTED`，不能被文档、旧代码或界面描述成当前能力：
+## 当前候选能力
 
-- 真实 SS V1 驱动的 live paper scheduler。
+1. **固定 SS V1 consumer 合同**：八字段 QueryRequest、完整 Catalog/Query envelope、逐数据集 evidence gate、nullable source proof 与 fail-closed；无 SS DB、`/tushare`、`/source_status`、provider 专用 route 或本地文件 fallback。
+2. **递归证据快照**：Catalog/Query 数据及 freshness、quality、lineage 内部保存 canonical JSON 快照；调用方修改原 payload、返回副本或缓存副本不能改变后续 Gate 判断。嵌套 `failed/error/invalid/unavailable` 统一拒绝。
+3. **三层 A股 Universe**：只有沪深主板普通股可进入个股分析、候选、预测、模拟仓位与订单；创业板、科创板个股无权限时不分析、不交易，其指数及行业汇总只作市场环境和行业宽度参考。
+4. **小资金决策与组合**：50,000 CNY simulated authority、100 股整数约束、15% 单票、90% 总敞口、最多 8 仓、最低经济订单、no-trade band、费用/滑点、T+1、现金与六维投资论点风险门。
+5. **研究与自动模拟闭环候选**：Opportunity Radar/Ledger、多期限未校准 forecast、三风格 shadow router、Decision Ledger、RunBundle、label maturity、counterfactual 与网络关闭的 automatic day fixture。它们不证明预测有效，也不是已安装 scheduler。
+6. **LLM evidence sidecar**：DeepSeek transport 默认关闭，固定 evidence-only schema、accepted/rejected/invocation Journal 与 fail-closed provenance；LLM 禁止输出订单、仓位、目标权重或风险预算。2026-07-18 的旧单次 canary 仅证明请求到达 provider 后被本地 schema 拒绝，没有 accepted evidence，不能复用为当前候选或生产凭证。
+7. **只读前端**：`front/` 是唯一前端入口，只显示模拟状态与证据缺口，不写资本、订单或交易权限。线上页面恢复不在本阶段范围。
 
-DeepSeek 官方 HTTPS 客户端现已是 `CURRENT_VERIFIED/local_isolated_candidate`，不再属于“未实现”；服务器 detached 候选只验证了 network-disabled、simulation-only 的安装与离线运行。随后一次隔离真实请求到达provider但被evidence schema拒绝；accepted evidence、认证稳定性、quota/成本/留存、新密钥轮换与生产激活仍未验证，不得由本地mock、服务器旁路或单次HTTP 200推断。
+## 本轮验证状态
 
-机会雷达/Ledger、多期限forecast和三风格router的**本地shadow合同**已经存在，但“实证有效、概率校准可发布、统一50k动态风格预算或接入当前订单链”仍未实现，不能借`CURRENT_VERIFIED/local_isolated_candidate`措辞升级。
+- SS V1 client/evidence/research/runtime/架构相关：`242 passed`；Ruff check 与相关格式检查通过。
+- 交易安全只读终审锚定 `525065c`：P0=0、P1=0、P2=0；专项 `389 passed`。之后唯一代码变化是 SS envelope/evidence P1 修复，正在进行独立 fresh 复核。
+- 前端：43 个测试文件、`276 passed`；`npm run lint` 与 `npm run build:all` 通过。
+- 第一次集成全量基线：`3065 passed / 1 failed`；唯一失败是已修复的旧 provenance 断言。最终冻结字节的完整后端全量尚待重跑，因此当前仍不可 merge。
+- 候选清单：上一冻结字节为 `1513 passed`；最终文档与证据修订后必须再跑。
 
-本地calendar/forward-target绑定、外部计划artifact门与network-closed simulation前drift重读已关闭对应的本地合同层断点，但不能向上推断生产完成。live paper前仍须接入并readback真实calendar authority、受信计划artifact registry与市场标签证据，并在长驻scheduler/真实broker每个外部副作用前复核最新drift authority。
+上述证据只属于标注的本地字节和只读层；旧候选的 `3059 passed`、Draft PR #2、旧 GitHub Actions 或旧服务器 canary 均不替代当前集成候选验证。
 
-旧四风格、exploration/exploitation、旧 reader/专用端点、screening/benchmark、A股 wrapper/cron、旧 opportunity funnel writer 和旧 review/runtime 路径分为三类：A股 current-v1 不消费这些路径；非 A 股或人工法证路径仍是 active-compatibility；旧 A股 wrapper 与funnel writer均hard-blocked（退出码 78）且从仓库cron模板移除。旧funnel读侧仅保留冻结历史，消费者与安装态依赖尚未全部清零，不能标记物理retired，也不能进入 V1 candidate。
+## 明确未完成或未授权
 
-## 当前验证状态
+- SS 上游尚未向本任务提供冻结的真实 internal handoff、catalog version、dataset IDs、service token、receipt authority、跨页语义与 runtime readback；因此只允许 fixture/mock。
+- 未安装或启用 live paper scheduler/cron；仓库 crontab 只是设计模板，旧 A股 wrapper 与 funnel writer 继续 hard-blocked。
+- 未调用真实 DeepSeek；会话中曾暴露的旧 credential 不写入 Git、不装载进现役服务，也不构成后续网络授权。
+- 未连接 broker、真实账户、真实邮件、同花顺、公开 ingress 或真实交易；`REAL_TRADING_ENABLED=false`。
+- `tradingagent.cc` 的单用户 Access 门未在本轮恢复或验证，禁止把候选接入匿名公网入口。
 
-- 当前工作树集合为`181`个`tests/test_*.py`。在本行状态证据回填前，同一冻结代码候选已在本机单进程新鲜通过全量`3059 passed in 971.37s`、唯一V1候选清单`1512 passed in 28.54s`，以及LLM sidecar、DeepSeek HTTP transport、Evidence Journal、Bull/Bear与架构门专项`143 passed in 5.24s`。两组独立只读终审均为P0=0、P1=0。`BullBearDebate` provider入口现已通过显式typed recorder把互斥accepted/rejected结果与provider-invocation仲裁自动持久化到单一canonical Journal family；尚未装配的是paper composition、scheduler、服务器/production runtime与production durable readback，三类readback仍只是`local-integrity-only`非权威映射。保留的P2为：Gateway底层公开分析API可被非产品调用方绕过recorder、Bull/Bear默认Gateway构造异常尚未统一降级为invalid，以及尚无双recorder真实多进程/跨主机唯一调用回归；这些能力均无交易authority，且文档明确不声称跨主机exactly-once。本轮未重跑前端，因为没有前端文件变化。此前基线的GitHub与服务器证据只属于既有提交，不替代本轮本机结果。这些结果证明本地隔离候选合同与旧兼容测试未回归，不代表已提交、GitHub/服务器已同步、现役生产、live SS、真实市场样本、可接受的DeepSeek evidence或真实业务动作。
-- 前端只读面：43 个测试文件、`276 passed`；`npm run lint` 与 `npm run build:all` 通过。新增单用户部署负例证明服务拒绝非loopback监听与`*` CORS。另以本地`vite preview`和headed Playwright真实渲染检查总览空态、状态标签、布局与文字溢出，检查后关闭浏览器/服务并清理临时截图。
-- 本轮7个相关Python文件通过Ruff check、Ruff format check与Python 3.12 `py_compile`。全仓基线探测仍有60项既有Ruff lint违例和125个既有格式债务文件；它们不在本候选写域内，也没有被批量改写或冒充全仓静态全绿。前端本轮无代码变更，因此没有重跑前端；既有前端、GitHub或服务器证据均不冒充本机本轮重跑。
-- 仓外 CLI 三次实跑均 `completed`：同输入跨两个不同真实 `/private/tmp` 输出根的 run ID、bundle SHA 和 artifact bytes 相同；同根第二次 `idempotent=true` 且 `transport_calls=[]`。本轮 run ID 为`ashare-paper-day-7c1b170499742adff759247b992ceb00`，bundle SHA-256 为`03c690274af36dd8e72196a6b831395401f0dd5e1c853e5bf09d9825f0877027`，但该产物仍是`non_authority`、`production_verified=false`。
-- 四轮独立科学复核累计发现并关闭：commit后崩溃恢复P1、时间链/失败原因缺口、跨订单预约归属P1、“半额release仍被对账成功”的资金冻结P1，以及重新签名后把同一股票改换六维风险组规避cap的P1。当前authority、optimizer与day loop都拒绝同symbol group重分类；day-loop对有效重签后的proof、final map和decision mirror也独立fail closed，嵌套fixture proof不能用外层非晋级标记掩盖。最新专项复核无P0，确认的group-binding P1已关闭；论点风险/optimizer/stage/day-loop/composition/架构九文件专项`255 passed in 6.97s`。本轮DeepSeek发布前复审又发现并关闭两项P1：公共transport可绕过Gateway直接发送任意payload，以及合法capability可同步篡改body与outbound hash；前者改为公开send/direct Adapter固定拒绝，后者以进程内私有HMAC绑定body、model、request/proof/material/outbound hash并在opener/credential前复核。DeepSeek transport安全复审范围内最终为P0=0、P1=0、P2=0；这不覆盖上文已登记的旧localhost默认与缓存身份绑定退役债务。同进程HMAC仍不是隔离恶意Python插件的安全沙箱，生产不得加载不可信同进程扩展。
-- SS live、真实 paper session、生产 calendar/account/market-evidence/Champion-feature/metrics/time verifier、受信 ValidationPlan registry、生产 scheduler/cron、现役生产 runtime切换、真实市场样本、可接受的DeepSeek evidence readback、认证/额度/成本/留存稳定性和 live broker 外部副作用门禁未验证。2026-07-18单次canary只证明一个隔离请求到达provider并被本地schema门拒绝；它不关闭上述上游、模型质量与生产authority门。会话中曾暴露的 DeepSeek credential 未进入Git或现役服务；供应商侧 revoke/rotate仍是安全建议，任何第二次真实模型请求都需要新的独立网络授权。
+## 本阶段剩余门禁
 
-## 第一阶段出口门禁
+1. 完成 final SS/document/trading-safety fresh review，关闭全部 P0/P1；
+2. 在最终冻结字节重跑后端全量、候选清单、前端、静态检查与 secret scan；
+3. push 独立集成分支，创建对应 PR，等待干净 CI，再以普通 merge commit 合入 `origin/main` 并 readback；
+4. 只在服务器创建 detached、隔离根、network-disabled、sim-only sidecar，监听 `127.0.0.1:18787`；验证后停止，确保现役 HEAD、service、8787、cron、unit 与运行资产无变化；
+5. 回填最终主线/sidecar事实，清理仅限已合并、clean、明确归属的旧 worktree/branch；保留所有 dirty、unmerged、运行与证据资产。
 
-1. 架构重构与DeepSeek HTTPS客户端的干净CI、服务器detached旁路、前端、离线fixture及一次schema-rejected真实canary证据均已收集；当前仍不授权merge/main、现役切换、scheduler、live SS、第二次真实provider请求、真实paper或实盘。下一技术门是等待SS上游冻结并提供只读runtime，再做显式配置的同`as_of`联调；DeepSeek v2再次canary仍受独立网络授权约束。LLM产品入口的typed provenance router、accepted/rejected物理隔离结果Journal和provider-invocation仲裁Journal已在本地候选闭合，但尚未装配进paper composition、scheduler或服务器runtime，也没有production durable authority；因此只能标记为local-integrity-only机制完成，不能标记真实provider证据产品或自动生产闭环；
-2. 等待 SS 上游冻结 catalog version、dataset IDs、auth、receipt authority、跨页语义与 runtime readback；随后生成仓外显式manifest，先运行integration-readiness probe，再做新旧同 `as_of` parity。当前probe只有fixture证据，不可作为SS已准备好的证明；
-3. 按消费者分批切 V1；每批同时删除旧 import、URL、env、调度、测试和文档引用，并保留 runtime no-fallback 负例，不建立长期双轨；
-4. 用真实 SS V1 与新鲜 50,000 CNY 模拟 authority 连续运行 20 个交易日，要求 0 未来数据、0 同 bar 成交、0 重复订单/成交、0 scope 泄漏、0 旧链 fallback、0 未解释账务差异；
-5. 再积累 60–120 交易日冻结 OOS 与多状态样本，执行真实 purged/nested walk-forward、PBO/DSR、成本/未成交、尾部和校准/排序验证；
-6. 月收益 20% 只报告达到概率、负月概率、尾部损失和风险毁灭概率，不是 PASS、交易频率或强迫满仓条件；任何晋级、恢复/扩风险或 live transition 仍需 Nicholas 单独批准。
+第一阶段真正出口仍需真实 SS V1 后连续 20 个交易日自动模拟闭环，以及随后 60–120 个交易日冻结 OOS/多状态样本。月收益 20% 只作为概率分布上尾指标，不是强制交易、满仓或 PASS 条件；任何模型晋级、风险扩张或 live transition 仍需 Nicholas 单独批准。
