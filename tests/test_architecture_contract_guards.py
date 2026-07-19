@@ -777,6 +777,22 @@ def test_current_v1_consumers_use_only_catalog_and_query_routes() -> None:
     )
 
 
+def test_legacy_client_cannot_own_or_autowire_the_v1_contract() -> None:
+    legacy_client = (ROOT / "shared" / "data" / "shared_signals_api.py").read_text(
+        encoding="utf-8"
+    )
+    legacy_reader = (ROOT / "shared" / "data" / "reader.py").read_text(encoding="utf-8")
+
+    for forbidden in ('"/v1/catalog"', '"/v1/query"', "query_v1_all"):
+        assert forbidden not in legacy_client
+    for forbidden in (
+        "cn.equity.daily",
+        "cn.equity.security_master",
+        "query_v1_all",
+    ):
+        assert forbidden not in legacy_reader
+
+
 def test_v1_candidate_manifest_excludes_legacy_data_and_server_tests() -> None:
     manifest = ROOT / "tests" / "ta_v1_candidate_manifest.txt"
     entries = tuple(

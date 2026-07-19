@@ -12,7 +12,6 @@ Usage:
 
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import os
 import time
@@ -63,8 +62,6 @@ class SharedSignalsAPIClient:
 
     _cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
     _cache_ttl: float = 30.0  # seconds
-    _v1_page_limit: int = 500
-    _v1_max_pages: int = 1000
 
     def __init__(
         self,
@@ -146,64 +143,6 @@ class SharedSignalsAPIClient:
             enriched.append(row)
         return enriched
 
-    def _request_json(
-        self,
-        path: str,
-        url: str,
-        *,
-        method: str,
-        body: bytes | None = None,
-    ) -> tuple[dict[str, Any], str] | None:
-        """Execute one JSON HTTP request through the shared auth/retry transport."""
-        if not self.base_url:
-            self.errors.append(f"{path}: SHAREDSIGNALS_API_URL is not configured")
-            return None
-
-        headers = {"Accept": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        if body is not None:
-            headers["Content-Type"] = "application/json; charset=utf-8"
-            headers["Content-Length"] = str(len(body))
-
-        last_error = ""
-        for attempt in range(self.max_retries + 1):
-            try:
-                req = urllib.request.Request(
-                    url,
-                    data=body,
-                    headers=headers,
-                    method=method,
-                )
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    raw = resp.read().decode("utf-8", errors="replace")
-                    received_at = datetime.now(timezone.utc).isoformat(
-                        timespec="seconds"
-                    )
-                result = json.loads(raw)
-                if not isinstance(result, dict):
-                    last_error = "response is not a JSON object"
-                    break
-                return result, received_at
-            except urllib.error.HTTPError as exc:
-                last_error = f"HTTP {exc.code}: {exc.reason}"
-                if exc.code < 500 and exc.code != 429:
-                    break
-                if attempt < self.max_retries:
-                    time.sleep(self.retry_backoff * (attempt + 1))
-            except (
-                urllib.error.URLError,
-                TimeoutError,
-                OSError,
-                json.JSONDecodeError,
-            ) as exc:
-                last_error = str(exc)
-                if attempt < self.max_retries:
-                    time.sleep(self.retry_backoff * (attempt + 1))
-
-        self.errors.append(f"{path}: {last_error}")
-        return None
-
     def _get(
         self, path: str, params: dict[str, str] | None = None
     ) -> list[dict[str, Any]]:
@@ -224,299 +163,47 @@ class SharedSignalsAPIClient:
         if query:
             url = f"{url}?{query}"
 
-        response = self._request_json(path, url, method="GET")
-        if response is None:
-            return []
-        result, received_at = response
-        data = result.get("data", [])
-        if not isinstance(data, list):
-            data = []
-        data = self._attach_http_response_receipt(
-            data,
-            path=path,
-            received_at=received_at,
-        )
-        self._cache_set(cache_key, data)
-        return data
+        headers = {"Accept": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
-    @staticmethod
-    def _is_aware_timestamp(value: object) -> bool:
-        if type(value) is not str or not value.strip():
-            return False
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return False
-        return parsed.tzinfo is not None and parsed.utcoffset() is not None
-
-    @classmethod
-    def _validate_v1_metadata(
-        cls,
-        metadata: object,
-        *,
-        dataset_id: str,
-    ) -> str | None:
-        if not isinstance(metadata, dict) or not metadata:
-            return "missing or malformed metadata"
-
-        required = {
-            "state",
-            "runtime_state",
-            "degraded",
-            "freshness",
-            "quality",
-            "lineage",
-            "receipt_id",
-            "data_through",
-            "observed_at",
-            "requested_as_of",
-            "resolved_as_of",
-            "reasons",
-        }
-        if not required.issubset(metadata):
-            return "missing or malformed metadata"
-        if (
-            metadata.get("state") != "ready"
-            or metadata.get("runtime_state") != "success"
-            or metadata.get("degraded") is not False
-        ):
-            return "metadata is not healthy success"
-
-        freshness = metadata.get("freshness")
-        if (
-            not isinstance(freshness, dict)
-            or freshness.get("state") != "fresh"
-            or freshness.get("stale") is not False
-            or type(freshness.get("sla_seconds")) is not int
-            or freshness["sla_seconds"] < 0
-        ):
-            return "missing or malformed metadata freshness"
-
-        quality = metadata.get("quality")
-        if (
-            not isinstance(quality, dict)
-            or quality.get("state") != "valid"
-            or quality.get("valid") is not True
-            or not isinstance(quality.get("evidence"), list)
-        ):
-            return "missing or malformed metadata quality"
-
-        lineage = metadata.get("lineage")
-        if (
-            not isinstance(lineage, dict)
-            or lineage.get("state") != "complete"
-            or lineage.get("complete") is not True
-            or lineage.get("provider_neutral") is not True
-            or type(lineage.get("authority")) is not str
-            or not lineage["authority"].strip()
-            or lineage.get("dataset_id") != dataset_id
-            or not isinstance(lineage.get("providers"), list)
-            or not lineage["providers"]
-            or not all(
-                type(provider) is str and bool(provider.strip())
-                for provider in lineage["providers"]
-            )
-            or type(lineage.get("receipt_watermark")) is not str
-            or not lineage["receipt_watermark"].strip()
-        ):
-            return "missing or malformed metadata lineage"
-
-        if type(metadata.get("receipt_id")) is not str or not metadata[
-            "receipt_id"
-        ].strip():
-            return "missing or malformed metadata receipt_id"
-        for field in ("data_through", "observed_at"):
-            if not cls._is_aware_timestamp(metadata.get(field)):
-                return f"missing or malformed metadata {field}"
-        for field in ("requested_as_of", "resolved_as_of"):
-            value = metadata.get(field)
-            if value is not None and not cls._is_aware_timestamp(value):
-                return f"missing or malformed metadata {field}"
-        reasons = metadata.get("reasons")
-        if not isinstance(reasons, list) or not all(
-            type(reason) is str for reason in reasons
-        ):
-            return "missing or malformed metadata reasons"
-        return None
-
-    def _query_v1_page(
-        self,
-        payload: dict[str, Any],
-    ) -> tuple[dict[str, Any], str] | None:
-        try:
-            body = json.dumps(
-                payload,
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=False,
-                allow_nan=False,
-            ).encode("utf-8")
-        except (TypeError, ValueError) as exc:
-            self.errors.append(f"/v1/query: invalid request body ({exc})")
-            return None
-        return self._request_json(
-            "/v1/query",
-            f"{self.base_url}/v1/query",
-            method="POST",
-            body=body,
-        )
-
-    def query_v1_all(
-        self,
-        dataset_id: str,
-        *,
-        schema_major: int = 1,
-        total_limit: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """Exhaust bounded V1 query pages and return rows only when complete."""
-        if type(dataset_id) is not str or not dataset_id.strip():
-            self.errors.append("/v1/query: invalid dataset_id")
-            return []
-        if type(schema_major) is not int or schema_major <= 0:
-            self.errors.append("/v1/query: invalid schema_major")
-            return []
-        if total_limit is not None and (
-            type(total_limit) is not int or total_limit <= 0
-        ):
-            self.errors.append("/v1/query: invalid total_limit")
-            return []
-
-        rows: list[dict[str, Any]] = []
-        cursor: str | None = None
-        seen_cursors: set[str] = set()
-        expected_schema_version: str | None = None
-        page_limit = self._v1_page_limit
-        if total_limit is not None:
-            page_limit = min(page_limit, total_limit)
-
-        for page_number in range(1, self._v1_max_pages + 1):
-            if total_limit is not None and len(rows) >= total_limit:
-                return rows
-            payload: dict[str, Any] = {
-                "dataset_id": dataset_id,
-                "schema_major": schema_major,
-                "limit": page_limit,
-            }
-            if cursor is not None:
-                payload["cursor"] = cursor
-
-            response = self._query_v1_page(payload)
-            if response is None:
-                return []
-            page, received_at = response
-
-            required_page_fields = {
-                "api_version",
-                "catalog_version",
-                "request_id",
-                "dataset_id",
-                "schema_version",
-                "data",
-                "next_cursor",
-                "metadata",
-            }
-            if "metadata" not in page:
-                self.errors.append("/v1/query: missing or malformed metadata")
-                return []
-            if not required_page_fields.issubset(page):
-                self.errors.append("/v1/query: malformed V1 page")
-                return []
-            if page.get("api_version") != "v1":
-                self.errors.append("/v1/query: malformed V1 page")
-                return []
-            for field in ("catalog_version", "request_id"):
-                value = page.get(field)
-                if type(value) is not str or not value.strip():
-                    self.errors.append(f"/v1/query: malformed V1 page {field}")
-                    return []
-            if page.get("dataset_id") != dataset_id:
-                self.errors.append("/v1/query: dataset drift between pages")
-                return []
-
-            schema_version = page.get("schema_version")
-            if type(schema_version) is not str or not schema_version.strip():
-                self.errors.append("/v1/query: schema drift between pages")
-                return []
-            schema_prefix = schema_version.split(".", 1)[0]
-            if not schema_prefix.isdigit() or int(schema_prefix) != schema_major:
-                self.errors.append("/v1/query: schema drift between pages")
-                return []
-            if expected_schema_version is None:
-                expected_schema_version = schema_version
-            elif schema_version != expected_schema_version:
-                self.errors.append("/v1/query: schema drift between pages")
-                return []
-
-            metadata = page.get("metadata")
-            metadata_error = self._validate_v1_metadata(
-                metadata,
-                dataset_id=dataset_id,
-            )
-            if metadata_error is not None:
-                self.errors.append(f"/v1/query: {metadata_error}")
-                return []
-
-            page_rows = page.get("data")
-            if not isinstance(page_rows, list) or not all(
-                isinstance(row, dict) for row in page_rows
-            ):
-                self.errors.append("/v1/query: malformed V1 page data")
-                return []
-            if len(page_rows) > page_limit:
-                self.errors.append("/v1/query: malformed V1 page exceeds limit")
-                return []
-
-            next_cursor = page.get("next_cursor")
-            if next_cursor is not None and (
-                type(next_cursor) is not str or not next_cursor.strip()
-            ):
-                self.errors.append("/v1/query: malformed cursor")
-                return []
-            if not page_rows and next_cursor is not None:
-                self.errors.append("/v1/query: empty page with cursor")
-                return []
-            if next_cursor is not None and next_cursor in seen_cursors:
-                self.errors.append("/v1/query: repeated cursor")
-                return []
-
-            page_evidence = {
-                field: deepcopy(page[field])
-                for field in (
-                    "api_version",
-                    "catalog_version",
-                    "request_id",
-                    "dataset_id",
-                    "schema_version",
-                    "next_cursor",
-                    "metadata",
+        last_error = ""
+        for attempt in range(self.max_retries + 1):
+            try:
+                req = urllib.request.Request(url, headers=headers, method="GET")
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    raw = resp.read().decode("utf-8", errors="replace")
+                    received_at = datetime.now(timezone.utc).isoformat(
+                        timespec="seconds"
+                    )
+                result = json.loads(raw)
+                data = result.get("data", [])
+                if not isinstance(data, list):
+                    data = []
+                data = self._attach_http_response_receipt(
+                    data,
+                    path=path,
+                    received_at=received_at,
                 )
-            }
-            enriched_page: list[dict[str, Any]] = []
-            for raw_row in page_rows:
-                if "sharedsignals_v1_page_evidence" in raw_row:
-                    self.errors.append("/v1/query: reserved evidence field collision")
-                    return []
-                row = dict(raw_row)
-                row["sharedsignals_v1_page_evidence"] = deepcopy(page_evidence)
-                enriched_page.append(row)
-            enriched_page = self._attach_http_response_receipt(
-                enriched_page,
-                path="/v1/query",
-                received_at=received_at,
-            )
-            rows.extend(enriched_page)
+                self._cache_set(cache_key, data)
+                return data
+            except urllib.error.HTTPError as exc:
+                last_error = f"HTTP {exc.code}: {exc.reason}"
+                if exc.code < 500 and exc.code != 429:
+                    break
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff * (attempt + 1))
+            except (
+                urllib.error.URLError,
+                TimeoutError,
+                OSError,
+                json.JSONDecodeError,
+            ) as exc:
+                last_error = str(exc)
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff * (attempt + 1))
 
-            if total_limit is not None and len(rows) >= total_limit:
-                return rows[:total_limit]
-            if next_cursor is None:
-                return rows
-            if page_number >= self._v1_max_pages:
-                self.errors.append("/v1/query: page cap exceeded")
-                return []
-            seen_cursors.add(next_cursor)
-            cursor = next_cursor
-
-        self.errors.append("/v1/query: page cap exceeded")
+        self.errors.append(f"{path}: {last_error}")
         return []
 
     # ── 15 canonical functions ───────────────────────────────────────────────

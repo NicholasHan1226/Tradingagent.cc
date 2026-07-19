@@ -1435,7 +1435,9 @@ class AsharePreopenDryRunTest(unittest.TestCase):
             "observe_and_label_candidates",
         )
 
-    def test_data_section_prefers_sharedsignals_api_daily_batch(self) -> None:
+    def test_data_section_labels_legacy_bulk_reader_without_claiming_a_route(
+        self,
+    ) -> None:
         reader = APICoverageReader()
         with (
             mock.patch.object(
@@ -1469,7 +1471,8 @@ class AsharePreopenDryRunTest(unittest.TestCase):
 
         self.assertEqual(report["data"]["status"], "pass")
         self.assertEqual(
-            report["data"]["data_source"], "SharedSignals API /tushare daily read model"
+            report["data"]["data_source"],
+            "legacy compatibility bulk reader (hard-blocked from current-v1)",
         )
         self.assertEqual(report["data"]["symbol_count"], 1000)
 

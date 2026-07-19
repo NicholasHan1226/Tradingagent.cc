@@ -23,7 +23,6 @@ from shared.data.reader import (  # noqa: E402
     TradingagentDataReader,
 )
 from shared.data.marketgraph_api import MarketGraphAPIClient  # noqa: E402
-from shared.data.shared_signals_api import SharedSignalsAPIClient  # noqa: E402
 from shared.screening import six_dimension_scorer  # noqa: E402
 
 
@@ -373,7 +372,7 @@ class TestSharedSignalsReader(unittest.TestCase):
 
         self.assertEqual(rows[0]["factor_name"], "value")
 
-    def test_latest_daily_batch_uses_sharedsignals_v1_daily_dataset(self) -> None:
+    def test_latest_daily_batch_uses_sharedsignals_tushare_read_model(self) -> None:
         api = FakeAPIClient()
         trading_reader = TradingagentDataReader(
             api_client=api,
@@ -386,144 +385,8 @@ class TestSharedSignalsReader(unittest.TestCase):
         rows = trading_reader.get_latest_daily_batch("Ashare", limit=3000)
 
         self.assertEqual(rows[0]["symbol"], "600000.SH")
-        self.assertEqual(
-            api.v1_query_calls,
-            [
-                {
-                    "dataset_id": "cn.equity.daily",
-                    "schema_major": 1,
-                    "total_limit": 3000,
-                }
-            ],
-        )
-        self.assertEqual(api.tushare_calls, [])
-
-    def test_latest_daily_batch_v1_pages_never_send_legacy_or_oversized_limits(
-        self,
-    ) -> None:
-        captured_requests = []
-
-        class V1Response:
-            def __init__(self, payload: dict[str, object]) -> None:
-                self.payload = payload
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def read(self) -> bytes:
-                return json.dumps(self.payload).encode("utf-8")
-
-        def fake_urlopen(req, timeout=0):
-            captured_requests.append(req)
-            page_number = len(captured_requests)
-            if page_number > 6:
-                raise AssertionError("reader followed a cursor past the requested total")
-            metadata = {
-                "state": "ready",
-                "runtime_state": "success",
-                "degraded": False,
-                "freshness": {
-                    "state": "fresh",
-                    "stale": False,
-                    "sla_seconds": 259200,
-                },
-                "quality": {"state": "valid", "valid": True, "evidence": []},
-                "lineage": {
-                    "state": "complete",
-                    "complete": True,
-                    "provider_neutral": True,
-                    "authority": "sqlite_ingest_receipts",
-                    "dataset_id": "cn.equity.daily",
-                    "providers": ["tushare"],
-                    "receipt_watermark": "receipt-watermark-1",
-                },
-                "receipt_id": f"receipt-{page_number}",
-                "data_through": "2026-07-16T00:00:00+08:00",
-                "observed_at": "2026-07-16T15:35:00+08:00",
-                "requested_as_of": None,
-                "resolved_as_of": None,
-                "reasons": [],
-            }
-            return V1Response(
-                {
-                    "api_version": "v1",
-                    "catalog_version": "v1-contract-1",
-                    "request_id": f"request-{page_number}",
-                    "dataset_id": "cn.equity.daily",
-                    "schema_version": "1.0.0",
-                    "data": [
-                        {
-                            "symbol": "600000.SH",
-                            "trade_date": "20260716",
-                            "market": "Ashare",
-                            "close": 10.0,
-                        }
-                        for _ in range(500)
-                    ],
-                    "next_cursor": f"signed.cursor.{page_number + 1}",
-                    "metadata": metadata,
-                }
-            )
-
-        client = SharedSignalsAPIClient(
-            base_url="http://sharedsignals.test",
-            api_key="tenant-secret",
-            max_retries=0,
-        )
-        trading_reader = TradingagentDataReader(api_client=client)
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            rows = trading_reader.get_latest_daily_batch("Ashare", limit=3000)
-
-        self.assertEqual(len(rows), 3000)
-        self.assertEqual(len(captured_requests), 6)
-        bodies = [json.loads(request.data) for request in captured_requests]
-        self.assertTrue(all(body["limit"] == 500 for body in bodies))
-        self.assertTrue(all(body["limit"] not in {3000, 5000} for body in bodies))
-        self.assertTrue(
-            all(
-                set(body) <= {"dataset_id", "schema_major", "limit", "cursor"}
-                for body in bodies
-            )
-        )
-        self.assertTrue(
-            all("/v1/query" in request.full_url for request in captured_requests)
-        )
-        self.assertTrue(
-            all("/tushare" not in request.full_url for request in captured_requests)
-        )
-
-    def test_security_master_v1_failure_never_reads_injected_sqlite_fallback(
-        self,
-    ) -> None:
-        for failure_mode in ("client_error", "exception"):
-            with self.subTest(failure_mode=failure_mode):
-                api = FakeAPIClient()
-
-                def fail_query_v1_all(*args, **kwargs):
-                    if failure_mode == "exception":
-                        raise RuntimeError("v1 transport failed")
-                    api.errors.append("/v1/query: unhealthy metadata")
-                    return []
-
-                api.query_v1_all = fail_query_v1_all  # type: ignore[method-assign]
-                trading_reader = TradingagentDataReader(
-                    api_client=api,
-                    shared=self.reader,
-                )
-                with patch.object(
-                    self.reader,
-                    "get_assets",
-                    wraps=self.reader.get_assets,
-                ) as local_get_assets:
-                    rows = trading_reader.get_assets("Ashare")
-
-                self.assertEqual(rows, [])
-                local_get_assets.assert_not_called()
-                self.assertTrue(trading_reader.stale)
-                self.assertTrue(trading_reader.errors)
+        self.assertEqual(api.tushare_calls[-1]["api_name"], "daily")
+        self.assertEqual(api.tushare_calls[-1]["limit"], 3000)
 
     def test_default_sqlite_fallback_is_nonexistent_until_explicitly_configured(
         self,
@@ -538,49 +401,11 @@ class TestSharedSignalsReader(unittest.TestCase):
 class FakeAPIClient:
     def __init__(self) -> None:
         self.errors: list[str] = []
-        self.v1_query_calls: list[dict[str, object]] = []
         self.tushare_calls: list[dict[str, object]] = []
         self.market_data_calls: list[dict[str, object]] = []
         self.realtime_calls: list[dict[str, object]] = []
         self.pm_price_calls: list[dict[str, object]] = []
         self.event_calls: list[dict[str, object]] = []
-
-    def query_v1_all(
-        self,
-        dataset_id: str,
-        *,
-        schema_major: int = 1,
-        total_limit: int | None = None,
-    ):
-        self.v1_query_calls.append(
-            {
-                "dataset_id": dataset_id,
-                "schema_major": schema_major,
-                "total_limit": total_limit,
-            }
-        )
-        if dataset_id == "cn.equity.security_master":
-            return [
-                {
-                    "symbol": "000001.SZ",
-                    "name": "平安银行",
-                    "market": "Ashare",
-                    "exchange": "SZSE",
-                    "industry": "银行",
-                    "list_date": "19910403",
-                }
-            ]
-        if dataset_id == "cn.equity.daily":
-            return [
-                {
-                    "symbol": "600000.SH",
-                    "trade_date": "20260708",
-                    "market": "Ashare",
-                    "close": 10.29,
-                    "amount": 888789.3933,
-                }
-            ]
-        return []
 
     def get_tushare(
         self, api_name, ts_code=None, start_date=None, end_date=None, **kwargs
@@ -966,17 +791,7 @@ class TestTradingagentDataReaderAPI(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["symbol"], "000001.SZ")
         self.assertEqual(rows[0]["sector"], "银行")
-        self.assertEqual(
-            api.v1_query_calls,
-            [
-                {
-                    "dataset_id": "cn.equity.security_master",
-                    "schema_major": 1,
-                    "total_limit": None,
-                }
-            ],
-        )
-        self.assertEqual(api.tushare_calls, [])
+        self.assertEqual(api.tushare_calls[0]["api_name"], "stock_basic")
 
     def test_get_assets_uses_sharedsignals_fut_basic_for_futures(self) -> None:
         api = FakeAPIClient()

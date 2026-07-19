@@ -502,12 +502,11 @@ class TradingagentDataReader:
         op: str,
         fallback: Callable[[], Any],
         *args: Any,
-        allow_sqlite_fallback: bool = True,
         **kwargs: Any,
     ) -> Any:
         """Prefer SharedSignals API and only use explicit local read-model diagnostics."""
         if self._api_client is None:
-            if not allow_sqlite_fallback or not self._can_use_sqlite_fallback():
+            if not self._can_use_sqlite_fallback():
                 message = f"{op}: SharedSignals API unavailable and SQLite diagnostic read disabled"
                 if not self.errors or self.errors[-1] != message:
                     self.errors.append(message)
@@ -523,7 +522,7 @@ class TradingagentDataReader:
             result = method(*args, **kwargs)
             self._last_api_used = True
         except Exception as exc:  # pragma: no cover - defensive API boundary
-            if allow_sqlite_fallback and self._can_use_sqlite_fallback():
+            if self._can_use_sqlite_fallback():
                 self._record_api_fallback(op, str(exc))
                 return fallback()
             self.errors.append(f"{op}: SharedSignals API failed ({exc}); SQLite diagnostic read disabled")
@@ -533,7 +532,7 @@ class TradingagentDataReader:
 
         api_errors = getattr(self._api_client, "errors", [])
         if len(api_errors) > before_error_count:
-            if allow_sqlite_fallback and self._can_use_sqlite_fallback():
+            if self._can_use_sqlite_fallback():
                 self._record_api_fallback(op, api_errors[-1])
                 return fallback()
             self.errors.append(f"{op}: SharedSignals API error ({api_errors[-1]}); SQLite diagnostic read disabled")
@@ -770,14 +769,13 @@ class TradingagentDataReader:
     def get_assets(self, market: str | None = None) -> list[dict[str, Any]]:
         try:
             if self._is_ashare_market(market):
-                result = self._api_call(
-                    "query_v1_all",
-                    lambda: [],
-                    dataset_id="cn.equity.security_master",
-                    schema_major=1,
-                    total_limit=None,
-                    allow_sqlite_fallback=False,
-                )
+                def fallback() -> list[dict[str, Any]]:
+                    rows = self.shared.get_assets("Ashare")
+                    if not rows:
+                        rows = self.shared.get_assets("ashare")
+                    return rows
+
+                result = self._api_call("get_tushare", fallback, api_name="stock_basic")
                 self._record_shared_error("get_assets")
                 return self._normalize_asset_rows(result, "Ashare")
 
@@ -1409,19 +1407,7 @@ class TradingagentDataReader:
         }.get(market_name)
         if not api_name:
             return []
-        requested_limit = max(1, int(limit))
-        if market_name == "Ashare":
-            rows = self._api_call(
-                "query_v1_all",
-                lambda: [],
-                dataset_id="cn.equity.daily",
-                schema_major=1,
-                total_limit=requested_limit,
-                allow_sqlite_fallback=False,
-            )
-            self._record_shared_error("get_latest_daily_batch")
-        else:
-            rows = self.get_tushare(api_name, limit=requested_limit)
+        rows = self.get_tushare(api_name, limit=max(1, int(limit)))
         normalized = self._normalize_market_rows(rows, market_name, "")
         if market_name:
             normalized = [

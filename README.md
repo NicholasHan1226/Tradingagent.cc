@@ -4,33 +4,6 @@ TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复�
 
 > 接手顺序：[AGENTS.md](AGENTS.md) → [STATUS.md](STATUS.md) → [docs/AGENTS.md](docs/AGENTS.md)。
 
-## 当前开发状态（2026-07-18）
-
-当前 `codex/ta-v1-data-client` 是**已完成既有冻结候选验收、正在增加本地接入门的隔离候选**。候选已包含 SS V1 严格客户端、显式manifest驱动的V1 integration-readiness probe、内容寻址 `CoverageReceipt`、三层 Universe、Phase 1.5 行业 shadow 薄切片、PIT OpportunityRadar/append-only Ledger、多期限 forecast 研究合同、三风格 shadow router、50,000 CNY 小资金可行池与账户证明绑定合同、六维投资论点风险 authority、A股零股卖出规则、当前选择与数值 PIT 特征双重绑定的冻结 rank-score Champion、mark/quote 证据 authority、逐副作用可信时钟、持久 drift 约束、模拟日 RunBundle、Decision Ledger、外部冻结交易日历 proof/`ValidationPlan`/冻结OOS/总回报标签门、负向模型保护，以及accepted/rejected结果Journal加独立provider-invocation仲裁Journal、本地CAS且`local-integrity-only`的 LLM provenance sidecar。integration probe当前只有fixture测试，未调用live SS，且只生成`non_authority`回执；这不表示预测有效、概率已校准、Phase 1、Git 主线、SharedSignals live API、生产 runtime、已安装 scheduler/cron 或真实模拟盘已完成。
-
-当前固定范围：
-
-- 个股研究、候选、预测、影子账、模拟订单和持仓仅允许沪深主板普通 A 股；
-- 创业板、科创板指数和全市场行业聚合可作市场环境参考，双创个股不进入任何个股交易链；
-- 系统仅供 Nicholas 个人内部使用；看板/API默认只监听localhost，`tradingagent.cc`只作为经过Cloudflare Access或等价单用户认证的个人远程入口，禁止匿名公网访问和API直出；
-- TA 只按显式配置消费 `GET /v1/catalog` 和 `POST /v1/query`，禁止回退 Tushare、SS SQLite、旧专用端点或缓存拼装；当前仅使用 fixture/port，不臆造 SS runtime 已可用；
-- 自动模拟盘有两条严格分开的本地候选：仓外 fixture CLI 可执行但使用不可晋级的 fixture account/proof；`compose_capital_backed_paper_runtime` 从 canonical simulated ledger 读取 current generation/lineage，并贯穿 Champion、六维论点风险 authority、mark/quote authority、逐副作用可信时钟、risk、capital outbox、模拟成交和reconcile。崩溃恢复只会优先补写已经由canonical ledger证明为幂等已提交的outbox settlement；只有pending intent而没有对应commit事实时，最新risk/drift门仍可阻止新增风险。目前该composition只有测试装配，没有 CLI、scheduler、生产行情/时钟/论点风险 verifier 或真实 paper session。自动模型晋级、恢复风险、扩风险和 live transition 永久不由学习环自行授权；
-- 第一阶段只有一个冻结的未校准 rank-score Champion；score receipt 必须同时绑定当前人工选择 manifest、artifact/model/spec 和经独立 port 复核的数值 PIT 特征快照，rank 只排序且不控制仓位。`OpportunityRadar`/Ledger、多期限 forecast 和三风格 router 已实现本地隔离 shadow 合同，只能写反事实研究证据；默认关闭的 DeepSeek 官方 HTTPS transport 已是本地隔离候选。2026-07-18一次隔离真实请求已到达provider，但A股v1输出被evidence schema拒绝，所以不证明模型证据可用或生产已启用；live paper scheduler 仍为 `PLANNED_NOT_IMPLEMENTED`；
-- Phase 1.5 行业薄切片只根据 PIT taxonomy、覆盖与证据动态选择 1 个深研行业和 2 个观察行业；它不输出个股、不改变排名/仓位/风险/订单，也不证明所选行业有 alpha；
-- 仓库中保留的旧 A股 wrapper/cron 名称只供迁移审计，入口已统一硬阻断且不能用环境变量恢复；新 day loop 尚未注册或应用 scheduler；
-- LLM产品角色`flash_extract`/`pro_thinking`分别映射代码路由`bulk_extraction`/`slow_research`，只做固定Prompt、内容寻址证据抽取和研究复核；source span 作为不可信引用数据处理，显式中英文及部分NFKC、零宽、HTML/URL编码、角色标签和常见同形字混淆会在transport前阻断并要求人工复核，但不声称覆盖所有语义攻击。A股v1 Prompt保留为字节冻结历史，v2固定七字段JSON和精确`artifact_id`引用合同。默认Gateway仍无网络；adapter只接受精确的`OfflineDeepSeekFixtureTransport`或`DeepSeekHTTPTransport`。HTTP transport的公开`send`和脱离Gateway的Adapter调用同样拒绝；wire path只接受Gateway铸造的内部capability。HTTPS候选固定官方endpoint、系统TLS、禁环境代理/重定向/自动重试并严格限制请求、响应和JSON。2026-07-18单次真实canary达到HTTP 200 provider envelope后在evidence schema失败，没有accepted receipt。代码现区分成功`ProviderTransportReceipt`与仅审计的`ProviderRejectedAttemptReceipt`；两者互斥，Gateway会重算完整request/source/material摘要并精确绑定canonical observation字段集，未知字段、元数据重绑或正文hash漂移均fail closed。Bull/Bear provider模式要求显式typed recorder、同verifier绑定、稳定request ID，以及由一个显式绝对accepted锚点派生的canonical accepted/rejected/provider-invocation Journal family；不同invocation锁、相对路径及Unicode/大小写/真实路径或物理文件别名均拒绝。invocation Journal以不依赖调用方ID的逻辑内容键在网络前持久化`in_flight`，持锁到唯一终态；同一canonical family内的并发重放只调用一次provider，轮换ID、未知mode、冲突或持久化失败均fail closed，崩溃后无终态时禁止自动补发。accepted只进入`LLMEvidenceJournal`，rejected只进入物理分离的`LLMRejectedAttemptAuditJournal`，后者不含响应正文/标准化证据hash且不得进入accepted evidence、样本或任何交易链。只有已持久化唯一终态的精确重放才不会再次调用provider；三类Journal回读只生成`local-integrity-only`、防御性不可变的结构校验视图，不会把磁盘descriptor重新铸造成有运行时权威的HTTPS receipt。本地receipt/journal不是provider签名、外部密封、tamper-proof或production durable authority。vendor model ID不进入领域合同，也不参与个股排名、仓位、风险、订单或账户操作。
-
-- DeepSeek公开配置保留固定密钥变量名`DEEPSEEK_API_KEY`但绝不读取其值；HTTP transport只在最终边界读取显式绝对路径的受限raw-secret文件，ambient环境变量不会自动提供credential。任意模型映射只能通过显式`fixture_only`离线路由构造；网络候选还必须同时取得进程内显式授权和启用的精确HTTP transport，单独把环境变量设为`true`会fail closed。独立的宽松环境变量路由入口和旧wrapper中的DeepSeek超时/重试假配置均已移除。
-
-### 数据 ownership 与迁移分类
-
-- SharedSignals 是独立上游数据平台；本仓只实现和验证 TA consumer。TA 测试不得定位、导入、执行或复刻兄弟仓 `reader.py`、`api_server.py`、SQLite 私有函数或 HTTP server。
-- **current-v1**：`shared/data/sharedsignals_v1.py`、Evidence Gate、immutable research snapshot、`sharedsignals_v1_integration_probe.py`、stage ports 和只读前端 SS market-context reader；只允许 `/v1/catalog` 与 `/v1/query`。integration probe对统一`as_of`做双跑语义/PIT/receipt验收，分页合同未冻结时阻断，不自行拼页。
-- **active-compatibility**：旧 `shared/data/reader.py`、screening/benchmark 和非 A 股消费者仍有明确历史/兼容用途，但不在 A股 V1 candidate、Champion、scheduler、风险或订单路径。
-- **hard-blocked / retirement-pending**：旧 A股 wrappers/cron、旧机会漏斗writer与专用 SS 路由不得恢复；旧漏斗文件只作冻结法证历史，未经V1 authority绑定的A股 `signals/pending` 不进入当前前端状态。物理删除要等消费者、安装态、同 `as_of` parity、OpportunityLedger只读投影和外部依赖清零，不能用长期双轨代替退役。
-
-最新验证层级、旧路径残留和阻塞必须回到 [STATUS.md](STATUS.md)，不得从模块存在或单个测试通过推断整条链已完成。
-
 ## 当前架构
 
 ```mermaid

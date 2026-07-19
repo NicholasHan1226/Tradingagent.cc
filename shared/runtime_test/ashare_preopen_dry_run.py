@@ -396,7 +396,9 @@ def _api_daily_coverage_from_reader(
             "status": "fail",
             "reason": "api_daily_bars_missing",
             "symbol_count": 0,
-            "data_source": "SharedSignals API /tushare daily read model",
+            "data_source": (
+                "legacy compatibility bulk reader (hard-blocked from current-v1)"
+            ),
         }
 
     # ---- asset count & coverage ratio ----
@@ -494,7 +496,9 @@ def _api_daily_coverage_from_reader(
         "latest_daily_age_days": age_days,
         "max_daily_age_days": 5,
         "min_coverage_ratio": min_coverage_ratio,
-        "data_source": "SharedSignals API /tushare daily read model",
+        "data_source": (
+            "legacy compatibility bulk reader (hard-blocked from current-v1)"
+        ),
     }
 
 
