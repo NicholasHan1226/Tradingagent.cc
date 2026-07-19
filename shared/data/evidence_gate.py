@@ -106,12 +106,16 @@ def _effective_state(envelope: QueryEnvelope) -> str:
         "paused",
         "empty",
     }
-    if top_state in failed_states or quality_state in {
+    nested_failed_states = {
         "failed",
         "error",
         "invalid",
         "unavailable",
-    }:
+    }
+    if top_state in failed_states or any(
+        nested_state in nested_failed_states
+        for nested_state in (freshness_state, quality_state, lineage_state)
+    ):
         return "failed"
     if top_state in {"stale", "expired"}:
         return "stale"

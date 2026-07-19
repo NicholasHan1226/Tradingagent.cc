@@ -251,6 +251,62 @@ def test_failed_quality_or_incomplete_lineage_always_rejects(
     assert "dataset_failed" in decision.reasons
 
 
+@pytest.mark.parametrize("nested_field", ["freshness", "quality", "lineage"])
+@pytest.mark.parametrize("failed_state", ["failed", "error", "invalid", "unavailable"])
+def test_nested_failed_state_cannot_be_laundered_by_ready_top_state(
+    nested_field: str,
+    failed_state: str,
+) -> None:
+    payload = _payload()
+    payload["metadata"][nested_field]["state"] = failed_state
+    envelope = parse_query_envelope(payload)
+    gate = _gate(
+        DatasetEvidencePolicy(
+            dataset_id=DATASET_ID,
+            degraded_action=EvidenceAction.DEWEIGHT,
+            stale_action=EvidenceAction.DEWEIGHT,
+        )
+    )
+
+    decision = gate.evaluate(envelope)
+
+    assert decision.effective_state == "failed"
+    assert decision.action is EvidenceAction.REJECT
+    assert decision.eligible is False
+    assert decision.weight == 0.0
+    assert "dataset_failed" in decision.reasons
+
+
+def test_parsed_envelope_evidence_cannot_be_mutated_into_ready_state() -> None:
+    envelope = parse_query_envelope(
+        _payload(
+            lineage={
+                "state": "invalid",
+                "complete": False,
+                "provider_neutral": True,
+            }
+        )
+    )
+    gate = _gate(DatasetEvidencePolicy(dataset_id=DATASET_ID))
+
+    leaked_lineage = envelope.metadata.lineage
+    assert leaked_lineage is not None
+    leaked_lineage["state"] = "complete"
+    leaked_lineage["complete"] = True
+
+    decision = gate.evaluate(envelope)
+
+    assert envelope.metadata.lineage == {
+        "state": "invalid",
+        "complete": False,
+        "provider_neutral": True,
+    }
+    assert decision.effective_state == "failed"
+    assert decision.action is EvidenceAction.REJECT
+    assert decision.eligible is False
+    assert "dataset_failed" in decision.reasons
+
+
 @pytest.mark.parametrize(
     ("freshness", "quality", "lineage"),
     [

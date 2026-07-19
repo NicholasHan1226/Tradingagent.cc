@@ -293,40 +293,141 @@ class QueryRequest:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class CatalogEnvelope:
     api_version: str
     catalog_version: str
     request_id: str
-    data: tuple[dict[str, Any], ...]
+    _data_json: str = field(repr=False)
+
+    def __init__(
+        self,
+        *,
+        api_version: str,
+        catalog_version: str,
+        request_id: str,
+        data: tuple[dict[str, Any], ...],
+    ) -> None:
+        object.__setattr__(self, "api_version", api_version)
+        object.__setattr__(self, "catalog_version", catalog_version)
+        object.__setattr__(self, "request_id", request_id)
+        object.__setattr__(
+            self,
+            "_data_json",
+            _canonical_json(list(data), field_name="catalog envelope data"),
+        )
+
+    @property
+    def data(self) -> tuple[dict[str, Any], ...]:
+        decoded = json.loads(self._data_json)
+        return tuple(decoded)
 
     @property
     def dataset_ids(self) -> frozenset[str]:
         return frozenset(row["dataset_id"] for row in self.data)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class QueryMetadata:
     state: str
     degraded: bool
-    freshness: dict[str, Any]
-    quality: dict[str, Any]
-    lineage: dict[str, Any] | None
     receipt_id: str | None
     data_through: str | None
     observed_at: str | None
     reasons: tuple[str, ...]
+    _freshness_json: str = field(repr=False)
+    _quality_json: str = field(repr=False)
+    _lineage_json: str | None = field(repr=False)
+
+    def __init__(
+        self,
+        *,
+        state: str,
+        degraded: bool,
+        freshness: dict[str, Any],
+        quality: dict[str, Any],
+        lineage: dict[str, Any] | None,
+        receipt_id: str | None,
+        data_through: str | None,
+        observed_at: str | None,
+        reasons: tuple[str, ...],
+    ) -> None:
+        object.__setattr__(self, "state", state)
+        object.__setattr__(self, "degraded", degraded)
+        object.__setattr__(self, "receipt_id", receipt_id)
+        object.__setattr__(self, "data_through", data_through)
+        object.__setattr__(self, "observed_at", observed_at)
+        object.__setattr__(self, "reasons", tuple(reasons))
+        object.__setattr__(
+            self,
+            "_freshness_json",
+            _canonical_json(freshness, field_name="query metadata freshness"),
+        )
+        object.__setattr__(
+            self,
+            "_quality_json",
+            _canonical_json(quality, field_name="query metadata quality"),
+        )
+        object.__setattr__(
+            self,
+            "_lineage_json",
+            (
+                None
+                if lineage is None
+                else _canonical_json(lineage, field_name="query metadata lineage")
+            ),
+        )
+
+    @property
+    def freshness(self) -> dict[str, Any]:
+        return json.loads(self._freshness_json)
+
+    @property
+    def quality(self) -> dict[str, Any]:
+        return json.loads(self._quality_json)
+
+    @property
+    def lineage(self) -> dict[str, Any] | None:
+        return None if self._lineage_json is None else json.loads(self._lineage_json)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class QueryEnvelope:
     api_version: str
     catalog_version: str
     request_id: str
     dataset_id: str
-    data: tuple[dict[str, Any], ...]
     next_cursor: str | None
     metadata: QueryMetadata
+    _data_json: str = field(repr=False)
+
+    def __init__(
+        self,
+        *,
+        api_version: str,
+        catalog_version: str,
+        request_id: str,
+        dataset_id: str,
+        data: tuple[dict[str, Any], ...],
+        next_cursor: str | None,
+        metadata: QueryMetadata,
+    ) -> None:
+        object.__setattr__(self, "api_version", api_version)
+        object.__setattr__(self, "catalog_version", catalog_version)
+        object.__setattr__(self, "request_id", request_id)
+        object.__setattr__(self, "dataset_id", dataset_id)
+        object.__setattr__(self, "next_cursor", next_cursor)
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(
+            self,
+            "_data_json",
+            _canonical_json(list(data), field_name="query envelope data"),
+        )
+
+    @property
+    def data(self) -> tuple[dict[str, Any], ...]:
+        decoded = json.loads(self._data_json)
+        return tuple(decoded)
 
 
 @dataclass(frozen=True, order=True)

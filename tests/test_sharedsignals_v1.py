@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -18,6 +19,8 @@ from shared.data.sharedsignals_v1 import (
     SharedSignalsV1Client,
     SharedSignalsV1Config,
     TransportNotConfigured,
+    parse_catalog_envelope,
+    parse_query_envelope,
 )
 
 
@@ -590,9 +593,57 @@ def test_cached_envelope_cannot_be_mutated_through_a_prior_result() -> None:
     first.metadata.quality["state"] = "failed"
     second = client.query(request)
 
+    assert first.data[0]["close"] == 10.5
+    assert first.metadata.quality["state"] == "valid"
     assert second.data[0]["close"] == 10.5
     assert second.metadata.quality["state"] == "valid"
     assert len(transport.calls) == 1
+
+
+def test_query_envelope_recursively_snapshots_source_and_materialized_copies() -> None:
+    payload = _query_payload()
+    payload["data"][0]["nested"] = {
+        "tags": ["original"],
+        "attributes": {"rank": 1},
+    }
+    payload["metadata"]["freshness"]["windows"] = [{"name": "daily", "ready": True}]
+    envelope = parse_query_envelope(payload)
+
+    payload["data"][0]["nested"]["tags"].append("source-mutated")
+    payload["metadata"]["freshness"]["windows"][0]["ready"] = False
+    leaked_row = envelope.data[0]
+    leaked_row["nested"]["attributes"]["rank"] = 999
+    leaked_freshness = envelope.metadata.freshness
+    leaked_freshness["windows"][0]["ready"] = False
+
+    assert envelope.data[0]["nested"] == {
+        "tags": ["original"],
+        "attributes": {"rank": 1},
+    }
+    assert envelope.metadata.freshness["windows"] == [{"name": "daily", "ready": True}]
+    assert copy.deepcopy(envelope) == envelope
+
+
+def test_catalog_envelope_recursively_snapshots_nested_fields() -> None:
+    payload = {
+        "api_version": "v1",
+        "catalog_version": CATALOG_VERSION,
+        "request_id": "catalog-request-001",
+        "data": [
+            {
+                "dataset_id": DATASET_ID,
+                "fields": [{"name": "close", "aliases": ["px_close"]}],
+            }
+        ],
+    }
+    envelope = parse_catalog_envelope(payload)
+
+    payload["data"][0]["fields"][0]["aliases"].append("source-mutated")
+    leaked = envelope.data[0]
+    leaked["fields"][0]["aliases"].append("copy-mutated")
+
+    assert envelope.data[0]["fields"] == [{"name": "close", "aliases": ["px_close"]}]
+    assert copy.deepcopy(envelope) == envelope
 
 
 def test_access_policy_is_part_of_request_and_cache_identity() -> None:
