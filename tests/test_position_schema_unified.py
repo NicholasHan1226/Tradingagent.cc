@@ -4,6 +4,7 @@ import sys
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -53,20 +54,24 @@ class PositionSchemaUnifiedTest(unittest.TestCase):
         self.assertTrue(results[0]["executable"])
 
     def test_unsellable_new_position_is_marked_not_executable(self) -> None:
-        position = from_ledger({
-            "ts_code": "000003.SZ",
-            "quantity": 100,
-            "avg_price": 10.0,
-            "cost_basis": 1000.0,
-            "entry_date": date.today().isoformat(),
-            "high_price": 10.0,
-            "thesis": "event",
-            "capital_layer": "shadow",
-        })
+        trade_date = date(2026, 7, 16)
+        with patch("shared.accounting.position_schema._t_plus_1", None), patch(
+            "shared.portfolio.exit_manager._t_plus_1", None
+        ):
+            position = from_ledger({
+                "ts_code": "000003.SZ",
+                "quantity": 100,
+                "avg_price": 10.0,
+                "cost_basis": 1000.0,
+                "entry_date": trade_date.isoformat(),
+                "high_price": 10.0,
+                "thesis": "event",
+                "capital_layer": "shadow",
+            }, as_of=trade_date)
+
+            results = check_all_exits([position], {"000003.SZ": 9.0})
 
         self.assertEqual(position.sellable_quantity, 0)
-
-        results = check_all_exits([position], {"000003.SZ": 9.0})
 
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0]["should_exit"])

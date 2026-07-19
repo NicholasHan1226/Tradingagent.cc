@@ -1,309 +1,561 @@
-# TradingAgent 运行、验收与回滚
+# TradingAgent V1 本地与服务器旁路运行、验收及回滚
 
-> 本文是 sim-only 运维入口。当前任务禁止 deploy、apply cron、发邮件、操作 GUI 或真实交易；仓库模板与本地命令成功不代表生产已生效。当前状态见 [STATUS.md](../STATUS.md)。
+> 本文是 A 股 V1 **simulation-only** 候选在本地与服务器旁路环境中的唯一现役操作入口。服务器sidecar只可在任务级明确授权后，以版本化、隔离、无公网切换的方式执行；该授权不自动扩展到merge/main、现役源码/API/页面切换、网络数据联调、broker、真实交易、邮件、GUI、scheduler/cron或生产密钥。仓库模板、fixture、本地测试、候选分支和服务器旁路成功均不代表 Git 主线、SharedSignals runtime 或现役生产已生效。当前授权与执行证据只见 [STATUS.md](../STATUS.md)。
 
-## 1. 固定安全环境
+## 1. 不可突破的边界
+
+- `REAL_TRADING_ENABLED=false`；不得由环境变量或 fixture 覆盖。
+- 该系统仅供 Nicholas 个人内部使用。前端/API默认只绑定`127.0.0.1`；`tradingagent.cc`远程入口必须先通过Cloudflare Access或等价单用户认证，禁止匿名公网访问和API直出。DNS、Tunnel/Pages与Access policy分别验收。
+- TradingAgent 只消费显式配置的 `GET /v1/catalog` 与 `POST /v1/query` 契约；不读取 SharedSignals 数据库，不实现其服务端，不使用旧专用接口或数据商回退。
+- HTTP 成功不代表数据可用。每个 dataset 独立检查 `state`、`degraded`、`freshness`、`quality`、`lineage`、`receipt_id`、`data_through`、`observed_at` 和 `reasons`；impaired state 允许后四项为 null，TA 不补造。无完整 source proof 时固定 fail closed；只有证据完整且 policy 明确允许的 impaired evidence 才可降权。
+- A 股个股只允许沪深主板普通股。创业板、科创板及北京市场个股不得进入候选、预测、目标仓位、订单、成交或持仓；双创指数与全市场行业聚合只作 `context_only` 环境证据。
+- 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是本地隔离shadow合同，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。默认关闭的DeepSeek HTTPS transport已是本地候选；2026-07-18仅有一次隔离真实请求到达provider后被本地evidence schema拒绝，accepted evidence、稳定认证和生产激活仍未验证。live paper scheduler仍是计划项。
+- 模拟日即使阻断新增风险，也必须尽量继续减仓/退出、对账、账本、学习到期检查和报告，并以 `completed_with_blocks` 明示结束；不得伪装成功，也不得切回旧链。
+
+## 1.1 服务器旁路候选部署
+
+服务器旁路部署只用于回答“冻结候选能否在目标服务器环境安装、测试、构建和运行”。它不改变现役代码、服务、定时任务、网页、路由或任何authority。每次执行都必须有独立授权、精确提交SHA和新的版本化目录；禁止把本节变成默认自动发布路径。
+
+目录约定：
+
+```text
+/opt/investment/tradingagent                         # 现役工作树不切换；Git管理元数据仅作受控fetch/worktree登记
+/opt/investment/tradingagent-candidates/<release-id> # detached候选代码
+/opt/investment/tradingagent-venvs/<release-id>      # 候选专用Python环境
+/opt/investment/tradingagent-canary-output/<run-id>  # fixture/canary输出
+/opt/investment/release-evidence/tradingagent/<id>   # 受限发布证据
+```
+
+### 1.1.1 部署前冻结与取证
+
+在创建候选目录前，至少保存并校验：
+
+- 现役仓HEAD、remote ref与完整`git status --porcelain=v1 --untracked-files=all`；
+- `tradingagent-front-api.service` unit、状态、PID与`127.0.0.1:8787/healthz`；
+- `marketgraph`用户crontab及其哈希；
+- 现役未跟踪运行资产、回滚目录和磁盘余量；
+- 候选远端分支的精确SHA、工作树干净状态和回退目录。
+
+生产仓可能包含不受Git跟踪的append-only运行证据和前端回滚副本。禁止`git clean`、`reset --hard`、覆盖式checkout或`rsync --delete`；也禁止把现役仓切到候选分支。只允许从精确SHA创建detached worktree，例如：
 
 ```bash
-cd /Users/nicholashan/Projects/Finance/TradingAgent
+set -euo pipefail
+umask 077
+
+ACTIVE=/opt/investment/tradingagent
+RELEASE_SHA='<approved-full-commit-sha>'
+APPROVED_BRANCH='<approved-candidate-branch>'
+RELEASE_ID="ta-v1-data-client-$(printf '%s' "$RELEASE_SHA" | cut -c1-7)"
+CANDIDATE="/opt/investment/tradingagent-candidates/$RELEASE_ID"
+VENV="/opt/investment/tradingagent-venvs/$RELEASE_ID"
+EVIDENCE_ID="$(date -u +%Y%m%dT%H%M%SZ)-$RELEASE_ID"
+EVIDENCE="/opt/investment/release-evidence/tradingagent/$EVIDENCE_ID"
+
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+test ! -e "$CANDIDATE"
+test ! -e "$VENV"
+sudo install -d -o marketgraph -g marketgraph /opt/investment/tradingagent-candidates
+sudo install -d -o marketgraph -g marketgraph /opt/investment/tradingagent-venvs
+sudo install -d -m 0700 -o marketgraph -g marketgraph "$EVIDENCE"
+sudo -u marketgraph git -C "$ACTIVE" fetch --no-tags origin "$APPROVED_BRANCH"
+FETCHED_SHA="$(sudo -u marketgraph git -C "$ACTIVE" rev-parse FETCH_HEAD)"
+test "$FETCHED_SHA" = "$RELEASE_SHA"
+sudo -u marketgraph git -C "$ACTIVE" cat-file -e "$RELEASE_SHA^{commit}"
+sudo -u marketgraph git -C "$ACTIVE" worktree add --detach "$CANDIDATE" "$RELEASE_SHA"
+test "$(sudo -u marketgraph git -C "$CANDIDATE" rev-parse HEAD)" = "$RELEASE_SHA"
+CANDIDATE_STATUS="$(sudo -u marketgraph git -C "$CANDIDATE" status --porcelain)"
+test -z "$CANDIDATE_STATUS"
+```
+
+### 1.1.2 隔离安装与验收
+
+候选使用自己的venv与`front/node_modules`，不得借用或修改现役依赖。服务器验收至少包括：
+
+```bash
+set -euo pipefail
+umask 077
+: "${CANDIDATE:?}" "${VENV:?}" "${EVIDENCE:?}"
+
+MARKETGRAPH_HOME="$(getent passwd marketgraph | cut -d: -f6)"
+SAFE_PATH=/opt/investment/tools/node-v24.4.1/bin:/usr/local/bin:/usr/bin:/bin
+SAFE_ENV=(
+  env -i
+  HOME="$MARKETGRAPH_HOME"
+  PATH="$SAFE_PATH"
+  LANG=C.UTF-8
+  TZ=Asia/Shanghai
+  REAL_TRADING_ENABLED=false
+  TRADINGAGENT_LLM_NETWORK_ENABLED=false
+  SHAREDSIGNALS_API_URL=
+  MARKETGRAPH_API_URL=
+  PYTHONDONTWRITEBYTECODE=1
+)
+
+sudo -u marketgraph "${SAFE_ENV[@]}" python3 -m venv "$VENV"
+sudo -u marketgraph "${SAFE_ENV[@]}" \
+  "$VENV/bin/python" -m pip install -r "$CANDIDATE/requirements.txt"
+sha256sum "$CANDIDATE/requirements.txt" > "$EVIDENCE/requirements.sha256"
+sudo -u marketgraph "${SAFE_ENV[@]}" \
+  "$VENV/bin/python" -m pip freeze > "$EVIDENCE/python-freeze.txt"
+
+cd "$CANDIDATE"
+sudo -u marketgraph "${SAFE_ENV[@]}" \
+  "$VENV/bin/python" -m pytest -q
+PYCACHE_ROOT="$(mktemp -d /tmp/ta-pycache.XXXXXX)"
+sudo chown marketgraph:marketgraph "$PYCACHE_ROOT"
+sudo -u marketgraph "${SAFE_ENV[@]}" PYTHONPYCACHEPREFIX="$PYCACHE_ROOT" \
+  "$VENV/bin/python" -m compileall -q shared Ashare tools
+sudo rm -rf -- "$PYCACHE_ROOT"
+
+cd "$CANDIDATE/front"
+sha256sum package-lock.json > "$EVIDENCE/package-lock.sha256"
+sudo -u marketgraph "${SAFE_ENV[@]}" npm ci
+sudo -u marketgraph "${SAFE_ENV[@]}" npm test
+sudo -u marketgraph "${SAFE_ENV[@]}" npm run lint
+sudo -u marketgraph "${SAFE_ENV[@]}" npm run build:all
+sudo -u marketgraph "${SAFE_ENV[@]}" node --version > "$EVIDENCE/node-version.txt"
+sudo -u marketgraph "${SAFE_ENV[@]}" npm --version > "$EVIDENCE/npm-version.txt"
+```
+
+`env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、SharedSignals catalog/dataset/auth或DeepSeek credential。`SHAREDSIGNALS_API_URL`与`MARKETGRAPH_API_URL`在旁路验收中必须显式为空，避免未退役旧reader把“变量缺失”解释为localhost默认地址并读取现役服务；这两个空值不是V1联调配置。依赖范围未完全锁hash时，receipt必须保存Python/pip/Node/npm版本、完整`pip freeze`、requirements与`package-lock.json`哈希；未保存这些证据不得声称复现了同一环境。
+
+只读API canary必须使用非现役、loopback-only端口，显式保持`REAL_TRADING_ENABLED=false`，记录精确PID并在停止前核对其cmdline指向候选`dist-server`。禁止通配`pkill`或占用8787。以下生命周期在同一个fail-fast Bash进程中执行；`FINANCE_WORKSPACE_ROOT`只指向候选的显式别名，不读取现役workspace：
+
+```bash
+set -euo pipefail
+umask 077
+: "${CANDIDATE:?}" "${EVIDENCE:?}" "${VENV:?}" "${SAFE_PATH:?}" "${MARKETGRAPH_HOME:?}"
+
+CANARY_PORT=18787
+test "$CANARY_PORT" -ne 8787
+! ss -ltn | grep -Fq "127.0.0.1:$CANARY_PORT"
+CANARY_OUTPUT="/opt/investment/tradingagent-canary-output/${RELEASE_ID}-api"
+WORKSPACE_LINK="$CANARY_OUTPUT/TradingAgent"
+PID_FILE="$EVIDENCE/canary.pid"
+SERVER_JS="$CANDIDATE/front/dist-server/server/tradingAgentSnapshotHttp.js"
+NODE_BIN="$(sudo -u marketgraph env -i PATH="$SAFE_PATH" sh -c 'command -v node')"
+test -f "$SERVER_JS"
+test ! -e "$CANARY_OUTPUT"
+sudo install -d -m 0700 -o marketgraph -g marketgraph "$CANARY_OUTPUT"
+sudo -u marketgraph ln -s "$CANDIDATE" "$WORKSPACE_LINK"
+
+CANARY_PID=''
+SUDO_PID=''
+cleanup_canary() {
+  local stopped=0
+  if [[ -n "${CANARY_PID:-}" && -r "/proc/$CANARY_PID/cmdline" ]] &&
+     tr '\0' '\n' < "/proc/$CANARY_PID/cmdline" | grep -Fxq "$SERVER_JS"; then
+    kill "$CANARY_PID"
+    stopped=1
+  fi
+  if [[ "$stopped" -eq 1 && -n "${SUDO_PID:-}" ]]; then
+    wait "$SUDO_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_canary EXIT
+
+sudo -u marketgraph env -i \
+  HOME="$MARKETGRAPH_HOME" PATH="$SAFE_PATH" LANG=C.UTF-8 TZ=Asia/Shanghai \
+  REAL_TRADING_ENABLED=false TRADINGAGENT_LLM_NETWORK_ENABLED=false \
+  FINANCE_WORKSPACE_ROOT="$WORKSPACE_LINK" \
+  TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1 \
+  TRADING_AGENT_SNAPSHOT_PORT="$CANARY_PORT" \
+  sh -c 'set -eu; printf "%s\n" "$$" > "$1"; exec "$2" "$3"' \
+  sh "$PID_FILE" "$NODE_BIN" "$SERVER_JS" \
+  > "$EVIDENCE/canary-api.log" 2>&1 &
+SUDO_PID=$!
+
+for _ in $(seq 1 50); do
+  test -s "$PID_FILE" && break
+  sleep 0.1
+done
+CANARY_PID="$(cat "$PID_FILE")"
+[[ "$CANARY_PID" =~ ^[0-9]+$ ]]
+test -r "/proc/$CANARY_PID/cmdline"
+tr '\0' '\n' < "/proc/$CANARY_PID/cmdline" | grep -Fxq "$SERVER_JS"
+
+for _ in $(seq 1 50); do
+  curl -fsS "http://127.0.0.1:$CANARY_PORT/healthz" >/dev/null && break
+  sleep 0.1
+done
+curl -fsS "http://127.0.0.1:$CANARY_PORT/healthz" >/dev/null
+curl -fsS -D "$EVIDENCE/canary-snapshot-headers.txt" \
+  "http://127.0.0.1:$CANARY_PORT/api/trading-agent/snapshot" \
+  > "$EVIDENCE/canary-snapshot.json"
+test -r "/proc/$CANARY_PID/cmdline"
+tr '\0' '\n' < "/proc/$CANARY_PID/cmdline" | grep -Fxq "$SERVER_JS"
+LISTENER="$(ss -ltnp | grep -F "127.0.0.1:$CANARY_PORT")"
+printf '%s\n' "$LISTENER" | grep -Fq "pid=$CANARY_PID,"
+grep -Eiq '^cache-control:.*no-store' "$EVIDENCE/canary-snapshot-headers.txt"
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  "http://127.0.0.1:$CANARY_PORT/api/trading-agent/snapshot")" = 405
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:$CANARY_PORT/not-a-route")" = 404
+
+"$VENV/bin/python" - "$EVIDENCE/canary-snapshot.json" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert payload.get("mode") == "simulated"
+paper_day = payload.get("paperDayRun")
+if isinstance(paper_day, dict):
+    assert paper_day.get("realTradingEnabled") is False
+    assert paper_day.get("productionVerified") is False
+
+def visit(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = key.replace("_", "").lower()
+            if normalized in {"realtradingenabled", "livetradingenabled"}:
+                assert child is False
+            visit(child)
+    elif isinstance(value, list):
+        for child in value:
+            visit(child)
+
+visit(payload)
+PY
+
+cleanup_canary
+trap - EXIT
+for _ in $(seq 1 50); do
+  if ! ss -ltn | grep -Fq "127.0.0.1:$CANARY_PORT"; then
+    break
+  fi
+  sleep 0.1
+done
+! ss -ltn | grep -Fq "127.0.0.1:$CANARY_PORT"
+curl -fsS http://127.0.0.1:8787/healthz >/dev/null
+```
+
+验收至少证明：
+
+- `GET /healthz`与只读snapshot可用，`Cache-Control: no-store`；
+- 顶层`mode=simulated`且所有真实交易标志为false；
+- snapshot的POST返回405，未知路由返回404；
+- canary停止后备用端口无监听；
+- 现役8787服务始终健康。
+
+冻结fixture必须写到独立canary output root，至少完成同根幂等重放和跨根字节一致性检查；输出必须保持`non_authority`、`local_candidate`、`production_verified=false`、`real_trading_enabled=false`。不得写正式SampleJournal、活动runtime根或前端投影根。
+
+### 1.1.3 最终readback与回滚
+
+部署完成后重新读取并逐字节或逐哈希比较现役仓状态、systemd unit、crontab和健康检查；同时确认候选精确SHA、候选工作树干净、备用端口已关闭。发布receipt必须把`server_sidecar_canary`与`active_production_activated=false`明确写开，不能用“已部署”省略层级。证据目录内除最终manifest自身外的文件应生成排序后的SHA-256清单，再单独记录该清单的SHA-256；receipt至少保存候选/现役SHA、依赖版本、测试结果、canary状态、fixture状态、现役变更布尔值和未验证项。
+
+因为sidecar从未接管现役服务，回滚只需停止候选进程并保留证据。候选worktree、venv与输出目录只有在留存期结束且获得清理授权后才可移除；不得删除现役未跟踪资产、append-only账本、模拟样本或既有回滚目录。若未来要切换现役源码/API、cron、页面或公网路由，必须重新进行独立发布授权、备份、原子切换和真实回退演练，不能沿用本次sidecar授权。
+
+## 2. 安全环境与显式配置
+
+从目标隔离 worktree 根目录运行：
+
+```bash
 export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 export REAL_TRADING_ENABLED=false
-export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
 ```
 
-两个 capital root 独立配置：
+V1 不提供 SharedSignals 默认地址。仅在上游合同真正冻结并由获批联调任务提供时，才可显式设置：
 
 ```bash
-export TRADINGAGENT_ASHARE_CAPITAL_ROOT=/path/to/ashare-capital
-export TRADINGAGENT_CN_FUTURES_CAPITAL_ROOT=/path/to/cn-futures-capital
+export SHAREDSIGNALS_API_URL='<explicit-http-or-https-base-url>'
+export SHAREDSIGNALS_CATALOG_VERSION='<explicit-frozen-catalog-version>'
+export SHAREDSIGNALS_ACCESS_POLICY_ID='<explicit-read-only-policy-id>'
+export SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON='<explicit-market-to-dataset-json>'
+export SHAREDSIGNALS_SCHEMA_MAJOR='<explicit-positive-schema-major>'
+export SHAREDSIGNALS_RUNTIME_TRANSPORT='http-json-v1'
 ```
 
-禁止设置旧共享 capital root。不要让两个变量指向同一目录；启动前检查它们不是 symlink，且 event/lock/latest 文件名分别属于对应 market。
+缺任一配置时保持 unavailable；不得猜测 localhost、生产地址、catalog version、schema major 或 dataset ID。`http-json-v1` 只表示显式 TA consumer transport，拒绝 30x 重定向，且不能解除未迁移业务 reader 的 retirement block；当前不授权配置或运行 live endpoint。
 
-## 2. Capital authority 只读检查
+### 2.1 SharedSignals V1 接入验收器
 
-单市场状态、checksum 和 cutover：
+轻量的 `sharedsignals_v1_gate.py` 继续负责任务启动前逐 dataset 的即时可用性门；`sharedsignals_v1_integration_probe.py` 负责首次接入、SS 发布或 catalog/profile 变化、消费者切换和故障恢复后的完整只读验收。二者均是 TA consumer，不实现或验收 SS 服务端；两者输出的 reason code 都由 TA 本地状态机推导，上游 `metadata.reasons` 自由文本只保存哈希，不能伪装成本地门禁结论或进入日志。
+
+模板见 [sharedsignals_v1_integration_probe.example.json](examples/sharedsignals_v1_integration_probe.example.json)。模板中的 `.invalid` 地址、`fixture.*` dataset ID、catalog 与 policy 只用于说明结构，不是生产默认值。SS owner 正式交接后，应复制到仓外绝对路径并逐项替换；manifest 只允许保存 base URL 与访问策略**身份**，禁止写 API key、token、密码或其它 credential。真实认证协议尚未冻结，验收器不会自行发明 Bearer/Header 或读取 `.env` 密钥。
+
+首批显式功能角色为：
+
+- `trade_calendar`：交易日历，执行必需；
+- `equity_master`：主板证券主数据与历史可交易状态，执行必需；
+- `daily_bars`：主板日线与行级 PIT，执行必需；
+- `industry_context`：全市场行业及创业板/科创板指数聚合，只作环境上下文，不允许输出双创个股。
+
+获批只读联调时，从目标 TA 隔离工作树执行：
 
 ```bash
-python3 tools/market_capital_ops.py status --market ashare --trade-date YYYYMMDD
-python3 tools/market_capital_ops.py status --market cn_futures --trade-date YYYYMMDD
-python3 tools/market_capital_ops.py verify --market ashare
-python3 tools/market_capital_ops.py verify --market cn_futures
-python3 tools/market_capital_ops.py cutover-audit --market ashare
-python3 tools/market_capital_ops.py cutover-audit --market cn_futures
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+export REAL_TRADING_ENABLED=false
+
+python3 -m shared.runtime_test.sharedsignals_v1_integration_probe \
+  --manifest /absolute/path/sharedsignals-integration.json \
+  --output /absolute/path/evidence/sharedsignals-integration-receipt.json \
+  --json
 ```
 
-并列状态：
+验收器只调用一次 `GET /v1/catalog`，随后对每个数据角色用同一显式 `as_of`、fields、filters、schema major、limit 与默认 registry order 连续执行两次 `POST /v1/query`。它复用 `DataEvidenceGate` 与 `ResearchDataProfile` 检查 metadata、source proof、精确字段投影、最小行数和行级 `event_time / available_time / revision_id / receipt_id`，并比较排除 transport request ID 后的完整响应语义哈希。缺少显式字段或出现未声明字段均阻断；后者只保存数量与字段集合哈希，避免行业聚合响应夹带个股字段或把未知字段写进回执。
+
+当前跨页 receipt、默认排序快照和拼页 identity 仍由 SS owner 待冻结。因此任一响应出现 `next_cursor != null` 时，首版固定返回 `pagination_contract_unfrozen` 并阻断；不会抓第二页后自行拼成研究快照。SS 合同补齐前，不得通过增大 limit、截取第一页或本地排序绕过。
+
+回执固定标注 `authority=non_authority`、`production_verified=false`、`real_trading_enabled=false`，隐藏 base URL、access policy 值、cursor、异常原文与上游自由文本 reason，只保存其 authority/config 哈希、catalog/query trace、dataset evidence、双跑一致性、PIT/内容哈希和 TA 受控 reason codes；上游 reason 原文只参与哈希。退出码为：`0=通过`、`2=数据或合同阻断`、`64=manifest/transport配置无效`、`74=回执落盘失败`。回执通过只证明该次显式只读输入满足 TA 接入合同，不证明 SS 服务端整体通过、生产 runtime 已切换、旧链 parity 已完成、每日数据持续健康或交易获授权。
+
+未来可把该命令放在自动模拟盘启动前作为 fail-closed 前置门，但当前没有注册 scheduler/cron，也未调用任何 live SS 地址。每次 catalog/dataset/schema、PIT 字段或 access policy identity 变化都必须生成新 manifest 与新回执，不能复用旧 PASS。
+
+DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：
+
+`TRADINGAGENT_LLM_API_KEY_ENV`只能取固定值`DEEPSEEK_API_KEY`；它不是让系统选择任意密钥变量的开关。任意模型映射只允许作为`fixture_only`离线测试路由，不能替代严格配置或授权网络出口。
 
 ```bash
-python3 tools/market_capital_ops.py dual-status --trade-date YYYYMMDD
+export TRADINGAGENT_LLM_PROVIDER=deepseek
+export TRADINGAGENT_LLM_BASE_URL=https://api.deepseek.com
+export TRADINGAGENT_LLM_API_KEY_ENV=DEEPSEEK_API_KEY
+export TRADINGAGENT_LLM_FLASH_MODEL=deepseek-v4-flash
+export TRADINGAGENT_LLM_PRO_MODEL=deepseek-v4-pro
+export TRADINGAGENT_LLM_NETWORK_ENABLED=false
 ```
 
-输出中两个 market 可并列，但不得求和。`fresh=true` 只在目标交易日有 actual MTM reconcile 后成立。
+默认Gateway不会读取`DEEPSEEK_API_KEY`值，也不会自行安装HTTP transport。只把`TRADINGAGENT_LLM_NETWORK_ENABLED`改成`true`会因缺少进程内显式授权而fail closed；ambient `DEEPSEEK_API_KEY`也不会被transport读取。HTTP候选必须同时满足两个独立门：
 
-CLI 的 `reconcile-dry-run` 只检查 ledger 本身，不会制造 fresh：
+1. `DeepSeekProviderConfig.from_environment(..., allow_network_transport=True)`显式批准validated router；
+2. 调用方显式构造`DeepSeekHTTPTransportConfig(network_enabled=True, credential=DeepSeekCredentialFile(...))`并注入精确的`DeepSeekHTTPTransport`类型。
+
+这两步只完成安全装配，不授权直接调用transport。公开`DeepSeekHTTPTransport.send(...)`以及脱离`LLMEvidenceGateway`的HTTP Adapter调用固定在读取credential/创建socket前失败；只有Gateway完成request/source proof、Prompt注入、全树DLP和router authority复核后，才会内部铸造以进程内HMAC绑定全部关键字段的验证egress capability并进入wire path。
+
+任何后续网络canary取得新的独立授权后，装配形状固定如下；本段是代码合同，不是可直接复制执行的运行命令：
+
+```python
+from pathlib import Path
+
+from shared.llm import (
+    DeepSeekCredentialFile,
+    DeepSeekHTTPTransport,
+    DeepSeekHTTPTransportConfig,
+    DeepSeekProviderConfig,
+)
+
+provider_config = DeepSeekProviderConfig.from_environment(
+    {"TRADINGAGENT_LLM_NETWORK_ENABLED": "true"},
+    allow_network_transport=True,
+)
+transport = DeepSeekHTTPTransport(
+    DeepSeekHTTPTransportConfig(
+        network_enabled=True,
+        credential=DeepSeekCredentialFile(
+            Path("<absolute-path-to-rotated-raw-secret>")
+        ),
+    )
+)
+```
+
+raw-secret必须是显式绝对路径、当前进程euid所有的regular file，禁止symlink且link count必须为1，权限只能为`0400`或`0600`，ASCII内容必须是单一`sk-...`值且不超过512 bytes；不得有换行、NUL、`=`或`DEEPSEEK_API_KEY=`前缀。任何在聊天、工单、日志或提交中暴露过的key都必须先在供应商侧废止并轮换。历史服务器候选中的env格式秘密文件只保留为旧证据，不能直接复用为raw-secret。新值不得写入仓库、`.env.example`、测试、RunBundle、receipt或文档。
+
+密钥父路径也是安全边界：客户端使用目录descriptor逐级打开，拒绝任一symlink父目录、非root/当前进程用户所有目录以及group/world-writable目录，避免最终文件合格但父目录可被替换。
+
+transport固定`POST https://api.deepseek.com/chat/completions`，使用系统TLS验证，禁环境代理、重定向、自动重试和fallback。禁止把上面的`transport`对象直接作为通用HTTP客户端；它只能注入`LLMEvidenceGateway`的DeepSeek Adapter。2026-07-18一次旧A股v1 Prompt的隔离真实请求到达HTTP 200 provider envelope，但evidence binding以`llm_evidence_schema_invalid`失败；没有accepted `ProviderTransportReceipt`、Journal或生产切换。该历史canary早于当前`ProviderRejectedAttemptReceipt`，不得追溯包装为新typed receipt。A股v2只通过离线fixture合同测试，没有进行第二次真实调用。
+
+后续真实canary必须使用`LLMEvidenceGateway.analyze_with_provenance()`并通过显式`LLMEvidenceProvenanceRecorder`路由，固定单次请求、稳定request ID、无应用层retry、无fallback，失败后不得自动补发。调用方只选择仓外受限目录中的显式绝对accepted锚点，再用`llm_provenance_journal_paths()`确定性得到accepted、rejected和provider-invocation三条路径；禁止另配invocation锁、相对路径或自定义伴随路径。三条Journal及`.head`共六个端点不得相同或互为Unicode NFC/NFD、大小写、真实路径或物理文件别名，recorder的source verifier必须与DeepSeek Adapter绑定同一对象。invocation Journal以不包含调用方request ID的逻辑内容键在网络前先落`in_flight`，并持有跨进程锁直到唯一`accepted/rejected/no_receipt`终态提交；同一canonical family内的逻辑内容轮换ID或同ID异内容均在副作用前fail closed。Gateway返回前会重算原request/source/material摘要并精确复核canonical observation字段集；额外字段、元数据重绑和内容hash漂移均拒绝。若精确HTTPS路径已验证HTTP 200、MIME/JSON和provider envelope，但evidence schema或Gateway observation binding失败，只可把`ProviderRejectedAttemptReceipt`的脱敏descriptor写入独立rejected audit Journal；不得保存Prompt、响应正文、parsed/normalized evidence、credential或credential fingerprint。该回执固定`audit_only=true`、`evidence_journal_eligible=false`且全部authority为false，绝不能写入accepted Journal、样本、成熟度或交易链。三类Journal都要求single-link、当前euid、`0600`及path/FD inode一致；任一readback、CAS、身份或持久化失败必须在provider调用前阻断，或把已得到的available观察降为invalid，不得旁路返回。只有已持久化唯一终态的同一request ID+内容可复用本地观察且不再次调用provider；若provider调用后进程中断且没有可验证终态，`in_flight`保持未知并禁止自动补发，必须人工裁决。三类回读都只消费非权威、深层不可变的descriptor校验视图，不得重建typed HTTPS receipt。其它网络、协议、DLP、敏感输出或前置门禁失败不伪造rejected receipt。任何后续真实网络启用仍是新的独立授权与验收任务；本地Journal不构成生产durable authority。
+
+最小装配合同如下；这里的路径和ID是占位符，不是已部署配置：
+
+```python
+accepted_path, rejected_path, invocation_path = llm_provenance_journal_paths(
+    Path("/absolute/restricted/llm-evidence.jsonl")
+)
+accepted = LLMEvidenceJournal(accepted_path)
+rejected = LLMRejectedAttemptAuditJournal(rejected_path)
+invocations = LLMProviderInvocationJournal(invocation_path)
+recorder = LLMEvidenceProvenanceRecorder(
+    accepted_journal=accepted,
+    rejected_attempt_journal=rejected,
+    provider_invocation_journal=invocations,
+    source_authority_verifier=adapter.source_authority_verifier,
+)
+observation = debate(
+    symbol,
+    scores,
+    gateway=gateway,
+    artifacts=artifacts,
+    provenance_recorder=recorder,
+    request_id=f"LLM-DEBATE-{immutable_decision_id}",
+)
+```
+
+`immutable_decision_id`必须由调用方已有的不可变run/decision identity确定性提供；同一次逻辑请求重试时保持不变，payload、artifact或route变化时必须生成新ID。它不是唯一幂等门：recorder还会以不依赖该ID的逻辑内容键拒绝换ID重发。所有worker还必须使用同一accepted锚点；canonical family检查能拒绝单个recorder内部错配，但当前尚无production runtime启动证明，不能由本地合同推断跨主机唯一调用。当前paper composition尚未装配这条provider路径，示例不代表scheduler、网络、服务器或production authority已启用。
+
+## 3. 唯一聚焦候选检查
+
+测试清单的唯一事实源是 [`tests/ta_v1_candidate_manifest.txt`](../tests/ta_v1_candidate_manifest.txt)。在仓库根执行：
 
 ```bash
-python3 tools/market_capital_ops.py reconcile-dry-run --market ashare --trade-date YYYYMMDD
-python3 tools/market_capital_ops.py reconcile-dry-run --market cn_futures --trade-date YYYYMMDD
+export REAL_TRADING_ENABLED=false
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest \
+  $(sed '/^#/d;/^$/d' tests/ta_v1_candidate_manifest.txt) -q
 ```
 
-日常 actual MTM writer 已统一为 `job_market_capital_reconcile.sh`。它先从 SharedSignals 刷新 PIT mark，再从 fresh execution snapshot、durable outbox 和 capital event chain 证明 cash/position/reservation/fill watermark 守恒，最后提交 `mtm_reconcile()`：
-
-当既有 A 股 capital bootstrap 的随机 lineage 与 canonical execution lineage 不一致、且尚无首个策略样本时，不得手写 manifest 或修改 append-only event。先用 staging-only CLI 生成一对新的 zero-import authority；该命令默认 dry run，拒绝生产默认 root、非 50,000 CNY、任何持仓/预留/盈亏、未来 PIT 和 `REAL_TRADING_ENABLED=true`：
+该命令只验证本地合同、fixture、故障负例与文档防漂移；它不访问真实上游，不制造真实市场样本。完整冻结前还必须执行：
 
 ```bash
-python3 tools/ashare_fresh_authority_bootstrap.py \
-  --capital-root /path/to/staging/capital/ashare \
-  --execution-root /path/to/staging/execution/ashare-sim-fresh-20260712-v1 \
-  --source-opening-manifest /path/to/operator/opening_manifest.json \
-  --legacy-freeze-manifest /path/to/operator/legacy_freeze_manifest.json \
-  --output-opening-manifest /path/to/new/evidence/opening_manifest.json \
-  --lineage-started-at YYYY-MM-DDTHH:MM:SS+08:00 \
-  --point-in-time-as-of YYYY-MM-DDTHH:MM:SS+08:00 \
-  --confirm-zero-import
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q
+python3 -m compileall -q shared Ashare tools
+python3 -m ruff check shared Ashare tools tests
+python3 -m ruff format --check shared Ashare tools tests
+git diff --check
+
+cd front
+npm test
+npm run lint
+npm run build:all
 ```
 
-只有 dry run、`--apply`、capital checksum、execution manifest、非 root 用户读写和隔离 reconcile 均通过后，才可在独立备份下把两个 staging root 原子切换为 production default。CLI 本身不激活 production root，也不写 fresh/reconciled 状态。
+若本机没有项目声明的工具依赖，报告“未运行及原因”，不得用较小检查替代完整检查并宣称通过。
+
+## 4. 离线 fixture 闭环
+
+当前唯一可执行入口是冻结 fixture 的本地、非权威 composition；它不是通用 paper-day CLI、实时模拟盘或 scheduler：
 
 ```bash
-REAL_TRADING_ENABLED=false \
-  shared/wrappers/job_market_capital_reconcile.sh ashare opening
+export REAL_TRADING_ENABLED=false
+OUTPUT_ROOT="$(mktemp -d /private/tmp/ta-phase1-paper-fixture.XXXXXX)"
 
-REAL_TRADING_ENABLED=false \
-  shared/wrappers/job_market_capital_reconcile.sh cn_futures preopen
+python3 tools/run_phase1_paper_fixture.py \
+  --fixture tests/fixtures/phase1_paper/paper_day.json \
+  --output-root "$OUTPUT_ROOT" \
+  --real-trading-enabled false
+
+python3 - "$OUTPUT_ROOT" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1]) / "shared" / "runtime_test" / "phase1_paper_fixture"
+latest = root / "run_bundles" / "latest.json"
+raw = latest.read_bytes()
+payload = json.loads(raw)
+assert payload["_projection"]["environment"] == "local_candidate"
+assert payload["_projection"]["production_verified"] is False
+assert payload["context"]["real_trading_enabled"] is False
+print(latest)
+print(hashlib.sha256(raw).hexdigest())
+PY
 ```
 
-`opening/preopen/ops` 时点已经写入仓库 cron 模板；生产是否安装必须通过项目 merge 工具的 readback 与 cron coverage 单独证明，不能从模板反推。A股 `14:58` 仍是收盘前资本 checkpoint；独立 `15:32 ops` 在盘后固定价格交易结束后写当日 closing MTM，并向 `shared/review/ashare/sample_journal.jsonl` 追加日级 `account_daily_mtm_equity` chain-validation 证据。15:31 前的 reconcile 不得作为正式逐日回撤点。wrapper 缺 source、mark、exact reservation、commit、lineage 或 ledger-head 证据时必须 blocked；不能用 dry-run 或人工 JSON 伪造 fresh。
+用同一 fixture 与 output root 重跑，必须获得稳定 run/bundle identity、字节稳定投影与 `idempotent=true`，且不得重复追加 ledger 事件；用两个不同真实 output root 运行时，业务 bundle SHA 与最终 artifact bytes 也必须相同，只有 CLI 顶层可操作绝对路径不同。输出只允许位于显式临时 root；macOS 应使用真实 `/private/tmp`，因为 `/tmp` 是 symlink 并会被安全门拒绝。仓库、项目根、正式 review/runtime 根及其 symlink 别名必须被拒绝。
 
-## 3. Fresh-start 初始化边界
+fixture 记录必须同时满足：
 
-`init` 不是日常任务，也不会在读取、reserve 或 wrapper 中隐式发生。它只允许对尚未作为当前默认 root 的显式隔离目录执行，并要求 Nicholas 已批准的 fresh-start decision、opening manifest 与真实 legacy freeze manifest：
+- `source_class=fixture`；
+- `promotion_eligible=false`；
+- `network_enabled=false`、`live_execution_enabled=false`、`real_trading_enabled=false`；
+- 数据、Universe、资本、成本、漂移和模型 receipt 均内容绑定；
+- 不写正式 SampleJournal，不发布到前端活动根，不计入正期望、概率校准或晋级样本。
 
-```bash
-python3 tools/market_capital_ops.py init \
-  --market ashare \
-  --root /isolated/new/ashare-capital \
-  --confirm-fresh-start \
-  --opening-manifest /evidence/ashare-opening.json \
-  --legacy-freeze-manifest /evidence/legacy-freeze.json \
-  --trade-date YYYYMMDD
+### 4.1 Shadow机会、forecast与三风格router
+
+仓库当前没有把`OpportunityRadar -> forecast -> style router`接入现役day loop的命令，也不得新增临时脚本绕过这条隔离。它们只能由对应contract tests构造内容寻址fixture，输出必须保持`shadow_only/nonpromotion/no position effect/no order effect`。尤其禁止：
+
+- 把旧`funnel_events.jsonl`当作OpportunityLedger，或让旧writer重新排入cron；
+- 把未校准quantile/hazard score命名成概率；
+- 把detached calibrated research artifact回写原forecast或Champion；
+- 把`open_candidate` shadow intent转换成`TargetPosition`、`TradeIntent`或订单；
+- 用多个style重复计算同一evidence group，或在冲突时取消abstain。
+
+只有未来独立任务完成真实shadow publisher、只读投影、冻结样本验收和consumer合同变更后，才可登记运行命令；这仍不等于进入订单链。
+
+### 4.2 A股 forward-label / sample-ops 计划门（合同检查，不是现役 V1 runner）
+
+A股 forward-label CLI 与 sample-ops CLI 合同都要求：
+
+```text
+--validation-plan-path <externally-created-ashare-validation-plan-v1.json>
 ```
 
-CNFutures 使用独立 root 和 opening manifest。禁止复用一个 root、事件文件或 execution lineage。
+该文件必须是预测前由外部calendar verifier生成并冻结的内容寻址`ashare_validation_plan_v1` artifact。CLI只加载、重建并校验canonical payload、plan/calendar/proof SHA和时点绑定；它不会调用verifier、不会自签proof，也不会从当天bar生成交易会话。缺参数、symlink、缺proof、hash漂移或非canonical payload时，会在读取行情前阻断。
 
-Opening authority 的完整 contract 必须证明 50,000 CNY cash/equity、零持仓/保证金/预约/冻结/PnL、fresh-start mode、current authority/generation、source SHA、唯一 execution lineage 和 `real=false`。CLI 对 opening JSON 做 dataclass 全字段、类型、集合精确性与 policy 校验，并在任何不一致时 fail-before-write。
+这两个模块当前仍位于`runtime_test`且默认reader尚在旧消费者退役清单中，所以不得把参数合同写成已接通SS V1的实时运行入口，也不得对默认review/Journal根执行。现阶段只允许通过注入reader的测试或显式隔离fixture验证；待同`as_of` V1 cutover、受信artifact registry和生产calendar readback完成后，才能另行登记scheduler命令。顶层fixture tier、`production_eligible=false`和内容hash都不能自行证明calendar来源真实。
 
-Legacy freeze manifest 必须引用真实只读事件文件和真实归档目录，并保存 SHA-256、最后 event ID、行数、带时区 frozen-at 和 `imported=false`。路径/哈希/行数/最后 ID 任一不匹配都必须 fail-before-write。
+## 5. 每个模拟日的验收顺序
 
-默认不得对生产 root 执行 init 或切换 runtime env。只有目标明确包含 fresh-start 生产发布且完成对应 preflight 时，主集成者才可把初始化、root 激活和首次 reconcile 作为独立 cutover：先备份并停止相关任务，在两个互异、非 symlink 的隔离 root 初始化并验证，再逐市场激活；日常任务不得隐式创建本金或 authority。
+固定阶段为：
 
-## 4. A股日内与样本运行
-
-仓库 cron authority 是 `shared/crontab.txt`；`shared/wrappers/job_ashare_sim_exec.sh` 运行 server-local simulated loop，并在开市外自行跳过。Hermes 默认关闭：
-
-```bash
-export ASHARE_SIM_HERMES_ENABLED=0
-export ASHARE_SIM_WEBHOOK_ENABLED=0
+```text
+preopen
+-> evidence_ready
+-> universe_ready
+-> decision_ready
+-> risk_checked
+-> orders_simulated
+-> reconciled
+-> learning_recorded
+-> reported
 ```
 
-当前 production cron/env loader 将这两个变量作为必须关闭的发布门禁：`.env`
-或共享环境中出现 truthy/未知值时，任务在正文启动前 fail closed。恢复 Mini/Hermes
-模拟第二路径需要单独发布授权和新的门禁审计，不能只改服务器环境变量。
+逐层检查：
 
-盘前与 opening 验收是只读检查：
+1. `decision_as_of` 带时区，并与 `trade_date` 的 `Asia/Shanghai` 交易日一致。
+2. SS V1 请求包含必填 `schema_major`；`order` 省略时由 registry 默认排序。catalog、逐 dataset metadata 与 receipt 逐项验证；不可用数据和 null source proof 不能被其它健康 dataset 洗白。
+3. CoverageReceipt 的分母、taxonomy、有效时间、来源 generation/receipt/hash 经外部注入 verifier 复核；缺 verifier 时只能 `partial_market + degraded`。
+4. 账户可交易池只含主板普通股；市场环境可含双创指数和全市场行业聚合，但始终 `context_only`。
+5. 小账户计划绑定50,000 CNY policy、独立账户proof、买入整手/卖出零股例外、持仓/T+1、模拟费用、现金顺序、最少经济订单、无交易区与authority generation；本地逻辑重算positions/gross/content hash、费用和计划数值。Champion score必须绑定当前selection manifest、artifact/model/spec及经独立port复核的数值PIT特征快照，rank只排序且不参与sizing。fixture verifier只证明所给输入的绑定；canonical-capital测试路径从同一模拟ledger head派生并复读current generation/lineage。两者都不证明真实账户、Champion registry、feature authority或broker事实。
+6. 六维论点风险必须显式注入人工复核policy、逐候选/持仓/pending detached proof与完整exposure-set proof；运行时无默认verifier且不得自签。当前持仓和所有open/increase pending预约必须先进入pre exposure，pending卖出不得重复计入；同一股票candidate、position与pending group必须连续。optimizer与day loop分别复算每笔notional变化和最终`industry/thesis/raw_material/policy_event/crowding/model_family` exposure map，day loop另把重签plan中的group绑定回权威receipt。超cap只阻断open/increase，合法reduce/exit继续；缺失、重复、过期、篡改、改换group、重新签名或跨决策归零均fail closed。外层stage不可晋级不能掩盖嵌套proof为可晋级。当前仅有不可晋级fixture authority，不是生产行业分类、pending book或上限readback。
+7. 非空持仓mark与非空订单quote必须嵌入精确`MarketEvidenceAuthority`，绑定dataset/catalog/source receipt/lineage、calendar receipt、capital generation、execution lineage与时点；fixture verification hash只证明本地内容绑定，不是签名或live市场authority。执行port还必须显式注入`TrustedExecutionClock`，并在`sim_submit`和`capital_commit`紧邻副作用前分别重新验证quote freshness/session；commit时钟通过后、账务写入前再次复核drift/Champion authority。所有证据与副作用时点保留原始微秒精度，模拟fill/terminal使用submit副作用时点，commit不得早于submit；任何TOCTOU、时钟倒退或跨交易日异常都保留坏reading、释放预约且不提交capital ledger/outbox。日循环与对账端复用同一session/30秒TTL和严格失败合同；`not_committed`必须先重证`data_through <= available <= execution <= submit`、submit时quote仍在30秒内且execution session匹配声明，再按唯一原因优先级复核精确terminal，并再次验证`quote <= submit <= fill/terminal <= commit <= reconcile`。它只接受明确的commit前市场失效、零成交、完整残量、无fill/commit ID且释放语义一致的回执。commit后、settlement前崩溃时，只有pending intent/receipt seed与canonical ledger中同一commit完全绑定且commit API返回幂等，才先恢复settlement；intent-before-commit仍服从当前收紧门。当前没有默认或生产时钟，也没有把最终authority复核与未来外部账务提交原子化的生产机制。
+8. Risk 输入不得预带当前或legacy capital reservation字段。`open/increase`预约证明必须由本轮wrapper生成，execution拒绝买单夹带legacy别名；`reduce/exit`在risk与execution两层均禁止携带预约字段，卖出失败不会释放预约。买入零成交释放前要向canonical ledger验证同一run/order/reference、reservation event、authority/generation、execution lineage、risk unit与lineage，并要求订单reserved cash/exposure等于canonical完整剩余值；首次释放还必须通过effect guard。释放后精确event必须立即使预约`terminal=true`且remaining cash/exposure/margin全零；幂等重放只恢复同一reference的既有终态event。对账以回执中的预约证明把ledger重放到精确release event，逐项核对金额、原因和reference，并拒绝部分释放或依靠后续事件才归零的预约。任何不匹配在写入close reconcile前fail closed。
+9. 漂移指标必须同时具有 metrics v2 artifact 与 detached verification receipt；本地verifier固定implementation trust root并复核完整artifact/receipt、label/cost snapshot、window/horizon/regime、journal/model及source receipts，producer 自报 lineage 不可用。该hash不是签名，也不替代真实独立metrics重算。漂移latch只能保持或收紧；每笔reserve、sim submit、capital commit和reservation release前都重读最新drift与Champion authority。open/increase被阻断时，合法reduce/exit、必要reservation清理、reconcile和report仍继续。
+10. 每个候选都写入 Decision Ledger：`PAPER_FILLED`、`PAPER_NOT_FILLED`、`REJECTED` 或 `OBSERVATION_ONLY`，不得只保存成交。
+11. RunBundle 与最新投影读回重算 hash；临时文件、中断写、跨 run order identity 或不一致 receipt 必须 fail closed。
 
-```bash
-python3 -m shared.runtime_test.ashare_preopen_dry_run \
-  --now YYYY-MM-DDT09:20:00+08:00 --json --pretty --send-on never --no-write
+## 6. `completed_with_blocks` 与恢复
 
-python3 -m shared.runtime_test.ashare_opening_validator \
-  --now YYYY-MM-DDT09:35:00+08:00 --pretty
+以下情况至少阻断新增风险，但不应中止审计闭环：
+
+- 单个或多个 dataset degraded/stale/failed；
+- 全市场覆盖 authority 未验证或聚合缺口；
+- 资本、持仓、费用或漂移 authority 无法证明；
+- Champion selection、数值PIT特征、论点风险policy/exposure set、market evidence或trusted clock无法证明；
+- 模型证据过期、OOD、校准恶化或有效样本不足；
+- 订单因T+1、买入整手/卖出零股规则、现金、费用、流动性或硬风险不可行。
+
+恢复流程：
+
+```text
+冻结新增风险
+-> 保存当前不可变事实与 reason codes
+-> 修复或等待权威证据
+-> 使用同一 run identity 做幂等重放
+-> 对账与投影读回
+-> 仅由显式人工复核解除负向 latch
 ```
 
-盘前至少检查 SharedSignals 来源/覆盖/新鲜度、普通 A股与流动性、A股 capital fresh/reconciled、server-local cash/positions、outbox 和 simulation-only flags。失败不应阻断 observation 写入，但必须阻断新增风险。
+不得删除 append-only 事实、手改投影、修改历史 receipt、自动清除 quarantine，或借“恢复服务”扩大风险。
 
-A股 position authority 的排障必须先查看 market capital provider 的 `checksum_status/checksum_last/checksum_event_count` 与显式 positions/count/fingerprint，再核对 server-local、adapter、strategy、generic 各 source-owned canonical envelope 的 authority/generation/lineage/checksum/trade date。运行时使用 capital A → sources → capital B 双读；A/B 漂移、任一来源缺字段或内容不一致均报告 `capital_position_source_mismatch`。此时普通 risk checker、position-capacity、dynamic capital plan 和 rebalance 不应被调用；若仍看到“持仓数 8 已达上限”等普通拒绝，视为门禁顺序回归。修复方式是让 producer 恢复同一 current authority 的完整可验证 envelope 后重跑，不得用字段别名、读取后 identity 绑定、空仓默认值、旧 ledger 或手工放宽风险。
+## 7. 旧代码退役
 
-审计时还要确认 `capital_plan.cash_source=market_capital_authority`，其 available cash 不高于 current `cash_balance_cny` 与 `available_to_reserve_cny` 任一值；普通 risk 的 `total_exposure` 必须等于已验证 `positions_market_value_cny / 50000`，不能从缺失 source weight 推成 0。adapter/server-local/strategy cash/weight 只能出现在 diagnostics；若它们改变下单容量，按资金 authority 回归处理。原生路径应显示 authority A 先于 `get_local_sim_account_snapshot/get_local_sim_pnl`，两者 envelope 由 producer 计算且零仓/非零仓 fingerprint 与 capital 一致；若 adapter 仍读取无 current envelope 的 reporting snapshot，按 source 回归处理。
+旧 A 股 adapter、数据 reader、screening/research、runtime-test 与 wrapper 只作为 time-boxed 迁移证据。旧机会漏斗writer同样已经退役并固定退出78，且不在仓库cron模板中；两个历史JSONL路径只允许冻结法证读取，不能驱动current readiness或实时心跳。现役 V1 不调用这些旧入口；对应旧 wrapper不能由环境恢复。
 
-`run_gate_review` 遇到日亏、连亏或 7% 回撤 blocker 时，先确认 server-local producer 仍在 verified authority context 下完成 A/source/B，且 view 保存 positions 并显示 `new_risk_allowed=false`。buy/open/add 不得调用普通 risk，也不得出现普通持仓容量拒绝；sell/trim/exit 应调用普通 risk 并用 producer 的 `entry_date` 执行 T+1，同日持仓仍必须拒绝。main loop 应保留 planned sell、把 replacement/new-buy capacity 置 0，并继续验证成交/幂等/`ashare_sell_commit`。若 authority/source 失效，则所有方向都在普通 risk 前 blocked。若入口读取 `position_ledger.get_positions` 裸 list 或测试用该 API 伪造 dict envelope，按 current-source 回归处理。`filled` 或 `partial` 只要改变持仓，post-execution refresh 就必须出现一轮新的 A/source/B 审计并标记 `cash_source=market_capital_authority_post_execution`；source 尚未同步时应 blocked，不能从 adapter snapshot 生成 refresh。
+每批退役都按同一顺序完成：
 
-统一 sample ops 会追加到期标签并写 KPI、manual-only evolution decision 和 maturity 投影；它不创建订单、账户、邮件或 live transition：
-
-```bash
-python3 -m shared.runtime_test.ashare_sample_ops \
-  --journal-path shared/review/ashare/sample_journal.jsonl \
-  --review-dir shared/review/ashare \
-  --trade-date YYYYMMDD \
-  --as-of YYYY-MM-DDTHH:MM:SS+08:00 \
-  --label-batch-size 200 \
-  --pretty
+```text
+登记消费者与 owner
+-> 新旧同 as_of 只读 parity
+-> 切换一个边界清晰的消费者
+-> 验证 V1 失败时无 fallback
+-> 同批删除旧 import / URL / env / wrapper / test / doc 引用
+-> 更新 legacy inventory、机器状态、STATUS 与文档
 ```
 
-`--as-of` 是 evidence availability/receipt cutoff。Journal 任一纳入候选行在顶层或 `point_in_time_lineage[.timestamps]` 中出现非法/无时区 receipt/availability，或没有任何可用 receipt 时，任务必须在写 label/投影前 fail closed。运行报告应检查 frozen head、pending/selected/terminal、Journal parse/bytes/lock/fsync、HTTP logical/physical/cache/timeout/retry/latency、as-of drift、task-owned delta、最终 physical-H1 CAS、共同 `projection_input_sha256` 与 generation ID。
+旧链失败或新链未冻结时停止新增风险，不恢复兼容路径。历史细节从 Git 与冻结证据审计，不在现役操作文档复制旧命令。
 
-reference 时间诊断必须同时查看 `data_quality.price_timestamp`、reference timestamp lineage、`prediction_at`、`data_as_of`、decision timestamp lineage 与 PIT receipt chain。reference/decision lineage 必须显式存在，并保存 source/raw/normalized/semantics/rule/valid；缺失或字段不完整只能 pending/degraded，present-but-invalid、raw/normalized 冲突或 instant 不匹配必须 data-quality fail closed，不能回退为 `verified_reference_data`。只有字段名明确为 A股交易所 `bar_time`/`trade_time` 的无偏移原值可按 `Asia/Shanghai` 标准化；通用 timestamp、prediction、data-as-of 或 receipt 无时区时继续 fail closed。`missing_reference_price` 是 retryable/degraded pending，不得用收盘价、前值或零值代填，也不得伪造成 terminal label。
+## 8. 发布前的外部阻塞
 
-forward-label 验收必须从 provider/bar/reference 原始入口检查统一 EvidenceEnvelope，而不能只直接调用 materializer。所有 present event aliases 必须保留原始路径、逐一解析并表示同一 UTC instant；`bar_time/trade_time` 的明确 A股墙钟可绑定 `Asia/Shanghai`，通用 secondary timestamp 无时区则阻断。root、PIT root、PIT `timestamps` 的 21 条 Journal receipt/availability 路径以及 provider `published_at/retrieved_at/collected_at_dt` 均须逐一解析；取最晚 evidence receipt 与 prediction/label boundary 比较，任一 future/invalid/naive 阻断，不能用较早别名或任务 `as_of` 覆盖。跨 stage 还必须验证 `event <= min(all receipts)`、`max(availability) <= min(ingestion)`、`max(ingestion) <= min(retrieval)`；单个同组晚值不能掩盖较早的反序 alias。embedded `structure_errors` 要在首次、二次和多次 canonicalization 后始终 invalid 且去重。reference collector 必须逐 row 传入真实 prediction boundary 并在选择价格前过滤无效行；合法低价与冲突/未来高价 sibling 的两种输入顺序都必须得到同一合法 reference。无合法 row 时应看到 null reference、`qualified=false`、snapshot pending/degraded、exploration not-selected；被过滤 sibling 只能在 rejection audit 中出现，不能进入 candidate/snapshot PIT。只有完整 envelope 验证后才允许合成 nested 四钟，并保留原始字段审计。测试还必须覆盖 only-conflict、naive secondary、`+08:00`/UTC 同义、hidden future published/received、future retrieved_at，以及 21 receipt 路径逐一 future 全部 non-ready。
+即使本地全部通过，以下证据缺一不可：
 
-CNFutures 的同一验收必须从 SharedSignals HTTP response 开始：确认实际 response receipt 在 cache 前写入合法 row envelope；provider envelope 或 retrieval group 非 mapping 时必须原样保留非法值，并在 sibling `sharedsignals_response_lineage` 保存真实 HTTP endpoint/received-at，cache 第二读一致且 HTTP 只发生一次。transport audit 不得让下游变 ready。prediction snapshot、session review 和 `_price_evidence` 保留所有原始 event/receipt aliases、structure errors 与 nested PIT。valid receipt 的 reference/exit 可形成六个 horizon；missing/invalid/naive/future/conflicting receipt 全部 non-ready，provider 输入顺序不改变合法 point 的选择，历史缺 receipt 不得用 `as_of` 或 bar/prediction time 修补。
+1. SharedSignals owner 冻结的 base URL、catalog version、dataset IDs、auth/receipt authority 和 live readback；
+2. 所有 A 股消费者的同 `as_of` parity、V1 cutover、旧引用清零和 runtime no-fallback 负例；
+3. 每个predictive dataset的首次可见时间、release/revision链、first-seen receipt和训练时vintage；无法还原历史回填版本的数据不得进入历史训练；
+4. PIT证券主数据覆盖上市/退市、板块迁移、ST/风险警示、停复牌和历史指数/行业成员，证明没有用当前存续集合回填过去Universe；
+5. 生产market-evidence verifier、Champion/数值特征registry verifier、独立metrics重算authority与长驻可信时钟，以及真实交易会话中的自动模拟盘、crash/restart、对账和 20 个以上交易日运行证据；
+6. 60–120 个交易日影子/模拟观察、费用后统计置信度、回撤与状态分层；
+7. DeepSeek若启用，会话中曾暴露的credential必须先由供应商侧revoke/rotate，新值不得入仓；还需真实模型/请求字段readback、quota/限流/幂等/数据留存核验、敏感数据门、提示注入语义/编码变体、引用绑定、typed receipt持久化、成本/延迟和冻结增量评测，且仍保持evidence-only。首版固定单次调用、无自动重试；未来是否保留或变更该策略必须另立评审，不能在运行时静默开启；
+8. 独立发布授权、preflight、回退方案，以及本地、Git、远端、生产文件、生产 runtime 和外部路由分别验收。
 
-SampleJournal 文件与 `.<journal>.lock` 的安全验收必须覆盖 journal hardlink、lock hardlink、journal/parent symlink，以及取得协作锁并封存既有 inode 后的 path replacement。每项都应在 append 前失败，并逐字节确认外部 target 未变化；普通 append/batch/crash replay、frozen H0/H1 与 projection-head guard 仍需通过。不要为修复 hardlink 去改写或删除既有 Journal。
-
-actual-cost 验收必须用同一 frozen Journal view 中的真实 prediction、entry fill、exit stop 与 completed-round-trip fixture。validator 要从权威 prediction event 保存的 canonical `source_snapshot_payload` 重算 source SHA 与 canonical content SHA，从 fill/stop 的显式 canonical receipt/local-trade payload 重算 fingerprint，再重算 round-trip source/content SHA；supplied SHA 必须 constant-time 等于重算结果，不能只验 64-hex 形状。随后分别测试任意 64hex + 缺 source payload、source payload 错绑、prediction SHA 错绑、显式空 envelope + 顶层便利字段、payload 改而 hash 不改、hash 改而 payload 不改，以及 entry/exit fingerprint 错配。多腿 exit 还要覆盖 receipt/local-trade SHA 数组换序、单元素漂移与长度差，并继续覆盖 invalid/naive/future/conflicting receipt。每项都必须确认 `actual_execution_cost_used=0`、`actual_execution_costs_v1` 不被选用、版本化保守成本仍在。历史 prediction 缺 source payload 时应继续 conservative，不得补造。maturity 与 cost path 必须调用同一 strict validator 和同一 frozen evidence index，禁止各自维护较松规则。
-
-canonical 投影入口是 `projection_current.json` 指向的 `projection_generations/<generation_id>/`；reader 必须先用 pointer 的 `generation_manifest_sha256` 校验 manifest 原始内容，再校验 manifest metadata、共同 input SHA、显式 false 的全部安全字段与三个 projection SHA。随后必须按 data contract 的 canonical identity 算法从 input SHA + 三 projection SHA map 重算 generation ID，并与 pointer、directory 和 manifest 全等；复制 projection 并重签 manifest/pointer 到伪造 ID 必须阻断。publisher 遇到已存在 generation 时必须在写 mirrors/current 前调用同一个完整 validator：目录只能有 manifest + 三投影四个 regular non-symlink/single-link 文件，逐文件 raw SHA、JSON、input lineage 与安全字段全通过；manifest-only、缺文件、extra、symlink、hardlink、可写 generation 或 tamper 均不得改变旧 current bytes。完整同内容幂等复用必须先封存为只读。整个 generation/mirror/log/final validation/pointer swap 在 `.projection_publish.lock` 独占锁内；final generation validation 必须封存目录及四文件的 path/dev/inode/mode/nlink/size/mtime_ns/ctime_ns/content-SHA，三 mirrors + 三 logs 写完后也保存相同身份。pointer 临时文件 fsync 后、`os.replace` 前在同一 callback 内重新 FD 校验并与两组快照逐项相等。运维负例必须在 final-validation seam 注入 generation 同字节、同 mode、不同 inode 替换，并分别对 mirror 和 log 注入 rename、symlink、hardlink；每项都必须断言 publisher 失败、旧 pointer bytes 完全不变。只重算内容 hash 或仅在 append 时检查 link count 都不足以关闭窗口。`sample_kpi_latest.json`/log、`evolution_decision_latest.json`/log、`market_maturity_latest.json`/log 继续写出供旧消费者兼容，但不能作为跨三文件原子发布证明。generation 已存在或 `TRADINGAGENT_ASHARE_CANONICAL_PROJECTIONS_REQUIRED=true` 时，current 缺失/非法必须报警并 fail closed，不能回退 latest；操作员可从 Journal 重建新的完整 generation，禁止反向改写 journal。
-
-明确 legacy-only 且从未出现 generation 体系时，health 可只读 mirrors 统计诊断量，但必须输出 degraded/legacy 证据，并强制 `maturity_stage=legacy_degraded`、`maturity_evidence_trusted=false`、`promotion_evidence_ready=false`、自动晋级/扩风险/live 全部 false。前端不把 legacy mirrors 作为 active maturity/KPI reader；missing/invalid current 必须返回无 canonical maturity，而不是展示成熟绿灯。
-
-若 generation 构建中断且 current 未替换，保持旧 current，不手工拼接三份 latest。若发现已污染投影，只追加 `invalid`/`superseded` audit；本地候选代码不授权修改生产 history。SharedSignals batch API、HTTP 并发、持久化 sidecar index 和增量 KPI 均未在此 P0 实现。
-
-`job_ashare_sample_ops.sh` 是唯一活跃 A股 labels/KPI/evolution-assessment/maturity wrapper。旧 sample-learning、旧 forward-validation、旧 portfolio-evolution 和重复监控入口不得恢复。
-
-当前由运行证据指出的两条 sample-ops cron 保持禁用；本候选不恢复或应用 cron。未来重新启用前必须一次性满足并留存以下门禁：
-
-1. 在隔离副本或获批的 sim-only 单次受控运行中，新增 label update 的 `reference_timestamp_timezone_mismatch` 为 0；非法/未来/冲突 fixture 仍按预期拒绝，缺价仍为 retryable degraded。
-2. canonical `projection_current.json` 通过 manifest/content/projection SHA 校验；KPI `data_as_of` 追平批准的 Journal cutoff，`H1` 与该次运行结束时 physical Journal fresh head 一致，三份投影共享同一 `projection_input_sha256`，且没有未解释的 cutoff/exclusion 漂移。
-3. 该轮使用的既有 SharedSignals `source_status` 中与 A股行情/receipt 相关的来源均无 red；本门禁只消费现有状态，不扩展 SharedSignals schema。
-4. 执行前明确记录单次资源预算：frozen Journal 事件/字节上限、exact pending IDs/unique symbol-date 数量、wall/CPU/RSS 上限、HTTP physical request 上限（不得超过 `2 × unique symbol-date`）、timeout/retry 上限、batch size 100–250 与预计 fsync 次数；运行实际指标必须在预算内且不得开启 P1 请求并发。
-5. 上述证据经人工复核后，才可按独立 cron 变更流程做 export、diff、backup、apply/readback 和 rollback 验证；本地候选测试、latest mirrors 或单个 health=200 均不能替代该授权。
-6. 完成 production writer inventory：逐项列出会写 SampleJournal、generation、current、compatibility mirrors/logs 的 cron/service/手工入口并确认全部使用协作锁；read back 每个 writer 的 UID/GID、目标路径 owner/mode/ACL、mount options、filesystem 类型与 rename/link 语义。任何未登记 writer、锁绕过或权限证据缺失都保持 cron disabled。最后一次用户态 validation 返回到 kernel rename 间的非协作同 UID 窗口按 P1 OS 隔离处理，当前锁协议不宣称覆盖该威胁。
-
-## 5. CNFutures 日内与会话验收
-
-活跃模拟 wrapper 是 `shared/wrappers/job_cn_futures_sim.sh`，由 `shared/crontab.txt` 在日盘/夜盘节奏触发。每个实际有效会话必须产生 prediction/candidate/hold/risk reject/fill 之一；闭市时间不计有效会话。
-
-会话证据只读验收：
-
-```bash
-python3 -m shared.runtime_test.cn_futures_session_acceptance \
-  --input /path/to/cn-futures-runtime.jsonl \
-  --trade-date YYYYMMDD \
-  --sessions day_morning,day_afternoon,night \
-  --verify-checksums \
-  --pretty
-```
-
-`--sessions` 必须来自当日真实产品/交易所会话，不得为了通过验收虚构。结果按 execution-eligible 和 counterfactual-only 分层，持仓/保证金不足、换月、会话不允许等具体拒绝原因均是有效复盘证据。
-
-期货 sample ops 先追加到期标签，再重建带 checksum 的独立 maturity 投影；不创建订单、账户或晋级：
-
-```bash
-python3 -m shared.runtime_test.cn_futures_sample_ops \
-  --review-path shared/review/data/cn_futures_sim_reviews.jsonl \
-  --review-dir shared/review/cn_futures \
-  --trade-date YYYYMMDD \
-  --as-of YYYY-MM-DDTHH:MM:SS+08:00 \
-  --pretty
-```
-
-## 6. Capital-growth 完整验收
-
-快速、本地全量与前端：
-
-```bash
-python3 -m shared.runtime_test.full_acceptance --profile quick --pretty
-python3 -m pytest -q
-python3 -m shared.runtime_test.full_acceptance --profile front --front-tests --pretty
-```
-
-运行层只读验收：
-
-```bash
-python3 -m shared.runtime_test.full_acceptance --profile prod --pretty
-```
-
-“prod”只是运行检查 profile，不授权部署、写 cron 或真实交易。
-
-双资本/样本/会话验收：
-
-```bash
-python3 -m shared.runtime_test.full_acceptance \
-  --profile capital_growth \
-  --trade-date YYYYMMDD \
-  --ashare-capital-root "$TRADINGAGENT_ASHARE_CAPITAL_ROOT" \
-  --cn-futures-capital-root "$TRADINGAGENT_CN_FUTURES_CAPITAL_ROOT" \
-  --ashare-journal shared/review/ashare/sample_journal.jsonl \
-  --as-of YYYY-MM-DDTHH:MM:SS+08:00 \
-  --cn-futures-records /path/to/cn-futures-runtime.jsonl \
-  --cn-futures-sessions day_morning,day_afternoon,night \
-  --pretty
-```
-
-该 profile 对 A股 journal 使用隔离副本物化 forward labels，不改源 journal；显式 root、journal、as-of、期货 records 或 sessions 缺失时 fail。`REAL_TRADING_ENABLED=true` 时任何子进程启动前 fail。
-
-## 7. 每日验收表
-
-### A股
-
-- 当日每个数据合格候选都有 prediction snapshot 与 paired MG ablation；
-- observation/exploration/exploitation 分开计数；
-- 无 exploration 时只有“无数据合格候选”或具体硬门禁，不能只有“样本不足”；
-- actual fill/partial/sell 与 capital commit、receipt、position、journal 一致；pending outbox 数量为零或有明确 blocker；
-- 到期 `m30/m60/close/1d/3d/5d` 标签与成本证据可见；
-- 资金计划输出 deployed/committed/planned utilization、未部署金额与原因；
-- day index、day-5/day-10 review due、有效样本、成熟度 blockers 与人工授权状态可见。
-
-### CNFutures
-
-- 每个声明有效会话有判断记录；
-- execution-eligible 与 counterfactual-only 分层；
-- 一手规格、保证金、止损预算、费用、滑点、夜盘、换月和 PIT evidence 完整；
-- open/close commit 与持仓/保证金/费用/PnL 一致，outbox 可 crash replay；
-- 独立 maturity 显示样本、回合、品种/波动/会话、夜盘/换月/极端风险和稳定性。
-
-### 共同
-
-- 两个 capital authority 分别 fresh/reconciled/checksum-valid；
-- 5% 是 tightened、7% 是 halted，两个市场互不影响；
-- SampleJournal/KPI 是唯一 evolution authority；所有自动 promotion/risk expansion/live transition 为 false；
-- 前端 All Markets 不显示 combined capital/equity/PnL/return/DD。
-
-## 8. Cron 审计与应用边界
-
-静态检查：
-
-```bash
-python3 -m shared.runtime_test.cron_coverage --pretty
-python3 tools/merge_tradingagent_crontab.py --current-file /path/to/exported-crontab
-```
-
-第二条默认只生成/预览 merge 结果。`--apply` 会修改用户 crontab，当前任务禁止执行。仓库模板通过不等于服务器 crontab 已安装；未来应用前必须先导出当前 crontab、diff、多仓归属核对和 rollback 文件。
-
-## 9. 故障与 fail-closed
-
-| 现象 | 新增风险 | Observation | 处理 |
-|---|---|---|---|
-| capital authority 不可读/非 fresh | 阻断 | 继续 | 保留具体 blocker，修复后 MTM reconcile |
-| A股 position source 缺失/陈旧/与 authority 不一致 | 阻断；不进入普通容量判断 | 继续 | 保留所有 source hash/lineage 与 A/B 双读审计，修复 envelope 后重跑 |
-| outbox pending/CAS 冲突 | 阻断 | 继续 | 停止重复提交，重放同一 action，不新建 identity |
-| 数据陈旧/无来源/PIT 不完整 | 阻断 | 保存但 label rejected | 修复 SharedSignals/source lineage |
-| 无合格候选 | 不下单 | 继续 | 记录 universe/coverage bias 与 undeployed reason |
-| 5% 回撤 | 收紧至 0.75 倍 | 继续 | 不误实现为全停 |
-| 7% 回撤/日亏/连续亏损 | 暂停 | 继续 | 人工复核该市场；不影响另一市场 |
-| actual cost/fill evidence 缺失 | 不计策略绩效 | 保留 chain validation | 补证据，不回写伪值 |
-| live/real marker | 全部阻断 | 不写入当前 journal | 安全事件处置 |
-
-## 10. 回滚
-
-回滚目标是停止新增风险并保留可审计事实，不是恢复旧系统。
-
-1. 逐市场停止新 wrapper/任务；不删除 pending outbox、event JSONL、local fills、receipts 或 SampleJournal。
-2. 记录最后 event ID/checksum、execution lineage、active reservation manifest、unreconciled commit IDs、positions/cash/margin 和最新投影 SHA。
-3. 若 outbox 未清零，保持该市场新增风险 halted；只重放相同 action identity，不手工释放或生成替代事件。
-4. 切回能理解现有 event schema 的已验证代码。若旧代码不能读取新事件，保持停机，不得通过恢复旧共享 ledger 绕过。
-5. 对 capital ledger 运行 `verify`，对 local execution/receipt/journal 做 checksum 与 lineage 审计，再决定是否恢复 sim-only 任务。
-6. KPI/maturity latest 损坏时从 append-only SampleJournal 重建；不得修改 journal 历史。
-7. generation 发布失败时保留上一 `projection_current.json`；不要通过逐个覆盖三份 current 文件“补齐”。回退只能把 current 原子指向已校验的完整旧 generation，并追加 superseded audit，不能删除 generation。
-8. 前端可独立回滚到旧只读 build，但仍不得展示跨市场货币聚合或写入接口。
-
-禁止的“回滚”：删除/改写 capital events、清空 PnL/持仓、改变 generation、导入历史冻结数据、把两个账户合并、恢复退役 cron/writer、发送补偿邮件或开启真实交易。
-
-## 11. 实盘晋级边界
-
-- A股 day 5/day 10 只做人工 review；1–2 周不是自动切换条件。
-- 数据完整、signal→order→receipt→position→capital→journal 闭环、actual costs、执行可行性、风险/回撤、市场覆盖和故障降级都满足，仍需 Nicholas 单独明确确认。
-- 若未来确认，完整 50,000 CNY 账户仅以 20%–30% 初始订单敞口人工试运行；不得自动扩大。
-- 邮件 → Nicholas → 同花顺人工下单仍未实现；在设计获审阅前不得编码或发邮件。broker automation gateway 属于更晚的独立项目。
-- CNFutures 没有实盘日期，继续长期模拟。
+当前服务器sidecar没有提供上述外部authority证据，因此业务能力仍只能是`local_isolated_candidate / simulation-only / nonpromotion`；`server_validated_non_authority_simulation_only`只描述目标服务器环境的安装与旁路运行证据，不能提升为现役生产状态。

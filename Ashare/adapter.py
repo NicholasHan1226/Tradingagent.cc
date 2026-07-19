@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from shared.data.reader import TradingagentDataReader
+from shared.universe.policy import is_mainboard_tradable
 from shared.execution.execution_reality import ashare_execution_reality
 from shared.markets.base import MarketAdapter
 from shared.markets.sim_capital import default_sim_capital
@@ -111,36 +111,6 @@ def _is_bse(asset: dict[str, Any]) -> bool:
     exchange = str(asset.get("exchange") or "").strip().upper()
     symbol = str(asset.get("symbol") or "")
     return exchange in {"BSE", "BJ", "NORTH"} or symbol.startswith(("8", "4"))
-
-
-def _is_regular_a_share_symbol(symbol: Any) -> bool:
-    raw = str(symbol or "").strip().upper()
-    if "." in raw:
-        digits, exchange = raw.split(".", 1)
-    else:
-        digits, exchange = raw, ""
-    if not re.fullmatch(r"\d{6}", digits):
-        return False
-    if exchange == "SZ":
-        return digits.startswith(("000", "001", "002", "003", "300", "301"))
-    if exchange == "SH":
-        return digits.startswith(("600", "601", "603", "605", "688", "689"))
-    return digits.startswith(
-        (
-            "000",
-            "001",
-            "002",
-            "003",
-            "300",
-            "301",
-            "600",
-            "601",
-            "603",
-            "605",
-            "688",
-            "689",
-        )
-    )
 
 
 def _read_jsonl_dicts(path: Path) -> list[dict[str, Any]]:
@@ -477,7 +447,7 @@ def build_current_sample_adjustment(
 
 
 class AshareAdapter(MarketAdapter):
-    """Market-specific adapter for A-share shadow screening and execution."""
+    """Mainboard-only stock adapter for A-share screening and simulation."""
 
     def __init__(
         self,
@@ -830,8 +800,16 @@ class AshareAdapter(MarketAdapter):
             return True
         if cfg.get("exclude_bse", True) and _is_bse(asset):
             return True
-        if cfg.get("exclude_non_a_share", True) and not _is_regular_a_share_symbol(
-            asset.get("symbol")
+        # Phase 0-3 范围门禁不可被配置放宽；配置只能继续收紧其它条件。
+        if not is_mainboard_tradable(
+            asset.get("symbol"),
+            exchange=asset.get("exchange"),
+            instrument_type=(
+                asset.get("instrument_type")
+                or asset.get("security_type")
+                or asset.get("asset_type")
+                or "common_stock"
+            ),
         ):
             return True
 

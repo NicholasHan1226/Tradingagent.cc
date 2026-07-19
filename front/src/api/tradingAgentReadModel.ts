@@ -1,5 +1,5 @@
 import type { ApiStatus, DashboardApiResponse } from './types.ts'
-import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, CNFuturesMarketMaturityProjection, FunnelEvent, HoldingRow, MarketPulse, MarketPulseCoverage, MarketPulseCoverageObservation, MarketSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
+import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, CNFuturesMarketMaturityProjection, FunnelEvent, HoldingRow, MarketPulse, MarketPulseCoverage, MarketPulseCoverageObservation, MarketSummary, PaperDayRunSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
 import type { DataDomain } from '../types/status.ts'
 
 export const tradingAgentReadModelSources = {
@@ -7,7 +7,7 @@ export const tradingAgentReadModelSources = {
   positions: 'signals/positions/*.json',
   filledSignals: 'signals/filled/*.json',
   signalQueue: 'signals/{pending,claimed,running,filled,expired,cancelled,failed,partial}',
-  opportunityEvents: 'shared/review/opportunities/funnel_events.jsonl or shared/logs/opportunities/funnel_events.jsonl',
+  opportunityEvents: 'legacy frozen forensic only: shared/review/opportunities/funnel_events.jsonl or shared/logs/opportunities/funnel_events.jsonl',
   review: 'shared/review/daily/daily_brief.jsonl',
   middayReview: 'shared/review/daily/midday_review.jsonl',
   riskLimits: 'shared/risk/risk_limits.yaml',
@@ -15,21 +15,22 @@ export const tradingAgentReadModelSources = {
   factorAttribution: 'shared/review/attribution/factor_attribution.jsonl',
   strategyVersion: 'shared/review/strategies/strategy_version.jsonl',
   simLedger: 'shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}',
-  localSimLedger: 'shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/local_sim_trades.jsonl',
+  localSimLedger: 'shared/logs/capital/ashare/ashare_sim_capital_latest.json -> shared/logs/execution_lineages/{verified execution_lineage_id}/local_sim_trades.jsonl',
   ashareMarketCapital: 'shared/logs/capital/ashare/ashare_sim_capital_latest.json',
   cnFuturesMarketCapital: 'shared/logs/capital/cn_futures/cn_futures_sim_capital_latest.json',
   equitySnapshots: 'shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl and shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl',
   performanceTracker: 'shared/review/*/style_performance.jsonl',
   styleComparison: 'shared/review/*/style_comparison.json',
   simMarketHealth: 'shared/runtime_test/sim_market_health_latest.json',
-  capitalFlow: 'SharedSignals /capital_flow via TradingAgent signal scores',
+  capitalFlow: 'TradingAgent signal score evidence only; no active legacy SharedSignals endpoint read',
   cnFuturesReview: 'shared/review/data/cn_futures_sim_reviews.jsonl',
   ashareResearchEvidence: 'shared/review/ashare/research_evidence_latest.json',
   ashareSampleKpi: 'shared/review/ashare/projection_current.json -> projection_generations/*/sample_kpi_latest.json',
   ashareMarketMaturity: 'shared/review/ashare/projection_current.json -> projection_generations/*/market_maturity_latest.json',
   cnFuturesMarketMaturity: 'shared/review/cn_futures/market_maturity_latest.json',
   cnFuturesReplay: 'shared/review/cn_futures/replay_latest.json',
-  sharedSignalsMarketPulse: 'SharedSignals HTTP read model via SHAREDSIGNALS_API_URL',
+  sharedSignalsMarketPulse: 'SharedSignals V1 GET /v1/catalog + POST /v1/query via explicit base URL, catalog version, access policy, and per-market dataset IDs; fail closed with no legacy fallback',
+  paperDayRunBundle: 'shared/runtime/run_bundles/latest.json',
 } as const
 
 export type TradingAgentReadModelHealth = {
@@ -58,5 +59,6 @@ export type TradingAgentReadModelSnapshot = {
   /** Compatibility view derived only from ashareSampleKpi; never a legacy file read. */
   ashareForwardValidation?: AShareForwardValidation
   ashareTierSummaries?: AShareTierSummary[]
+  paperDayRun?: PaperDayRunSummary
   sourceRefs: typeof tradingAgentReadModelSources
 }

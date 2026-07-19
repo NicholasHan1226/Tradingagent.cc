@@ -5,29 +5,29 @@
 ## 定位与账户
 
 - 本模块负责 A股候选、多风格预测、组合资金计划、T+1、server-local 模拟执行和样本归因；不采集行情，也不连接真实券商。
-- 唯一执行账户是 fresh-start `ashare-capital-v1` / generation 1 的 50,000 CNY simulated 账户。
-- 资本 ledger 位于 `shared/logs/capital/ashare/`，执行事实位于 `shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/`；旧 `shared/logs/local_sim/` 冻结，adapter 资金只可诊断。
+- 唯一执行账户是 fresh-start `ashare-capital-v1` 的 50,000 CNY simulated 账户；generation 1 只是初始化基线，每轮必须从 current snapshot 读取、验证并传播正整数 generation。
+- 资本 ledger 位于 `shared/logs/capital/ashare/`，执行事实根必须由 current snapshot 的受验证 `execution_lineage_id` 动态派生到 `shared/logs/execution_lineages/<execution_lineage_id>/`；固定日期 lineage 与旧 `shared/logs/local_sim/` 均冻结，adapter 资金只可诊断。
 - 股票总敞口上限 45,000 CNY，单票累计“持仓市值 + pending reservations + 新订单”上限 7,500 CNY，100 股整手；容量 8 并至少支持 7 个不同股票。
 - 不设固定保护现金、不强制满仓。费用、滑点、冻结额与 pending order 构成动态运营现金；计划必须写利用率和未部署原因。
 - 历史共享资金池、旧持仓/PnL、旧多账本只读冻结，不导入或计入当前统计。
 
 ## 样本顺序
 
-1. 对所有数据合格候选生成 observation/counterfactual prediction。
+1. 对所有数据合格的主板候选生成 observation/counterfactual；创业板、科创板个股禁止进入分析与订单，相关指数和行业聚合只作环境参考。
 2. 以同一 immutable base snapshot 生成 paired `mg_on` / `mg_off`，后者不得含 MG 特征。
-3. 四类正交风格保存 thesis、horizon、raw ranking score、uncalibrated prior、风险请求和 abstain/reject reason。
-4. Exploitation 走成熟门槛；需要采样时，Exploration 从安全 top-K 进行分层随机/epsilon-greedy并记录 propensity。
-5. 单一组合决策器处理风格冲突、相关性、资金和幂等，同一股票同日最多一份订单。
-6. 保存 prediction/fill/reject/round trip/chain validation，并生成 `m30/m60/close/1d/3d/5d` 标签。
+3. 唯一冻结 Champion 生成未经校准的 deterministic rank；该分数只排序，新仓由与 rank 无关的固定 probe sizing 进入 50k optimizer。
+4. OpportunityRadar、Ledger、多期限 forecast 与 `industry_trend/event_surprise/cross_market_dislocation` 三风格只写 shadow/反事实证据，不进入 Champion、资金或执行链。
+5. 单一组合决策器处理资金、论点风险、T+1、整数股、费用与幂等，同一股票同日最多一份 authority-bound 模拟订单。
+6. 保存 observation/fill/reject/round trip/chain validation，并生成 `m30/m60/close/1d/3d/5d` 标签。
 
-初始假设族仅为趋势突破/强势延续、回调/短反转、事件催化+价格确认、防御低波/空仓基线。不要用轻微阈值变化扩张风格。
+旧四风格、exploration/exploitation 与对应固定额度属于 time-boxed legacy，不是当前 V1 样本或执行入口。新三风格只作 shadow sleeve；现金是正式动作，不得用轻微阈值变化制造伪独立风格。
 
-## Exploration 边界
+## 旧 Exploration 退役边界
 
 - 每日最多新增 1 个探索头寸；探索累计敞口上限 7,500 CNY；探索日亏上限 225 CNY。
 - 只可下调候选分数、最小 edge 或研究完整度等策略门槛。
 - 数据来源/新鲜度、普通 A股与流动性、真实价格/成交证据、交易时段、T+1、涨跌停、100 股整手、现金/持仓、幂等、累计敞口、日亏、连续亏损、回撤和实盘隔离永不放宽。
-- “样本不足”不能单独导致零 observation 或零交易；无 exploration 必须记录无合格候选或具体硬门禁。
+- 这些数值只用于旧记录解释和退役回归，不得恢复旧 exploration writer。当前“样本不足”不能阻断安全 observation；无模拟成交必须记录无合格候选或具体硬门禁。
 
 ## 执行与资本一致性
 

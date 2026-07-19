@@ -24,6 +24,29 @@ export type PerformancePoint = {
 
 export type PerformanceRange = 'today' | '7d' | '30d' | 'all'
 
+export type PaperDayRunSummary = {
+  environment: 'local_candidate'
+  productionVerified: false
+  contractId: 'tradingagent.paper_day_loop.v1'
+  runId: string
+  tradeDate: string
+  status: 'incomplete' | 'incomplete_with_blocks' | 'completed' | 'completed_with_blocks'
+  currentStage?: string
+  completedStageCount: number
+  totalStageCount: 9
+  dataEvidenceState: 'ready' | 'degraded' | 'unavailable'
+  simulationExecutionState: 'eligible' | 'blocked' | 'no_orders'
+  candidateCount: number
+  decisionCount: number
+  simulatedOrderCount: number
+  simulatedFillCount: number
+  noTradeReasons: string[]
+  riskBlocks: string[]
+  championManifestSha256: string
+  llmEvidenceState: 'evidence_only' | 'unavailable'
+  source: 'shared/runtime/run_bundles/latest.json'
+}
+
 export type PortfolioSummary = {
   pnlAmount: number
   returnPct: number
@@ -174,7 +197,7 @@ export type AShareNoTradeEvidence = {
 
 export type AShareAccountSummary = {
   capitalAuthorityId: 'ashare-capital-v1'
-  authorityGeneration: 1
+  authorityGeneration: number
   executionLineageId: string
   cashAvailable: number
   marketValue: number
@@ -391,7 +414,7 @@ export type FunnelEvent = {
   status: FunnelEventStatus
   label: string
   at?: string
-  source: 'signal_queue' | 'sim_ledger' | 'opportunity_log'
+  source: 'signal_queue' | 'sim_ledger' | 'opportunity_log' | 'legacy_frozen_opportunity_log'
   reason?: string
   latencyMinutes?: number
   terminal?: boolean

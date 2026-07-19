@@ -44,6 +44,55 @@ def test_explicit_sample_layers_cover_every_required_bucket_without_collapsing_t
     )
 
 
+def test_fixture_records_are_excluded_from_all_kpi_and_promotion_evidence():
+    fixture_records = [
+        {
+            "record_type": "prediction",
+            "style": "fixture_champion",
+            "source_class": "fixture",
+            "promotion_eligible": False,
+            "decision_cluster_id": "fixture-cluster-1",
+            "trade_date": "20260716",
+            "primary_label_horizon": "1d",
+            "probability_model_state": "frozen_out_of_sample_calibrated",
+            "calibration_role": "primary",
+            "calibrated_probability": 0.99,
+            "labels": {
+                "1d": {"status": "ready", "net_return_after_costs": 0.10},
+            },
+        },
+        {
+            "record_type": "fill",
+            "primary_style": "fixture_champion",
+            "source_class": "fixture",
+            "promotion_eligible": False,
+            "sample_intent": "exploitation",
+            "status": "filled",
+        },
+        {
+            "record_type": "completed_round_trip",
+            "primary_style": "fixture_champion",
+            "source_class": "fixture",
+            "promotion_eligible": False,
+            "sample_intent": "exploitation",
+            "gross_pnl_cny": 1_000.0,
+            "fee_cny": 1.0,
+            "slippage_cny": 1.0,
+            "net_pnl_cny": 998.0,
+        },
+    ]
+
+    result = build_sample_kpi(fixture_records)
+
+    assert result["styles"] == {}
+    assert result["sample_layer_totals"] == {layer: 0 for layer in SAMPLE_LAYERS}
+    assert result["excluded_source_class_counts"] == {"fixture": 3}
+    assert result["sample_size_evidence"]["raw_N"] == 0
+    assert result["sample_size_evidence"]["N_eff"] == 0.0
+    assert result["calibration_evidence"]["sufficient"] is False
+    assert result["calibration_evidence"]["independent_sample_count"] == 0
+
+
 def _records():
     return [
         {

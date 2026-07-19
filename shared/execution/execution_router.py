@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sys
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -352,43 +353,69 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
     if channel == "sim_broker":
         try:
             from Ashare.sim_executor import ashare_sim_execute
-
-            tr = ashare_sim_execute(
-                order,
-                account=order.get("account"),
-                config={
-                    "dry_run": order.get("dry_run", False),
-                    "mock": order.get("mock", order.get("dry_run", False)),
-                },
-            )
-            executed = tr.status in ("filled", "pending", "ok", "warning", "dry_run_ok")
-            result = {
-                "status": tr.status,
-                "filled_qty": tr.filled_qty,
-                "avg_price": tr.avg_price,
-                "message": tr.message,
-                "slippage": 0.0,
-                "order_id": tr.order_id,
-            }
-            message = (
-                f"Sim executed: {tr.status} @ {tr.avg_price} (qty {tr.filled_qty})"
-            )
         except Exception as exc:
+            error = f"{exc.__class__.__name__}: {exc}"
+            result = {
+                "status": "unavailable",
+                "reason": "ashare_sim_executor_unavailable",
+                "filled_qty": 0,
+                "avg_price": 0.0,
+                "fee": 0.0,
+                "recorded": False,
+                "legacy_fallback_used": False,
+                "message": f"A-share simulated executor unavailable: {error}",
+                "order_id": str(order.get("order_id", "")),
+            }
+            executed = False
+            message = result["message"]
+        else:
             try:
-                from .sim_broker import simulate_order
-
-                result = simulate_order(order)
-                result["ashare_executor_error"] = str(exc)
-                executed = result.get("status") in ("filled", "partial")
-                message = f"Sim fallback: {result.get('status')} @ slippage {result.get('slippage')}%"
-            except Exception as fallback_exc:
+                execution_order = dict(order)
+                execution_account = deepcopy(order.get("account"))
+                if "account" in execution_order:
+                    execution_order["account"] = execution_account
+                tr = ashare_sim_execute(
+                    execution_order,
+                    account=execution_account,
+                    config={
+                        "dry_run": order.get("dry_run", False),
+                        "mock": order.get("mock", order.get("dry_run", False)),
+                    },
+                )
+            except Exception as exc:
+                error = f"{exc.__class__.__name__}: {exc}"
                 result = {
-                    "status": "error",
-                    "message": f"Ashare simulated executor failed: {exc}; fallback sim_broker failed: {fallback_exc}",
-                    "slippage": 0.0,
+                    "status": "failed",
+                    "reason": "ashare_sim_executor_failed",
+                    "filled_qty": 0,
+                    "avg_price": 0.0,
+                    "fee": 0.0,
+                    "recorded": False,
+                    "legacy_fallback_used": False,
+                    "message": f"A-share simulated executor failed: {error}",
+                    "order_id": str(order.get("order_id", "")),
                 }
                 executed = False
                 message = result["message"]
+            else:
+                executed = tr.status in (
+                    "filled",
+                    "pending",
+                    "ok",
+                    "warning",
+                    "dry_run_ok",
+                )
+                result = {
+                    "status": tr.status,
+                    "filled_qty": tr.filled_qty,
+                    "avg_price": tr.avg_price,
+                    "message": tr.message,
+                    "slippage": 0.0,
+                    "order_id": tr.order_id,
+                }
+                message = (
+                    f"Sim executed: {tr.status} @ {tr.avg_price} (qty {tr.filled_qty})"
+                )
 
     elif channel == "shadow_broker":
         try:

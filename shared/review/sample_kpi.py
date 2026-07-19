@@ -746,14 +746,23 @@ def build_sample_kpi(
 ) -> dict[str, Any]:
     """Aggregate layered sample metrics without inventing executable capital."""
 
-    rows = deepcopy(list(records))
+    source_rows = deepcopy(list(records))
+    for row in source_rows:
+        if not isinstance(row, Mapping):
+            raise TypeError("every sample record must be a mapping")
+    excluded_source_classes: Counter[str] = Counter()
+    rows: list[Mapping[str, Any]] = []
+    for row in source_rows:
+        source_class = _normalized(row.get("source_class"))
+        if source_class == "fixture":
+            excluded_source_classes[source_class] += 1
+            continue
+        rows.append(row)
     styles: dict[str, dict[str, Any]] = {}
     evidence_statuses: Counter[str] = Counter()
     invalid_completed_round_trip_count = 0
 
     for sequence, row in enumerate(rows):
-        if not isinstance(row, Mapping):
-            raise TypeError("every sample record must be a mapping")
         layers = classify_sample_layers(row)
         round_trip_economics: Optional[tuple[float, float, float]] = None
         if "completed_round_trip" in layers:
@@ -845,6 +854,7 @@ def build_sample_kpi(
             sorted(round_trip_intent_totals.items())
         ),
         "evidence_status_counts": dict(sorted(evidence_statuses.items())),
+        "excluded_source_class_counts": dict(sorted(excluded_source_classes.items())),
         "missing_evidence_count": missing_evidence_count,
         "invalid_completed_round_trip_count": invalid_completed_round_trip_count,
         "sample_size_evidence": _sample_size_evidence(rows),

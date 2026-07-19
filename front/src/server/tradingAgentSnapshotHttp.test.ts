@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel'
-import { createTradingAgentSnapshotHttpServer } from './tradingAgentSnapshotHttp'
+import { createTradingAgentSnapshotHttpServer, resolveSnapshotListenHost } from './tradingAgentSnapshotHttp'
 
 const snapshot: TradingAgentReadModelSnapshot = {
   mode: 'simulated',
@@ -48,6 +48,15 @@ async function listen(server: ReturnType<typeof createTradingAgentSnapshotHttpSe
 }
 
 describe('TradingAgent cloud snapshot API server', () => {
+  it('only permits loopback listen hosts for the internal snapshot API', () => {
+    expect(resolveSnapshotListenHost(undefined)).toBe('127.0.0.1')
+    expect(resolveSnapshotListenHost('localhost')).toBe('localhost')
+    expect(resolveSnapshotListenHost('::1')).toBe('::1')
+    expect(() => resolveSnapshotListenHost('0.0.0.0')).toThrowError(
+      'TRADING_AGENT_SNAPSHOT_HOST must be a loopback host',
+    )
+  })
+
   it('serves both /healthz and /health for operational probes', async () => {
     const baseUrl = await listen(
       createTradingAgentSnapshotHttpServer({
@@ -79,6 +88,15 @@ describe('TradingAgent cloud snapshot API server', () => {
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('access-control-allow-origin')).toBe('https://dashboard.example.com')
     await expect(response.json()).resolves.toMatchObject({ mode: 'simulated', signals: [{ symbol: '0700.HK' }] })
+  })
+
+  it('rejects wildcard CORS configuration for the single-user dashboard', () => {
+    expect(() =>
+      createTradingAgentSnapshotHttpServer({
+        allowedOrigins: ['*'],
+        readSnapshot: async () => snapshot,
+      }),
+    ).toThrowError('TRADING_AGENT_SNAPSHOT_CORS_ORIGINS must not contain wildcard origins')
   })
 
   it('requires a bearer token when the API token is configured', async () => {

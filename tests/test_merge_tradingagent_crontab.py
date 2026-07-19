@@ -29,13 +29,10 @@ ASHARE_SIM_HERMES_ENABLED=0
 ASHARE_SIM_WEBHOOK_ENABLED=0
 BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
-# A-share simulated execution
-1,6,11,16,21,26,31,36,41,46,51,56 9-15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sim_exec.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sim_exec.log 2>&1
-35 8 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_preopen_dry_run.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_preopen_dry_run.log 2>&1
-40 17,22 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_ashare_sample_ops.log 2>&1
-
 # Health and evolution
-*/10 * * * * /opt/investment/tradingagent/cron/health_check.sh
+*/10 * * * * /opt/investment/tradingagent/shared/wrappers/job_sim_market_health.sh
+*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_equity_snapshots.sh
+4,34 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_research_probability.sh
 0 */4 * * * /opt/investment/tradingagent/cron/evolution.sh
 """
 
@@ -146,13 +143,17 @@ class MergeTests(unittest.TestCase):
         )
         self.assertFalse(
             _ta_coverage_ok(
-                merged.replace("ASHARE_SIM_HERMES_ENABLED=0", "ASHARE_SIM_HERMES_ENABLED=1"),
+                merged.replace(
+                    "ASHARE_SIM_HERMES_ENABLED=0", "ASHARE_SIM_HERMES_ENABLED=1"
+                ),
                 TA_TEMPLATE,
             )
         )
         self.assertFalse(
             _ta_coverage_ok(
-                merged.replace("ASHARE_SIM_WEBHOOK_ENABLED=0", "ASHARE_SIM_WEBHOOK_ENABLED=1"),
+                merged.replace(
+                    "ASHARE_SIM_WEBHOOK_ENABLED=0", "ASHARE_SIM_WEBHOOK_ENABLED=1"
+                ),
                 TA_TEMPLATE,
             )
         )
@@ -217,34 +218,35 @@ class MergeTests(unittest.TestCase):
         """Old TA lines gone; template TA lines appear exactly once."""
         result = merge(CURRENT, TA_TEMPLATE)
         self.assertNotIn("job_old_removed.sh", result)
-        self.assertEqual(result.count("health_check.sh"), 1)
-        self.assertEqual(result.count("job_ashare_sim_exec.sh"), 1)
+        self.assertNotIn("/cron/health_check.sh", result)
+        self.assertNotIn("job_ashare_sim_exec.sh", result)
+        self.assertEqual(result.count("job_sim_market_health.sh"), 1)
+        self.assertEqual(result.count("job_equity_snapshots.sh"), 1)
 
     def test_empty_template_fails(self):
         """Template with zero TA schedule entries returns None."""
         self.assertIsNone(merge(CURRENT, "# no schedule lines\nSHELL=/bin/bash\n"))
         duplicate = (
             TA_TEMPLATE
-            + "*/10 * * * * /opt/investment/tradingagent/cron/health_check.sh\n"
+            + "*/10 * * * * /opt/investment/tradingagent/shared/wrappers/job_sim_market_health.sh\n"
         )
         self.assertIsNone(merge(CURRENT, duplicate))
 
-    def test_template_with_retired_sample_job_fails_closed(self):
-        retired = TA_TEMPLATE.replace(
-            "job_ashare_sample_ops.sh",
-            "job_ashare_sample_learning.sh",
+    def test_template_with_retired_ashare_or_generic_job_fails_closed(self):
+        retired_schedules = (
+            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_ashare_sample_ops.sh",
+            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh ashare ops",
+            "*/10 * * * * /opt/investment/tradingagent/cron/health_check.sh",
+            "30 7 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_daily_brief_morning.sh",
+            "8,38 * * * * /opt/investment/tradingagent/shared/wrappers/job_us_sim.sh",
+            "9,39 * * * * /opt/investment/tradingagent/shared/wrappers/job_crypto_sim.sh",
+            "7,37 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_sim.sh",
+            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sim.sh",
         )
 
-        self.assertIsNone(merge(CURRENT, retired))
-
-    def test_template_without_unified_sample_ops_fails_closed(self):
-        without_sample_ops = "\n".join(
-            line
-            for line in TA_TEMPLATE.splitlines()
-            if "job_ashare_sample_ops.sh" not in line
-        )
-
-        self.assertIsNone(merge(CURRENT, without_sample_ops))
+        for schedule in retired_schedules:
+            with self.subTest(schedule=schedule):
+                self.assertIsNone(merge(CURRENT, TA_TEMPLATE + schedule + "\n"))
 
     def test_shared_crontab_is_the_only_merge_authority(self):
         from tools import merge_tradingagent_crontab
@@ -271,7 +273,10 @@ class MergeTests(unittest.TestCase):
         """Current without any TA lines gets all template entries appended."""
         result = merge("# other repo\n*/5 * * * * /usr/bin/foo\n", TA_TEMPLATE)
         self.assertIn("/usr/bin/foo", result)
-        self.assertIn("health_check.sh", result)
+        self.assertIn("job_sim_market_health.sh", result)
+        self.assertIn("job_equity_snapshots.sh", result)
+        self.assertNotIn("/cron/health_check.sh", result)
+        self.assertNotIn("job_ashare_", result)
         self.assertIn("evolution.sh", result)
 
 
@@ -402,7 +407,12 @@ class FileModeTests(unittest.TestCase):
             rc = main(["--current-file", current_path, "--output", output_path])
             self.assertEqual(rc, 0)
             content = Path(output_path).read_text()
-            self.assertIn("health_check.sh", content)
+            self.assertIn("job_sim_market_health.sh", content)
+            self.assertIn("job_equity_snapshots.sh", content)
+            self.assertNotIn("/cron/health_check.sh", content)
+            self.assertNotIn("job_ashare_", content)
+            self.assertNotIn("job_market_capital_reconcile.sh ashare", content)
+            self.assertNotIn("job_daily_brief_", content)
             self.assertIn("/opt/investment/sharedsignals/", content)
             self.assertNotIn("job_old_removed.sh", content)
         finally:
@@ -425,7 +435,12 @@ class FileModeTests(unittest.TestCase):
                 out = sys.stdout.getvalue()
                 sys.stdout = saved
             self.assertEqual(rc, 0)
-            self.assertIn("health_check.sh", out)
+            self.assertIn("job_sim_market_health.sh", out)
+            self.assertIn("job_equity_snapshots.sh", out)
+            self.assertNotIn("/cron/health_check.sh", out)
+            self.assertNotIn("job_ashare_", out)
+            self.assertNotIn("job_market_capital_reconcile.sh ashare", out)
+            self.assertNotIn("job_daily_brief_", out)
             self.assertIn("/opt/investment/sharedsignals/", out)
         finally:
             os.unlink(current_path)

@@ -1,5 +1,10 @@
 # Explicit Market Attribution & Coverage Observability Implementation Plan
 
+> **Historical plan — endpoint portion superseded on 2026-07-16.** The active
+> `sharedSignalsMarketPulse.ts` now uses only explicitly configured V1
+> `GET /v1/catalog` + `POST /v1/query`; the legacy endpoint expectations below are retained
+> only as historical implementation evidence and must not be replayed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Safely activate exact cross-market pulse symbols, expose single-origin A-share attribution, and show a bounded coverage observation trace.

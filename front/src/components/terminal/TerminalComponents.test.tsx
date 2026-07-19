@@ -113,12 +113,12 @@ describe('terminal components', () => {
   it('renders the process event audit trail', () => {
     render(<ProcessEventLedger rows={[{
       id: 'event-1', symbol: '600519.SH', market: 'A股', stage: '风控', result: '通过',
-      source: '信号队列', latency: '2分钟', reason: '风险检查通过', timestamp: '11:05',
+      source: '队列状态投影', latency: '2分钟', reason: '风险检查通过', timestamp: '11:05',
     }]} />)
 
     const table = screen.getByRole('table', { name: '过程事件账本' })
     expect(within(table).getByText('风险检查通过')).toBeInTheDocument()
-    expect(within(table).getByText('信号队列')).toBeInTheDocument()
+    expect(within(table).getByText('队列状态投影')).toBeInTheDocument()
   })
 
   it('renders grouped opportunity cycles with honest missing stages', () => {

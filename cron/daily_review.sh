@@ -5,6 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/shared/wrappers/_common.sh"
 PYTHON_BIN="${TRADINGAGENT_PYTHON:-python3}"
 TRADE_DATE="${TRADINGAGENT_REVIEW_DATE:-$(date +%Y%m%d)}"
 SESSION="${TRADINGAGENT_REVIEW_SESSION:-close}"

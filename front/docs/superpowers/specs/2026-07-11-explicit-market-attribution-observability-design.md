@@ -1,5 +1,9 @@
 # Explicit Market Attribution & Coverage Observability Design
 
+> **Historical design — endpoint portion superseded on 2026-07-16.** The active reader no
+> longer routes to per-provider/special endpoints. Current contract is explicit V1 catalog/query
+> with no legacy or SQLite fallback; see `front/docs/integration.md`.
+
 ## Goal
 
 Make the next TradingAgent terminal layer operationally useful without fabricating cross-market data: explicit market-data identifiers activate multi-market pulses, single-origin simulated positions become safely attributable to opportunities, and source-coverage observations become visible as a short read-only history.

@@ -1,5 +1,13 @@
 # TradingAgent Front Cloudflare Deployment
 
+> **Historical migration record, not current authorization.** TradingAgent is a
+> Nicholas-only internal system. `tradingagent.cc` may remain the convenient
+> remote entry only when Cloudflare Access (or an equivalent single-user policy)
+> denies anonymous users before the page and same-origin snapshot route. The
+> API must stay on `127.0.0.1` and must not have an anonymously reachable public
+> hostname. Historical “Done” statements below do not prove the current DNS,
+> Tunnel, Access policy, service or route state; all require fresh readback.
+
 This document records the Cloudflare migration shape for the TradingAgent front
 layer. It is a deployment preparation note, not a trading runtime change.
 
@@ -23,9 +31,11 @@ The last recorded Cloudflare Pages shape was:
 | Tunnel | `tradingagent-front-api` (`88b5a0af-35fe-438d-b294-2d1b441631ca`) |
 | API domain | `https://api.tradingagent.cc/api/trading-agent/snapshot` |
 
-When the Cloudflare path is re-enabled, the dashboard page is public on
-Cloudflare and the snapshot API connects through Cloudflare Tunnel to the
-TradingAgent server's local read-only snapshot service on `127.0.0.1:8787`.
+When the Cloudflare path is re-enabled, the dashboard remains a Nicholas-only
+internal observability surface. Cloudflare Access must authorize the browser
+before either the page or its same-origin snapshot route is served. The origin
+snapshot service remains read-only on `127.0.0.1:8787`; a direct public API
+hostname is not part of the target shape.
 
 The Pages Function at `/api/trading-agent/snapshot` remains the same-origin
 read-only proxy shape for that rollback path. It uses the Cloudflare Pages
@@ -40,6 +50,9 @@ public entry and onto Cloudflare:
 Browser
   |
   | HTTPS
+  v
+Cloudflare Access (Nicholas-only)
+  |
   v
 Cloudflare Pages
   |
@@ -103,8 +116,10 @@ Preferred first backend shape:
 1. Keep the Node snapshot API on the TradingAgent host.
 2. Keep it bound to `127.0.0.1:8787`.
 3. Run Cloudflare Tunnel on the same host or a trusted private network peer.
-4. Publish only the snapshot route through a dedicated hostname such as
-   `api.tradingagent.cc`.
+4. Prefer an Access-protected same-origin snapshot route. If a dedicated
+   hostname such as `api.tradingagent.cc` is temporarily retained for
+   migration, deny anonymous access and do not expose it directly to browser
+   JavaScript.
 5. Keep the API token, if enabled, server-side at the tunnel/proxy layer.
 
 The origin service remains:
@@ -126,12 +141,13 @@ api.tradingagent.cc -> http://127.0.0.1:8787
 If token auth is enabled with `TRADING_AGENT_SNAPSHOT_API_TOKEN`, the browser
 must not know that token. Use a server-side proxy that injects
 `Authorization: Bearer <server-only-token>`, or keep the tunnel hostname private
-behind Cloudflare Access and use a Worker proxy for the public dashboard.
+behind Cloudflare Access and use a Worker proxy for the authenticated personal
+dashboard.
 
 ## Worker Proxy Option
 
-Use a Worker when the public dashboard should keep a same-origin API path or
-when token injection is required.
+Use a Worker when the authenticated personal dashboard should keep a
+same-origin API path or when token injection is required.
 
 Recommended route:
 
@@ -160,10 +176,10 @@ Recommended target split:
 
 | Hostname | Cloudflare target | Purpose |
 | --- | --- | --- |
-| `dashboard.tradingagent.cc` | Cloudflare Pages custom domain | Dashboard UI |
-| `tradingagent.cc` | Cloudflare Pages custom domain or redirect to dashboard | Public dashboard entry |
-| `www.tradingagent.cc` | Redirect or Pages custom domain | Convenience alias |
-| `api.tradingagent.cc` | Cloudflare Tunnel public hostname | Read-only snapshot API |
+| `dashboard.tradingagent.cc` | Access-protected Pages custom domain or redirect | Historical alias; no anonymous dashboard |
+| `tradingagent.cc` | Access-protected personal entry | Nicholas-only observability entry |
+| `www.tradingagent.cc` | Access-protected redirect or disabled | Optional historical alias |
+| `api.tradingagent.cc` | Disabled, or Access/service-auth protected migration route | Never a direct anonymous browser API |
 
 `dashboard.tradingagent.cc` has already been moved away from the mainland
 Alibaba Cloud A-record entry. `api.tradingagent.cc` is routed through the
@@ -194,7 +210,9 @@ Keep these boundaries explicit:
 - Browser configuration can contain only public URLs.
 - Tokens live only in server-side service configuration, Cloudflare Tunnel
   private configuration, or Worker secrets.
-- Cloudflare Access may protect `api.tradingagent.cc` during testing.
+- Cloudflare Access (or an equivalent single-user identity gate) must protect
+  both the page and snapshot route before remote use. Origin or service
+  authentication is an additional control, not a substitute for user access.
 - No Cloudflare rule should expose `signals/`, local files, order queues,
   execution routes, account callbacks, email endpoints, or credentials.
 
@@ -204,16 +222,20 @@ Keep these boundaries explicit:
 2. Confirm the origin API health on the host:
    `curl http://127.0.0.1:8787/healthz`.
 3. Confirm the origin snapshot returns JSON and no mutation surface.
-4. Create the Pages project with output directory `dist`. Done:
-   `tradingagent-front`.
+4. Create or verify the Pages project with output directory `dist`.
 5. Set `VITE_TRADING_AGENT_SNAPSHOT_URL=/api/trading-agent/snapshot`.
-6. Deploy the Pages Function proxy. Done.
-7. Set DNS/custom domains in Cloudflare. Done for `dashboard.tradingagent.cc`.
-8. Verify the public dashboard loads from Pages. Done.
-9. Create the Tunnel public hostname for `api.tradingagent.cc`. Done.
-10. Set `TRADING_AGENT_SNAPSHOT_UPSTREAM_URL` in Cloudflare Pages. Done.
-11. Verify the browser snapshot call returns JSON through Cloudflare. Done.
-12. Keep the Alibaba Cloud Nginx route available until the Cloudflare route has
+6. Configure Cloudflare Access for Nicholas before attaching any remote domain;
+   verify an anonymous request is denied or redirected.
+7. Deploy the Pages Function or Worker same-origin proxy behind Access.
+8. Set DNS/custom domains only after the Access policy is readable and tested.
+9. Keep a dedicated API hostname disabled unless migration requires it; if
+   retained, require Access or service authentication and verify anonymous
+   denial.
+10. Set `TRADING_AGENT_SNAPSHOT_UPSTREAM_URL` only as server-side configuration.
+11. Verify an authenticated Nicholas session loads both the page and snapshot;
+    verify anonymous page and snapshot requests do not return data.
+12. Verify revocation/logout removes access, and preserve audit evidence.
+13. Keep the Alibaba Cloud Nginx route available until the Cloudflare route has
     been checked from normal browsers.
 
 ## Rollback
@@ -238,9 +260,10 @@ Backend rollback:
 
 ## Not Covered Yet
 
-- No Cloudflare Access policy is configured yet for `api.tradingagent.cc`.
-- `tradingagent.cc` and `www.tradingagent.cc` still point to the previous
-  Alibaba Cloud A-record route.
-- The snapshot currently returns the live API envelope, but several data
-  domains may still be empty until TradingAgent writes richer performance,
-  holdings, signal timeline, and decision records.
+- This repository does not prove the current Cloudflare Access, DNS, Tunnel,
+  Pages, Worker or revocation state. Use [../../STATUS.md](../../STATUS.md) for
+  the latest read-only evidence and repeat control-plane and anonymous/authenticated
+  readback during an explicitly authorized release.
+- Several snapshot domains may remain empty until TradingAgent writes richer
+  performance, holdings, signal timeline and decision records. Empty or
+  degraded evidence must remain visible as such.

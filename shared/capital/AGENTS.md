@@ -4,9 +4,9 @@
 
 ## 唯一政策源
 
-| 市场 | policy | authority | generation | 初始权益 | 容量 |
+| 市场 | policy | authority | fresh-start baseline generation | 初始权益 | 容量 |
 |---|---|---|---:|---:|---|
-| A股 | `ashare_capital_policy.yaml` | `ashare-capital-v1` | 1 | 50,000 CNY | gross 45,000；single-name 7,500 |
+| A股 | `ashare_capital_policy.yaml` | `ashare-capital-v1` | 1 | 50,000 CNY | gross 45,000；single-name 7,500；最多8仓 |
 | CNFutures | `cn_futures_capital_policy.yaml` | `cn-futures-capital-v1` | 1 | 50,000 CNY | margin 25,000 |
 
 - 默认 roots：`shared/logs/capital/ashare/` 与 `shared/logs/capital/cn_futures/`。
@@ -14,6 +14,9 @@
 - 事件文件：`ashare_sim_capital_events.jsonl`、`cn_futures_sim_capital_events.jsonl`；latest JSON 只是可重建投影。
 - 两市场不可调拨、相加、净额或互补；一个市场的 PnL/DD 不影响另一个市场。
 - fresh-start 不继承旧持仓、预约、PnL 或 high-water。legacy freeze manifest 只证明历史已冻结，不导入新 ledger。
+- 表中 generation 1 只描述初始基线；每轮消费 current snapshot 的正整数 generation，禁止在 optimizer、runtime、文档示例或测试外固定为 1。
+- A股组合常量也只来自同一 YAML：100 股买入整手、最低经济订单 2,000 CNY、无交易区 1,000 CNY、最多 8 个仓位。optimizer、runtime stage、测试和文档不得复制另一套默认值；政策缺字段或跨层不一致时 fail closed。
+- 其中 2,000 CNY 与 1,000 CNY 是 Phase 1 首版保守工程假设，不是经验最优值；只有真实费用、滑点、未成交和信号衰减的冻结OOS证据可支持发布新 policy 版本，不能在线自调或为凑频率放宽。
 
 ## 风险语义
 
@@ -22,6 +25,7 @@
 - MTM 回撤达到 7%：该市场暂停并复核。
 - 上述“暂停”只改变 new-risk eligibility；若 position authority 与全部来源仍 verified，必须保留 positions 供 sell/trim/exit、T+1、幂等和 close commit。authority/source 无效或不一致才全方向阻断。
 - A股按 risk unit 聚合持仓市值、pending reservations 和新订单校验单票 15%，并校验 90% gross。
+- A股 T+1 可卖数量只能由本账本 append-only `fill_commit` / `ashare_sell_commit` 按 Asia/Shanghai aware `filled_at` 与 FIFO 重放，并与 current position quantity 全等校验；不得信任订单、行情或外部 adapter 自报可卖量覆盖该 authority。
 - A股 provider state 必须显式输出 checksum status/last/正整数 event count 和 positions mapping/count/fingerprint；缺字段、非法股票/数量或声明冲突不得推断为空仓。所有 position source 必须与 current authority/generation/lineage/checksum/trade date 和 canonical positions 全等，并用同轮前后双读防止并发绑定漂移。
 - CNFutures 保证金使用上限 50%；止损损失预算由执行/风险层另行校验。
 - 风险以 current MTM equity/high-water 计算，不能只看 realized PnL。
@@ -35,7 +39,7 @@
 - `position_close_commit`：期货平/减仓的 actual margin release/fee/PnL 原子结算。
 - `reconcile`：以 exact reservation manifest、未结 commit IDs、持仓数量/成本/保证金、冻结额和 execution lineage 完成 MTM 守恒证明。
 
-所有 commit 必须包含 authority/generation、execution lineage、PIT timestamp、source/receipt/local fact SHA、fill sequence、idempotency key 和 expected ledger head event/checksum。partial 只消费实际成交部分；终态释放未使用预约。冲突重放、未知 reservation、超额释放、symlink、checksum 断链或 CAS 失败全部阻断。
+所有 commit 必须包含 authority/generation、execution lineage、PIT timestamp、source/receipt/local fact SHA、fill sequence、idempotency key 和 expected ledger head event/checksum。partial 只消费实际成交部分；终态释放未使用预约。零成交清理只能释放 canonical reservation 当时的完整剩余 cash/exposure/margin，release event 后必须立即得到 `terminal=true` 与三项余额全零；部分 release 不得被 execution receipt 或 reconcile 宣称为成功闭环。冲突重放、未知 reservation、超额/不足释放、symlink、checksum 断链或 CAS 失败全部阻断。
 
 ## 运维边界
 

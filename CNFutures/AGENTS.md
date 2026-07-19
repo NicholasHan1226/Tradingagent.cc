@@ -41,7 +41,7 @@
 
 ## 数据与成熟度
 
-- 盘中合约与 5 分钟行情来自 SharedSignals API；SQLite 只限显式隔离测试/诊断。
+- 盘中合约与 5 分钟行情来自 SharedSignals API；`SHAREDSIGNALS_API_URL` 被显式置空时必须在旧 reader 前 fail closed。SQLite 只限显式隔离测试/诊断，并且必须同时设置 `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` 与提供已存在的诊断数据库；生产环境不得设置该开关。
 - 生产 universe 至少覆盖 3 个独立底层品种；同品种跨月只算一个。覆盖不足仍保存 observation，并标明偏差，不放宽执行门禁。
 - 成熟度独立展示有效样本、完整回合、品种/波动/会话覆盖、夜盘、换月、极端风险、费用后结果、回撤和稳定性；不读取 A股模拟天数或晋级状态。
 - 自动晋级、自动风险扩张和 live transition 均关闭。

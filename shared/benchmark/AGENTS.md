@@ -5,6 +5,12 @@
 ## 目标
 基准跟踪与业绩比较。
 
+## 当前分类与 ownership
+
+- `benchmark_tracker.py` 是 TradingAgent 所有的 **active-compatibility、只读分析**模块；它只接受调用方注入的基准价格，不是 SharedSignals 服务端、数据采集器、current-v1 client 或交易 authority。
+- A股 current-v1 的基准/指数/行业环境数据必须先经 `GET /v1/catalog`、`POST /v1/query`、Evidence Gate 和不可变 snapshot，再由 TA 适配为本模块输入；本模块不得自行访问兄弟仓、SQLite、旧专用端点或 provider。
+- `shared/review/benchmark.py` 仍是 `RETIREMENT_PENDING_VERIFICATION` 的兼容分析路径，不得作为 current-v1 数据或完成证明；其状态以 `shared/governance/legacy_inventory.yaml` 为准。
+
 ## 文件
 - `benchmark_tracker.py` — 追踪沪深300/创业板指/买入持有基准, 计算区间收益, 对比组合表现。
 
@@ -14,7 +20,7 @@
 - **Buy-Hold (买入持有)**: 等权买入并持有初始组合, 不调仓
 
 ## 数据来源
-- 基准行情数据通过 `update_benchmark(date)` 注入；生产环境必须从 SharedSignals API/read model 取基准价格后传入, 不直接调用 MarketGraph 或数据 provider。
+- 基准行情数据通过 `update_benchmark(date)` 注入；current-v1 输入只能来自已通过 TA Evidence Gate 的 catalog/query snapshot，不直接调用 MarketGraph、SharedSignals 服务端内部实现或数据 provider。
 - 本地 CSV 存储, 每日一条记录
 
 ## 原则

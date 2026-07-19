@@ -11,8 +11,14 @@ from shared.runtime_test import ashare_preopen_dry_run
 
 
 def _test_symbol(index: int) -> str:
-    prefix = (600, 601, 603, 605, 688)[index // 1000]
-    return f"{prefix * 1000 + (index % 1000):06d}.SH"
+    prefix, exchange = (
+        ("600", "SH"),
+        ("601", "SH"),
+        ("603", "SH"),
+        ("605", "SH"),
+        ("000", "SZ"),
+    )[index // 1000]
+    return f"{prefix}{index % 1000:03d}.{exchange}"
 
 
 def _healthy_v1_daily_row(
@@ -1663,7 +1669,7 @@ class AsharePreopenDryRunTest(unittest.TestCase):
             limit=3,
         )
 
-        self.assertEqual(universe, ["300750.SZ", "600000.SH", "000002.SZ"])
+        self.assertEqual(universe, ["600000.SH", "000002.SZ"])
 
     def test_reader_universe_fails_closed_for_unavailable_v1_batch(self) -> None:
         class LegacyFallbackTrap:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 import tempfile
@@ -25,9 +26,27 @@ from shared.runtime_test.ashare_forward_label_ops import (
     enumerate_ashare_forward_label_backlog,
     main,
     price_points_from_bars,
-    run_ashare_forward_label_backlog,
-    run_ashare_forward_label_ops,
+    run_ashare_forward_label_backlog as _run_ashare_forward_label_backlog,
+    run_ashare_forward_label_ops as _run_ashare_forward_label_ops,
 )
+from tests._ashare_validation_plan_fixture import (
+    build_non_production_ashare_validation_plan,
+    write_non_production_validation_plan_artifact,
+)
+
+
+def run_ashare_forward_label_ops(**kwargs):
+    """Test-only adapter makes the non-production plan explicit."""
+
+    kwargs.setdefault("validation_plan", build_non_production_ashare_validation_plan())
+    return _run_ashare_forward_label_ops(**kwargs)
+
+
+def run_ashare_forward_label_backlog(**kwargs):
+    """Test-only adapter makes the non-production plan explicit."""
+
+    kwargs.setdefault("validation_plan", build_non_production_ashare_validation_plan())
+    return _run_ashare_forward_label_backlog(**kwargs)
 
 
 class FakeAshareReader:
@@ -193,8 +212,67 @@ def _run_adapter_bars(tmp_path: Path, bars: list[dict[str, object]]):
         as_of="2026-07-13T11:30:00+08:00",
         reader=FakeAshareReader(intraday=bars),
         environ={},
+        validation_plan=build_non_production_ashare_validation_plan(),
     )
     return report, journal.latest_sample_records()[0]
+
+
+def test_runtime_fails_closed_before_market_read_without_validation_plan(
+    tmp_path: Path,
+) -> None:
+    class ReaderMustNotBeCalled:
+        def get_bars_intraday(self, *args, **kwargs):
+            raise AssertionError("market reader must not run without validation plan")
+
+        def get_bars_daily(self, *args, **kwargs):
+            raise AssertionError("market reader must not run without validation plan")
+
+    journal = SampleJournal(tmp_path / "missing-plan.jsonl")
+    journal.append_prediction(_prediction())
+
+    with pytest.raises(
+        ForwardLabelOpsSafetyError,
+        match="verified_frozen_validation_plan_required",
+    ):
+        _run_ashare_forward_label_ops(
+            journal_path=journal.path,
+            trade_date="20260713",
+            as_of="2026-07-13T11:30:00+08:00",
+            reader=ReaderMustNotBeCalled(),
+            environ={},
+        )
+
+
+def test_runtime_rejects_non_ashare_plan_before_market_read(tmp_path: Path) -> None:
+    class ReaderMustNotBeCalled:
+        def get_bars_intraday(self, *args, **kwargs):
+            raise AssertionError("market reader must not run with wrong-market plan")
+
+        def get_bars_daily(self, *args, **kwargs):
+            raise AssertionError("market reader must not run with wrong-market plan")
+
+    journal = SampleJournal(tmp_path / "wrong-market-plan.jsonl")
+    journal.append_prediction(_prediction())
+    ashare_plan = build_non_production_ashare_validation_plan()
+    generic_plan = replace(
+        ashare_plan,
+        market="generic",
+        trading_session_calendar=None,
+        trading_session_calendar_verification=None,
+    )
+
+    with pytest.raises(
+        ForwardLabelOpsSafetyError,
+        match="verified_frozen_ashare_validation_plan_required",
+    ):
+        _run_ashare_forward_label_ops(
+            journal_path=journal.path,
+            trade_date="20260713",
+            as_of="2026-07-13T11:30:00+08:00",
+            reader=ReaderMustNotBeCalled(),
+            environ={},
+            validation_plan=generic_plan,
+        )
 
 
 @pytest.mark.parametrize("receipt_path", _RECEIPT_ALIAS_PATHS)
@@ -777,6 +855,9 @@ class ForwardLabelOpsTests(unittest.TestCase):
 
     def test_cli_writes_only_label_update_and_prints_json(self) -> None:
         self.journal.append_prediction(_prediction())
+        plan_path = write_non_production_validation_plan_artifact(
+            Path(self.tmp.name) / "validation-plan.json"
+        )
         fake = FakeAshareReader()
         stdout = io.StringIO()
         with (
@@ -795,6 +876,8 @@ class ForwardLabelOpsTests(unittest.TestCase):
                     "20260713",
                     "--as-of",
                     "2026-07-13T15:30:00+08:00",
+                    "--validation-plan-path",
+                    str(plan_path),
                 ]
             )
 
@@ -1025,6 +1108,9 @@ class ForwardLabelBacklogTests(unittest.TestCase):
         old = _prediction(prediction_at="2026-07-10T09:30:00+08:00")
         old["trade_date"] = "20260710"
         self.journal.append_prediction(old)
+        plan_path = write_non_production_validation_plan_artifact(
+            Path(self.tmp.name) / "validation-plan.json"
+        )
         stdout = io.StringIO()
         with (
             patch(
@@ -1042,6 +1128,8 @@ class ForwardLabelBacklogTests(unittest.TestCase):
                     "20260713",
                     "--as-of",
                     "2026-07-13T16:00:00+08:00",
+                    "--validation-plan-path",
+                    str(plan_path),
                 ]
             )
 

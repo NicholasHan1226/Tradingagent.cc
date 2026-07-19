@@ -1,0 +1,513 @@
+{
+  "schema_version": 1,
+  "offline_fixture": true,
+  "config": {
+    "trade_date": "2026-07-16",
+    "decision_as_of": "2026-07-16T09:05:00+08:00",
+    "ss_v1_base_url": "http://sharedsignals.fixture.invalid:8082",
+    "ss_catalog_version": "fixture-catalog-2026-07-16",
+    "ss_access_policy_id": "ta-paper-read-v1",
+    "capital_authority_id": "ashare-phase1-offline-fixture-capital-v1",
+    "authority_generation": 1,
+    "execution_lineage": "ashare-phase1-offline-fixture-lineage-v1",
+    "champion_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "real_trading_enabled": false,
+    "live_execution_enabled": false,
+    "network_enabled": false,
+    "profile_id": "mainboard-paper-mvp-input-v1",
+    "datasets": [
+      {
+        "dataset_id": "cn.equity.daily.mainboard.v1",
+        "schema_major": 1,
+        "role": "required_execution",
+        "fields": ["ts_code", "close"],
+        "filters": {},
+        "as_of": "2026-07-16T01:05:00+00:00",
+        "limit": 1000,
+        "cursor": null,
+        "evidence_policy": {
+          "degraded_action": "reject",
+          "stale_action": "reject",
+          "degraded_weight": 0.25,
+          "stale_weight": 0.1
+        }
+      },
+      {
+        "dataset_id": "cn.equity.sector.full_market.context.v1",
+        "schema_major": 1,
+        "role": "optional_context",
+        "fields": ["sector_id", "breadth"],
+        "filters": {},
+        "as_of": "2026-07-16T01:05:00+00:00",
+        "limit": 1000,
+        "cursor": null,
+        "evidence_policy": {
+          "degraded_action": "deweight",
+          "stale_action": "reject",
+          "degraded_weight": 0.25,
+          "stale_weight": 0.1
+        }
+      }
+    ]
+  },
+  "small_account_optimizer": {
+    "identity": {
+      "component_id": "small-account-decision-stage",
+      "version": "1",
+      "artifact_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "runtime_environment": "local_candidate",
+    "promotion_eligible": false,
+    "decision_time": "2026-07-16T01:05:00+00:00",
+    "account_snapshot": {
+      "capital_authority_id": "ashare-phase1-offline-fixture-capital-v1",
+      "authority_generation": 1,
+      "account_as_of": "2026-07-16T01:05:00+00:00",
+      "available_cash_cny": 50000.0,
+      "current_gross_cny": 0.0,
+      "positions": [],
+      "position_snapshot_receipt_id": "position-authority-receipt-1",
+      "position_snapshot_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "verification_receipt_sha256": "72f801d5343abfb4359f75ba92c8da394fa73b8af801634ef0e7613caf5c923b",
+      "authority_source_class": "offline_fixture"
+    },
+    "candidates": [
+      {
+        "symbol": "000001.SZ",
+        "fixture_rank_score": 0.28,
+        "score_evidence_class": "offline_engineering_fixture_rank",
+        "source_fixture_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+        "price_observed_at": "2026-07-16T01:00:00+00:00",
+        "decision_reference_price": 10.0
+      }
+    ],
+    "reduction_intents": [],
+    "thesis_risk_authority": {
+      "authority_sha256": "5f849c1108274754367b90d99a1504a9bb7b4368413c4c98daea153b4378380b",
+      "decision_time": "2026-07-16T01:05:00+00:00",
+      "exposure_proofs": [
+        {
+          "authority_binding_reference_id": "a107b0e631d032f79aa3ef5573a9419b34f81875d2619af3bed1bc59521f8b3c",
+          "authority_binding_sha256": "a107b0e631d032f79aa3ef5573a9419b34f81875d2619af3bed1bc59521f8b3c",
+          "authority_notional_cny": 0.0,
+          "exposure_id": "candidate-000001.SZ",
+          "exposure_receipt_sha256": "a4516298bb4591170776b1f2d942fcb7dcb32645a0041e22f0f154ea9531f285",
+          "promotion_eligible": false,
+          "proof_sha256": "26e4c2b0edaee71ff8979f26f432e3dd534cb80806d5e3441889f06efc42f179",
+          "valid_until": "2026-07-16T02:05:00+00:00",
+          "verified_at": "2026-07-16T01:04:59+00:00",
+          "verifier_id": "tests-frozen-thesis-risk-exposure",
+          "verifier_version": "1"
+        }
+      ],
+      "exposure_receipts": [
+        {
+          "as_of": "2026-07-16T01:00:00+00:00",
+          "available_at": "2026-07-16T01:00:00+00:00",
+          "binding_reference_id": "a107b0e631d032f79aa3ef5573a9419b34f81875d2619af3bed1bc59521f8b3c",
+          "binding_sha256": "a107b0e631d032f79aa3ef5573a9419b34f81875d2619af3bed1bc59521f8b3c",
+          "exposure_id": "candidate-000001.SZ",
+          "exposure_kind": "candidate",
+          "groups": {
+            "crowding": "fixture-crowding",
+            "industry": "fixture-industry",
+            "model_family": "fixture-frozen-champion",
+            "policy_event": "fixture-policy-event",
+            "raw_material": "fixture-raw-material",
+            "thesis": "fixture-thesis"
+          },
+          "notional_cny": 0.0,
+          "pending_action": null,
+          "receipt_sha256": "a4516298bb4591170776b1f2d942fcb7dcb32645a0041e22f0f154ea9531f285",
+          "source_content_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "source_dataset_id": "tests.thesis-risk.candidate.v1",
+          "source_lineage_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "source_receipt_id": "candidate-source-000001.SZ",
+          "symbol": "000001.SZ"
+        }
+      ],
+      "exposure_set_proof": {
+        "exposure_set_id": "tests-frozen-thesis-risk-book-v1",
+        "exposure_set_receipt_sha256": "227f564c99e00e601193acb8994a19bb8cac682433314c87ca5b335b46715b08",
+        "promotion_eligible": false,
+        "proof_sha256": "a9d1884830edba98a71b83d1d1083babe0f99dfc7f607e98f4a9caeb64ded633",
+        "source_generation": 1,
+        "source_lineage_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "valid_until": "2026-07-16T02:05:00+00:00",
+        "verified_at": "2026-07-16T01:04:59+00:00",
+        "verifier_id": "tests-frozen-thesis-risk-exposure-set",
+        "verifier_version": "1"
+      },
+      "exposure_set_receipt": {
+        "as_of": "2026-07-16T01:00:00+00:00",
+        "available_at": "2026-07-16T01:00:00+00:00",
+        "candidate_count": 1,
+        "decision_time": "2026-07-16T01:05:00+00:00",
+        "exposure_receipt_sha256s": [
+          "a4516298bb4591170776b1f2d942fcb7dcb32645a0041e22f0f154ea9531f285"
+        ],
+        "exposure_set_id": "tests-frozen-thesis-risk-book-v1",
+        "pending_count": 0,
+        "position_count": 0,
+        "receipt_sha256": "227f564c99e00e601193acb8994a19bb8cac682433314c87ca5b335b46715b08",
+        "source_generation": 1,
+        "source_id": "tests.frozen-thesis-risk-book.v1",
+        "source_lineage_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "initial_group_exposures": [],
+      "policy": {
+        "dimension_caps": [
+          {
+            "dimension": "industry",
+            "max_exposure_cny": 50000.0
+          },
+          {
+            "dimension": "thesis",
+            "max_exposure_cny": 50000.0
+          },
+          {
+            "dimension": "raw_material",
+            "max_exposure_cny": 50000.0
+          },
+          {
+            "dimension": "policy_event",
+            "max_exposure_cny": 50000.0
+          },
+          {
+            "dimension": "crowding",
+            "max_exposure_cny": 50000.0
+          },
+          {
+            "dimension": "model_family",
+            "max_exposure_cny": 50000.0
+          }
+        ],
+        "effective_at": "2026-07-15T01:05:00+00:00",
+        "policy_id": "tests-human-reviewed-thesis-risk-v1",
+        "policy_sha256": "2bf78ee134c79c57b78fd265b5cb21c0f4dfa7b274e21dd031db31dd293ea15a",
+        "review_reference": "tests-review-reference-20260716",
+        "reviewed_by": "tests-explicit-reviewer",
+        "valid_until": "2026-08-15T01:05:00+00:00"
+      },
+      "policy_proof": {
+        "policy_id": "tests-human-reviewed-thesis-risk-v1",
+        "policy_sha256": "2bf78ee134c79c57b78fd265b5cb21c0f4dfa7b274e21dd031db31dd293ea15a",
+        "promotion_eligible": false,
+        "proof_sha256": "29cd8d13728420edcbb656918ce810fd274bd83ed68de8ecad1b17b869c29540",
+        "review_reference": "tests-review-reference-20260716",
+        "reviewed_by": "tests-explicit-reviewer",
+        "valid_until": "2026-07-16T02:05:00+00:00",
+        "verified_at": "2026-07-16T01:04:59+00:00",
+        "verifier_id": "tests-frozen-thesis-risk-policy",
+        "verifier_version": "1"
+      }
+    }
+  },
+  "transport_responses": {
+    "catalog": {
+      "status_code": 200,
+      "json_body": {
+        "api_version": "v1",
+        "catalog_version": "fixture-catalog-2026-07-16",
+        "request_id": "catalog-request-1",
+        "data": [
+          {
+            "dataset_id": "cn.equity.daily.mainboard.v1",
+            "fields": ["ts_code", "close"]
+          },
+          {
+            "dataset_id": "cn.equity.sector.full_market.context.v1",
+            "fields": ["sector_id", "breadth"]
+          }
+        ]
+      }
+    },
+    "queries": {
+      "cn.equity.daily.mainboard.v1": {
+        "status_code": 200,
+        "json_body": {
+          "api_version": "v1",
+          "catalog_version": "fixture-catalog-2026-07-16",
+          "request_id": "query-cn-equity-daily-mainboard-v1",
+          "dataset_id": "cn.equity.daily.mainboard.v1",
+          "data": [
+            {
+              "ts_code": "000001.SZ",
+              "close": 10.0,
+              "event_time": "2026-07-15T07:00:00+00:00",
+              "available_time": "2026-07-16T00:59:00+00:00",
+              "revision_id": "r1",
+              "receipt_id": "row-price-receipt-1"
+            }
+          ],
+          "next_cursor": null,
+          "metadata": {
+            "state": "ready",
+            "degraded": false,
+            "freshness": {"state": "fresh", "stale": false},
+            "quality": {"state": "valid", "valid": true},
+            "lineage": {"complete": true, "provider_neutral": true},
+            "receipt_id": "price-receipt-1",
+            "data_through": "2026-07-15T07:00:00+00:00",
+            "observed_at": "2026-07-16T01:00:00+00:00",
+            "reasons": []
+          }
+        }
+      },
+      "cn.equity.sector.full_market.context.v1": {
+        "status_code": 200,
+        "json_body": {
+          "api_version": "v1",
+          "catalog_version": "fixture-catalog-2026-07-16",
+          "request_id": "query-cn-equity-sector-context-v1",
+          "dataset_id": "cn.equity.sector.full_market.context.v1",
+          "data": [
+            {
+              "sector_id": "full-market",
+              "breadth": 0.55,
+              "event_time": "2026-07-15T07:00:00+00:00",
+              "available_time": "2026-07-16T00:59:00+00:00",
+              "revision_id": "r1",
+              "receipt_id": "row-context-receipt-1"
+            }
+          ],
+          "next_cursor": null,
+          "metadata": {
+            "state": "degraded",
+            "degraded": true,
+            "freshness": {"state": "degraded", "stale": false},
+            "quality": {"state": "degraded", "valid": true},
+            "lineage": {"complete": true, "provider_neutral": true},
+            "receipt_id": "context-receipt-1",
+            "data_through": "2026-07-15T07:00:00+00:00",
+            "observed_at": "2026-07-16T01:00:00+00:00",
+            "reasons": ["context_partial"]
+          }
+        }
+      }
+    }
+  },
+  "managed_stage_identities": {
+    "evidence_ready": {
+      "component_id": "sharedsignals-research-evidence-port",
+      "version": "1",
+      "artifact_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "learning_recorded": {
+      "component_id": "sample-journal-learning-port",
+      "version": "1",
+      "artifact_sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+    },
+    "reported": {
+      "component_id": "local-today-report-port",
+      "version": "1",
+      "artifact_sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+    }
+  },
+  "scope_policy_identity": {
+    "component_id": "mainboard-scope-policy",
+    "version": "1",
+    "artifact_sha256": "8a4f9d07703ed9c0d8ec8e5a2d42af1d3b124a4fba61cf8197097c85692fce9d"
+  },
+  "business_stage_payloads": {
+    "preopen": {
+      "market": "ashare",
+      "account_type": "simulated",
+      "real_trading_enabled": false,
+      "account_authority_valid": true,
+      "position_authority_valid": true
+    },
+    "universe_ready": {
+      "context_receipt_id": "context-universe-1",
+      "tradable_receipt_id": "tradable-universe-1",
+      "feasible_receipt_id": "feasible-universe-1",
+      "context_entities": [
+        {
+          "entity_id": "399006.SZ",
+          "entity_type": "index",
+          "context_only": true,
+          "order_identity_allowed": false
+        },
+        {
+          "entity_id": "000688.SH",
+          "entity_type": "index",
+          "context_only": true,
+          "order_identity_allowed": false
+        }
+      ],
+      "tradable_symbols": ["000001.SZ"],
+      "feasible_symbols": ["000001.SZ"]
+    },
+    "decision_ready": {
+      "candidate_set_receipt": {
+        "schema_version": 1,
+        "candidate_set_id": "phase1-offline-fixture-candidate-set-v1",
+        "generated_at": "2026-07-16T01:05:00+00:00",
+        "selection_policy_version": "phase1-decision-policy-v1",
+        "exploration_seed": "phase1-offline-fixture-seed-v1",
+        "candidates": [
+          {
+            "candidate_id": "candidate-1",
+            "decision_id": "decision-1",
+            "prediction_snapshot_id": "phase1-decision-1",
+            "symbol": "000001.SZ",
+            "selected": true,
+            "selection_reason": "ranked_within_fixture_budget",
+            "selection_propensity": 1.0,
+            "strategy_version": "phase1-frozen-champion-v1"
+          }
+        ]
+      },
+      "journal_predictions": [
+        {
+          "snapshot_id": "phase1-decision-1",
+          "decision_id": "decision-1",
+          "decision_cluster_id": "decision-cluster-1",
+          "market": "ashare",
+          "symbol": "000001.SZ",
+          "style": "phase1_frozen_champion",
+          "strategy_version": "phase1-frozen-champion-v1",
+          "prediction_at": "2026-07-16T01:05:00+00:00",
+          "data_as_of": "2026-07-16T01:05:00+00:00",
+          "event_time": "2026-07-15T07:00:00+00:00",
+          "available_at": "2026-07-16T01:00:00+00:00",
+          "ingested_at": "2026-07-16T01:00:00+00:00",
+          "retrieved_as_of": "2026-07-16T01:00:00+00:00",
+          "reference_price": 10.0,
+          "direction": "long",
+          "raw_style_score": 0.42,
+          "score_semantics": "uncalibrated_deterministic_rank_score",
+          "calibrated_probability": null,
+          "probability_model_state": "not_calibrated",
+          "mature_threshold_passed": false,
+          "execution_gate_passed": true,
+          "execution_reject_reason": null,
+          "costs": {
+            "round_trip_fee_bps": 105.0,
+            "round_trip_slippage_bps": 10.0,
+            "cost_model_version": "ashare-small-account-cost-v1",
+            "cost_basis_notional_cny": 2000.0
+          },
+          "data_quality": {
+            "reliable": true,
+            "source": "sharedsignals.query_result.v1",
+            "price_timestamp": "2026-07-15T07:00:00+00:00"
+          },
+          "point_in_time_lineage": {
+            "timestamps": {
+              "event_time": "2026-07-15T07:00:00+00:00",
+              "available_at": "2026-07-16T01:00:00+00:00",
+              "ingested_at": "2026-07-16T01:00:00+00:00",
+              "retrieved_as_of": "2026-07-16T01:00:00+00:00"
+            }
+          },
+          "source_snapshot_payload": "__RESEARCH_SOURCE_PAYLOAD__",
+          "source_snapshot_sha256": "__RESEARCH_SOURCE_SHA256__",
+          "capital_authority_id": "ashare-phase1-offline-fixture-capital-v1",
+          "authority_generation": 1,
+          "execution_lineage_id": "ashare-phase1-offline-fixture-lineage-v1",
+          "source_class": "fixture",
+          "promotion_eligible": false,
+          "real_trading_enabled": false,
+          "live_execution_enabled": false
+        }
+      ]
+    },
+    "risk_checked": {
+      "risk_policy_version": "ashare-capital-policy-v1",
+      "oms_plan_id": "oms-plan-1",
+      "small_account_plan_sha256": "__PLAN_SHA__",
+      "approved_orders": [
+        {
+          "decision_id": "__OPTIMIZER_DECISION_ID__",
+          "order_id": "order-1",
+          "symbol": "__OPTIMIZER_SYMBOL__",
+          "intent": "__OPTIMIZER_ACTION__",
+          "side": "__OPTIMIZER_SIDE__",
+          "quantity": "__OPTIMIZER_ORDER_QUANTITY__",
+          "sample_intent": "exploitation",
+          "source_class": "fixture",
+          "promotion_eligible": false,
+          "prediction_snapshot_id": "phase1-decision-1",
+          "prediction_source_snapshot_sha256": "__RESEARCH_SOURCE_SHA256__",
+          "primary_style": "phase1_frozen_champion",
+          "supporting_styles": [],
+          "style_scores": {"phase1_frozen_champion": 0.42},
+          "style_versions": {"phase1_frozen_champion": "phase1-frozen-champion-v1"},
+          "decision_policy_version": "phase1-decision-policy-v1",
+          "capital_authority_id": "__AUTHORITY_ID__",
+          "authority_generation": "__AUTHORITY_GENERATION__",
+          "execution_lineage": "__EXECUTION_LINEAGE__",
+          "risk_receipt_id": "risk-receipt-1",
+          "position_authority_receipt_id": "__POSITION_SNAPSHOT_RECEIPT_ID__",
+          "cash_authority_receipt_id": "cash-authority-receipt-1",
+          "small_account_plan_sha256": "__PLAN_SHA__",
+          "reservation_price_cny": "__OPTIMIZER_RESERVATION_PRICE_CNY__",
+          "expected_fee_cny": "__OPTIMIZER_ESTIMATED_ORDER_COST_CNY__",
+          "available_cash_before_cny": "__STARTING_AVAILABLE_CASH_CNY__",
+          "t_plus_one_eligible": "__OPTIMIZER_T1_ELIGIBLE__",
+          "sellable_quantity": "__OPTIMIZER_SELLABLE_QUANTITY__",
+          "session_policy_verified": true,
+          "not_suspended": true,
+          "limit_fillable": true
+        }
+      ],
+      "rejected_decisions": []
+    },
+    "orders_simulated": {
+      "execution_lineage": "ashare-phase1-offline-fixture-lineage-v1",
+      "account_type": "simulated",
+      "real_trading_enabled": false,
+      "order_receipts": [
+        {
+          "order_id": "order-1",
+          "symbol": "__OPTIMIZER_SYMBOL__",
+          "intent": "__OPTIMIZER_ACTION__",
+          "status": "filled",
+          "capital_authority_id": "__AUTHORITY_ID__",
+          "authority_generation": "__AUTHORITY_GENERATION__",
+          "execution_lineage": "__EXECUTION_LINEAGE__",
+          "requested_quantity": "__OPTIMIZER_ORDER_QUANTITY__",
+          "filled_quantity": "__OPTIMIZER_ORDER_QUANTITY__",
+          "residual_quantity": 0,
+          "filled_price_cny": 10.0,
+          "fee_cny": 5.0,
+          "slippage_cny": 1.0,
+          "filled_at": "2026-07-16T01:06:00+00:00",
+          "available_at": "2026-07-16T01:06:00+00:00",
+          "ingested_at": "2026-07-16T01:06:00+00:00",
+          "retrieved_as_of": "2026-07-16T01:06:00+00:00",
+          "execution_eligible": true,
+          "source_class": "fixture",
+          "promotion_eligible": false,
+          "market_evidence_receipt_id": "market-fill-receipt-1",
+          "capital_commit_receipt_id": "capital-commit-receipt-1",
+          "capital_commit_status": "committed",
+          "fill_fingerprint": "__CANONICAL_FILL_FINGERPRINT__",
+          "terminal_at": "2026-07-16T01:06:00+00:00",
+          "execution_receipt_id": "execution-receipt-1"
+        }
+      ],
+      "unknown_order_ids": []
+    },
+    "reconciled": {
+      "status": "reconciled",
+      "account_authority_valid": true,
+      "position_authority_valid": true,
+      "execution_lineage": "ashare-phase1-offline-fixture-lineage-v1",
+      "capital_authority_id": "__AUTHORITY_ID__",
+      "authority_generation": "__AUTHORITY_GENERATION__",
+      "source_run_id": "__RUN_ID__",
+      "source_input_bundle_sha256": "__INPUT_BUNDLE_SHA__",
+      "reconciled_at": "2026-07-16T01:06:30+00:00",
+      "reconciliation_receipt_id": "reconciliation-receipt-1",
+      "capital_ledger_head_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "position_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "order_receipts_sha256": "__ORDER_RECEIPTS_SHA256__",
+      "account_equity_cny": 49995.0,
+      "cash_cny": 47995.0,
+      "unknown_order_ids": [],
+      "unreconciled_order_ids": []
+    }
+  }
+}

@@ -5,13 +5,14 @@
 
 filter_universe(date, stock_list) → list[ts_code]
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-import re
 from typing import Any
 
 from shared.data.reader import TradingagentDataReader
+from shared.universe.policy import is_mainboard_tradable
 
 _DATA_READER: TradingagentDataReader | None = None
 
@@ -29,7 +30,8 @@ _DEFAULTS: dict[str, Any] = {
     "min_float_mktcap_yi": 20,
     # 排除退市
     "exclude_delisted": True,
-    # A股只保留普通 A 股代码段，排除 B 股/北交所等非本链路标的
+    # Phase 0-3 个股只保留沪深主板普通股；双创个股与其它证券不进入交易链。
+    # 兼容字段只允许收紧；Phase 0-3 不允许关闭主板范围门禁。
     "exclude_non_a_share": True,
 }
 
@@ -67,21 +69,6 @@ def _lookback_start(date: str, calendar_days: int = 14) -> str:
     return (end - timedelta(days=calendar_days)).strftime("%Y%m%d")
 
 
-def _is_regular_a_share_symbol(ts_code: Any) -> bool:
-    raw = str(ts_code or "").strip().upper()
-    if "." in raw:
-        digits, exchange = raw.split(".", 1)
-    else:
-        digits, exchange = raw, ""
-    if not re.fullmatch(r"\d{6}", digits):
-        return False
-    if exchange == "SZ":
-        return digits.startswith(("000", "001", "002", "003", "300", "301"))
-    if exchange == "SH":
-        return digits.startswith(("600", "601", "603", "605", "688", "689"))
-    return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
-
-
 def _is_st(name: str) -> bool:
     """判断是否 ST / *ST / 退市股。"""
     if not name:
@@ -90,7 +77,9 @@ def _is_st(name: str) -> bool:
     return "ST" in upper or "*ST" in upper or "退" in name
 
 
-def _is_suspended(ts_code: str, date: str, reader: Any | None = None, market: str = "ashare") -> bool:
+def _is_suspended(
+    ts_code: str, date: str, reader: Any | None = None, market: str = "ashare"
+) -> bool:
     """判断是否停牌。"""
     data_reader = _get_data_reader(reader)
     try:
@@ -101,7 +90,13 @@ def _is_suspended(ts_code: str, date: str, reader: Any | None = None, market: st
             if str(row.get("symbol") or "").strip() not in _symbol_variants(ts_code):
                 continue
             coverage_status = str(row.get("coverage_status") or "").strip().lower()
-            if coverage_status and coverage_status not in {"normal", "ok", "active", "trading", "covered"}:
+            if coverage_status and coverage_status not in {
+                "normal",
+                "ok",
+                "active",
+                "trading",
+                "covered",
+            }:
                 return True
     except Exception:
         pass
@@ -122,21 +117,29 @@ def _is_suspended(ts_code: str, date: str, reader: Any | None = None, market: st
     return False
 
 
-def _list_days(ts_code: str, date: str, assets_by_symbol: dict[str, dict[str, Any]]) -> int:
+def _list_days(
+    ts_code: str, date: str, assets_by_symbol: dict[str, dict[str, Any]]
+) -> int:
     """获取上市天数。"""
     try:
-        asset = assets_by_symbol.get(ts_code) or assets_by_symbol.get(ts_code.split(".", 1)[0])
+        asset = assets_by_symbol.get(ts_code) or assets_by_symbol.get(
+            ts_code.split(".", 1)[0]
+        )
         list_date = str((asset or {}).get("list_date") or "").strip()
         if list_date:
             d1 = datetime.strptime(date, "%Y%m%d")
-            d2 = datetime.strptime(list_date[:8].replace("-", "").replace("/", ""), "%Y%m%d")
+            d2 = datetime.strptime(
+                list_date[:8].replace("-", "").replace("/", ""), "%Y%m%d"
+            )
             return (d1 - d2).days
     except Exception:
         pass
     return 999  # 未知时不过滤
 
 
-def _turnover_wan(ts_code: str, date: str, reader: Any | None = None, market: str = "ashare") -> float:
+def _turnover_wan(
+    ts_code: str, date: str, reader: Any | None = None, market: str = "ashare"
+) -> float:
     """获取日均成交额 (万元) — 近 5 日平均。"""
     data_reader = _get_data_reader(reader)
     try:
@@ -197,7 +200,8 @@ def filter_universe(
             stock_list = [
                 symbol
                 for symbol, asset in assets_by_symbol.items()
-                if str(asset.get("status") or "").strip().lower() not in {"delisted", "退市", "d", "inactive"}
+                if str(asset.get("status") or "").strip().lower()
+                not in {"delisted", "退市", "d", "inactive"}
             ]
         except Exception:
             stock_list = []
@@ -209,21 +213,25 @@ def filter_universe(
     result: list[str] = []
 
     for ts_code in stock_list:
-        # 0. A股代码段硬过滤
-        if market.lower() == "ashare" and cfg.get("exclude_non_a_share", True) and not _is_regular_a_share_symbol(ts_code):
+        # 0. 主板个股资格硬过滤（统一 authority，不在此复制前缀）
+        if market.lower() == "ashare" and not is_mainboard_tradable(ts_code):
             excluded.append((ts_code, "non_a_share_symbol"))
             continue
 
         # 1. ST 排除
         if cfg["exclude_st"]:
-            asset = assets_by_symbol.get(ts_code) or assets_by_symbol.get(ts_code.split(".", 1)[0], {})
+            asset = assets_by_symbol.get(ts_code) or assets_by_symbol.get(
+                ts_code.split(".", 1)[0], {}
+            )
             name = str(asset.get("name") or "")
             if _is_st(name):
                 excluded.append((ts_code, "ST"))
                 continue
 
         # 2. 停牌排除
-        if cfg["exclude_suspended"] and _is_suspended(ts_code, date, data_reader, market):
+        if cfg["exclude_suspended"] and _is_suspended(
+            ts_code, date, data_reader, market
+        ):
             excluded.append((ts_code, "suspended"))
             continue
 

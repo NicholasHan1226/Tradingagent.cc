@@ -27,6 +27,7 @@ from uuid import uuid4
 from Ashare.evolution_controller import (
     build_evolution_decision,
 )
+from shared.models.lifecycle import ValidationPlan
 from shared.review.market_maturity import AshareEvidence, assess_ashare_maturity
 from shared.review.forward_labels import validate_point_in_time_lineage
 from shared.review.sample_journal import (
@@ -44,6 +45,8 @@ from shared.runtime_test.ashare_forward_label_ops import (
     ForwardLabelOpsSafetyError,
     _assert_sim_only,
     _find_live_marker,
+    _require_ashare_validation_plan,
+    load_validation_plan_artifact,
     run_ashare_forward_label_backlog,
 )
 
@@ -608,12 +611,14 @@ def run_ashare_sample_ops(
     safety_flags: Optional[Mapping[str, Any]] = None,
     backlog_window_days: int = DEFAULT_BACKLOG_WINDOW_DAYS,
     label_batch_size: int = 200,
+    validation_plan: Optional[ValidationPlan] = None,
 ) -> dict[str, Any]:
     """Run one bounded, sim-only label/KPI/decision/maturity cycle."""
 
     active_environ = os.environ if environ is None else environ
     try:
         _assert_sim_only(active_environ, safety_flags)
+        validation_plan = _require_ashare_validation_plan(validation_plan)
     except ForwardLabelOpsSafetyError as exc:
         raise AshareSampleOpsSafetyError(str(exc)) from exc
 
@@ -652,6 +657,7 @@ def run_ashare_sample_ops(
                 frozen_view=frozen,
                 authority_scope=authority_scope,
                 batch_size=label_batch_size,
+                validation_plan=validation_plan,
             )
         task_owned_delta_events = list(label_ops.pop("task_owned_delta_events", []))
         events = full_events_before + deepcopy(task_owned_delta_events)
@@ -849,6 +855,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--review-dir", type=Path, default=DEFAULT_REVIEW_DIR)
     parser.add_argument("--trade-date", required=True)
     parser.add_argument("--as-of", required=True)
+    parser.add_argument("--validation-plan-path", type=Path)
     parser.add_argument(
         "--backlog-window-days",
         type=int,
@@ -863,6 +870,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args(argv)
     try:
+        validation_plan = load_validation_plan_artifact(args.validation_plan_path)
         report = run_ashare_sample_ops(
             journal_path=args.journal_path,
             review_dir=args.review_dir,
@@ -870,6 +878,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             as_of=args.as_of,
             backlog_window_days=args.backlog_window_days,
             label_batch_size=args.label_batch_size,
+            validation_plan=validation_plan,
         )
         exit_code = 0
     except (
