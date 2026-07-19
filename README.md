@@ -6,7 +6,7 @@ TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复�
 
 ## 数据接入与迁移边界
 
-- **current-v1**：A股当前链只通过显式配置的 `GET /v1/catalog`、`POST /v1/query`、Evidence Gate 和不可变研究快照消费 SharedSignals；没有 transport 时 fail closed，不直读兄弟仓、SQLite、Tushare 或专用端点。
+- **current-v1**：A股 V1 候选链只通过显式配置的 `GET /v1/catalog`、`POST /v1/query`、Evidence Gate 和不可变研究快照消费 SharedSignals；没有 transport 时 fail closed，不直读兄弟仓、SQLite、Tushare 或专用端点。
 - **active-compatibility**：旧 reader、筛选和非 A 股兼容消费者仅保留为有清单、有退出条件的历史兼容面，不进入 A股 V1 Champion、风险、订单或调度链。
 - **hard-blocked / retirement-pending**：旧 A股 wrapper、cron 和机会漏斗 writer 已阻断；物理删除须等待安装态、消费者引用、同 `as_of` parity 与回滚证据清零，不能靠长期双轨代替退役。
 

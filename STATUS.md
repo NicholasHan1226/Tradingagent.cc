@@ -32,13 +32,15 @@ TradingAgent A股 V1 已形成一个本地集成候选，仍是 **fixture/mock-f
 
 ## 本轮验证状态
 
-- SS V1 client/evidence/research/runtime/架构相关：`242 passed`；Ruff check 与相关格式检查通过。
-- 交易安全只读终审锚定 `525065c`：P0=0、P1=0、P2=0；专项 `389 passed`。之后唯一代码变化是 SS envelope/evidence P1 修复，正在进行独立 fresh 复核。
-- 前端：43 个测试文件、`276 passed`；`npm run lint` 与 `npm run build:all` 通过。
-- 第一次集成全量基线：`3065 passed / 1 failed`；唯一失败是已修复的旧 provenance 断言。最终冻结字节的完整后端全量尚待重跑，因此当前仍不可 merge。
-- 候选清单：上一冻结字节为 `1513 passed`；最终文档与证据修订后必须再跑。
+- 最终后端全量：`3081 passed in 979.20s`；唯一集成基线失败已修复并在同一冻结代码上重跑关闭。
+- 最终候选清单：`1528 passed in 29.52s`；该清单覆盖 SS V1、Evidence Gate、研究快照、主板 Universe、小账户、风险、模拟闭环、LLM sidecar、演化与架构/文档防漂移合同。
+- SS V1 client/evidence/research/runtime/架构专项：`242 passed`；嵌套失败状态与递归证据快照 fresh 复核 P0=0、P1=0，独立复核分别得到 `101 passed` 与 `205 passed`。
+- 交易安全最终只读复核：P0=0、P1=0、P2=0；fresh 专项 `397 passed`。未发现 runtime、资金、组合、风险、LLM 或执行 authority 被扩张。
+- 文档/机器状态最终只读复核：P0=0、P1=0；fresh 专项 `159 passed`，40 个 YAML/Markdown 状态项一致，全部保持 `production_verified=false`。
+- 前端：43 个测试文件、`276 passed`；`npm run lint` 与 `npm run build:all` 通过；本地 loopback preview 已人工检查总览和风险页，空数据保持等待/不可用语义且无伪造收益。
+- 最终代码修订切片 Ruff check/format、`compileall`、`git diff --check` 与敏感字面量扫描通过。仓库全量 Ruff 历史基线由 `origin/main` 的 66 项降为当前 60 项，但仍不是全绿；剩余既有 lint 债务不在本次架构发布中顺带重写。
 
-上述证据只属于标注的本地字节和只读层；旧候选的 `3059 passed`、Draft PR #2、旧 GitHub Actions 或旧服务器 canary 均不替代当前集成候选验证。
+上述证据只属于标注的本地字节和只读层；旧候选的 `3059 passed`、Draft PR #2、旧 GitHub Actions 或旧服务器 canary 均不替代当前集成候选验证。最终文档回填提交后仍须重跑聚焦架构/文档门禁并确认工作树 clean，才能 push。
 
 ## 明确未完成或未授权
 
@@ -50,10 +52,8 @@ TradingAgent A股 V1 已形成一个本地集成候选，仍是 **fixture/mock-f
 
 ## 本阶段剩余门禁
 
-1. 完成 final SS/document/trading-safety fresh review，关闭全部 P0/P1；
-2. 在最终冻结字节重跑后端全量、候选清单、前端、静态检查与 secret scan；
-3. push 独立集成分支，创建对应 PR，等待干净 CI，再以普通 merge commit 合入 `origin/main` 并 readback；
-4. 只在服务器创建 detached、隔离根、network-disabled、sim-only sidecar，监听 `127.0.0.1:18787`；验证后停止，确保现役 HEAD、service、8787、cron、unit 与运行资产无变化；
-5. 回填最终主线/sidecar事实，清理仅限已合并、clean、明确归属的旧 worktree/branch；保留所有 dirty、unmerged、运行与证据资产。
+1. push 独立集成分支，创建对应 PR，等待干净 CI，再以普通 merge commit 合入 `origin/main` 并 readback；
+2. 只在服务器创建 detached、隔离根、network-disabled、sim-only sidecar，监听 `127.0.0.1:18787`；验证后停止，确保现役 HEAD、service、8787、cron、unit 与运行资产无变化；
+3. 回填最终主线/sidecar事实，清理仅限已合并、clean、明确归属的旧 worktree/branch；保留所有 dirty、unmerged、运行与证据资产。
 
 第一阶段真正出口仍需真实 SS V1 后连续 20 个交易日自动模拟闭环，以及随后 60–120 个交易日冻结 OOS/多状态样本。月收益 20% 只作为概率分布上尾指标，不是强制交易、满仓或 PASS 条件；任何模型晋级、风险扩张或 live transition 仍需 Nicholas 单独批准。
