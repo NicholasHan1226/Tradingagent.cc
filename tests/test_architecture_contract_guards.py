@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -1333,6 +1334,41 @@ def test_human_state_matrix_names_every_machine_governance_entry() -> None:
         not in human_matrix
     ]
     assert stale_rows == []
+    machine_index = human_matrix.split("## 完整机器条目索引", 1)[1]
+    human_rows = [
+        line
+        for line in machine_index.splitlines()
+        if line.startswith("| `") and not line.startswith("| `entry_id` |")
+    ]
+    human_pairs = []
+    for row in human_rows:
+        columns = [column.strip() for column in row.strip().strip("|").split("|")]
+        human_pairs.append((columns[0].strip("`"), columns[1].strip("`")))
+    machine_pairs = [
+        (entry.entry_id, f"{entry.state} / {entry.layer}") for entry in matrix.entries
+    ]
+    assert human_pairs == machine_pairs
+
+
+def test_status_main_readback_cannot_pin_a_self_invalidating_commit_sha() -> None:
+    status = (ROOT / "STATUS.md").read_text(encoding="utf-8")
+    current_main_rows = tuple(
+        line
+        for line in status.splitlines()
+        if line.startswith("| 本地主线 |") or line.startswith("| GitHub 主线 |")
+    )
+    commit_sha = re.compile(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])", re.I)
+
+    assert len(current_main_rows) == 2
+    assert all(commit_sha.search(line) is None for line in current_main_rows)
+    assert "`git rev-parse HEAD origin/main`" in status
+    stale_count = re.compile(r"\d+\s*个\s+YAML/Markdown\s+状态项")
+    assert stale_count.search(status) is None
+    for stale_example in (
+        "共41个 YAML/Markdown 状态项",
+        "abc41 个 YAML/Markdown 状态项",
+    ):
+        assert stale_count.search(stale_example) is not None
 
 
 def test_machine_state_test_evidence_is_closed_by_candidate_manifest() -> None:
