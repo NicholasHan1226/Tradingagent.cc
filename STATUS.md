@@ -4,21 +4,21 @@
 
 ## 当前结论
 
-TradingAgent A股 V1 已形成一个本地集成候选，仍是 **fixture/mock-first、simulation-only、无真实交易权限**。集成候选代码冻结锚点为 `f1a0387`，位于 `TradingAgent/.worktrees/ta-v1-integrated-release` 的 `codex/ta-v1-integrated-release` 分支；状态文档提交本身由所在 Git 提交识别，不把自引用 commit hash 写入文件。
+TradingAgent A股 V1 架构已通过 PR #3 以普通 merge commit 合入 `origin/main@fdc00817ec1d6f944e426c5e7c05923194b75187`，并完成一次目标服务器 detached、loopback-only、network-disabled 的非权威 sidecar 验收。它仍是 **fixture/mock-first、simulation-only、无真实交易权限**；服务器现役源码、service、cron、8787 API 和公开入口均未切换。
 
-该候选合并了原 `ta-v1-data-client` 候选与本地主板 fail-closed 修复，并撤回了旧 `SharedSignalsAPIClient` 对 V1 的错误 ownership。A股 current-v1 只允许显式配置、显式 transport 的 `GET /v1/catalog` 与 `POST /v1/query`；旧 reader 只按 `active-compatibility` / `retirement-pending` 服务非 A 股兼容与法证路径，旧 A股 writer/wrapper 保持 `hard-blocked`，都不得拥有或自动接线 V1。
+主线合并了原 `ta-v1-data-client` 候选与本地主板 fail-closed 修复，并撤回了旧 `SharedSignalsAPIClient` 对 V1 的错误 ownership。A股 current-v1 只允许显式配置、显式 transport 的 `GET /v1/catalog` 与 `POST /v1/query`；旧 reader 只按 `active-compatibility` / `retirement-pending` 服务非 A 股兼容与法证路径，旧 A股 writer/wrapper 保持 `hard-blocked`，都不得拥有或自动接线 V1。
 
 ## 五层事实
 
 | 层级 | 2026-07-19 当前事实 | 不能据此推断 |
 |---|---|---|
-| 本地集成候选 | `codex/ta-v1-integrated-release`；代码锚点 `f1a0387`；本文件提交后以 `git rev-parse HEAD` 和 clean status 为最终字节证据 | 不等于 GitHub、主线或服务器 |
-| GitHub 候选 | 集成分支尚未 push，尚无对应 PR/CI；Draft PR #2 仅对应旧源候选 `codex/ta-v1-data-client@de57a71` | PR #2 不代表本集成候选 |
-| Git 主线 | `origin/main@3b3aab41bcf1fee046da169f6fd582b4f2818cba`；尚未合入本集成候选 | 本地 main 的额外提交不等于远端主线 |
-| 服务器现役 | 只读 readback：`/opt/investment/tradingagent@6c12fbed29db925019f85a6016774626f63b857a`；`tradingagent-front-api.service=active`，PID `1043`，仅监听 `127.0.0.1:8787`，`/healthz` 为 200；`127.0.0.1:18787` 无监听 | 现役代码未切换，候选未部署、未激活 |
+| 本地主线 | `/Users/nicholashan/Projects/Finance/TradingAgent@fdc00817...b75187` 已 fast-forward 到远端主线；既有未跟踪 `.codegraphcontext/` 原样保留 | 本地同步不等于服务器现役切换 |
+| GitHub 主线 | PR #3 已合并，CI `TradingAgent Tests/test` 成功；`origin/main@fdc00817...b75187` | GitHub main 不等于服务器进程已加载 |
+| 服务器旁路候选 | `/opt/investment/tradingagent-candidates/ta-v1-integrated-fdc0081@fdc00817...b75187` clean；独立 venv/node_modules 测试通过；18787 canary 已停止 | 只证明目标机安装与旁路运行，不是生产激活或 live paper |
+| 服务器现役 | `/opt/investment/tradingagent@6c12fbed...b857a`；`tradingagent-front-api.service=active`，PID `1043`，仅监听 `127.0.0.1:8787`，`/healthz` 为 200；18787 无监听 | 现役代码、服务、cron 与入口均未切换 |
 | 外部能力 | 未连接 live SharedSignals、真实 DeepSeek、broker、邮件、同花顺、GUI、Cloudflare 控制面或公开 API | 不能声称真实数据闭环、真实模型可用或真实交易 |
 
-服务器只读快照同时记录：现役 Git status 有 49 条既有运行/回滚资产，内容摘要为 `2ac8dc6a...74f9`；systemd unit 摘要为 `9128f159...2307`；marketgraph 用户 crontab 摘要为 `af3605a8...fc9a`。这些值只用于本次发布前后差异比较，不能成为候选能力或生产激活凭证。
+服务器发布前后逐字节比较通过：现役 Git status 仍有同样的 49 条既有运行/回滚资产，摘要 `2ac8dc6a...74f9`；systemd unit 摘要仍为 `9128f159...2307`；marketgraph 用户 crontab 摘要仍为 `af3605a8...fc9a`；service PID 始终为 `1043`。服务器证据位于 `/opt/investment/release-evidence/tradingagent/20260719T054010Z-ta-v1-integrated-fdc0081`，release receipt 摘要为 `09f2fa5d...14c3fb`，证据清单摘要为 `6f3fb964...a0e918`。这些值只证明旁路验收和现役未变，不能成为生产激活凭证。
 
 ## 当前候选能力
 
@@ -39,8 +39,10 @@ TradingAgent A股 V1 已形成一个本地集成候选，仍是 **fixture/mock-f
 - 文档/机器状态最终只读复核：P0=0、P1=0；fresh 专项 `159 passed`，40 个 YAML/Markdown 状态项一致，全部保持 `production_verified=false`。
 - 前端：43 个测试文件、`276 passed`；`npm run lint` 与 `npm run build:all` 通过；本地 loopback preview 已人工检查总览和风险页，空数据保持等待/不可用语义且无伪造收益。
 - 最终代码修订切片 Ruff check/format、`compileall`、`git diff --check` 与敏感字面量扫描通过。仓库全量 Ruff 历史基线由 `origin/main` 的 66 项降为当前 60 项，但仍不是全绿；剩余既有 lint 债务不在本次架构发布中顺带重写。
+- GitHub：PR #3 使用普通 merge commit 合入，远端与本地主线均 readback 为 `fdc00817...b75187`；CI `test` 成功。
+- 服务器 detached 候选：后端 `3081 passed` 及 177 subtests，前端 `276 passed`、lint/build 成功，候选 status clean。API canary 只监听 `127.0.0.1:18787`，`mode=simulated`、POST=405、未知路由=404；随后按精确 PID 停止并确认 18787 无监听。
 
-上述证据只属于标注的本地字节和只读层；旧候选的 `3059 passed`、Draft PR #2、旧 GitHub Actions 或旧服务器 canary 均不替代当前集成候选验证。最终文档回填提交后仍须重跑聚焦架构/文档门禁并确认工作树 clean，才能 push。
+上述证据只属于标注的 Git、服务器旁路或只读层；旧候选的 `3059 passed`、Draft PR #2、旧 GitHub Actions 或旧服务器 canary 均不替代本轮证据。服务器 sidecar 成功也不提升 `production_verified`，更不授权现役 service、scheduler、真实数据或交易。
 
 ## 明确未完成或未授权
 
@@ -50,10 +52,13 @@ TradingAgent A股 V1 已形成一个本地集成候选，仍是 **fixture/mock-f
 - 未连接 broker、真实账户、真实邮件、同花顺、公开 ingress 或真实交易；`REAL_TRADING_ENABLED=false`。
 - `tradingagent.cc` 的单用户 Access 门未在本轮恢复或验证，禁止把候选接入匿名公网入口。
 
-## 本阶段剩余门禁
+## 下一阶段入口
 
-1. push 独立集成分支，创建对应 PR，等待干净 CI，再以普通 merge commit 合入 `origin/main` 并 readback；
-2. 只在服务器创建 detached、隔离根、network-disabled、sim-only sidecar，监听 `127.0.0.1:18787`；验证后停止，确保现役 HEAD、service、8787、cron、unit 与运行资产无变化；
-3. 回填最终主线/sidecar事实，清理仅限已合并、clean、明确归属的旧 worktree/branch；保留所有 dirty、unmerged、运行与证据资产。
+本轮架构重构、主线合并与服务器旁路验收门禁已完成；接下来不是切实盘，而是建立真实数据驱动的自动模拟样本：
+
+1. 等待 SharedSignals owner 提供冻结的 internal handoff，再以显式 base URL/service token/catalog version/dataset IDs 运行只读 integration probe；任何 dataset degraded/stale/failed 继续逐数据集 fail closed。
+2. 真实 SS parity 通过后，另行实现并验收 live paper scheduler；安装或修改 cron/service 前仍需独立授权，不能恢复旧 A股 wrapper。
+3. 连续 20 个交易日自动模拟闭环后评估工程出口，再积累 60–120 个交易日冻结 OOS/多状态样本；Champion 晋级、风险扩张、真实 DeepSeek canary、网页恢复和 live transition 都是独立后续门。
+4. 旧兼容代码只按 `legacy_inventory.yaml` 的消费者、安装态、parity 与回滚证据逐项退役；不得一次性删除 dirty、unmerged、append-only、运行或证据资产。
 
 第一阶段真正出口仍需真实 SS V1 后连续 20 个交易日自动模拟闭环，以及随后 60–120 个交易日冻结 OOS/多状态样本。月收益 20% 只作为概率分布上尾指标，不是强制交易、满仓或 PASS 条件；任何模型晋级、风险扩张或 live transition 仍需 Nicholas 单独批准。

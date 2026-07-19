@@ -843,9 +843,28 @@ entries:
     allowed_uses:
       - compare_read_only_runtime_inventory_during_release
     prohibited_uses:
-      - infer_candidate_deployed_or_activated
+      - infer_sidecar_candidate_activated_as_production
       - deploy_or_write_production
     successor: separately_authorized_activation_required
+  - entry_id: tradingagent_server_sidecar_candidate
+    state: CURRENT_VERIFIED
+    layer: server_validated_non_authority_simulation_only
+    owner: TradingAgent
+    canonical_path: /opt/investment/tradingagent-candidates/ta-v1-integrated-fdc0081
+    production_verified: false
+    last_verified_at: "2026-07-19"
+    evidence:
+      - STATUS.md
+      - docs/operations.md
+    allowed_uses:
+      - reproduce_target_server_install_and_loopback_sidecar_evidence
+      - inspect_detached_candidate_and_release_receipt_read_only
+    prohibited_uses:
+      - infer_active_service_cutover
+      - infer_live_sharedsignals_or_scheduler
+      - infer_real_llm_or_trading_authority
+      - bind_public_ingress
+    successor: real_data_paper_phase_requires_separate_authorization
   - entry_id: tradingagent_front
     state: CURRENT_VERIFIED
     layer: repository_contract
