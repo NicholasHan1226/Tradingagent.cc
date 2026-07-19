@@ -1358,10 +1358,22 @@ def test_status_main_readback_cannot_pin_a_self_invalidating_commit_sha() -> Non
         if line.startswith("| 本地主线 |") or line.startswith("| GitHub 主线 |")
     )
     commit_sha = re.compile(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])", re.I)
+    pr_token = re.compile(r"(?<![A-Za-z])PR(?![A-Za-z])", re.I)
+    pr_number = re.compile(r"(?<![A-Za-z])PR\s*#?\s*(\d+)(?!\d)", re.I)
 
     assert len(current_main_rows) == 2
     assert all(commit_sha.search(line) is None for line in current_main_rows)
+    assert all(pr_token.search(line) is None for line in current_main_rows)
     assert "`git rev-parse HEAD origin/main`" in status
+    assert set(pr_number.findall(status)) <= {"2", "3"}
+    assert pr_token.search("/Users/example/Projects/TradingAgent") is None
+    for stale_pr_example in ("PR #4", "历史PR #4", "历史 PR#4", "PR4"):
+        assert pr_token.search(stale_pr_example) is not None
+        assert pr_number.findall(stale_pr_example) == ["4"]
+    ci_count = re.compile(r"(?:\d+|[一二两三四五六七八九十百千万]+)\s*次\s+CI")
+    assert ci_count.search(status) is None
+    for stale_ci_example in ("两次 CI", "2 次 CI", "十次 CI"):
+        assert ci_count.search(stale_ci_example) is not None
     stale_count = re.compile(r"\d+\s*个\s+YAML/Markdown\s+状态项")
     assert stale_count.search(status) is None
     for stale_example in (

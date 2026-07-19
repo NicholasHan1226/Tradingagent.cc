@@ -4,7 +4,7 @@
 
 ## 当前结论
 
-TradingAgent A股 V1 架构已通过 PR #3 以普通 merge commit 把功能代码锚点 `fdc00817ec1d6f944e426c5e7c05923194b75187` 合入 `main`，PR #4 又合入发布读回文档，并完成一次目标服务器 detached、loopback-only、network-disabled 的非权威 sidecar 验收。它仍是 **fixture/mock-first、simulation-only、无真实交易权限**；服务器现役源码、service、cron、8787 API 和公开入口均未切换。
+TradingAgent A股 V1 架构已通过 PR #3 以普通 merge commit 把功能代码锚点 `fdc00817ec1d6f944e426c5e7c05923194b75187` 合入 `main`，后续发布读回文档与防漂移门禁也已合入，并完成一次目标服务器 detached、loopback-only、network-disabled 的非权威 sidecar 验收。它仍是 **fixture/mock-first、simulation-only、无真实交易权限**；服务器现役源码、service、cron、8787 API 和公开入口均未切换。
 
 主线合并了原 `ta-v1-data-client` 候选与本地主板 fail-closed 修复，并撤回了旧 `SharedSignalsAPIClient` 对 V1 的错误 ownership。A股 current-v1 只允许显式配置、显式 transport 的 `GET /v1/catalog` 与 `POST /v1/query`；旧 reader 只按 `active-compatibility` / `retirement-pending` 服务非 A 股兼容与法证路径，旧 A股 writer/wrapper 保持 `hard-blocked`，都不得拥有或自动接线 V1。
 
@@ -13,7 +13,7 @@ TradingAgent A股 V1 架构已通过 PR #3 以普通 merge commit 把功能代�
 | 层级 | 2026-07-19 当前事实 | 不能据此推断 |
 |---|---|---|
 | 本地主线 | `/Users/nicholashan/Projects/Finance/TradingAgent` 已 fast-forward，`HEAD` 与 `origin/main` 一致；精确值以 `git rev-parse HEAD origin/main` 读回，既有未跟踪 `.codegraphcontext/` 原样保留 | 本地同步不等于服务器现役切换 |
-| GitHub 主线 | PR #3 功能代码与 PR #4 发布读回文档均已合并，CI `TradingAgent Tests/test` 成功；精确提交值以同一 Git 读回命令核对 | GitHub main 不等于服务器进程已加载 |
+| GitHub 主线 | 功能代码、发布读回文档与防漂移门禁均已合并，最新 CI `TradingAgent Tests/test` 成功；精确提交值以同一 Git 读回命令核对 | GitHub main 不等于服务器进程已加载 |
 | 服务器旁路候选 | `/opt/investment/tradingagent-candidates/ta-v1-integrated-fdc0081@fdc00817...b75187` clean；独立 venv/node_modules 测试通过；18787 canary 已停止 | 只证明目标机安装与旁路运行，不是生产激活或 live paper |
 | 服务器现役 | `/opt/investment/tradingagent@6c12fbed...b857a`；`tradingagent-front-api.service=active`，PID `1043`，仅监听 `127.0.0.1:8787`，`/healthz` 为 200；18787 无监听 | 现役代码、服务、cron 与入口均未切换 |
 | 外部能力 | 未连接 live SharedSignals、真实 DeepSeek、broker、邮件、同花顺、GUI、Cloudflare 控制面或公开 API | 不能声称真实数据闭环、真实模型可用或真实交易 |
@@ -39,7 +39,7 @@ TradingAgent A股 V1 架构已通过 PR #3 以普通 merge commit 把功能代�
 - 文档/机器状态防漂移合同：YAML 与 Markdown 状态项必须逐项一致且全部保持 `production_verified=false`；`STATUS.md` 的当前主线行禁止固定会随本文件提交而失效的 SHA，精确提交值必须通过 Git 命令读回。
 - 前端：43 个测试文件、`276 passed`；`npm run lint` 与 `npm run build:all` 通过；本地 loopback preview 已人工检查总览和风险页，空数据保持等待/不可用语义且无伪造收益。
 - 最终代码修订切片 Ruff check/format、`compileall`、`git diff --check` 与敏感字面量扫描通过。仓库全量 Ruff 历史基线由 `origin/main` 的 66 项降为当前 60 项，但仍不是全绿；剩余既有 lint 债务不在本次架构发布中顺带重写。
-- GitHub：PR #3 使用普通 merge commit 合入功能代码锚点 `fdc00817...b75187`，PR #4 合入发布读回文档；当前本地 `HEAD` 与 `origin/main` 一致，精确提交值以 `git rev-parse HEAD origin/main` 读回；两次 CI `test` 均成功。
+- GitHub：PR #3 使用普通 merge commit 合入功能代码锚点 `fdc00817...b75187`，后续发布读回文档与防漂移门禁均已合入；当前本地 `HEAD` 与 `origin/main` 一致，精确提交值以 `git rev-parse HEAD origin/main` 读回；最新 CI `test` 成功。
 - 服务器 detached 候选：后端 `3081 passed` 及 177 subtests，前端 `276 passed`、lint/build 成功，候选 status clean。API canary 只监听 `127.0.0.1:18787`，`mode=simulated`、POST=405、未知路由=404；随后按精确 PID 停止并确认 18787 无监听。
 
 上述证据只属于标注的 Git、服务器旁路或只读层；旧候选的 `3059 passed`、Draft PR #2、旧 GitHub Actions 或旧服务器 canary 均不替代本轮证据。服务器 sidecar 成功也不提升 `production_verified`，更不授权现役 service、scheduler、真实数据或交易。
