@@ -47,6 +47,70 @@ _tradingagent_require_disabled_sim_bridge() {
     esac
 }
 
+_tradingagent_trim_env_value() {
+    local value="${1:-}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "${value}" == \"*\" && "${value}" == *\" ]]; then
+        value="${value:1:${#value}-2}"
+    elif [[ "${value}" == \'*\' && "${value}" == *\' ]]; then
+        value="${value:1:${#value}-2}"
+    fi
+    printf '%s' "${value}"
+}
+
+_tradingagent_probe_env_file_safety() {
+    local env_file="${1:-}"
+    local line=""
+    local variable_name=""
+    local raw_value=""
+    [[ -r "${env_file}" ]] || return 0
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        if [[ "${line}" =~ ^[[:space:]]*(export[[:space:]]+)?(REAL_TRADING_ENABLED|ASHARE_SIM_HERMES_ENABLED|ASHARE_SIM_WEBHOOK_ENABLED)[[:space:]]*=(.*)$ ]]; then
+            variable_name="${BASH_REMATCH[2]}"
+            raw_value="${BASH_REMATCH[3]}"
+            raw_value="${raw_value%%#*}"
+            raw_value="$(_tradingagent_trim_env_value "${raw_value}")"
+            case "${variable_name}" in
+                REAL_TRADING_ENABLED)
+                    local REAL_TRADING_ENABLED="${raw_value}"
+                    _tradingagent_require_sim_only || return 2
+                    ;;
+                ASHARE_SIM_HERMES_ENABLED|ASHARE_SIM_WEBHOOK_ENABLED)
+                    local "${variable_name}=${raw_value}"
+                    _tradingagent_require_disabled_sim_bridge "${variable_name}" || return 2
+                    ;;
+            esac
+        fi
+    done < "${env_file}"
+}
+
+# Bash sources BASH_ENV before it exposes the pending script path.  This pass
+# therefore cannot decide wrapper retirement.  It still enforces the universal
+# sim-only front door and safely inspects only protected assignments in env
+# files; it never executes arbitrary env-file commands.  Bash versions differ
+# in the value exposed through $0 during BASH_ENV loading, so the source-stack
+# depth distinguishes this automatic top-level pass from the wrapper's later
+# explicit load without trusting an externally seedable environment marker.
+# The wrapper-level retirement guard runs between the two loads.
+if [[ -n "${BASH_ENV:-}" \
+    && -r "${BASH_ENV}" \
+    && "${BASH_SOURCE[0]}" -ef "${BASH_ENV}" \
+    && "${#BASH_SOURCE[@]}" -eq 1 ]]; then
+    _tradingagent_env_root="${TRADINGAGENT_ROOT:-/opt/investment/tradingagent}"
+    _tradingagent_env_file="${TRADINGAGENT_ENV_FILE:-${_tradingagent_env_root}/.env}"
+    _tradingagent_shared_env_file="${FINANCE_SHARED_ENV_FILE:-/opt/tradingagent/.env}"
+    if ! _tradingagent_require_sim_only \
+        || ! _tradingagent_require_disabled_sim_bridge ASHARE_SIM_HERMES_ENABLED \
+        || ! _tradingagent_require_disabled_sim_bridge ASHARE_SIM_WEBHOOK_ENABLED \
+        || ! _tradingagent_probe_env_file_safety "${_tradingagent_env_file}" \
+        || ! _tradingagent_probe_env_file_safety "${_tradingagent_shared_env_file}"; then
+        exit 2
+    fi
+    unset _tradingagent_env_root _tradingagent_env_file _tradingagent_shared_env_file
+    return 0 2>/dev/null || exit 0
+fi
+
 if [[ -n "${TRADINGAGENT_ENV_LOADER_READY:-}" ]]; then
     if ! _tradingagent_require_sim_only \
         || ! _tradingagent_require_disabled_sim_bridge ASHARE_SIM_HERMES_ENABLED \
@@ -88,10 +152,16 @@ fi
 export TZ=Asia/Shanghai
 export TRADINGAGENT_ENV_LOADER_READY=1
 
-# SharedSignals/ShareChannel API is the production data entry for TradingAgent.
-# Tests that need isolated data inject an explicit reader instead of opening the
-# SharedSignals database.
-export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-http://127.0.0.1:8082}"
+# SharedSignals V1 routing has no inferred localhost or authority defaults.
+# Exporting missing values as explicit empties keeps downstream V1 config
+# fail-closed while allowing non-SharedSignals maintenance jobs to load this
+# shared environment. Tests inject frozen fixtures or an explicit reader.
+export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-}"
+export SHAREDSIGNALS_CATALOG_VERSION="${SHAREDSIGNALS_CATALOG_VERSION:-}"
+export SHAREDSIGNALS_ACCESS_POLICY_ID="${SHAREDSIGNALS_ACCESS_POLICY_ID:-}"
+export SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON="${SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON:-}"
+export SHAREDSIGNALS_SCHEMA_MAJOR="${SHAREDSIGNALS_SCHEMA_MAJOR:-}"
+export SHAREDSIGNALS_RUNTIME_TRANSPORT="${SHAREDSIGNALS_RUNTIME_TRANSPORT:-}"
 export SHAREDSIGNALS_API_TIMEOUT="${SHAREDSIGNALS_API_TIMEOUT:-10}"
 export SHAREDSIGNALS_API_RETRIES="${SHAREDSIGNALS_API_RETRIES:-1}"
 export MARKETGRAPH_API_URL="${MARKETGRAPH_API_URL:-http://127.0.0.1:8080}"
@@ -148,7 +218,6 @@ export PYTHONPATH="${TRADINGAGENT_ROOT}:${PYTHONPATH:-}"
 # Market-data provider credentials belong to SharedSignals, not TradingAgent.
 export TRADINGS_OPENAI_API_KEY="${TRADINGS_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
 export TRADINGS_COZE_API_KEY="${TRADINGS_COZE_API_KEY:-${COZE_API_KEY:-}}"
-export TRADINGS_DEEPSEEK_API_KEY="${TRADINGS_DEEPSEEK_API_KEY:-${DEEPSEEK_API_KEY:-}}"
 
 mkdir -p \
     "${TRADINGS_RUNTIME_ROOT}" \

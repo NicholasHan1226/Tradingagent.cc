@@ -10,6 +10,11 @@ source_thread_id: 019f5040-76a7-7672-b2fc-91c1526312bf
 initial_equity_cny: 50000.0
 single_name_max_pct: 0.15
 stock_gross_exposure_limit_pct: 0.90
+portfolio:
+  max_positions: 8
+  buy_lot_size_shares: 100
+  minimum_economic_order_cny: 2000.0
+  no_trade_band_cny: 1000.0
 risk:
   daily_loss_pause_pct: 0.03
   drawdown_tighten_pct: 0.05

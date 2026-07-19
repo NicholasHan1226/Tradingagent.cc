@@ -152,6 +152,38 @@ def _blocked(reason: str, **extra: Any) -> dict[str, Any]:
     return {"status": "blocked", "reason": reason, **extra}
 
 
+def _normalize_current_authority_scope(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if value is None:
+        # Legacy compatibility only.  Current composition supplies the
+        # authority envelope observed from the canonical ledger so a lineage
+        # rotation does not require a source edit.
+        return {
+            "capital_authority_id": ASHARE_CAPITAL_AUTHORITY_ID,
+            "authority_generation": ASHARE_AUTHORITY_GENERATION,
+            "execution_lineage_id": ASHARE_EXECUTION_LINEAGE_ID,
+        }
+    if not isinstance(value, Mapping):
+        return None
+    authority_id = str(value.get("capital_authority_id") or "").strip()
+    generation = value.get("authority_generation")
+    lineage_id = str(value.get("execution_lineage_id") or "").strip()
+    if (
+        authority_id != ASHARE_CAPITAL_AUTHORITY_ID
+        or isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation <= 0
+        or not lineage_id
+    ):
+        return None
+    return {
+        "capital_authority_id": authority_id,
+        "authority_generation": generation,
+        "execution_lineage_id": lineage_id,
+    }
+
+
 def ashare_capital_state_audit(
     capital_state: Any,
     authority_view: Mapping[str, Any],
@@ -198,11 +230,16 @@ def ashare_capital_state_audit(
 def build_ashare_capital_position_authority_view(
     capital_state: Any,
     trade_date: str,
+    *,
+    current_authority_scope: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate and freeze one replayable market-capital position view."""
 
     if not isinstance(capital_state, Mapping):
         return _blocked("ashare_capital_unavailable")
+    expected_authority = _normalize_current_authority_scope(current_authority_scope)
+    if expected_authority is None:
+        return _blocked("ashare_current_authority_scope_invalid")
     expected_date = _compact_date(trade_date)
     if not expected_date:
         return _blocked("ashare_capital_trade_date_invalid")
@@ -211,15 +248,15 @@ def build_ashare_capital_position_authority_view(
     lineage_id = str(capital_state.get("execution_lineage_id") or "")
     if str(capital_state.get("source") or "") != "market_capital_ledger":
         return _blocked("ashare_capital_source_invalid")
-    if authority_id != ASHARE_CAPITAL_AUTHORITY_ID:
+    if authority_id != expected_authority["capital_authority_id"]:
         return _blocked("ashare_capital_authority_mismatch")
     if (
         isinstance(generation, bool)
         or not isinstance(generation, int)
-        or generation != ASHARE_AUTHORITY_GENERATION
+        or generation != expected_authority["authority_generation"]
     ):
         return _blocked("ashare_capital_generation_mismatch")
-    if lineage_id != ASHARE_EXECUTION_LINEAGE_ID:
+    if lineage_id != expected_authority["execution_lineage_id"]:
         return _blocked("ashare_capital_execution_lineage_mismatch")
     if str(capital_state.get("market") or "").lower() != "ashare":
         return _blocked("ashare_capital_market_mismatch")
@@ -358,10 +395,15 @@ def reconcile_ashare_position_sources(
     sources: Mapping[str, Any],
     preferred_source: str,
     final_capital_state: Any | None = None,
+    current_authority_scope: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Verify a stable authority replay and every supplied position source."""
 
-    authority = build_ashare_capital_position_authority_view(capital_state, trade_date)
+    authority = build_ashare_capital_position_authority_view(
+        capital_state,
+        trade_date,
+        current_authority_scope=current_authority_scope,
+    )
     if authority.get("status") != "verified":
         return {
             **authority,
@@ -378,7 +420,9 @@ def reconcile_ashare_position_sources(
     authority_before = authority
     if final_capital_state is not None:
         authority_after = build_ashare_capital_position_authority_view(
-            final_capital_state, trade_date
+            final_capital_state,
+            trade_date,
+            current_authority_scope=current_authority_scope,
         )
         if (
             authority_after.get("status") != "verified"

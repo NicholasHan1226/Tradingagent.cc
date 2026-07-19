@@ -69,16 +69,18 @@ def test_sim_execution_does_not_refresh_legacy_portfolio_evolution() -> None:
     assert "Ashare.portfolio_evolution" not in source
 
 
-def test_unified_sample_ops_is_the_only_active_ashare_learning_job() -> None:
-    schedule = (ROOT / "shared/crontab.txt").read_text(encoding="utf-8")
-    assert "job_ashare_sample_ops.sh" in schedule
-    for marker in (
+def test_ashare_learning_jobs_are_retired_from_active_schedules() -> None:
+    retired = (
+        "job_ashare_sample_ops.sh",
         "job_ashare_sample_learning.sh",
         "job_ashare_formal_close_refresh.sh",
         "job_ashare_forward_validation.sh",
         "job_ashare_sample_target_monitor.sh",
-    ):
-        assert marker not in schedule
+    )
+    for relative_path in ("shared/crontab.txt", "crontab.txt"):
+        schedule = (ROOT / relative_path).read_text(encoding="utf-8")
+        for marker in retired:
+            assert marker not in schedule
 
 
 def test_sample_ops_uses_only_sample_journal_manual_decision_and_maturity() -> None:

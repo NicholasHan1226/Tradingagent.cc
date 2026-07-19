@@ -11,9 +11,6 @@ source "${WRAPPER_DIR}/_common.sh"
 
 JOB_NAME="job_cn_futures_sim"
 PHASE="intraday"
-LEVEL3_TARGET="cn_futures_5min_simulation"
-ENTRYPOINT="CNFutures.run_simulation"
 
-sharedsignals_source_gate "${JOB_NAME}" "${PHASE}" "cn_futures"
-
-run_job "${JOB_NAME}" "${PHASE}" "${LEVEL3_TARGET}" "${PYTHON_BIN}" -m "${ENTRYPOINT}" --cadence 5min --json
+sharedsignals_v1_runtime_gate "${JOB_NAME}" "${PHASE}" "cn_futures"
+block_unmigrated_sharedsignals_consumer "${JOB_NAME}" "cn_futures"

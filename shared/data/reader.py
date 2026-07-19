@@ -424,12 +424,21 @@ class MarketGraphCSVReader:
 # -- Unified TradingagentDataReader ----------------------------------------------
 
 
+class _AutoSharedSignalsAPIClient:
+    """Sentinel for the legacy omitted-client auto-configuration path."""
+
+
+_AUTO_SHARED_SIGNALS_API_CLIENT = _AutoSharedSignalsAPIClient()
+
+
 class TradingagentDataReader:
     """Fail-safe unified reader: SharedSignals API + explicit local read model.
 
     Uses SharedSignals HTTP API first. Direct SQLite reads are allowed only when
     a caller injects a SharedSignalsReader or explicitly enables local read-model
-    fallback for tests/emergency diagnostics.
+    fallback for tests/emergency diagnostics. Omitting ``api_client`` retains the
+    legacy environment/default auto-configuration path; passing ``None``
+    explicitly disables that path for isolated research and tests.
 
     All methods are safe to call regardless of whether the underlying data
     sources are available — missing data returns empty lists / None rather
@@ -440,15 +449,24 @@ class TradingagentDataReader:
         self,
         shared: SharedSignalsReader | None = None,
         marketgraph: MarketGraphCSVReader | None = None,
-        api_client: SharedSignalsAPIClient | None = None,
+        api_client: (
+            SharedSignalsAPIClient | None | _AutoSharedSignalsAPIClient
+        ) = _AUTO_SHARED_SIGNALS_API_CLIENT,
     ):
         self._shared = shared
         self._marketgraph = marketgraph
         api_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHARED_SIGNALS_API_URL).strip()
         marketgraph_api_url = os.environ.get("MARKETGRAPH_API_URL", DEFAULT_MARKETGRAPH_API_URL).strip()
-        self._api_client = api_client
-        if self._api_client is None and api_url:
-            self._api_client = SharedSignalsAPIClient(base_url=api_url)
+        self._api_client: SharedSignalsAPIClient | None
+        if isinstance(api_client, _AutoSharedSignalsAPIClient):
+            self._api_client = (
+                SharedSignalsAPIClient(base_url=api_url) if api_url else None
+            )
+        else:
+            # Explicit ``None`` is a dependency-injection boundary: callers can
+            # disable SharedSignals without ambient localhost/runtime data
+            # changing a supposedly isolated research or test result.
+            self._api_client = api_client
         self._marketgraph_api_client = MarketGraphAPIClient(base_url=marketgraph_api_url) if marketgraph_api_url else None
         self.errors: list[str] = []
         self.stale = False

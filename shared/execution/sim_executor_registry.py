@@ -8,6 +8,8 @@ from typing import Any, Callable
 SimExecutor = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], Any]
 
 _SIM_EXECUTORS: dict[str, SimExecutor] = {}
+_TEST_ONLY_LEGACY_CONFIG_KEY = "_test_only_ashare_legacy_simulator_token"
+_TEST_ONLY_LEGACY_TOKEN = object()
 
 
 def _normalize_market(market: str | None) -> str:
@@ -30,8 +32,33 @@ def local_sim_executor(
     account: dict[str, Any] | None = None,
     config: dict[str, Any] | None = None,
 ) -> Any:
-    """Fallback executor that wraps the legacy local slippage simulator."""
+    """Fallback executor that wraps the legacy local slippage simulator.
+
+    The A-share legacy simulator is retired from normal dispatch.  It can only
+    be reached through :func:`build_test_only_legacy_sim_executor`, which adds
+    a process-local token that cannot arrive through a serialized order/config.
+    Other markets retain their existing fallback behavior.
+    """
     from .sim_broker import SimResult, simulate_order
+
+    market_key = _normalize_market(order.get("market"))
+    config_payload = dict(config or {})
+    test_only_token = config_payload.pop(_TEST_ONLY_LEGACY_CONFIG_KEY, None)
+    if market_key == "ashare" and test_only_token is not _TEST_ONLY_LEGACY_TOKEN:
+        return SimResult(
+            status="failed",
+            filled_qty=0,
+            avg_price=0.0,
+            fee=0.0,
+            message="A-share legacy simulator is disabled outside explicit test-only injection",
+            order_id=str(order.get("order_id", "")),
+            market=market_key,
+            raw_response={
+                "recorded": False,
+                "reason": "ashare_legacy_simulator_disabled",
+                "legacy_fallback_used": False,
+            },
+        )
 
     result = simulate_order(order)
     return SimResult(
@@ -46,7 +73,32 @@ def local_sim_executor(
     )
 
 
-def get_sim_executor(market: str | None) -> SimExecutor | None:
-    """Return the registered market executor, or the local fallback."""
+def build_test_only_legacy_sim_executor(market: str) -> SimExecutor:
+    """Return an explicitly test-only wrapper around the retired simulator."""
     market_key = _normalize_market(market)
-    return _SIM_EXECUTORS.get(market_key, local_sim_executor)
+    if market_key != "ashare":
+        raise ValueError("test-only legacy executor is restricted to market=ashare")
+
+    def _execute(
+        order: dict[str, Any],
+        account: dict[str, Any],
+        config: dict[str, Any],
+    ) -> Any:
+        test_order = dict(order)
+        test_order["market"] = market_key
+        test_config = dict(config or {})
+        test_config[_TEST_ONLY_LEGACY_CONFIG_KEY] = _TEST_ONLY_LEGACY_TOKEN
+        return local_sim_executor(test_order, account, test_config)
+
+    return _execute
+
+
+def get_sim_executor(market: str | None) -> SimExecutor | None:
+    """Return the registered executor, without an A-share legacy fallback."""
+    market_key = _normalize_market(market)
+    registered = _SIM_EXECUTORS.get(market_key)
+    if registered is not None:
+        return registered
+    if market_key == "ashare":
+        return None
+    return local_sim_executor

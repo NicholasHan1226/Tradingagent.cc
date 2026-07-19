@@ -15,7 +15,8 @@ export type ProcessEventRow = {
 
 const SOURCE_LABELS: Record<FunnelEvent['source'], string> = {
   opportunity_log: '机会事件',
-  signal_queue: '信号队列',
+  legacy_frozen_opportunity_log: '旧漏斗冻结历史',
+  signal_queue: '队列状态投影',
   sim_ledger: '模拟账本',
 }
 

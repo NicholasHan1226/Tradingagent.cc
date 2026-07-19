@@ -47,7 +47,9 @@ class StubMarketAdapter(MarketAdapter):
 
 
 class StubReader:
-    def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, float]]:
+    def get_bars_daily(
+        self, market: str, symbol: str, start: object = None, end: object = None
+    ) -> list[dict[str, float]]:
         return [{"close": 10.0}, {"close": 10.5}, {"close": 11.0}]
 
 
@@ -93,7 +95,9 @@ class OrchestratorTest(unittest.TestCase):
         class Reader:
             daily_calls: list[tuple[object, object]] = []
 
-            def get_bars_intraday(self, market, symbol, interval="5m", start="", end=""):
+            def get_bars_intraday(
+                self, market, symbol, interval="5m", start="", end=""
+            ):
                 return [{"close": 10.2}, {"close": 10.8}]
 
             def get_bars_daily(self, market, symbol, start=None, end=None):
@@ -102,14 +106,18 @@ class OrchestratorTest(unittest.TestCase):
 
         reader = Reader()
 
-        self.assertEqual(_latest_price(reader, "ashare", "000001.SZ", "20260706", 0.0), 10.8)
+        self.assertEqual(
+            _latest_price(reader, "ashare", "000001.SZ", "20260706", 0.0), 10.8
+        )
         self.assertEqual(reader.daily_calls, [])
 
     def test_latest_price_and_volatility_fall_back_to_recent_daily_window(self) -> None:
         class Reader:
             daily_calls: list[tuple[object, object]] = []
 
-            def get_bars_intraday(self, market, symbol, interval="5m", start="", end=""):
+            def get_bars_intraday(
+                self, market, symbol, interval="5m", start="", end=""
+            ):
                 return []
 
             def get_bars_daily(self, market, symbol, start=None, end=None):
@@ -118,8 +126,12 @@ class OrchestratorTest(unittest.TestCase):
 
         reader = Reader()
 
-        self.assertEqual(_latest_price(reader, "ashare", "000001.SZ", "20260706", 0.0), 11.0)
-        self.assertGreater(_latest_volatility(reader, "ashare", "000001.SZ", "20260706", 0.2), 0.01)
+        self.assertEqual(
+            _latest_price(reader, "ashare", "000001.SZ", "20260706", 0.0), 11.0
+        )
+        self.assertGreater(
+            _latest_volatility(reader, "ashare", "000001.SZ", "20260706", 0.2), 0.01
+        )
         self.assertIn(("20260622", "20260706"), reader.daily_calls)
         self.assertIn(("20260522", "20260706"), reader.daily_calls)
 
@@ -128,15 +140,24 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(_execution_quantity("ashare", "buy", 99), 0)
         self.assertEqual(_execution_quantity("us", "buy", 799), 799)
 
-    def _deps(self, *, fail_debate: bool = False, use_batch_score: bool = False) -> OrchestratorDeps:
-        def score_stock(market: str, symbol: str, data_reader: object = None, date: str | None = None) -> dict[str, object]:
+    def _deps(
+        self, *, fail_debate: bool = False, use_batch_score: bool = False
+    ) -> OrchestratorDeps:
+        def score_stock(
+            market: str,
+            symbol: str,
+            data_reader: object = None,
+            date: str | None = None,
+        ) -> dict[str, object]:
             self.calls.append("screening")
-            self.score_requests.append({
-                "market": market,
-                "symbol": symbol,
-                "date": date,
-                "reader": data_reader,
-            })
+            self.score_requests.append(
+                {
+                    "market": market,
+                    "symbol": symbol,
+                    "date": date,
+                    "reader": data_reader,
+                }
+            )
             return {"combined": 0.72, "sector": "unit", "capital_layer": "shadow"}
 
         def score_universe(
@@ -146,15 +167,20 @@ class OrchestratorTest(unittest.TestCase):
             market: str = "unit",
         ) -> list[tuple[str, dict[str, object]]]:
             self.calls.append("screening_batch")
-            self.score_requests.append({
-                "market": market,
-                "symbol": ",".join(universe),
-                "date": date,
-                "reader": data_reader,
-                "batch": True,
-            })
+            self.score_requests.append(
+                {
+                    "market": market,
+                    "symbol": ",".join(universe),
+                    "date": date,
+                    "reader": data_reader,
+                    "batch": True,
+                }
+            )
             return [
-                (symbol, {"combined": 0.73, "sector": "unit", "capital_layer": "shadow"})
+                (
+                    symbol,
+                    {"combined": 0.73, "sector": "unit", "capital_layer": "shadow"},
+                )
                 for symbol in universe
             ]
 
@@ -165,25 +191,46 @@ class OrchestratorTest(unittest.TestCase):
             reader: object | None = None,
         ) -> dict[str, list[str]]:
             self.calls.append("candidate_pool")
-            self.pool_requests.append({
-                "market": market,
-                "date": date,
+            self.pool_requests.append(
+                {
+                    "market": market,
+                    "date": date,
+                    "universe": list(universe),
+                    "reader": reader,
+                }
+            )
+            return {
+                "candidate": list(universe),
+                "watch": [],
+                "holdings": [],
                 "universe": list(universe),
-                "reader": reader,
-            })
-            return {"candidate": list(universe), "watch": [], "holdings": [], "universe": list(universe)}
+            }
 
         def debate(symbol: str, scores: dict[str, object]) -> dict[str, object]:
             self.calls.append("adversarial")
             if fail_debate:
                 raise RuntimeError("debate failed")
-            return {"ts_code": symbol, "belief_score": 0.70, "bull_case": "ok", "bear_case": "risk"}
+            return {
+                "ts_code": symbol,
+                "belief_score": 0.70,
+                "bull_case": "ok",
+                "bear_case": "risk",
+            }
 
-        def risk_check(order: dict[str, object], portfolio: dict[str, object]) -> dict[str, object]:
+        def risk_check(
+            order: dict[str, object], portfolio: dict[str, object]
+        ) -> dict[str, object]:
             self.calls.append("risk")
-            return {"approved": True, "adjusted_weight": order["weight"], "adjustments": ["ok"], "reasons": []}
+            return {
+                "approved": True,
+                "adjusted_weight": order["weight"],
+                "adjustments": ["ok"],
+                "reasons": [],
+            }
 
-        def construct(orders: list[dict[str, object]], capital: float, method: str, regime: str) -> dict[str, object]:
+        def construct(
+            orders: list[dict[str, object]], capital: float, method: str, regime: str
+        ) -> dict[str, object]:
             self.calls.append("portfolio")
             return {
                 "method": method,
@@ -209,7 +256,11 @@ class OrchestratorTest(unittest.TestCase):
 
         def review(date: str, session: str = "close") -> dict[str, object]:
             self.calls.append("review")
-            return {"session": session, "trade_date": date, "capital_layer_reviews": {"shadow": {}}}
+            return {
+                "session": session,
+                "trade_date": date,
+                "capital_layer_reviews": {"shadow": {}},
+            }
 
         return OrchestratorDeps(
             score_stock=score_stock,
@@ -235,31 +286,192 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(result["state"], "ok")
         self.assertEqual(result["capital_layer"], "shadow")
-        for expected in ("screening", "candidate_pool", "adversarial", "risk", "position_sizer", "portfolio", "review"):
+        for expected in (
+            "screening",
+            "candidate_pool",
+            "adversarial",
+            "risk",
+            "position_sizer",
+            "portfolio",
+            "review",
+        ):
             self.assertIn(expected, self.calls)
         self.assertEqual(result["recorded_count"], 2)
-        self.assertEqual(len(list((self.tmp_path / "signals" / "pending").glob("*.json"))), 0)
-        self.assertEqual(len(list((self.tmp_path / "signals" / "shadow" / "pending").glob("*.json"))), 2)
-        self.assertEqual({request["market"] for request in self.score_requests}, {"unit"})
-        self.assertEqual({request["market"] for request in self.pool_requests}, {"unit"})
+        self.assertEqual(
+            len(list((self.tmp_path / "signals" / "pending").glob("*.json"))), 0
+        )
+        self.assertEqual(
+            len(
+                list((self.tmp_path / "signals" / "shadow" / "pending").glob("*.json"))
+            ),
+            2,
+        )
+        self.assertEqual(
+            {request["market"] for request in self.score_requests}, {"unit"}
+        )
+        self.assertEqual(
+            {request["market"] for request in self.pool_requests}, {"unit"}
+        )
 
         trade_rows = [
             json.loads(line)
-            for line in shadow_broker.SHADOW_TRADES.read_text(encoding="utf-8").splitlines()
+            for line in shadow_broker.SHADOW_TRADES.read_text(
+                encoding="utf-8"
+            ).splitlines()
         ]
         self.assertEqual(len(trade_rows), 2)
         self.assertEqual({row["capital_layer"] for row in trade_rows}, {"shadow"})
 
         audit_rows = [
             json.loads(line)
-            for line in trade_audit_trail.AUDIT_TRAIL.read_text(encoding="utf-8").splitlines()
+            for line in trade_audit_trail.AUDIT_TRAIL.read_text(
+                encoding="utf-8"
+            ).splitlines()
         ]
         self.assertEqual(
             {row["stage"] for row in audit_rows},
             {"signal", "decision", "risk", "execution", "result"},
         )
-        self.assertTrue(all(row.get("metadata", {}).get("capital_layer") == "shadow" for row in audit_rows))
+        self.assertTrue(
+            all(
+                row.get("metadata", {}).get("capital_layer") == "shadow"
+                for row in audit_rows
+            )
+        )
 
+    def test_llm_belief_cannot_change_weight_risk_portfolio_or_order(self) -> None:
+        """LLM output is sidecar evidence, never a decision-authority input."""
+
+        def run_with_debate(result: object, suffix: str) -> dict[str, object]:
+            captured: dict[str, object] = {}
+            audit_sequence = 0
+
+            deps = self._deps()
+            deps.debate = lambda symbol, scores: result
+
+            def record_audit_event(**kwargs: object) -> dict[str, object]:
+                nonlocal audit_sequence
+                audit_sequence += 1
+                stage = str(kwargs["stage"])
+                return {
+                    "audit_id": f"AUDIT-{suffix}-{audit_sequence}",
+                    "stage": stage,
+                    "ts_code": kwargs.get("ts_code", ""),
+                    "parent_audit_id": kwargs.get("parent_audit_id", ""),
+                    "payload": kwargs.get(f"{stage}_data", {}),
+                }
+
+            def size_position(
+                decision_score: float, volatility: float, regime: str
+            ) -> float:
+                captured["position_score"] = decision_score
+                return round(decision_score * 0.10, 6)
+
+            def risk_check(
+                order: dict[str, object], portfolio: dict[str, object]
+            ) -> dict[str, object]:
+                captured["risk_order"] = dict(order)
+                return {
+                    "approved": True,
+                    "adjusted_weight": order["weight"],
+                    "adjustments": [],
+                    "reasons": [],
+                }
+
+            def construct(
+                orders: list[dict[str, object]],
+                capital: float,
+                method: str,
+                regime: str,
+            ) -> dict[str, object]:
+                captured["portfolio_orders"] = [
+                    {
+                        key: value
+                        for key, value in order.items()
+                        if key != "risk_audit_id"
+                    }
+                    for order in orders
+                ]
+                return {
+                    "method": method,
+                    "capital": capital,
+                    "positions": [
+                        {
+                            "ts_code": order["ts_code"],
+                            "weight": order["weight"],
+                            "shares": 10,
+                            "amount": 100.0,
+                            "sector": "unit",
+                            "price": 10.0,
+                        }
+                        for order in orders
+                    ],
+                    "total_weight": sum(float(order["weight"]) for order in orders),
+                    "cash_weight": 0.90,
+                }
+
+            deps.size_position = size_position
+            deps.risk_check = risk_check
+            deps.construct = construct
+            deps.record_audit_event = record_audit_event
+            loop_result = run_shadow_loop(
+                StubMarketAdapter(),
+                "20260630",
+                StubReader(),
+                deps=deps,
+                signals_dir=self.tmp_path / f"signals_{suffix}",
+            )
+            captured["execution_orders"] = [
+                row["order"] for row in loop_result["records"]
+            ]
+            decision_payloads = [
+                row["payload"]
+                for row in loop_result["audit_events"]
+                if row.get("stage") == "decision"
+            ]
+            captured["decision_payloads"] = decision_payloads
+            return captured
+
+        bearish = run_with_debate(
+            {
+                "belief_score": 0.0,
+                "bull_case": "provider says no upside",
+                "bear_case": "provider says maximum risk",
+                "target_weight": 0.0,
+            },
+            "bearish",
+        )
+        bullish = run_with_debate(
+            {
+                "belief_score": 1.0,
+                "bull_case": "provider says maximum upside",
+                "bear_case": "provider says no risk",
+                "target_weight": 1.0,
+            },
+            "bullish",
+        )
+
+        for snapshot in (bearish, bullish):
+            self.assertAlmostEqual(float(snapshot["position_score"]), 0.72)
+            self.assertEqual(snapshot["risk_order"], bearish["risk_order"])
+            self.assertEqual(snapshot["portfolio_orders"], bearish["portfolio_orders"])
+            self.assertEqual(snapshot["execution_orders"], bearish["execution_orders"])
+            serialized_authority_paths = json.dumps(
+                {
+                    "risk_order": snapshot["risk_order"],
+                    "portfolio_orders": snapshot["portfolio_orders"],
+                    "execution_orders": snapshot["execution_orders"],
+                },
+                ensure_ascii=False,
+            )
+            self.assertNotIn("provider says", serialized_authority_paths)
+            self.assertNotIn("target_weight", serialized_authority_paths)
+
+            for payload in snapshot["decision_payloads"]:
+                observation = payload["llm_evidence_observation"]
+                self.assertEqual(observation["record_type"], "llm_evidence_observation")
+                self.assertEqual(observation["status"], "invalid")
+                self.assertNotIn("belief_score", observation)
 
     def test_run_shadow_loop_uses_batch_scoring_when_available(self) -> None:
         result = run_shadow_loop(
@@ -275,7 +487,6 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn("screening_batch", self.calls)
         self.assertNotIn("screening", self.calls)
         self.assertEqual(self.score_requests[0]["symbol"], "AAA,BBB")
-
 
     def test_run_shadow_loop_deduplicates_same_day_shadow_pending(self) -> None:
         signals_dir = self.tmp_path / "signals_dedup"
@@ -296,8 +507,15 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(first["recorded_count"], 2)
         self.assertEqual(second["recorded_count"], 2)
-        self.assertEqual(len(list((signals_dir / "shadow" / "pending").glob("*.json"))), 2)
-        self.assertTrue(all(record["pending_signal"]["status"] == "duplicate" for record in second["records"]))
+        self.assertEqual(
+            len(list((signals_dir / "shadow" / "pending").glob("*.json"))), 2
+        )
+        self.assertTrue(
+            all(
+                record["pending_signal"]["status"] == "duplicate"
+                for record in second["records"]
+            )
+        )
 
     def test_run_shadow_loop_fail_safe_records_degraded_without_crashing(self) -> None:
         result = run_shadow_loop(
@@ -330,8 +548,12 @@ class OrchestratorTest(unittest.TestCase):
 
                 self.assertEqual(result["state"], "ok")
                 self.assertEqual(result["market"], market)
-                self.assertEqual({request["market"] for request in self.score_requests}, {market})
-                self.assertEqual({request["market"] for request in self.pool_requests}, {market})
+                self.assertEqual(
+                    {request["market"] for request in self.score_requests}, {market}
+                )
+                self.assertEqual(
+                    {request["market"] for request in self.pool_requests}, {market}
+                )
 
     def test_run_shadow_loop_records_fractional_crypto_quantity(self) -> None:
         class CryptoLikeAdapter(StubMarketAdapter):
@@ -353,7 +575,9 @@ class OrchestratorTest(unittest.TestCase):
                 }
 
         class HighPriceReader:
-            def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, float]]:
+            def get_bars_daily(
+                self, market: str, symbol: str, start: object = None, end: object = None
+            ) -> list[dict[str, float]]:
                 return [{"close": 100000.0}, {"close": 100000.0}]
 
         deps = self._deps()
@@ -371,7 +595,9 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(result["recorded_count"], 1)
         trade_rows = [
             json.loads(line)
-            for line in shadow_broker.SHADOW_TRADES.read_text(encoding="utf-8").splitlines()
+            for line in shadow_broker.SHADOW_TRADES.read_text(
+                encoding="utf-8"
+            ).splitlines()
         ]
         self.assertEqual(len(trade_rows), 1)
         self.assertEqual(trade_rows[0]["market"], "crypto")

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """5层候选池 — holdings→watch→candidate→universe→fundamental。
 
+A股 Phase 0-3 的所有个股层均由统一资格策略限制为沪深主板普通股；
+双创指数与行业汇总属于独立市场环境快照，不进入本候选池。
+
 层次越内, 优先级越高。每层有独立的进入/退出条件。
 - holdings: 当前持仓 (最高优先, 监控退出)
 - watch: 观察池 (有条件待触发, 盯盘中)
@@ -11,23 +14,24 @@
 build_pool(date, holdings, market="ashare") → {layer: [ts_code]}
 get_layer(pool, layer) → [ts_code]
 """
+
 from __future__ import annotations
 
 from datetime import datetime
-import re
 from typing import Any
 
 from shared.data.reader import TradingagentDataReader
+from shared.universe.policy import is_mainboard_tradable
 
 _DATA_READER: TradingagentDataReader | None = None
 
 # 池大小限制
 _POOL_LIMITS: dict[str, int] = {
-    "holdings": 5,        # 持仓上限
-    "watch": 20,          # 观察池上限
-    "candidate": 50,      # 候选池上限
-    "universe": 500,      # 全市场上限 (过滤后)
-    "fundamental": 100,   # 基本面池上限
+    "holdings": 5,  # 持仓上限
+    "watch": 20,  # 观察池上限
+    "candidate": 50,  # 候选池上限
+    "universe": 500,  # 全市场上限 (过滤后)
+    "fundamental": 100,  # 基本面池上限
 }
 
 # 六维打分阈值 (进入 candidate 层的最低 combined)
@@ -37,7 +41,11 @@ _WATCH_THRESHOLD = 0.45
 # A股 candidate 不允许只靠技术/资金证据穿过综合分阈值。
 _MIN_ASHARE_CANDIDATE_EVIDENCE_COVERAGE = 0.5
 _ASHARE_RESEARCH_EVIDENCE_DIMENSIONS = ("event", "fundamental", "sentiment")
-_EVIDENCE_METADATA_KEYS = {"evidence_coverage", "missing_evidence_dimensions", "evidence_sources"}
+_EVIDENCE_METADATA_KEYS = {
+    "evidence_coverage",
+    "missing_evidence_dimensions",
+    "evidence_sources",
+}
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
@@ -49,7 +57,11 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 
 
 def _metric_name(row: dict[str, Any]) -> str:
-    raw = str(row.get("factor_name") or row.get("name") or row.get("metric") or "").strip().lower()
+    raw = (
+        str(row.get("factor_name") or row.get("name") or row.get("metric") or "")
+        .strip()
+        .lower()
+    )
     return raw.split(":", 1)[1] if ":" in raw else raw
 
 
@@ -62,30 +74,21 @@ def _get_data_reader(reader: Any | None = None) -> Any:
     return _DATA_READER
 
 
-def _is_regular_a_share_symbol(ts_code: Any) -> bool:
-    raw = str(ts_code or "").strip().upper()
-    if "." in raw:
-        digits, exchange = raw.split(".", 1)
-    else:
-        digits, exchange = raw, ""
-    if not re.fullmatch(r"\d{6}", digits):
-        return False
-    if exchange == "SZ":
-        return digits.startswith(("000", "001", "002", "003", "300", "301"))
-    if exchange == "SH":
-        return digits.startswith(("600", "601", "603", "605", "688", "689"))
-    return digits.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689"))
-
-
 def _filter_market_symbols(symbols: list[str], market: str) -> list[str]:
     if str(market or "").lower() != "ashare":
         return symbols
-    return [symbol for symbol in symbols if _is_regular_a_share_symbol(symbol)]
+    return [symbol for symbol in symbols if is_mainboard_tradable(symbol)]
 
 
 def _dimension_has_evidence(scores: dict[str, Any], dimension: str) -> bool | None:
-    evidence_sources = scores.get("evidence_sources") if isinstance(scores.get("evidence_sources"), dict) else {}
-    source_info = evidence_sources.get(dimension) if isinstance(evidence_sources, dict) else None
+    evidence_sources = (
+        scores.get("evidence_sources")
+        if isinstance(scores.get("evidence_sources"), dict)
+        else {}
+    )
+    source_info = (
+        evidence_sources.get(dimension) if isinstance(evidence_sources, dict) else None
+    )
     if isinstance(source_info, dict) and "has_evidence" in source_info:
         return source_info.get("has_evidence") is True
 
@@ -167,7 +170,10 @@ def _load_fundamental_pool(
                 if factor not in {"value", "quality"} or factor in latest_scores:
                     continue
                 latest_scores[factor] = _safe_float(row.get("value"), 0.0)
-            if latest_scores.get("value", 0.0) > 0.7 and latest_scores.get("quality", 0.0) > 0.6:
+            if (
+                latest_scores.get("value", 0.0) > 0.7
+                and latest_scores.get("quality", 0.0) > 0.6
+            ):
                 selected.append(symbol)
                 if len(selected) >= _POOL_LIMITS["fundamental"]:
                     break
@@ -221,25 +227,30 @@ def build_pool(
     # 1. Holdings 层
     if holdings is None:
         holdings = _load_holdings()
-    holdings = _filter_market_symbols(holdings, market)[:_POOL_LIMITS["holdings"]]
+    holdings = _filter_market_symbols(holdings, market)[: _POOL_LIMITS["holdings"]]
 
     # 2. Universe 层 (过滤后全市场)
     if universe is None:
         try:
             from .universe_filter import filter_universe
+
             universe = filter_universe(date)
         except ImportError:
             universe = []
-    universe = _filter_market_symbols(universe, market)[:_POOL_LIMITS["universe"]]
+    universe = _filter_market_symbols(universe, market)[: _POOL_LIMITS["universe"]]
 
-    precomputed_scores = scores_by_symbol if scores_by_symbol is not None else scores_map
+    precomputed_scores = (
+        scores_by_symbol if scores_by_symbol is not None else scores_map
+    )
     precomputed_scores = dict(precomputed_scores or {})
     if include_fundamental_pool is None:
         include_fundamental_pool = not bool(precomputed_scores)
 
     # 3. Fundamental 层 (长期跟踪)
     fundamental = (
-        _filter_market_symbols(_load_fundamental_pool(reader=reader, market=market), market)[:_POOL_LIMITS["fundamental"]]
+        _filter_market_symbols(
+            _load_fundamental_pool(reader=reader, market=market), market
+        )[: _POOL_LIMITS["fundamental"]]
         if include_fundamental_pool
         else []
     )
@@ -264,7 +275,9 @@ def build_pool(
                 continue
             scores = score_for(ts_code)
             combined = _safe_float(scores.get("combined"), 0.0)
-            if combined >= _CANDIDATE_THRESHOLD and _ashare_candidate_evidence_allowed(scores, market):
+            if combined >= _CANDIDATE_THRESHOLD and _ashare_candidate_evidence_allowed(
+                scores, market
+            ):
                 candidate.append(ts_code)
                 if len(candidate) >= _POOL_LIMITS["candidate"]:
                     break
@@ -291,7 +304,11 @@ def build_pool(
 
     # Fundamental 池中的股票也加入 watch (如果不在其他池中)
     for ts_code in fundamental:
-        if ts_code not in holdings and ts_code not in candidate and ts_code not in watch:
+        if (
+            ts_code not in holdings
+            and ts_code not in candidate
+            and ts_code not in watch
+        ):
             watch.append(ts_code)
             if len(watch) >= _POOL_LIMITS["watch"]:
                 break
@@ -354,6 +371,10 @@ def promote(
 if __name__ == "__main__":
     import json
 
-    pool = build_pool("20260629", holdings=["600519.SH"], universe=["600519.SH", "000858.SZ", "601318.SH"])
+    pool = build_pool(
+        "20260629",
+        holdings=["600519.SH"],
+        universe=["600519.SH", "000858.SZ", "601318.SH"],
+    )
     print(json.dumps(pool, ensure_ascii=False, indent=2))
     print(f"\nCandidate layer: {get_layer(pool, 'candidate')}")

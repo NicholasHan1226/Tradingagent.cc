@@ -70,7 +70,22 @@ TradingAgent signals / positions / review / risk
 - 读取入口：`GET /api/trading-agent/snapshot`。
 - 浏览器客户端：`src/api/tradingAgentIntegration.ts`。
 - TradingAgent 读取器：`src/server/tradingAgentSnapshot.ts`。
-- SharedSignals 市场脉冲读取器：`src/server/sharedSignalsMarketPulse.ts`。它只从 `SHAREDSIGNALS_API_URL` 读取持仓/信号涉及的有限代表标的，单请求 900ms 超时并使用 15 秒进程内缓存；`marketPulseCoverage` 会说明每个市场是已取到、无代表映射、不可用还是降级。它不直接调用 provider，不写 SharedSignals，也不让上游不可用拖垮快照。
+- 今日自动模拟盘状态：只读 snapshot 可选读取
+  `shared/runtime/run_bundles/latest.json`及其内容寻址immutable mirror，归一化为
+  `paperDayRun`。reader会重算component/payload/bundle hash、run ID和幂等绑定，不信任
+  文件内自报摘要。后端已有本地
+  `FileRunBundleStore`、`LocalRunBundlePublisher` 和离线 fixture CLI 候选；CLI
+  只会在显式隔离output root的`shared/runtime_test/phase1_paper_fixture/`下发布，故意不写
+  活动Today路径。它没有 scheduler、真实 SS
+  或市场会话运行证据，也不会自动发布到活动项目/生产根；因此文件缺失时
+  界面明确显示“不可用”，不把仓库能力、测试 fixture 或 HTTP 200 冒充为今天已经运行。
+- SharedSignals 市场脉冲读取器：`src/server/sharedSignalsMarketPulse.ts`。本地候选已只调用
+  provider-neutral `GET /v1/catalog` + `POST /v1/query`，并要求显式配置 base URL、
+  catalog version、access policy 和逐市场 dataset ID。catalog/dataset identity、响应 envelope、
+  freshness/quality/lineage/receipt 或 `as_of` 任一不合格时按数据集 fail closed；返回行还须
+  显式匹配目标实体，且 row time 不得晚于 `data_through` 或本次决策时间。不会回退
+  provider、兄弟仓 SQLite、旧专用端点或本地拼装。该能力仍只是本地候选，SS upstream
+  合同与生产 runtime 尚未冻结，不能描述为 live 可用，也不赋予 paper-day 执行权限。
 - 非 A 股代表行情必须由上游显式提供 `market_data_symbol` 或 `marketDataSymbol`；前端不从展示代码转换 Crypto、期货、PM、US 或 HK API 参数。`marketPulseCoverageHistory` 只保留当前服务进程最近 12 次真实来源读取，缓存命中与服务重启不会伪造连续观测。
 - 真实数据适配：`src/api/tradingAgentReadModel.ts` 和
   `src/adapters/tradingAgentReadModel.ts`。
@@ -80,7 +95,7 @@ TradingAgent signals / positions / review / risk
 
 可以读取：
 
-- `../signals/{pending,claimed,running,filled,cancelled,expired,failed,partial}/*.json`
+- `../signals/{pending,claimed,running,filled,cancelled,expired,failed,partial}/*.json`（兼容只读投影；未经V1 authority/freshness证明的A股pending行不得进入current/live）
 - `../signals/positions/*.json`
 - `../shared/accounting/position_plan.jsonl`
 - `../shared/review/daily/daily_brief.jsonl`
@@ -90,7 +105,17 @@ TradingAgent signals / positions / review / risk
 - `../shared/logs/capital/{ashare,cn_futures}/*_capital_latest.json`
 - `../shared/review/attribution/*.jsonl`
 - `../shared/risk/risk_limits.yaml`
-- `SHAREDSIGNALS_API_URL` 暴露的只读 HTTP read model，用于可选 `marketPulses[]` 与 `marketPulseCoverage`。A股/CNFutures 使用 5 分钟接口，US/HK 使用日线接口，Crypto 使用 `/crypto`；PM 只采用明确的 canonical YES outcome，无法识别 outcome 时保持空值。
+- 可选 V1 市场脉冲只读面：同时显式提供 `SHAREDSIGNALS_API_URL`、
+  `SHAREDSIGNALS_CATALOG_VERSION`、`SHAREDSIGNALS_ACCESS_POLICY_ID` 和
+  `SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON` 后，前端才会读取 `GET /v1/catalog` 与
+  `POST /v1/query`。dataset mapping 缺失、上游未冻结或 envelope 不合格时
+  `marketPulses[]` 为空并保留 `marketPulseCoverage` 的 unavailable/degraded 状态；绝不调用旧端点。
+- `shared/runtime/run_bundles/latest.json`（可选本地候选快照）：只展示
+  RunBundle 阶段、数据证据、候选/决策、模拟订单/成交、风险阻断、Champion
+  清单和 LLM 证据角色。必须同时存在字节一致的
+  `shared/runtime/run_bundles/runs/<run_id>/<bundle_sha256>.json`；仅接受
+  `account_type=simulated` 且`real_trading_enabled=false`，并重验完整manifest和hash链。
+  缺失、畸形、单文件自报或不安全内容不回退到样例数据。
 
 首页“成熟度与资金”面板并列显示 A股独立 5 万模拟账户的 Day 5 / Day 10 证据复核，以及 CNFutures 独立 5 万模拟账户的长期模拟成熟度；两者不相加、不互相补资。投影缺失或 hash/authority 无效时保持“等待证据”，并始终显示自动晋级关闭。
 
@@ -104,17 +129,17 @@ TradingAgent signals / positions / review / risk
 
 ## 部署形态与验证边界
 
-仓库支持 Cloudflare Tunnel + 服务器 Nginx 的部署形态：
+当前产品只供 Nicholas 个人内部使用。`tradingagent.cc`保留为个人远程入口，但必须由Cloudflare Access或等价单用户认证保护；只读API仍只监听服务器localhost，不允许匿名访问或API直出：
 
 ```text
-dashboard.tradingagent.cc
-  Cloudflare Tunnel
-    -> Nginx on TradingAgent server
-      /                         -> front/dist
-      /api/trading-agent/snapshot -> 127.0.0.1:8787
+本机浏览器或经过单用户认证的 tradingagent.cc
+  -> Cloudflare Access / authenticated edge
+    -> internal Nginx / static server
+    /                           -> front/dist
+    /api/trading-agent/snapshot -> 127.0.0.1:8787
 ```
 
-下列服务器参数来自既有部署说明，本轮 capital-growth 重构未做生产核验；是否仍为当前入口必须在获准发布前按 [STATUS.md](../STATUS.md) 现场验证：
+下列服务器参数来自历史部署说明，本轮重构未做生产核验；是否仍可用必须在另行获准部署前按 [STATUS.md](../STATUS.md) 现场验证：
 
 ```text
 8.138.181.177
@@ -136,25 +161,15 @@ dashboard.tradingagent.cc
 /opt/investment/tradingagent/front
 ```
 
-前端默认使用同源接口：
+内部前端默认使用同源接口：
 
 ```bash
 VITE_TRADING_AGENT_SNAPSHOT_URL=/api/trading-agent/snapshot
 ```
 
-详细部署和 Nginx 示例见 [docs/integration.md](docs/integration.md)。
+详细的内部服务和认证域名部署示例见 [docs/integration.md](docs/integration.md)。[docs/cloudflare.md](docs/cloudflare.md) 保留Cloudflare迁移与回滚记录；其中未配置Access policy的匿名形态不得恢复。重新启用域名、Tunnel或Pages前，必须先配置单用户认证、最小暴露面和可验证撤销路径。
 
-Cloudflare 部署说明见 [docs/cloudflare.md](docs/cloudflare.md)。当前形态是：
-
-- 前端静态页面由 TradingAgent 服务器 `front/dist` 通过 Cloudflare Tunnel 对外提供。
-- 只读 snapshot API 运行在 TradingAgent 服务器内侧 `127.0.0.1:8787`，同样通过 Cloudflare Tunnel/Nginx 接入。
-- API 仍只读，不暴露交易执行、队列写入、账户、回调或密钥。
-
-既有域名规划如下，不能据此断言本轮代码已同步或路由仍在线：
-
-- `dashboard.tradingagent.cc`、`tradingagent.cc`、`www.tradingagent.cc` 规划经 Cloudflare Tunnel 指向服务器 Nginx。
-- `api.tradingagent.cc` 规划经同一 Tunnel 指向服务器内侧只读 API。
-- Cloudflare Pages 项目 `tradingagent-front` 是历史/回滚入口；若重新启用 Pages，必须先完成最新构建部署并重新绑定自定义域，避免公开域名继续服务旧静态资源。
+API 始终只读，不暴露交易执行、队列写入、账户、回调或密钥。服务启动时拒绝`0.0.0.0`等非loopback监听和`*` CORS；即使只在私网运行，也不能降低这条边界。
 
 ## 本地运行
 
@@ -187,11 +202,18 @@ npm run build:api
   或 `shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl`。如果后端尚未写入权益快照，snapshot 才回退到 `shared/review/daily/daily_brief.jsonl` 的明确 return 字段，再回退到 `shared/review/*/style_performance.jsonl` 的真实 simulated PnL，并用模拟账本本金换算为收益率；当同市场/同策略/同日期存在模拟账本成交时间戳时，snapshot 会把日级 PnL 展开成交易时间线曲线。若只存在成交日志或持仓成本，snapshot 会保持收益为空并给出缺口说明，前端不得用成交额或成本冒充收益。
 - `style_performance.jsonl` 作为回退收益来源时，US/Crypto/PM 的 money fields 可按其显式币种/汇率归一化到各自 `marketSummaries[]`；不得跨市场相加生成全市场收益曲线，也不得用一个市场的本金归一化另一个市场的 PnL。
 - 维护、回补、烟测或修复重跑样本不得进入用户收益和交易量口径。只读 snapshot 会跳过带 `exclude_from_dashboard=true`、`dashboard_excluded=true`、`excluded_from_dashboard=true`，或 `run_context/run_mode/run_source/sample_type` 包含 `maintenance/backfill/smoke/repair/bootstrap/dry-run` 的模拟账本、权益快照、风格绩效和风格对比记录。
-- A股研究证据卡片读取 `shared/review/ashare/research_evidence_latest.json`，只展示集合竞价/09:30 代理、尾盘候选、204001 现金管理建议和四个正交风格的 SampleJournal 归因计数；风格没有可相加的虚拟本金。该卡片不写队列、不触发交易、不发送邮件。
-- A股服务器本地模拟账本读取当前 fresh lineage 下的 `shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/{local_sim_pnl.json,local_sim_trades.jsonl}`，首页收益和持仓摘要会展示单一 `ashare_sim` 账户事实。冻结的 `shared/logs/local_sim/` 不得作为当前读取回退。
+- A股研究证据卡片读取 `shared/review/ashare/research_evidence_latest.json`，只展示集合竞价/09:30 代理、尾盘候选、204001 现金管理建议和旧四风格的legacy SampleJournal归因计数；它们不是当前三风格shadow router，也没有可相加的虚拟本金。该卡片不写队列、不触发交易、不发送邮件。
+- A股服务器本地模拟账本先验证
+  `shared/logs/capital/ashare/ashare_sim_capital_latest.json`，再使用其中受验证的
+  `authority_generation` 与单段安全 `execution_lineage_id` 定位
+  `shared/logs/execution_lineages/<execution_lineage_id>/{simulated_ashare_positions.json,local_sim_pnl.json,local_sim_trades.jsonl}`。
+  持仓回执缺失（资本声明非零持仓时）、损坏、身份冲突或数量不一致时显示“持仓权威不可用”，
+  capital `updated_at`和position `synced_at`还必须带时区、在36小时内且不晚于读取时点；
+  页面生成时间不能冒充证据时间。不读取固定日期 lineage，也不把 `position_plan.jsonl` 当 SQLite 重开。冻结的
+  `shared/logs/local_sim/` 和旧账本不得作为当前读取回退。
 - 后端已预留并提供权益快照生成入口：`shared/runtime_test/write_equity_snapshots.py`。生产运行时应由服务器定时或手动调用该入口，把模拟账本的已实现收益、未实现收益、本金、回撤、持仓数和价格缺失状态写入 `daily_mark_to_market.jsonl`，供首页收益主面板优先读取。
-- 机会漏斗优先读取后端显式事件日志 `shared/review/opportunities/funnel_events.jsonl`，也兼容 `shared/logs/opportunities/funnel_events.jsonl`。每行表示一个真实机会在某个阶段的变化，支持 `opportunity_id/opportunityId`、`symbol/ts_code`、`market`、`stage`、`status`、`timestamp`、`sequence`、`latency_minutes/latencyMinutes`、`terminal`、`label` 和 `reason`。读模型会归一化为 `funnelEvents[]`，供首页动态机会漏斗按真实事件展示。
-- 没有显式事件日志时，机会漏斗才从 signal 状态和模拟账本成交路径派生 `发现 / 研判 / 风控 / 待确认 / 结果` 阶段。首页机会漏斗把 `opportunity_log` 与 `signal_queue` 都视为真实阶段事件；如果同一标的后续有 `sim_ledger` 成交结果，可以补到“结果”阶段。纯模拟账本成交只能展示为“历史结果”，不得标成正在筛选的机会漏斗。没有真实事件时，只显示等待态或已有信号推导，不用静态样例或占位粒子伪装成真实筛选。若只有持仓，漏斗必须切换为持仓监控板，显示“暂无新机会”、持仓数量、正贡献、需观察和当前状态，不再硬套五段漏斗。没有真实机会、信号或持仓时，漏斗保持轻量等待态，不展示五段零值漏斗。
+- `shared/review/opportunities/funnel_events.jsonl`与`shared/logs/opportunities/funnel_events.jsonl`是已退役writer留下的可选冻结法证历史，不是当前OpportunityLedger。读模型把它们统一标记为`legacy_frozen_opportunity_log`，不得据此把signals/risk置为ready、驱动实时心跳或关联当前持仓/PnL；未来替代只能是经过独立合同验收的OpportunityLedger只读投影。
+- signal queue仍是兼容只读投影，sim ledger只能形成completed replay。未经V1 authority/freshness证明的A股pending行必须排除；合成的`发现 / 研判 / 风控 / 待确认 / 结果`只是队列状态投影，不能声称显式真实事件。纯模拟账本成交只展示为历史结果。只有持仓时切换为持仓监控板；没有current事件、信号或持仓时保持轻量等待态，不用静态样例或占位粒子伪装真实筛选。
 - 首页收益口径必须区分“真实 0 收益”和“收益尚未写入”：只有成交、非零收益、连续收益点或 A 股账户事实存在时，才把数字展示为收益结果；空账本或单个零值快照显示为等待收益。
 - 首页右轨只展示最高优先级的自动运行状态，不再重复收益卡已有的账户、收益和风险数字；收益页曲线只展示走势、事件和区间切换，当前收益/目标差/回撤由页面摘要板承载。
 - 每个市场的收益曲线只使用该市场自己的 authority/equity snapshots；多个独立市场同时存在时，`All Markets` 不绘制货币收益曲线。
@@ -199,10 +221,19 @@ npm run build:api
 - 实盘只保留未来接入口；未验证账户授权前，前端不得展示为已接入。
 - 首页顶部和收益主面板必须使用同一“所选市场”口径：A股看 A股独立模拟账户，CNFutures 看期货独立摘要，其它市场看自身摘要；`All Markets` 不显示货币 portfolio。不要再次拆成“模拟盘收益”和“现在收益”两个数字。
 - 首页右轨只展示过程、阶段、状态、证据、更新时间和简短结果说明，不展示人工建议、内部错误码或调试文案。
-- 市场状态带会从当前持仓或信号中为每个市场选择一个代表标的，并由只读 snapshot API 通过 `SHAREDSIGNALS_API_URL` 查询 SharedSignals。只展示真实返回的价格、短走势、区间、成交量和新鲜度；无代表标的、读取超时、上游降级或字段缺失时保持 `—`/“暂无代表行情”，不得生成样例价格。`marketPulseCoverage` 明确展示已取到、待映射、不可用和降级范围。请求限制为每个代表标的最多 24 个点、900ms 超时和 15 秒进程缓存。
+- 市场状态带会从当前持仓或信号中为每个市场选择一个代表标的，并由只读 snapshot API
+  通过显式 V1 配置查询 catalog/query。只展示 identity 与 metadata 全部验证通过的真实返回；
+  无代表标的、dataset 未配置、读取超时、HTTP 200 但 dataset stale/degraded/failed、
+  receipt/lineage 缺失或字段不合格时保持`—`/“暂无代表行情”，不得生成样例价格或回退旧端点。
+  `marketPulseCoverage`明确展示已取到、待映射、不可用和降级范围。请求限制为每个代表标的
+  最多24个点、900ms超时和15秒进程缓存；该只读脉冲不进入 paper-day 决策/执行链。
 - 过程页选择机会周期后，URL 增加 `opportunity=<opportunityId>`，周期行进入选中态，原始事件账本只展示该机会的显式事件；关联条在其它页面继续显示标的、阶段、结果、完整度、关联信号/持仓与可归因盈亏。后两项只接受相同的显式 `opportunityId`，无匹配持仓时保持 `—`。清除关联只改变浏览器展示状态。
 - A 股 server-local 模拟持仓只在同一聚合仓位的所有记录买入来源均为同一 `order_id` 时透传该 ID 与未实现 PnL，供只读机会关联使用；多来源仓位不分摊、不归因，历史成交和签名回执不回写。
 - `Cmd/Ctrl+K` 打开桌面终端命令面板，可切换页面、市场和信息密度、清除关联机会。密度与各账本列显示写入版本化浏览器本地偏好，不写服务器、不修改 snapshot。
+- 首页“今日自动模拟盘”面板始终标记“本地候选 · 非生产”。它没有按钮，
+  不产生订单、邮件、回调或队列写入；LLM 只能显示为“仅作证据”或“证据未提供”。
+  本地发布器候选与前端读取器的相对路径已经一致，但这不等于活动项目根已有受控发布。
+  在没有真实当日 runtime readback 前，正常状态仍是 honest unavailable。
 
 ## 用户可见文案规范
 

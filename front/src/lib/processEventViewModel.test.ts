@@ -28,4 +28,14 @@ describe('process event view model', () => {
     expect(rows.map((row) => row.id)).toEqual(['two', 'one'])
     expect(rows[0]).toMatchObject({ timestamp: '—', latency: '—', reason: '—' })
   })
+
+  it('labels legacy history and queue projections without claiming current explicit events', () => {
+    const rows = createProcessEventRows([
+      earlier,
+      { ...later, id: 'legacy', source: 'legacy_frozen_opportunity_log' },
+    ])
+
+    expect(rows.find((row) => row.id === 'earlier')?.source).toBe('队列状态投影')
+    expect(rows.find((row) => row.id === 'legacy')?.source).toBe('旧漏斗冻结历史')
+  })
 })

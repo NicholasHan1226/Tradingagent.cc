@@ -755,6 +755,28 @@ class FakeSharedBars:
 
 
 class TestTradingagentDataReaderAPI(unittest.TestCase):
+    def test_explicit_none_disables_ambient_sharedsignals_client(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"SHAREDSIGNALS_API_URL": "http://ambient-sharedsignals.invalid"},
+        ):
+            reader = TradingagentDataReader(api_client=None)
+
+        self.assertIsNone(reader._api_client)
+        self.assertEqual(reader.get_macro_factors(), [])
+        self.assertTrue(reader.stale)
+        self.assertIn("SharedSignals API unavailable", reader.errors[-1])
+
+    def test_omitted_client_preserves_legacy_explicit_environment_configuration(
+        self,
+    ) -> None:
+        explicit_url = "http://explicit-sharedsignals.invalid"
+        with patch.dict(os.environ, {"SHAREDSIGNALS_API_URL": explicit_url}):
+            reader = TradingagentDataReader()
+
+        self.assertIsNotNone(reader._api_client)
+        self.assertEqual(reader._api_client.base_url, explicit_url)
+
     def test_environment_cannot_enable_sqlite_fallback(self) -> None:
         with patch.dict(os.environ, {"TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE": "1"}):
             reader = TradingagentDataReader(api_client=FakeAPIClient())

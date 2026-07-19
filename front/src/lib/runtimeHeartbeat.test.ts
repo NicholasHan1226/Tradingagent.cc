@@ -38,6 +38,12 @@ describe('runtime heartbeat', () => {
     expect(build({ signals: [pending] })).toMatchObject({ state: 'live', headline: '自动过程运行中 · 1项', runningCount: 1 })
   })
 
+  it('does not use frozen legacy opportunity history as a current heartbeat event', () => {
+    expect(build({
+      funnelEvents: [{ ...event, source: 'legacy_frozen_opportunity_log' }],
+    })).toMatchObject({ latestEventLabel: '尚无过程事件' })
+  })
+
   it('lets degraded and stale evidence override idle wording', () => {
     expect(build({ domains: { ...domains, signals: { status: 'error', updatedAt: '2026-07-11T05:29:50.000Z' } } })).toMatchObject({ state: 'degraded', headline: '证据读取异常 · 需要关注' })
     expect(build({ generatedAt: '2026-07-11T04:00:00.000Z' })).toMatchObject({ state: 'stale', headline: '快照滞后 · 等待更新' })

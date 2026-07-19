@@ -5,6 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/shared/wrappers/_common.sh"
 PYTHON_BIN="${TRADINGAGENT_PYTHON:-python3}"
 LOG_DIR="${ROOT}/shared/logs/cron"
 LOCK_DIR="${ROOT}/shared/logs/locks"
@@ -14,9 +16,6 @@ LOCK_FILE="${LOCK_DIR}/health_check.lock"
 WATCHDOG_INPUT_DIR="${WATCHDOG_INPUT_DIR:-${ROOT}/shared/logs/health}"
 OUTPUT_FILE="${WATCHDOG_INPUT_DIR}/tradingagent_health.json"
 OUTPUT_JSONL="${WATCHDOG_INPUT_DIR}/tradingagent_health.jsonl"
-SHAREDSIGNALS_API_BASE_URL="${SHAREDSIGNALS_API_BASE_URL:-http://127.0.0.1:${SHAREDSIGNALS_API_PORT:-8082}}"
-SHAREDSIGNALS_HEALTH_URL="${SHAREDSIGNALS_API_HEALTH_URL:-${SHAREDSIGNALS_API_BASE_URL}/health}"
-SHAREDSIGNALS_SOURCE_STATUS_URL="${SHAREDSIGNALS_SOURCE_STATUS_URL:-${SHAREDSIGNALS_API_BASE_URL}/source_status}"
 MARKETGRAPH_API_BASE_URL="${MARKETGRAPH_API_BASE_URL:-${MARKETGRAPH_API_URL:-http://127.0.0.1:8080}}"
 MARKETGRAPH_HEALTH_URL="${MARKETGRAPH_API_HEALTH_URL:-${MARKETGRAPH_API_BASE_URL%/}/health}"
 MAX_SIM_OUTPUT_AGE_MIN="${TRADINGAGENT_SIM_OUTPUT_MAX_AGE_MIN:-180}"
@@ -42,9 +41,12 @@ fi
 {
   echo "[$(date -Iseconds)] START health_check"
   TRADINGAGENT_ROOT="${ROOT}" \
-  SHAREDSIGNALS_API_BASE_URL="${SHAREDSIGNALS_API_BASE_URL}" \
-  SHAREDSIGNALS_HEALTH_URL="${SHAREDSIGNALS_HEALTH_URL}" \
-  SHAREDSIGNALS_SOURCE_STATUS_URL="${SHAREDSIGNALS_SOURCE_STATUS_URL}" \
+  SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-}" \
+  SHAREDSIGNALS_CATALOG_VERSION="${SHAREDSIGNALS_CATALOG_VERSION:-}" \
+  SHAREDSIGNALS_ACCESS_POLICY_ID="${SHAREDSIGNALS_ACCESS_POLICY_ID:-}" \
+  SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON="${SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON:-}" \
+  SHAREDSIGNALS_SCHEMA_MAJOR="${SHAREDSIGNALS_SCHEMA_MAJOR:-}" \
+  SHAREDSIGNALS_RUNTIME_TRANSPORT="${SHAREDSIGNALS_RUNTIME_TRANSPORT:-}" \
   MARKETGRAPH_HEALTH_URL="${MARKETGRAPH_HEALTH_URL}" \
   OUTPUT_FILE="${OUTPUT_FILE}" \
   OUTPUT_JSONL="${OUTPUT_JSONL}" \
@@ -60,7 +62,9 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shared.runtime_test.sharedsignals_source_status import check_source_status
+from shared.runtime_test.sharedsignals_v1_gate import (
+    check_v1_runtime_gate_from_environment,
+)
 
 
 def now_iso() -> str:
@@ -84,68 +88,8 @@ def http_json(url: str, timeout_seconds: float) -> tuple[int, dict]:
     return status_code, payload if isinstance(payload, dict) else {"data": payload}
 
 
-def check_sharedsignals(base_url: str, health_url: str) -> dict:
-    base = base_url.rstrip("/")
-    cache_url = f"{base}/cache/status"
-    capability_url = f"{base}/capabilities"
-    errors: list[str] = []
-    cache_status_code = 0
-    cache_payload: dict = {}
-    capability_status_code = 0
-    capability_payload: dict = {}
-    for attempt in range(1, 3):
-        try:
-            cache_status_code, cache_payload = http_json(cache_url, 3)
-            capability_status_code, capability_payload = http_json(capability_url, 5)
-            break
-        except (OSError, urllib.error.URLError) as exc:
-            errors.append(f"attempt={attempt} error={exc}")
-            if attempt < 2:
-                time.sleep(2)
-    capability_data = capability_payload.get("data") if isinstance(capability_payload.get("data"), dict) else {}
-    endpoint_count = len(capability_data.get("endpoints") or []) if isinstance(capability_data, dict) else 0
-    cache_ok = 200 <= cache_status_code < 300 and int(cache_payload.get("functions_registered") or 0) > 0
-    capability_ok = 200 <= capability_status_code < 300 and endpoint_count > 0
-    if not (cache_ok and capability_ok):
-        return {
-            "status": "critical",
-            "cache_url": cache_url,
-            "cache_status_code": cache_status_code,
-            "capability_url": capability_url,
-            "capability_status_code": capability_status_code,
-            "capability_endpoint_count": endpoint_count,
-            "attempts": 2,
-            "errors": errors[-3:],
-        }
-    health_status_code = 0
-    health_payload: dict = {}
-    health_error = ""
-    try:
-        health_status_code, health_payload = http_json(health_url, 2)
-    except (OSError, urllib.error.URLError) as exc:
-        health_error = str(exc)
-    health_payload_status = str(health_payload.get("status") or "")
-    health_ok = 200 <= health_status_code < 300 and health_payload_status in {"ok", "degraded", "healthy"}
-    source_status = check_source_status(base, timeout_seconds=3)
-    overall_status = "ok" if health_ok else "degraded"
-    if source_status["status"] == "critical":
-        overall_status = "critical"
-    elif source_status["status"] == "degraded" and overall_status == "ok":
-        overall_status = "degraded"
-    return {
-        "status": overall_status,
-        "cache_url": cache_url,
-        "cache_status_code": cache_status_code,
-        "functions_registered": cache_payload.get("functions_registered"),
-        "capability_url": capability_url,
-        "capability_status_code": capability_status_code,
-        "capability_endpoint_count": endpoint_count,
-        "health_url": health_url,
-        "health_status_code": health_status_code,
-        "health_payload_status": health_payload_status,
-        "health_error": health_error,
-        "source_status": source_status,
-    }
+def check_sharedsignals() -> dict:
+    return check_v1_runtime_gate_from_environment(os.environ, market=None)
 
 
 def check_sim_output(root: Path, max_age: int) -> dict:
@@ -200,7 +144,7 @@ root = Path(os.environ["TRADINGAGENT_ROOT"])
 result = {
     "timestamp": now_iso(),
     "source": "tradingagent/cron/health_check.sh",
-    "sharedsignals_api": check_sharedsignals(os.environ["SHAREDSIGNALS_API_BASE_URL"], os.environ["SHAREDSIGNALS_HEALTH_URL"]),
+    "sharedsignals_api": check_sharedsignals(),
     "tradingagent_sim_output": check_sim_output(root, int(os.environ["MAX_SIM_OUTPUT_AGE_MIN"])),
     "marketgraph_api": check_marketgraph_api(os.environ["MARKETGRAPH_HEALTH_URL"]),
 }

@@ -2,6 +2,7 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import {
   canonicalAShareProjectionGenerationId,
@@ -198,6 +199,7 @@ async function writeCurrentMarketCapitalAuthorities(
     ashare?: Record<string, unknown>
     cnFutures?: Record<string, unknown>
   } = {},
+  updatedAt = '2026-07-13T08:00:00+00:00',
 ) {
   const ashareDir = join(root, 'TradingAgent/shared/logs/capital/ashare')
   const cnDir = join(root, 'TradingAgent/shared/logs/capital/cn_futures')
@@ -205,17 +207,24 @@ async function writeCurrentMarketCapitalAuthorities(
   await mkdir(cnDir, { recursive: true })
   await writeFile(
     join(ashareDir, 'ashare_sim_capital_latest.json'),
-    JSON.stringify(marketCapitalSnapshot('ashare', overrides.ashare)),
+    JSON.stringify(marketCapitalSnapshot('ashare', {
+      updated_at: updatedAt,
+      ...overrides.ashare,
+    })),
   )
   await writeFile(
     join(cnDir, 'cn_futures_sim_capital_latest.json'),
-    JSON.stringify(marketCapitalSnapshot('cn_futures', overrides.cnFutures)),
+    JSON.stringify(marketCapitalSnapshot('cn_futures', {
+      updated_at: updatedAt,
+      ...overrides.cnFutures,
+    })),
   )
 }
 
 async function writeCurrentASharePositions(
   root: string,
   positions: Array<Record<string, unknown>>,
+  updatedAt = '2026-07-13T08:00:00+00:00',
 ) {
   const projectRoot = root.endsWith('/TradingAgent') ? root : join(root, 'TradingAgent')
   const capitalDir = join(projectRoot, 'shared/logs/capital/ashare')
@@ -238,6 +247,7 @@ async function writeCurrentASharePositions(
   await writeFile(
     join(capitalDir, 'ashare_sim_capital_latest.json'),
     JSON.stringify(marketCapitalSnapshot('ashare', {
+      updated_at: updatedAt,
       equity_cny: 50_000,
       cash_balance_cny: 50_000 - positionsMarketValue,
       positions_market_value_cny: positionsMarketValue,
@@ -252,6 +262,7 @@ async function writeCurrentASharePositions(
       execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
       capital_layer: 'simulated',
       account_type: 'simulated',
+      synced_at: updatedAt,
       positions,
       real_trading_enabled: false,
     }),
@@ -323,12 +334,12 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.sourceRefs.capitalPlan).toBe('shared/accounting/position_plan.jsonl')
   })
 
-  it('can read directly from the TradingAgent project root used by production deployment', async () => {
+  it('keeps an unverified A-share legacy pending queue row out of current signals', async () => {
     const root = join(await createWorkspace(), 'TradingAgent')
     await mkdir(join(root, 'signals/pending'), { recursive: true })
     await writeCurrentASharePositions(root, [
       { ts_code: '600519.SH', quantity: 100, market_value: 12000, realized_pnl: 8200 },
-    ])
+    ], '2026-07-04T09:55:00+00:00')
 
     await writeFile(
       join(root, 'shared/accounting/position_plan.jsonl'),
@@ -355,11 +366,244 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: '600519.SH', market: 'A-share' }))
-    expect(snapshot.signals).toContainEqual(expect.objectContaining({
-      symbol: '600519.SH',
-      status: 'pending',
-      capitalEvidence: expect.objectContaining({ score: 0.82, netInflow: 12800000 }),
-    }))
+    expect(snapshot.signals).not.toContainEqual(expect.objectContaining({ symbol: '600519.SH' }))
+    expect(snapshot.domains.signals.status).toBe('empty')
+  })
+
+  it('derives the A-share position authority path and generation from the verified current capital snapshot', async () => {
+    const root = await createWorkspace()
+    const projectRoot = join(root, 'TradingAgent')
+    const currentLineage = 'ashare-current-lineage-v2'
+    const currentExecutionDir = join(projectRoot, 'shared/logs/execution_lineages', currentLineage)
+    const staleExecutionDir = join(projectRoot, 'shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
+    const capitalDir = join(projectRoot, 'shared/logs/capital/ashare')
+    await mkdir(currentExecutionDir, { recursive: true })
+    await mkdir(staleExecutionDir, { recursive: true })
+    await mkdir(capitalDir, { recursive: true })
+    await writeFile(
+      join(capitalDir, 'ashare_sim_capital_latest.json'),
+      JSON.stringify(marketCapitalSnapshot('ashare', {
+        authority_generation: 2,
+        execution_lineage_id: currentLineage,
+        equity_cny: 50_000,
+        cash_balance_cny: 38_000,
+        positions_market_value_cny: 12_000,
+        positions_quantity_by_risk_unit: { '600519.SH': 100 },
+      })),
+    )
+    await writeFile(
+      join(currentExecutionDir, 'simulated_ashare_positions.json'),
+      JSON.stringify({
+        capital_authority_id: 'ashare-capital-v1',
+        authority_generation: 2,
+        execution_lineage_id: currentLineage,
+        capital_layer: 'simulated',
+        account_type: 'simulated',
+        synced_at: '2026-07-14T11:55:00+00:00',
+        positions: [{ ts_code: '600519.SH', quantity: 100, market_value: 12_000 }],
+        real_trading_enabled: false,
+      }),
+    )
+    await writeFile(
+      join(staleExecutionDir, 'simulated_ashare_positions.json'),
+      JSON.stringify({
+        capital_authority_id: 'ashare-capital-v1',
+        authority_generation: 1,
+        execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
+        synced_at: '2026-07-14T11:55:00+00:00',
+        positions: [{ ts_code: '000001.SZ', quantity: 100, market_value: 1_000 }],
+        real_trading_enabled: false,
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-14T12:00:00.000Z'),
+    })
+
+    expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: '600519.SH', market: 'A-share' }))
+    expect(snapshot.holdings).not.toContainEqual(expect.objectContaining({ symbol: '000001.SZ' }))
+    expect(snapshot.portfolio?.ashareAccount).toMatchObject({
+      authorityGeneration: 2,
+      executionLineageId: currentLineage,
+      updatedAt: '2026-07-13T08:00:00+00:00',
+    })
+    expect(snapshot.portfolio?.updatedAt).toBe('2026-07-13T08:00:00+00:00')
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'A-share')).toMatchObject({
+      capitalAuthorityId: 'ashare-capital-v1',
+      authorityGeneration: 2,
+      executionLineageId: currentLineage,
+      holdingCount: 1,
+    })
+  })
+
+  it.each([
+    ['stale', '2026-07-10T08:00:00+00:00'],
+    ['future-dated', '2026-07-17T08:00:00+00:00'],
+  ])('fails closed for a %s market-capital authority instead of displaying it as current', async (_caseName, updatedAt) => {
+    const root = await createWorkspace()
+    await writeCurrentMarketCapitalAuthorities(root, {
+      ashare: { updated_at: updatedAt },
+      cnFutures: { updated_at: updatedAt },
+    })
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-16T08:05:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'A-share')).toMatchObject({
+      capitalAuthorityId: null,
+    })
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'CNFutures')).toMatchObject({
+      capitalAuthorityId: null,
+    })
+  })
+
+  it('rejects a stale position receipt even when its quantities still match fresh capital', async () => {
+    const root = await createWorkspace()
+    await writeCurrentASharePositions(root, [
+      { ts_code: '600519.SH', quantity: 100, market_value: 12_000 },
+    ])
+    const positionsPath = join(
+      root,
+      'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/simulated_ashare_positions.json',
+    )
+    const positions = JSON.parse(await readFile(positionsPath, 'utf8')) as Record<string, unknown>
+    positions.synced_at = '2026-07-10T08:00:00+00:00'
+    await writeFile(positionsPath, JSON.stringify(positions))
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-13T08:05:00.000Z'),
+    })
+
+    expect(snapshot.holdings).not.toContainEqual(expect.objectContaining({ market: 'A-share' }))
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'A-share')).toMatchObject({
+      runtimeReason: 'ashare_position_authority_unavailable',
+    })
+  })
+
+  it('does not use the dashboard generation time as a substitute for missing market evidence', async () => {
+    const root = await createWorkspace()
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-16T08:05:00.000Z'),
+    })
+
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'A-share')?.latestAt).toBeUndefined()
+  })
+
+  it('marks A-share positions unavailable when the current position receipt conflicts with capital authority', async () => {
+    const root = await createWorkspace()
+    const projectRoot = join(root, 'TradingAgent')
+    const currentLineage = 'ashare-current-lineage-v3'
+    const currentExecutionDir = join(projectRoot, 'shared/logs/execution_lineages', currentLineage)
+    const capitalDir = join(projectRoot, 'shared/logs/capital/ashare')
+    await mkdir(currentExecutionDir, { recursive: true })
+    await mkdir(capitalDir, { recursive: true })
+    await writeFile(
+      join(capitalDir, 'ashare_sim_capital_latest.json'),
+      JSON.stringify(marketCapitalSnapshot('ashare', {
+        authority_generation: 3,
+        execution_lineage_id: currentLineage,
+        equity_cny: 50_000,
+        cash_balance_cny: 38_000,
+        positions_market_value_cny: 12_000,
+        positions_quantity_by_risk_unit: { '600519.SH': 100 },
+      })),
+    )
+    await writeFile(
+      join(currentExecutionDir, 'simulated_ashare_positions.json'),
+      JSON.stringify({
+        capital_authority_id: 'ashare-capital-v1',
+        authority_generation: 2,
+        execution_lineage_id: currentLineage,
+        positions: [{ ts_code: '600519.SH', quantity: 100, market_value: 12_000 }],
+        real_trading_enabled: false,
+      }),
+    )
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-14T12:00:00.000Z'),
+    })
+
+    expect(snapshot.holdings).not.toContainEqual(expect.objectContaining({ market: 'A-share' }))
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'A-share')).toMatchObject({
+      capitalAuthorityId: 'ashare-capital-v1',
+      authorityGeneration: 3,
+      executionLineageId: currentLineage,
+      holdingCount: 0,
+      status: 'paused',
+      runtimeState: 'needs_attention',
+      runtimeReason: 'ashare_position_authority_unavailable',
+    })
+  })
+
+  it.each([
+    { caseName: 'missing', corruptPayload: undefined },
+    { caseName: 'corrupt', corruptPayload: '{not-json' },
+  ])('marks non-zero A-share positions unavailable when the current receipt is $caseName', async ({ corruptPayload }) => {
+    const root = await createWorkspace()
+    const projectRoot = join(root, 'TradingAgent')
+    const currentLineage = 'ashare-current-lineage-v4'
+    const currentExecutionDir = join(projectRoot, 'shared/logs/execution_lineages', currentLineage)
+    const capitalDir = join(projectRoot, 'shared/logs/capital/ashare')
+    await mkdir(currentExecutionDir, { recursive: true })
+    await mkdir(capitalDir, { recursive: true })
+    await writeFile(
+      join(capitalDir, 'ashare_sim_capital_latest.json'),
+      JSON.stringify(marketCapitalSnapshot('ashare', {
+        authority_generation: 4,
+        execution_lineage_id: currentLineage,
+        equity_cny: 50_000,
+        cash_balance_cny: 38_000,
+        positions_market_value_cny: 12_000,
+        positions_quantity_by_risk_unit: { '600519.SH': 100 },
+      })),
+    )
+    if (corruptPayload !== undefined) {
+      await writeFile(join(currentExecutionDir, 'simulated_ashare_positions.json'), corruptPayload)
+    }
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-14T12:00:00.000Z'),
+    })
+
+    expect(snapshot.holdings).not.toContainEqual(expect.objectContaining({ market: 'A-share' }))
+    expect(snapshot.marketSummaries?.find((item) => item.market === 'A-share')).toMatchObject({
+      authorityGeneration: 4,
+      executionLineageId: currentLineage,
+      status: 'paused',
+      runtimeState: 'needs_attention',
+      runtimeReason: 'ashare_position_authority_unavailable',
+    })
+  })
+
+  it('does not reopen a malformed position plan as the retired SQLite position authority', async () => {
+    const root = await createWorkspace()
+    const path = join(root, 'TradingAgent/shared/accounting/position_plan.jsonl')
+    const db = new DatabaseSync(path)
+    db.exec('CREATE TABLE position_ledger_simulated (ts_code TEXT, quantity REAL, running_cost REAL, realized_pnl REAL)')
+    db.prepare('INSERT INTO position_ledger_simulated VALUES (?, ?, ?, ?)').run('0700.HK', 200, 78_500, 9_800)
+    db.close()
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-14T12:00:00.000Z'),
+    })
+
+    expect(snapshot.holdings).not.toContainEqual(expect.objectContaining({ symbol: '0700.HK' }))
   })
 
   it('keeps mixed signal outcomes visible and normalizes backend market labels', async () => {
@@ -879,7 +1123,7 @@ describe('TradingAgent snapshot reader', () => {
 
   it('reads CNFutures maturity beside A-share without sharing days, samples, or authority', async () => {
     const root = await createWorkspace()
-    await writeCurrentMarketCapitalAuthorities(root)
+    await writeCurrentMarketCapitalAuthorities(root, {}, '2026-07-25T08:00:00+00:00')
     const futuresReviewDir = join(root, 'TradingAgent/shared/review/cn_futures')
     await mkdir(futuresReviewDir, { recursive: true })
     await writeCurrentAShareProjectionGeneration(root, {
@@ -1605,7 +1849,7 @@ describe('TradingAgent snapshot reader', () => {
 
   it('uses only the canonical A-share server-local ledger for dashboard equity', async () => {
     const root = await createWorkspace()
-    await writeCurrentMarketCapitalAuthorities(root)
+    await writeCurrentMarketCapitalAuthorities(root, {}, '2026-07-04T11:55:00+00:00')
     const legacyAshareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/aggressive')
     const canonicalAshareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
     await mkdir(legacyAshareRoot, { recursive: true })
@@ -1818,7 +2062,7 @@ describe('TradingAgent snapshot reader', () => {
           '000002.SZ': 1600,
         },
       },
-    })
+    }, '2026-07-06T11:55:00+00:00')
     const localSimRoot = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
     await mkdir(localSimRoot, { recursive: true })
 
@@ -1854,6 +2098,7 @@ describe('TradingAgent snapshot reader', () => {
         execution_lineage_id: 'ashare-sim-fresh-20260712-v1',
         capital_layer: 'simulated',
         account_type: 'simulated',
+        synced_at: '2026-07-06T11:55:00+00:00',
         real_trading_enabled: false,
         positions: [
           {
@@ -1862,6 +2107,13 @@ describe('TradingAgent snapshot reader', () => {
             avg_price: 10.3,
             market_value: 7206.57,
             unrealized_pnl: -5,
+          },
+          {
+            ts_code: '000002.SZ',
+            quantity: 1600,
+            avg_price: 14.2,
+            market_value: 22728.43,
+            unrealized_pnl: -40,
           },
         ],
       }),
@@ -1917,7 +2169,7 @@ describe('TradingAgent snapshot reader', () => {
 
   it('treats after-hours A-share local sim fills as validation samples in the dashboard', async () => {
     const root = await createWorkspace()
-    await writeCurrentMarketCapitalAuthorities(root)
+    await writeCurrentMarketCapitalAuthorities(root, {}, '2026-07-07T08:55:00+00:00')
     const localSimRoot = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
     await mkdir(localSimRoot, { recursive: true })
 
@@ -2016,7 +2268,7 @@ describe('TradingAgent snapshot reader', () => {
 
   it('keeps same-day A-share no-trade evidence visible when historical trades exist', async () => {
     const root = await createWorkspace()
-    await writeCurrentMarketCapitalAuthorities(root)
+    await writeCurrentMarketCapitalAuthorities(root, {}, '2026-07-08T07:25:00+00:00')
     const logRoot = join(root, 'TradingAgent/shared/logs')
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
     const localSimRoot = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
@@ -2274,7 +2526,7 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
-  it('reads explicit opportunity funnel event logs as the homepage funnel source', async () => {
+  it('reads retired opportunity funnel event logs only as frozen legacy history', async () => {
     const root = await createWorkspace()
 
     await writeFile(
@@ -2330,14 +2582,15 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T10:00:00.000Z'),
     })
 
-    expect(snapshot.domains.signals.status).toBe('ready')
+    expect(snapshot.domains.signals.status).toBe('empty')
+    expect(snapshot.domains.risk.status).toBe('empty')
     expect(snapshot.sourceRefs.opportunityEvents).toContain('shared/review/opportunities/funnel_events.jsonl')
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
       symbol: '0700.HK',
       opportunityId: 'opp-0700-breakout',
       stage: '待确认',
       status: '等待',
-      source: 'opportunity_log',
+      source: 'legacy_frozen_opportunity_log',
       reason: '等待价格确认',
     }))
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
@@ -2345,7 +2598,7 @@ describe('TradingAgent snapshot reader', () => {
       opportunityId: 'opp-btc-volatility',
       stage: '结果',
       status: '拦截',
-      source: 'opportunity_log',
+      source: 'legacy_frozen_opportunity_log',
       terminal: true,
     }))
   })
@@ -2468,7 +2721,7 @@ describe('TradingAgent snapshot reader', () => {
         realized_pnl: 40,
         unrealized_pnl: 12,
         opportunity_id: 'opp-ashare-001',
-    }])
+    }], '2026-07-11T03:55:00+00:00')
 
     const snapshot = await readTradingAgentSnapshot({ workspaceRoot: root, signalQueueDir: join(root, 'signals'), now: new Date('2026-07-11T04:00:00.000Z') })
 
@@ -2499,7 +2752,7 @@ describe('TradingAgent snapshot reader', () => {
     )
     await writeCurrentASharePositions(root, [
       { ts_code: '600519.SH', quantity: 1, market_value: 1500, realized_pnl: 0 },
-    ])
+    ], '2026-07-06T02:55:00+00:00')
     await writeFile(
       join(ledgerRoot, 'positions.json'),
       JSON.stringify({
@@ -3100,7 +3353,7 @@ describe('TradingAgent snapshot reader', () => {
         cash_balance_cny: 51_200,
         realized_pnl_cny: 1_200,
       },
-    })
+    }, '2026-07-04T11:55:00+00:00')
     const ashareReview = join(root, 'TradingAgent/shared/review/ashare')
     const tiersRoot = join(root, 'TradingAgent/shared/logs/local_sim_tiers')
     const localSimDir = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
@@ -3177,7 +3430,7 @@ describe('TradingAgent snapshot reader', () => {
 
   it('uses the current A-share account for realized and unrealized PnL instead of stale style performance', async () => {
     const root = await createWorkspace()
-    await writeCurrentMarketCapitalAuthorities(root)
+    await writeCurrentMarketCapitalAuthorities(root, {}, '2026-07-11T03:55:00+00:00')
     const localSimDir = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')
     const reviewDir = join(root, 'TradingAgent/shared/review/ashare')
     await mkdir(localSimDir, { recursive: true })
@@ -3421,7 +3674,7 @@ describe('cross-market monetary segregation', () => {
         realized_pnl_cny: -300,
         unrealized_pnl_cny: 0,
       },
-    })
+    }, '2026-07-11T11:55:00+00:00')
     const ashareRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/ashare/ashare_sim')
     const cnRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/cn_futures/index_intraday_directional')
     await mkdir(ashareRoot, { recursive: true })
@@ -3582,7 +3835,7 @@ describe('cross-market monetary segregation', () => {
   it('rejects local A-share money and CN style money when fresh authority identity is invalid', async () => {
     const root = await createWorkspace()
     await writeCurrentMarketCapitalAuthorities(root, {
-      ashare: { authority_generation: 2 },
+      ashare: { authority_generation: 0 },
       cnFutures: { execution_lineage_id: '', initial_equity_cny: 100_000 },
     })
     const localSimDir = join(root, 'TradingAgent/shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1')

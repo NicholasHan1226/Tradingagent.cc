@@ -89,6 +89,44 @@ class SimEngineSmokeTest(unittest.TestCase):
         self.assertEqual(record.state, "rejected")
         self.assertEqual(record.reason, "insufficient_sellable_qty_t1")
 
+    def test_ashare_sell_rejects_partial_odd_lot_request(self) -> None:
+        engine = SimExecutionEngine("ashare", rng=random.Random(1))
+        engine.position("600000.SH").current_holdings = 150
+        order = SimOrder(
+            symbol="600000.SH",
+            side="sell",
+            quantity=20,
+            limit_price=10.0,
+            market="ashare",
+        )
+
+        record = engine.submit_order(
+            order,
+            {"bid_price": 10.0, "bid_size": 1000, "sellable_qty": 150},
+        )
+
+        self.assertEqual(record.state, "rejected")
+        self.assertEqual(record.reason, "ashare_odd_lot_sell_quantity_invalid")
+
+    def test_ashare_sell_accepts_complete_odd_lot_remainder(self) -> None:
+        engine = SimExecutionEngine("ashare", rng=random.Random(1))
+        engine.position("600000.SH").current_holdings = 150
+        order = SimOrder(
+            symbol="600000.SH",
+            side="sell",
+            quantity=50,
+            limit_price=10.0,
+            market="ashare",
+        )
+
+        record = engine.submit_order(
+            order,
+            {"bid_price": 10.0, "bid_size": 1000, "sellable_qty": 150},
+        )
+
+        self.assertEqual(record.state, "filled")
+        self.assertEqual(record.filled_qty, 50)
+
     def test_ashare_rejects_price_above_limit(self) -> None:
         engine = SimExecutionEngine("ashare", rng=random.Random(1))
         order = SimOrder(

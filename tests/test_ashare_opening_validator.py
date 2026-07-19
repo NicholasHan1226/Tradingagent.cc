@@ -71,7 +71,9 @@ class AshareOpeningValidatorTest(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertIn("api_daily", report.get("reason", ""))
         self.assertFalse(report["real_trading_enabled"])
-        self.assertIn("SharedSignals API", report.get("data_source", ""))
+        data_source = report.get("data_source", "")
+        self.assertIn("legacy compatibility bulk reader", data_source)
+        self.assertNotIn("SharedSignals API", data_source)
 
     def test_pre_open_fails_when_daily_bars_missing(self) -> None:
         reader = _mock_reader(assets=[_asset_row("600000.SH"), _asset_row("000001.SZ")], daily_rows=[])

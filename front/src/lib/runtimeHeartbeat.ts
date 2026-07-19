@@ -35,7 +35,9 @@ export function createRuntimeHeartbeat({
   const snapshotAge = ageMs(generatedAt, now)
   const degraded = marketSummary?.executionFault === true || Object.values(domains).some((domain) => DEGRADED_STATUSES.has(domain.status))
   const stale = snapshotAge === null || snapshotAge > SNAPSHOT_STALE_MS || Object.values(domains).some((domain) => domain.status === 'stale')
-  const latestEventAt = funnelEvents.reduce<string | null>((latest, event) => newerTimestamp(latest, event.at), null)
+  const latestEventAt = funnelEvents
+    .filter((event) => event.source !== 'legacy_frozen_opportunity_log')
+    .reduce<string | null>((latest, event) => newerTimestamp(latest, event.at), null)
   const latestEventLabel = latestEventAt ? `最近事件 ${formatAge(ageMs(latestEventAt, now))}` : '尚无过程事件'
   const snapshotLabel = generatedAt ? `快照 ${formatAge(snapshotAge)}` : '等待快照'
 
@@ -50,9 +52,10 @@ const TERMINAL_LABELS: Record<string, string> = {
   sell: '卖出观察',
   hold: '继续观察',
   empty: '等待数据',
-  signal_queue: '信号队列',
+  signal_queue: '队列状态投影',
   sim_ledger: '模拟账本',
   opportunity_log: '机会事件',
+  legacy_frozen_opportunity_log: '旧漏斗冻结历史',
 }
 
 export function translateTerminalValue(value: string | undefined) {

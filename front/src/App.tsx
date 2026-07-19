@@ -26,7 +26,7 @@ import './App.css'
 import './styles/home-funnel.css'
 import './styles/page-summary.css'
 
-const DASHBOARD_BUILD_ID = '20260711-explicit-market-attribution'
+const DASHBOARD_BUILD_ID = '20260716-today-paper-run-candidate'
 
 function App() {
   const demoPreviewEnabled = isDemoPreviewEnabled()
@@ -251,6 +251,7 @@ function App() {
             reviewItems={observatory.automaticReview}
             runningCount={observatory.summary.runningCount}
             runtimeItem={observatory.runtimeItem}
+            paperDayRun={readModelSnapshot?.paperDayRun}
             snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
             funnelEvents={visibleFunnelEvents}
             events={chartEvents}

@@ -144,50 +144,26 @@ def _latest_liquid_universe_from_reader(reader: Any, *, limit: int) -> list[str]
         asset_symbols.append(symbol)
 
     batch_amounts = _latest_daily_amounts_from_reader(reader)
-    if batch_amounts:
-        candidates = [
-            (symbol, amount)
-            for symbol in asset_symbols
-            if (amount := batch_amounts.get(symbol, 0.0)) > 0
-            and amount * 1000.0 >= 50_000_000.0
-        ]
-        candidates.sort(key=lambda item: (-item[1], item[0]))
-        return [symbol for symbol, _ in candidates[: max(1, int(limit))]]
-
-    candidates: list[tuple[str, float]] = []
-    for symbol in asset_symbols:
-        amount = _latest_daily_amount_from_reader(reader, symbol)
-        if amount > 0 and amount * 1000.0 < 50_000_000.0:
-            continue
-        candidates.append((symbol, amount))
-        if len(candidates) >= max(1, int(limit)) * 4:
-            break
-    candidates.sort(key=lambda item: -item[1])
+    if not batch_amounts:
+        return []
+    candidates = [
+        (symbol, amount)
+        for symbol in asset_symbols
+        if (amount := batch_amounts.get(symbol, 0.0)) > 0
+        and amount * 1000.0 >= 50_000_000.0
+    ]
+    candidates.sort(key=lambda item: (-item[1], item[0]))
     return [symbol for symbol, _ in candidates[: max(1, int(limit))]]
 
 
 def _latest_daily_rows_from_reader(reader: Any) -> list[dict[str, Any]]:
     get_latest_daily_batch = getattr(reader, "get_latest_daily_batch", None)
-    rows: list[dict[str, Any]] = []
-    api_error: str | None = None
-    if callable(get_latest_daily_batch):
-        try:
-            rows = list(get_latest_daily_batch("Ashare", limit=5000) or [])
-        except Exception as exc:
-            api_error = f"{exc.__class__.__name__}: {exc}"
-            rows = []
-    if not rows and not api_error:
-        get_tushare = getattr(reader, "get_tushare", None)
-        if callable(get_tushare):
-            try:
-                rows = list(get_tushare("daily", limit=5000) or [])
-            except TypeError:
-                rows = []
-            except Exception as exc:
-                api_error = f"{exc.__class__.__name__}: {exc}"
-                rows = []
-    if api_error and not rows:
-        raise RuntimeError(api_error)
+    if not callable(get_latest_daily_batch):
+        return []
+    try:
+        rows = list(get_latest_daily_batch("Ashare", limit=5000) or [])
+    except Exception as exc:
+        raise RuntimeError(f"{exc.__class__.__name__}: {exc}") from exc
     return [row for row in rows if isinstance(row, dict)]
 
 
@@ -420,7 +396,9 @@ def _api_daily_coverage_from_reader(
             "status": "fail",
             "reason": "api_daily_bars_missing",
             "symbol_count": 0,
-            "data_source": "SharedSignals API /tushare daily read model",
+            "data_source": (
+                "legacy compatibility bulk reader (hard-blocked from current-v1)"
+            ),
         }
 
     # ---- asset count & coverage ratio ----
@@ -518,7 +496,9 @@ def _api_daily_coverage_from_reader(
         "latest_daily_age_days": age_days,
         "max_daily_age_days": 5,
         "min_coverage_ratio": min_coverage_ratio,
-        "data_source": "SharedSignals API /tushare daily read model",
+        "data_source": (
+            "legacy compatibility bulk reader (hard-blocked from current-v1)"
+        ),
     }
 
 

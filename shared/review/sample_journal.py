@@ -25,6 +25,7 @@ import stat
 from time import perf_counter
 from typing import Any, Iterator, Mapping, Optional, Sequence, Union
 
+from shared.models.lifecycle import ValidationPlan
 from shared.review.forward_labels import (
     PIT_TIMESTAMP_FIELDS,
     build_prediction_snapshot,
@@ -616,23 +617,30 @@ def _decision_cluster_id(value: Mapping[str, Any]) -> str:
 
 
 def _current_authority_scope(value: Optional[Mapping[str, Any]]) -> dict[str, Any]:
-    scope = dict(value or {})
-    authority_id = str(
-        scope.get("capital_authority_id") or ASHARE_CAPITAL_AUTHORITY_ID
-    ).strip()
-    generation = scope.get("authority_generation", ASHARE_AUTHORITY_GENERATION)
-    lineage_id = str(
-        scope.get("execution_lineage_id") or ASHARE_EXECUTION_LINEAGE_ID
-    ).strip()
+    if value is None:
+        # Time-boxed compatibility for legacy callers that have not yet been
+        # moved to the explicit authority-scope contract.  Current runtime
+        # composition must provide the observed authority envelope instead of
+        # treating this bootstrap generation as a permanent truth.
+        scope: dict[str, Any] = {
+            "capital_authority_id": ASHARE_CAPITAL_AUTHORITY_ID,
+            "authority_generation": ASHARE_AUTHORITY_GENERATION,
+            "execution_lineage_id": ASHARE_EXECUTION_LINEAGE_ID,
+        }
+    else:
+        scope = dict(value)
+    authority_id = str(scope.get("capital_authority_id") or "").strip()
+    generation = scope.get("authority_generation")
+    lineage_id = str(scope.get("execution_lineage_id") or "").strip()
     if authority_id != ASHARE_CAPITAL_AUTHORITY_ID:
         raise JournalSafetyError("current A-share capital authority required")
     if (
         not isinstance(generation, int)
         or isinstance(generation, bool)
-        or generation != ASHARE_AUTHORITY_GENERATION
+        or generation <= 0
     ):
         raise JournalSafetyError("current A-share authority generation required")
-    if lineage_id != ASHARE_EXECUTION_LINEAGE_ID:
+    if not lineage_id:
         raise JournalSafetyError("current A-share execution lineage required")
     return {
         "capital_authority_id": authority_id,
@@ -1181,6 +1189,7 @@ def _strict_evolution_evidence(
     record: Mapping[str, Any],
     *,
     evidence_index: Mapping[str, Any],
+    authority_scope: Mapping[str, Any],
 ) -> bool:
     kind = (
         str(
@@ -1197,6 +1206,7 @@ def _strict_evolution_evidence(
     return (
         validate_strict_completed_round_trip_evidence(
             record,
+            authority_scope=authority_scope,
             evidence_index=evidence_index,
         ).get("valid")
         is True
@@ -1893,6 +1903,7 @@ class SampleJournal:
         as_of: Any,
         horizon_targets: Optional[Mapping[str, Any]] = None,
         costs: Optional[Mapping[str, Any]] = None,
+        validation_plan: Optional[ValidationPlan] = None,
     ) -> dict[str, Any]:
         materialized = materialize_forward_labels(
             snapshot,
@@ -1900,6 +1911,7 @@ class SampleJournal:
             as_of=as_of,
             horizon_targets=horizon_targets,
             costs=costs,
+            validation_plan=validation_plan,
         )
         cost_model_version = None
         cost_evidence_id = None
@@ -1958,6 +1970,10 @@ class SampleJournal:
                 ),
             }
         )
+        if isinstance(materialized.get("forward_label_authority_binding"), Mapping):
+            update["forward_label_authority_binding"] = deepcopy(
+                materialized["forward_label_authority_binding"]
+            )
         update["journal_event_id"] = _stable_label_update_id(
             snapshot_id,
             materialized["labels_as_of"],
@@ -1996,6 +2012,7 @@ class SampleJournal:
         requests: Sequence[Mapping[str, Any]],
         *,
         batch_size: int = 200,
+        validation_plan: Optional[ValidationPlan] = None,
     ) -> dict[str, Any]:
         """Append task-owned label deltas in bounded idempotent batches.
 
@@ -2042,6 +2059,7 @@ class SampleJournal:
                     else None
                 ),
                 costs=costs,
+                validation_plan=validation_plan,
             )
             event_id = str(update["journal_event_id"])
             prior = existing.get(event_id) or pending_by_id.get(event_id)
@@ -2096,6 +2114,7 @@ class SampleJournal:
         as_of: Any,
         horizon_targets: Optional[Mapping[str, Any]] = None,
         costs: Optional[Mapping[str, Any]] = None,
+        validation_plan: Optional[ValidationPlan] = None,
     ) -> dict[str, Any]:
         """Append an idempotent forward-label update for an existing snapshot.
 
@@ -2123,6 +2142,7 @@ class SampleJournal:
                 as_of=as_of,
                 horizon_targets=horizon_targets,
                 costs=costs,
+                validation_plan=validation_plan,
             )
 
             existing = [
@@ -2337,6 +2357,7 @@ class SampleJournal:
             if _strict_evolution_evidence(
                 record,
                 evidence_index=evidence_index,
+                authority_scope=current_authority,
             )
         ]
         invalid_evolution_evidence_count = len(current_records) - len(

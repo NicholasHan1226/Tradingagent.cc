@@ -7,6 +7,9 @@ from pathlib import Path
 import pytest
 
 from shared.review.sample_journal import SampleJournal
+from tests._ashare_validation_plan_fixture import (
+    build_non_production_ashare_validation_plan,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +68,13 @@ class EmptyAshareReader:
 
 def _module():
     return importlib.import_module(MODULE_NAME)
+
+
+def _run_sample_ops(module, **kwargs):
+    """Test-only adapter makes the non-production plan explicit."""
+
+    kwargs.setdefault("validation_plan", build_non_production_ashare_validation_plan())
+    return module.run_ashare_sample_ops(**kwargs)
 
 
 def _prediction() -> dict[str, object]:
@@ -145,7 +155,8 @@ def test_empty_journal_is_an_explicit_warning_and_persists_manual_only_evidence(
     journal_path = tmp_path / "sample_journal.jsonl"
     review_dir = tmp_path / "review"
 
-    report = module.run_ashare_sample_ops(
+    report = _run_sample_ops(
+        module,
         journal_path=journal_path,
         trade_date="20260713",
         as_of="2026-07-13T10:20:00+08:00",
@@ -195,7 +206,8 @@ def test_sample_ops_materializes_labels_and_is_idempotent(tmp_path: Path) -> Non
     journal = SampleJournal(journal_path)
     journal.append_prediction(_prediction())
 
-    first = module.run_ashare_sample_ops(
+    first = _run_sample_ops(
+        module,
         journal_path=journal_path,
         trade_date="20260713",
         as_of="2026-07-14T16:00:00+08:00",
@@ -203,7 +215,8 @@ def test_sample_ops_materializes_labels_and_is_idempotent(tmp_path: Path) -> Non
         reader=FakeAshareReader(),
         environ={},
     )
-    second = module.run_ashare_sample_ops(
+    second = _run_sample_ops(
+        module,
         journal_path=journal_path,
         trade_date="20260713",
         as_of="2026-07-14T16:00:00+08:00",
@@ -241,7 +254,8 @@ def test_retired_authority_events_do_not_enter_fresh_start_counts(
     }
     SampleJournal(journal_path).append_prediction(legacy)
 
-    report = module.run_ashare_sample_ops(
+    report = _run_sample_ops(
+        module,
         journal_path=journal_path,
         trade_date="20260713",
         as_of="2026-07-13T10:20:00+08:00",
@@ -271,7 +285,8 @@ def test_short_lineage_marker_cannot_claim_point_in_time_evidence(
     }
     SampleJournal(journal_path).append_prediction(prediction)
 
-    report = module.run_ashare_sample_ops(
+    report = _run_sample_ops(
+        module,
         journal_path=journal_path,
         trade_date="20260713",
         as_of="2026-07-13T10:20:00+08:00",
@@ -366,7 +381,8 @@ def test_due_labels_without_market_evidence_are_an_explicit_warning(
     journal_path = tmp_path / "sample_journal.jsonl"
     SampleJournal(journal_path).append_prediction(_prediction())
 
-    report = module.run_ashare_sample_ops(
+    report = _run_sample_ops(
+        module,
         journal_path=journal_path,
         trade_date="20260713",
         as_of="2026-07-13T15:30:00+08:00",
@@ -387,7 +403,8 @@ def test_live_environment_blocks_before_any_output(tmp_path: Path) -> None:
     review_dir = tmp_path / "review"
 
     with pytest.raises(module.AshareSampleOpsSafetyError):
-        module.run_ashare_sample_ops(
+        _run_sample_ops(
+            module,
             journal_path=journal_path,
             trade_date="20260713",
             as_of="2026-07-13T10:20:00+08:00",
@@ -408,7 +425,8 @@ def test_symlink_review_directory_is_rejected(tmp_path: Path) -> None:
     review_dir.symlink_to(target, target_is_directory=True)
 
     with pytest.raises(module.AshareSampleOpsSafetyError):
-        module.run_ashare_sample_ops(
+        _run_sample_ops(
+            module,
             journal_path=tmp_path / "sample_journal.jsonl",
             trade_date="20260713",
             as_of="2026-07-13T10:20:00+08:00",

@@ -14,11 +14,11 @@ gated and must not trigger execution from the front layer.
 
 | Front result | Preferred source | Fallback / supporting source | Status |
 | --- | --- | --- | --- |
-| Current opportunities | `signals/pending/*.json` | `signals/{claimed,running,filled,cancelled,expired,failed,partial}/*.json` | Ready |
-| Opportunity funnel | `shared/review/opportunities/funnel_events.jsonl` | `shared/logs/opportunities/funnel_events.jsonl`, then derived `signals[]` and `sim_ledger` result events | Ready |
-| Positions | `signals/positions/*.json` | `shared/accounting/position_plan.jsonl` | Partial |
+| Current opportunities | compatibility read-only `signals/*.json`; A-share pending requires V1 authority/freshness or is excluded | completed queue/sim-ledger projection only | Partial; not V1 opportunity authority |
+| Legacy opportunity funnel | `shared/review/opportunities/funnel_events.jsonl` | `shared/logs/opportunities/funnel_events.jsonl` | Frozen forensic history only; writer retired; excluded from current readiness |
+| Positions | A-share: verified current capital snapshot -> derived execution-lineage position receipt; other markets: `signals/positions/*.json` | A-share has no fallback; generic non-A-share may use `shared/accounting/position_plan.jsonl` | Partial |
 
-> **A股模拟盘默认走服务器本地闭环**：`Ashare/sim_executor.py` 生成 simulated fill 后直接进入 `signals/filled/` 与 `signals/positions/`；`signals/pending/` 仅在显式启用 `ASHARE_SIM_HERMES_ENABLED=1` 时用于 Hermes/同花顺 GUI 第二路径。
+> `Ashare/sim_executor.py -> signals/*` 是兼容只读来源，不是V1订单authority。前端不得启动Hermes/同花顺或把旧pending queue显示成当前A股机会；V1模拟日只从受验证capital/execution-lineage/RunBundle投影读取。
 | Performance | `shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl` or `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl` | `shared/review/daily/daily_brief.jsonl` return fields, then `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
 | Generic market summaries | US/Crypto/PM `shared/review/*/style_comparison.json` | their own `style_performance.jsonl` and sim ledgers; A-share/CNFutures use their dedicated authorities below | Ready |
 | A-share capital | `shared/logs/capital/ashare/ashare_sim_capital_latest.json` | unavailable; never infer from another market | Ready; strict authority/generation/fresh/reconcile/checksum |
@@ -26,8 +26,9 @@ gated and must not trigger execution from the front layer.
 | A-share research evidence | `shared/review/ashare/research_evidence_latest.json` | omitted from snapshot when missing or malformed | Ready |
 | A-share sample KPI / maturity | `shared/review/ashare/projection_current.json` -> hash-verified `projection_generations/<generation_id>/{sample_kpi_latest,evolution_decision_latest,market_maturity_latest}.json` | entire set omitted when pointer/manifest/file hash, recomputed generation ID, shared input SHA, authority, or explicit sim-only fields are missing/invalid; root mirrors are never a transaction fallback | Ready |
 | CNFutures maturity | `shared/review/cn_futures/market_maturity_latest.json` | omitted when canonical `projection_sha256`, authority, lineage, or sim-only contract is invalid | Ready |
-| Optional market pulse | Bounded SharedSignals HTTP reads selected from current holdings/signals | `marketPulses[]` is omitted per unavailable/degraded series while `marketPulseCoverage` retains exact source coverage | Ready |
+| Optional market pulse | Explicit SharedSignals V1 `GET /v1/catalog` + `POST /v1/query` selected from current holdings/signals | `marketPulses[]` is omitted per unavailable/degraded dataset while `marketPulseCoverage` retains exact source coverage | Local candidate only; explicit base/catalog/policy/dataset mapping, no legacy fallback, upstream/runtime unverified |
 | CNFutures replay evidence | `shared/review/cn_futures/replay_latest.json` | omitted from market summary when missing or malformed | Ready |
+| Today paper-day summary | optional local candidate `shared/runtime/run_bundles/latest.json` plus byte-identical `shared/runtime/run_bundles/runs/<run_id>/<bundle_sha256>.json` | `paperDayRun` omitted when either file, strict manifest, component/payload/bundle hash, run identity, idempotency binding, or simulation-only flags fail; no sample fallback | Candidate active reader only; fixture CLI intentionally publishes under `shared/runtime_test/phase1_paper_fixture/`, so scheduler and active-root publication remain unverified |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
 | Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
 | Live readiness | execution schemas and filled signal writeback | manual authorization state | Gated |
@@ -93,14 +94,19 @@ Display-ready fields used by the homepage:
   `realizedPnl`, and `unrealizedPnl`; the homepage can show that the current
   portfolio return is based on simulated-ledger mark-to-market instead of the
   old entry-price estimate.
-- When A-share local simulation account files exist under
-  current fresh lineage root `shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/`, the snapshot may attach
+- When the verified A-share capital snapshot identifies a safe current execution lineage,
+  the reader derives `shared/logs/execution_lineages/<execution_lineage_id>/` from that
+  snapshot rather than a date-coded constant, and may attach
   `portfolio.ashareAccount`. This object is a display-only account fact layer
   with `cashAvailable`, `marketValue`, `accountEquity`, `accountTotalPnl`,
   `accountReturnPct`, `openPositionCount`, `totalSampleCount`,
   `validationSampleCount`, `strategySampleValidCount`, optional
   `strategyTotalPnl`, optional `strategyMarketValue`, optional
   `strategyOpenPositionCount`, `source`, and `updatedAt`.
+- A-share capital `updated_at` and the derived position receipt's `synced_at` must be timezone-aware,
+  no more than 36 hours old, and not future-dated relative to the snapshot clock. Stale or missing
+  authority is omitted/fail-closed. The dashboard generation timestamp is never substituted for
+  missing market evidence.
 - `portfolio.ashareAccount` separates account facts from strategy-valid
   samples. Filled A-share rows without `candidate_pool_layer=candidate` plus
   `execution_source=ashare_candidate_layer` for buys, or without
@@ -129,14 +135,43 @@ Display-ready fields used by the homepage:
   `reason`, `next`, `steps`, plus optional funnel fields `stage`,
   `stageTimes`, and `stageLatencyMinutes`.
 - `marketSummaries[]`: one read-only status row per active dashboard market.
-- `marketPulses[]`: optional representative-instrument rows enriched by the TradingAgent snapshot service from the configured SharedSignals HTTP read model. Each row contains `market`, `symbol`, `lastPrice`, optional `changePct/high/low/volume/updatedAt`, `freshness`, sourced `points[]`, and `source`. The reader selects at most one current holding or signal symbol per market, requests at most 24 rows, times out after 900ms, caches for 15 seconds, and never calls a provider or write route.
+- `marketPulses[]`: optional representative-instrument rows enriched only through the
+  configured SharedSignals V1 catalog/query boundary. Each row contains `market`, `symbol`,
+  `lastPrice`, optional `changePct/high/low/volume/updatedAt`, `freshness`, sourced `points[]`,
+  and a provider-neutral source identity composed from dataset ID and receipt ID. The reader
+  selects at most one current holding or signal symbol per market, requests at most 24 rows,
+  times out after 900ms, caches for 15 seconds, and never calls a provider, write route,
+  legacy endpoint or sibling SQLite. Catalog version, dataset identity, `as_of`, freshness,
+  quality, lineage and receipt are verified before a pulse can be displayed. Each returned row
+  must explicitly match the requested entity, and its timestamp cannot exceed either
+  `metadata.data_through` or the decision time.
 - `marketPulseCoverage`: optional read-only diagnostics for all six markets. It contains `entries[]` with `sourced`, `no_representative`, `unavailable`, or `degraded` status plus `requestedCount`, `sourcedCount`, `cacheState`, `fetchedAt`, and `sourceLatencyMs`. A cached result preserves its original fetch time and labels its cache state rather than pretending to be a new source read.
 - `marketPulseCoverageHistory`: optional bounded in-process observations of fresh SharedSignals reads. It retains at most 12 entries, adds no sample on cache hit, and resets on snapshot-service restart. It is terminal observability only, not a durable health or SLA history.
+- `paperDayRun`: optional read-only summary of the latest explicitly published
+  local A-share paper-day RunBundle. It carries `environment=local_candidate`,
+  `productionVerified=false`, stage progress, dataset evidence state, simulation
+  execution eligibility, candidate/decision/simulated-order/fill counts,
+  no-trade reasons, risk blocks, Champion manifest identity, and the LLM
+  evidence-only state. The reader accepts only
+  `contract_id=tradingagent.paper_day_loop.v1`, `market=ashare`,
+  `account_type=simulated`, and `real_trading_enabled=false`, with ordered stage
+  receipts. Missing or unsafe input omits the field. The browser then renders an
+  honest unavailable state; it never substitutes fixture or demo execution.
+  Overall evidence may display `degraded` when optional context is explicitly
+  deweighted, while simulation eligibility still requires at least one accepted
+  `required_execution` dataset, `execution_eligible=true`, valid position
+  authority, and no run-level risk block.
   The reader combines existing signals, holdings, simulated ledger capital,
   `style_performance.jsonl`, and `style_comparison.json`. This lets the front
   show why a selected market has data, partial data, or no data without
   inventing trades.
-- `marketPulses[]`: optional sourced price context for representative symbols already present in holdings or signals. The snapshot server reads only `SHAREDSIGNALS_API_URL`, applies a 900ms request timeout and 15-second in-process cache, orders timestamped samples chronologically, accepts compact `YYYYMMDD` daily dates, and uses only canonical YES-outcome rows for PM history. A failed or ambiguous upstream response omits the pulse; it does not fail the snapshot or synthesize movement.
+- `marketPulses[]`: optional sourced price context for representative symbols already present
+  in holdings or signals. The snapshot server requires all four explicit inputs:
+  `SHAREDSIGNALS_API_URL`, `SHAREDSIGNALS_CATALOG_VERSION`,
+  `SHAREDSIGNALS_ACCESS_POLICY_ID`, and
+  `SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON`. Missing or invalid config performs no HTTP
+  call. A failed, stale, degraded, identity-mismatched or ambiguous V1 response omits the pulse;
+  it does not fail the snapshot, synthesize movement, or try a legacy route.
 - CNFutures current runtime status uses the latest actionable row from
   `shared/review/data/cn_futures_sim_reviews.jsonl` as the authoritative
   source. `shared/review/cn_futures/style_comparison.json` is review context for
@@ -162,18 +197,17 @@ Display-ready fields used by the homepage:
 - Supported dashboard market labels include `A-share`, `US`, `Crypto`, `HK`,
   `PM`, and `CNFutures`. CN futures symbols such as `IF2601.CFFEX` and backend
   market labels such as `cn_futures` map to `CNFutures`.
-- Signal stage timestamps can be supplied as `discovered_at`, `scored_at`,
-  `debated_at`, `risk_checked_at`, and `triggered_at`. The reader maps existing
-  status and timestamps into `发现 / 研判 / 风控 / 待确认 / 结果` so the animated
-  funnel reflects only real read-only file state.
-- `funnelEvents[]`: read-only display events. The preferred upstream source is
-  `shared/review/opportunities/funnel_events.jsonl`; the reader also accepts
-  `shared/logs/opportunities/funnel_events.jsonl`. When explicit event logs are
-  absent, the reader derives display events from `signals[]` and the simulated
-  ledger. Each event carries `symbol`, `market`, `stage`, `status`, `source`,
-  and optional `opportunityId`, `sequence`, `at`, `reason`, `latencyMinutes`,
-  and `terminal`, allowing the homepage funnel to animate one real opportunity
-  through the pipeline without writing to queues or inventing stages.
+- Compatibility signal timestamps may be supplied as `discovered_at`,
+  `scored_at`, `debated_at`, `risk_checked_at`, and `triggered_at`. Mapping them
+  into `发现 / 研判 / 风控 / 待确认 / 结果` creates a derived queue projection,
+  not proof that each explicit event happened.
+- `funnelEvents[]` is a read-only display union with distinct source classes.
+  The two historical JSONL paths are parsed only as
+  `legacy_frozen_opportunity_log`; `signal_queue` is a derived compatibility
+  projection; `sim_ledger` is completed replay. Legacy events cannot make
+  signals/risk ready, drive the current heartbeat, or link current holdings/PnL.
+  Future current opportunity display requires a separately verified
+  OpportunityLedger read-only projection; it is not implemented here.
 - Explicit opportunity event rows may use either snake_case or camelCase:
   `opportunity_id/opportunityId`, `event_id/id`, `symbol/ts_code`, `market`,
   `stage`, `status`, `timestamp/at/ts/created_at/updated_at`,
@@ -201,11 +235,10 @@ Display-ready fields used by the homepage:
 - Missed, expired, failed, and cancelled rows are terminal review outcomes.
   They should be shown as review/abandoned results, not counted as current
   pending opportunities.
-- The homepage treats `opportunity_log` and `signal_queue` events as the source
-  of a true opportunity funnel. A matching `sim_ledger` result for the same
-  market and symbol may complete the final outcome stage, but simulated-ledger
-  rows alone are only a completed-trade replay. This prevents old fills from
-  pretending to be a live screening funnel.
+- The homepage treats only an explicit, current event source as a future true
+  opportunity funnel. Current code has no such source: legacy JSONL stays
+  frozen, queue rows remain derived projections, and sim-ledger rows remain
+  completed replay. Equal symbol alone never upgrades or joins these classes.
 - Homepage view portfolio: the browser derives the visible portfolio from the
   active market. `All Markets` returns no monetary portfolio; it displays
   non-monetary counts/health only. `A-share` may show
@@ -231,12 +264,11 @@ Display-ready fields used by the homepage:
   frontend transaction point. The retired
   forward-validation projection is not an evolution authority and must not be
   used to authorize risk or live transition.
-- The homepage trading funnel is designed to animate real stage movement. If
-  the API only exposes completed simulated-ledger trade journals, the UI will
-  show a completed-trade replay instead of inventing upstream drop-off. To show
-  a true screening funnel, upstream records should include one row per
-  opportunity with its latest `status`, current `stage`, and available stage
-  timestamps before execution.
+- The homepage may animate explicit current stage movement only after the
+  OpportunityLedger projection has its own current/fresh/authority contract.
+  Until then it labels queue-derived paths as status projections, old JSONL as
+  frozen history, and simulated-ledger paths as completed replay; it does not
+  infer upstream drop-off.
 - If `funnelEvents[]` and `signals[]` are both empty but `holdings[]` exists,
   the homepage renders a holding flow (`当前持仓 / 收益贡献 / 风险检查 / 继续持有 /
   复盘记录`). This is deliberately not labeled as a new-opportunity funnel. It
@@ -274,12 +306,12 @@ waiting/unavailable state when the snapshot API is unavailable; they must not
 display sample money, opportunities, holdings, or funnel events as if they were
 live results.
 
-The homepage funnel is a live result view, not a decorative flow. It should
-prefer `funnelEvents[]` from the read model, and may fall back to
-`signals[].stage`, `signals[].stageTimes`, status, and latency fields. When
-upstream records do not include real screening stages, the frontend must label
-the view as a completed-signal replay or waiting state rather than claiming a
-full opportunity funnel.
+The homepage funnel is a read-only result view, not a decorative or execution
+flow. It preserves source identity: explicit current events (future contract),
+derived queue projection, legacy frozen history, and completed replay must not
+be merged into one live claim. When no verified current source exists, the
+frontend shows the appropriate projection/replay/history/waiting label rather
+than claiming a full opportunity funnel.
 
 When the view falls back to holdings, the frontend must show it as a holding
 flow, not as a trade-signal funnel. The visual style should stay close to the
@@ -287,12 +319,15 @@ Hyperliquid-inspired surface: dark base, hairline borders, restrained cyan for
 healthy state, amber/red only for watch or blocked states, and no decorative
 glow blocks.
 
-## Same-Server Production Deployment
+## Authenticated Internal-Use Deployment
 
 The preferred first production shape is to keep the dashboard frontend and the
-read-only snapshot API on the TradingAgent production server. The browser does
-not read the filesystem directly. It loads a static Vite build through Nginx and
-fetches one same-origin snapshot route:
+read-only snapshot API on the TradingAgent production server. This is a
+single-user internal system: a local browser may use the server-local surface,
+while `tradingagent.cc` may provide convenient remote access only after
+Cloudflare Access or equivalent single-user authentication. The browser does
+not read the filesystem directly. It loads a static Vite build through the
+authenticated edge and Nginx, then fetches one same-origin snapshot route:
 
 `GET /api/trading-agent/snapshot`
 
@@ -313,10 +348,11 @@ Last documented deployment shape (not revalidated by the local capital-growth re
 - Service: `tradingagent-front-api.service`
 - Nginx site: `/etc/nginx/sites-available/tradingagent-front`
 - Internal API: `127.0.0.1:8787`
-- Public server names: `dashboard.tradingagent.cc`, `tradingagent.cc`,
-  `www.tradingagent.cc`
-- DNS, Tunnel, service, and Nginx runtime state must be verified independently
-  during an explicitly authorized release; repository text is not production proof.
+- Historical server names: `dashboard.tradingagent.cc`, `tradingagent.cc`,
+  `www.tradingagent.cc`; the preferred personal entry is `tradingagent.cc`.
+- DNS, Tunnel, Access policy, service, and Nginx runtime state must be verified
+  independently during an explicitly authorized release. A reachable domain
+  without a verified single-user policy is a blocker, not production proof.
 
 When the frontend and API share the same domain, the frontend can use the
 same-origin route:
@@ -337,9 +373,13 @@ npm run build:api
 FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent \
 TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1 \
 TRADING_AGENT_SNAPSHOT_PORT=8787 \
-TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://dashboard.tradingagent.cc \
+TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://tradingagent.cc \
 /opt/investment/tools/node-v24.4.1/bin/node dist-server/server/tradingAgentSnapshotHttp.js
 ```
+
+The server rejects non-loopback listen hosts (including `0.0.0.0`) and wildcard
+CORS. Cloudflare Tunnel or same-host Nginx must reach the API through
+`127.0.0.1`; remote browser origins must be listed exactly.
 
 Routes:
 
@@ -378,7 +418,7 @@ Example route shape for the production server:
 ```nginx
 server {
   listen 443 ssl;
-  server_name dashboard.tradingagent.cc;
+  server_name tradingagent.cc;
 
   root /opt/investment/tradingagent/front/dist;
   index index.html;
@@ -404,7 +444,9 @@ the `Authorization` header as shown above.
 
 ## Production Service Shape
 
-Keep the API as a local service and let Nginx handle the public HTTPS surface.
+Keep the API as a local service and let Nginx handle only the authenticated
+remote HTTPS surface. Cloudflare Access or equivalent authentication must run
+before this route; Nginx availability alone is not an authorization boundary.
 One practical `systemd` shape:
 
 ```ini
@@ -419,7 +461,7 @@ WorkingDirectory=/opt/investment/tradingagent/front
 Environment=FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent
 Environment=TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1
 Environment=TRADING_AGENT_SNAPSHOT_PORT=8787
-Environment=TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://dashboard.tradingagent.cc
+Environment=TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://tradingagent.cc
 ExecStart=/opt/investment/tools/node-v24.4.1/bin/node /opt/investment/tradingagent/front/dist-server/server/tradingAgentSnapshotHttp.js
 Restart=on-failure
 RestartSec=3
@@ -437,9 +479,9 @@ Production verification:
 - `curl http://127.0.0.1:8787/healthz` returns `ok`.
 - `curl http://127.0.0.1:8787/api/trading-agent/snapshot` returns JSON when
   the service is bound to localhost and token auth is unset.
-- `curl --resolve dashboard.tradingagent.cc:80:8.138.181.177 http://dashboard.tradingagent.cc/` returns the React app before DNS is switched.
-- The public dashboard route loads the React app.
-- The public `/api/trading-agent/snapshot` route returns JSON through Nginx.
+- A request to `tradingagent.cc` without an authenticated session is denied or redirected to the identity gate; it never returns dashboard data anonymously.
+- The authenticated Nicholas session loads the React app through `tradingagent.cc`.
+- The authenticated same-origin `/api/trading-agent/snapshot` route returns JSON, while a direct API hostname is absent or denied.
 - The snapshot response reports simulated display data and does not expose
   execution, account, credential, callback, or mutation routes.
 
@@ -453,15 +495,18 @@ Rollback:
 
 The route may read:
 
-- `signals/{pending,claimed,running,filled,cancelled,expired,failed,partial}/*.json`
+- compatibility `signals/{pending,claimed,running,filled,cancelled,expired,failed,partial}/*.json` under the source restrictions above
+- frozen forensic `shared/{review,logs}/opportunities/funnel_events.jsonl`, never as current readiness
 - `signals/positions/*.json`
 - `shared/accounting/position_plan.jsonl`
 - `shared/review/daily/daily_brief.jsonl`
 - `shared/review/*/style_performance.jsonl`
 - `shared/review/attribution/*.jsonl`
 - `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}`
-- `shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/local_sim_trades.jsonl`
+- `shared/logs/capital/ashare/ashare_sim_capital_latest.json`, then
+  `shared/logs/execution_lineages/<verified execution_lineage_id>/{simulated_ashare_positions.json,local_sim_trades.jsonl}`
 - `shared/risk/risk_limits.yaml`
+- `shared/runtime/run_bundles/latest.json` as an optional, simulation-only local candidate snapshot
 
 The route must not:
 
@@ -470,6 +515,7 @@ The route must not:
 - import execution routers as action surfaces
 - send orders, emails, webhooks, or account callbacks
 - merge different account layers into one result number
+- turn `paperDayRun` or LLM evidence into an order, queue mutation, approval, or production-readiness claim
 
 ## Current Gap
 
@@ -482,15 +528,33 @@ state.
 
 The repository supports a static frontend plus the server-side snapshot API,
 but this refactor did not verify which hosting path is currently live. Pages,
-Tunnel, Nginx, service runtime, DNS, and public route are separate release
-checks. Every shape must preserve the same read-only boundary: no execution,
-callback, or order mutation route belongs to this dashboard.
+Tunnel, Nginx, service runtime, DNS, Access policy, and the authenticated remote
+route are separate release checks. Every shape must preserve the same read-only
+boundary: no anonymous access, execution, callback, or order mutation route
+belongs to this dashboard.
 
-The data gap is now narrower: server-local simulated ledger positions and trade
-journals feed the homepage holdings and signal funnel, and
+The data gap is now narrower: verified server-local simulated ledger positions
+can feed holdings, while trade journals feed completed replay rather than a
+current opportunity funnel, and
 `shared/review/*/style_performance.jsonl` can feed a real simulated return curve
 when present with simulated ledger capital. `midday_review.jsonl`, strategy/factor attribution JSONL,
 `risk_limits.yaml`, richer per-signal stage records, and normalized
 mark-to-market return series still need upstream data before the UI should
 present them as complete panels. The frontend must not infer returns from trade
 notional or cost basis.
+
+The Today panel reader is implemented. It treats the projection as untrusted input: it requires
+strict keys, recomputes component/payload/bundle hashes and the run ID, checks the receipt and
+idempotency bindings, and requires a byte-identical immutable mirror under
+`shared/runtime/run_bundles/runs/<run_id>/<bundle_sha256>.json`. The Python local candidate includes
+a durable event store, `LocalRunBundlePublisher`, explicit offline composition,
+and `tools/run_phase1_paper_fixture.py`. That CLI is deliberately restricted to
+frozen responses and publishes a non-authoritative projection to
+`<output-root>/shared/runtime_test/phase1_paper_fixture/run_bundles/latest.json`.
+It intentionally does not target the active reader path and cannot create a “Today” run.
+There is no accepted
+scheduler, live SharedSignals adapter, or real paper-session readback.
+Until those are independently implemented and verified, the expected
+user-facing state is “Today RunBundle unavailable”. Repository tests, fixture
+fills and isolated local artifacts are not production or market-runtime
+evidence and must never be manually copied to manufacture a current run.

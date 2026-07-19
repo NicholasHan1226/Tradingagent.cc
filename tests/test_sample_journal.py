@@ -8,6 +8,9 @@ import os
 import pytest
 
 import shared.review.sample_journal as sample_journal_module
+from tests._ashare_validation_plan_fixture import (
+    build_non_production_ashare_validation_plan,
+)
 from shared.review.sample_journal import (
     JOURNAL_SCHEMA_VERSION,
     JournalConflictError,
@@ -108,10 +111,6 @@ def _targets(start: datetime) -> dict[str, datetime]:
     return {
         "m30": start + timedelta(minutes=30),
         "m60": start + timedelta(minutes=60),
-        "close": start + timedelta(hours=5, minutes=30),
-        "1d": start + timedelta(days=1),
-        "3d": start + timedelta(days=3),
-        "5d": start + timedelta(days=5),
     }
 
 
@@ -176,6 +175,7 @@ def test_label_update_includes_cost_model_version(tmp_path):
         [_point(start + timedelta(minutes=30), 10.2)],
         as_of=start + timedelta(minutes=30),
         horizon_targets=_targets(start),
+        validation_plan=build_non_production_ashare_validation_plan(),
     )["record"]
 
     assert update["cost_model_version"] == "ashare-execution-reality-20260706-v1"
@@ -183,6 +183,99 @@ def test_label_update_includes_cost_model_version(tmp_path):
         update["labels"]["m30"]["cost_model_version"]
         == "ashare-execution-reality-20260706-v1"
     )
+
+
+def test_ashare_label_update_requires_and_binds_explicit_validation_plan(tmp_path):
+    journal = SampleJournal(tmp_path / "samples.jsonl")
+    prediction = journal.append_prediction(_candidate())["record"]
+    start = datetime(2026, 7, 13, 1, 30, tzinfo=UTC)
+    points = [_point(start + timedelta(minutes=30), 10.2)]
+
+    with pytest.raises(ValueError, match="ashare_validation_plan_required"):
+        journal.materialize_labels(
+            prediction["snapshot_id"],
+            points,
+            as_of=start + timedelta(minutes=30),
+            horizon_targets={
+                "m30": start + timedelta(minutes=30),
+                "m60": start + timedelta(minutes=60),
+            },
+        )
+
+    plan = build_non_production_ashare_validation_plan()
+    result = journal.materialize_labels(
+        prediction["snapshot_id"],
+        points,
+        as_of=start + timedelta(minutes=30),
+        horizon_targets={
+            "m30": start + timedelta(minutes=30),
+            "m60": start + timedelta(minutes=60),
+        },
+        validation_plan=plan,
+    )
+
+    assert result["status"] == "appended"
+    assert result["record"]["forward_label_authority_binding"] == {
+        "validation_plan_sha256": plan.sha256(),
+        "trading_session_calendar_sha256": (
+            plan.trading_session_calendar.calendar_sha256
+        ),
+        "trading_session_calendar_verification_proof_sha256": (
+            plan.trading_session_calendar_verification.proof_sha256
+        ),
+    }
+    assert result["record"]["labels"]["m30"]["validation_plan_sha256"] == plan.sha256()
+
+
+def test_ashare_label_batch_uses_one_explicit_frozen_plan(tmp_path):
+    journal = SampleJournal(tmp_path / "batch.jsonl")
+    records = journal.append_predictions(
+        [_candidate(symbol="600000.SH"), _candidate(symbol="600001.SH")]
+    )
+    snapshot_ids = [result["record"]["snapshot_id"] for result in records]
+    start = datetime(2026, 7, 13, 1, 30, tzinfo=UTC)
+    view = journal.read_frozen(as_of=start + timedelta(minutes=30))
+    requests = [
+        {
+            "snapshot_id": snapshot_id,
+            "price_points": [_point(start + timedelta(minutes=30), 10.2)],
+            "as_of": start + timedelta(minutes=30),
+            "horizon_targets": _targets(start),
+        }
+        for snapshot_id in snapshot_ids
+    ]
+
+    with pytest.raises(ValueError, match="ashare_validation_plan_required"):
+        journal.materialize_label_batch(view, requests)
+
+    plan = build_non_production_ashare_validation_plan()
+    report = journal.materialize_label_batch(
+        view,
+        requests,
+        validation_plan=plan,
+    )
+
+    assert len(report["appended_events"]) == 2
+    assert {
+        event["forward_label_authority_binding"]["validation_plan_sha256"]
+        for event in report["appended_events"]
+    } == {plan.sha256()}
+
+
+def test_non_ashare_label_materialization_remains_plan_optional(tmp_path):
+    journal = SampleJournal(tmp_path / "non-ashare.jsonl")
+    prediction = journal.append_prediction(_candidate(market="US"))["record"]
+    start = datetime(2026, 7, 13, 1, 30, tzinfo=UTC)
+
+    result = journal.materialize_labels(
+        prediction["snapshot_id"],
+        [_point(start + timedelta(minutes=30), 10.2)],
+        as_of=start + timedelta(minutes=30),
+        horizon_targets=_targets(start),
+    )
+
+    assert result["status"] == "appended"
+    assert "forward_label_authority_binding" not in result["record"]
 
 
 def test_cost_versioned_idempotency_prevent_old_zero_cost_collision(tmp_path):
@@ -198,6 +291,7 @@ def test_cost_versioned_idempotency_prevent_old_zero_cost_collision(tmp_path):
         points,
         as_of=start + timedelta(minutes=30),
         horizon_targets=_targets(start),
+        validation_plan=build_non_production_ashare_validation_plan(),
     )
     assert r1["status"] == "appended"
     eid1 = r1["record"]["journal_event_id"]
@@ -208,6 +302,7 @@ def test_cost_versioned_idempotency_prevent_old_zero_cost_collision(tmp_path):
         points,
         as_of=start + timedelta(minutes=30),
         horizon_targets=_targets(start),
+        validation_plan=build_non_production_ashare_validation_plan(),
     )
     assert r2["status"] == "idempotent"
     assert r2["record"]["journal_event_id"] == eid1
@@ -223,6 +318,7 @@ def test_cost_versioned_idempotency_prevent_old_zero_cost_collision(tmp_path):
             "round_trip_slippage_bps": 15.0,
             "cost_model_version": "actual_execution_costs_v1",
         },
+        validation_plan=build_non_production_ashare_validation_plan(),
     )
     assert r3["status"] == "appended"
     assert r3["record"]["journal_event_id"] != eid1
@@ -429,6 +525,7 @@ def test_label_materialization_is_append_idempotent_and_latest_projection_feeds_
     kwargs = {
         "as_of": start + timedelta(minutes=30),
         "horizon_targets": _targets(start),
+        "validation_plan": build_non_production_ashare_validation_plan(),
     }
     points = [_point(start + timedelta(minutes=30), 10.2)]
 
@@ -468,6 +565,7 @@ def test_latest_label_projection_compares_timezone_offsets_chronologically(tmp_p
         [_point(start + timedelta(minutes=30), 10.1)],
         as_of="2026-07-13T10:00:00+08:00",
         horizon_targets=targets,
+        validation_plan=build_non_production_ashare_validation_plan(),
     )
     journal.materialize_labels(
         prediction["snapshot_id"],
@@ -477,6 +575,7 @@ def test_latest_label_projection_compares_timezone_offsets_chronologically(tmp_p
         ],
         as_of="2026-07-13T02:30:00+00:00",
         horizon_targets=targets,
+        validation_plan=build_non_production_ashare_validation_plan(),
     )
 
     latest = journal.latest_sample_records()[0]
@@ -562,6 +661,37 @@ def test_legacy_or_cross_market_portfolio_snapshot_cannot_enter_current_kpi(tmp_
                 "authority_generation": 2,
                 "execution_lineage_id": "retired-epoch-2",
                 "real_trading_enabled": False,
+            }
+        )
+
+
+def test_explicit_rotated_authority_scope_is_current_without_bootstrap_constants(
+    tmp_path,
+):
+    rotated = {
+        "capital_authority_id": "ashare-capital-v1",
+        "authority_generation": 2,
+        "execution_lineage_id": "ashare-sim-rotated-generation-2",
+    }
+    journal = SampleJournal(tmp_path / "rotated-samples.jsonl")
+    journal.append_prediction(_candidate(**rotated))
+
+    kpi = journal.build_kpi(authority_scope=rotated)
+
+    assert kpi["authority_scope"] == rotated
+    assert kpi["raw_current_authority_record_count"] == 1
+
+
+def test_explicit_authority_scope_never_fills_missing_lineage_from_bootstrap(
+    tmp_path,
+):
+    journal = SampleJournal(tmp_path / "missing-lineage.jsonl")
+
+    with pytest.raises(JournalSafetyError, match="execution lineage"):
+        journal.build_kpi(
+            authority_scope={
+                "capital_authority_id": "ashare-capital-v1",
+                "authority_generation": 2,
             }
         )
 
@@ -668,6 +798,7 @@ def test_actual_cost_evidence_id_fingerprint_is_respected(tmp_path):
     base_kwargs = {
         "as_of": start + timedelta(minutes=30),
         "horizon_targets": _targets(start),
+        "validation_plan": build_non_production_ashare_validation_plan(),
         "costs": {
             "round_trip_fee_bps": 50.0,
             "round_trip_slippage_bps": 15.0,

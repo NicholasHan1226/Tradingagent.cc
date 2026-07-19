@@ -11,7 +11,8 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from hashlib import sha256
 import json
 import math
 import os
@@ -20,6 +21,11 @@ from time import perf_counter
 from typing import Any, Mapping, Optional, Sequence
 
 from shared.data.reader import TradingagentDataReader
+from shared.models.lifecycle import (
+    TradingSessionCalendarAuthority,
+    TradingSessionCalendarAuthorityVerification,
+    ValidationPlan,
+)
 from shared.review.forward_labels import (
     CANONICAL_HORIZONS,
     evidence_envelope_from_record,
@@ -82,6 +88,174 @@ class ForwardLabelOpsError(RuntimeError):
 
 class ForwardLabelOpsSafetyError(ForwardLabelOpsError):
     """Raised before any read/write when live execution is indicated."""
+
+
+def _require_ashare_validation_plan(
+    value: Optional[ValidationPlan],
+) -> ValidationPlan:
+    if not isinstance(value, ValidationPlan):
+        raise ForwardLabelOpsSafetyError("verified_frozen_validation_plan_required")
+    calendar = value.trading_session_calendar
+    proof = value.trading_session_calendar_verification
+    if (
+        value.market.strip().lower()
+        not in {"ashare", "a_share", "a-share", "a股", "cn", "china"}
+        or calendar is None
+        or proof is None
+        or proof.accepted is not True
+        or proof.calendar_sha256 != calendar.calendar_sha256
+        or proof.source_receipt_id != calendar.source_receipt_id
+        or proof.source_receipt_sha256 != calendar.source_receipt_sha256
+        or proof.frozen_at != value.frozen_at
+    ):
+        raise ForwardLabelOpsSafetyError(
+            "verified_frozen_ashare_validation_plan_required"
+        )
+    return value
+
+
+def _artifact_datetime(value: Any, *, field: str) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(
+                str(value or "").strip().replace("Z", "+00:00")
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("%s must be an ISO timestamp" % field) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("%s must include a timezone" % field)
+    return parsed
+
+
+def _artifact_date_pair(value: Any, *, field: str) -> tuple[date, date]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError("validation_plan.%s must be a two-date sequence" % field)
+    if len(value) != 2:
+        raise ValueError("validation_plan.%s must contain exactly two dates" % field)
+    try:
+        return date.fromisoformat(str(value[0])), date.fromisoformat(str(value[1]))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("validation_plan.%s contains an invalid date" % field) from exc
+
+
+def load_validation_plan_artifact(path: Path | str | None) -> ValidationPlan:
+    """Load one immutable, detached-proof plan artifact without minting proof."""
+
+    if path is None:
+        raise ForwardLabelOpsSafetyError(
+            "verified_frozen_validation_plan_artifact_required"
+        )
+    artifact_path = Path(path)
+    if artifact_path.is_symlink():
+        raise ForwardLabelOpsSafetyError("validation_plan_artifact_symlink_rejected")
+    try:
+        raw = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ForwardLabelOpsSafetyError("validation_plan_artifact_unreadable") from exc
+    if not isinstance(raw, Mapping):
+        raise ForwardLabelOpsSafetyError("validation_plan_artifact_must_be_mapping")
+    if raw.get("artifact_type") != "ashare_validation_plan_v1":
+        raise ForwardLabelOpsSafetyError("validation_plan_artifact_type_invalid")
+    payload = raw.get("validation_plan")
+    if not isinstance(payload, Mapping):
+        raise ForwardLabelOpsSafetyError("validation_plan_payload_missing")
+    calendar_payload = payload.get("trading_session_calendar")
+    proof_payload = payload.get("trading_session_calendar_verification")
+    if not isinstance(calendar_payload, Mapping) or not isinstance(
+        proof_payload, Mapping
+    ):
+        raise ForwardLabelOpsSafetyError(
+            "validation_plan_calendar_authority_proof_missing"
+        )
+    try:
+        calendar = TradingSessionCalendarAuthority(
+            market=str(calendar_payload["market"]),
+            calendar_id=str(calendar_payload["calendar_id"]),
+            calendar_version=str(calendar_payload["calendar_version"]),
+            source_dataset_id=str(calendar_payload["source_dataset_id"]),
+            source_receipt_id=str(calendar_payload["source_receipt_id"]),
+            source_receipt_sha256=str(calendar_payload["source_receipt_sha256"]),
+            available_at=_artifact_datetime(
+                calendar_payload["available_at"], field="calendar.available_at"
+            ),
+            sessions=tuple(
+                date.fromisoformat(str(value)) for value in calendar_payload["sessions"]
+            ),
+        )
+        if calendar_payload.get("calendar_sha256") != calendar.calendar_sha256:
+            raise ValueError("calendar_sha256_mismatch")
+        if calendar_payload.get("session_count") != calendar.session_count:
+            raise ValueError("calendar_session_count_mismatch")
+        proof = TradingSessionCalendarAuthorityVerification(
+            accepted=proof_payload["accepted"],
+            verifier_id=str(proof_payload["verifier_id"]),
+            verifier_version=str(proof_payload["verifier_version"]),
+            proof_sha256=str(proof_payload["proof_sha256"]),
+            verified_at=_artifact_datetime(
+                proof_payload["verified_at"], field="calendar_proof.verified_at"
+            ),
+            frozen_at=_artifact_datetime(
+                proof_payload["frozen_at"], field="calendar_proof.frozen_at"
+            ),
+            calendar_sha256=str(proof_payload["calendar_sha256"]),
+            source_receipt_id=str(proof_payload["source_receipt_id"]),
+            source_receipt_sha256=str(proof_payload["source_receipt_sha256"]),
+        )
+        train_start, train_end = _artifact_date_pair(payload["train"], field="train")
+        validation_start, validation_end = _artifact_date_pair(
+            payload["validation"], field="validation"
+        )
+        test_start, test_end = _artifact_date_pair(payload["test"], field="test")
+        plan = ValidationPlan(
+            train_start=train_start,
+            train_end=train_end,
+            validation_start=validation_start,
+            validation_end=validation_end,
+            test_start=test_start,
+            test_end=test_end,
+            purge_days=payload["purge_days"],
+            embargo_days=payload["embargo_days"],
+            label_horizon_days=payload["label_horizon_days"],
+            max_feature_lookback_days=payload["max_feature_lookback_days"],
+            event_cluster_embargo_days=payload["event_cluster_embargo_days"],
+            decision_cluster_key=str(payload["decision_cluster_key"]),
+            decision_cluster_deduplicated=payload["decision_cluster_deduplicated"],
+            registered_trial_count=payload["registered_trial_count"],
+            multiple_testing_trial_budget=payload["multiple_testing_trial_budget"],
+            pbo_required=payload["pbo_required"],
+            deflated_sharpe_required=payload["deflated_sharpe_required"],
+            oos_reuse_count=payload["oos_reuse_count"],
+            max_oos_reuse_count=payload["max_oos_reuse_count"],
+            oos_used_for_tuning=payload["oos_used_for_tuning"],
+            oos_authority_receipt_sha256=str(payload["oos_authority_receipt_sha256"]),
+            experiment_family_id=str(payload["experiment_family_id"]),
+            experiment_id=str(payload["experiment_id"]),
+            frozen_test_set_id=str(payload["frozen_test_set_id"]),
+            frozen_at=_artifact_datetime(payload["frozen_at"], field="frozen_at"),
+            market=str(payload["market"]),
+            trading_session_calendar=calendar,
+            trading_session_calendar_verification=proof,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ForwardLabelOpsSafetyError(
+            "validation_plan_artifact_contract_invalid:%s" % exc
+        ) from exc
+    expected_sha = str(raw.get("validation_plan_sha256") or "").strip().lower()
+    if expected_sha != plan.sha256():
+        raise ForwardLabelOpsSafetyError("validation_plan_artifact_sha256_mismatch")
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if sha256(canonical).hexdigest() != plan.sha256():
+        raise ForwardLabelOpsSafetyError(
+            "validation_plan_artifact_noncanonical_payload"
+        )
+    return plan
 
 
 def _is_truthy(value: Any) -> bool:
@@ -667,50 +841,12 @@ def _ashare_horizon_targets(
     as_of: datetime,
     daily_trade_dates: Sequence[str],
 ) -> dict[str, str]:
-    """Build 1d/3d/5d from observed A-share trading dates, not calendar days."""
+    """Build only intraday assertions; the verified plan owns session targets."""
 
     prediction = _parse_datetime(snapshot.get("prediction_at"), field="prediction_at")
-    prediction_date = prediction.strftime("%Y%m%d")
-    same_day_close = prediction.replace(hour=15, minute=0, second=0, microsecond=0)
-    future_dates = sorted(
-        {
-            date
-            for date in daily_trade_dates
-            if len(date) == 8 and date > prediction_date
-        }
-    )
-
-    def close_for(date_key: str) -> datetime:
-        return datetime.strptime(date_key, "%Y%m%d").replace(
-            hour=15,
-            minute=0,
-            second=0,
-            microsecond=0,
-            tzinfo=CN_TZ,
-        )
-
-    def pending_target() -> datetime:
-        # We do not guess future exchange holidays. Until the Nth observed
-        # trading date exists, keep the horizon pending just beyond as_of.
-        return max(as_of + timedelta(seconds=1), prediction + timedelta(seconds=1))
-
-    if same_day_close < prediction:
-        close_target = close_for(future_dates[0]) if future_dates else pending_target()
-    else:
-        close_target = same_day_close
     targets = {
         "m30": prediction + timedelta(minutes=30),
         "m60": prediction + timedelta(minutes=60),
-        "close": close_target,
-        "1d": close_for(future_dates[0])
-        if len(future_dates) >= 1
-        else pending_target(),
-        "3d": close_for(future_dates[2])
-        if len(future_dates) >= 3
-        else pending_target(),
-        "5d": close_for(future_dates[4])
-        if len(future_dates) >= 5
-        else pending_target(),
     }
     return {
         name: _timestamp_compatible_with_snapshot(snapshot, target)
@@ -941,6 +1077,11 @@ def _build_actual_execution_costs(
             event,
             boundary=as_of,
             prediction_snapshot_id=snapshot_id,
+            authority_scope={
+                "capital_authority_id": authority_id,
+                "authority_generation": authority_generation,
+                "execution_lineage_id": execution_lineage_id,
+            },
             evidence_index=evidence_index,
         )
         if strict_validation.get("valid") is not True:
@@ -1076,11 +1217,13 @@ def run_ashare_forward_label_ops(
     snapshot_ids: Optional[Sequence[str]] = None,
     evidence_cache: Optional[dict[tuple[str, str, str], dict[str, Any]]] = None,
     batch_size: int = 200,
+    validation_plan: Optional[ValidationPlan] = None,
 ) -> dict[str, Any]:
     """Materialize an exact frozen set of prediction snapshots."""
 
     active_environ = os.environ if environ is None else environ
     _assert_sim_only(active_environ, safety_flags)
+    validation_plan = _require_ashare_validation_plan(validation_plan)
     selected_trade_date = _validated_trade_date(trade_date)
     current_as_of = _parse_datetime(as_of, field="as_of")
     active_journal = journal or SampleJournal(journal_path)
@@ -1286,6 +1429,7 @@ def run_ashare_forward_label_ops(
         active_view,
         materialization_requests,
         batch_size=batch_size,
+        validation_plan=validation_plan,
     )
     if len(materialization_context) != len(batch_report["results"]):
         raise ForwardLabelOpsError("label_batch_result_count_mismatch")
@@ -1402,11 +1546,13 @@ def run_ashare_forward_label_backlog(
     frozen_view: FrozenJournalView | None = None,
     authority_scope: Optional[Mapping[str, Any]] = None,
     batch_size: int = 200,
+    validation_plan: Optional[ValidationPlan] = None,
 ) -> dict[str, Any]:
     """Discover and materialize only the exact pending frozen snapshot IDs."""
 
     active_environ = os.environ if environ is None else environ
     _assert_sim_only(active_environ, safety_flags)
+    validation_plan = _require_ashare_validation_plan(validation_plan)
     current_as_of = _parse_datetime(as_of, field="as_of")
     active_journal = journal or SampleJournal(journal_path)
     active_view = frozen_view
@@ -1463,6 +1609,7 @@ def run_ashare_forward_label_backlog(
         snapshot_ids=pending_snapshot_ids,
         evidence_cache={},
         batch_size=batch_size,
+        validation_plan=validation_plan,
     )
     counts: Counter[str] = Counter(label_report["counts"])
     counts["backlog_date_count"] = len(pending_dates)
@@ -1506,6 +1653,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--journal-path", type=Path, required=True)
     parser.add_argument("--trade-date", required=True)
     parser.add_argument("--as-of", required=True)
+    parser.add_argument("--validation-plan-path", type=Path)
     parser.add_argument(
         "--backlog-window-days",
         type=int,
@@ -1521,12 +1669,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args(argv)
     try:
+        validation_plan = load_validation_plan_artifact(args.validation_plan_path)
         report = run_ashare_forward_label_backlog(
             journal_path=args.journal_path,
             anchor_trade_date=args.trade_date,
             as_of=args.as_of,
             window_days=args.backlog_window_days,
             batch_size=args.label_batch_size,
+            validation_plan=validation_plan,
         )
         exit_code = 0
     except (ForwardLabelOpsSafetyError, JournalSafetyError, ValueError) as exc:

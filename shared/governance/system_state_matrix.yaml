@@ -1,0 +1,873 @@
+version: 1
+entries:
+  - entry_id: sharedsignals_v1_query
+    state: TARGET_CONTRACT
+    layer: local_isolated_candidate
+    owner: SharedSignals
+    canonical_path: SharedSignals:/v1/query
+    production_verified: false
+    last_verified_at: "2026-07-18"
+    evidence:
+      - docs/superpowers/plans/2026-07-16-mainboard-paper-architecture-v1.md
+    allowed_uses:
+      - contract_and_local_fixture_development
+    prohibited_uses:
+      - claim_production_runtime_ready
+      - fallback_to_tushare_or_sibling_sqlite
+    successor: sharedsignals.query_result.v1
+  - entry_id: tradingagent_sharedsignals_v1_client
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/data/sharedsignals_v1.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_sharedsignals_v1.py
+    allowed_uses:
+      - fixture_and_contract_testing
+      - provider_neutral_v1_client_in_local_candidate
+    prohibited_uses:
+      - claim_sharedsignals_runtime_available
+      - fallback_to_legacy_endpoint_or_sqlite
+    successor: sharedsignals.query_result.v1
+  - entry_id: tradingagent_sharedsignals_v1_integration_probe
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime_test/sharedsignals_v1_integration_probe.py
+    production_verified: false
+    last_verified_at: "2026-07-17"
+    evidence:
+      - tests/test_sharedsignals_v1_integration_probe.py
+      - docs/operations.md
+      - docs/data_contract.md
+    allowed_uses:
+      - explicit_fixture_or_authorized_read_only_v1_integration_probe
+      - same_as_of_semantic_consistency_and_row_pit_validation
+      - content_addressed_non_authority_readiness_receipt
+    prohibited_uses:
+      - claim_sharedsignals_live_runtime_available
+      - infer_production_or_trading_authority
+      - follow_unfrozen_pagination_contract
+      - store_credentials_in_probe_manifest_or_receipt
+      - fallback_to_legacy_endpoint_sqlite_or_provider
+    successor: tradingagent.sharedsignals.integration-readiness.v1
+  - entry_id: tradingagent_mainboard_scope
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/universe/policy.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - docs/universe_contract.md
+      - tests/test_mainboard_scope_policy.py
+      - tests/test_three_universe_snapshots.py
+    allowed_uses:
+      - mainboard_simulation_scope_validation
+      - chinext_star_aggregate_context
+      - externally_verified_content_addressed_coverage_receipt_validation
+    prohibited_uses:
+      - chinext_or_star_individual_security_analysis
+      - non_mainboard_order_creation
+      - caller_asserted_full_market_coverage
+      - accept_unverified_coverage_authority
+    successor: tradingagent.universe_scope.v1
+  - entry_id: tradingagent_small_account_optimizer
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/portfolio/small_account_optimizer.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_small_account_optimizer.py
+      - tests/test_small_account_stage.py
+      - tests/test_execution_reality.py
+    allowed_uses:
+      - uncalibrated_rank_only_simulated_research
+      - integer_lot_and_bilateral_cost_feasibility
+      - independently_verified_complete_account_snapshot_input
+      - ashare_odd_lot_sell_remainder_or_full_exit_validation
+    prohibited_uses:
+      - claim_probability_or_positive_expected_edge
+      - claim_current_production_position_allocator
+      - accept_caller_self_asserted_account_authority
+      - claim_fixture_verifier_as_production_authority
+      - claim_detached_account_proof_as_real_account_or_broker_truth
+      - expand_ashare_capital_authority
+    successor: tradingagent.small_account_optimizer.v1
+  - entry_id: tradingagent_thesis_risk_authority
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/portfolio/thesis_risk.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_thesis_risk.py
+      - tests/test_small_account_optimizer.py
+      - tests/test_ashare_day_loop.py
+      - tests/test_capital_runtime_composition.py
+    allowed_uses:
+      - bind_explicit_human_reviewed_six_dimension_exposure_caps
+      - verify_complete_candidate_position_and_pending_exposure_set
+      - bind_detached_policy_exposure_and_exposure_set_proofs
+      - preserve_verified_reduce_and_exit_while_blocking_cap_breaching_new_risk
+      - reverify_exact_notional_group_continuity_and_final_exposure_map
+    prohibited_uses:
+      - accept_runtime_self_signed_policy_or_exposure_proof
+      - accept_missing_stale_duplicate_or_unbound_exposure_members
+      - reset_preexisting_or_pending_exposure_between_decisions
+      - claim_fixture_policy_or_verifier_as_production_authority
+      - infer_alpha_probability_or_expected_return_from_risk_groups
+      - automatically_expand_caps_or_authorize_live_trading
+    successor: tradingagent.thesis_risk_runtime_authority.v1
+  - entry_id: tradingagent_small_account_plan_binding
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime/day_loop.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_ashare_day_loop.py
+      - tests/test_day_loop_recovery.py
+      - tests/test_sim_engine_smoke.py
+    allowed_uses:
+      - bind_50k_plan_to_verified_simulated_position_authority
+      - enforce_integer_lot_t1_cash_fee_and_risk_order_identity
+      - independently_recompute_canonical_cost_policy
+      - bind_detached_account_authority_verification_receipt
+      - enforce_ashare_odd_lot_sell_quantity_rules
+    prohibited_uses:
+      - infer_live_account_or_broker_state
+      - accept_unbound_or_self_declared_order_quantity
+      - accept_unverified_account_cash_positions_or_sellable_quantity
+      - accept_resigned_but_incorrect_fee_plan
+      - claim_account_binding_receipt_as_live_broker_readback
+      - expand_ashare_capital_authority
+    successor: tradingagent.small_account_plan_receipt.v1
+  - entry_id: tradingagent_canonical_account_authority
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime/canonical_account_authority.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_canonical_account_authority.py
+      - tests/test_canonical_small_account_stage.py
+      - tests/test_market_capital_fill_commit.py
+    allowed_uses:
+      - derive_optimizer_snapshot_from_current_simulated_capital_ledger_head
+      - bind_trade_date_generation_execution_lineage_cash_positions_and_mark_receipts
+      - fail_closed_when_ledger_head_or_authority_identity_drifts
+    prohibited_uses:
+      - claim_live_broker_or_production_account_readback
+      - accept_unreconciled_stale_or_guessed_account_facts
+      - create_parallel_capital_or_position_authority
+      - authorize_real_trading
+    successor: tradingagent.canonical_account_authority.v1
+  - entry_id: tradingagent_champion_authority_binding
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/portfolio/champion.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_frozen_champion.py
+      - tests/test_small_account_optimizer.py
+      - tests/test_canonical_small_account_stage.py
+    allowed_uses:
+      - bind_rank_score_to_current_selection_manifest_artifact_model_and_frozen_spec
+      - bind_numeric_pit_feature_snapshot_to_dataset_receipt_lineage_implementation_and_normalization
+      - reverify_current_selection_and_numeric_feature_authority_at_decision_time
+      - use_uncalibrated_rank_for_ordering_only_with_fixed_probe_sizing
+    prohibited_uses:
+      - accept_caller_self_certified_champion_or_numeric_feature_authority
+      - accept_llm_or_future_data_as_numeric_pit_feature_authority
+      - map_uncalibrated_rank_to_probability_expected_return_or_position_size
+      - claim_fixture_verifier_as_production_registry_or_feature_authority
+      - automatic_challenger_promotion
+    successor: tradingagent.champion_score_receipt.v1
+  - entry_id: tradingagent_market_evidence_authority
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime/market_evidence_authority.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_market_evidence_authority.py
+      - tests/test_capital_backed_paper_stages.py
+      - tests/test_capital_stage_safety.py
+    allowed_uses:
+      - bind_nonproduction_mark_and_quote_evidence_to_dataset_catalog_receipt_lineage_calendar_and_run_context
+      - fail_closed_on_missing_future_stale_or_mismatched_market_evidence
+      - carry_exact_local_verification_identity_into_account_execution_and_receipts
+    prohibited_uses:
+      - claim_fixture_verifier_as_production_market_authority
+      - claim_local_integrity_hash_as_external_authentication
+      - infer_live_sharedsignals_or_exchange_market_truth
+      - accept_unbound_mark_or_quote_for_nonempty_capital_or_execution_effects
+      - authorize_real_trading
+    successor: tradingagent.market_evidence_authority.v1
+  - entry_id: tradingagent_trusted_execution_clock
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime/trusted_clock.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_capital_backed_paper_stages.py
+      - tests/test_capital_stage_safety.py
+      - tests/test_capital_runtime_composition.py
+    allowed_uses:
+      - inject_frozen_nonproduction_time_into_network_closed_simulation
+      - recheck_quote_freshness_immediately_before_sim_submit_and_capital_commit
+      - bind_clock_identity_and_effect_times_into_execution_receipts
+      - enforce_monotonic_submit_fill_commit_and_reconcile_effect_times
+      - reconcile_strict_zero_fill_not_committed_failure_receipts
+      - preserve_subsecond_market_and_side_effect_causality
+    prohibited_uses:
+      - claim_fixture_clock_as_production_time_authority
+      - infer_exchange_session_time_from_caller_wall_clock
+      - provide_default_or_implicit_execution_clock
+      - authorize_live_broker_side_effects
+    successor: tradingagent.trusted_execution_clock.v1
+  - entry_id: tradingagent_phase1_industry_shadow_slice
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/industry/shadow_slice.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_industry_shadow_slice.py
+      - docs/superpowers/plans/2026-07-16-mainboard-paper-architecture-v1.md
+    allowed_uses:
+      - select_one_deep_and_two_watch_industries_for_shadow_research
+      - preserve_pit_taxonomy_membership_score_coverage_and_authority_identity
+    prohibited_uses:
+      - emit_individual_security_candidates
+      - change_champion_rank_position_risk_or_order
+      - claim_live_industry_intelligence_or_alpha
+      - accept_unverified_industry_activity_score
+    successor: tradingagent.industry_shadow_basket.v2
+  - entry_id: tradingagent_llm_evidence
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/llm/schema.py
+    production_verified: false
+    last_verified_at: "2026-07-18"
+    evidence:
+      - tests/test_llm_sidecar.py
+      - tests/test_llm_evidence_artifact.py
+      - tests/test_llm_evaluation.py
+      - tests/test_deepseek_http_transport.py
+      - tests/test_bull_bear_debate_fast.py
+    allowed_uses:
+      - evidence_extraction_and_shadow_analysis
+      - frozen_offline_evaluation
+      - fixed_prompt_content_addressed_public_evidence
+      - reject_explicit_source_span_prompt_injection_before_transport
+      - emit_typed_content_addressed_provider_receipt_contract
+      - emit_a_separate_audit_only_schema_rejected_attempt_receipt_contract
+      - expose_validated_request_observation_and_transport_provenance_as_one_shadow_result
+    prohibited_uses:
+      - change_score_risk_position_or_order
+      - send_account_or_strategy_secrets
+      - send_unverified_or_unbound_source_spans
+      - claim_llm_alpha_improvement
+      - claim_complete_semantic_or_encoded_prompt_injection_coverage
+      - infer_accepted_evidence_model_availability_or_production_readiness_from_schema_rejected_canary
+      - claim_production_durable_receipt_store
+    successor: tradingagent.llm_evidence.v1
+  - entry_id: tradingagent_llm_evidence_journal
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/llm/evidence_journal.py
+    production_verified: false
+    last_verified_at: "2026-07-18"
+    evidence:
+      - tests/test_llm_evidence_journal.py
+      - tests/test_llm_sidecar.py
+      - tests/test_deepseek_http_transport.py
+      - tests/test_bull_bear_debate_fast.py
+    allowed_uses:
+      - bind_request_source_authority_transport_receipt_and_validated_observation
+      - append_content_addressed_shadow_evidence_with_cas_and_idempotent_replay
+      - reject_symlink_partial_tail_checksum_and_receipt_swap_evidence
+      - persist_schema_rejected_attempts_only_in_a_physically_separate_audit_journal
+      - persist_provider_in_flight_claims_and_terminal_outcomes_in_a_third_invocation_journal
+      - validate_single_link_owner_mode_and_path_fd_inode_identity
+      - expose_mapping_only_local_integrity_readback_without_typed_receipt_reminting
+    prohibited_uses:
+      - write_rejected_attempts_into_the_accepted_evidence_journal
+      - mix_or_cross_write_accepted_and_rejected_results
+      - claim_provider_or_source_truth_from_http_success
+      - claim_production_durable_receipt_authority
+      - claim_local_head_anchor_as_external_seal_or_tamper_proof_authority
+      - carry_account_strategy_or_api_key_material
+      - change_score_risk_position_or_order
+      - authorize_model_promotion_or_risk_expansion
+    successor: tradingagent.llm_evidence_journal.v1
+  - entry_id: tradingagent_llm_provenance_router
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/llm/evidence_journal.py
+    production_verified: false
+    last_verified_at: "2026-07-18"
+    evidence:
+      - tests/test_llm_evidence_journal.py
+      - tests/test_deepseek_http_transport.py
+      - tests/test_bull_bear_debate_fast.py
+    allowed_uses:
+      - require_an_explicit_exact_typed_recorder_with_no_default_paths
+      - require_stable_request_id_for_provider_mode_idempotent_replay
+      - derive_a_logical_invocation_key_independent_of_caller_request_id
+      - derive_rejected_and_invocation_paths_from_one_explicit_absolute_accepted_journal_anchor
+      - freeze_and_seal_journal_paths_and_reject_unicode_case_realpath_or_existing_inode_aliases
+      - serialize_preflight_provider_call_and_unique_outcome_under_one_cross_process_lock_within_the_canonical_journal_family
+      - fail_closed_without_automatic_resend_for_unknown_in_flight_attempts
+      - route_each_mutually_exclusive_gateway_result_to_only_its_matching_journal
+      - fail_closed_before_provider_or_available_return_on_identity_cas_or_persistence_failure
+      - replay_exact_persisted_outcomes_without_reinvoking_the_provider
+    prohibited_uses:
+      - use_default_or_aliased_data_or_head_paths_for_any_provenance_journal
+      - configure_a_second_invocation_lock_for_the_same_accepted_journal_family
+      - use_relative_or_noncanonical_companion_journal_paths
+      - mutate_any_journal_data_or_head_endpoint_after_construction
+      - accept_untyped_or_forged_recorders
+      - fall_back_to_provider_on_unknown_debate_mode
+      - reuse_one_request_id_for_different_content_or_routes
+      - rotate_request_id_to_reinvoke_the_same_logical_content
+      - automatically_resend_an_unknown_in_flight_provider_attempt
+      - remint_typed_receipts_from_persisted_descriptors
+      - claim_provider_attestation_external_durability_or_production_authority
+      - claim_cross_host_or_runtime_global_exactly_once_without_shared_runtime_readback
+      - change_candidate_score_risk_position_order_or_model_promotion
+    successor: tradingagent.llm_provenance_router.v1
+  - entry_id: tradingagent_deepseek_provider_config
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/llm/deepseek_config.py
+    production_verified: false
+    last_verified_at: "2026-07-18"
+    evidence:
+      - tests/test_deepseek_provider_config.py
+      - tests/test_llm_sidecar.py
+    allowed_uses:
+      - configure_officially_documented_openai_compatible_target
+      - route_bulk_extraction_to_configured_flash_role
+      - route_slow_research_to_configured_pro_role
+      - publish_secret_free_provider_descriptor
+      - use_only_request_and_outbound_bound_OfflineDeepSeekFixtureTransport
+      - require_explicit_in_process_authorization_for_network_candidate_routing
+      - use_arbitrary_model_mapping_only_as_explicit_offline_fixture_router
+    prohibited_uses:
+      - read_or_persist_api_key_value_in_config
+      - select_any_api_key_environment_name_other_than_DEEPSEEK_API_KEY
+      - treat_fixture_only_router_as_provider_egress_authority
+      - make_network_calls_from_provider_config
+      - infer_network_transport_authority_from_environment_flag_alone
+      - accept_arbitrary_injected_transport_callable
+      - accept_legacy_deepseek_model_aliases
+      - claim_real_network_transport_from_config_alone
+      - claim_provider_transport_or_alpha_improvement
+      - infer_authenticated_model_availability_from_config_or_schema_rejected_canary
+      - change_score_position_risk_or_order
+    successor: tradingagent.llm_provider_transport.v1
+  - entry_id: tradingagent_model_lifecycle
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/models/lifecycle.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_model_lifecycle.py
+      - tests/test_forward_labels.py
+      - tests/test_drift_policy.py
+      - tests/test_drift_action_store.py
+      - tests/test_negative_only_evolution.py
+    allowed_uses:
+      - challenger_quarantine_and_negative_only_automation
+      - durable_risk_reducing_latch_pending_human_review
+      - require_detached_metrics_verification_receipt_bound_to_trusted_implementation_and_source_snapshots
+    prohibited_uses:
+      - automatic_challenger_promotion
+      - automatic_risk_expansion
+      - automatic_clear_or_loosen_after_healthy_restart
+      - trust_metrics_producer_self_reported_lineage
+      - claim_live_independent_metrics_recomputation_authority
+    successor: tradingagent.model_lifecycle.v1
+  - entry_id: tradingagent_metrics_verification_authority
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/models/evolution_loop.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_negative_only_evolution.py
+      - tests/test_drift_runtime.py
+      - tests/test_drift_policy.py
+    allowed_uses:
+      - enforce_fixed_local_metrics_implementation_trust_root
+      - rehash_canonical_metrics_artifact_and_complete_detached_receipt
+      - bind_label_cost_source_window_horizon_regime_journal_model_and_sample_count
+      - drive_negative_only_local_drift_actions_after_verification
+    prohibited_uses:
+      - accept_caller_selected_metrics_implementation_as_trusted
+      - accept_partial_or_self_reported_metrics_lineage
+      - claim_local_receipt_hash_as_signature_or_external_recompute
+      - claim_production_independent_metrics_authority
+      - automatically_expand_risk_or_promote_model
+    successor: tradingagent.metrics_verification_authority.v1
+  - entry_id: tradingagent_trusted_evolution_clock
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/models/evolution_clock.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_negative_only_evolution.py
+      - tests/test_drift_policy.py
+    allowed_uses:
+      - require_an_explicit_frozen_nonproduction_clock_for_fixture_evolution
+      - bind_clock_identity_to_model_manifest_and_evidence
+      - enforce_metrics_freshness_before_negative_only_actions
+    prohibited_uses:
+      - provide_an_implicit_or_default_wall_clock
+      - claim_fixture_time_as_production_time_authority
+      - accept_regressed_or_pre_evidence_time
+      - auto_clear_quarantine_or_expand_risk
+      - claim_live_scheduler_or_runtime_freshness
+    successor: tradingagent.trusted_evolution_clock.v1
+  - entry_id: tradingagent_scientific_validation_contract
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/models/lifecycle.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_model_lifecycle.py
+      - tests/test_forward_labels.py
+      - tests/test_sample_journal.py
+      - tests/test_ashare_forward_label_ops.py
+      - tests/test_ashare_sample_ops.py
+    allowed_uses:
+      - bind_label_horizon_feature_lookback_purge_and_event_embargo
+      - require_registered_trial_budget_pbo_dsr_and_frozen_oos_receipt
+      - bind_ashare_split_gaps_to_content_addressed_trading_sessions
+      - require_independent_calendar_verifier_and_prediction_time_freeze
+      - derive_ashare_forward_targets_from_same_verified_calendar_proof
+      - require_external_content_addressed_validation_plan_artifact_for_ashare_label_ops
+      - bind_sample_journal_label_updates_to_validation_plan_calendar_and_proof
+    prohibited_uses:
+      - claim_empirical_strategy_validated
+      - replace_real_walk_forward_or_multiple_testing_results
+      - promote_without_shadow_and_human_review
+      - claim_production_calendar_authority_or_real_market_truth_verified
+      - treat_target_time_authority_as_exit_price_or_total_return_truth
+      - mint_or_resign_calendar_proof_inside_runtime_cli
+      - claim_plan_artifact_content_hash_as_external_authority_verification
+    successor: tradingagent.validation_plan.v1
+  - entry_id: tradingagent_drift_runtime_binding
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime/drift_stage.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_drift_constrained_risk_stage.py
+      - tests/test_paper_runtime_composition.py
+      - tests/test_ashare_day_loop.py
+    allowed_uses:
+      - persist_and_apply_negative_only_drift_latches
+      - block_new_risk_while_preserving_verified_reduce_and_exit
+      - complete_a_blocked_paper_day_with_explicit_status
+      - reread_latest_latch_before_each_risk_evaluation
+      - reread_latest_latch_immediately_before_network_closed_simulation
+      - reread_latest_latch_after_commit_clock_check_before_local_capital_commit
+    prohibited_uses:
+      - automatic_risk_expansion
+      - automatic_latch_clear
+      - infer_live_runtime_or_broker_authority
+      - claim_live_broker_side_effect_recheck_or_scheduler_authority
+    successor: tradingagent.drift_constrained_risk_stage.v2
+  - entry_id: tradingagent_day_loop
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime/day_loop.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_ashare_day_loop.py
+      - tests/test_day_loop_recovery.py
+    allowed_uses:
+      - network_closed_fixture_simulation_orchestration
+    prohibited_uses:
+      - claim_automatic_runtime_active
+      - live_broker_execution
+    successor: tradingagent.paper_day_loop.v1
+  - entry_id: tradingagent_paper_runtime_composition
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime/composition.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_paper_runtime_composition.py
+    allowed_uses:
+      - exact_data_only_fixture_composition
+      - local_candidate_publication
+    prohibited_uses:
+      - arbitrary_callable_stage_or_transport
+      - network_or_broker_access
+      - claim_scheduler_installed
+    successor: tradingagent.paper_runtime_composition.v1
+  - entry_id: tradingagent_capital_backed_paper_runtime_composition
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime/composition.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_capital_runtime_composition.py
+      - tests/test_capital_backed_paper_stages.py
+      - tests/test_capital_stage_safety.py
+      - tests/test_canonical_account_authority.py
+      - tests/test_canonical_small_account_stage.py
+      - tests/test_champion_registry.py
+    allowed_uses:
+      - compose_canonical_simulated_account_champion_risk_execution_and_reconcile_stages
+      - bind_current_human_selected_champion_manifest
+      - route_actionable_orders_through_one_append_only_capital_ledger_and_durable_outbox
+      - reread_persistent_drift_constraint_before_network_closed_simulation_side_effect
+      - preserve_verified_reduce_and_exit_when_new_risk_is_blocked
+      - share_strict_not_committed_receipt_semantics_between_day_loop_and_reconcile
+      - verify_full_canonical_unfilled_release_terminal_at_exact_event
+      - reject_partial_foreign_legacy_or_fill_terminal_release_claims
+    prohibited_uses:
+      - claim_live_paper_scheduler_or_production_runtime
+      - bypass_canonical_account_champion_or_drift_authority
+      - network_broker_or_real_trading
+      - treat_fixture_receipts_as_real_market_or_broker_evidence
+      - claim_positive_expected_return_or_auto_promotion
+      - accept_partial_or_later_completed_release_as_reconciled
+    successor: tradingagent.capital_backed_paper_runtime.v1
+  - entry_id: tradingagent_phase1_fixture_cli
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: tools/run_phase1_paper_fixture.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_phase1_paper_fixture_cli.py
+    allowed_uses:
+      - deterministic_filled_simulated_trade_closed_loop
+      - cross_process_idempotency_validation
+      - output_root_independent_business_bundle_validation
+      - isolated_fixture_only_review_artifacts
+    prohibited_uses:
+      - claim_live_sharedsignals
+      - claim_realtime_market_paper_runtime
+      - write_formal_sample_journal_or_promotion_evidence
+      - network_or_broker_access
+    successor: tradingagent.phase1_fixture_cli.v1
+  - entry_id: tradingagent_opportunity_intelligence
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/opportunity/
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_opportunity_radar_contracts.py
+      - tests/test_opportunity_ledger.py
+      - docs/superpowers/plans/2026-07-16-mainboard-paper-architecture-v1.md
+    allowed_uses:
+      - shadow_only_pit_opportunity_discovery
+      - append_only_opportunity_lifecycle_and_counterfactual_tracking
+      - mainboard_stock_candidates_with_sector_and_index_context_only
+    prohibited_uses:
+      - influence_frozen_champion_rank_position_risk_or_order
+      - treat_sector_or_index_context_as_tradable_security
+      - claim_calibrated_alpha_or_50k_account_authority
+      - promote_or_auto_execute_an_opportunity
+    successor: tradingagent.opportunity_intelligence.v1
+  - entry_id: tradingagent_multihorizon_forecast
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/forecast/contracts.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_multihorizon_forecast_contract.py
+      - docs/superpowers/plans/2026-07-16-mainboard-paper-architecture-v1.md
+    allowed_uses:
+      - emit_uncalibrated_shadow_quantiles_and_hazard_estimates
+      - research_m30_m60_close_1d_3d_and_5d_horizons
+      - bind_forecast_inputs_to_pit_evidence_and_model_identity
+    prohibited_uses:
+      - claim_published_live_or_decision_eligible_calibrated_return_distribution
+      - influence_current_champion_or_position
+      - claim_live_forecast_service_or_positive_expected_return
+      - authorize_risk_order_or_model_promotion
+    successor: tradingagent.multihorizon_forecast.v1
+  - entry_id: tradingagent_multistyle_router
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/strategy_router/
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_strategy_router_contracts.py
+      - docs/superpowers/plans/2026-07-16-mainboard-paper-architecture-v1.md
+    allowed_uses:
+      - combine_industry_trend_event_surprise_and_cross_market_dislocation_as_shadow_sleeves
+      - deduplicate_shared_evidence_and_abstain_on_conflict
+      - emit_one_noncapital_counterfactual_candidate_intent
+    prohibited_uses:
+      - split_the_50k_account_into_uncoordinated_accounts
+      - claim_dynamic_style_allocation_active
+      - allocate_capital_set_target_weight_or_emit_order
+      - influence_frozen_champion_risk_or_execution
+    successor: tradingagent.multistyle_router.v1
+  - entry_id: tradingagent_deepseek_provider_transport
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/llm/providers/deepseek_http.py
+    production_verified: false
+    last_verified_at: "2026-07-18"
+    evidence:
+      - tests/test_deepseek_http_transport.py
+      - tests/test_deepseek_provider_config.py
+      - tests/test_llm_sidecar.py
+      - docs/operations.md
+    allowed_uses:
+      - construct_an_explicit_disabled_by_default_provider_transport_candidate
+      - test_exact_official_https_post_with_fake_local_http_opener
+      - bind_raw_response_hash_and_safe_http_facts_to_typed_transport_receipt
+      - emit_audit_only_rejected_receipt_after_http_envelope_schema_or_binding_failure
+      - preserve_one_schema_rejected_real_canary_as_non_authority_history
+      - require_gateway_minted_hmac_bound_egress_capability_before_wire_io
+      - reject_public_transport_send_and_direct_http_adapter_invocation_before_secret_or_socket
+      - reject_proxy_redirect_retry_streaming_and_non_json_provider_responses
+      - keep_llm_output_evidence_only_without_trading_authority
+    prohibited_uses:
+      - infer_accepted_evidence_stable_auth_quota_cost_or_model_quality_from_schema_rejected_real_canary
+      - enable_network_from_ambient_environment_flag_alone
+      - load_or_reuse_any_credential_exposed_in_chat_or_env_style_secret_file
+      - treat_offline_fixture_transport_as_network_transport
+      - send_account_strategy_or_nonpublic_data
+      - invoke_http_transport_or_adapter_outside_llm_evidence_gateway
+      - claim_deepseek_runtime_active
+      - claim_production_deployment_or_durable_receipt_authority
+      - change_score_position_risk_or_order
+    successor: tradingagent.llm_provider_transport.v1
+  - entry_id: tradingagent_live_paper_scheduler
+    state: PLANNED_NOT_IMPLEMENTED
+    layer: architecture_target
+    owner: TradingAgent
+    canonical_path: planned:shared/runtime/paper_scheduler
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - docs/operations.md
+    allowed_uses:
+      - scheduler_contract_and_recovery_design
+    prohibited_uses:
+      - infer_cron_or_scheduler_installed
+      - consume_unfrozen_sharedsignals_runtime
+      - deploy_or_trigger_production
+    successor: tradingagent.live_paper_scheduler.v1
+  - entry_id: tradingagent_run_bundle_store
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/runtime/file_store.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_run_bundle_file_store.py
+    allowed_uses:
+      - immutable_local_run_events
+      - recovery_and_idempotency_testing
+    prohibited_uses:
+      - claim_distributed_transactionality
+      - claim_production_storage
+    successor: tradingagent.run_bundle_store.v1
+  - entry_id: tradingagent_decision_ledger
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/review/decision_ledger.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_decision_ledger.py
+      - tests/test_decision_ledger_persistence.py
+    allowed_uses:
+      - append_only_candidate_and_decision_facts
+      - counterfactual_research_inputs
+    prohibited_uses:
+      - automatic_model_promotion
+      - infer_broker_execution
+    successor: tradingagent.decision_ledger.v1
+  - entry_id: tradingagent_label_maturity
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/review/label_maturity.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_label_maturity.py
+    allowed_uses:
+      - externally_verified_point_in_time_label_release
+      - paper_and_shadow_observation
+      - frozen_oos_total_return_and_corporate_action_binding
+    prohibited_uses:
+      - self_certify_market_truth
+      - promote_paper_or_shadow_labels
+      - release_fixture_or_unregistered_oos_labels
+    successor: tradingagent.label_maturity.v1
+  - entry_id: tradingagent_capital_authority
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/capital/ashare_capital_policy.yaml
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - AGENTS.md
+      - tests/test_ashare_capital_plan.py
+    allowed_uses:
+      - simulated_capital_and_risk
+    prohibited_uses:
+      - infer_real_account_state
+      - cross_market_netting
+    successor: ashare-capital-v1
+  - entry_id: tradingagent_execution_lineage
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/execution/execution_lineage.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - docs/architecture.md
+    allowed_uses:
+      - simulated_order_fill_and_reconcile
+    prohibited_uses:
+      - live_broker_execution
+    successor: verified_current_market_capital.execution_lineage_id
+  - entry_id: tradingagent_sample_journal
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/review/sample_journal.py
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - tests/test_sample_journal.py
+    allowed_uses:
+      - append_only_learning_facts
+    prohibited_uses:
+      - automatic_model_promotion
+    successor: SampleJournal
+  - entry_id: tradingagent_repository_cron_template
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/crontab.txt
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - docs/operations.md
+      - tests/test_cron_coverage.py
+      - tests/test_architecture_contract_guards.py
+    allowed_uses:
+      - read_only_schedule_design_and_tests
+      - verify_legacy_ashare_entries_are_executable_blocked
+    prohibited_uses:
+      - infer_installed_cron
+      - apply_cron_without_authorization
+      - execute_retired_ashare_wrappers
+    successor: shared/crontab.txt
+  - entry_id: tradingagent_installed_cron
+    state: CURRENT_VERIFIED
+    layer: production_runtime_read_only_snapshot
+    owner: TradingAgent
+    canonical_path: marketgraph-user-crontab
+    production_verified: false
+    last_verified_at: "2026-07-19"
+    evidence:
+      - STATUS.md
+    allowed_uses:
+      - compare_read_only_crontab_digest_during_release
+    prohibited_uses:
+      - infer_candidate_schedule_or_activation
+      - mutate_or_install_cron
+    successor: separately_authorized_activation_required
+  - entry_id: tradingagent_production_runtime
+    state: CURRENT_VERIFIED
+    layer: production_runtime_read_only_snapshot
+    owner: TradingAgent
+    canonical_path: /opt/investment/tradingagent
+    production_verified: false
+    last_verified_at: "2026-07-19"
+    evidence:
+      - STATUS.md
+    allowed_uses:
+      - compare_read_only_runtime_inventory_during_release
+    prohibited_uses:
+      - infer_candidate_deployed_or_activated
+      - deploy_or_write_production
+    successor: separately_authorized_activation_required
+  - entry_id: tradingagent_front
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: front/
+    production_verified: false
+    last_verified_at: "2026-07-16"
+    evidence:
+      - AGENTS.md
+      - front/AGENTS.md
+      - front/docs/integration.md
+      - front/src/server/sharedSignalsMarketPulse.test.ts
+      - front/src/server/tradingAgentSnapshotHttp.test.ts
+      - front/src/server/tradingAgentSnapshot.test.ts
+      - tests/test_architecture_contract_guards.py
+    allowed_uses:
+      - read_only_simulation_dashboard
+      - explicitly_configured_sharedsignals_v1_market_context
+      - single_user_authenticated_remote_entry_target
+    prohibited_uses:
+      - write_capital_or_orders
+      - anonymous_public_dashboard
+      - direct_public_snapshot_api
+      - infer_cloudflare_access_is_configured
+    successor: front/

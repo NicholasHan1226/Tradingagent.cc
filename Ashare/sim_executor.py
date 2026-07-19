@@ -10,7 +10,6 @@ not required for server-side simulated training data.
 from __future__ import annotations
 
 import os
-import re
 from datetime import datetime, time
 from pathlib import Path
 from typing import Any
@@ -24,6 +23,7 @@ from shared.execution.sim_engine import SimExecutionEngine, SimOrder
 from shared.execution.sim_broker import SimResult
 from shared.execution.sim_executor_registry import register_sim_executor
 from shared.execution.webhook_sender import send_sim_signal_to_mini
+from shared.universe.policy import classify_instrument
 
 
 DEFAULT_SIGNALS_DIR = Path("/opt/investment/tradingagent/signals")
@@ -92,33 +92,13 @@ def _fresh_5min_bar(
 
 
 def _is_supported_ashare_code(code: Any) -> bool:
-    raw = str(code or "").strip().upper()
-    if "." in raw:
-        digits, exchange = raw.split(".", 1)
-    else:
-        digits, exchange = raw, ""
-    if not re.fullmatch(r"\d{6}", digits):
-        return False
-    if exchange == "SZ":
-        return digits.startswith(("000", "001", "002", "003", "300", "301"))
-    if exchange == "SH":
-        return digits.startswith(("600", "601", "603", "605", "688", "689"))
-    return digits.startswith(
-        (
-            "000",
-            "001",
-            "002",
-            "003",
-            "300",
-            "301",
-            "600",
-            "601",
-            "603",
-            "605",
-            "688",
-            "689",
-        )
-    )
+    """Compatibility wrapper backed by the canonical instrument policy.
+
+    Runtime validators still import this private helper.  Keep the call shape
+    during migration, but do not retain a second prefix table here.
+    """
+
+    return classify_instrument(code).order_identity_allowed
 
 
 def _reject(
@@ -679,11 +659,32 @@ def ashare_sim_execute(
     """Queue an A-share simulated order for Mini execution, or fill via mock."""
 
     config = dict(config or {})
+    code = str(order.get("ts_code") or order.get("symbol") or "").strip().upper()
+    eligibility = classify_instrument(
+        code,
+        exchange=order.get("exchange"),
+        instrument_type=order.get("instrument_type") or "common_stock",
+    )
+    if not eligibility.order_identity_allowed:
+        now = _parse_session_now(config.get("market_session_now") or config.get("now"))
+        order_id = str(
+            order.get("order_id") or f"REJECTED-ASHARE-{now.strftime('%Y%m%d%H%M%S')}"
+        )
+        return _reject(
+            order_id,
+            code,
+            f"unsupported or non-mainboard A-share code: {code}",
+            details={
+                "reason_code": "instrument_not_mainboard_tradable",
+                "instrument_policy_id": eligibility.policy_id,
+                "instrument_role": eligibility.role.value,
+                "instrument_reason_code": eligibility.reason_code,
+                "context_only": eligibility.context_only,
+                "order_identity_allowed": eligibility.order_identity_allowed,
+            },
+        )
     card = _signal_card(order, account, config)
     order_id = str(card["order_id"])
-    code = str(card.get("ts_code") or "").strip().upper()
-    if not _is_supported_ashare_code(code):
-        return _reject(order_id, code, f"unsupported or non-A-share code: {code}")
     if int(card.get("quantity") or 0) <= 0 or float(card.get("price") or 0.0) <= 0:
         return _reject(order_id, code, "non-positive quantity or price")
 

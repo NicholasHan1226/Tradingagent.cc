@@ -57,7 +57,7 @@ Quantitative design gate: **94/100**. Visual hierarchy 19/20, typography 14/15, 
 - At 1440×900, quiet returns rendered with `data-density=quiet` and a 300px chart; empty holdings rendered with `data-density=empty` and a 390px primary grid.
 - All six routes at 1280×720 had `scrollWidth === clientWidth`, no app/state error surface and no browser console warnings/errors.
 - User-visible leak scan returned no raw `buy`, `sell`, `empty`, `signal_queue`, `sim_ledger` or `opportunity_log` text.
-- Production build `20260711-evidence-adaptive-terminal` loaded 31 real funnel events into 4 opportunity cycles at 1440×900; the completed render had zero document overflow and changed the heartbeat from initial snapshot loading to `调度正常 · 当前空闲`.
+- Historical pre-retirement QA build `20260711-evidence-adaptive-terminal` loaded 31 legacy funnel rows into 4 display cycles at 1440×900. That visual/layout evidence is retained only as history; those rows are now classified `legacy_frozen_opportunity_log` and cannot prove current readiness or drive heartbeat.
 
 ## Next iteration
 

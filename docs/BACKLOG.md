@@ -25,3 +25,9 @@
 - 以更多独立交易日、决策 cluster、市场状态和完整回合验证费用后 expectancy、校准、稳定性与逐日 MTM 回撤。
 - CNFutures Sharpe 仅在有同频净收益序列后计算；再评估 DSR、多重比较、换月/夜盘/极端状态分层。
 - 任何长期统计升级不得用 label-cell 数替代独立样本，也不得据短期盈利自动晋级。
+
+## 5. 旧数据客户端退役债务
+
+- 按消费者批次移除旧 `TradingagentDataReader` 的隐式 localhost 配置；每批同时迁移 adapter、screening、research、wrapper/runtime-test、环境变量、测试和文档，不做长期双轨。
+- 旧 `SharedSignalsAPIClient` 的类级缓存键尚未绑定 `base_url` 与访问身份，存在不同 endpoint 同查询串用缓存的隔离风险。该客户端应随旧专用端点一起退役；若退役前必须继续使用，则先补 endpoint/identity 绑定与跨端点负例。
+- 退役完成前，服务器旁路测试必须显式把 `SHAREDSIGNALS_API_URL` 与 `MARKETGRAPH_API_URL` 设为空，禁止测试进程读取本机现役服务。

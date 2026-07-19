@@ -11,9 +11,9 @@
 
 ## 当前唯一资本事实
 
-- A股和 CNFutures 各有一个独立、fresh-start、50,000 CNY 的 simulated authority：`ashare-capital-v1` 与 `cn-futures-capital-v1`，当前 `authority_generation=1`。
+- A股和 CNFutures 各有一个独立、fresh-start、50,000 CNY 的 simulated authority：`ashare-capital-v1` 与 `cn-futures-capital-v1`。generation 1 只是历史 fresh-start 基线；消费者每轮必须读取、验证并传播 current snapshot 的正整数 generation，禁止写死。
 - 两个账户的现金、持仓/保证金、预约、盈亏、回撤、风控、execution lineage 和样本归因完全分离。总览只可并列，禁止相加、净额抵消或互相补资。
-- A股政策：股票总敞口上限 90%（45,000 CNY），单一标的累计上限 15%（7,500 CNY），100 股整手，组合容量 8 且至少支持 7 个不同股票；全部 50,000 CNY 有资格服务合格机会，但不强制满仓。
+- A股政策：股票总敞口上限 90%（45,000 CNY），单一标的累计上限 15%（7,500 CNY），买入100股整数倍；卖出只允许100股整数倍、完整不足100股余额或全部退出，且受T+1可卖量约束。组合容量 8 且至少支持 7 个不同股票；全部 50,000 CNY 有资格服务合格机会，但不强制满仓。
 - CNFutures 政策：保证金使用率上限 50%（25,000 CNY）。保证金容量和止损损失预算分开验证，不能把保证金上限当作可承受亏损。
 - 每个市场独立执行：日亏 3% 暂停、连续亏损 3 次暂停、回撤 5% 仅收紧风险预算至 0.75 倍、回撤 7% 才暂停并复核。
 - 政策源仅为 `shared/capital/ashare_capital_policy.yaml` 和 `shared/capital/cn_futures_capital_policy.yaml`。调用方不得复制另一套漂移常量。
@@ -30,13 +30,13 @@
 
 ## A股样本与组合执行
 
-- 对所有数据合格候选保存 observation/counterfactual prediction。成熟阈值或执行门禁不能阻断 observation；数据不可靠时才拒绝标签。
-- 初始正交假设族仅为：趋势突破/强势延续、回调/短反转、事件催化+价格确认、防御低波/空仓基线。风格只有预测与影子归因，没有独立资金或订单 authority。
-- 同一 immutable base snapshot 必须生成 paired `mg_on` / `mg_off`；`mg_off` 不得读取 MG 特征。
-- Exploration 使用安全 top-K 内分层随机/epsilon-greedy，记录 policy、seed、selection probability/propensity；每日最多新增 1 个探索头寸，探索累计敞口上限 7,500 CNY，探索日亏上限 225 CNY。
-- Exploration 只可降低分数、最小 edge、研究完整度等策略门槛；数据、价格/成交证据、流动性、时段、T+1、整手、资金、幂等、累计敞口、日亏、连续亏损、回撤和实盘隔离永不放宽。
-- Exploitation 保留成熟门槛。多个风格由一个组合决策器解决冲突、相关性、资金和幂等；同一股票同日只产生一份真实规格模拟订单。
-- 成交保存 `primary_style`、`supporting_styles`、`style_scores`、`style_versions`、`decision_policy_version`、风格争议和 sample intent；未选风格仍生成标签。
+- V1 第一阶段只允许一个冻结、可解释的 `uncalibrated_deterministic_rank_score` Champion 与现金基线进入组合；rank score 不得称为概率、期望收益或投资建议。
+- 对所有数据合格的主板候选保存 observation/counterfactual 与后续标签请求；风险、成本或资金门禁可以拒绝订单，但不能抹掉候选和拒绝原因。数据/PIT 不可靠时标签必须 fail closed。
+- `OpportunityRadar`、append-only OpportunityLedger、多期限预测合同和三风格路由已是本地隔离的 shadow candidate；它们只能做 PIT 合同、fixture、反事实和研究审计，不证明预测有效、概率已校准或 runtime 已接入，也不得改变 V1 Champion 排名、仓位、风险或订单。
+- 仓库既有四风格、exploration/exploitation 与旧组合路径属于 time-boxed legacy/历史能力，不能成为 V1 隐式 fallback、第二资金 authority 或当前完成证明；其消费者按 `legacy_inventory.yaml` 分批迁移并同批删除。
+- MarketGraph 消融只能在同一 immutable base snapshot 上生成 paired `mg_on` / `mg_off` 研究证据；`mg_off` 不得读取 MG 特征，任何一侧均无资金或订单 authority。
+- 同一股票同日最多一份 authority-bound 模拟订单；计划必须经无默认`AccountAuthorityVerifier`复核完整模拟账户内容、持仓、mark、现金、gross、T+1可卖量、proof有效期，再绑定`cost_policy_id`、独立复算费用、现金顺序和drift constraint。持久漂移latch的风险乘数与动作严重度只允许保持或收紧；本地候选在每次risk评估和网络关闭的模拟副作用前重读最新latch，未来live broker仍须在真实外部副作用前完成同等复核。
+- LLM source span 永远按不可信引用数据处理；已知提示注入模式、敏感载荷、未验证artifact/authority或未知引用必须在transport前阻断。HTTP transport的公开`send`和脱离Gateway的Adapter调用必须在读密钥或创建socket前拒绝，wire path只接受Gateway完成上述验证后铸造、以进程内HMAC绑定全部关键字段的内部egress capability。provider模式必须使用显式typed recorder、稳定request ID及一个无默认的绝对accepted Journal锚点；rejected与provider-invocation路径必须由该锚点确定性派生，组成单一canonical Journal family，全部data/head端点互异且构造后不可改。provider-invocation Journal在网络前持久化`in_flight`并持有跨进程锁直到唯一终态落盘，逻辑内容键不依赖调用方ID，未知崩溃状态禁止自动补发。未知mode、伪recorder、非canonical family、ID/内容冲突、Unicode/大小写/真实路径或物理文件别名、端点改写、文件身份或持久化失败均fail closed。模式门不能声称覆盖全部语义/编码攻击；offline receipt不能冒充HTTPS receipt，audit-only rejected-attempt receipt不能冒充accepted evidence receipt或进入accepted Journal，本地/mock HTTPS receipt、local CAS journal和`.head`完整性锚点也不能冒充外部密封或durable production receipt authority。LLM永远无候选、排名、仓位、风险、订单或账户authority。
 - 资金计划必须输出 deployed/committed/planned utilization、dynamic operating cash、undeployed capital 和具体 undeployed reasons。现金管理收益与股票 alpha 分账，不得伪造资金利用率。
 
 ## CNFutures 样本与执行
@@ -59,7 +59,7 @@
 
 - A股唯一演化事实源是 append-only `shared/review/ashare/sample_journal.jsonl`；`sample_kpi_latest.json`、evolution decision 和 maturity 都只是可重建投影。
 - 样本必须分层：observation/counterfactual、exploration fill、exploitation fill、completed round trip、exit/stop、risk reject、chain validation，禁止混算。
-- horizon 固定为 `m30/m60/close/1d/3d/5d`。标签使用 PIT `as_of`，真实成交采用实际费用/滑点；反事实标签采用版本化保守成本。
+- horizon 固定为 `m30/m60/close/1d/3d/5d`。标签使用 PIT `as_of`，真实成交采用实际费用/滑点；反事实标签采用版本化保守成本。A股`ValidationPlan`必须经无默认calendar verifier生成detached proof并在预测前冻结；`close/1d/3d/5d` target只可从该会话authority派生，缺目标会话证据不得顺延。该本地proof只证明目标时刻绑定，不等于生产calendar、exit price、总回报或公司行动真值；缺真实market-truth/OOS/adjustment authority不得发布predictive evidence。
 - 5 分钟重复样本聚类去重；选择概率、预测快照、source SHA、execution lineage、actual costs 和成交重验证缺失时不得进入晋级证据。
 - SampleJournal/KPI 是唯一演化 authority。旧 portfolio/weekly/legacy review 不得自动给出生命周期或风险晋级。
 - “样本不足”不能单独导致长期零 observation 或零交易；无探索成交必须归因于无数据合格候选或具体安全门禁。
@@ -68,10 +68,11 @@
 
 - A股资本：`shared/logs/capital/ashare/`
 - CNFutures 资本：`shared/logs/capital/cn_futures/`
-- A股 server-local 执行：`shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/`；`shared/logs/local_sim/` 只读冻结。
-- 执行状态与回执：`signals/`
+- A股 server-local 执行：由 verified current capital snapshot 的 `execution_lineage_id` 派生 `shared/logs/execution_lineages/<execution_lineage_id>/`；固定日期 lineage 与 `shared/logs/local_sim/` 仅可作历史审计。
+- `signals/` 是旧执行队列兼容路径；V1 fixture/day-loop 使用显式隔离 root，不得把它当成 current authority fallback。
 - A股样本与复盘：`shared/review/ashare/`
 - `front/` 是唯一活跃只读前端。All Markets 只可汇总非货币计数；不同市场的资本、权益、PnL、收益率和回撤绝不聚合。
+- 系统仅供 Nicholas 个人内部使用。前端与只读 API 默认只监听 localhost；`tradingagent.cc` 可作为个人远程入口，但必须由 Cloudflare Access 或等价单用户认证保护。禁止匿名公网访问或直接暴露 API，远程入口必须独立完成权限、路由和撤销验证。
 
 ## 验收与发布边界
 

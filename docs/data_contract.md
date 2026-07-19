@@ -27,7 +27,186 @@
 
 ### SharedSignals
 
-`SHAREDSIGNALS_API_URL` 是生产基础数据入口，由 `shared.data.reader.TradingagentDataReader` 消费。TradingAgent 不导入 SharedSignals 内部模块、不扫描兄弟仓目录、不打开其 SQLite，也不现场调用数据商。
+`SHAREDSIGNALS_API_URL` + `shared.data.reader.TradingagentDataReader` 是尚未退役的旧消费链，
+不是本地 V1 候选的 canonical client。该旧链在 A股 adapter、screening、research、
+wrapper/runtime-test 仍有真实消费者，只能标记 `COMPATIBILITY_TIMEBOXED` /
+`RETIREMENT_PENDING_VERIFICATION`。前端 market pulse 本地候选已经改为严格 V1 catalog/query，
+且不再是旧链消费者；这不证明其它路径已退役或 SS live runtime 已冻结。新链的边界是
+TradingAgent 不导入 SharedSignals 内部模块、不扫描兄弟仓目录、不打开其 SQLite、不现场调用
+数据商，也不在 V1 失败时回退旧链。
+
+新查询接口的 canonical contract ID 是 `sharedsignals.query_result.v1`。当前实现状态必须从 `shared/governance/system_state_matrix.yaml` 读取：SS upstream query仍是`TARGET_CONTRACT`；TA client已是`CURRENT_VERIFIED`但仅限`layer=local_isolated_candidate`、`production_verified=false`和fixture/contract allowed uses。两者都不能证明生产runtime已切换。V1读取失败、数据陈旧、lineage不完整或dataset未注册时一律fail closed；A股生产路径不得静默回退到Tushare、兄弟仓SQLite、旧HTTP shape或本地缓存拼装。
+
+V1 唯一路由为：
+
+```http
+GET /v1/catalog
+POST /v1/query
+```
+
+`POST /v1/query` 请求是 provider-neutral 的显式契约；`schema_major` 必填：
+
+```json
+{
+  "dataset_id": "explicit-configured-id",
+  "schema_major": 1,
+  "fields": ["field_a", "field_b"],
+  "filters": {"canonical_key": "value"},
+  "as_of": "2026-07-16T09:25:00+08:00",
+  "limit": 1000,
+  "cursor": null
+}
+```
+
+`order` 是可选的非空、有序且无重复字符串列表；调用方不指定时必须从请求中省略，排序由 SharedSignals registry 的 dataset 默认值决定，TA 不得猜测或补造 provider 排序。`schema_major`、显式 `order`（如有）均进入 query identity/cache identity。
+
+`base_url`、`expected_catalog_version`、`dataset_ids`、`access_policy_id`、timeout 和 max limit 必须显式配置。dataset ID 不允许从 provider 名称、URL 或返回行中猜测。当前候选响应 envelope 至少保留：
+
+```yaml
+api_version: v1
+catalog_version: explicit-frozen-version
+request_id: immutable-request-id
+dataset_id: provider-neutral-dataset-id
+data: []
+metadata:
+  state: observed_or_degraded_or_stale_or_failed
+  degraded: false
+  freshness: {}
+  quality: {}
+  lineage: {} # impaired state 可为 null
+  receipt_id: immutable-receipt-id # impaired state 可为 null
+  data_through: aware-time-or-version # impaired state 可为 null
+  observed_at: aware-time # impaired state 可为 null
+  reasons: []
+```
+
+HTTP 200 仅证明 transport 完成，不给 dataset 授权。每个 dataset 根据自己的 requirement policy 被 `ACCEPT / DEWEIGHT / REJECT`；`unobserved/paused/failed/stale/empty/degraded` 等 impaired state 可以如实携带 null `lineage/receipt_id/data_through/observed_at`，客户端不得为通过解析补造证据，Evidence Gate 必须依据 `metadata.state/degraded` 及证据完整性 fail closed。只有带完整 source proof 的 degraded/stale 数据才可能按显式 dataset policy 降权；缺 freshness/quality/lineage/receipt、catalog mismatch、未完整分页和 cursor 重放均不得被“其它 dataset 正常”洗白。只有完整、已验证且具有 receipt 的响应才能缓存；cache key 绑定 query、catalog、schema/receipt watermark 和 access policy。provider 原始字段只能保留在 provenance 中，不能覆盖 registry 的 dataset/provider identity。
+
+当前 endpoint base URL、catalog version 和 dataset IDs 仍只是显式配置/fixture；上游 SS 冻结前不得臆造生产值。
+
+#### TA integration-readiness profile 与回执
+
+`tradingagent.sharedsignals.integration-readiness.v1` 是 TA 对冻结 V1 consumer 合同的只读验收回执，不是 SharedSignals 服务端 receipt、生产健康证明或交易 authority。输入 manifest 必须显式且 secret-free，至少绑定：
+
+```yaml
+manifest_version: 1
+profile_id: explicit-profile-id
+base_url: explicit-authority-url
+catalog_version: explicit-frozen-version
+access_policy_id: explicit-identity-not-a-secret
+transport_id: http-json-v1
+timeout_seconds: 10
+as_of: timezone-aware-decision-time
+expected_probe_roles: [trade_calendar, equity_master, daily_bars, industry_context]
+datasets:
+  - probe_role: trade_calendar
+    dataset_id: provider-neutral-id
+    schema_major: 1
+    requirement_role: required_execution
+    fields: [market, trade_date, is_open, event_time, available_time, revision_id, receipt_id]
+    filters: {}
+    limit: 100
+    minimum_row_count: 1
+    row_event_time_field: event_time
+    row_available_time_field: available_time
+    row_revision_id_field: revision_id
+    row_receipt_id_field: receipt_id
+```
+
+`expected_probe_roles` 与 `datasets[].probe_role` 的顺序和集合必须完全相等；dataset ID 唯一，limit 为 `1..10000`，四个行级 PIT 字段必须全部显式包含在 `fields` 中，`order` 未配置时从 QueryRequest 省略。响应每行也必须与显式 fields 精确投影一致：缺字段以`requested_field_missing`阻断，多出任何未声明字段以`undeclared_field_present`阻断且只保存字段集合哈希，不把上游未知字段名或值写入回执。`industry_context` 可标为 `optional_context`，但它仍必须通过显式 dataset policy；无 proof 的 optional response 不能被健康必需数据洗白，聚合查询也不能夹带个股字段。
+
+验收器对每个 dataset 使用同一 QueryRequest 连续读取两次。双跑语义比较包含 data、`next_cursor` 和完整 metadata，排除每次 transport 独有的 `request_id`；因此 request ID 变化不造成误报，而 receipt、lineage、data-through、observed-at、行值、默认排序或状态变化都会触发 `same_as_of_semantic_mismatch`。两次 exact response identity 仍分别保留在 snapshot SHA 中，不能用稳定语义哈希替代原始 trace。
+
+当前 research port 不具备经 SS owner 冻结的跨页 receipt/排序/snapshot identity。`next_cursor` 非空时只能输出 `pagination_complete=false` 与 `pagination_contract_unfrozen`，不得自动拼页、截取第一页或本地重排。待上游合同冻结后，分页扩展必须继续绑定每页 query identity、cursor 连续性、统一 source snapshot 与完整 readback。
+
+回执至少包含：
+
+```yaml
+schema_id: tradingagent.sharedsignals.integration-readiness.v1
+probe_version: 1
+authority: non_authority
+production_verified: false
+real_trading_enabled: false
+profile_id: explicit-profile-id
+as_of: timezone-aware-decision-time
+manifest_sha256: sha256
+authority_sha256: sha256
+catalog:
+  request_id: trace-id
+  catalog_sha256: sha256
+datasets:
+  - probe_role: trade_calendar
+    dataset_id: provider-neutral-id
+    schema_major: 1
+    query_sha256: sha256
+    request_ids: [first, second]
+    state: ready
+    evidence_action: accept
+    receipt_id: source-receipt
+    source_proof_complete: true
+    row_count: 1
+    semantic_response_sha256: sha256
+    same_as_of_match: true
+    pagination_complete: true
+    reason_codes: []
+same_as_of_match: true
+blocking: false
+receipt_sha256: sha256
+```
+
+回执不得包含 base URL、access policy 原值、cursor、manifest正文、HTTP header、credential、异常原文或上游自由文本 `metadata.reasons`。自由文本只进入 `evidence_reasons_sha256` 与完整响应语义哈希；对外 `reason_codes` 只保留 TA Evidence Gate 产生的受控代码。`receipt_sha256`覆盖除自身外的 canonical JSON，并绑定本次 request trace；完全相同的 trace 产生相同回执，新的 request ID 会形成新的精确回执。跨重试的业务一致性看 `semantic_snapshot_sha256` 与每个 dataset 的 `semantic_response_sha256`，它们排除 request ID；任一 authority/config/source/data/PIT/状态变化必须改变对应哈希或阻断。
+
+`as_of` 不是防止回填偏差的充分条件。任何进入predictive validation的dataset还必须保存首次可见`available_at`、release ID、revision ID、每次修订链、first-seen receipt和训练时实际可见vintage；供应商事后批量回填但无法还原历史发布版本时，只能作当前观察或风险证据，不能回写历史训练样本。cache、ResearchDataSnapshot、ValidationPlan和label truth都必须绑定所用vintage/revision identity。
+
+### A股三层 Universe 契约
+
+`tradingagent.universe_scope.v1` 生成三个不可变快照：
+
+该 scope 的运行 port 固定为 `CanonicalMainboardScopePolicy`；其 stage-neutral component
+identity 绑定冻结 manifest SHA-256。composition 和离线 fixture parser 都必须验证精确类型
+及 identity 内容，不能接受调用方自报的等价 callable、派生类或任意 artifact digest。
+
+- `MarketContextUniverseSnapshot`：可包含全 A 指数、创业板指、科创 50 和全市场行业聚合，且必须 `context_only=true`；其 `coverage_scope` 只能由内容寻址 `tradingagent.market_context_coverage.v1` receipt 及本次实际聚合对象派生，调用者不能自报 `full_market`；
+- `AccountTradableUniverseSnapshot`：当前历史类型名只代表 `simulation_only` 主板scope policy，明确 `broker_permission_status=unverified`；未来订单链还需另行绑定真实账户权限和 PIT 证券主数据；
+- `SmallCapitalFeasibleUniverseSnapshot`：当前候选只叠加不超过 50,000 CNY 的模拟cash+policy upper bound、100 股整手、单票 15%、费用/滑点、流动性和最小经济订单；`single_name_max_pct`、`minimum_economic_order_cny`、`max_adv_participation_pct`、`lot_size_shares` 进入不可变hash并对非法值fail closed。`position_state_applied=false` 时的 `max_buyable_shares` 不是订单量；真实持仓、可卖数量、reservation和ledger proof必须在组合/风险/OMS前另行验证。
+
+后层只能增加约束。非主板个股在 Feature、Candidate、Forecast、TargetPosition、TradeIntent、ShadowBook、Order、Fill 和 Position 必须为零；CoverageReceipt 必须绑定 taxonomy/version、membership effective/available/valid time、board/sector expected/observed denominator、coverage ratio、source generation/receipt/lineage 和 source/content hash，并要求实际行业聚合 ID 集合与 receipt 逐项一致。receipt 缺失或非法直接拒绝；过期、数量异常、taxonomy/板块/行业缺口或本次双创聚合缺口只能输出 `partial_market + degraded`，不得用主板子集伪装全市场。精确 reason code 和快照 hash 见 [universe_contract.md](universe_contract.md)。
+
+Universe历史验证还必须绑定PIT证券主数据：上市/退市、板块迁移、ST/风险警示、停复牌，以及历史指数与行业成员的effective/available time。CoverageReceipt证明某次decision time的denominator与观察覆盖，不单独证明历史样本已消除幸存者偏差；缺任一历史状态链时不得把今天仍存续的证券集合回填为过去Universe。
+
+Coverage denominator 不能由调用方或 receipt 自证。`CoverageAuthorityVerifier` 是注入式信任边界，TradingAgent 没有默认实现；它必须返回 `CoverageAuthorityVerification`，精确绑定 source generation/receipt/content SHA、taxonomy ID/version/sector count、`assessed_as_of`、verifier/proof identity 和验证时点。构建与消费快照都会重新验证这份 proof。verifier 缺失、拒绝、绑定漂移、未来验证或 proof 篡改时，只能拒绝或降级，不能发布 `full_market`。
+
+### Phase 1.5 行业 shadow authority
+
+`tradingagent.industry_shadow_basket.v2` 只选择 1 个深研行业和 2 个观察行业。每个 `IndustryShadowInput` 至少绑定：
+
+- taxonomy、PIT membership、expected/observed member count 与 coverage ratio；
+- `activity_score` 及 `score_method_id/version`；
+- `score_observed_at <= score_available_at < score_valid_until`；
+- score receipt ID/SHA、coverage authority receipt ID/SHA、evidence receipt IDs；
+- canonical `score_content_sha256` 与 source generation。
+
+调用方必须注入没有默认实现的 `IndustryScoreAuthorityVerifier`。返回的 `IndustryScoreAuthorityVerification` 必须逐项绑定 decision time、industry、score content、score/coverage receipts、verifier/proof identity；未来、过期、缺失、篡改或拒绝均 fail closed。basket hash 同时绑定所选三项及其 proof。该对象固定 `shadow_only=true`、`context_only=true`、`position_effect_allowed=false`、`promotion_eligible=false`，不含 symbol，也不能影响 Champion、排序、仓位、风险或订单。当前只有 fixture verifier；真实评分和覆盖 authority 未接入前，不得称为 live 行业智能。
+
+### LLM 证据 sidecar（本地候选）
+
+密钥变量名固定为`DEEPSEEK_API_KEY`且公开配置对象不读取其值；其它格式合法的环境变量名也拒绝。任意模型映射只能生成`fixture_only`离线路由，不能作为provider egress授权；独立的宽松环境变量路由旁路已移除。validated router只有在调用方同时传入`allow_network_transport=True`时才能从network环境标志形成候选；该标志本身不读取credential、不执行网络，也不能替代精确HTTP transport注入。
+
+`EvidenceArtifact` 的 source span 是 `untrusted_artifact_data`，不是Prompt指令。请求必须绑定固定template/version、artifact content hash、source authority proof、PIT cutoff和完整artifact-set hash；proof至少保存verifier ID/version、verified time、source receipt与proof hash。transport前先做全树敏感数据门，再对source span中的显式角色覆盖、忽略既有规则、系统/开发者指令注入等中英文模式做负例门；安全扫描会额外规范化NFKC/NFKD、零宽/控制/组合字符、HTML entity、最多三层URL编码、定向JSON Unicode escape、部分常见同形字及高置信compact skeleton。命中后禁止transport、保留引用并输出human-review reason；这仍是启发式门，不代表完整语义安全。
+
+A股Prompt registry保留`bull-bear-evidence.v1`的字节冻结历史，当前A股request builder使用`bull-bear-evidence.v2`。v2的provider wire output必须是不带Markdown、代码围栏、前后缀或解释的原始JSON对象，且恰好包含`bull_case`、`bear_case`、`key_risk`、`contradictions`、`material_facts`、`evidence_refs`和`confidence_note`七个字段。前三项为非空字符串；两个事实/矛盾字段为字符串数组，无内容时显式输出`[]`；`evidence_refs`为非空字符串数组，每项必须逐字复制自本次`untrusted_artifact_data[].artifact_id`；`confidence_note`为字符串。额外字段、决策字段、未知/改写引用、类型错误或空核心字段均fail closed。v2已经离线fixture合同验证，但未进行第二次真实provider canary，不得从本v1失败推断v2已修复真实输出。
+
+当前只允许两个精确transport类型：`OfflineDeepSeekFixtureTransport`的不可调用冻结响应，或默认关闭的`DeepSeekHTTPTransport`。普通callable、类型子类和未知request/outbound identity都在副作用前拒绝；HTTP transport公开`send`与脱离Gateway的Adapter调用也固定拒绝，内部wire path只接受Gateway完成request/source-proof/Prompt注入/DLP验证后铸造的exact-type capability，该对象以进程内HMAC绑定body、批准模型、request hash、source-authority proof-set hash、transport material hash和outbound hash。fixture身份同时绑定request与outbound，HTTP路径还必须使用validated DeepSeek V4 router、固定官方HTTPS endpoint和显式raw-secret文件。默认Gateway通过严格、无密钥配置构造。2026-07-18一次隔离的`deepseek-v4-flash`请求已到达HTTP 200 provider envelope，但A股v1输出在evidence binding阶段失败；这是失败闭合证据，不是可用的认证readback。
+
+offline receipt必须使用固定offline transport ID/version/policy，不能声明HTTPS身份。HTTP路径还必须在router中携带不可变的`network_authorized=true`；仅注入已启用HTTP transport不能覆盖provider网络门。默认Gateway的router为`network_authorized=false`，两道门任一缺失都必须在读密钥或网络副作用前fail closed。
+
+`ProviderTransportReceipt`只表示provider envelope、evidence schema/引用绑定与Gateway observation均成功。它绑定provider/model、transport ID/version、request hash、包含本地source-authority proof的`transport_material_sha256`、provider outbound的`outbound_sha256`、response hash、标准化evidence hash、provider response ID、verified/received time与receipt hash。`transport_metadata`是receipt identity的一部分，精确包含`kind`、`endpoint`、`method`、`egress_policy_version`、`http_status`、`content_type`、`request_bytes`、`response_bytes`、`attempt_count`和`retry_disposition`。HTTPS只允许DeepSeek两个批准模型、官方transport ID/version/policy、固定endpoint、`POST`、HTTP 200、`application/json`、正请求/响应字节数、attempt 1和`not_retried`；离线fixture使用独立固定元数据。HTTPS的`response_sha256`按原始HTTP body bytes计算，不对解析后对象重新序列化。
+
+`ProviderRejectedAttemptReceipt`是与成功receipt完全独立、互斥的审计合同。它只能在精确`DeepSeekHTTPTransport`已验证HTTP 200、MIME/JSON和provider envelope，但后续`provider_evidence_validation`或`gateway_observation_binding`失败时由内部transport capability铸造。固定`outcome=rejected`、`reason_code=llm_evidence_schema_invalid`、`evidence_accepted=false`、`evidence_journal_eligible=false`、`production_eligible=false`、`audit_only=true`，六项authority全为false；仅保留安全transport元数据与request/source/material/outbound/raw-response hash，不保留provider正文、parsed/normalized evidence、`normalized_evidence_sha256`、provider response ID、credential或credential fingerprint。它不适用于offline fixture、非200、坏MIME/JSON/envelope、前置权限/DLP拒绝或敏感输出，不得创建`LLMEvidenceEnvelope`、写入accepted `LLMEvidenceJournal`、进入样本/成熟度/晋级或给予任何候选、风险或交易权限。它只可通过完整`GatewayAnalysisResult`和显式`LLMEvidenceProvenanceRecorder`写入物理分离的`LLMRejectedAttemptAuditJournal`；readback为mapping-only，绝不重建typed/capability receipt。它是本地内容寻址审计事实，不是provider attestation、外部签名或production durable authority。`GatewayAnalysisResult`只能由Gateway内部能力强制两类回执互斥并精确绑定canonical observation字段集、原request/entity/prompt/refs、provider/model/status/reason/output hash和重新计算的request/source/material摘要；额外字段、缺字段、元数据重绑或正文hash漂移均fail closed。Adapter没有外部receipt sink，调用方取得完整`analyze_with_provenance()`结果后也只能交给上述typed recorder路由，不得自行发明第三种或混合持久化协议。
+
+非200、非法MIME/编码/JSON/envelope、敏感输出或引用绑定失败均不产生accepted receipt；其中只有上述两个真实HTTP schema/binding阶段可产生审计用rejected-attempt receipt。内部proof/审计metadata只参与本地内容绑定，不进入outbound；JSON mode、thinking、`reasoning_effort`与bulk/pro 4,096/8,192 token上限仍只是本候选请求构造合同，不是当前账户接受证明。2026-07-18一次真实Flash请求得到schema-rejected结果且原始响应未持久化；它不能被本轮后新增的typed rejected receipt追溯包装，也不证明生产verifier或模型可用。
+
+成功且完整验证的offline或HTTPS结果可以封装为`tradingagent.llm_evidence_envelope.v1`并写入显式绝对路径的`LLMEvidenceJournal`；schema-rejected HTTPS结果只写入由该accepted锚点确定性派生的`LLMRejectedAttemptAuditJournal`；provider调用仲裁只写同一canonical family内的`LLMProviderInvocationJournal`。`llm_provenance_journal_paths()`是唯一伴随路径推导合同；另配invocation锁、相对路径或不匹配的Journal family一律拒绝。三条Journal及其`.head`共六个端点必须全部互异且没有默认runtime位置，路径在构造时冻结为绝对路径，并按Unicode NFC、大小写、真实路径与已存在device/inode去重。rejected事件schema固定为`tradingagent.llm_rejected_attempt_audit_event.v1`，其`attempt_id/event_id`由typed receipt SHA确定性派生，并绑定canonical invalid observation、observation hash、occurred time、完整脱敏receipt descriptor、previous-event hash与event hash；它只表达`local-integrity-only`审计，不具evidence eligibility。invocation事件schema固定为`tradingagent.llm_provider_invocation_event.v1`：不依赖调用方request ID的逻辑内容键同时绑定request schema、entity、route、provider/model、Prompt、PIT cutoff、artifact set和payload；网络前先持久化`in_flight`，并在同一跨进程文件锁内完成双结果Journal检查、provider调用与唯一`accepted/rejected/no_receipt`终态。`LLMEvidenceProvenanceRecorder`要求三条精确typed journals、与DeepSeek Adapter同对象的source verifier和精确`LLMEvidenceGateway`；Bull/Bear provider模式还要求调用方提供稳定、受限格式的request ID。已持久化终态的同ID同内容顺序或并发重放不再次调用provider；同一canonical family内相同逻辑内容换ID、同ID异内容、双重结果或端点别名fail closed。provider调用后崩溃且没有对应可验证结果时保留`in_flight`，后续不得自动补发；若唯一accepted/rejected结果已成功落盘但invocation终态未写完，可在同一锁内重绑receipt和observation后补齐终态。只有互斥结果对应的唯一Journal与invocation终态写入成功或精确幂等后才返回观察，任何read/append/CAS/身份校验失败均不得返回available。`run_id`由当次typed transport receipt确定性派生；accepted envelope同时绑定请求、outbound、response hash/标准化evidence、source authority proof、artifact set、provider receipt和观察结果。三类readback都对descriptor做完整结构/hash校验并保存防御性不可变快照，只返回非权威mapping视图，绝不重建运行时typed receipt。Journal采用append-only canonical JSONL、事件checksum chain、expected-head CAS、状态迁移/同run/attempt幂等、冲突拒绝和本地`.head`锚点；Journal与head在持锁读写期间都要求regular file、`st_nlink=1`、owner为当前euid、mode精确`0600`，且`stat(path)`与打开FD的device/inode一致，读写后再次复核。该journal和head只能发现本地断链、交换、截断或单侧篡改；它们不是外部签名、远程密封、production durable receipt authority，也不能抵抗journal与head被同时替换或删除。模式门不能被描述成覆盖全部语义型、混淆型或编码型prompt injection。任何LLM输出或journal记录都无候选成员、排名、概率、仓位、风险豁免、订单和账户authority。
 
 输入包括 assets、日线/5 分钟行情、交易日历、合约元数据、基本面/因子/资金流/宏观/情绪、事件、行业 taxonomy/membership/snapshot 以及数据覆盖/新鲜度/source status。
 
@@ -216,7 +395,11 @@ MTM reconcile manifest 包含：
 - A股卖出 `ashare_sell_commit`：actual closed quantity、gross proceeds、fee、net cash credit、gross realized PnL 和 local-position SHA。
 - 期货平/减仓 `position_close_commit`：actual closed quantity、margin released、fee、gross realized PnL 和 local-position SHA。
 
-partial 只结算 actual quantity；terminal 同一事件释放未使用 reservation。commit 成功或幂等成功前，fill 不得计入 execution-eligible 策略绩效。outbox pending 必须对新增风险保守可见。
+A股可卖数量只从 append-only `fill_commit` / `ashare_sell_commit` 重放：唯一公共批量投影为 `ashare_sellable_quantities(trade_date) -> dict[symbol, int]`，按 Asia/Shanghai 的 timezone-aware `filled_at` 建立买入批次，卖出只 FIFO 消耗早于卖出本地交易日的批次，并为每个当前持仓 symbol 显式返回可卖数量（包括 0）。投影必须与同轮 ledger replay 的 `latest_position_quantity` 全等；时间倒退、查询日期早于既有成交、非法日期/数量/方向或持仓不一致均 fail closed。`commit_ashare_sell` 在追加事件前和候选事件重放后都执行该校验，不信任订单或行情快照自报的 `sellable_quantity`。
+
+partial 只结算 actual quantity；terminal 同一事件释放未使用 reservation。commit 成功或幂等成功前，fill 不得计入 execution-eligible 策略绩效。outbox pending 必须对新增风险保守可见。pending intent保存内容绑定的完整receipt seed；恢复时只有在canonical ledger独立返回同一commit的幂等事实后才可先补settlement，只有intent或CAS已变化但无commit事实时不得绕过最新risk/drift授权。
+
+capital-backed risk wrapper 的输入必须是尚未携带任何当前或legacy预约字段的原始订单，避免重复预约或继承他单预约。只有`open/increase`可以由该wrapper生成并携带`market_capital_reference_id/reservation_id/reservation_event_id/lineage/reserved_cash/reserved_exposure/required`；execution对买单继续拒绝全部legacy别名，`reduce/exit`在risk与execution两层拒绝任何预约字段，且`release_unfilled`永不为卖单释放预约。买入零成交释放前会按同一run/order构造canonical reservation reference，由capital ledger复核reservation event、authority、generation、execution lineage、risk unit与lineage，并要求订单中的reserved cash/exposure精确等于canonical当前完整剩余值；不能由订单把释放额缩小为部分清理。新release必须服从effect guard，随后精确event在该事件时点就必须得到`terminal=true`且remaining cash/exposure/margin全零；同一reference的重放只接受canonical已存在的相同终态事实。回执保存完整预约证明。reconcile不能只接受非空release ID或事后变成零的最终状态，而必须重放到精确release event，验证同一reservation、金额、原因、reference及event ID，并证明该事件当时已终态全额释放。
 
 ## A股 capital plan
 
@@ -244,9 +427,55 @@ partial 只结算 actual quantity；terminal 同一事件释放未使用 reserva
 
 现金管理建议必须 `auto_order=false`、`status=suggestion_only`、`attribution_bucket=cash_management_yield`、`excluded_from_stock_alpha=true`。
 
-## A股 prediction 与 exploration
+### 小资金订单计划绑定（本地候选）
 
-每个风格 prediction 保存：
+三层Universe中的`SmallCapitalFeasible`仍只是`cash+policy upper bound`。进入模拟决策链时必须另生成精确schema的`tradingagent.small_account_plan_receipt.v1`，至少绑定：
+
+- 当前模拟capital authority、正整数generation、`account_state_as_of`与50,000 CNY risk base；
+- position receipt ID/SHA、完整account content SHA、detached verification receipt、verifier identity/version/有效期、当前持仓/mark和每只股票T+1 `sellable_quantity`；
+- 买入100股整数倍及卖出零股/全退例外、15%单票上限、90% gross上限、current/target gross、starting/ending cash；
+- 当前 `cost_policy_id`，以及每项plan decision的symbol、side、quantity、reservation price、fee、cash before/after和reason；
+- 每个新仓候选的不可变 score evidence：canonical 路径必须是绑定当前人工选择 Champion manifest、artifact SHA、model ID/version、精确冻结 spec、symbol、PIT decision time，以及经独立port复核的数值PIT特征快照/数据receipt/vintage/lineage/known time/实现SHA/归一化版本/source type、computed rank 和 receipt hash 的 `ChampionScoreReceipt`；fixture 路径只能使用明确 `offline_engineering_fixture_rank`、不可晋级的独立 evidence 类型；
+- canonical plan digest与生成时点。
+
+Optimizer必须调用无默认实现的`AccountAuthorityVerifier`；proof逐项绑定authority/generation/source、account as-of、现金/gross、positions/sellable/mark、position receipt/hash、完整account content hash与有效期。future、expired、篡改或不匹配均fail closed；offline fixture proof固定不可晋级。调用方不能直接注入 raw `rank_score`。canonical decision 必须重新调用`ChampionSelectionVerifier`和`NumericPITFeatureSnapshotVerifier`，并复算完整score receipt；过期/非当前Champion、future/LLM/过早feature proof、调用方自证或fixture evidence冒充canonical authority均fail closed。未校准 rank 只用于候选排序，禁止通过 `single_name_max * rank` 或其它映射控制目标金额。Phase 1 新仓统一使用与 rank 无关、受最低经济金额、整手、费用、现金、15%单票、90% gross和最多8仓约束的固定 probe sizing，并明确标注为 engineering simulation。fixture路径只证明输入/proof内容绑定；canonical-capital测试路径从同一simulated ledger head派生并复读账户，current generation/lineage只能来自该snapshot而不能比较历史常量。Day loop再独立重算计划数值和hash，不相信stage自报。费用按canonical佣金、过户费和卖出印花税逐项复算，重新签名不能洗白错费用。Risk及每个approved order必须匹配plan SHA、position receipt、symbol/side/quantity/reservation price/fee并顺序重算现金。买入须为100股整数倍；卖出仅允许100股整数倍、一次性卖出当前不足100股余额，或全部退出，且不得超过可卖数量。optimizer、day loop与sim engine任一处不满足都在模拟成交前fail closed。两条本地路径都不证明真实账户、生产Champion/feature registry或broker状态。
+
+### 六维投资论点风险 authority（本地候选）
+
+每次调用optimizer必须显式提供不可变`ThesisRiskRuntimeAuthority`；没有默认policy、默认verifier或runtime自签路径。authority至少包含：
+
+- 人工复核且有有效期的`ThesisRiskPolicy`，六个维度固定为`industry / thesis / raw_material / policy_event / crowding / model_family`，每个cap为有限非负CNY金额；
+- 每个候选、非零现仓及所有未终结open/increase pending预约的`ThesisRiskExposureReceipt`，绑定symbol、exposure kind、六维group、有限非负notional、PIT时点、source receipt/lineage/content hash和对应candidate/position/pending事实；pending reduce/exit不重复增加风险；
+- 每个receipt的独立detached verification proof，以及一个覆盖全部成员、不可漏记/增补/重复的`ThesisRiskExposureSetReceipt`和set verification proof；proof必须在decision time有效并明确`promotion_eligible=false`时只能用于fixture；
+- policy、proof、set、初始六维exposure map和authority context的内容hash。
+
+Optimizer按当前持仓与pending book计算pre-exposure，再逐动作应用精确notional delta；同一symbol的candidate、position与open/increase pending必须保持六维group一致，不能靠重分类规避cap。open/increase超cap只可拒绝该新增风险，reduce/exit不得因cap已超而被锁死。Day loop不相信plan自报：它把每个决策的六维`group_id`重新绑定回权威exposure receipt，并验证authority context、逐订单金额变化、pre→post group连续性、最终六维map和plan hash；对payload改值后重新签名、遗漏pending、跨决策把pre exposure归零、替换policy/proof/set、改换group或过期proof均fail closed。外层stage为不可晋级不能掩盖任一嵌套proof的`promotion_eligible=true`。当前fixture policy及verifier只证明本地合同完整性，不证明生产行业/论点映射、真实订单预约、上限科学性或外部签名。
+
+Canonical A股账户估值 mark 不接受“只要早于决策时刻即可”的宽松口径。每只实际持仓的 mark 必须嵌入精确`AShareMarkEvidence + MarketEvidenceVerification`，绑定dataset/catalog、source receipt ID/SHA、source lineage、price payload、`data_through/observed_at/available_at`、`market_session=close`、完整`session_calendar_receipt`以及capital authority/generation/execution lineage/run decision context。按该 calendar，mark 的 `trade_date` 必须是运行日最近前一交易会话，`data_through=observed_at` 必须为该会话上海时间 `15:00:00`，且 `available_at <= account_as_of`。调用方另传的 `mark_observed_at` 必须与账户内不可变 evidence 完全相等；canonical position receipt 继续绑定由 mark evidence 参与形成的 ledger event/checksum、market authority SHA与verification SHA。当前唯一具体verifier是不可继承的`non_production_fixture`、`production_eligible=false`类型；proof hash只证明本地内容完整性，不是签名、生产calendar、SharedSignals live receipt readback或市场行情authority。
+
+## A股机会、预测与三风格 shadow 合同
+
+### OpportunityRadar 与 Ledger
+
+`FrozenOpportunityRadar`对显式`scanned_entity_ids`全分母扫描，并要求无默认实现的`OpportunityCoverageVerifier`返回detached proof。proof必须精确绑定detector ID/version、decision time、Universe snapshot、scan rows、entity ID集合及expected/observed count；缺失、拒绝、future、数量不等、内容漂移或`production_eligible!=false`均fail closed。股票scope只允许沪深主板普通股；市场/行业scope只能是`context_only`聚合。
+
+每个`OpportunitySnapshot`保存`latent / forming / ready / triggered / active / decaying / invalidated`状态、未校准hazard score、priced-in score、触发窗口、horizon、thesis、失效条件和逐条PIT evidence receipt/lineage/hash/expiry。状态迁移只能沿冻结状态机进行，必须增加新的、在decision time已可知且仍fresh的证据，并绑定previous snapshot SHA；`invalidated`为终态。`OpportunityLedger`只写`scan_batch`与`state_transition`两类append-only事件，采用canonical JSONL、checksum chain、expected-head CAS和内容相同幂等；它不是订单队列。Batch、snapshot与ledger固定`shadow_only=true`、`candidate_emission_allowed=false`、`position_effect_allowed=false`、`order_effect_allowed=false`、`promotion_eligible=false`。
+
+### 多期限 forecast
+
+`MultiHorizonForecastSnapshot`只接受现有标签期限`m30/m60/close/1d/3d/5d`，逐期限保存单调`q10/q25/q50/q75/q90`和`score_semantics=uncalibrated_return_quantiles`；未校准时`positive_probability`与`outperform_probability`必须为null。可选event hazard必须保存事件定义/version、窗口、censoring和competing-risk policy，且仍为未校准score。snapshot逐项绑定Opportunity、research snapshot、model release manifest、ValidationPlan和frozen OOS receipt，生成时点必须等于Opportunity decision time，并固定shadow-only、无仓位/订单/晋级authority。
+
+概率只能存在于分离的`CalibratedForecastResearchArtifact`。它要求无默认实现的`CalibrationAuthorityVerifier`复核exact forecast/probability set/ValidationPlan/OOS receipt、有效期、Brier、Log Loss、ECE和至少40个有效独立样本；proof仍固定`production_eligible=false`。这个artifact只证明本地冻结研究合同，不能回写原forecast、不能发布为live概率，也不能进入Champion或订单链。
+
+### 三风格 shadow router
+
+当前风格固定为`industry_trend / event_surprise / cross_market_dislocation`。每个`StyleSleeveReceipt`只能对同一个主板Champion candidate给出`support / oppose / abstain`和未校准heuristic score，并绑定base snapshot、Champion score receipt、decision time、版本、reason codes及不可变evidence groups。相同evidence group必须共用同一source receipt SHA，router按group去重，禁止用多个名称重复计算同一证据。
+
+`StyleRouterRunReceipt`只输出反事实`open_candidate`或`abstain`。支持与反对同时存在时必须abstain；支持意见可排序primary/supporting style，但票数和raw score不能改变50k资金、仓位或风险。run固定`router_mode=shadow_only`、`decision_eligible=false`、`position_effect_allowed=false`、`order_effect_allowed=false`、`automatic_promotion_enabled=false`、`automatic_risk_expansion_enabled=false`和`live_transition_authorized=false`。现役订单链不得导入`shared.opportunity`、`shared.forecast`或`shared.strategy_router`。
+
+## 旧 A股 prediction 与 exploration（冻结兼容）
+
+以下字段只描述旧四风格/探索样本的只读审计合同，不是V1现役router。每个旧风格 prediction 保存：
 
 - `style_id`、`style_version`、lifecycle/hypothesis family；
 - entry/exit thesis、holding horizon、direction；
@@ -259,16 +488,21 @@ partial 只结算 actual quantity；terminal 同一事件释放未使用 reserva
 
 不得输出无校准证据的 `probability` 或把 prior 当作未来收益预测。
 
-Exploration selection 保存：`exploration_policy_version`、top-K/pool、seed、selection method、`selection_probability`、`propensity`、chosen symbol/style/snapshot 和 not-selected reason。probability/propensity 必须相等且在 `(0,1]`。
+旧Exploration selection 保存：`exploration_policy_version`、top-K/pool、seed、selection method、`selection_probability`、`propensity`、chosen symbol/style/snapshot 和 not-selected reason。probability/propensity 必须相等且在 `(0,1]`。V1不得新增这类selection、不得把它恢复到当前KPI或订单链。
 
-订单归因保存 `sample_intent`、`primary_style`、`supporting_styles`、`style_scores`、`style_versions`、`decision_policy_version`、disagreement 和 exploration metadata。风格不拥有 capital account。
+历史订单归因可保存 `sample_intent`、`primary_style`、`supporting_styles`、`style_scores`、`style_versions`、`decision_policy_version`、disagreement 和 exploration metadata；它们必须标记legacy/excluded。风格从不拥有 capital account。
 
 ## A股本地执行事实
 
-- 执行 authority：`shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/local_sim_trades.jsonl` 及同 root 的 manifest/outbox；旧 `shared/logs/local_sim/` 冻结且不参与当前统计。
+- 执行 authority 路径由 verified current capital snapshot 的 `execution_lineage_id` 派生为
+  `shared/logs/execution_lineages/<execution_lineage_id>/`；同 root 的 positions、trades、manifest、
+  receipts 与 outbox 必须匹配同一 authority/generation/lineage。历史
+  `ashare-sim-fresh-20260712-v1` 只是某次基线 lineage，不是 reader 常量；旧
+  `shared/logs/local_sim/` 冻结且不参与当前统计。
 - 签名回执：同一 fresh execution root 下的 `sim_execution_receipts.jsonl`；不得回退读取旧 `signals/` 或 `shared/logs/local_sim/` 回执作为当前 authority。
 - 同日幂等键至少包含 market + account + trade date + symbol + side；多风格不得重复下单。
-- execution-eligible fill 包含 actual positive price/quantity、timezone-aware timestamp、真实 5 分钟 source/timestamp/positive volume、candidate/execution source、100 股整手、T+1/session/limit/liquidity 与 capital commit identity。
+- execution-eligible fill 包含 actual positive price/quantity、timezone-aware timestamp、真实 5 分钟 source/timestamp/positive volume、candidate/execution source、方向正确的A股数量规则、T+1/session/limit/liquidity 与 capital commit identity。
+- 资本支持的模拟执行 quote 必须嵌入精确`AShareExecutionQuoteEvidence + MarketEvidenceVerification`，绑定dataset/catalog、source receipt/hash/lineage、quote payload、`data_through/observed_at/available_at`、`market_session`、同一calendar receipt和capital/run context。静态时点必须满足`data_through <= observed_at <= available_at <= execution_time`；quote可以在decision后到达，但不得来自future。trade date必须是calendar当前会话，session label必须匹配上海本地effect time。当前模拟只接受 `continuous_auction_am=09:30–11:30` 与 `continuous_auction_pm=13:00–14:57`；收盘集合竞价和盘后固定价不得伪装为连续竞价。整批snapshot先完成静态preflight，随后无默认`TrustedExecutionClock`分别在`sim_submit`与`capital_commit`紧邻副作用前取时，要求`effect_time-data_through <= 30 seconds`并再次复核session；commit校验后、账务写入前还要重读一次最新drift/Champion authority。quote的`execution_time`保持为市场证据时点；模拟`filled_at/terminal_at`取submit副作用时点，全部ISO时间保留原始微秒精度，commit时点不得倒退。第二次检查失败时保留异常reading、丢弃未提交模拟结果、释放预约且不写capital outbox/ledger；倒退或跨交易日时terminal保持最后合法submit。receipt绑定clock identity、`market_session/available_at/data_through`、market execution time、两次effect time与market authority/verification SHA。日循环与对账复用同一session划分和30秒TTL；验证`not_committed`回执时还必须重证`data_through <= available_at <= execution_time <= sim_submit_checked_at`、`sim_submit_checked_at-data_through <= 30 seconds`及`session(execution_time) == market_session`，不能只看commit阶段的最终失败原因。随后按`regression -> trade-date mismatch -> session mismatch -> stale`的唯一优先级证明失败原因；commit阶段的future原因在submit已通过且时钟不倒退时不可达，因此不接受伪造。regression/trade-date的terminal必须精确等于最后合法submit，session/stale必须精确等于commit reading；卖出型零成交回执不得携带release ID。对账另行验证`quote <= submit <= fill/terminal <= commit <= reconcile`，并只为精确允许列表内的commit前市场失效、零成交、完整残量、无fill/commit ID且释放语义一致的`not_committed`回执开放闭环。当前唯一具体时钟是不可继承、`production_eligible=false`的冻结fixture时钟，不是生产time authority；本地最终authority重读也不证明未来外部authority与capital commit已原子化。
 - pending/unknown、请求值、弱价格证据或 commit pending 只能作为账户/chain-validation 事实，不能进入策略 PnL。
 
 ### A股 ExecutionRealityModel
@@ -276,12 +510,83 @@ Exploration selection 保存：`exploration_policy_version`、top-K/pool、seed�
 当前版本是 `ashare-execution-reality-20260706-v1`，`effective_from=2026-07-06`。adapter、server-local 模拟撮合、共享 market-rules facade 和反事实成本必须读取同一模型，不得各自复制税费/涨跌幅/整手常量。模型依据沪深现行交易规则、中国结算交易过户费及现行印花税口径；规则变动必须发布新 model version，历史订单不得原地改口径。
 
 - `price_limit_policy_version=ashare-price-limit-20260706-v1`：主板正常股及主板风险警示股涨跌幅均为 10%；科创板/创业板为 20%，北交所为 30%；上下限按 0.01 CNY tick 四舍五入。不得继续使用无板块语义的 `st=5%`。
-- 买入为 100 股或整数倍；卖出不足 100 股的余额仅允许一次性卖出。`lot_rules.version=ashare-lot-rules-20260706-v1`。
+- 买入为 100 股或整数倍；卖出允许100股整数倍、全部退出，或一次性卖出当前完整不足100股余额。不得把非法请求自动向下取整、拆成部分零股或改写为其它数量，且T+1可卖量必须覆盖请求。`lot_rules.version=ashare-lot-rules-20260706-v1`。
 - `session_policy_version=ashare-sessions-20260706-v1`：连续竞价只包括 `09:30–11:30` 与 `13:00–14:57`。`14:57–15:00` 是独立收盘集合竞价；`15:05–15:30` 是面向全部 A股的独立盘后固定价格交易，order type 为 `after_hours_fixed_price`，价格引用正式收盘价。当前同步模拟器没有集合竞价批量撮合或盘后固定价撮合，因此两者都必须返回显式 unsupported reason；不得延长普通连续竞价伪造成交。observation/counterfactual 仍继续记录。
 - 连续竞价限价申报使用 `ashare-continuous-price-cage-20260706-v1`：买价上限为“基准价 102%”与“基准价 + 10 ticks”的较高者；卖价下限为“基准价 98%”与“基准价 - 10 ticks”的较低者。tick 为 0.01 CNY，执行样本保存可验证基准价来源。
 - 撤单使用 `ashare-cancel-cas-20260706-v1`，保存 `state_version`、expected/observed state version 和 cancel outcome；成交/终态先到时不得回写成已撤。未来异步 broker 必须使用 append-only order events + startup reconcile，当前 sim-only 同步引擎不构成 broker-ready 证明。
 - 卖方证券交易印花税为 5bps；交易过户费买卖双方各 0.1bps，分别保存 `stamp_duty` 与 `transfer_fee`，不得合并进 commission。当前保守佣金暂按 2.5bps、最低 5 CNY，`commission_schedule_status=provisional_pending_broker_contract`；它不是已核实的华创费率。只有实际合同/交割单核实后，才允许以 `broker_contract_verified`/`broker_statement_verified` 和独立 `commission_schedule_version` 覆盖。
 - 成交费用记录至少包含 `commission`、`stamp_duty`、`transfer_fee`、总费用（模型为 `total`，本地成交/回执为 `total_fee`/`fee`）、`execution_reality_model_version`、`commission_schedule_status` 和 `commission_schedule_version`；实际成交绩效最终使用回执/交割事实，保守模型只用于模拟与反事实。
+
+## 本地自动模拟日 RunBundle（候选）
+
+contract ID：`tradingagent.paper_day_loop.v1`。该对象只是编排证据，不取代 capital、position、order、fill、reconcile 或 SampleJournal authority。
+
+```yaml
+RunContext:
+  trade_date: YYYY-MM-DD
+  decision_as_of: timezone-aware Asia/Shanghai instant on trade_date
+  market: ashare
+  authority_id: ashare-capital-v1
+  authority_generation: positive-current-generation
+  execution_lineage: immutable-lineage
+  account_type: simulated
+  real_trading_enabled: false
+  champion_manifest_sha256: 64-hex
+```
+
+`decision_as_of` 是 run identity 的必需组成部分，与 `trade_date` 在上海时区不同日时 fail before stage。阶段顺序固定为 `preopen -> evidence_ready -> universe_ready -> decision_ready -> risk_checked -> orders_simulated -> reconciled -> learning_recorded -> reported`。每个 StageReceipt 绑定 component ID/version/artifact SHA、input bundle SHA、输出 payload SHA、reason codes 和幂等 key。
+
+evidence/universe/preopen 在早期阻断新增风险时，loop 不得把无候选交给 optimizer 后异常退出。它要生成可审计 `hold`，继续处理已验证持仓的 reduce/exit、reconcile、Decision Ledger、label maturity 与 report，并以 `completed_with_blocks` 结束。position authority 无效时只能严格 hold，不能借“继续闭环”生成任何方向订单。
+
+`compose_paper_runtime`和fixture CLI只允许精确`FrozenFixtureStagePort`及不可晋级fixture账户/proof，禁止任意callable或网络/broker port以自报属性通过。`compose_capital_backed_paper_runtime`是另一条test-only composition：它只通过public stage contracts连接canonical simulated ledger、人工选择Champion、逐副作用drift/Champion复核、capital outbox、模拟成交与reconcile；当前没有CLI、scheduler或live sample。FileRunBundleStore只使用调用方显式给定的本地root，每个compare-and-swap先写同目录临时文件、完整写入并fsync、原子公布为递增的内容寻址事件，再fsync目录。reader校验完整事件链；中断的temp不是有效事件。无默认生产目录，不读旧runtime fallback。
+
+## Decision Exposure Ledger（audit-only）
+
+`decision_exposure_disposition` 事件只能是：
+
+| disposition | 必需事实 |
+|---|---|
+| `PAPER_FILLED` | 通过风险的模拟订单 + 内容绑定 fill receipt |
+| `PAPER_NOT_FILLED` | 通过风险但明确未成交 + nonfill reason |
+| `REJECTED` | 明确结构化 risk rejection |
+| `OBSERVATION_ONLY` | hold/不交易，无任何成交或拒绝伪装 |
+
+每条记录绑定 `source_run_id`、`input_bundle_sha256`、capital authority/generation、execution lineage、decision/prediction/cluster identity、requested notional、模拟 fill 和 actual cost。读回必须按当前 run 的整组 identity 限定，禁止仅用可重复的 `order_id` 扫描其他 run。这些事件始终为 `eligible_for_statistical_learning=false`、`eligible_for_performance_metrics=false`、`eligible_for_calibration=false`、`eligible_for_promotion=false`；它们只用于完整决策覆盖和反事实实验设计。
+
+## ValidationPlan 与交易会话 authority（候选）
+
+A股 `ValidationPlan` 必须绑定 `TradingSessionCalendarAuthority`：market、calendar ID/version、source dataset/receipt ID/SHA、带时区 `available_at` 和严格递增的完整 session tuple；并强制注入无默认`TradingSessionCalendarAuthorityVerifier`，将verifier ID/version、verified time、proof hash和计划`frozen_at`一起绑定。calendar必须在计划冻结前可知，canonical plan hash同时绑定calendar/proof/session count。train/validation/test六个边界必须都是该calendar会话，purge/embargo按边界之间的交易会话数计算；非A股才保留自然日间隔。
+
+本地forward-label合同要求`ValidationPlan.frozen_at <= prediction_at`，从同一verified calendar派生`close/1d/3d/5d`的上海15:00时点；调用方target只能作相等断言，label/result逐项保存plan/calendar/proof SHA，缺目标会话日线不得顺延。`SampleJournal.materialize_labels()`、`materialize_label_batch()`、`run_ashare_forward_label_ops()`和`run_ashare_sample_ops()`均要求显式传入该计划；A股调用缺失时在读取行情前fail closed，非A股仍可使用原自然日合同。
+
+两个A股 CLI 只接受`--validation-plan-path`指向预先生成的内容寻址artifact。加载器要求`artifact_type=ashare_validation_plan_v1`、canonical `validation_plan` payload和匹配的`validation_plan_sha256`，重建calendar/detached proof并拒绝symlink、缺字段、非canonical payload或任一hash/binding漂移。它不会调用`TradingSessionCalendarAuthorityVerifier`、不会在运行时生成或重签proof，也不会根据观测到的bar反推日线target。当前loader只验证artifact内部合同与内容绑定，不验证顶层authority tier或生产registry；因此它只能用于本地sim-only候选，不能把fixture source receipt升级为真实calendar authority。
+
+这些门能防止周末、节假日、调用方自授target authority和运行时自签，却不证明fixture source receipt、exit price或收益真值真实。当前没有生产calendar verifier、受信计划artifact registry或真实market-truth readback；任何predictive eligibility仍须经过frozen OOS、总回报、公司行动与独立authority门禁。
+
+## Label maturity authority（候选）
+
+`market_truth / paper / shadow / unavailable_oracle` 是不同证据类，不得互相伪装。只有`source_class=market_truth`才可能进入predictive validation，并且必须同时满足：
+
+- horizon 已到期、`available_at <= assessed_as_of`；
+- canonical evidence payload 经本地重算 SHA-256，decision cutoff、horizon、value 和 receipt IDs 精确一致；
+- 外部注入的 `FrozenAuthorityProof` 绑定同一 evidence SHA/receipts 和冻结时点；
+- 外部注入、默认不存在的 verifier 以完整 binding 验证 proof；
+- 决策前已冻结且内容hash自校验的`FrozenOOSValidationPlanReceipt`绑定registry、plan、主horizon和eligible source class；
+- total-return definition、corporate-action policy与OOS receipt中的版本完全一致；
+- adjustment-truth receipt/hash位于source receipts中，覆盖完整horizon，且其可知时间不晚于label available time；
+- 独立OOS registry verifier在每次投影重建时重新验证receipt，手工构造verification不能自证。
+
+proof、OOS receipt、总回报/公司行动真值或任一verifier缺失，自报verification、binding/时间不一致均不得发布predictive eligibility。fixture永远不能成为release evidence；paper只供模拟执行验证，shadow只供反事实验证，unavailable只保留不可用原因。
+
+## 模型漂移与负向进化（本地候选）
+
+漂移证据必须绑定`journal_head_sha256`、`model_manifest_sha256`、`metrics_artifact_sha256`、metrics实现版本、带时区window/evaluated time和`effective_independent_sample_count`。数值生产者不得在 metrics artifact 内自报 `lineage_verified`；当前 `tradingagent.drift_metrics_artifact.v2` 只有在另一份 `tradingagent.drift_metrics_verification_receipt.v1` canonical detached receipt 同时绑定 exact artifact/evidence SHA、固定本地metrics implementation trust root、label/cost snapshot SHA、journal/model、window、horizon、regime、sample count 与非空 source receipt 集合后，控制器才构造 verified evidence。verifier重新读取canonical artifact/receipt并复核所有字段，拒绝调用方选择任意implementation。receipt 缺失、非 canonical、实现/窗口/证据绑定漂移或 producer 重新加入自证字段均 fail closed。proof SHA只是本地完整性hash，不是数字签名；该本地 verifier 合同也不等于真实独立 metrics 重算 authority。样本不足、证据过期、lineage/数据异常、校准/OOD/成本偏差不得由调用方用一个`healthy=true`覆盖。
+
+控制器必须显式注入`TrustedEvolutionClock`，没有进程墙钟或调用方timestamp回退。clock reading绑定model manifest和evidence SHA，结果保存`trusted_clock_identity_sha256`与`trusted_evaluated_at`；reading不得早于metrics记录/评估时点，metrics超过14天视为过期。当前唯一具体实现是不可继承、不可变、`production_eligible=false`的`NonProductionFixtureEvolutionClock`，只证明测试中的确定性freshness门，不是长驻生产时间authority。
+
+自动动作仅允许`quarantine / reduce_only / stop_new_risk / require_review`。动作以内容寻址receipt持久化，active latch只允许保持或收紧；进程重启后即使新窗口看似健康，也不能自动清除、晋级模型或扩大风险。恢复必须经过独立人工复核和未来版本化的显式release流程。
+
+“保持或收紧”同时约束两个维度：新 receipt 的 `risk_multiplier` 不得高于 active receipt，动作集合也不得丢失现有的 risk-action/review 严重度，且至少一个维度真正收紧。未知 action severity 直接 fail closed。当前wrapper在每次risk评估前重读store，网络关闭的simulation wrapper在模拟副作用前再次重读；如果新latch收紧，open/increase强制转为未成交，reduce/exit不被抹掉。该实现仍不是live scheduler或broker authority；未来真实外部副作用前必须执行并记录同一类最新latch复核。
 
 ## SampleJournal
 
@@ -346,6 +651,8 @@ A股逐日正式回撤证据只在盘后固定价格交易结束后的 `15:31` �
 规范 horizon：`m30, m60, close, 1d, 3d, 5d`；`next_day`/`next-day` 只映射到 `1d`。
 
 每个 label 保存 target time、status、exit evidence、market/direction-adjusted gross return、cost model/version、fees/slippage 和 `net_return_after_costs`。状态至少区分 ready/labeled、pending-not-due、missing evidence、rejected data quality 与 rejected missing cost evidence。
+
+A股`close/1d/3d/5d`的target必须从预测前冻结且由独立verifier复核的同一`ValidationPlan`交易会话authority派生；调用方提供的target只能断言完全相等。label/result逐项保存plan SHA、calendar SHA与detached proof SHA。目标会话缺15:00日线时保持missing，不得顺延到后一会话或使用次日开盘补造。该target authority只证明目标时刻，不证明exit price、total return或公司行动真值；predictive eligibility仍需下游market-truth/OOS/adjustment authority。
 
 - `as_of` 限制可见数据；日线不能伪造 m30/m60，晚到价格不能回填更早 horizon。
 - 科学 PIT 证据必须同时保存并重新校验 `event_time <= available_at <= ingested_at <= retrieved_as_of <= prediction/label as_of`；source SHA 或任意 `as_of` 字段不能单独证明 PIT。reference/entry 与每个 exit candidate 都必须在排序、选价和计算收益前通过同一个 Evidence Gate，且 validation 必须 `complete=true,status=valid`。EvidenceEnvelope 在 record root、PIT root、PIT `timestamps` 与 adapter 原始 envelope 收集所有 present event aliases（包括 `event_time/source_event_time/timestamp/observed_at/bar_time/trade_time/datetime`）；它们必须换算到同一 UTC instant，同义 `+08:00`/UTC 允许，任一非法、naive 或冲突 fail closed。receipt/availability aliases 至少覆盖 Journal 的 21 条 root/nested 路径，并额外覆盖 provider `published_at/retrieved_at/collected_at_dt`；每个 present 值必须带时区且可解析，最晚证据时刻不得晚于本轮边界，较早字段不能覆盖较晚字段。validated envelope 的 canonical 四钟必须与 nested lineage 一致；窗口资格、排序、`evidence_at` 与写出 lineage 只使用该 canonical instant。任一顺序冲突、future receipt 或 canonical instant 超窗的 point 不能影响候选排序，也绝不能生成 `ready/verified_exit_evidence`。

@@ -373,7 +373,7 @@ def _ashare_sell_request(
         execution_lineage_id=LINEAGE_ID,
         lineage_sha256=_sha("lineage"),
         order_id="A-ORDER-SELL-1",
-        idempotency_key="ashare:sim:20260712:000001.XSHE:sell:1",
+        idempotency_key="ashare:sim:20260713:000001.XSHE:sell:1",
         execution_fill_id="A-FILL-SELL-1",
         fill_sequence=1,
         side="sell",
@@ -385,7 +385,7 @@ def _ashare_sell_request(
         actual_fee_cash_cny=6.0,
         actual_net_cash_credit_cny=1_094.0,
         actual_gross_realized_pnl_cny=100.0,
-        filled_at="2026-07-12T09:33:00+08:00",
+        filled_at="2026-07-13T09:33:00+08:00",
         point_in_time_as_of=PIT,
         source="ashare_local_sim_sell",
         source_sha256=_sha("a-sell-source"),
@@ -1222,6 +1222,27 @@ def test_ashare_full_sell_closes_quantity_and_exposure(tmp_path: Path) -> None:
     assert decision.snapshot.positions_quantity_by_risk_unit == {}
     assert decision.snapshot.realized_pnl_cny == 89.0
     assert decision.snapshot.available_to_reserve_cny == 45_000.0
+
+
+def test_ashare_same_day_sell_fails_closed_before_append(tmp_path: Path) -> None:
+    ledger = _init_ledger(tmp_path, "ashare")
+    reservation = _reserve_ashare(ledger)
+    opened = ledger.commit_fill(_ashare_fill_request(ledger, reservation))
+    assert opened.committed is True
+    event_count = len(ledger._load_events_unlocked())
+
+    decision = ledger.commit_ashare_sell(
+        _ashare_sell_request(
+            ledger,
+            idempotency_key="ashare:sim:20260712:000001.XSHE:sell:blocked",
+            filled_at="2026-07-12T09:33:00+08:00",
+        )
+    )
+
+    assert decision.committed is False
+    assert decision.reason == "ashare_sell_quantity_exceeds_t1_sellable"
+    assert len(ledger._load_events_unlocked()) == event_count
+    assert ledger.snapshot().positions_quantity_by_risk_unit == {"000001.XSHE": 100}
 
 
 def test_ashare_sell_retry_is_idempotent_and_overclose_fails_closed(

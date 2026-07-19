@@ -1,0 +1,82 @@
+"""Optional, evidence-only LLM sidecar.
+
+This package has no authority over portfolio, risk, TradeIntent, orders, or
+broker operations.  Provider output must first become a versioned
+``LLMEvidenceObservation``.
+"""
+
+from .deepseek_config import DeepSeekProviderConfig, DeepSeekProviderConfigError
+from .gateway import (
+    DeepSeekAdapter,
+    GatewayAnalysisResult,
+    LLMEvidenceGateway,
+    OfflineDeepSeekFixtureTransport,
+    ProviderEvidenceBindingError,
+    ProviderOutputSensitiveError,
+    ProviderRejectedAttemptReceipt,
+    ProviderTransportReceipt,
+    ProviderTransportReceiptError,
+    validate_provider_rejected_attempt_receipt_descriptor,
+)
+from .evidence_journal import (
+    EMPTY_LLM_EVIDENCE_JOURNAL_HEAD_SHA256,
+    LLMEvidenceEnvelope,
+    LLMEvidenceEnvelopeError,
+    LLMEvidenceJournal,
+    LLMEvidenceJournalError,
+    LLMEvidenceJournalReadback,
+    LLMEvidenceProvenanceRecorder,
+    LLMProviderInvocationEvent,
+    LLMProviderInvocationJournal,
+    LLMProviderInvocationReadback,
+    LLMRejectedAttemptAuditEvent,
+    LLMRejectedAttemptAuditJournal,
+    LLMRejectedAttemptAuditReadback,
+    llm_provenance_journal_paths,
+)
+from .router import LLMRouter, ModelRoute
+from .providers.deepseek_http import (
+    DeepSeekCredentialFile,
+    DeepSeekHTTPResponse,
+    DeepSeekHTTPTransport,
+    DeepSeekHTTPTransportConfig,
+    DeepSeekHTTPTransportError,
+)
+from .schema import LLMEvidenceRequest
+
+__all__ = [
+    "DeepSeekAdapter",
+    "DeepSeekProviderConfig",
+    "DeepSeekProviderConfigError",
+    "DeepSeekCredentialFile",
+    "DeepSeekHTTPResponse",
+    "DeepSeekHTTPTransport",
+    "DeepSeekHTTPTransportConfig",
+    "DeepSeekHTTPTransportError",
+    "EMPTY_LLM_EVIDENCE_JOURNAL_HEAD_SHA256",
+    "GatewayAnalysisResult",
+    "LLMEvidenceEnvelope",
+    "LLMEvidenceEnvelopeError",
+    "LLMEvidenceGateway",
+    "LLMEvidenceJournal",
+    "LLMEvidenceJournalError",
+    "LLMEvidenceJournalReadback",
+    "LLMEvidenceProvenanceRecorder",
+    "LLMProviderInvocationEvent",
+    "LLMProviderInvocationJournal",
+    "LLMProviderInvocationReadback",
+    "LLMEvidenceRequest",
+    "LLMRejectedAttemptAuditEvent",
+    "LLMRejectedAttemptAuditJournal",
+    "LLMRejectedAttemptAuditReadback",
+    "llm_provenance_journal_paths",
+    "LLMRouter",
+    "ModelRoute",
+    "OfflineDeepSeekFixtureTransport",
+    "ProviderEvidenceBindingError",
+    "ProviderOutputSensitiveError",
+    "ProviderRejectedAttemptReceipt",
+    "ProviderTransportReceipt",
+    "ProviderTransportReceiptError",
+    "validate_provider_rejected_attempt_receipt_descriptor",
+]

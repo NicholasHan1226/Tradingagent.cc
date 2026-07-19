@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from shared.execution import execution_reality
 from shared.execution.execution_reality import (
     ASHARE_EXECUTION_REALITY_VERSION,
     ashare_execution_reality,
@@ -126,3 +127,35 @@ def test_legacy_market_rules_facade_uses_same_ashare_reality_model() -> None:
     assert rules.stamp_duty_bps == pytest.approx(5.0)
     assert rules.transfer_fee_bps == pytest.approx(0.1)
     assert commission("ashare", 1_000.0, "sell") == pytest.approx(5.51)
+
+
+@pytest.mark.parametrize(
+    ("current_shares", "sellable_shares", "requested_shares", "expected_reason"),
+    [
+        (150, 150, 20, "ashare_odd_lot_sell_quantity_invalid"),
+        (150, 150, 50, None),
+        (150, 150, 100, None),
+        (150, 150, 150, None),
+    ],
+)
+def test_ashare_sell_quantity_validator_enforces_odd_lot_remainder_rule(
+    current_shares: int,
+    sellable_shares: int,
+    requested_shares: int,
+    expected_reason: str | None,
+) -> None:
+    validator = getattr(
+        execution_reality,
+        "ashare_sell_quantity_rejection_reason",
+        None,
+    )
+
+    assert validator is not None
+    assert (
+        validator(
+            current_shares=current_shares,
+            sellable_shares=sellable_shares,
+            requested_shares=requested_shares,
+        )
+        == expected_reason
+    )
