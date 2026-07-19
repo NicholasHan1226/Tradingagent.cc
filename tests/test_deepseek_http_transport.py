@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import io
 import json
+import os
 import ssl
 import tempfile
 import urllib.error
@@ -1565,6 +1566,70 @@ def test_gateway_preserves_rejected_http_attempt_receipt_without_response_conten
     assert "合同事实有已验证来源" not in repr(descriptor)
     assert "客户验收仍有不确定性" not in repr(descriptor)
     assert len(opener.calls) == 1
+    persisted_descriptor = (
+        gateway_module.validate_provider_rejected_attempt_receipt_descriptor(descriptor)
+    )
+    assert not isinstance(
+        persisted_descriptor,
+        gateway_module.ProviderRejectedAttemptReceipt,
+    )
+    persisted_authority = persisted_descriptor["authority"]
+    persisted_authority["order_eligible"] = True
+    assert persisted_descriptor["authority"]["order_eligible"] is False
+    for field_name, replacement in (
+        ("receipt_sha256", "0" * 64),
+        ("audit_only", False),
+        ("evidence_journal_eligible", True),
+        ("reason_code", "other_failure"),
+    ):
+        tampered_descriptor = {**descriptor, field_name: replacement}
+        with pytest.raises(gateway_module.ProviderTransportReceiptError):
+            gateway_module.validate_provider_rejected_attempt_receipt_descriptor(
+                tampered_descriptor
+            )
+    journal_module = importlib.import_module("shared.llm.evidence_journal")
+    audit_journal = journal_module.LLMRejectedAttemptAuditJournal(
+        tmp_path / "rejected_attempts.jsonl"
+    )
+    empty_head = journal_module.EMPTY_LLM_EVIDENCE_JOURNAL_HEAD_SHA256
+    assert (
+        audit_journal.append_gateway_result(
+            result,
+            expected_head_sha256=empty_head,
+        )
+        is True
+    )
+    first_head = audit_journal.read().head_sha256
+    assert (
+        audit_journal.append_gateway_result(
+            result,
+            expected_head_sha256=first_head,
+        )
+        is False
+    )
+    audit_readback = audit_journal.read()
+    assert len(audit_readback.events) == 1
+    audit_event = audit_readback.events[0]
+    assert audit_event.attempt_id == f"llm-attempt-{rejected.receipt_sha256}"
+    assert audit_event.observation["status"] == "invalid"
+    assert audit_event.rejected_attempt_receipt["audit_only"] is True
+    assert not isinstance(
+        audit_event.rejected_attempt_receipt,
+        gateway_module.ProviderRejectedAttemptReceipt,
+    )
+    event_authority = audit_event.rejected_attempt_receipt["authority"]
+    event_authority["decision_eligible"] = True
+    assert (
+        audit_event.rejected_attempt_receipt["authority"]["decision_eligible"] is False
+    )
+    audit_alias = tmp_path / "rejected_attempts-hardlink.jsonl"
+    os.link(audit_journal.path, audit_alias)
+    with pytest.raises(
+        journal_module.LLMEvidenceJournalError,
+        match="journal_hardlink_forbidden",
+    ):
+        audit_journal.read()
+    audit_alias.unlink()
     for changes in (
         {"response_sha256": "0" * 64},
         {"audit_only": False},
@@ -1575,7 +1640,6 @@ def test_gateway_preserves_rejected_http_attempt_receipt_without_response_conten
             match="rejected_attempt_transport_authority_required",
         ):
             replace(rejected, **changes)
-    journal_module = importlib.import_module("shared.llm.evidence_journal")
     with pytest.raises(
         journal_module.LLMEvidenceEnvelopeError,
         match="transport_receipt_required",
@@ -1635,6 +1699,261 @@ def test_gateway_preserves_rejected_http_attempt_receipt_without_response_conten
         match="gateway_observation_request_binding_invalid",
     ):
         sidecar.analyze_with_provenance(request, entity_id="600000.SH")
+
+
+def test_provenance_recorder_persists_rejected_attempt_once_and_replays(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _http_module()
+    gateway_module = importlib.import_module("shared.llm.gateway")
+    journal_module = importlib.import_module("shared.llm.evidence_journal")
+    provider_config_module = importlib.import_module("shared.llm.deepseek_config")
+    request = _llm_request()
+    envelope = _provider_envelope_for_request(request)
+    envelope["choices"][0]["message"]["content"] = json.dumps(
+        {
+            "bull_case": "合同事实有已验证来源",
+            "bear_case": "客户验收仍有不确定性",
+            "key_risk": "收入确认可能延后",
+            "evidence_refs": list(request.evidence_refs),
+            "belief_score": 0.99,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    raw = json.dumps(
+        envelope,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    opener = _FakeOpener(_FakeResponse(raw))
+    credential_path, _ = _write_credential(tmp_path)
+    transport = _transport_with_fake(
+        monkeypatch,
+        module,
+        _config(module, credential_path),
+        opener,
+    )
+    provider_config = provider_config_module.DeepSeekProviderConfig.from_environment(
+        {"TRADINGAGENT_LLM_NETWORK_ENABLED": "true"},
+        allow_network_transport=True,
+    )
+    verifier = _VersionedSourceVerifier()
+    sidecar = gateway_module.LLMEvidenceGateway(
+        router=provider_config.router(),
+        adapters={
+            "deepseek": gateway_module.DeepSeekAdapter(
+                transport=transport,
+                source_authority_verifier=verifier,
+            )
+        },
+    )
+    accepted_journal = journal_module.LLMEvidenceJournal(tmp_path / "accepted.jsonl")
+    _, rejected_path, invocation_path = journal_module.llm_provenance_journal_paths(
+        accepted_journal.path
+    )
+    rejected_journal = journal_module.LLMRejectedAttemptAuditJournal(rejected_path)
+    invocation_journal = journal_module.LLMProviderInvocationJournal(invocation_path)
+    recorder = journal_module.LLMEvidenceProvenanceRecorder(
+        accepted_journal=accepted_journal,
+        rejected_attempt_journal=rejected_journal,
+        provider_invocation_journal=invocation_journal,
+        source_authority_verifier=verifier,
+    )
+
+    first = recorder.analyze_and_persist(
+        sidecar,
+        request,
+        entity_id="600000.SH",
+    )
+    replay = recorder.analyze_and_persist(
+        sidecar,
+        request,
+        entity_id="600000.SH",
+    )
+
+    assert first["status"] == "invalid"
+    assert first["reason_code"] == "llm_evidence_schema_invalid"
+    assert replay == first
+    assert len(opener.calls) == 1
+    assert len(accepted_journal.read().events) == 0
+    rejected_readback = rejected_journal.read()
+    assert len(rejected_readback.events) == 1
+    assert rejected_readback.events[0].observation == first
+    invocation_readback = invocation_journal.read()
+    assert len(invocation_readback.events) == 2
+    assert invocation_readback.events[-1].state == "rejected"
+
+
+def test_provenance_recorder_rejects_rotated_request_id_without_provider_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway_module = importlib.import_module("shared.llm.gateway")
+    journal_module = importlib.import_module("shared.llm.evidence_journal")
+    request = _llm_request()
+    rotated = replace(request, request_id="REQ-ROTATED-ID")
+    content = gateway_module._canonical_json(
+        {
+            "schema_version": rotated.schema_version,
+            "request_id": rotated.request_id,
+            "task_type": rotated.task_type,
+            "route": rotated.route,
+            "prompt_template_id": rotated.prompt_template_id,
+            "prompt_version": rotated.prompt_version,
+            "prompt_sha256": rotated.prompt_sha256,
+            "document_cutoff": rotated.document_cutoff,
+            "evidence_refs": list(rotated.evidence_refs),
+            "artifact_set_sha256": rotated.artifact_set_sha256,
+            "payload_sha256": rotated.payload_sha256,
+        }
+    )
+    rotated = replace(
+        rotated,
+        request_content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    )
+    verifier = _VersionedSourceVerifier()
+    sidecar = gateway_module.LLMEvidenceGateway(
+        router=gateway_module.LLMRouter.from_offline_fixture_mapping(
+            {
+                "slow_research": {
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-pro",
+                }
+            }
+        ),
+        adapters={
+            "deepseek": gateway_module.DeepSeekAdapter(
+                transport=None,
+                source_authority_verifier=verifier,
+            )
+        },
+    )
+    accepted_journal = journal_module.LLMEvidenceJournal(tmp_path / "accepted.jsonl")
+    _, rejected_path, invocation_path = journal_module.llm_provenance_journal_paths(
+        accepted_journal.path
+    )
+    rejected_journal = journal_module.LLMRejectedAttemptAuditJournal(rejected_path)
+    invocation_journal = journal_module.LLMProviderInvocationJournal(invocation_path)
+    recorder = journal_module.LLMEvidenceProvenanceRecorder(
+        accepted_journal=accepted_journal,
+        rejected_attempt_journal=rejected_journal,
+        provider_invocation_journal=invocation_journal,
+        source_authority_verifier=verifier,
+    )
+    calls = 0
+
+    def unavailable(
+        request_value: object,
+        *,
+        entity_id: str = "",
+    ) -> gateway_module.GatewayAnalysisResult:
+        nonlocal calls
+        calls += 1
+        observation = gateway_module.unavailable_observation(
+            request_value,
+            reason_code="deepseek_adapter_unavailable",
+            entity_id=entity_id,
+        )
+        return gateway_module.GatewayAnalysisResult(
+            observation=observation,
+            transport_receipt=None,
+            rejected_attempt_receipt=None,
+            _gateway_authority_seal=gateway_module._GATEWAY_ANALYSIS_AUTHORITY_SEAL,
+            _request=request_value,
+            _entity_id=entity_id,
+            _source_authority_verifier=verifier,
+        )
+
+    monkeypatch.setattr(sidecar, "analyze_with_provenance", unavailable)
+    first = recorder.analyze_and_persist(sidecar, request, entity_id="600000.SH")
+    assert first["status"] == "unavailable"
+    with pytest.raises(
+        journal_module.LLMEvidenceJournalError,
+        match="llm_provenance_request_id_conflict",
+    ):
+        recorder.analyze_and_persist(sidecar, rotated, entity_id="600000.SH")
+    assert calls == 1
+
+
+def test_provenance_recorder_rejects_cross_journal_path_aliases(
+    tmp_path: Path,
+) -> None:
+    journal_module = importlib.import_module("shared.llm.evidence_journal")
+    accepted = journal_module.LLMEvidenceJournal(tmp_path / "accepted.jsonl")
+    rejected = journal_module.LLMRejectedAttemptAuditJournal(accepted.head_path)
+
+    with pytest.raises(
+        journal_module.LLMEvidenceJournalError,
+        match="llm_provenance_journal_endpoints_must_be_distinct",
+    ):
+        journal_module._verify_distinct_journal_endpoints(accepted, rejected)
+
+
+def test_provenance_recorder_never_retries_unknown_in_flight_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway_module = importlib.import_module("shared.llm.gateway")
+    journal_module = importlib.import_module("shared.llm.evidence_journal")
+    request = _llm_request()
+    verifier = _VersionedSourceVerifier()
+    sidecar = gateway_module.LLMEvidenceGateway(
+        router=gateway_module.LLMRouter.from_offline_fixture_mapping(
+            {
+                "slow_research": {
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-pro",
+                }
+            }
+        ),
+        adapters={
+            "deepseek": gateway_module.DeepSeekAdapter(
+                transport=None,
+                source_authority_verifier=verifier,
+            )
+        },
+    )
+    accepted = journal_module.LLMEvidenceJournal(tmp_path / "accepted.jsonl")
+    _, rejected_path, invocation_path = journal_module.llm_provenance_journal_paths(
+        accepted.path
+    )
+    rejected = journal_module.LLMRejectedAttemptAuditJournal(rejected_path)
+    invocation = journal_module.LLMProviderInvocationJournal(invocation_path)
+    recorder = journal_module.LLMEvidenceProvenanceRecorder(
+        accepted_journal=accepted,
+        rejected_attempt_journal=rejected,
+        provider_invocation_journal=invocation,
+        source_authority_verifier=verifier,
+    )
+    calls = 0
+
+    def fail_after_claim(*_: object, **__: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("simulated provider outcome loss")
+
+    monkeypatch.setattr(sidecar, "analyze_with_provenance", fail_after_claim)
+    with pytest.raises(
+        journal_module.LLMEvidenceJournalError,
+        match="llm_provenance_provider_outcome_unknown",
+    ):
+        recorder.analyze_and_persist(sidecar, request, entity_id="600000.SH")
+    assert len(invocation.read().events) == 1
+    assert invocation.read().events[0].state == "in_flight"
+
+    with pytest.raises(
+        journal_module.LLMEvidenceJournalError,
+        match="llm_provenance_invocation_in_flight_unknown",
+    ):
+        recorder.analyze_and_persist(sidecar, request, entity_id="600000.SH")
+    assert calls == 1
+    assert len(accepted.read().events) == 0
+    assert len(rejected.read().events) == 0
 
 
 def test_gateway_binding_failure_converts_https_success_receipt_to_rejected_attempt(

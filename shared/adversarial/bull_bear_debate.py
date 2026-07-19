@@ -10,9 +10,14 @@ a TradeIntent, size a position, or enable real trading.
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from typing import Any, Iterable
 
+from shared.llm.evidence_journal import (
+    LLMEvidenceJournalError,
+    LLMEvidenceProvenanceRecorder,
+)
 from shared.llm.gateway import LLMEvidenceGateway
 from shared.llm.evidence_artifact import (
     EvidenceArtifact,
@@ -30,6 +35,9 @@ from shared.llm.schema import (
 _DIMENSIONS = ["macro", "event", "fundamental", "capital", "technical", "sentiment"]
 _PROMPT_TEMPLATE_ID = "ashare-bull-bear-evidence"
 _PROMPT_VERSION = "bull-bear-evidence.v2"
+_FAST_MODES = {"fast", "heuristic", "deterministic", "off", "disabled"}
+_PROVIDER_MODES = {"cloud", "live", "provider", "slow"}
+_SAFE_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$")
 
 
 def _call_deepseek(*_: Any, **__: Any) -> dict[str, Any]:
@@ -76,6 +84,7 @@ def _request(
     *,
     route: str,
     artifacts: tuple[EvidenceArtifact, ...],
+    request_id: str | None = None,
 ) -> LLMEvidenceRequest:
     recorded_times = [artifact.available_at for artifact in artifacts]
     recorded_times.extend(
@@ -94,7 +103,7 @@ def _request(
         if key not in {"evidence_refs", "document_cutoff", "available_time"}
     }
     return LLMEvidenceRequest.create(
-        request_id=f"LLM-{uuid.uuid4().hex[:16]}",
+        request_id=request_id or f"LLM-{uuid.uuid4().hex[:16]}",
         task_type="adversarial_review",
         route=route,
         prompt_template_id=_PROMPT_TEMPLATE_ID,
@@ -118,6 +127,8 @@ def debate(
     gateway: LLMEvidenceGateway | None = None,
     artifacts: Iterable[EvidenceArtifact] = (),
     source_authority_verifier: EvidenceSourceAuthorityVerifier | Any | None = None,
+    provenance_recorder: LLMEvidenceProvenanceRecorder | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     """Return research evidence without any trading authority."""
 
@@ -139,6 +150,20 @@ def debate(
             entity_id=ts_code,
         )
     mode = _debate_mode()
+    if mode not in _FAST_MODES | _PROVIDER_MODES:
+        return invalid_observation(
+            None,
+            reason_code="llm_debate_mode_invalid",
+            entity_id=ts_code,
+        )
+    if mode in _PROVIDER_MODES and (
+        not isinstance(request_id, str) or not _SAFE_REQUEST_ID_RE.fullmatch(request_id)
+    ):
+        return invalid_observation(
+            None,
+            reason_code="llm_provider_request_id_required",
+            entity_id=ts_code,
+        )
     route = "slow_research"
     try:
         request = _request(
@@ -146,6 +171,7 @@ def debate(
             scores,
             route=route,
             artifacts=artifact_rows,
+            request_id=request_id,
         )
     except (EvidenceArtifactError, SensitivePayloadError, ValueError):
         return invalid_observation(
@@ -154,7 +180,7 @@ def debate(
             entity_id=ts_code,
         )
 
-    if mode in {"fast", "heuristic", "deterministic", "off", "disabled"}:
+    if mode in _FAST_MODES:
         try:
             for artifact in artifact_rows:
                 artifact.verify_source_authority(
@@ -178,8 +204,27 @@ def debate(
             entity_id=ts_code,
         )
 
+    if type(provenance_recorder) is not LLMEvidenceProvenanceRecorder:
+        return invalid_observation(
+            request,
+            reason_code="llm_provenance_recorder_required",
+            entity_id=ts_code,
+        )
+
     sidecar = gateway or LLMEvidenceGateway()
-    return sidecar.analyze(request, entity_id=ts_code)
+    try:
+        observation = provenance_recorder.analyze_and_persist(
+            sidecar,
+            request,
+            entity_id=ts_code,
+        )
+    except LLMEvidenceJournalError:
+        return invalid_observation(
+            request,
+            reason_code="llm_provenance_persistence_failed",
+            entity_id=ts_code,
+        )
+    return dict(observation)
 
 
 if __name__ == "__main__":

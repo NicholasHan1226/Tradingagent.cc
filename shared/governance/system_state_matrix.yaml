@@ -298,11 +298,19 @@ entries:
     evidence:
       - tests/test_llm_evidence_journal.py
       - tests/test_llm_sidecar.py
+      - tests/test_deepseek_http_transport.py
+      - tests/test_bull_bear_debate_fast.py
     allowed_uses:
       - bind_request_source_authority_transport_receipt_and_validated_observation
       - append_content_addressed_shadow_evidence_with_cas_and_idempotent_replay
       - reject_symlink_partial_tail_checksum_and_receipt_swap_evidence
+      - persist_schema_rejected_attempts_only_in_a_physically_separate_audit_journal
+      - persist_provider_in_flight_claims_and_terminal_outcomes_in_a_third_invocation_journal
+      - validate_single_link_owner_mode_and_path_fd_inode_identity
+      - expose_mapping_only_local_integrity_readback_without_typed_receipt_reminting
     prohibited_uses:
+      - write_rejected_attempts_into_the_accepted_evidence_journal
+      - mix_or_cross_write_accepted_and_rejected_results
       - claim_provider_or_source_truth_from_http_success
       - claim_production_durable_receipt_authority
       - claim_local_head_anchor_as_external_seal_or_tamper_proof_authority
@@ -310,6 +318,43 @@ entries:
       - change_score_risk_position_or_order
       - authorize_model_promotion_or_risk_expansion
     successor: tradingagent.llm_evidence_journal.v1
+  - entry_id: tradingagent_llm_provenance_router
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/llm/evidence_journal.py
+    production_verified: false
+    last_verified_at: "2026-07-18"
+    evidence:
+      - tests/test_llm_evidence_journal.py
+      - tests/test_deepseek_http_transport.py
+      - tests/test_bull_bear_debate_fast.py
+    allowed_uses:
+      - require_an_explicit_exact_typed_recorder_with_no_default_paths
+      - require_stable_request_id_for_provider_mode_idempotent_replay
+      - derive_a_logical_invocation_key_independent_of_caller_request_id
+      - derive_rejected_and_invocation_paths_from_one_explicit_absolute_accepted_journal_anchor
+      - freeze_and_seal_journal_paths_and_reject_unicode_case_realpath_or_existing_inode_aliases
+      - serialize_preflight_provider_call_and_unique_outcome_under_one_cross_process_lock_within_the_canonical_journal_family
+      - fail_closed_without_automatic_resend_for_unknown_in_flight_attempts
+      - route_each_mutually_exclusive_gateway_result_to_only_its_matching_journal
+      - fail_closed_before_provider_or_available_return_on_identity_cas_or_persistence_failure
+      - replay_exact_persisted_outcomes_without_reinvoking_the_provider
+    prohibited_uses:
+      - use_default_or_aliased_data_or_head_paths_for_any_provenance_journal
+      - configure_a_second_invocation_lock_for_the_same_accepted_journal_family
+      - use_relative_or_noncanonical_companion_journal_paths
+      - mutate_any_journal_data_or_head_endpoint_after_construction
+      - accept_untyped_or_forged_recorders
+      - fall_back_to_provider_on_unknown_debate_mode
+      - reuse_one_request_id_for_different_content_or_routes
+      - rotate_request_id_to_reinvoke_the_same_logical_content
+      - automatically_resend_an_unknown_in_flight_provider_attempt
+      - remint_typed_receipts_from_persisted_descriptors
+      - claim_provider_attestation_external_durability_or_production_authority
+      - claim_cross_host_or_runtime_global_exactly_once_without_shared_runtime_readback
+      - change_candidate_score_risk_position_order_or_model_promotion
+    successor: tradingagent.llm_provenance_router.v1
   - entry_id: tradingagent_deepseek_provider_config
     state: CURRENT_VERIFIED
     layer: local_isolated_candidate

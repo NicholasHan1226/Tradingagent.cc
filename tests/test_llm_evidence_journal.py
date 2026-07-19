@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,7 +17,11 @@ from shared.llm.evidence_journal import (
     LLMEvidenceEnvelopeError,
     LLMEvidenceJournal,
     LLMEvidenceJournalError,
+    LLMEvidenceProvenanceRecorder,
+    LLMProviderInvocationJournal,
+    LLMRejectedAttemptAuditJournal,
 )
+from shared.llm import evidence_journal as journal_module
 from shared.llm.gateway import ProviderTransportReceipt
 from shared.llm.schema import (
     LLMEvidenceRequest,
@@ -53,6 +58,105 @@ class _SourceVerifier:
     @staticmethod
     def verify(*, artifact: EvidenceArtifact, receipt: object) -> bool:
         return receipt.document_sha256 == artifact.document_sha256
+
+
+def test_provenance_recorder_rejects_noncanonical_journal_family(
+    tmp_path: Path,
+) -> None:
+    accepted = LLMEvidenceJournal(tmp_path / "evidence.jsonl")
+    rejected = LLMRejectedAttemptAuditJournal(
+        Path(f"{accepted.path}.rejected-attempts")
+    )
+    wrong_invocation = LLMProviderInvocationJournal(
+        tmp_path / "alternate-provider-invocations.jsonl"
+    )
+
+    with pytest.raises(
+        LLMEvidenceJournalError,
+        match="llm_provenance_journal_family_invalid",
+    ):
+        LLMEvidenceProvenanceRecorder(
+            accepted_journal=accepted,
+            rejected_attempt_journal=rejected,
+            provider_invocation_journal=wrong_invocation,
+            source_authority_verifier=_SourceVerifier(),
+        )
+
+
+def test_provenance_recorder_rejects_noncanonical_rejected_path(
+    tmp_path: Path,
+) -> None:
+    accepted = LLMEvidenceJournal(tmp_path / "evidence.jsonl")
+    _, _, invocation_path = journal_module.llm_provenance_journal_paths(accepted.path)
+
+    with pytest.raises(
+        LLMEvidenceJournalError,
+        match="llm_provenance_journal_family_invalid",
+    ):
+        LLMEvidenceProvenanceRecorder(
+            accepted_journal=accepted,
+            rejected_attempt_journal=LLMRejectedAttemptAuditJournal(
+                tmp_path / "alternate-rejected.jsonl"
+            ),
+            provider_invocation_journal=LLMProviderInvocationJournal(invocation_path),
+            source_authority_verifier=_SourceVerifier(),
+        )
+
+
+def test_journal_endpoint_preflight_rejects_unicode_equivalent_paths(
+    tmp_path: Path,
+) -> None:
+    accepted = LLMEvidenceJournal(tmp_path / "caf\u00e9.jsonl")
+    rejected = LLMRejectedAttemptAuditJournal(tmp_path / "cafe\u0301.jsonl")
+
+    with pytest.raises(
+        LLMEvidenceJournalError,
+        match="llm_provenance_journal_endpoints_must_be_distinct",
+    ):
+        journal_module._verify_distinct_journal_endpoints(accepted, rejected)
+
+
+def test_journal_rejects_relative_path_before_any_working_directory_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(
+        LLMEvidenceJournalError,
+        match="journal_absolute_path_required",
+    ):
+        LLMEvidenceJournal(Path("audit/evidence.jsonl"))
+
+    with pytest.raises(
+        LLMEvidenceJournalError,
+        match="journal_absolute_path_required",
+    ):
+        journal_module.llm_provenance_journal_paths(Path("audit/evidence.jsonl"))
+
+
+def test_journal_endpoints_are_immutable_after_construction(
+    tmp_path: Path,
+) -> None:
+    journal = LLMProviderInvocationJournal(tmp_path / "invocations.jsonl")
+
+    with pytest.raises(AttributeError):
+        journal.path = tmp_path / "other-invocations.jsonl"
+
+    with pytest.raises(AttributeError):
+        journal.head_path = tmp_path / "other-invocations.jsonl.head"
+
+    with pytest.raises(AttributeError):
+        journal._path = tmp_path / "other-invocations.jsonl"
+
+    with pytest.raises(AttributeError):
+        journal._head_path = tmp_path / "other-invocations.jsonl.head"
+
+    with pytest.raises(AttributeError):
+        del journal._path
+
+    with pytest.raises(AttributeError):
+        del journal._head_path
 
 
 def _request(*, request_id: str = "REQ-JOURNAL-001") -> LLMEvidenceRequest:
@@ -373,6 +477,37 @@ def test_journal_fails_closed_on_tamper_partial_write_and_symlink(
     symlink.symlink_to(target)
     with pytest.raises(LLMEvidenceJournalError, match="journal_symlink_forbidden"):
         LLMEvidenceJournal(symlink)
+
+
+def test_journal_rejects_hardlinks_and_unsafe_file_mode(tmp_path: Path) -> None:
+    path = tmp_path / "llm_evidence.jsonl"
+    journal = LLMEvidenceJournal(path)
+    assert (
+        journal.append(
+            _envelope(),
+            expected_head_sha256=EMPTY_LLM_EVIDENCE_JOURNAL_HEAD_SHA256,
+        )
+        is True
+    )
+
+    journal_alias = tmp_path / "journal-hardlink.jsonl"
+    os.link(path, journal_alias)
+    with pytest.raises(LLMEvidenceJournalError, match="journal_hardlink_forbidden"):
+        journal.read()
+    journal_alias.unlink()
+
+    head_alias = tmp_path / "head-hardlink"
+    os.link(journal.head_path, head_alias)
+    with pytest.raises(
+        LLMEvidenceJournalError,
+        match="journal_head_anchor_hardlink_forbidden",
+    ):
+        journal.read()
+    head_alias.unlink()
+
+    path.chmod(0o640)
+    with pytest.raises(LLMEvidenceJournalError, match="journal_mode_invalid"):
+        journal.read()
 
 
 def test_journal_requires_cas_and_rejects_alternate_run_replay(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ from .gateway import (
     ProviderRejectedAttemptReceipt,
     ProviderTransportReceipt,
     ProviderTransportReceiptError,
+    validate_provider_rejected_attempt_receipt_descriptor,
 )
 from .evidence_journal import (
     EMPTY_LLM_EVIDENCE_JOURNAL_HEAD_SHA256,
@@ -24,6 +25,14 @@ from .evidence_journal import (
     LLMEvidenceJournal,
     LLMEvidenceJournalError,
     LLMEvidenceJournalReadback,
+    LLMEvidenceProvenanceRecorder,
+    LLMProviderInvocationEvent,
+    LLMProviderInvocationJournal,
+    LLMProviderInvocationReadback,
+    LLMRejectedAttemptAuditEvent,
+    LLMRejectedAttemptAuditJournal,
+    LLMRejectedAttemptAuditReadback,
+    llm_provenance_journal_paths,
 )
 from .router import LLMRouter, ModelRoute
 from .providers.deepseek_http import (
@@ -52,7 +61,15 @@ __all__ = [
     "LLMEvidenceJournal",
     "LLMEvidenceJournalError",
     "LLMEvidenceJournalReadback",
+    "LLMEvidenceProvenanceRecorder",
+    "LLMProviderInvocationEvent",
+    "LLMProviderInvocationJournal",
+    "LLMProviderInvocationReadback",
     "LLMEvidenceRequest",
+    "LLMRejectedAttemptAuditEvent",
+    "LLMRejectedAttemptAuditJournal",
+    "LLMRejectedAttemptAuditReadback",
+    "llm_provenance_journal_paths",
     "LLMRouter",
     "ModelRoute",
     "OfflineDeepSeekFixtureTransport",
@@ -61,4 +78,5 @@ __all__ = [
     "ProviderRejectedAttemptReceipt",
     "ProviderTransportReceipt",
     "ProviderTransportReceiptError",
+    "validate_provider_rejected_attempt_receipt_descriptor",
 ]

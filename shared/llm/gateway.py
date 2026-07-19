@@ -861,6 +861,132 @@ class ProviderRejectedAttemptReceipt:
         return {**self._identity_payload(), "receipt_sha256": self.receipt_sha256}
 
 
+_PROVIDER_REJECTED_ATTEMPT_RECEIPT_DESCRIPTOR_FIELDS = {
+    "audit_only",
+    "authority",
+    "evidence_accepted",
+    "evidence_journal_eligible",
+    "model",
+    "outbound_sha256",
+    "outcome",
+    "production_eligible",
+    "provider",
+    "reason_code",
+    "receipt_kind",
+    "receipt_sha256",
+    "received_at",
+    "rejection_stage",
+    "request_sha256",
+    "response_sha256",
+    "schema_version",
+    "source_authority_proof_set_sha256",
+    "transport_id",
+    "transport_material_sha256",
+    "transport_metadata",
+    "transport_version",
+    "verified_at",
+}
+
+
+def validate_provider_rejected_attempt_receipt_descriptor(
+    value: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Validate a persisted rejected attempt without restoring its capability."""
+
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != _PROVIDER_REJECTED_ATTEMPT_RECEIPT_DESCRIPTOR_FIELDS
+    ):
+        raise ProviderTransportReceiptError(
+            "rejected_attempt_receipt_descriptor_invalid"
+        )
+    metadata = value.get("transport_metadata")
+    authority = value.get("authority")
+    if not isinstance(metadata, Mapping):
+        raise ProviderTransportReceiptError("transport_metadata_invalid")
+    if not isinstance(authority, Mapping) or dict(authority) != AUTHORITY_DENIED:
+        raise ProviderTransportReceiptError("rejected_attempt_state_invalid")
+    normalized_metadata = _transport_metadata(metadata)
+    if normalized_metadata["kind"] != "https":
+        raise ProviderTransportReceiptError("rejected_attempt_transport_kind_invalid")
+    provider = _strict_text(value.get("provider"), field_name="provider")
+    model = _strict_text(value.get("model"), field_name="model")
+    transport_id = _strict_text(
+        value.get("transport_id"),
+        field_name="transport_id",
+    )
+    transport_version = _strict_text(
+        value.get("transport_version"),
+        field_name="transport_version",
+    )
+    _validate_transport_receipt_binding(
+        provider=provider,
+        model=model,
+        transport_id=transport_id,
+        transport_version=transport_version,
+        transport_metadata=normalized_metadata,
+    )
+    verified_at = _aware_instant(value.get("verified_at"), field_name="verified_at")
+    received_at = _aware_instant(value.get("received_at"), field_name="received_at")
+    if datetime.fromisoformat(received_at) < datetime.fromisoformat(verified_at):
+        raise ProviderTransportReceiptError("rejected_attempt_time_order_invalid")
+    identity = {
+        "schema_version": value.get("schema_version"),
+        "receipt_kind": value.get("receipt_kind"),
+        "outcome": value.get("outcome"),
+        "rejection_stage": value.get("rejection_stage"),
+        "reason_code": value.get("reason_code"),
+        "provider": provider,
+        "model": model,
+        "transport_id": transport_id,
+        "transport_version": transport_version,
+        "verified_at": verified_at,
+        "received_at": received_at,
+        "request_sha256": value.get("request_sha256"),
+        "source_authority_proof_set_sha256": value.get(
+            "source_authority_proof_set_sha256"
+        ),
+        "transport_material_sha256": value.get("transport_material_sha256"),
+        "outbound_sha256": value.get("outbound_sha256"),
+        "response_sha256": value.get("response_sha256"),
+        "transport_metadata": normalized_metadata,
+        "evidence_accepted": value.get("evidence_accepted"),
+        "evidence_journal_eligible": value.get("evidence_journal_eligible"),
+        "production_eligible": value.get("production_eligible"),
+        "audit_only": value.get("audit_only"),
+        "authority": dict(authority),
+    }
+    if (
+        identity["schema_version"]
+        != "tradingagent.llm_provider_rejected_attempt_receipt.v1"
+        or identity["receipt_kind"] != "provider_rejected_attempt"
+        or identity["outcome"] != "rejected"
+        or identity["rejection_stage"]
+        not in {"provider_evidence_validation", "gateway_observation_binding"}
+        or identity["reason_code"] != "llm_evidence_schema_invalid"
+        or identity["evidence_accepted"] is not False
+        or identity["evidence_journal_eligible"] is not False
+        or identity["production_eligible"] is not False
+        or identity["audit_only"] is not True
+    ):
+        raise ProviderTransportReceiptError("rejected_attempt_state_invalid")
+    for field_name in (
+        "request_sha256",
+        "source_authority_proof_set_sha256",
+        "transport_material_sha256",
+        "outbound_sha256",
+        "response_sha256",
+    ):
+        if not _SHA256_RE.fullmatch(str(identity[field_name])):
+            raise ProviderTransportReceiptError(f"{field_name}_invalid")
+    receipt_sha256 = value.get("receipt_sha256")
+    if not isinstance(receipt_sha256, str) or not _SHA256_RE.fullmatch(receipt_sha256):
+        raise ProviderTransportReceiptError("rejected_attempt_receipt_sha256_mismatch")
+    if not hmac.compare_digest(receipt_sha256, _sha256_json(identity)):
+        raise ProviderTransportReceiptError("rejected_attempt_receipt_sha256_mismatch")
+    return _FrozenJSONMapping({**identity, "receipt_sha256": receipt_sha256})
+
+
 @dataclass(frozen=True)
 class ProviderInvocationResult:
     evidence: Mapping[str, Any]

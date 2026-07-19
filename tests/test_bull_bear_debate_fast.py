@@ -4,7 +4,11 @@ import hashlib
 import importlib
 import json
 import os
+import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest.mock import patch
 
 from shared.adversarial import bull_bear_debate
@@ -136,6 +140,7 @@ class BullBearDebateFastModeTest(unittest.TestCase):
             scores,
             route="slow_research",
             artifacts=(artifact,),
+            request_id="LLM-DEBATE-600519-20260715-001",
         )
         outbound = {
             "model": "configured-pro-model",
@@ -203,16 +208,390 @@ class BullBearDebateFastModeTest(unittest.TestCase):
                 )
             },
         )
-        with patch.dict(os.environ, {"TRADINGS_DEBATE_MODE": "live"}, clear=False):
-            with patch.object(bull_bear_debate, "_request", return_value=request):
-                result = bull_bear_debate.debate(
-                    "600519.SH",
-                    scores,
-                    artifacts=(artifact,),
-                    gateway=gateway,
-                )
+        journal_module = importlib.import_module("shared.llm.evidence_journal")
+        with tempfile.TemporaryDirectory(
+            prefix=".ta-llm-journal-",
+            dir=Path.home(),
+        ) as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            accepted_journal = journal_module.LLMEvidenceJournal(
+                root / "accepted.jsonl"
+            )
+            _, rejected_path, invocation_path = (
+                journal_module.llm_provenance_journal_paths(accepted_journal.path)
+            )
+            rejected_journal = journal_module.LLMRejectedAttemptAuditJournal(
+                rejected_path
+            )
+            invocation_journal = journal_module.LLMProviderInvocationJournal(
+                invocation_path
+            )
+            recorder = journal_module.LLMEvidenceProvenanceRecorder(
+                accepted_journal=accepted_journal,
+                rejected_attempt_journal=rejected_journal,
+                provider_invocation_journal=invocation_journal,
+                source_authority_verifier=_source_verifier,
+            )
+            with patch.dict(
+                os.environ,
+                {"TRADINGS_DEBATE_MODE": "live"},
+                clear=False,
+            ):
+                with patch.object(
+                    gateway,
+                    "analyze_with_provenance",
+                    wraps=gateway.analyze_with_provenance,
+                ) as analyze_with_provenance:
+                    result = bull_bear_debate.debate(
+                        "600519.SH",
+                        scores,
+                        artifacts=(artifact,),
+                        gateway=gateway,
+                        provenance_recorder=recorder,
+                        request_id=request.request_id,
+                    )
+                    replay = bull_bear_debate.debate(
+                        "600519.SH",
+                        scores,
+                        artifacts=(artifact,),
+                        gateway=gateway,
+                        provenance_recorder=recorder,
+                        request_id=request.request_id,
+                    )
+                    conflict = bull_bear_debate.debate(
+                        "600519.SH",
+                        {"macro": 0.2, "event": 0.8},
+                        artifacts=(artifact,),
+                        gateway=gateway,
+                        provenance_recorder=recorder,
+                        request_id=request.request_id,
+                    )
+
+            self.assertEqual(len(accepted_journal.read().events), 1)
+            self.assertEqual(len(rejected_journal.read().events), 0)
+            self.assertEqual(len(invocation_journal.read().events), 2)
+            self.assertEqual(analyze_with_provenance.call_count, 1)
+            accepted_alias = root / "accepted-hardlink.jsonl"
+            os.link(accepted_journal.path, accepted_alias)
+            with patch.dict(
+                os.environ,
+                {"TRADINGS_DEBATE_MODE": "live"},
+                clear=False,
+            ):
+                with patch.object(
+                    gateway,
+                    "analyze_with_provenance",
+                    wraps=gateway.analyze_with_provenance,
+                ) as blocked_provider_call:
+                    persistence_failure = bull_bear_debate.debate(
+                        "600519.SH",
+                        scores,
+                        artifacts=(artifact,),
+                        gateway=gateway,
+                        provenance_recorder=recorder,
+                        request_id="LLM-DEBATE-600519-20260715-002",
+                    )
+            self.assertEqual(blocked_provider_call.call_count, 0)
 
         self.assertEqual(result["status"], "available")
+        self.assertEqual(replay, result)
+        self.assertEqual(conflict["status"], "invalid")
+        self.assertEqual(
+            conflict["reason_code"],
+            "llm_provenance_persistence_failed",
+        )
+        self.assertEqual(persistence_failure["status"], "invalid")
+        self.assertEqual(
+            persistence_failure["reason_code"],
+            "llm_provenance_persistence_failed",
+        )
+        self.assertEqual(persistence_failure["evidence"], {})
+
+    def test_slow_mode_requires_stable_request_id_before_gateway_call(self) -> None:
+        artifact = _artifact()
+        journal_module = importlib.import_module("shared.llm.evidence_journal")
+        with tempfile.TemporaryDirectory(
+            prefix=".ta-llm-journal-",
+            dir=Path.home(),
+        ) as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            accepted_journal = journal_module.LLMEvidenceJournal(
+                root / "accepted.jsonl"
+            )
+            _, rejected_path, invocation_path = (
+                journal_module.llm_provenance_journal_paths(accepted_journal.path)
+            )
+            rejected_journal = journal_module.LLMRejectedAttemptAuditJournal(
+                rejected_path
+            )
+            invocation_journal = journal_module.LLMProviderInvocationJournal(
+                invocation_path
+            )
+            recorder = journal_module.LLMEvidenceProvenanceRecorder(
+                accepted_journal=accepted_journal,
+                rejected_attempt_journal=rejected_journal,
+                provider_invocation_journal=invocation_journal,
+                source_authority_verifier=_source_verifier,
+            )
+            gateway = LLMEvidenceGateway()
+
+            with patch.dict(
+                os.environ,
+                {"TRADINGS_DEBATE_MODE": "live"},
+                clear=False,
+            ):
+                result = bull_bear_debate.debate(
+                    "600519.SH",
+                    {"macro": 0.7},
+                    artifacts=(artifact,),
+                    gateway=gateway,
+                    provenance_recorder=recorder,
+                )
+
+            self.assertEqual(len(accepted_journal.read().events), 0)
+            self.assertEqual(len(rejected_journal.read().events), 0)
+            self.assertEqual(len(invocation_journal.read().events), 0)
+
+        self.assertEqual(result["status"], "invalid")
+        self.assertEqual(
+            result["reason_code"],
+            "llm_provider_request_id_required",
+        )
+
+    def test_provider_recorder_serializes_same_request_before_gateway_call(
+        self,
+    ) -> None:
+        artifact = _artifact()
+        scores = {"macro": 0.7, "event": 0.3}
+        request_id = "LLM-DEBATE-600519-CONCURRENT-001"
+        request = bull_bear_debate._request(
+            "600519.SH",
+            scores,
+            route="slow_research",
+            artifacts=(artifact,),
+            request_id=request_id,
+        )
+        outbound = {
+            "model": "configured-pro-model",
+            "messages": [
+                {"role": "system", "content": request.prompt_text},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "payload": request.payload,
+                            "untrusted_artifact_data": [
+                                item.to_request_descriptor()
+                                for item in request.artifacts
+                            ],
+                        },
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                },
+            ],
+            "response_format": {"type": "json_object"},
+            "stream": False,
+            "max_tokens": 8192,
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "high",
+        }
+        outbound_sha256 = hashlib.sha256(
+            json.dumps(
+                outbound,
+                ensure_ascii=True,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        fixture = OfflineDeepSeekFixtureTransport.from_response(
+            request_sha256=request.request_sha256("configured-pro-model"),
+            outbound_sha256=outbound_sha256,
+            response={
+                "bull_case": "公开证据支持合同增量",
+                "bear_case": "验收时间仍不确定",
+                "key_risk": "收入兑现可能延迟",
+                "contradictions": [],
+                "material_facts": [],
+                "evidence_refs": [artifact.artifact_id],
+                "confidence_note": "仅基于已校验证据片段。",
+            },
+        )
+        gateway = LLMEvidenceGateway(
+            router=LLMRouter.from_offline_fixture_mapping(
+                {
+                    "slow_research": {
+                        "provider": "deepseek",
+                        "model": "configured-pro-model",
+                    }
+                }
+            ),
+            adapters={
+                "deepseek": DeepSeekAdapter(
+                    transport=fixture,
+                    source_authority_verifier=_source_verifier,
+                )
+            },
+        )
+        journal_module = importlib.import_module("shared.llm.evidence_journal")
+        entered = threading.Event()
+        release = threading.Event()
+        original = gateway.analyze_with_provenance
+        call_count = 0
+        count_lock = threading.Lock()
+
+        def blocking_analyze(*args: object, **kwargs: object) -> object:
+            nonlocal call_count
+            with count_lock:
+                call_count += 1
+            entered.set()
+            self.assertTrue(release.wait(timeout=5))
+            return original(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory(
+            prefix=".ta-llm-journal-",
+            dir=Path.home(),
+        ) as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            accepted_journal = journal_module.LLMEvidenceJournal(
+                root / "accepted.jsonl"
+            )
+            _, rejected_path, invocation_path = (
+                journal_module.llm_provenance_journal_paths(accepted_journal.path)
+            )
+            rejected_journal = journal_module.LLMRejectedAttemptAuditJournal(
+                rejected_path
+            )
+            invocation_journal = journal_module.LLMProviderInvocationJournal(
+                invocation_path
+            )
+            recorder = journal_module.LLMEvidenceProvenanceRecorder(
+                accepted_journal=accepted_journal,
+                rejected_attempt_journal=rejected_journal,
+                provider_invocation_journal=invocation_journal,
+                source_authority_verifier=_source_verifier,
+            )
+            with (
+                patch.dict(
+                    os.environ,
+                    {"TRADINGS_DEBATE_MODE": "live"},
+                    clear=False,
+                ),
+                patch.object(
+                    gateway,
+                    "analyze_with_provenance",
+                    side_effect=blocking_analyze,
+                ),
+            ):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    first = pool.submit(
+                        bull_bear_debate.debate,
+                        "600519.SH",
+                        scores,
+                        artifacts=(artifact,),
+                        gateway=gateway,
+                        provenance_recorder=recorder,
+                        request_id=request_id,
+                    )
+                    self.assertTrue(entered.wait(timeout=5))
+                    second = pool.submit(
+                        bull_bear_debate.debate,
+                        "600519.SH",
+                        scores,
+                        artifacts=(artifact,),
+                        gateway=gateway,
+                        provenance_recorder=recorder,
+                        request_id=request_id,
+                    )
+                    self.assertFalse(second.done())
+                    release.set()
+                    first_result = first.result(timeout=5)
+                    second_result = second.result(timeout=5)
+
+            self.assertEqual(first_result, second_result)
+            self.assertEqual(call_count, 1)
+            self.assertEqual(len(accepted_journal.read().events), 1)
+            self.assertEqual(len(rejected_journal.read().events), 0)
+            invocation_readback = invocation_journal.read()
+            self.assertEqual(len(invocation_readback.events), 2)
+            self.assertEqual(
+                invocation_readback.events[-1].state,
+                "accepted",
+            )
+
+    def test_slow_mode_requires_explicit_provenance_recorder(self) -> None:
+        artifact = _artifact()
+        gateway = unittest.mock.Mock(spec=LLMEvidenceGateway)
+
+        with patch.dict(os.environ, {"TRADINGS_DEBATE_MODE": "live"}, clear=False):
+            result = bull_bear_debate.debate(
+                "600519.SH",
+                {"macro": 0.7},
+                artifacts=(artifact,),
+                gateway=gateway,
+                request_id="LLM-DEBATE-MISSING-RECORDER-001",
+            )
+
+        self.assertEqual(result["status"], "invalid")
+        self.assertEqual(
+            result["reason_code"],
+            "llm_provenance_recorder_required",
+        )
+        gateway.analyze.assert_not_called()
+        gateway.analyze_with_provenance.assert_not_called()
+
+    def test_slow_mode_rejects_untyped_provenance_recorder(self) -> None:
+        artifact = _artifact()
+        gateway = unittest.mock.Mock(spec=LLMEvidenceGateway)
+        forged_recorder = unittest.mock.Mock()
+        forged_recorder.analyze_and_persist.return_value = {
+            "status": "available",
+            "authority": {"order_eligible": True},
+        }
+
+        with patch.dict(os.environ, {"TRADINGS_DEBATE_MODE": "live"}, clear=False):
+            result = bull_bear_debate.debate(
+                "600519.SH",
+                {"macro": 0.7},
+                artifacts=(artifact,),
+                gateway=gateway,
+                provenance_recorder=forged_recorder,
+                request_id="LLM-DEBATE-FORGED-RECORDER-001",
+            )
+
+        self.assertEqual(result["status"], "invalid")
+        self.assertEqual(
+            result["reason_code"],
+            "llm_provenance_recorder_required",
+        )
+        forged_recorder.analyze_and_persist.assert_not_called()
+
+    def test_unknown_mode_fails_closed_before_gateway_call(self) -> None:
+        artifact = _artifact()
+        gateway = unittest.mock.Mock(spec=LLMEvidenceGateway)
+
+        with patch.dict(
+            os.environ,
+            {"TRADINGS_DEBATE_MODE": "unexpected-mode"},
+            clear=False,
+        ):
+            result = bull_bear_debate.debate(
+                "600519.SH",
+                {"macro": 0.7},
+                artifacts=(artifact,),
+                gateway=gateway,
+            )
+
+        self.assertEqual(result["status"], "invalid")
+        self.assertEqual(result["reason_code"], "llm_debate_mode_invalid")
+        gateway.analyze.assert_not_called()
+        gateway.analyze_with_provenance.assert_not_called()
 
     def test_v2_bulk_extraction_fixture_preserves_exact_evidence_contract(self) -> None:
         artifact = _artifact()

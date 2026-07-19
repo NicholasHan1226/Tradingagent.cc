@@ -11,11 +11,11 @@ LLM 仅提供证据：多空对辩、矛盾检查、压力情景草案和历史�
 - `bull_bear_debate.py` 只可输出 `LLMEvidenceObservation`；不得输出 `belief_score`、`conviction`、目标仓位、风险预算或订单建议。
 - LLM 字段不得进入仓位、组合权重、风险放宽、`TargetPosition`、`TradeIntent` 或模拟成交。
 - 缺少验证过的证据 artifact、外部来源权威回执、PIT 截止时间或引用绑定时 fail closed。
-- 快速模式仅生成确定性的证据摘要；慢速 provider 路由只用于研究、复盘和离线评估。
+- 快速模式仅生成确定性的证据摘要；慢速 provider 路由只用于研究、复盘和离线评估，且必须显式注入typed provenance recorder、与Adapter相同的source verifier、稳定request ID，以及由一个显式绝对accepted锚点确定性派生的canonical accepted/rejected/provider-invocation Journal family。六个data/head端点必须互异且构造后不可改；另配不同invocation锁、相对路径、端点改写、Unicode/大小写/真实路径或物理文件别名均拒绝。provider调用前必须在该family的invocation Journal持久化逻辑内容键与`in_flight`，并在跨进程锁内完成唯一终态；调用方轮换ID不能绕过去重，崩溃后的未知状态不得自动补发。未知mode、伪recorder或不稳定/非法request ID一律在provider调用前fail closed。
 - provider/model 是显式配置与冻结评估对象，不在项目规则中硬编码为长期事实。
 - LLM 不得接收账户、持仓、策略秘密、密钥、未脱敏日志或其它敏感数据。
 - source span是`untrusted_artifact_data`；显式中英文角色覆盖/忽略指令等已知模式在transport前阻断并转人工复核。该模式门不能声称覆盖所有语义、混淆或编码型注入。
-- accepted typed source proof/provider receipt只证明对应离线或HTTPS内容与操作元数据绑定；audit-only rejected-attempt receipt只证明schema拒绝的本地审计事实。一次隔离真实调用不构成accepted evidence、生产verifier、durable sink或生产provenance。
+- accepted typed source proof/provider receipt只证明对应离线或HTTPS内容与操作元数据绑定；accepted只能写`LLMEvidenceJournal`，audit-only rejected-attempt只能写物理分离的`LLMRejectedAttemptAuditJournal`，调用仲裁只写`LLMProviderInvocationJournal`，绝不能混写、双写或进入样本。三类readback都仅为`local-integrity-only` mapping，不重建typed receipt；一次隔离真实调用和本地Journal均不构成accepted evidence、生产verifier、durable sink或生产provenance。
 - 模型离线、输出不合法或检测到提示注入时，交易决策链继续使用非 LLM 的冻结 Champion；不得把 LLM 故障伪装成中性交易分。
 
 ## 文件

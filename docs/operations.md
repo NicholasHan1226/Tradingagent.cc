@@ -353,7 +353,34 @@ raw-secret必须是显式绝对路径、当前进程euid所有的regular file，
 
 transport固定`POST https://api.deepseek.com/chat/completions`，使用系统TLS验证，禁环境代理、重定向、自动重试和fallback。禁止把上面的`transport`对象直接作为通用HTTP客户端；它只能注入`LLMEvidenceGateway`的DeepSeek Adapter。2026-07-18一次旧A股v1 Prompt的隔离真实请求到达HTTP 200 provider envelope，但evidence binding以`llm_evidence_schema_invalid`失败；没有accepted `ProviderTransportReceipt`、Journal或生产切换。该历史canary早于当前`ProviderRejectedAttemptReceipt`，不得追溯包装为新typed receipt。A股v2只通过离线fixture合同测试，没有进行第二次真实调用。
 
-后续真实canary必须使用`LLMEvidenceGateway.analyze_with_provenance()`，固定单次请求、无retry、无fallback，失败后不得自动补发。Gateway返回前会重算原request/source/material摘要并精确复核canonical observation字段集；额外字段、元数据重绑和内容hash漂移均拒绝。若精确HTTPS路径已验证HTTP 200、MIME/JSON和provider envelope，但evidence schema或Gateway observation binding失败，只可保存`ProviderRejectedAttemptReceipt.to_descriptor()`的脱敏审计字段；不得保存Prompt、响应正文、parsed/normalized evidence、credential或credential fingerprint。该回执固定`audit_only=true`、`evidence_journal_eligible=false`且全部authority为false，绝不能写入`LLMEvidenceJournal`、样本、成熟度或交易链。accepted Journal回读只能消费非权威、深层不可变的descriptor校验视图，不得重建typed HTTPS receipt。其它网络、协议、DLP、敏感输出或前置门禁失败不伪造这类回执。任何后续真实网络启用仍是新的独立授权与验收任务。
+后续真实canary必须使用`LLMEvidenceGateway.analyze_with_provenance()`并通过显式`LLMEvidenceProvenanceRecorder`路由，固定单次请求、稳定request ID、无应用层retry、无fallback，失败后不得自动补发。调用方只选择仓外受限目录中的显式绝对accepted锚点，再用`llm_provenance_journal_paths()`确定性得到accepted、rejected和provider-invocation三条路径；禁止另配invocation锁、相对路径或自定义伴随路径。三条Journal及`.head`共六个端点不得相同或互为Unicode NFC/NFD、大小写、真实路径或物理文件别名，recorder的source verifier必须与DeepSeek Adapter绑定同一对象。invocation Journal以不包含调用方request ID的逻辑内容键在网络前先落`in_flight`，并持有跨进程锁直到唯一`accepted/rejected/no_receipt`终态提交；同一canonical family内的逻辑内容轮换ID或同ID异内容均在副作用前fail closed。Gateway返回前会重算原request/source/material摘要并精确复核canonical observation字段集；额外字段、元数据重绑和内容hash漂移均拒绝。若精确HTTPS路径已验证HTTP 200、MIME/JSON和provider envelope，但evidence schema或Gateway observation binding失败，只可把`ProviderRejectedAttemptReceipt`的脱敏descriptor写入独立rejected audit Journal；不得保存Prompt、响应正文、parsed/normalized evidence、credential或credential fingerprint。该回执固定`audit_only=true`、`evidence_journal_eligible=false`且全部authority为false，绝不能写入accepted Journal、样本、成熟度或交易链。三类Journal都要求single-link、当前euid、`0600`及path/FD inode一致；任一readback、CAS、身份或持久化失败必须在provider调用前阻断，或把已得到的available观察降为invalid，不得旁路返回。只有已持久化唯一终态的同一request ID+内容可复用本地观察且不再次调用provider；若provider调用后进程中断且没有可验证终态，`in_flight`保持未知并禁止自动补发，必须人工裁决。三类回读都只消费非权威、深层不可变的descriptor校验视图，不得重建typed HTTPS receipt。其它网络、协议、DLP、敏感输出或前置门禁失败不伪造rejected receipt。任何后续真实网络启用仍是新的独立授权与验收任务；本地Journal不构成生产durable authority。
+
+最小装配合同如下；这里的路径和ID是占位符，不是已部署配置：
+
+```python
+accepted_path, rejected_path, invocation_path = llm_provenance_journal_paths(
+    Path("/absolute/restricted/llm-evidence.jsonl")
+)
+accepted = LLMEvidenceJournal(accepted_path)
+rejected = LLMRejectedAttemptAuditJournal(rejected_path)
+invocations = LLMProviderInvocationJournal(invocation_path)
+recorder = LLMEvidenceProvenanceRecorder(
+    accepted_journal=accepted,
+    rejected_attempt_journal=rejected,
+    provider_invocation_journal=invocations,
+    source_authority_verifier=adapter.source_authority_verifier,
+)
+observation = debate(
+    symbol,
+    scores,
+    gateway=gateway,
+    artifacts=artifacts,
+    provenance_recorder=recorder,
+    request_id=f"LLM-DEBATE-{immutable_decision_id}",
+)
+```
+
+`immutable_decision_id`必须由调用方已有的不可变run/decision identity确定性提供；同一次逻辑请求重试时保持不变，payload、artifact或route变化时必须生成新ID。它不是唯一幂等门：recorder还会以不依赖该ID的逻辑内容键拒绝换ID重发。所有worker还必须使用同一accepted锚点；canonical family检查能拒绝单个recorder内部错配，但当前尚无production runtime启动证明，不能由本地合同推断跨主机唯一调用。当前paper composition尚未装配这条provider路径，示例不代表scheduler、网络、服务器或production authority已启用。
 
 ## 3. 唯一聚焦候选检查
 
