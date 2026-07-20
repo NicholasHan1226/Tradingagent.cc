@@ -40,6 +40,8 @@ TradingDatas catalog/query futures bars/spec evidence
 
 `session_windows` 使用分钟边界；普通结束分钟仅允许该分钟的 `:00.000000` 端点。跨午夜 night window 只能以有序、无歧义的 `[start, 1440]`、`[0, end]` 两段表示，且 `night_session_end_minute=end`；`1440` 是专门的 `24:00` seam、采用半开边界。因此 `[1260, 1440]` 连续覆盖 `21:00:00` 至 `23:59:59.999999`，再由 `[0, 60]` 覆盖至精确 `01:00:00`；它不等同于真实的 `23:59` 收盘。零宽、重叠、乱序、跨 session 冲突，以及旧式 `1439` seam sentinel 全部 fail closed。
 
+上述 session window 和 data/calendar evidence 都只是 non-authoritative fixture bootstrap，绝不构成真实交易所时段验证。真实运行必须等待 TradingDatas 与交易所 calendar/contract authority 的可追溯交接；当前不能据此宣称真实会话已验证。
+
 fixture 数据证据必须精确声明 `GET /v1/catalog` 与 `POST /v1/query`，并同时保持 `ready`、`degraded=false`、`fresh`、`valid`、非空（strip 后）`lineage_ref` 与 `receipt_id`；entry、mark、close 的各自 calendar 同样要求非空 `calendar_lineage_ref` 与 `receipt_id`。任何旧/provider route、degraded、stale、failed、空 receipt/lineage 或无效 `YYYYMMDD` 均在候选和订单形成前 fail closed。canonical fixture 先生成稳定 `fixture_lineage_sha256`，再派生 `intent_id` 与不同的 open/close `order_id`，避免循环哈希；相同 fixture 重放的 ID 相同且不产生持久化或外部副作用。schema/dataset 仍等待 TradingDatas fresh manifest。
 
 费用字段同时声明 `open_fee_type`/`close_fee_type`：`rate` 按成交名义金额计算，`fixed_per_lot` 按手数计算。两种费用以及静态/injected 规格都只是 simulation bootstrap，绝非真实交易所、期货公司或 TradingDatas authority。

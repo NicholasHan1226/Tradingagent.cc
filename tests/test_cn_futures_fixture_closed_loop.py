@@ -210,6 +210,73 @@ def test_fixture_evidence_and_live_markers_fail_closed(
 @pytest.mark.parametrize(
     "path",
     [
+        ("data_evidence",),
+        ("data_evidence", "exchange_calendar"),
+    ],
+)
+def test_evidence_and_nested_calendar_reject_authority_spoofing(
+    path: tuple[str, ...],
+) -> None:
+    fixture = copy.deepcopy(_fixture())
+    target: dict[str, object] = fixture
+    for key in path:
+        target = target[key]  # type: ignore[assignment,index]
+    target.update(
+        {
+            "real_trading_enabled": True,
+            "execution_eligible": True,
+            "execution_authority": True,
+            "durable": True,
+            "status": "filled",
+            "capital_commit_id": "spoof-commit",
+            "outbox_id": "spoof-outbox",
+            "broker": "spoof-broker",
+            "orders": [{"order_id": "spoof-order"}],
+        }
+    )
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(fixture)
+
+
+def test_data_evidence_output_is_allowlisted_and_normalized() -> None:
+    fixture = _fixture()
+    evidence = fixture["data_evidence"]
+    assert isinstance(evidence, dict)
+    evidence["ignored_fixture_note"] = "not projected"
+    calendar = evidence["exchange_calendar"]
+    assert isinstance(calendar, dict)
+    calendar["ignored_fixture_note"] = "not projected"
+
+    result = run_fixture_closed_loop(fixture)
+
+    assert set(result["data_evidence"]) == {
+        "source_kind",
+        "catalog_route",
+        "query_route",
+        "catalog_state",
+        "query_state",
+        "degraded",
+        "freshness",
+        "quality",
+        "lineage_ref",
+        "receipt_id",
+        "available_at",
+        "exchange_calendar",
+    }
+    assert set(result["data_evidence"]["exchange_calendar"]) == {
+        "trade_date",
+        "calendar_eligible",
+        "session",
+        "available_at",
+        "calendar_lineage_ref",
+        "receipt_id",
+    }
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
         ("data_evidence", "lineage_ref"),
         ("data_evidence", "receipt_id"),
         ("bar", "exchange_calendar", "calendar_lineage_ref"),
@@ -658,8 +725,6 @@ def test_fixture_output_is_strict_json_serializable() -> None:
 
 
 def test_fixture_output_never_claims_execution_or_durable_capital_authority() -> None:
-    result = run_fixture_closed_loop(_fixture())
-
     def walk(value: object) -> list[dict[str, object]]:
         if isinstance(value, dict):
             return [value, *(item for child in value.values() for item in walk(child))]
@@ -667,14 +732,23 @@ def test_fixture_output_never_claims_execution_or_durable_capital_authority() ->
             return [item for child in value for item in walk(child)]
         return []
 
-    for mapping in walk(result):
-        assert mapping.get("execution_eligible") is not True
-        assert mapping.get("status") != "filled"
-        assert mapping.get("capital_commit_id") in (None,)
-        assert mapping.get("outbox_id") in (None,)
-    assert result["execution"]["orders"][0]["status"] == "simulated_filled"
-    assert result["execution"]["orders"][0]["execution_authority"] is False
-    assert result["execution"]["orders"][0]["durable"] is False
+    for result in (
+        run_fixture_closed_loop(_fixture()),
+        run_fixture_closed_loop(_fixture(maximum_loss_cny=2_000.0)),
+    ):
+        for mapping in walk(result):
+            assert mapping.get("real_trading_enabled") is not True
+            assert mapping.get("execution_eligible") is not True
+            assert mapping.get("execution_authority") is not True
+            assert mapping.get("durable") is not True
+            assert mapping.get("status") != "filled"
+            assert mapping.get("capital_commit_id") in (None,)
+            assert mapping.get("outbox_id") in (None,)
+            assert mapping.get("broker") in (None,)
+        for order in result["execution"]["orders"]:
+            assert order["status"] == "simulated_filled"
+            assert order["execution_authority"] is False
+            assert order["durable"] is False
 
 
 @pytest.mark.parametrize(

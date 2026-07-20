@@ -37,6 +37,36 @@ _FIXTURE_PRODUCT_EXCHANGES = {
     "im": "CFFEX",
 }
 
+_FORBIDDEN_EVIDENCE_FIELDS = frozenset(
+    {
+        "real_trading_enabled",
+        "live_broker",
+        "real_account",
+        "network_enabled",
+        "execution_eligible",
+        "execution_authority",
+        "authority",
+        "capital_authority",
+        "capital_authority_id",
+        "durable",
+        "status",
+        "capital_commit_id",
+        "outbox_id",
+        "broker",
+        "broker_order_id",
+        "order",
+        "order_id",
+        "orders",
+        "execution",
+        "execution_lineage",
+        "execution_lineage_id",
+        "live",
+        "live_trading",
+        "capital_commit",
+        "outbox",
+    }
+)
+
 
 class FixtureContractError(ValueError):
     """Raised when a fixture tries to bypass the simulation-only contract."""
@@ -128,7 +158,7 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     or order is formed.
     """
 
-    _validate_fixture_evidence(fixture)
+    evidence = _validate_fixture_evidence(fixture)
     policy = _load_cn_futures_policy()
     contract = FixtureContract.from_mapping(_mapping(fixture, "contract"))
     bar = _mapping(fixture, "bar")
@@ -142,7 +172,6 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         and mark_timing.decision_time <= close_timing.event_time
     ):
         raise FixtureContractError("event evidence and decisions are out of PIT order")
-    evidence = _mapping(fixture, "data_evidence")
     _assert_available_by(evidence, "data_evidence", entry_timing.decision_time)
     _assert_available_by(
         _mapping(fixture, "contract"), "contract", entry_timing.decision_time
@@ -346,7 +375,7 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     return _with_lineage(base, candidate, execution, sample, reconcile)
 
 
-def _validate_fixture_evidence(fixture: Mapping[str, Any]) -> None:
+def _validate_fixture_evidence(fixture: Mapping[str, Any]) -> dict[str, Any]:
     if fixture.get("fixture_only") is not True:
         raise FixtureContractError("fixture_only must be true")
     for key in (
@@ -381,6 +410,67 @@ def _validate_fixture_evidence(fixture: Mapping[str, Any]) -> None:
     ):
         raise FixtureContractError("fixture lineage_ref is required")
     _nonempty_string_field(evidence, "receipt_id", "fixture data receipt_id")
+    return _project_data_evidence(evidence)
+
+
+def _reject_authority_evidence_fields(raw: Mapping[str, Any], name: str) -> None:
+    forbidden = sorted(set(raw).intersection(_FORBIDDEN_EVIDENCE_FIELDS))
+    if forbidden:
+        raise FixtureContractError(f"{name} contains forbidden authority fields")
+
+
+def _project_exchange_calendar(raw: Mapping[str, Any], name: str) -> dict[str, Any]:
+    _reject_authority_evidence_fields(raw, name)
+    trade_date = raw.get("trade_date")
+    if not isinstance(trade_date, str) or not re.fullmatch(r"\d{8}", trade_date):
+        raise FixtureContractError(f"{name} trade_date must be YYYYMMDD")
+    try:
+        datetime.strptime(trade_date, "%Y%m%d")
+    except ValueError as exc:
+        raise FixtureContractError(f"{name} trade_date is invalid") from exc
+    if (
+        raw.get("calendar_eligible") is not True
+        and raw.get("calendar_eligible") is not False
+    ):
+        raise FixtureContractError(f"{name} calendar_eligible must be a boolean")
+    return {
+        "trade_date": trade_date,
+        "calendar_eligible": raw["calendar_eligible"],
+        "session": _text(raw, "session"),
+        "available_at": _aware_timestamp(
+            raw.get("available_at"), f"{name} available_at"
+        ).isoformat(),
+        "calendar_lineage_ref": _nonempty_string_field(
+            raw, "calendar_lineage_ref", f"{name} lineage"
+        ),
+        "receipt_id": _nonempty_string_field(raw, "receipt_id", f"{name} receipt"),
+    }
+
+
+def _project_data_evidence(raw: Mapping[str, Any]) -> dict[str, Any]:
+    _reject_authority_evidence_fields(raw, "data_evidence")
+    return {
+        "source_kind": "fixture_mock",
+        "catalog_route": "GET /v1/catalog",
+        "query_route": "POST /v1/query",
+        "catalog_state": "ready",
+        "query_state": "ready",
+        "degraded": False,
+        "freshness": "fresh",
+        "quality": "valid",
+        "lineage_ref": _nonempty_string_field(
+            raw, "lineage_ref", "fixture lineage_ref"
+        ),
+        "receipt_id": _nonempty_string_field(
+            raw, "receipt_id", "fixture data receipt_id"
+        ),
+        "available_at": _aware_timestamp(
+            raw.get("available_at"), "data_evidence available_at"
+        ).isoformat(),
+        "exchange_calendar": _project_exchange_calendar(
+            _mapping(raw, "exchange_calendar"), "data_evidence exchange_calendar"
+        ),
+    }
 
 
 def _load_cn_futures_policy() -> MarketPolicy:
@@ -564,16 +654,10 @@ def _event_trade_date_and_session(
     contract: FixtureContract,
     name: str,
 ) -> tuple[str, str]:
-    calendar = _mapping(raw, "exchange_calendar")
-    trade_date = calendar.get("trade_date")
-    if not isinstance(trade_date, str) or not re.fullmatch(r"\d{8}", trade_date):
-        raise FixtureContractError(f"{name} calendar trade_date must be YYYYMMDD")
-    try:
-        datetime.strptime(trade_date, "%Y%m%d")
-    except ValueError as exc:
-        raise FixtureContractError(f"{name} calendar trade_date is invalid") from exc
-    _nonempty_string_field(calendar, "calendar_lineage_ref", f"{name} calendar lineage")
-    _nonempty_string_field(calendar, "receipt_id", f"{name} calendar receipt")
+    calendar = _project_exchange_calendar(
+        _mapping(raw, "exchange_calendar"), f"{name} exchange_calendar"
+    )
+    trade_date = calendar["trade_date"]
     _assert_available_by(calendar, f"{name} exchange_calendar", timing.decision_time)
     if calendar.get("calendar_eligible") is not True:
         if (
