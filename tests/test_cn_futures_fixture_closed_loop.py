@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 import json
 
 import pytest
 
-from CNFutures.fixture_closed_loop import FixtureContractError, run_fixture_closed_loop
+from CNFutures.fixture_closed_loop import (
+    FixtureContract,
+    FixtureContractError,
+    _session_for_contract,
+    run_fixture_closed_loop,
+)
 from shared.capital.market_policy import MarketPolicy
 
 
@@ -58,7 +64,7 @@ def _fixture(**overrides: object) -> dict[str, object]:
             "session_windows": {
                 "day_morning": [[540, 690]],
                 "day_afternoon": [[780, 900]],
-                "night": [[1260, 1439], [0, 60]],
+                "night": [[1260, 1440], [0, 60]],
             },
             "available_at": "2026-07-17T20:59:00+08:00",
         },
@@ -580,6 +586,28 @@ def test_session_end_is_exact_to_seconds_and_microseconds() -> None:
     close["timestamp"] = "2026-07-18T01:00:00.000001+08:00"
     with pytest.raises(FixtureContractError):
         run_fixture_closed_loop(_fixture(**{**fixture, "close": close}))
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "expected_session"),
+    [
+        ("2026-07-17T23:59:59.999999+08:00", "night"),
+        ("2026-07-18T00:00:00+08:00", "night"),
+        ("2026-07-18T01:00:00+08:00", "night"),
+        ("2026-07-18T01:00:00.000001+08:00", "closed"),
+        ("2026-07-17T11:30:00+08:00", "day_morning"),
+        ("2026-07-17T11:30:00.000001+08:00", "closed"),
+    ],
+)
+def test_session_windows_distinguish_midnight_seam_from_true_close(
+    timestamp: str, expected_session: str
+) -> None:
+    contract = FixtureContract.from_mapping(_fixture()["contract"])
+
+    assert (
+        _session_for_contract(datetime.fromisoformat(timestamp), contract)
+        == expected_session
+    )
 
 
 def test_finite_inputs_with_derived_overflow_fail_closed() -> None:

@@ -468,7 +468,7 @@ def _session_windows(
                     f"session_windows.{name} entries must be minute pairs"
                 )
             start, end = window
-            if not 0 <= start <= end < 24 * 60:
+            if not 0 <= start <= end <= 24 * 60:
                 raise FixtureContractError(
                     f"session_windows.{name} minute range is invalid"
                 )
@@ -529,6 +529,7 @@ def _session_for_contract(timestamp: datetime, contract: FixtureContract) -> str
             start <= minute < end
             or (
                 minute == end
+                and end < 24 * 60
                 and local.second == 0
                 and local.microsecond == 0
             )
