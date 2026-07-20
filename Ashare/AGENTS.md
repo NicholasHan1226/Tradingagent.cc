@@ -31,7 +31,7 @@
 
 ## 执行与资本一致性
 
-- 本地执行链是 `Ashare/sim_executor.py → shared/execution/sim_broker.py → shared/execution/local_sim_ledger.py`。
+- 当前 V1 仓库合同由 `compose_capital_backed_paper_runtime` 组合 canonical simulated account、capital-backed risk、模拟执行、outbox commit 与 reconcile。`Ashare/sim_executor.py → shared/execution/sim_broker.py → shared/execution/local_sim_ledger.py` 仅是限时 legacy/compatibility 诊断链，不得作为 V1 fallback 或另一套资本/执行 authority。
 - 只有实际 `filled/partial` 数量、价格、时区时间、5 分钟正成交量证据、候选/执行来源和完整 PIT lineage 才可进入 execution-eligible 样本。
 - 买入通过 durable outbox 原子提交 `fill_commit`；卖出原子提交 `ashare_sell_commit`。capital commit 成功/幂等成功前不得把成交计入策略绩效。
 - partial 只消费实际成交部分；终态原子释放未使用预约。pending commit 保守占用风险并在重启后重放。
