@@ -40,11 +40,13 @@ TradingDatas catalog/query futures bars/spec evidence
 
 `CNFutures.fixture_closed_loop` 是当前唯一可直接运行的期货纵向切片。它只接收显式 `fixture_only=true` 的内存 mock，既不访问 TradingDatas、SQLite 或网络，也不声明或猜测真实 dataset ID。切片依次验证 fixture 数据证据、注入的 exchange trade-date/calendar eligibility、产品 session windows、换月保护、一手保证金/止损预算、多空开平、tick 对齐、费用、逐日 MTM、维持保证金强平风险、平仓和最终 reconcile，并输出独立的样本复盘记录与 lineage hash。
 
-每个 bar、mark、close 必须各自提供可解析的 event `timestamp`、`available_at` 和 `decision_time`，允许且要求 `event_time <= available_at <= decision_time`（相等允许）；整体要求 entry decision 严格早于 mark event，mark decision 不晚于 close event。这样允许正常发布延迟，但 pre-event、future-available、倒序或缺时刻均 fail closed；强平可按 mark 成交但仍需 close 时间证据。contract/calendar 必须在 entry decision 前可用。交易资格只来自 fixture 注入的 `exchange_calendar`，其中 `trade_date`、`calendar_eligible`、`session`、`available_at` 必填；缺失或与合约声明的 product-specific `session_windows`/`night_session_end_minute` 不一致即 fail closed。合约 symbol 必须是与 product 一致的具体合约，不能用泛品种字符串。
+每个 bar、mark、close 必须各自提供显式带时区的 event `timestamp`、`available_at` 和 `decision_time`，允许且要求 `event_time <= available_at <= decision_time`（相等允许）；naive 时间一律 fail closed。整体要求 entry decision 严格早于 mark event，mark decision 不晚于 close event。这样允许正常发布延迟，但 pre-event、future-available、倒序或缺时刻均 fail closed；强平可按 mark 成交但仍需 close 时间证据。contract/calendar 的 `available_at` 也必须显式带时区且在 entry decision 前可用。entry、mark、close 都必须有各自的 `exchange_calendar`，其中 `trade_date`、`calendar_eligible`、`session`、`available_at` 必填；周日/休市、session mismatch 或跨 trade-date 的 follow-up evidence 不得形成成交或 reconcile。合约 symbol 规范化接受 `RB2610.SHF`，但必须与 product、最小 fixture product-exchange mapping 和月份 `01..12` 一致；真实完整规格仍等待 TradingDatas handoff。
 
 fixture 数据证据必须精确声明 `GET /v1/catalog` 与 `POST /v1/query`，并同时保持 `ready`、`degraded=false`、`fresh`、`valid` 和非空 lineage；任何旧/provider route、degraded、stale 或 failed 状态均在候选和订单形成前 fail closed。canonical fixture 先生成稳定 `fixture_lineage_sha256`，再派生 `intent_id` 与不同的 open/close `order_id`，避免循环哈希；相同 fixture 重放的 ID 相同且不产生持久化或外部副作用。schema/dataset 仍等待 TradingDatas fresh manifest。
 
 费用字段同时声明 `open_fee_type`/`close_fee_type`：`rate` 按成交名义金额计算，`fixed_per_lot` 按手数计算。两种费用以及静态/injected 规格都只是 simulation bootstrap，绝非真实交易所、期货公司或 TradingDatas authority。
+
+资金 authority 每轮只读 `MarketPolicy.load("cn_futures")`：初始权益、保证金上限与 daily-loss budget 不在本模块复制常量。fixture `maximum_loss_cny` 只能收紧 canonical daily-loss budget；开仓前必须同时证明保证金、stop exposure、开/平预估费用和保留现金可支付。任一项不能满足时仅保留 counterfactual/hold，不能生成 execution-eligible order 或把负现金标记为 reconciled。
 
 它的静态合约参数仅用于模拟 bootstrap，不能替代 TradingDatas 将来交接的可追溯合约规格。真实 handoff 到位前，任何非 fixture 输入都必须 fail closed；该切片不安装 cron、不连接 broker，也不写入 ledger/outbox 文件。
 

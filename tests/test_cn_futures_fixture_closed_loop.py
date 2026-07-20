@@ -5,6 +5,7 @@ import copy
 import pytest
 
 from CNFutures.fixture_closed_loop import FixtureContractError, run_fixture_closed_loop
+from shared.capital.market_policy import MarketPolicy
 
 
 def _fixture(**overrides: object) -> dict[str, object]:
@@ -15,7 +16,7 @@ def _fixture(**overrides: object) -> dict[str, object]:
         "side": "long",
         "quantity": 2,
         "stop_distance": 10.0,
-        "maximum_loss_cny": 5_000.0,
+        "maximum_loss_cny": 1_000.0,
         "raw_heuristic_score": 0.7,
         "uncalibrated_prior": 0.1,
         "data_evidence": {
@@ -77,6 +78,13 @@ def _fixture(**overrides: object) -> dict[str, object]:
         },
     }
     fixture.update(overrides)
+    for event_name in ("bar", "mark", "close"):
+        event = fixture[event_name]
+        if isinstance(event, dict):
+            event.setdefault(
+                "exchange_calendar",
+                copy.deepcopy(fixture["data_evidence"]["exchange_calendar"]),
+            )
     return fixture
 
 
@@ -357,6 +365,108 @@ def test_fixed_per_lot_fees_do_not_use_notional_rate_math() -> None:
     assert result["execution"]["orders"][0]["fee_cny"] == 4.0
     assert result["execution"]["orders"][1]["fee_cny"] == 6.0
     assert result["execution"]["fees_cny"] == 10.0
+
+
+def test_policy_is_the_only_capital_and_daily_risk_authority() -> None:
+    policy = MarketPolicy.load("cn_futures")
+    result = run_fixture_closed_loop(_fixture())
+
+    assert result["account"]["account_id"] == policy.capital_authority_id
+    assert result["daily_reconcile"]["initial_equity_cny"] == policy.initial_equity_cny
+
+    blocked = run_fixture_closed_loop(_fixture(maximum_loss_cny=2_000.0))
+    assert (
+        blocked["candidate"]["reason"] == "maximum_loss_exceeds_canonical_daily_budget"
+    )
+    assert blocked["execution"]["orders"] == []
+
+
+def test_fixed_per_lot_fee_cannot_create_negative_cash_or_fill() -> None:
+    contract = dict(_fixture()["contract"])
+    contract.update({"open_fee_rate": 60_000.0, "open_fee_type": "fixed_per_lot"})
+    result = run_fixture_closed_loop(_fixture(contract=contract))
+
+    assert result["candidate"]["reason"] == "margin_stop_or_fee_pretrade_ineligible"
+    assert result["candidate"]["execution_eligible"] is False
+    assert result["daily_reconcile"]["cash_cny"] >= 0
+
+
+@pytest.mark.parametrize("event_name", ["mark", "close"])
+def test_followup_event_ineligible_calendar_fails_closed(event_name: str) -> None:
+    event = dict(_fixture()[event_name])
+    event["exchange_calendar"] = {
+        "trade_date": "20260720",
+        "calendar_eligible": False,
+        "session": "closed",
+        "available_at": "2026-07-17T20:59:00+08:00",
+    }
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(_fixture(**{event_name: event}))
+
+
+def test_followup_event_session_mismatch_fails_closed() -> None:
+    mark = dict(_fixture()["mark"])
+    mark["exchange_calendar"] = {
+        "trade_date": "20260720",
+        "calendar_eligible": True,
+        "session": "day_morning",
+        "available_at": "2026-07-17T20:59:00+08:00",
+    }
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(_fixture(mark=mark))
+
+
+def test_uppercase_contract_is_normalized_and_invalid_month_exchange_fail() -> None:
+    upper = run_fixture_closed_loop(
+        _fixture(
+            contract={
+                **_fixture()["contract"],
+                "symbol": "RB2610.SHF",
+                "active_symbol": "RB2610.SHF",
+                "product": "RB",
+            }
+        )
+    )
+    assert upper["contract"]["symbol"] == "rb2610.SHF"
+
+    for patch in ({"symbol": "rb2613.SHF"}, {"symbol": "rb2610.DCE"}):
+        with pytest.raises(FixtureContractError):
+            run_fixture_closed_loop(
+                _fixture(contract={**_fixture()["contract"], **patch})
+            )
+
+
+def test_rollover_active_symbol_changes_fixture_lineage() -> None:
+    baseline = run_fixture_closed_loop(_fixture())
+    rollover = run_fixture_closed_loop(
+        _fixture(contract={**_fixture()["contract"], "active_symbol": "rb2701.SHF"})
+    )
+
+    assert rollover["candidate"]["execution_eligible"] is False
+    assert rollover["fixture_lineage_sha256"] != baseline["fixture_lineage_sha256"]
+
+
+@pytest.mark.parametrize(
+    "path, value",
+    [
+        (("bar", "timestamp"), "2026-07-17T21:05:00"),
+        (("mark", "available_at"), "2026-07-17T21:10:01"),
+        (("close", "decision_time"), "2026-07-17T21:15:02"),
+        (("contract", "available_at"), "2026-07-17T20:59:00"),
+        (("bar", "exchange_calendar", "available_at"), "2026-07-17T20:59:00"),
+    ],
+)
+def test_naive_timestamps_fail_closed(path: tuple[str, ...], value: str) -> None:
+    fixture = copy.deepcopy(_fixture())
+    target: dict[str, object] = fixture
+    for key in path[:-1]:
+        target = target[key]  # type: ignore[assignment,index]
+    target[path[-1]] = value
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(fixture)
 
 
 @pytest.mark.parametrize(

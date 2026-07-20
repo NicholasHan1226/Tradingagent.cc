@@ -17,16 +17,25 @@ import math
 import re
 from typing import Any, Mapping
 
+from shared.capital.market_policy import MarketPolicy
+
 from .session import CN_TZ, parse_cn_datetime
 
 
-ACCOUNT_ID = "cn-futures-capital-v1"
-INITIAL_EQUITY_CNY = 50_000.0
-MAX_MARGIN_CNY = 25_000.0
 SIMULATION_MARKER = "fixture_mock_only"
 _CONTRACT_SYMBOL = re.compile(
-    r"^(?P<product>[a-z]+)(?P<month>\d{3,4})\.(?P<exchange>[A-Z]+)$"
+    r"^(?P<product>[A-Za-z]+)(?P<month>\d{3,4})\.(?P<exchange>[A-Za-z]+)$"
 )
+_FIXTURE_PRODUCT_EXCHANGES = {
+    "rb": "SHF",
+    "cu": "SHF",
+    "i": "DCE",
+    "m": "DCE",
+    "if": "CFFEX",
+    "ih": "CFFEX",
+    "ic": "CFFEX",
+    "im": "CFFEX",
+}
 
 
 class FixtureContractError(ValueError):
@@ -59,11 +68,11 @@ class FixtureContract:
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "FixtureContract":
-        symbol = _text(raw, "symbol")
-        active_symbol = _text(raw, "active_symbol")
-        product = _text(raw, "product")
-        _validate_contract_identity(symbol, product, "symbol")
-        _validate_contract_identity(active_symbol, product, "active_symbol")
+        product = _text(raw, "product").lower()
+        symbol = _canonical_contract_symbol(_text(raw, "symbol"), product, "symbol")
+        active_symbol = _canonical_contract_symbol(
+            _text(raw, "active_symbol"), product, "active_symbol"
+        )
         values = {
             name: _positive(raw, name)
             for name in (
@@ -120,6 +129,7 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     """
 
     _validate_fixture_evidence(fixture)
+    policy = _load_cn_futures_policy()
     contract = FixtureContract.from_mapping(_mapping(fixture, "contract"))
     bar = _mapping(fixture, "bar")
     mark = _mapping(fixture, "mark")
@@ -144,12 +154,16 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     requested_quantity = _whole_positive(fixture, "quantity")
     generation = _whole_positive(fixture, "generation")
 
-    trade_date, session = _trade_date_and_session(
-        entry_timing.event_time,
-        entry_timing.decision_time,
-        contract,
-        evidence,
+    trade_date, session = _event_trade_date_and_session(
+        bar, entry_timing, contract, "bar"
     )
+    if session != "closed":
+        _validate_followup_event_calendar(
+            mark, mark_timing, contract, trade_date, "mark"
+        )
+        _validate_followup_event_calendar(
+            close, close_timing, contract, trade_date, "close"
+        )
     fixture_lineage_sha256 = _canonical_sha256(fixture)
     intent_id = f"cnf-intent-{fixture_lineage_sha256[:24]}"
     base = _base_result(
@@ -160,6 +174,7 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         generation,
         evidence,
         fixture_lineage_sha256,
+        policy,
     )
     candidate = {
         "symbol": contract.symbol,
@@ -174,21 +189,28 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         "intent_id": intent_id,
     }
     if contract.symbol != contract.active_symbol:
-        return _hold(base, candidate, "rollover_guard_active_contract_mismatch")
+        return _hold(base, candidate, policy, "rollover_guard_active_contract_mismatch")
     if session == "closed":
-        return _hold(base, candidate, "outside_contract_session")
+        return _hold(base, candidate, policy, "outside_contract_session")
 
     stop_distance = _positive(fixture, "stop_distance")
     maximum_loss = _positive(fixture, "maximum_loss_cny")
+    daily_risk_budget = policy.initial_equity_cny * policy.daily_loss_pause_pct
+    if maximum_loss > daily_risk_budget:
+        return _hold(
+            base, candidate, policy, "maximum_loss_exceeds_canonical_daily_budget"
+        )
     entry = _round_tick(price, contract.tick_size, requested_side in {"long"})
     one_lot_margin = entry * contract.multiplier * contract.initial_margin_rate
     one_lot_loss = stop_distance * contract.multiplier
-    max_lots_by_margin = int(MAX_MARGIN_CNY // one_lot_margin)
+    max_lots_by_margin = int(policy.margin_utilization_limit_cny // one_lot_margin)
     max_lots_by_loss = int(maximum_loss // one_lot_loss)
     quantity = min(requested_quantity, max_lots_by_margin, max_lots_by_loss)
     if quantity < 1:
         candidate["counterfactual_only"] = True
-        return _hold(base, candidate, "one_lot_margin_or_stop_budget_ineligible")
+        return _hold(
+            base, candidate, policy, "one_lot_margin_or_stop_budget_ineligible"
+        )
 
     open_fee = _fee(
         entry,
@@ -198,7 +220,20 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         contract.open_fee_type,
     )
     margin = entry * contract.multiplier * quantity * contract.initial_margin_rate
-    cash_after_open = INITIAL_EQUITY_CNY - open_fee
+    expected_close_fee = _fee(
+        entry,
+        contract.multiplier,
+        quantity,
+        contract.close_fee_rate,
+        contract.close_fee_type,
+    )
+    reserved_cash_after_order = (
+        policy.initial_equity_cny - margin - open_fee - expected_close_fee
+    )
+    stop_exposure = one_lot_loss * quantity + open_fee + expected_close_fee
+    if reserved_cash_after_order < 0 or stop_exposure > daily_risk_budget:
+        return _hold(base, candidate, policy, "margin_stop_or_fee_pretrade_ineligible")
+    cash_after_open = policy.initial_equity_cny - open_fee
     mark_price = _positive(mark, "price")
     unrealized = _pnl(requested_side, entry, mark_price, contract.multiplier, quantity)
     equity_before_close = cash_after_open + unrealized
@@ -263,9 +298,9 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         "reason": "forced_liquidation" if liquidation else "fixture_round_trip",
     }
     reconcile = {
-        "account_id": ACCOUNT_ID,
+        "account_id": policy.capital_authority_id,
         "generation": generation,
-        "initial_equity_cny": INITIAL_EQUITY_CNY,
+        "initial_equity_cny": policy.initial_equity_cny,
         "cash_cny": _money(final_cash),
         "equity_cny": _money(final_cash),
         "margin_cny": 0.0,
@@ -311,12 +346,43 @@ def _validate_fixture_evidence(fixture: Mapping[str, Any]) -> None:
         raise FixtureContractError("fixture lineage_ref is required")
 
 
-def _validate_contract_identity(symbol: str, product: str, field_name: str) -> None:
+def _load_cn_futures_policy() -> MarketPolicy:
+    try:
+        policy = MarketPolicy.load("cn_futures")
+    except Exception as exc:
+        raise FixtureContractError("canonical_cn_futures_policy_unavailable") from exc
+    if (
+        policy.market != "cn_futures"
+        or policy.currency != "CNY"
+        or policy.capital_layer != "simulated"
+        or policy.real_trading_enabled is not False
+        or policy.margin_utilization_limit_pct is None
+        or policy.margin_utilization_limit_cny <= 0
+        or policy.daily_loss_pause_pct <= 0
+    ):
+        raise FixtureContractError("canonical_cn_futures_policy_mismatch")
+    return policy
+
+
+def _canonical_contract_symbol(symbol: str, product: str, field_name: str) -> str:
     match = _CONTRACT_SYMBOL.fullmatch(symbol)
-    if match is None or match.group("product") != product.lower():
+    if match is None:
         raise FixtureContractError(
             f"{field_name} must be a concrete contract for the declared product"
         )
+    normalized_product = match.group("product").lower()
+    normalized_exchange = match.group("exchange").upper()
+    month = match.group("month")
+    if (
+        normalized_product != product
+        or _FIXTURE_PRODUCT_EXCHANGES.get(product) != normalized_exchange
+    ):
+        raise FixtureContractError(
+            f"{field_name} must match the declared product and fixture exchange"
+        )
+    if not 1 <= int(month[-2:]) <= 12:
+        raise FixtureContractError(f"{field_name} must have month 01 through 12")
+    return f"{normalized_product}{month}.{normalized_exchange}"
 
 
 def _minute_or_none(value: Any) -> int | None:
@@ -384,9 +450,9 @@ def _fee_type(raw: Mapping[str, Any], key: str) -> str:
 
 
 def _event_timing(raw: Mapping[str, Any], name: str) -> EventTiming:
-    event_time = parse_cn_datetime(raw.get("timestamp"))
-    available_at = parse_cn_datetime(raw.get("available_at"))
-    decision_time = parse_cn_datetime(raw.get("decision_time"))
+    event_time = _aware_timestamp(raw.get("timestamp"), f"{name} timestamp")
+    available_at = _aware_timestamp(raw.get("available_at"), f"{name} available_at")
+    decision_time = _aware_timestamp(raw.get("decision_time"), f"{name} decision_time")
     if event_time is None or available_at is None or decision_time is None:
         raise FixtureContractError(
             f"{name} timestamp, available_at, and decision_time must be ISO-8601"
@@ -401,11 +467,21 @@ def _event_timing(raw: Mapping[str, Any], name: str) -> EventTiming:
 def _assert_available_by(
     raw: Mapping[str, Any], name: str, decision_time: datetime
 ) -> None:
-    available_at = parse_cn_datetime(raw.get("available_at"))
-    if available_at is None:
-        raise FixtureContractError(f"{name} available_at must be an ISO-8601 datetime")
+    available_at = _aware_timestamp(raw.get("available_at"), f"{name} available_at")
     if available_at > decision_time:
         raise FixtureContractError(f"{name} became available after entry decision")
+
+
+def _aware_timestamp(value: Any, name: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise FixtureContractError(f"{name} must be an ISO-8601 string with timezone")
+    text = value.strip()
+    if not (text.endswith("Z") or re.search(r"[+-]\d{2}:\d{2}$", text)):
+        raise FixtureContractError(f"{name} must include an explicit timezone")
+    parsed = parse_cn_datetime(text)
+    if parsed is None:
+        raise FixtureContractError(f"{name} must be an ISO-8601 datetime")
+    return parsed
 
 
 def _session_for_contract(timestamp: datetime, contract: FixtureContract) -> str:
@@ -415,6 +491,44 @@ def _session_for_contract(timestamp: datetime, contract: FixtureContract) -> str
         if any(start <= minute <= end for start, end in windows):
             return name
     return "closed"
+
+
+def _event_trade_date_and_session(
+    raw: Mapping[str, Any],
+    timing: EventTiming,
+    contract: FixtureContract,
+    name: str,
+) -> tuple[str, str]:
+    calendar = _mapping(raw, "exchange_calendar")
+    trade_date = calendar.get("trade_date")
+    if not isinstance(trade_date, str) or not re.fullmatch(r"\d{8}", trade_date):
+        raise FixtureContractError(f"{name} calendar trade_date must be YYYYMMDD")
+    if calendar.get("calendar_eligible") is not True:
+        if (
+            calendar.get("calendar_eligible") is False
+            and calendar.get("session") == "closed"
+        ):
+            return trade_date, "closed"
+        raise FixtureContractError(f"{name} calendar eligibility is required")
+    _assert_available_by(calendar, f"{name} exchange_calendar", timing.decision_time)
+    actual_session = _session_for_contract(timing.event_time, contract)
+    if actual_session == "closed" or calendar.get("session") != actual_session:
+        raise FixtureContractError(
+            f"{name} calendar session is not permitted by contract"
+        )
+    return trade_date, actual_session
+
+
+def _validate_followup_event_calendar(
+    raw: Mapping[str, Any],
+    timing: EventTiming,
+    contract: FixtureContract,
+    entry_trade_date: str,
+    name: str,
+) -> None:
+    trade_date, session = _event_trade_date_and_session(raw, timing, contract, name)
+    if session == "closed" or trade_date != entry_trade_date:
+        raise FixtureContractError(f"{name} calendar does not cover entry trade date")
 
 
 def _fee(
@@ -429,35 +543,6 @@ def _fee(
     return price * multiplier * quantity * value
 
 
-def _trade_date_and_session(
-    event_time: datetime,
-    decision_time: datetime,
-    contract: FixtureContract,
-    evidence: Mapping[str, Any],
-) -> tuple[str, str]:
-    calendar = _mapping(evidence, "exchange_calendar")
-    trade_date = calendar.get("trade_date")
-    if not isinstance(trade_date, str) or not re.fullmatch(r"\d{8}", trade_date):
-        raise FixtureContractError("exchange calendar trade_date must be YYYYMMDD")
-    eligible = calendar.get("calendar_eligible")
-    if eligible is not True and eligible is not False:
-        raise FixtureContractError("exchange calendar eligibility is required")
-    _assert_available_by(calendar, "exchange_calendar", decision_time)
-    actual_session = _session_for_contract(event_time, contract)
-    declared_session = calendar.get("session")
-    if not isinstance(declared_session, str) or not declared_session:
-        raise FixtureContractError("exchange calendar session is required")
-    if not eligible:
-        if declared_session != "closed":
-            raise FixtureContractError("ineligible exchange calendar must be closed")
-        return trade_date, "closed"
-    if actual_session == "closed" or declared_session != actual_session:
-        raise FixtureContractError(
-            "exchange calendar session is not permitted by contract"
-        )
-    return trade_date, actual_session
-
-
 def _base_result(
     contract: FixtureContract,
     timestamp: datetime,
@@ -466,13 +551,14 @@ def _base_result(
     generation: int,
     data_evidence: Mapping[str, Any],
     fixture_lineage_sha256: str,
+    policy: MarketPolicy,
 ) -> dict[str, Any]:
     return {
         "mode": SIMULATION_MARKER,
         "real_trading_enabled": False,
         "data_source": "fixture_mock",
         "account": {
-            "account_id": ACCOUNT_ID,
+            "account_id": policy.capital_authority_id,
             "generation": generation,
             "capital_layer": "simulated",
             "account_type": "simulated",
@@ -487,7 +573,10 @@ def _base_result(
 
 
 def _hold(
-    base: dict[str, Any], candidate: dict[str, Any], reason: str
+    base: dict[str, Any],
+    candidate: dict[str, Any],
+    policy: MarketPolicy,
+    reason: str,
 ) -> dict[str, Any]:
     candidate.update(
         {"execution_eligible": False, "counterfactual_only": True, "reason": reason}
@@ -498,10 +587,10 @@ def _hold(
         "counterfactual_only": True,
     }
     reconcile = {
-        "account_id": ACCOUNT_ID,
+        "account_id": policy.capital_authority_id,
         "generation": base["account"]["generation"],
-        "cash_cny": INITIAL_EQUITY_CNY,
-        "equity_cny": INITIAL_EQUITY_CNY,
+        "cash_cny": policy.initial_equity_cny,
+        "equity_cny": policy.initial_equity_cny,
         "margin_cny": 0.0,
         "reconciled": True,
     }
@@ -629,4 +718,4 @@ def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-__all__ = ["ACCOUNT_ID", "FixtureContractError", "run_fixture_closed_loop"]
+__all__ = ["FixtureContractError", "run_fixture_closed_loop"]
