@@ -1,6 +1,6 @@
-# TradingAgent V1 本地与服务器旁路运行、验收及回滚
+# TradingAgent 多市场 fixture 与服务器旁路运行、验收及回滚
 
-> 本文是 A 股 V1 **simulation-only** 候选在本地与服务器旁路环境中的唯一现役操作入口。Nicholas 已授予正常代码发布的 standing authorization；范围明确且通过测试、独立审计、preflight与回滚检查后，提交、PR/merge、push和版本化loopback-only sidecar不再等待逐次确认。该授权不自动扩展到现役源码/API/页面切换、网络数据联调、broker、真实交易、邮件、GUI、scheduler/cron、公开入口或生产密钥。仓库模板、fixture、本地测试、候选分支和服务器旁路成功均不代表 Git 主线、TradingDatas runtime 或现役生产已生效。当前执行证据只见 [STATUS.md](../STATUS.md)。
+> 本文是 A股、CNFutures 与 Crypto **simulation-only** 候选在本地与服务器旁路环境中的唯一现役操作入口。Nicholas 已授予正常代码发布的 standing authorization；范围明确且通过测试、独立审计、preflight与回滚检查后，提交、PR/merge、push和版本化loopback-only sidecar不再等待逐次确认。该授权不自动扩展到现役源码/API/页面切换、网络数据联调、broker、真实交易、邮件、GUI、scheduler/cron、公开入口或生产密钥。仓库模板、fixture、本地测试、候选分支和服务器旁路成功均不代表 Git 主线、TradingDatas runtime 或现役生产已生效。当前执行证据只见 [STATUS.md](../STATUS.md)。
 
 ## 1. 不可突破的边界
 
@@ -66,7 +66,7 @@ git -C /Users/nicholashan/Projects/Finance/TradingAgent rev-parse HEAD origin/ma
 
 - 现役仓HEAD、remote ref与完整`git status --porcelain=v1 --untracked-files=all`；
 - `tradingagent-front-api.service` unit、状态、PID与`127.0.0.1:8787/healthz`；
-- `marketgraph`用户crontab及其哈希；
+- `root`与`marketgraph`两份用户crontab及其各自哈希；任一不可读都必须记为未验证，不能以另一份替代；
 - 现役未跟踪运行资产、回滚目录和磁盘余量；
 - 候选远端分支的精确SHA、工作树干净状态和回退目录。
 
@@ -151,6 +151,55 @@ sudo -u marketgraph "${SAFE_ENV[@]}" PYTHONPYCACHEPREFIX="$PYCACHE_ROOT" \
   "$VENV/bin/python" -m compileall -q \
   shared Ashare CNFutures Crypto tools scripts
 sudo rm -rf -- "$PYCACHE_ROOT"
+
+CRYPTO_CANARY_OUTPUT="/opt/investment/tradingagent-canary-output/${RELEASE_ID}-crypto-fixture"
+test ! -e "$CRYPTO_CANARY_OUTPUT"
+sudo install -d -m 0700 -o marketgraph -g marketgraph "$CRYPTO_CANARY_OUTPUT"
+sudo -u marketgraph "${SAFE_ENV[@]}" \
+  "$VENV/bin/python" - "$CRYPTO_CANARY_OUTPUT" "$EVIDENCE" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+from Crypto.fixture_auto_sim import run_fixture_file
+
+root = Path(sys.argv[1])
+evidence = Path(sys.argv[2])
+fixture = Path("Crypto/fixtures/auto_sim_spot_cycle_v1.json")
+first_root = root / "first"
+second_root = root / "second"
+first = run_fixture_file(fixture, output_root=first_root)
+replay = run_fixture_file(fixture, output_root=first_root)
+second = run_fixture_file(fixture, output_root=second_root)
+assert first["idempotent_replay"] is False
+assert replay["idempotent_replay"] is True
+assert first["bundle"] == replay["bundle"] == second["bundle"]
+run_id = first["bundle"]["run_id"]
+first_bytes = (first_root / "runs" / f"{run_id}.json").read_bytes()
+second_bytes = (second_root / "runs" / f"{run_id}.json").read_bytes()
+assert first_bytes == second_bytes
+assert first["bundle"]["execution_eligible"] is False
+assert first["bundle"]["execution_authority"] is False
+assert first["bundle"]["durable_execution_receipt"] is False
+readback = {
+    "contract": "tradingagent.crypto.server_fixture_readback.v1",
+    "run_id": run_id,
+    "bundle_sha256": hashlib.sha256(first_bytes).hexdigest(),
+    "same_root_idempotent_replay": True,
+    "cross_root_bundle_bytes_equal": True,
+    "generation_scope": first["bundle"]["capital_policy"]["generation_scope"],
+    "execution_eligible": False,
+    "execution_authority": False,
+    "durable_execution_receipt": False,
+    "real_trading_enabled": False,
+    "production_verified": False,
+}
+(evidence / "crypto-fixture-readback.json").write_text(
+    json.dumps(readback, ensure_ascii=False, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
 
 cd "$CANDIDATE/front"
 sudo -u marketgraph "${SAFE_ENV[@]}" sha256sum package-lock.json \
@@ -256,7 +305,11 @@ def visit(value):
     if isinstance(value, dict):
         for key, child in value.items():
             normalized = key.replace("_", "").lower()
-            if normalized in {"realtradingenabled", "livetradingenabled"}:
+            if normalized in {
+                "realtradingenabled",
+                "livetradingenabled",
+                "productionverified",
+            }:
                 assert child is False
             visit(child)
     elif isinstance(value, list):
@@ -286,7 +339,7 @@ curl -fsS http://127.0.0.1:8787/healthz >/dev/null
 - canary停止后备用端口无监听；
 - 现役8787服务始终健康。
 
-冻结fixture必须写到独立canary output root，至少完成同根幂等重放和跨根字节一致性检查；输出必须保持`non_authority`、`local_candidate`、`production_verified=false`、`real_trading_enabled=false`。不得写正式SampleJournal、活动runtime根或前端投影根。
+冻结fixture必须写到独立canary output root。A股基线fixture与Crypto `auto_sim_spot_cycle_v1.json`至少完成首次运行、同根幂等重放和跨根业务bundle字节一致性检查；CNFutures至少运行其fixture闭环聚焦测试。输出必须保持`non_authority`/`local_candidate`或`fixture_simulated`的精确市场语义，并明确`production_verified=false`、`real_trading_enabled=false`。Crypto还必须保持`execution_eligible=false`、`execution_authority=false`、`durable_execution_receipt=false`与`local_fixture_opening_baseline_only`。不得写正式SampleJournal、活动runtime根或前端投影根。
 
 ### 1.1.3 最终readback与回滚
 

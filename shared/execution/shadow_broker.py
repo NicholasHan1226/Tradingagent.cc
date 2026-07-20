@@ -18,8 +18,12 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from shared.governance.market_lanes import canonical_runtime_market
+from shared.governance.retirement import RetiredRuntimeError
 
-from shared.markets.safety import reject_real_execution_payload
+from shared.markets.safety import (
+    looks_like_crypto_payload,
+    reject_real_execution_payload,
+)
 
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
@@ -378,6 +382,11 @@ def record_shadow(
     """Record a shadow order and update local shadow JSON ledgers."""
 
     payload = dict(order or {})
+    if looks_like_crypto_payload(payload, market=market):
+        raise RetiredRuntimeError(
+            "CryptoSharedShadowBroker:legacy_runtime_retired; "
+            "use Crypto.fixture_auto_sim"
+        )
     _validate_shadow_order(payload)
     symbol = _symbol_from_order(payload)
     if not symbol:

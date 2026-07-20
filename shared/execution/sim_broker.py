@@ -19,7 +19,10 @@ from pathlib import Path
 from typing import Any
 
 from .slippage_model import estimate_slippage
-from shared.markets.safety import reject_real_execution_payload
+from shared.markets.safety import (
+    looks_like_crypto_payload,
+    reject_real_execution_payload,
+)
 
 SIM_LEDGER = Path(__file__).resolve().parent.parent / "logs" / "sim_orders.jsonl"
 SIM_STATUSES = {"filled", "partial", "rejected", "failed", "pending"}
@@ -140,17 +143,6 @@ def _ensure_builtin_executor(market_key: str) -> None:
             ashare_sim_execute,
             simulation_contract="tradingagent.ashare.paper_broker.v1",
             authority_id="ashare-capital-v1",
-        )
-    elif market_key == "crypto":
-        try:
-            from Crypto.sim_executor import crypto_sim_execute
-        except Exception:
-            return
-        register_sim_executor(
-            "crypto",
-            crypto_sim_execute,
-            simulation_contract="tradingagent.crypto.paper_broker.v1",
-            authority_id="crypto-shadow-sim-v1",
         )
     elif market_key == "cn_futures":
         try:
@@ -329,6 +321,12 @@ def _coerce_payload_mapping(value: Any, *, scalar_key: str = "value") -> dict[st
     return {scalar_key: value}
 
 
+def _looks_like_crypto_order(order: dict[str, Any]) -> bool:
+    """Recognize Crypto hints so the legacy generic simulator fails closed."""
+
+    return looks_like_crypto_payload(order)
+
+
 def _coerce_sim_result(result: Any, order: dict[str, Any], market: str) -> SimResult:
     if isinstance(result, SimResult):
         raw_response = result.raw_response
@@ -415,6 +413,35 @@ def execute_sim_order(
     sim_order = _with_sim_markers(order_payload)
     sim_account = _with_sim_markers(account_payload)
     sim_config = _with_sim_markers(config_payload)
+    if market_key != "crypto" and _looks_like_crypto_order(order_payload):
+        return SimResult(
+            status="failed",
+            message=(
+                "Order carries Crypto instrument hints that conflict with "
+                f"market={market_key or 'unknown'}"
+            ),
+            order_id=str(order_payload.get("order_id", "")),
+            market=market_key,
+            raw_response={
+                "recorded": False,
+                "reason": "crypto_market_binding_conflict",
+            },
+        )
+    if market_key == "crypto":
+        return SimResult(
+            status="failed",
+            message=(
+                "Generic Crypto simulated execution is retired; use the "
+                "capital-backed Crypto ledger runtime"
+            ),
+            order_id=str(order_payload.get("order_id", "")),
+            market=market_key,
+            raw_response={
+                "recorded": False,
+                "reason": "crypto_general_executor_retired",
+                "capital_ledger_required": True,
+            },
+        )
     if market_key == "ashare":
         provenance_error = _ashare_provenance_error(sim_order)
         if provenance_error:
@@ -631,6 +658,27 @@ def simulate_order(order: dict[str, Any]) -> dict[str, Any]:
         fill_probability, order_id, details.
     """
     order_id = order.get("order_id", f"SIM-{uuid.uuid4().hex[:12]}")
+    if _looks_like_crypto_order(order):
+        market_claim = str(order.get("market") or "").strip().lower()
+        reason = (
+            "crypto_market_binding_conflict"
+            if market_claim and market_claim != "crypto"
+            else "crypto_general_executor_retired"
+        )
+        return {
+            "order_id": order_id,
+            "filled_price": 0.0,
+            "slippage": 0.0,
+            "fill_time": datetime.now().isoformat(),
+            "status": "rejected",
+            "filled_quantity": 0,
+            "fill_probability": 0.0,
+            "message": (
+                "Generic Crypto slippage simulation is retired; the "
+                "capital-backed Crypto ledger runtime is required"
+            ),
+            "reason": reason,
+        }
     ts_code = order.get("ts_code", "")
     side = order.get("side", "buy")
     quantity = int(order.get("quantity", 0))

@@ -7,6 +7,13 @@ tests/test_evolution_authority_retirement.py
 tests/test_mini_hermes_retirement.py
 tests/test_market_base_layer.py
 tests/test_market_rules.py
+tests/test_ashare_twenty_day_fixture_loop.py
+tests/test_cn_futures_fixture_closed_loop.py
+tests/test_crypto_fixture_auto_sim.py
+tests/test_crypto_authority_retirement.py
+tests/test_email_trigger.py
+tests/test_signal_state_machine.py
+tests/test_crypto_sim.py
 tests/test_sim_capital.py
 tests/test_daily_reconcile.py
 tests/test_ashare_sim.py

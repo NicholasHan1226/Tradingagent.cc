@@ -1,7 +1,9 @@
 market: crypto
 capital:
-  default_layer: shadow
-  allowed_layers: [shadow, simulated]
+  default_layer: simulated
+  # Writable Crypto shadow paths are retired. Historical shadow artifacts are
+  # read-only evidence; the local fixture candidate writes simulated only.
+  allowed_layers: [simulated]
   currency: USDT
 safety:
   real_money_enabled: false
@@ -9,9 +11,10 @@ safety:
   direct_execution_enabled: false
 data:
   reader: tradingdatas_v1_catalog_query
-  daily_table: market_bars_daily
-  intraday_table: market_bars_intraday
-  events_table: market_events
+  # Fixture/mock-only until the provider-neutral catalog handoff supplies IDs.
+  daily_table: null
+  intraday_table: null
+  events_table: null
 universe:
   max_symbols: 50
   min_close: 0.00000001
@@ -29,5 +32,6 @@ reporting:
   daily_report_path: shared/review/crypto/daily
   notify_on_trigger_only: true
 promotion:
+  # Read-only historical scorecard thresholds; never an activation policy.
   min_shadow_trades: 50
   min_positive_days_pct: 0.55

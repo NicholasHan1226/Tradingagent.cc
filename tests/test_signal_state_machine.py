@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from shared.execution.signal_state_machine import (
+from shared.execution.signal_state_machine import (  # noqa: E402
     CANCELLED,
     CLAIMED,
     EXPIRED,
@@ -26,6 +26,7 @@ from shared.execution.signal_state_machine import (
     read_json,
     write_json,
 )
+from shared.governance.retirement import RetiredRuntimeError  # noqa: E402
 
 
 class SignalStateMachineTest(unittest.TestCase):
@@ -91,12 +92,29 @@ class SignalStateMachineTest(unittest.TestCase):
         self.assertEqual(running["status"], RUNNING)
         self.assertTrue((self.signals_dir / "running" / "SIG-1.json").exists())
 
-        filled = self.machine.fill("SIG-1", {"filled_price": 10.1, "filled_quantity": 100})
+        filled = self.machine.fill(
+            "SIG-1", {"filled_price": 10.1, "filled_quantity": 100}
+        )
         self.assertEqual(filled["status"], FILLED)
         self.assertTrue((self.signals_dir / "filled" / "SIG-1.json").exists())
         filled_card = read_json(self.signals_dir / "filled" / "SIG-1.json")
         self.assertEqual(filled_card["filled_price"], 10.1)
         self.assertEqual(filled_card["filled_quantity"], 100)
+
+    def test_crypto_card_is_retired_before_signal_directories_are_created(self) -> None:
+        for identity in (
+            {"market": "crypto", "ts_code": "BTCUSDT"},
+            {"market": "ashare", "symbol": "BTC/USDT"},
+            {"base_asset": "BTC", "quote_asset": "USDT"},
+        ):
+            card = self._card("CRYPTO-RETIRED", **identity)
+            with self.subTest(identity=identity):
+                with self.assertRaisesRegex(
+                    RetiredRuntimeError, "legacy_runtime_retired"
+                ):
+                    self.machine.write_pending(card)
+
+        self.assertFalse(self.signals_dir.exists())
 
     def test_order_id_and_idempotency_key_duplicates_are_rejected(self) -> None:
         self.machine.write_pending(self._card("SIG-DUP"))
@@ -105,7 +123,9 @@ class SignalStateMachineTest(unittest.TestCase):
             self.machine.write_pending(self._card("SIG-DUP", idempotency_key="NEW-KEY"))
 
         with self.assertRaises(SignalStateConflict):
-            self.machine.write_pending(self._card("SIG-DUP-2", idempotency_key="SIG-DUP"))
+            self.machine.write_pending(
+                self._card("SIG-DUP-2", idempotency_key="SIG-DUP")
+            )
 
     def test_sweep_expired_moves_only_expired_pending(self) -> None:
         now = datetime.now().astimezone()
@@ -128,11 +148,19 @@ class SignalStateMachineTest(unittest.TestCase):
     def test_fill_rejects_pending_without_claim_or_running_state(self) -> None:
         self.machine.write_pending(self._card("SIG-PENDING-FILL"))
 
-        with self.assertRaisesRegex(SignalStateConflict, "cannot be filled from status pending"):
-            self.machine.fill("SIG-PENDING-FILL", {"filled_price": 10.1, "filled_quantity": 100})
+        with self.assertRaisesRegex(
+            SignalStateConflict, "cannot be filled from status pending"
+        ):
+            self.machine.fill(
+                "SIG-PENDING-FILL", {"filled_price": 10.1, "filled_quantity": 100}
+            )
 
-        self.assertTrue((self.signals_dir / "pending" / "SIG-PENDING-FILL.json").exists())
-        self.assertFalse((self.signals_dir / "filled" / "SIG-PENDING-FILL.json").exists())
+        self.assertTrue(
+            (self.signals_dir / "pending" / "SIG-PENDING-FILL.json").exists()
+        )
+        self.assertFalse(
+            (self.signals_dir / "filled" / "SIG-PENDING-FILL.json").exists()
+        )
 
     def test_claim_competition_allows_only_one_winner(self) -> None:
         self.machine.write_pending(self._card("SIG-RACE"))
@@ -145,7 +173,10 @@ class SignalStateMachineTest(unittest.TestCase):
             except SignalStateConflict:
                 results.append("conflict")
 
-        threads = [threading.Thread(target=claim_once, args=(f"worker-{idx}",)) for idx in range(2)]
+        threads = [
+            threading.Thread(target=claim_once, args=(f"worker-{idx}",))
+            for idx in range(2)
+        ]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -165,9 +196,13 @@ class SignalStateMachineTest(unittest.TestCase):
         self.assertEqual(claimed_card["status"], CLAIMED)
         self.assertTrue(claimed_card["cancel_requested"])
 
-        filled = self.machine.fill("SIG-CANCEL-FILL", {"filled_price": 10.2, "filled_quantity": 100})
+        filled = self.machine.fill(
+            "SIG-CANCEL-FILL", {"filled_price": 10.2, "filled_quantity": 100}
+        )
         self.assertEqual(filled["status"], FILLED)
-        self.assertFalse((self.signals_dir / "claimed" / "SIG-CANCEL-FILL.json").exists())
+        self.assertFalse(
+            (self.signals_dir / "claimed" / "SIG-CANCEL-FILL.json").exists()
+        )
         self.assertTrue((self.signals_dir / "filled" / "SIG-CANCEL-FILL.json").exists())
 
     def test_cancel_pending_moves_to_cancelled(self) -> None:
@@ -240,9 +275,7 @@ class SignalStateMachineTest(unittest.TestCase):
                 {"filled_price": 10.1, "filled_quantity": 100, "broker_mode": "live"},
             )
 
-        self.assertTrue(
-            (self.signals_dir / "claimed" / "SIG-FILL-LIVE.json").exists()
-        )
+        self.assertTrue((self.signals_dir / "claimed" / "SIG-FILL-LIVE.json").exists())
 
     def test_fill_cannot_overwrite_order_or_market_identity(self) -> None:
         self.machine.write_pending(self._card("SIG-IMMUTABLE"))
@@ -254,9 +287,7 @@ class SignalStateMachineTest(unittest.TestCase):
                 {"order_id": "SIG-OTHER", "filled_price": 10.1},
             )
 
-        self.assertTrue(
-            (self.signals_dir / "claimed" / "SIG-IMMUTABLE.json").exists()
-        )
+        self.assertTrue((self.signals_dir / "claimed" / "SIG-IMMUTABLE.json").exists())
 
     def test_duplicate_order_projection_across_states_fails_closed(self) -> None:
         self.machine.ensure_dirs()
@@ -269,6 +300,7 @@ class SignalStateMachineTest(unittest.TestCase):
 
         with self.assertRaisesRegex(SignalStateConflict, "multiple states"):
             self.machine.find_by_order_id("SIG-MULTI")
+
 
 if __name__ == "__main__":
     unittest.main()

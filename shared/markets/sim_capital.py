@@ -43,8 +43,10 @@ def default_sim_capital(
     """Return one owned lane's fixed bootstrap capital in native currency.
 
     A-share and CN futures each have an independent 50,000 CNY authority.
-    Crypto has an isolated 10,000 USDT shadow account.  No value here converts
-    or combines those accounts, and unknown/retired markets fail closed.
+    Crypto receives a compatibility projection derived from its isolated local
+    fixture opening policy; this function is not a current/runtime capital
+    authority. No value here converts or combines those accounts, and
+    unknown/retired markets fail closed.
     """
 
     key = _normalize_market(market)

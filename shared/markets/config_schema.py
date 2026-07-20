@@ -30,9 +30,13 @@ class SafetyConfig:
 @dataclass(frozen=True)
 class DataConfig:
     reader: str = "tradingdatas_v1_catalog_query"
-    daily_table: str = "market_bars_daily"
-    intraday_table: str = "market_bars_intraday"
-    events_table: str = "market_events"
+    # Dataset identities arrive only through a fresh TradingDatas handoff.  The
+    # legacy table fields remain solely for explicitly injected fixture ports;
+    # they are never interpreted as TradingDatas dataset IDs.
+    binding_scope: str = "unconfigured"
+    daily_table: str | None = None
+    intraday_table: str | None = None
+    events_table: str | None = None
 
 
 @dataclass(frozen=True)
@@ -179,6 +183,36 @@ def validate_market_config(config: MarketToolConfig) -> None:
     if config.data.reader != "tradingdatas_v1_catalog_query":
         raise ValueError(
             "data.reader must use the TradingDatas V1 catalog/query contract"
+        )
+    if config.data.binding_scope not in {"unconfigured", "fixture_only"}:
+        raise ValueError("data.binding_scope must be unconfigured or fixture_only")
+    fixture_tables: list[str] = []
+    for field_name in ("daily_table", "intraday_table", "events_table"):
+        value = getattr(config.data, field_name)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"data.{field_name} must be null or a non-empty string")
+        normalized = value.strip().lower()
+        if any(
+            marker in normalized
+            for marker in (
+                "binance",
+                "sharedsignals",
+                "tushare",
+                "sqlite",
+                ".db",
+                "/",
+                "\\",
+            )
+        ):
+            raise ValueError(
+                f"data.{field_name} cannot configure a provider-specific fallback"
+            )
+        fixture_tables.append(value.strip())
+    if fixture_tables and config.data.binding_scope != "fixture_only":
+        raise ValueError(
+            "legacy data table aliases require data.binding_scope=fixture_only"
         )
     if config.universe.max_symbols <= 0:
         raise ValueError("universe.max_symbols must be positive")

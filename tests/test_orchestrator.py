@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from shared.accounting import trade_audit_trail
 from shared.execution import shadow_broker
+from shared.governance.retirement import RetiredRuntimeError
 from shared.markets.base import MarketAdapter
 from shared.orchestrator import (
     OrchestratorDeps,
@@ -15,12 +16,13 @@ from shared.orchestrator import (
     _latest_price,
     _latest_volatility,
     run_shadow_loop,
+    run_sim_loop,
 )
 from shared.portfolio.constructor import construct as construct_portfolio
 
 
 class StubMarketAdapter(MarketAdapter):
-    def __init__(self, market: str = "crypto") -> None:
+    def __init__(self, market: str = "cn_futures") -> None:
         self.market = market
 
     def get_universe(self, date: str) -> list[str]:
@@ -307,10 +309,10 @@ class OrchestratorTest(unittest.TestCase):
             2,
         )
         self.assertEqual(
-            {request["market"] for request in self.score_requests}, {"crypto"}
+            {request["market"] for request in self.score_requests}, {"cn_futures"}
         )
         self.assertEqual(
-            {request["market"] for request in self.pool_requests}, {"crypto"}
+            {request["market"] for request in self.pool_requests}, {"cn_futures"}
         )
 
         trade_rows = [
@@ -532,7 +534,7 @@ class OrchestratorTest(unittest.TestCase):
         self.assertGreaterEqual(result["recorded_count"], 1)
 
     def test_run_shadow_loop_uses_adapter_market_for_non_ashare_scoring(self) -> None:
-        for market in ("crypto", "cn_futures"):
+        for market in ("cn_futures",):
             with self.subTest(market=market):
                 self.calls.clear()
                 self.score_requests.clear()
@@ -555,7 +557,7 @@ class OrchestratorTest(unittest.TestCase):
                     {request["market"] for request in self.pool_requests}, {market}
                 )
 
-    def test_run_shadow_loop_records_fractional_crypto_quantity(self) -> None:
+    def test_run_shadow_loop_retires_crypto_before_any_writer(self) -> None:
         class CryptoLikeAdapter(StubMarketAdapter):
             def __init__(self) -> None:
                 super().__init__("crypto")
@@ -583,26 +585,98 @@ class OrchestratorTest(unittest.TestCase):
         deps = self._deps()
         deps.construct = construct_portfolio
 
-        result = run_shadow_loop(
-            CryptoLikeAdapter(),
-            "20260630",
-            HighPriceReader(),
-            deps=deps,
-            signals_dir=self.tmp_path / "signals_crypto_fractional",
-        )
+        signals_dir = self.tmp_path / "signals_crypto_fractional"
+        with self.assertRaisesRegex(RetiredRuntimeError, "legacy_runtime_retired"):
+            run_shadow_loop(
+                CryptoLikeAdapter(),
+                "20260630",
+                HighPriceReader(),
+                deps=deps,
+                signals_dir=signals_dir,
+            )
 
-        self.assertEqual(result["state"], "ok")
-        self.assertEqual(result["recorded_count"], 1)
-        trade_rows = [
-            json.loads(line)
-            for line in shadow_broker.SHADOW_TRADES.read_text(
-                encoding="utf-8"
-            ).splitlines()
-        ]
-        self.assertEqual(len(trade_rows), 1)
-        self.assertEqual(trade_rows[0]["market"], "crypto")
-        self.assertGreater(trade_rows[0]["quantity"], 0)
-        self.assertLess(trade_rows[0]["quantity"], 1)
+        self.assertFalse(shadow_broker.SHADOW_TRADES.exists())
+        self.assertFalse(signals_dir.exists())
+        self.assertEqual(self.calls, [])
+
+    def test_run_shadow_loop_retires_mislabeled_or_mapped_crypto_identity(self) -> None:
+        class CryptoIdentityAdapter(StubMarketAdapter):
+            def __init__(self, *, mapped: bool) -> None:
+                super().__init__("cn_futures")
+                self.mapped = mapped
+
+            def get_universe(self, date: str) -> list[str]:
+                return ["ALIAS"] if self.mapped else ["BTCUSDT"]
+
+            def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
+                if self.mapped:
+                    return "ashare", "BTC/USDT"
+                return "cn_futures", symbol
+
+        for mapped in (False, True):
+            with self.subTest(mapped=mapped):
+                self.calls.clear()
+                signals_dir = self.tmp_path / f"signals_crypto_alias_{mapped}"
+                with self.assertRaisesRegex(
+                    RetiredRuntimeError, "legacy_runtime_retired"
+                ):
+                    run_shadow_loop(
+                        CryptoIdentityAdapter(mapped=mapped),
+                        "20260630",
+                        StubReader(),
+                        deps=self._deps(),
+                        signals_dir=signals_dir,
+                    )
+
+                self.assertFalse(shadow_broker.SHADOW_TRADES.exists())
+                self.assertFalse(signals_dir.exists())
+                self.assertEqual(self.calls, [])
+
+    def test_run_sim_loop_retires_crypto_market_and_mislabeled_identity(self) -> None:
+        class SimCryptoIdentityAdapter(StubMarketAdapter):
+            def __init__(self, *, explicit_market: bool, mapped: bool) -> None:
+                super().__init__("crypto" if explicit_market else "cn_futures")
+                self.mapped = mapped
+
+            def get_universe(self, date: str) -> list[str]:
+                return ["ALIAS"] if self.mapped else ["BTCUSDT"]
+
+            def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
+                if self.mapped:
+                    return "ashare", "BTC-USDT"
+                return self.market, symbol
+
+            def get_sim_account(self) -> dict[str, object]:
+                return {
+                    "account": f"{self.market}_sim",
+                    "sim_capital": 10000.0,
+                    "positions": [],
+                }
+
+        cases = ((True, False), (False, False), (False, True))
+        for explicit_market, mapped in cases:
+            with self.subTest(explicit_market=explicit_market, mapped=mapped):
+                self.calls.clear()
+                signals_dir = (
+                    self.tmp_path / f"sim_crypto_alias_{explicit_market}_{mapped}"
+                )
+                with self.assertRaisesRegex(
+                    RetiredRuntimeError, "legacy_runtime_retired"
+                ):
+                    run_sim_loop(
+                        SimCryptoIdentityAdapter(
+                            explicit_market=explicit_market,
+                            mapped=mapped,
+                        ),
+                        "20260630",
+                        StubReader(),
+                        deps=self._deps(),
+                        signals_dir=signals_dir,
+                    )
+
+                self.assertFalse(shadow_broker.SHADOW_TRADES.exists())
+                self.assertFalse(signals_dir.exists())
+                self.assertEqual(self.calls, [])
 
 
 if __name__ == "__main__":

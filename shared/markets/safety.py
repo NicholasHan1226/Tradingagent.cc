@@ -7,8 +7,53 @@ from collections.abc import Iterable
 from typing import Any
 
 
+CRYPTO_QUOTE_ASSETS = frozenset({"USDT", "USDC", "BUSD", "USD", "BTC", "ETH"})
+CRYPTO_IDENTITY_FIELDS = (
+    "symbol",
+    "pair",
+    "ts_code",
+    "market_id",
+    "asset",
+)
+
+
 class SafetyViolation(RuntimeError):
     """Raised when a market tool config crosses a shadow/simulated boundary."""
+
+
+def looks_like_crypto_payload(payload: Any, *, market: Any = None) -> bool:
+    """Conservatively identify Crypto orders/cards across legacy spellings.
+
+    Explicit non-Crypto labels never mask an instrument-shaped Crypto identity.
+    This helper is intentionally shared by every retained generic writer so a
+    representation such as ``BTCUSDT``, ``BTC/USDT`` or ``BTC-USDT`` cannot
+    bypass retirement at a lower layer.
+    """
+
+    value = dict(payload) if isinstance(payload, dict) else {}
+    market_hints = (
+        market,
+        value.get("market"),
+        value.get("asset_class"),
+        value.get("market_type"),
+    )
+    if any(str(hint or "").strip().lower() == "crypto" for hint in market_hints):
+        return True
+
+    quote_asset = str(value.get("quote_asset") or "").strip().upper()
+    base_asset = str(value.get("base_asset") or "").strip().upper()
+    if base_asset and quote_asset in CRYPTO_QUOTE_ASSETS:
+        return True
+
+    for field in CRYPTO_IDENTITY_FIELDS:
+        raw = str(value.get(field) or "").strip().upper()
+        normalized = raw.replace("/", "").replace("-", "").replace("_", "")
+        if normalized and any(
+            normalized.endswith(quote) and len(normalized) > len(quote)
+            for quote in CRYPTO_QUOTE_ASSETS
+        ):
+            return True
+    return False
 
 
 def assert_shadow_or_sim_only(config: Any) -> None:

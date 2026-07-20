@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from Crypto.capital_policy import CRYPTO_CAPITAL_AUTHORITY_ID
 from shared.accounting.daily_reconcile import (
     ReconcileSnapshotIdentity,
     reconcile,
@@ -76,14 +77,14 @@ def test_reconcile_preserves_crypto_fractional_quantity() -> None:
     system_identity = _identity(
         market="crypto",
         account_id="crypto-paper-001",
-        authority_id="crypto-shadow-sim-v1",
+        authority_id=CRYPTO_CAPITAL_AUTHORITY_ID,
         broker_contract="tradingagent.crypto.paper_broker.v1",
         receipt_id="system-crypto-001",
     )
     broker_identity = _identity(
         market="crypto",
         account_id="crypto-paper-001",
-        authority_id="crypto-shadow-sim-v1",
+        authority_id=CRYPTO_CAPITAL_AUTHORITY_ID,
         broker_contract="tradingagent.crypto.paper_broker.v1",
         receipt_id="broker-crypto-001",
     )
@@ -270,14 +271,14 @@ def test_reconcile_rejects_invalid_quantity_for_declared_step(quantity: object) 
             system_identity=_identity(
                 market="crypto",
                 account_id="crypto-paper-001",
-                authority_id="crypto-shadow-sim-v1",
+                authority_id=CRYPTO_CAPITAL_AUTHORITY_ID,
                 broker_contract="tradingagent.crypto.paper_broker.v1",
                 receipt_id="system-004",
             ),
             broker_identity=_identity(
                 market="crypto",
                 account_id="crypto-paper-001",
-                authority_id="crypto-shadow-sim-v1",
+                authority_id=CRYPTO_CAPITAL_AUTHORITY_ID,
                 broker_contract="tradingagent.crypto.paper_broker.v1",
                 receipt_id="broker-004",
             ),

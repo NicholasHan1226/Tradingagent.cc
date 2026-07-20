@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from shared.markets.base import MarketAdapter
+from shared.governance.retirement import RetiredRuntimeError
 from shared.notify import email_sender
 from shared.orchestrator import OrchestratorDeps, run_shadow_loop, run_sim_loop
 
@@ -15,10 +16,10 @@ class TriggerAdapter(MarketAdapter):
         return ["AAA"]
 
     def get_market(self) -> str:
-        return "crypto"
+        return "cn_futures"
 
     def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
-        return "crypto", symbol
+        return "cn_futures", symbol
 
     def get_strategy_config(self) -> dict[str, object]:
         return {
@@ -32,10 +33,22 @@ class TriggerAdapter(MarketAdapter):
         }
 
     def get_shadow_account(self) -> str:
-        return "crypto_shadow"
+        return "cn_futures_shadow"
 
     def get_sim_account(self) -> dict[str, object]:
-        return {"account": "crypto_sim", "sim_capital": 10000.0, "positions": []}
+        return {
+            "account": "cn_futures_sim",
+            "sim_capital": 10000.0,
+            "positions": [],
+        }
+
+
+class CryptoTriggerAdapter(TriggerAdapter):
+    def get_market(self) -> str:
+        return "crypto"
+
+    def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
+        return "crypto", "BTCUSDT"
 
 
 class TriggerReader:
@@ -199,6 +212,26 @@ class EmailTriggerTest(unittest.TestCase):
         self.assertIn("模拟盘成交回执", str(self.sent[0]["subject"]))
         self.assertIn("交易回执", str(self.sent[0]["html_body"]))
         self.assertEqual(result["records"][0]["email_notification"]["status"], "sent")
+
+    def test_crypto_shared_orchestrators_retire_before_email_or_signal_write(
+        self,
+    ) -> None:
+        for runner, sim in ((run_shadow_loop, False), (run_sim_loop, True)):
+            with self.subTest(runner=runner.__name__):
+                signals_dir = self.tmp_path / runner.__name__
+                with self.assertRaisesRegex(
+                    RetiredRuntimeError, "legacy_runtime_retired"
+                ):
+                    runner(
+                        CryptoTriggerAdapter(),
+                        "20260630",
+                        TriggerReader(),
+                        deps=self._deps(sim=sim),
+                        signals_dir=signals_dir,
+                    )
+                self.assertFalse(signals_dir.exists())
+
+        self.assertEqual(self.sent, [])
 
     def test_send_email_rate_limit_blocks_same_type_within_five_minutes(self) -> None:
         log_path = self.tmp_path / "emails_sent.jsonl"

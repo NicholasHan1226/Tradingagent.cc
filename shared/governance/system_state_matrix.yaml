@@ -852,7 +852,7 @@ entries:
       - register_disjoint_market_specific_simulation_and_future_adapter_contracts
       - verify_the_three_market_contract_is_present_in_main
       - keep_ashare_and_cnfutures_as_separate_50000_cny_authorities
-      - keep_crypto_as_an_isolated_10000_usdt_shadow_authority
+      - keep_crypto_as_an_isolated_10000_usdt_local_fixture_opening_candidate
     prohibited_uses:
       - infer_any_future_live_adapter_is_implemented
       - infer_market_worktree_changes_are_deployed_or_runtime_activated
@@ -860,6 +860,81 @@ entries:
       - convert_or_aggregate_money_returns_or_drawdown_across_market_authorities
       - enable_live_trading
     successor: market_specific_lanes_with_shared_mechanical_kernel_only
+  - entry_id: tradingagent_ashare_twenty_day_fixture_loop
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: Ashare/twenty_day_fixture_loop.py
+    production_verified: false
+    last_verified_at: "2026-07-20"
+    evidence:
+      - Ashare/README.md
+      - tests/test_ashare_twenty_day_fixture_loop.py
+    allowed_uses:
+      - run_network_closed_twenty_session_fixture_simulation
+      - verify_crash_replay_reconcile_and_nonpromotion_evidence_contracts
+    prohibited_uses:
+      - infer_scheduler_or_tradingdatas_runtime
+      - infer_predictive_edge_or_return_target
+      - authorize_broker_or_real_trading
+    successor: ashare_real_data_paper_requires_fresh_tradingdatas_handoff
+  - entry_id: tradingagent_cnfutures_fixture_closed_loop
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: CNFutures/fixture_closed_loop.py
+    production_verified: false
+    last_verified_at: "2026-07-20"
+    evidence:
+      - CNFutures/README.md
+      - tests/test_cn_futures_fixture_closed_loop.py
+    allowed_uses:
+      - run_network_closed_futures_fixture_closed_loop
+      - verify_session_margin_fee_mtm_close_and_reconcile_contracts
+    prohibited_uses:
+      - infer_scheduler_or_tradingdatas_runtime
+      - infer_exchange_grade_margin_or_liquidation_truth
+      - authorize_broker_or_real_trading
+    successor: cnfutures_real_data_paper_requires_fresh_tradingdatas_handoff
+  - entry_id: tradingagent_crypto_fixture_auto_sim
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: Crypto/fixture_auto_sim.py
+    production_verified: false
+    last_verified_at: "2026-07-20"
+    evidence:
+      - Crypto/README.md
+      - tests/test_crypto_fixture_auto_sim.py
+    allowed_uses:
+      - run_network_closed_crypto_fixture_auto_sim
+      - verify_local_fixture_opening_generation_one_replay_and_reconcile
+      - record_independent_non_authority_llm_sidecar_diagnostics
+    prohibited_uses:
+      - infer_rotating_current_capital_snapshot
+      - infer_scheduler_tradingdatas_testnet_or_live_runtime
+      - treat_fixture_receipt_as_execution_or_durable_authority
+      - authorize_broker_or_real_trading
+    successor: crypto_runtime_capital_requires_separate_current_snapshot_authority
+  - entry_id: tradingagent_crypto_execution_retirement
+    state: RETIRED_BLOCKED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: Crypto/sim_executor.py
+    production_verified: false
+    last_verified_at: "2026-07-20"
+    evidence:
+      - tests/test_crypto_authority_retirement.py
+      - tests/test_crypto_sim.py
+      - shared/governance/market_lanes.yaml
+    allowed_uses:
+      - preserve_import_tombstones_and_historical_read_only_evidence
+      - verify_old_crypto_direct_entrypoints_fail_closed
+    prohibited_uses:
+      - register_or_dispatch_generic_crypto_executor
+      - restore_crypto_shadow_sim_v1_as_active_authority
+      - write_signals_fills_or_promotion_from_retired_paths
+    successor: tradingagent_crypto_fixture_auto_sim
   - entry_id: tradingagent_retired_noncore_markets
     state: RETIRED_BLOCKED
     layer: repository_contract
@@ -913,7 +988,7 @@ entries:
     state: CURRENT_VERIFIED
     layer: server_validated_non_authority_simulation_only
     owner: TradingAgent
-    canonical_path: /opt/investment/tradingagent-candidates/ta-market-kernel-123a112
+    canonical_path: /opt/investment/tradingagent-candidates/ta-state-retirement-5158a09
     production_verified: false
     last_verified_at: "2026-07-20"
     evidence:

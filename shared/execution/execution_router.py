@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from shared.accounting import position_ledger
+from shared.governance.retirement import RetiredRuntimeError
+from shared.markets.safety import looks_like_crypto_payload
 
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
 TRADINGAGENT_ASHARE = TRADINGAGENT_ROOT / "Ashare"
@@ -311,6 +313,11 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
         dict with: channel, executed, result, order_id, message.
     """
     market = str(order.get("market") or "").strip().lower()
+    if looks_like_crypto_payload(order, market=market):
+        raise RetiredRuntimeError(
+            "CryptoSharedExecutionRouter:legacy_runtime_retired; "
+            "use Crypto.fixture_auto_sim"
+        )
     if not market:
         result = {
             "status": "failed",
@@ -332,7 +339,6 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
             "order_id": order.get("order_id", ""),
             "message": result["message"],
         }
-
     stage = strategy_stage.lower().strip()
     if stage not in STAGE_CHANNELS:
         return {

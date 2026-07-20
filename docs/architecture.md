@@ -6,7 +6,7 @@
 
 TradingAgent 的短期目标是在 A股和国内期货形成“数据 → 预测 → 风控 → 真实规格模拟成交/拒绝 → 前向标签 → 费用后复盘”的可学习闭环，并让 Crypto 在独立市场 lane 中推进自己的闭环；三者用真实证据分别判断策略是否存在可重复正期望。
 
-A股与 CNFutures 各有独立 50,000 CNY simulated authority；Crypto 只有隔离的 10,000 USDT shadow/simulated authority。它们是原生币种资本约束，不是盈利承诺，不换汇、不相加、不净额。首 1–2 周主要验证工程、数据和执行闭环；短期盈利、样本量或 maturity readiness 都不能自动切实盘。
+A股与 CNFutures 各有独立 50,000 CNY simulated authority；Crypto 目前只有隔离的 10,000 USDT 本地 fixture opening candidate，尚无可轮换 current/runtime/live capital authority。三者的原生币种边界不是盈利承诺，不换汇、不相加、不净额。首 1–2 周主要验证工程、数据和执行闭环；短期盈利、样本量或 maturity readiness 都不能自动切实盘。
 
 当前非目标：真实券商/期货下单、自动邮件、同花顺自动点击、自动 champion 晋级、自动风险扩张、跨市场资金调拨。
 
@@ -18,7 +18,7 @@ flowchart LR
     MG["MarketGraph\n宏观、事件、行业/供应链研究"] -. "paired mg_on / mg_off" .-> TA
     TA --> AC["A股 capital authority\n独立 fresh-start 50k CNY"]
     TA --> FC["CNFutures capital authority\n独立 fresh-start 50k CNY"]
-    TA --> CC["Crypto shadow authority\n独立 10k USDT"]
+    TA --> CC["Crypto local fixture candidate\n独立 opening 10k USDT"]
     AC --> AE["server-local fills + positions"]
     FC --> FE["one-lot simulation + margin"]
     AE --> SJ["SampleJournal / forward labels"]
@@ -152,7 +152,7 @@ DeepSeek adapter只接受精确的冻结离线响应fixture或上述精确HTTP t
 
 ### 兼容退役尚未完成
 
-新 V1 client 不代表旧源码已经物理删除。前端 market pulse 本地候选已只使用严格
+新 V1 client 不代表旧源码已经物理删除。前端 market pulse 仓库合同已只使用严格
 `GET /v1/catalog` + `POST /v1/query`，A股旧 wrapper、调度、混合 dispatcher 与直接诊断 CLI
 也已经在进入旧 reader 前以退出码 78 fail closed；但 A股 adapter/research/T+1/opening/closing、
 `shared/screening/*`、`shared/research/*`、`shared/execution/auto_pipeline.py` 以及部分
@@ -177,12 +177,13 @@ fail closed。重新启用必须是新的代码审查与cutover变更，不能�
 |---|---|---:|---:|---|
 | A股 | `ashare-capital-v1` | 50,000 CNY | 股票 gross 45,000；单票 7,500 | 买入100股整数倍；卖出含完整零股/全退例外；组合容量8 |
 | CNFutures | `cn-futures-capital-v1` | 50,000 CNY | 保证金 25,000 | 保证金与止损损失预算分开 |
-| Crypto | `Crypto/capital_policy.py` 原生资本权威 + `Crypto/config.yaml` 风险配置 | 10,000 USDT | 单仓 15%；最多10仓 | 24x7、小数数量、当前仅 shadow/simulated；无 live exchange authority |
+| Crypto | `Crypto/capital_policy.py` 本地 fixture opening policy + `Crypto/config.yaml` 风险配置 | 10,000 USDT | 单仓 15%；最多10仓 | generation 1 仅为 `local_fixture_opening_baseline_only`；非 execution/durable/runtime/live authority |
 
-历史 fresh-start 基线从 generation 1 开始，但消费者不得把 generation 或 execution lineage
-写成常量。每次只接受 current capital snapshot 中验证通过的正整数 generation 与安全 lineage，
-并要求所有下游回执逐项匹配。国内两套正式 simulated authority 与 Crypto 的 shadow authority
-各自持有原生币种 cash、position/margin、reservation、PnL、MTM equity、high-water、drawdown、
+国内两套正式 simulated authority 的历史 fresh-start 基线从 generation 1 开始，但消费者不得把
+generation 或 execution lineage 写成常量；每次只接受 current capital snapshot 中验证通过的正整数
+generation 与安全 lineage，并要求所有下游回执逐项匹配。Crypto 当前例外仅限本地 fixture opening
+candidate：generation 1 被明确标记为 opening baseline，不能据此声称已实现 current snapshot 轮换。
+三个市场各自持有原生币种 cash、position/margin、reservation、PnL、MTM equity、high-water、drawdown、
 loss streak、execution lineage 和 event chain；任何层都不得换汇、相加、净额或补资。All Markets
 只允许汇总计数、覆盖率和健康状态，货币金额、收益率、回撤和基准必须按 market/currency 分桶。
 

@@ -25,8 +25,10 @@ from shared.capital.ashare_position_authority import (
 )
 from shared.execution import local_sim_ledger
 from shared.execution.execution_reality import ashare_execution_reality
+from shared.governance.retirement import RetiredRuntimeError
 from shared.llm.schema import normalize_observation as normalize_llm_observation
 from shared.markets.base import MarketAdapter
+from shared.markets.safety import looks_like_crypto_payload
 from shared.notify import email_sender
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -4345,6 +4347,11 @@ def run_shadow_loop(
     market = _safe_stage(
         "adapter.get_market", errors, market_adapter.get_market, default="unknown"
     )
+    if str(market).strip().lower() == "crypto":
+        raise RetiredRuntimeError(
+            "CryptoSharedShadowOrchestrator:legacy_runtime_retired; "
+            "use Crypto.fixture_auto_sim"
+        )
     account = _safe_stage(
         "adapter.get_shadow_account",
         errors,
@@ -4420,6 +4427,18 @@ def run_shadow_loop(
             }
         )
         universe = []
+
+    for symbol in universe:
+        mapped_market, mapped_symbol = market_adapter.map_symbol_to_reader(str(symbol))
+        if looks_like_crypto_payload(
+            {"market": market, "symbol": symbol}
+        ) or looks_like_crypto_payload(
+            {"market": mapped_market, "symbol": mapped_symbol}
+        ):
+            raise RetiredRuntimeError(
+                "CryptoSharedShadowOrchestrator:legacy_runtime_retired; "
+                "use Crypto.fixture_auto_sim"
+            )
 
     scores_by_symbol = _score_symbols_with_batch(
         deps,
@@ -5043,6 +5062,11 @@ def run_sim_loop(
         default="unknown",
         capital_layer=capital_layer,
     )
+    if str(market).strip().lower() == "crypto":
+        raise RetiredRuntimeError(
+            "CryptoSharedSimOrchestrator:legacy_runtime_retired; "
+            "use Crypto.fixture_auto_sim"
+        )
     config = _strategy_config(market_adapter)
     sample_journal_path = _ashare_sample_journal_path(signals_dir)
     is_ashare = str(market).lower() == "ashare"
@@ -5588,6 +5612,18 @@ def run_sim_loop(
             }
         )
         universe = []
+
+    for symbol in universe:
+        mapped_market, mapped_symbol = market_adapter.map_symbol_to_reader(str(symbol))
+        if looks_like_crypto_payload(
+            {"market": market, "symbol": symbol}
+        ) or looks_like_crypto_payload(
+            {"market": mapped_market, "symbol": mapped_symbol}
+        ):
+            raise RetiredRuntimeError(
+                "CryptoSharedSimOrchestrator:legacy_runtime_retired; "
+                "use Crypto.fixture_auto_sim"
+            )
 
     scores_by_symbol = _score_symbols_with_batch(
         deps,

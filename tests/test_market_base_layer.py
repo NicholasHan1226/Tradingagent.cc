@@ -27,6 +27,7 @@ safety:
   direct_execution_enabled: false
 data:
   reader: tradingdatas_v1_catalog_query
+  binding_scope: fixture_only
   daily_table: market_bars_daily
   intraday_table: market_bars_intraday
   events_table: market_events
@@ -66,6 +67,44 @@ promotion:
         self.assertEqual(config.fees.taker_bps, 10.0)
         self.assertTrue(config.reporting.notify_on_trigger_only)
         self.assertEqual(config.promotion.min_shadow_trades, 20)
+        self.assertEqual(config.data.binding_scope, "fixture_only")
+
+    def test_data_config_has_no_guessed_dataset_or_table_defaults(self) -> None:
+        from shared.markets.config_schema import DataConfig
+
+        data = DataConfig()
+
+        self.assertEqual(data.binding_scope, "unconfigured")
+        self.assertIsNone(data.daily_table)
+        self.assertIsNone(data.intraday_table)
+        self.assertIsNone(data.events_table)
+
+    def test_data_config_rejects_provider_specific_or_unscoped_fallbacks(self) -> None:
+        from shared.markets.config_schema import (
+            MarketToolConfig,
+            validate_market_config,
+        )
+
+        provider_specific = MarketToolConfig(
+            market="demo",
+            capital={"currency": "USD"},
+            data={
+                "binding_scope": "fixture_only",
+                "daily_table": "binance_daily",
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "provider-specific fallback"):
+            validate_market_config(provider_specific)
+
+        unscoped_fixture = MarketToolConfig(
+            market="demo",
+            capital={"currency": "USD"},
+            data={
+                "daily_table": "fixture_market_bars_daily",
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "fixture_only"):
+            validate_market_config(unscoped_fixture)
 
     def test_safety_helpers_reject_real_and_direct_execution(self) -> None:
         from shared.markets.config_schema import MarketToolConfig

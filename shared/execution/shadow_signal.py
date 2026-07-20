@@ -7,18 +7,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.governance.retirement import RetiredRuntimeError
+from shared.markets.safety import looks_like_crypto_payload
+
 from .signal_state_machine import SignalStateConflict, SignalStateMachine
 
 FILLED_SHADOW_STATUSES = {"filled", "partial"}
 
 
-def write_shadow_signal(card: dict[str, Any], signals_root: Path | str) -> dict[str, Any]:
+def write_shadow_signal(
+    card: dict[str, Any], signals_root: Path | str
+) -> dict[str, Any]:
     """Write a shadow card and settle local mock fills immediately.
 
     Shadow cards are not broker execution tasks. When a market runner already
     has a local simulated fill, leaving the card in pending creates permanent
     operational noise, so the card is atomically advanced to shadow/filled.
     """
+    if looks_like_crypto_payload(card):
+        raise RetiredRuntimeError(
+            "CryptoSharedShadowSignal:legacy_runtime_retired; "
+            "use Crypto.fixture_auto_sim"
+        )
     state = SignalStateMachine(Path(signals_root) / "shadow")
     try:
         pending = state.write_pending(card)
@@ -30,7 +40,11 @@ def write_shadow_signal(card: dict[str, Any], signals_root: Path | str) -> dict[
             "message": str(exc),
         }
 
-    simulated_fill = card.get("simulated_fill") if isinstance(card.get("simulated_fill"), dict) else {}
+    simulated_fill = (
+        card.get("simulated_fill")
+        if isinstance(card.get("simulated_fill"), dict)
+        else {}
+    )
     fill_status = str(simulated_fill.get("status") or "").strip().lower()
     if fill_status not in FILLED_SHADOW_STATUSES:
         pending["queue_scope"] = "shadow"

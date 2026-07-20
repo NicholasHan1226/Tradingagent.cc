@@ -20,7 +20,11 @@ from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Iterator
 
-from shared.markets.safety import reject_real_execution_payload
+from shared.governance.retirement import RetiredRuntimeError
+from shared.markets.safety import (
+    looks_like_crypto_payload,
+    reject_real_execution_payload,
+)
 
 TRADINGAGENT_ROOT = Path("/opt/investment/tradingagent")
 SIGNALS_DIR = TRADINGAGENT_ROOT / "signals"
@@ -103,7 +107,11 @@ class SignalStateMachine:
 
     def _acquire_exclusive_lock(self, fd: int) -> None:
         last_error: OSError | None = None
-        retry_errnos = {errno.EACCES, errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN)}
+        retry_errnos = {
+            errno.EACCES,
+            errno.EAGAIN,
+            getattr(errno, "EWOULDBLOCK", errno.EAGAIN),
+        }
         for attempt in range(1, LOCK_RETRY_ATTEMPTS + 1):
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -120,13 +128,13 @@ class SignalStateMachine:
 
     def write_pending(self, card: dict[str, Any]) -> dict[str, Any]:
         """Atomically create a globally unique pending signal card."""
-        self.ensure_dirs()
         order_id = normalize_order_id(str(card.get("order_id", "")))
         idempotency_key = str(card.get("idempotency_key", "")).strip()
         card = dict(card)
         card["order_id"] = order_id
         card["status"] = PENDING
         _assert_non_live_card(card)
+        self.ensure_dirs()
 
         with self._locked():
             existing_path, existing_card = self.find_by_order_id(order_id)
@@ -135,7 +143,9 @@ class SignalStateMachine:
                     f"Signal order_id already exists in {existing_card.get('status', existing_path.parent.name)}"
                 )
             if idempotency_key:
-                duplicate_path, duplicate_card = self.find_by_idempotency_key(idempotency_key)
+                duplicate_path, duplicate_card = self.find_by_idempotency_key(
+                    idempotency_key
+                )
                 if duplicate_path is not None:
                     raise SignalStateConflict(
                         "Signal idempotency_key already exists "
@@ -143,7 +153,9 @@ class SignalStateMachine:
                     )
 
             pending_path = self.path_for(PENDING, order_id)
-            tmp_path = pending_path.with_name(f".{pending_path.name}.{uuid.uuid4().hex}.tmp")
+            tmp_path = pending_path.with_name(
+                f".{pending_path.name}.{uuid.uuid4().hex}.tmp"
+            )
             write_json(tmp_path, card)
             try:
                 os.link(tmp_path, pending_path)
@@ -152,7 +164,12 @@ class SignalStateMachine:
             finally:
                 tmp_path.unlink(missing_ok=True)
 
-        return {"order_id": order_id, "status": PENDING, "signal_path": str(pending_path), "signal_card": card}
+        return {
+            "order_id": order_id,
+            "status": PENDING,
+            "signal_path": str(pending_path),
+            "signal_card": card,
+        }
 
     def claim(self, order_id: str, worker_id: str | None = None) -> dict[str, Any]:
         """Atomically move a pending signal into claimed for one cron worker."""
@@ -164,8 +181,14 @@ class SignalStateMachine:
         with self._locked():
             if not pending_path.exists():
                 existing_path, existing_card = self.find_by_order_id(order_id)
-                status = existing_card.get("status", existing_path.parent.name) if existing_path else "not_found"
-                raise SignalStateConflict(f"Signal cannot be claimed from status {status}")
+                status = (
+                    existing_card.get("status", existing_path.parent.name)
+                    if existing_path
+                    else "not_found"
+                )
+                raise SignalStateConflict(
+                    f"Signal cannot be claimed from status {status}"
+                )
 
             card = read_json(pending_path)
             _assert_non_live_card(card)
@@ -176,12 +199,29 @@ class SignalStateMachine:
             write_json(pending_path, card)
             os.rename(pending_path, claimed_path)
 
-        return {"order_id": order_id, "status": CLAIMED, "signal_path": str(claimed_path), "signal_card": card}
+        return {
+            "order_id": order_id,
+            "status": CLAIMED,
+            "signal_path": str(claimed_path),
+            "signal_card": card,
+        }
 
-    def mark_running(self, order_id: str, worker_id: str | None = None) -> dict[str, Any]:
-        return self._move_active(order_id, CLAIMED, RUNNING, {"running_at": now_iso(), "running_by": worker_id})
+    def mark_running(
+        self, order_id: str, worker_id: str | None = None
+    ) -> dict[str, Any]:
+        return self._move_active(
+            order_id,
+            CLAIMED,
+            RUNNING,
+            {"running_at": now_iso(), "running_by": worker_id},
+        )
 
-    def fill(self, order_id: str, fill_info: dict[str, Any] | None = None, partial: bool = False) -> dict[str, Any]:
+    def fill(
+        self,
+        order_id: str,
+        fill_info: dict[str, Any] | None = None,
+        partial: bool = False,
+    ) -> dict[str, Any]:
         """Mark a signal filled. Filled wins over a pending cancel request."""
         self.ensure_dirs()
         target_state = PARTIAL if partial else FILLED
@@ -203,11 +243,19 @@ class SignalStateMachine:
                     "message": "Signal already filled",
                 }
             if current_status in (EXPIRED, FAILED):
-                raise SignalStateConflict(f"Signal cannot be filled from status {current_status}")
+                raise SignalStateConflict(
+                    f"Signal cannot be filled from status {current_status}"
+                )
             if current_status not in (CLAIMED, RUNNING):
-                raise SignalStateConflict(f"Signal cannot be filled from status {current_status}")
-            if current_status == CANCELLED and not existing_card.get("cancel_requested"):
-                raise SignalStateConflict("Signal cannot be filled after final cancellation")
+                raise SignalStateConflict(
+                    f"Signal cannot be filled from status {current_status}"
+                )
+            if current_status == CANCELLED and not existing_card.get(
+                "cancel_requested"
+            ):
+                raise SignalStateConflict(
+                    "Signal cannot be filled after final cancellation"
+                )
 
             card = dict(existing_card)
             for field in IMMUTABLE_CARD_FIELDS:
@@ -227,7 +275,12 @@ class SignalStateMachine:
             write_json(existing_path, card)
             os.rename(existing_path, target_path)
 
-        return {"order_id": order_id, "status": target_state, "signal_path": str(target_path), "signal_card": card}
+        return {
+            "order_id": order_id,
+            "status": target_state,
+            "signal_path": str(target_path),
+            "signal_card": card,
+        }
 
     def cancel(self, order_id: str, reason: str = "") -> dict[str, Any]:
         """Cancel pending signals; for claimed/running mark cancel_requested."""
@@ -237,7 +290,11 @@ class SignalStateMachine:
         with self._locked():
             existing_path, existing_card = self.find_by_order_id(order_id)
             if existing_path is None:
-                return {"order_id": order_id, "status": "not_found", "message": "Signal not found"}
+                return {
+                    "order_id": order_id,
+                    "status": "not_found",
+                    "message": "Signal not found",
+                }
 
             current_status = str(existing_card.get("status", existing_path.parent.name))
             if current_status in (FILLED, PARTIAL):
@@ -286,15 +343,21 @@ class SignalStateMachine:
                     "message": f"Signal is {current_status}; cancellation requested without overwriting execution state",
                 }
 
-            raise SignalStateConflict(f"Signal cannot be cancelled from status {current_status}")
+            raise SignalStateConflict(
+                f"Signal cannot be cancelled from status {current_status}"
+            )
 
-    def fail(self, order_id: str, reason: str = "", details: dict[str, Any] | None = None) -> dict[str, Any]:
+    def fail(
+        self, order_id: str, reason: str = "", details: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         payload = {"failed_at": now_iso()}
         if reason:
             payload["failure_reason"] = reason
         if details:
             payload["failure_details"] = details
-        return self._move_first_available(order_id, (PENDING, CLAIMED, RUNNING), FAILED, payload)
+        return self._move_first_available(
+            order_id, (PENDING, CLAIMED, RUNNING), FAILED, payload
+        )
 
     def sweep_expired(self, now: datetime | None = None) -> dict[str, Any]:
         """Move pending cards whose valid_until is before now into expired."""
@@ -311,10 +374,17 @@ class SignalStateMachine:
                     continue
                 card["status"] = EXPIRED
                 card["expired_at"] = now_iso(now)
-                expired_path = self.path_for(EXPIRED, str(card.get("order_id", pending_path.stem)))
+                expired_path = self.path_for(
+                    EXPIRED, str(card.get("order_id", pending_path.stem))
+                )
                 write_json(pending_path, card)
                 os.rename(pending_path, expired_path)
-                expired.append({"order_id": card.get("order_id", pending_path.stem), "signal_path": str(expired_path)})
+                expired.append(
+                    {
+                        "order_id": card.get("order_id", pending_path.stem),
+                        "signal_path": str(expired_path),
+                    }
+                )
 
         return {"status": "ok", "expired_count": len(expired), "expired": expired}
 
@@ -337,7 +407,9 @@ class SignalStateMachine:
             return matches[0]
         return None, {}
 
-    def find_by_idempotency_key(self, idempotency_key: str) -> tuple[Path | None, dict[str, Any]]:
+    def find_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> tuple[Path | None, dict[str, Any]]:
         if not idempotency_key:
             return None, {}
         for state in SIGNAL_STATES:
@@ -349,7 +421,9 @@ class SignalStateMachine:
                     return path, card
         return None, {}
 
-    def _move_active(self, order_id: str, from_state: str, to_state: str, updates: dict[str, Any]) -> dict[str, Any]:
+    def _move_active(
+        self, order_id: str, from_state: str, to_state: str, updates: dict[str, Any]
+    ) -> dict[str, Any]:
         return self._move_first_available(order_id, (from_state,), to_state, updates)
 
     def _move_first_available(
@@ -367,15 +441,24 @@ class SignalStateMachine:
                 raise FileNotFoundError(f"Signal not found: {order_id}")
             current_status = str(card.get("status", existing_path.parent.name))
             if current_status not in from_states:
-                raise SignalStateConflict(f"Signal cannot move from {current_status} to {to_state}")
+                raise SignalStateConflict(
+                    f"Signal cannot move from {current_status} to {to_state}"
+                )
             next_card = dict(card)
-            next_card.update({key: value for key, value in updates.items() if value is not None})
+            next_card.update(
+                {key: value for key, value in updates.items() if value is not None}
+            )
             next_card["status"] = to_state
             _assert_non_live_card(next_card)
             target_path = self.path_for(to_state, order_id)
             write_json(existing_path, next_card)
             os.rename(existing_path, target_path)
-        return {"order_id": order_id, "status": to_state, "signal_path": str(target_path), "signal_card": next_card}
+        return {
+            "order_id": order_id,
+            "status": to_state,
+            "signal_path": str(target_path),
+            "signal_card": next_card,
+        }
 
 
 def normalize_order_id(order_id: str) -> str:
@@ -402,6 +485,11 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _assert_non_live_card(card: dict[str, Any]) -> None:
+    if looks_like_crypto_payload(card):
+        raise RetiredRuntimeError(
+            "CryptoSharedSignalStateMachine:legacy_runtime_retired; "
+            "use Crypto.fixture_auto_sim"
+        )
     reject_real_execution_payload(card, context="signal state card")
     capital_layer = str(card.get("capital_layer") or "").strip().lower()
     account_type = str(card.get("account_type") or "").strip().lower()

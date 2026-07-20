@@ -12,12 +12,12 @@
 ## 当前唯一资本事实
 
 - A股和 CNFutures 各有一个独立、fresh-start、50,000 CNY 的 simulated authority：`ashare-capital-v1` 与 `cn-futures-capital-v1`。generation 1 只是历史 fresh-start 基线；消费者每轮必须读取、验证并传播 current snapshot 的正整数 generation，禁止写死。
-- Crypto 由 `Crypto/config.yaml` 与 `shared/markets/sim_capital.py` 定义独立 10,000 USDT shadow/simulated authority，不得换算为 CNY 或伪装为 USD；当前没有 live exchange authority。
+- Crypto 的 `Crypto/capital_policy.py` 只定义独立 10,000 USDT 本地 fixture opening baseline；generation 1 固定为 `local_fixture_opening_baseline_only`，不是可轮换 current snapshot、execution、durable receipt、production 或 live capital authority。`Crypto/config.yaml` 只声明币种与风险参数，`shared/markets/sim_capital.py` 只派生兼容读侧数值；当前没有 current/live exchange authority。
 - 三个账户的现金、持仓/保证金、预约、盈亏、回撤、风控、execution lineage 和样本归因完全分离。总览只可并列；All Markets 只可汇总非货币计数和健康状态，禁止跨 market/currency 金额、收益率或回撤相加、净额抵消或互相补资。
 - A股政策：股票总敞口上限 90%（45,000 CNY），单一标的累计上限 15%（7,500 CNY），买入100股整数倍；卖出只允许100股整数倍、完整不足100股余额或全部退出，且受T+1可卖量约束。组合容量 8 且至少支持 7 个不同股票；全部 50,000 CNY 有资格服务合格机会，但不强制满仓。
 - CNFutures 政策：保证金使用率上限 50%（25,000 CNY）。保证金容量和止损损失预算分开验证，不能把保证金上限当作可承受亏损。
 - 每个市场独立执行：日亏 3% 暂停、连续亏损 3 次暂停、回撤 5% 仅收紧风险预算至 0.75 倍、回撤 7% 才暂停并复核。
-- 政策源仅为 `shared/capital/ashare_capital_policy.yaml` 和 `shared/capital/cn_futures_capital_policy.yaml`。调用方不得复制另一套漂移常量。
+- 国内两市场政策源仅为 `shared/capital/ashare_capital_policy.yaml` 和 `shared/capital/cn_futures_capital_policy.yaml`；Crypto 本地 fixture opening policy 仅来自 `Crypto/capital_policy.py`。调用方不得复制另一套漂移常量，也不得把 Crypto opening baseline 描述成 current runtime authority。
 - 旧共享资金池、旧模拟持仓/PnL、旧多账本与历史账户只读冻结，不导入、不迁移、不进入新统计；退役入口不得恢复。
 
 ## Simulation-only 红线

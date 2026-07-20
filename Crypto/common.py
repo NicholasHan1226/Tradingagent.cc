@@ -25,11 +25,13 @@ SESSION_TYPE = "24x7"
 
 @dataclass(frozen=True)
 class CryptoConfig(MarketToolConfig):
-    """Crypto market config constrained to public-data shadow/simulated tools."""
+    """Crypto config for simulated tools and read-only historical research."""
 
     market: str = MARKET
     capital: CapitalConfig | dict[str, Any] = field(
         default_factory=lambda: CapitalConfig(
+            default_layer="simulated",
+            allowed_layers=("simulated",),
             initial_capital=DEFAULT_CRYPTO_SIM_CAPITAL_USDT,
             currency=CURRENCY,
         )
@@ -49,6 +51,12 @@ class CryptoConfig(MarketToolConfig):
             raise ValueError(
                 "CryptoConfig initial_capital must be "
                 f"{DEFAULT_CRYPTO_SIM_CAPITAL_USDT:g} {CURRENCY}"
+            )
+        if self.capital.default_layer != "simulated" or self.capital.allowed_layers != (
+            "simulated",
+        ):
+            raise ValueError(
+                "CryptoConfig writable capital layer must remain simulated-only"
             )
         if self.session.type != SESSION_TYPE:
             raise ValueError("CryptoConfig session.type must be 24x7")

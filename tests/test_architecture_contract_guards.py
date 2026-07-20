@@ -8,6 +8,8 @@ import re
 import subprocess
 import sys
 
+import pytest
+
 from shared.governance.contracts import (
     LLM_EVIDENCE_CONTRACT_ID,
     SHARED_SIGNALS_QUERY_CONTRACT_ID,
@@ -613,7 +615,7 @@ def test_capital_runtime_consumes_generation_and_lineage_from_current_snapshot()
     assert "ASHARE_EXECUTION_LINEAGE_ID" not in source
 
 
-def test_declared_tradingagent_legacy_paths_are_real_and_still_timeboxed() -> None:
+def test_declared_tradingagent_legacy_paths_match_repository_state() -> None:
     inventory = load_legacy_inventory()
     entries = {entry.legacy_id: entry for entry in inventory.entries}
     required_ids = {
@@ -633,9 +635,15 @@ def test_declared_tradingagent_legacy_paths_are_real_and_still_timeboxed() -> No
             "timeboxed_read_only",
             "retirement_pending_verification",
         }
+
+    for entry in inventory.entries:
         for relative_path in entry.paths:
             assert (ROOT / relative_path).exists(), (
                 f"declared legacy path does not exist: {relative_path}"
+            )
+        for relative_path in entry.retired_paths:
+            assert not (ROOT / relative_path).exists(), (
+                f"retired path must not be restored: {relative_path}"
             )
         for relative_path in entry.runtime_paths:
             ignored = subprocess.run(
@@ -679,6 +687,35 @@ entries:
         assert "repository-relative" in str(exc)
     else:
         raise AssertionError("escaping runtime path must fail closed")
+
+
+def test_legacy_retired_paths_cannot_escape_or_overlap(tmp_path: Path) -> None:
+    inventory_path = tmp_path / "legacy_inventory.yaml"
+    inventory_path.write_text(
+        """\
+version: 1
+entries:
+  - legacy_id: unsafe_retired_path
+    owner: TradingAgent
+    paths:
+      - README.md
+    retired_paths:
+      - README.md
+      - ../outside-retired
+    replacement: safe_replacement
+    compatibility_mode: historical_read_only
+    sunset_phase: phase_3
+    remaining_consumers:
+      - none_verified
+    deletion_preconditions:
+      - installed_runtime_readback
+    rollback: do_not_restore_retired_code
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_legacy_inventory(inventory_path)
 
 
 def test_contract_ids_are_synchronized_with_active_docs() -> None:
@@ -873,6 +910,11 @@ def test_legacy_data_and_research_paths_are_classified_outside_current_v1() -> N
         "hard_blocked_tombstones_and_forensic_manual_research_only"
         in multi_market.remaining_consumers
     )
+    assert "shared/wrappers/job_crypto_scan.sh" in multi_market.paths
+    assert "shared/execution/risk_manager.py" in multi_market.retired_paths
+    assert "shared/signals/signal_cards.jsonl" in multi_market.retired_paths
+    assert "Crypto/adapter.py" not in multi_market.paths
+    assert "Crypto/market_data.py" not in multi_market.paths
 
     screening_rules = (ROOT / "shared/screening/AGENTS.md").read_text(encoding="utf-8")
     benchmark_rules = (ROOT / "shared/benchmark/AGENTS.md").read_text(encoding="utf-8")
@@ -921,7 +963,7 @@ def test_retained_legacy_endpoint_and_sharedsignals_sqlite_paths_are_in_inventor
     inventoried_paths = {
         path
         for entry in inventory.entries
-        for path in (*entry.paths, *entry.runtime_paths)
+        for path in (*entry.paths, *entry.runtime_paths, *entry.retired_paths)
     }
     retained_legacy_paths = {
         "CNFutures/adapter.py",

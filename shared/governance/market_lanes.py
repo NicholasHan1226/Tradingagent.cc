@@ -100,9 +100,21 @@ class MarketLane:
 
 
 @dataclass(frozen=True)
+class RetiredAuthority:
+    """Read-only identity retained solely for historical evidence lookup."""
+
+    authority_id: str
+    lane_id: str
+    successor_authority_id: str
+    state: str
+    read_only: bool
+
+
+@dataclass(frozen=True)
 class MarketLaneRegistry:
     version: int
     lanes: tuple[MarketLane, ...]
+    retired_authorities: tuple[RetiredAuthority, ...] = ()
 
     def get(self, lane_id: str) -> MarketLane:
         matches = [lane for lane in self.lanes if lane.lane_id == lane_id]
@@ -114,6 +126,16 @@ class MarketLaneRegistry:
         market_key = canonical_runtime_market(market)
         lane_id = RUNTIME_MARKET_LANE_ALIASES[market_key]
         return self.get(lane_id)
+
+    def get_retired_authority(self, authority_id: str) -> RetiredAuthority:
+        matches = [
+            authority
+            for authority in self.retired_authorities
+            if authority.authority_id == authority_id
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"unknown or duplicate retired authority: {authority_id}")
+        return matches[0]
 
 
 @dataclass(frozen=True)
@@ -149,6 +171,7 @@ def load_market_lanes(
     seen_ids: set[str] = set()
     seen_branches: set[str] = set()
     seen_worktrees: set[str] = set()
+    seen_authorities: set[str] = set()
     seen_broker_contracts: set[str] = set()
     for index, raw in enumerate(raw_lanes):
         if not isinstance(raw, Mapping):
@@ -209,10 +232,13 @@ def load_market_lanes(
             raise ValueError(
                 f"duplicate market worktree_basename: {lane.worktree_basename}"
             )
+        if lane.authority_id in seen_authorities:
+            raise ValueError(f"duplicate active authority_id: {lane.authority_id}")
         if lane.broker_boundary.live_enabled:
             raise ValueError(f"market lane {lane.lane_id} must keep live disabled")
         if lane.authority_state not in {
             "current_verified_simulated",
+            "local_fixture_simulated_candidate",
             "isolated_shadow_only",
         }:
             raise ValueError(
@@ -233,8 +259,70 @@ def load_market_lanes(
         seen_ids.add(lane.lane_id)
         seen_branches.add(lane.branch)
         seen_worktrees.add(lane.worktree_basename)
+        seen_authorities.add(lane.authority_id)
         lanes.append(lane)
-    return MarketLaneRegistry(version=version, lanes=tuple(lanes))
+
+    raw_retired = root.get("retired_authorities", [])
+    if not isinstance(raw_retired, list):
+        raise ValueError("retired_authorities must be a list")
+    lanes_by_id = {lane.lane_id: lane for lane in lanes}
+    retired_authorities: list[RetiredAuthority] = []
+    seen_retired_ids: set[str] = set()
+    for index, raw in enumerate(raw_retired):
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"retired_authorities[{index}] must be a mapping")
+        read_only = raw.get("read_only")
+        if read_only is not True:
+            raise ValueError(f"retired_authorities[{index}].read_only must be true")
+        authority = RetiredAuthority(
+            authority_id=_text(
+                raw.get("authority_id"),
+                f"retired_authorities[{index}].authority_id",
+            ),
+            lane_id=_text(
+                raw.get("lane_id"),
+                f"retired_authorities[{index}].lane_id",
+            ),
+            successor_authority_id=_text(
+                raw.get("successor_authority_id"),
+                f"retired_authorities[{index}].successor_authority_id",
+            ),
+            state=_text(
+                raw.get("state"),
+                f"retired_authorities[{index}].state",
+            ),
+            read_only=True,
+        )
+        lane = lanes_by_id.get(authority.lane_id)
+        if lane is None:
+            raise ValueError(
+                f"retired authority {authority.authority_id} has unknown lane_id"
+            )
+        if authority.state != "historical_evidence_only":
+            raise ValueError(
+                f"retired authority {authority.authority_id} must be historical evidence only"
+            )
+        if authority.successor_authority_id != lane.authority_id:
+            raise ValueError(
+                f"retired authority {authority.authority_id} successor must match "
+                f"the current {authority.lane_id} authority"
+            )
+        if authority.authority_id in seen_authorities:
+            raise ValueError(
+                f"retired authority {authority.authority_id} cannot remain active"
+            )
+        if authority.authority_id in seen_retired_ids:
+            raise ValueError(
+                f"duplicate retired authority_id: {authority.authority_id}"
+            )
+        seen_retired_ids.add(authority.authority_id)
+        retired_authorities.append(authority)
+
+    return MarketLaneRegistry(
+        version=version,
+        lanes=tuple(lanes),
+        retired_authorities=tuple(retired_authorities),
+    )
 
 
 def _git(repo: Path, *args: str) -> str:

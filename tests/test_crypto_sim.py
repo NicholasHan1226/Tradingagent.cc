@@ -3,19 +3,23 @@ from __future__ import annotations
 import unittest
 
 from Crypto.adapter import CryptoAdapter
+from Crypto.capital_policy import CRYPTO_CAPITAL_AUTHORITY_ID
 from Crypto.market_data import CryptoMarketData
-from Crypto.sim_executor import crypto_sim_execute
+from Crypto.sim_executor import (
+    PAPER_BROKER_CONTRACT,
+    CryptoLegacyExecutionRetired,
+    crypto_sim_execute,
+)
 from Crypto.simulator import CryptoSimulator
-from shared.execution.sim_broker import SimResult, execute_sim_order
-from shared.execution.sim_executor_registry import get_sim_executor
-
-
+from shared.execution import sim_executor_registry
+from shared.execution.sim_broker import SimResult, execute_sim_order, simulate_order
 
 
 class EmptyCryptoMarketData:
     reader = None
 
     def get_latest_price(self, symbol: str, date: str):
+        del symbol, date
         return None
 
 
@@ -30,53 +34,25 @@ class FixtureCryptoReader:
         return [{"symbol": symbol, "close": 50_000}]
 
 
-def _market_evidence(symbol: str, price: str) -> dict[str, object]:
-    return {
-        "transport": "fixture",
-        "dataset_id": "fixture.crypto.spot_quote",
-        "schema_major": 1,
-        "symbol": symbol,
-        "price": price,
-        "metadata": {
-            "state": "ready",
-            "degraded": False,
-            "freshness": "fresh",
-            "quality": "pass",
-            "lineage": {"fixture": "crypto-sim-v1"},
-            "receipt_id": "fixture-receipt-001",
-            "observed_at": "2026-07-20T01:00:00Z",
-            "data_through": "2026-07-20T01:00:00Z",
-            "reasons": [],
-        },
-        "rules": {
-            "quantity_step": "0.000001",
-            "min_quantity": "0.000001",
-            "min_notional": "5",
-            "base_asset": symbol.removesuffix("USDT"),
-            "quote_asset": "USDT",
-        },
-    }
-
-
-def _mock_market_evidence(symbol: str, price: str) -> dict[str, object]:
-    evidence = _market_evidence(symbol, price)
-    evidence["transport"] = "mock"
-    evidence["dataset_id"] = "mock.crypto.spot_quote"
-    return evidence
-
-
-def _account(**balances: object) -> dict[str, object]:
+def _account() -> dict[str, object]:
     return {
         "account_id": "crypto_sim",
         "market": "crypto",
-        "broker_contract": "tradingagent.crypto.paper_broker.v1",
-        "authority_id": "crypto-shadow-sim-v1",
+        "broker_contract": PAPER_BROKER_CONTRACT,
+        "authority_id": CRYPTO_CAPITAL_AUTHORITY_ID,
         "authority_generation": 1,
-        "balances": {"USDT": "1000000", "BTC": "10", "ETH": "10", **balances},
     }
 
 
 class CryptoSimExecutorTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._old_registry = dict(sim_executor_registry._SIM_EXECUTORS)
+        sim_executor_registry._SIM_EXECUTORS.clear()
+
+    def tearDown(self) -> None:
+        sim_executor_registry._SIM_EXECUTORS.clear()
+        sim_executor_registry._SIM_EXECUTORS.update(self._old_registry)
+
     def test_market_data_health_uses_tradingdatas_product_identity(self) -> None:
         health = CryptoMarketData(reader=FixtureCryptoReader()).health_check()
 
@@ -90,212 +66,171 @@ class CryptoSimExecutorTest(unittest.TestCase):
         self.assertEqual(adapter.get_shadow_account(), "crypto_shadow")
         self.assertEqual(adapter.get_sim_account(), "crypto_sim")
 
-    def test_crypto_sim_execute_uses_provider_neutral_fixture(self) -> None:
-        result = crypto_sim_execute(
-            order={
-                "order_id": "SIM-1",
-                "symbol": "BTCUSDT",
-                "side": "buy",
-                "quantity": 2,
-            },
-            account=_account(),
-            config={"market_evidence": _market_evidence("BTCUSDT", "50000.25")},
-        )
-
-        self.assertIsInstance(result, SimResult)
-        self.assertEqual(result.status, "filled")
-        self.assertEqual(result.filled_qty, 2)
-        self.assertEqual(result.avg_price, 50000.25)
-        self.assertAlmostEqual(result.fee, 100.0005, places=8)
-        self.assertEqual(result.capital_layer, "simulated")
-        self.assertEqual(result.account_type, "simulated")
-        self.assertEqual(result.market, "crypto")
-        self.assertEqual(result.raw_response["source"], "provider_neutral_market_evidence")
-
-    def test_crypto_fractional_quantity_is_preserved_through_shared_dispatch(self) -> None:
-        result = execute_sim_order(
-            order={
-                "order_id": "SIM-FRACTIONAL",
-                "symbol": "BTCUSDT",
-                "side": "buy",
-                "quantity": 0.001,
-                "authority_generation": 1,
-            },
-            market="crypto",
-            account=_account(),
-            config={"market_evidence": _market_evidence("BTCUSDT", "50000.00")},
-        )
-
-        self.assertEqual(result.status, "filled")
-        self.assertEqual(result.filled_qty, 0.001)
-        self.assertEqual(result.broker_contract, "tradingagent.crypto.paper_broker.v1")
-        self.assertEqual(result.authority_id, "crypto-shadow-sim-v1")
-        self.assertAlmostEqual(result.fee, 0.05, places=8)
-
-    def test_crypto_sim_execute_accepts_explicit_mock_transport(self) -> None:
-        result = crypto_sim_execute(
-            order={
-                "order_id": "SIM-MOCK",
-                "symbol": "BTCUSDT",
-                "side": "buy",
-                "quantity": "0.001",
-            },
-            account=_account(),
-            config={"market_evidence": _mock_market_evidence("BTCUSDT", "50000")},
-        )
-
-        self.assertEqual(result.status, "filled")
-        self.assertEqual(result.raw_response["transport"], "mock")
-
-    def test_crypto_sim_execute_rejects_tradingdatas_before_fresh_handoff(self) -> None:
-        evidence = _market_evidence("BTCUSDT", "50000")
-        evidence["transport"] = "tradingdatas_v1"
-        evidence["dataset_id"] = "invented.crypto.spot_quote.v1"
-
+    def test_legacy_crypto_direct_executor_always_fails_closed(self) -> None:
         with self.assertRaisesRegex(
-            ValueError, "TradingDatas dataset ID is not frozen for Crypto fills"
+            CryptoLegacyExecutionRetired, CRYPTO_CAPITAL_AUTHORITY_ID
         ):
             crypto_sim_execute(
                 order={
-                    "order_id": "SIM-FORGED-TD",
+                    "order_id": "RETIRED-DIRECT",
                     "symbol": "BTCUSDT",
                     "side": "buy",
                     "quantity": "0.001",
                 },
                 account=_account(),
-                config={"market_evidence": evidence},
+                config={"market_evidence": {"transport": "fixture"}},
             )
 
-    def test_crypto_sim_execute_rejects_transport_dataset_prefix_mismatch(self) -> None:
-        evidence = _market_evidence("BTCUSDT", "50000")
-        evidence["dataset_id"] = "mock.crypto.spot_quote"
-
-        with self.assertRaisesRegex(ValueError, "fixture dataset_id"):
+    def test_legacy_crypto_direct_executor_rejects_real_markers_first(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
             crypto_sim_execute(
                 order={
-                    "order_id": "SIM-BAD-FIXTURE-ID",
+                    "order_id": "RETIRED-REAL",
                     "symbol": "BTCUSDT",
-                    "side": "buy",
-                    "quantity": "0.001",
+                    "capital_layer": "real",
                 },
                 account=_account(),
-                config={"market_evidence": evidence},
+                config={},
             )
 
-    def test_crypto_sim_execute_rejects_non_timestamp_metadata(self) -> None:
-        for field, value in (
-            ("observed_at", "20260720"),
-            ("data_through", "2026-07-20T01:00:00"),
-        ):
-            with self.subTest(field=field):
-                evidence = _market_evidence("BTCUSDT", "50000")
-                evidence["metadata"] = {**evidence["metadata"], field: value}
-                with self.assertRaisesRegex(ValueError, f"metadata.{field}"):
-                    crypto_sim_execute(
-                        order={
-                            "order_id": f"SIM-BAD-{field}",
-                            "symbol": "BTCUSDT",
-                            "side": "buy",
-                            "quantity": "0.001",
-                        },
-                        account=_account(),
-                        config={"market_evidence": evidence},
-                    )
+    def test_importing_legacy_executor_does_not_register_crypto(self) -> None:
+        self.assertIsNone(sim_executor_registry.get_sim_executor("crypto"))
+        self.assertIsNone(sim_executor_registry.get_sim_executor_binding("crypto"))
 
-    def test_crypto_sim_execute_rejects_empty_lineage(self) -> None:
-        for lineage in ({}, [], {"fixture": ""}, {"fixture": False}):
-            with self.subTest(lineage=lineage):
-                evidence = _market_evidence("BTCUSDT", "50000")
-                evidence["metadata"] = {
-                    **evidence["metadata"],
-                    "lineage": lineage,
-                }
-                with self.assertRaisesRegex(ValueError, "metadata.lineage"):
-                    crypto_sim_execute(
-                        order={
-                            "order_id": "SIM-EMPTY-LINEAGE",
-                            "symbol": "BTCUSDT",
-                            "side": "buy",
-                            "quantity": "0.001",
-                        },
-                        account=_account(),
-                        config={"market_evidence": evidence},
-                    )
+    def test_registry_rejects_generic_crypto_executor_registration(self) -> None:
+        calls: list[object] = []
 
-    def test_crypto_sim_execute_rejects_data_through_after_observation(self) -> None:
-        evidence = _market_evidence("BTCUSDT", "50000")
-        evidence["metadata"] = {
-            **evidence["metadata"],
-            "data_through": "2026-07-20T01:00:01Z",
-        }
-
-        with self.assertRaisesRegex(ValueError, "cannot exceed observed_at"):
-            crypto_sim_execute(
-                order={
-                    "order_id": "SIM-FUTURE-DATA",
-                    "symbol": "BTCUSDT",
-                    "side": "buy",
-                    "quantity": "0.001",
-                },
-                account=_account(),
-                config={"market_evidence": evidence},
+        def unsafe_stub(order, account, config) -> SimResult:
+            calls.append((order, account, config))
+            return SimResult(
+                status="filled",
+                filled_qty=1,
+                avg_price=1,
+                market="crypto",
+                broker_contract=PAPER_BROKER_CONTRACT,
+                authority_id=CRYPTO_CAPITAL_AUTHORITY_ID,
             )
 
-    def test_registered_crypto_executor_dispatches_via_sim_broker(self) -> None:
-        executor = get_sim_executor("crypto")
-        self.assertIs(executor, crypto_sim_execute)
+        with self.assertRaisesRegex(ValueError, "registration disabled"):
+            sim_executor_registry.register_sim_executor(
+                "crypto",
+                unsafe_stub,
+                simulation_contract=PAPER_BROKER_CONTRACT,
+                authority_id=CRYPTO_CAPITAL_AUTHORITY_ID,
+            )
 
         result = execute_sim_order(
-            order={
-                "order_id": "SIM-2",
-                "ts_code": "ETHUSDT",
-                "side": "buy",
-                "quantity": 3,
-                "capital_layer": "real",
-                "account_type": "real",
-            },
+            order={"order_id": "NO-GENERAL-FILL", "authority_generation": 1},
             market="crypto",
-            account={**_account(), "account_type": "real"},
-            config={
-                "market_evidence": _market_evidence("ETHUSDT", "42000.00"),
-                "capital_layer": "real",
-            },
+            account=_account(),
+            config={},
         )
 
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.filled_qty, 0)
-        self.assertEqual(result.avg_price, 0.0)
-        self.assertEqual(result.capital_layer, "simulated")
-        self.assertEqual(result.account_type, "simulated")
-        self.assertEqual(result.order_id, "SIM-2")
-        self.assertIn("real/live execution is rejected", result.message)
-    def test_legacy_crypto_simulator_does_not_fallback_to_order_price(self) -> None:
+        self.assertEqual(
+            result.raw_response["reason"], "crypto_general_executor_retired"
+        )
+        self.assertEqual(calls, [])
+
+    def test_non_crypto_asset_pair_fields_do_not_change_domestic_dispatch(self) -> None:
+        for market in ("ashare", "cn_futures"):
+            with self.subTest(market=market):
+                result = simulate_order(
+                    {
+                        "order_id": f"NON-CRYPTO-{market}",
+                        "market": market,
+                        "base_asset": "LOCAL_SECURITY",
+                        "quote_asset": "CNY",
+                        "quantity": 1,
+                    }
+                )
+                self.assertEqual(result["status"], "rejected")
+                self.assertEqual(result["message"], "Missing mid_price and limit_price")
+                self.assertNotIn("crypto", str(result.get("reason", "")))
+
+    def test_shared_dispatch_rejects_crypto_instruments_mislabeled_as_other_markets(
+        self,
+    ) -> None:
+        cases = (
+            ("ashare", {"order_id": "MISLABEL-A", "ts_code": "BTCUSDT"}),
+            ("cn_futures", {"order_id": "MISLABEL-F", "symbol": "ETHUSDT"}),
+        )
+
+        for market, order in cases:
+            with self.subTest(market=market):
+                result = execute_sim_order(order=order, market=market)
+                self.assertEqual(result.status, "failed")
+                self.assertEqual(result.filled_qty, 0)
+                self.assertEqual(
+                    result.raw_response["reason"],
+                    "crypto_market_binding_conflict",
+                )
+
+    def test_generic_slippage_simulator_rejects_crypto_without_fill(self) -> None:
+        orders = (
+            (
+                {
+                    "order_id": "NO-LEGACY-SLIPPAGE-MARKET",
+                    "market": "crypto",
+                    "mid_price": 50_000,
+                    "quantity": 1,
+                },
+                "crypto_general_executor_retired",
+            ),
+            (
+                {
+                    "order_id": "NO-LEGACY-SLIPPAGE-SYMBOL",
+                    "symbol": "BTCUSDT",
+                    "mid_price": 50_000,
+                    "quantity": 1,
+                },
+                "crypto_general_executor_retired",
+            ),
+            (
+                {
+                    "order_id": "NO-LEGACY-SLIPPAGE-ASHARE-MISLABEL",
+                    "market": "ashare",
+                    "ts_code": "BTCUSDT",
+                    "mid_price": 50_000,
+                    "quantity": 1,
+                },
+                "crypto_market_binding_conflict",
+            ),
+            (
+                {
+                    "order_id": "NO-LEGACY-SLIPPAGE-CNFUTURES-MISLABEL",
+                    "market": "cn_futures",
+                    "symbol": "ETHUSDT",
+                    "mid_price": 50_000,
+                    "quantity": 1,
+                },
+                "crypto_market_binding_conflict",
+            ),
+        )
+
+        for order, expected_reason in orders:
+            with self.subTest(order_id=order["order_id"]):
+                result = simulate_order(order)
+                self.assertEqual(result["status"], "rejected")
+                self.assertEqual(result["filled_quantity"], 0)
+                self.assertEqual(result["reason"], expected_reason)
+
+    def test_legacy_crypto_simulator_never_uses_market_or_order_price(self) -> None:
         simulator = CryptoSimulator(market_data=EmptyCryptoMarketData())
 
-        with self.assertRaisesRegex(ValueError, "order-price fallback is retired"):
+        with self.assertRaisesRegex(
+            CryptoLegacyExecutionRetired, CRYPTO_CAPITAL_AUTHORITY_ID
+        ):
             simulator.simulate(
                 {
-                    "order_id": "SIM-CRYPTO-FALLBACK",
+                    "order_id": "NO-LEGACY-SIMULATOR",
                     "symbol": "BTCUSDT",
                     "quantity": 2,
                     "price": 123.45,
                     "trade_date": "20260704",
                 },
                 {"account_id": "crypto_sim", "account_type": "simulated"},
-            )
-
-    def test_crypto_sim_executor_rejects_real_execution_payload_directly(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
-            crypto_sim_execute(
-                order={
-                    "order_id": "SIM-REAL",
-                    "symbol": "BTCUSDT",
-                    "side": "buy",
-                    "quantity": 1,
-                    "capital_layer": "real",
-                },
-                account=_account(),
-                config={"market_evidence": _market_evidence("BTCUSDT", "50000")},
             )
 
 
