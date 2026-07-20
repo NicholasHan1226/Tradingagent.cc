@@ -42,6 +42,8 @@ TradingDatas catalog/query futures bars/spec evidence
 
 每个 bar、mark、close 必须各自提供可解析的 `timestamp` 与不晚于该时点的 `available_at`，并强制 `entry < mark <= close`；强平可按 mark 成交但仍需 close 时间证据。交易资格只来自 fixture 注入的 `exchange_calendar`，其中 `trade_date`、`calendar_eligible`、`session`、`available_at` 必填；缺失或与合约声明的 product-specific `session_windows`/`night_session_end_minute` 不一致即 fail closed。合约 symbol 必须是与 product 一致的具体合约，不能用泛品种字符串。
 
+fixture 数据证据必须精确声明 `GET /v1/catalog` 与 `POST /v1/query`，并同时保持 `ready`、`degraded=false`、`fresh`、`valid` 和非空 lineage；任何旧/provider route、degraded、stale 或 failed 状态均在候选和订单形成前 fail closed。相同 fixture 的重放只产生相同的 lineage/order identity，不产生持久化或外部副作用；schema/dataset 仍等待 TradingDatas fresh manifest。
+
 费用字段同时声明 `open_fee_type`/`close_fee_type`：`rate` 按成交名义金额计算，`fixed_per_lot` 按手数计算。两种费用以及静态/injected 规格都只是 simulation bootstrap，绝非真实交易所、期货公司或 TradingDatas authority。
 
 它的静态合约参数仅用于模拟 bootstrap，不能替代 TradingDatas 将来交接的可追溯合约规格。真实 handoff 到位前，任何非 fixture 输入都必须 fail closed；该切片不安装 cron、不连接 broker，也不写入 ledger/outbox 文件。

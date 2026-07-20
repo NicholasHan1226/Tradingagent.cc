@@ -265,11 +265,19 @@ def _validate_fixture_evidence(fixture: Mapping[str, Any]) -> None:
     evidence = _mapping(fixture, "data_evidence")
     if evidence.get("source_kind") != "fixture_mock":
         raise FixtureContractError("data evidence must be fixture_mock")
+    if evidence.get("catalog_route") != "GET /v1/catalog":
+        raise FixtureContractError("fixture catalog route must be GET /v1/catalog")
+    if evidence.get("query_route") != "POST /v1/query":
+        raise FixtureContractError("fixture query route must be POST /v1/query")
     if (
         evidence.get("catalog_state") != "ready"
         or evidence.get("query_state") != "ready"
     ):
         raise FixtureContractError("catalog and query fixture evidence must be ready")
+    if evidence.get("degraded") is not False:
+        raise FixtureContractError(
+            "fixture data evidence must explicitly be non-degraded"
+        )
     if evidence.get("freshness") != "fresh" or evidence.get("quality") != "valid":
         raise FixtureContractError("fixture data evidence must be fresh and valid")
     if (

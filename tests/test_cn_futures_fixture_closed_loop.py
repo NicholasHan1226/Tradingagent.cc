@@ -20,8 +20,11 @@ def _fixture(**overrides: object) -> dict[str, object]:
         "uncalibrated_prior": 0.1,
         "data_evidence": {
             "source_kind": "fixture_mock",
+            "catalog_route": "GET /v1/catalog",
+            "query_route": "POST /v1/query",
             "catalog_state": "ready",
             "query_state": "ready",
+            "degraded": False,
             "freshness": "fresh",
             "quality": "valid",
             "lineage_ref": "fixture-lineage-001",
@@ -147,7 +150,11 @@ def test_maintenance_margin_breach_forces_close_and_preserves_simulated_marker()
         (("real_trading_enabled",), True),
         (("network_enabled",), True),
         (("data_evidence", "source_kind"), "http"),
+        (("data_evidence", "catalog_route"), "GET /tushare"),
+        (("data_evidence", "query_route"), "POST /provider/futures"),
+        (("data_evidence", "degraded"), True),
         (("data_evidence", "freshness"), "stale"),
+        (("data_evidence", "query_state"), "failed"),
     ],
 )
 def test_fixture_evidence_and_live_markers_fail_closed(
@@ -161,6 +168,19 @@ def test_fixture_evidence_and_live_markers_fail_closed(
 
     with pytest.raises(FixtureContractError):
         run_fixture_closed_loop(fixture)
+
+
+def test_identical_fixture_replay_is_deterministic_and_side_effect_free() -> None:
+    fixture = _fixture()
+    original = copy.deepcopy(fixture)
+
+    first = run_fixture_closed_loop(fixture)
+    second = run_fixture_closed_loop(fixture)
+
+    assert fixture == original
+    assert first == second
+    assert first["lineage_sha256"] == second["lineage_sha256"]
+    assert first["execution"]["orders"] == second["execution"]["orders"]
 
 
 def test_weekend_day_bar_is_hold_not_an_order() -> None:
