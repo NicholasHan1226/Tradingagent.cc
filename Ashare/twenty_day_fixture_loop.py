@@ -7,6 +7,7 @@ broker, scheduler, LLM, outbox, or persistent ledger side effect.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from datetime import datetime
 import re
 from typing import Any, Mapping, Sequence
@@ -163,15 +164,16 @@ def _mark_portfolio(
 def _fill_price(reference_price: float, side: str) -> tuple[float, float, str]:
     reality = ashare_execution_reality()
     slippage_bps = reality.conservative_label_slippage_bps_per_side
-    multiplier = (
-        1.0 + slippage_bps / 10_000.0
-        if side == "buy"
-        else 1.0 - slippage_bps / 10_000.0
+    tick = Decimal(str(reality.price_tick_cny))
+    raw = Decimal(str(reference_price)) * (
+        Decimal("1")
+        + (Decimal(str(slippage_bps)) / Decimal("10000"))
+        * (Decimal("1") if side == "buy" else Decimal("-1"))
     )
-    # An exact half-tick must not erase adverse slippage through float drift.
-    guard = 1e-9 if side == "buy" else -1e-9
+    rounding = ROUND_CEILING if side == "buy" else ROUND_FLOOR
+    fill = float((raw / tick).quantize(Decimal("1"), rounding=rounding) * tick)
     return (
-        reality._round_to_tick(reference_price * multiplier + guard),
+        fill,
         slippage_bps,
         reality.model_version,
     )
