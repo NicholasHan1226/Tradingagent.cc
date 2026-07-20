@@ -9,7 +9,7 @@ an LLM.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from shared.execution.execution_reality import ashare_execution_reality
@@ -36,6 +36,7 @@ class FixtureDay:
     evidence_eligible: bool
     evidence_reason: str
     instruments: Sequence[Mapping[str, Any]]
+    mark_prices: Mapping[str, Any] = field(default_factory=dict)
     catalog_route: str = _CATALOG_ROUTE
     query_route: str = _QUERY_ROUTE
 
@@ -82,6 +83,27 @@ def _fees(side: str, notional: float) -> dict[str, Any]:
     return ashare_execution_reality().calculate_fees(side, notional)
 
 
+def _mark_portfolio(
+    positions: Mapping[str, Mapping[str, Any]], mark_prices: Mapping[str, Any]
+) -> tuple[dict[str, float] | None, str | None]:
+    market_value = 0.0
+    unrealized_pnl = 0.0
+    gross_exposure = 0.0
+    for symbol, position in positions.items():
+        mark = _number(mark_prices.get(symbol), -1.0)
+        if mark <= 0.0:
+            return None, f"mark_unavailable:{symbol}"
+        value = int(position["quantity"]) * mark
+        market_value += value
+        gross_exposure += value
+        unrealized_pnl += value - _number(position["entry_cost_cny"])
+    return {
+        "market_value_cny": round(market_value, 2),
+        "gross_exposure_cny": round(gross_exposure, 2),
+        "unrealized_pnl_cny": round(unrealized_pnl, 2),
+    }, None
+
+
 def _day_report(
     *,
     day: FixtureDay,
@@ -91,15 +113,13 @@ def _day_report(
     receipt: Mapping[str, Any] | None,
     cash: float,
     positions: Mapping[str, Mapping[str, Any]],
+    mark: Mapping[str, float] | None,
+    mark_reason: str | None,
+    realized_pnl: float,
     samples: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    market_value = round(
-        sum(
-            _number(position["quantity"]) * _number(position["price"])
-            for position in positions.values()
-        ),
-        2,
-    )
+    mark_complete = mark is not None
+    market_value = mark["market_value_cny"] if mark else None
     return {
         "trade_date": day.trade_date,
         "status": "completed" if receipt else "completed_with_blocks",
@@ -122,9 +142,13 @@ def _day_report(
             "real_trading_enabled": False,
             "cash_cny": round(cash, 2),
             "market_value_cny": market_value,
-            "equity_cny": round(cash + market_value, 2),
+            "gross_exposure_cny": mark["gross_exposure_cny"] if mark else None,
+            "realized_pnl_cny": round(realized_pnl, 2),
+            "unrealized_pnl_cny": mark["unrealized_pnl_cny"] if mark else None,
+            "equity_cny": round(cash + market_value, 2) if mark_complete else None,
             "position_count": len(positions),
-            "status": "reconciled",
+            "status": "reconciled" if mark_complete else "blocked",
+            "reason_code": None if mark_complete else mark_reason,
         },
         "sample_review": list(samples),
     }
@@ -150,6 +174,7 @@ def run_fixture_twenty_day_loop(
 
     cash = INITIAL_CASH_CNY
     positions: dict[str, dict[str, Any]] = {}
+    realized_pnl = 0.0
     reports: list[dict[str, Any]] = []
     sample_journal: list[dict[str, Any]] = []
 
@@ -158,6 +183,7 @@ def run_fixture_twenty_day_loop(
             raise ValueError("tradingdatas_wire_contract_mismatch")
         universe_rows, context = _mainboard_rows(day.instruments)
         universe = [_symbol(row) for row in universe_rows]
+        mark, mark_reason = _mark_portfolio(positions, day.mark_prices)
         samples = [
             {
                 "sample_type": "observation",
@@ -171,7 +197,9 @@ def run_fixture_twenty_day_loop(
         reason = "no_eligible_mainboard_candidate"
         receipt: dict[str, Any] | None = None
 
-        if not day.evidence_eligible:
+        if mark is None:
+            reason = str(mark_reason)
+        elif not day.evidence_eligible:
             reason = f"evidence_ineligible:{day.evidence_reason or 'unspecified'}"
         elif universe_rows:
             candidate = max(
@@ -199,6 +227,13 @@ def run_fixture_twenty_day_loop(
                     fees = _fees(side, notional)
                     fee = _number(fees["total"])
                     cash = round(cash + notional - fee, 2)
+                    realized_pnl = round(
+                        realized_pnl
+                        + notional
+                        - fee
+                        - _number(holding["entry_cost_cny"]),
+                        2,
+                    )
                     del positions[symbol]
                     receipt = {
                         "status": "filled",
@@ -222,11 +257,18 @@ def run_fixture_twenty_day_loop(
                 reason = "same_symbol_position_exists"
             elif len(positions) >= MAX_POSITIONS:
                 reason = "position_capacity_reached"
+            elif any(
+                int(position["quantity"]) * _number(day.mark_prices.get(held_symbol))
+                > MAX_SINGLE_NAME_CNY
+                for held_symbol, position in positions.items()
+            ):
+                reason = "single_name_mark_limit_breached"
+            elif _number(mark["gross_exposure_cny"]) >= MAX_GROSS_CNY:
+                reason = "gross_exposure_limit_reached"
+            elif _number(day.mark_prices.get(symbol), -1.0) <= 0.0:
+                reason = f"mark_unavailable:{symbol}"
             else:
-                gross = sum(
-                    _number(item["quantity"]) * _number(item["price"])
-                    for item in positions.values()
-                )
+                gross = _number(mark["gross_exposure_cny"])
                 budget = min(MAX_SINGLE_NAME_CNY, MAX_GROSS_CNY - gross, cash)
                 quantity = int(budget // (price * LOT_SIZE)) * LOT_SIZE
                 notional = quantity * price
@@ -242,7 +284,8 @@ def run_fixture_twenty_day_loop(
                     cash = round(cash - notional - fee, 2)
                     positions[symbol] = {
                         "quantity": quantity,
-                        "price": price,
+                        "cost_basis_price": price,
+                        "entry_cost_cny": round(notional + fee, 2),
                         "acquired_day_index": day_index,
                     }
                     receipt = {
@@ -264,6 +307,10 @@ def run_fixture_twenty_day_loop(
                     }
                     reason = "simulated_buy_filled"
 
+        mark, mark_reason = _mark_portfolio(positions, day.mark_prices)
+        if mark is None and receipt is not None:
+            raise RuntimeError("fixture_mark_required_before_simulated_receipt")
+
         samples.append(
             {
                 "sample_type": "execution" if receipt else "risk_reject",
@@ -283,6 +330,9 @@ def run_fixture_twenty_day_loop(
                 receipt=receipt,
                 cash=cash,
                 positions=positions,
+                mark=mark,
+                mark_reason=mark_reason,
+                realized_pnl=realized_pnl,
                 samples=samples,
             )
         )

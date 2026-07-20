@@ -11,6 +11,12 @@ dataset ID, network access, SQLite access, broker, LLM, scheduler, outbox, or
 runtime ledger side effect.  It is therefore not a live-paper scheduler or a
 capital authority replacement.
 
+Each `FixtureDay` must explicitly supply a current `mark_prices` mapping for
+every open position. Cost basis and mark are separate: reconciliation reports
+realized/unrealized PnL, market value, equity, and gross exposure from current
+marks. A missing or invalid mark blocks reconciliation and all new simulated
+orders for that day; it never silently reuses the entry price.
+
 The loop keeps `ashare-capital-v1` at 50,000 CNY simulated capital and applies
 mainboard-only filtering, 100-share lots, T+1 sells, the versioned execution
 reality fee model, a no-trade score band, single-name/gross/cash limits, and
