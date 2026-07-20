@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
-"""Public SharedSignals market data adapter for Crypto Phase D."""
+"""Crypto data adapter for an explicit fixture or future TradingDatas V1 port."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from Crypto.common import SHAREDSIGNALS_MARKET, CryptoConfig, load_crypto_config
+from Crypto.common import TRADINGDATAS_MARKET_CONTEXT, CryptoConfig, load_crypto_config
+from shared.governance.retirement import require_explicit_data_port
 from shared.markets.base_tools import BaseMarketData
 
 
 class CryptoMarketData(BaseMarketData):
-    """Read Crypto daily bars from SharedSignals ``market_bars_daily`` only."""
+    """Read Crypto rows only through an explicitly injected safe data port."""
 
     def __init__(self, config: CryptoConfig | None = None, reader: Any | None = None) -> None:
-        super().__init__("crypto", config or load_crypto_config())
-        if reader is not None:
-            self.reader = reader
+        super().__init__("crypto", config or load_crypto_config(), reader=reader)
 
     def get_daily(self, symbol: str, start: str = "", end: str = "") -> list[dict[str, Any]]:
         normalized = self._normalize_symbol(symbol)
-        return list(self.reader.get_bars_daily(SHAREDSIGNALS_MARKET, normalized, start or "", end or ""))
+        reader = require_explicit_data_port(
+            self.reader, context="CryptoMarketData.get_daily"
+        )
+        return list(
+            reader.get_bars_daily(
+                TRADINGDATAS_MARKET_CONTEXT, normalized, start or "", end or ""
+            )
+        )
 
     def get_latest_price(self, symbol: str, date: str) -> float | None:
         rows = self.get_daily(symbol, "", date)
@@ -51,24 +57,27 @@ class CryptoMarketData(BaseMarketData):
             return {
                 "ok": False,
                 "market": "crypto",
-                "sharedsignals_market": SHAREDSIGNALS_MARKET,
-                "source": "SharedSignals.market_bars_daily",
+                "tradingdatas_market_context": TRADINGDATAS_MARKET_CONTEXT,
+                "source": "TradingDatas fixture_or_v1_port",
                 "error": str(exc),
             }
         return {
             "ok": True,
             "market": "crypto",
-            "sharedsignals_market": SHAREDSIGNALS_MARKET,
-            "source": "SharedSignals.market_bars_daily",
+            "tradingdatas_market_context": TRADINGDATAS_MARKET_CONTEXT,
+            "source": "TradingDatas fixture_or_v1_port",
             "universe_count": len(universe),
             "public_data_only": True,
         }
 
     def _asset_universe(self) -> list[str]:
-        get_assets = getattr(self.reader, "get_assets", None)
+        reader = require_explicit_data_port(
+            self.reader, context="CryptoMarketData.get_universe"
+        )
+        get_assets = getattr(reader, "get_assets", None)
         rows: list[dict[str, Any]] = []
         if callable(get_assets):
-            rows = list(get_assets(SHAREDSIGNALS_MARKET) or [])
+            rows = list(get_assets(TRADINGDATAS_MARKET_CONTEXT) or [])
 
         symbols: list[str] = []
         for row in rows:

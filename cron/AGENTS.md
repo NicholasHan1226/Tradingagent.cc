@@ -14,16 +14,16 @@ This directory contains thin cron wrappers for TradingAgent subsystem jobs.
 update TradingAgent entries in the production `marketgraph` user crontab.**
 
 Never run `crontab shared/crontab.txt` or `crontab crontab.txt` directly —
-that would overwrite SharedSignals and MarketGraph entries.
+that would overwrite TradingDatas and MarketGraph entries.
 
 The merge tool strips only TA schedule lines from the current crontab and
 appends a self-contained TradingAgent block: first
 `BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh`, then the TA
 schedule lines from `shared/crontab.txt`. Cron environment assignments are
 positional, so the loader reset must remain immediately before the appended TA
-block; otherwise a preceding MarketGraph/SharedSignals loader can leak its
+block; otherwise a preceding MarketGraph/TradingDatas loader can leak its
 tokens and paths into TradingAgent jobs. All other lines
-(SharedSignals, MarketGraph, env vars, comments, blank lines) are preserved
+(TradingDatas, MarketGraph, env vars, comments, blank lines) are preserved
 as-is in their original order.  Behaviour:
 
 - **Default: dry-run** — prints merged crontab to stdout, no system changes.

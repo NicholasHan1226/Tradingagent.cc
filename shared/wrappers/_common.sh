@@ -16,6 +16,28 @@ block_retired_ashare_runtime() {
     return 78
 }
 
+block_retired_legacy_runtime() {
+    local job_name="${1:-legacy_tradingagent_job}"
+    printf '[%s] %s blocked=retired_legacy_runtime action=wait_for_tradingdatas_fresh_handoff_and_reviewed_replacement\n' \
+        "$(timestamp)" "${job_name}" >&2
+    return 78
+}
+
+retired_legacy_runtime_job_for() {
+    local entrypoint_name="${1##*/}"
+    local market_arg="${2:-}"
+    case "${entrypoint_name}" in
+        auto_pipeline.sh|evolution.sh|job_pm_research_probability.sh|job_equity_snapshots.sh|job_self_heal.sh|job_self_heal_night.sh|job_cn_futures_observation_report.sh|job_cn_futures_sample_ops.sh|job_cn_futures_calibration_report.sh|job_cn_futures_replay.sh|job_cn_futures_pre_open_validation.sh|job_cn_futures_opening_validation.sh|job_cn_futures_first_sample_alert.sh|job_us_sim.sh|job_crypto_sim.sh|job_pm_sim.sh|job_hk_sim.sh|job_cn_futures_sim.sh)
+            printf '%s' "${entrypoint_name%.sh}"
+            ;;
+        job_market_capital_reconcile.sh)
+            if [[ "${market_arg}" != "ashare" ]]; then
+                printf '%s' "job_market_capital_reconcile_${market_arg:-unspecified}"
+            fi
+            ;;
+    esac
+}
+
 # One shell authority for entrypoints that may no longer execute.  Keep this
 # list limited to A-share-only wrappers plus generic jobs whose whole legacy
 # behavior (old A-share readers or external email) is retired.  Mixed jobs with
@@ -57,6 +79,18 @@ if [[ -n "${_tradingagent_retired_job}" ]]; then
 fi
 unset _tradingagent_calling_entrypoint _tradingagent_retired_job
 
+_tradingagent_calling_entrypoint="${BASH_SOURCE[1]:-}"
+_tradingagent_retired_job="$(
+    retired_legacy_runtime_job_for \
+        "${_tradingagent_calling_entrypoint}" \
+        "${1:-}"
+)"
+if [[ -n "${_tradingagent_retired_job}" ]]; then
+    block_retired_legacy_runtime "${_tradingagent_retired_job}"
+    exit 78
+fi
+unset _tradingagent_calling_entrypoint _tradingagent_retired_job
+
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARED_DIR="$(cd "${WRAPPER_DIR}/.." && pwd)"
 
@@ -79,19 +113,19 @@ record_level3_queue() {
         "$(timestamp)" "${job_name}" "${phase}" "${fallback_target}" "${exit_code}" >> "${TRADINGS_REPAIR_QUEUE}"
 }
 
-sharedsignals_v1_runtime_gate() {
+tradingdatas_v1_runtime_gate() {
     local job_name="${1:-trading_job}"
     local phase="${2:-intraday}"
     local market="${3:-}"
     ensure_cron_paths
     local log_file="${TRADINGS_CRON_LOG_ROOT}/${job_name}.log"
     local -a required_config=(
-        SHAREDSIGNALS_API_URL
-        SHAREDSIGNALS_CATALOG_VERSION
-        SHAREDSIGNALS_ACCESS_POLICY_ID
-        SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON
-        SHAREDSIGNALS_SCHEMA_MAJOR
-        SHAREDSIGNALS_RUNTIME_TRANSPORT
+        TRADINGDATAS_API_URL
+        TRADINGDATAS_CATALOG_VERSION
+        TRADINGDATAS_ACCESS_POLICY_ID
+        TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON
+        TRADINGDATAS_SCHEMA_MAJOR
+        TRADINGDATAS_RUNTIME_TRANSPORT
     )
     local variable_name=""
     for variable_name in "${required_config[@]}"; do
@@ -110,17 +144,17 @@ sharedsignals_v1_runtime_gate() {
     exit_code=$?
     set -e
     if (( exit_code != 0 )); then
-        printf '[%s] %s blocked=sharedsignals_v1_runtime_gate phase=%s market=%s detail=%q\n' \
+        printf '[%s] %s blocked=tradingdatas_v1_runtime_gate phase=%s market=%s detail=%q\n' \
             "$(timestamp)" "${job_name}" "${phase}" "${market}" "${output}" \
             | tee -a "${log_file}" >&2
         return 78
     fi
-    printf '[%s] %s sharedsignals_v1_runtime_gate=%q phase=%s market=%s action=evidence_ready\n' \
+    printf '[%s] %s tradingdatas_v1_runtime_gate=%q phase=%s market=%s action=evidence_ready\n' \
         "$(timestamp)" "${job_name}" "${output}" "${phase}" "${market}" >> "${log_file}"
     return 0
 }
 
-block_unmigrated_sharedsignals_consumer() {
+block_unmigrated_tradingdatas_consumer() {
     local job_name="${1:-trading_job}"
     local market="${2:-}"
     ensure_cron_paths

@@ -221,49 +221,20 @@ def _acceptance_report(status: str) -> dict[str, object]:
     }
 
 
-def test_main_keeps_business_pass_when_notification_fails(tmp_path, monkeypatch, capsys):
+def test_main_is_tombstoned_before_notification_or_output(tmp_path, monkeypatch, capsys):
     latest = tmp_path / "latest.json"
     history = tmp_path / "history.jsonl"
     monkeypatch.setattr(opening_acceptance, "LATEST", latest)
     monkeypatch.setattr(opening_acceptance, "HISTORY", history)
-    monkeypatch.setattr(opening_acceptance, "run_acceptance", lambda **_kwargs: _acceptance_report("pass"))
-    monkeypatch.setattr(
-        opening_acceptance,
-        "_maybe_send_alert",
-        lambda *_args: (_ for _ in ()).throw(PermissionError("fallback denied")),
-    )
 
     exit_code = opening_acceptance.main(["--send-on", "warn", "--json"])
-    report = json.loads(capsys.readouterr().out)
+    report = json.loads(capsys.readouterr().err)
 
-    assert exit_code == 0
-    assert report["overall_status"] == "pass"
-    assert report["notification_status"] == "degraded"
-    assert report["notification"]["delivery_status"] == "degraded"
-    assert report["notification"]["error"] == "PermissionError: fallback denied"
-    assert json.loads(latest.read_text(encoding="utf-8"))["overall_status"] == "pass"
-
-
-def test_main_keeps_business_fail_when_notification_fails(tmp_path, monkeypatch, capsys):
-    latest = tmp_path / "latest.json"
-    history = tmp_path / "history.jsonl"
-    monkeypatch.setattr(opening_acceptance, "LATEST", latest)
-    monkeypatch.setattr(opening_acceptance, "HISTORY", history)
-    monkeypatch.setattr(opening_acceptance, "run_acceptance", lambda **_kwargs: _acceptance_report("fail"))
-    monkeypatch.setattr(
-        opening_acceptance,
-        "_maybe_send_alert",
-        lambda *_args: (_ for _ in ()).throw(PermissionError("fallback denied")),
-    )
-
-    exit_code = opening_acceptance.main(["--send-on", "warn", "--json"])
-    report = json.loads(capsys.readouterr().out)
-
-    assert exit_code == 2
-    assert report["overall_status"] == "fail"
-    assert report["notification_status"] == "degraded"
-    assert report["notification"]["error"] == "PermissionError: fallback denied"
-    assert json.loads(latest.read_text(encoding="utf-8"))["overall_status"] == "fail"
+    assert exit_code == 78
+    assert report["state"] == "retired"
+    assert report["reason"] == "legacy_runtime_retired"
+    assert not latest.exists()
+    assert not history.exists()
 
 
 def test_notification_outcome_marks_sent_and_saved_local_separately():

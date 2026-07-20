@@ -10,11 +10,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 ENV_LOADER = ROOT / "shared" / "env_loader.sh"
 ENV_EXAMPLE = ROOT / ".env.example"
-SHAREDSIGNALS_V1_CONFIG = (
-    "SHAREDSIGNALS_API_URL",
-    "SHAREDSIGNALS_CATALOG_VERSION",
-    "SHAREDSIGNALS_ACCESS_POLICY_ID",
-    "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON",
+TRADINGDATAS_V1_CONFIG = (
+    "TRADINGDATAS_API_URL",
+    "TRADINGDATAS_CATALOG_VERSION",
+    "TRADINGDATAS_ACCESS_POLICY_ID",
+    "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON",
 )
 
 
@@ -77,7 +77,7 @@ def _source_loader_v1_config(
     env = dict(os.environ)
     env.pop("TRADINGAGENT_ENV_LOADER_READY", None)
     env.pop("REAL_TRADING_ENABLED", None)
-    for variable_name in SHAREDSIGNALS_V1_CONFIG:
+    for variable_name in TRADINGDATAS_V1_CONFIG:
         env.pop(variable_name, None)
     env.update(inherited_config or {})
     env.update(
@@ -102,7 +102,7 @@ def _source_loader_v1_config(
             'printf "%s:%s\\n" "${!name+x}" "${!name-}"; done',
             "bash",
             str(ENV_LOADER),
-            *SHAREDSIGNALS_V1_CONFIG,
+            *TRADINGDATAS_V1_CONFIG,
         ],
         env=env,
         text=True,
@@ -141,14 +141,14 @@ def test_bash_env_preflight_is_not_keyed_to_platform_specific_zero_value() -> No
     assert "TRADINGAGENT_BASH_ENV_PREFLIGHT_DONE" not in source
 
 
-def test_sharedsignals_v1_configuration_has_no_implicit_localhost_default() -> None:
+def test_tradingdatas_v1_configuration_has_no_implicit_localhost_default() -> None:
     forbidden_default = "http://127.0.0.1:8082"
 
     assert forbidden_default not in ENV_LOADER.read_text(encoding="utf-8")
     assert forbidden_default not in ENV_EXAMPLE.read_text(encoding="utf-8")
 
 
-def test_env_example_requires_all_sharedsignals_v1_configuration_explicitly() -> None:
+def test_env_example_requires_all_tradingdatas_v1_configuration_explicitly() -> None:
     assignments = {
         name.strip(): value.strip()
         for line in ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
@@ -156,35 +156,57 @@ def test_env_example_requires_all_sharedsignals_v1_configuration_explicitly() ->
         for name, value in [line.split("=", 1)]
     }
 
-    assert {name: assignments.get(name) for name in SHAREDSIGNALS_V1_CONFIG} == {
-        name: "" for name in SHAREDSIGNALS_V1_CONFIG
+    assert {name: assignments.get(name) for name in TRADINGDATAS_V1_CONFIG} == {
+        name: "" for name in TRADINGDATAS_V1_CONFIG
     }
 
 
-def test_env_loader_exports_missing_sharedsignals_v1_configuration_as_empty(
+def test_tradingdatas_env_does_not_advertise_an_unimplemented_retry_policy() -> None:
+    env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
+    env_loader = ENV_LOADER.read_text(encoding="utf-8")
+
+    assert "TRADINGDATAS_API_RETRIES" not in env_example
+    assert "TRADINGDATAS_API_RETRY_BACKOFF" not in env_example
+    assert "TRADINGDATAS_API_RETRIES" not in env_loader
+    assert "TRADINGDATAS_API_RETRY_BACKOFF" not in env_loader
+
+
+def test_env_loader_exports_missing_tradingdatas_v1_configuration_as_empty(
     tmp_path: Path,
 ) -> None:
     result = _source_loader_v1_config(tmp_path)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["x:" for _ in SHAREDSIGNALS_V1_CONFIG]
+    assert result.stdout.splitlines() == ["x:" for _ in TRADINGDATAS_V1_CONFIG]
 
 
-def test_env_loader_preserves_explicit_sharedsignals_v1_configuration(
+def test_env_loader_preserves_explicit_tradingdatas_v1_configuration(
     tmp_path: Path,
 ) -> None:
     explicit_config = {
-        "SHAREDSIGNALS_API_URL": "https://sharedsignals.fixture.invalid",
-        "SHAREDSIGNALS_CATALOG_VERSION": "catalog-fixture-v1",
-        "SHAREDSIGNALS_ACCESS_POLICY_ID": "ta-paper-read-v1",
-        "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON": '{"ashare":"market-pulse-v1"}',
+        "TRADINGDATAS_API_URL": "https://tradingdatas.fixture.invalid",
+        "TRADINGDATAS_CATALOG_VERSION": "catalog-fixture-v1",
+        "TRADINGDATAS_ACCESS_POLICY_ID": "ta-paper-read-v1",
+        "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON": '{"ashare":"market-pulse-v1"}',
     }
     result = _source_loader_v1_config(tmp_path, inherited_config=explicit_config)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        f"x:{explicit_config[name]}" for name in SHAREDSIGNALS_V1_CONFIG
+        f"x:{explicit_config[name]}" for name in TRADINGDATAS_V1_CONFIG
     ]
+
+
+def test_legacy_sharedsignals_url_is_a_blank_tombstone_not_a_tradingdatas_alias(
+    tmp_path: Path,
+) -> None:
+    result = _source_loader_v1_config(
+        tmp_path,
+        inherited_config={"SHAREDSIGNALS_API_URL": "https://legacy.invalid"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["x:" for _ in TRADINGDATAS_V1_CONFIG]
 
 
 @pytest.mark.parametrize(

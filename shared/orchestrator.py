@@ -345,10 +345,10 @@ def _write_pending_signal(
     # Shadow records are research/paper-tracking signals. Keep their pending lifecycle
     # for review and email de-duplication, but isolate them from executable queues.
     layer = str(card.get("capital_layer") or "").strip().lower()
-    direct_execution = bool(card.get("direct_execution"))
+    synchronous_sim = card.get("signal_delivery_mode") == "synchronous_sim"
     state_root = (
         signals_dir / "shadow"
-        if layer == "shadow" and not direct_execution
+        if layer == "shadow" and not synchronous_sim
         else signals_dir
     )
     symbol = str(
@@ -490,26 +490,6 @@ def _write_execution_signal(
                 "signal_path": existing_signal_path,
                 "signal_card": raw_response.get("signal_card", card),
                 "source": "sim_executor",
-            },
-        }
-
-    webhook_payload = (
-        raw_response.get("webhook")
-        if isinstance(raw_response.get("webhook"), dict)
-        else {}
-    )
-    mini_webhook_sent = raw_response.get("mode") == "mini_webhook_sent" or bool(
-        webhook_payload.get("success")
-    )
-    if retryable and mini_webhook_sent:
-        return {
-            "order_id": card.get("order_id", ""),
-            "status": "pending",
-            "pending_signal": {
-                "status": "pending",
-                "signal_card": raw_response.get("signal_card", card),
-                "source": "mini_webhook",
-                "webhook": webhook_payload,
             },
         }
 
@@ -810,7 +790,9 @@ def _build_signal_card(
         "capital_layer": capital_layer,
         "account_type": account_type,
         "manual_confirm_required": False,
-        "direct_execution": direct_execution,
+        "signal_delivery_mode": (
+            "synchronous_sim" if direct_execution else "queued_shadow"
+        ),
         "candidate_pool_layer": str(order.get("candidate_pool_layer") or ""),
         "execution_source": str(order.get("execution_source") or ""),
         "risk_check": {
@@ -825,6 +807,34 @@ def _build_signal_card(
         "idempotency_key": idempotency_key,
         "evidence_refs": [audit_id],
     }
+    if capital_layer == "simulated" and str(market).strip().lower() in {
+        "ashare",
+        "cn_futures",
+        "crypto",
+    }:
+        from shared.governance.market_lanes import load_market_lanes
+
+        lane = load_market_lanes().get_for_runtime_market(market)
+        expected_contract = lane.broker_boundary.simulation_contract
+        expected_authority = lane.authority_id
+        for source_name, payload in (("order", order), ("trade", trade)):
+            claimed_contract = str(payload.get("broker_contract") or "").strip()
+            claimed_authority = str(payload.get("authority_id") or "").strip()
+            if claimed_contract and claimed_contract != expected_contract:
+                raise ValueError(
+                    f"{source_name}.broker_contract does not match governed market lane"
+                )
+            if claimed_authority and claimed_authority != expected_authority:
+                raise ValueError(
+                    f"{source_name}.authority_id does not match governed market lane"
+                )
+        card.update(
+            {
+                "account": account,
+                "broker_contract": expected_contract,
+                "authority_id": expected_authority,
+            }
+        )
     for key in (
         "capital_scope",
         "capital_authority_id",

@@ -189,7 +189,6 @@ async function validateCatalog(config: V1Config, requests: PulseRequest[], fetch
       method: 'GET',
       headers: {
         accept: 'application/json',
-        'x-access-policy': config.accessPolicyId,
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
@@ -227,7 +226,6 @@ async function queryPulse(
       headers: {
         accept: 'application/json',
         'content-type': 'application/json',
-        'x-access-policy': config.accessPolicyId,
       },
       body: JSON.stringify({
         dataset_id: request.datasetId,
@@ -455,7 +453,7 @@ function normalizePulse(
     updatedAt,
     freshness: freshness(updatedAt, market, now),
     points,
-    source: `SharedSignals V1:${datasetId}:${envelope.metadata.receiptId}`,
+    source: `TradingDatas V1:${datasetId}:${envelope.metadata.receiptId}`,
   }
 }
 

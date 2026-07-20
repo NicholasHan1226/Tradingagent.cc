@@ -18,7 +18,7 @@ gated and must not trigger execution from the front layer.
 | Legacy opportunity funnel | `shared/review/opportunities/funnel_events.jsonl` | `shared/logs/opportunities/funnel_events.jsonl` | Frozen forensic history only; writer retired; excluded from current readiness |
 | Positions | A-share: verified current capital snapshot -> derived execution-lineage position receipt; other markets: `signals/positions/*.json` | A-share has no fallback; generic non-A-share may use `shared/accounting/position_plan.jsonl` | Partial |
 
-> `Ashare/sim_executor.py -> signals/*` 是兼容只读来源，不是V1订单authority。前端不得启动Hermes/同花顺或把旧pending queue显示成当前A股机会；V1模拟日只从受验证capital/execution-lineage/RunBundle投影读取。
+> A股当前模拟执行只从受验证capital/execution-lineage/RunBundle投影读取；`signals/*`仅保留为非A股兼容/法证投影。前端不得启动任何执行器，也不得把旧pending queue显示成当前A股机会。
 | Performance | `shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl` or `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl` | `shared/review/daily/daily_brief.jsonl` return fields, then `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
 | Generic market summaries | US/Crypto/PM `shared/review/*/style_comparison.json` | their own `style_performance.jsonl` and sim ledgers; A-share/CNFutures use their dedicated authorities below | Ready |
 | A-share capital | `shared/logs/capital/ashare/ashare_sim_capital_latest.json` | unavailable; never infer from another market | Ready; strict authority/generation/fresh/reconcile/checksum |
@@ -26,12 +26,12 @@ gated and must not trigger execution from the front layer.
 | A-share research evidence | `shared/review/ashare/research_evidence_latest.json` | omitted from snapshot when missing or malformed | Ready |
 | A-share sample KPI / maturity | `shared/review/ashare/projection_current.json` -> hash-verified `projection_generations/<generation_id>/{sample_kpi_latest,evolution_decision_latest,market_maturity_latest}.json` | entire set omitted when pointer/manifest/file hash, recomputed generation ID, shared input SHA, authority, or explicit sim-only fields are missing/invalid; root mirrors are never a transaction fallback | Ready |
 | CNFutures maturity | `shared/review/cn_futures/market_maturity_latest.json` | omitted when canonical `projection_sha256`, authority, lineage, or sim-only contract is invalid | Ready |
-| Optional market pulse | Explicit SharedSignals V1 `GET /v1/catalog` + `POST /v1/query` selected from current holdings/signals | `marketPulses[]` is omitted per unavailable/degraded dataset while `marketPulseCoverage` retains exact source coverage | Local candidate only; explicit base/catalog/policy/dataset mapping, no legacy fallback, upstream/runtime unverified |
+| Optional market pulse | Explicit TradingDatas V1 `GET /v1/catalog` + `POST /v1/query` selected from current holdings/signals | `marketPulses[]` is omitted per unavailable/degraded dataset while `marketPulseCoverage` retains exact source coverage | Fixture/mock-first candidate only; explicit base/catalog/schema/policy/dataset mapping, no legacy fallback, no fresh handoff or live claim |
 | CNFutures replay evidence | `shared/review/cn_futures/replay_latest.json` | omitted from market summary when missing or malformed | Ready |
 | Today paper-day summary | optional local candidate `shared/runtime/run_bundles/latest.json` plus byte-identical `shared/runtime/run_bundles/runs/<run_id>/<bundle_sha256>.json` | `paperDayRun` omitted when either file, strict manifest, component/payload/bundle hash, run identity, idempotency binding, or simulation-only flags fail; no sample fallback | Candidate active reader only; fixture CLI intentionally publishes under `shared/runtime_test/phase1_paper_fixture/`, so scheduler and active-root publication remain unverified |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
 | Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
-| Live readiness | execution schemas and filled signal writeback | manual authorization state | Gated |
+| Execution / live readiness | `shared/governance/market_lanes.yaml` and `system_state_matrix.yaml` plus market-specific simulated lineage receipts | separately authorized market-specific broker adapter readback | Gated; A-share/CNFutures/Crypto APIs remain distinct and live is disabled |
 
 The homepage maturity panel never aggregates capital across markets. It shows
 the A-share fresh 50,000 CNY account with Day 5 / Day 10 evidence reviews and
@@ -67,8 +67,9 @@ Display-ready fields used by the homepage:
 - Backend writer: `PYTHONPATH=/opt/investment/tradingagent python3 shared/runtime_test/write_equity_snapshots.py --pretty`
   appends one simulated mark-to-market snapshot per style ledger into
   `shared/logs/sim_ledger/<market>/<style>/daily_mark_to_market.jsonl`.
-  It reads existing simulated positions, uses SharedSignals close prices when
-  available, and marks missing prices as `sim_ledger_cost_fallback` rather
+  It reads existing simulated positions. Any future external close price must
+  arrive through the validated TradingDatas V1 boundary; without that evidence it marks
+  missing prices as `sim_ledger_cost_fallback` rather
   than inventing return.
 - If explicit equity snapshots are absent, the local reader accepts daily review
   aliases such as
@@ -136,7 +137,7 @@ Display-ready fields used by the homepage:
   `stageTimes`, and `stageLatencyMinutes`.
 - `marketSummaries[]`: one read-only status row per active dashboard market.
 - `marketPulses[]`: optional representative-instrument rows enriched only through the
-  configured SharedSignals V1 catalog/query boundary. Each row contains `market`, `symbol`,
+  configured TradingDatas V1 catalog/query boundary. Each row contains `market`, `symbol`,
   `lastPrice`, optional `changePct/high/low/volume/updatedAt`, `freshness`, sourced `points[]`,
   and a provider-neutral source identity composed from dataset ID and receipt ID. The reader
   selects at most one current holding or signal symbol per market, requests at most 24 rows,
@@ -146,7 +147,7 @@ Display-ready fields used by the homepage:
   must explicitly match the requested entity, and its timestamp cannot exceed either
   `metadata.data_through` or the decision time.
 - `marketPulseCoverage`: optional read-only diagnostics for all six markets. It contains `entries[]` with `sourced`, `no_representative`, `unavailable`, or `degraded` status plus `requestedCount`, `sourcedCount`, `cacheState`, `fetchedAt`, and `sourceLatencyMs`. A cached result preserves its original fetch time and labels its cache state rather than pretending to be a new source read.
-- `marketPulseCoverageHistory`: optional bounded in-process observations of fresh SharedSignals reads. It retains at most 12 entries, adds no sample on cache hit, and resets on snapshot-service restart. It is terminal observability only, not a durable health or SLA history.
+- `marketPulseCoverageHistory`: optional bounded in-process observations of fresh TradingDatas reads. It retains at most 12 entries, adds no sample on cache hit, and resets on snapshot-service restart. It is terminal observability only, not a durable health or SLA history.
 - `paperDayRun`: optional read-only summary of the latest explicitly published
   local A-share paper-day RunBundle. It carries `environment=local_candidate`,
   `productionVerified=false`, stage progress, dataset evidence state, simulation
@@ -166,10 +167,11 @@ Display-ready fields used by the homepage:
   show why a selected market has data, partial data, or no data without
   inventing trades.
 - `marketPulses[]`: optional sourced price context for representative symbols already present
-  in holdings or signals. The snapshot server requires all four explicit inputs:
-  `SHAREDSIGNALS_API_URL`, `SHAREDSIGNALS_CATALOG_VERSION`,
-  `SHAREDSIGNALS_ACCESS_POLICY_ID`, and
-  `SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON`. Missing or invalid config performs no HTTP
+  in holdings or signals. The snapshot server requires all five explicit inputs:
+  `TRADINGDATAS_API_URL`, `TRADINGDATAS_CATALOG_VERSION`,
+  `TRADINGDATAS_SCHEMA_MAJOR`, `TRADINGDATAS_ACCESS_POLICY_ID` (a local
+  cache/audit namespace, never an HTTP auth header), and
+  `TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON`. Missing or invalid config performs no HTTP
   call. A failed, stale, degraded, identity-mismatched or ambiguous V1 response omits the pulse;
   it does not fail the snapshot, synthesize movement, or try a legacy route.
 - CNFutures current runtime status uses the latest actionable row from
@@ -553,7 +555,7 @@ frozen responses and publishes a non-authoritative projection to
 `<output-root>/shared/runtime_test/phase1_paper_fixture/run_bundles/latest.json`.
 It intentionally does not target the active reader path and cannot create a “Today” run.
 There is no accepted
-scheduler, live SharedSignals adapter, or real paper-session readback.
+scheduler, fresh TradingDatas handoff, or real paper-session readback.
 Until those are independently implemented and verified, the expected
 user-facing state is “Today RunBundle unavailable”. Repository tests, fixture
 fills and isolated local artifacts are not production or market-runtime

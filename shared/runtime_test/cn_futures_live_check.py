@@ -24,6 +24,14 @@ from typing import Any, Callable, Mapping
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# This diagnostic owns a retired /realtime_5min path. A direct invocation must
+# not load it while TradingDatas has not supplied a fresh V1 handoff.
+if __name__ == "__main__":
+    from shared.governance.retirement import retired_cli
+
+    raise SystemExit(retired_cli("shared.runtime_test.cn_futures_live_check"))
+
 from CNFutures.review import latest_actionable_review  # noqa: E402
 from CNFutures.sample_maturity import (  # noqa: E402
     validate_futures_maturity_projection_hash,
@@ -974,15 +982,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    report = run_live_check(
-        sharedsignals_root=args.sharedsignals_root,
-        sqlite_db=args.sqlite_db,
-        max_age_minutes=args.max_age_minutes,
-        python_bin=args.python_bin,
-    )
-    print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
-    return 2 if report["overall_status"] == "fail" else 0
+    from shared.governance.retirement import retired_cli
+
+    del argv
+    return retired_cli("shared.runtime_test.cn_futures_live_check")
 
 
 if __name__ == "__main__":

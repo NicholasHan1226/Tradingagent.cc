@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Provider-neutral SharedSignals V1 client contract for TradingAgent.
+"""Provider-neutral TradingDatas V1 client contract for TradingAgent.
 
 The client deliberately has no default transport.  Runtime code must inject an
 explicit HTTP transport and an explicit catalog/dataset configuration.  This
 keeps tests offline and prevents silent fallback to legacy endpoints or local
-storage.
+storage.  The module, public class names and ``sharedsignals.query_result.v1``
+wire ID remain compatibility identifiers after the product rename.
 """
 
 from __future__ import annotations
@@ -140,6 +141,10 @@ class SharedSignalsV1Config:
     base_url: str
     expected_catalog_version: str
     dataset_ids: frozenset[str]
+    # TradingAgent-local cache/audit namespace for the injected transport
+    # identity. It is deliberately not emitted as an HTTP header; TradingDatas
+    # authentication remains owned by the transport and is unfrozen until the
+    # fresh handoff.
     access_policy_id: str
     timeout_seconds: float = 10.0
     max_limit: int = 10_000
@@ -647,10 +652,9 @@ class SharedSignalsV1Client:
         return tuple(sorted(self._cache))
 
     def _headers(self, *, json_request: bool = False) -> dict[str, str]:
-        headers = {
-            "Accept": "application/json",
-            "X-Access-Policy": self.config.access_policy_id,
-        }
+        # Do not invent an upstream auth or policy header. The injected
+        # transport owns authentication once TradingDatas freezes that contract.
+        headers = {"Accept": "application/json"}
         if json_request:
             headers["Content-Type"] = "application/json"
         return headers
@@ -664,7 +668,7 @@ class SharedSignalsV1Client:
     ) -> Mapping[str, Any]:
         if self._transport is None:
             raise TransportNotConfigured(
-                "SharedSignals V1 transport must be explicitly injected"
+                "TradingDatas V1 transport must be explicitly injected"
             )
         response = self._transport(
             method=method,
@@ -675,7 +679,7 @@ class SharedSignalsV1Client:
         )
         if response.status_code != 200:
             raise HTTPStatusError(
-                f"SharedSignals V1 {path} returned HTTP {response.status_code}"
+                f"TradingDatas V1 {path} returned HTTP {response.status_code}"
             )
         if not isinstance(response.json_body, Mapping):
             raise ContractViolation("HTTP response body must be a mapping")

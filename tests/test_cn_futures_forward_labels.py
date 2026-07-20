@@ -44,21 +44,21 @@ class _Reader:
                 "bar_time": "2026-07-13T10:05:00+08:00",
                 "close": 3510.0,
                 "volume": 100,
-                "source": "sharedsignals_futures_bars",
+                "source": "fixture.cnfutures.intraday-bars.v1",
                 **_receipts("2026-07-13T10:05:00+08:00"),
             },
             {
                 "bar_time": "2026-07-13T10:35:00+08:00",
                 "close": 3520.0,
                 "volume": 100,
-                "source": "sharedsignals_futures_bars",
+                "source": "fixture.cnfutures.intraday-bars.v1",
                 **_receipts("2026-07-13T10:35:00+08:00"),
             },
             {
                 "bar_time": "2026-07-13T15:00:00+08:00",
                 "close": 3530.0,
                 "volume": 100,
-                "source": "sharedsignals_futures_bars",
+                "source": "fixture.cnfutures.intraday-bars.v1",
                 **_receipts("2026-07-13T15:00:00+08:00"),
             },
         ]
@@ -248,7 +248,7 @@ def test_reference_receipt_failures_never_become_ready(
                 {
                     "bar_time": "2026-07-13T10:05:00+08:00",
                     "close": 3510.0,
-                    "source": "sharedsignals_futures_bars",
+                    "source": "fixture.cnfutures.intraday-bars.v1",
                     **_receipts("2026-07-13T10:05:00+08:00"),
                 }
             ]
@@ -283,7 +283,7 @@ def test_exit_receipt_failures_never_become_ready(
                 {
                     "bar_time": "2026-07-13T10:05:00+08:00",
                     "close": 99.0,
-                    "source": "sharedsignals_futures_bars",
+                    "source": "fixture.cnfutures.intraday-bars.v1",
                     **receipt_fields,
                 }
             ]
@@ -301,14 +301,14 @@ def test_invalid_high_price_cannot_control_selection_order(
     valid = {
         "bar_time": "2026-07-13T10:05:00+08:00",
         "close": 3510.0,
-        "source": "sharedsignals_futures_bars",
+        "source": "fixture.cnfutures.intraday-bars.v1",
         **_receipts("2026-07-13T10:05:00+08:00"),
     }
     invalid = {
         "bar_time": "2026-07-13T10:04:00+08:00",
         "timestamp": "2026-07-13T11:04:00+08:00",
         "close": 99_000.0,
-        "source": "sharedsignals_futures_bars",
+        "source": "fixture.cnfutures.intraday-bars.v1",
         **_receipts("2026-07-13T10:04:00+08:00"),
     }
     rows = [valid, invalid]
@@ -331,7 +331,7 @@ def test_missing_receipt_is_not_fabricated_from_as_of() -> None:
                 {
                     "bar_time": "2026-07-13T10:05:00+08:00",
                     "close": 3510.0,
-                    "source": "sharedsignals_futures_bars",
+                    "source": "fixture.cnfutures.intraday-bars.v1",
                 }
             ]
         ),

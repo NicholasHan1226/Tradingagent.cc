@@ -19,7 +19,6 @@ POLICY_FILENAMES: dict[str, str] = {
     "cn_futures": "cn_futures_capital_policy.yaml",
 }
 ALLOWED_MARKETS = frozenset(POLICY_FILENAMES)
-CANONICAL_AUTHORITY_GENERATION = 1
 CANONICAL_INITIAL_EQUITY_CNY = 50_000.0
 CANONICAL_SINGLE_NAME_MAX_PCT = 0.15
 CANONICAL_STOCK_GROSS_EXPOSURE_LIMIT_PCT = 0.90
@@ -153,7 +152,7 @@ class MarketPolicy:
         if (
             not isinstance(ag, int)
             or isinstance(ag, bool)
-            or ag != CANONICAL_AUTHORITY_GENERATION
+            or ag <= 0
         ):
             raise MarketPolicyError("unsupported_authority_generation")
 

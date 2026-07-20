@@ -27,7 +27,7 @@ def render(data: dict[str, Any]) -> str:
             - ts_code, name, direction, quantity
             - filled_price, requested_price, slippage_pct
             - fill_time, order_id, commission
-            - channel: "sim" | "shadow" | "hermes"
+            - channel: "sim" | "shadow"
 
     Returns:
         HTML string.
@@ -47,7 +47,7 @@ def render(data: dict[str, Any]) -> str:
 
     dir_label = {"buy": "买入", "sell": "卖出"}.get(direction, direction)
     badge_class = "badge-buy" if direction == "buy" else "badge-sell"
-    channel_label = {"sim": "模拟盘", "shadow": "影子盘", "hermes": "实盘"}.get(channel, channel)
+    channel_label = {"sim": "模拟盘", "shadow": "影子盘"}.get(channel, channel)
 
     # Receipt summary
     summary_html = (

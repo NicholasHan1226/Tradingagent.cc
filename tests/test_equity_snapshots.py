@@ -407,12 +407,12 @@ class EquitySnapshotTest(unittest.TestCase):
                     },
                 ]
 
-        with patch("shared.data.reader.TradingagentDataReader", FakeReader):
-            prices = load_mark_prices_for_positions(
-                {"600000.SH": {"quantity": 100}},
-                "ashare",
-                trade_date="20260705",
-            )
+        prices = load_mark_prices_for_positions(
+            {"600000.SH": {"quantity": 100}},
+            "ashare",
+            trade_date="20260705",
+            reader=FakeReader(),
+        )
 
         self.assertEqual(prices, {"600000.SH": 12.34})
 
@@ -427,12 +427,12 @@ class EquitySnapshotTest(unittest.TestCase):
                     {"symbol": symbol, "trade_date": "20260705", "close": 62500.5},
                 ]
 
-        with patch("shared.data.reader.TradingagentDataReader", FakeReader):
-            prices = load_mark_prices_for_positions(
-                {"BTCUSDT": {"quantity": 0.1}},
-                "crypto",
-                trade_date="20260705",
-            )
+        prices = load_mark_prices_for_positions(
+            {"BTCUSDT": {"quantity": 0.1}},
+            "crypto",
+            trade_date="20260705",
+            reader=FakeReader(),
+        )
 
         self.assertEqual(prices, {"BTCUSDT": 62500.5})
 
@@ -447,12 +447,12 @@ class EquitySnapshotTest(unittest.TestCase):
                     {"market_id": "558943", "latest_price": 0.9765},
                 ]
 
-        with patch("shared.data.reader.TradingagentDataReader", FakeReader):
-            prices = load_mark_prices_for_positions(
-                {"558943": {"quantity": 100}},
-                "pm",
-                trade_date="20260705",
-            )
+        prices = load_mark_prices_for_positions(
+            {"558943": {"quantity": 100}},
+            "pm",
+            trade_date="20260705",
+            reader=FakeReader(),
+        )
 
         self.assertEqual(prices, {"558943": 0.9765})
 
@@ -466,18 +466,18 @@ class EquitySnapshotTest(unittest.TestCase):
                     {"market_id": "558943", "yes_price": 0.8},
                 ]
 
-        with patch("shared.data.reader.TradingagentDataReader", FakeReader):
-            prices = load_mark_prices_for_positions(
-                {
-                    "558943:no": {
-                        "quantity": 100,
-                        "market_id": "558943",
-                        "outcome": "no",
-                    }
-                },
-                "pm",
-                trade_date="20260705",
-            )
+        prices = load_mark_prices_for_positions(
+            {
+                "558943:no": {
+                    "quantity": 100,
+                    "market_id": "558943",
+                    "outcome": "no",
+                }
+            },
+            "pm",
+            trade_date="20260705",
+            reader=FakeReader(),
+        )
 
         self.assertIn("558943:no", prices)
         self.assertAlmostEqual(prices["558943:no"], 0.2, places=6)
@@ -492,18 +492,18 @@ class EquitySnapshotTest(unittest.TestCase):
                     {"market_id": "558943", "yes_price": 0.8, "no_price": 0.35},
                 ]
 
-        with patch("shared.data.reader.TradingagentDataReader", FakeReader):
-            prices = load_mark_prices_for_positions(
-                {
-                    "558943:no": {
-                        "quantity": 100,
-                        "market_id": "558943",
-                        "outcome": "no",
-                    }
-                },
-                "pm",
-                trade_date="20260705",
-            )
+        prices = load_mark_prices_for_positions(
+            {
+                "558943:no": {
+                    "quantity": 100,
+                    "market_id": "558943",
+                    "outcome": "no",
+                }
+            },
+            "pm",
+            trade_date="20260705",
+            reader=FakeReader(),
+        )
 
         self.assertEqual(prices, {"558943:no": 0.35})
 

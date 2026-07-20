@@ -4,7 +4,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from CNFutures import observation_report
 from CNFutures.sample_maturity import (
@@ -108,13 +107,11 @@ class CNFuturesObservationReportTest(unittest.TestCase):
                 ],
             }
 
-            with patch.object(
-                observation_report, "run_live_check", return_value=live_report
-            ):
-                report = observation_report.build_observation_report(
-                    review_root=review_root,
-                    review_path=review_root / "data/cn_futures_sim_reviews.jsonl",
-                )
+            report = observation_report.build_observation_report(
+                live_report=live_report,
+                review_root=review_root,
+                review_path=review_root / "data/cn_futures_sim_reviews.jsonl",
+            )
 
             self.assertEqual(report["maturity"]["status"], "current")
             self.assertEqual(
@@ -138,13 +135,11 @@ class CNFuturesObservationReportTest(unittest.TestCase):
             tampered = json.loads(maturity_path.read_text(encoding="utf-8"))
             tampered["sample_counts"]["valid_sample_count"] = 999
             maturity_path.write_text(json.dumps(tampered), encoding="utf-8")
-            with patch.object(
-                observation_report, "run_live_check", return_value=live_report
-            ):
-                rejected = observation_report.build_observation_report(
-                    review_root=review_root,
-                    review_path=review_root / "data/cn_futures_sim_reviews.jsonl",
-                )
+            rejected = observation_report.build_observation_report(
+                live_report=live_report,
+                review_root=review_root,
+                review_path=review_root / "data/cn_futures_sim_reviews.jsonl",
+            )
             self.assertEqual(rejected["maturity"]["status"], "invalid")
             self.assertIn("projection_sha256_invalid", rejected["maturity"]["issues"])
             self.assertEqual(rejected["styles"]["ranked"], [])
@@ -264,13 +259,11 @@ class CNFuturesObservationReportTest(unittest.TestCase):
                     "alerts": [],
                 }
 
-                with patch.object(
-                    observation_report, "run_live_check", return_value=live_report
-                ):
-                    report = observation_report.build_observation_report(
-                        review_root=review_root,
-                        review_path=review_path,
-                    )
+                report = observation_report.build_observation_report(
+                    live_report=live_report,
+                    review_root=review_root,
+                    review_path=review_path,
+                )
 
                 affordability = report["simulation"]["affordability"]
                 self.assertEqual(affordability["affordable_distinct_products"], [])
@@ -408,12 +401,11 @@ class CNFuturesObservationReportTest(unittest.TestCase):
                 ],
             }
 
-            with patch.object(
-                observation_report, "run_live_check", return_value=live_report
-            ):
-                report = observation_report.build_observation_report(
-                    review_root=review_root, review_path=review_path
-                )
+            report = observation_report.build_observation_report(
+                live_report=live_report,
+                review_root=review_root,
+                review_path=review_path,
+            )
 
             self.assertEqual(report["observation_phase"], "ready_to_observe")
             self.assertEqual(report["data"]["freshness_status"], "fresh")
@@ -520,13 +512,11 @@ class CNFuturesObservationReportTest(unittest.TestCase):
                 ],
             }
 
-            with patch.object(
-                observation_report, "run_live_check", return_value=live_report
-            ):
-                report = observation_report.build_observation_report(
-                    review_root=root / "review",
-                    review_path=review_path,
-                )
+            report = observation_report.build_observation_report(
+                live_report=live_report,
+                review_root=root / "review",
+                review_path=review_path,
+            )
 
             affordability = report["simulation"]["affordability"]
             self.assertEqual(affordability["raw_distinct_products"], ["cu", "m", "rb"])
@@ -585,13 +575,11 @@ class CNFuturesObservationReportTest(unittest.TestCase):
                 "alerts": [],
             }
 
-            with patch.object(
-                observation_report, "run_live_check", return_value=live_report
-            ):
-                report = observation_report.build_observation_report(
-                    review_root=root / "review",
-                    review_path=review_path,
-                )
+            report = observation_report.build_observation_report(
+                live_report=live_report,
+                review_root=root / "review",
+                review_path=review_path,
+            )
 
             affordability = report["simulation"]["affordability"]
             self.assertEqual(affordability["state"], "stale")
@@ -653,12 +641,11 @@ class CNFuturesObservationReportTest(unittest.TestCase):
                 "alerts": [],
             }
 
-            with patch.object(
-                observation_report, "run_live_check", return_value=live_report
-            ):
-                report = observation_report.build_observation_report(
-                    review_root=root / "review", review_path=review_path
-                )
+            report = observation_report.build_observation_report(
+                live_report=live_report,
+                review_root=root / "review",
+                review_path=review_path,
+            )
 
             self.assertEqual(report["simulation"]["affordability"]["state"], "current")
             self.assertEqual(

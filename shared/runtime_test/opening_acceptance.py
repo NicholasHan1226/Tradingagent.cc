@@ -18,6 +18,14 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# A direct module invocation must stop before importing the old reader, email
+# stack, or any output path. The implementation below remains importable only
+# as time-boxed forensic code until its tests and evidence are deleted.
+if __name__ == "__main__":
+    from shared.governance.retirement import retired_cli
+
+    raise SystemExit(retired_cli("shared.runtime_test.opening_acceptance"))
+
 from shared.notify import email_sender
 try:
     from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB
@@ -610,32 +618,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    report = run_acceptance(
-        now=_now_cn(args.now) if args.now else None,
-        health_input_root=args.health_input_root,
-        sharedsignals_api_url=args.sharedsignals_api_url,
-        sqlite_db=args.sqlite_db,
-    )
-    rendered = render_text(report)
-    notification = _send_notification(report, rendered, args.send_on)
-    # Keep the legacy field for callers that already consume it.  Business
-    # acceptance remains solely in overall_status/checks.
-    report["email"] = notification["result"]
-    report["notification_status"] = notification["notification_status"]
-    report["notification"] = notification
-    _write_outputs(report)
-    if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
-    else:
-        print(rendered)
-        if notification["delivery_status"] not in {"skipped", "rate_limited"}:
-            print(f"邮件: {notification['delivery_status']} -> {notification['result'].get('to')}")
-        if notification["notification_status"] == "degraded":
-            print(f"通知状态: degraded；{notification.get('error') or notification['delivery_status']}")
-    if args.exit_zero:
-        return 0
-    return 2 if report["overall_status"] == "fail" else 0
+    from shared.governance.retirement import retired_cli
+
+    del argv
+    return retired_cli("shared.runtime_test.opening_acceptance")
 
 
 if __name__ == "__main__":

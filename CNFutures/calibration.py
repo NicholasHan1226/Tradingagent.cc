@@ -1,21 +1,35 @@
 #!/usr/bin/env python3
-"""Post-session forward labeling and win-rate calibration for CN futures sims."""
+"""CN futures simulation calibration with an explicit market-data port.
+
+The historical direct CLI is retired.  Library callers must inject a fixture
+or TradingDatas-backed reader and may never construct a hidden legacy reader.
+"""
 
 from __future__ import annotations
 
-import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# Stop direct invocation before importing market modules or touching output.
+if __name__ == "__main__":
+    from shared.governance.retirement import retired_cli
+
+    raise SystemExit(retired_cli("CNFutures.calibration"))
+
 from . import MARKET
-from .adapter import CNFuturesAdapter, READER_MARKET
+from .adapter import READER_MARKET
 from .contract_rules import normalize_product
 from .review import DEFAULT_REVIEW_PATH, dynamic_threshold_candidates, summarize_forward_outcomes
+from shared.governance.retirement import require_explicit_data_port, retired_cli
 
 
-ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SIGNALS_DIR = ROOT / "signals"
 DEFAULT_REVIEW_ROOT = ROOT / "shared" / "review"
 DEFAULT_LABELS_PATH = DEFAULT_REVIEW_ROOT / "cn_futures" / "forward_labels.jsonl"
@@ -262,8 +276,10 @@ def build_calibration_report(
     max_cards: int = 500,
     write_labels: bool = True,
 ) -> dict[str, Any]:
-    adapter = CNFuturesAdapter(reader=reader) if reader is not None else CNFuturesAdapter()
-    active_reader = reader or adapter.reader
+    active_reader = require_explicit_data_port(
+        reader,
+        context="CNFutures.build_calibration_report",
+    )
     cards = _signal_cards(signals_dir, date=date, max_cards=max_cards)
     bars_by_symbol: dict[str, list[dict[str, Any]]] = {}
     labels: list[dict[str, Any]] = []
@@ -338,36 +354,9 @@ def _write_report_md(path: Path, report: dict[str, Any]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Post-session CN futures forward labeling and win-rate calibration.")
-    parser.add_argument("--date", default=datetime.now().strftime("%Y%m%d"))
-    parser.add_argument("--signals-dir", type=Path, default=DEFAULT_SIGNALS_DIR)
-    parser.add_argument("--review-path", type=Path, default=DEFAULT_REVIEW_PATH)
-    parser.add_argument("--labels-path", type=Path, default=DEFAULT_LABELS_PATH)
-    parser.add_argument("--write-json", type=Path, default=DEFAULT_REPORT_JSON)
-    parser.add_argument("--write-md", type=Path, default=DEFAULT_REPORT_MD)
-    parser.add_argument("--max-cards", type=int, default=500)
-    parser.add_argument("--no-write-labels", action="store_true")
-    parser.add_argument("--pretty", action="store_true")
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    report = build_calibration_report(
-        date=str(args.date),
-        signals_dir=args.signals_dir,
-        review_path=args.review_path,
-        labels_path=args.labels_path,
-        max_cards=args.max_cards,
-        write_labels=not args.no_write_labels,
-    )
-    if args.write_json:
-        _write_report_json(args.write_json, report)
-    if args.write_md:
-        _write_report_md(args.write_md, report)
-    print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=True))
-    return 0
+    del argv
+    return retired_cli("CNFutures.calibration")
 
 
 if __name__ == "__main__":

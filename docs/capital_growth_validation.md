@@ -11,15 +11,15 @@
 - CNFutures 长期模拟，无实盘时间表。
 - “月收益 20%”只能作为收益分布上尾的 stretch scenario，报告 `P(monthly_return>=20%)`、负月概率、尾部亏损与风险毁灭概率；不得作为第一阶段 PASS、最低交易频率或强迫交易条件。
 
-本轮主板小资金架构仅是本地未提交候选；没有真实 SS V1 runtime、生产 scheduler 和真实 paper samples 时，只可评价契约/故障负例，不可评价策略正期望。A股个股样本仅限沪深主板普通 A 股；创业板、科创板指数和全市场行业聚合只作 `context_only` 环境证据。环境汇总缺失时行业宽度 degraded，不得用主板子集补分母。
+本轮主板小资金架构仅是本地未提交候选；没有 TradingDatas fresh handoff、真实 V1 runtime、生产 scheduler 和真实 paper samples 时，只可评价契约/故障负例，不可评价策略正期望。A股个股样本仅限沪深主板普通 A 股；创业板、科创板指数和全市场行业聚合只作 `context_only` 环境证据。环境汇总缺失时行业宽度 degraded，不得用主板子集补分母。
 
 ### 1.1 第一阶段四层验收
 
 | 层级 | 需要的证据 | 不能推断 |
 |---|---|---|
-| 契约层 | SS fixture/catalog/query、PIT gate、三层 Universe、50k plan binding、rank score、Opportunity/Ledger、forecast、三风格shadow router、RunBundle、ledger/OOS/LLM负例 | SS live、真实模拟成交、shadow预测有效性 |
+| 契约层 | TradingDatas fixture/catalog/query、PIT gate、三层 Universe、50k plan binding、rank score、Opportunity/Ledger、forecast、三风格shadow router、RunBundle、ledger/OOS/LLM负例 | TradingDatas live、真实模拟成交、shadow预测有效性 |
 | 本地闭环层 | 受控离线 replay、crash/restart、现金/持仓/冻结额守恒、原子 readback | 生产 scheduler 或稳定运维 |
-| 20 交易日工程层 | 真实 SS V1 数据下 0 未来数据、0同 bar、0重复 order/fill、0权限泄漏、0旧链 fallback、0未解释账务差异 | 策略正期望或实盘准备 |
+| 20 交易日工程层 | 真实 TradingDatas V1 数据下 0 未来数据、0同 bar、0重复 order/fill、0权限泄漏、0旧链 fallback、0未解释账务差异 | 策略正期望或实盘准备 |
 | 60–120 交易日科学层 | 冻结 OOS、独立 decision clusters/N_eff、多市场状态、完整成本/未成交、可发布的校准或排序证据 | 自动晋级、扩风险或 live |
 
 第一阶段 Champion 是 `uncalibrated_deterministic_rank_score`。只验收排序一致性、分组结果、稳定性、与现金/简单可行基线的费用后增量和尾部风险。没有冻结 calibrator 时，概率、Brier、Log Loss 和 ECE 都不在Champion验收面中；分离的forecast shadow可以保存带detached proof的校准研究artifact，但不能把概率回写Champion或订单链。
@@ -86,7 +86,7 @@ LLM 输出不能直接作为 rank score、概率、仓位乘数、风险豁免�
 
 ### A股
 
-- 真实SharedSignals price/volume/source/timestamp，成交时段，普通A股与流动性，T+1、涨跌停、方向正确的整手/零股卖出规则、cash/positions、幂等全部通过。
+- 真实 TradingDatas price/volume/source/timestamp，成交时段，普通A股与流动性，T+1、涨跌停、方向正确的整手/零股卖出规则、cash/positions、幂等全部通过。
 - risk/order绑定同一`tradingagent.small_account_plan_receipt.v1`；无默认`AccountAuthorityVerifier`已逐项复核模拟capital generation、完整账户内容、position receipt/hash、cash/gross、mark、sellable数量和有效期，订单的symbol/side/quantity/reservation price/fee逐项相等。fixture proof不可晋级，也不证明真实账户。
 - optimizer与day loop还必须共同证明六维论点风险：显式人工policy、逐成员detached proof和完整候选/持仓/open-or-increase-pending exposure set在决策时有效；每笔notional delta、同股票group连续性、pre/post/final exposure map与plan hash可独立复算。缺成员、重复成员、过期proof、运行时自签、替换policy后重签、pending漏记或跨决策清零都必须拒绝；超cap不得锁死经过验证的reduce/exit。fixture authority不可晋级，也不证明生产风险上限合理。
 - plan必须绑定`cost_policy_id`，day loop按canonical佣金、过户费和卖出印花税独立复算；篡改费用后重新签名仍须拒绝。

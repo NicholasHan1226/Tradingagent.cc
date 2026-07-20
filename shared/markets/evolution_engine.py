@@ -182,6 +182,9 @@ def _write_weights_snapshot(
         "capital_layer": "simulated",
         "account_type": "simulated",
         "real_execution": False,
+        "authority": "advisory_only",
+        "runtime_applied": False,
+        "requires_manual_review": True,
         "styles": {
             name: {
                 "status": _style_status(style),
@@ -224,28 +227,28 @@ def _consecutive_loser_days(
 
 def promote_style(style: dict[str, Any]) -> dict[str, Any]:
     before = {"status": _style_status(style), "weight": _style_weight(style)}
-    _set_status(style, "active")
-    style["weight"] = min(
+    proposed_weight = min(
         MAX_ACTIVE_WEIGHT, max(MIN_ACTIVE_WEIGHT, _style_weight(style) * 1.20)
     )
     return {
-        "action": "promoted",
+        "action": "promotion_proposed",
         "before": before,
-        "after": {"status": _style_status(style), "weight": style["weight"]},
+        "proposed": {"status": "active", "weight": proposed_weight},
+        "runtime_applied": False,
+        "requires_manual_review": True,
     }
 
 
 def demote_style(style: dict[str, Any]) -> dict[str, Any]:
     before = {"status": _style_status(style), "weight": _style_weight(style)}
-    style["weight"] = max(MIN_ACTIVE_WEIGHT, _style_weight(style) * 0.75)
-    if style["weight"] <= MIN_ACTIVE_WEIGHT:
-        _set_status(style, "paused")
-    else:
-        style["last_modified"] = _now_iso()
+    proposed_weight = max(MIN_ACTIVE_WEIGHT, _style_weight(style) * 0.75)
+    proposed_status = "paused" if proposed_weight <= MIN_ACTIVE_WEIGHT else before["status"]
     return {
-        "action": "demoted",
+        "action": "risk_tightening_proposed",
         "before": before,
-        "after": {"status": _style_status(style), "weight": style["weight"]},
+        "proposed": {"status": proposed_status, "weight": proposed_weight},
+        "runtime_applied": False,
+        "requires_manual_review": True,
     }
 
 
@@ -253,14 +256,16 @@ def invalidate_style(
     style: dict[str, Any], reason: str = "performance below threshold"
 ) -> dict[str, Any]:
     before = {"status": _style_status(style), "weight": _style_weight(style)}
-    _set_status(style, "deprecated")
-    style["deprecated_reason"] = reason
-    style["deprecated_at"] = _now_iso()
-    style["weight"] = 0.0
     return {
-        "action": "deprecated",
+        "action": "invalidation_proposed",
         "before": before,
-        "after": {"status": _style_status(style), "weight": 0.0},
+        "proposed": {
+            "status": "deprecated",
+            "weight": 0.0,
+            "reason": reason,
+        },
+        "runtime_applied": False,
+        "requires_manual_review": True,
     }
 
 
@@ -317,14 +322,17 @@ def generate_variant(
     variant.update(
         {
             "name": name,
-            "status": "active",
-            "enabled": True,
-            "weight": MIN_ACTIVE_WEIGHT,
+            "status": "paused",
+            "enabled": False,
+            "weight": 0.0,
             "created_at": _now_iso(),
             "last_modified": _now_iso(),
             "generation": base_generation + 1,
             "parent_style": base_name,
-            "description": f"Auto-generated simulated variant from {base_name}.",
+            "candidate_only": True,
+            "runtime_applied": False,
+            "requires_manual_review": True,
+            "description": f"Inactive shadow challenger proposed from {base_name}.",
         }
     )
     variant["position_pct"] = _tweak_numeric(base_style, "position_pct", -1)
@@ -334,10 +342,12 @@ def generate_variant(
     variant["max_hold_days"] = _tweak_numeric(base_style, "max_hold_days", -1)
     _write_style_file(path, variant)
     return {
-        "action": "variant_generated",
+        "action": "challenger_proposed",
         "style_name": name,
         "base_style": base_name,
         "path": str(path),
+        "runtime_applied": False,
+        "requires_manual_review": True,
     }
 
 
@@ -347,7 +357,7 @@ def evaluate_and_adjust(
     review_root: Path | str | None = None,
     styles_dir: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Compare style performance, adjust weights, and log all changes."""
+    """Compare styles and persist advisory proposals without runtime mutation."""
 
     market_key = _require_evolution_market(market)
     styles = _load_styles(market_key, styles_dir, review_root=review_root)
@@ -436,7 +446,7 @@ def evaluate_and_adjust(
                 review_root=review_root,
                 styles_dir=styles_dir,
             )
-            if variant_action["action"] == "variant_generated":
+            if variant_action["action"] == "challenger_proposed":
                 actions.append(
                     {
                         "market": market_key,
@@ -444,23 +454,20 @@ def evaluate_and_adjust(
                         "reason": "top style improving",
                     }
                 )
-                variant_path = Path(str(variant_action.get("path", "")))
-                variant_payload = _read_style_file(variant_path)
-                if variant_payload:
-                    variant_payload["_path"] = str(variant_path)
-                    styles[str(variant_payload.get("name"))] = variant_payload
-
-    _normalize_weights(styles)
+    # No candidate or advisory weight is applied to runtime styles.  The
+    # snapshot below is an inspectable proposal surface only.
     weights = _write_weights_snapshot(
         market_key, styles, rankings, review_root=review_root
     )
     result = {
         "market": market_key,
         "generated_at": _now_iso(),
-        "state": "adjusted" if actions else "observed",
+        "state": "proposal_generated" if actions else "observed",
         "capital_layer": "simulated",
         "account_type": "simulated",
         "real_execution": False,
+        "runtime_applied": False,
+        "requires_manual_review": bool(actions),
         "actions": actions,
         "rankings": rankings,
         "weights": weights.get("styles", {}),
@@ -501,12 +508,14 @@ def evaluate_all_markets(
     ]
     return {
         "generated_at": _now_iso(),
-        "state": "evaluated",
+        "state": "evaluated_advisory_only",
         "capital_layer": "simulated",
         "account_type": "simulated",
         "real_execution": False,
         "markets": results,
-        "changed": any(result.get("actions") for result in results),
+        "changed": False,
+        "production_changed": False,
+        "proposal_count": sum(len(result.get("actions") or []) for result in results),
         "guard": guard_state,
     }
 

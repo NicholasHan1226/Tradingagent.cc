@@ -5,7 +5,7 @@
 ## 项目定位
 
 - TradingAgent 负责候选、预测、组合决策、风险门禁、模拟执行、样本、复盘和只读看板。
-- SharedSignals 是基础数据 authority；生产只通过其 HTTP API 消费，不直读兄弟仓数据库，也不在本仓现场采集行情。
+- TradingDatas（`NicholasHan1226/TradingDatas`；本地目录 `/Users/nicholashan/Projects/Finance/TradingDatas`）是基础数据 authority；TradingAgent 只通过其 `GET /v1/catalog` 与 `POST /v1/query` HTTP 契约消费，不直读兄弟仓数据库，也不在本仓现场采集行情。TradingDatas fresh handoff 前只允许 fixture/mock-first，不得臆造 base URL、catalog version 或 dataset ID。
 - MarketGraph 是可选只读研究增强。它不是价格、资本、账户或执行 authority，`mg_off` 必须能独立形成样本闭环。
 - 当前目标是验证工程闭环、样本质量、费用/滑点后结果与回撤；不承诺盈利，更不承诺稳定盈利。
 
@@ -74,9 +74,18 @@
 - `front/` 是唯一活跃只读前端。All Markets 只可汇总非货币计数；不同市场的资本、权益、PnL、收益率和回撤绝不聚合。
 - 系统仅供 Nicholas 个人内部使用。前端与只读 API 默认只监听 localhost；`tradingagent.cc` 可作为个人远程入口，但必须由 Cloudflare Access 或等价单用户认证保护。禁止匿名公网访问或直接暴露 API，远程入口必须独立完成权限、路由和撤销验证。
 
+## 长期多市场开发 lane
+
+- A股、CNFutures 与 Crypto 使用三个长期固定 Git worktree 和三个独立分支；工作树提供物理隔离，`shared/governance/market_lanes.yaml` 定义机器可读的单写者路径边界。
+- 三个市场的模拟撮合合同和未来实盘适配器族必须各自独立：A股保留现金股票/T+1/整手语义，CNFutures保留多空/开平/保证金/夜盘语义，Crypto保留小数数量/最小名义金额/Testnet与Live分账语义。共享内核只可提供BrokerPort、outbox、幂等、审计和对账接口，禁止共享provider payload、账户、密钥、订单状态机、风险或资本authority。
+- 市场 owner 只能修改本市场目录、同前缀测试和局部文档。`shared/**`、根文档、前端和其它市场目录一律只可提交 handoff 提案，由共享内核单写者统一实现。
+- 每轮开工、交接和提交前都必须运行 `python scripts/validate_market_lane.py --lane <ashare|cnfutures|crypto>`；错误 worktree、错误分支或越权路径必须 fail closed。
+- 三个稳定 market worktree 不随单次任务清理。共享变更先经独立候选合入 `main`，市场 lane 只在工作树干净的检查点同步 `main`；禁止市场分支之间互相 cherry-pick 或直接复制公共实现。
+- 每批变更保持小范围、独立测试和独立文档。candidate、`main`、远端、服务器文件、runtime、真实数据和真实交易权限继续分别验收。
+
 ## 验收与发布边界
 
 - 命令、运行顺序和回滚见 [docs/operations.md](docs/operations.md)；字段见 [docs/data_contract.md](docs/data_contract.md)；样本与成熟度见 [docs/capital_growth_validation.md](docs/capital_growth_validation.md)。
 - 当前事实只写 [STATUS.md](STATUS.md)。文档不得把本地测试、GitHub、生产文件、生产 runtime、cron、真实市场样本或真实交易混成一个“完成”。
 - 回滚只能停止新任务、切回已验证代码并保留 append-only 事实；不得删除/改写新账本，也不得恢复旧共享账本。
-- 未经单独授权，禁止 commit、push、deploy、apply cron、发邮件、操作 GUI 或接入真实交易。
+- Nicholas 已于 2026-07-20 对本项目授予正常发布的 standing authorization：当开发/修复范围明确、测试与独立审计通过且 release preflight/回滚路径成立时，主助手默认继续完成 commit、PR/merge、push、服务器旁路或项目既定部署与读回，不再等待逐次发布确认。该授权不包含 force-push/历史重写、删除或覆盖数据、密钥/账号/权限、数据库破坏性迁移、公开入口切换、安装或启用 cron/service、真实模型网络调用、邮件/GUI 外部写入、broker 或真实交易；这些动作仍须由当期任务明确包含并通过各自门禁。

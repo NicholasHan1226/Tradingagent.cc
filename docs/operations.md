@@ -1,12 +1,12 @@
 # TradingAgent V1 本地与服务器旁路运行、验收及回滚
 
-> 本文是 A 股 V1 **simulation-only** 候选在本地与服务器旁路环境中的唯一现役操作入口。服务器sidecar只可在任务级明确授权后，以版本化、隔离、无公网切换的方式执行；该授权不自动扩展到merge/main、现役源码/API/页面切换、网络数据联调、broker、真实交易、邮件、GUI、scheduler/cron或生产密钥。仓库模板、fixture、本地测试、候选分支和服务器旁路成功均不代表 Git 主线、SharedSignals runtime 或现役生产已生效。当前授权与执行证据只见 [STATUS.md](../STATUS.md)。
+> 本文是 A 股 V1 **simulation-only** 候选在本地与服务器旁路环境中的唯一现役操作入口。Nicholas 已授予正常代码发布的 standing authorization；范围明确且通过测试、独立审计、preflight与回滚检查后，提交、PR/merge、push和版本化loopback-only sidecar不再等待逐次确认。该授权不自动扩展到现役源码/API/页面切换、网络数据联调、broker、真实交易、邮件、GUI、scheduler/cron、公开入口或生产密钥。仓库模板、fixture、本地测试、候选分支和服务器旁路成功均不代表 Git 主线、TradingDatas runtime 或现役生产已生效。当前执行证据只见 [STATUS.md](../STATUS.md)。
 
 ## 1. 不可突破的边界
 
 - `REAL_TRADING_ENABLED=false`；不得由环境变量或 fixture 覆盖。
 - 该系统仅供 Nicholas 个人内部使用。前端/API默认只绑定`127.0.0.1`；`tradingagent.cc`远程入口必须先通过Cloudflare Access或等价单用户认证，禁止匿名公网访问和API直出。DNS、Tunnel/Pages与Access policy分别验收。
-- TradingAgent 只消费显式配置的 `GET /v1/catalog` 与 `POST /v1/query` 契约；不读取 SharedSignals 数据库，不实现其服务端，不使用旧专用接口或数据商回退。
+- TradingAgent 只消费显式配置的 TradingDatas `GET /v1/catalog` 与 `POST /v1/query` 契约；不读取 TradingDatas 数据库，不实现其服务端，不使用旧专用接口或数据商回退。
 - HTTP 成功不代表数据可用。每个 dataset 独立检查 `state`、`degraded`、`freshness`、`quality`、`lineage`、`receipt_id`、`data_through`、`observed_at` 和 `reasons`；impaired state 允许后四项为 null，TA 不补造。无完整 source proof 时固定 fail closed；只有证据完整且 policy 明确允许的 impaired evidence 才可降权。
 - A 股个股只允许沪深主板普通股。创业板、科创板及北京市场个股不得进入候选、预测、目标仓位、订单、成交或持仓；双创指数与全市场行业聚合只作 `context_only` 环境证据。
 - 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是本地隔离shadow合同，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。默认关闭的DeepSeek HTTPS transport已是本地候选；2026-07-18仅有一次隔离真实请求到达provider后被本地evidence schema拒绝，accepted evidence、稳定认证和生产激活仍未验证。live paper scheduler仍是计划项。
@@ -14,7 +14,7 @@
 
 ## 1.1 服务器旁路候选部署
 
-服务器旁路部署只用于回答“冻结候选能否在目标服务器环境安装、测试、构建和运行”。它不改变现役代码、服务、定时任务、网页、路由或任何authority。每次执行都必须有独立授权、精确提交SHA和新的版本化目录；禁止把本节变成默认自动发布路径。
+服务器旁路部署只用于回答“冻结候选能否在目标服务器环境安装、测试、构建和运行”。它不改变现役代码、服务、定时任务、网页、路由或任何authority。它是正常发布后的默认非权威服务器验收路径，但每次仍必须使用精确提交SHA、新的版本化目录、隔离环境、完整receipt和现役未变读回；任何条件不满足都停止，不得切换现役。
 
 目录约定：
 
@@ -86,6 +86,7 @@ SAFE_ENV=(
   TZ=Asia/Shanghai
   REAL_TRADING_ENABLED=false
   TRADINGAGENT_LLM_NETWORK_ENABLED=false
+  TRADINGDATAS_API_URL=
   SHAREDSIGNALS_API_URL=
   MARKETGRAPH_API_URL=
   PYTHONDONTWRITEBYTECODE=1
@@ -117,7 +118,7 @@ sudo -u marketgraph "${SAFE_ENV[@]}" node --version > "$EVIDENCE/node-version.tx
 sudo -u marketgraph "${SAFE_ENV[@]}" npm --version > "$EVIDENCE/npm-version.txt"
 ```
 
-`env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、SharedSignals catalog/dataset/auth或DeepSeek credential。`SHAREDSIGNALS_API_URL`与`MARKETGRAPH_API_URL`在旁路验收中必须显式为空，避免未退役旧reader把“变量缺失”解释为localhost默认地址并读取现役服务；这两个空值不是V1联调配置。依赖范围未完全锁hash时，receipt必须保存Python/pip/Node/npm版本、完整`pip freeze`、requirements与`package-lock.json`哈希；未保存这些证据不得声称复现了同一环境。
+`env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、TradingDatas catalog/dataset/auth或DeepSeek credential。`TRADINGDATAS_API_URL`、旧名 tombstone `SHAREDSIGNALS_API_URL` 与 `MARKETGRAPH_API_URL` 在旁路验收中必须显式为空，避免任何未退役旧 reader 把“变量缺失”解释为 localhost 默认地址并读取现役服务；这些空值不是 V1 联调配置。依赖范围未完全锁 hash 时，receipt 必须保存 Python/pip/Node/npm 版本、完整 `pip freeze`、requirements 与 `package-lock.json` 哈希；未保存这些证据不得声称复现了同一环境。
 
 只读API canary必须使用非现役、loopback-only端口，显式保持`REAL_TRADING_ENABLED=false`，记录精确PID并在停止前核对其cmdline指向候选`dist-server`。禁止通配`pkill`或占用8787。以下生命周期在同一个fail-fast Bash进程中执行；`FINANCE_WORKSPACE_ROOT`只指向候选的显式别名，不读取现役workspace：
 
@@ -255,24 +256,24 @@ export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 export REAL_TRADING_ENABLED=false
 ```
 
-V1 不提供 SharedSignals 默认地址。仅在上游合同真正冻结并由获批联调任务提供时，才可显式设置：
+V1 不提供 TradingDatas 默认地址。仅在 TradingDatas fresh handoff 与上游合同真正冻结、并由获批联调任务提供时，才可显式设置：
 
 ```bash
-export SHAREDSIGNALS_API_URL='<explicit-http-or-https-base-url>'
-export SHAREDSIGNALS_CATALOG_VERSION='<explicit-frozen-catalog-version>'
-export SHAREDSIGNALS_ACCESS_POLICY_ID='<explicit-read-only-policy-id>'
-export SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON='<explicit-market-to-dataset-json>'
-export SHAREDSIGNALS_SCHEMA_MAJOR='<explicit-positive-schema-major>'
-export SHAREDSIGNALS_RUNTIME_TRANSPORT='http-json-v1'
+export TRADINGDATAS_API_URL='<explicit-http-or-https-base-url>'
+export TRADINGDATAS_CATALOG_VERSION='<explicit-frozen-catalog-version>'
+export TRADINGDATAS_ACCESS_POLICY_ID='<explicit-read-only-policy-id>'
+export TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON='<explicit-market-to-dataset-json>'
+export TRADINGDATAS_SCHEMA_MAJOR='<explicit-positive-schema-major>'
+export TRADINGDATAS_RUNTIME_TRANSPORT='http-json-v1'
 ```
 
 缺任一配置时保持 unavailable；不得猜测 localhost、生产地址、catalog version、schema major 或 dataset ID。`http-json-v1` 只表示显式 TA consumer transport，拒绝 30x 重定向，且不能解除未迁移业务 reader 的 retirement block；当前不授权配置或运行 live endpoint。
 
-### 2.1 SharedSignals V1 接入验收器
+### 2.1 TradingDatas V1 接入验收器
 
-轻量的 `sharedsignals_v1_gate.py` 继续负责任务启动前逐 dataset 的即时可用性门；`sharedsignals_v1_integration_probe.py` 负责首次接入、SS 发布或 catalog/profile 变化、消费者切换和故障恢复后的完整只读验收。二者均是 TA consumer，不实现或验收 SS 服务端；两者输出的 reason code 都由 TA 本地状态机推导，上游 `metadata.reasons` 自由文本只保存哈希，不能伪装成本地门禁结论或进入日志。
+轻量的 `sharedsignals_v1_gate.py` 与 `sharedsignals_v1_integration_probe.py` 保留为兼容文件名：前者负责任务启动前逐 dataset 的即时可用性门，后者负责首次接入、TradingDatas 发布或 catalog/profile 变化、消费者切换和故障恢复后的完整只读验收。二者均是 TA consumer，不实现或验收 TradingDatas 服务端；两者输出的 reason code 都由 TA 本地状态机推导，上游 `metadata.reasons` 自由文本只保存哈希，不能伪装成本地门禁结论或进入日志。
 
-模板见 [sharedsignals_v1_integration_probe.example.json](examples/sharedsignals_v1_integration_probe.example.json)。模板中的 `.invalid` 地址、`fixture.*` dataset ID、catalog 与 policy 只用于说明结构，不是生产默认值。SS owner 正式交接后，应复制到仓外绝对路径并逐项替换；manifest 只允许保存 base URL 与访问策略**身份**，禁止写 API key、token、密码或其它 credential。真实认证协议尚未冻结，验收器不会自行发明 Bearer/Header 或读取 `.env` 密钥。
+模板见 [sharedsignals_v1_integration_probe.example.json](examples/sharedsignals_v1_integration_probe.example.json)；该文件名是兼容入口。模板中的 `.invalid` 地址、`fixture.*` dataset ID、catalog 与 policy 只用于说明结构，不是生产默认值。TradingDatas owner 提供 fresh handoff 后，应复制到仓外绝对路径并逐项替换；manifest 只允许保存 base URL 与访问策略**身份**，禁止写 API key、token、密码或其它 credential。真实认证协议尚未冻结，验收器不会自行发明 Bearer/Header 或读取 `.env` 密钥。
 
 首批显式功能角色为：
 
@@ -295,11 +296,11 @@ python3 -m shared.runtime_test.sharedsignals_v1_integration_probe \
 
 验收器只调用一次 `GET /v1/catalog`，随后对每个数据角色用同一显式 `as_of`、fields、filters、schema major、limit 与默认 registry order 连续执行两次 `POST /v1/query`。它复用 `DataEvidenceGate` 与 `ResearchDataProfile` 检查 metadata、source proof、精确字段投影、最小行数和行级 `event_time / available_time / revision_id / receipt_id`，并比较排除 transport request ID 后的完整响应语义哈希。缺少显式字段或出现未声明字段均阻断；后者只保存数量与字段集合哈希，避免行业聚合响应夹带个股字段或把未知字段写进回执。
 
-当前跨页 receipt、默认排序快照和拼页 identity 仍由 SS owner 待冻结。因此任一响应出现 `next_cursor != null` 时，首版固定返回 `pagination_contract_unfrozen` 并阻断；不会抓第二页后自行拼成研究快照。SS 合同补齐前，不得通过增大 limit、截取第一页或本地排序绕过。
+当前跨页 receipt、默认排序快照和拼页 identity 仍由 TradingDatas owner 待冻结。因此任一响应出现 `next_cursor != null` 时，首版固定返回 `pagination_contract_unfrozen` 并阻断；不会抓第二页后自行拼成研究快照。TradingDatas 合同补齐前，不得通过增大 limit、截取第一页或本地排序绕过。
 
-回执固定标注 `authority=non_authority`、`production_verified=false`、`real_trading_enabled=false`，隐藏 base URL、access policy 值、cursor、异常原文与上游自由文本 reason，只保存其 authority/config 哈希、catalog/query trace、dataset evidence、双跑一致性、PIT/内容哈希和 TA 受控 reason codes；上游 reason 原文只参与哈希。退出码为：`0=通过`、`2=数据或合同阻断`、`64=manifest/transport配置无效`、`74=回执落盘失败`。回执通过只证明该次显式只读输入满足 TA 接入合同，不证明 SS 服务端整体通过、生产 runtime 已切换、旧链 parity 已完成、每日数据持续健康或交易获授权。
+回执固定标注 `authority=non_authority`、`production_verified=false`、`real_trading_enabled=false`，隐藏 base URL、access policy 值、cursor、异常原文与上游自由文本 reason，只保存其 authority/config 哈希、catalog/query trace、dataset evidence、双跑一致性、PIT/内容哈希和 TA 受控 reason codes；上游 reason 原文只参与哈希。退出码为：`0=通过`、`2=数据或合同阻断`、`64=manifest/transport配置无效`、`74=回执落盘失败`。回执通过只证明该次显式只读输入满足 TA 接入合同，不证明 TradingDatas 服务端整体通过、生产 runtime 已切换、旧链 parity 已完成、每日数据持续健康或交易获授权。回执 schema ID `tradingagent.sharedsignals.integration-readiness.v1` 保持不变。
 
-未来可把该命令放在自动模拟盘启动前作为 fail-closed 前置门，但当前没有注册 scheduler/cron，也未调用任何 live SS 地址。每次 catalog/dataset/schema、PIT 字段或 access policy identity 变化都必须生成新 manifest 与新回执，不能复用旧 PASS。
+未来可把该命令放在自动模拟盘启动前作为 fail-closed 前置门，但当前没有注册 scheduler/cron，也未调用任何 live TradingDatas 地址。每次 catalog/dataset/schema、PIT 字段或 access policy identity 变化都必须生成新 manifest 与新回执，不能复用旧 PASS。
 
 DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：
 
@@ -493,7 +494,7 @@ preopen
 逐层检查：
 
 1. `decision_as_of` 带时区，并与 `trade_date` 的 `Asia/Shanghai` 交易日一致。
-2. SS V1 请求包含必填 `schema_major`；`order` 省略时由 registry 默认排序。catalog、逐 dataset metadata 与 receipt 逐项验证；不可用数据和 null source proof 不能被其它健康 dataset 洗白。
+2. TradingDatas V1 请求包含必填 `schema_major`；`order` 省略时由 registry 默认排序。catalog、逐 dataset metadata 与 receipt 逐项验证；不可用数据和 null source proof 不能被其它健康 dataset 洗白。
 3. CoverageReceipt 的分母、taxonomy、有效时间、来源 generation/receipt/hash 经外部注入 verifier 复核；缺 verifier 时只能 `partial_market + degraded`。
 4. 账户可交易池只含主板普通股；市场环境可含双创指数和全市场行业聚合，但始终 `context_only`。
 5. 小账户计划绑定50,000 CNY policy、独立账户proof、买入整手/卖出零股例外、持仓/T+1、模拟费用、现金顺序、最少经济订单、无交易区与authority generation；本地逻辑重算positions/gross/content hash、费用和计划数值。Champion score必须绑定当前selection manifest、artifact/model/spec及经独立port复核的数值PIT特征快照，rank只排序且不参与sizing。fixture verifier只证明所给输入的绑定；canonical-capital测试路径从同一模拟ledger head派生并复读current generation/lineage。两者都不证明真实账户、Champion registry、feature authority或broker事实。
@@ -549,13 +550,13 @@ preopen
 
 即使本地全部通过，以下证据缺一不可：
 
-1. SharedSignals owner 冻结的 base URL、catalog version、dataset IDs、auth/receipt authority 和 live readback；
+1. TradingDatas owner fresh handoff 冻结的 base URL、catalog version、dataset IDs、auth/receipt authority 和 live readback；
 2. 所有 A 股消费者的同 `as_of` parity、V1 cutover、旧引用清零和 runtime no-fallback 负例；
 3. 每个predictive dataset的首次可见时间、release/revision链、first-seen receipt和训练时vintage；无法还原历史回填版本的数据不得进入历史训练；
 4. PIT证券主数据覆盖上市/退市、板块迁移、ST/风险警示、停复牌和历史指数/行业成员，证明没有用当前存续集合回填过去Universe；
 5. 生产market-evidence verifier、Champion/数值特征registry verifier、独立metrics重算authority与长驻可信时钟，以及真实交易会话中的自动模拟盘、crash/restart、对账和 20 个以上交易日运行证据；
 6. 60–120 个交易日影子/模拟观察、费用后统计置信度、回撤与状态分层；
 7. DeepSeek若启用，会话中曾暴露的credential必须先由供应商侧revoke/rotate，新值不得入仓；还需真实模型/请求字段readback、quota/限流/幂等/数据留存核验、敏感数据门、提示注入语义/编码变体、引用绑定、typed receipt持久化、成本/延迟和冻结增量评测，且仍保持evidence-only。首版固定单次调用、无自动重试；未来是否保留或变更该策略必须另立评审，不能在运行时静默开启；
-8. 独立发布授权、preflight、回退方案，以及本地、Git、远端、生产文件、生产 runtime 和外部路由分别验收。
+8. standing release authorization下仍须完成当次preflight、回退方案，以及本地、Git、远端、生产文件、生产runtime和外部路由的分别验收；授权不能替代证据。
 
 当前服务器sidecar没有提供上述外部authority证据，因此业务能力仍只能是`local_isolated_candidate / simulation-only / nonpromotion`；`server_validated_non_authority_simulation_only`只描述目标服务器环境的安装与旁路运行证据，不能提升为现役生产状态。

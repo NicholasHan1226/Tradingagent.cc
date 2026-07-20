@@ -19,6 +19,12 @@ from shared.execution import local_sim_ledger, sim_executor_registry
 from shared.execution.sim_broker import SimResult, execute_sim_order
 
 
+ASHARE_CONTRACT = "tradingagent.ashare.paper_broker.v1"
+ASHARE_AUTHORITY = "ashare-capital-v1"
+CRYPTO_CONTRACT = "tradingagent.crypto.paper_broker.v1"
+CRYPTO_AUTHORITY = "crypto-shadow-sim-v1"
+
+
 class SimBrokerV2Test(unittest.TestCase):
     def setUp(self) -> None:
         self._old_registry = dict(sim_executor_registry._SIM_EXECUTORS)
@@ -58,6 +64,26 @@ class SimBrokerV2Test(unittest.TestCase):
         sim_executor_registry._SIM_EXECUTORS.clear()
         sim_executor_registry._SIM_EXECUTORS.update(self._old_registry)
 
+    def _ashare_account(self, **overrides: object) -> dict[str, object]:
+        return {
+            "account_id": "ashare_sim",
+            "market": "ashare",
+            "broker_contract": ASHARE_CONTRACT,
+            "authority_id": ASHARE_AUTHORITY,
+            "authority_generation": 1,
+            **overrides,
+        }
+
+    def _crypto_account(self, **overrides: object) -> dict[str, object]:
+        return {
+            "account_id": "crypto_sim",
+            "market": "crypto",
+            "broker_contract": CRYPTO_CONTRACT,
+            "authority_id": CRYPTO_AUTHORITY,
+            "authority_generation": 1,
+            **overrides,
+        }
+
     def _market_funded(self, order: dict[str, object]) -> dict[str, object]:
         payload = dict(order)
         identity = str(payload.get("order_id") or "test")
@@ -79,8 +105,15 @@ class SimBrokerV2Test(unittest.TestCase):
                 "fill_price_source_class": "market_data",
                 "fill_evidence": {
                     "execution_evidence_class": "verified_5min_market_data",
-                    "fill_price_source": "sharedsignals_api_realtime_5min",
+                    "fill_price_source": "tradingdatas_fixture_5min",
                     "fill_price_source_class": "market_data",
+                    "bar_time": "2026-07-13T10:00:00+08:00",
+                    "bar_volume": 100_000.0,
+                },
+                "market_snapshot": {
+                    "ask_price": float(payload.get("price") or 10.0),
+                    "bid_price": float(payload.get("price") or 10.0),
+                    "last_price": float(payload.get("price") or 10.0),
                     "bar_time": "2026-07-13T10:00:00+08:00",
                     "bar_volume": 100_000.0,
                 },
@@ -127,14 +160,23 @@ class SimBrokerV2Test(unittest.TestCase):
                 avg_price=101.25,
                 fee=0.35,
                 message="stub sim api receipt",
-                capital_layer="real",
-                account_type="real",
                 order_id=str(order["order_id"]),
                 market="crypto",
-                raw_response={"api_order_id": "stub-123"},
+                raw_response={
+                    "api_order_id": "stub-123",
+                    "broker_contract": CRYPTO_CONTRACT,
+                    "authority_id": CRYPTO_AUTHORITY,
+                },
+                broker_contract=CRYPTO_CONTRACT,
+                authority_id=CRYPTO_AUTHORITY,
             )
 
-        sim_executor_registry.register_sim_executor("crypto", stub_executor)
+        sim_executor_registry.register_sim_executor(
+            "crypto",
+            stub_executor,
+            simulation_contract=CRYPTO_CONTRACT,
+            authority_id=CRYPTO_AUTHORITY,
+        )
 
         result = execute_sim_order(
             order={
@@ -142,9 +184,10 @@ class SimBrokerV2Test(unittest.TestCase):
                 "ts_code": "BTCUSDT",
                 "side": "buy",
                 "quantity": 2,
+                "authority_generation": 1,
             },
             market="Crypto",
-            account={"account_id": "sim-crypto"},
+            account=self._crypto_account(),
             config={"venue": "unit"},
         )
 
@@ -171,20 +214,29 @@ class SimBrokerV2Test(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._bootstrap_fresh_ledger(tmp)
 
-            def ashare_bridge_executor(order, account, config) -> SimResult:
+            def ashare_pending_executor(order, account, config) -> SimResult:
                 return SimResult(
                     status="pending",
                     filled_qty=0,
                     avg_price=0.0,
                     fee=0.0,
-                    message="queued for Mini/Hermes simulated execution",
+                    message="A-share paper broker accepted a pending order",
                     order_id=str(order["order_id"]),
                     market="ashare",
-                    raw_response={"mode": "mini_bridge_pending"},
+                    raw_response={
+                        "mode": "paper_broker_pending",
+                        "broker_contract": ASHARE_CONTRACT,
+                        "authority_id": ASHARE_AUTHORITY,
+                    },
+                    broker_contract=ASHARE_CONTRACT,
+                    authority_id=ASHARE_AUTHORITY,
                 )
 
             sim_executor_registry.register_sim_executor(
-                "ashare", ashare_bridge_executor
+                "ashare",
+                ashare_pending_executor,
+                simulation_contract=ASHARE_CONTRACT,
+                authority_id=ASHARE_AUTHORITY,
             )
 
             result = execute_sim_order(
@@ -202,7 +254,7 @@ class SimBrokerV2Test(unittest.TestCase):
                     }
                 ),
                 market="ashare",
-                account={"account": "ashare_sim"},
+                account=self._ashare_account(),
                 config={
                     "local_sim_slippage_bps": 0,
                     "market_session_now": "2026-07-13T10:00:00+08:00",
@@ -237,7 +289,7 @@ class SimBrokerV2Test(unittest.TestCase):
                     }
                 ),
                 market="ashare",
-                account={"account": "ashare_sim"},
+                account=self._ashare_account(),
                 config={
                     "local_sim_slippage_bps": 0,
                     "market_session_now": "2026-07-13T10:00:00+08:00",
@@ -262,7 +314,7 @@ class SimBrokerV2Test(unittest.TestCase):
             self.assertEqual(backup["market_capital_risk_unit_key"], "600000.SH")
             self.assertNotIn("capital_epoch", backup)
 
-    def test_ashare_builtin_executor_accepts_string_account(self) -> None:
+    def test_ashare_builtin_executor_rejects_unbound_string_account(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self._bootstrap_fresh_ledger(tmp)
 
@@ -287,14 +339,10 @@ class SimBrokerV2Test(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(result.status, "filled")
-            backup = result.raw_response.get("local_sim_backup", {})
-            self.assertTrue(backup.get("recorded"), backup)
-            self.assertEqual(backup.get("account"), "ashare_sim")
-            snapshot = local_sim_ledger.LOCAL_SIM_POSITIONS_SNAPSHOT.read_text(
-                encoding="utf-8"
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(
+                result.raw_response.get("reason"), "sim_account_binding_invalid"
             )
-            self.assertIn("600000.SH", snapshot)
 
     def test_ashare_builtin_executor_rejects_second_fill_when_ledger_cash_is_exhausted(
         self,
@@ -316,7 +364,7 @@ class SimBrokerV2Test(unittest.TestCase):
                     }
                 ),
                 market="ashare",
-                account={"account": "ashare_sim", "cash_available": 50000.0},
+                account=self._ashare_account(cash_available=50000.0),
                 config={
                     "local_sim_slippage_bps": 0,
                     "market_session_now": "2026-07-13T10:00:00+08:00",
@@ -336,7 +384,7 @@ class SimBrokerV2Test(unittest.TestCase):
                     }
                 ),
                 market="ashare",
-                account={"account": "ashare_sim", "cash_available": 50000.0},
+                account=self._ashare_account(cash_available=50000.0),
                 config={
                     "local_sim_slippage_bps": 0,
                     "market_session_now": "2026-07-13T10:00:00+08:00",
@@ -370,9 +418,16 @@ class SimBrokerV2Test(unittest.TestCase):
                 avg_price=10.0,
                 order_id=str(order["order_id"]),
                 market="ashare",
+                broker_contract=ASHARE_CONTRACT,
+                authority_id=ASHARE_AUTHORITY,
             )
 
-        sim_executor_registry.register_sim_executor("ashare", ashare_executor)
+        sim_executor_registry.register_sim_executor(
+            "ashare",
+            ashare_executor,
+            simulation_contract=ASHARE_CONTRACT,
+            authority_id=ASHARE_AUTHORITY,
+        )
 
         result = execute_sim_order(
             order={
@@ -383,7 +438,7 @@ class SimBrokerV2Test(unittest.TestCase):
                 "price": 10.0,
             },
             market="ashare",
-            account={"account": "ashare_sim"},
+            account=self._ashare_account(),
             config={"local_sim_slippage_bps": 0},
         )
 
@@ -398,12 +453,17 @@ class SimBrokerV2Test(unittest.TestCase):
             calls.append((order, account, config))
             return SimResult(status="filled", filled_qty=1, avg_price=1.0)
 
-        sim_executor_registry.register_sim_executor("crypto", stub_executor)
+        sim_executor_registry.register_sim_executor(
+            "crypto",
+            stub_executor,
+            simulation_contract=CRYPTO_CONTRACT,
+            authority_id=CRYPTO_AUTHORITY,
+        )
 
         result = execute_sim_order(
             order={"order_id": "SIM-V2-REAL", "ts_code": "BTCUSDT", "quantity": 1},
             market="Crypto",
-            account={"account_id": "sim-crypto", "account_type": "real"},
+            account=self._crypto_account(account_type="real"),
             config={},
         )
 
@@ -420,7 +480,12 @@ class SimBrokerV2Test(unittest.TestCase):
             calls.append((order, account, config))
             return SimResult(status="filled", filled_qty=1, avg_price=1.0)
 
-        sim_executor_registry.register_sim_executor("crypto", stub_executor)
+        sim_executor_registry.register_sim_executor(
+            "crypto",
+            stub_executor,
+            simulation_contract=CRYPTO_CONTRACT,
+            authority_id=CRYPTO_AUTHORITY,
+        )
 
         result = execute_sim_order(
             order={
@@ -430,13 +495,106 @@ class SimBrokerV2Test(unittest.TestCase):
                 "real_trading_enabled": True,
             },
             market="Crypto",
-            account={"account_id": "sim-crypto"},
+            account=self._crypto_account(),
             config={},
         )
 
         self.assertEqual(result.status, "failed")
         self.assertIn("real/live execution is rejected", result.message)
         self.assertEqual(calls, [])
+
+    def test_executor_cannot_return_real_markers_or_wrong_market_binding(self) -> None:
+        def real_receipt(order, account, config):
+            return {
+                "status": "filled",
+                "filled_qty": 1,
+                "avg_price": 1.0,
+                "capital_layer": "real",
+                "account_type": "real",
+                "market": "crypto",
+                "broker_contract": CRYPTO_CONTRACT,
+                "authority_id": CRYPTO_AUTHORITY,
+            }
+
+        sim_executor_registry.register_sim_executor(
+            "crypto",
+            real_receipt,
+            simulation_contract=CRYPTO_CONTRACT,
+            authority_id=CRYPTO_AUTHORITY,
+        )
+        real_result = execute_sim_order(
+            order={
+                "order_id": "SIM-REAL-RECEIPT",
+                "symbol": "BTCUSDT",
+                "quantity": 1,
+                "authority_generation": 1,
+            },
+            market="crypto",
+            account=self._crypto_account(),
+        )
+        self.assertEqual(real_result.status, "failed")
+        self.assertIn("real/live execution is rejected", real_result.message)
+
+        sim_executor_registry._SIM_EXECUTORS.clear()
+
+        def wrong_market(order, account, config) -> SimResult:
+            return SimResult(
+                status="filled",
+                filled_qty=1,
+                avg_price=1.0,
+                market="ashare",
+                broker_contract=CRYPTO_CONTRACT,
+                authority_id=CRYPTO_AUTHORITY,
+            )
+
+        sim_executor_registry.register_sim_executor(
+            "crypto",
+            wrong_market,
+            simulation_contract=CRYPTO_CONTRACT,
+            authority_id=CRYPTO_AUTHORITY,
+        )
+        mismatch = execute_sim_order(
+            order={
+                "order_id": "SIM-WRONG-MARKET",
+                "symbol": "BTCUSDT",
+                "quantity": 1,
+                "authority_generation": 1,
+            },
+            market="crypto",
+            account=self._crypto_account(),
+        )
+        self.assertEqual(mismatch.status, "failed")
+        self.assertEqual(
+            mismatch.raw_response["reason"], "sim_receipt_binding_mismatch"
+        )
+
+    def test_registry_rejects_wrong_contract_and_silent_override(self) -> None:
+        def first(order, account, config):
+            return {}
+
+        def second(order, account, config):
+            return {}
+
+        with self.assertRaisesRegex(ValueError, "requires simulation_contract"):
+            sim_executor_registry.register_sim_executor(
+                "crypto",
+                first,
+                simulation_contract=ASHARE_CONTRACT,
+                authority_id=CRYPTO_AUTHORITY,
+            )
+        sim_executor_registry.register_sim_executor(
+            "crypto",
+            first,
+            simulation_contract=CRYPTO_CONTRACT,
+            authority_id=CRYPTO_AUTHORITY,
+        )
+        with self.assertRaisesRegex(ValueError, "already registered"):
+            sim_executor_registry.register_sim_executor(
+                "crypto",
+                second,
+                simulation_contract=CRYPTO_CONTRACT,
+                authority_id=CRYPTO_AUTHORITY,
+            )
 
     def test_any_local_ledger_rejection_overrides_preledger_filled_status(self) -> None:
         def ashare_executor(order, account, config) -> SimResult:
@@ -446,9 +604,16 @@ class SimBrokerV2Test(unittest.TestCase):
                 avg_price=10.0,
                 order_id=str(order["order_id"]),
                 market="ashare",
+                broker_contract=ASHARE_CONTRACT,
+                authority_id=ASHARE_AUTHORITY,
             )
 
-        sim_executor_registry.register_sim_executor("ashare", ashare_executor)
+        sim_executor_registry.register_sim_executor(
+            "ashare",
+            ashare_executor,
+            simulation_contract=ASHARE_CONTRACT,
+            authority_id=ASHARE_AUTHORITY,
+        )
         with patch.object(
             local_sim_ledger,
             "record_local_sim_order",
@@ -467,9 +632,10 @@ class SimBrokerV2Test(unittest.TestCase):
                     "price": 10.0,
                     "candidate_pool_layer": "candidate",
                     "execution_source": "ashare_candidate_layer",
+                    "authority_generation": 1,
                 },
                 market="ashare",
-                account={"account": "ashare_sim"},
+                account=self._ashare_account(),
                 config={"local_sim_slippage_bps": 0},
             )
 
@@ -488,9 +654,16 @@ class SimBrokerV2Test(unittest.TestCase):
                 avg_price=10.0,
                 order_id=str(order["order_id"]),
                 market="ashare",
+                broker_contract=ASHARE_CONTRACT,
+                authority_id=ASHARE_AUTHORITY,
             )
 
-        sim_executor_registry.register_sim_executor("ashare", ashare_executor)
+        sim_executor_registry.register_sim_executor(
+            "ashare",
+            ashare_executor,
+            simulation_contract=ASHARE_CONTRACT,
+            authority_id=ASHARE_AUTHORITY,
+        )
         with patch.object(
             local_sim_ledger,
             "record_local_sim_order",
@@ -511,13 +684,35 @@ class SimBrokerV2Test(unittest.TestCase):
                     }
                 ),
                 market="ashare",
-                account={"account": "ashare_sim"},
+                account=self._ashare_account(),
                 config={"local_sim_slippage_bps": 0},
             )
 
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.filled_qty, 0)
         self.assertIn("corrupt_local_sim_trade", result.message)
+
+    def test_sim_result_rejects_invalid_numeric_or_status_combinations(self) -> None:
+        with self.assertRaisesRegex(ValueError, "avg_price"):
+            SimResult(status="filled", filled_qty=1, avg_price=float("inf"))
+        with self.assertRaisesRegex(ValueError, "requires positive"):
+            SimResult(status="filled", filled_qty=0, avg_price=0)
+        with self.assertRaisesRegex(ValueError, "cannot carry fill"):
+            SimResult(status="rejected", filled_qty=1, avg_price=1)
+
+    def test_sim_result_scans_preconstructed_raw_response_for_live_markers(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "real/live execution"):
+            SimResult(
+                status="filled",
+                filled_qty=1,
+                avg_price=1,
+                raw_response={"broker_mode": "live"},
+            )
+
+    def test_dry_run_status_never_normalizes_to_a_fill(self) -> None:
+        result = SimResult(status="dry_run_ok")
+
+        self.assertEqual(result.status, "pending")
 
 
 if __name__ == "__main__":

@@ -76,16 +76,17 @@ TradingAgent signals / positions / review / risk
   文件内自报摘要。后端已有本地
   `FileRunBundleStore`、`LocalRunBundlePublisher` 和离线 fixture CLI 候选；CLI
   只会在显式隔离output root的`shared/runtime_test/phase1_paper_fixture/`下发布，故意不写
-  活动Today路径。它没有 scheduler、真实 SS
+  活动Today路径。它没有 scheduler、TradingDatas fresh handoff
   或市场会话运行证据，也不会自动发布到活动项目/生产根；因此文件缺失时
   界面明确显示“不可用”，不把仓库能力、测试 fixture 或 HTTP 200 冒充为今天已经运行。
-- SharedSignals 市场脉冲读取器：`src/server/sharedSignalsMarketPulse.ts`。本地候选已只调用
+- TradingDatas 市场脉冲兼容读取器：`src/server/sharedSignalsMarketPulse.ts`。文件名与函数名为
+  向后兼容标识；本地候选已只调用
   provider-neutral `GET /v1/catalog` + `POST /v1/query`，并要求显式配置 base URL、
-  catalog version、access policy 和逐市场 dataset ID。catalog/dataset identity、响应 envelope、
+  catalog version、schema major、access policy 和逐市场 dataset ID。catalog/dataset identity、响应 envelope、
   freshness/quality/lineage/receipt 或 `as_of` 任一不合格时按数据集 fail closed；返回行还须
   显式匹配目标实体，且 row time 不得晚于 `data_through` 或本次决策时间。不会回退
-  provider、兄弟仓 SQLite、旧专用端点或本地拼装。该能力仍只是本地候选，SS upstream
-  合同与生产 runtime 尚未冻结，不能描述为 live 可用，也不赋予 paper-day 执行权限。
+  provider、兄弟仓 SQLite、旧专用端点或本地拼装。该能力仍只是 fixture/mock-first 本地候选；
+  TradingDatas 尚未提供 fresh handoff，不能描述为 live 可用，也不赋予 paper-day 执行权限。
 - 非 A 股代表行情必须由上游显式提供 `market_data_symbol` 或 `marketDataSymbol`；前端不从展示代码转换 Crypto、期货、PM、US 或 HK API 参数。`marketPulseCoverageHistory` 只保留当前服务进程最近 12 次真实来源读取，缓存命中与服务重启不会伪造连续观测。
 - 真实数据适配：`src/api/tradingAgentReadModel.ts` 和
   `src/adapters/tradingAgentReadModel.ts`。
@@ -105,11 +106,15 @@ TradingAgent signals / positions / review / risk
 - `../shared/logs/capital/{ashare,cn_futures}/*_capital_latest.json`
 - `../shared/review/attribution/*.jsonl`
 - `../shared/risk/risk_limits.yaml`
-- 可选 V1 市场脉冲只读面：同时显式提供 `SHAREDSIGNALS_API_URL`、
-  `SHAREDSIGNALS_CATALOG_VERSION`、`SHAREDSIGNALS_ACCESS_POLICY_ID` 和
-  `SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON` 后，前端才会读取 `GET /v1/catalog` 与
+- 可选 TradingDatas V1 市场脉冲只读面：同时显式提供 `TRADINGDATAS_API_URL`、
+  `TRADINGDATAS_CATALOG_VERSION`、`TRADINGDATAS_SCHEMA_MAJOR`、
+  `TRADINGDATAS_ACCESS_POLICY_ID` 和 `TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON` 后，
+  前端才会读取 `GET /v1/catalog` 与
   `POST /v1/query`。dataset mapping 缺失、上游未冻结或 envelope 不合格时
   `marketPulses[]` 为空并保留 `marketPulseCoverage` 的 unavailable/degraded 状态；绝不调用旧端点。
+  `TRADINGDATAS_ACCESS_POLICY_ID` 只是服务端 reader 的本地 cache/audit 命名空间，
+  不作为 HTTP header 发给 TradingDatas，也不是 credential。真实 service-token/header
+  合同必须等待 fresh handoff 后由独立 transport 实现；当前 reader 不臆造认证协议。
 - `shared/runtime/run_bundles/latest.json`（可选本地候选快照）：只展示
   RunBundle 阶段、数据证据、候选/决策、模拟订单/成交、风险阻断、Champion
   清单和 LLM 证据角色。必须同时存在字节一致的
@@ -222,7 +227,7 @@ npm run build:api
 - 首页顶部和收益主面板必须使用同一“所选市场”口径：A股看 A股独立模拟账户，CNFutures 看期货独立摘要，其它市场看自身摘要；`All Markets` 不显示货币 portfolio。不要再次拆成“模拟盘收益”和“现在收益”两个数字。
 - 首页右轨只展示过程、阶段、状态、证据、更新时间和简短结果说明，不展示人工建议、内部错误码或调试文案。
 - 市场状态带会从当前持仓或信号中为每个市场选择一个代表标的，并由只读 snapshot API
-  通过显式 V1 配置查询 catalog/query。只展示 identity 与 metadata 全部验证通过的真实返回；
+  通过显式 TradingDatas V1 配置查询 catalog/query。只展示 identity 与 metadata 全部验证通过的真实返回；
   无代表标的、dataset 未配置、读取超时、HTTP 200 但 dataset stale/degraded/failed、
   receipt/lineage 缺失或字段不合格时保持`—`/“暂无代表行情”，不得生成样例价格或回退旧端点。
   `marketPulseCoverage`明确展示已取到、待映射、不可用和降级范围。请求限制为每个代表标的

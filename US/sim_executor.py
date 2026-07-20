@@ -13,6 +13,8 @@ from shared.markets.safety import reject_real_execution_payload
 
 DEFAULT_SETTLEMENT = "T+2"
 DEFAULT_FEE = 0.001
+PAPER_BROKER_CONTRACT = "tradingagent.us.legacy_paper_mock.v1"
+SIM_AUTHORITY_ID = "us-legacy-sim-v1"
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
@@ -85,11 +87,20 @@ def us_sim_execute(
             "broker": "alpaca_paper_mock",
             "settlement": settlement,
             "api_order": alpaca_order,
+            "broker_contract": PAPER_BROKER_CONTRACT,
+            "authority_id": SIM_AUTHORITY_ID,
         },
+        broker_contract=PAPER_BROKER_CONTRACT,
+        authority_id=SIM_AUTHORITY_ID,
     )
 
 
-register_sim_executor("us", us_sim_execute)
+register_sim_executor(
+    "us",
+    us_sim_execute,
+    simulation_contract=PAPER_BROKER_CONTRACT,
+    authority_id=SIM_AUTHORITY_ID,
+)
 
 
 __all__ = ["us_sim_execute"]

@@ -4,7 +4,7 @@
 #   sudo -u marketgraph crontab -l
 # Production ops may compose one marketgraph user crontab from the three repos.
 # This repo file only owns TradingAgent entries; never install it directly over
-# live crontab or use it to overwrite SharedSignals/MarketGraph entries.
+# live crontab or use it to overwrite TradingDatas/MarketGraph entries.
 #
 # To install or update TradingAgent entries, use the merge installer:
 #   sudo python3 tools/merge_tradingagent_crontab.py --apply
@@ -13,7 +13,7 @@
 #
 # TradingAgent owns judgment, queues, simulated/shadow accounting, review, and
 # notifications. It must not collect market data directly; market data comes
-# from SharedSignals API. HK remains disabled by Nicholas' current
+# from the TradingDatas catalog/query API. HK remains disabled by Nicholas' current
 # decision.
 
 SHELL=/bin/bash
@@ -31,44 +31,11 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 # unscheduled. They remain fail-closed compatibility entrypoints while the
 # fresh day-loop/fixture architecture is validated simulation-only.
 
-# US/Crypto/PM/CNFutures legacy simulation wrappers are intentionally
-# unscheduled while their business readers await V1 catalog/query migration.
-# Their entrypoints fail closed and cannot be used as recurring probes.
-4,34 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_research_probability.sh >> /opt/investment/tradingagent/shared/logs/cron/job_pm_research_probability.log 2>&1
-
-# Pipeline, health, evolution, and review.
-0 9 * * 1-5 /opt/investment/tradingagent/cron/auto_pipeline.sh
-*/10 * * * * /opt/investment/tradingagent/shared/wrappers/job_sim_market_health.sh >> /opt/investment/tradingagent/shared/logs/cron/sim_market_health.log 2>&1
-*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_equity_snapshots.sh >> /opt/investment/tradingagent/shared/logs/cron/equity_snapshots.log 2>&1
-# The legacy opportunity-funnel writer is unscheduled and hard-blocked. The
-# front may read frozen history until a read-only OpportunityLedger projection exists.
-0 */4 * * * /opt/investment/tradingagent/cron/evolution.sh
-
-# Legacy A-share calibration and email briefs are intentionally unscheduled.
-# Local evidence/reporting stays simulation-only and external delivery requires
-# separate authorization.
-
-# Self-heal and domestic futures compatibility reporting. The legacy CNFutures
-# simulation wrapper is unscheduled until its reader is migrated to V1.
-*/15 * * * * /opt/investment/tradingagent/shared/wrappers/job_self_heal.sh >> /opt/investment/tradingagent/shared/logs/cron/job_self_heal.log 2>&1
-58 8,20 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures preopen >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1
-2 9,13,21 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures opening >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1
-32 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1
-2 15,23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1
-32 2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1
-2-59/5 9-15,21-23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_observation_report.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_observation_report.log 2>&1
-2-59/5 0-2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_observation_report.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_observation_report.log 2>&1
-# Append-only forward labels plus the single rebuildable CNFutures maturity
-# projection. Run after each effective day/night session; sim-only, no promotion.
-40 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_sample_ops.log 2>&1
-10 15,23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_sample_ops.log 2>&1
-40 2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sample_ops.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_sample_ops.log 2>&1
-45 15 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_calibration_report.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_calibration_report.log 2>&1
-45 2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_calibration_report.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_calibration_report.log 2>&1
-35 11,15,23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_replay.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_replay.log 2>&1
-50 2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_replay.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_replay.log 2>&1
-55 8,12,20 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_pre_open_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_pre_open_validation.log 2>&1
-5 9,13,21 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_opening_validation.log 2>&1
-35 0 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_opening_validation.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_opening_validation.log 2>&1
-10 9,13,21 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_first_sample_alert.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_first_sample_alert.log 2>&1
-40 0 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_first_sample_alert.sh >> /opt/investment/tradingagent/shared/logs/cron/job_cn_futures_first_sample_alert.log 2>&1
+# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff
+#
+# No TradingAgent recurring market job is active in this repository template.
+# The previous jobs depended on retired readers, provider-specific endpoints,
+# mixed SQLite state, automatic model mutation, or unverified self-heal claims.
+# Re-enabling any job requires a fresh TradingDatas handoff, an explicit
+# provider-neutral dataset contract, fixture/parity evidence, and a separate
+# reviewed scheduler change. This file change does not modify installed cron.

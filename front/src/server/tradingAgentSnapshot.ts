@@ -675,10 +675,11 @@ export async function readTradingAgentSnapshot({
     now,
   })
   const marketPulseRead = await readSharedSignalsMarketPulses({
-    baseUrl: process.env.SHAREDSIGNALS_API_URL,
-    expectedCatalogVersion: process.env.SHAREDSIGNALS_CATALOG_VERSION,
-    accessPolicyId: process.env.SHAREDSIGNALS_ACCESS_POLICY_ID,
-    datasetIds: parseMarketPulseDatasetIds(process.env.SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON),
+    baseUrl: process.env.TRADINGDATAS_API_URL,
+    expectedCatalogVersion: process.env.TRADINGDATAS_CATALOG_VERSION,
+    accessPolicyId: process.env.TRADINGDATAS_ACCESS_POLICY_ID,
+    schemaMajor: parseTradingDatasSchemaMajor(process.env.TRADINGDATAS_SCHEMA_MAJOR),
+    datasetIds: parseMarketPulseDatasetIds(process.env.TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON),
     holdings: fallbackHoldings,
     signals,
     now,
@@ -1520,6 +1521,12 @@ function parseMarketPulseDatasetIds(
   } catch {
     return undefined
   }
+}
+
+function parseTradingDatasSchemaMajor(raw: string | undefined): number | undefined {
+  if (!raw || raw !== raw.trim() || !/^[1-9]\d*$/.test(raw)) return undefined
+  const value = Number(raw)
+  return Number.isSafeInteger(value) ? value : undefined
 }
 
 async function readAShareAccountSummary(

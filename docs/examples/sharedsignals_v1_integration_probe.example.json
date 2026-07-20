@@ -1,7 +1,7 @@
 {
   "access_policy_id": "fixture-read-only-policy-v1",
   "as_of": "2026-07-17T09:25:00+08:00",
-  "base_url": "https://sharedsignals.fixture.invalid",
+  "base_url": "https://tradingdatas.fixture.invalid",
   "catalog_version": "fixture-catalog-replace-after-handoff",
   "datasets": [
     {

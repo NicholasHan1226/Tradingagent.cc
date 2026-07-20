@@ -22,14 +22,14 @@ export const tradingAgentReadModelSources = {
   performanceTracker: 'shared/review/*/style_performance.jsonl',
   styleComparison: 'shared/review/*/style_comparison.json',
   simMarketHealth: 'shared/runtime_test/sim_market_health_latest.json',
-  capitalFlow: 'TradingAgent signal score evidence only; no active legacy SharedSignals endpoint read',
+  capitalFlow: 'TradingAgent signal score evidence only; no active legacy data-platform endpoint read',
   cnFuturesReview: 'shared/review/data/cn_futures_sim_reviews.jsonl',
   ashareResearchEvidence: 'shared/review/ashare/research_evidence_latest.json',
   ashareSampleKpi: 'shared/review/ashare/projection_current.json -> projection_generations/*/sample_kpi_latest.json',
   ashareMarketMaturity: 'shared/review/ashare/projection_current.json -> projection_generations/*/market_maturity_latest.json',
   cnFuturesMarketMaturity: 'shared/review/cn_futures/market_maturity_latest.json',
   cnFuturesReplay: 'shared/review/cn_futures/replay_latest.json',
-  sharedSignalsMarketPulse: 'SharedSignals V1 GET /v1/catalog + POST /v1/query via explicit base URL, catalog version, access policy, and per-market dataset IDs; fail closed with no legacy fallback',
+  sharedSignalsMarketPulse: 'TradingDatas V1 GET /v1/catalog + POST /v1/query via explicit base URL, catalog version, schema major, access policy, and per-market dataset IDs; fail closed with no legacy fallback',
   paperDayRunBundle: 'shared/runtime/run_bundles/latest.json',
 } as const
 

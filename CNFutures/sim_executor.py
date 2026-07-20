@@ -10,15 +10,20 @@ from typing import Any
 
 from shared.execution.sim_broker import SimResult
 from shared.execution.sim_executor_registry import register_sim_executor
+from shared.markets.safety import reject_real_execution_payload
 
 from . import MARKET
 from .margin_model import estimate_order_cost
-from .session import parse_cn_datetime
+from .session import active_trade_date, parse_cn_datetime
 
 
 DEFAULT_SLIPPAGE_BPS = 2.0
 DEFAULT_VOLUME_PARTICIPATION = 0.05
+DEFAULT_MAX_FILL_EVIDENCE_AGE_SECONDS = 600.0
 VALID_SIDES = {"buy", "sell", "long", "short"}
+VALID_POSITION_EFFECTS = {"open", "close", "close_today", "close_yesterday"}
+PAPER_BROKER_CONTRACT = "tradingagent.cnfutures.paper_broker.v1"
+SIM_AUTHORITY_ID = "cn-futures-capital-v1"
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -30,10 +35,15 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
     try:
-        return int(float(value))
+        parsed = float(value)
     except (OverflowError, TypeError, ValueError):
         return default
+    if not math.isfinite(parsed) or not parsed.is_integer():
+        return default
+    return int(parsed)
 
 
 def _extract_symbol(order: dict[str, Any]) -> str:
@@ -75,21 +85,68 @@ def _extract_reference_price(order: dict[str, Any]) -> float:
     return price
 
 
-def _evidence_timestamp(order: dict[str, Any]) -> str:
-    for key in (
-        "bar_time",
-        "quote_time",
-        "quote_timestamp",
-        "timestamp",
-        "trade_time",
-        "time",
-    ):
+def _evidence_datetime(
+    order: dict[str, Any], *, prefer_quote: bool = False
+) -> datetime | None:
+    keys = (
+        (
+            "quote_time",
+            "quote_timestamp",
+            "bar_time",
+            "timestamp",
+            "trade_time",
+            "time",
+        )
+        if prefer_quote
+        else (
+            "bar_time",
+            "timestamp",
+            "trade_time",
+            "time",
+            "quote_time",
+            "quote_timestamp",
+        )
+    )
+    for key in keys:
         value = order.get(key)
         raw = str(value or "").strip()
         parsed = parse_cn_datetime(value)
         if ":" in raw and parsed is not None:
-            return parsed.isoformat(timespec="seconds")
-    return ""
+            return parsed
+    return None
+
+
+def _aware_decision_time(value: Any) -> datetime | None:
+    """Parse an explicit decision timestamp without inventing a timezone."""
+
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parse_cn_datetime(parsed)
+
+
+def _max_fill_evidence_age_seconds(config: dict[str, Any]) -> float | None:
+    if "max_fill_evidence_age_seconds" not in config:
+        return DEFAULT_MAX_FILL_EVIDENCE_AGE_SECONDS
+    raw = config.get("max_fill_evidence_age_seconds")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        parsed = float(raw)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed <= 0:
+        return None
+    return parsed
 
 
 def _reject(
@@ -111,6 +168,8 @@ def _reject(
         "reason": reason,
         "real_trading_enabled": False,
         "source": source,
+        "broker_contract": PAPER_BROKER_CONTRACT,
+        "authority_id": SIM_AUTHORITY_ID,
     }
     raw_response.update(details or {})
     return SimResult(
@@ -124,6 +183,8 @@ def _reject(
         order_id=order_id,
         market=MARKET,
         raw_response=raw_response,
+        broker_contract=PAPER_BROKER_CONTRACT,
+        authority_id=SIM_AUTHORITY_ID,
     )
 
 
@@ -201,6 +262,90 @@ def _book_quote(order: dict[str, Any], side: str) -> tuple[float, int, str]:
     return 0.0, 0, "signal_price"
 
 
+def _close_position_snapshot_error(
+    *,
+    account: dict[str, Any] | None,
+    symbol: str,
+    side: str,
+    position_effect: str,
+    requested_qty: int,
+) -> tuple[str, dict[str, Any]] | None:
+    """Validate a close against an authority-bound long/short position snapshot."""
+
+    if position_effect == "open":
+        return None
+    snapshot = account.get("position_snapshot") if isinstance(account, dict) else None
+    if not isinstance(snapshot, dict):
+        return "position_snapshot_required", {}
+    snapshot_id = str(snapshot.get("snapshot_id") or "").strip()
+    as_of = str(snapshot.get("as_of") or "").strip()
+    if not snapshot_id or not as_of:
+        return "position_snapshot_identity_missing", {}
+    if str(snapshot.get("authority_id") or "").strip() != SIM_AUTHORITY_ID:
+        return "position_snapshot_authority_mismatch", {"snapshot_id": snapshot_id}
+    if (
+        str(snapshot.get("broker_contract") or "").strip()
+        != PAPER_BROKER_CONTRACT
+    ):
+        return "position_snapshot_contract_mismatch", {"snapshot_id": snapshot_id}
+    positions = snapshot.get("positions")
+    if not isinstance(positions, list):
+        return "position_snapshot_positions_invalid", {"snapshot_id": snapshot_id}
+    target_side = "long" if side in {"sell", "short"} else "short"
+    matches = [
+        row
+        for row in positions
+        if isinstance(row, dict)
+        and str(row.get("symbol") or "").strip().upper() == symbol.upper()
+        and str(row.get("position_side") or row.get("side") or "")
+        .strip()
+        .lower()
+        == target_side
+    ]
+    if len(matches) != 1:
+        return "position_snapshot_match_not_unique", {
+            "snapshot_id": snapshot_id,
+            "target_position_side": target_side,
+            "match_count": len(matches),
+        }
+    position = matches[0]
+    today_raw = position.get("today_qty")
+    yesterday_raw = position.get("yesterday_qty")
+    total_raw = position.get("total_qty")
+    today_qty = _safe_int(today_raw, -1) if today_raw is not None else -1
+    yesterday_qty = (
+        _safe_int(yesterday_raw, -1) if yesterday_raw is not None else -1
+    )
+    total_qty = _safe_int(total_raw, -1) if total_raw is not None else -1
+    if position_effect == "close_today":
+        available = today_qty
+        bucket = "today"
+    elif position_effect == "close_yesterday":
+        available = yesterday_qty
+        bucket = "yesterday"
+    else:
+        available = (
+            today_qty + yesterday_qty
+            if today_qty >= 0 and yesterday_qty >= 0
+            else total_qty
+        )
+        bucket = "total"
+    if available < 0:
+        return "position_snapshot_quantity_invalid", {
+            "snapshot_id": snapshot_id,
+            "position_bucket": bucket,
+        }
+    if requested_qty > available:
+        return "insufficient_close_position", {
+            "snapshot_id": snapshot_id,
+            "position_bucket": bucket,
+            "available_quantity": available,
+            "requested_quantity": requested_qty,
+            "target_position_side": target_side,
+        }
+    return None
+
+
 def cn_futures_sim_execute(
     order: dict[str, Any],
     account: dict[str, Any] | None = None,
@@ -208,10 +353,17 @@ def cn_futures_sim_execute(
 ) -> SimResult:
     """Return a local simulated fill and never touch a real CTP account."""
 
-    del account
+    reject_real_execution_payload(order, context="cn_futures_sim_execute.order")
+    reject_real_execution_payload(
+        account or {}, context="cn_futures_sim_execute.account"
+    )
+    reject_real_execution_payload(config or {}, context="cn_futures_sim_execute.config")
     config = dict(config or {})
     symbol = _extract_symbol(order)
     side = str(order.get("side") or order.get("direction") or "").lower().strip()
+    position_effect = str(
+        order.get("position_effect") or order.get("offset") or ""
+    ).lower().strip()
     quantity = order.get("quantity", order.get("qty", 0))
     requested_qty = _safe_int(quantity)
     order_id = str(order.get("order_id") or f"SIM-CNF-{symbol.upper()}")
@@ -234,6 +386,41 @@ def cn_futures_sim_execute(
             reason="missing_fill_evidence",
             message="Simulated China futures reject: side is not executable",
             source="cn_futures_sim_executor_fill_evidence_guard",
+        )
+    if position_effect not in VALID_POSITION_EFFECTS:
+        return _reject(
+            order_id=order_id,
+            symbol=symbol,
+            side=side,
+            requested_qty=requested_qty,
+            reason="position_effect_required",
+            message=(
+                "Simulated China futures reject: position_effect must explicitly "
+                "declare open/close/close_today/close_yesterday"
+            ),
+            source="cn_futures_sim_executor_position_effect_guard",
+        )
+    close_snapshot_error = _close_position_snapshot_error(
+        account=account,
+        symbol=symbol,
+        side=side,
+        position_effect=position_effect,
+        requested_qty=requested_qty,
+    )
+    if close_snapshot_error is not None:
+        reason, details = close_snapshot_error
+        return _reject(
+            order_id=order_id,
+            symbol=symbol,
+            side=side,
+            requested_qty=requested_qty,
+            reason=reason,
+            message=(
+                "Simulated China futures reject: an authority-bound position "
+                "snapshot does not support the requested close"
+            ),
+            source="cn_futures_sim_executor_position_snapshot_guard",
+            details={"position_effect": position_effect, **details},
         )
     try:
         requested_price = _extract_price(order)
@@ -302,9 +489,10 @@ def cn_futures_sim_execute(
     latest_volume = _safe_float(order.get("bar_volume") or order.get("volume"), 0.0)
     raw_participation = config.get("volume_participation", DEFAULT_VOLUME_PARTICIPATION)
     participation = min(1.0, max(0.0, _safe_float(raw_participation, 0.0)))
-    evidence_timestamp = _evidence_timestamp(order)
     book_evidence = book_price > 0 and book_available_qty > 0
     bar_evidence = latest_volume > 0 and participation > 0
+    evidence_dt = _evidence_datetime(order, prefer_quote=book_evidence)
+    evidence_timestamp = evidence_dt.isoformat() if evidence_dt is not None else ""
     if not evidence_timestamp:
         return _reject(
             order_id=order_id,
@@ -314,6 +502,134 @@ def cn_futures_sim_execute(
             reason="missing_fill_evidence",
             message="Simulated China futures reject: parseable bar or quote timestamp required",
             source="cn_futures_sim_executor_fill_evidence_guard",
+        )
+    decision_dt = _aware_decision_time(
+        order.get("decision_time")
+        if "decision_time" in order
+        else config.get("decision_time")
+    )
+    if decision_dt is None:
+        return _reject(
+            order_id=order_id,
+            symbol=symbol,
+            side=side,
+            requested_qty=requested_qty,
+            reason="decision_time_required",
+            message=(
+                "Simulated China futures reject: an explicit timezone-aware "
+                "decision_time is required"
+            ),
+            source="cn_futures_sim_executor_evidence_time_guard",
+            details={"evidence_timestamp": evidence_timestamp},
+        )
+    trade_date_raw = (
+        order.get("trade_date")
+        if "trade_date" in order
+        else order.get("date", config.get("trade_date"))
+    )
+    parsed_trade_date = _parse_trade_date(trade_date_raw)
+    if parsed_trade_date is None:
+        return _reject(
+            order_id=order_id,
+            symbol=symbol,
+            side=side,
+            requested_qty=requested_qty,
+            reason="trade_date_required",
+            message=(
+                "Simulated China futures reject: a valid YYYYMMDD trade_date "
+                "is required"
+            ),
+            source="cn_futures_sim_executor_evidence_time_guard",
+            details={
+                "evidence_timestamp": evidence_timestamp,
+                "decision_time": decision_dt.isoformat(timespec="seconds"),
+            },
+        )
+    normalized_trade_date = parsed_trade_date.strftime("%Y%m%d")
+    expected_trade_date = active_trade_date(decision_dt)
+    evidence_trade_date = active_trade_date(evidence_dt)
+    if (
+        normalized_trade_date != expected_trade_date
+        or normalized_trade_date != evidence_trade_date
+    ):
+        return _reject(
+            order_id=order_id,
+            symbol=symbol,
+            side=side,
+            requested_qty=requested_qty,
+            reason="trade_date_mismatch",
+            message=(
+                "Simulated China futures reject: trade_date does not match the "
+                "decision timestamp's exchange trade date"
+            ),
+            source="cn_futures_sim_executor_evidence_time_guard",
+            details={
+                "evidence_timestamp": evidence_timestamp,
+                "decision_time": decision_dt.isoformat(timespec="seconds"),
+                "trade_date": normalized_trade_date,
+                "expected_trade_date": expected_trade_date,
+                "evidence_trade_date": evidence_trade_date,
+            },
+        )
+    max_evidence_age_seconds = _max_fill_evidence_age_seconds(config)
+    if max_evidence_age_seconds is None:
+        return _reject(
+            order_id=order_id,
+            symbol=symbol,
+            side=side,
+            requested_qty=requested_qty,
+            reason="fill_evidence_max_age_invalid",
+            message=(
+                "Simulated China futures reject: max fill-evidence age must be "
+                "a positive finite number of seconds"
+            ),
+            source="cn_futures_sim_executor_evidence_time_guard",
+            details={
+                "evidence_timestamp": evidence_timestamp,
+                "decision_time": decision_dt.isoformat(timespec="seconds"),
+                "trade_date": normalized_trade_date,
+            },
+        )
+    evidence_age_seconds = (decision_dt - evidence_dt).total_seconds()
+    if evidence_age_seconds < 0:
+        return _reject(
+            order_id=order_id,
+            symbol=symbol,
+            side=side,
+            requested_qty=requested_qty,
+            reason="future_fill_evidence",
+            message=(
+                "Simulated China futures reject: fill evidence is later than "
+                "decision_time"
+            ),
+            source="cn_futures_sim_executor_evidence_time_guard",
+            details={
+                "evidence_timestamp": evidence_timestamp,
+                "decision_time": decision_dt.isoformat(timespec="seconds"),
+                "trade_date": normalized_trade_date,
+                "fill_evidence_age_seconds": evidence_age_seconds,
+                "max_fill_evidence_age_seconds": max_evidence_age_seconds,
+            },
+        )
+    if evidence_age_seconds > max_evidence_age_seconds:
+        return _reject(
+            order_id=order_id,
+            symbol=symbol,
+            side=side,
+            requested_qty=requested_qty,
+            reason="stale_fill_evidence",
+            message=(
+                "Simulated China futures reject: fill evidence exceeds the "
+                "maximum allowed age"
+            ),
+            source="cn_futures_sim_executor_evidence_time_guard",
+            details={
+                "evidence_timestamp": evidence_timestamp,
+                "decision_time": decision_dt.isoformat(timespec="seconds"),
+                "trade_date": normalized_trade_date,
+                "fill_evidence_age_seconds": evidence_age_seconds,
+                "max_fill_evidence_age_seconds": max_evidence_age_seconds,
+            },
         )
     if not (bar_evidence or book_evidence):
         reason = (
@@ -354,11 +670,12 @@ def cn_futures_sim_execute(
         cost = estimate_order_cost(
             symbol=symbol, side=side, quantity=filled_qty, price=price
         )
-    fee = (
-        cost.total_estimated_fee
-        if config.get("fee_mode") == "round_trip_estimate"
-        else cost.open_fee
-    )
+    if config.get("fee_mode") == "round_trip_estimate":
+        fee = cost.total_estimated_fee
+    elif position_effect == "open":
+        fee = cost.open_fee
+    else:
+        fee = cost.estimated_close_fee
     fill_evidence_type = price_source if book_evidence else "bar_volume_participation"
 
     return SimResult(
@@ -375,6 +692,7 @@ def cn_futures_sim_execute(
             "order_id": order_id,
             "symbol": cost.symbol,
             "side": cost.side,
+            "position_effect": position_effect,
             "quantity": cost.quantity,
             "requested_quantity": requested_qty,
             "price": cost.price,
@@ -383,6 +701,10 @@ def cn_futures_sim_execute(
             "execution_price_source": price_source,
             "fill_evidence_type": fill_evidence_type,
             "evidence_timestamp": evidence_timestamp,
+            "decision_time": decision_dt.isoformat(timespec="seconds"),
+            "trade_date": normalized_trade_date,
+            "fill_evidence_age_seconds": evidence_age_seconds,
+            "max_fill_evidence_age_seconds": max_evidence_age_seconds,
             "order_book_available_qty": book_available_qty,
             "bid_price": _safe_float(
                 order.get("bid_price") or order.get("bid1") or order.get("best_bid"),
@@ -429,12 +751,21 @@ def cn_futures_sim_execute(
             "night_session": cost.rule.night_session,
             "real_trading_enabled": False,
             "source": "cn_futures_sim_executor_static_rules",
+            "broker_contract": PAPER_BROKER_CONTRACT,
+            "authority_id": SIM_AUTHORITY_ID,
             "rule": asdict(cost.rule),
         },
+        broker_contract=PAPER_BROKER_CONTRACT,
+        authority_id=SIM_AUTHORITY_ID,
     )
 
 
-register_sim_executor(MARKET, cn_futures_sim_execute)
+register_sim_executor(
+    MARKET,
+    cn_futures_sim_execute,
+    simulation_contract=PAPER_BROKER_CONTRACT,
+    authority_id=SIM_AUTHORITY_ID,
+)
 
 
 __all__ = ["cn_futures_sim_execute"]

@@ -17,8 +17,13 @@ def _sim_card(order_id: str, *, intent: str = "open") -> dict[str, object]:
         "quantity": 2,
         "price": 3500.0,
         "order_intent": intent,
+        "position_effect": "open" if intent == "open" else "close",
         "capital_layer": "simulated",
         "account_type": "simulated",
+        "market": "cn_futures",
+        "account": "cn_futures_sim_unit",
+        "broker_contract": "tradingagent.cnfutures.paper_broker.v1",
+        "authority_id": "cn-futures-capital-v1",
         "real_trading_enabled": False,
         "timestamp": "2026-07-13T09:35:00+08:00",
     }

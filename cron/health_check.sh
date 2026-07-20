@@ -41,12 +41,12 @@ fi
 {
   echo "[$(date -Iseconds)] START health_check"
   TRADINGAGENT_ROOT="${ROOT}" \
-  SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-}" \
-  SHAREDSIGNALS_CATALOG_VERSION="${SHAREDSIGNALS_CATALOG_VERSION:-}" \
-  SHAREDSIGNALS_ACCESS_POLICY_ID="${SHAREDSIGNALS_ACCESS_POLICY_ID:-}" \
-  SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON="${SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON:-}" \
-  SHAREDSIGNALS_SCHEMA_MAJOR="${SHAREDSIGNALS_SCHEMA_MAJOR:-}" \
-  SHAREDSIGNALS_RUNTIME_TRANSPORT="${SHAREDSIGNALS_RUNTIME_TRANSPORT:-}" \
+  TRADINGDATAS_API_URL="${TRADINGDATAS_API_URL:-}" \
+  TRADINGDATAS_CATALOG_VERSION="${TRADINGDATAS_CATALOG_VERSION:-}" \
+  TRADINGDATAS_ACCESS_POLICY_ID="${TRADINGDATAS_ACCESS_POLICY_ID:-}" \
+  TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON="${TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON:-}" \
+  TRADINGDATAS_SCHEMA_MAJOR="${TRADINGDATAS_SCHEMA_MAJOR:-}" \
+  TRADINGDATAS_RUNTIME_TRANSPORT="${TRADINGDATAS_RUNTIME_TRANSPORT:-}" \
   MARKETGRAPH_HEALTH_URL="${MARKETGRAPH_HEALTH_URL}" \
   OUTPUT_FILE="${OUTPUT_FILE}" \
   OUTPUT_JSONL="${OUTPUT_JSONL}" \
@@ -88,7 +88,7 @@ def http_json(url: str, timeout_seconds: float) -> tuple[int, dict]:
     return status_code, payload if isinstance(payload, dict) else {"data": payload}
 
 
-def check_sharedsignals() -> dict:
+def check_tradingdatas() -> dict:
     return check_v1_runtime_gate_from_environment(os.environ, market=None)
 
 
@@ -144,12 +144,12 @@ root = Path(os.environ["TRADINGAGENT_ROOT"])
 result = {
     "timestamp": now_iso(),
     "source": "tradingagent/cron/health_check.sh",
-    "sharedsignals_api": check_sharedsignals(),
+    "tradingdatas_api": check_tradingdatas(),
     "tradingagent_sim_output": check_sim_output(root, int(os.environ["MAX_SIM_OUTPUT_AGE_MIN"])),
     "marketgraph_api": check_marketgraph_api(os.environ["MARKETGRAPH_HEALTH_URL"]),
 }
 result["status"] = worse([
-    result["sharedsignals_api"]["status"],
+    result["tradingdatas_api"]["status"],
     result["tradingagent_sim_output"]["status"],
     result["marketgraph_api"]["status"],
 ])

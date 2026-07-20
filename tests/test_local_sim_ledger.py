@@ -362,7 +362,7 @@ class LocalSimLedgerTest(unittest.TestCase):
             )
 
         self.assertEqual(rejected["status"], "rejected")
-        self.assertEqual(rejected["reason"], "t_plus_one_sell_quantity_unavailable")
+        self.assertEqual(rejected["reason"], "insufficient_sellable_qty_t1")
 
     def test_market_reserved_buy_rejects_underfunded_lineage_without_append(
         self,

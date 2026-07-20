@@ -1,22 +1,36 @@
 #!/usr/bin/env python3
-"""Read-only CNFutures 5-minute trading observation report."""
+"""CNFutures observation projection from an explicitly injected report.
+
+The historical CLI and its implicit SharedSignals/SQLite live-check path are
+retired.  Library callers may still build the read-only projection, but must
+inject a fixture or TradingDatas-backed report explicitly.
+"""
 
 from __future__ import annotations
 
-import argparse
 import json
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# Stop direct invocation before importing retired diagnostics or market code.
+if __name__ == "__main__":
+    from shared.governance.retirement import retired_cli
+
+    raise SystemExit(retired_cli("CNFutures.observation_report"))
+
+from shared.governance.retirement import require_explicit_data_port, retired_cli
 from shared.runtime_test.cn_futures_live_check import (
-    run_live_check,
     validate_cn_futures_maturity_projection,
 )
 
 from .review import DEFAULT_REVIEW_PATH, STYLE_REVIEW_MARKET, latest_actionable_review
 
 
-ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REVIEW_ROOT = ROOT / "shared" / "review"
 MATURITY_FILENAME = "market_maturity_latest.json"
 AFFORDABILITY_FILENAME = "cn_futures_affordability_latest.json"
@@ -269,18 +283,17 @@ def _affordability(
 
 def build_observation_report(
     *,
-    sharedsignals_root: Path | None = None,
-    sqlite_db: Path | None = None,
+    live_report: Mapping[str, Any] | None = None,
     review_root: Path = DEFAULT_REVIEW_ROOT,
     review_path: Path = DEFAULT_REVIEW_PATH,
-    max_age_minutes: int = 10,
-    python_bin: str | None = None,
 ) -> dict[str, Any]:
-    live = run_live_check(
-        sharedsignals_root=sharedsignals_root,
-        sqlite_db=sqlite_db,
-        max_age_minutes=max_age_minutes,
-        python_bin=python_bin,
+    """Project an observation report from an explicit upstream evidence port."""
+
+    live = dict(
+        require_explicit_data_port(
+            live_report,
+            context="CNFutures.build_observation_report",
+        )
     )
     freshness = _check(live, "sharedsignals_5min_freshness")
     freshness_report = (
@@ -489,38 +502,9 @@ def build_observation_report(
     }
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Read-only CNFutures 5-minute trading observation report."
-    )
-    parser.add_argument("--sharedsignals-root", type=Path, default=None)
-    parser.add_argument("--sqlite-db", type=Path, default=None)
-    parser.add_argument("--review-root", type=Path, default=DEFAULT_REVIEW_ROOT)
-    parser.add_argument("--review-path", type=Path, default=DEFAULT_REVIEW_PATH)
-    parser.add_argument("--max-age-minutes", type=int, default=10)
-    parser.add_argument("--python-bin", default=None)
-    parser.add_argument("--write-json", type=Path, default=None)
-    parser.add_argument("--pretty", action="store_true")
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    report = build_observation_report(
-        sharedsignals_root=args.sharedsignals_root,
-        sqlite_db=args.sqlite_db,
-        review_root=args.review_root,
-        review_path=args.review_path,
-        max_age_minutes=args.max_age_minutes,
-        python_bin=args.python_bin,
-    )
-    if args.write_json is not None:
-        args.write_json.parent.mkdir(parents=True, exist_ok=True)
-        args.write_json.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-    print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
-    return 2 if report.get("overall_status") == "fail" else 0
+    del argv
+    return retired_cli("CNFutures.observation_report")
 
 
 if __name__ == "__main__":

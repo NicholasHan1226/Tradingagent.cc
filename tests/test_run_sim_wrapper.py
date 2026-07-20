@@ -199,12 +199,12 @@ def test_pm_research_probability_file_can_generate_signal(monkeypatch, tmp_path)
     assert signals[0]["model_source"] == "test_research"
 
 
-def test_legacy_run_sim_refuses_ashare_entrypoint(monkeypatch, capsys):
+def test_legacy_run_sim_is_tombstoned_for_every_market(monkeypatch, capsys):
     monkeypatch.setattr(run_sim, "market", "ashare")
 
-    assert run_sim.main() == 2
+    assert run_sim.main() == 78
 
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["status"] == "unsupported"
-    assert payload["reason"] == "ashare_sim_requires_tradings_cron_entry"
-    assert "tradings_cron_entry" in payload["entrypoint"]
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["state"] == "retired"
+    assert payload["reason"] == "legacy_runtime_retired"
+    assert payload["real_trading_enabled"] is False

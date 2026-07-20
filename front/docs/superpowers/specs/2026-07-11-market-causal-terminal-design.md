@@ -1,5 +1,7 @@
 # Market-Causal Terminal Design
 
+> **Historical naming notice (2026-07-20):** This document preserves implementation history. The current upstream product is TradingDatas, and TradingAgent consumes only `GET /v1/catalog` and `POST /v1/query`. Old SharedSignals runtime routes, SQLite access, and dual registries are not dependencies or fallbacks. Compatibility file and function identifiers may retain historical names.
+
 ## Goal
 
 Move TradingAgent from a Hyperliquid-inspired read-only shell to an evidence-dense market terminal: real sourced market pulse, a persistent opportunity-to-result context, and faster desktop navigation without adding execution controls.
@@ -52,4 +54,3 @@ Density has `compact` and `comfortable` modes. It is stored in a versioned local
 - Command palette and density work with keyboard only.
 - No queue, account, capital, strategy, cron or execution path changes.
 - 1280×720 and 1440×900 desktop views have no horizontal page overflow or console errors.
-

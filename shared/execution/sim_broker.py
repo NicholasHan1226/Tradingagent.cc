@@ -5,13 +5,13 @@
 returns a receipt-shaped ``SimResult``. ``simulate_order`` is kept as the legacy
 local slippage model for callers that still need backtest-compatible estimates.
 
-Reference: Ashare/sim_executor.py for the A-share Mini bridge path
+Reference: Ashare/sim_executor.py for the A-share paper-broker adapter.
 """
 
 from __future__ import annotations
 
 import json
-import os
+import math
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -31,7 +31,7 @@ class SimResult:
     """Simulated-account execution receipt returned by market executors."""
 
     status: str
-    filled_qty: int = 0
+    filled_qty: int | float = 0
     avg_price: float = 0.0
     fee: float = 0.0
     message: str = ""
@@ -40,14 +40,70 @@ class SimResult:
     order_id: str = ""
     market: str = ""
     raw_response: dict[str, Any] = field(default_factory=dict)
+    broker_contract: str = ""
+    authority_id: str = ""
+    authority_generation: int | None = None
 
     def __post_init__(self) -> None:
         self.status = _normalize_sim_status(self.status)
-        self.filled_qty = int(self.filled_qty or 0)
-        self.avg_price = float(self.avg_price or 0.0)
-        self.fee = float(self.fee or 0.0)
+        self.filled_qty = _normalize_filled_quantity(self.filled_qty)
+        self.avg_price = _normalize_non_negative_float(
+            self.avg_price, name="avg_price"
+        )
+        self.fee = _normalize_non_negative_float(self.fee, name="fee")
+        if not isinstance(self.raw_response, dict):
+            raise ValueError("sim result raw_response must be an object")
+        reject_real_execution_payload(
+            self.raw_response, context="sim result raw_response"
+        )
+        if str(self.capital_layer or "").strip().lower() != "simulated":
+            raise ValueError("sim result capital_layer must be simulated")
+        if str(self.account_type or "").strip().lower() != "simulated":
+            raise ValueError("sim result account_type must be simulated")
+        if self.authority_generation is not None and (
+            isinstance(self.authority_generation, bool)
+            or not isinstance(self.authority_generation, int)
+            or self.authority_generation <= 0
+        ):
+            raise ValueError("sim result authority_generation must be positive integer")
         self.capital_layer = "simulated"
         self.account_type = "simulated"
+        if self.status in LOCAL_BACKUP_STATUSES:
+            if self.filled_qty <= 0 or self.avg_price <= 0:
+                raise ValueError(
+                    f"{self.status} sim result requires positive filled_qty and avg_price"
+                )
+        elif self.filled_qty != 0 or self.avg_price != 0 or self.fee != 0:
+            raise ValueError(
+                f"{self.status} sim result cannot carry fill quantity, price, or fee"
+            )
+
+
+def _normalize_filled_quantity(value: Any) -> int | float:
+    """Preserve fractional Crypto quantities while keeping lot markets integral."""
+
+    if isinstance(value, bool):
+        raise ValueError("filled_qty must be a non-negative finite number")
+    try:
+        quantity = float(value or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("filled_qty must be a non-negative finite number") from exc
+    if not math.isfinite(quantity) or quantity < 0:
+        raise ValueError("filled_qty must be a non-negative finite number")
+    rounded = round(quantity)
+    return int(rounded) if abs(quantity - rounded) <= 1e-12 else quantity
+
+
+def _normalize_non_negative_float(value: Any, *, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a non-negative finite number")
+    try:
+        parsed = float(value or 0.0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a non-negative finite number") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise ValueError(f"{name} must be a non-negative finite number")
+    return parsed
 
 
 @dataclass
@@ -81,21 +137,155 @@ def _ensure_builtin_executor(market_key: str) -> None:
             from Ashare.sim_executor import ashare_sim_execute
         except Exception:
             return
-        register_sim_executor("ashare", ashare_sim_execute)
+        register_sim_executor(
+            "ashare",
+            ashare_sim_execute,
+            simulation_contract="tradingagent.ashare.paper_broker.v1",
+            authority_id="ashare-capital-v1",
+        )
     elif market_key == "crypto":
         try:
             from Crypto.sim_executor import crypto_sim_execute
         except Exception:
             return
-        register_sim_executor("crypto", crypto_sim_execute)
+        register_sim_executor(
+            "crypto",
+            crypto_sim_execute,
+            simulation_contract="tradingagent.crypto.paper_broker.v1",
+            authority_id="crypto-shadow-sim-v1",
+        )
+    elif market_key == "cn_futures":
+        try:
+            from CNFutures.sim_executor import cn_futures_sim_execute
+        except Exception:
+            return
+        register_sim_executor(
+            "cn_futures",
+            cn_futures_sim_execute,
+            simulation_contract="tradingagent.cnfutures.paper_broker.v1",
+            authority_id="cn-futures-capital-v1",
+        )
+    elif market_key == "us":
+        try:
+            from US.sim_executor import us_sim_execute
+        except Exception:
+            return
+        register_sim_executor(
+            "us",
+            us_sim_execute,
+            simulation_contract="tradingagent.us.legacy_paper_mock.v1",
+            authority_id="us-legacy-sim-v1",
+        )
+    elif market_key == "pm":
+        try:
+            from PM.sim_executor import pm_sim_execute
+        except Exception:
+            return
+        register_sim_executor(
+            "pm",
+            pm_sim_execute,
+            simulation_contract="tradingagent.pm.research_sandbox.v1",
+            authority_id="pm-research-sim-v1",
+        )
+
+
+def _binding_claim_error(
+    payload: dict[str, Any],
+    *,
+    market_key: str,
+    simulation_contract: str,
+    authority_id: str,
+    authority_generation: int | None,
+    account_id: str | None,
+    source: str,
+) -> str:
+    claimed_market = str(payload.get("market") or "").strip().lower()
+    if claimed_market and claimed_market != market_key:
+        return f"{source}.market={claimed_market} does not match {market_key}"
+    claimed_contract = str(payload.get("broker_contract") or "").strip()
+    if claimed_contract and claimed_contract != simulation_contract:
+        return f"{source}.broker_contract does not match registered binding"
+    claimed_authority = str(payload.get("authority_id") or "").strip()
+    if claimed_authority and claimed_authority != authority_id:
+        return f"{source}.authority_id does not match registered binding"
+    if "authority_generation" in payload:
+        claimed_generation = payload.get("authority_generation")
+        if (
+            isinstance(claimed_generation, bool)
+            or not isinstance(claimed_generation, int)
+            or claimed_generation <= 0
+            or (
+                authority_generation is not None
+                and claimed_generation != authority_generation
+            )
+        ):
+            return f"{source}.authority_generation does not match account binding"
+    claimed_accounts = {
+        str(payload.get(field) or "").strip()
+        for field in ("account_id", "account")
+        if str(payload.get(field) or "").strip()
+    }
+    if len(claimed_accounts) > 1:
+        return f"{source}.account identity fields disagree"
+    if claimed_accounts and account_id is not None and claimed_accounts != {account_id}:
+        return f"{source}.account does not match market lane binding"
+    return ""
+
+
+_GOVERNED_SIM_ACCOUNT_IDS = {
+    "ashare": "ashare_sim",
+    "cn_futures": "cn_futures_sim",
+    "crypto": "crypto_sim",
+}
+
+
+def _governed_account_binding(
+    account: dict[str, Any],
+    *,
+    market_key: str,
+    simulation_contract: str,
+    authority_id: str,
+) -> tuple[str, int] | str | None:
+    """Validate the caller-owned market account binding before enrichment.
+
+    The dispatcher may propagate a verified binding to executor inputs, but it
+    must never manufacture one for an unbound or cross-market account.
+    """
+
+    expected_account = _GOVERNED_SIM_ACCOUNT_IDS.get(market_key)
+    if expected_account is None:
+        return None
+    identities = {
+        str(account.get(field) or "").strip()
+        for field in ("account_id", "account")
+        if str(account.get(field) or "").strip()
+    }
+    if identities != {expected_account}:
+        return f"account identity must be exactly {expected_account}"
+    if str(account.get("market") or "").strip().lower() != market_key:
+        return "account.market does not match governed market lane"
+    if str(account.get("broker_contract") or "").strip() != simulation_contract:
+        return "account.broker_contract does not match governed market lane"
+    if str(account.get("authority_id") or "").strip() != authority_id:
+        return "account.authority_id does not match governed market lane"
+    generation = account.get("authority_generation")
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation <= 0
+    ):
+        return "account.authority_generation must be a positive integer"
+    return expected_account, generation
 
 
 def _normalize_sim_status(status: Any) -> str:
     value = str(status or "").lower().strip()
     aliases = {
         "ok": "filled",
-        "dry_run_ok": "filled",
-        "warning": "partial",
+        "dry_run_ok": "pending",
+        # A warning is not evidence of a partial fill. Treat it as a non-fill
+        # failure unless an adapter emits an explicit, validated partial result.
+        "warning": "failed",
         "unfilled": "pending",
         "error": "failed",
     }
@@ -175,13 +365,17 @@ def _coerce_sim_result(result: Any, order: dict[str, Any], market: str) -> SimRe
             order_id=result.order_id or str(order.get("order_id", "")),
             market=result.market or market,
             raw_response=raw_response,
+            broker_contract=result.broker_contract,
+            authority_id=result.authority_id,
+            authority_generation=result.authority_generation,
         )
 
     if isinstance(result, dict):
+        reject_real_execution_payload(result, context=f"{market}.sim_result")
         return SimResult(
             status=result.get("status", "failed"),
-            filled_qty=int(
-                result.get("filled_qty", result.get("filled_quantity", 0)) or 0
+            filled_qty=result.get(
+                "filled_qty", result.get("filled_quantity", 0)
             ),
             avg_price=float(
                 result.get("avg_price", result.get("filled_price", 0.0)) or 0.0
@@ -191,6 +385,9 @@ def _coerce_sim_result(result: Any, order: dict[str, Any], market: str) -> SimRe
             order_id=str(result.get("order_id", order.get("order_id", ""))),
             market=str(result.get("market", market)),
             raw_response=dict(result),
+            broker_contract=str(result.get("broker_contract", "")),
+            authority_id=str(result.get("authority_id", "")),
+            authority_generation=result.get("authority_generation"),
         )
 
     return SimResult(
@@ -213,7 +410,10 @@ def execute_sim_order(
     ``SimResult``. The returned receipt is always marked as
     ``capital_layer=simulated`` and ``account_type=simulated``.
     """
-    from .sim_executor_registry import get_sim_executor, local_sim_executor
+    from .sim_executor_registry import (
+        get_sim_executor,
+        get_sim_executor_binding,
+    )
 
     market_key = str(market or "").lower().strip()
     order_payload = _coerce_payload_mapping(order, scalar_key="order")
@@ -252,9 +452,7 @@ def execute_sim_order(
                 raw_response={"recorded": False, "reason": provenance_error},
             )
     executor = get_sim_executor(market_key)
-    if executor is None or (
-        executor is local_sim_executor and market_key in {"ashare", "crypto"}
-    ):
+    if executor is None:
         _ensure_builtin_executor(market_key)
         executor = get_sim_executor(market_key)
     if executor is None:
@@ -264,6 +462,69 @@ def execute_sim_order(
             order_id=str(order_payload.get("order_id", "")),
             market=market_key,
         )
+
+    binding = get_sim_executor_binding(market_key)
+    if binding is None:
+        return SimResult(
+            status="failed",
+            message=f"Missing simulated executor binding for market={market_key}",
+            order_id=str(order_payload.get("order_id", "")),
+            market=market_key,
+        )
+    account_binding = _governed_account_binding(
+        account_payload,
+        market_key=market_key,
+        simulation_contract=binding.simulation_contract,
+        authority_id=binding.authority_id,
+    )
+    if isinstance(account_binding, str):
+        return SimResult(
+            status="failed",
+            message=f"Simulated account binding invalid: {account_binding}",
+            order_id=str(order_payload.get("order_id", "")),
+            market=market_key,
+            raw_response={"recorded": False, "reason": "sim_account_binding_invalid"},
+        )
+    bound_account_id: str | None = None
+    bound_generation: int | None = None
+    if isinstance(account_binding, tuple):
+        bound_account_id, bound_generation = account_binding
+        if "authority_generation" not in order_payload:
+            return SimResult(
+                status="failed",
+                message="Simulated input binding mismatch: order.authority_generation is required",
+                order_id=str(order_payload.get("order_id", "")),
+                market=market_key,
+                raw_response={"recorded": False, "reason": "sim_input_binding_mismatch"},
+            )
+    for source, payload in (
+        ("order", order_payload),
+        ("account", account_payload),
+        ("config", config_payload),
+    ):
+        mismatch = _binding_claim_error(
+            payload,
+            market_key=market_key,
+            simulation_contract=binding.simulation_contract,
+            authority_id=binding.authority_id,
+            authority_generation=bound_generation,
+            account_id=bound_account_id,
+            source=source,
+        )
+        if mismatch:
+            return SimResult(
+                status="failed",
+                message=f"Simulated input binding mismatch: {mismatch}",
+                order_id=str(order_payload.get("order_id", "")),
+                market=market_key,
+                raw_response={"recorded": False, "reason": "sim_input_binding_mismatch"},
+            )
+    for payload in (sim_order, sim_account, sim_config):
+        payload["market"] = market_key
+        payload["broker_contract"] = binding.simulation_contract
+        payload["authority_id"] = binding.authority_id
+        if bound_generation is not None:
+            payload["authority_generation"] = bound_generation
 
     try:
         result = executor(sim_order, sim_account, sim_config)
@@ -275,12 +536,37 @@ def execute_sim_order(
             market=market_key,
         )
 
-    sim_result = _coerce_sim_result(result, sim_order, market_key)
+    try:
+        sim_result = _coerce_sim_result(result, sim_order, market_key)
+    except (TypeError, ValueError, RuntimeError) as exc:
+        return SimResult(
+            status="failed",
+            message=f"Invalid simulated receipt for market={market_key}: {exc}",
+            order_id=str(order_payload.get("order_id", "")),
+            market=market_key,
+        )
     if (
-        market_key == "ashare"
-        and sim_result.status in LOCAL_BACKUP_STATUSES
-        and os.environ.get("TRADINGS_LOCAL_SIM_BACKUP_ENABLED", "1") != "0"
+        sim_result.market != market_key
+        or sim_result.broker_contract != binding.simulation_contract
+        or sim_result.authority_id != binding.authority_id
+        or (
+            sim_result.authority_generation is not None
+            and sim_result.authority_generation != bound_generation
+        )
     ):
+        return SimResult(
+            status="failed",
+            message=(
+                "Simulated receipt binding mismatch: "
+                f"expected market={market_key}, contract={binding.simulation_contract}, "
+                f"authority={binding.authority_id}"
+            ),
+            order_id=str(order_payload.get("order_id", "")),
+            market=market_key,
+            raw_response={"recorded": False, "reason": "sim_receipt_binding_mismatch"},
+        )
+    sim_result.authority_generation = bound_generation
+    if market_key == "ashare" and sim_result.status in LOCAL_BACKUP_STATUSES:
         try:
             from .local_sim_ledger import record_local_sim_order
 
@@ -289,7 +575,7 @@ def execute_sim_order(
             )
         except (
             Exception
-        ) as exc:  # pragma: no cover - backup must not block Hermes dispatch
+        ) as exc:  # pragma: no cover - backup must not mask executor result
             backup = {
                 "status": "failed",
                 "recorded": False,
@@ -299,7 +585,9 @@ def execute_sim_order(
             **dict(sim_result.raw_response or {}),
             "local_sim_backup": backup,
         }
-        if backup.get("status") in {"rejected", "failed"}:
+        if backup.get("status") in {"rejected", "failed"} or not bool(
+            backup.get("recorded")
+        ):
             reason = str(
                 backup.get("reason")
                 or backup.get("error")
@@ -331,6 +619,9 @@ def execute_sim_order(
                         "avg_price": sim_result.avg_price,
                     },
                 },
+                broker_contract=binding.simulation_contract,
+                authority_id=binding.authority_id,
+                authority_generation=bound_generation,
             )
     return sim_result
 

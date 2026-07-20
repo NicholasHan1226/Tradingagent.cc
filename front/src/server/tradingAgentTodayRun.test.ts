@@ -232,7 +232,7 @@ function runBundle(overrides: Record<string, unknown> = {}) {
           execution_eligible: true,
           datasets: [
             {
-              dataset_id: 'cn.equity.daily',
+              dataset_id: 'fixture.cn.equity.daily.v1',
               role: 'required_execution',
               state: 'ready',
               evidence_action: 'accept',
@@ -351,7 +351,7 @@ describe('TradingAgent Today RunBundle read model', () => {
     const receipts = payload.stage_receipts as Array<Record<string, unknown>>
     const evidence = receipts.find((row) => row.stage === 'evidence_ready')!
     evidence.payload = {
-      datasets: [{ dataset_id: 'cn.equity.daily', state: 'stale', evidence_action: 'reject', receipt_id: 'receipt-1' }],
+      datasets: [{ dataset_id: 'fixture.cn.equity.daily.v1', state: 'stale', evidence_action: 'reject', receipt_id: 'receipt-1' }],
     }
     evidence.reason_codes = ['dataset_stale']
     const risk = receipts.find((row) => row.stage === 'risk_checked')!
@@ -399,7 +399,7 @@ describe('TradingAgent Today RunBundle read model', () => {
       execution_eligible: true,
       datasets: [
         {
-          dataset_id: 'cn.equity.daily',
+          dataset_id: 'fixture.cn.equity.daily.v1',
           role: 'required_execution',
           state: 'ready',
           evidence_action: 'accept',
@@ -407,7 +407,7 @@ describe('TradingAgent Today RunBundle read model', () => {
           receipt_id: 'receipt-daily',
         },
         {
-          dataset_id: 'cn.index.daily',
+          dataset_id: 'fixture.cn.index.daily.v1',
           role: 'optional_context',
           state: 'degraded',
           evidence_action: 'deweight',

@@ -12,7 +12,7 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Mapping
 
 from shared.execution.signal_state_machine import (
     SignalStateConflict,
@@ -128,7 +128,7 @@ def _validate_market_capital_provider_state(
     """Validate the market-capital-ledger provider contract fail closed.
 
     Requires: source=market_capital_ledger, market=cn_futures,
-    authority_id=cn-futures-capital-v1, generation=1,
+    authority_id=cn-futures-capital-v1, a positive current generation,
     sim-only, reconciled, fresh, trade_date match,
     execution_lineage present, margin_utilization_limit=25000.
     Bootstrap without reconcile fails closed.
@@ -153,7 +153,7 @@ def _validate_market_capital_provider_state(
     if (
         not isinstance(authority_generation, int)
         or isinstance(authority_generation, bool)
-        or authority_generation != 1
+        or authority_generation <= 0
     ):
         return None, "market_capital_state_invalid_generation"
     if state.get("real_trading_enabled") is not False:
@@ -258,12 +258,30 @@ def _reserve_cn_futures_market_margin(
     point_in_time_as_of: str,
     lineage_sha256: str,
     execution_lineage_id: str,
+    authority_id: str,
+    authority_generation: int,
     worst_case_fee_cash_cny: float = 0.0,
 ) -> dict[str, Any]:
     """Reserve simulated capacity via cn_futures MarketCapitalLedger before a new futures fill."""
 
     from shared.capital import MarketCapitalReservationRequest, reserve_market_capital
 
+    if authority_id != "cn-futures-capital-v1":
+        return {
+            "approved": False,
+            "reason": "market_capital_reservation_invalid_authority",
+            "real_trading_enabled": False,
+        }
+    if (
+        isinstance(authority_generation, bool)
+        or not isinstance(authority_generation, int)
+        or authority_generation <= 0
+    ):
+        return {
+            "approved": False,
+            "reason": "market_capital_reservation_invalid_generation",
+            "real_trading_enabled": False,
+        }
     try:
         decision = reserve_market_capital(
             "cn_futures",
@@ -272,8 +290,8 @@ def _reserve_cn_futures_market_margin(
                 reference_id=reference_id,
                 risk_unit_key=risk_unit_key,
                 worst_case_amount_cny=worst_case_amount_cny,
-                authority_id="cn-futures-capital-v1",
-                authority_generation=1,
+                authority_id=authority_id,
+                authority_generation=authority_generation,
                 trade_date=trade_date,
                 point_in_time_as_of=point_in_time_as_of,
                 lineage_sha256=lineage_sha256,
@@ -299,8 +317,8 @@ def _reserve_cn_futures_market_margin(
         "amount_cny": round(float(worst_case_amount_cny), 6),
         "reference_id": reference_id,
         "risk_unit_key": risk_unit_key,
-        "authority_id": "cn-futures-capital-v1",
-        "authority_generation": 1,
+        "authority_id": authority_id,
+        "authority_generation": authority_generation,
         "trade_date": _normalize_trade_date(trade_date),
         "point_in_time_as_of": point_in_time_as_of,
         "lineage_sha256": lineage_sha256,
@@ -816,6 +834,14 @@ def _build_open_fill_commit_request(
         capital_reservation.get("execution_lineage_id") or ""
     ).strip()
     fill_id = _execution_fill_id(order_id, receipt)
+    authority_id = str(capital_reservation.get("authority_id") or "").strip()
+    authority_generation = capital_reservation.get("authority_generation")
+    if authority_id != "cn-futures-capital-v1" or (
+        isinstance(authority_generation, bool)
+        or not isinstance(authority_generation, int)
+        or authority_generation <= 0
+    ):
+        raise ValueError("capital_reservation_authority_binding_invalid")
     point_in_time = _aware_cn_timestamp(
         capital_reservation.get("point_in_time_as_of")
         or prediction_snapshot.get("point_in_time_as_of")
@@ -848,7 +874,8 @@ def _build_open_fill_commit_request(
     return {
         "market": "cn_futures",
         "reference_id": (
-            f"MCAPFILL:1:{execution_lineage_id}:{reservation_id}:{fill_id}"
+            f"MCAPFILL:{authority_generation}:{execution_lineage_id}:"
+            f"{reservation_id}:{fill_id}"
         ),
         "reservation_id": reservation_id,
         "reservation_event_id": str(capital_reservation.get("event_id") or ""),
@@ -856,8 +883,8 @@ def _build_open_fill_commit_request(
             capital_reservation.get("reference_id") or order_id
         ),
         "risk_unit_key": str(order.get("symbol") or ""),
-        "authority_id": "cn-futures-capital-v1",
-        "authority_generation": 1,
+        "authority_id": authority_id,
+        "authority_generation": authority_generation,
         "execution_lineage_id": execution_lineage_id,
         "lineage_sha256": str(capital_reservation.get("lineage_sha256") or ""),
         "order_id": order_id,
@@ -915,6 +942,14 @@ def _build_position_close_commit_request(
     fill_id = _execution_fill_id(order_id, receipt)
     risk_unit_key = str(order.get("symbol") or "")
     execution_lineage_id = str(capital_state.get("execution_lineage_id") or "")
+    authority_id = str(capital_state.get("authority_id") or "").strip()
+    authority_generation = capital_state.get("authority_generation")
+    if authority_id != "cn-futures-capital-v1" or (
+        isinstance(authority_generation, bool)
+        or not isinstance(authority_generation, int)
+        or authority_generation <= 0
+    ):
+        raise ValueError("capital_state_authority_binding_invalid")
     previous_qty = abs(_safe_int(previous_position.get("net_qty"), 0))
     closed_qty = _safe_int(performance.get("closed_quantity"), 0)
     previous_margin = _safe_float(previous_position.get("margin_required"), 0.0)
@@ -930,11 +965,12 @@ def _build_position_close_commit_request(
     return {
         "market": "cn_futures",
         "reference_id": (
-            f"MCAPCLOSE:1:{execution_lineage_id}:{risk_unit_key}:{fill_id}"
+            f"MCAPCLOSE:{authority_generation}:{execution_lineage_id}:"
+            f"{risk_unit_key}:{fill_id}"
         ),
         "risk_unit_key": risk_unit_key,
-        "authority_id": "cn-futures-capital-v1",
-        "authority_generation": 1,
+        "authority_id": authority_id,
+        "authority_generation": authority_generation,
         "execution_lineage_id": execution_lineage_id,
         "lineage_sha256": str(prediction_snapshot.get("source_snapshot_sha256") or ""),
         "order_id": order_id,
@@ -2978,6 +3014,50 @@ def _bars_for_cadence(
     return bars, INTRADAY_INTERVAL, latest_bar_time
 
 
+def _explicit_source_identity(
+    reader: Any,
+    bars: list[dict[str, Any]],
+) -> str:
+    """Return only an identity explicitly supplied by the injected data port.
+
+    A reader implementation name is not data lineage, and TradingDatas dataset
+    IDs are not known before the fresh handoff.  Fixture ports therefore expose
+    an explicit ``source_identity``; future V1 ports may propagate a dataset ID
+    on the reader or row envelope.  Missing or conflicting identities remain
+    empty so the simulated receipt fails closed as lineage-incomplete.
+    """
+
+    candidates: set[str] = set()
+
+    reader_identity = getattr(reader, "source_identity", None)
+    if callable(reader_identity):
+        try:
+            reader_identity = reader_identity()
+        except Exception:
+            reader_identity = None
+    if isinstance(reader_identity, Mapping):
+        reader_identity = (
+            reader_identity.get("dataset_id")
+            or reader_identity.get("source_name")
+            or reader_identity.get("identity")
+        )
+    if isinstance(reader_identity, str) and reader_identity.strip():
+        candidates.add(reader_identity.strip())
+
+    for bar in bars:
+        metadata = bar.get("metadata") if isinstance(bar.get("metadata"), dict) else {}
+        identity = (
+            bar.get("source_dataset_id")
+            or bar.get("dataset_id")
+            or metadata.get("dataset_id")
+            or metadata.get("source_name")
+        )
+        if isinstance(identity, str) and identity.strip():
+            candidates.add(identity.strip())
+
+    return next(iter(candidates)) if len(candidates) == 1 else ""
+
+
 def _order_period_key(date: str, cadence: str, latest_bar_time: str) -> str:
     if cadence == "daily":
         return str(date)
@@ -3629,7 +3709,15 @@ def _signal_card(
         "timestamp": _now_iso(),
         "idempotency_key": order_id,
         "order_intent": str(order.get("intent") or "open"),
+        "position_effect": str(order.get("position_effect") or ""),
         "source": "cn_futures_multi_style_simulation",
+        "broker_contract": str(
+            receipt.get("broker_contract")
+            or _sim_executor.PAPER_BROKER_CONTRACT
+        ),
+        "authority_id": str(
+            receipt.get("authority_id") or _sim_executor.SIM_AUTHORITY_ID
+        ),
         "cadence": cadence,
         "bar_time": latest_bar_time,
         "signal": signal,
@@ -4151,6 +4239,7 @@ def run_multi_style_simulation(
                 exit_plan,
                 point_in_time_as_of=latest_bar_time,
             )
+            source_identity = _explicit_source_identity(reader, bars)
             prediction_snapshot = _prediction_snapshot_before_risk(
                 style_name=style_name,
                 style=style,
@@ -4161,7 +4250,7 @@ def run_multi_style_simulation(
                 bar_time=latest_bar_time,
                 authority=resolved_authority,
                 symbol=symbol,
-                source_name="sharedsignals_futures_bars",
+                source_name=source_identity,
                 source_cadence=bar_cadence,
                 source_bars=bars,
             )
@@ -4179,7 +4268,9 @@ def run_multi_style_simulation(
                 }
             )
             cluster_authority = (
-                "cn-futures-capital-v1:1:"
+                "cn-futures-capital-v1:"
+                + str((authoritative_state or {}).get("authority_generation") or "")
+                + ":"
                 + str((authoritative_state or {}).get("execution_lineage_id") or "")
                 if authoritative_state is not None
                 else "unverified:"
@@ -4253,19 +4344,47 @@ def run_multi_style_simulation(
             try:
                 if reduce_only:
                     rule = get_contract_rule(symbol)
-                    quantity = abs(existing_qty)
-                    size_decision = {
-                        "symbol": symbol,
-                        "quantity": quantity,
-                        "margin_per_lot": 0.0,
-                        "margin_budget": 0.0,
-                        "modeled_loss_per_lot": 0.0,
-                        "loss_budget": 0.0,
-                        "eligible": quantity > 0,
-                        "reason": "reduce_only_existing_position",
-                        "counterfactual_only": False,
-                        "reduce_only": True,
-                    }
+                    if authoritative_state is None:
+                        quantity = 0
+                        size_decision = {
+                            "symbol": symbol,
+                            "quantity": 0,
+                            "margin_per_lot": 0.0,
+                            "margin_budget": 0.0,
+                            "modeled_loss_per_lot": 0.0,
+                            "loss_budget": 0.0,
+                            "eligible": False,
+                            "reason": "account_state_unavailable",
+                            "authority_status": authority_status,
+                            "counterfactual_only": True,
+                            "reduce_only": True,
+                        }
+                        capital_error = {
+                            "stage": "capital",
+                            "market": MARKET,
+                            "symbol": symbol,
+                            "style": style_name,
+                            "error": (
+                                "capital_provider_unavailable:"
+                                f"{authority_status}"
+                            ),
+                        }
+                        if capital_error not in errors:
+                            errors.append(capital_error)
+                    else:
+                        quantity = abs(existing_qty)
+                        size_decision = {
+                            "symbol": symbol,
+                            "quantity": quantity,
+                            "margin_per_lot": 0.0,
+                            "margin_budget": 0.0,
+                            "modeled_loss_per_lot": 0.0,
+                            "loss_budget": 0.0,
+                            "eligible": quantity > 0,
+                            "reason": "reduce_only_existing_position",
+                            "counterfactual_only": False,
+                            "reduce_only": True,
+                        }
                 else:
                     account_state = _current_account_state(
                         account=account,
@@ -4334,7 +4453,7 @@ def run_multi_style_simulation(
                     }
                 )
                 continue
-            if not reduce_only and not bool(size_decision.get("eligible")):
+            if not bool(size_decision.get("eligible")):
                 size_decision = {
                     **size_decision,
                     "quantity": 0,
@@ -4419,10 +4538,20 @@ def run_multi_style_simulation(
                 "market": MARKET,
                 "capital_layer": "simulated",
                 "account_type": "simulated",
+                "account_id": "cn_futures_sim",
+                "broker_contract": _sim_executor.PAPER_BROKER_CONTRACT,
+                "authority_id": str(
+                    (authoritative_state or {}).get("authority_id") or ""
+                ),
+                "authority_generation": (
+                    (authoritative_state or {}).get("authority_generation")
+                ),
+                "decision_time": cn_now.isoformat(timespec="seconds"),
                 "contract_multiplier": rule.contract_multiplier,
                 "cadence": bar_cadence,
                 "bar_time": latest_bar_time,
                 "intent": intent,
+                "position_effect": "close" if reduce_only else "open",
                 "bar_volume": _safe_float(
                     (bars[-1] if bars else {}).get("volume"), 0.0
                 ),
@@ -4540,6 +4669,12 @@ def run_multi_style_simulation(
                     execution_lineage_id=str(
                         (authoritative_state or {}).get("execution_lineage_id") or ""
                     ),
+                    authority_id=str(
+                        (authoritative_state or {}).get("authority_id") or ""
+                    ),
+                    authority_generation=(authoritative_state or {}).get(
+                        "authority_generation"
+                    ),
                     worst_case_fee_cash_cny=float(projected_cost.open_fee),
                 )
                 if not bool(capital_reservation.get("approved")):
@@ -4590,15 +4725,47 @@ def run_multi_style_simulation(
                 symbol=symbol,
                 side=str(order["side"]),
             )
+            sim_account: dict[str, Any] = {
+                "account_id": "cn_futures_sim",
+                "market": MARKET,
+                "broker_contract": _sim_executor.PAPER_BROKER_CONTRACT,
+                "authority_id": str(
+                    (authoritative_state or {}).get("authority_id") or ""
+                ),
+                "authority_generation": (
+                    (authoritative_state or {}).get("authority_generation")
+                ),
+                "capital_layer": "simulated",
+                "account_type": "simulated",
+            }
+            if reduce_only:
+                sim_account["position_snapshot"] = {
+                    "snapshot_id": str(
+                        position_snapshot.get("payload_sha256") or ""
+                    ),
+                    "as_of": str(
+                        position_snapshot.get("updated_at")
+                        or position_snapshot.get("trade_date")
+                        or ""
+                    ),
+                    "authority_id": _sim_executor.SIM_AUTHORITY_ID,
+                    "authority_generation": (
+                        (authoritative_state or {}).get("authority_generation")
+                    ),
+                    "broker_contract": _sim_executor.PAPER_BROKER_CONTRACT,
+                    "positions": [
+                        {
+                            "symbol": symbol,
+                            "position_side": _position_side(existing_qty),
+                            "total_qty": abs(existing_qty),
+                        }
+                    ],
+                }
             try:
                 receipt_obj = execute_sim_order(
                     order=order,
                     market=MARKET,
-                    account={
-                        "account": f"cn_futures_sim_{style_name}",
-                        "capital_layer": "simulated",
-                        "account_type": "simulated",
-                    },
+                    account=sim_account,
                     config={
                         "fee_mode": "round_trip_estimate",
                         "style": style_name,
@@ -4668,6 +4835,9 @@ def run_multi_style_simulation(
                 "real_trading_enabled": False,
                 "order_id": receipt_obj.order_id,
                 "market": receipt_obj.market,
+                "broker_contract": receipt_obj.broker_contract,
+                "authority_id": receipt_obj.authority_id,
+                "authority_generation": receipt_obj.authority_generation,
                 "raw_response": receipt_obj.raw_response,
             }
             # PIT lineage flag on the receipt itself

@@ -12,12 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from shared.markets.performance_tracker import load_style_weights, save_run
+from shared.markets.performance_tracker import save_run
 from shared.markets.safety import reject_real_execution_payload
 from shared.markets.sim_capital import default_sim_capital
 from shared.markets.style_config import (
     TradeStyle,
-    load_generated_trade_styles,
     load_trade_styles,
 )
 
@@ -373,40 +372,24 @@ class StyleRunner:
     def _load_weighted_styles(
         self, *, include_disabled: bool = False
     ) -> list[TradeStyle]:
+        # Production/simulation runtime uses checked-in styles only.  Evolution
+        # reports, generated challengers, and weight snapshots are advisory and
+        # cannot silently alter an active run.
         styles = load_trade_styles(
             self.market, styles_dir=self.styles_dir, include_disabled=include_disabled
         )
-        generated = load_generated_trade_styles(
-            self.market,
-            review_root=self.review_root,
-            include_disabled=include_disabled,
-        )
-        if generated:
-            by_name = {style.name: style for style in styles}
-            for style in generated:
-                by_name[style.name] = style
-            styles = list(by_name.values())
-        weights = load_style_weights(self.market, review_root=self.review_root)
-        weighted: list[TradeStyle] = []
         active_weight_total = 0.0
         for style in styles:
-            override = weights.get(style.name, {})
-            if isinstance(override, dict):
-                status = str(override.get("status") or style.status)
-                weight = float(override.get("weight", style.weight) or 0.0)
-                weighted.append(replace(style, status=status, weight=weight))
-            else:
-                weighted.append(style)
-            if weighted[-1].status == "active":
-                active_weight_total += max(0.0, float(weighted[-1].weight))
+            if style.status == "active":
+                active_weight_total += max(0.0, float(style.weight))
         if active_weight_total <= 0:
-            active = [style for style in weighted if style.status == "active"]
+            active = [style for style in styles if style.status == "active"]
             if not active:
-                return weighted
+                return styles
             equal = round(1.0 / len(active), 6)
             return [
                 replace(style, weight=equal) if style.status == "active" else style
-                for style in weighted
+                for style in styles
             ]
         return [
             replace(
@@ -415,7 +398,7 @@ class StyleRunner:
             )
             if style.status == "active"
             else style
-            for style in weighted
+            for style in styles
         ]
 
     @staticmethod

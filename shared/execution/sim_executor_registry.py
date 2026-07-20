@@ -3,11 +3,25 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable
+
+from shared.governance.market_lanes import load_market_lanes
 
 SimExecutor = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], Any]
 
-_SIM_EXECUTORS: dict[str, SimExecutor] = {}
+
+@dataclass(frozen=True)
+class SimExecutorBinding:
+    """One market's explicit paper-broker binding."""
+
+    market: str
+    simulation_contract: str
+    authority_id: str
+    fn: SimExecutor
+
+
+_SIM_EXECUTORS: dict[str, SimExecutorBinding] = {}
 _TEST_ONLY_LEGACY_CONFIG_KEY = "_test_only_ashare_legacy_simulator_token"
 _TEST_ONLY_LEGACY_TOKEN = object()
 
@@ -16,14 +30,52 @@ def _normalize_market(market: str | None) -> str:
     return str(market or "").lower().strip()
 
 
-def register_sim_executor(market: str, fn: SimExecutor) -> SimExecutor:
-    """Register a simulated-account executor for ``market``."""
+def _governed_lane(market_key: str):
+    registry = load_market_lanes()
+    try:
+        return registry.get_for_runtime_market(market_key)
+    except ValueError:
+        return None
+
+
+def register_sim_executor(
+    market: str,
+    fn: SimExecutor,
+    *,
+    simulation_contract: str = "",
+    authority_id: str = "",
+) -> SimExecutor:
+    """Register an executor with its market-specific contract and authority."""
     market_key = _normalize_market(market)
     if not market_key:
         raise ValueError("market is required")
     if not callable(fn):
         raise TypeError("sim executor must be callable")
-    _SIM_EXECUTORS[market_key] = fn
+    lane = _governed_lane(market_key)
+    if lane is not None:
+        expected_contract = lane.broker_boundary.simulation_contract
+        if simulation_contract != expected_contract:
+            raise ValueError(
+                f"market {market_key} requires simulation_contract={expected_contract}"
+            )
+        if authority_id != lane.authority_id:
+            raise ValueError(
+                f"market {market_key} requires authority_id={lane.authority_id}"
+            )
+    elif not simulation_contract or not authority_id:
+        raise ValueError(
+            "non-governed market executors require explicit simulation_contract and authority_id"
+        )
+    binding = SimExecutorBinding(
+        market=market_key,
+        simulation_contract=simulation_contract,
+        authority_id=authority_id,
+        fn=fn,
+    )
+    existing = _SIM_EXECUTORS.get(market_key)
+    if existing is not None and existing != binding:
+        raise ValueError(f"sim executor already registered for market={market_key}")
+    _SIM_EXECUTORS[market_key] = binding
     return fn
 
 
@@ -37,7 +89,7 @@ def local_sim_executor(
     The A-share legacy simulator is retired from normal dispatch.  It can only
     be reached through :func:`build_test_only_legacy_sim_executor`, which adds
     a process-local token that cannot arrive through a serialized order/config.
-    Other markets retain their existing fallback behavior.
+    No market receives this fallback implicitly from the registry.
     """
     from .sim_broker import SimResult, simulate_order
 
@@ -94,11 +146,15 @@ def build_test_only_legacy_sim_executor(market: str) -> SimExecutor:
 
 
 def get_sim_executor(market: str | None) -> SimExecutor | None:
-    """Return the registered executor, without an A-share legacy fallback."""
+    """Return only an explicitly registered executor; unknown markets fail closed."""
     market_key = _normalize_market(market)
     registered = _SIM_EXECUTORS.get(market_key)
     if registered is not None:
-        return registered
-    if market_key == "ashare":
-        return None
-    return local_sim_executor
+        return registered.fn
+    return None
+
+
+def get_sim_executor_binding(market: str | None) -> SimExecutorBinding | None:
+    """Return the immutable binding for a governed market."""
+
+    return _SIM_EXECUTORS.get(_normalize_market(market))

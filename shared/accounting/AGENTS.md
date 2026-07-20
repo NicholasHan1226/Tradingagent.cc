@@ -8,7 +8,7 @@
 ## 文件
 - `capital_ledger.py` — 资金流水: 买入/卖出/逆回购/利息/手续费。SQLite 存储, 按 real/simulated/shadow 三张表物理隔离, 精确到分。
 - `position_ledger.py` — 持仓流水: 开仓/加仓/减仓/平仓。SQLite 存储, 按 real/simulated/shadow 三张表物理隔离。
-- `daily_reconcile.py` — 每日对账: 系统持仓 vs 券商实盘持仓（未来接入）或 Hermes 同花顺只读同步（仅 `ASHARE_SIM_HERMES_ENABLED=1` 时用于 A股模拟第二路径），输出 matched/mismatches/actions。
+- `daily_reconcile.py` — provider-neutral 单市场对账原语：系统持仓 vs 该市场 paper/broker adapter 快照，输出 matched/mismatches/actions；它不持有transport、账户或凭据。
 - `trade_audit_trail.py` — 审计追踪: signal→decision→risk→execution→result 全链路, JSONL 追加只写, 永不修改。
 
 ## 原则
@@ -27,5 +27,5 @@ from trade_audit_trail import record_event
 ```
 
 ## 依赖
-- 券商/交易所持仓回报（未来）或 Hermes 只读同步（仅 `ASHARE_SIM_HERMES_ENABLED=1` 时用于 A股模拟第二路径）— 对账时读取实盘持仓
+- 各市场自己的 paper/broker adapter 快照；A股、CNFutures、Crypto 的账户、字段映射和回执分别实现，不能由本模块互相转换。
 - 共享 logs/ 目录 — SQLite 账本、旧 CSV 迁移输入和 JSONL 存储位置

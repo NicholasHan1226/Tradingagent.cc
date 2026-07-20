@@ -7,17 +7,18 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from shared.data.reader import TradingagentDataReader
 from shared.markets.config_schema import MarketToolConfig
 from shared.markets.safety import assert_no_live_broker, assert_no_real_execution, assert_public_data_only
 
 
 class BaseMarketData(ABC):
-    def __init__(self, market: str, config: MarketToolConfig) -> None:
+    def __init__(
+        self, market: str, config: MarketToolConfig, *, reader: Any | None = None
+    ) -> None:
         assert_public_data_only(config)
         self.market = market
         self.config = config
-        self.reader = TradingagentDataReader()
+        self.reader = reader
 
     @abstractmethod
     def get_daily(self, symbol: str, start: str, end: str) -> list[dict[str, Any]]:
@@ -47,7 +48,7 @@ class BaseSimulator(ABC):
         self.market = market
         self.config = config
         self.market_data = market_data
-        self.reader = TradingagentDataReader()
+        self.reader = getattr(market_data, "reader", None)
         self.validate_config()
 
     def validate_config(self) -> None:
@@ -76,7 +77,7 @@ class BaseShadowRunner(ABC):
         self.config = config
         self.market_data = market_data
         self.simulator = simulator
-        self.reader = TradingagentDataReader()
+        self.reader = getattr(market_data, "reader", None)
 
     @abstractmethod
     def run_shadow(self, date: str) -> dict[str, Any]:
@@ -92,11 +93,13 @@ class BaseShadowRunner(ABC):
 
 
 class BaseReport(ABC):
-    def __init__(self, market: str, config: MarketToolConfig) -> None:
+    def __init__(
+        self, market: str, config: MarketToolConfig, *, reader: Any | None = None
+    ) -> None:
         assert_no_real_execution(config)
         self.market = market
         self.config = config
-        self.reader = TradingagentDataReader()
+        self.reader = reader
 
     @abstractmethod
     def render_daily(self, date: str) -> dict[str, Any]:

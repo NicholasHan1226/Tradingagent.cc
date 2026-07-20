@@ -4,9 +4,9 @@
   "config": {
     "trade_date": "2026-07-16",
     "decision_as_of": "2026-07-16T09:05:00+08:00",
-    "ss_v1_base_url": "http://sharedsignals.fixture.invalid:8082",
-    "ss_catalog_version": "fixture-catalog-2026-07-16",
-    "ss_access_policy_id": "ta-paper-read-v1",
+    "tradingdatas_v1_base_url": "http://tradingdatas.fixture.invalid:8082",
+    "tradingdatas_catalog_version": "fixture-catalog-2026-07-16",
+    "tradingdatas_access_policy_id": "ta-paper-read-v1",
     "capital_authority_id": "ashare-phase1-offline-fixture-capital-v1",
     "authority_generation": 1,
     "execution_lineage": "ashare-phase1-offline-fixture-lineage-v1",
@@ -17,7 +17,7 @@
     "profile_id": "mainboard-paper-mvp-input-v1",
     "datasets": [
       {
-        "dataset_id": "cn.equity.daily.mainboard.v1",
+        "dataset_id": "fixture.cn.equity.daily.mainboard.v1",
         "schema_major": 1,
         "role": "required_execution",
         "fields": ["ts_code", "close"],
@@ -33,7 +33,7 @@
         }
       },
       {
-        "dataset_id": "cn.equity.sector.full_market.context.v1",
+        "dataset_id": "fixture.cn.equity.sector.full-market-context.v1",
         "schema_major": 1,
         "role": "optional_context",
         "fields": ["sector_id", "breadth"],
@@ -212,24 +212,24 @@
         "request_id": "catalog-request-1",
         "data": [
           {
-            "dataset_id": "cn.equity.daily.mainboard.v1",
+            "dataset_id": "fixture.cn.equity.daily.mainboard.v1",
             "fields": ["ts_code", "close"]
           },
           {
-            "dataset_id": "cn.equity.sector.full_market.context.v1",
+            "dataset_id": "fixture.cn.equity.sector.full-market-context.v1",
             "fields": ["sector_id", "breadth"]
           }
         ]
       }
     },
     "queries": {
-      "cn.equity.daily.mainboard.v1": {
+      "fixture.cn.equity.daily.mainboard.v1": {
         "status_code": 200,
         "json_body": {
           "api_version": "v1",
           "catalog_version": "fixture-catalog-2026-07-16",
           "request_id": "query-cn-equity-daily-mainboard-v1",
-          "dataset_id": "cn.equity.daily.mainboard.v1",
+          "dataset_id": "fixture.cn.equity.daily.mainboard.v1",
           "data": [
             {
               "ts_code": "000001.SZ",
@@ -254,13 +254,13 @@
           }
         }
       },
-      "cn.equity.sector.full_market.context.v1": {
+      "fixture.cn.equity.sector.full-market-context.v1": {
         "status_code": 200,
         "json_body": {
           "api_version": "v1",
           "catalog_version": "fixture-catalog-2026-07-16",
           "request_id": "query-cn-equity-sector-context-v1",
-          "dataset_id": "cn.equity.sector.full_market.context.v1",
+          "dataset_id": "fixture.cn.equity.sector.full-market-context.v1",
           "data": [
             {
               "sector_id": "full-market",
@@ -289,7 +289,7 @@
   },
   "managed_stage_identities": {
     "evidence_ready": {
-      "component_id": "sharedsignals-research-evidence-port",
+      "component_id": "tradingdatas-research-evidence-port",
       "version": "1",
       "artifact_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
     },

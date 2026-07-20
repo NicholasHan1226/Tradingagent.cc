@@ -5,7 +5,7 @@
 ## 定位与账户
 
 - CNFutures 负责国内期货方向判断、会话/合约语义、一手 affordability、模拟成交和复盘。
-- 唯一资金 authority 是独立 fresh-start `cn-futures-capital-v1` / generation 1 的 50,000 CNY simulated 账户；不与 A股共享、相加、净额或互补。
+- 唯一资金 authority 是独立 fresh-start `cn-futures-capital-v1` 的 50,000 CNY simulated 账户；generation 必须在每轮从 current authoritative snapshot 读取且为正数，不得写死为 1，也不与 A股共享、相加、净额或互补。
 - 保证金使用率上限 50%，当前 25,000 CNY。保证金容量与单笔止损损失预算是两道独立门禁。
 - 日亏、连续亏损、MTM 回撤和 high-water 各自独立；5% 回撤收紧预算，7% 暂停。
 - 当前长期模拟，无实盘日期。SimNow/CTP 只是测试或未来预留，不构成真实交易接入。
@@ -41,7 +41,7 @@
 
 ## 数据与成熟度
 
-- 盘中合约与 5 分钟行情来自 SharedSignals API；`SHAREDSIGNALS_API_URL` 被显式置空时必须在旧 reader 前 fail closed。SQLite 只限显式隔离测试/诊断，并且必须同时设置 `TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1` 与提供已存在的诊断数据库；生产环境不得设置该开关。
+- 盘中合约与 5 分钟行情只消费 TradingDatas 的 `GET /v1/catalog` 与 `POST /v1/query`；fresh handoff 前只允许显式 fixture/mock。CNFutures 当前链不得读取 TradingDatas SQLite，也不得回退到旧 `SHAREDSIGNALS_API_URL` reader、`/tushare`、`/source_status` 或 provider 专用 route；历史诊断代码不构成可恢复入口。
 - 生产 universe 至少覆盖 3 个独立底层品种；同品种跨月只算一个。覆盖不足仍保存 observation，并标明偏差，不放宽执行门禁。
 - 成熟度独立展示有效样本、完整回合、品种/波动/会话覆盖、夜盘、换月、极端风险、费用后结果、回撤和稳定性；不读取 A股模拟天数或晋级状态。
 - 自动晋级、自动风险扩张和 live transition 均关闭。

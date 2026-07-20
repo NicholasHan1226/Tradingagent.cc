@@ -1,5 +1,7 @@
 # Mainboard Small-Capital Paper Architecture V1 Implementation Plan
 
+> **Historical naming notice (2026-07-20):** This is an implementation-history document. References below to “SharedSignals” preserve the names and ownership model used when the plan was written. The current upstream product is **TradingDatas**; TA still consumes only `GET /v1/catalog` and `POST /v1/query`. The old SharedSignals runtime, routes, SQLite and dual registry are not valid fallbacks or dependencies. Do not use this historical plan as current runtime status; see `STATUS.md`, `README.md` and `docs/system_state_matrix.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Preserve TradingAgent's proven simulated-capital and execution core while replacing only the TA consumer edge with the externally owned SharedSignals V1 query contract, enforcing mainboard-only individual-security scope, adding explicit small-capital feasibility and safe model/LLM lifecycle contracts, and producing one automatic, auditable paper-trading day loop.

@@ -3,7 +3,7 @@
 """Merge TradingAgent crontab into a multi-repo crontab.
 
 Only allowed way to install/update TA cron entries. Never run ``crontab
-shared/crontab.txt`` directly; it would overwrite SharedSignals/MarketGraph.
+shared/crontab.txt`` directly; it would overwrite TradingDatas/MarketGraph.
 
 Default: dry-run to stdout. --apply: backup -> install -> readback verification;
 auto-rollback on readback/coverage failure.  --current-file/--output: file-mode.
@@ -45,6 +45,9 @@ USER = "marketgraph"
 TRADINGAGENT_BASH_ENV = f"BASH_ENV={TRADINGAGENT_BASH_ENV_PATH}"
 TRADINGAGENT_MANAGED_BLOCK_BEGIN = "# BEGIN TRADINGAGENT MANAGED CRON"
 TRADINGAGENT_MANAGED_BLOCK_END = "# END TRADINGAGENT MANAGED CRON"
+TRADINGAGENT_SCHEDULE_PAUSED_MARKER = (
+    "# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff"
+)
 TRADINGAGENT_ENVIRONMENT_LINES = (
     f"SHELL={TRADINGAGENT_SHELL}",
     f"CRON_TZ={TRADINGAGENT_CRON_TZ}",
@@ -55,8 +58,22 @@ TRADINGAGENT_ENVIRONMENT_LINES = (
     TRADINGAGENT_BASH_ENV,
 )
 RETIRED_GENERIC_SCHEDULE_MARKERS = (
+    "/cron/auto_pipeline.sh",
+    "/cron/evolution.sh",
     "/cron/health_check.sh",
     "/cron/daily_review.sh",
+    "/job_equity_snapshots.sh",
+    "/job_pm_research_probability.sh",
+    "/job_self_heal.sh",
+    "/job_self_heal_night.sh",
+    "/job_market_capital_reconcile.sh",
+    "/job_cn_futures_observation_report.sh",
+    "/job_cn_futures_sample_ops.sh",
+    "/job_cn_futures_calibration_report.sh",
+    "/job_cn_futures_replay.sh",
+    "/job_cn_futures_pre_open_validation.sh",
+    "/job_cn_futures_opening_validation.sh",
+    "/job_cn_futures_first_sample_alert.sh",
     "/job_opening_acceptance.sh",
     "/job_daily_brief_morning.sh",
     "/job_daily_brief_day.sh",
@@ -122,7 +139,7 @@ def _without_existing_managed_block(lines: list[str]) -> list[str] | None:
 
 
 def merge(current_text: str, template_text: str) -> str | None:
-    """Return merged crontab, or None if template has no TA schedule entries.
+    """Return merged crontab, including an explicitly paused zero-job block.
 
     Strips TA schedule lines from *current_text*, then appends the TradingAgent
     self-contained simulation-only/timezone environment followed by raw TA
@@ -132,8 +149,10 @@ def merge(current_text: str, template_text: str) -> str | None:
     expected = tradingagent_entries(template_text)
     ta_raw = [line for line in template_text.splitlines() if _is_ta_schedule_line(line)]
     template_lines = [line.strip() for line in template_text.splitlines()]
+    explicitly_paused = TRADINGAGENT_SCHEDULE_PAUSED_MARKER in template_lines
     if (
-        not expected
+        (not expected and not explicitly_paused)
+        or (expected and explicitly_paused)
         or len(expected) != len(set(expected))
         or len(ta_raw) != len(expected)
         or any(
@@ -153,6 +172,7 @@ def merge(current_text: str, template_text: str) -> str | None:
     managed = [
         TRADINGAGENT_MANAGED_BLOCK_BEGIN,
         *TRADINGAGENT_ENVIRONMENT_LINES,
+        *([TRADINGAGENT_SCHEDULE_PAUSED_MARKER] if explicitly_paused else []),
         *ta_raw,
         TRADINGAGENT_MANAGED_BLOCK_END,
     ]
@@ -200,9 +220,19 @@ def _backup(text: str) -> Path:
 
 
 def _ta_coverage_ok(text: str, template_text: str) -> bool:
-    return tradingagent_entries(text) == tradingagent_entries(
-        template_text
-    ) and not _tradingagent_environment_mismatches(text)
+    expected = tradingagent_entries(template_text)
+    actual = tradingagent_entries(text)
+    if actual != expected or _tradingagent_environment_mismatches(text):
+        return False
+    if TRADINGAGENT_SCHEDULE_PAUSED_MARKER in template_text:
+        lines = [line.strip() for line in text.splitlines()]
+        return (
+            lines.count(TRADINGAGENT_MANAGED_BLOCK_BEGIN) == 1
+            and lines.count(TRADINGAGENT_MANAGED_BLOCK_END) == 1
+            and lines.count(TRADINGAGENT_SCHEDULE_PAUSED_MARKER) == 1
+            and all(lines.count(line) == 1 for line in TRADINGAGENT_ENVIRONMENT_LINES)
+        )
+    return bool(expected)
 
 
 def apply_merge(

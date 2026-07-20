@@ -4,7 +4,7 @@
 
 ## 职责
 
-执行层负责 server-local 模拟撮合、不可变成交事实、回执重验证、durable outbox、capital commit、shadow 记录和可选 Hermes 模拟对照。当前没有真实下单入口。
+执行层只提供跨市场机械原语：执行端口、不可变成交事实、回执重验证、durable outbox、幂等、审计、对账与 fail-closed 实盘门。A股、CNFutures、Crypto 的模拟撮合和未来实盘适配器分别归各自市场域；当前没有真实下单入口。
 
 ## A股闭环
 
@@ -30,12 +30,13 @@
 - 资本 ledger、local ledger、receipt、position 或 outbox 任一 checksum/lineage 不一致时，保留证据并停止新增风险；不伪造释放或可用资金。
 - chain-validation 样本可保存链路故障，但不得进入胜率、expectancy、费用后 PnL 或成熟度。
 
-## Hermes/Mini
+## 市场适配器隔离与旧桥退役
 
-- 默认 server-local 模拟闭环不依赖 Mini；当前仓库cron/env模板强制`ASHARE_SIM_HERMES_ENABLED=0`与`ASHARE_SIM_WEBHOOK_ENABLED=0`，truthy/未知值会在任务正文前fail closed。已安装生产cron/env本轮未验证。恢复GUI模拟对照需要单独发布授权和门禁审计，不能只改服务器环境变量。
-- Mini 不判断买卖、不分配资本、不修改 capital authority。点击不是成交；无法用委托/成交/持仓证据严格确认时必须 failed + halt，禁止自动重试下单。
-- 拟议邮件 → Nicholas → 同花顺人工复核实盘仍是设计，未实现、未授权；Mini 不发送邮件、不读取真实账户、不点击真实交易。
+- A股模拟合同固定为`tradingagent.ashare.paper_broker.v1`，只做server-local paper execution；CNFutures和Crypto使用各自不同的模拟合同与未来broker adapter，禁止复用A股payload或状态机。
+- Mini/Hermes bridge、webhook sender、Mini file consumer与`RealSignalQueue`均已从源码退役。不得以兼容、健康探针或人工确认名义恢复其import、网络、文件队列或真实信号路径。
+- `ASHARE_SIM_HERMES_ENABLED=0`与`ASHARE_SIM_WEBHOOK_ENABLED=0`暂作安装态清理墓碑；truthy/未知值在任务正文前fail closed。已安装服务器cron/env/process/port必须在独立发布前门中做只读readback，源码删除不能冒充安装态已清理。
+- 通用`signal_state_machine.py`只保留为隔离模拟/影子状态原语，不具有Mini、券商或真实账户语义。
 
 ## 实盘红线
 
-任何 real/live/direct-execution 标记必须安全失败，不能改写为 simulated/shadow。未来 broker gateway 需独立架构、权限、风控、人工确认和发布验收。
+任何 real/live/direct-execution 标记必须安全失败，不能改写为 simulated/shadow。未来每个市场的 broker gateway 都需独立架构、凭据、账户、风控、人工确认和发布验收；共享层只提供接口与审计机械能力。

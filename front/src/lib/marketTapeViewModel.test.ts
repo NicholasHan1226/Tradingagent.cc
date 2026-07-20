@@ -16,7 +16,7 @@ const domains: DashboardState['domains'] = {
   risk: { status: 'ready', updatedAt: '2026-07-11T04:00:00Z' },
 }
 
-const pulses: MarketPulse[] = [{ market: 'A-share', symbol: '600519.SH', lastPrice: 1424.1, changePct: 1, high: 1430, low: 1400, volume: 2000, updatedAt: '2026-07-11T04:00:00Z', freshness: 'live', points: [1410, 1414, 1424.1], source: 'SharedSignals' }]
+const pulses: MarketPulse[] = [{ market: 'A-share', symbol: '600519.SH', lastPrice: 1424.1, changePct: 1, high: 1430, low: 1400, volume: 2000, updatedAt: '2026-07-11T04:00:00Z', freshness: 'live', points: [1410, 1414, 1424.1], source: 'TradingDatas V1' }]
 const pulseCoverage: MarketPulseCoverage = {
   cacheState: 'cached', fetchedAt: '2026-07-11T04:00:00Z', requestedCount: 2, sourcedCount: 1, sourceLatencyMs: 18,
   entries: [

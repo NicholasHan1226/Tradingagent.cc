@@ -109,12 +109,12 @@ def test_cli_runs_complete_offline_fixture_to_validated_report(
         "transport_calls": [
             {"dataset_id": None, "method": "GET", "path": "/v1/catalog"},
             {
-                "dataset_id": "cn.equity.daily.mainboard.v1",
+                "dataset_id": "fixture.cn.equity.daily.mainboard.v1",
                 "method": "POST",
                 "path": "/v1/query",
             },
             {
-                "dataset_id": "cn.equity.sector.full_market.context.v1",
+                "dataset_id": "fixture.cn.equity.sector.full-market-context.v1",
                 "method": "POST",
                 "path": "/v1/query",
             },

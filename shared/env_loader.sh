@@ -152,18 +152,22 @@ fi
 export TZ=Asia/Shanghai
 export TRADINGAGENT_ENV_LOADER_READY=1
 
-# SharedSignals V1 routing has no inferred localhost or authority defaults.
+# TradingDatas V1 routing has no inferred localhost or authority defaults.
 # Exporting missing values as explicit empties keeps downstream V1 config
-# fail-closed while allowing non-SharedSignals maintenance jobs to load this
+# fail-closed while allowing non-TradingDatas maintenance jobs to load this
 # shared environment. Tests inject frozen fixtures or an explicit reader.
-export SHAREDSIGNALS_API_URL="${SHAREDSIGNALS_API_URL:-}"
-export SHAREDSIGNALS_CATALOG_VERSION="${SHAREDSIGNALS_CATALOG_VERSION:-}"
-export SHAREDSIGNALS_ACCESS_POLICY_ID="${SHAREDSIGNALS_ACCESS_POLICY_ID:-}"
-export SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON="${SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON:-}"
-export SHAREDSIGNALS_SCHEMA_MAJOR="${SHAREDSIGNALS_SCHEMA_MAJOR:-}"
-export SHAREDSIGNALS_RUNTIME_TRANSPORT="${SHAREDSIGNALS_RUNTIME_TRANSPORT:-}"
-export SHAREDSIGNALS_API_TIMEOUT="${SHAREDSIGNALS_API_TIMEOUT:-10}"
-export SHAREDSIGNALS_API_RETRIES="${SHAREDSIGNALS_API_RETRIES:-1}"
+export TRADINGDATAS_API_URL="${TRADINGDATAS_API_URL:-}"
+export TRADINGDATAS_CATALOG_VERSION="${TRADINGDATAS_CATALOG_VERSION:-}"
+export TRADINGDATAS_ACCESS_POLICY_ID="${TRADINGDATAS_ACCESS_POLICY_ID:-}"
+export TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON="${TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON:-}"
+export TRADINGDATAS_SCHEMA_MAJOR="${TRADINGDATAS_SCHEMA_MAJOR:-}"
+export TRADINGDATAS_RUNTIME_TRANSPORT="${TRADINGDATAS_RUNTIME_TRANSPORT:-}"
+export TRADINGDATAS_API_TIMEOUT="${TRADINGDATAS_API_TIMEOUT:-10}"
+
+# Legacy SharedSignals routing is not a compatibility alias for TradingDatas.
+# Keeping this one variable blank prevents still-quarantined readers from
+# inventing their old localhost default while they are retired market by market.
+export SHAREDSIGNALS_API_URL=""
 export MARKETGRAPH_API_URL="${MARKETGRAPH_API_URL:-http://127.0.0.1:8080}"
 export MARKETGRAPH_API_TIMEOUT="${MARKETGRAPH_API_TIMEOUT:-10}"
 export MARKETGRAPH_API_RETRIES="${MARKETGRAPH_API_RETRIES:-1}"
@@ -215,7 +219,7 @@ export TRADINGS_GATE_ROOT="${TRADINGS_GATE_ROOT:-${TRADINGAGENT_SHARED_ROOT}/ris
 export PYTHONPATH="${TRADINGAGENT_ROOT}:${PYTHONPATH:-}"
 
 # Secret references only. Do not place plaintext secrets in this file.
-# Market-data provider credentials belong to SharedSignals, not TradingAgent.
+# Market-data provider credentials belong to TradingDatas, not TradingAgent.
 export TRADINGS_OPENAI_API_KEY="${TRADINGS_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
 export TRADINGS_COZE_API_KEY="${TRADINGS_COZE_API_KEY:-${COZE_API_KEY:-}}"
 

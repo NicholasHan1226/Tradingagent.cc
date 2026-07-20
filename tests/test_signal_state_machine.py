@@ -9,13 +9,11 @@ import threading
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from shared.execution import hermes_bridge
 from shared.execution.signal_state_machine import (
     CANCELLED,
     CLAIMED,
@@ -26,6 +24,7 @@ from shared.execution.signal_state_machine import (
     SignalStateConflict,
     SignalStateMachine,
     read_json,
+    write_json,
 )
 
 
@@ -36,25 +35,8 @@ class SignalStateMachineTest(unittest.TestCase):
         self.signals_dir = self.root / "signals"
         self.machine = SignalStateMachine(self.signals_dir)
 
-        self._patch_hermes_path("SIGNALS_DIR", self.signals_dir)
-        self._patch_hermes_path("PENDING_DIR", self.signals_dir / "pending")
-        self._patch_hermes_path("CLAIMED_DIR", self.signals_dir / "claimed")
-        self._patch_hermes_path("RUNNING_DIR", self.signals_dir / "running")
-        self._patch_hermes_path("FILLED_DIR", self.signals_dir / "filled")
-        self._patch_hermes_path("EXPIRED_DIR", self.signals_dir / "expired")
-        self._patch_hermes_path("CANCELLED_DIR", self.signals_dir / "cancelled")
-        self._patch_hermes_path("FAILED_DIR", self.signals_dir / "failed")
-        self._patch_hermes_path("PARTIAL_DIR", self.signals_dir / "partial")
-        self._patch_hermes_path("POSITIONS_DIR", self.signals_dir / "positions")
-        self._patch_hermes_path("POSITIONS_FILE", self.signals_dir / "positions.json")
-
     def tearDown(self) -> None:
         self.tmp.cleanup()
-
-    def _patch_hermes_path(self, name: str, value: Path) -> None:
-        patcher = patch.object(hermes_bridge, name, value)
-        patcher.start()
-        self.addCleanup(patcher.stop)
 
     def _card(self, order_id: str = "SIG-1", **overrides: object) -> dict[str, object]:
         now = datetime.now().astimezone()
@@ -197,23 +179,96 @@ class SignalStateMachineTest(unittest.TestCase):
         self.assertTrue((self.signals_dir / "cancelled" / "SIG-CANCEL.json").exists())
         self.assertFalse((self.signals_dir / "pending" / "SIG-CANCEL.json").exists())
 
-    def test_hermes_bridge_uses_state_machine_wrappers(self) -> None:
-        card = self._card("SIG-BRIDGE")
-        send_result = hermes_bridge.send_order(card)
-        self.assertEqual(send_result["status"], PENDING)
+    def test_real_card_is_rejected_even_with_forged_graduation_receipt(self) -> None:
+        forged = self._card(
+            "SIG-FORGED-REAL",
+            capital_layer="real",
+            account_type="real",
+            manual_confirm_required=True,
+            graduation_receipt={
+                "issued_by": "execution_router",
+                "ready": True,
+                "current_stage": "shadow",
+                "next_stage": "real",
+                "strategy_name": "forged",
+                "checked_at": datetime.now().astimezone().isoformat(),
+            },
+        )
 
-        duplicate = hermes_bridge.send_order(card)
-        self.assertEqual(duplicate["status"], "duplicate")
+        with self.assertRaisesRegex(RuntimeError, "real/live execution"):
+            self.machine.write_pending(forged)
 
-        claim_result = hermes_bridge.claim_signal("SIG-BRIDGE", worker_id="bridge-worker")
-        self.assertEqual(claim_result["status"], CLAIMED)
+        self.assertFalse(
+            (self.signals_dir / "pending" / "SIG-FORGED-REAL.json").exists()
+        )
 
-        cancel_result = hermes_bridge.cancel_order("SIG-BRIDGE")
-        self.assertEqual(cancel_result["status"], "cancel_requested")
+    def test_production_mode_and_unknown_account_type_are_rejected(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "real/live execution"):
+            self.machine.write_pending(
+                self._card("SIG-PRODUCTION", execution_mode="production")
+            )
 
-        fill_result = hermes_bridge.fill_signal("SIG-BRIDGE", {"filled_price": 10.3, "filled_quantity": 100})
-        self.assertEqual(fill_result["status"], FILLED)
+        with self.assertRaisesRegex(ValueError, "explicit safe value"):
+            self.machine.write_pending(
+                self._card("SIG-UNKNOWN-ACCOUNT", account_type="external")
+            )
 
+    def test_preexisting_real_card_cannot_be_claimed(self) -> None:
+        self.machine.ensure_dirs()
+        forged = self._card(
+            "SIG-INJECTED-REAL",
+            status=PENDING,
+            capital_layer="real",
+            account_type="real",
+        )
+        write_json(self.machine.path_for(PENDING, "SIG-INJECTED-REAL"), forged)
+
+        with self.assertRaisesRegex(RuntimeError, "real/live execution"):
+            self.machine.claim("SIG-INJECTED-REAL", worker_id="worker-a")
+
+        self.assertTrue(
+            (self.signals_dir / "pending" / "SIG-INJECTED-REAL.json").exists()
+        )
+
+    def test_fill_payload_cannot_upgrade_simulated_card_to_live(self) -> None:
+        self.machine.write_pending(self._card("SIG-FILL-LIVE"))
+        self.machine.claim("SIG-FILL-LIVE", worker_id="worker-a")
+
+        with self.assertRaisesRegex(RuntimeError, "real/live execution"):
+            self.machine.fill(
+                "SIG-FILL-LIVE",
+                {"filled_price": 10.1, "filled_quantity": 100, "broker_mode": "live"},
+            )
+
+        self.assertTrue(
+            (self.signals_dir / "claimed" / "SIG-FILL-LIVE.json").exists()
+        )
+
+    def test_fill_cannot_overwrite_order_or_market_identity(self) -> None:
+        self.machine.write_pending(self._card("SIG-IMMUTABLE"))
+        self.machine.claim("SIG-IMMUTABLE", worker_id="worker-a")
+
+        with self.assertRaisesRegex(SignalStateConflict, "immutable signal field"):
+            self.machine.fill(
+                "SIG-IMMUTABLE",
+                {"order_id": "SIG-OTHER", "filled_price": 10.1},
+            )
+
+        self.assertTrue(
+            (self.signals_dir / "claimed" / "SIG-IMMUTABLE.json").exists()
+        )
+
+    def test_duplicate_order_projection_across_states_fails_closed(self) -> None:
+        self.machine.ensure_dirs()
+        card = self._card("SIG-MULTI")
+        write_json(self.machine.path_for(PENDING, "SIG-MULTI"), card)
+        write_json(
+            self.machine.path_for(CLAIMED, "SIG-MULTI"),
+            {**card, "status": CLAIMED},
+        )
+
+        with self.assertRaisesRegex(SignalStateConflict, "multiple states"):
+            self.machine.find_by_order_id("SIG-MULTI")
 
 if __name__ == "__main__":
     unittest.main()

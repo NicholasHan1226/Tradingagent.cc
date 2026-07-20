@@ -12,8 +12,8 @@ from shared.data.evidence_gate import (
 from shared.data.sharedsignals_v1 import parse_query_envelope
 
 
-DATASET_ID = "cn.equity.daily.mainboard.v1"
-CONTEXT_DATASET_ID = "cn.equity.sector.star.context.v1"
+DATASET_ID = "fixture.cn.equity.daily.mainboard.v1"
+CONTEXT_DATASET_ID = "fixture.cn.equity.sector.star.context.v1"
 CATALOG_VERSION = "fixture-catalog-2026-07-16"
 
 

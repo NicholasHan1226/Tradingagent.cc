@@ -76,9 +76,9 @@ def _config_kwargs() -> dict[str, Any]:
     return {
         "trade_date": "2026-07-16",
         "decision_as_of": datetime.fromisoformat(DECISION_AS_OF),
-        "ss_v1_base_url": "http://sharedsignals.fixture.invalid:8082",
-        "ss_catalog_version": CATALOG,
-        "ss_access_policy_id": "ta-paper-read-v1",
+        "tradingdatas_v1_base_url": "http://tradingdatas.fixture.invalid:8082",
+        "tradingdatas_catalog_version": CATALOG,
+        "tradingdatas_access_policy_id": "ta-paper-read-v1",
         "dataset_profile": _profile(),
         "dataset_requests": {
             PRICE_DATASET: QueryRequest(
@@ -116,7 +116,7 @@ def _managed_identities() -> dict[RunStage, ComponentIdentity]:
     return {
         RunStage.EVIDENCE_READY: ComponentIdentity(
             stage=RunStage.EVIDENCE_READY,
-            component_id="sharedsignals-research-evidence-port",
+            component_id="tradingdatas-research-evidence-port",
             version="1",
             artifact_sha256=_digest("2"),
         ),
@@ -740,9 +740,9 @@ def _fixture_transport(module, responses: object | None = None):
 @pytest.mark.parametrize(
     ("field_name", "invalid_value"),
     [
-        ("ss_v1_base_url", ""),
-        ("ss_catalog_version", ""),
-        ("ss_access_policy_id", ""),
+        ("tradingdatas_v1_base_url", ""),
+        ("tradingdatas_catalog_version", ""),
+        ("tradingdatas_access_policy_id", ""),
         ("dataset_profile", None),
         ("dataset_requests", {}),
         ("evidence_policies", {}),

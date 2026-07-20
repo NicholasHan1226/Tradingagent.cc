@@ -18,11 +18,11 @@
 ## 工具清单 (TradingAgent tool references)
 
 - 源目录: `tradingagent/PM/`。
-- 数据入口: SharedSignals API 只提供 PM 市场/价格；CLOB sandbox 仅作模拟/研究适配，不替代 SharedSignals 供数层。
-- 概率判断入口: `PM/probability_model.py`。优先读取 `TRADINGAGENT_PM_MODEL_PROBABILITY_FILE` / `PM_MODEL_PROBABILITY_FILE` 或默认 `shared/review/pm/model_probabilities.jsonl` 的研究概率；缺研究概率时只使用 `pm_market_consensus_baseline` 标记“模型概率=市场概率、无独立 edge”，不得把判断概率写回 SharedSignals。
-- 研究概率生成入口: `PM/research_probability.py` 与 wrapper `shared/wrappers/job_pm_research_probability.sh`。该任务通过 MarketGraph 统一 API `GET /pm/research-probabilities` / MCP `read_pm_research_probabilities` 读取独立研究概率，再与 SharedSignals `/pm_markets` 市场元数据和 `/pm_prices` 价格快照合并输出 `shared/review/pm/model_probabilities.jsonl`；无 MarketGraph 研究概率或缺 SharedSignals 市场价时会原子清空/不写旧 edge，避免历史 edge 残留。
-- SharedSignals PM 行内即使出现 `research_probability`、`marketgraph_probability` 或类似字段，也只能视为上游脏字段并忽略；TradingAgent 不用 SharedSignals 弱证据、情绪、类别、清晰度、流动性或到期时间生成 PM 独立概率。
-- PM edge 计算必须同时具备 MarketGraph 研究概率和 SharedSignals 市场价；缺 SharedSignals 市场价时不得从 MarketGraph 研究行里的 `price` / `market_probability` 兜底。
+- 数据入口: 未来只消费 TradingDatas 的 `GET /v1/catalog` 与 `POST /v1/query`；CLOB sandbox 仅作模拟/研究适配，不替代 TradingDatas 供数层。fresh handoff 前只允许 fixture/mock-first，不臆造 PM dataset ID。
+- 概率判断入口: `PM/probability_model.py`。优先读取 `TRADINGAGENT_PM_MODEL_PROBABILITY_FILE` / `PM_MODEL_PROBABILITY_FILE` 或默认 `shared/review/pm/model_probabilities.jsonl` 的研究概率；缺研究概率时只使用 `pm_market_consensus_baseline` 标记“模型概率=市场概率、无独立 edge”，不得把判断概率写回 TradingDatas。
+- `PM/research_probability.py`、`shared/wrappers/job_pm_research_probability.sh` 以及旧 `/pm_markets`、`/pm_prices` 拼接方式仅是待退役兼容线索，不是当前 TradingDatas 契约或可调度入口。未来研究概率与市场价必须分别通过获批的 MarketGraph 只读研究接口和 TradingDatas provider-neutral catalog/query 合同取得；任一缺失即 fail closed。
+- TradingDatas PM 行内即使出现 `research_probability`、`marketgraph_probability` 或类似字段，也只能视为上游脏字段并忽略；TradingAgent 不用数据源弱证据、情绪、类别、清晰度、流动性或到期时间生成 PM 独立概率。
+- PM edge 计算必须同时具备 MarketGraph 研究概率和 TradingDatas 市场价；缺 TradingDatas 市场价时不得从 MarketGraph 研究行里的 `price` / `market_probability` 兜底。
 - 历史迁移线索: `/opt/investment/PredictionMarkets/tools/`；如服务器仍有残留，默认按退役资产处理。
 - 关键工具:
   - pm_workflow.py — Unified PredictionMarkets simulated-training workflow

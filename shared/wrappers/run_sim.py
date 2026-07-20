@@ -14,10 +14,14 @@ LOCAL_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(LOCAL_ROOT))
 sys.path.insert(0, os.environ.get("TRADINGAGENT_ROOT", "/opt/investment/tradingagent"))
 
-os.environ.setdefault("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082")
+# Stop a direct script/module invocation before importing the retired reader or
+# constructing any output. Market-specific fixture runners replace this mixed
+# legacy command.
+if __name__ == "__main__":
+    from shared.governance.retirement import retired_cli
 
-from shared.data.reader import TradingagentDataReader
-from shared.markets.style_runner import StyleRunner
+    raise SystemExit(retired_cli("shared.wrappers.run_sim"))
+
 from PM.probability_model import enrich_pm_rows
 
 market = os.environ.get("SIM_MARKET", "crypto")
@@ -561,86 +565,9 @@ def _load_signals(reader: TradingagentDataReader, name: str, limit: int = 10) ->
 
 
 def main() -> int:
-    if market in {"ashare", "a-share", "a_share"}:
-        print(
-            json.dumps(
-                {
-                    "market": market,
-                    "status": "unsupported",
-                    "reason": "ashare_sim_requires_tradings_cron_entry",
-                    "entrypoint": "shared.wrappers.tradings_cron_entry --job job_ashare_sim_exec",
-                },
-                ensure_ascii=False,
-            )
-        )
-        return 2
+    from shared.governance.retirement import retired_cli
 
-    if market == "hk" and not _env_enabled("TRADINGAGENT_HK_SIM_ENABLED"):
-        print(
-            json.dumps(
-                {
-                    "market": market,
-                    "status": "disabled",
-                    "signals": 0,
-                    "reason": "hk_sim_paused",
-                    "enable_with": "TRADINGAGENT_HK_SIM_ENABLED=1",
-                },
-                ensure_ascii=False,
-            )
-        )
-        return 0
-
-    reader = TradingagentDataReader()
-    signals = _load_signals(reader, market)
-
-    if not signals:
-        diagnostics = _signal_diagnostics(reader, market)
-        print(
-            json.dumps(
-                {
-                    "market": market,
-                    "status": "no_trade_signals",
-                    "signals": 0,
-                    "data_source": "SharedSignals reader/API",
-                    "reader_degraded": bool(reader.degraded or reader.stale),
-                    "reader_errors": reader.errors[-5:],
-                    "reason": diagnostics.get("reason") or "no explicit buy/sell signal; price rows are data only",
-                    **({"diagnostics": diagnostics} if diagnostics else {}),
-                    "price_only_smoke_enable_with": "TRADINGAGENT_SIM_ALLOW_PRICE_ONLY_SIGNALS=1",
-                },
-                ensure_ascii=False,
-            )
-        )
-        return 0
-
-    cfg = configs.get(market, configs["crypto"])
-    sim_mod = __import__(cfg["sim_mod"], fromlist=[cfg["sim_cls"]])
-    cfg_mod = __import__(cfg["cfg_mod"], fromlist=[cfg["cfg_cls"]])
-    config = getattr(cfg_mod, cfg["cfg_cls"])()
-    simulator = getattr(sim_mod, cfg["sim_cls"])(config=config)
-
-    audit_scope = _run_audit_scope()
-    runner = StyleRunner(market, simulator)
-    runner.run(signals, date=str(date.today()), account=audit_scope)
-
-    print(
-        json.dumps(
-            {
-                "market": market,
-                "status": "ok",
-                "signals": len(signals),
-                "data_rows": len(signals),
-                "timestamp": str(date.today()),
-                "data_source": "SharedSignals reader/API",
-                **audit_scope,
-                "reader_degraded": bool(reader.degraded or reader.stale),
-                "reader_errors": reader.errors[-5:],
-            },
-            ensure_ascii=False,
-            default=str,
-        )
-    )
-    return 0
+    return retired_cli("shared.wrappers.run_sim")
 
 
 if __name__ == "__main__":

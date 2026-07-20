@@ -4,9 +4,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from shared.data.reader import TradingagentDataReader
-
-
 class MarketBaseLayerTest(unittest.TestCase):
     def test_load_market_config_returns_dataclass_from_market_yaml(self) -> None:
         from shared.markets.config_schema import load_market_config
@@ -189,7 +186,9 @@ promotion:
         runner = DemoShadowRunner("demo", safe_config, market_data, simulator)
         report = DemoReport("demo", safe_config)
 
-        self.assertIsInstance(market_data.reader, TradingagentDataReader)
+        self.assertIsNone(market_data.reader)
+        self.assertIsNone(simulator.reader)
+        self.assertIsNone(runner.reader)
         self.assertIs(runner.market_data, market_data)
         self.assertIs(runner.simulator, simulator)
         self.assertEqual(report.market, "demo")
