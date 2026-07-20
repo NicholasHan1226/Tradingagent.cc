@@ -212,7 +212,9 @@ def test_exact_fixture_session_endpoints_are_accepted(decision_time: str) -> Non
     days[0] = FixtureDay(
         days[0].trade_date,
         days[0].instruments,
-        _evidence(days[0].trade_date, decision_time=f"2026-07-01T{decision_time}+08:00"),
+        _evidence(
+            days[0].trade_date, decision_time=f"2026-07-01T{decision_time}+08:00"
+        ),
         days[0].mark_prices,
     )
     result = run_fixture_twenty_day_loop(days)
@@ -262,9 +264,9 @@ def test_reconcile_has_one_stable_result_shape() -> None:
             },
             "instrument_suspended",
         ),
-            (
-                {"symbol": "600000.SH", "price": 20, "volume": 0, "rank_score": 1},
-                "bar_volume_shares_invalid",
+        (
+            {"symbol": "600000.SH", "price": 20, "volume": 0, "rank_score": 1},
+            "bar_volume_shares_invalid",
         ),
         (
             {"symbol": "600000.SH", "price": 0, "volume": 1, "rank_score": 1},
@@ -443,7 +445,10 @@ def test_real_mode_and_non_twenty_days_are_rejected() -> None:
 
 def _mappings(value: object) -> list[dict]:
     if isinstance(value, dict):
-        return [value, *[mapping for item in value.values() for mapping in _mappings(item)]]
+        return [
+            value,
+            *[mapping for item in value.values() for mapping in _mappings(item)],
+        ]
     if isinstance(value, list):
         return [mapping for item in value for mapping in _mappings(item)]
     return []
@@ -462,9 +467,7 @@ def _assert_no_duplicate_literal_keys(node: ast.AST) -> None:
 
 
 def test_fixture_result_is_non_authoritative_with_stable_result_shapes() -> None:
-    _assert_no_duplicate_literal_keys(
-        ast.parse(inspect.getsource(fixture_loop))
-    )
+    _assert_no_duplicate_literal_keys(ast.parse(inspect.getsource(fixture_loop)))
     result = run_fixture_twenty_day_loop(
         _days(
             first_rows=[
@@ -499,7 +502,8 @@ def test_fixture_result_is_non_authoritative_with_stable_result_shapes() -> None
     assert receipt is not None
     assert receipt["status"] == "simulated_filled"
     assert all(
-        mapping.get("status") != "filled" and mapping.get("execution_eligible") is not True
+        mapping.get("status") != "filled"
+        and mapping.get("execution_eligible") is not True
         for mapping in _mappings(result)
     )
     assert all(
@@ -599,9 +603,7 @@ def test_buy_risk_uses_current_mark_not_only_fill_price() -> None:
 
 def test_zero_tick_rounded_sell_is_rejected_without_cash_mutation() -> None:
     days = _days(
-        first_rows=[
-            {"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}
-        ],
+        first_rows=[{"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}],
         first_marks={"600000.SH": 20},
     )
     days[1] = FixtureDay(
@@ -653,9 +655,7 @@ def test_missing_previous_close_fails_closed() -> None:
 @pytest.mark.parametrize("sell_quote", [1, 1000])
 def test_extreme_sell_quotes_cannot_bypass_price_limits(sell_quote: float) -> None:
     days = _days(
-        first_rows=[
-            {"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}
-        ],
+        first_rows=[{"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}],
         first_marks={"600000.SH": 20},
     )
     days[1] = FixtureDay(
@@ -731,9 +731,7 @@ def test_price_limit_boundaries_and_normal_values_can_fill() -> None:
     )
     assert upper_bound["days"][0]["simulated_receipt"]["fill_price"] == 11
     days = _days(
-        first_rows=[
-            {"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}
-        ],
+        first_rows=[{"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}],
         first_marks={"600000.SH": 20},
     )
     days[1] = FixtureDay(

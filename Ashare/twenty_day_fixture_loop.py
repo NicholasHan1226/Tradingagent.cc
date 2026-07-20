@@ -99,7 +99,9 @@ def _price_limit_reason(
     return None
 
 
-def _bar_capacity_shares(row: Mapping[str, Any], *, lot_size: int) -> tuple[int, str | None]:
+def _bar_capacity_shares(
+    row: Mapping[str, Any], *, lot_size: int
+) -> tuple[int, str | None]:
     raw_volume = row.get("bar_volume_shares")
     if type(raw_volume) is not int or raw_volume <= 0:
         return 0, "bar_volume_shares_invalid"
@@ -180,10 +182,7 @@ def _evidence_reason(day: FixtureDay) -> str | None:
         return "trade_date_invalid"
     if session.weekday() >= 5:
         return "trade_date_not_weekday"
-    if (
-        decision_time.astimezone(_SHANGHAI).strftime("%Y%m%d")
-        != day.trade_date
-    ):
+    if decision_time.astimezone(_SHANGHAI).strftime("%Y%m%d") != day.trade_date:
         return "decision_time_trade_date_mismatch"
     if available_at > decision_time:
         return "evidence_available_after_decision"
