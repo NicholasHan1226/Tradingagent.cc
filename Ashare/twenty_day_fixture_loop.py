@@ -1,7 +1,9 @@
 """Network-closed 20-session A-share fixture simulation.
 
-This is a test/review composition only: it has no data client, SQLite access,
-broker, scheduler, LLM, outbox, or persistent ledger side effect.
+This is a non-authoritative, test/review composition only: it has no external
+market-data client, network access, persistent write, broker, scheduler, LLM,
+outbox, or durable ledger side effect. It reads the canonical A-share market
+policy only, as its single capital/risk authority.
 """
 
 from __future__ import annotations
@@ -22,6 +24,9 @@ _CATALOG_ROUTE = "GET /v1/catalog"
 _QUERY_ROUTE = "POST /v1/query"
 _NO_TRADE_SCORE = 0.60
 _AGGREGATE_NAMESPACE = re.compile(r"^(?:SECTOR|INDUSTRY):[A-Z0-9._:-]+$")
+_FIXTURE_SESSION = "ashare_regular"
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
+_DECISION_WINDOWS = ((9 * 60 + 15, 11 * 60 + 30), (13 * 60, 15 * 60))
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,7 @@ class FixtureEvidence:
     calendar_lineage_id: str
     available_at: str
     decision_time: str
+    session: str = _FIXTURE_SESSION
 
 
 @dataclass(frozen=True)
@@ -78,17 +84,19 @@ def _evidence_reason(day: FixtureDay) -> str | None:
         return "evidence_stale"
     if evidence.quality != "valid":
         return "evidence_quality_invalid"
-    if not isinstance(evidence.lineage_id, str) or not evidence.lineage_id:
+    if not isinstance(evidence.lineage_id, str) or not evidence.lineage_id.strip():
         return "evidence_lineage_missing"
-    if not isinstance(evidence.receipt_id, str) or not evidence.receipt_id:
+    if not isinstance(evidence.receipt_id, str) or not evidence.receipt_id.strip():
         return "evidence_receipt_missing"
     if type(evidence.calendar_eligible) is not bool or not evidence.calendar_eligible:
         return "calendar_ineligible"
     if (
         not isinstance(evidence.calendar_lineage_id, str)
-        or not evidence.calendar_lineage_id
+        or not evidence.calendar_lineage_id.strip()
     ):
         return "calendar_lineage_missing"
+    if evidence.session != _FIXTURE_SESSION:
+        return "fixture_session_invalid"
     try:
         available_at = datetime.fromisoformat(
             evidence.available_at.replace("Z", "+00:00")
@@ -112,12 +120,16 @@ def _evidence_reason(day: FixtureDay) -> str | None:
     if session.weekday() >= 5:
         return "trade_date_not_weekday"
     if (
-        decision_time.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+        decision_time.astimezone(_SHANGHAI).strftime("%Y%m%d")
         != day.trade_date
     ):
         return "decision_time_trade_date_mismatch"
     if available_at > decision_time:
         return "evidence_available_after_decision"
+    local_decision = decision_time.astimezone(_SHANGHAI)
+    decision_minute = local_decision.hour * 60 + local_decision.minute
+    if not any(start <= decision_minute <= end for start, end in _DECISION_WINDOWS):
+        return "decision_time_outside_fixture_session"
     return None
 
 
@@ -182,13 +194,18 @@ def _fill_price(reference_price: float, side: str) -> tuple[float, float, str]:
     reality = ashare_execution_reality()
     slippage_bps = reality.conservative_label_slippage_bps_per_side
     tick = Decimal(str(reality.price_tick_cny))
+    if not tick.is_finite() or tick <= 0:
+        return 0.0, slippage_bps, reality.model_version
     raw = Decimal(str(reference_price)) * (
         Decimal("1")
         + (Decimal(str(slippage_bps)) / Decimal("10000"))
         * (Decimal("1") if side == "buy" else Decimal("-1"))
     )
     rounding = ROUND_CEILING if side == "buy" else ROUND_FLOOR
-    fill = float((raw / tick).quantize(Decimal("1"), rounding=rounding) * tick)
+    try:
+        fill = float((raw / tick).quantize(Decimal("1"), rounding=rounding) * tick)
+    except (ArithmeticError, ValueError):
+        fill = 0.0
     return (
         fill,
         slippage_bps,
@@ -210,7 +227,7 @@ def _receipt(
     notional = round(quantity * fill_price, 2)
     fee = _number(fees["total"])
     return {
-        "status": "filled",
+        "status": "simulated_filled",
         "side": side,
         "symbol": symbol,
         "quantity": quantity,
@@ -225,6 +242,10 @@ def _receipt(
         "capital_authority_id": policy.capital_authority_id,
         "capital_layer": "simulated",
         "real_trading_enabled": False,
+        "execution_authority": False,
+        "durable": False,
+        "capital_commit_id": None,
+        "outbox_id": None,
     }
 
 
@@ -245,7 +266,12 @@ def _report(
 ) -> dict[str, Any]:
     return {
         "trade_date": day.trade_date,
-        "status": "completed" if receipt else "completed_with_blocks",
+        "status": "fixture_completed" if receipt else "fixture_completed_with_blocks",
+        "non_authoritative": True,
+        "execution_authority": False,
+        "durable": False,
+        "capital_commit_id": None,
+        "outbox_id": None,
         "reason_code": reason,
         "evidence": {
             "fixture_only": True,
@@ -253,18 +279,31 @@ def _report(
             "query_route": day.evidence.query_route,
             "state": day.evidence.state,
             "degraded": day.evidence.degraded,
+            "freshness": day.evidence.freshness,
+            "quality": day.evidence.quality,
             "lineage_id": day.evidence.lineage_id,
             "receipt_id": day.evidence.receipt_id,
+            "calendar_eligible": day.evidence.calendar_eligible,
+            "calendar_lineage_id": day.evidence.calendar_lineage_id,
+            "available_at": day.evidence.available_at,
+            "decision_time": day.evidence.decision_time,
+            "session": day.evidence.session,
+            "calendar_authoritative": False,
+            "real_session_verified": False,
         },
         "universe": {
             "tradable_mainboard": list(universe),
             "context_only": list(context),
         },
-        "intent_receipt": dict(receipt) if receipt else None,
+        "simulated_receipt": dict(receipt) if receipt else None,
         "reconcile": {
             "account_id": policy.capital_authority_id,
             "capital_layer": "simulated",
             "real_trading_enabled": False,
+            "non_authoritative": True,
+            "durable": False,
+            "capital_commit_id": None,
+            "outbox_id": None,
             "cash_cny": round(cash, 2),
             "market_value_cny": mark["market_value_cny"] if mark else None,
             "gross_exposure_cny": mark["gross_exposure_cny"] if mark else None,
@@ -274,7 +313,7 @@ def _report(
             if mark
             else None,
             "position_count": len(positions),
-            "status": "reconciled" if mark else "blocked",
+            "status": "fixture_reconciled" if mark else "fixture_blocked",
             "reason_code": mark_reason,
         },
         "sample_review": list(samples),
@@ -305,25 +344,46 @@ def run_fixture_twenty_day_loop(
     journal: list[dict[str, Any]] = []
     for session_index, day in enumerate(days):
         evidence_reason = _evidence_reason(day)
-        universe_rows, context = _mainboard_rows(day.instruments)
-        universe = [_symbol(row) for row in universe_rows]
         mark, mark_reason = _mark_portfolio(positions, day.mark_prices)
         reason = "no_eligible_mainboard_candidate"
         receipt: dict[str, Any] | None = None
-        samples = [
-            {
-                "sample_type": "observation",
-                "trade_date": day.trade_date,
-                "symbol": symbol,
-                "execution_eligible": False,
-                "reason_code": "fixture_mainboard_observation",
-            }
-            for symbol in universe
-        ]
-        if mark is None:
-            reason = str(mark_reason)
-        elif evidence_reason:
+        if evidence_reason:
+            universe_rows: list[dict[str, Any]] = []
+            context: list[str] = []
+            universe: list[str] = []
+            samples: list[dict[str, Any]] = [
+                {
+                    "sample_type": "data_reject",
+                    "trade_date": day.trade_date,
+                    "symbol": None,
+                    "execution_eligible": False,
+                    "training_eligible": False,
+                    "fixture_simulation_eligible": False,
+                    "simulated_fill_observed": False,
+                    "reason_code": evidence_reason,
+                }
+            ]
             reason = evidence_reason
+        else:
+            universe_rows, context = _mainboard_rows(day.instruments)
+            universe = [_symbol(row) for row in universe_rows]
+            samples = [
+                {
+                    "sample_type": "observation",
+                    "trade_date": day.trade_date,
+                    "symbol": symbol,
+                    "execution_eligible": False,
+                    "training_eligible": False,
+                    "fixture_simulation_eligible": False,
+                    "simulated_fill_observed": False,
+                    "reason_code": "fixture_mainboard_observation",
+                }
+                for symbol in universe
+            ]
+        if evidence_reason:
+            pass
+        elif mark is None:
+            reason = str(mark_reason)
         elif universe_rows:
             candidate = max(
                 universe_rows, key=lambda row: _number(row.get("rank_score"))
@@ -334,7 +394,7 @@ def run_fixture_twenty_day_loop(
             volume = _number(candidate.get("volume"), -1.0)
             if _number(candidate.get("rank_score")) < _NO_TRADE_SCORE:
                 reason = "no_trade_band"
-            elif bool(candidate.get("suspended")):
+            elif candidate.get("suspended") is not False:
                 reason = "instrument_suspended"
             elif volume <= 0.0:
                 reason = "volume_unavailable"
@@ -350,29 +410,32 @@ def run_fixture_twenty_day_loop(
                     reason = "t_plus_1_not_sellable"
                 else:
                     fill, slippage, _ = _fill_price(reference, side)
-                    quantity = int(holding["quantity"])
-                    notional = quantity * fill
-                    fees = ashare_execution_reality().calculate_fees(side, notional)
-                    cash = round(cash + notional - _number(fees["total"]), 2)
-                    realized_pnl = round(
-                        realized_pnl
-                        + notional
-                        - _number(fees["total"])
-                        - _number(holding["entry_cost_cny"]),
-                        2,
-                    )
-                    del positions[symbol]
-                    receipt = _receipt(
-                        side=side,
-                        symbol=symbol,
-                        quantity=quantity,
-                        reference_price=reference,
-                        fill_price=fill,
-                        slippage_bps=slippage,
-                        fees=fees,
-                        policy=policy,
-                    )
-                    reason = "simulated_sell_filled"
+                    if fill <= 0.0:
+                        reason = "invalid_fill_price"
+                    else:
+                        quantity = int(holding["quantity"])
+                        notional = quantity * fill
+                        fees = ashare_execution_reality().calculate_fees(side, notional)
+                        cash = round(cash + notional - _number(fees["total"]), 2)
+                        realized_pnl = round(
+                            realized_pnl
+                            + notional
+                            - _number(fees["total"])
+                            - _number(holding["entry_cost_cny"]),
+                            2,
+                        )
+                        del positions[symbol]
+                        receipt = _receipt(
+                            side=side,
+                            symbol=symbol,
+                            quantity=quantity,
+                            reference_price=reference,
+                            fill_price=fill,
+                            slippage_bps=slippage,
+                            fees=fees,
+                            policy=policy,
+                        )
+                        reason = "simulated_sell_filled"
             elif symbol in positions:
                 reason = "same_symbol_position_exists"
             elif len(positions) >= int(policy.max_positions or 0):
@@ -392,6 +455,8 @@ def run_fixture_twenty_day_loop(
                 reason = f"mark_unavailable:{symbol}"
             else:
                 fill, slippage, _ = _fill_price(reference, side)
+                mark_price = _number(day.mark_prices.get(symbol), -1.0)
+                risk_price = max(fill, mark_price)
                 budget = min(
                     policy.single_name_cap_cny,
                     policy.stock_gross_exposure_limit_cny
@@ -399,49 +464,64 @@ def run_fixture_twenty_day_loop(
                     cash,
                 )
                 lot = int(policy.buy_lot_size_shares or 0)
-                quantity = int(budget // (fill * lot)) * lot if lot else 0
+                quantity = int(budget // (risk_price * lot)) * lot if lot else 0
                 notional = quantity * fill
-                fees = ashare_execution_reality().calculate_fees(side, notional)
-                total = notional + _number(fees["total"])
-                if quantity == 0:
+                post_single_name = quantity * mark_price
+                post_gross = _number(mark["gross_exposure_cny"]) + post_single_name
+                if fill <= 0.0:
+                    reason = "invalid_fill_price"
+                elif quantity == 0:
                     reason = "lot_or_single_name_cap_not_feasible"
+                elif post_single_name > policy.single_name_cap_cny:
+                    reason = "post_trade_single_name_mark_limit_breached"
+                elif post_gross > policy.stock_gross_exposure_limit_cny:
+                    reason = "post_trade_gross_exposure_limit_breached"
                 elif notional < max(
                     _number(policy.minimum_economic_order_cny),
                     _number(policy.no_trade_band_cny),
                 ):
                     reason = "minimum_economic_order_not_met"
-                elif total > cash:
-                    reason = "insufficient_cash_after_fee"
                 else:
-                    cash = round(cash - total, 2)
-                    positions[symbol] = {
-                        "quantity": quantity,
-                        "entry_cost_cny": round(total, 2),
-                        "acquired_session_index": session_index,
-                    }
-                    receipt = _receipt(
-                        side=side,
-                        symbol=symbol,
-                        quantity=quantity,
-                        reference_price=reference,
-                        fill_price=fill,
-                        slippage_bps=slippage,
-                        fees=fees,
-                        policy=policy,
-                    )
-                    reason = "simulated_buy_filled"
+                    fees = ashare_execution_reality().calculate_fees(side, notional)
+                    total = notional + _number(fees["total"])
+                    if total > cash:
+                        reason = "insufficient_cash_after_fee"
+                    else:
+                        cash = round(cash - total, 2)
+                        positions[symbol] = {
+                            "quantity": quantity,
+                            "entry_cost_cny": round(total, 2),
+                            "acquired_session_index": session_index,
+                        }
+                        receipt = _receipt(
+                            side=side,
+                            symbol=symbol,
+                            quantity=quantity,
+                            reference_price=reference,
+                            fill_price=fill,
+                            slippage_bps=slippage,
+                            fees=fees,
+                            policy=policy,
+                        )
+                        reason = "simulated_buy_filled"
         mark, mark_reason = _mark_portfolio(positions, day.mark_prices)
         if receipt and mark is None:
             raise RuntimeError("fixture_mark_required_before_simulated_receipt")
-        samples.append(
-            {
-                "sample_type": "execution" if receipt else "risk_reject",
-                "trade_date": day.trade_date,
-                "symbol": receipt["symbol"] if receipt else None,
-                "execution_eligible": bool(receipt),
-                "reason_code": reason,
-            }
-        )
+        if not evidence_reason:
+            samples.append(
+                {
+                    "sample_type": "fixture_simulated_fill"
+                    if receipt
+                    else "risk_reject",
+                    "trade_date": day.trade_date,
+                    "symbol": receipt["symbol"] if receipt else None,
+                    "execution_eligible": False,
+                    "training_eligible": False,
+                    "fixture_simulation_eligible": bool(receipt),
+                    "simulated_fill_observed": bool(receipt),
+                    "reason_code": reason,
+                }
+            )
         journal.extend(samples)
         reports.append(
             _report(
@@ -462,6 +542,15 @@ def run_fixture_twenty_day_loop(
     return {
         "contract_id": "tradingagent.ashare.fixture_twenty_day_loop.v1",
         "fixture_only": True,
+        "non_authoritative": True,
+        "execution_authority": False,
+        "durable": False,
+        "capital_commit_id": None,
+        "outbox_id": None,
+        "calendar_authoritative": False,
+        "real_session_verified": False,
+        "training_eligible": False,
+        "promotion_eligible": False,
         "account_id": policy.capital_authority_id,
         "capital_layer": "simulated",
         "real_trading_enabled": False,
