@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from shared.execution import execution_router, sim_broker, sim_executor_registry
 
 
@@ -96,7 +98,10 @@ def test_missing_ashare_executor_is_explicitly_unavailable_without_legacy_fill(
     assert receipt["executed"] is False
     assert receipt["result"]["status"] == "failed"
     assert receipt["result"]["filled_qty"] == 0
-    assert "No simulated executor available for market=ashare" in receipt["result"]["message"]
+    assert (
+        "No simulated executor available for market=ashare"
+        in receipt["result"]["message"]
+    )
     assert not legacy_ledger.exists()
 
 
@@ -178,3 +183,62 @@ def test_registry_never_uses_implicit_cross_market_fallback(monkeypatch: Any) ->
     assert sim_executor_registry.get_sim_executor("us") is None
     assert sim_executor_registry.get_sim_executor("hk") is None
     assert sim_executor_registry.get_sim_executor("cn_futures") is None
+
+
+def test_legacy_local_simulator_rejects_every_non_ashare_market_without_writing(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    legacy_ledger = _isolate_logs(monkeypatch, tmp_path)
+
+    for market in ("cnfutures", "cn_futures", "crypto", "unknown", ""):
+        order = {
+            **_ashare_order(),
+            "order_id": f"NO-CROSS-MARKET-{market or 'missing'}",
+            "market": market,
+        }
+        result = sim_executor_registry.local_sim_executor(order, {}, {})
+
+        assert result.status == "failed"
+        assert result.filled_qty == 0
+        assert result.raw_response == {
+            "recorded": False,
+            "reason": "legacy_simulator_market_not_supported",
+            "legacy_fallback_used": False,
+        }
+
+    assert not legacy_ledger.exists()
+
+
+def test_test_only_ashare_factory_cannot_launder_cross_market_orders(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    legacy_ledger = _isolate_logs(monkeypatch, tmp_path)
+    executor = sim_executor_registry.build_test_only_legacy_sim_executor("ashare")
+
+    with pytest.raises(
+        ValueError, match="test-only legacy executor order market must be ashare"
+    ):
+        executor(
+            {
+                **_ashare_order(),
+                "market": "cn_futures",
+                "ts_code": "RB2610.SHF",
+                "quantity": 1,
+            },
+            {},
+            {},
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="test-only legacy executor requires a mainboard A-share identity",
+    ):
+        executor(
+            {**_ashare_order(), "ts_code": "RB2610.SHF", "quantity": 1},
+            {},
+            {},
+        )
+
+    assert not legacy_ledger.exists()

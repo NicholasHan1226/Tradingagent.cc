@@ -4,7 +4,7 @@
 
 ```yaml
 contract_version: 1
-implementation_state: local_uncommitted_candidate
+implementation_state: repository_contract
 effective_from: null
 production_verified: false
 supersedes: null
@@ -15,7 +15,7 @@ tests:
   - tests/test_three_universe_snapshots.py
 ```
 
-上述状态表示本地候选已存在，不表示主线、生产 runtime 或真实账户已按该契约运行。当机器状态仍为 `TARGET_CONTRACT`时，只允许契约和离线验证。
+上述状态表示契约已进入 Git 主线仓库合同，不表示服务器现役 runtime、生产 scheduler 或真实账户已按该契约运行。机器状态继续保持 `production_verified=false`；当前只允许 fixture/离线验证与明确标注的非权威旁路复现。
 
 运行组合入口只接受精确类型 `CanonicalMainboardScopePolicy`。该类型无实例可变状态，
 其 stage-neutral `ComponentIdentity.artifact_sha256` 由冻结 policy manifest 的 canonical JSON

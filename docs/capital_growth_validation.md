@@ -12,7 +12,7 @@
 - CNFutures 长期模拟，无实盘时间表。
 - “月收益 20%”只能作为收益分布上尾的 stretch scenario，报告 `P(monthly_return>=20%)`、负月概率、尾部亏损与风险毁灭概率；不得作为第一阶段 PASS、最低交易频率或强迫交易条件。
 
-本轮主板小资金架构仅是本地未提交候选；没有 TradingDatas fresh handoff、真实 V1 runtime、生产 scheduler 和真实 paper samples 时，只可评价契约/故障负例，不可评价策略正期望。A股个股样本仅限沪深主板普通 A 股；创业板、科创板指数和全市场行业聚合只作 `context_only` 环境证据。环境汇总缺失时行业宽度 degraded，不得用主板子集补分母。
+主板小资金架构已进入 Git 主线仓库合同，但仍不是服务器现役或生产能力；没有 TradingDatas fresh handoff、真实 V1 runtime、生产 scheduler 和真实 paper samples 时，只可评价契约/故障负例，不可评价策略正期望。A股个股样本仅限沪深主板普通 A 股；创业板、科创板指数和全市场行业聚合只作 `context_only` 环境证据。环境汇总缺失时行业宽度 degraded，不得用主板子集补分母。
 
 ### 1.1 第一阶段四层验收
 

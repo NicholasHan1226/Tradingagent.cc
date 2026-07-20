@@ -51,7 +51,7 @@
 | 三市场长期 lane 与 BrokerAdapter 边界 | worktree/branch/path owner及互异合同已登记，live统一关闭 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅仓库治理门；不证明任一未来live adapter已实现或部署 |
 | A股 market-kernel | server-local paper、T+1边界与20交易日fixture loop已进入仓库 | repository contract；本轮新增loop尚无服务器现役证明 | 不证明已连接券商、真实数据或现役 runtime 已切换 |
 | CNFutures market-kernel | 独立期货 paper、会话/保证金/证据边界与fixture闭环已进入仓库 | repository contract；本轮新增loop尚无服务器现役证明 | 不证明 CTP/SimNow、真实规格或 live adapter 可用 |
-| Crypto market-kernel | 10,000 USDT 本地fixture opening candidate、非权威paper receipt与独立Testnet/Live合同边界已进入仓库；旧direct执行已退役 | repository contract；尚无本轮服务器旁路证明 | 不证明current capital、7x24 scheduler、Binance Testnet或Live已连接 |
+| Crypto market-kernel | 10,000 USDT 本地fixture opening candidate、非权威paper receipt与独立Testnet/Live合同边界已进入仓库；旧direct执行已退役 | repository contract；冻结功能基线已完成network-disabled服务器旁路与已停止的loopback canary | 不证明current capital、7x24 scheduler、Binance Testnet、Live或现役runtime已连接 |
 
 ## 完整机器条目索引
 
@@ -103,8 +103,8 @@
 | `tradingagent_crypto_fixture_auto_sim` | `CURRENT_VERIFIED / repository_contract` | generation 1本地fixture opening候选、非权威receipt与独立LLM sidecar；无current runtime/Testnet/Live |
 | `tradingagent_crypto_execution_retirement` | `RETIRED_BLOCKED / repository_contract` | 旧Crypto direct workflow/simulator/executor/shadow writer与generic registry路径禁止恢复 |
 | `tradingagent_retired_noncore_markets` | `RETIRED_BLOCKED / repository_contract` | US/PM/HK与旧共享市场执行语义已从仓库合同删除；安装态仍需独立readback |
-| `tradingagent_installed_cron` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | 2026-07-20 已发布基线旁路验收的只读安装态 readback 仍发现旧 SharedSignals/旧 TradingAgent wrapper 引用；本后续候选未重新读取，未安装、修改或激活候选调度 |
-| `tradingagent_production_runtime` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | 2026-07-20 已发布基线旁路验收 readback；现役仍为旧 SHA，detached sidecar基线未激活，本后续候选尚无服务器证据 |
+| `tradingagent_installed_cron` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | 2026-07-20 最终只读 readback 再次确认 root/marketgraph crontab 仍引用旧 SharedSignals/旧 TradingAgent wrapper；本轮未安装、修改或激活调度，退役必须等待 TradingDatas 替代链与原子切换证据 |
+| `tradingagent_production_runtime` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | 2026-07-20 最终只读 readback 确认现役仍为旧 SHA；服务器已验证的 detached 功能基线未激活，后续仅文档主线变化不构成现役切换 |
 | `tradingagent_server_sidecar_candidate` | `CURRENT_VERIFIED / server_validated_non_authority_simulation_only` | detached候选已在目标机通过测试与已停止的18787 loopback canary；现役service/cron/8787未变，无live数据或交易authority |
 | `tradingagent_front` | `CURRENT_VERIFIED / repository_contract` | 只读模拟看板；`tradingagent.cc`仅作待验收的单用户认证入口，不写订单或资金、不允许匿名访问/API直出 |
 

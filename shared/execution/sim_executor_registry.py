@@ -101,18 +101,30 @@ def local_sim_executor(
     market_key = _normalize_market(order.get("market"))
     config_payload = dict(config or {})
     test_only_token = config_payload.pop(_TEST_ONLY_LEGACY_CONFIG_KEY, None)
-    if market_key == "ashare" and test_only_token is not _TEST_ONLY_LEGACY_TOKEN:
+    test_only_ashare = (
+        market_key == "ashare" and test_only_token is _TEST_ONLY_LEGACY_TOKEN
+    )
+    if not test_only_ashare:
+        reason = (
+            "ashare_legacy_simulator_disabled"
+            if market_key == "ashare"
+            else "legacy_simulator_market_not_supported"
+        )
         return SimResult(
             status="failed",
             filled_qty=0,
             avg_price=0.0,
             fee=0.0,
-            message="A-share legacy simulator is disabled outside explicit test-only injection",
+            message=(
+                "A-share legacy simulator is disabled outside explicit test-only injection"
+                if market_key == "ashare"
+                else "Legacy local simulator is restricted to explicit A-share test-only injection"
+            ),
             order_id=str(order.get("order_id", "")),
             market=market_key,
             raw_response={
                 "recorded": False,
-                "reason": "ashare_legacy_simulator_disabled",
+                "reason": reason,
                 "legacy_fallback_used": False,
             },
         )
@@ -141,6 +153,15 @@ def build_test_only_legacy_sim_executor(market: str) -> SimExecutor:
         account: dict[str, Any],
         config: dict[str, Any],
     ) -> Any:
+        from shared.universe.policy import classify_instrument
+
+        if _normalize_market(order.get("market")) != market_key:
+            raise ValueError("test-only legacy executor order market must be ashare")
+        symbol = order.get("ts_code") or order.get("symbol")
+        if not classify_instrument(symbol).order_identity_allowed:
+            raise ValueError(
+                "test-only legacy executor requires a mainboard A-share identity"
+            )
         test_order = dict(order)
         test_order["market"] = market_key
         test_config = dict(config or {})
