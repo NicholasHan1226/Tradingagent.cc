@@ -25,11 +25,32 @@ describe('linked evidence context', () => {
       { market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-2', method: '候选', status: 'executed', impact: '—', confidence: '—', age: '1m', reason: '—', next: '—', steps: 5 },
     ]
     const holdings: HoldingRow[] = [
-      { market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-1', weight: '¥1,000', pnl: '+¥10', realizedPnl: 12.5, unrealizedPnl: -2.5, risk: '正常', role: '模拟盘持仓' },
-      { market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-2', weight: '¥1,000', pnl: '+¥99', realizedPnl: 99, risk: '正常', role: '模拟盘持仓' },
+      { market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-1', weight: '¥1,000', pnl: '+¥10', realizedPnl: 12.5, unrealizedPnl: -2.5, currency: 'CNY', accountScope: 'ashare-main', risk: '正常', role: '模拟盘持仓' },
+      { market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-2', weight: '¥1,000', pnl: '+¥99', realizedPnl: 99, currency: 'CNY', accountScope: 'ashare-main', risk: '正常', role: '模拟盘持仓' },
     ]
 
-    expect(createLinkedEvidenceContext(events, 'opp-1', signals, holdings)).toEqual(expect.objectContaining({ signalCount: 1, holdingCount: 1, attributablePnl: 10 }))
+    expect(createLinkedEvidenceContext(events, 'opp-1', signals, holdings)).toEqual(expect.objectContaining({ signalCount: 1, holdingCount: 1, attributablePnl: 10, attributablePnlCurrency: 'CNY' }))
+  })
+
+  it('refuses PnL attribution across accounts, markets, currencies, or missing account scope', () => {
+    const base: HoldingRow = {
+      market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-1', weight: '¥1,000', pnl: '+¥10', realizedPnl: 10,
+      currency: 'CNY', accountScope: 'ashare-main', risk: '正常', role: '模拟盘持仓',
+    }
+    const assertUnavailable = (holdings: HoldingRow[]) => {
+      expect(createLinkedEvidenceContext(events, 'opp-1', [], holdings)).toEqual(expect.objectContaining({
+        holdingCount: holdings.length,
+        attributablePnl: undefined,
+        attributablePnlCurrency: undefined,
+      }))
+    }
+
+    assertUnavailable([base, { ...base, symbol: '000001.SZ', accountScope: 'ashare-secondary' }])
+    assertUnavailable([base, { ...base, symbol: 'BTC-USDT', market: 'Crypto', currency: 'USDT', accountScope: 'crypto:grid' }])
+    assertUnavailable([base, { ...base, symbol: '000001.SZ', currency: 'USDT' }])
+    assertUnavailable([{ ...base, accountScope: undefined }])
+    assertUnavailable([{ ...base, currency: 'USD' }])
+    assertUnavailable([{ ...base, symbol: 'BTC-USDT', market: 'Crypto', currency: 'USDT', accountScope: 'crypto:grid' }])
   })
 
   it('keeps a frozen legacy opportunity namespace detached from current signal and PnL attribution', () => {
@@ -41,7 +62,7 @@ describe('linked evidence context', () => {
       market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-1', method: '候选', status: 'executed', impact: '—', confidence: '—', age: '1m', reason: '—', next: '—', steps: 5,
     }]
     const holdings: HoldingRow[] = [{
-      market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-1', weight: '¥1,000', pnl: '+¥10', realizedPnl: 10, risk: '正常', role: '模拟盘持仓',
+      market: 'A-share', symbol: '600519.SH', name: '贵州茅台', opportunityId: 'opp-1', weight: '¥1,000', pnl: '+¥10', realizedPnl: 10, currency: 'CNY', accountScope: 'ashare-main', risk: '正常', role: '模拟盘持仓',
     }]
 
     expect(createLinkedEvidenceContext(legacyEvents, 'opp-1', signals, holdings)).toEqual(expect.objectContaining({

@@ -2,11 +2,12 @@
 # One repository-relative pytest file per line; keep this list deterministic.
 tests/test_architecture_contract_guards.py
 tests/test_market_lane_governance.py
+tests/test_retired_market_surfaces.py
+tests/test_evolution_authority_retirement.py
 tests/test_mini_hermes_retirement.py
-tests/test_auto_pipeline_smoke.py
-tests/test_hk_pause_contract.py
 tests/test_market_base_layer.py
-tests/test_pm_workflow_config.py
+tests/test_market_rules.py
+tests/test_sim_capital.py
 tests/test_daily_reconcile.py
 tests/test_ashare_sim.py
 tests/test_env_loader_boundary.py
@@ -24,6 +25,14 @@ tests/test_market_capital_fill_commit.py
 tests/test_ashare_capital_plan.py
 tests/test_execution_reality.py
 tests/test_sim_engine_smoke.py
+tests/test_pnl_summary.py
+tests/test_daily_review_driver.py
+tests/test_review_capital_layer.py
+tests/test_weekly_review_promotion_guard.py
+tests/test_equity_snapshots.py
+tests/test_sim_ledger_reader.py
+tests/test_ops_report.py
+tests/test_self_evolution_health.py
 tests/test_market_evidence_authority.py
 tests/test_capital_backed_paper_stages.py
 tests/test_capital_stage_safety.py

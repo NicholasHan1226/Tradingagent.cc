@@ -98,7 +98,7 @@ describe('createWorkbenchViewModel', () => {
   it('keeps partial queue outcomes out of active opportunities', () => {
     const partial: SignalRow = {
       ...signals[1],
-      symbol: 'ETH-USD',
+      symbol: 'ETH-USDT',
       queueBucket: 'partial',
       next: '进入复盘',
     }

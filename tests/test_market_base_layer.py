@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+
 class MarketBaseLayerTest(unittest.TestCase):
     def test_load_market_config_returns_dataclass_from_market_yaml(self) -> None:
         from shared.markets.config_schema import load_market_config
@@ -25,7 +26,7 @@ safety:
   live_broker_enabled: false
   direct_execution_enabled: false
 data:
-  reader: shared.data.reader.TradingagentDataReader
+  reader: tradingdatas_v1_catalog_query
   daily_table: market_bars_daily
   intraday_table: market_bars_intraday
   events_table: market_events
@@ -129,6 +130,25 @@ promotion:
                 config = MarketToolConfig(market="unsafe", safety={flag: True})
                 with self.assertRaisesRegex(ValueError, flag):
                     validate_market_config(config)
+
+    def test_validate_market_config_requires_native_currency_and_v1_data_contract(
+        self,
+    ) -> None:
+        from shared.markets.config_schema import (
+            MarketToolConfig,
+            validate_market_config,
+        )
+
+        with self.assertRaisesRegex(ValueError, "market-native currency"):
+            validate_market_config(MarketToolConfig(market="demo"))
+
+        legacy_reader = MarketToolConfig(
+            market="demo",
+            capital={"currency": "CNY"},
+            data={"reader": "shared.data.reader.TradingagentDataReader"},
+        )
+        with self.assertRaisesRegex(ValueError, "TradingDatas V1"):
+            validate_market_config(legacy_reader)
 
     def test_base_classes_create_reader_and_reject_real_execution(self) -> None:
         from shared.markets.base_tools import (

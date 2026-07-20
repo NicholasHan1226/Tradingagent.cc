@@ -13,6 +13,9 @@ type SnapshotOptions = {
 }
 
 type PositionRow = {
+  account?: string
+  account_id?: string
+  account_scope?: string
   ts_code?: string
   quantity?: number
   sellable_quantity?: number
@@ -80,6 +83,9 @@ type SimLedgerPosition = {
 }
 
 type SimLedgerPositionsFile = {
+  account?: string
+  account_id?: string
+  account_scope?: string
   cash?: number
   positions?: Record<string, SimLedgerPosition>
 }
@@ -327,81 +333,9 @@ type SimLedgerTradeRow = {
   timestamp?: string
 }
 
-type SimLedgerTimelineTrade = {
-  market: string
-  notional: number
-  strategy: string
-  timestamp: string
-  timestampMs: number
-}
-
-type StylePerformanceRow = {
-  dashboard_excluded?: boolean | string
-  date?: string
-  exclude_from_dashboard?: boolean | string
-  excluded_from_dashboard?: boolean | string
-  metadata?: Record<string, unknown>
-  trade_date?: string
-  as_of?: string
-  pnl?: number | string
-  pnl_cny?: number | string
-  total_pnl_cny?: number | string
-  net_pnl_cny?: number | string
-  realized_pnl?: number | string
-  realized_pnl_cny?: number | string
-  unrealized_pnl?: number | string
-  unrealized_pnl_cny?: number | string
-  fx_to_cny?: number | string
-  exchange_rate_to_cny?: number | string
-  currency?: string
-  pnl_currency?: string
-  max_dd?: number | string
-  max_dd_cny?: number | string
-  market?: string
-  style?: string
-  style_name?: string
-  trades?: number | string
-  pnl_source?: string
-  run_context?: string
-  run_mode?: string
-  run_source?: string
-  sample_type?: string
-  capital_layer?: string
-  account_type?: string
-  real_execution?: boolean
-}
-
-type StyleComparisonPayload = {
-  account_type?: string
-  capital_layer?: string
-  dashboard_excluded?: boolean | string
-  error_count?: number | string
-  exclude_from_dashboard?: boolean | string
-  excluded_from_dashboard?: boolean | string
-  filled_count?: number | string
-  generated_at?: string
-  hold_count?: number | string
-  market?: string
-  real_execution?: boolean
-  record_count?: number | string
-  run_context?: string
-  run_mode?: string
-  run_source?: string
-  sample_type?: string
-  signal_count?: number | string
-  state?: string
-  style_comparison?: unknown
-  style_states?: unknown
-  styles_loaded?: number | string
-  styles_total?: number | string
-}
-
-type StylePerformanceRecord = StylePerformanceRow & {
-  marketHint: string
-}
-
 type MarketPerformanceSummary = {
   capitalBase?: number
+  currency: NonNullable<MarketSummary['pnlCurrency']>
   latestAt?: string
   maxDrawdown: number
   pnl: number
@@ -419,6 +353,7 @@ function marketCapitalPerformanceSummary(
     : 0
   return {
     capitalBase: capital.initialEquityCny,
+    currency: 'CNY',
     latestAt: capital.updatedAt,
     maxDrawdown: roundMetric(currentDrawdownPct),
     pnl,
@@ -444,6 +379,9 @@ type MarketStyleSummary = {
 }
 
 type EquitySnapshotRow = {
+  account?: string
+  account_id?: string
+  account_scope?: string
   dashboard_excluded?: boolean | string
   timestamp?: string
   ts?: string
@@ -513,8 +451,10 @@ type EquitySnapshotRecord = EquitySnapshotRow & {
 }
 
 type ParsedEquitySnapshot = {
+  accountScope: string
   benchmarkPct: number
   capitalBase: number
+  currency: NonNullable<MarketSummary['pnlCurrency']>
   dayKey: string
   isSimLedgerSnapshot: boolean
   markets: Set<Market>
@@ -530,13 +470,6 @@ type ParsedEquitySnapshot = {
   timestampMs: number
   tradeCount: number
   unrealizedPnl: number
-}
-
-type TimelineContribution = {
-  maxDrawdown: number
-  pnl: number
-  timestamp: string
-  timestampMs: number
 }
 
 type PerformanceReviewRow = {
@@ -561,15 +494,12 @@ const MAX_SIM_LEDGER_SIGNALS = 120
 const MAX_OPPORTUNITY_FUNNEL_EVENTS = 300
 const DEFAULT_TARGET_RETURN_PCT = 8
 const DEFAULT_SIM_CAPITAL_CNY = 50_000
-const DEFAULT_USD_CAPITAL = 10_000
 const SIM_LEDGER_EQUITY_BUCKET_MS = 5 * 60 * 1000
 const MAX_EQUITY_PERFORMANCE_POINTS = 360
 const MAX_SIM_MARKET_HEALTH_AGE_MS = 30 * 60 * 1000
 const MAX_CAPITAL_AUTHORITY_AGE_MS = 36 * 60 * 60 * 1000
 const MAX_POSITION_AUTHORITY_AGE_MS = 36 * 60 * 60 * 1000
-const DASHBOARD_MARKETS: Market[] = ['A-share', 'US', 'Crypto', 'PM', 'CNFutures']
-const DEFAULT_USD_CNY = 7.2
-const DEFAULT_HKD_CNY = 0.92
+const DASHBOARD_MARKETS: Market[] = ['A-share', 'CNFutures', 'Crypto']
 
 export async function readTradingAgentSnapshot({
   workspaceRoot,
@@ -584,7 +514,7 @@ export async function readTradingAgentSnapshot({
   const filledSignalsPath = join(projectRoot, 'signals/filled')
   const reviewPath = toProjectPath(projectRoot, tradingAgentReadModelSources.review)
   const reviewFallbackPath = join(projectRoot, 'shared/review/data/daily_reviews.jsonl')
-  const performanceTrackerRoot = join(projectRoot, 'shared/review')
+  const reviewRoot = join(projectRoot, 'shared/review')
   const simLedgerRoot = join(projectRoot, 'shared/logs/sim_ledger')
   const nonAuthoritativeHoldings = await readPositionSnapshots(positionsPath)
   const planHoldings = await readPositionPlan(positionPlanPath)
@@ -616,7 +546,6 @@ export async function readTradingAgentSnapshot({
     simLedgerHoldings.filter((holding) => holding.market !== 'A-share'),
   )
   const equityPortfolio = await readEquitySnapshotPortfolio(projectRoot, generatedAt)
-  const trackerPortfolio = await readStylePerformancePortfolio(performanceTrackerRoot, simLedgerRoot, generatedAt)
   const ashareAccount = await readAShareAccountSummary(projectRoot, ashareMarketCapital)
   const ashareTierSummaries = readAShareTierSummaries(ashareAccount)
   const ashareNoTradeExplanation = await readLatestAShareNoTradeExplanation(projectRoot, now)
@@ -656,12 +585,12 @@ export async function readTradingAgentSnapshot({
   )
   const cnFuturesReplayEvidence = await readCNFuturesReplayEvidence(toProjectPath(projectRoot, tradingAgentReadModelSources.cnFuturesReplay))
   const equityPerformance = ashareAccount && isAShareLegacyEquitySummary(equityPortfolio.summary) ? [] : equityPortfolio.performance
-  const performance = annotatePerformanceQuality(firstNonEmpty(equityPerformance, reviewPerformance, trackerPortfolio.performance))
-  const portfolio = attachAShareAccountSummary(equityPortfolio.summary ?? trackerPortfolio.summary, ashareAccount)
+  const performance = annotatePerformanceQuality(firstNonEmpty(equityPerformance, reviewPerformance))
+  const portfolio = attachAShareAccountSummary(equityPortfolio.summary, ashareAccount)
   const marketSummaries = await buildMarketSummaries({
     holdings: fallbackHoldings,
     ashareNoTradeExplanation,
-    performanceRoot: performanceTrackerRoot,
+    reviewRoot,
     projectRoot,
     portfolio,
     signals,
@@ -688,7 +617,7 @@ export async function readTradingAgentSnapshot({
   const hasPlan = await fileExists(positionPlanPath)
   const hasReview = await fileExists(reviewPath) || await fileExists(reviewFallbackPath)
   const hasSimLedger = simLedgerHoldings.length > 0 || simLedgerSignals.length > 0
-  const hasPerformanceEvidence = hasReview || equityPortfolio.summary !== undefined || trackerPortfolio.summary !== undefined
+  const hasPerformanceEvidence = hasReview || equityPortfolio.summary !== undefined
   const performanceMessage = performance.length > 0
     ? undefined
     : hasOrders || hasPlan || hasSimLedger || hasReview
@@ -1504,10 +1433,7 @@ function parseMarketPulseDatasetIds(
     const payload = asRecord(JSON.parse(raw))
     const allowedMarkets = new Set<Exclude<Market, 'All Markets'>>([
       'A-share',
-      'US',
       'Crypto',
-      'HK',
-      'PM',
       'CNFutures',
     ])
     const datasetIds: Partial<Record<Exclude<Market, 'All Markets'>, string>> = {}
@@ -1666,7 +1592,7 @@ function mergeHoldings(...sources: HoldingRow[][]): HoldingRow[] {
   const rows = new Map<string, HoldingRow>()
   for (const source of sources) {
     for (const holding of source) {
-      const key = `${holding.market}:${holding.symbol}:${holding.role}`
+      const key = `${holding.market}:${holding.accountScope ?? 'unscoped'}:${holding.symbol}:${holding.role}`
       if (!rows.has(key)) rows.set(key, holding)
     }
   }
@@ -1689,7 +1615,7 @@ function mergeSignals(...sources: SignalRow[][]): SignalRow[] {
 async function buildMarketSummaries({
   holdings,
   ashareNoTradeExplanation,
-  performanceRoot,
+  reviewRoot,
   projectRoot,
   portfolio,
   signals,
@@ -1704,7 +1630,7 @@ async function buildMarketSummaries({
 }: {
   holdings: HoldingRow[]
   ashareNoTradeExplanation?: AShareNoTradeExplanation
-  performanceRoot: string
+  reviewRoot: string
   projectRoot: string
   portfolio?: PortfolioSummary
   signals: SignalRow[]
@@ -1717,24 +1643,15 @@ async function buildMarketSummaries({
   cnFuturesMarketMaturity?: CNFuturesMarketMaturityProjection
   now: Date
 }): Promise<MarketSummary[]> {
-  const styleSummaries = await readStyleComparisonMarketSummaries(performanceRoot)
-  const cnFuturesReviewSummary = await readCNFuturesReviewMarketSummary(performanceRoot)
-  const performanceSummaries = await readStylePerformanceMarketSummaries(performanceRoot)
+  const cnFuturesReviewSummary = await readCNFuturesReviewMarketSummary(reviewRoot)
   const equitySummaries = await readEquitySnapshotMarketSummaries(simLedgerRoot)
-  const capitalBaseByMarket = await readSimLedgerCapitalBaseByMarket(simLedgerRoot)
   const healthSummaries = await readSimMarketHealthSummaries(projectRoot, now)
 
   return DASHBOARD_MARKETS.map((market) => {
     const holdingCount = holdings.filter((holding) => holding.market === market).length
     const marketSignals = signals.filter((signal) => signal.market === market)
     const executedCount = marketSignals.filter((signal) => signal.status === 'executed').length
-    const baseStyleSummary = styleSummaries.get(market)
-    const reviewStyleSummary = market === 'CNFutures' ? cnFuturesReviewSummary : undefined
-    const styleSummary = market === 'CNFutures'
-      ? reviewStyleSummary ?? baseStyleSummary
-      : baseStyleSummary && reviewStyleSummary
-        ? mergeMarketStyleSummary(baseStyleSummary, reviewStyleSummary)
-        : baseStyleSummary ?? reviewStyleSummary
+    const styleSummary = market === 'CNFutures' ? cnFuturesReviewSummary : undefined
     const marketCapital = market === 'A-share'
       ? ashareMarketCapital
       : market === 'CNFutures'
@@ -1744,13 +1661,13 @@ async function buildMarketSummaries({
       ? marketCapitalPerformanceSummary(marketCapital)
       : market === 'A-share' || market === 'CNFutures'
         ? undefined
-        : equitySummaries.get(market) ?? performanceSummaries.get(market)
+        : equitySummaries.get(market)
     const isAshare = market === 'A-share'
     const ashareAccount = isAshare ? portfolio?.ashareAccount : undefined
     const rawCapitalBase = marketCapital?.initialEquityCny ?? (ashareAccount
       ? roundMoney(ashareAccount.accountEquity - ashareAccount.accountTotalPnl)
-      : performanceSummary?.capitalBase ?? capitalBaseByMarket.get(market))
-    const capitalBase = defaultMarketCapitalBase(market, rawCapitalBase, Boolean(marketCapital))
+      : performanceSummary?.capitalBase)
+    const capitalBase = validatedMarketCapitalBase(market, rawCapitalBase, Boolean(marketCapital))
     const pnlAmount = marketCapital
       ? roundMoney(marketCapital.equityCny - marketCapital.initialEquityCny)
       : ashareAccount?.accountTotalPnl ?? performanceSummary?.pnl
@@ -1829,7 +1746,7 @@ async function buildMarketSummaries({
       errorCount: styleSummary?.errorCount,
       capitalBase: capitalBase === undefined ? undefined : roundMoney(capitalBase),
       pnlAmount: hasMeaningfulPnl && pnlAmount !== undefined ? roundMoney(pnlAmount) : undefined,
-      pnlCurrency: 'CNY',
+      pnlCurrency: performanceSummary?.currency ?? marketNativeCurrency(market),
       returnPct,
       maxDrawdownPct: ashareAccount
         ? roundMetric(Math.max(0, -ashareAccount.accountReturnPct))
@@ -1849,7 +1766,9 @@ async function buildMarketSummaries({
         ? marketCapital.source
         : isAshare && ashareAccount
           ? ashareAccount.source
-        : styleSummary?.source ?? (performanceSummary ? tradingAgentReadModelSources.performanceTracker : tradingAgentReadModelSources.simLedger),
+        : styleSummary?.source ?? (performanceSummary
+          ? tradingAgentReadModelSources.equitySnapshots
+          : tradingAgentReadModelSources.simLedger),
       capitalAuthorityId: marketCapital?.authorityId ?? null,
       authorityGeneration: marketCapital?.authorityGeneration ?? null,
       executionLineageId: marketCapital?.executionLineageId ?? null,
@@ -1954,8 +1873,6 @@ function normalizeHealthMarket(value: unknown): Market | undefined {
   const text = String(value ?? '').toLowerCase()
   if (text.includes('ashare') || text.includes('a-share')) return 'A-share'
   if (text.includes('crypto')) return 'Crypto'
-  if (text.includes('pm')) return 'PM'
-  if (text.includes('us')) return 'US'
   if (text.includes('cn_futures') || text.includes('cnfutures') || text.includes('futures')) return 'CNFutures'
   return undefined
 }
@@ -2036,107 +1953,12 @@ async function readCNFuturesReviewMarketSummary(root: string): Promise<MarketSty
   return undefined
 }
 
-async function readStyleComparisonMarketSummaries(root: string): Promise<Map<Market, MarketStyleSummary>> {
-  const summaries = new Map<Market, MarketStyleSummary>()
-  try {
-    const entries = await readdir(root, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const path = join(root, entry.name, 'style_comparison.json')
-      const payload = asRecord(await readOptionalJson(path)) as StyleComparisonPayload
-      if (!Object.keys(payload).length) continue
-      if (payload.real_execution === true) continue
-      if (normalizeCapitalLayer(payload) !== 'simulated') continue
-      if (isDashboardExcluded(payload)) continue
-
-      const market = normalizeMarketFolder(String(payload.market ?? entry.name))
-      if (market === 'All Markets' || market === 'HK') continue
-      const states = summarizeStyleStates(payload.style_states)
-      const comparisonCount = countStyleComparisonRows(payload.style_comparison)
-      const styleCount = Math.max(
-        Math.trunc(parseFiniteNumber(payload.styles_total) ?? 0),
-        Math.trunc(parseFiniteNumber(payload.styles_loaded) ?? 0),
-        states.total,
-        comparisonCount,
-      )
-      const current = summaries.get(market)
-      const next: MarketStyleSummary = {
-        source: tradingAgentReadModelSources.styleComparison,
-        status: optionalString(payload.state),
-        styleCount,
-        activeStyleCount: states.active,
-        degradedStyleCount: states.degraded,
-        pausedStyleCount: states.paused,
-        filledCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.filled_count) ?? 0)),
-        errorCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.error_count) ?? 0)),
-        holdCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.hold_count) ?? 0)),
-        recordCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.record_count) ?? 0)),
-        signalCount: Math.max(0, Math.trunc(parseFiniteNumber(payload.signal_count) ?? 0)),
-        latestAt: optionalString(payload.generated_at),
-      }
-      summaries.set(market, current ? mergeMarketStyleSummary(current, next) : next)
-    }
-  } catch {
-    return summaries
-  }
-  return summaries
-}
-
-async function readStylePerformanceMarketSummaries(root: string): Promise<Map<Market, MarketPerformanceSummary>> {
-  const files = await listStylePerformanceFiles(root)
-  const ledgerRoot = join(root, '..', 'logs', 'sim_ledger')
-  const summaries = new Map<Market, MarketPerformanceSummary>()
-
-  for (const file of files) {
-    const market = normalizeMarketFolder(file.market)
-    if (market === 'All Markets' || market === 'HK') continue
-    if (market === 'A-share' || market === 'CNFutures') continue
-    try {
-      const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
-      for (const line of lines) {
-        try {
-          const row = JSON.parse(line) as StylePerformanceRow
-          if (row.real_execution === true) continue
-          if (normalizeCapitalLayer(row) !== 'simulated') continue
-          if (isDashboardExcluded(row as Record<string, unknown>)) continue
-          if (await isStylePerformanceRowLedgerExcluded(ledgerRoot, file.market, row)) continue
-          const pnl = stylePerformanceMoneyCny(row, market, 'pnl')
-          const timestamp = row.as_of ?? row.date ?? row.trade_date
-          const realizedPnl = stylePerformanceMoneyCny(row, market, 'realized')
-          const unrealizedPnl = stylePerformanceMoneyCny(row, market, 'unrealized')
-          if (pnl === undefined && realizedPnl === undefined && unrealizedPnl === undefined) continue
-          const current = summaries.get(market) ?? { maxDrawdown: 0, pnl: 0, realizedPnl: 0, trades: 0, unrealizedPnl: 0 }
-          current.pnl += pnl ?? 0
-          current.realizedPnl += realizedPnl ?? 0
-          current.unrealizedPnl += unrealizedPnl ?? 0
-          current.maxDrawdown = Math.max(current.maxDrawdown, Math.abs(stylePerformanceMaxDrawdownCny(row, market)))
-          current.trades += Math.max(0, Math.trunc(parseFiniteNumber(row.trades) ?? 0))
-          current.latestAt = latestIso(current.latestAt, timestamp)
-          summaries.set(market, current)
-        } catch {
-          // Ignore malformed append-only rows.
-        }
-      }
-    } catch {
-      // Ignore unreadable market folders.
-    }
-  }
-
-  return summaries
-}
-
-async function isStylePerformanceRowLedgerExcluded(ledgerRoot: string, market: string, row: StylePerformanceRow) {
-  const styleName = String(row.style_name ?? row.style ?? '').trim()
-  if (!styleName) return false
-  return isSimLedgerStrategyExcluded(join(ledgerRoot, market, styleName))
-}
-
 async function readEquitySnapshotMarketSummaries(root: string): Promise<Map<Market, MarketPerformanceSummary>> {
   const latestBySource = new Map<string, { market: Market; snapshot: ParsedEquitySnapshot }>()
 
   for (const file of await listSimLedgerFiles(root, 'daily_mark_to_market.jsonl')) {
     const market = normalizeMarketFolder(file.market)
-    if (market === 'All Markets' || market === 'HK') continue
+    if (market === 'All Markets') continue
     if (market === 'A-share' || market === 'CNFutures') continue
     try {
       const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
@@ -2160,16 +1982,28 @@ async function readEquitySnapshotMarketSummaries(root: string): Promise<Map<Mark
     }
   }
 
+  const accountScopesByMarket = new Map<Market, Set<string>>()
+  for (const { market, snapshot } of latestBySource.values()) {
+    const scopes = accountScopesByMarket.get(market) ?? new Set<string>()
+    scopes.add(dirname(snapshot.sourcePath))
+    accountScopesByMarket.set(market, scopes)
+  }
+
   const summaries = new Map<Market, MarketPerformanceSummary>()
   for (const { market, snapshot } of latestBySource.values()) {
+    // A strategy directory is the narrowest available ledger/account scope.
+    // Without a shared account authority, separate scopes must not be summed.
+    if ((accountScopesByMarket.get(market)?.size ?? 0) !== 1) continue
     const current = summaries.get(market) ?? {
       capitalBase: 0,
+      currency: snapshot.currency,
       maxDrawdown: 0,
       pnl: 0,
       realizedPnl: 0,
       trades: 0,
       unrealizedPnl: 0,
     }
+    if (current.currency !== snapshot.currency) continue
     current.capitalBase = (current.capitalBase ?? 0) + snapshot.capitalBase
     current.pnl += snapshot.pnl
     current.realizedPnl += snapshot.realizedPnl
@@ -2180,108 +2014,15 @@ async function readEquitySnapshotMarketSummaries(root: string): Promise<Map<Mark
     summaries.set(market, current)
   }
 
-  for (const [market, summary] of summaries.entries()) {
-    summary.capitalBase = defaultMarketCapitalBase(market, summary.capitalBase)
-  }
-
   return summaries
 }
 
-async function readSimLedgerCapitalBaseByMarket(root: string): Promise<Map<Market, number>> {
-  const capitalBaseByMarket = new Map<Market, number>()
-  for (const file of await listSimLedgerFiles(root, 'positions.json')) {
-    try {
-      const market = normalizeMarketFolder(file.market)
-      if (market === 'All Markets' || market === 'HK') continue
-      if (market === 'A-share' || market === 'CNFutures') continue
-      const payload = JSON.parse(await readFile(file.path, 'utf8')) as SimLedgerPositionsFile
-      if (isDashboardExcluded(payload as Record<string, unknown>)) continue
-      let capitalBase = parseFiniteNumber(payload.cash) ?? 0
-      for (const position of Object.values(payload.positions ?? {})) {
-        capitalBase += (parseFiniteNumber(position.avg_cost) ?? 0) * (parseFiniteNumber(position.quantity) ?? 0)
-      }
-      capitalBaseByMarket.set(market, (capitalBaseByMarket.get(market) ?? 0) + toCny(capitalBase, market))
-    } catch {
-      // Ignore malformed ledger files.
-    }
-  }
-  return capitalBaseByMarket
-}
-
-function mergeMarketStyleSummary(current: MarketStyleSummary, next: MarketStyleSummary): MarketStyleSummary {
-  return {
-    source: current.source,
-    status: next.status ?? current.status,
-    styleCount: current.styleCount + next.styleCount,
-    activeStyleCount: (current.activeStyleCount ?? 0) + (next.activeStyleCount ?? 0),
-    degradedStyleCount: (current.degradedStyleCount ?? 0) + (next.degradedStyleCount ?? 0),
-    pausedStyleCount: (current.pausedStyleCount ?? 0) + (next.pausedStyleCount ?? 0),
-    filledCount: (current.filledCount ?? 0) + (next.filledCount ?? 0),
-    errorCount: (current.errorCount ?? 0) + (next.errorCount ?? 0),
-    holdCount: (current.holdCount ?? 0) + (next.holdCount ?? 0),
-    recordCount: (current.recordCount ?? 0) + (next.recordCount ?? 0),
-    signalCount: (current.signalCount ?? 0) + (next.signalCount ?? 0),
-    latestAt: latestIso(current.latestAt, next.latestAt),
-  }
-}
-
-function summarizeStyleStates(value: unknown) {
-  if (Array.isArray(value)) return summarizeStyleStateRows(value)
-
-  const states = asRecord(value)
-  let active = 0
-  let degraded = 0
-  let paused = 0
-  let total = 0
-
-  for (const [key, raw] of Object.entries(states)) {
-    const numeric = parseFiniteNumber(raw as number | string | undefined)
-    if (numeric !== undefined && ['active', 'degraded', 'paused'].includes(key.toLowerCase())) {
-      const count = Math.max(0, Math.trunc(numeric))
-      total += count
-      if (key.toLowerCase() === 'active') active += count
-      if (key.toLowerCase() === 'degraded') degraded += count
-      if (key.toLowerCase() === 'paused') paused += count
-      continue
-    }
-
-    const state = String(raw ?? '').toLowerCase()
-    if (!state) continue
-    total += 1
-    if (state.includes('active') || state.includes('ready')) active += 1
-    else if (state.includes('degraded') || state.includes('warn')) degraded += 1
-    else if (state.includes('paused') || state.includes('disabled')) paused += 1
-  }
-
-  return { active, degraded, paused, total }
-}
-
-function summarizeStyleStateRows(rows: unknown[]) {
-  let active = 0
-  let degraded = 0
-  let paused = 0
-  let total = 0
-
-  for (const row of rows) {
-    const state = String(asRecord(row).status ?? row ?? '').toLowerCase()
-    if (!state) continue
-    total += 1
-    if (state.includes('active') || state.includes('ready')) active += 1
-    else if (state.includes('degraded') || state.includes('warn')) degraded += 1
-    else if (state.includes('paused') || state.includes('disabled')) paused += 1
-  }
-
-  return { active, degraded, paused, total }
-}
-
-function countStyleComparisonRows(value: unknown) {
-  if (Array.isArray(value)) return value.length
-  const rows = asRecord(value)
-  return Object.keys(rows).length
-}
-
 function normalizeMarketFolder(value: string): Market {
-  return normalizeMarket(value, value.toUpperCase())
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'ashare' || normalized === 'a-share' || normalized === 'a_share') return 'A-share'
+  if (normalized === 'cn_futures' || normalized === 'cnfutures') return 'CNFutures'
+  if (normalized === 'crypto') return 'Crypto'
+  return 'All Markets'
 }
 
 function buildMarketSummaryHeadline(market: Market, status: MarketSummary['status'], holdingCount: number, signalCount: number, tradeCount: number, styleCount: number) {
@@ -2321,7 +2062,7 @@ function buildMarketSummaryDetail({
   if (styleCount > 0) facts.push(`风格 ${activeStyleCount ?? 0}/${styleCount}`)
   if (filledCount !== undefined) facts.push(`成交 ${filledCount}`)
   if (errorCount) facts.push(`失败 ${errorCount}`)
-  return facts.length ? facts.join(' · ') : '等待该市场写入模拟成交、持仓或风格收益。'
+  return facts.length ? facts.join(' · ') : '等待该市场写入模拟成交、持仓或明确收益证据。'
 }
 
 function buildAShareNoTradeEvidence(
@@ -2410,11 +2151,8 @@ function formatAShareNoTradeAction(action?: string) {
 
 function marketName(market: Market) {
   if (market === 'A-share') return 'A股'
-  if (market === 'US') return '美股'
   if (market === 'Crypto') return '加密'
-  if (market === 'PM') return '预测'
   if (market === 'CNFutures') return '中国期货'
-  if (market === 'HK') return '港股'
   return '全市场'
 }
 
@@ -3323,8 +3061,16 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
 
   if (!snapshots.length) return { performance: [] }
 
+  const simLedgerSnapshots = snapshots.filter((snapshot) => snapshot.isSimLedgerSnapshot)
+  if (hasAmbiguousEquityAuthorities(snapshots)) {
+    return { performance: [] }
+  }
+  if (new Set(simLedgerSnapshots.map((snapshot) => dirname(snapshot.sourcePath))).size > 1) {
+    return { performance: [] }
+  }
+
   const grouped = snapshots.some((snapshot) => snapshot.isSimLedgerSnapshot)
-    ? groupSimLedgerEquitySnapshots(snapshots.filter((snapshot) => snapshot.isSimLedgerSnapshot))
+    ? groupSimLedgerEquitySnapshots(simLedgerSnapshots)
     : groupEquitySnapshotsByTimestamp(snapshots)
 
   const timestamps = [...grouped.keys()].sort((a, b) => a - b)
@@ -3332,8 +3078,7 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
   const useProgressiveTarget = shouldUseProgressiveEquityTarget(snapshotRows)
   const performance = timestamps.map((_, index) => {
     const row = snapshotRows[index]
-    const normalizedCapitalBase = normalizedCapitalBaseForMarkets(row.capitalBase, row.markets)
-    const simulated = normalizedCapitalBase > 0 ? (row.pnl / normalizedCapitalBase) * 100 : row.returnPct
+    const simulated = row.capitalBase > 0 ? (row.pnl / row.capitalBase) * 100 : row.returnPct
     const target = useProgressiveTarget
       ? Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / timestamps.length))
       : row.targetPct > 0 ? row.targetPct : Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / timestamps.length))
@@ -3348,7 +3093,7 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
     }
   })
   const latest = grouped.get(timestamps.at(-1)!)!
-  const latestCapitalBase = normalizedCapitalBaseForMarkets(latest.capitalBase, latest.markets)
+  const latestCapitalBase = latest.capitalBase
 
   // DECOMMISSIONED: When multiple independent markets contribute equity
   // snapshots, do not produce a combined monetary portfolio summary or
@@ -3370,7 +3115,7 @@ async function readEquitySnapshotPortfolio(projectRoot: string, generatedAt: str
       pointCount: performance.length,
       source: tradingAgentReadModelSources.equitySnapshots,
       pnlSource: latest.sources.size === 1 ? [...latest.sources][0] : latest.sources.size > 1 ? 'mixed' : 'equity_snapshot',
-      pnlCurrency: 'CNY',
+      pnlCurrency: latest.currency,
       realizedPnl: roundMoney(latest.realizedPnl),
       unrealizedPnl: roundMoney(latest.unrealizedPnl),
       updatedAt: generatedAt,
@@ -3391,11 +3136,14 @@ function groupEquitySnapshotsByTimestamp(snapshots: ParsedEquitySnapshot[]) {
   for (const snapshot of snapshots) {
     const current = grouped.get(snapshot.timestampMs)
     if (!current) {
-      grouped.set(snapshot.timestampMs, { ...snapshot })
+      grouped.set(snapshot.timestampMs, cloneEquitySnapshot(snapshot))
       continue
     }
 
-    mergeEquitySnapshot(current, snapshot)
+    // Equity snapshots are full-account observations, never additive deltas.
+    // Repeated observations from the sole validated authority replace the
+    // prior row for that instant instead of doubling its capital and PnL.
+    grouped.set(snapshot.timestampMs, cloneEquitySnapshot(snapshot))
   }
   return grouped
 }
@@ -3477,6 +3225,7 @@ function mergeEquitySnapshot(current: ParsedEquitySnapshot, snapshot: ParsedEqui
     for (const source of snapshot.sources) current.sources.add(source)
     return
   }
+  if (current.currency !== snapshot.currency || current.accountScope !== snapshot.accountScope || current.sourcePath !== snapshot.sourcePath) return
 
   const previousCapitalBase = current.capitalBase
   current.capitalBase += snapshot.capitalBase
@@ -3534,24 +3283,30 @@ function parseEquitySnapshotRecord(row: EquitySnapshotRecord): ParsedEquitySnaps
   const dayKey = compactDate(row.date ?? row.trade_date ?? String(timestamp)) ?? compactDate(formatDateForSnapshot(timestampMs))
   if (!dayKey) return null
 
-  const fxToCny = snapshotFxToCny(row)
+  const sourceMarket = marketFromEquitySourcePath(row.sourcePath)
+  const currency = snapshotNativeCurrency(row, sourceMarket)
+  if (!currency) return null
+  const cryptoNative = sourceMarket === 'Crypto'
   const rawEquity = firstParsedNumber(row.total_equity, row.equity, row.nav, row.net_value, row.account_value, row.portfolio_value)
   const rawCapitalBase = firstParsedNumber(row.capital_base, row.initial_equity, row.starting_equity, row.start_equity, row.principal)
   const rawRealizedPnl = parseFiniteNumber(row.realized_pnl) ?? 0
   const rawUnrealizedPnl = parseFiniteNumber(row.unrealized_pnl) ?? 0
   const rawExplicitPnl = firstParsedNumber(row.pnl, row.total_pnl, row.net_pnl)
-  const equity = firstParsedNumber(row.total_equity_cny, row.equity_cny)
-    ?? normalizeSnapshotMoney(rawEquity, fxToCny)
-  const capitalBase = parseFiniteNumber(row.capital_base_cny)
-    ?? normalizeSnapshotMoney(rawCapitalBase, fxToCny)
-  const realizedPnl = parseFiniteNumber(row.realized_pnl_cny)
-    ?? normalizeSnapshotMoney(rawRealizedPnl, fxToCny)
-    ?? 0
-  const unrealizedPnl = parseFiniteNumber(row.unrealized_pnl_cny)
-    ?? normalizeSnapshotMoney(rawUnrealizedPnl, fxToCny)
-    ?? 0
-  const explicitPnl = firstParsedNumber(row.pnl_cny, row.total_pnl_cny, row.net_pnl_cny)
-    ?? normalizeSnapshotMoney(rawExplicitPnl, fxToCny)
+  const equity = cryptoNative
+    ? rawEquity
+    : firstParsedNumber(row.total_equity_cny, row.equity_cny) ?? rawEquity
+  const capitalBase = cryptoNative
+    ? rawCapitalBase
+    : parseFiniteNumber(row.capital_base_cny) ?? rawCapitalBase
+  const realizedPnl = cryptoNative
+    ? rawRealizedPnl
+    : parseFiniteNumber(row.realized_pnl_cny) ?? rawRealizedPnl
+  const unrealizedPnl = cryptoNative
+    ? rawUnrealizedPnl
+    : parseFiniteNumber(row.unrealized_pnl_cny) ?? rawUnrealizedPnl
+  const explicitPnl = cryptoNative
+    ? rawExplicitPnl
+    : firstParsedNumber(row.pnl_cny, row.total_pnl_cny, row.net_pnl_cny) ?? rawExplicitPnl
   const pnl = explicitPnl ?? (realizedPnl || unrealizedPnl ? realizedPnl + unrealizedPnl : equity !== undefined && capitalBase !== undefined ? equity - capitalBase : undefined)
   const returnPct = firstParsedNumber(row.simulated_return_pct, row.return_pct)
 
@@ -3564,11 +3319,13 @@ function parseEquitySnapshotRecord(row: EquitySnapshotRecord): ParsedEquitySnaps
   const drawdownAmount = firstParsedNumber(row.max_dd, row.drawdown)
 
   return {
+    accountScope: firstString(row.account_scope, row.account_id, row.account) ?? `equity-source:${row.sourcePath}`,
     benchmarkPct: firstParsedNumber(row.benchmark_return_pct, row.benchmark_pct) ?? 0,
     capitalBase: base,
+    currency,
     dayKey,
     isSimLedgerSnapshot: row.sourcePath.includes('/shared/logs/sim_ledger/'),
-    markets: new Set([marketFromEquitySourcePath(row.sourcePath)]),
+    markets: new Set([sourceMarket]),
     maxDrawdownPct: Math.abs(drawdownPct ?? (drawdownAmount !== undefined ? (drawdownAmount / base) * 100 : 0)),
     opportunityPct: firstParsedNumber(row.opportunity_gap_pct, row.missed_alpha_pct) ?? 0,
     pnl: pnl ?? (returnPct! / 100) * base,
@@ -3584,41 +3341,38 @@ function parseEquitySnapshotRecord(row: EquitySnapshotRecord): ParsedEquitySnaps
   }
 }
 
-function marketDefaultCapitalBase(market: Market): number {
-  if (market === 'A-share' || market === 'CNFutures') return DEFAULT_SIM_CAPITAL_CNY
-  if (market === 'US' || market === 'Crypto' || market === 'PM') return DEFAULT_USD_CAPITAL * DEFAULT_USD_CNY
-  return 0
+function hasAmbiguousEquityAuthorities(snapshots: ParsedEquitySnapshot[]) {
+  const authoritiesByMarket = new Map<Market, { accountScopes: Set<string>; sourcePaths: Set<string>; currencies: Set<string> }>()
+  for (const snapshot of snapshots) {
+    for (const market of snapshot.markets) {
+      if (market === 'All Markets') return true
+      const authority = authoritiesByMarket.get(market) ?? {
+        accountScopes: new Set<string>(),
+        sourcePaths: new Set<string>(),
+        currencies: new Set<string>(),
+      }
+      authority.accountScopes.add(snapshot.accountScope)
+      authority.sourcePaths.add(snapshot.sourcePath)
+      authority.currencies.add(snapshot.currency)
+      authoritiesByMarket.set(market, authority)
+      if (authority.accountScopes.size > 1 || authority.sourcePaths.size > 1 || authority.currencies.size > 1) return true
+    }
+  }
+  return false
 }
 
-function isUsdCapitalMarket(market: Market) {
-  return market === 'US' || market === 'Crypto' || market === 'PM'
-}
-
-function defaultMarketCapitalBase(
+function validatedMarketCapitalBase(
   market: Market,
   current?: number,
   freshAuthorityValidated = false,
 ) {
-  if (market === 'All Markets' || market === 'HK') return current
+  if (market === 'All Markets') return current
   if (market === 'A-share' || market === 'CNFutures') {
     return freshAuthorityValidated && current !== undefined && current > 0
       ? current
       : undefined
   }
-  if (isUsdCapitalMarket(market)) return marketDefaultCapitalBase(market)
-  if (current !== undefined && current > 0) return current
-  return marketDefaultCapitalBase(market)
-}
-
-function normalizedCapitalBaseForMarkets(current: number, markets: Set<Market>) {
-  // DECOMMISSIONED: Must never create cross-market composite capital base,
-  // even via max-of-floors. When multiple independent markets contribute,
-  // return the actual data value unchanged — no normalization.
-  const activeMarkets = [...markets].filter((market) => market !== 'All Markets' && market !== 'HK')
-  if (activeMarkets.length > 1) return current
-  if (!activeMarkets.length) return current
-  const floor = marketDefaultCapitalBase(activeMarkets[0])
-  return Math.max(current, floor)
+  return current !== undefined && current > 0 ? current : undefined
 }
 
 function marketFromEquitySourcePath(sourcePath: string): Market {
@@ -3628,175 +3382,6 @@ function marketFromEquitySourcePath(sourcePath: string): Market {
   const reviewMatch = normalized.match(/\/shared\/review\/([^/]+)\//)
   if (reviewMatch?.[1]) return normalizeMarketFolder(reviewMatch[1])
   return 'All Markets'
-}
-
-async function readStylePerformancePortfolio(root: string, simLedgerRoot: string, generatedAt: string): Promise<{
-  performance: PerformancePoint[]
-  summary?: PortfolioSummary
-}> {
-  const files = await listStylePerformanceFiles(root)
-  const rows: StylePerformanceRecord[] = []
-
-  for (const file of files) {
-    try {
-      const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
-      for (const line of lines) {
-        try {
-          rows.push({ ...(JSON.parse(line) as StylePerformanceRow), marketHint: file.market })
-        } catch {
-          // Ignore malformed append-only rows; other rows remain usable.
-        }
-      }
-    } catch {
-      // Ignore unreadable market folders.
-    }
-  }
-
-  const tradeTimeline = await readSimLedgerTradeTimeline(simLedgerRoot)
-  const timelineContributions: TimelineContribution[] = []
-  const byDay = new Map<string, { pnl: number; realizedPnl: number; unrealizedPnl: number; maxDrawdown: number; markets: Set<Market>; trades: number; pnlSources: Set<string> }>()
-  const markets = new Set<Market>()
-  for (const row of rows) {
-    if (row.real_execution === true) continue
-    if (normalizeCapitalLayer(row) !== 'simulated') continue
-    if (isDashboardExcluded(row as Record<string, unknown>)) continue
-    if (await isStylePerformanceRowLedgerExcluded(simLedgerRoot, row.market ?? row.marketHint ?? '', row)) continue
-    const dayKey = compactDate(row.date ?? row.trade_date ?? row.as_of)
-    const market = normalizeMarketFolder(row.market ?? row.marketHint)
-    const pnl = stylePerformanceMoneyCny(row, market, 'pnl')
-    if (!dayKey || pnl === undefined) continue
-    const current = byDay.get(dayKey) ?? { pnl: 0, realizedPnl: 0, unrealizedPnl: 0, maxDrawdown: 0, markets: new Set<Market>(), trades: 0, pnlSources: new Set<string>() }
-    const maxDrawdown = stylePerformanceMaxDrawdownCny(row, market)
-    current.pnl += pnl
-    current.realizedPnl += stylePerformanceMoneyCny(row, market, 'realized') ?? 0
-    current.unrealizedPnl += stylePerformanceMoneyCny(row, market, 'unrealized') ?? 0
-    current.maxDrawdown = Math.max(current.maxDrawdown, maxDrawdown)
-    current.markets.add(market)
-    markets.add(market)
-    current.trades += Math.max(0, Math.trunc(parseFiniteNumber(row.trades) ?? 0))
-    if (row.pnl_source) current.pnlSources.add(String(row.pnl_source))
-    byDay.set(dayKey, current)
-
-    const matchingTrades = tradeTimeline.get(performanceTradeKey(dayKey, row.market ?? row.marketHint, row.style_name))
-    if (matchingTrades?.length && pnl !== 0) {
-      const totalNotional = matchingTrades.reduce((sum, trade) => sum + Math.max(0, trade.notional), 0)
-      const equalShare = 1 / matchingTrades.length
-      for (const trade of matchingTrades) {
-        const weight = totalNotional > 0 ? Math.max(0, trade.notional) / totalNotional : equalShare
-        timelineContributions.push({
-          maxDrawdown: maxDrawdown * weight,
-          pnl: pnl * weight,
-          timestamp: trade.timestamp,
-          timestampMs: trade.timestampMs,
-        })
-      }
-    }
-  }
-
-  if (!byDay.size) return { performance: [] }
-
-  // DECOMMISSIONED: Cross-market PnL/capital aggregation is forbidden.
-  // When multiple independent markets contribute, do not produce a combined
-  // monetary summary. Per-market data is available via marketSummaries.
-  if (markets.size > 1) {
-    return { performance: [] }
-  }
-
-  const capitalBase = normalizedCapitalBaseForMarkets(await readSimLedgerCapitalBase(simLedgerRoot), markets)
-  const dates = [...byDay.keys()].sort()
-  let cumulativePnl = 0
-  const dailyPerformance = dates.map((day, index) => {
-    const value = byDay.get(day)!
-    cumulativePnl += value.pnl
-    const simulated = capitalBase > 0 ? (cumulativePnl / capitalBase) * 100 : 0
-    const target = Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / dates.length))
-    const drawdown = capitalBase > 0 ? (Math.abs(value.maxDrawdown) / capitalBase) * 100 : 0
-
-    return {
-      day: index === dates.length - 1 ? '现在' : formatReviewDay(day) ?? day,
-      timestamp: day,
-      simulated: roundMetric(simulated),
-      target: roundMetric(target),
-      benchmark: 0,
-      opportunity: roundMetric(-drawdown),
-    }
-  })
-  const timelinePerformance = buildTimelinePerformance(timelineContributions, capitalBase)
-  const performance = timelinePerformance.length > dailyPerformance.length ? timelinePerformance : dailyPerformance
-  const totalPnl = [...byDay.values()].reduce((sum, row) => sum + row.pnl, 0)
-  const totalRealizedPnl = [...byDay.values()].reduce((sum, row) => sum + row.realizedPnl, 0)
-  const totalUnrealizedPnl = [...byDay.values()].reduce((sum, row) => sum + row.unrealizedPnl, 0)
-  const pnlSources = new Set([...byDay.values()].flatMap((row) => [...row.pnlSources]))
-  const latest = byDay.get(dates.at(-1)!)!
-  const maxDrawdown = Math.max(...[...byDay.values()].map((row) => Math.abs(row.maxDrawdown)), 0)
-
-  return {
-    performance,
-    summary: {
-      pnlAmount: roundMoney(totalPnl),
-      returnPct: roundMetric(capitalBase > 0 ? (totalPnl / capitalBase) * 100 : 0),
-      capitalBase: roundMoney(capitalBase),
-      targetPct: DEFAULT_TARGET_RETURN_PCT,
-      maxDrawdownPct: roundMetric(capitalBase > 0 ? (maxDrawdown / capitalBase) * 100 : 0),
-      tradeCount: latest.trades,
-      pointCount: performance.length,
-      source: tradingAgentReadModelSources.performanceTracker,
-      pnlSource: pnlSources.size === 1 ? [...pnlSources][0] : pnlSources.size > 1 ? 'mixed' : undefined,
-      pnlCurrency: 'CNY',
-      realizedPnl: roundMoney(totalRealizedPnl),
-      unrealizedPnl: roundMoney(totalUnrealizedPnl),
-      updatedAt: generatedAt,
-    },
-  }
-}
-
-async function listStylePerformanceFiles(root: string) {
-  const files: Array<{ path: string; market: string }> = []
-  try {
-    const entries = await readdir(root, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const path = join(root, entry.name, 'style_performance.jsonl')
-      if (await fileExists(path)) files.push({ path, market: entry.name })
-    }
-  } catch {
-    return []
-  }
-  return files
-}
-
-function buildTimelinePerformance(contributions: TimelineContribution[], capitalBase: number): PerformancePoint[] {
-  const usable = contributions
-    .filter((row) => Number.isFinite(row.timestampMs) && Number.isFinite(row.pnl))
-    .sort((a, b) => a.timestampMs - b.timestampMs)
-  if (!usable.length) return []
-
-  const byTimestamp = new Map<number, { timestamp: string; pnl: number; maxDrawdown: number }>()
-  for (const row of usable) {
-    const current = byTimestamp.get(row.timestampMs) ?? { timestamp: row.timestamp, pnl: 0, maxDrawdown: 0 }
-    current.pnl += row.pnl
-    current.maxDrawdown += Math.abs(row.maxDrawdown)
-    byTimestamp.set(row.timestampMs, current)
-  }
-
-  const timestamps = [...byTimestamp.keys()].sort((a, b) => a - b)
-  let cumulativePnl = 0
-  return timestamps.map((timestampMs, index) => {
-    const row = byTimestamp.get(timestampMs)!
-    cumulativePnl += row.pnl
-    const simulated = capitalBase > 0 ? (cumulativePnl / capitalBase) * 100 : 0
-    const target = Math.min(DEFAULT_TARGET_RETURN_PCT, DEFAULT_TARGET_RETURN_PCT * ((index + 1) / timestamps.length))
-    const drawdown = capitalBase > 0 ? (row.maxDrawdown / capitalBase) * 100 : 0
-
-    return {
-      day: index === timestamps.length - 1 ? '现在' : formatTimelineLabel(row.timestamp),
-      timestamp: row.timestamp,
-      simulated: roundMetric(simulated),
-      target: roundMetric(target),
-      benchmark: 0,
-      opportunity: roundMetric(-drawdown),
-    }
-  })
 }
 
 function parsePerformanceRow(row: PerformanceReviewRow): PerformancePoint | null {
@@ -3818,7 +3403,10 @@ async function readPositionSnapshots(root: string): Promise<HoldingRow[]> {
   try {
     const names = await readdir(root)
     const rows = await Promise.all(
-      names.filter((name) => name.endsWith('.json')).map(async (name) => parsePositionSnapshot(await readJson(join(root, name)))),
+      names.filter((name) => name.endsWith('.json')).map(async (name) => {
+        const path = join(root, name)
+        return parsePositionSnapshot(await readJson(path), `position-snapshot:${path}`)
+      }),
     )
     return rows.flat().filter((row): row is HoldingRow => Boolean(row))
   } catch {
@@ -3856,7 +3444,10 @@ async function readAuthoritativeASharePositions(
     || !Array.isArray(payload.positions)
     || !positionsMatchCapital(payload.positions, capital.positionsQuantityByRiskUnit)
   ) return { holdings: [], state: 'unavailable' }
-  const holdings = parsePositionSnapshot(payload).filter((holding) => holding.market === 'A-share')
+  const holdings = parsePositionSnapshot(
+    payload,
+    `capital:${capital.authorityId}:${capital.authorityGeneration}:${capital.executionLineageId}`,
+  ).filter((holding) => holding.market === 'A-share')
   if (holdings.length !== capital.openPositionCount) return { holdings: [], state: 'unavailable' }
   return { holdings, state: holdings.length ? 'ready' : 'empty' }
 }
@@ -3889,7 +3480,11 @@ async function readPositionPlan(path: string): Promise<HoldingRow[]> {
   try {
     const lines = (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean)
     const latest = JSON.parse(lines.at(-1) ?? '{}') as PositionPlanFile
-    return (latest.positions ?? []).map((row) => parsePositionRow(row)).filter((row): row is HoldingRow => Boolean(row))
+    return (latest.positions ?? []).map((row) => parsePositionRow(
+      row,
+      'position_snapshot',
+      `position-plan:${path}`,
+    )).filter((row): row is HoldingRow => Boolean(row))
   } catch {
     return []
   }
@@ -3901,7 +3496,15 @@ async function readSimLedgerHoldings(root: string): Promise<HoldingRow[]> {
     try {
       const payload = JSON.parse(await readFile(file.path, 'utf8')) as SimLedgerPositionsFile
       if (isDashboardExcluded(payload as Record<string, unknown>)) return []
-      return Object.entries(payload.positions ?? {}).map(([symbol, position]) => parseSimLedgerPosition(symbol, position, file.market, file.strategy))
+      const accountScope = firstString(payload.account_scope, payload.account_id, payload.account)
+        ?? `sim-ledger:${file.market}:${file.strategy}`
+      return Object.entries(payload.positions ?? {}).map(([symbol, position]) => parseSimLedgerPosition(
+        symbol,
+        position,
+        file.market,
+        file.strategy,
+        accountScope,
+      ))
     } catch {
       return []
     }
@@ -3910,33 +3513,20 @@ async function readSimLedgerHoldings(root: string): Promise<HoldingRow[]> {
   return rows.flat().filter((row): row is HoldingRow => Boolean(row))
 }
 
-async function readSimLedgerCapitalBase(root: string): Promise<number> {
-  const files = await listSimLedgerFiles(root, 'positions.json')
-  let capitalBase = 0
-
-  for (const file of files) {
-    try {
-      const payload = JSON.parse(await readFile(file.path, 'utf8')) as SimLedgerPositionsFile
-      if (isDashboardExcluded(payload as Record<string, unknown>)) continue
-      capitalBase += parseFiniteNumber(payload.cash) ?? 0
-      for (const position of Object.values(payload.positions ?? {})) {
-        capitalBase += (parseFiniteNumber(position.avg_cost) ?? 0) * (parseFiniteNumber(position.quantity) ?? 0)
-      }
-    } catch {
-      // Ignore malformed ledger files; the snapshot API is read-only and should remain resilient.
-    }
-  }
-
-  return capitalBase
-}
-
-function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, marketHint: string, strategy: string): HoldingRow | null {
+function parseSimLedgerPosition(
+  symbol: string,
+  position: SimLedgerPosition,
+  marketHint: string,
+  strategy: string,
+  accountScope: string,
+): HoldingRow | null {
   if (!symbol || !position.quantity) return null
   const market = normalizeMarket(marketHint, symbol)
-  const cost = toCny(Number(position.avg_cost ?? 0) * Number(position.quantity ?? 0), market)
-  const realizedPnl = toCny(position.realized_pnl ?? 0, market)
-  const unrealizedPnl = position.unrealized_pnl === undefined ? undefined : toCny(position.unrealized_pnl, market)
-  const averagePrice = toCny(Number(position.avg_cost ?? 0), market)
+  if (market === 'All Markets') return null
+  const cost = roundMoney(Number(position.avg_cost ?? 0) * Number(position.quantity ?? 0))
+  const realizedPnl = roundMoney(position.realized_pnl ?? 0)
+  const unrealizedPnl = position.unrealized_pnl === undefined ? undefined : roundMoney(position.unrealized_pnl)
+  const averagePrice = roundMoney(Number(position.avg_cost ?? 0))
 
   return {
     symbol: normalizeSymbol(symbol, market),
@@ -3944,8 +3534,8 @@ function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, mar
     market,
     opportunityId: explicitOpportunityId(position),
     marketDataSymbol: explicitMarketDataSymbol(position),
-    weight: formatCost(cost),
-    pnl: formatCurrency(realizedPnl + (unrealizedPnl ?? 0)),
+    weight: formatMarketCurrencyAmount(cost, market),
+    pnl: formatMarketCurrency(realizedPnl + (unrealizedPnl ?? 0), market),
     risk: position.quantity > 0 ? '正常' : '观察',
     role: `${formatStrategyName(strategy)} 持仓`,
     quantity: Number(position.quantity),
@@ -3955,30 +3545,39 @@ function parseSimLedgerPosition(symbol: string, position: SimLedgerPosition, mar
     dayPnl: realizedPnl + (unrealizedPnl ?? 0),
     realizedPnl,
     unrealizedPnl,
-    currency: 'CNY',
+    currency: marketNativeCurrency(market),
+    accountScope,
     source: 'sim_ledger',
   }
 }
 
-function parsePositionSnapshot(payload: unknown): HoldingRow[] {
+function parsePositionSnapshot(payload: unknown, accountScope?: string): HoldingRow[] {
+  const payloadRecord = asRecord(payload)
+  const effectiveAccountScope = firstString(
+    payloadRecord.account_scope,
+    payloadRecord.account_id,
+    payloadRecord.account,
+  ) ?? accountScope
   if (Array.isArray(payload)) {
-    return payload.map((row) => parsePositionRow(row)).filter((row): row is HoldingRow => Boolean(row))
+    return payload.map((row) => parsePositionRow(row, 'position_snapshot', effectiveAccountScope)).filter((row): row is HoldingRow => Boolean(row))
   }
 
-  const direct = parsePositionRow(payload)
+  const direct = parsePositionRow(payload, 'position_snapshot', effectiveAccountScope)
   if (direct) return [direct]
 
   const snapshot = payload as CNFuturesPositionsFile
   if (Array.isArray(snapshot.positions)) {
     return snapshot.positions
-      .map((row) => (asRecord(row).ts_code ? parsePositionRow(row) : parseCNFuturesPositionRow(row)))
+      .map((row) => (asRecord(row).ts_code
+        ? parsePositionRow(row, 'position_snapshot', effectiveAccountScope)
+        : parseCNFuturesPositionRow(row, effectiveAccountScope)))
       .filter((row): row is HoldingRow => Boolean(row))
   }
 
   return []
 }
 
-function parseCNFuturesPositionRow(row: CNFuturesPositionRow): HoldingRow | null {
+function parseCNFuturesPositionRow(row: CNFuturesPositionRow, accountScope?: string): HoldingRow | null {
   const symbol = String(row.symbol ?? '').trim()
   if (!symbol) return null
   const qty = parseFiniteNumber(row.net_qty) ?? 0
@@ -4007,15 +3606,21 @@ function parseCNFuturesPositionRow(row: CNFuturesPositionRow): HoldingRow | null
     realizedPnl: realized,
     unrealizedPnl: unrealized,
     currency: 'CNY',
+    accountScope,
     source: 'position_snapshot',
   }
 }
 
-function parsePositionRow(row: unknown, source: HoldingRow['source'] = 'position_snapshot'): HoldingRow | null {
+function parsePositionRow(
+  row: unknown,
+  source: HoldingRow['source'] = 'position_snapshot',
+  sourceAccountScope?: string,
+): HoldingRow | null {
   const position = row as PositionRow
   const symbol = position.ts_code
   if (!symbol) return null
   const market = inferMarket(symbol)
+  if (market === 'All Markets') return null
   const marketValue = parseFiniteNumber(position.market_value)
   const runningCost = firstParsedNumber(position.cost_basis, position.running_cost)
   const quantity = parseFiniteNumber(position.quantity)
@@ -4026,8 +3631,8 @@ function parsePositionRow(row: unknown, source: HoldingRow['source'] = 'position
   const markPrice = firstParsedNumber(position.price, marketValue !== undefined && quantity ? marketValue / quantity : undefined)
 
   return {
-    symbol,
-    name: symbol,
+    symbol: normalizeSymbol(symbol, market),
+    name: normalizeSymbol(symbol, market),
     market,
     opportunityId: explicitOpportunityId(position),
     marketDataSymbol: explicitMarketDataSymbol(position),
@@ -4043,7 +3648,8 @@ function parsePositionRow(row: unknown, source: HoldingRow['source'] = 'position
     dayPnl: pnl,
     realizedPnl,
     unrealizedPnl,
-    currency: 'CNY',
+    currency: marketNativeCurrency(market),
+    accountScope: firstString(position.account_scope, position.account_id, position.account) ?? sourceAccountScope,
     updatedAt: position.entry_date,
     source,
   }
@@ -4096,52 +3702,10 @@ function dedupeSimLedgerSignal() {
   }
 }
 
-async function readSimLedgerTradeTimeline(root: string): Promise<Map<string, SimLedgerTimelineTrade[]>> {
-  const files = await listSimLedgerFiles(root, 'trade_journal.jsonl')
-  const timeline = new Map<string, SimLedgerTimelineTrade[]>()
-
-  for (const file of files) {
-    try {
-      const lines = (await readFile(file.path, 'utf8')).trim().split('\n').filter(Boolean)
-      for (const line of lines) {
-        try {
-          const trade = JSON.parse(line) as SimLedgerTradeRow
-          if (trade.capital_layer && String(trade.capital_layer).toLowerCase() !== 'simulated') continue
-          if (isDashboardExcluded(trade as Record<string, unknown>)) continue
-          if (!trade.timestamp) continue
-          const timestampMs = Date.parse(trade.timestamp)
-          if (!Number.isFinite(timestampMs)) continue
-          const dayKey = compactDate(trade.timestamp)
-          if (!dayKey) continue
-          const key = performanceTradeKey(dayKey, file.market, file.strategy)
-          const rows = timeline.get(key) ?? []
-          rows.push({
-            market: file.market,
-            notional: parseFiniteNumber(trade.notional) ?? 0,
-            strategy: file.strategy,
-            timestamp: trade.timestamp,
-            timestampMs,
-          })
-          timeline.set(key, rows)
-        } catch {
-          // Ignore malformed ledger rows; other trades remain usable.
-        }
-      }
-    } catch {
-      // Ignore unreadable strategy folders.
-    }
-  }
-
-  for (const rows of timeline.values()) {
-    rows.sort((a, b) => a.timestampMs - b.timestampMs)
-  }
-
-  return timeline
-}
-
 function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strategy: string, now: Date): SignalRow | null {
   if (!row.symbol) return null
   const market = normalizeMarket(marketHint, row.symbol)
+  if (market === 'All Markets') return null
   const symbol = normalizeSymbol(row.symbol, market)
   const timestamp = row.timestamp
   const canonicalStrategy = row.strategy_name || strategy
@@ -4157,7 +3721,7 @@ function parseSimLedgerTrade(row: SimLedgerTradeRow, marketHint: string, strateg
     strategyName: row.strategy_name,
     signalSource: row.signal_source,
     status: 'executed',
-    impact: row.notional === undefined ? '--' : `成交 ${formatCurrencyAmount(toCny(row.notional, market))}`,
+    impact: row.notional === undefined ? '--' : `成交 ${formatMarketCurrencyAmount(row.notional, market)}`,
     confidence: formatConviction(row.conviction) ?? '已成交',
     age: formatAge(timestamp, now),
     reason: row.reason ?? `模拟盘已按 ${formatPrice(row.fill_price)} 成交`,
@@ -4227,7 +3791,7 @@ async function listSimLedgerFiles(root: string, targetName: 'positions.json' | '
     const markets = await readdir(root, { withFileTypes: true })
     for (const market of markets) {
       if (!market.isDirectory()) continue
-      if (market.name.toLowerCase() === 'hk' && process.env.TRADINGAGENT_HK_SIM_ENABLED !== '1') continue
+      if (normalizeMarketFolder(market.name) === 'All Markets') continue
       const marketRoot = join(root, market.name)
       const strategies = await readdir(marketRoot, { withFileTypes: true })
       for (const strategy of strategies) {
@@ -4254,9 +3818,11 @@ async function isSimLedgerStrategyExcluded(strategyRoot: string) {
 async function readSignalFile(path: string, bucket: string, now: Date): Promise<SignalRow | null> {
   try {
     const raw = JSON.parse(await readFile(path, 'utf8')) as SignalFile
-    const symbol = raw.ts_code ?? raw.symbol
-    if (!symbol) return null
-    const market = normalizeMarket(raw.market, symbol)
+    const rawSymbol = raw.ts_code ?? raw.symbol
+    if (!rawSymbol) return null
+    const market = normalizeMarket(raw.market, rawSymbol)
+    if (market === 'All Markets') return null
+    const symbol = normalizeSymbol(rawSymbol, market)
     if (!isSignalQueueRowVisible(raw, market)) return null
     const status = mapSignalStatus(raw.status ?? bucket, raw)
     const stage = inferSignalStage(raw, bucket)
@@ -4373,30 +3939,30 @@ async function directoryHasJson(path: string) {
 }
 
 function inferMarket(symbol: string): Market {
-  if (symbol.endsWith('.HK')) return 'HK'
   if (symbol.endsWith('.SH') || symbol.endsWith('.SZ')) return 'A-share'
-  if (symbol.endsWith('.US')) return 'US'
   if (/\.(CFFEX|CFE|CFX|SHFE|SHF|DCE|CZCE|INE|GFEX)$/i.test(symbol)) return 'CNFutures'
-  if (/^[A-Z]{2,12}USDT$/.test(symbol) || symbol.includes('-USD') || symbol.includes('PERP')) return 'Crypto'
-  if (symbol.startsWith('PM-') || /^\d{5,8}$/.test(symbol)) return 'PM'
+  if (isActiveCryptoSymbol(symbol)) return 'Crypto'
   return 'All Markets'
 }
 
 function normalizeMarket(market: string | undefined, symbol: string): Market {
   const value = market?.toLowerCase()
-  if (value === 'hk') return 'HK'
   if (value === 'a-share' || value === 'ashare' || value === 'a_share' || value === 'cn') return 'A-share'
-  if (value === 'us') return 'US'
-  if (value === 'crypto') return 'Crypto'
-  if (value === 'pm' || value === 'prediction' || value === 'prediction-market') return 'PM'
+  if (value === 'crypto') return isActiveCryptoSymbol(symbol) ? 'Crypto' : 'All Markets'
   if (value === 'cn_futures' || value === 'cnfutures' || value === 'futures' || value === 'china-futures' || value === 'china_futures') return 'CNFutures'
   return inferMarket(symbol)
 }
 
 function normalizeSymbol(symbol: string, market: Market) {
-  if (market === 'Crypto' && symbol.endsWith('USDT')) return symbol.replace(/USDT$/, '-USD')
-  if (market === 'PM' && !symbol.startsWith('PM-')) return `PM-${symbol}`
+  if (market === 'Crypto' && isActiveCryptoSymbol(symbol)) {
+    const compact = symbol.trim().toUpperCase().replace('-', '')
+    return `${compact.slice(0, -4)}-USDT`
+  }
   return symbol
+}
+
+function isActiveCryptoSymbol(symbol: string) {
+  return /^[A-Z0-9]{2,20}-?USDT$/.test(symbol.trim().toUpperCase())
 }
 
 function formatStrategyName(value: string) {
@@ -4503,6 +4069,7 @@ function parseOpportunityFunnelEvent(row: OpportunityFunnelEventRow, index: numb
   const rawSymbol = firstString(row.ts_code, row.symbol, metadata.ts_code, metadata.symbol)
   if (!rawSymbol) return null
   const market = normalizeMarket(firstString(row.market, metadata.market), rawSymbol)
+  if (market === 'All Markets') return null
   const symbol = normalizeSymbol(rawSymbol, market)
   const stage = mapOpportunityFunnelStage(firstString(row.stage, metadata.stage, row.status, metadata.status))
   const status = mapOpportunityFunnelStatus(firstString(row.status, metadata.status), stage)
@@ -4877,71 +4444,19 @@ function parseSnapshotTimestamp(value: string) {
   return Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}+08:00`)
 }
 
-function snapshotFxToCny(row: EquitySnapshotRecord) {
-  const explicit = parseFiniteNumber(row.fx_to_cny)
-  if (explicit !== undefined && explicit > 0) return explicit
-  const currency = String(row.display_currency ?? row.currency ?? '').trim().toUpperCase()
-  if (currency === 'CNY') return 1
-  if (currency === 'HKD') return DEFAULT_HKD_CNY
-  if (currency === 'USD' || currency === 'USDC' || currency === 'USDT') return DEFAULT_USD_CNY
-  return marketFxToCny(sourcePathMarket(row.sourcePath))
+function marketNativeCurrency(market: Market): NonNullable<MarketSummary['pnlCurrency']> {
+  return market === 'Crypto' ? 'USDT' : 'CNY'
 }
 
-function normalizeSnapshotMoney(value: number | undefined, fxToCny: number) {
-  return value === undefined ? undefined : roundMoney(value * fxToCny)
-}
-
-function sourcePathMarket(path: string): Market {
-  const normalized = path.toLowerCase().replace(/\\/g, '/')
-  if (normalized.includes('/sim_ledger/ashare/')) return 'A-share'
-  if (normalized.includes('/sim_ledger/crypto/')) return 'Crypto'
-  if (normalized.includes('/sim_ledger/us/')) return 'US'
-  if (normalized.includes('/sim_ledger/pm/')) return 'PM'
-  if (normalized.includes('/sim_ledger/cn_futures/')) return 'CNFutures'
-  if (normalized.includes('/sim_ledger/hk/')) return 'HK'
-  return 'All Markets'
-}
-
-function marketFxToCny(market: Market) {
-  if (market === 'US' || market === 'Crypto' || market === 'PM') return DEFAULT_USD_CNY
-  if (market === 'HK') return DEFAULT_HKD_CNY
-  return 1
-}
-
-function stylePerformanceFxToCny(row: StylePerformanceRow, market: Market) {
-  const explicit = firstParsedNumber(row.fx_to_cny, row.exchange_rate_to_cny)
-  if (explicit !== undefined && explicit > 0) return explicit
-  const currency = String(row.pnl_currency ?? row.currency ?? '').trim().toUpperCase()
-  if (currency === 'CNY') return 1
-  if (currency === 'HKD') return DEFAULT_HKD_CNY
-  if (currency === 'USD' || currency === 'USDC' || currency === 'USDT') return DEFAULT_USD_CNY
-  return marketFxToCny(market)
-}
-
-function stylePerformanceMoneyCny(row: StylePerformanceRow, market: Market, field: 'pnl' | 'realized' | 'unrealized') {
-  const explicit = field === 'pnl'
-    ? firstParsedNumber(row.pnl_cny, row.total_pnl_cny, row.net_pnl_cny)
-    : field === 'realized'
-      ? parseFiniteNumber(row.realized_pnl_cny)
-      : parseFiniteNumber(row.unrealized_pnl_cny)
-  if (explicit !== undefined) return explicit
-  const raw = field === 'pnl'
-    ? parseFiniteNumber(row.pnl)
-    : field === 'realized'
-      ? parseFiniteNumber(row.realized_pnl)
-      : parseFiniteNumber(row.unrealized_pnl)
-  return raw === undefined ? undefined : roundMoney(raw * stylePerformanceFxToCny(row, market))
-}
-
-function stylePerformanceMaxDrawdownCny(row: StylePerformanceRow, market: Market) {
-  const explicit = parseFiniteNumber(row.max_dd_cny)
-  if (explicit !== undefined) return explicit
-  const raw = parseFiniteNumber(row.max_dd) ?? 0
-  return roundMoney(raw * stylePerformanceFxToCny(row, market))
-}
-
-function toCny(value: number, market: Market) {
-  return roundMoney(value * marketFxToCny(market))
+function snapshotNativeCurrency(
+  row: EquitySnapshotRecord,
+  market: Market,
+): NonNullable<MarketSummary['pnlCurrency']> | undefined {
+  if (market === 'All Markets') return undefined
+  const expected = marketNativeCurrency(market)
+  const declared = String(row.display_currency ?? row.currency ?? '').trim().toUpperCase()
+  if (declared && declared !== expected) return undefined
+  return expected
 }
 
 function weightedAverage(leftValue: number, leftWeight: number, rightValue: number, rightWeight: number) {
@@ -4958,39 +4473,12 @@ function roundMoney(value: number) {
   return Number(value.toFixed(2))
 }
 
-function normalizeCapitalLayer(row: StylePerformanceRow | EquitySnapshotRow | SimLedgerTradeRow) {
+function normalizeCapitalLayer(row: EquitySnapshotRow) {
   return String(row.capital_layer ?? row.account_type ?? 'simulated').toLowerCase()
-}
-
-function performanceTradeKey(dayKey: string, market: string | undefined, style: string | undefined) {
-  return `${dayKey}:${normalizeMarketKey(market)}:${normalizeStyleKey(style)}`
-}
-
-function normalizeMarketKey(value: string | undefined) {
-  const raw = String(value ?? '').toLowerCase()
-  if (raw === 'a-share' || raw === 'a_share') return 'ashare'
-  if (raw === 'prediction' || raw === 'prediction-market') return 'pm'
-  return raw.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-}
-
-function normalizeStyleKey(value: string | undefined) {
-  return String(value ?? '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
 }
 
 function formatCurrency(value: number) {
   return formatCny(value, true)
-}
-
-function formatCurrencyAmount(value: number) {
-  return formatCny(value, false)
-}
-
-function formatCost(value?: number) {
-  if (value === undefined) return '--'
-  return formatCny(value, false)
 }
 
 function formatMarketCost(value: number | undefined, market: HoldingRow['market']) {
@@ -4999,11 +4487,16 @@ function formatMarketCost(value: number | undefined, market: HoldingRow['market'
 }
 
 function formatMarketCurrency(value: number, _market: HoldingRow['market']) {
-  return formatCny(value, true)
+  return _market === 'Crypto' ? formatUsdt(value, true) : formatCny(value, true)
 }
 
 function formatMarketCurrencyAmount(value: number, _market: HoldingRow['market']) {
-  return formatCny(value, false)
+  return _market === 'Crypto' ? formatUsdt(value, false) : formatCny(value, false)
+}
+
+function formatUsdt(value: number, signed: boolean) {
+  const prefix = value > 0 && signed ? '+' : value < 0 ? '-' : ''
+  return `${prefix}${Math.abs(value).toLocaleString('en-US', { maximumFractionDigits: 2 })} USDT`
 }
 
 function formatCny(value: number, signed: boolean) {

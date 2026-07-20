@@ -22,7 +22,7 @@ const pulseCoverage: MarketPulseCoverage = {
   entries: [
     { market: 'A-share', symbol: '600519.SH', status: 'sourced' },
     { market: 'Crypto', symbol: 'BTCUSDT', status: 'unavailable' },
-    { market: 'US', status: 'no_representative' }, { market: 'HK', status: 'no_representative' }, { market: 'PM', status: 'no_representative' }, { market: 'CNFutures', status: 'no_representative' },
+    { market: 'CNFutures', status: 'no_representative' },
   ],
 }
 const coverageHistory: MarketPulseCoverageObservation[] = [
@@ -38,7 +38,7 @@ describe('market tape view model', () => {
 
     expect(ashare).toEqual(expect.objectContaining({ selected: true, returnLabel: '+1.20%', holdingsLabel: '2 持仓', runtimeLabel: '正常' }))
     expect(crypto).toEqual(expect.objectContaining({ selected: false, returnLabel: '-0.50%', runtimeLabel: '策略等待', tone: 'warning' }))
-    expect(rows.find((row) => row.market === 'US')).toEqual(expect.objectContaining({ returnLabel: '—', runtimeLabel: '等待数据' }))
+    expect(rows.find((row) => row.market === 'CNFutures')).toEqual(expect.objectContaining({ returnLabel: '—', runtimeLabel: '等待数据' }))
   })
 
   it('builds an all-market row with non-monetary aggregates only', () => {
@@ -75,7 +75,7 @@ describe('market tape view model', () => {
     const rows = createMarketTapeRows(summaries, 'A-share', '2026-07-11T04:00:00Z', pulses)
 
     expect(rows.find((row) => row.market === 'A-share')?.pulse).toEqual(expect.objectContaining({ symbol: '600519.SH', priceLabel: '1,424.10', changeLabel: '+1.00%', freshness: 'live', points: [1410, 1414, 1424.1] }))
-    expect(rows.find((row) => row.market === 'US')?.pulse).toBeUndefined()
+    expect(rows.find((row) => row.market === 'CNFutures')?.pulse).toBeUndefined()
   })
 
   it('surfaces stale evidence without hiding healthy domains', () => {
@@ -90,7 +90,7 @@ describe('market tape view model', () => {
   it('summarizes pulse coverage instead of pretending unmapped markets have prices', () => {
     expect(createMarketPulseHealth(pulseCoverage, coverageHistory)).toEqual(expect.objectContaining({
       headline: '1/2 已取到',
-      detail: expect.stringContaining('4 市场待映射'),
+      detail: expect.stringContaining('1 市场待映射'),
       traceLabel: '轨迹 2',
       traceDetail: expect.stringContaining('近 2 次来源观测'),
       tone: 'warning',

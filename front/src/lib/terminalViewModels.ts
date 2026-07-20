@@ -59,40 +59,67 @@ export function createProcessBookRows(running: SignalRow[], completed: SignalRow
 }
 
 export function createPortfolioLedgerRows(holdings: HoldingRow[]): PortfolioLedgerRow[] {
+  const currencies = holdings.map(holdingCurrency)
+  const scopes = holdings.map((holding, index) => holding.accountScope?.trim()
+    ? `${holding.market}:${holding.accountScope.trim()}:${currencies[index]}`
+    : undefined)
   const values = holdings.map((holding) => parseHoldingExposure(holding.weight).value)
-  const total = values.reduce((sum, value) => sum + value, 0)
+  const totalsByScope = values.reduce((totals, value, index) => {
+    const scope = scopes[index]
+    if (!scope) return totals
+    totals.set(scope, (totals.get(scope) ?? 0) + value)
+    return totals
+  }, new Map<string, number>())
   const pnlValues = holdings.map((holding) => parseSignedValue(holding.pnl))
-  const totalAbsPnl = pnlValues.reduce((sum, value) => sum + Math.abs(value), 0)
+  const totalAbsPnlByScope = pnlValues.reduce((totals, value, index) => {
+    const scope = scopes[index]
+    if (!scope) return totals
+    totals.set(scope, (totals.get(scope) ?? 0) + Math.abs(value))
+    return totals
+  }, new Map<string, number>())
 
-  return holdings.map((holding, index) => ({
-    symbol: holding.symbol,
-    assetName: normalizeAssetName(holding),
-    market: marketLabels[holding.market],
-    role: holding.role,
-    marketValue: holding.marketValue === undefined ? holding.weight : formatHoldingMoney(holding.marketValue, holding.currency),
-    weight: total > 0 ? `${((values[index] / total) * 100).toFixed(1)}%` : '—',
-    pnl: holding.pnl,
-    contribution: totalAbsPnl > 0 ? `${pnlValues[index] >= 0 ? '+' : '-'}${((Math.abs(pnlValues[index]) / totalAbsPnl) * 100).toFixed(1)}%` : '—',
-    risk: holding.risk,
-    quantity: formatQuantity(holding.quantity),
-    averagePrice: formatHoldingMoney(holding.averagePrice, holding.currency, 2),
-    markPrice: formatHoldingMoney(holding.markPrice, holding.currency, 2),
-    costBasis: formatHoldingMoney(holding.costBasis, holding.currency),
-    dayPnl: holding.dayPnl === undefined ? '—' : `${holding.dayPnl > 0 ? '+' : ''}${formatHoldingMoney(holding.dayPnl, holding.currency)}`,
-    source: holdingSourceLabel(holding.source),
-    updatedAt: holding.updatedAt ?? '—',
-  }))
+  return holdings.map((holding, index) => {
+    const currency = currencies[index]
+    const scope = scopes[index]
+    const total = scope ? totalsByScope.get(scope) ?? 0 : 0
+    const totalAbsPnl = scope ? totalAbsPnlByScope.get(scope) ?? 0 : 0
+    return {
+      symbol: holding.symbol,
+      assetName: normalizeAssetName(holding),
+      market: marketLabels[holding.market],
+      role: holding.role,
+      marketValue: holding.marketValue === undefined ? holding.weight : formatHoldingMoney(holding.marketValue, currency),
+      weight: scope && total > 0 ? `${((values[index] / total) * 100).toFixed(1)}%` : '—',
+      pnl: holding.pnl,
+      contribution: scope && totalAbsPnl > 0 ? `${pnlValues[index] >= 0 ? '+' : '-'}${((Math.abs(pnlValues[index]) / totalAbsPnl) * 100).toFixed(1)}%` : '—',
+      risk: holding.risk,
+      quantity: formatQuantity(holding.quantity),
+      averagePrice: formatHoldingMoney(holding.averagePrice, currency, 2),
+      markPrice: formatHoldingMoney(holding.markPrice, currency, 2),
+      costBasis: formatHoldingMoney(holding.costBasis, currency),
+      dayPnl: holding.dayPnl === undefined ? '—' : `${holding.dayPnl > 0 ? '+' : ''}${formatHoldingMoney(holding.dayPnl, currency)}`,
+      source: holdingSourceLabel(holding.source),
+      updatedAt: holding.updatedAt ?? '—',
+    }
+  })
 }
 
-export function summarizePortfolioCurrency(holdings: HoldingRow[]): { currency: 'CNY' | 'USD' | 'percent' | 'mixed' | 'empty'; label: string } {
+export function summarizePortfolioCurrency(holdings: HoldingRow[]): { currency: 'CNY' | 'USD' | 'USDT' | 'percent' | 'mixed' | 'empty'; label: string } {
   if (!holdings.length) return { currency: 'empty', label: '—' }
-  const kinds = new Set(holdings.map((holding) => currencyKind(holding.weight)))
+  if (new Set(holdings.map((holding) => holding.market)).size > 1) {
+    return { currency: 'mixed', label: '多账户不可汇总' }
+  }
+  const accountScopes = holdings.map((holding) => holding.accountScope?.trim()).filter(Boolean) as string[]
+  if (accountScopes.length !== holdings.length) return { currency: 'mixed', label: '账户范围不可用' }
+  if (new Set(accountScopes).size > 1) return { currency: 'mixed', label: '多账户不可汇总' }
+  const kinds = new Set(holdings.map((holding) => holding.currency ?? currencyKind(holding.weight)))
   if (kinds.size !== 1) return { currency: 'mixed', label: '多币种' }
   const [currency] = [...kinds]
-  const total = holdings.reduce((sum, holding) => sum + parseHoldingExposure(holding.weight).value, 0)
+  const total = holdings.reduce((sum, holding) => sum + (holding.marketValue ?? parseHoldingExposure(holding.weight).value), 0)
   if (currency === 'CNY') return { currency, label: `¥${Math.round(total).toLocaleString('en-US')}` }
-  if (currency === 'USD') return { currency, label: `$${Math.round(total).toLocaleString('en-US')}` }
+  if (currency === 'USDT') return { currency, label: `${Math.round(total).toLocaleString('en-US')} USDT` }
   if (currency === 'percent') return { currency, label: `${total.toFixed(1)}%` }
+  if (currency === 'USD') return { currency: 'mixed', label: '币种不可用' }
   return { currency: 'empty', label: '—' }
 }
 
@@ -156,9 +183,10 @@ function normalizeAssetName(row: { symbol: string; name: string }) {
   return row.name.trim().toUpperCase() === row.symbol.trim().toUpperCase() ? '' : row.name
 }
 
-function currencyKind(value: string): 'CNY' | 'USD' | 'percent' | 'empty' {
+function currencyKind(value: string): 'CNY' | 'USD' | 'USDT' | 'percent' | 'empty' {
   if (/¥|￥|CNY|RMB/i.test(value)) return 'CNY'
-  if (/\$|USD|USDC|USDT/i.test(value)) return 'USD'
+  if (/USDT/i.test(value)) return 'USDT'
+  if (/\$|USD|USDC/i.test(value)) return 'USD'
   if (value.includes('%')) return 'percent'
   return 'empty'
 }
@@ -175,8 +203,14 @@ function formatQuantity(value?: number) {
 function formatHoldingMoney(value?: number, currency: HoldingRow['currency'] = 'CNY', decimals = 0) {
   if (value === undefined) return '—'
   const sign = value < 0 ? '-' : ''
-  const symbol = currency === 'USD' ? '$' : '¥'
-  return `${sign}${symbol}${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
+  const amount = Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+  if (currency === 'USDT') return `${sign}${amount} USDT`
+  if (currency === 'CNY') return `${sign}¥${amount}`
+  return '—'
+}
+
+function holdingCurrency(holding: HoldingRow): NonNullable<HoldingRow['currency']> {
+  return holding.currency ?? (holding.market === 'Crypto' ? 'USDT' : 'CNY')
 }
 
 function holdingSourceLabel(source?: HoldingRow['source']) {

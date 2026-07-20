@@ -35,45 +35,6 @@ SIDES = {"buy", "sell"}
 
 DEFAULT_MARKET_MODELS: dict[str, dict[str, Any]] = {
     "ashare": ashare_execution_reality().as_engine_config(),
-    "crypto": {
-        "commission_bps": 4.0,
-        "stamp_duty_sell_bps": 0.0,
-        "min_commission": 0.0,
-        "base_slippage_bps": 1.5,
-        "volatility_slippage_multiplier": 0.12,
-        "volume_impact_bps": 6.0,
-        "price_improvement_bps": 0.8,
-        "queue_ahead_ratio": 0.2,
-        "bar_participation_cap": 0.05,
-        "default_counterparty": "simulated_crypto_book",
-    },
-    "us": {
-        "commission_bps": 0.5,
-        "stamp_duty_sell_bps": 0.0,
-        "min_commission": 0.0,
-        "base_slippage_bps": 1.0,
-        "volatility_slippage_multiplier": 0.1,
-        "volume_impact_bps": 4.0,
-        "price_improvement_bps": 0.4,
-        "queue_ahead_ratio": 0.25,
-        "price_tick": 0.01,
-        "bar_participation_cap": 0.05,
-        "default_counterparty": "simulated_us_book",
-    },
-    "pm": {
-        "commission_bps": 2.0,
-        "stamp_duty_sell_bps": 0.0,
-        "min_commission": 0.0,
-        "base_slippage_bps": 4.0,
-        "volatility_slippage_multiplier": 0.08,
-        "volume_impact_bps": 10.0,
-        "price_improvement_bps": 0.0,
-        "queue_ahead_ratio": 0.5,
-        "price_tick": 0.001,
-        "min_price": 0.001,
-        "max_price": 0.999,
-        "default_counterparty": "simulated_pm_book",
-    },
 }
 
 
@@ -100,7 +61,13 @@ def _fill_time_iso(snapshot: dict[str, Any]) -> str:
 
 def _market_key(value: str | None) -> str:
     key = str(value or "").strip().lower()
-    return "ashare" if key in {"a", "a-share", "a_share"} else key
+    key = "ashare" if key in {"a", "a-share", "a_share"} else key
+    if key != "ashare":
+        raise ValueError(
+            "shared SimExecutionEngine is the time-boxed A-share paper model; "
+            "other markets require their market-specific simulator"
+        )
+    return key
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -422,9 +389,7 @@ class CommissionModel:
             )
             self.config = self.execution_reality.as_engine_config()
             return
-        config = dict(
-            DEFAULT_MARKET_MODELS.get(self.market, DEFAULT_MARKET_MODELS["ashare"])
-        )
+        config = dict(DEFAULT_MARKET_MODELS[self.market])
         config.update(commission_config)
         self.config = config
 
@@ -465,9 +430,7 @@ class VolatilitySlippageModel:
         self, market: str, profile: dict[str, Any] | str | Path | None = None
     ) -> None:
         self.market = _market_key(market)
-        config = dict(
-            DEFAULT_MARKET_MODELS.get(self.market, DEFAULT_MARKET_MODELS["ashare"])
-        )
+        config = dict(DEFAULT_MARKET_MODELS[self.market])
         config.update(_load_profile(profile).get("slippage", _load_profile(profile)))
         self.config = config
 
@@ -592,9 +555,7 @@ class SimExecutionEngine:
     ) -> None:
         self.market = _market_key(market)
         self.profile = _load_profile(profile)
-        self.model_config = dict(
-            DEFAULT_MARKET_MODELS.get(self.market, DEFAULT_MARKET_MODELS["ashare"])
-        )
+        self.model_config = dict(DEFAULT_MARKET_MODELS[self.market])
         execution_profile = self.profile.get("execution", {})
         if not isinstance(execution_profile, dict):
             execution_profile = {}
@@ -935,14 +896,6 @@ class SimExecutionEngine:
                     return "price_below_continuous_auction_cage"
             elif _truthy(snapshot.get("price_cage_reference_required")):
                 return "missing_verified_price_cage_reference"
-
-        if self.market == "pm":
-            min_price = _safe_float(self.model_config.get("min_price"), 0.0)
-            max_price = _safe_float(self.model_config.get("max_price"), 0.0)
-            if min_price > 0 and rule_price < min_price:
-                return "price_below_min_probability"
-            if max_price > 0 and rule_price > max_price:
-                return "price_above_max_probability"
 
         if order.side == "buy":
             cash_available = _safe_float(snapshot.get("cash_available"), -1.0)

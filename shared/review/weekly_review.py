@@ -4,6 +4,8 @@
 
 The report can flag manual-review and demotion candidates, but it never changes
 strategy lifecycle, increases risk, or upgrades simulation to real trading.
+Money remains inside one explicit account scope and native currency. Market,
+capital-layer, and all-market records aggregate counts only.
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.governance.market_lanes import canonical_runtime_market
+
 from .attribution import attribute_pct
 from .pnl_summary import sim_ledger_pnl_summary
 from .sample_quality import strategy_valid_trades
@@ -22,6 +26,12 @@ from .sim_ledger_reader import DEFAULT_LOCAL_SIM_TRADES, DEFAULT_SIM_LEDGER_ROOT
 REVIEW_DIR = Path(__file__).resolve().parent
 WEEKLY_LOG = REVIEW_DIR / "data" / "weekly_reviews.jsonl"
 WEEKLY_STATE = REVIEW_DIR / "data" / "weekly_state.json"  # tracks consecutive weeks
+MARKET_CURRENCIES = {
+    "ashare": "CNY",
+    "cn_futures": "CNY",
+    "crypto": "USDT",
+}
+UNSCOPED_ACCOUNT_KEY = "__unscoped__"
 
 
 def _now_iso() -> str:
@@ -71,16 +81,96 @@ def _normalize_capital_layer(value: Any, default: str = "shadow") -> str:
     return default
 
 
-def _group_by_capital_layer(
+def _active_market(value: Any) -> str | None:
+    try:
+        return canonical_runtime_market(value)
+    except ValueError:
+        return None
+
+
+def _market_currency(market: str) -> str:
+    return MARKET_CURRENCIES[canonical_runtime_market(market)]
+
+
+def _normalize_account_scope(value: Any) -> str | None:
+    scope = str(value or "").strip()
+    return scope or None
+
+
+def _group_by_market_capital_layer_account(
     rows: list[dict[str, Any]],
-) -> dict[str, list[dict[str, Any]]]:
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+) -> dict[str, dict[str, dict[str, list[dict[str, Any]]]]]:
+    grouped: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
+    )
     for row in rows or []:
+        market = _active_market(row.get("market"))
+        if market is None:
+            continue
         layer = _normalize_capital_layer(row.get("capital_layer"))
+        account_scope = _normalize_account_scope(row.get("account_scope"))
         normalized = dict(row)
+        normalized["market"] = market
         normalized["capital_layer"] = layer
-        grouped[layer].append(normalized)
-    return dict(grouped)
+        normalized["account_scope"] = account_scope
+        grouped[market][layer][account_scope or UNSCOPED_ACCOUNT_KEY].append(normalized)
+    return {
+        market: {layer: dict(accounts) for layer, accounts in capital_layers.items()}
+        for market, capital_layers in grouped.items()
+    }
+
+
+def _ledger_by_market(
+    ledger_pnl_summary: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Project ledger money per exact account without market-level totals."""
+    projected: dict[str, dict[str, Any]] = {}
+    for raw_market, raw_ledger in sorted(ledger_pnl_summary.items()):
+        market = canonical_runtime_market(raw_market)
+        ledger = raw_ledger if isinstance(raw_ledger, dict) else {}
+        raw_accounts = ledger.get("account_summaries")
+        accounts = raw_accounts if isinstance(raw_accounts, dict) else {}
+        account_summaries: dict[str, dict[str, Any]] = {}
+        for raw_scope, raw_account in sorted(accounts.items()):
+            scope = _normalize_account_scope(raw_scope)
+            if scope is None or not isinstance(raw_account, dict):
+                continue
+            account_summaries[scope] = {
+                "market": market,
+                "currency": _market_currency(market),
+                "capital_layer": "simulated",
+                "account_scope": scope,
+                "realized_pnl": round(_safe_float(raw_account.get("realized_pnl")), 6),
+                "unrealized_pnl": round(
+                    _safe_float(raw_account.get("unrealized_pnl")), 6
+                ),
+                "total_pnl": round(_safe_float(raw_account.get("total_pnl")), 6),
+                "market_value": round(_safe_float(raw_account.get("market_value")), 6),
+                "open_position_count": int(raw_account.get("open_position_count") or 0),
+                "missing_mark_count": int(raw_account.get("missing_mark_count") or 0),
+                "source": raw_account.get("pnl_source") or None,
+                "mark_authority": raw_account.get("mark_authority") or None,
+            }
+        projected[market] = {
+            "market": market,
+            "currency": _market_currency(market),
+            "capital_layer": "simulated",
+            "account_scope": None,
+            "account_count": len(account_summaries),
+            "account_summaries": account_summaries,
+            "open_position_count": sum(
+                int(account["open_position_count"])
+                for account in account_summaries.values()
+            ),
+            "missing_mark_count": sum(
+                int(account["missing_mark_count"])
+                for account in account_summaries.values()
+            ),
+            "source": None,
+            "mark_authority": None,
+            "monetary_aggregation": "forbidden_across_accounts",
+        }
+    return projected
 
 
 def _strategy_stats(week_trades: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -142,127 +232,176 @@ def review_week(
         week_trades: all trades for the week (each carries strategy/dimension/condition/pnl).
         strategies: known strategy ids (to include strategies with zero trades this week).
 
-    Returns:
-        {
-          "strategy_win_rates": {strategy: {trades, wins, win_rate, pnl}},
-          "dimension_effectiveness": {dim: pnl_pct},
-          "conditions_to_adjust": [str],      # conditions that bled
-          "strategies_to_eliminate": [str],   # demotion candidates
-          "strategies_to_promote": [],        # permanently disabled compatibility field
-          "strategies_for_manual_review": [str],
-          "week_pnl": float,
-          "week_win_rate": float,
-        }
+    Returns market -> capital-layer -> account reviews plus
+    ``ledger_by_market``. Market, capital-layer, and all-market records contain
+    only counts; monetary fields require an explicit account scope.
     """
-    grouped = _group_by_capital_layer(week_trades)
+    grouped = _group_by_market_capital_layer_account(week_trades)
     state = _read_json(WEEKLY_STATE)
     as_of = _now_iso()
-    capital_layer_reviews: dict[str, Any] = {}
     ledger_pnl_summary = sim_ledger_pnl_summary(
         ledger_root=DEFAULT_SIM_LEDGER_ROOT,
         local_trades_path=DEFAULT_LOCAL_SIM_TRADES,
     )
+    ledger_by_market = _ledger_by_market(ledger_pnl_summary)
+    market_reviews: dict[str, Any] = {}
+    all_layer_counts: dict[str, dict[str, Any]] = {}
 
-    for layer in sorted(grouped or {"shadow": []}):
-        raw_layer_trades = grouped.get(layer, [])
-        layer_trades = (
-            strategy_valid_trades(raw_layer_trades)
-            if layer == "simulated"
-            else raw_layer_trades
-        )
-        stats = _strategy_stats(layer_trades)
-        for s in strategies or []:
-            stats.setdefault(s, {"trades": 0, "wins": 0, "win_rate": 0.0, "pnl": 0.0})
+    for market, capital_layers in sorted(grouped.items()):
+        layer_reviews: dict[str, Any] = {}
+        for layer, account_rows in sorted(capital_layers.items()):
+            account_reviews: dict[str, dict[str, Any]] = {}
+            layer_trade_count = 0
+            explicit_account_count = 0
+            unscoped_trade_count = 0
 
-        dim_eff = _dimension_effectiveness(layer_trades)
-        attr_cond = attribute_pct(layer_trades).get("by_condition", {})
-        conditions_to_adjust = [
-            c for c, pct in attr_cond.items() if pct < -0.1 and c != "unattributed"
-        ]
-        strategies_to_eliminate: list[str] = []
-        strategies_for_manual_review: list[str] = []
+            for account_key, raw_account_trades in sorted(account_rows.items()):
+                account_scope = (
+                    None if account_key == UNSCOPED_ACCOUNT_KEY else account_key
+                )
+                account_trades = (
+                    strategy_valid_trades(raw_account_trades)
+                    if layer == "simulated"
+                    else raw_account_trades
+                )
+                total_wins = sum(
+                    1 for trade in account_trades if _safe_float(trade.get("pnl")) > 0
+                )
+                layer_trade_count += len(account_trades)
 
-        for s, st in stats.items():
-            wr = st["win_rate"]
-            week_positive = st["pnl"] > 0
-            week_below_50 = wr < 0.50
-            tracked = _update_consecutive(
-                state, f"{layer}:{s}", week_positive, week_below_50
+                if account_scope is None:
+                    unscoped_trade_count += len(account_trades)
+                    account_reviews[account_key] = {
+                        "market": market,
+                        "currency": _market_currency(market),
+                        "capital_layer": layer,
+                        "account_scope": None,
+                        "week_trade_count": len(account_trades),
+                        "monetary_state": "unavailable_missing_account_scope",
+                        "review_state": "count_only",
+                        "reason": "explicit_account_scope_required",
+                        "automatic_promotion_enabled": False,
+                        "automatic_risk_expansion_enabled": False,
+                    }
+                    continue
+
+                explicit_account_count += 1
+                stats = _strategy_stats(account_trades)
+                for strategy in strategies or []:
+                    stats.setdefault(
+                        strategy,
+                        {"trades": 0, "wins": 0, "win_rate": 0.0, "pnl": 0.0},
+                    )
+                dim_eff = _dimension_effectiveness(account_trades)
+                attr_cond = attribute_pct(account_trades).get("by_condition", {})
+                conditions_to_adjust = [
+                    condition
+                    for condition, pct in attr_cond.items()
+                    if pct < -0.1 and condition != "unattributed"
+                ]
+                strategies_to_eliminate: list[str] = []
+                strategies_for_manual_review: list[str] = []
+                for strategy, strategy_stats in stats.items():
+                    tracked = _update_consecutive(
+                        state,
+                        f"{market}:{layer}:{account_scope}:{strategy}",
+                        strategy_stats["pnl"] > 0,
+                        strategy_stats["win_rate"] < 0.50,
+                    )
+                    if tracked.get("consecutive_below50_weeks", 0) >= 2:
+                        strategies_to_eliminate.append(strategy)
+                    if tracked.get("consecutive_positive_weeks", 0) >= 2:
+                        strategies_for_manual_review.append(strategy)
+
+                total_pnl = sum(
+                    _safe_float(trade.get("pnl")) for trade in account_trades
+                )
+                account_reviews[account_scope] = {
+                    "market": market,
+                    "currency": _market_currency(market),
+                    "capital_layer": layer,
+                    "account_scope": account_scope,
+                    "week_pnl": round(total_pnl, 6),
+                    "week_win_rate": (
+                        round(total_wins / len(account_trades), 4)
+                        if account_trades
+                        else 0.0
+                    ),
+                    "week_trade_count": len(account_trades),
+                    "strategy_win_rates": stats,
+                    "dimension_effectiveness": dim_eff,
+                    "conditions_to_adjust": conditions_to_adjust,
+                    "strategies_to_eliminate": strategies_to_eliminate,
+                    "strategies_to_promote": [],
+                    "strategies_for_manual_review": strategies_for_manual_review,
+                    "automatic_promotion_enabled": False,
+                    "automatic_risk_expansion_enabled": False,
+                    "monetary_state": "available",
+                }
+
+            layer_reviews[layer] = {
+                "market": market,
+                "currency": _market_currency(market),
+                "capital_layer": layer,
+                "account_count": explicit_account_count,
+                "unscoped_trade_count": unscoped_trade_count,
+                "week_trade_count": layer_trade_count,
+                "monetary_aggregation": "forbidden_across_accounts",
+                "account_reviews": account_reviews,
+            }
+            count_summary = all_layer_counts.setdefault(
+                layer,
+                {
+                    "capital_layer": layer,
+                    "market_count": 0,
+                    "markets": [],
+                    "week_trade_count": 0,
+                    "account_count": 0,
+                    "unscoped_trade_count": 0,
+                    "monetary_aggregation": "forbidden",
+                },
             )
-            if tracked.get("consecutive_below50_weeks", 0) >= 2:
-                strategies_to_eliminate.append(s)
-            if tracked.get("consecutive_positive_weeks", 0) >= 2:
-                strategies_for_manual_review.append(s)
+            count_summary["market_count"] += 1
+            count_summary["markets"].append(market)
+            count_summary["week_trade_count"] += layer_trade_count
+            count_summary["account_count"] += explicit_account_count
+            count_summary["unscoped_trade_count"] += unscoped_trade_count
 
-        total_pnl = sum(_safe_float(t.get("pnl")) for t in layer_trades)
-        total_wins = sum(1 for t in layer_trades if _safe_float(t.get("pnl")) > 0)
-        week_wr = total_wins / len(layer_trades) if layer_trades else 0.0
-        layer_ledger = {
-            "realized_pnl": 0.0,
-            "unrealized_pnl": 0.0,
-            "total_pnl": 0.0,
-            "market_value": 0.0,
-            "open_position_count": 0,
-            "missing_mark_count": 0,
-        }
-        if layer == "simulated":
-            for market_pnl in ledger_pnl_summary.values():
-                layer_ledger["realized_pnl"] += float(
-                    market_pnl.get("realized_pnl") or 0.0
-                )
-                layer_ledger["unrealized_pnl"] += float(
-                    market_pnl.get("unrealized_pnl") or 0.0
-                )
-                layer_ledger["total_pnl"] += float(market_pnl.get("total_pnl") or 0.0)
-                layer_ledger["market_value"] += float(
-                    market_pnl.get("market_value") or 0.0
-                )
-                layer_ledger["open_position_count"] += int(
-                    market_pnl.get("open_position_count") or 0
-                )
-                layer_ledger["missing_mark_count"] += int(
-                    market_pnl.get("missing_mark_count") or 0
-                )
-        capital_layer_reviews[layer] = {
-            "capital_layer": layer,
-            "week_pnl": round(total_pnl, 6),
-            "week_win_rate": round(week_wr, 4),
-            "week_trade_count": len(layer_trades),
-            "strategy_win_rates": stats,
-            "dimension_effectiveness": dim_eff,
-            "conditions_to_adjust": conditions_to_adjust,
-            "strategies_to_eliminate": strategies_to_eliminate,
-            # Weekly evidence can nominate a shadow/manual-review candidate,
-            # but it can never mutate lifecycle state or increase risk.
-            "strategies_to_promote": [],
-            "strategies_for_manual_review": strategies_for_manual_review,
-            "automatic_promotion_enabled": False,
-            "automatic_risk_expansion_enabled": False,
-            "ledger_realized_pnl": round(layer_ledger["realized_pnl"], 6),
-            "ledger_unrealized_pnl": round(layer_ledger["unrealized_pnl"], 6),
-            "ledger_total_pnl": round(layer_ledger["total_pnl"], 6),
-            "ledger_market_value": round(layer_ledger["market_value"], 6),
-            "ledger_open_position_count": layer_ledger["open_position_count"],
-            "ledger_missing_mark_count": layer_ledger["missing_mark_count"],
-            "ledger_pnl_source": "sim_ledger_mark_to_market"
-            if layer == "simulated"
-            else "",
+        market_reviews[market] = {
+            "market": market,
+            "currency": _market_currency(market),
+            "capital_layer_reviews": layer_reviews,
         }
 
     _write_json(WEEKLY_STATE, state)
+    reviewed_trade_count = sum(
+        int(summary["week_trade_count"]) for summary in all_layer_counts.values()
+    )
     result = {
         "session": "weekly",
         "as_of": as_of,
-        "capital_layer_reviews": capital_layer_reviews,
+        "all_markets": {
+            "market_count": len(market_reviews),
+            "capital_layer_count": len(all_layer_counts),
+            "week_trade_count": reviewed_trade_count,
+            "open_position_count": sum(
+                int(ledger["open_position_count"])
+                for ledger in ledger_by_market.values()
+            ),
+            "missing_mark_count": sum(
+                int(ledger["missing_mark_count"])
+                for ledger in ledger_by_market.values()
+            ),
+            "monetary_aggregation": "forbidden",
+        },
+        "capital_layer_reviews": all_layer_counts,
+        "market_reviews": market_reviews,
+        "ledger_by_market": ledger_by_market,
     }
-    for capital_layer, layer_record in capital_layer_reviews.items():
-        log_record = {
-            "session": "weekly",
-            "as_of": as_of,
-            "capital_layer": capital_layer,
-        }
-        log_record.update(layer_record)
-        _append_log(log_record)
+    for market_record in market_reviews.values():
+        for layer_record in market_record["capital_layer_reviews"].values():
+            for account_record in layer_record["account_reviews"].values():
+                _append_log({"session": "weekly", "as_of": as_of, **account_record})
     return result
 
 
@@ -271,30 +410,35 @@ def review_week(
 if __name__ == "__main__":
     trades = [
         {
+            "market": "ashare",
             "pnl": 0.05,
             "strategy": "pullback",
             "dimensions": {"macro": 0.6, "technical": 0.4},
             "condition": "low_vol",
         },
         {
+            "market": "ashare",
             "pnl": -0.03,
             "strategy": "pullback",
             "dimension": "technical",
             "condition": "low_vol",
         },
         {
+            "market": "ashare",
             "pnl": 0.04,
             "strategy": "trend",
             "dimensions": {"technical": 1.0},
             "condition": "mid_vol",
         },
         {
+            "market": "ashare",
             "pnl": -0.06,
             "strategy": "event_driven",
             "dimension": "event",
             "condition": "high_vol",
         },
         {
+            "market": "ashare",
             "pnl": -0.02,
             "strategy": "event_driven",
             "dimension": "event",

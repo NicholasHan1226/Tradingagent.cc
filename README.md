@@ -37,7 +37,7 @@ flowchart LR
 
 - TradingDatas 提供统一只读数据；TradingAgent 不直读兄弟仓数据库，也不现场采集行情。
 - MarketGraph 只作可开关增强，不阻塞基础样本闭环，也没有资金或执行权。
-- A股和 CNFutures 各自拥有独立的 50,000 CNY 模拟账户；两个账户不得相加、净额抵消或互相补资。
+- A股和 CNFutures 各自拥有独立的 50,000 CNY 模拟账户；Crypto 拥有隔离的 10,000 USDT shadow/simulated 账户。三者不换汇、不相加、不净额抵消或互相补资；All Markets 只汇总非货币计数与健康状态。
 - 所有流程保持 `REAL_TRADING_ENABLED=false`。邮件、同花顺人工实盘和 broker gateway 都未在本仓实现。
 
 ## 资本与风险
@@ -46,6 +46,7 @@ flowchart LR
 |---|---:|---|---|
 | A股 | 50,000 CNY | 股票总敞口90%；单票15%；买入100股整数倍，卖出含完整零股/全退例外；最多8仓并支持至少7个不同股票 | 5% 回撤收紧，7% 暂停 |
 | CNFutures | 50,000 CNY | 保证金使用率 50%；最小一手与止损损失预算另行校验 | 5% 回撤收紧，7% 暂停 |
+| Crypto | 10,000 USDT | shadow/simulated；单仓15%；最多10仓；小数数量与最小名义金额由 Crypto lane 校验 | 独立 USDT 风险状态；无 live exchange authority |
 
 A股不设固定保护现金：全部资金可服务合格机会，但弱市、没有通过冻结rank/成本/风险门禁的合格候选，或硬门禁未过时不强制部署。当前rank score尚不能证明正期望；资金计划必须展示利用率和未部署原因，现金管理收益与股票 alpha 分账。
 
@@ -60,7 +61,7 @@ A股不设固定保护现金：全部资金可服务合格机会，但弱市、�
 - `ValidationPlan` 已把标签期限、最大特征回看、purge/embargo、事件簇隔离、试验预算、PBO/DSR、冻结 OOS receipt，以及独立复核且冻结于预测前的 A股交易会话 calendar proof 纳入不可变合同。SampleJournal 和 A股 label/sample ops 调用链都必须显式传入该计划；两个 CLI 只通过 `--validation-plan-path` 加载预先生成、内容寻址的 `ashare_validation_plan_v1` artifact，不在运行时调用verifier或自签proof。A股 `close/1d/3d/5d` target 必须来自同一会话证明，调用方只能断言同一时点，不能顺延缺失日线。这仍只是本地合同与fixture verifier，真实上游 calendar authority、artifact registry、walk-forward、PBO 和 DSR 实证均未完成。
 - metrics v2 数值产物不能自报 lineage；本地 verifier 固定 implementation trust root，重读 canonical artifact 与完整 detached receipt，并复核 label/cost/source、窗口/horizon/regime、journal/model 和独立样本数。该 proof 仍只是本地完整性绑定，不是数字签名或外部独立重算 authority。持久 drift latch 会在每次风险评估及网络关闭的模拟副作用前重读，capital commit还在时钟校验后做最终authority重读；模拟提交和资本提交分别从显式 `TrustedExecutionClock` 获取不截断时点并再次验证 quote，强制`quote <= submit <= fill/terminal <= commit <= reconcile`。TOCTOU或坏时钟时释放预约且不提交账务，日循环与对账复用严格零成交失败合同。它阻断 open/increase、保留已验证 reduce/exit，并把无新增订单日明确结束为 `completed_with_blocks`；健康重启不会自动清除 latch。未来真实broker/scheduler仍须接入生产时钟、市场证据、原子化authority+commit和独立metrics authority。
 - 可执行自动闭环只在网络关闭的冻结 fixture 中得到验证；相同输入的业务 bundle 已验证不受本机输出根绝对路径影响，同根 replay 不重放 transport。另有 canonical-capital composition 的测试候选证明单一模拟账本、人工选择Champion、动态generation/lineage、capital outbox与reconcile可组合，但它还没有 CLI/scheduler/live sample。真实 TradingDatas V1、市场日历 scheduler 和 20 个交易日运行尚未验收。旧四风格、exploration/exploitation 路径仍是 time-boxed legacy，不是 V1 当前路由。
-- CNFutures 维持独立市场专属契约和独立 50k authority；A股重构不能隐式改变其行为。A股、CNFutures、Crypto 只能共享机械 `BrokerPort`/幂等/回执原语，模拟 API、外部测试 API、未来 live adapter、账户、凭据和订单语义均分别实现；当前全部 live 关闭。
+- CNFutures 维持独立市场专属契约和独立 50k CNY authority；Crypto 保持独立 10k USDT shadow authority；A股重构不能隐式改变其行为。A股、CNFutures、Crypto 只能共享机械 `BrokerPort`/幂等/回执原语，模拟 API、外部测试 API、未来 live adapter、账户、凭据和订单语义均分别实现；当前全部 live 关闭。
 
 SampleJournal/KPI 仍是正式演化 authority。Decision Ledger、fixture、paper、shadow 和 LLM evidence 都不能自行晋级、扩风险或切实盘。
 
@@ -85,7 +86,7 @@ SampleJournal/KPI 仍是正式演化 authority。Decision Ledger、fixture、pap
 | Phase 1 | 真实 TradingDatas V1 驱动的自动模拟日闭环 | 连续 20 个交易日无未来数据、重复订单、权限泄漏、旧链 fallback 和未解释账务差异 |
 | Phase 1.5 | 1 个深研行业 + 2 个观察行业的 shadow 研究 | PIT 覆盖、证据与反事实增量；不影响 Champion |
 | Phase 2 | 将现有多期限shadow合同升级为有统计证据的 Challenger | purged walk-forward、冻结 OOS、PBO/DSR、quantile/calibration与删失处理证据；合同存在不算通过 |
-| Phase 3 | 将现有三风格shadow合同升级为统一 50k 候选路由 | 分组消融、独立收益来源、费用后增量、abstain价值、尾部与相关性稳定；仍不自动晋级 |
+| Phase 3 | 将现有三风格shadow合同升级为统一 A股 50k CNY 候选路由 | 分组消融、独立收益来源、费用后增量、abstain价值、尾部与相关性稳定；仍不自动晋级 |
 | Phase 4 | 人工批准的受控试运行设计 | 另行授权；不由本候选推导 |
 
 ## 运行入口
@@ -119,4 +120,4 @@ REAL_TRADING_ENABLED=false python -m pytest -q \
 - [冻结范围后的 Backlog](docs/BACKLOG.md)
 - [当前状态](STATUS.md)
 
-本地通过、候选远端分支、远端主线、生产文件、生产 runtime、cron 生效和真实市场样本是不同层级；任何一层都不能替代其它层。本文档不授予 commit、push、merge、deploy、apply cron、生产密钥、发邮件或真实交易权限；每项动作都必须以当前任务的独立明确授权及对应门禁为准。
+本地通过、候选远端分支、远端主线、服务器旁路、生产文件、生产 runtime、cron 生效和真实市场样本是不同层级；任何一层都不能替代其它层。Nicholas 已授予正常代码发布 standing authorization：范围明确且 release gate 通过后，主助手默认继续完成 commit、普通 PR/merge、push、版本化 loopback-only sidecar 和逐层读回。该默认不包含 force-push/历史重写、删除或覆盖运行数据、密钥/账号/权限、破坏性数据库迁移、现役源码或入口切换、安装/启用 cron/service、真实模型网络、邮件/GUI、broker 或真实交易；这些高风险动作必须由当期任务明确包含并通过专用门禁。

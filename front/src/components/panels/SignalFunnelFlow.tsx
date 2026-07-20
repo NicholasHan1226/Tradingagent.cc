@@ -885,7 +885,7 @@ function isReadableLabel(label: string) {
 
 function compactSymbol(symbol: string) {
   if (symbol.length <= 8) return symbol
-  return symbol.replace(/(\.US|\.SH|\.SZ|\.CFFEX|\.SHFE|\.DCE|\.CZCE|\.INE|\.GFEX|-USD|-PERP)$/i, '').slice(0, 8)
+  return symbol.replace(/(\.SH|\.SZ|\.CFFEX|\.SHFE|\.DCE|\.CZCE|\.INE|\.GFEX|-USDT)$/i, '').slice(0, 8)
 }
 
 function getStopStage(signal: SignalRow) {

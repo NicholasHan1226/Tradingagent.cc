@@ -15,8 +15,8 @@
 #
 # TradingAgent owns judgment, queues, simulated/shadow accounting, review, and
 # notifications. It must not collect market data directly; market data comes
-# from the TradingDatas catalog/query API. HK remains disabled by Nicholas' current
-# decision.
+# from the TradingDatas catalog/query API. US, PM and HK repository runtimes are
+# retired; any installed references are removal-only evidence, never fallbacks.
 
 SHELL=/bin/bash
 CRON_TZ=Asia/Shanghai

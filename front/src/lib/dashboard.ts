@@ -42,7 +42,7 @@ export function getPortfolioForView({
 
   if (activeMarket === 'A-share') {
     const targetPct = portfolio?.targetPct ?? 8
-    if (portfolio) return portfolio
+    if (portfolio?.ashareAccount?.capitalAuthorityId === 'ashare-capital-v1') return portfolio
     const summary = marketSummaries.find((row) => row.market === 'A-share')
     if (!summary) return null
     return marketSummaryToPortfolio(summary, targetPct)

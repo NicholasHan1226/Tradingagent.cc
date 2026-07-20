@@ -8,7 +8,7 @@ from shared.review.weekly_review import review_week
 def test_two_positive_weeks_only_nominate_manual_review_never_auto_promote() -> None:
     state = {
         "strategies": {
-            "simulated:trend_breakout": {
+            "ashare:simulated:ashare_sim:trend_breakout": {
                 "consecutive_positive_weeks": 1,
                 "consecutive_below50_weeks": 0,
             }
@@ -16,7 +16,9 @@ def test_two_positive_weeks_only_nominate_manual_review_never_auto_promote() -> 
     }
     trades = [
         {
+            "market": "ashare",
             "capital_layer": "simulated",
+            "account_scope": "ashare_sim",
             "strategy": "trend_breakout",
             "pnl": 20.0,
             "status": "filled",
@@ -33,8 +35,10 @@ def test_two_positive_weeks_only_nominate_manual_review_never_auto_promote() -> 
     ):
         result = review_week(trades, strategies=["trend_breakout"])
 
-    layer = result["capital_layer_reviews"]["simulated"]
-    assert layer["strategies_to_promote"] == []
-    assert layer["strategies_for_manual_review"] == ["trend_breakout"]
-    assert layer["automatic_promotion_enabled"] is False
-    assert layer["automatic_risk_expansion_enabled"] is False
+    account = result["market_reviews"]["ashare"]["capital_layer_reviews"]["simulated"][
+        "account_reviews"
+    ]["ashare_sim"]
+    assert account["strategies_to_promote"] == []
+    assert account["strategies_for_manual_review"] == ["trend_breakout"]
+    assert account["automatic_promotion_enabled"] is False
+    assert account["automatic_risk_expansion_enabled"] is False

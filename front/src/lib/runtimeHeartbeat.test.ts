@@ -12,11 +12,11 @@ const domains: DashboardState['domains'] = {
   risk: { status: 'ready', updatedAt: '2026-07-11T05:29:50.000Z' },
 }
 const event: FunnelEvent = {
-  id: 'event-1', symbol: 'BTC-USD', market: 'Crypto', opportunityId: 'opp-1',
+  id: 'event-1', symbol: 'BTC-USDT', market: 'Crypto', opportunityId: 'opp-1',
   stage: '结果', status: '成交', label: '结果写回', source: 'sim_ledger', at: '2026-07-11T05:20:00.000Z',
 }
 const pending: SignalRow = {
-  symbol: 'BTC-USD', name: '比特币', market: 'Crypto', method: 'buy', status: 'pending',
+  symbol: 'BTC-USDT', name: '比特币', market: 'Crypto', method: 'buy', status: 'pending',
   impact: '—', confidence: '70%', age: '2分钟', reason: '等待结果', next: '继续观察', steps: 4,
 }
 

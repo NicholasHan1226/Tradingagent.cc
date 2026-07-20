@@ -186,9 +186,6 @@ RETIRED_ASHARE_PYTHON_JOBS = (
 
 RETIRED_LEGACY_RUNTIME_ENTRYPOINTS = (
     "cron/auto_pipeline.sh",
-    "cron/evolution.sh",
-    "shared/wrappers/job_pm_research_probability.sh",
-    "shared/wrappers/job_equity_snapshots.sh",
     "shared/wrappers/job_self_heal.sh",
     "shared/wrappers/job_self_heal_night.sh",
     "shared/wrappers/job_market_capital_reconcile.sh",
@@ -199,10 +196,7 @@ RETIRED_LEGACY_RUNTIME_ENTRYPOINTS = (
     "shared/wrappers/job_cn_futures_pre_open_validation.sh",
     "shared/wrappers/job_cn_futures_opening_validation.sh",
     "shared/wrappers/job_cn_futures_first_sample_alert.sh",
-    "shared/wrappers/job_us_sim.sh",
     "shared/wrappers/job_crypto_sim.sh",
-    "shared/wrappers/job_pm_sim.sh",
-    "shared/wrappers/job_hk_sim.sh",
     "shared/wrappers/job_cn_futures_sim.sh",
 )
 
@@ -362,9 +356,7 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
         in entries["tradingagent_metrics_verification_authority"].prohibited_uses
     )
     assert entries["tradingagent_llm_evidence_journal"].state == ("CURRENT_VERIFIED")
-    assert entries["tradingagent_llm_evidence_journal"].layer == (
-        "local_isolated_candidate"
-    )
+    assert entries["tradingagent_llm_evidence_journal"].layer == ("repository_contract")
     assert entries["tradingagent_llm_evidence_journal"].production_verified is False
     assert (
         "claim_local_head_anchor_as_external_seal_or_tamper_proof_authority"
@@ -372,7 +364,7 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
     )
     assert entries["tradingagent_trusted_evolution_clock"].state == ("CURRENT_VERIFIED")
     assert entries["tradingagent_trusted_evolution_clock"].layer == (
-        "local_isolated_candidate"
+        "repository_contract"
     )
     assert entries["tradingagent_trusted_evolution_clock"].production_verified is False
     assert (
@@ -385,11 +377,11 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
         "tradingagent_multistyle_router",
     ):
         assert entries[shadow_candidate].state == "CURRENT_VERIFIED"
-        assert entries[shadow_candidate].layer == "local_isolated_candidate"
+        assert entries[shadow_candidate].layer == "repository_contract"
         assert entries[shadow_candidate].production_verified is False
     transport = entries["tradingagent_deepseek_provider_transport"]
     assert transport.state == "CURRENT_VERIFIED"
-    assert transport.layer == "local_isolated_candidate"
+    assert transport.layer == "repository_contract"
     assert transport.production_verified is False
     assert (
         "infer_accepted_evidence_stable_auth_quota_cost_or_model_quality_from_schema_rejected_real_canary"
@@ -807,6 +799,10 @@ def test_legacy_client_cannot_own_or_autowire_the_v1_contract() -> None:
         encoding="utf-8"
     )
     legacy_reader = (ROOT / "shared" / "data" / "reader.py").read_text(encoding="utf-8")
+    marketgraph_client = (ROOT / "shared" / "data" / "marketgraph_api.py").read_text(
+        encoding="utf-8"
+    )
+    ashare_adapter = (ROOT / "Ashare" / "adapter.py").read_text(encoding="utf-8")
 
     for forbidden in ('"/v1/catalog"', '"/v1/query"', "query_v1_all"):
         assert forbidden not in legacy_client
@@ -816,6 +812,9 @@ def test_legacy_client_cannot_own_or_autowire_the_v1_contract() -> None:
         "query_v1_all",
     ):
         assert forbidden not in legacy_reader
+    assert 'DEFAULT_API_URL = ""' in legacy_client
+    assert 'DEFAULT_API_URL = ""' in marketgraph_client
+    assert "TradingagentDataReader(" not in ashare_adapter
 
 
 def test_v1_candidate_manifest_excludes_legacy_data_and_server_tests() -> None:
@@ -1220,7 +1219,7 @@ def test_legacy_sim_market_health_wrapper_is_a_hard_tombstone() -> None:
     assert "retired" in result.stderr.lower()
 
 
-def test_tradings_cron_entry_blocks_all_mixed_legacy_jobs_before_dispatch(
+def test_tradings_cron_entry_is_a_minimal_fail_closed_tombstone(
     tmp_path: Path,
 ) -> None:
     env = os.environ.copy()
@@ -1236,75 +1235,23 @@ def test_tradings_cron_entry_blocks_all_mixed_legacy_jobs_before_dispatch(
     )
     entrypoint = ROOT / "shared" / "wrappers" / "tradings_cron_entry.py"
 
-    for job_name in RETIRED_ASHARE_PYTHON_JOBS:
-        result = subprocess.run(
-            [sys.executable, str(entrypoint), "--job", job_name],
-            check=False,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        assert result.returncode == 78, job_name
-        assert "legacy_runtime_retired" in result.stderr, job_name
-
-
-def test_tradings_cron_entry_early_guard_matches_final_job_argument_semantics(
-    tmp_path: Path,
-) -> None:
-    """Abbreviation and duplicate options must not reach project imports first."""
-
-    env = os.environ.copy()
-    env.update(
-        {
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "REAL_TRADING_ENABLED": "true",
-            "PYTHONPATH": str(tmp_path),
-        }
+    result = subprocess.run(
+        [sys.executable, str(entrypoint), "--job", "any-retired-job"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
     )
-    entrypoint = ROOT / "shared" / "wrappers" / "tradings_cron_entry.py"
-    invocations = (
-        ("--jo", "job_email_notify"),
-        ("--job", "job_crypto_sim", "--job", "job_email_notify"),
-    )
-
-    for argv in invocations:
-        result = subprocess.run(
-            [sys.executable, str(entrypoint), *argv],
-            cwd=tmp_path,
-            check=False,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        assert result.returncode == 78, argv
-        assert "legacy_runtime_retired" in result.stderr, argv
-        assert "ModuleNotFoundError" not in result.stderr, argv
-
+    assert result.returncode == 78
+    assert "legacy_runtime_retired" in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr
     source = entrypoint.read_text(encoding="utf-8")
-    assert 'retired_cli("shared.wrappers.tradings_cron_entry")' in source
-
-
-def test_tradings_cron_entry_direct_cli_does_not_restore_other_markets(
-    tmp_path: Path,
-) -> None:
-    entrypoint = ROOT / "shared" / "wrappers" / "tradings_cron_entry.py"
-    for job_name in (
-        "job_trading_signals",
-        "job_crypto_sim",
-        "job_us_sim",
-        "job_pm_sim",
-        "job_cn_futures_sim",
-    ):
-        result = subprocess.run(
-            [sys.executable, str(entrypoint), "--job", job_name],
-            cwd=tmp_path,
-            check=False,
-            capture_output=True,
-            text=True,
-            env={**os.environ, "REAL_TRADING_ENABLED": "true"},
-        )
-        assert result.returncode == 78, (job_name, result.stderr)
-        assert "legacy_runtime_retired" in result.stderr, job_name
+    assert "shared.wrappers.tradings_cron_entry" in source
+    assert "return 78" in source
+    assert "from shared" not in source
+    assert "JOB_HANDLERS" not in source
+    assert "TradingagentDataReader" not in source
 
 
 def test_retired_ashare_entrypoints_are_not_scheduled() -> None:
@@ -1495,14 +1442,10 @@ def test_current_tradingdatas_fixture_ids_are_explicitly_non_production() -> Non
             encoding="utf-8"
         )
     )
-    dataset_ids = {
-        dataset["dataset_id"] for dataset in fixture["config"]["datasets"]
-    }
+    dataset_ids = {dataset["dataset_id"] for dataset in fixture["config"]["datasets"]}
     dataset_ids.update(
         dataset["dataset_id"]
-        for dataset in fixture["transport_responses"]["catalog"]["json_body"][
-            "data"
-        ]
+        for dataset in fixture["transport_responses"]["catalog"]["json_body"]["data"]
     )
     dataset_ids.update(fixture["transport_responses"]["queries"])
 
@@ -1538,14 +1481,6 @@ def test_cnfutures_lineage_never_hardcodes_retired_product_identity() -> None:
     assert "_explicit_source_identity" in source
 
 
-def test_historical_front_plans_mark_sharedsignals_name_as_superseded() -> None:
-    paths = (
-        "front/docs/superpowers/plans/2026-07-11-market-causal-terminal.md",
-        "front/docs/superpowers/plans/2026-07-11-market-evidence-attribution.md",
-        "front/docs/superpowers/specs/2026-07-11-market-causal-terminal-design.md",
-        "front/docs/superpowers/specs/2026-07-11-market-evidence-attribution-design.md",
-    )
-    for relative_path in paths:
-        source = (ROOT / relative_path).read_text(encoding="utf-8")
-        assert "Historical naming notice (2026-07-20)" in source
-        assert "current upstream product is TradingDatas" in source
+def test_superseded_front_implementation_plans_are_not_active_documents() -> None:
+    root = ROOT / "front/docs/superpowers"
+    assert not root.exists() or not any(root.rglob("*.md"))

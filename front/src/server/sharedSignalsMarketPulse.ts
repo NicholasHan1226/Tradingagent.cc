@@ -68,7 +68,7 @@ const MAX_POINTS = 24
 const cache = new Map<string, CacheEntry>()
 const coverageHistory = new Map<string, AuditedCoverageObservation[]>()
 const MAX_COVERAGE_OBSERVATIONS = 12
-const MARKET_ORDER: PulseMarket[] = ['A-share', 'US', 'Crypto', 'HK', 'PM', 'CNFutures']
+const MARKET_ORDER: PulseMarket[] = ['A-share', 'CNFutures', 'Crypto']
 const DATASET_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
 
 export async function readSharedSignalsMarketPulses({
@@ -355,14 +355,12 @@ function metadataIsUsable(metadata: RawMetadata): metadata is CompleteRawMetadat
 }
 
 function fieldsForMarket(market: PulseMarket) {
-  if (market === 'PM') return ['market_id', 'price', 'price_time', 'outcome', 'raw_json']
-  if (market === 'US' || market === 'HK') return ['symbol', 'close', 'high', 'low', 'volume', 'trade_date']
   if (market === 'Crypto') return ['symbol', 'close', 'price', 'high', 'low', 'volume', 'bar_time']
   return ['symbol', 'close', 'high', 'low', 'volume', 'bar_time']
 }
 
-function filtersForMarket(market: PulseMarket, symbol: string) {
-  return market === 'PM' ? { market_id: symbol } : { symbol }
+function filtersForMarket(_market: PulseMarket, symbol: string) {
+  return { symbol }
 }
 
 function selectRepresentatives(holdings: HoldingRow[], signals: SignalRow[]) {
@@ -420,8 +418,7 @@ function normalizePulse(
   now: Date,
 ): MarketPulse | null {
   const rows = envelope.data
-    .filter((row) => market !== 'PM' || readOutcome(row) === 'yes')
-    .filter((row) => rowMatchesSymbol(row, market, symbol))
+    .filter((row) => rowMatchesSymbol(row, symbol))
   const timestampCeiling = Math.min(now.getTime(), Date.parse(envelope.metadata.dataThrough))
   const samples = rows
     .map((row, index) => ({ row, index, price: readPrice(row), time: rowTimestamp(row, market) }))
@@ -457,8 +454,8 @@ function normalizePulse(
   }
 }
 
-function rowMatchesSymbol(row: RawRow, market: PulseMarket, expected: string) {
-  const actual = readString(row, market === 'PM' ? ['market_id', 'symbol'] : ['symbol', 'ts_code'])
+function rowMatchesSymbol(row: RawRow, expected: string) {
+  const actual = readString(row, ['symbol', 'ts_code'])
   return actual === expected
 }
 
@@ -466,7 +463,7 @@ function freshness(updatedAt: string | undefined, market: PulseMarket, now: Date
   if (!updatedAt) return 'degraded'
   const time = parseTimestamp(updatedAt, market)
   if (time === undefined) return 'degraded'
-  const maxAge = market === 'A-share' || market === 'CNFutures' ? 15 * 60_000 : market === 'Crypto' || market === 'PM' ? 45 * 60_000 : 36 * 60 * 60_000
+  const maxAge = market === 'A-share' || market === 'CNFutures' ? 15 * 60_000 : 45 * 60_000
   return now.getTime() - time <= maxAge ? 'live' : 'stale'
 }
 
@@ -482,17 +479,6 @@ function parseTimestamp(value: string, market: PulseMarket) {
   const normalized = cnLocal && (market === 'A-share' || market === 'CNFutures') ? `${value.replace(' ', 'T')}+08:00` : value
   const parsed = new Date(normalized).getTime()
   return Number.isFinite(parsed) ? parsed : undefined
-}
-function readOutcome(row: RawRow) {
-  const direct = readString(row, ['outcome'])
-  if (direct) return direct.toLowerCase()
-  if (typeof row.raw_json !== 'string') return undefined
-  try {
-    const raw = JSON.parse(row.raw_json) as RawRow
-    return readString(raw, ['outcome'])?.toLowerCase()
-  } catch {
-    return undefined
-  }
 }
 function readNumber(row: RawRow, keys: string[]) { for (const key of keys) { const value = Number(row[key]); if (Number.isFinite(value)) return value } return undefined }
 function readString(row: RawRow, keys: string[]) { for (const key of keys) { const value = row[key]; if (typeof value === 'string' && value.trim()) return value.trim() } return undefined }

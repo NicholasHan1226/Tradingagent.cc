@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """CNFutures observation projection from an explicitly injected report.
 
 The historical CLI and its implicit SharedSignals/SQLite live-check path are
@@ -28,7 +29,7 @@ from shared.runtime_test.cn_futures_live_check import (
     validate_cn_futures_maturity_projection,
 )
 
-from .review import DEFAULT_REVIEW_PATH, STYLE_REVIEW_MARKET, latest_actionable_review
+from .review import DEFAULT_REVIEW_PATH, REVIEW_MARKET, latest_actionable_review
 
 
 DEFAULT_REVIEW_ROOT = ROOT / "shared" / "review"
@@ -79,7 +80,7 @@ def _latest_review(review_path: Path, *, trade_date: str = "") -> dict[str, Any]
 def _current_maturity(
     review_root: Path, *, expected_trade_date: str = ""
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    path = review_root / STYLE_REVIEW_MARKET / MATURITY_FILENAME
+    path = review_root / REVIEW_MARKET / MATURITY_FILENAME
     raw = _read_json(path)
     if not path.exists():
         return {}, {
@@ -422,7 +423,7 @@ def build_observation_report(
     else:
         overall_status = "pass"
     return {
-        "market": STYLE_REVIEW_MARKET,
+        "market": REVIEW_MARKET,
         "report_type": "cn_futures_5min_observation",
         "schema_version": "2026-07-05.dashboard.v1",
         "generated_at": live.get("generated_at", ""),

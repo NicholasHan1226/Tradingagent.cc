@@ -103,6 +103,7 @@ entries:
       - shared/execution/auto_pipeline.py
       - shared/runtime_test/ashare_opening_validator.py
       - shared/runtime_test/ashare_preopen_dry_run.py
+      - shared/runtime_test/ashare_forward_label_ops.py
       - shared/runtime_test/ashare_health_alert.py
       - shared/runtime_test/sharedsignals_evidence_contract.py
       - shared/wrappers/job_ashare_health_check.sh
@@ -128,10 +129,6 @@ entries:
       - shared/portfolio/constructor.py
       - shared/portfolio/position_sizer.py
       - shared/portfolio/rebalancer.py
-      - shared/portfolio/exit_manager.py
-      - shared/markets/style_config.py
-      - shared/markets/style_runner.py
-      - shared/markets/evolution_engine.py
       - shared/execution/decision_engine.py
       - shared/execution/auto_pipeline.py
       - shared/orchestrator.py
@@ -196,14 +193,12 @@ entries:
     owner: TradingAgent
     paths:
       - cron/auto_pipeline.sh
-      - cron/evolution.sh
       - shared/wrappers/job_us_sim.sh
       - shared/wrappers/job_crypto_sim.sh
       - shared/wrappers/job_pm_sim.sh
       - shared/wrappers/job_hk_sim.sh
       - shared/wrappers/job_cn_futures_sim.sh
       - shared/wrappers/job_pm_research_probability.sh
-      - shared/wrappers/job_equity_snapshots.sh
       - shared/wrappers/job_self_heal.sh
       - shared/wrappers/job_self_heal_night.sh
       - shared/wrappers/job_market_capital_reconcile.sh
@@ -215,8 +210,6 @@ entries:
       - shared/wrappers/job_cn_futures_opening_validation.sh
       - shared/wrappers/job_cn_futures_first_sample_alert.sh
       - shared/execution/auto_pipeline.py
-      - shared/markets/evolution_engine.py
-      - shared/markets/style_runner.py
       - Crypto/adapter.py
       - Crypto/market_data.py
       - Crypto/workflow.py
@@ -262,17 +255,3 @@ entries:
       - historical_receipts_are_preserved_read_only
       - rollback_evidence_keeps_all_market_paper_brokers_simulation_only
     rollback: keep_ashare_server_local_paper_broker_and_all_legacy_bridge_flags_zero
-  - legacy_id: historical_desktop_investment_runtime
-    owner: Nicholas
-    paths:
-      - ~/Desktop/Investment
-    replacement: Projects/Finance/TradingAgent
-    compatibility_mode: historical_read_only
-    sunset_phase: post_phase_3_audit
-    remaining_consumers:
-      - unknown_external_launchagents_and_historical_tools
-    deletion_preconditions:
-      - external_consumer_inventory_complete
-      - runtime_reference_scan_zero
-      - backup_and_rollback_evidence_captured
-    rollback: preserve_read_only_archive_until_external_dependency_audit_passes

@@ -369,21 +369,11 @@ class SimEngineSmokeTest(unittest.TestCase):
         self.assertEqual(record.state, "filled")
         self.assertLessEqual(record.avg_fill_price, order.limit_price)
 
-    def test_pm_rejects_probability_outside_bounds(self) -> None:
-        engine = SimExecutionEngine("pm", rng=random.Random(1))
-        order = SimOrder(
-            symbol="market-1",
-            side="buy",
-            quantity=10,
-            limit_price=1.01,
-            market="pm",
-            order_type="limit",
-        )
-
-        record = engine.submit_order(order, {"last_price": 0.5, "available_qty": 100})
-
-        self.assertEqual(record.state, "rejected")
-        self.assertEqual(record.reason, "price_above_max_probability")
+    def test_non_ashare_market_cannot_inherit_shared_engine_defaults(self) -> None:
+        for market in ("crypto", "cn_futures", "us", "pm", "hk", "martian", ""):
+            with self.subTest(market=market):
+                with self.assertRaisesRegex(ValueError, "market-specific simulator"):
+                    SimExecutionEngine(market, rng=random.Random(1))
 
 
 if __name__ == "__main__":

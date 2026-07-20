@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Unified simulated PnL summary: realized_pnl + mark-to-market unrealized_pnl.
 
-This module aggregates the server-local simulated ledger (A-share) and the
-per-style ``SimLedger`` journals (Crypto/PM/US/CNFutures) into a single
-readable summary for daily/weekly reviews, health checks and dashboards.
+This module reads the server-local simulated ledger (A-share) and the active
+market ``SimLedger`` journals (CNFutures/Crypto).  Results remain keyed by
+market; this module never creates an all-market monetary total.
 """
 
 from __future__ import annotations
@@ -18,7 +18,12 @@ from typing import Any
 
 from shared.accounting.sim_ledger import SimLedger
 from shared.execution.local_sim_ledger import (
+    DEFAULT_ACCOUNT as CURRENT_ASHARE_SIM_ACCOUNT,
     LOCAL_SIM_TRADES as CURRENT_ASHARE_SIM_TRADES,
+)
+from shared.governance.market_lanes import (
+    ACTIVE_RUNTIME_MARKETS,
+    canonical_runtime_market,
 )
 from shared.review.sample_quality import classify_trade_sample, summarize_sample_quality
 
@@ -26,7 +31,7 @@ from shared.review.sample_quality import classify_trade_sample, summarize_sample
 TRADINGAGENT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SIM_LEDGER_ROOT = TRADINGAGENT_ROOT / "shared" / "logs" / "sim_ledger"
 DEFAULT_LOCAL_SIM_TRADES = CURRENT_ASHARE_SIM_TRADES
-DEFAULT_MARKETS = ("ashare", "crypto", "pm", "us", "cn_futures")
+DEFAULT_MARKETS = ACTIVE_RUNTIME_MARKETS
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -65,65 +70,6 @@ def _row_price(row: dict[str, Any]) -> float:
         if price > 0:
             return price
     return 0.0
-
-
-def _clamp_probability(value: float) -> float:
-    return max(0.0, min(1.0, value))
-
-
-def _pm_position_market_id(symbol: str, position: dict[str, Any] | None = None) -> str:
-    position = position or {}
-    explicit = str(position.get("market_id") or "").strip()
-    if explicit:
-        return explicit
-    raw = str(symbol or "").strip()
-    if ":" in raw:
-        return raw.split(":", 1)[0]
-    return raw
-
-
-def _pm_position_outcome(symbol: str, position: dict[str, Any] | None = None) -> str:
-    position = position or {}
-    raw = str(position.get("outcome") or "").strip().lower()
-    if raw in {"yes", "no"}:
-        return raw
-    symbol_outcome = str(symbol or "").rsplit(":", 1)[-1].strip().lower()
-    if symbol_outcome in {"yes", "no"}:
-        return symbol_outcome
-    return "yes"
-
-
-def _pm_yes_price(row: dict[str, Any]) -> float:
-    for key in (
-        "yes_price",
-        "last_price",
-        "price",
-        "latest_price",
-        "market_price",
-        "implied_probability",
-        "probability",
-    ):
-        price = _safe_float(row.get(key), 0.0)
-        if price > 0:
-            return _clamp_probability(price)
-    return 0.0
-
-
-def _pm_no_price(row: dict[str, Any]) -> float:
-    for key in ("no_price", "no_last_price", "no_latest_price", "no_market_price"):
-        price = _safe_float(row.get(key), 0.0)
-        if price > 0:
-            return _clamp_probability(price)
-    yes_price = _pm_yes_price(row)
-    if yes_price > 0:
-        return _clamp_probability(1.0 - yes_price)
-    return 0.0
-
-
-def _pm_mark_price(row: dict[str, Any], outcome: str) -> float:
-    if outcome == "no":
-        return _pm_no_price(row)
-    return _pm_yes_price(row)
 
 
 def _latest_priced(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -186,8 +132,6 @@ def _replay_journal_to_ledger(
     This keeps the summary computation independent of the persisted ``positions.json``
     state and avoids mutating production ledger files.
     """
-    from shared.execution.sim_engine import SimFill, SimOrder
-
     for row in _read_jsonl_dicts(journal_path):
         symbol = str(row.get("symbol") or row.get("ts_code") or "").strip()
         side = str(row.get("side") or "").lower()
@@ -202,48 +146,123 @@ def _replay_journal_to_ledger(
             or row.get("fill_id")
             or f"REPLAY-{uuid.uuid4().hex[:12]}"
         )
-        order = SimOrder(
-            symbol=symbol,
-            side=side,
-            quantity=qty,
-            limit_price=price,
-            order_type="market",
-            market=market,
-            order_id=order_id,
-            submitted_at=str(
+        order = {
+            "symbol": symbol,
+            "side": side,
+            "quantity": qty,
+            "limit_price": price,
+            "order_type": "market",
+            "market": market,
+            "order_id": order_id,
+            "submitted_at": str(
                 row.get("timestamp") or row.get("fill_time") or _now_iso()
             ),
-        )
-        fill = SimFill(
-            order_id=order_id,
-            fill_price=price,
-            fill_qty=qty,
-            fill_time=str(row.get("timestamp") or row.get("fill_time") or _now_iso()),
-            slippage_bps=_safe_float(row.get("slippage_bps"), 0.0),
-            counterparty=str(row.get("counterparty") or "simulated"),
-        )
+        }
+        fill = {
+            "fill_id": str(
+                row.get("fill_id") or f"REPLAY-FILL-{uuid.uuid4().hex[:12]}"
+            ),
+            "order_id": order_id,
+            "fill_price": price,
+            "fill_qty": qty,
+            "fill_time": str(
+                row.get("timestamp") or row.get("fill_time") or _now_iso()
+            ),
+            "slippage_bps": _safe_float(row.get("slippage_bps"), 0.0),
+            "counterparty": str(row.get("counterparty") or "simulated"),
+        }
         fees = dict(row.get("fees")) if isinstance(row.get("fees"), dict) else {}
         ledger.record_fill(order, fill, fees=fees)
 
 
+def _market_account_envelope(
+    market: str,
+    account_summaries: dict[str, dict[str, Any]],
+    *,
+    journal_count: int,
+    errors: list[str] | None = None,
+) -> dict[str, Any]:
+    """Expose money only when exactly one authoritative account is present.
+
+    Position and error counts may be summed for health reporting. Monetary
+    fields are never summed across accounts; callers must consume
+    ``account_summaries`` by exact ``account_scope``.
+    """
+    account_count = len(account_summaries)
+    envelope: dict[str, Any] = {
+        "market": market,
+        "capital_layer": "simulated",
+        "account_count": account_count,
+        "journal_count": journal_count,
+        "account_summaries": account_summaries,
+        "open_position_count": sum(
+            int(record.get("open_position_count") or 0)
+            for record in account_summaries.values()
+        ),
+        "missing_mark_count": sum(
+            int(record.get("missing_mark_count") or 0)
+            for record in account_summaries.values()
+        ),
+        "errors": list(errors or []),
+        "monetary_aggregation": "forbidden_across_accounts",
+    }
+    if account_count == 1:
+        account_scope, account = next(iter(account_summaries.items()))
+        account_monetary_state = str(
+            account.get("monetary_state") or "available"
+        ).strip()
+        envelope.update(account)
+        envelope.update(
+            {
+                "market": market,
+                "capital_layer": "simulated",
+                "account_scope": account_scope,
+                "account_count": 1,
+                "journal_count": journal_count,
+                "account_summaries": account_summaries,
+                "errors": list(errors or []),
+                "monetary_state": (
+                    "available_single_account"
+                    if account_monetary_state == "available"
+                    else account_monetary_state
+                ),
+                "monetary_aggregation": (
+                    "single_account_projection"
+                    if account_monetary_state == "available"
+                    else "unavailable_account_authority"
+                ),
+            }
+        )
+        return envelope
+
+    reason = "multiple_accounts" if account_count > 1 else "no_account_authority"
+    envelope.update(
+        {
+            "account_scope": None,
+            "realized_pnl": None,
+            "unrealized_pnl": None,
+            "total_pnl": None,
+            "market_value": None,
+            "pnl_source": None,
+            "mark_authority": None,
+            "monetary_state": f"unavailable_{reason}",
+        }
+    )
+    return envelope
+
+
 def _aggregate_style_ledgers(market: str, ledger_root: Path) -> dict[str, Any]:
-    """Aggregate realized + unrealized PnL across all style ledgers for one market."""
+    """Summarize each style ledger as an independent simulated account."""
     market_dir = ledger_root / market
     journals = (
         sorted(market_dir.glob("*/trade_journal.jsonl")) if market_dir.exists() else []
     )
-
-    realized = 0.0
-    unrealized = 0.0
-    total = 0.0
-    market_value = 0.0
-    open_position_count = 0
-    missing_mark_count = 0
-    style_count = 0
+    account_summaries: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
 
     for journal in journals:
         style_name = journal.parent.name
+        account_scope = f"{market}:simulated:{style_name}"
         try:
             # Replay the journal into a temporary ledger so we never mutate the
             # production positions.json state while computing a read-only summary.
@@ -255,27 +274,54 @@ def _aggregate_style_ledgers(market: str, ledger_root: Path) -> dict[str, Any]:
                 _replay_journal_to_ledger(journal, ledger, market)
                 prices = _latest_prices_from_journal(journal)
                 pnl = ledger.total_pnl(prices=prices if prices else None)
-            realized += _safe_float(pnl.get("realized_pnl"))
-            unrealized += _safe_float(pnl.get("unrealized_pnl"))
-            total += _safe_float(pnl.get("total_pnl"))
-            market_value += _safe_float(pnl.get("market_value"))
-            open_position_count += int(pnl.get("open_position_count") or 0)
-            missing_mark_count += int(pnl.get("missing_mark_count") or 0)
-            style_count += 1
+            account_summaries[account_scope] = {
+                "market": market,
+                "capital_layer": "simulated",
+                "account_scope": account_scope,
+                "account_scope_source": "style_ledger_path",
+                "strategy": style_name,
+                "realized_pnl": round(_safe_float(pnl.get("realized_pnl")), 6),
+                "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl")), 6),
+                "total_pnl": round(_safe_float(pnl.get("total_pnl")), 6),
+                "market_value": round(_safe_float(pnl.get("market_value")), 6),
+                "open_position_count": int(pnl.get("open_position_count") or 0),
+                "missing_mark_count": int(pnl.get("missing_mark_count") or 0),
+                # This compatibility summary has no independent market-data
+                # reader. Open positions use the latest fill price only.
+                "pnl_source": "sim_ledger_journal_fill_price_fallback",
+                "mark_authority": "journal_fill_price_fallback",
+                "source_ledger": str(journal),
+                "monetary_state": "available",
+            }
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{style_name}: {exc.__class__.__name__}: {exc}")
+            account_summaries[account_scope] = {
+                "market": market,
+                "capital_layer": "simulated",
+                "account_scope": account_scope,
+                "account_scope_source": "style_ledger_path",
+                "strategy": style_name,
+                "realized_pnl": None,
+                "unrealized_pnl": None,
+                "total_pnl": None,
+                "market_value": None,
+                "open_position_count": 0,
+                "missing_mark_count": 0,
+                "pnl_source": None,
+                "mark_authority": None,
+                "source_ledger": str(journal),
+                "monetary_state": "unavailable_read_error",
+                "error": f"{exc.__class__.__name__}: {exc}",
+            }
 
-    return {
-        "realized_pnl": round(realized, 6),
-        "unrealized_pnl": round(unrealized, 6),
-        "total_pnl": round(total, 6),
-        "market_value": round(market_value, 6),
-        "open_position_count": open_position_count,
-        "missing_mark_count": missing_mark_count,
-        "style_count": style_count,
-        "pnl_source": "sim_ledger_mark_to_market",
-        "errors": errors,
-    }
+    envelope = _market_account_envelope(
+        market,
+        account_summaries,
+        journal_count=len(journals),
+        errors=errors,
+    )
+    envelope["style_count"] = len(account_summaries)
+    return envelope
 
 
 def _ashare_local_sim_summary(
@@ -313,18 +359,20 @@ def _ashare_local_sim_summary(
             local_sim_ledger.LOCAL_SIM_TRADES = original_local_sim_trades
     except Exception as exc:  # noqa: BLE001
         return {
-            "realized_pnl": 0.0,
-            "unrealized_pnl": 0.0,
-            "total_pnl": 0.0,
-            "strategy_realized_pnl": 0.0,
-            "strategy_unrealized_pnl": 0.0,
-            "strategy_total_pnl": 0.0,
-            "audit_realized_pnl": 0.0,
-            "audit_unrealized_pnl": 0.0,
-            "audit_total_pnl": 0.0,
-            "market_value": 0.0,
-            "strategy_market_value": 0.0,
-            "audit_market_value": 0.0,
+            "realized_pnl": None,
+            "unrealized_pnl": None,
+            "total_pnl": None,
+            "strategy_realized_pnl": None,
+            "strategy_unrealized_pnl": None,
+            "strategy_total_pnl": None,
+            "audit_realized_pnl": None,
+            "audit_unrealized_pnl": None,
+            "audit_total_pnl": None,
+            "market_value": None,
+            "strategy_market_value": None,
+            "audit_market_value": None,
+            "equity": None,
+            "cash": None,
             "open_position_count": 0,
             "strategy_open_position_count": 0,
             "audit_open_position_count": 0,
@@ -338,6 +386,7 @@ def _ashare_local_sim_summary(
                 "by_reason": {},
             },
             "pnl_source": "ashare_local_sim_error",
+            "monetary_state": "unavailable_read_error",
             "error": f"{exc.__class__.__name__}: {exc}",
         }
 
@@ -380,6 +429,7 @@ def _ashare_local_sim_summary(
         "missing_mark_count": missing_mark_count,
         "sample_quality": sample_quality,
         "pnl_source": pnl_source,
+        "monetary_state": "available",
     }
 
 
@@ -405,7 +455,10 @@ def sim_ledger_pnl_summary(
             open_position_count, missing_mark_count, pnl_source, ...
         }}
     """
-    target_markets = tuple(markets) if markets is not None else DEFAULT_MARKETS
+    requested_markets = tuple(markets) if markets is not None else DEFAULT_MARKETS
+    target_markets = tuple(
+        dict.fromkeys(canonical_runtime_market(market) for market in requested_markets)
+    )
     root = Path(ledger_root) if ledger_root is not None else DEFAULT_SIM_LEDGER_ROOT
     local_path = (
         Path(local_trades_path)
@@ -414,8 +467,7 @@ def sim_ledger_pnl_summary(
     )
 
     result: dict[str, dict[str, Any]] = {}
-    for market in target_markets:
-        market_key = str(market).lower().strip()
+    for market_key in target_markets:
         if market_key == "ashare":
             mark_prices = ashare_mark_prices
             if mark_prices is None:
@@ -425,7 +477,25 @@ def sim_ledger_pnl_summary(
                     if positions
                     else None
                 )
-            result[market_key] = _ashare_local_sim_summary(local_path, mark_prices)
+            ashare_summary = _ashare_local_sim_summary(local_path, mark_prices)
+            ashare_summary.update(
+                {
+                    "market": "ashare",
+                    "capital_layer": "simulated",
+                    "account_scope": CURRENT_ASHARE_SIM_ACCOUNT,
+                    "account_scope_source": "documented_single_ashare_sim_account",
+                }
+            )
+            result[market_key] = _market_account_envelope(
+                "ashare",
+                {CURRENT_ASHARE_SIM_ACCOUNT: ashare_summary},
+                journal_count=1 if local_path.exists() else 0,
+                errors=(
+                    [str(ashare_summary["error"])]
+                    if ashare_summary.get("error")
+                    else []
+                ),
+            )
         else:
             result[market_key] = _aggregate_style_ledgers(market_key, root)
     return result
@@ -461,75 +531,42 @@ def load_mark_prices_for_positions(
     now returns no marks so the accounting caller can report a missing-mark or
     cost-basis fallback without silently changing data authority.
     """
+    market_key = canonical_runtime_market(market)
     prices: dict[str, float] = {}
     if not positions or reader is None:
         return prices
-    try:
-        market_key = str(market).lower().strip()
-        date = trade_date or __import__(
-            "datetime", fromlist=["date"]
-        ).date.today().strftime("%Y%m%d")
-        start, end = _lookback_window(date)
+    date = trade_date or __import__(
+        "datetime", fromlist=["date"]
+    ).date.today().strftime("%Y%m%d")
+    start, end = _lookback_window(date)
 
-        if market_key == "crypto":
-            get_crypto = getattr(reader, "get_crypto_klines", None)
-            if not callable(get_crypto):
-                return prices
-            for symbol in positions:
-                try:
-                    latest = _latest_priced(get_crypto(symbol=symbol, limit=50) or [])
-                    if latest:
-                        prices[symbol] = _row_price(latest)
-                except Exception:  # noqa: BLE001
-                    continue
+    if market_key == "crypto":
+        get_crypto = getattr(reader, "get_crypto_klines", None)
+        if not callable(get_crypto):
             return prices
-
-        if market_key == "pm":
-            get_pm = getattr(reader, "get_pm_markets", None)
-            if not callable(get_pm):
-                return prices
-            try:
-                rows = get_pm(limit=500) or []
-            except Exception:  # noqa: BLE001
-                rows = []
-            wanted = {
-                _pm_position_market_id(symbol, position)
-                for symbol, position in positions.items()
-            }
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                market_id = str(row.get("market_id") or row.get("id") or "").strip()
-                if market_id in wanted:
-                    for symbol, position in positions.items():
-                        if _pm_position_market_id(symbol, position) != market_id:
-                            continue
-                        outcome = _pm_position_outcome(symbol, position)
-                        price = _pm_mark_price(row, outcome)
-                        if price > 0:
-                            prices[str(symbol)] = price
-            return prices
-
-        get_bars = getattr(reader, "get_bars_daily", None)
-        if not callable(get_bars):
-            return prices
-        reader_market = {
-            "ashare": "Ashare",
-            "us": "US",
-            "hk": "HK",
-            "cn_futures": "Futures",
-        }.get(market_key, market)
         for symbol in positions:
             try:
-                latest = _latest_priced(
-                    get_bars(reader_market, symbol, start, end) or []
-                )
+                latest = _latest_priced(get_crypto(symbol=symbol, limit=50) or [])
                 if latest:
                     prices[symbol] = _row_price(latest)
             except Exception:  # noqa: BLE001
                 continue
-    except Exception:  # noqa: BLE001
-        pass
+        return prices
+
+    get_bars = getattr(reader, "get_bars_daily", None)
+    if not callable(get_bars):
+        return prices
+    reader_market = {
+        "ashare": "Ashare",
+        "cn_futures": "Futures",
+    }[market_key]
+    for symbol in positions:
+        try:
+            latest = _latest_priced(get_bars(reader_market, symbol, start, end) or [])
+            if latest:
+                prices[symbol] = _row_price(latest)
+        except Exception:  # noqa: BLE001
+            continue
     return prices
 
 

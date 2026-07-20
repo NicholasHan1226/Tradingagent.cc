@@ -27,7 +27,7 @@ retired_legacy_runtime_job_for() {
     local entrypoint_name="${1##*/}"
     local market_arg="${2:-}"
     case "${entrypoint_name}" in
-        auto_pipeline.sh|evolution.sh|job_pm_research_probability.sh|job_equity_snapshots.sh|job_self_heal.sh|job_self_heal_night.sh|job_cn_futures_observation_report.sh|job_cn_futures_sample_ops.sh|job_cn_futures_calibration_report.sh|job_cn_futures_replay.sh|job_cn_futures_pre_open_validation.sh|job_cn_futures_opening_validation.sh|job_cn_futures_first_sample_alert.sh|job_us_sim.sh|job_crypto_sim.sh|job_pm_sim.sh|job_hk_sim.sh|job_cn_futures_sim.sh)
+        auto_pipeline.sh|job_self_heal.sh|job_self_heal_night.sh|job_cn_futures_observation_report.sh|job_cn_futures_sample_ops.sh|job_cn_futures_calibration_report.sh|job_cn_futures_replay.sh|job_cn_futures_pre_open_validation.sh|job_cn_futures_opening_validation.sh|job_cn_futures_first_sample_alert.sh|job_crypto_sim.sh|job_cn_futures_sim.sh)
             printf '%s' "${entrypoint_name%.sh}"
             ;;
         job_market_capital_reconcile.sh)
@@ -41,8 +41,8 @@ retired_legacy_runtime_job_for() {
 # One shell authority for entrypoints that may no longer execute.  Keep this
 # list limited to A-share-only wrappers plus generic jobs whose whole legacy
 # behavior (old A-share readers or external email) is retired.  Mixed jobs with
-# useful Crypto/US/PM/CNFutures branches must filter A-share instead of joining
-# this list.
+# useful Crypto/CNFutures branches must filter A-share instead of joining this
+# list. Retired US/PM/HK packages and their dedicated wrappers no longer exist.
 retired_ashare_runtime_job_for() {
     local entrypoint_name="${1##*/}"
     local market_arg="${2:-}"

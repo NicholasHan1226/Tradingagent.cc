@@ -168,7 +168,10 @@ export TRADINGDATAS_API_TIMEOUT="${TRADINGDATAS_API_TIMEOUT:-10}"
 # Keeping this one variable blank prevents still-quarantined readers from
 # inventing their old localhost default while they are retired market by market.
 export SHAREDSIGNALS_API_URL=""
-export MARKETGRAPH_API_URL="${MARKETGRAPH_API_URL:-http://127.0.0.1:8080}"
+# MarketGraph is an optional, explicitly configured research enhancement.  An
+# ambient loopback service must never become an implicit dependency of a
+# fixture/mock or TradingDatas-only run.
+export MARKETGRAPH_API_URL="${MARKETGRAPH_API_URL:-}"
 export MARKETGRAPH_API_TIMEOUT="${MARKETGRAPH_API_TIMEOUT:-10}"
 export MARKETGRAPH_API_RETRIES="${MARKETGRAPH_API_RETRIES:-1}"
 export MARKETGRAPH_API_TOKEN="${MARKETGRAPH_API_TOKEN:-${MCP_API_TOKEN:-${MARKETGRAPH_AUTH_TOKEN:-}}}"

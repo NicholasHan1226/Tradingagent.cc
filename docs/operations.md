@@ -9,10 +9,44 @@
 - TradingAgent 只消费显式配置的 TradingDatas `GET /v1/catalog` 与 `POST /v1/query` 契约；不读取 TradingDatas 数据库，不实现其服务端，不使用旧专用接口或数据商回退。
 - HTTP 成功不代表数据可用。每个 dataset 独立检查 `state`、`degraded`、`freshness`、`quality`、`lineage`、`receipt_id`、`data_through`、`observed_at` 和 `reasons`；impaired state 允许后四项为 null，TA 不补造。无完整 source proof 时固定 fail closed；只有证据完整且 policy 明确允许的 impaired evidence 才可降权。
 - A 股个股只允许沪深主板普通股。创业板、科创板及北京市场个股不得进入候选、预测、目标仓位、订单、成交或持仓；双创指数与全市场行业聚合只作 `context_only` 环境证据。
-- 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是本地隔离shadow合同，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。默认关闭的DeepSeek HTTPS transport已是本地候选；2026-07-18仅有一次隔离真实请求到达provider后被本地evidence schema拒绝，accepted evidence、稳定认证和生产激活仍未验证。live paper scheduler仍是计划项。
+- 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是仓库合同层的shadow能力，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。默认关闭的DeepSeek HTTPS transport也只是非生产仓库合同；2026-07-18仅有一次隔离真实请求到达provider后被本地evidence schema拒绝，accepted evidence、稳定认证和生产激活仍未验证。live paper scheduler仍是计划项。
 - 模拟日即使阻断新增风险，也必须尽量继续减仓/退出、对账、账本、学习到期检查和报告，并以 `completed_with_blocks` 明示结束；不得伪装成功，也不得切回旧链。
 
-## 1.1 服务器旁路候选部署
+## 1.1 GitHub 普通发布与主线冻结
+
+服务器旁路只能使用已通过普通 PR 合并的 `main` 精确 SHA。候选字节变更后，
+旧评审、旧测试与旧服务器回执全部只是复现线索，不再是当次 PASS。发布顺序固定为：
+
+```bash
+set -euo pipefail
+git status --short --branch
+git diff --check
+git diff --stat
+
+# 仅当这是已审定、无他人改动的隔离候选 worktree 时暂存完整候选范围；
+# 混合 worktree 必须改用精确路径，禁止照抄下一行。
+git add -A
+git diff --cached --check
+git diff --cached --stat
+git commit -m '<scoped-release-message>'
+git push -u origin "$(git branch --show-current)"
+
+gh pr create --draft --base main --head "$(git branch --show-current)" \
+  --title '<scoped-release-title>' --body-file '<absolute-pr-body-path>'
+gh pr checks '<pr-url>' --watch
+gh pr ready '<pr-url>'
+gh pr merge '<pr-url>' --merge
+
+git -C /Users/nicholashan/Projects/Finance/TradingAgent fetch origin main
+git -C /Users/nicholashan/Projects/Finance/TradingAgent merge --ff-only origin/main
+git -C /Users/nicholashan/Projects/Finance/TradingAgent rev-parse HEAD origin/main
+```
+
+不删除远程分支，不强推，不改写历史。PR CI 同时覆盖 Python 全量测试与前端
+`npm test/lint/build:all`；同一前端矩阵仍必须在本地与服务器旁路分别复验。只有当主工作树
+`HEAD == origin/main == PR merge commit`、现有未跟踪资产未受影响时，才能进入旁路验收。
+
+## 1.2 服务器旁路候选部署
 
 服务器旁路部署只用于回答“冻结候选能否在目标服务器环境安装、测试、构建和运行”。它不改变现役代码、服务、定时任务、网页、路由或任何authority。它是正常发布后的默认非权威服务器验收路径，但每次仍必须使用精确提交SHA、新的版本化目录、隔离环境、完整receipt和现役未变读回；任何条件不满足都停止，不得切换现役。
 
@@ -26,7 +60,7 @@
 /opt/investment/release-evidence/tradingagent/<id>   # 受限发布证据
 ```
 
-### 1.1.1 部署前冻结与取证
+### 1.2.1 部署前冻结与取证
 
 在创建候选目录前，至少保存并校验：
 
@@ -43,9 +77,9 @@ set -euo pipefail
 umask 077
 
 ACTIVE=/opt/investment/tradingagent
-RELEASE_SHA='<approved-full-commit-sha>'
-APPROVED_BRANCH='<approved-candidate-branch>'
-RELEASE_ID="ta-v1-data-client-$(printf '%s' "$RELEASE_SHA" | cut -c1-7)"
+RELEASE_SHA='<merged-main-full-commit-sha>'
+APPROVED_BRANCH='main'
+RELEASE_ID="ta-state-retirement-$(printf '%s' "$RELEASE_SHA" | cut -c1-7)"
 CANDIDATE="/opt/investment/tradingagent-candidates/$RELEASE_ID"
 VENV="/opt/investment/tradingagent-venvs/$RELEASE_ID"
 EVIDENCE_ID="$(date -u +%Y%m%dT%H%M%SZ)-$RELEASE_ID"
@@ -67,7 +101,7 @@ CANDIDATE_STATUS="$(sudo -u marketgraph git -C "$CANDIDATE" status --porcelain)"
 test -z "$CANDIDATE_STATUS"
 ```
 
-### 1.1.2 隔离安装与验收
+### 1.2.2 隔离安装与验收
 
 候选使用自己的venv与`front/node_modules`，不得借用或修改现役依赖。服务器验收至少包括：
 
@@ -95,9 +129,18 @@ SAFE_ENV=(
 sudo -u marketgraph "${SAFE_ENV[@]}" python3 -m venv "$VENV"
 sudo -u marketgraph "${SAFE_ENV[@]}" \
   "$VENV/bin/python" -m pip install -r "$CANDIDATE/requirements.txt"
-sha256sum "$CANDIDATE/requirements.txt" > "$EVIDENCE/requirements.sha256"
 sudo -u marketgraph "${SAFE_ENV[@]}" \
-  "$VENV/bin/python" -m pip freeze > "$EVIDENCE/python-freeze.txt"
+  sha256sum "$CANDIDATE/requirements.txt" \
+  | sudo -u marketgraph tee "$EVIDENCE/requirements.sha256" >/dev/null
+sudo -u marketgraph "${SAFE_ENV[@]}" \
+  "$VENV/bin/python" --version 2>&1 \
+  | sudo -u marketgraph tee "$EVIDENCE/python-version.txt" >/dev/null
+sudo -u marketgraph "${SAFE_ENV[@]}" \
+  "$VENV/bin/python" -m pip --version \
+  | sudo -u marketgraph tee "$EVIDENCE/pip-version.txt" >/dev/null
+sudo -u marketgraph "${SAFE_ENV[@]}" \
+  "$VENV/bin/python" -m pip freeze \
+  | sudo -u marketgraph tee "$EVIDENCE/python-freeze.txt" >/dev/null
 
 cd "$CANDIDATE"
 sudo -u marketgraph "${SAFE_ENV[@]}" \
@@ -105,20 +148,24 @@ sudo -u marketgraph "${SAFE_ENV[@]}" \
 PYCACHE_ROOT="$(mktemp -d /tmp/ta-pycache.XXXXXX)"
 sudo chown marketgraph:marketgraph "$PYCACHE_ROOT"
 sudo -u marketgraph "${SAFE_ENV[@]}" PYTHONPYCACHEPREFIX="$PYCACHE_ROOT" \
-  "$VENV/bin/python" -m compileall -q shared Ashare tools
+  "$VENV/bin/python" -m compileall -q \
+  shared Ashare CNFutures Crypto tools scripts
 sudo rm -rf -- "$PYCACHE_ROOT"
 
 cd "$CANDIDATE/front"
-sha256sum package-lock.json > "$EVIDENCE/package-lock.sha256"
+sudo -u marketgraph "${SAFE_ENV[@]}" sha256sum package-lock.json \
+  | sudo -u marketgraph tee "$EVIDENCE/package-lock.sha256" >/dev/null
 sudo -u marketgraph "${SAFE_ENV[@]}" npm ci
 sudo -u marketgraph "${SAFE_ENV[@]}" npm test
 sudo -u marketgraph "${SAFE_ENV[@]}" npm run lint
 sudo -u marketgraph "${SAFE_ENV[@]}" npm run build:all
-sudo -u marketgraph "${SAFE_ENV[@]}" node --version > "$EVIDENCE/node-version.txt"
-sudo -u marketgraph "${SAFE_ENV[@]}" npm --version > "$EVIDENCE/npm-version.txt"
+sudo -u marketgraph "${SAFE_ENV[@]}" node --version \
+  | sudo -u marketgraph tee "$EVIDENCE/node-version.txt" >/dev/null
+sudo -u marketgraph "${SAFE_ENV[@]}" npm --version \
+  | sudo -u marketgraph tee "$EVIDENCE/npm-version.txt" >/dev/null
 ```
 
-`env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、TradingDatas catalog/dataset/auth或DeepSeek credential。`TRADINGDATAS_API_URL`、旧名 tombstone `SHAREDSIGNALS_API_URL` 与 `MARKETGRAPH_API_URL` 在旁路验收中必须显式为空，避免任何未退役旧 reader 把“变量缺失”解释为 localhost 默认地址并读取现役服务；这些空值不是 V1 联调配置。依赖范围未完全锁 hash 时，receipt 必须保存 Python/pip/Node/npm 版本、完整 `pip freeze`、requirements 与 `package-lock.json` 哈希；未保存这些证据不得声称复现了同一环境。
+`env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、TradingDatas catalog/dataset/auth或DeepSeek credential。`TRADINGDATAS_API_URL`、旧名 tombstone `SHAREDSIGNALS_API_URL` 与 `MARKETGRAPH_API_URL` 在旁路验收中必须显式为空，避免任何未退役旧 reader 把“变量缺失”解释为 localhost 默认地址并读取现役服务；这些空值不是 V1 联调配置。依赖范围未完全锁 hash 时，receipt 必须保存 Python/pip/Node/npm 版本、完整 `pip freeze`、requirements 与 `package-lock.json` 哈希；未保存这些证据不得声称复现了同一环境。若 evidence 文件先由 root 重定向创建，必须在任何 `marketgraph` 进程读回前恢复 evidence 目录 owner/mode，并把修正前失败保留在 receipt；不得把证据解析脚本失败误报成候选测试失败或静默覆盖。
 
 只读API canary必须使用非现役、loopback-only端口，显式保持`REAL_TRADING_ENABLED=false`，记录精确PID并在停止前核对其cmdline指向候选`dist-server`。禁止通配`pkill`或占用8787。以下生命周期在同一个fail-fast Bash进程中执行；`FINANCE_WORKSPACE_ROOT`只指向候选的显式别名，不读取现役workspace：
 
@@ -397,9 +444,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest \
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q
-python3 -m compileall -q shared Ashare tools
-python3 -m ruff check shared Ashare tools tests
-python3 -m ruff format --check shared Ashare tools tests
+python3 -m compileall -q shared Ashare CNFutures Crypto tools scripts
 git diff --check
 
 cd front
@@ -559,4 +604,4 @@ preopen
 7. DeepSeek若启用，会话中曾暴露的credential必须先由供应商侧revoke/rotate，新值不得入仓；还需真实模型/请求字段readback、quota/限流/幂等/数据留存核验、敏感数据门、提示注入语义/编码变体、引用绑定、typed receipt持久化、成本/延迟和冻结增量评测，且仍保持evidence-only。首版固定单次调用、无自动重试；未来是否保留或变更该策略必须另立评审，不能在运行时静默开启；
 8. standing release authorization下仍须完成当次preflight、回退方案，以及本地、Git、远端、生产文件、生产runtime和外部路由的分别验收；授权不能替代证据。
 
-当前服务器sidecar没有提供上述外部authority证据，因此业务能力仍只能是`local_isolated_candidate / simulation-only / nonpromotion`；`server_validated_non_authority_simulation_only`只描述目标服务器环境的安装与旁路运行证据，不能提升为现役生产状态。
+当前服务器sidecar没有提供上述外部authority证据，因此业务能力仍只能是`fixture/mock-first / simulation-only / nonpromotion`；`server_validated_non_authority_simulation_only`只描述目标服务器环境的安装与旁路运行证据，不能提升为现役生产状态。

@@ -6,7 +6,7 @@
 
 TradingAgent 的短期目标是在 A股和国内期货形成“数据 → 预测 → 风控 → 真实规格模拟成交/拒绝 → 前向标签 → 费用后复盘”的可学习闭环，并让 Crypto 在独立市场 lane 中推进自己的闭环；三者用真实证据分别判断策略是否存在可重复正期望。
 
-50,000 CNY 是每个市场的独立模拟资本约束，不是盈利承诺。首 1–2 周主要验证工程、数据和执行闭环；短期盈利、样本量或 maturity readiness 都不能自动切实盘。
+A股与 CNFutures 各有独立 50,000 CNY simulated authority；Crypto 只有隔离的 10,000 USDT shadow/simulated authority。它们是原生币种资本约束，不是盈利承诺，不换汇、不相加、不净额。首 1–2 周主要验证工程、数据和执行闭环；短期盈利、样本量或 maturity readiness 都不能自动切实盘。
 
 当前非目标：真实券商/期货下单、自动邮件、同花顺自动点击、自动 champion 晋级、自动风险扩张、跨市场资金调拨。
 
@@ -16,8 +16,9 @@ TradingAgent 的短期目标是在 A股和国内期货形成“数据 → 预测
 flowchart LR
     TD["TradingDatas\n采集、校验、统一只读 API"] --> TA["TradingAgent\n候选、预测、风控、模拟执行、复盘"]
     MG["MarketGraph\n宏观、事件、行业/供应链研究"] -. "paired mg_on / mg_off" .-> TA
-    TA --> AC["A股 capital authority\n独立 fresh-start 50k"]
-    TA --> FC["CNFutures capital authority\n独立 fresh-start 50k"]
+    TA --> AC["A股 capital authority\n独立 fresh-start 50k CNY"]
+    TA --> FC["CNFutures capital authority\n独立 fresh-start 50k CNY"]
+    TA --> CC["Crypto shadow authority\n独立 10k USDT"]
     AC --> AE["server-local fills + positions"]
     FC --> FE["one-lot simulation + margin"]
     AE --> SJ["SampleJournal / forward labels"]
@@ -35,6 +36,8 @@ flowchart LR
 
 三市场只能共享机械接口，不能共享交易 API。当前机器合同见
 `shared/governance/market_lanes.yaml`：
+市场 lane 在开工前还必须通过 `scripts/validate_market_lane.py`，并且相对当前
+`main` 的 `behind=0`；工作树/分支/路径归属正确但基线过旧时仍会 fail closed。
 
 | 市场 | 模拟合同 | 外部测试环境 | 未来实盘适配器 | 关键不可混用语义 |
 |---|---|---|---|---|
@@ -49,14 +52,14 @@ Crypto Testnet是一个外部测试适配器，不是paper broker，也不能通
 自动升级为Live。三个`future_live_adapter_family`当前均是未实现且`live_enabled=false`；
 合同登记不构成实盘能力或发布授权。
 
-Mini/Hermes webhook、文件消费者和`RealSignalQueue`已在本地候选源码层退役。
+Mini/Hermes webhook、文件消费者和`RealSignalQueue`已在仓库合同层退役。
 通用文件`SignalStateMachine`永久限定为simulation/shadow，伪造graduation receipt也不能
 写入real/live卡。源码退役不证明服务器或Mini的安装态已清理；零值环境变量只作清理墓碑，
 仍需独立cron/env/process/port只读readback。
 
 ### V1 契约与权限边界
 
-- `sharedsignals.query_result.v1`：TradingDatas provider-neutral 查询结果的 immutable wire/schema ID；重命名产品不改变该标识。当前仅是隔离工作树中的目标契约，未经 fresh handoff、runtime 与真实数据新鲜度验证前，不得描述为生产可用，也不得回退到 Tushare 直连或兄弟仓 SQLite。
+- `sharedsignals.query_result.v1`：TradingDatas provider-neutral 查询结果的 immutable wire/schema ID；重命名产品不改变该标识。该 upstream 仍是仓库中的`TARGET_CONTRACT`；TA 消费端只是`repository_contract`。未经 TradingDatas fresh handoff、runtime 与真实数据新鲜度验证前，不得描述为生产可用，也不得回退到 Tushare 直连或兄弟仓 SQLite。
 - `tradingagent.sharedsignals.integration-readiness.v1`：TradingAgent 侧可复用接入验收回执的 immutable schema ID；重命名产品不改变该标识。它只从显式、无密钥 manifest 读取冻结的 endpoint、catalog、dataset、schema、PIT 与角色要求，通过兼容代码符号 `SharedSignalsV1Client` 对每个数据集执行同 `as_of` 的两次独立查询，并复用 `DataEvidenceGate` 与 research snapshot 验证状态、freshness、lineage、receipt、字段及逐行 PIT。任一分页游标会按 `pagination_contract_unfrozen` 阻断，不能由客户端擅自拼页。通过结果仍是 `non_authority`，不证明 TradingDatas runtime 可用、真实交易可用或未来结果可复现。
 - `tradingagent.universe_scope.v1`：A股第一阶段只允许沪深主板个股进入候选、组合和模拟订单；创业板、科创板的指数及行业聚合数据只允许作为市场环境证据，不能升级为可交易个股。两个 paper composition root 只接受精确、无实例可变状态且由冻结 manifest 内容寻址的 `CanonicalMainboardScopePolicy`；伪 duck type、callable 与 subclass 一律在组装阶段拒绝。
 - `tradingagent.llm_evidence.v1`：LLM/DeepSeek 只生成固定Prompt、内容寻址且可重新验证的证据观察。source span 被包在明确的不可信数据边界，提示注入负例在transport前阻断；外部来源authority必须由receipt和独立verifier复核。provenance分为两个完全独立的结果：accepted `ProviderTransportReceipt`只在provider envelope、evidence schema/引用和Gateway observation全部成功后生成；`ProviderRejectedAttemptReceipt`只在真实HTTP 200 envelope成功但后续schema/binding失败时保留无正文的audit-only hash证据。`GatewayAnalysisResult`强制两者互斥并与status/reason绑定；accepted evidence只能进入`LLMEvidenceJournal`，rejected attempt只能进入物理分离的`LLMRejectedAttemptAuditJournal`，后者绝不进入样本、晋级、风险或交易链。Bull/Bear provider模式必须显式注入同verifier绑定的typed recorder，并从一个显式绝对accepted锚点确定性派生canonical accepted/rejected/provider-invocation Journal family；另配invocation锁、相对路径和Unicode/大小写/真实路径或物理别名均拒绝。provider-invocation Journal以不依赖调用方request ID的逻辑内容键在网络前持久化`in_flight`，并持有跨进程锁直到唯一终态；同一canonical family内换ID重发、未知崩溃状态、未知mode、ID/内容冲突或任一持久化校验失败均在provider调用或返回available前fail closed。本地receipt/journal均不是provider签名、外部密封、tamper-proof authority或production durable sink。2026-07-18一次隔离v1请求达到provider envelope但schema失败，不能被后新增的rejected receipt追溯包装，也不证明认证稳定、模型可用或生产部署。LLM不能直接改变候选成员、预测分数、风险请求、目标仓位或订单。
@@ -142,7 +145,7 @@ DeepSeek adapter只接受精确的冻结离线响应fixture或上述精确HTTP t
 - 历史证券主数据必须PIT覆盖上市/退市、板块迁移、ST/风险警示、停复牌与历史指数/行业成员；CoverageReceipt证明当期denominator，不单独证明已消除幸存者偏差；
 - 行业 shadow 已绑定 PIT taxonomy/membership、评分方法/有效期、score/coverage authority proof，但当前只有 fixture verifier；产业暴露、事件 hazard、跨市场映射与多期限分布尚未进入 Champion；
 - OpportunityRadar/Ledger、多期限forecast和三风格router已有本地shadow合同，但尚未完成真实机会覆盖率、pre-trigger capture、FDR、可成交性、quantile loss/coverage、Brier/Log Loss/ECE、按期限/状态删失处理、分组消融、abstain价值、费用后增量、尾部与相关性验证；合同通过不能冒充实证有效；
-- DeepSeek provider transport已是默认关闭的`local_isolated_candidate`；一次真实canary已到达provider但schema拒绝，accepted evidence readback、认证稳定性、quota/成本/留存及生产激活未验证；live paper scheduler仍为`PLANNED_NOT_IMPLEMENTED`；
+- DeepSeek provider transport已是默认关闭的`repository_contract`；一次真实canary已到达provider但schema拒绝，accepted evidence readback、认证稳定性、quota/成本/留存及生产激活未验证；live paper scheduler仍为`PLANNED_NOT_IMPLEMENTED`；
 - 当前已在每次risk评估及网络关闭的模拟副作用前重读drift latch；未来长驻scheduler/live broker仍须在真实外部副作用前绑定同一最新authority，当前fixture不能替代该验收；
 - mark/quote、Champion selection/feature、metrics与时钟已有本地完整性和TOCTOU门，但生产市场证据verifier、生产Champion/feature registry verifier、独立metrics重算authority和可信长驻时钟均未实现；
 - 真实 TradingDatas V1 runtime/dataset IDs、市场样本、20交易日工程闭环、60–120交易日科学成熟度与 paper-to-live 转化均未验证。
@@ -163,21 +166,25 @@ SQLite/旧 endpoint 的历史源码。这些只属于退役清单或法证回归
 仓库现役cron模板已移除显式旧A股调度；仍保留的`job_ashare_*` wrapper以及
 `job_market_capital_reconcile.sh ashare`分支只用于历史安装依赖识别，并在进入旧reader、
 旧研究或旧执行前统一调用不可由环境变量恢复的`block_retired_ashare_runtime`，以退出码78
-fail closed。重新启用必须是新的代码审查与cutover变更，不能改环境变量绕过。生产已安装
-cron本轮未读取，因此仍不能宣称服务器旧任务已经移除。
+fail closed。重新启用必须是新的代码审查与cutover变更，不能改环境变量绕过。2026-07-20
+已发布基线旁路验收的只读安装态 readback 仍看见旧 SharedSignals 与旧 TradingAgent wrapper
+引用；本后续候选尚未重新执行安装态 readback。因此只能确认旧任务未清零，不能宣称候选已在
+服务器退役或已修改任何现役 cron。
 
-## 双市场独立资本
+## 按市场原生币种隔离资本
 
 | 市场 | authority | 初始权益 | 容量 | 说明 |
 |---|---|---:|---:|---|
 | A股 | `ashare-capital-v1` | 50,000 CNY | 股票 gross 45,000；单票 7,500 | 买入100股整数倍；卖出含完整零股/全退例外；组合容量8 |
 | CNFutures | `cn-futures-capital-v1` | 50,000 CNY | 保证金 25,000 | 保证金与止损损失预算分开 |
+| Crypto | `Crypto/capital_policy.py` 原生资本权威 + `Crypto/config.yaml` 风险配置 | 10,000 USDT | 单仓 15%；最多10仓 | 24x7、小数数量、当前仅 shadow/simulated；无 live exchange authority |
 
 历史 fresh-start 基线从 generation 1 开始，但消费者不得把 generation 或 execution lineage
 写成常量。每次只接受 current capital snapshot 中验证通过的正整数 generation 与安全 lineage，
-并要求所有下游回执逐项匹配。两个 authority 各自持有 cash、position/margin、reservation、
-PnL、MTM equity、high-water、drawdown、loss streak、execution lineage 和 event chain；任何层
-都不得相加、净额或补资。
+并要求所有下游回执逐项匹配。国内两套正式 simulated authority 与 Crypto 的 shadow authority
+各自持有原生币种 cash、position/margin、reservation、PnL、MTM equity、high-water、drawdown、
+loss streak、execution lineage 和 event chain；任何层都不得换汇、相加、净额或补资。All Markets
+只允许汇总计数、覆盖率和健康状态，货币金额、收益率、回撤和基准必须按 market/currency 分桶。
 
 账户不是“始终满仓”目标。A股全部50,000 CNY有资格服务合格机会，但动态运营现金、买入100股整数倍、费用/滑点、冻结订单、相关性、候选质量和风险门禁会造成未部署资金。资金计划必须显示利用率和未部署原因。现金管理建议与股票alpha分账且不自动下单。
 

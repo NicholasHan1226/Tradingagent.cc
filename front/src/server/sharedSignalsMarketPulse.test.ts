@@ -4,10 +4,7 @@ import { readSharedSignalsMarketPulses, resetMarketPulseCacheForTests } from './
 
 const DATASET_IDS: Partial<Record<Exclude<Market, 'All Markets'>, string>> = {
   'A-share': 'cn_equity_intraday_fixture',
-  US: 'us_equity_daily_fixture',
   Crypto: 'crypto_intraday_fixture',
-  HK: 'hk_equity_daily_fixture',
-  PM: 'prediction_market_fixture',
   CNFutures: 'cn_futures_intraday_fixture',
 }
 const V1_CONFIG = {
@@ -333,52 +330,29 @@ describe('TradingDatas market pulse reader (compatibility module)', () => {
     expect(pulse.lastPrice).toBe(1424.1)
   })
 
-  it('treats compact daily trade dates as valid freshness evidence', async () => {
-    const fetchImpl = v1Fetch((body) => queryResponse(String(body.dataset_id), [{ symbol: 'AAPL', close: 288.39, trade_date: '20260711' }]))
+  it('treats compact trade dates as valid freshness evidence for an active market', async () => {
+    const fetchImpl = v1Fetch((body) => queryResponse(
+      String(body.dataset_id),
+      [{ symbol: 'IF2601.CFFEX', close: 4012.4, trade_date: '20260711' }],
+      { data_through: '2026-07-11T00:05:00+00:00', observed_at: '2026-07-11T00:06:00+00:00' },
+    ))
 
     const { pulses: [pulse] } = await readSharedSignalsMarketPulses({
       ...V1_CONFIG,
       fetchImpl,
-      holdings: [{ ...holding('US', 'AAPL'), marketDataSymbol: 'AAPL' }],
+      holdings: [{ ...holding('CNFutures', 'IF2601.CFFEX'), marketDataSymbol: 'IF2601.CFFEX' }],
       signals: [],
-      now: new Date('2026-07-12T09:00:00+08:00'),
+      now: new Date('2026-07-11T08:05:00+08:00'),
     })
 
     expect(pulse.updatedAt).toBe('20260711')
     expect(pulse.freshness).toBe('live')
   })
 
-  it('uses only the canonical yes outcome for Polymarket history', async () => {
-    const pmRow = (price: number, priceTime: string, outcome: 'Yes' | 'No') => ({
-      market_id: '561263', price, price_time: priceTime, raw_json: JSON.stringify({ outcome }),
-    })
-    const fetchImpl = v1Fetch((body) => queryResponse(String(body.dataset_id), [
-      pmRow(0.8, '2026-07-11T05:00:00+00:00', 'No'),
-      pmRow(0.2, '2026-07-11T05:00:00+00:00', 'Yes'),
-      pmRow(0.75, '2026-07-11T04:30:00+00:00', 'No'),
-      pmRow(0.25, '2026-07-11T04:30:00+00:00', 'Yes'),
-    ], {
-      data_through: '2026-07-11T05:00:00+00:00',
-      observed_at: '2026-07-11T05:01:00+00:00',
-    }))
-
-    const { pulses: [pulse] } = await readSharedSignalsMarketPulses({
-      ...V1_CONFIG,
-      fetchImpl,
-      holdings: [],
-      signals: [{ ...signal('PM', '561263'), marketDataSymbol: '561263' }],
-      now: new Date('2026-07-11T05:05:00+00:00'),
-    })
-
-    expect(pulse.points).toEqual([0.25, 0.2])
-    expect(pulse.lastPrice).toBe(0.2)
-    expect(pulse.updatedAt).toBe('2026-07-11T05:00:00+00:00')
-  })
-
   it('reports sourced, unavailable, degraded and unmapped coverage without guessing identifiers', async () => {
     const fetchImpl = v1Fetch((body) => {
       if (body.dataset_id === DATASET_IDS.Crypto) throw new Error('upstream unavailable')
-      if (body.dataset_id === DATASET_IDS.PM) return queryResponse(String(body.dataset_id), [], { degraded: true, state: 'failed', reasons: ['upstream_failed'] })
+      if (body.dataset_id === DATASET_IDS.CNFutures) return queryResponse(String(body.dataset_id), [], { degraded: true, state: 'failed', reasons: ['upstream_failed'] })
       return queryResponse(String(body.dataset_id), [{ symbol: '600519.SH', close: 1424.1, bar_time: '2026-07-11T09:35:00+08:00' }])
     })
 
@@ -386,7 +360,7 @@ describe('TradingDatas market pulse reader (compatibility module)', () => {
       ...V1_CONFIG,
       fetchImpl,
       holdings: [holding('A-share', '600519.SH')],
-      signals: [{ ...signal('Crypto', 'BTCUSDT'), marketDataSymbol: 'BTCUSDT' }, { ...signal('PM', 'market-123'), marketDataSymbol: 'market-123' }],
+      signals: [{ ...signal('Crypto', 'BTCUSDT'), marketDataSymbol: 'BTCUSDT' }, { ...signal('CNFutures', 'IF2601.CFFEX'), marketDataSymbol: 'IF2601.CFFEX' }],
       now: new Date('2026-07-11T09:40:00+08:00'),
     })
 
@@ -394,10 +368,7 @@ describe('TradingDatas market pulse reader (compatibility module)', () => {
     expect(result.coverage.entries).toEqual(expect.arrayContaining([
       expect.objectContaining({ market: 'A-share', symbol: '600519.SH', status: 'sourced' }),
       expect.objectContaining({ market: 'Crypto', symbol: 'BTCUSDT', status: 'unavailable' }),
-      expect.objectContaining({ market: 'PM', symbol: 'market-123', status: 'degraded' }),
-      expect.objectContaining({ market: 'US', status: 'no_representative' }),
-      expect.objectContaining({ market: 'HK', status: 'no_representative' }),
-      expect.objectContaining({ market: 'CNFutures', status: 'no_representative' }),
+      expect.objectContaining({ market: 'CNFutures', symbol: 'IF2601.CFFEX', status: 'degraded' }),
     ]))
     expect(result.coverage).toMatchObject({ cacheState: 'fresh', sourcedCount: 1, requestedCount: 3 })
   })
@@ -406,8 +377,8 @@ describe('TradingDatas market pulse reader (compatibility module)', () => {
     const fetchImpl = v1Fetch((body) => queryResponse(String(body.dataset_id), [
       { symbol: 'BTCUSDT', close: 62_000, bar_time: '2026-07-11T09:35:00+08:00' },
     ]))
-    const explicitCrypto = { ...signal('Crypto', 'BTC-USD'), marketDataSymbol: 'BTCUSDT' }
-    const unmappedCrypto = signal('Crypto', 'ETH-USD')
+    const explicitCrypto = { ...signal('Crypto', 'BTC-USDT'), marketDataSymbol: 'BTCUSDT' }
+    const unmappedCrypto = signal('Crypto', 'ETH-USDT')
 
     const unmapped = await readSharedSignalsMarketPulses({ ...V1_CONFIG, fetchImpl, holdings: [], signals: [unmappedCrypto], now: new Date('2026-07-11T09:39:00+08:00') })
     const first = await readSharedSignalsMarketPulses({ ...V1_CONFIG, fetchImpl, holdings: [], signals: [explicitCrypto], now: new Date('2026-07-11T09:40:00+08:00') })

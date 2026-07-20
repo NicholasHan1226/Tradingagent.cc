@@ -20,7 +20,7 @@ from shared.portfolio.constructor import construct as construct_portfolio
 
 
 class StubMarketAdapter(MarketAdapter):
-    def __init__(self, market: str = "unit") -> None:
+    def __init__(self, market: str = "crypto") -> None:
         self.market = market
 
     def get_universe(self, date: str) -> list[str]:
@@ -307,10 +307,10 @@ class OrchestratorTest(unittest.TestCase):
             2,
         )
         self.assertEqual(
-            {request["market"] for request in self.score_requests}, {"unit"}
+            {request["market"] for request in self.score_requests}, {"crypto"}
         )
         self.assertEqual(
-            {request["market"] for request in self.pool_requests}, {"unit"}
+            {request["market"] for request in self.pool_requests}, {"crypto"}
         )
 
         trade_rows = [
@@ -532,7 +532,7 @@ class OrchestratorTest(unittest.TestCase):
         self.assertGreaterEqual(result["recorded_count"], 1)
 
     def test_run_shadow_loop_uses_adapter_market_for_non_ashare_scoring(self) -> None:
-        for market in ("crypto", "us"):
+        for market in ("crypto", "cn_futures"):
             with self.subTest(market=market):
                 self.calls.clear()
                 self.score_requests.clear()

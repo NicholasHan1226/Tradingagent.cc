@@ -21,9 +21,9 @@ const performance: PerformancePoint[] = [
 
 const signals: SignalRow[] = [
   {
-    symbol: '0700.HK',
-    name: '腾讯',
-    market: 'HK',
+    symbol: '600519.SH',
+    name: '贵州茅台',
+    market: 'A-share',
     method: '事件机会',
     status: 'pending',
     impact: '--',

@@ -14,6 +14,7 @@ export type LinkedEvidenceContextModel = {
   signalCount: number
   holdingCount: number
   attributablePnl?: number
+  attributablePnlCurrency?: 'CNY' | 'USDT'
   updatedAt: string
   legacyFrozen?: boolean
 }
@@ -28,9 +29,7 @@ export function createLinkedEvidenceContext(events: FunnelEvent[], opportunityId
   const legacyFrozen = ordered.some((event) => event.source === 'legacy_frozen_opportunity_log')
   const relatedSignals = legacyFrozen ? [] : signals.filter((signal) => signal.opportunityId === opportunityId)
   const relatedHoldings = legacyFrozen ? [] : holdings.filter((holding) => holding.opportunityId === opportunityId)
-  const pnlValues = relatedHoldings
-    .map((holding) => holding.realizedPnl === undefined && holding.unrealizedPnl === undefined ? undefined : (holding.realizedPnl ?? 0) + (holding.unrealizedPnl ?? 0))
-    .filter((value): value is number => value !== undefined)
+  const attributablePnl = summarizeAttributablePnl(relatedHoldings, latest.market)
   return {
     id: opportunityId,
     symbol: latest.symbol,
@@ -41,9 +40,30 @@ export function createLinkedEvidenceContext(events: FunnelEvent[], opportunityId
     eventCount: ordered.length,
     signalCount: relatedSignals.length,
     holdingCount: relatedHoldings.length,
-    attributablePnl: pnlValues.length ? roundMoney(pnlValues.reduce((total, value) => total + value, 0)) : undefined,
+    attributablePnl: attributablePnl?.value,
+    attributablePnlCurrency: attributablePnl?.currency,
     updatedAt: formatTimestamp(latest.at),
     legacyFrozen,
+  }
+}
+
+function summarizeAttributablePnl(holdings: HoldingRow[], expectedMarket: HoldingRow['market']): { value: number; currency: 'CNY' | 'USDT' } | undefined {
+  if (!holdings.length) return undefined
+
+  const scopes = holdings.map((holding) => holding.accountScope?.trim())
+  const currencies = holdings.map((holding) => holding.currency)
+  const pnlValues = holdings.map((holding) => holding.realizedPnl === undefined && holding.unrealizedPnl === undefined
+    ? undefined
+    : (holding.realizedPnl ?? 0) + (holding.unrealizedPnl ?? 0))
+
+  if (scopes.some((scope) => !scope) || new Set(scopes).size !== 1) return undefined
+  if (holdings.some((holding) => holding.market !== expectedMarket)) return undefined
+  if (currencies.some((currency) => currency !== 'CNY' && currency !== 'USDT') || new Set(currencies).size !== 1) return undefined
+  if (pnlValues.some((value) => value === undefined || !Number.isFinite(value))) return undefined
+
+  return {
+    value: roundMoney((pnlValues as number[]).reduce((total, value) => total + value, 0)),
+    currency: currencies[0] as 'CNY' | 'USDT',
   }
 }
 

@@ -24,6 +24,15 @@ export function formatCurrency(value: number) {
   }).format(value)
 }
 
+export function formatUsdt(value: number) {
+  return `${value.toLocaleString('en-US', { maximumFractionDigits: 2 })} USDT`
+}
+
+export function formatSignedUsdt(value: number) {
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${formatUsdt(value)}`
+}
+
 export function formatCny(value: number) {
   return new Intl.NumberFormat('zh-CN', {
     style: 'currency',

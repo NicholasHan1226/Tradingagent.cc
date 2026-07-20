@@ -134,22 +134,34 @@ def test_ashare_generic_style_files_and_weight_budget_projection_are_retired() -
     assert "single_shared_execution_account" in source
 
 
-def test_generic_style_runner_and_evolution_fail_closed_for_single_account_markets() -> (
-    None
-):
+def test_generic_style_runner_and_automatic_evolution_are_physically_retired() -> None:
+    retired = (
+        "shared/markets/style_config.py",
+        "shared/markets/style_runner.py",
+        "shared/markets/evolution_engine.py",
+        "shared/markets/evolution_guard.py",
+        "shared/markets/performance_tracker.py",
+        "cron/evolution.sh",
+        "Crypto/styles/aggressive.json",
+        "Crypto/styles/balanced.json",
+        "Crypto/styles/conservative.json",
+        "Crypto/styles/grid.json",
+        "Crypto/styles/mean_reversion.json",
+        "Crypto/styles/swing.json",
+        "tests/test_evolution_runtime_styles.py",
+        "tests/test_style_runner_ledger.py",
+        "tests/test_performance_tracker_dedupe.py",
+    )
+    for relative_path in retired:
+        assert not (ROOT / relative_path).exists(), relative_path
+    assert not list((ROOT / "Crypto" / "styles").glob("*.json"))
+
     pipeline = (ROOT / "shared" / "execution" / "auto_pipeline.py").read_text(
         encoding="utf-8"
     )
-    runner = (ROOT / "shared" / "markets" / "style_runner.py").read_text(
-        encoding="utf-8"
-    )
-    evolution = (ROOT / "shared" / "markets" / "evolution_engine.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'ACTIVE_MARKETS = ("crypto", "us", "pm")' in pipeline
-    for source in (pipeline, runner, evolution):
-        assert 'frozenset({"ashare", "cn_futures"})' in source
-        assert "retired" in source
+    assert 'retired_cli("shared.execution.auto_pipeline")' in pipeline
+    assert "StyleRunner" not in pipeline
+    assert "TradingagentDataReader" not in pipeline
 
 
 def test_execution_router_cannot_auto_graduate_or_queue_real_signals() -> None:

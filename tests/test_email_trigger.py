@@ -15,10 +15,10 @@ class TriggerAdapter(MarketAdapter):
         return ["AAA"]
 
     def get_market(self) -> str:
-        return "unit"
+        return "crypto"
 
     def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
-        return "unit", symbol
+        return "crypto", symbol
 
     def get_strategy_config(self) -> dict[str, object]:
         return {
@@ -32,14 +32,16 @@ class TriggerAdapter(MarketAdapter):
         }
 
     def get_shadow_account(self) -> str:
-        return "unit_shadow"
+        return "crypto_shadow"
 
     def get_sim_account(self) -> dict[str, object]:
-        return {"account": "unit_sim", "sim_capital": 10000.0, "positions": []}
+        return {"account": "crypto_sim", "sim_capital": 10000.0, "positions": []}
 
 
 class TriggerReader:
-    def get_bars_daily(self, market: str, symbol: str, start: object = None, end: object = None) -> list[dict[str, float]]:
+    def get_bars_daily(
+        self, market: str, symbol: str, start: object = None, end: object = None
+    ) -> list[dict[str, float]]:
         return [{"close": 10.0}, {"close": 10.2}]
 
 
@@ -58,7 +60,9 @@ class EmailTriggerTest(unittest.TestCase):
         self.tmp_path = Path(self.tmpdir.name)
         self.sent: list[dict[str, object]] = []
 
-    def _send_email(self, to: str, subject: str, body: str, html_body: str, **kwargs: object) -> dict[str, object]:
+    def _send_email(
+        self, to: str, subject: str, body: str, html_body: str, **kwargs: object
+    ) -> dict[str, object]:
         record = {
             "to": to,
             "subject": subject,
@@ -67,24 +71,57 @@ class EmailTriggerTest(unittest.TestCase):
             **kwargs,
         }
         self.sent.append(record)
-        return {"status": "sent", "provider": "mock", "message_id": f"mock-{len(self.sent)}"}
+        return {
+            "status": "sent",
+            "provider": "mock",
+            "message_id": f"mock-{len(self.sent)}",
+        }
 
     def _deps(self, *, sim: bool = False) -> OrchestratorDeps:
-        def score_stock(market: str, symbol: str, reader: object = None, date: str | None = None) -> dict[str, object]:
+        def score_stock(
+            market: str, symbol: str, reader: object = None, date: str | None = None
+        ) -> dict[str, object]:
             return {"combined": 0.8, "technical": 0.75, "sector": "unit"}
 
-        def build_pool(date: str, universe: list[str], market: str | None = None, reader: object | None = None) -> dict[str, list[str]]:
-            return {"candidate": list(universe), "watch": [], "holdings": [], "universe": list(universe)}
+        def build_pool(
+            date: str,
+            universe: list[str],
+            market: str | None = None,
+            reader: object | None = None,
+        ) -> dict[str, list[str]]:
+            return {
+                "candidate": list(universe),
+                "watch": [],
+                "holdings": [],
+                "universe": list(universe),
+            }
 
         def debate(symbol: str, scores: dict[str, object]) -> dict[str, object]:
             return {"ts_code": symbol, "belief_score": 0.7}
 
-        def risk_check(order: dict[str, object], portfolio: dict[str, object]) -> dict[str, object]:
-            return {"approved": True, "adjusted_weight": 0.05, "adjustments": [], "reasons": ["unit trigger"]}
-
-        def construct(orders: list[dict[str, object]], capital: float, method: str, regime: str) -> dict[str, object]:
+        def risk_check(
+            order: dict[str, object], portfolio: dict[str, object]
+        ) -> dict[str, object]:
             return {
-                "positions": [{"ts_code": "AAA", "shares": 10, "price": 10.0, "weight": 0.05, "sector": "unit"}],
+                "approved": True,
+                "adjusted_weight": 0.05,
+                "adjustments": [],
+                "reasons": ["unit trigger"],
+            }
+
+        def construct(
+            orders: list[dict[str, object]], capital: float, method: str, regime: str
+        ) -> dict[str, object]:
+            return {
+                "positions": [
+                    {
+                        "ts_code": "AAA",
+                        "shares": 10,
+                        "price": 10.0,
+                        "weight": 0.05,
+                        "sector": "unit",
+                    }
+                ],
                 "total_weight": 0.05,
                 "cash_weight": 0.95,
             }
@@ -95,10 +132,18 @@ class EmailTriggerTest(unittest.TestCase):
         def record_shadow(order: dict[str, object], account: str) -> dict[str, object]:
             return {"recorded": True, "status": "recorded", "trade_id": "shadow-1"}
 
-        def review(date: str, session: str = "close", capital_layer: str = "shadow") -> dict[str, object]:
-            return {"trade_date": date, "session": session, "capital_layer": capital_layer}
+        def review(
+            date: str, session: str = "close", capital_layer: str = "shadow"
+        ) -> dict[str, object]:
+            return {
+                "trade_date": date,
+                "session": session,
+                "capital_layer": capital_layer,
+            }
 
-        def execute_sim_order(order: dict[str, object], account: object = None) -> dict[str, object]:
+        def execute_sim_order(
+            order: dict[str, object], account: object = None
+        ) -> dict[str, object]:
             return {
                 "order_id": order["order_id"],
                 "status": "filled",
@@ -165,11 +210,15 @@ class EmailTriggerTest(unittest.TestCase):
             patch.object(email_sender, "LOCAL_FALLBACK_DIR", fallback_dir),
             patch.object(email_sender, "RATE_LIMIT_STATE", state_path),
             patch.object(email_sender, "load_env_from_file", return_value=[]),
-            patch.object(email_sender, "_send_via_cloudflare", return_value={
-                "provider": "cloudflare",
-                "message_id": "cf-1",
-                "status_code": 200,
-            }) as cloudflare,
+            patch.object(
+                email_sender,
+                "_send_via_cloudflare",
+                return_value={
+                    "provider": "cloudflare",
+                    "message_id": "cf-1",
+                    "status_code": 200,
+                },
+            ) as cloudflare,
         ):
             first = email_sender.send_email(
                 "user@example.com",

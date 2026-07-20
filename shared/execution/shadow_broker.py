@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from shared.governance.market_lanes import canonical_runtime_market
+
 from shared.markets.safety import reject_real_execution_payload
 
 
@@ -66,8 +68,7 @@ def _safe_quantity(value: Any) -> float:
 
 
 def _normalize_market(value: Any) -> str:
-    market = str(value or "").strip().lower()
-    return market or "unknown"
+    return canonical_runtime_market(value)
 
 
 def _infer_market(symbol: str) -> str:
@@ -76,9 +77,9 @@ def _infer_market(symbol: str) -> str:
         return "ashare"
     if upper.endswith(("USDT", "USDC", "USD")):
         return "crypto"
-    if "-" in symbol or "will-" in upper.lower():
-        return "pm"
-    return "unknown"
+    if upper.endswith((".CFFEX", ".SHFE", ".DCE", ".CZCE", ".INE", ".GFEX")):
+        return "cn_futures"
+    return ""
 
 
 def _symbol_from_order(order: dict[str, Any]) -> str:
@@ -93,7 +94,13 @@ def _symbol_from_order(order: dict[str, Any]) -> str:
 
 def _normalize_side(value: Any) -> str:
     side = str(value or "buy").strip().lower()
-    return {"buy": "buy", "long": "buy", "sell": "sell", "reduce": "sell", "close": "sell"}.get(side, side)
+    return {
+        "buy": "buy",
+        "long": "buy",
+        "sell": "sell",
+        "reduce": "sell",
+        "close": "sell",
+    }.get(side, side)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -106,7 +113,9 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def _iter_trade_rows() -> Iterator[dict[str, Any]]:
@@ -138,7 +147,11 @@ def _file_lock() -> Iterator[None]:
 
 def _acquire_exclusive_lock(fd: int, lock_path: Path) -> None:
     last_error: OSError | None = None
-    retry_errnos = {errno.EACCES, errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN)}
+    retry_errnos = {
+        errno.EACCES,
+        errno.EAGAIN,
+        getattr(errno, "EWOULDBLOCK", errno.EAGAIN),
+    }
     for attempt in range(1, LOCK_RETRY_ATTEMPTS + 1):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -149,7 +162,9 @@ def _acquire_exclusive_lock(fd: int, lock_path: Path) -> None:
             last_error = exc
             if attempt < LOCK_RETRY_ATTEMPTS:
                 time.sleep(LOCK_RETRY_DELAY_SECONDS * attempt)
-    raise TimeoutError(f"Could not acquire shadow broker lock {lock_path} after {LOCK_RETRY_ATTEMPTS} attempts") from last_error
+    raise TimeoutError(
+        f"Could not acquire shadow broker lock {lock_path} after {LOCK_RETRY_ATTEMPTS} attempts"
+    ) from last_error
 
 
 def _validate_shadow_order(order: dict[str, Any]) -> None:
@@ -159,14 +174,18 @@ def _validate_shadow_order(order: dict[str, Any]) -> None:
         raise ValueError(str(exc)) from exc
     layer = str(order.get("capital_layer") or "shadow").strip().lower()
     if layer != "shadow":
-        raise ValueError(f"shadow_broker only accepts capital_layer=shadow, got {layer!r}")
+        raise ValueError(
+            f"shadow_broker only accepts capital_layer=shadow, got {layer!r}"
+        )
 
 
 def _load_positions() -> dict[str, Any]:
     return _read_json(SHADOW_POSITIONS)
 
 
-def _position_bucket(positions: dict[str, Any], strategy_name: str, market: str) -> dict[str, Any]:
+def _position_bucket(
+    positions: dict[str, Any], strategy_name: str, market: str
+) -> dict[str, Any]:
     strategies = positions.setdefault("strategies", {})
     strategy = strategies.setdefault(strategy_name, {})
     markets = strategy.setdefault("markets", {})
@@ -219,7 +238,9 @@ def _apply_trade_to_positions(
         current["quantity"] = _safe_quantity(new_qty)
         current["cost_basis"] = round(new_cost, 6)
         current["avg_price"] = round(new_cost / new_qty, 6) if new_qty else 0.0
-        current["realized_pnl"] = round(_safe_float(current.get("realized_pnl"), 0.0) + realized_pnl, 6)
+        current["realized_pnl"] = round(
+            _safe_float(current.get("realized_pnl"), 0.0) + realized_pnl, 6
+        )
         if new_qty <= 0:
             bucket.pop(symbol, None)
     else:
@@ -239,9 +260,14 @@ def _row_market(row: dict[str, Any]) -> str:
 
 
 def _matches_market(row: dict[str, Any], market: str | None) -> bool:
+    try:
+        row_market = _row_market(row)
+    except ValueError:
+        # Frozen rows from retired or unidentified markets are forensic only.
+        return False
     if market is None:
         return True
-    return _row_market(row) == _normalize_market(market)
+    return row_market == _normalize_market(market)
 
 
 def _replay_strategy(
@@ -282,10 +308,14 @@ def _replay_strategy(
             buys += 1 if side == "buy" else 0
             sells += 1 if side == "sell" else 0
 
-        position = positions.setdefault(symbol, {"quantity": 0.0, "avg_price": 0.0, "cost_basis": 0.0})
+        position = positions.setdefault(
+            symbol, {"quantity": 0.0, "avg_price": 0.0, "cost_basis": 0.0}
+        )
         if side == "buy":
             new_qty = _safe_float(position["quantity"]) + quantity
-            new_cost = _safe_float(position["cost_basis"]) + quantity * price + commission
+            new_cost = (
+                _safe_float(position["cost_basis"]) + quantity * price + commission
+            )
             position["quantity"] = new_qty
             position["cost_basis"] = new_cost
             position["avg_price"] = new_cost / new_qty if new_qty else 0.0
@@ -294,11 +324,17 @@ def _replay_strategy(
             if quantity > current_qty:
                 skipped_rows += 1
                 continue
-            row_pnl = (price - _safe_float(position["avg_price"])) * quantity - commission
+            row_pnl = (
+                price - _safe_float(position["avg_price"])
+            ) * quantity - commission
             if is_target_day:
                 realized_pnl += row_pnl
             new_qty = current_qty - quantity
-            new_cost = max(0.0, _safe_float(position["cost_basis"]) - _safe_float(position["avg_price"]) * quantity)
+            new_cost = max(
+                0.0,
+                _safe_float(position["cost_basis"])
+                - _safe_float(position["avg_price"]) * quantity,
+            )
             position["quantity"] = new_qty
             position["cost_basis"] = new_cost
             position["avg_price"] = new_cost / new_qty if new_qty else 0.0
@@ -336,7 +372,9 @@ def _replay_strategy(
     }
 
 
-def record_shadow(order: dict[str, Any], strategy_name: str, market: str | None = None) -> dict[str, Any]:
+def record_shadow(
+    order: dict[str, Any], strategy_name: str, market: str | None = None
+) -> dict[str, Any]:
     """Record a shadow order and update local shadow JSON ledgers."""
 
     payload = dict(order or {})
@@ -345,15 +383,26 @@ def record_shadow(order: dict[str, Any], strategy_name: str, market: str | None 
     if not symbol:
         raise ValueError("shadow_broker requires ts_code/symbol/market_id")
 
-    market_key = _normalize_market(market or payload.get("market") or _infer_market(symbol))
-    trade_date = _display_date(payload.get("trade_date") or payload.get("date") or _now_iso())
+    market_key = _normalize_market(
+        market or payload.get("market") or _infer_market(symbol)
+    )
+    trade_date = _display_date(
+        payload.get("trade_date") or payload.get("date") or _now_iso()
+    )
     quantity = _safe_float(payload.get("quantity"), 0.0)
-    price = _safe_float(payload.get("price") or payload.get("limit_price") or payload.get("execution_price"), 0.0)
+    price = _safe_float(
+        payload.get("price")
+        or payload.get("limit_price")
+        or payload.get("execution_price"),
+        0.0,
+    )
     commission = _safe_float(payload.get("commission"), 0.0)
     side = _normalize_side(payload.get("side") or payload.get("direction"))
     amount = quantity * price
     trade_id = str(payload.get("trade_id") or f"SHADOW-{uuid.uuid4().hex[:12]}")
-    strategy = str(strategy_name or payload.get("strategy_name") or "shadow_strategy").strip()
+    strategy = str(
+        strategy_name or payload.get("strategy_name") or "shadow_strategy"
+    ).strip()
 
     trade = {
         "trade_id": trade_id,
@@ -366,7 +415,9 @@ def record_shadow(order: dict[str, Any], strategy_name: str, market: str | None 
         "price": round(price, 8),
         "amount": round(amount, 8),
         "commission": round(commission, 8),
-        "net_amount": round(-amount - commission if side == "buy" else amount - commission, 8),
+        "net_amount": round(
+            -amount - commission if side == "buy" else amount - commission, 8
+        ),
         "capital_layer": "shadow",
         "account_type": "shadow",
         "real_execution": False,
@@ -396,7 +447,9 @@ def record_shadow(order: dict[str, Any], strategy_name: str, market: str | None 
         positions["updated_at"] = trade["created_at"]
         _write_json(SHADOW_POSITIONS, positions)
         pnl_snapshot = _read_json(SHADOW_PNL)
-        pnl_snapshot.setdefault("dates", {}).setdefault(_display_date(trade_date), {})[strategy] = _replay_strategy(
+        pnl_snapshot.setdefault("dates", {}).setdefault(_display_date(trade_date), {})[
+            strategy
+        ] = _replay_strategy(
             strategy,
             trade_date,
         )
@@ -420,13 +473,17 @@ def record_shadow(order: dict[str, Any], strategy_name: str, market: str | None 
     }
 
 
-def get_shadow_pnl(strategy_name: str, date: str, market: str | None = None) -> dict[str, Any]:
+def get_shadow_pnl(
+    strategy_name: str, date: str, market: str | None = None
+) -> dict[str, Any]:
     """Return shadow PnL for one strategy/date, optionally scoped to a market."""
 
     return _replay_strategy(str(strategy_name), date, market=market)
 
 
-def get_all_shadow_pnl(date: str, market: str | None = None) -> dict[str, dict[str, Any]]:
+def get_all_shadow_pnl(
+    date: str, market: str | None = None
+) -> dict[str, dict[str, Any]]:
     """Return shadow PnL for every strategy seen on the requested date."""
 
     target_date = _compact_date(date)
@@ -434,10 +491,14 @@ def get_all_shadow_pnl(date: str, market: str | None = None) -> dict[str, dict[s
         {
             str(row.get("strategy_name") or "")
             for row in _iter_trade_rows()
-            if str(row.get("strategy_name") or "") and (not target_date or _trade_date_for_row(row) == target_date)
+            if str(row.get("strategy_name") or "")
+            and (not target_date or _trade_date_for_row(row) == target_date)
         }
     )
-    return {strategy: get_shadow_pnl(strategy, date, market=market) for strategy in strategies}
+    return {
+        strategy: get_shadow_pnl(strategy, date, market=market)
+        for strategy in strategies
+    }
 
 
 __all__ = [

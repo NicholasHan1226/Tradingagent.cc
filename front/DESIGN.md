@@ -20,7 +20,7 @@ The interface uses a Hyperliquid-inspired terminal grammar rather than a generic
 
 Hyperliquid structures are translated to the product boundary: its market ticker becomes the snapshot strip, chart remains a chart, order book becomes Process Book, order form becomes Automation Inspector, and positions/orders/history become read-only ledgers.
 
-The terminal operations layer adds a six-market tape and evidence-health block below the account header. It keeps return, holdings count, runtime truth, snapshot freshness and five data-domain states visible without introducing another card row.
+The terminal operations layer adds a three-lane market tape (`A-share`, `CNFutures`, `Crypto`) and evidence-health block below the account header. `All Markets` remains a non-monetary status aggregate. The strip keeps return, holdings count, runtime truth, snapshot freshness and five data-domain states visible without introducing another card row.
 
 The evidence-adaptive layer adds four explicit runtime states: `live`, `idle`, `stale` and `degraded`. Top navigation, market header, page metrics and inspectors consume one heartbeat model, so a healthy scheduler with no pending process reads `调度正常 · 当前空闲` instead of claiming automation is running. Internal values such as `buy`, `sell`, `empty` and raw source codes are translated before rendering.
 
@@ -51,7 +51,7 @@ Secondary pages do not use `PageSummaryBoard`. Empty running state reveals recen
 ## Data trust rules
 
 - Use snapshot fields only. Missing facts display `—`, never synthetic zeroes.
-- Holdings totals are currency-aware: A-share-only exposure is CNY, USD-only exposure is USD, percentages remain percentages, and mixed currencies display `多币种` without a false sum.
+- Holdings totals are currency-aware: A-share and CNFutures exposure use their independent CNY authorities, Crypto can use USD, percentages remain percentages, and `All Markets` never creates a false monetary sum.
 - Suppress an asset name when it duplicates the ticker.
 - Terminal rows preserve result states such as partial fill, safety block, missed and cancelled; terminal records never return to the running queue.
 - Display timestamps and source health as observed. Never use the browser clock to disguise stale data.

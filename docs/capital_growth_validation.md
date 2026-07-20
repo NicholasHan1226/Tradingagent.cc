@@ -5,6 +5,7 @@
 ## 1. 先验边界
 
 - A股和 CNFutures 各自以独立 fresh-start 50,000 CNY simulated authority 运行；资金、PnL、DD、样本和成熟度不合并。
+- Crypto 的 10,000 USDT shadow/simulated authority 由其市场 lane 独立验证，不纳入本文国内资本 KPI；即使币种相同也不得跨 market/account 聚合，All Markets 只汇总非货币计数与健康状态。
 - 首 1–2 周只能证明工程/数据闭环和初步样本质量，不能证明长期正期望。
 - 第 5、10 个 A股交易日是人工 review checkpoint，不是自动实盘日期。
 - `promotion_evidence_ready`、短期盈利或胜率均不构成授权；自动 champion、自动风险扩张、自动 live transition 始终关闭。

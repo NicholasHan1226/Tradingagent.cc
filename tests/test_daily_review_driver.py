@@ -90,6 +90,8 @@ class DailyReviewDriverTest(unittest.TestCase):
                 "created_at": "2026-06-30T10:30:00",
                 "strategy_name": "trend",
                 "pnl": 0.12,
+                "market": "ashare",
+                "account_scope": "ashare-shadow",
             }
         )
         self._write_shadow_trade(
@@ -104,6 +106,8 @@ class DailyReviewDriverTest(unittest.TestCase):
                 "created_at": "2026-06-30T14:20:00",
                 "strategy_name": "trend",
                 "pnl": -0.03,
+                "market": "ashare",
+                "account_scope": "ashare-shadow",
             }
         )
 
@@ -120,16 +124,26 @@ class DailyReviewDriverTest(unittest.TestCase):
         self.assertEqual(
             lunch["capital_layer_reviews"]["shadow"]["capital_layer"], "shadow"
         )
-        self.assertIn("comparisons", lunch["capital_layer_reviews"]["shadow"])
-        self.assertIn("next_plan", lunch["capital_layer_reviews"]["shadow"])
+        lunch_ashare = lunch["capital_layer_reviews"]["shadow"]["market_reviews"][
+            "ashare"
+        ]
+        lunch_account = lunch_ashare["account_reviews"]["ashare-shadow"]
+        self.assertIn("comparisons", lunch_account)
+        self.assertIn("next_plan", lunch_account)
+        self.assertNotIn("pnl", lunch["capital_layer_reviews"]["shadow"])
 
         self.assertEqual(close["capital_layer"], "shadow")
         self.assertFalse(close["stale"])
         self.assertEqual(
             close["capital_layer_reviews"]["shadow"]["capital_layer"], "shadow"
         )
-        self.assertIn("comparisons", close["capital_layer_reviews"]["shadow"])
-        self.assertIn("next_day_plan", close["capital_layer_reviews"]["shadow"])
+        close_ashare = close["capital_layer_reviews"]["shadow"]["market_reviews"][
+            "ashare"
+        ]
+        close_account = close_ashare["account_reviews"]["ashare-shadow"]
+        self.assertIn("comparisons", close_account)
+        self.assertIn("next_day_plan", close_account)
+        self.assertNotIn("pnl", close["capital_layer_reviews"]["shadow"])
 
         rows = [
             json.loads(line)
@@ -220,7 +234,7 @@ class DailyReviewDriverTest(unittest.TestCase):
         )
         ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"][
             "ashare"
-        ]
+        ]["account_reviews"]["ashare_sim"]
         self.assertEqual(ashare_review["trades"], 1)
         self.assertEqual(ashare_review["strategy_trades"], 0)
         self.assertEqual(ashare_review["validation_sample_count"], 1)
@@ -309,7 +323,7 @@ class DailyReviewDriverTest(unittest.TestCase):
         self.assertEqual(quality["by_reason"], {"outside_ashare_regular_session": 1})
         ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"][
             "ashare"
-        ]
+        ]["account_reviews"]["ashare_sim"]
         self.assertEqual(ashare_review["trades"], 1)
         self.assertEqual(ashare_review["strategy_trades"], 0)
 
@@ -357,7 +371,7 @@ class DailyReviewDriverTest(unittest.TestCase):
         self.assertEqual(quality["by_reason"], {"ashare_candidate_layer_buy": 1})
         ashare_review = close["capital_layer_reviews"]["simulated"]["market_reviews"][
             "ashare"
-        ]
+        ]["account_reviews"]["ashare_sim"]
         self.assertEqual(ashare_review["trades"], 1)
         self.assertEqual(ashare_review["strategy_trades"], 1)
         self.assertEqual(

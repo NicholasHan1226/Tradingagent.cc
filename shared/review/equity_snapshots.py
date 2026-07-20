@@ -15,6 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from shared.accounting.sim_ledger import SimLedger
+from shared.execution.local_sim_ledger import (
+    DEFAULT_ACCOUNT as ASHARE_SIM_ACCOUNT_SCOPE,
+)
+from shared.governance.market_lanes import (
+    ACTIVE_RUNTIME_MARKETS,
+    canonical_runtime_market,
+)
 from shared.markets.sim_capital import default_sim_capital
 from shared.review.pnl_summary import (
     DEFAULT_SIM_LEDGER_ROOT,
@@ -22,11 +29,22 @@ from shared.review.pnl_summary import (
 )
 
 
-DEFAULT_MARKETS = ("ashare", "crypto", "pm", "us", "cn_futures")
+DEFAULT_MARKETS = ACTIVE_RUNTIME_MARKETS
 DEFAULT_LOCAL_SIM_DIR = DEFAULT_SIM_LEDGER_ROOT.parent / "local_sim"
 DEFAULT_ASHARE_SIM_CAPITAL = default_sim_capital("ashare")
-DEFAULT_USD_CNY = 7.2
-DEFAULT_HKD_CNY = 0.92
+MARKET_CURRENCIES = {
+    "ashare": "CNY",
+    "cn_futures": "CNY",
+    "crypto": "USDT",
+}
+
+
+def _style_account_scope(market: str, style: str) -> str:
+    market_key = canonical_runtime_market(market)
+    style_key = str(style or "").strip()
+    if not style_key:
+        raise ValueError("style_ledger_account_scope_unavailable")
+    return f"{market_key}:simulated:{style_key}"
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -46,68 +64,19 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _env_float(name: str, default: float) -> float:
-    try:
-        import os
-
-        return _safe_float(os.environ.get(name), default)
-    except Exception:  # noqa: BLE001
-        return default
-
-
 def _market_currency(market: str) -> str:
-    key = str(market).lower().strip()
-    if key in {"ashare", "cn_futures"}:
-        return "CNY"
-    if key == "hk":
-        return "HKD"
-    if key == "pm":
-        return "USDC"
-    if key == "crypto":
-        return "USDT"
-    return "USD"
+    return MARKET_CURRENCIES[canonical_runtime_market(market)]
 
 
-def _fx_to_cny(market: str) -> float:
-    key = str(market).lower().strip()
-    if key in {"ashare", "cn_futures"}:
-        return 1.0
-    if key == "hk":
-        return _env_float("TRADINGAGENT_HKD_CNY", DEFAULT_HKD_CNY)
-    if key == "pm":
-        return _env_float(
-            "TRADINGAGENT_USDC_CNY", _env_float("TRADINGAGENT_USD_CNY", DEFAULT_USD_CNY)
-        )
-    if key == "crypto":
-        return _env_float(
-            "TRADINGAGENT_USDT_CNY", _env_float("TRADINGAGENT_USD_CNY", DEFAULT_USD_CNY)
-        )
-    return _env_float("TRADINGAGENT_USD_CNY", DEFAULT_USD_CNY)
+def _with_native_currency_fields(
+    payload: dict[str, Any], market: str
+) -> dict[str, Any]:
+    """Label native amounts without inventing a cross-market FX authority."""
 
-
-def _with_cny_fields(payload: dict[str, Any], market: str) -> dict[str, Any]:
-    fx = _fx_to_cny(market)
     currency = _market_currency(market)
-    for key in (
-        "capital_base",
-        "cash",
-        "equity",
-        "total_equity",
-        "market_value",
-        "pnl",
-        "total_pnl",
-        "realized_pnl",
-        "unrealized_pnl",
-        "benchmark_pnl",
-        "pnl_vs_benchmark",
-    ):
-        value = payload.get(key)
-        if value is None:
-            continue
-        payload[f"{key}_cny"] = round(_safe_float(value) * fx, 8)
     payload["currency"] = currency
-    payload["display_currency"] = "CNY"
-    payload["fx_to_cny"] = round(fx, 8)
+    payload["display_currency"] = currency
+    payload["fx_conversion_status"] = "not_applied"
     return payload
 
 
@@ -343,6 +312,8 @@ def _write_ashare_local_sim_snapshot(
         capital_base=capital_base,
     )
     snapshot = {
+        "account_scope": ASHARE_SIM_ACCOUNT_SCOPE,
+        "account_scope_source": "documented_single_ashare_sim_account",
         "account_type": "simulated",
         "benchmark_pnl": round(benchmark_pnl, 6) if benchmark_pnl is not None else None,
         "benchmark_return": benchmark_value,
@@ -382,11 +353,13 @@ def _write_ashare_local_sim_snapshot(
         "trade_count": int(pnl.get("total_trades") or 0),
         "unrealized_pnl": round(_safe_float(pnl.get("unrealized_pnl"), 0.0), 6),
     }
-    _with_cny_fields(snapshot, "ashare")
+    _with_native_currency_fields(snapshot, "ashare")
     _append_jsonl(snapshot_path, snapshot, dry_run=dry_run)
     return {
         "market": "ashare",
         "style": "ashare_sim",
+        "account_scope": ASHARE_SIM_ACCOUNT_SCOPE,
+        "account_scope_source": "documented_single_ashare_sim_account",
         "ledger_path": str(local_sim_dir),
         "snapshot_path": str(snapshot_path),
         "status": "dry_run" if dry_run else "written",
@@ -429,26 +402,36 @@ def write_sim_ledger_equity_snapshots(
     Returns an operational summary suitable for cron logs and health checks.
     """
 
+    requested_markets = DEFAULT_MARKETS if markets is None else tuple(markets)
     target_markets = tuple(
-        str(market).lower().strip()
-        for market in (markets or DEFAULT_MARKETS)
-        if str(market).strip()
+        dict.fromkeys(canonical_runtime_market(market) for market in requested_markets)
     )
+    if benchmark_return is not None and len(target_markets) != 1:
+        raise ValueError("benchmark_return_requires_exactly_one_market")
     root = Path(ledger_root) if ledger_root is not None else DEFAULT_SIM_LEDGER_ROOT
     local_root = (
         Path(local_sim_dir) if local_sim_dir is not None else DEFAULT_LOCAL_SIM_DIR
     )
     snapshot_date = trade_date or date_cls.today().strftime("%Y%m%d")
 
-    rows: list[dict[str, Any]] = []
     totals = {
         "ledger_count": 0,
         "written_count": 0,
         "skipped_count": 0,
         "open_position_count": 0,
         "missing_mark_count": 0,
-        "total_equity": 0.0,
-        "total_pnl": 0.0,
+    }
+    per_market: dict[str, dict[str, Any]] = {
+        market: {
+            "currency": _market_currency(market),
+            "ledger_count": 0,
+            "written_count": 0,
+            "skipped_count": 0,
+            "open_position_count": 0,
+            "missing_mark_count": 0,
+            "ledgers": [],
+        }
+        for market in target_markets
     }
     if "ashare" in target_markets:
         ashare_row = _write_ashare_local_sim_snapshot(
@@ -463,25 +446,36 @@ def write_sim_ledger_equity_snapshots(
         totals["written_count"] += 0 if dry_run else 1
         totals["open_position_count"] += int(ashare_row.get("open_position_count") or 0)
         totals["missing_mark_count"] += int(ashare_row.get("missing_mark_count") or 0)
-        totals["total_equity"] += _safe_float(ashare_row.get("equity"))
-        totals["total_pnl"] += _safe_float(ashare_row.get("total_pnl"))
-        rows.append(ashare_row)
+        per_market["ashare"]["ledger_count"] += 1
+        per_market["ashare"]["written_count"] += 0 if dry_run else 1
+        per_market["ashare"]["open_position_count"] += int(
+            ashare_row.get("open_position_count") or 0
+        )
+        per_market["ashare"]["missing_mark_count"] += int(
+            ashare_row.get("missing_mark_count") or 0
+        )
+        per_market["ashare"]["ledgers"].append(ashare_row)
 
     style_markets = tuple(market for market in target_markets if market != "ashare")
     for market, style, style_dir in _discover_style_ledgers(root, style_markets):
+        account_scope = _style_account_scope(market, style)
         totals["ledger_count"] += 1
         state = _read_json(style_dir / "positions.json", {})
         positions = _active_positions(state)
         if not positions:
             totals["skipped_count"] += 1
-            rows.append(
-                {
-                    "market": market,
-                    "style": style,
-                    "ledger_path": str(style_dir),
-                    "status": "skipped_no_open_positions",
-                }
-            )
+            per_market[market]["ledger_count"] += 1
+            per_market[market]["skipped_count"] += 1
+            skipped_row = {
+                "market": market,
+                "style": style,
+                "account_scope": account_scope,
+                "account_scope_source": "style_ledger_path",
+                "ledger_path": str(style_dir),
+                "status": "skipped_no_open_positions",
+                "currency": _market_currency(market),
+            }
+            per_market[market]["ledgers"].append(skipped_row)
             continue
 
         prices = load_mark_prices_for_positions(
@@ -498,6 +492,8 @@ def write_sim_ledger_equity_snapshots(
                     if int(payload.get("missing_mark_count") or 0) == 0
                     else "sim_ledger_cost_fallback",
                     "capital_layer": "simulated",
+                    "account_scope": account_scope,
+                    "account_scope_source": "style_ledger_path",
                     "real_execution": False,
                     "benchmark_return": benchmark_return,
                     "benchmark_return_pct": (
@@ -512,9 +508,15 @@ def write_sim_ledger_equity_snapshots(
                     ),
                 }
             )
-            _with_cny_fields(payload, market)
+            _with_native_currency_fields(payload, market)
         else:
-            currency_fields = _with_cny_fields({}, market)
+            currency_fields = _with_native_currency_fields({}, market)
+            currency_fields.update(
+                {
+                    "account_scope": account_scope,
+                    "account_scope_source": "style_ledger_path",
+                }
+            )
             currency_fields["benchmark_status"] = (
                 "available" if benchmark_return is not None else "unavailable"
             )
@@ -534,8 +536,9 @@ def write_sim_ledger_equity_snapshots(
                 target_return_pct=target_return_pct,
                 extra_fields=currency_fields,
             )
-            _with_cny_fields(payload, market)
+            _with_native_currency_fields(payload, market)
             totals["written_count"] += 1
+            per_market[market]["written_count"] += 1
 
         missing = int(payload.get("missing_mark_count") or 0)
         open_count = int(payload.get("open_position_count") or len(positions))
@@ -543,37 +546,39 @@ def write_sim_ledger_equity_snapshots(
         pnl = _safe_float(payload.get("total_pnl") or payload.get("pnl"))
         totals["open_position_count"] += open_count
         totals["missing_mark_count"] += missing
-        totals["total_equity"] += equity
-        totals["total_pnl"] += pnl
-        rows.append(
-            {
-                "market": market,
-                "style": style,
-                "ledger_path": str(style_dir),
-                "snapshot_path": str(style_dir / "daily_mark_to_market.jsonl"),
-                "status": "dry_run" if dry_run else "written",
-                "equity": round(equity, 8),
-                "total_pnl": round(pnl, 8),
-                "open_position_count": open_count,
-                "missing_mark_count": missing,
-                "pnl_source": payload.get("pnl_source") or "sim_ledger_mark_to_market",
-            }
-        )
+        per_market[market]["ledger_count"] += 1
+        per_market[market]["open_position_count"] += open_count
+        per_market[market]["missing_mark_count"] += missing
+        ledger_row = {
+            "market": market,
+            "style": style,
+            "account_scope": account_scope,
+            "account_scope_source": "style_ledger_path",
+            "ledger_path": str(style_dir),
+            "snapshot_path": str(style_dir / "daily_mark_to_market.jsonl"),
+            "status": "dry_run" if dry_run else "written",
+            "currency": _market_currency(market),
+            "equity": round(equity, 8),
+            "total_pnl": round(pnl, 8),
+            "open_position_count": open_count,
+            "missing_mark_count": missing,
+            "pnl_source": payload.get("pnl_source") or "sim_ledger_mark_to_market",
+        }
+        per_market[market]["ledgers"].append(ledger_row)
 
-    totals["total_equity"] = round(totals["total_equity"], 8)
-    totals["total_pnl"] = round(totals["total_pnl"], 8)
     return {
         "date": snapshot_date,
         "ledger_root": str(root),
         "markets": list(target_markets),
         "dry_run": dry_run,
         "totals": totals,
-        "ledgers": rows,
+        "all_markets_monetary_aggregation": "forbidden",
+        "per_market": per_market,
     }
 
 
 def _parse_markets(raw: str) -> list[str]:
-    return [item.strip().lower() for item in raw.split(",") if item.strip()]
+    return [canonical_runtime_market(item) for item in raw.split(",") if item.strip()]
 
 
 def main() -> int:

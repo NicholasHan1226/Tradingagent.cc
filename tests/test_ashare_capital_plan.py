@@ -572,17 +572,21 @@ class AsharePatrolMarketLimitTest(unittest.TestCase):
         self.assertIn("position_count_breach", alert_types)
         self.assertIn("exposure_breach", alert_types)
 
-    def test_ashare_override_does_not_leak_into_unspecified_or_us_market(self) -> None:
+    def test_ashare_override_does_not_leak_into_unspecified_or_crypto_market(
+        self,
+    ) -> None:
         positions = [{"ts_code": f"{index:06d}.SZ"} for index in range(1, 9)]
         unspecified = patrol({"positions": positions[:6], "total_exposure": 0.85})
-        us = patrol({"market": "us", "positions": positions, "total_exposure": 0.85})
+        crypto = patrol(
+            {"market": "crypto", "positions": positions, "total_exposure": 0.85}
+        )
 
         unspecified_types = {row["type"] for row in unspecified["alerts"]}
-        us_types = {row["type"] for row in us["alerts"]}
+        crypto_types = {row["type"] for row in crypto["alerts"]}
         self.assertIn("position_count_breach", unspecified_types)
         self.assertIn("exposure_breach", unspecified_types)
-        self.assertNotIn("position_count_breach", us_types)
-        self.assertIn("exposure_breach", us_types)
+        self.assertNotIn("position_count_breach", crypto_types)
+        self.assertIn("exposure_breach", crypto_types)
 
 
 if __name__ == "__main__":

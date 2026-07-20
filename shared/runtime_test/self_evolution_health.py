@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Read-only health check for simulated evolution evidence.
+"""Read-only health check for market-specific learning evidence.
 
-CNFutures uses only its hash-verified review-journal/KPI maturity projection;
-legacy style-evolution files remain applicable only to the other listed markets.
+A-share and CNFutures use their explicit journal/KPI projections. Crypto is
+simulation-only and exposes negative-learning/manual-review health; legacy
+style-evolution files never provide promotion or risk-expansion authority.
 """
 
 from __future__ import annotations
@@ -17,6 +18,10 @@ from typing import Any
 from shared.runtime_test.cn_futures_live_check import (
     validate_cn_futures_maturity_projection,
 )
+from shared.governance.market_lanes import (
+    ACTIVE_RUNTIME_MARKETS,
+    canonical_runtime_market,
+)
 from shared.review.pnl_summary import sim_ledger_pnl_summary
 from shared.review.projection_generation import (
     CURRENT_MANIFEST,
@@ -28,7 +33,7 @@ from shared.review.projection_generation import (
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REVIEW_ROOT = ROOT / "shared" / "review"
-DEFAULT_MARKETS = ("ashare", "crypto", "pm", "us", "cn_futures")
+DEFAULT_MARKETS = ACTIVE_RUNTIME_MARKETS
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -37,24 +42,6 @@ def _read_json(path: Path) -> dict[str, Any]:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     return payload if isinstance(payload, dict) else {}
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (FileNotFoundError, OSError):
-        return rows
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            rows.append(payload)
-    return rows
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -70,40 +57,6 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return default
-
-
-def _latest(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    return rows[-1] if rows else {}
-
-
-def _weights_map(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    weights = payload.get("weights")
-    if not isinstance(weights, dict):
-        weights = payload.get("styles")
-    if not isinstance(weights, dict):
-        return {}
-    return {
-        str(key): value for key, value in weights.items() if isinstance(value, dict)
-    }
-
-
-def _sum_rank_metric(rows: list[dict[str, Any]], key: str) -> float:
-    return round(
-        sum(_safe_float(row.get(key)) for row in rows if isinstance(row, dict)), 6
-    )
-
-
-def _sum_rank_trades(rows: list[dict[str, Any]]) -> int:
-    return sum(_safe_int(row.get("trades")) for row in rows if isinstance(row, dict))
-
-
-def _performance_summary(review_dir: Path) -> dict[str, Any]:
-    rows = _read_jsonl(review_dir / "style_performance.jsonl")
-    return {
-        "row_count": len(rows),
-        "trade_sum": sum(_safe_int(row.get("trades")) for row in rows),
-        "pnl_sum": round(sum(_safe_float(row.get("pnl")) for row in rows), 6),
-    }
 
 
 def _read_current_projection(path: Path) -> dict[str, Any]:
@@ -144,7 +97,9 @@ def _valid_ashare_projection(payload: dict[str, Any], *, report_type: str) -> bo
         and payload.get("evidence_source") == "sample_journal_kpi"
         and safety_fields_false
         and authority.get("capital_authority_id") == "ashare-capital-v1"
-        and authority.get("authority_generation") == 1
+        and isinstance(authority.get("authority_generation"), int)
+        and not isinstance(authority.get("authority_generation"), bool)
+        and authority.get("authority_generation") > 0
         and str(authority.get("execution_lineage_id") or "").strip()
     )
 
@@ -430,7 +385,10 @@ def evaluate_self_evolution_health(
     pnl_summary: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     root = Path(review_root) if review_root is not None else DEFAULT_REVIEW_ROOT
-    target_markets = tuple(markets or DEFAULT_MARKETS)
+    requested_markets = DEFAULT_MARKETS if markets is None else tuple(markets)
+    target_markets = tuple(
+        dict.fromkeys(canonical_runtime_market(market) for market in requested_markets)
+    )
     pnl = (
         pnl_summary
         if pnl_summary is not None
@@ -473,7 +431,14 @@ def evaluate_self_evolution_health(
                     "ranking_pnl_sum": _safe_float(projection.get("post_cost_pnl_cny")),
                     "style_weight_count": 0,
                     "current_projection": projection,
-                    "performance": _performance_summary(review_dir),
+                    "performance": {
+                        "source": "sample_journal_kpi",
+                        "completed_round_trip_count": ranking_trade_sum,
+                        "post_cost_pnl_cny": _safe_float(
+                            projection.get("post_cost_pnl_cny")
+                        ),
+                        "retired_style_artifacts_ignored": True,
+                    },
                     "pnl": {
                         "total_pnl": market_pnl.get("total_pnl", 0.0),
                         "realized_pnl": market_pnl.get("realized_pnl", 0.0),
@@ -483,6 +448,10 @@ def evaluate_self_evolution_health(
                     },
                     "weight_mismatches": [],
                     "positive_evolution_proven": False,
+                    "automatic_promotion_enabled": False,
+                    "automatic_risk_expansion_enabled": False,
+                    "live_transition_authorized": False,
+                    "real_trading_enabled": False,
                 }
             )
             continue
@@ -554,31 +523,9 @@ def evaluate_self_evolution_health(
             )
             continue
 
-        latest_evolution = _latest(_read_jsonl(review_dir / "evolution_log.jsonl"))
-        evolution_for_samples = latest_evolution
-        rankings = (
-            latest_evolution.get("rankings")
-            if isinstance(latest_evolution.get("rankings"), list)
-            else []
-        )
-        sample_rankings = (
-            evolution_for_samples.get("rankings")
-            if isinstance(evolution_for_samples.get("rankings"), list)
-            else rankings
-        )
-        actions = (
-            latest_evolution.get("actions")
-            if isinstance(latest_evolution.get("actions"), list)
-            else []
-        )
-        sample_actions = (
-            evolution_for_samples.get("actions")
-            if isinstance(evolution_for_samples.get("actions"), list)
-            else actions
-        )
-        weights = _weights_map(latest_evolution) or _weights_map(
-            _read_json(review_dir / "style_weights.json")
-        )
+        if market != "crypto":  # canonical_runtime_market makes this unreachable.
+            raise ValueError(f"unsupported market health lane: {market}")
+
         market_pnl = pnl.get(market, {}) if isinstance(pnl, dict) else {}
         sample_quality = (
             market_pnl.get("sample_quality")
@@ -588,42 +535,59 @@ def evaluate_self_evolution_health(
         strategy_sample_count = _safe_int(
             sample_quality.get("strategy_sample_valid_count")
         )
-        ranking_trade_sum = _sum_rank_trades(sample_rankings)
+        simulation_evidence_present = bool(
+            _safe_int(market_pnl.get("style_count")) > 0 or strategy_sample_count > 0
+        )
         issues: list[str] = []
-
-        if strategy_sample_count > 0 and ranking_trade_sum <= 0:
-            issues.append("strategy_samples_not_seen_by_evolution")
-        mismatches: list[dict[str, Any]] = []
-        if market in {"crypto", "pm"} and not latest_evolution:
-            issues.append("missing_evolution_log")
+        if not simulation_evidence_present:
+            issues.append("missing_crypto_simulation_evidence")
+        if market_pnl.get("errors"):
+            issues.append("crypto_simulation_ledger_errors")
 
         for issue in issues:
             all_issues.append({"market": market, "issue": issue})
 
+        current_projection = {
+            "state": (
+                "simulation_observation_only"
+                if simulation_evidence_present
+                else "missing"
+            ),
+            "evidence_source": "crypto_simulation_manual_review",
+            "simulation_only": True,
+            "manual_review_required": True,
+            "negative_only_learning_enabled": True,
+            "positive_automation_enabled": False,
+            "promotion_evidence_ready": False,
+            "automatic_promotion_enabled": False,
+            "automatic_risk_expansion_enabled": False,
+            "live_transition_authorized": False,
+            "real_trading_enabled": False,
+        }
+        performance = {
+            "source": "sim_ledger_pnl_summary",
+            "total_pnl_native": _safe_float(market_pnl.get("total_pnl")),
+            "style_count": _safe_int(market_pnl.get("style_count")),
+            "retired_style_artifacts_ignored": True,
+        }
         market_reports.append(
             {
                 "market": market,
                 "status": "warn" if issues else "pass",
                 "issues": issues,
-                "latest_evolution_at": evolution_for_samples.get("generated_at", ""),
-                "latest_evolution_state": evolution_for_samples.get("state", "missing")
-                if evolution_for_samples
-                else "missing",
-                "evolution_source": "style_evolution",
-                "action_count": len(sample_actions),
-                "non_observe_action_count": sum(
-                    1
-                    for item in sample_actions
-                    if isinstance(item, dict)
-                    and item.get("action") not in {"observe", None, ""}
-                ),
-                "generated_variant_count": len(
-                    evolution_for_samples.get("generated_variants") or []
-                ),
-                "ranking_trade_sum": ranking_trade_sum,
-                "ranking_pnl_sum": _sum_rank_metric(sample_rankings, "pnl"),
-                "style_weight_count": len(weights),
-                "performance": _performance_summary(review_dir),
+                "latest_evolution_at": "",
+                "latest_evolution_state": current_projection["state"],
+                "evolution_source": "crypto_simulation_manual_review",
+                "action_count": 0,
+                "non_observe_action_count": 0,
+                "generated_variant_count": 0,
+                "ranking_trade_sum": 0,
+                "ranking_pnl_sum": 0.0,
+                "style_weight_count": 0,
+                "simulation_trade_count": 0,
+                "simulation_pnl_native": _safe_float(market_pnl.get("total_pnl")),
+                "current_projection": current_projection,
+                "performance": performance,
                 "pnl": {
                     "total_pnl": market_pnl.get("total_pnl", 0.0),
                     "realized_pnl": market_pnl.get("realized_pnl", 0.0),
@@ -631,17 +595,12 @@ def evaluate_self_evolution_health(
                     "open_position_count": market_pnl.get("open_position_count", 0),
                     "strategy_sample_valid_count": strategy_sample_count,
                 },
-                "weight_mismatches": mismatches,
-                "positive_evolution_proven": bool(
-                    ranking_trade_sum > 0
-                    and _sum_rank_metric(sample_rankings, "pnl") > 0
-                    and any(
-                        isinstance(item, dict)
-                        and item.get("action")
-                        in {"promote", "promoted", "variant_generated", "expand_risk"}
-                        for item in sample_actions
-                    )
-                ),
+                "weight_mismatches": [],
+                "positive_evolution_proven": False,
+                "automatic_promotion_enabled": False,
+                "automatic_risk_expansion_enabled": False,
+                "live_transition_authorized": False,
+                "real_trading_enabled": False,
             }
         )
 
@@ -652,6 +611,7 @@ def evaluate_self_evolution_health(
         "issue_count": len(all_issues),
         "issues": all_issues,
         "markets": market_reports,
+        "all_markets_monetary_aggregation": "forbidden",
         "read_only": True,
         "real_trading_enabled": False,
     }

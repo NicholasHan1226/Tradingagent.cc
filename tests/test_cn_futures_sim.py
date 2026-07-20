@@ -606,9 +606,7 @@ class CNFuturesSimTest(unittest.TestCase):
         )
 
         self.assertEqual(missing.status, "rejected")
-        self.assertEqual(
-            missing.raw_response["reason"], "position_snapshot_required"
-        )
+        self.assertEqual(missing.raw_response["reason"], "position_snapshot_required")
         self.assertEqual(accepted.status, "filled")
         self.assertEqual(accepted.filled_qty, 2)
 
@@ -870,7 +868,7 @@ class CNFuturesSimTest(unittest.TestCase):
             health["trend"]["suggested_action"], "inspect_data_or_risk_gate"
         )
 
-    def test_append_review_writes_dashboard_style_outputs(self) -> None:
+    def test_append_review_keeps_current_review_and_retires_style_outputs(self) -> None:
         from CNFutures.review import append_review
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -916,33 +914,30 @@ class CNFuturesSimTest(unittest.TestCase):
                 path=review_path,
             )
 
-            style_path = Path(payload["style_output_paths"]["style_comparison"])
-            perf_path = Path(payload["style_output_paths"]["style_performance"])
-            style_payload = json.loads(style_path.read_text(encoding="utf-8"))
-            perf_rows = [
-                json.loads(line)
-                for line in perf_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+            persisted = json.loads(
+                review_path.read_text(encoding="utf-8").splitlines()[-1]
+            )
 
-            self.assertTrue(style_path.exists())
-            self.assertTrue(perf_path.exists())
-            self.assertEqual(style_payload["market"], "cn_futures")
+            self.assertNotIn("style_output_paths", payload)
+            self.assertNotIn("style_output_paths", persisted)
+            self.assertFalse(
+                (
+                    review_path.parent.parent / "cn_futures" / "style_comparison.json"
+                ).exists()
+            )
+            self.assertFalse(
+                (
+                    review_path.parent.parent / "cn_futures" / "style_performance.jsonl"
+                ).exists()
+            )
+            self.assertEqual(payload["market"], "cn_futures")
             self.assertEqual(
-                style_payload["style_comparison"][0]["style_name"], "trend"
+                payload["forward_label_summary"]["styles"]["trend"]["labeled"], 1
             )
             self.assertEqual(
-                style_payload["forward_label_summary"]["styles"]["trend"]["labeled"], 1
-            )
-            self.assertEqual(
-                style_payload["forward_label_summary"]["styles"]["trend"]["win_rate"],
+                payload["forward_label_summary"]["styles"]["trend"]["win_rate"],
                 1.0,
             )
-            self.assertEqual(
-                style_payload["style_comparison"][0]["forward_labeled_count"], 1
-            )
-            self.assertEqual(perf_rows[0]["market"], "cn_futures")
-            self.assertFalse(perf_rows[0]["real_execution"])
 
     def test_non_index_styles_hold_in_night_session_by_default(self) -> None:
         from CNFutures.signal_engine import generate_style_signal
@@ -1062,7 +1057,9 @@ class CNFuturesSimTest(unittest.TestCase):
             1,
         )
 
-    def test_run_simulation_cli_is_retired_before_kill_switch_or_data_access(self) -> None:
+    def test_run_simulation_cli_is_retired_before_kill_switch_or_data_access(
+        self,
+    ) -> None:
         import os
         import subprocess
 

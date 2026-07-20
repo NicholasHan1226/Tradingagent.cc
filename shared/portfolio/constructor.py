@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """组合构建 — 从已批准订单构建组合。
 
-方法: risk_parity / equal_weight / conviction_weighted /
-volatility_targeted / pm_probability_weighted。
+方法: risk_parity / equal_weight / conviction_weighted / volatility_targeted。
 """
 
 from __future__ import annotations
@@ -24,10 +23,6 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return f if f == f else default
     except (TypeError, ValueError):
         return default
-
-
-def _clamp(v: float, low: float, high: float) -> float:
-    return max(low, min(high, v))
 
 
 def _first_float(order: dict[str, Any], keys: tuple[str, ...], default: float) -> float:
@@ -155,37 +150,6 @@ def _volatility_targeted_weights(
     return _limit_weights(weights, target_total=max_total, max_total=max_total)
 
 
-def _pm_probability_weight(order: dict[str, Any]) -> float:
-    probability = _first_float(
-        order,
-        ("probability", "model_probability", "belief_score", "conviction"),
-        0.5,
-    )
-    probability = _clamp(probability, 0.0, 1.0)
-    price = _first_float(
-        order,
-        ("opponent_price", "market_price", "last_price", "price"),
-        0.5,
-    )
-    price = _clamp(price, 0.0, 1.0)
-    edge = abs(_safe_float(order.get("edge"), probability - price))
-    if edge <= 0:
-        edge = abs(probability - 0.5)
-    return probability * max(0.0, edge)
-
-
-def _pm_probability_weighted_weights(
-    orders: list[dict[str, Any]], *, max_total: float = _MAX_TOTAL_WEIGHT
-) -> list[float]:
-    weights: list[float] = []
-    for order in orders:
-        if not isinstance(order, dict) or not order.get("ts_code"):
-            weights.append(0.0)
-            continue
-        weights.append(_pm_probability_weight(order))
-    return _limit_weights(weights, target_total=max_total, max_total=max_total)
-
-
 def construct(
     orders: list[dict[str, Any]],
     capital: float,
@@ -202,12 +166,11 @@ def construct(
             "sector": str,
             "price": float,           # 当前价格
             "conviction": float,      # 可选, 信心分 (默认用 belief_score)
-            "probability": float,     # PM 可选, 主观/模型概率
             "capital_layer": str,     # 可选, real/simulated/shadow 透传
         }
         capital: 总资金 (元)
         method: "risk_parity" | "equal_weight" | "conviction_weighted" |
-            "volatility_targeted" | "pm_probability_weighted"
+            "volatility_targeted"
         regime: 当前 regime
 
     Returns:
@@ -243,7 +206,6 @@ def construct(
         "equal_weight",
         "conviction_weighted",
         "volatility_targeted",
-        "pm_probability_weighted",
     }
     if method not in valid_methods:
         raise ValueError(f"method must be one of {valid_methods}, got {method}")
@@ -260,10 +222,6 @@ def construct(
     weights: list[float] = []
     if method == "volatility_targeted":
         weights = _volatility_targeted_weights(
-            active_orders, max_total=max_total_weight
-        )
-    elif method == "pm_probability_weighted":
-        weights = _pm_probability_weighted_weights(
             active_orders, max_total=max_total_weight
         )
     else:

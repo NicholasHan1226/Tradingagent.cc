@@ -7,7 +7,6 @@ Default mode is read-only: no orders, no emails, no state mutation.
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import re
@@ -57,41 +56,22 @@ REQUIRED_TEMPLATES = [
 SIM_MARKETS = tuple(
     item.strip().lower()
     for item in os.environ.get(
-        "TRADINGAGENT_SIM_MARKETS", "ashare,crypto,pm,us,cn_futures"
+        "TRADINGAGENT_SIM_MARKETS", "ashare,crypto,cn_futures"
     ).split(",")
     if item.strip()
 )
 SIM_LOG_NAMES = {
     "ashare": "job_ashare_sim_exec.log",
     "crypto": "crypto_sim.log",
-    "pm": "pm_sim.log",
-    "us": "us_sim.log",
-    "hk": "hk_sim.log",
     "cn_futures": "job_cn_futures_sim.log",
 }
 SIM_WRAPPERS = {
     "ashare": "job_ashare_sim_exec.sh",
     "crypto": "job_crypto_sim.sh",
-    "pm": "job_pm_sim.sh",
-    "us": "job_us_sim.sh",
-    "hk": "job_hk_sim.sh",
     "cn_futures": "job_cn_futures_sim.sh",
 }
 DEFAULT_SIM_SYMBOLS = {
     "crypto": ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"),
-    "us": (
-        "TSLA",
-        "NVDA",
-        "META",
-        "AMZN",
-        "GOOGL",
-        "AMD",
-        "NFLX",
-        "AVGO",
-        "COIN",
-        "PLTR",
-    ),
-    "hk": ("00700.HK", "09988.HK", "03690.HK", "09618.HK", "00005.HK", "00388.HK"),
 }
 CRYPTO_ONE_BAR_THRESHOLD = 0.012
 CRYPTO_LOOKBACK_THRESHOLD = 0.025
@@ -1426,123 +1406,7 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                 "reader_degraded": reader.degraded,
                 "reader_errors": reader.errors[-5:],
             }
-        if market == "pm":
-            from PM.probability_model import enrich_pm_rows
-            from shared.wrappers.run_sim import _pm_strategy_signal
-
-            rows = enrich_pm_rows(_unwrap_rows(reader.get_pm_markets(limit=10)))
-            priced_rows = [row for row in rows if _price(row) > 0]
-            modeled_rows = [
-                row
-                for row in priced_rows
-                if _probability(
-                    row,
-                    (
-                        "model_probability",
-                        "model_prob",
-                        "fair_probability",
-                        "estimated_probability",
-                    ),
-                )
-                > 0
-            ]
-            explicit_rows = [row for row in rows if _explicit_trade_side(row)]
-            candidate_rows = [row for row in priced_rows if _pm_strategy_signal(row)]
-            if not rows:
-                return {
-                    "status": "warn",
-                    "asset_count": 0,
-                    "priced_signal_count": 0,
-                    "modeled_signal_count": 0,
-                    "explicit_signal_count": 0,
-                    "reason": "pm_market_rows_empty",
-                    "sample": [],
-                    "reader_degraded": reader.degraded,
-                    "reader_errors": reader.errors[-5:],
-                }
-            if not priced_rows:
-                return {
-                    "status": "warn",
-                    "asset_count": len(rows),
-                    "priced_signal_count": 0,
-                    "modeled_signal_count": 0,
-                    "explicit_signal_count": len(explicit_rows),
-                    "reason": "pm_prices_missing",
-                    "sample": [
-                        {
-                            key: row.get(key)
-                            for key in (
-                                "symbol",
-                                "market_id",
-                                "trade_date",
-                                "price",
-                                "yes_price",
-                            )
-                        }
-                        for row in rows[:5]
-                    ],
-                    "reader_degraded": reader.degraded,
-                    "reader_errors": reader.errors[-5:],
-                }
-            if not modeled_rows and not explicit_rows:
-                return {
-                    "status": "warn",
-                    "asset_count": len(rows),
-                    "priced_signal_count": len(priced_rows),
-                    "modeled_signal_count": 0,
-                    "explicit_signal_count": 0,
-                    "reason": "pm_model_probability_missing",
-                    "sample": [
-                        {
-                            key: row.get(key)
-                            for key in (
-                                "symbol",
-                                "market_id",
-                                "trade_date",
-                                "price",
-                                "latest_price",
-                                "yes_price",
-                                "model_probability",
-                                "fair_probability",
-                                "estimated_probability",
-                            )
-                        }
-                        for row in priced_rows[:5]
-                    ],
-                    "reader_degraded": reader.degraded,
-                    "reader_errors": reader.errors[-5:],
-                }
-            if modeled_rows and not explicit_rows and not candidate_rows:
-                return {
-                    "status": "warn",
-                    "asset_count": len(rows),
-                    "priced_signal_count": len(priced_rows),
-                    "modeled_signal_count": len(modeled_rows),
-                    "explicit_signal_count": 0,
-                    "strategy_candidate_count": 0,
-                    "reason": "pm_model_edge_below_threshold",
-                    "sample": [
-                        {
-                            key: row.get(key)
-                            for key in (
-                                "symbol",
-                                "market_id",
-                                "trade_date",
-                                "price",
-                                "latest_price",
-                                "yes_price",
-                                "model_probability",
-                                "model_source",
-                                "model_reason",
-                            )
-                        }
-                        for row in priced_rows[:5]
-                    ],
-                    "reader_degraded": reader.degraded,
-                    "reader_errors": reader.errors[-5:],
-                }
-            asset_count = len(rows)
-        elif market == "crypto":
+        if market == "crypto":
             diagnostics: list[dict[str, Any]] = []
             for symbol in DEFAULT_SIM_SYMBOLS["crypto"]:
                 rows = _unwrap_rows(reader.get_crypto_klines(symbol=symbol, limit=50))
@@ -1585,69 +1449,6 @@ def _probe_market_data(market: str) -> dict[str, Any]:
                     "reader_errors": reader.errors[-5:],
                 }
             asset_count = len(DEFAULT_SIM_SYMBOLS["crypto"])
-        elif market in {"us", "hk"}:
-            end = datetime.now(timezone.utc).date()
-            start = end - timedelta(days=10)
-            market_name = "HK" if market == "hk" else "US"
-            for symbol in DEFAULT_SIM_SYMBOLS[market]:
-                latest = _latest_priced(
-                    _unwrap_rows(
-                        reader.get_market_data(
-                            ts_code=symbol,
-                            market=market_name,
-                            start=start.strftime("%Y%m%d"),
-                            end=end.strftime("%Y%m%d"),
-                            freq="daily",
-                        )
-                    )
-                )
-                if latest:
-                    priced_rows.append(latest)
-            if market == "hk" and not priced_rows:
-                proxy_rows: list[dict[str, Any]] = []
-                for symbol in ("HSI",):
-                    latest = _latest_priced(
-                        _unwrap_rows(
-                            reader.get_market_data(
-                                ts_code=symbol,
-                                market="Global",
-                                start=start.strftime("%Y%m%d"),
-                                end=end.strftime("%Y%m%d"),
-                                freq="daily",
-                            )
-                        )
-                    )
-                    if latest:
-                        item = dict(latest)
-                        item["symbol"] = symbol
-                        item["market_proxy_for"] = "HK"
-                        proxy_rows.append(item)
-                if proxy_rows:
-                    return {
-                        "status": "warn",
-                        "asset_count": asset_count,
-                        "priced_signal_count": 0,
-                        "proxy_priced_signal_count": len(proxy_rows),
-                        "proxy": "HSI",
-                        "reason": "hk_stock_daily_missing_using_hsi_proxy",
-                        "sample": [
-                            {
-                                key: row.get(key)
-                                for key in (
-                                    "symbol",
-                                    "market",
-                                    "trade_date",
-                                    "price",
-                                    "close",
-                                    "latest_price",
-                                    "market_proxy_for",
-                                )
-                            }
-                            for row in proxy_rows[:5]
-                        ],
-                        "reader_degraded": reader.degraded,
-                        "reader_errors": reader.errors[-5:],
-                    }
         elif market == "cn_futures":
             api_base = (
                 os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL)
@@ -1919,11 +1720,8 @@ def _check_sim_market_loop(
     if cron_reader_degraded:
         warn_reasons.append("latest_cron_reader_degraded")
     if payload and cron_status not in {"ok", "market_closed", "observation_only"}:
-        if market == "hk" and cron_status == "no_data":
-            hard_fail_reasons.append("latest_cron_no_data")
-        else:
-            warn_reasons.append(f"latest_cron_status={cron_status}")
-    elif not payload and market in {"crypto", "pm"}:
+        warn_reasons.append(f"latest_cron_status={cron_status}")
+    elif not payload and market == "crypto":
         warn_reasons.append("latest_cron_json_missing")
     if crontab_error and not crontab_text:
         warn_reasons.append("crontab_unreadable")
@@ -1934,8 +1732,6 @@ def _check_sim_market_loop(
         and any(
             reason in warn_reasons
             for reason in (
-                "pm_waiting_for_marketgraph_probability",
-                "pm_waiting_for_model_edge",
                 "crypto_waiting_for_momentum_signal",
                 "ashare_waiting_for_portfolio_or_strategy_signal",
             )
@@ -2003,13 +1799,6 @@ def _check_sim_market_loop(
 
 
 def _sim_market_wait_reason(market: str, reason: str) -> str:
-    if market == "pm":
-        if reason in {"pm_market_rows_empty", "pm_prices_missing"}:
-            return "pm_waiting_for_market_data"
-        if reason == "pm_model_probability_missing":
-            return "pm_waiting_for_marketgraph_probability"
-        if reason == "pm_model_edge_below_threshold":
-            return "pm_waiting_for_model_edge"
     if market == "crypto":
         if reason == "crypto_klines_empty":
             return "crypto_waiting_for_market_data"

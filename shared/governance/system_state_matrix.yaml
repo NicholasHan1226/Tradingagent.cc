@@ -2,7 +2,7 @@ version: 1
 entries:
   - entry_id: sharedsignals_v1_query
     state: TARGET_CONTRACT
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingDatas
     canonical_path: TradingDatas:/v1/query
     production_verified: false
@@ -17,7 +17,7 @@ entries:
     successor: sharedsignals.query_result.v1
   - entry_id: tradingagent_sharedsignals_v1_client
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/data/sharedsignals_v1.py
     production_verified: false
@@ -33,7 +33,7 @@ entries:
     successor: sharedsignals.query_result.v1
   - entry_id: tradingagent_sharedsignals_v1_integration_probe
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime_test/sharedsignals_v1_integration_probe.py
     production_verified: false
@@ -55,7 +55,7 @@ entries:
     successor: tradingagent.sharedsignals.integration-readiness.v1
   - entry_id: tradingagent_mainboard_scope
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/universe/policy.py
     production_verified: false
@@ -76,7 +76,7 @@ entries:
     successor: tradingagent.universe_scope.v1
   - entry_id: tradingagent_small_account_optimizer
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/portfolio/small_account_optimizer.py
     production_verified: false
@@ -100,7 +100,7 @@ entries:
     successor: tradingagent.small_account_optimizer.v1
   - entry_id: tradingagent_thesis_risk_authority
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/portfolio/thesis_risk.py
     production_verified: false
@@ -126,7 +126,7 @@ entries:
     successor: tradingagent.thesis_risk_runtime_authority.v1
   - entry_id: tradingagent_small_account_plan_binding
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime/day_loop.py
     production_verified: false
@@ -151,7 +151,7 @@ entries:
     successor: tradingagent.small_account_plan_receipt.v1
   - entry_id: tradingagent_canonical_account_authority
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime/canonical_account_authority.py
     production_verified: false
@@ -172,7 +172,7 @@ entries:
     successor: tradingagent.canonical_account_authority.v1
   - entry_id: tradingagent_champion_authority_binding
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/portfolio/champion.py
     production_verified: false
@@ -195,7 +195,7 @@ entries:
     successor: tradingagent.champion_score_receipt.v1
   - entry_id: tradingagent_market_evidence_authority
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime/market_evidence_authority.py
     production_verified: false
@@ -217,7 +217,7 @@ entries:
     successor: tradingagent.market_evidence_authority.v1
   - entry_id: tradingagent_trusted_execution_clock
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime/trusted_clock.py
     production_verified: false
@@ -241,7 +241,7 @@ entries:
     successor: tradingagent.trusted_execution_clock.v1
   - entry_id: tradingagent_phase1_industry_shadow_slice
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/industry/shadow_slice.py
     production_verified: false
@@ -260,7 +260,7 @@ entries:
     successor: tradingagent.industry_shadow_basket.v2
   - entry_id: tradingagent_llm_evidence
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/llm/schema.py
     production_verified: false
@@ -290,7 +290,7 @@ entries:
     successor: tradingagent.llm_evidence.v1
   - entry_id: tradingagent_llm_evidence_journal
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/llm/evidence_journal.py
     production_verified: false
@@ -320,7 +320,7 @@ entries:
     successor: tradingagent.llm_evidence_journal.v1
   - entry_id: tradingagent_llm_provenance_router
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/llm/evidence_journal.py
     production_verified: false
@@ -357,7 +357,7 @@ entries:
     successor: tradingagent.llm_provenance_router.v1
   - entry_id: tradingagent_deepseek_provider_config
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/llm/deepseek_config.py
     production_verified: false
@@ -388,7 +388,7 @@ entries:
     successor: tradingagent.llm_provider_transport.v1
   - entry_id: tradingagent_model_lifecycle
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/models/lifecycle.py
     production_verified: false
@@ -412,7 +412,7 @@ entries:
     successor: tradingagent.model_lifecycle.v1
   - entry_id: tradingagent_metrics_verification_authority
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/models/evolution_loop.py
     production_verified: false
@@ -435,7 +435,7 @@ entries:
     successor: tradingagent.metrics_verification_authority.v1
   - entry_id: tradingagent_trusted_evolution_clock
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/models/evolution_clock.py
     production_verified: false
@@ -456,7 +456,7 @@ entries:
     successor: tradingagent.trusted_evolution_clock.v1
   - entry_id: tradingagent_scientific_validation_contract
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/models/lifecycle.py
     production_verified: false
@@ -486,7 +486,7 @@ entries:
     successor: tradingagent.validation_plan.v1
   - entry_id: tradingagent_drift_runtime_binding
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime/drift_stage.py
     production_verified: false
@@ -510,7 +510,7 @@ entries:
     successor: tradingagent.drift_constrained_risk_stage.v2
   - entry_id: tradingagent_day_loop
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime/day_loop.py
     production_verified: false
@@ -526,7 +526,7 @@ entries:
     successor: tradingagent.paper_day_loop.v1
   - entry_id: tradingagent_paper_runtime_composition
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime/composition.py
     production_verified: false
@@ -543,7 +543,7 @@ entries:
     successor: tradingagent.paper_runtime_composition.v1
   - entry_id: tradingagent_capital_backed_paper_runtime_composition
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime/composition.py
     production_verified: false
@@ -574,7 +574,7 @@ entries:
     successor: tradingagent.capital_backed_paper_runtime.v1
   - entry_id: tradingagent_phase1_fixture_cli
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: tools/run_phase1_paper_fixture.py
     production_verified: false
@@ -594,7 +594,7 @@ entries:
     successor: tradingagent.phase1_fixture_cli.v1
   - entry_id: tradingagent_opportunity_intelligence
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/opportunity/
     production_verified: false
@@ -615,7 +615,7 @@ entries:
     successor: tradingagent.opportunity_intelligence.v1
   - entry_id: tradingagent_multihorizon_forecast
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/forecast/contracts.py
     production_verified: false
@@ -635,7 +635,7 @@ entries:
     successor: tradingagent.multihorizon_forecast.v1
   - entry_id: tradingagent_multistyle_router
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/strategy_router/
     production_verified: false
@@ -655,7 +655,7 @@ entries:
     successor: tradingagent.multistyle_router.v1
   - entry_id: tradingagent_deepseek_provider_transport
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/llm/providers/deepseek_http.py
     production_verified: false
@@ -704,7 +704,7 @@ entries:
     successor: tradingagent.live_paper_scheduler.v1
   - entry_id: tradingagent_run_bundle_store
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime/file_store.py
     production_verified: false
@@ -720,7 +720,7 @@ entries:
     successor: tradingagent.run_bundle_store.v1
   - entry_id: tradingagent_decision_ledger
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/review/decision_ledger.py
     production_verified: false
@@ -737,7 +737,7 @@ entries:
     successor: tradingagent.decision_ledger.v1
   - entry_id: tradingagent_label_maturity
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/review/label_maturity.py
     production_verified: false
@@ -818,7 +818,7 @@ entries:
     successor: shared/crontab.txt
   - entry_id: tradingagent_mini_hermes_retirement
     state: RETIRED_BLOCKED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/execution/AGENTS.md
     production_verified: false
@@ -838,7 +838,7 @@ entries:
     successor: market_specific_paper_and_future_live_broker_adapters
   - entry_id: tradingagent_market_lane_governance
     state: CURRENT_VERIFIED
-    layer: local_isolated_candidate
+    layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/governance/market_lanes.yaml
     production_verified: false
@@ -850,19 +850,42 @@ entries:
     allowed_uses:
       - validate_long_lived_market_worktree_branch_and_path_ownership
       - register_disjoint_market_specific_simulation_and_future_adapter_contracts
+      - verify_the_three_market_contract_is_present_in_main
+      - keep_ashare_and_cnfutures_as_separate_50000_cny_authorities
+      - keep_crypto_as_an_isolated_10000_usdt_shadow_authority
     prohibited_uses:
       - infer_any_future_live_adapter_is_implemented
-      - infer_market_worktree_changes_are_merged_or_deployed
+      - infer_market_worktree_changes_are_deployed_or_runtime_activated
       - share_market_accounts_credentials_payloads_or_order_state_machines
+      - convert_or_aggregate_money_returns_or_drawdown_across_market_authorities
       - enable_live_trading
     successor: market_specific_lanes_with_shared_mechanical_kernel_only
+  - entry_id: tradingagent_retired_noncore_markets
+    state: RETIRED_BLOCKED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/governance/market_lanes.yaml
+    production_verified: false
+    last_verified_at: "2026-07-20"
+    evidence:
+      - tests/test_retired_market_surfaces.py
+      - tests/test_market_lane_governance.py
+      - shared/governance/legacy_inventory.yaml
+    allowed_uses:
+      - verify_us_pm_hk_runtime_surfaces_are_absent_from_current_repository
+      - recover_historical_implementations_from_git_only
+    prohibited_uses:
+      - restore_us_pm_or_hk_as_active_market_lanes
+      - infer_installed_server_cron_or_historical_runtime_is_clean
+      - infer_any_public_or_live_market_adapter
+    successor: ashare_cnfutures_crypto_only
   - entry_id: tradingagent_installed_cron
     state: CURRENT_VERIFIED
     layer: production_runtime_read_only_snapshot
     owner: TradingAgent
     canonical_path: marketgraph-user-crontab
     production_verified: false
-    last_verified_at: "2026-07-19"
+    last_verified_at: "2026-07-20"
     evidence:
       - STATUS.md
     allowed_uses:
@@ -877,7 +900,7 @@ entries:
     owner: TradingAgent
     canonical_path: /opt/investment/tradingagent
     production_verified: false
-    last_verified_at: "2026-07-19"
+    last_verified_at: "2026-07-20"
     evidence:
       - STATUS.md
     allowed_uses:
@@ -890,9 +913,9 @@ entries:
     state: CURRENT_VERIFIED
     layer: server_validated_non_authority_simulation_only
     owner: TradingAgent
-    canonical_path: /opt/investment/tradingagent-candidates/ta-v1-integrated-fdc0081
+    canonical_path: /opt/investment/tradingagent-candidates/ta-market-kernel-123a112
     production_verified: false
-    last_verified_at: "2026-07-19"
+    last_verified_at: "2026-07-20"
     evidence:
       - STATUS.md
       - docs/operations.md

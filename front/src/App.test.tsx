@@ -35,7 +35,7 @@ describe('App navigation and result-first dashboard', () => {
 
     const marketHeader = screen.getByRole('region', { name: '市场与账户' })
     expect(within(marketHeader).getByText('运行状态').parentElement).toHaveTextContent('1 运行中')
-    expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('2')
+    expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('1')
     expect(screen.getByRole('navigation', { name: '市场状态带' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: '证据健康' })).toBeInTheDocument()
   })
@@ -48,7 +48,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getAllByText('收益曲线').length).toBeGreaterThan(0)
     const marketHeader = screen.getByRole('region', { name: '市场与账户' })
     expect(within(marketHeader).getByText('运行状态').parentElement).toHaveTextContent('1 运行中')
-    expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('2')
+    expect(within(marketHeader).getByText('已完成').parentElement).toHaveTextContent('1')
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '实盘' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getAllByText('发现').length).toBeGreaterThan(0)
@@ -114,9 +114,9 @@ describe('App navigation and result-first dashboard', () => {
             holdings: [],
             signals: [
               {
-                symbol: '0700.HK',
-                name: '腾讯',
-                market: 'HK',
+                symbol: 'IF2601.CFFEX',
+                name: '沪深300期指',
+                market: 'CNFutures',
                 method: '事件驱动',
                 status: 'pending',
                 impact: '--',
@@ -127,7 +127,7 @@ describe('App navigation and result-first dashboard', () => {
                 steps: 5,
               },
               {
-                symbol: 'BTC-USD',
+                symbol: 'BTC-USDT',
                 name: 'Bitcoin',
                 market: 'Crypto',
                 method: '波动突破',
@@ -150,9 +150,9 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getByRole('complementary', { name: '当前运行' })).toHaveTextContent('0700.HK'))
+    await waitFor(() => expect(screen.getByRole('complementary', { name: '当前运行' })).toHaveTextContent('IF2601.CFFEX'))
     click(screen.getByRole('tab', { name: '自动复盘 1' }))
-    expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('BTC-USDT').length).toBeGreaterThan(0)
   })
 
   it('does not replace an empty TradingAgent snapshot with demo results', async () => {
@@ -653,7 +653,7 @@ describe('App navigation and result-first dashboard', () => {
             performance: [{ day: '现在', simulated: 0.4, target: 8, benchmark: 0, opportunity: 0 }],
             holdings: [
               { symbol: '600519.SH', name: '贵州茅台', market: 'A-share', weight: '¥7,206', pnl: '-¥5', risk: '正常', role: '模拟盘持仓' },
-              { symbol: 'BTC-USD', name: 'BTC-USD', market: 'Crypto', weight: '$1,200', pnl: '+$18', risk: '正常', role: 'Grid 持仓' },
+              { symbol: 'BTC-USDT', name: 'BTC-USDT', market: 'Crypto', weight: '$1,200', pnl: '+$18', risk: '正常', role: 'Grid 持仓' },
             ],
             signals: [
               {
@@ -675,8 +675,8 @@ describe('App navigation and result-first dashboard', () => {
                 },
               },
               {
-                symbol: 'BTC-USD',
-                name: 'BTC-USD',
+                symbol: 'BTC-USDT',
+                name: 'BTC-USDT',
                 market: 'Crypto',
                 method: 'Grid · 买入',
                 status: 'executed',
@@ -749,7 +749,7 @@ describe('App navigation and result-first dashboard', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getAllByText('BTC-USDT').length).toBeGreaterThan(0))
     expect(screen.getByLabelText('市场运行状态')).toBeInTheDocument()
     expect(screen.getByText('个股流向')).toBeInTheDocument()
     expect(screen.getByText('资金分 82')).toBeInTheDocument()
@@ -770,7 +770,7 @@ describe('App navigation and result-first dashboard', () => {
     click(screen.getByRole('menuitem', { name: /加密/ }))
 
     expect(screen.getByText('加密正在等更好的入场条件')).toBeInTheDocument()
-    expect(screen.getAllByText('BTC-USD').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('BTC-USDT').length).toBeGreaterThan(0)
     expect(screen.queryByText('贵州茅台')).not.toBeInTheDocument()
   })
 
@@ -808,7 +808,7 @@ describe('App navigation and result-first dashboard', () => {
                 stageEvidence: 'full',
               },
               {
-                symbol: 'BTC-USD',
+                symbol: 'BTC-USDT',
                 name: 'Bitcoin',
                 market: 'Crypto',
                 method: '波动突破',
@@ -829,7 +829,7 @@ describe('App navigation and result-first dashboard', () => {
               { id: 'c', symbol: '600519.SH', market: 'A-share', stage: '风控', status: '通过', label: '风控通过', source: 'signal_queue' },
               { id: 'd', symbol: '600519.SH', market: 'A-share', stage: '待确认', status: '等待', label: '待执行', source: 'signal_queue' },
               { id: 'e', symbol: '600519.SH', market: 'A-share', stage: '结果', status: '成交', label: '成交', source: 'sim_ledger' },
-              { id: 'f', symbol: 'BTC-USD', market: 'Crypto', stage: '结果', status: '拦截', label: '放弃', source: 'signal_queue' },
+              { id: 'f', symbol: 'BTC-USDT', market: 'Crypto', stage: '结果', status: '拦截', label: '放弃', source: 'signal_queue' },
             ],
             sourceRefs: tradingAgentReadModelSources,
           }),
@@ -856,14 +856,14 @@ describe('App navigation and result-first dashboard', () => {
   it('switches from the return card into the dedicated live gate and back', () => {
     render(<App />)
 
-    click(screen.getByRole('tab', { name: '已完成 2' }))
+    click(screen.getByRole('tab', { name: '已完成 1' }))
     const card = screen.getByLabelText('收益结果')
     click(within(card).getByRole('tab', { name: '实盘' }))
 
     expect(screen.getByRole('region', { name: '实盘接入状态' })).toHaveTextContent('实盘待接入')
     click(screen.getByRole('button', { name: '返回模拟盘' }))
     expect(within(screen.getByLabelText('收益结果')).getByRole('tab', { name: '模拟盘' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: '已完成 2' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '已完成 1' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('shows the Process Book beside its automation inspector', () => {
@@ -875,7 +875,7 @@ describe('App navigation and result-first dashboard', () => {
     expect(screen.getByRole('table', { name: '运行中过程账本' })).toBeInTheDocument()
     expect(within(screen.getByLabelText('过程终端检查器')).getByRole('heading', { name: '过程分布' })).toBeInTheDocument()
     expect(screen.getByText('IF2601.CFFEX')).toBeInTheDocument()
-    expect(screen.queryByText('BTC-USD')).not.toBeInTheDocument()
+    expect(screen.queryByText('BTC-USDT')).not.toBeInTheDocument()
   })
 
   it('keeps the reserved live state inside the workbench rather than a dialog', () => {

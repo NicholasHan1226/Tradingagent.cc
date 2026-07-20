@@ -1,6 +1,6 @@
 # TradingAgent 数据与事实契约
 
-> 本文是 TradingDatas/MarketGraph 输入、双市场资本、执行、样本、标签、KPI 与成熟度字段的 canonical contract。架构见 [architecture.md](architecture.md)，当前状态见 [STATUS.md](../STATUS.md)。
+> 本文是 TradingDatas/MarketGraph 输入、按市场与原生币种隔离的资本、执行、样本、标签、KPI 与成熟度字段的 canonical contract。架构见 [architecture.md](architecture.md)，当前状态见 [STATUS.md](../STATUS.md)。
 
 ## 通用安全与 lineage
 
@@ -35,9 +35,11 @@ current-v1 composition、风险或订单链调用。前端 market pulse 本地�
 catalog/query；这既不证明剩余旧源码已物理删除，也不证明 TradingDatas live runtime 已冻结。新链的边界是
 TradingAgent 不导入 TradingDatas 内部模块、不扫描兄弟仓目录、不打开其 SQLite、不现场调用
 数据商，也不在 V1 失败时回退旧链。TradingDatas fresh handoff 前只允许 fixture/mock-first；旧
-SharedSignals runtime、route 与 dual-registry 不再是新架构依赖。
+SharedSignals runtime、route 与 dual-registry 不再是新架构依赖。旧 reader 与 MarketGraph 兼容
+client 的默认 URL 固定为空；未显式注入 fixture/port 或仓外受控配置时必须保持关闭，不能自动
+发现 `127.0.0.1:8082`、`127.0.0.1:8080` 或任何文件/SQLite 后备入口。
 
-新查询接口的 canonical contract ID 是 `sharedsignals.query_result.v1`；这是产品重命名后继续保留的 immutable wire/schema ID，不代表旧 SharedSignals runtime 仍受支持。当前实现状态必须从 `shared/governance/system_state_matrix.yaml` 读取：TradingDatas upstream query仍是`TARGET_CONTRACT`；TA client已是`CURRENT_VERIFIED`但仅限`layer=local_isolated_candidate`、`production_verified=false`和fixture/contract allowed uses。两者都不能证明生产runtime已切换。V1读取失败、数据陈旧、lineage不完整或dataset未注册时一律fail closed；A股路径不得静默回退到Tushare、兄弟仓SQLite、`/tushare`、`/source_status`、provider专用route、旧HTTP shape或本地缓存拼装。
+新查询接口的 canonical contract ID 是 `sharedsignals.query_result.v1`；这是产品重命名后继续保留的 immutable wire/schema ID，不代表旧 SharedSignals runtime 仍受支持。当前实现状态必须从 `shared/governance/system_state_matrix.yaml` 读取：TradingDatas upstream query仍是`TARGET_CONTRACT`；TA client已是`CURRENT_VERIFIED`，仅限`layer=repository_contract`、`production_verified=false`和fixture/contract allowed uses。两者都不能证明生产runtime已切换。V1读取失败、数据陈旧、lineage不完整或dataset未注册时一律fail closed；A股路径不得静默回退到Tushare、兄弟仓SQLite、`/tushare`、`/source_status`、provider专用route、旧HTTP shape或本地缓存拼装。
 
 V1 唯一路由为：
 
@@ -263,7 +265,12 @@ paired 消融要求：
 
 同一候选的 `mg_on` / `mg_off` 必须共享 base snapshot SHA、prediction time、基础数据质量、成本与标签口径；`mg_off.applied_features` 为空。
 
-## 双 market capital contract
+## 按市场隔离的 capital contract
+
+本节的 append-only capital ledger 字段只规范 A股与 CNFutures 两套 50,000 CNY
+simulated authority。Crypto 当前使用 `Crypto/config.yaml` 定义的独立 10,000 USDT
+shadow/simulated authority；其金额字段必须显式携带 `market=crypto,currency=USDT`，不得
+套用 `_cny` 字段、固定汇率或国内 ledger authority。三者在 All Markets 层均禁止货币聚合。
 
 ### 根与文件
 
@@ -288,7 +295,7 @@ paired 消融要求：
 }
 ```
 
-CNFutures 使用相同初始权益和 generation，并以 `margin_utilization_limit_pct=0.50` 取代 A股单票/gross 字段。两个 policy 均为 `fresh_start_approved`，不接受 cross-market allocations 或 fixed protected cash。
+CNFutures 使用相同初始权益和 generation，并以 `margin_utilization_limit_pct=0.50` 取代 A股单票/gross 字段。两套国内 policy 均为 `fresh_start_approved`，不接受 cross-market allocations 或 fixed protected cash；Crypto shadow authority 不参与这两套 policy。
 
 ### Snapshot/provider state
 
@@ -711,9 +718,9 @@ A股 stage 由交易日序号决定，第 5/10 日只标记 review due。期货 
 
 ## 前端 contract
 
-- `marketSummaries[]` 按市场保存 capital authority ID、generation、maturity 和市场自己的资本/PnL/return/DD；缺字段显示 null/unavailable。
+- `marketSummaries[]` 按 market + currency + account authority 保存 capital authority ID、generation、maturity 和市场自己的资本/PnL/return/DD；缺字段显示 null/unavailable。
 - All Markets 不生成 combined monetary portfolio/performance；只可汇总非货币 counts/health。
-- `portfolio.ashareAccount` 只显示 A股账户事实；CNFutures 使用自己的 market summary。不同市场的 capital、equity、PnL、return、drawdown、utilization 禁止聚合。
+- `portfolio.ashareAccount` 只显示 A股账户事实；CNFutures 与 Crypto 使用各自 market summary 和原生币种。即使 A股与 CNFutures 同为 CNY，也属于不同 authority；不同 market/account 的 capital、equity、PnL、return、drawdown、utilization 禁止聚合。
 - 前端只读；不得创建/修改 signal、capital、sample、email、callback 或 execution state。
 
 ## 版本与变更

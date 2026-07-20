@@ -194,18 +194,49 @@ function PerformanceQuietStrip({ data, latestPoint, portfolio }: { data: Perform
 }
 
 function summarizeMarketExposure(holdings: HoldingRow[]): [string, string][] {
-  const grouped = new Map<Market, { count: number; value: number }>()
+  const grouped = new Map<Market, {
+    accountScopes: Set<string>
+    count: number
+    hasMissingAccountScope: boolean
+    value: number
+    currencies: Set<NonNullable<HoldingRow['currency']>>
+  }>()
   for (const holding of holdings) {
-    const current = grouped.get(holding.market) ?? { count: 0, value: 0 }
-    grouped.set(holding.market, { count: current.count + 1, value: current.value + (holding.marketValue ?? 0) })
+    const current = grouped.get(holding.market) ?? {
+      accountScopes: new Set<string>(),
+      count: 0,
+      hasMissingAccountScope: false,
+      value: 0,
+      currencies: new Set<NonNullable<HoldingRow['currency']>>(),
+    }
+    current.count += 1
+    current.value += holding.marketValue ?? 0
+    current.currencies.add(holding.currency ?? (holding.market === 'Crypto' ? 'USDT' : 'CNY'))
+    const accountScope = holding.accountScope?.trim()
+    if (accountScope) current.accountScopes.add(accountScope)
+    else current.hasMissingAccountScope = true
+    grouped.set(holding.market, current)
   }
-  return [...grouped.entries()].map(([market, item]) => [market, item.value > 0 ? `${item.count}项 · ¥${Math.round(item.value).toLocaleString('en-US')}` : `${item.count}项`])
+  return [...grouped.entries()].map(([market, item]) => {
+    if (item.hasMissingAccountScope) return [market, `${item.count}项 · 账户范围不可用`]
+    if (item.accountScopes.size > 1) return [market, `${item.count}项 · 多账户不可汇总`]
+    if (item.currencies.size !== 1) return [market, `${item.count}项 · 多币种不可汇总`]
+    const [currency] = [...item.currencies]
+    return [market, item.value > 0 ? `${item.count}项 · ${formatMoney(item.value, currency, false)}` : `${item.count}项`]
+  })
 }
 
 function InspectorRows({ rows }: { rows: [string, string][] }) { return <dl className="terminal-inspector-rows">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl> }
 function getPerformanceTone(value: number) { return value < -0.005 ? 'negative' as const : value > 0.005 ? 'positive' as const : 'flat' as const }
 function signedPercent(value: number) { return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` }
-function formatMoney(value?: number, currency: 'USD' | 'CNY' = 'CNY') { return value === undefined ? '—' : `${value >= 0 ? '+' : '-'}${currency === 'USD' ? '$' : '¥'}${Math.abs(value).toLocaleString('en-US')}` }
-function parseImpact(value: string) { const parsed = Number(value.replace(/[+,%K¥$]/g, '').trim()); return Number.isFinite(parsed) ? parsed : null }
+function formatMoney(value?: number, currency: 'USD' | 'USDT' | 'CNY' = 'CNY', signed = true) {
+  if (value === undefined) return '—'
+  const sign = signed ? (value >= 0 ? '+' : '-') : value < 0 ? '-' : ''
+  const amount = Math.abs(value).toLocaleString('en-US')
+  if (currency === 'USDT') return `${sign}${amount} USDT`
+  if (currency === 'CNY') return `${sign}¥${amount}`
+  return '—'
+}
+function parseImpact(value: string) { const parsed = Number(value.replace(/USDT|USD|CNY/gi, '').replace(/[+,%K¥$]/g, '').trim()); return Number.isFinite(parsed) ? parsed : null }
 function averageLatency(signals: SignalRow[]) { const rows = signals.map((row) => row.stageLatencyMinutes).filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0); return rows.length ? Math.round(rows.reduce((sum, value) => sum + value, 0) / rows.length) : 0 }
 function getCurrentDrawdown(data: PerformancePoint[], portfolio: PortfolioSummary | null) { if (portfolio) return Math.abs(portfolio.maxDrawdownPct); if (!data.length) return 0; let peak = data[0]?.simulated ?? 0; return data.reduce((maximum, point) => { peak = Math.max(peak, point.simulated); return Math.max(maximum, peak - point.simulated) }, 0) }

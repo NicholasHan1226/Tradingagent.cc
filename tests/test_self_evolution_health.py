@@ -8,6 +8,7 @@ from pathlib import Path
 from CNFutures.sample_maturity import (
     canonical_futures_maturity_projection_sha256,
 )
+from shared.runtime_test import self_evolution_health
 from shared.runtime_test.self_evolution_health import evaluate_self_evolution_health
 from shared.review.projection_generation import (
     CURRENT_MANIFEST,
@@ -27,12 +28,14 @@ class SelfEvolutionHealthTest(unittest.TestCase):
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
-    def _write_current_ashare_projections(self, root: Path) -> None:
+    def _write_current_ashare_projections(
+        self, root: Path, *, authority_generation: int = 1
+    ) -> None:
         review = root / "ashare"
         review.mkdir(parents=True, exist_ok=True)
         authority = {
             "capital_authority_id": "ashare-capital-v1",
-            "authority_generation": 1,
+            "authority_generation": authority_generation,
             "execution_lineage_id": "ashare-sim-fresh-20260712-v1",
         }
         (review / "sample_kpi_latest.json").write_text(
@@ -149,8 +152,12 @@ class SelfEvolutionHealthTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _publish_current_ashare_generation(self, root: Path) -> dict[str, object]:
-        self._write_current_ashare_projections(root)
+    def _publish_current_ashare_generation(
+        self, root: Path, *, authority_generation: int = 1
+    ) -> dict[str, object]:
+        self._write_current_ashare_projections(
+            root, authority_generation=authority_generation
+        )
         review = (root / "ashare").resolve()
         input_sha = "a" * 64
         projections: dict[str, dict[str, object]] = {}
@@ -319,6 +326,27 @@ class SelfEvolutionHealthTest(unittest.TestCase):
             )
             self.assertEqual(market["ranking_trade_sum"], 0)
             self.assertEqual(market["current_projection"]["maturity_stage"], "missing")
+
+    def test_current_positive_authority_generation_is_not_hard_coded_to_one(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            self._publish_current_ashare_generation(root, authority_generation=2)
+
+            report = evaluate_self_evolution_health(
+                review_root=root,
+                markets=["ashare"],
+                pnl_summary={"ashare": {"sample_quality": {}}},
+            )
+
+            self.assertEqual(report["overall_status"], "pass")
+            self.assertEqual(
+                report["markets"][0]["current_projection"]["authority_scope"][
+                    "authority_generation"
+                ],
+                2,
+            )
 
     def test_forged_legacy_portfolio_evolution_cannot_replace_current_projection(
         self,
@@ -506,34 +534,81 @@ class SelfEvolutionHealthTest(unittest.TestCase):
             self.assertEqual(rejected_market["ranking_pnl_sum"], 0.0)
             self.assertFalse(rejected_market["positive_evolution_proven"])
 
-    def test_passes_when_samples_and_evolution_are_consistent(self) -> None:
+    def test_crypto_ignores_legacy_positive_evolution_and_stays_manual_only(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self._write_jsonl(
-                root / "us" / "evolution_log.jsonl",
+                root / "crypto" / "evolution_log.jsonl",
                 {
-                    "generated_at": "2026-07-09T01:00:00+00:00",
-                    "state": "adjusted",
+                    "generated_at": "2099-07-09T01:00:00+00:00",
+                    "state": "expanded",
                     "actions": [
                         {
                             "style_name": "trend",
-                            "action": "promote",
+                            "action": "expand_risk",
                             "after": {"weight": 1.0},
                         }
                     ],
-                    "rankings": [{"style_name": "trend", "trades": 3, "pnl": 1.5}],
+                    "rankings": [
+                        {"style_name": "trend", "trades": 999, "pnl": 9_999_999}
+                    ],
                     "weights": {"trend": {"status": "active", "weight": 1.0}},
+                },
+            )
+            self._write_jsonl(
+                root / "crypto" / "style_performance.jsonl",
+                {
+                    "generated_at": "2026-07-09T01:00:00+00:00",
+                    "trades": 3,
+                    "pnl": 1.5,
+                    "capital_layer": "simulated",
+                    "real_execution": False,
                 },
             )
 
             report = evaluate_self_evolution_health(
                 review_root=root,
-                markets=["us"],
-                pnl_summary={"us": {"total_pnl": 1.5}},
+                markets=["crypto"],
+                pnl_summary={"crypto": {"total_pnl": 1.5, "style_count": 1}},
             )
 
             self.assertEqual(report["overall_status"], "pass")
-            self.assertTrue(report["markets"][0]["positive_evolution_proven"])
+            market = report["markets"][0]
+            self.assertEqual(
+                market["evolution_source"], "crypto_simulation_manual_review"
+            )
+            self.assertEqual(market["simulation_trade_count"], 0)
+            self.assertEqual(market["simulation_pnl_native"], 1.5)
+            self.assertTrue(market["performance"]["retired_style_artifacts_ignored"])
+            self.assertEqual(market["performance"]["source"], "sim_ledger_pnl_summary")
+            self.assertEqual(market["ranking_trade_sum"], 0)
+            self.assertEqual(market["ranking_pnl_sum"], 0.0)
+            self.assertEqual(market["action_count"], 0)
+            self.assertEqual(market["style_weight_count"], 0)
+            self.assertFalse(market["positive_evolution_proven"])
+            self.assertTrue(
+                market["current_projection"]["negative_only_learning_enabled"]
+            )
+            self.assertTrue(market["current_projection"]["manual_review_required"])
+            self.assertFalse(market["current_projection"]["promotion_evidence_ready"])
+            self.assertFalse(market["automatic_promotion_enabled"])
+
+    def test_retired_market_health_request_fails_closed(self) -> None:
+        self.assertEqual(
+            self_evolution_health.DEFAULT_MARKETS,
+            ("ashare", "cn_futures", "crypto"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(
+                ValueError, "unknown or retired runtime market"
+            ):
+                evaluate_self_evolution_health(
+                    review_root=Path(tmp),
+                    markets=["us"],
+                    pnl_summary={},
+                )
 
 
 if __name__ == "__main__":

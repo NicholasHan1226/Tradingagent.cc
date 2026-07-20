@@ -8,7 +8,10 @@ from typing import Any
 
 from Crypto.common import CryptoConfig, load_crypto_config
 from shared.markets.analytics import close_series, safe_float
-from shared.markets.safety import assert_no_real_execution, reject_real_execution_payload
+from shared.markets.safety import (
+    assert_no_real_execution,
+    reject_real_execution_payload,
+)
 
 
 class CryptoHistoricalReplay:
@@ -31,10 +34,12 @@ class CryptoHistoricalReplay:
         series_by_symbol: dict[str, list[tuple[str, float]]] = {}
         for symbol, rows in bars_by_symbol.items():
             for row in rows:
-                reject_real_execution_payload(row, context="CryptoHistoricalReplay.bars")
+                reject_real_execution_payload(
+                    row, context="CryptoHistoricalReplay.bars"
+                )
             series_by_symbol[symbol.upper()] = close_series(rows)
 
-        cash = safe_float(initial_cash, self.config.capital.initial_capital or 10000.0)
+        cash = safe_float(initial_cash, self.config.capital.initial_capital)
         equity = cash
         trades: list[dict[str, Any]] = []
         for rule in rules:
@@ -42,7 +47,10 @@ class CryptoHistoricalReplay:
             series = series_by_symbol.get(symbol, [])
             lookback = max(1, int(safe_float(rule.get("lookback"), 1)))
             threshold = safe_float(rule.get("threshold"), 0.0)
-            size_pct = min(float(self.config.risk.max_single_position_pct), max(0.0, safe_float(rule.get("size_pct"), 0.05)))
+            size_pct = min(
+                float(self.config.risk.max_single_position_pct),
+                max(0.0, safe_float(rule.get("size_pct"), 0.05)),
+            )
             for idx in range(lookback, len(series) - 1):
                 prev_price = series[idx - lookback][1]
                 date, price = series[idx]
@@ -53,15 +61,17 @@ class CryptoHistoricalReplay:
                 notional = equity * size_pct
                 pnl = notional * (next_price / price - 1.0)
                 equity += pnl
-                trades.append({
-                    "symbol": symbol,
-                    "entry_date": date,
-                    "exit_date": next_date,
-                    "entry_price": price,
-                    "exit_price": next_price,
-                    "pnl": round(pnl, 6),
-                    "capital_layer": "shadow",
-                })
+                trades.append(
+                    {
+                        "symbol": symbol,
+                        "entry_date": date,
+                        "exit_date": next_date,
+                        "entry_price": price,
+                        "exit_price": next_price,
+                        "pnl": round(pnl, 6),
+                        "capital_layer": "shadow",
+                    }
+                )
 
         wins = sum(1 for trade in trades if safe_float(trade.get("pnl")) > 0)
         return {
@@ -81,4 +91,3 @@ class CryptoHistoricalReplay:
 
 
 __all__ = ["CryptoHistoricalReplay"]
-

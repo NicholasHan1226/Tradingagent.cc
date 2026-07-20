@@ -13,7 +13,35 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MARKET_LANES_PATH = ROOT / "shared" / "governance" / "market_lanes.yaml"
-RUNTIME_MARKET_LANE_ALIASES = {"cn_futures": "cnfutures"}
+ACTIVE_RUNTIME_MARKETS = ("ashare", "cn_futures", "crypto")
+RUNTIME_MARKET_ALIASES = {
+    "ashare": "ashare",
+    "a-share": "ashare",
+    "a_share": "ashare",
+    "cn_futures": "cn_futures",
+    "cn-futures": "cn_futures",
+    "cnfutures": "cn_futures",
+    "crypto": "crypto",
+}
+RUNTIME_MARKET_LANE_ALIASES = {
+    "ashare": "ashare",
+    "cn_futures": "cnfutures",
+    "crypto": "crypto",
+}
+
+
+def canonical_runtime_market(value: Any) -> str:
+    """Return one of the three owned runtime markets or fail closed.
+
+    Spelling aliases are accepted only when they map to an owned lane.  Empty,
+    retired and unknown market values never inherit A-share semantics.
+    """
+
+    raw = str(value or "").strip().lower()
+    canonical = RUNTIME_MARKET_ALIASES.get(raw)
+    if canonical not in ACTIVE_RUNTIME_MARKETS:
+        raise ValueError(f"unknown or retired runtime market: {raw or '<missing>'}")
+    return canonical
 
 
 def _text(value: Any, field: str) -> str:
@@ -83,8 +111,8 @@ class MarketLaneRegistry:
         return matches[0]
 
     def get_for_runtime_market(self, market: str) -> MarketLane:
-        market_key = str(market or "").strip().lower()
-        lane_id = RUNTIME_MARKET_LANE_ALIASES.get(market_key, market_key)
+        market_key = canonical_runtime_market(market)
+        lane_id = RUNTIME_MARKET_LANE_ALIASES[market_key]
         return self.get(lane_id)
 
 
@@ -93,6 +121,11 @@ class LaneValidation:
     lane_id: str
     repo_root: str
     branch: str
+    base_ref: str
+    base_head: str
+    lane_head: str
+    ahead: int
+    behind: int
     changed_paths: tuple[str, ...]
 
 
@@ -193,7 +226,8 @@ def load_market_lanes(
         overlap = seen_broker_contracts.intersection(broker_contracts)
         if overlap:
             raise ValueError(
-                "broker contracts must be market-specific: " + ", ".join(sorted(overlap))
+                "broker contracts must be market-specific: "
+                + ", ".join(sorted(overlap))
             )
         seen_broker_contracts.update(broker_contracts)
         seen_ids.add(lane.lane_id)
@@ -261,8 +295,23 @@ def validate_market_lane(
         )
     branch = _git(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
     if branch != lane.branch:
+        raise ValueError(f"lane {lane_id} requires branch {lane.branch}, got {branch}")
+    base_head = _git(repo_root, "rev-parse", f"{base_ref}^{{commit}}")
+    lane_head = _git(repo_root, "rev-parse", "HEAD^{commit}")
+    counts = _git(
+        repo_root,
+        "rev-list",
+        "--left-right",
+        "--count",
+        f"{base_ref}...HEAD",
+    ).split()
+    if len(counts) != 2 or any(not value.isdigit() for value in counts):
+        raise ValueError(f"unable to determine lane freshness against {base_ref}")
+    behind, ahead = (int(value) for value in counts)
+    if behind:
         raise ValueError(
-            f"lane {lane_id} requires branch {lane.branch}, got {branch}"
+            f"lane {lane_id} is {behind} commit(s) behind {base_ref}; "
+            "synchronize the clean lane before development"
         )
     changed_paths = collect_changed_paths(repo_root, base_ref)
     forbidden = tuple(
@@ -280,5 +329,10 @@ def validate_market_lane(
         lane_id=lane_id,
         repo_root=str(repo_root),
         branch=branch,
+        base_ref=base_ref,
+        base_head=base_head,
+        lane_head=lane_head,
+        ahead=ahead,
+        behind=behind,
         changed_paths=changed_paths,
     )

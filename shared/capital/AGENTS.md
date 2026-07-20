@@ -1,6 +1,6 @@
 # TradingAgent / shared/capital
 
-本目录是两个彼此隔离的 simulated capital authorities。任何调用必须显式指定 market；缺 authority、lineage、PIT 或 checksum 时 fail closed。
+本目录只拥有 A股与 CNFutures 两个彼此隔离的正式 simulated capital authorities。任何调用必须显式指定 market；缺 authority、lineage、PIT 或 checksum 时 fail closed。Crypto 的 10,000 USDT shadow/simulated authority 由 `Crypto/config.yaml` 与 `shared/markets/sim_capital.py` 管理，不得伪装成本目录第三套 CNY authority。
 
 ## 唯一政策源
 
@@ -13,6 +13,7 @@
 - 覆盖变量：`TRADINGAGENT_ASHARE_CAPITAL_ROOT` 与 `TRADINGAGENT_CN_FUTURES_CAPITAL_ROOT`。
 - 事件文件：`ashare_sim_capital_events.jsonl`、`cn_futures_sim_capital_events.jsonl`；latest JSON 只是可重建投影。
 - 两市场不可调拨、相加、净额或互补；一个市场的 PnL/DD 不影响另一个市场。
+- Crypto 与国内两市场也不得换汇、金额合计或共享风险状态；All Markets 只允许非货币计数/健康汇总。
 - fresh-start 不继承旧持仓、预约、PnL 或 high-water。legacy freeze manifest 只证明历史已冻结，不导入新 ledger。
 - 表中 generation 1 只描述初始基线；每轮消费 current snapshot 的正整数 generation，禁止在 optimizer、runtime、文档示例或测试外固定为 1。
 - A股组合常量也只来自同一 YAML：100 股买入整手、最低经济订单 2,000 CNY、无交易区 1,000 CNY、最多 8 个仓位。optimizer、runtime stage、测试和文档不得复制另一套默认值；政策缺字段或跨层不一致时 fail closed。

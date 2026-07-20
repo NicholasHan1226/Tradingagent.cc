@@ -44,7 +44,7 @@ const holdingRow: PortfolioLedgerRow = {
 }
 
 const riskRow: RiskLedgerRow = {
-  symbol: 'BTC-USD',
+  symbol: 'BTC-USDT',
   market: '加密货币',
   stage: '风控',
   gate: '安全拦截',
@@ -57,7 +57,7 @@ describe('terminal components', () => {
   it('renders a sourced market price pulse and truthful missing state', () => {
     render(<MarketTape evidence={{ overall: 'positive', snapshotLabel: '13:20', sourceLabel: 'TradingDatas V1', items: [] }} pulseHealth={{ headline: '1/2 已取到', detail: '4 市场待映射 · 已缓存 · 18ms', traceLabel: '轨迹 2', traceDetail: '近 2 次来源观测', tone: 'warning' }} onSelect={() => undefined} rows={[
       { market: 'A-share', label: 'A股', selected: true, returnLabel: '+1.20%', holdingsLabel: '2 持仓', runtimeLabel: '正常', freshnessLabel: '13:20', tone: 'positive', pulse: { symbol: '600519.SH', priceLabel: '1,424.10', changeLabel: '+1.00%', detailLabel: 'H 1,430.00 · L 1,400.00', freshness: 'live', points: [1410, 1414, 1424.1] } },
-      { market: 'US', label: '美股', selected: false, returnLabel: '—', holdingsLabel: '0 持仓', runtimeLabel: '等待数据', freshnessLabel: '13:20', tone: 'muted' },
+      { market: 'CNFutures', label: '中国期货', selected: false, returnLabel: '—', holdingsLabel: '0 持仓', runtimeLabel: '等待数据', freshnessLabel: '13:20', tone: 'muted' },
     ]} />)
 
     expect(screen.getByText('600519.SH')).toBeInTheDocument()
@@ -75,6 +75,13 @@ describe('terminal components', () => {
     expect(screen.getByText('关联持仓')).toBeInTheDocument()
     expect(screen.getByText('可归因盈亏')).toBeInTheDocument()
     expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
+  it('renders attributable Crypto PnL in native USDT without a CNY symbol', () => {
+    render(<LinkedEvidenceContext model={{ id: 'opp-2', symbol: 'BTC-USDT', market: '加密货币', stage: '结果', result: '仿真成交', evidence: '5/5 阶段', eventCount: 5, signalCount: 1, holdingCount: 1, attributablePnl: 12.5, attributablePnlCurrency: 'USDT', updatedAt: '07/11 13:10' }} onClear={() => undefined} onOpenProcess={() => undefined} />)
+
+    expect(screen.getByText('+12.50 USDT')).toBeInTheDocument()
+    expect(screen.queryByText('+¥12.50')).not.toBeInTheDocument()
   })
   it('renders one continuous terminal shell with metrics and ledger', () => {
     render(

@@ -18,7 +18,6 @@ from shared.capital.ashare_position_authority import (
 )
 from shared.markets.base import MarketAdapter
 from shared.orchestrator import OrchestratorDeps, run_shadow_loop, run_sim_loop
-from shared.wrappers import tradings_cron_entry
 
 
 TRADE_DATE = "20260714"
@@ -641,7 +640,7 @@ def _deps(risk_check: Mock) -> OrchestratorDeps:
     )
 
 
-def test_entrypoints_block_before_ordinary_risk_and_pass_only_verified_zero(
+def test_current_loops_block_before_ordinary_risk_and_pass_only_verified_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -665,7 +664,6 @@ def test_entrypoints_block_before_ordinary_risk_and_pass_only_verified_zero(
         point_in_time_as_of="2026-07-12T00:00:00+08:00",
     )
 
-    generic_loader = tradings_cron_entry._load_ashare_generic_position_source
     risk_check = Mock(
         return_value={
             "approved": True,
@@ -674,77 +672,6 @@ def test_entrypoints_block_before_ordinary_risk_and_pass_only_verified_zero(
             "portfolio_position_count": 0,
         }
     )
-    monkeypatch.setattr(
-        tradings_cron_entry,
-        "_pending_signal_orders",
-        lambda: [
-            {
-                "order_id": "order-1",
-                "market": "ashare",
-                "ts_code": "601999.SH",
-                "weight": 0.05,
-            }
-        ],
-    )
-    monkeypatch.setattr(tradings_cron_entry, "trade_date", lambda: TRADE_DATE)
-    monkeypatch.setattr(tradings_cron_entry, "append_jsonl", lambda *_: None)
-    monkeypatch.setattr(
-        tradings_cron_entry.market_capital,
-        "load_market_capital_provider_state",
-        lambda market, date: _capital_state(),
-    )
-    monkeypatch.setattr("shared.risk.pre_trade_check.check", risk_check)
-    monkeypatch.setattr(
-        tradings_cron_entry,
-        "_load_ashare_generic_position_source",
-        lambda date, authority: _source(_position_rows(8), source="legacy_generic"),
-    )
-
-    blocked_gate = tradings_cron_entry.run_gate_review(
-        "job_gate_review_day", "risk/gate/test.jsonl", "day"
-    )
-    risk_check.assert_not_called()
-    assert blocked_gate["decisions"][0]["decision"]["reason_code"] == (
-        CAPITAL_POSITION_SOURCE_MISMATCH
-    )
-    assert not any(
-        "持仓数" in reason
-        for reason in blocked_gate["decisions"][0]["decision"]["reasons"]
-    )
-
-    monkeypatch.setattr(
-        tradings_cron_entry, "_load_ashare_generic_position_source", generic_loader
-    )
-    passed_gate = tradings_cron_entry.run_gate_review(
-        "job_gate_review_day", "risk/gate/test.jsonl", "day"
-    )
-    risk_check.assert_called_once()
-    assert passed_gate["decisions"][0]["decision"]["approved"] is True
-
-    risk_check.reset_mock()
-    monkeypatch.setattr(
-        tradings_cron_entry,
-        "_load_ashare_generic_position_source",
-        generic_loader,
-    )
-    monkeypatch.setattr(
-        tradings_cron_entry.market_capital,
-        "load_market_capital_provider_state",
-        lambda market, date: _capital_state(daily_mtm_change=-1_500.0),
-    )
-    capital_blocked_gate = tradings_cron_entry.run_gate_review(
-        "job_gate_review_day", "risk/gate/test.jsonl", "day"
-    )
-    risk_check.assert_not_called()
-    assert capital_blocked_gate["state"] == "ok"
-    assert capital_blocked_gate["ashare_position_authority"]["status"] == "verified"
-    assert (
-        capital_blocked_gate["ashare_position_authority"]["new_risk_allowed"] is False
-    )
-    assert capital_blocked_gate["decisions"][0]["decision"]["reason_code"] == (
-        "ashare_capital_daily_loss_pause"
-    )
-
     dynamic_plan = Mock(side_effect=AssertionError("dynamic plan must not run"))
     rebalance = Mock(side_effect=AssertionError("rebalance must not run"))
     monkeypatch.setattr(
