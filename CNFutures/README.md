@@ -24,12 +24,8 @@ CNFutures 是国内期货的长期模拟研究与样本闭环。当前目标是�
 TradingDatas catalog/query futures bars/spec evidence
   -> strategy prediction / hold / risk reject
   -> one-lot affordability and hard risk gates
-  -> simulated execution evidence + market capital commit
-  -> append-only order lifecycle events + startup directory reconcile
-  -> append-only CNFutures review journal
-  -> m30/m60/close/1d/3d/5d forward-label updates
-  -> Sample KPI + independent maturity projection
-  -> observation report / read-only dashboard
+  -> non-authority fixture simulated open/MTM/close math
+  -> fixture-only sample/reconcile projection (no durable write)
 ```
 
 每个有效会话至少保留 prediction、hold、risk reject、counterfactual 或 simulated fill 之一。样本不足不能阻断 observation；但数据、时段、最小一手、真实规格、费用、滑点、夜盘、换月、资金、回撤和 execution lineage 门禁不能为了采样而放宽。
@@ -47,6 +43,8 @@ fixture 数据证据必须精确声明 `GET /v1/catalog` 与 `POST /v1/query`，
 费用字段同时声明 `open_fee_type`/`close_fee_type`：`rate` 按成交名义金额计算，`fixed_per_lot` 按手数计算。两种费用以及静态/injected 规格都只是 simulation bootstrap，绝非真实交易所、期货公司或 TradingDatas authority。
 
 资金 authority 每轮只读 `MarketPolicy.load("cn_futures")`：初始权益、保证金上限与 daily-loss budget 不在本模块复制常量。fixture `maximum_loss_cny` 只能收紧 canonical daily-loss budget；开仓前必须同时证明保证金、stop exposure、开/平预估费用和保留现金可支付。任一项不能满足时仅保留 counterfactual/hold，不能生成 execution-eligible order 或把负现金标记为 reconciled。
+
+本切片永远不具有 execution authority：`candidate.execution_eligible=false`，只有通过数学和数据门禁时 `fixture_simulation_eligible=true`。订单仅为 `simulated_filled` payload，且显式 `execution_authority=false`、`durable=false`、`capital_commit_id=null`、`outbox_id=null`；对账仅为 `fixture_reconciled/non_authoritative`，不是 durable capital reconciliation。升级为 execution-eligible 前必须分别接入并验证 durable outbox、append-only capital ledger、原子 capital commit、execution lineage 及其 crash/reconcile 证据。
 
 它的静态合约参数仅用于模拟 bootstrap，不能替代 TradingDatas 将来交接的可追溯合约规格。真实 handoff 到位前，任何非 fixture 输入都必须 fail closed；该切片不安装 cron、不连接 broker，也不写入 ledger/outbox 文件。
 

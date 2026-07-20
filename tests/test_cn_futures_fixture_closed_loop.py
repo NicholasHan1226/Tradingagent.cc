@@ -96,7 +96,8 @@ def test_fixture_long_round_trip_binds_night_trade_date_tick_margin_and_reconcil
     assert result["mode"] == "fixture_mock_only"
     assert result["trade_date"] == "20260720"
     assert result["session"] == "night"
-    assert result["candidate"]["execution_eligible"] is True
+    assert result["candidate"]["execution_eligible"] is False
+    assert result["candidate"]["fixture_simulation_eligible"] is True
     assert result["candidate"]["intent_id"].startswith("cnf-intent-")
     assert result["execution"]["orders"][0]["price"] == 3501.0
     assert result["execution"]["orders"][0]["margin_cny"] == 9102.6
@@ -108,6 +109,8 @@ def test_fixture_long_round_trip_binds_night_trade_date_tick_margin_and_reconcil
     assert result["daily_reconcile"]["margin_cny"] == 0.0
     assert result["daily_reconcile"]["open_position_quantity"] == 0
     assert result["sample_review"]["sample_class"] == "completed_round_trip"
+    assert result["daily_reconcile"]["fixture_reconciled"] is True
+    assert result["daily_reconcile"]["non_authoritative"] is True
     assert (
         result["execution"]["orders"][0]["order_id"]
         != result["execution"]["orders"][1]["order_id"]
@@ -265,7 +268,8 @@ def test_publish_delay_after_event_is_valid_before_entry_decision() -> None:
     result = run_fixture_closed_loop(_fixture())
 
     assert result["bar_timestamp"] == "2026-07-17T21:05:00+08:00"
-    assert result["candidate"]["execution_eligible"] is True
+    assert result["candidate"]["execution_eligible"] is False
+    assert result["candidate"]["fixture_simulation_eligible"] is True
 
 
 def test_saturday_early_night_uses_injected_monday_trade_date() -> None:
@@ -444,7 +448,7 @@ def test_rollover_active_symbol_changes_fixture_lineage() -> None:
         _fixture(contract={**_fixture()["contract"], "active_symbol": "rb2701.SHF"})
     )
 
-    assert rollover["candidate"]["execution_eligible"] is False
+    assert rollover["candidate"]["fixture_simulation_eligible"] is False
     assert rollover["fixture_lineage_sha256"] != baseline["fixture_lineage_sha256"]
 
 
@@ -467,6 +471,26 @@ def test_naive_timestamps_fail_closed(path: tuple[str, ...], value: str) -> None
 
     with pytest.raises(FixtureContractError):
         run_fixture_closed_loop(fixture)
+
+
+def test_fixture_output_never_claims_execution_or_durable_capital_authority() -> None:
+    result = run_fixture_closed_loop(_fixture())
+
+    def walk(value: object) -> list[dict[str, object]]:
+        if isinstance(value, dict):
+            return [value, *(item for child in value.values() for item in walk(child))]
+        if isinstance(value, list):
+            return [item for child in value for item in walk(child)]
+        return []
+
+    for mapping in walk(result):
+        assert mapping.get("execution_eligible") is not True
+        assert mapping.get("status") != "filled"
+        assert mapping.get("capital_commit_id") in (None,)
+        assert mapping.get("outbox_id") in (None,)
+    assert result["execution"]["orders"][0]["status"] == "simulated_filled"
+    assert result["execution"]["orders"][0]["execution_authority"] is False
+    assert result["execution"]["orders"][0]["durable"] is False
 
 
 @pytest.mark.parametrize(

@@ -185,7 +185,8 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         "trade_date": trade_date,
         "session": session,
         "counterfactual_only": False,
-        "execution_eligible": True,
+        "execution_eligible": False,
+        "fixture_simulation_eligible": True,
         "intent_id": intent_id,
     }
     if contract.symbol != contract.active_symbol:
@@ -275,6 +276,10 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     )
     execution = {
         "simulation_only": True,
+        "execution_authority": False,
+        "durable": False,
+        "capital_commit_id": None,
+        "outbox_id": None,
         "broker": None,
         "orders": [open_order, close_order],
         "realized_pnl_cny": _money(realized),
@@ -293,7 +298,8 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         "session": session,
         "symbol": contract.symbol,
         "side": requested_side,
-        "execution_eligible": True,
+        "execution_eligible": False,
+        "fixture_simulation_eligible": True,
         "counterfactual_only": False,
         "reason": "forced_liquidation" if liquidation else "fixture_round_trip",
     }
@@ -305,7 +311,11 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         "equity_cny": _money(final_cash),
         "margin_cny": 0.0,
         "open_position_quantity": 0,
-        "reconciled": True,
+        "fixture_reconciled": True,
+        "non_authoritative": True,
+        "durable": False,
+        "capital_commit_id": None,
+        "outbox_id": None,
     }
     return _with_lineage(base, candidate, execution, sample, reconcile)
 
@@ -579,7 +589,12 @@ def _hold(
     reason: str,
 ) -> dict[str, Any]:
     candidate.update(
-        {"execution_eligible": False, "counterfactual_only": True, "reason": reason}
+        {
+            "execution_eligible": False,
+            "fixture_simulation_eligible": False,
+            "counterfactual_only": True,
+            "reason": reason,
+        }
     )
     sample = {
         **candidate,
@@ -592,10 +607,25 @@ def _hold(
         "cash_cny": policy.initial_equity_cny,
         "equity_cny": policy.initial_equity_cny,
         "margin_cny": 0.0,
-        "reconciled": True,
+        "fixture_reconciled": True,
+        "non_authoritative": True,
+        "durable": False,
+        "capital_commit_id": None,
+        "outbox_id": None,
     }
     return _with_lineage(
-        base, candidate, {"simulation_only": True, "orders": []}, sample, reconcile
+        base,
+        candidate,
+        {
+            "simulation_only": True,
+            "execution_authority": False,
+            "durable": False,
+            "capital_commit_id": None,
+            "outbox_id": None,
+            "orders": [],
+        },
+        sample,
+        reconcile,
     )
 
 
@@ -641,6 +671,11 @@ def _order(
         "fee_cny": _money(fee),
         "margin_cny": _money(margin),
         "simulated": True,
+        "status": "simulated_filled",
+        "execution_authority": False,
+        "durable": False,
+        "capital_commit_id": None,
+        "outbox_id": None,
     }
 
 
