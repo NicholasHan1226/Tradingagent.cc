@@ -16,9 +16,9 @@ const snapshot: TradingAgentReadModelSnapshot = {
   holdings: [],
   signals: [
     {
-      symbol: '0700.HK',
-      name: 'Tencent',
-      market: 'HK',
+      symbol: '600519.SH',
+      name: '贵州茅台',
+      market: 'A-share',
       method: '事件驱动',
       status: 'pending',
       impact: '--',
@@ -87,7 +87,7 @@ describe('TradingAgent cloud snapshot API server', () => {
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('access-control-allow-origin')).toBe('https://dashboard.example.com')
-    await expect(response.json()).resolves.toMatchObject({ mode: 'simulated', signals: [{ symbol: '0700.HK' }] })
+    await expect(response.json()).resolves.toMatchObject({ mode: 'simulated', signals: [{ symbol: '600519.SH' }] })
   })
 
   it('rejects wildcard CORS configuration for the single-user dashboard', () => {

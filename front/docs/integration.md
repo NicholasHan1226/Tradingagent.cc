@@ -19,10 +19,11 @@ gated and must not trigger execution from the front layer.
 | Positions | A-share: verified current capital snapshot -> derived execution-lineage position receipt; other markets: `signals/positions/*.json` | A-share has no fallback; generic non-A-share may use `shared/accounting/position_plan.jsonl` | Partial |
 
 > A股当前模拟执行只从受验证capital/execution-lineage/RunBundle投影读取；`signals/*`仅保留为非A股兼容/法证投影。前端不得启动任何执行器，也不得把旧pending queue显示成当前A股机会。
-| Performance | `shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl` or `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl` | `shared/review/daily/daily_brief.jsonl` return fields, then `shared/review/*/style_performance.jsonl` simulated PnL series | Partial |
-| Generic market summaries | US/Crypto/PM `shared/review/*/style_comparison.json` | their own `style_performance.jsonl` and sim ledgers; A-share/CNFutures use their dedicated authorities below | Ready |
+| Performance | `shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl` or `shared/logs/sim_ledger/*/*/daily_mark_to_market.jsonl` | `shared/review/daily/daily_brief.jsonl` explicit return fields only | Partial; missing authority stays unavailable |
+| Active market summaries | A-share/CNFutures dedicated authorities below plus current market-specific sim-ledger facts | no retired StyleRunner fallback; never cross-market money aggregation | Partial |
 | A-share capital | `shared/logs/capital/ashare/ashare_sim_capital_latest.json` | unavailable; never infer from another market | Ready; strict authority/generation/fresh/reconcile/checksum |
 | CNFutures capital | `shared/logs/capital/cn_futures/cn_futures_sim_capital_latest.json` | unavailable; never infer from A-share | Ready; strict authority/generation/fresh/reconcile/checksum |
+| Crypto capital/equity | current `shared/logs/sim_ledger/crypto/*/daily_mark_to_market.jsonl` equity evidence | unavailable; positions-only and frozen style reports never synthesize capital | Partial; native USDT only, no fixed FX conversion or CNY fallback |
 | A-share research evidence | `shared/review/ashare/research_evidence_latest.json` | omitted from snapshot when missing or malformed | Ready |
 | A-share sample KPI / maturity | `shared/review/ashare/projection_current.json` -> hash-verified `projection_generations/<generation_id>/{sample_kpi_latest,evolution_decision_latest,market_maturity_latest}.json` | entire set omitted when pointer/manifest/file hash, recomputed generation ID, shared input SHA, authority, or explicit sim-only fields are missing/invalid; root mirrors are never a transaction fallback | Ready |
 | CNFutures maturity | `shared/review/cn_futures/market_maturity_latest.json` | omitted when canonical `projection_sha256`, authority, lineage, or sim-only contract is invalid | Ready |
@@ -30,7 +31,7 @@ gated and must not trigger execution from the front layer.
 | CNFutures replay evidence | `shared/review/cn_futures/replay_latest.json` | omitted from market summary when missing or malformed | Ready |
 | Today paper-day summary | optional local candidate `shared/runtime/run_bundles/latest.json` plus byte-identical `shared/runtime/run_bundles/runs/<run_id>/<bundle_sha256>.json` | `paperDayRun` omitted when either file, strict manifest, component/payload/bundle hash, run identity, idempotency binding, or simulation-only flags fail; no sample fallback | Candidate active reader only; fixture CLI intentionally publishes under `shared/runtime_test/phase1_paper_fixture/`, so scheduler and active-root publication remain unverified |
 | Decisions | daily review and attribution JSONL files | strategy version history | Partial |
-| Risk | `shared/risk/risk_limits.yaml` | PM risk report JSONL | Ready |
+| Risk | `shared/risk/risk_limits.yaml` | current signal and runtime evidence | Ready |
 | Execution / live readiness | `shared/governance/market_lanes.yaml` and `system_state_matrix.yaml` plus market-specific simulated lineage receipts | separately authorized market-specific broker adapter readback | Gated; A-share/CNFutures/Crypto APIs remain distinct and live is disabled |
 
 The homepage maturity panel never aggregates capital across markets. It shows
@@ -75,26 +76,14 @@ Display-ready fields used by the homepage:
   aliases such as
   `simulated_return_pct`, `return_pct`, `pnl_pct`, `target_return_pct`,
   `benchmark_return_pct`, and `opportunity_gap_pct`.
-- If daily review return fields are absent, the reader can build a real
-  simulated return series from `shared/review/*/style_performance.jsonl` by
-  summing `pnl` per date and normalizing it against the simulated ledger
-  capital base from `shared/logs/sim_ledger/*/*/positions.json`.
-- `style_performance.jsonl` money fields are normalized to dashboard CNY. Rows
-  may provide explicit `pnl_cny`, `total_pnl_cny`, `net_pnl_cny`,
-  `realized_pnl_cny`, `unrealized_pnl_cny`, and `max_dd_cny`. If explicit CNY
-  fields are absent, the reader uses `fx_to_cny` / `exchange_rate_to_cny`,
-  then `pnl_currency` / `currency`, then the market default FX rule. This keeps
-  US, Crypto, PM, HK, A-share, and CNFutures summaries comparable on the
-  dashboard.
-- When matching simulated `trade_journal.jsonl` timestamps are available for
-  the same market/style/date, the reader expands style-level daily PnL into a
-  trade-timed return curve. This preserves the style performance PnL total while
-  making the homepage curve move at real ledger event times.
-- When style performance rows provide `pnl_source`, `realized_pnl`, and
-  `unrealized_pnl`, the snapshot `portfolio` includes `pnlSource`,
-  `realizedPnl`, and `unrealizedPnl`; the homepage can show that the current
-  portfolio return is based on simulated-ledger mark-to-market instead of the
-  old entry-price estimate.
+- If daily review return fields are absent, performance remains unavailable.
+  The reader never derives current returns from trade notional, position cost,
+  or retired `style_performance.jsonl` / `style_comparison.json` artifacts.
+- Retired StyleRunner/PerformanceTracker artifacts may remain on disk only as
+  frozen forensic history. They do not affect current market summaries,
+  readiness, trade counts, PnL, holdings, evolution, or execution. A `style`
+  field in current SampleJournal rows is only a research grouping for the three
+  active strategy sleeves, not legacy runtime authority.
 - When the verified A-share capital snapshot identifies a safe current execution lineage,
   the reader derives `shared/logs/execution_lineages/<execution_lineage_id>/` from that
   snapshot rather than a date-coded constant, and may attach
@@ -146,7 +135,7 @@ Display-ready fields used by the homepage:
   quality, lineage and receipt are verified before a pulse can be displayed. Each returned row
   must explicitly match the requested entity, and its timestamp cannot exceed either
   `metadata.data_through` or the decision time.
-- `marketPulseCoverage`: optional read-only diagnostics for all six markets. It contains `entries[]` with `sourced`, `no_representative`, `unavailable`, or `degraded` status plus `requestedCount`, `sourcedCount`, `cacheState`, `fetchedAt`, and `sourceLatencyMs`. A cached result preserves its original fetch time and labels its cache state rather than pretending to be a new source read.
+- `marketPulseCoverage`: optional read-only diagnostics for `A-share`, `CNFutures`, and `Crypto`. It contains `entries[]` with `sourced`, `no_representative`, `unavailable`, or `degraded` status plus `requestedCount`, `sourcedCount`, `cacheState`, `fetchedAt`, and `sourceLatencyMs`. A cached result preserves its original fetch time and labels its cache state rather than pretending to be a new source read.
 - `marketPulseCoverageHistory`: optional bounded in-process observations of fresh TradingDatas reads. It retains at most 12 entries, adds no sample on cache hit, and resets on snapshot-service restart. It is terminal observability only, not a durable health or SLA history.
 - `paperDayRun`: optional read-only summary of the latest explicitly published
   local A-share paper-day RunBundle. It carries `environment=local_candidate`,
@@ -162,10 +151,10 @@ Display-ready fields used by the homepage:
   deweighted, while simulation eligibility still requires at least one accepted
   `required_execution` dataset, `execution_eligible=true`, valid position
   authority, and no run-level risk block.
-  The reader combines existing signals, holdings, simulated ledger capital,
-  `style_performance.jsonl`, and `style_comparison.json`. This lets the front
-  show why a selected market has data, partial data, or no data without
-  inventing trades.
+  The reader combines existing signals, holdings, verified market-specific
+  capital, current simulated ledgers, and explicit equity/return authorities.
+  Frozen StyleRunner artifacts are excluded. This lets the front show why a
+  selected market has data, partial data, or no data without inventing trades.
 - `marketPulses[]`: optional sourced price context for representative symbols already present
   in holdings or signals. The snapshot server requires all five explicit inputs:
   `TRADINGDATAS_API_URL`, `TRADINGDATAS_CATALOG_VERSION`,
@@ -176,29 +165,33 @@ Display-ready fields used by the homepage:
   it does not fail the snapshot, synthesize movement, or try a legacy route.
 - CNFutures current runtime status uses the latest actionable row from
   `shared/review/data/cn_futures_sim_reviews.jsonl` as the authoritative
-  source. `shared/review/cn_futures/style_comparison.json` is review context for
-  style readiness and must not be added to the latest review counts, otherwise
-  filled/error/hold numbers can be doubled or contaminated by an older run.
+  source. Frozen `shared/review/cn_futures/style_comparison.json` is ignored;
+  it cannot supplement or alter latest review counts.
 - CNFutures market summaries may attach `cnFuturesReplayEvidence` from
   `shared/review/cn_futures/replay_latest.json`. This object is display-only
   and separates historical actionable replay counts from currently executable
   candidates with `execution_eligible` and non-executable reasons.
-- When `style_performance.jsonl` is used as a fallback performance source,
-  US/Crypto/PM money fields are normalized to CNY before aggregation. Rows may
-  provide explicit `pnl_cny` / `realized_pnl_cny` / `unrealized_pnl_cny` /
-  `max_dd_cny` or `fx_to_cny`; otherwise USD/USDT/USDC markets use the standard
-  dashboard FX rate and the normalized 10,000 original-currency capital base.
-  The reader must not divide original-currency PnL by a CNY capital base.
-- Market switching is strict. Selecting `A-share`, `US`, `Crypto`, `PM`, or
-  `CNFutures` filters signals and holdings to that market. It must not fall
+- Crypto performance requires its own current USDT authority and current
+  explicit equity snapshots. The front never converts a retired style artifact
+  into current CNY PnL and never divides one market's PnL by another market's
+  capital base. `capitalBase`, equity, realized/unrealized PnL, holdings and
+  simulated trade notional remain native `USDT`; missing authority stays
+  unavailable, and `USD` or `CNY` is never used as a display alias for USDT.
+  The active front supports only `CNY` for A-share/CNFutures and `USDT` for
+  Crypto. A retired `USD` payload renders unavailable instead of falling back
+  to `$`. Multiple Crypto ledger/account directories also remain unavailable
+  until an explicit shared-account authority permits aggregation.
+- Market switching is strict. Selecting `A-share`, `CNFutures`, or `Crypto`
+  filters signals and holdings to that market. It must not fall
   back to all-market rows when the selected market has no records.
 - `All Markets` never has a monetary performance curve. It may aggregate only
   non-monetary counts and health. A selected market may show its own history or
   a single current-return point from its `marketSummaries[]` row; it must never
   use another market's curve or a cross-market capital base.
-- Supported dashboard market labels include `A-share`, `US`, `Crypto`, `HK`,
-  `PM`, and `CNFutures`. CN futures symbols such as `IF2601.CFFEX` and backend
-  market labels such as `cn_futures` map to `CNFutures`.
+- Supported dashboard market labels are exactly `A-share`, `CNFutures`, and
+  `Crypto`, plus the non-monetary `All Markets` aggregate. CN futures symbols
+  such as `IF2601.CFFEX` and backend market labels such as `cn_futures` map to
+  `CNFutures`; rows from retired market directories are ignored.
 - Compatibility signal timestamps may be supplied as `discovered_at`,
   `scored_at`, `debated_at`, `risk_checked_at`, and `triggered_at`. Mapping them
   into `发现 / 研判 / 风控 / 待确认 / 结果` creates a derived queue projection,
@@ -502,7 +495,8 @@ The route may read:
 - `signals/positions/*.json`
 - `shared/accounting/position_plan.jsonl`
 - `shared/review/daily/daily_brief.jsonl`
-- `shared/review/*/style_performance.jsonl`
+- frozen `shared/review/*/{style_performance.jsonl,style_comparison.json}` may
+  remain on disk for forensic audit but are deliberately not read by this route
 - `shared/review/attribution/*.jsonl`
 - `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}`
 - `shared/logs/capital/ashare/ashare_sim_capital_latest.json`, then
@@ -537,9 +531,9 @@ belongs to this dashboard.
 
 The data gap is now narrower: verified server-local simulated ledger positions
 can feed holdings, while trade journals feed completed replay rather than a
-current opportunity funnel, and
-`shared/review/*/style_performance.jsonl` can feed a real simulated return curve
-when present with simulated ledger capital. `midday_review.jsonl`, strategy/factor attribution JSONL,
+current opportunity funnel. Current return curves still require explicit equity
+snapshots or daily-review return fields; frozen StyleRunner artifacts cannot
+fill that gap. `midday_review.jsonl`, strategy/factor attribution JSONL,
 `risk_limits.yaml`, richer per-signal stage records, and normalized
 mark-to-market return series still need upstream data before the UI should
 present them as complete panels. The frontend must not infer returns from trade

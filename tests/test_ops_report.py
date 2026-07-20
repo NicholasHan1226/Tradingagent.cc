@@ -8,14 +8,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from shared.runtime_test import ops_report
-from shared.review import metrics_dashboard
-from shared.notify.email_templates import daily_report, weekly_report
+from shared.runtime_test import ops_report  # noqa: E402
+from shared.review import metrics_dashboard  # noqa: E402
+from shared.notify.email_templates import daily_report, weekly_report  # noqa: E402
 
 
 class OpsReportTest(unittest.TestCase):
@@ -23,7 +24,15 @@ class OpsReportTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.signals = self.root / "signals"
-        for state in ("pending", "claimed", "running", "filled", "failed", "expired", "cancelled"):
+        for state in (
+            "pending",
+            "claimed",
+            "running",
+            "filled",
+            "failed",
+            "expired",
+            "cancelled",
+        ):
             (self.signals / state).mkdir(parents=True)
         self.old_root = ops_report.ROOT
         self.old_shared = ops_report.SHARED
@@ -48,39 +57,65 @@ class OpsReportTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _write_card(self, state: str, name: str, payload: dict[str, object]) -> None:
-        (self.signals / state / name).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        (self.signals / state / name).write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
 
     def test_queue_summary_groups_by_market_and_state(self) -> None:
         self._write_card("pending", "a.json", {"ts_code": "600000.SH"})
+        self._write_card("pending", "c.json", {"market": "crypto", "symbol": "BTCUSDT"})
+        self._write_card(
+            "filled", "f.json", {"market": "cnfutures", "symbol": "RB2601.SHF"}
+        )
         self._write_card("pending", "p.json", {"market": "pm", "symbol": "event-1"})
         self._write_card("filled", "u.json", {"market": "US", "symbol": "AAPL"})
 
         summary = ops_report.queue_summary()
 
-        self.assertEqual(summary["totals"]["pending"], 2)
-        self.assertEqual(summary["totals"]["filled"], 1)
+        self.assertEqual(summary["totals"]["pending"], 3)
+        self.assertEqual(summary["totals"]["filled"], 2)
         self.assertEqual(summary["by_market"]["ashare"]["pending"], 1)
-        self.assertEqual(summary["by_market"]["pm"]["pending"], 1)
-        self.assertEqual(summary["by_market"]["us"]["filled"], 1)
+        self.assertEqual(summary["by_market"]["crypto"]["pending"], 1)
+        self.assertEqual(summary["by_market"]["cn_futures"]["filled"], 1)
+        self.assertEqual(summary["by_market"]["unknown"]["pending"], 1)
+        self.assertEqual(summary["by_market"]["unknown"]["filled"], 1)
+        self.assertNotIn("pm", summary["by_market"])
+        self.assertNotIn("us", summary["by_market"])
 
     def test_shadow_queue_summary_groups_shadow_cards(self) -> None:
         (self.signals / "shadow" / "pending").mkdir(parents=True)
         (self.signals / "shadow" / "failed").mkdir(parents=True)
-        (self.signals / "shadow" / "pending" / "s1.json").write_text(json.dumps({"market": "pm"}), encoding="utf-8")
-        (self.signals / "shadow" / "failed" / "s2.json").write_text(json.dumps({"ts_code": "600000.SH"}), encoding="utf-8")
+        (self.signals / "shadow" / "pending" / "s1.json").write_text(
+            json.dumps({"market": "pm"}), encoding="utf-8"
+        )
+        (self.signals / "shadow" / "failed" / "s2.json").write_text(
+            json.dumps({"ts_code": "600000.SH"}), encoding="utf-8"
+        )
 
         summary = ops_report.shadow_queue_summary()
 
         self.assertEqual(summary["totals"]["pending"], 1)
         self.assertEqual(summary["totals"]["failed"], 1)
-        self.assertEqual(summary["by_market"]["pm"]["pending"], 1)
+        self.assertEqual(summary["by_market"]["unknown"]["pending"], 1)
         self.assertEqual(summary["by_market"]["ashare"]["failed"], 1)
 
     def test_failure_review_classifies_existing_failed_cards(self) -> None:
-        self._write_card("failed", "bad_code.json", {"market": "ashare", "receipt": {"message": "不支持的A股代码段"}})
-        self._write_card("failed", "unconfirmed.json", {"market": "ashare", "receipt": {"confirmation_status": "unconfirmed"}})
-        self._write_card("expired", "old.json", {"market": "crypto", "status": "expired"})
-        self._write_card("filled", "cnf.json", {"market": "cn_futures", "symbol": "RB2601.SHF"})
+        self._write_card(
+            "failed",
+            "bad_code.json",
+            {"market": "ashare", "receipt": {"message": "不支持的A股代码段"}},
+        )
+        self._write_card(
+            "failed",
+            "unconfirmed.json",
+            {"market": "ashare", "receipt": {"confirmation_status": "unconfirmed"}},
+        )
+        self._write_card(
+            "expired", "old.json", {"market": "crypto", "status": "expired"}
+        )
+        self._write_card(
+            "filled", "cnf.json", {"market": "cn_futures", "symbol": "RB2601.SHF"}
+        )
 
         review = ops_report.failure_review()
         queue = ops_report.queue_summary()
@@ -101,8 +136,16 @@ class OpsReportTest(unittest.TestCase):
                 "filled_count": 0,
                 "error_count": 1,
                 "styles": {"trend": {"filled_count": 0}},
-                "error_summary": {"by_error": {"stale_intraday_bar": 1}, "by_style": {"trend": {"error_count": 1}}},
-                "style_health": {"trend": {"status": "blocked", "suggested_action": "inspect_data_or_risk_gate"}},
+                "error_summary": {
+                    "by_error": {"stale_intraday_bar": 1},
+                    "by_style": {"trend": {"error_count": 1}},
+                },
+                "style_health": {
+                    "trend": {
+                        "status": "blocked",
+                        "suggested_action": "inspect_data_or_risk_gate",
+                    }
+                },
             },
             {
                 "date": "20260706",
@@ -115,7 +158,9 @@ class OpsReportTest(unittest.TestCase):
                 "style_health": {"trend": {"status": "active_sample"}},
             },
         ]
-        review.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+        review.write_text(
+            "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+        )
 
         summary = ops_report.cn_futures_review_summary()
 
@@ -124,13 +169,19 @@ class OpsReportTest(unittest.TestCase):
         self.assertEqual(summary["current"]["filled_count"], 2)
         self.assertEqual(summary["current"]["error_count"], 0)
         self.assertEqual(summary["historical"]["scope"], "append_only_history")
-        self.assertEqual(summary["historical"]["style_totals"]["trend"]["filled_count"], 2)
-        self.assertEqual(summary["historical"]["style_totals"]["trend"]["error_count"], 1)
+        self.assertEqual(
+            summary["historical"]["style_totals"]["trend"]["filled_count"], 2
+        )
+        self.assertEqual(
+            summary["historical"]["style_totals"]["trend"]["error_count"], 1
+        )
         self.assertEqual(summary["historical"]["top_errors"]["stale_intraday_bar"], 1)
         self.assertNotIn("top_errors", summary)
         self.assertNotIn("style_totals", summary)
 
-    def test_cn_futures_review_summary_keeps_old_errors_out_of_current_status(self) -> None:
+    def test_cn_futures_review_summary_keeps_old_errors_out_of_current_status(
+        self,
+    ) -> None:
         review = self.root / "shared/review/data/cn_futures_sim_reviews.jsonl"
         review.parent.mkdir(parents=True)
         rows = [
@@ -146,11 +197,16 @@ class OpsReportTest(unittest.TestCase):
                 "filled_count": 0,
                 "hold_count": 4,
                 "error_count": 0,
-                "hold_reason_summary": {"total": 4, "by_reason": {"below_threshold": 4}},
+                "hold_reason_summary": {
+                    "total": 4,
+                    "by_reason": {"below_threshold": 4},
+                },
                 "error_summary": {"by_error": {}},
             },
         ]
-        review.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+        review.write_text(
+            "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+        )
 
         summary = ops_report.cn_futures_review_summary()
 
@@ -159,9 +215,11 @@ class OpsReportTest(unittest.TestCase):
         self.assertEqual(summary["current"]["error_count"], 0)
         self.assertEqual(summary["current"]["hold_count"], 4)
         self.assertEqual(summary["historical"]["error_count"], 7)
-        self.assertEqual(summary["historical"]["top_errors"], {"missing_intraday_bars": 7})
+        self.assertEqual(
+            summary["historical"]["top_errors"], {"missing_intraday_bars": 7}
+        )
 
-    def test_metrics_dashboard_reads_cn_futures_style_performance(self) -> None:
+    def test_metrics_dashboard_ignores_retired_style_performance(self) -> None:
         perf = self.root / "shared/review/cn_futures/style_performance.jsonl"
         perf.parent.mkdir(parents=True)
         perf.write_text(
@@ -185,10 +243,49 @@ class OpsReportTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        metrics = metrics_dashboard.compute(self.root / "shared/review")
+        with patch(
+            "shared.review.pnl_summary.sim_ledger_pnl_summary",
+            return_value={
+                "cn_futures": {
+                    "account_count": 1,
+                    "open_position_count": 1,
+                    "missing_mark_count": 0,
+                    "monetary_state": "available_single_account",
+                    "account_summaries": {
+                        "cn_futures:simulated:trend": {
+                            "account_scope": "cn_futures:simulated:trend",
+                            "capital_layer": "simulated",
+                            "realized_pnl": 1.5,
+                            "unrealized_pnl": 0.0,
+                            "total_pnl": 1.5,
+                            "market_value": 500.0,
+                            "open_position_count": 1,
+                            "missing_mark_count": 0,
+                            "pnl_source": "unit",
+                        }
+                    },
+                }
+            },
+        ):
+            metrics = metrics_dashboard.compute(self.root / "shared/review")
 
-        self.assertEqual(metrics["markets"]["CNFutures"]["total_runs"], 1)
-        self.assertEqual(metrics["markets"]["CNFutures"]["latest"]["style_name"], "trend")
+        self.assertEqual(list(metrics["markets"]), ["Ashare", "CNFutures", "Crypto"])
+        self.assertTrue(
+            metrics["markets"]["CNFutures"]["retired_style_artifacts_ignored"]
+        )
+        self.assertEqual(
+            metrics["markets"]["CNFutures"]["current_authority"],
+            "sim_ledger_pnl_summary",
+        )
+        self.assertNotIn("latest", metrics["markets"]["CNFutures"])
+        self.assertEqual(
+            metrics["markets"]["CNFutures"]["ledger_pnl"]["account_summaries"][
+                "cn_futures:simulated:trend"
+            ]["total_pnl"],
+            1.5,
+        )
+        self.assertNotIn("total_pnl", metrics["markets"]["CNFutures"]["ledger_pnl"])
+        self.assertEqual(metrics["all_markets"]["monetary_aggregation"], "forbidden")
 
     def test_reviewed_summary_counts_archived_batches(self) -> None:
         batch = self.root / "signals_archive" / "reviewed" / "BATCH1"
@@ -196,7 +293,9 @@ class OpsReportTest(unittest.TestCase):
         (batch / "expired").mkdir(parents=True)
         (batch / "failed" / "f.json").write_text("{}", encoding="utf-8")
         (batch / "expired" / "e.json").write_text("{}", encoding="utf-8")
-        (batch / "manifest.json").write_text(json.dumps({"record_count": 2, "reason": "unit"}), encoding="utf-8")
+        (batch / "manifest.json").write_text(
+            json.dumps({"record_count": 2, "reason": "unit"}), encoding="utf-8"
+        )
 
         summary = ops_report.reviewed_summary()
 
@@ -207,10 +306,19 @@ class OpsReportTest(unittest.TestCase):
     def test_receipt_integrity_counts_signed_unsigned_and_invalid(self) -> None:
         path = self.root / "receipts.jsonl"
         signed = {"order_id": "1", "status": "filled"}
-        signed["receipt_sha256"] = ops_report.payload_sha256(signed, drop_checksums=True)
+        signed["receipt_sha256"] = ops_report.payload_sha256(
+            signed, drop_checksums=True
+        )
         invalid = {"order_id": "2", "status": "filled", "receipt_sha256": "bad"}
-        unsigned = {"order_id": "3", "status": "failed", "payload_sha256": "source-payload"}
-        path.write_text("\n".join(json.dumps(x) for x in [signed, invalid, unsigned]) + "\n", encoding="utf-8")
+        unsigned = {
+            "order_id": "3",
+            "status": "failed",
+            "payload_sha256": "source-payload",
+        }
+        path.write_text(
+            "\n".join(json.dumps(x) for x in [signed, invalid, unsigned]) + "\n",
+            encoding="utf-8",
+        )
 
         report = ops_report.receipt_integrity([path])
 
@@ -223,13 +331,25 @@ class OpsReportTest(unittest.TestCase):
     def test_email_templates_render_optional_ops_section(self) -> None:
         ops = {
             "ops_status": "warn",
-            "ops_queue_summary": {"pending": 1, "running": 0, "failed": 2, "expired": 0},
+            "ops_queue_summary": {
+                "pending": 1,
+                "running": 0,
+                "failed": 2,
+                "expired": 0,
+            },
             "ops_receipt_integrity": {"total": 3, "unsigned": 1, "invalid": 0},
-            "ops_shadow_queue_summary": {"pending": 4, "running": 0, "failed": 0, "expired": 0},
+            "ops_shadow_queue_summary": {
+                "pending": 4,
+                "running": 0,
+                "failed": 0,
+                "expired": 0,
+            },
             "ops_failure_summary": {"timeout": 2},
         }
         daily_html = daily_report.render({"date": "2026-07-01", **ops})
-        weekly_html = weekly_report.render({"week_range": "2026-06-29 ~ 2026-07-03", **ops})
+        weekly_html = weekly_report.render(
+            {"week_range": "2026-06-29 ~ 2026-07-03", **ops}
+        )
 
         self.assertIn("运行状态", daily_html)
         self.assertIn("timeout:2", daily_html)

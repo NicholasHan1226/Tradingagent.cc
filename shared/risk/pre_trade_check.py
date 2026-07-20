@@ -12,6 +12,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from shared.governance.market_lanes import canonical_runtime_market
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
@@ -50,41 +52,10 @@ _DEFAULT_LIMITS: dict[str, Any] = {
             "no_limit_up_down": True,
             "max_positions": 10,
         },
-        "us": {
-            "t_plus_2": True,
-            "daily_loss_limit": 0.05,
-            "PDT": True,
-            "extended_hours": True,
-            "max_positions": 10,
-        },
-        "pm": {
-            "t_plus_N": "none",
-            "daily_loss_limit": 0.05,
-            "single_market_max": 0.20,
-            "max_positions": 20,
-        },
     },
 }
 
 _LIMITS_PATH = Path(__file__).resolve().parent / "risk_limits.yaml"
-_MARKET_ALIASES = {
-    "a": "ashare",
-    "a-share": "ashare",
-    "a_share": "ashare",
-    "ashare": "ashare",
-    "cn": "ashare",
-    "china": "ashare",
-    "crypto": "crypto",
-    "cryptocurrency": "crypto",
-    "digital_asset": "crypto",
-    "us": "us",
-    "usa": "us",
-    "u.s.": "us",
-    "equity_us": "us",
-    "pm": "pm",
-    "prediction": "pm",
-    "prediction_market": "pm",
-}
 _DEFAULT_A_SHARE_HOLIDAYS_2026 = frozenset(
     {
         date(2026, 1, 1),
@@ -139,12 +110,7 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 
 
 def _normalize_market(value: Any) -> str:
-    raw = str(value or "").strip().lower()
-    if not raw:
-        return "ashare"
-    return _MARKET_ALIASES.get(
-        raw, raw if raw in _DEFAULT_LIMITS["market_rules"] else "ashare"
-    )
+    return canonical_runtime_market(value)
 
 
 def _market_rule(limits: dict[str, Any], market: str) -> dict[str, Any]:
@@ -155,8 +121,8 @@ def _market_rule(limits: dict[str, Any], market: str) -> dict[str, Any]:
         rule.update(defaults[market])
     if isinstance(all_rules, dict) and isinstance(all_rules.get(market), dict):
         rule.update(all_rules[market])
-    if not rule and isinstance(defaults, dict):
-        rule.update(defaults.get("ashare", {}))
+    if not rule:
+        raise ValueError(f"risk rule unavailable for market={market}")
     return rule
 
 
@@ -254,7 +220,7 @@ def _can_sell_by_market(
 ) -> bool:
     if entry_day is None:
         return False
-    if rule.get("24/7") or str(rule.get("t_plus_N", "")).lower() == "none":
+    if rule.get("24/7"):
         return True
     if rule.get("t_plus_1"):
         if _t_plus_1 is not None:
@@ -262,32 +228,7 @@ def _can_sell_by_market(
                 _t_plus_1.can_sell(entry_day.isoformat(), trade_day.isoformat())
             )
         return trade_day >= _fallback_next_trading_day(entry_day)
-    if rule.get("t_plus_2"):
-        return trade_day >= entry_day + timedelta(days=2)
-    return True
-
-
-def _market_exposure(
-    market: str,
-    positions: list[Any],
-    portfolio: dict[str, Any],
-) -> float:
-    market_exposure = portfolio.get("market_exposure", {})
-    if isinstance(market_exposure, dict) and market in market_exposure:
-        return _safe_float(market_exposure.get(market))
-    if f"{market}_exposure" in portfolio:
-        return _safe_float(portfolio.get(f"{market}_exposure"))
-
-    exposure = 0.0
-    for position in positions:
-        if not isinstance(position, dict):
-            continue
-        position_market = _normalize_market(position.get("market", market))
-        if position_market == market:
-            exposure += _safe_float(
-                position.get("weight", position.get("market_weight", 0.0))
-            )
-    return exposure
+    return False
 
 
 def _blocked_by_price_limit(order: dict[str, Any], rule: dict[str, Any]) -> str:
@@ -307,50 +248,6 @@ def _blocked_by_price_limit(order: dict[str, Any], rule: dict[str, Any]) -> str:
             return "硬拒: 跌停约束, 禁止卖出"
         if price > 0 and limit_down_price > 0 and price <= limit_down_price:
             return f"硬拒: 卖出价格 {price:.4f} 已触及跌停价 {limit_down_price:.4f}"
-    return ""
-
-
-def _pdt_block_reason(
-    order: dict[str, Any],
-    portfolio: dict[str, Any],
-    entry_day: date | None,
-    trade_day: date,
-    rule: dict[str, Any],
-) -> str:
-    if not rule.get("PDT") or not _is_sell_order(order):
-        return ""
-
-    day_trade = bool(order.get("day_trade") or order.get("would_day_trade"))
-    if not day_trade and entry_day is not None:
-        day_trade = entry_day == trade_day
-    if not day_trade:
-        return ""
-
-    day_trades = int(
-        _safe_float(
-            order.get(
-                "day_trades_5d",
-                order.get(
-                    "day_trades_last_5_days",
-                    portfolio.get(
-                        "day_trades_5d", portfolio.get("day_trades_last_5_days", 0)
-                    ),
-                ),
-            )
-        )
-    )
-    account_equity = _safe_float(
-        order.get(
-            "account_equity",
-            portfolio.get("account_equity", portfolio.get("equity", 0.0)),
-        )
-    )
-    pdt_min_equity = _safe_float(rule.get("pdt_min_equity", 25000.0), 25000.0)
-    if day_trades >= 3 and account_equity < pdt_min_equity:
-        return (
-            f"硬拒: PDT 限制, 5日内日内交易 {day_trades} 次且权益 "
-            f"{account_equity:.2f} < {pdt_min_equity:.2f}"
-        )
     return ""
 
 
@@ -395,8 +292,26 @@ def check(
     if not isinstance(positions, list):
         positions = []
 
+    raw_market = str(order.get("market") or "").strip().lower()
+    try:
+        market = _normalize_market(raw_market)
+    except ValueError:
+        return {
+            "approved": False,
+            "adjusted_weight": 0.0,
+            "adjustments": [],
+            "reasons": ["unsupported_or_missing_market"],
+            "market": raw_market,
+        }
+    if market == "cn_futures":
+        return {
+            "approved": False,
+            "adjusted_weight": 0.0,
+            "adjustments": [],
+            "reasons": ["cn_futures_requires_market_specific_risk_adapter"],
+            "market": market,
+        }
     limits = _load_limits()
-    market = _normalize_market(order.get("market"))
     market_rule = _market_rule(limits, market)
     ts_code = order["ts_code"]
     target_weight = _safe_float(order.get("weight", 0.0))
@@ -479,25 +394,6 @@ def check(
             )
             adjusted_weight = allowed
 
-    # --- 硬限: PM 单市场敞口 ---
-    single_market_max = market_rule.get("single_market_max")
-    if single_market_max is not None:
-        market_max = _safe_float(single_market_max)
-        current_market_exposure = _market_exposure(market, positions, portfolio)
-        new_market_exposure = current_market_exposure + target_weight
-        if market_max > 0 and new_market_exposure > market_max + 1e-9:
-            approved = False
-            reasons.append(
-                f"硬拒: {market} 市场敞口 {new_market_exposure:.4f} > 单市场上限 {market_max:.4f}"
-            )
-            return {
-                "approved": False,
-                "adjusted_weight": 0.0,
-                "adjustments": [],
-                "reasons": reasons,
-                "market": market,
-            }
-
     # --- 软限: 持仓数 ---
     max_positions = int(
         market_rule.get("max_positions", limits.get("max_positions", 5))
@@ -527,26 +423,9 @@ def check(
     if _is_sell_order(order) and not _can_sell_by_market(
         market_rule, entry_day, trade_day
     ):
-        label = (
-            "T+1"
-            if market_rule.get("t_plus_1")
-            else "T+2"
-            if market_rule.get("t_plus_2")
-            else "settlement"
-        )
+        label = "T+1" if market_rule.get("t_plus_1") else "settlement"
         approved = False
         reasons.append(f"硬拒: {market} {label} 规则禁止当前卖出")
-        return {
-            "approved": False,
-            "adjusted_weight": 0.0,
-            "adjustments": [],
-            "reasons": reasons,
-            "market": market,
-        }
-
-    pdt_block = _pdt_block_reason(order, portfolio, entry_day, trade_day, market_rule)
-    if pdt_block:
-        reasons.append(pdt_block)
         return {
             "approved": False,
             "adjusted_weight": 0.0,

@@ -13,6 +13,10 @@ from typing import Any
 
 from CNFutures.review import latest_actionable_review
 from shared.execution.execution_lineage import ASHARE_EXECUTION_LINEAGE_ID
+from shared.governance.market_lanes import (
+    ACTIVE_RUNTIME_MARKETS,
+    canonical_runtime_market,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "shared"
@@ -20,7 +24,7 @@ SIGNALS = ROOT / "signals"
 OUT_DIR = SHARED / "review" / "ops"
 LATEST = OUT_DIR / "tradings_ops_latest.json"
 HISTORY = OUT_DIR / "tradings_ops_history.jsonl"
-MARKETS = ("ashare", "pm", "us", "crypto", "cn_futures")
+MARKETS = ACTIVE_RUNTIME_MARKETS
 CHECKSUM_KEYS = {"payload_sha256", "receipt_sha256", "checksum", "sha256"}
 RECEIPT_CHECKSUM_KEYS = ("receipt_sha256", "checksum", "sha256")
 
@@ -72,21 +76,20 @@ def payload_sha256(payload: dict[str, Any], drop_checksums: bool = False) -> str
 def market_of(card: dict[str, Any]) -> str:
     raw = str(
         card.get("market") or card.get("asset_class") or card.get("source_market") or ""
-    ).lower()
+    ).strip()
     code = str(
         card.get("ts_code") or card.get("code") or card.get("symbol") or ""
     ).upper()
-    if raw in MARKETS:
-        return raw
-    if raw in {"ashare", "a", "cn"} or code.endswith((".SH", ".SZ", ".BJ")):
+    if raw:
+        try:
+            return canonical_runtime_market(raw)
+        except ValueError:
+            return "unknown"
+    if code.endswith((".SH", ".SZ", ".BJ")):
         return "ashare"
-    if raw in {"predictionmarkets", "polymarket", "pm"}:
-        return "pm"
-    if raw in {"cn_futures", "futures", "cnfutures"} or code.startswith("SIM-CNF-"):
+    if code.startswith("SIM-CNF-"):
         return "cn_futures"
-    if raw in {"us", "usa"}:
-        return "us"
-    if raw in {"crypto", "cryptocurrency"} or "USDT" in code:
+    if "USDT" in code:
         return "crypto"
     return "unknown"
 

@@ -7,7 +7,6 @@ from shared.execution.execution_reality import (
     ASHARE_EXECUTION_REALITY_VERSION,
     ashare_execution_reality,
 )
-from shared.markets.market_rules import RULES, commission
 
 
 def test_ashare_execution_reality_is_versioned_from_2026_07_06() -> None:
@@ -118,15 +117,6 @@ def test_daily_price_limits_round_half_up_to_the_versioned_tick() -> None:
 
     assert lower == pytest.approx(9.05)
     assert upper == pytest.approx(11.06)
-
-
-def test_legacy_market_rules_facade_uses_same_ashare_reality_model() -> None:
-    rules = RULES["ashare"]
-
-    assert rules.execution_reality_model_version == ASHARE_EXECUTION_REALITY_VERSION
-    assert rules.stamp_duty_bps == pytest.approx(5.0)
-    assert rules.transfer_fee_bps == pytest.approx(0.1)
-    assert commission("ashare", 1_000.0, "sell") == pytest.approx(5.51)
 
 
 @pytest.mark.parametrize(

@@ -33,7 +33,6 @@ KEY_TESTS = [
     "tests/test_ashare_sim.py",
     "tests/test_crypto_sim.py",
     "tests/test_cn_futures_sim.py",
-    "tests/test_evolution_runtime_styles.py",
     "tests/test_real_trading_gate.py",
     "tests/test_real_money_boundary.py",
 ]

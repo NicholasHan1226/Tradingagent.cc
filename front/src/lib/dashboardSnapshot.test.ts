@@ -4,9 +4,9 @@ import type { PerformancePoint, SignalRow } from '../types/dashboard'
 import { getSnapshotPerformance, getSnapshotSignals } from './dashboardSnapshot'
 
 const fallbackSignal: SignalRow = {
-  symbol: 'AAPL.US',
-  name: 'Apple',
-  market: 'US',
+  symbol: '600519.SH',
+  name: '贵州茅台',
+  market: 'A-share',
   method: '趋势跟踪',
   status: 'pending',
   impact: '+12.4',
@@ -19,9 +19,9 @@ const fallbackSignal: SignalRow = {
 
 const snapshotSignal: SignalRow = {
   ...fallbackSignal,
-  symbol: '0700.HK',
-  name: 'Tencent',
-  market: 'HK',
+  symbol: 'BTC-USDT',
+  name: 'Bitcoin',
+  market: 'Crypto',
 }
 
 const fallbackPoint: PerformancePoint = {

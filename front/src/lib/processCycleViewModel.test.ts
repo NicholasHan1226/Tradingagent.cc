@@ -4,7 +4,7 @@ import { createProcessCycles } from './processCycleViewModel'
 
 const events: FunnelEvent[] = [
   { id: 'opp1-risk', opportunityId: 'opp-1', sequence: 3, symbol: '600519.SH', market: 'A-share', stage: '风控', status: '通过', label: '风控通过', at: '2026-07-11T05:06:00Z', source: 'signal_queue', latencyMinutes: 2 },
-  { id: 'opp2-result', opportunityId: 'opp-2', sequence: 2, symbol: 'BTC-USD', market: 'Crypto', stage: '结果', status: '拦截', label: '安全拦截', at: '2026-07-11T05:20:00Z', source: 'signal_queue', reason: '波动超过边界', terminal: true },
+  { id: 'opp2-result', opportunityId: 'opp-2', sequence: 2, symbol: 'BTC-USDT', market: 'Crypto', stage: '结果', status: '拦截', label: '安全拦截', at: '2026-07-11T05:20:00Z', source: 'signal_queue', reason: '波动超过边界', terminal: true },
   { id: 'opp1-result', opportunityId: 'opp-1', sequence: 5, symbol: '600519.SH', market: 'A-share', stage: '结果', status: '成交', label: '结果写回', at: '2026-07-11T05:10:00Z', source: 'sim_ledger', latencyMinutes: 4, terminal: true },
   { id: 'opp1-discovered', opportunityId: 'opp-1', sequence: 1, symbol: '600519.SH', market: 'A-share', stage: '发现', status: '进入', label: '机会进入', at: '2026-07-11T05:00:00Z', source: 'opportunity_log' },
 ]

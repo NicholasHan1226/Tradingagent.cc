@@ -1,32 +1,21 @@
 #!/usr/bin/env python3
-"""Shared simulated-capital defaults for market runners."""
+"""Owned market-lane simulated-capital defaults.
+
+The values are native-currency account bootstrap amounts, not an FX conversion
+service and not permission to aggregate capital across markets.
+"""
 
 from __future__ import annotations
 
-import os
-from typing import Any
+from Crypto.capital_policy import DEFAULT_CRYPTO_SIM_CAPITAL_USDT
+from shared.governance.market_lanes import canonical_runtime_market
 
 DEFAULT_SIM_CAPITAL_CNY = 50_000.0
-DEFAULT_USD_BASE_CAPITAL = 10_000.0
-DEFAULT_USD_CNY = 7.2
-DEFAULT_HKD_CNY = 0.92
 ALLOWED_CNY_TIERS = (50_000.0,)
 
 
-def _safe_float(value: Any | None, default: float) -> float:
-    try:
-        parsed = float(value)  # type: ignore[arg-type]
-        return parsed if parsed > 0 and parsed == parsed else default
-    except (TypeError, ValueError):
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    return _safe_float(os.environ.get(name), default)
-
-
 def _normalize_market(market: str) -> str:
-    return str(market or "").strip().lower().replace("-", "_")
+    return canonical_runtime_market(market)
 
 
 def _resolve_cny_capital(
@@ -45,64 +34,34 @@ def _resolve_cny_capital(
     return DEFAULT_SIM_CAPITAL_CNY
 
 
-def fx_to_cny(market: str) -> float:
-    key = _normalize_market(market)
-    if key in {"ashare", "a_share", "cn", "cn_futures", "cnfutures", "futures"}:
-        return 1.0
-    if key == "hk":
-        return _env_float("TRADINGAGENT_HKD_CNY", DEFAULT_HKD_CNY)
-    if key == "pm":
-        return _env_float(
-            "TRADINGAGENT_USDC_CNY", _env_float("TRADINGAGENT_USD_CNY", DEFAULT_USD_CNY)
-        )
-    if key == "crypto":
-        return _env_float(
-            "TRADINGAGENT_USDT_CNY", _env_float("TRADINGAGENT_USD_CNY", DEFAULT_USD_CNY)
-        )
-    if key == "us":
-        return _env_float("TRADINGAGENT_USD_CNY", DEFAULT_USD_CNY)
-    return 1.0
-
-
 def default_sim_capital(
     market: str,
     *,
     capital_cny: float | None = None,
     tier: str | float | None = None,
 ) -> float:
-    """Return the default simulated capital for a market in its native currency.
+    """Return one owned lane's fixed bootstrap capital in native currency.
 
-    - US/Crypto/PM default to ``DEFAULT_USD_BASE_CAPITAL`` (USD/USDT/USDC).
-    - A-share and CN futures always resolve to their one canonical independent
-      ``DEFAULT_SIM_CAPITAL_CNY`` fresh-start account.  Explicit legacy tier
-      arguments are accepted for call compatibility but cannot override it.
+    A-share and CN futures each have an independent 50,000 CNY authority.
+    Crypto has an isolated 10,000 USDT shadow account.  No value here converts
+    or combines those accounts, and unknown/retired markets fail closed.
     """
 
     key = _normalize_market(market)
-    if key in {"ashare", "a_share", "cn", "cn_futures", "cnfutures", "futures"}:
+    if key in {"ashare", "cn_futures"}:
         return round(_resolve_cny_capital(key, capital_cny=capital_cny, tier=tier), 6)
-
-    fx = fx_to_cny(key)
-    if capital_cny is not None:
-        cny = _safe_float(capital_cny, DEFAULT_SIM_CAPITAL_CNY)
-        return round(cny / fx, 6) if fx > 0 else round(cny, 6)
-
-    if key in {"us", "crypto", "pm"}:
-        return round(DEFAULT_USD_BASE_CAPITAL, 6)
-
-    return (
-        round(DEFAULT_SIM_CAPITAL_CNY / fx, 6)
-        if fx > 0
-        else float(DEFAULT_SIM_CAPITAL_CNY)
-    )
+    if key == "crypto":
+        if capital_cny is not None or tier is not None:
+            raise ValueError(
+                "crypto capital is USDT-native; CNY/tier overrides are not allowed"
+            )
+        return DEFAULT_CRYPTO_SIM_CAPITAL_USDT
+    raise ValueError(f"unsupported simulated-capital market: {key}")
 
 
 __all__ = [
     "DEFAULT_SIM_CAPITAL_CNY",
-    "DEFAULT_USD_BASE_CAPITAL",
-    "DEFAULT_USD_CNY",
-    "DEFAULT_HKD_CNY",
+    "DEFAULT_CRYPTO_SIM_CAPITAL_USDT",
     "ALLOWED_CNY_TIERS",
     "default_sim_capital",
-    "fx_to_cny",
 ]

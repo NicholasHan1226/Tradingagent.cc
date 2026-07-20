@@ -1,5 +1,5 @@
 import { marketLabels } from '../../data/dashboard'
-import { formatCurrency, formatSignedCnyCompact } from '../../lib/format'
+import { formatSignedCnyCompact, formatSignedUsdt, formatUsdt } from '../../lib/format'
 import type { Market, MarketSummary } from '../../types/dashboard'
 
 export function MarketSummaryPanel({
@@ -70,9 +70,9 @@ function formatHeadline(summary: MarketSummary, activeMarket: Market) {
 
 function formatDetail(summary: MarketSummary) {
   const parts = [
-    summary.pnlAmount === undefined ? null : `收益 ${summary.pnlCurrency === 'CNY' ? formatSignedCnyCompact(summary.pnlAmount) : formatCurrency(summary.pnlAmount)}`,
+    summary.pnlAmount === undefined ? null : `收益 ${formatMarketMoney(summary.pnlAmount, summary.pnlCurrency, true)}`,
     summary.returnPct === undefined ? null : `收益率 ${summary.returnPct >= 0 ? '+' : ''}${summary.returnPct.toFixed(2)}%`,
-    summary.capitalBase === undefined ? null : `资金 ${summary.pnlCurrency === 'CNY' ? formatSignedCnyCompact(summary.capitalBase).replace('+', '') : formatCurrency(summary.capitalBase)}`,
+    summary.capitalBase === undefined ? null : `资金 ${formatMarketMoney(summary.capitalBase, summary.pnlCurrency, false)}`,
     summary.activeStyleCount === undefined ? null : `模式 ${summary.activeStyleCount}/${summary.styleCount}`,
     summary.tradeCount ? `成交 ${summary.tradeCount}` : null,
   ].filter(Boolean)
@@ -101,10 +101,14 @@ function formatSummaryReturn(summary: MarketSummary) {
   const returnPart = summary.returnPct === undefined ? '' : `${summary.returnPct >= 0 ? '+' : ''}${summary.returnPct.toFixed(2)}%`
   const amountPart = summary.pnlAmount === undefined
     ? ''
-    : summary.pnlCurrency === 'CNY'
-      ? formatSignedCnyCompact(summary.pnlAmount)
-      : formatCurrency(summary.pnlAmount)
+    : formatMarketMoney(summary.pnlAmount, summary.pnlCurrency, true)
   return [amountPart, returnPart].filter(Boolean).join(' · ')
+}
+
+function formatMarketMoney(value: number, currency: MarketSummary['pnlCurrency'], signed: boolean) {
+  if (currency === 'CNY') return signed ? formatSignedCnyCompact(value) : formatSignedCnyCompact(value).replace('+', '')
+  if (currency === 'USDT') return signed ? formatSignedUsdt(value) : formatUsdt(value)
+  return '--'
 }
 
 function AshareCapitalTrace({ summary }: { summary: MarketSummary }) {

@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { marketLabels, markets, pageMeta } from '../data/dashboard'
-import { formatCurrency, formatSignedCnyCompact } from '../lib/format'
+import { formatSignedCnyCompact, formatSignedUsdt } from '../lib/format'
 import type { RuntimeHeartbeat } from '../lib/runtimeHeartbeat'
 import { AutomationHeartbeat } from './terminal/AutomationHeartbeat'
-import type { AccountMode, Market, Page } from '../types/dashboard'
+import type { AccountMode, Market, Page, PortfolioSummary } from '../types/dashboard'
 import type { DomainStatus } from '../types/status'
 
 export function MarketHeader({
@@ -18,7 +18,7 @@ export function MarketHeader({
   performanceStatus,
   hasPerformanceData,
   isDemoPreview,
-  isCnyAccount,
+  pnlCurrency,
   runningCount,
   heartbeat,
   setActiveMarket,
@@ -31,7 +31,7 @@ export function MarketHeader({
   activeMarket: Market
   hasPerformanceData: boolean
   isDemoPreview: boolean
-  isCnyAccount: boolean
+  pnlCurrency?: PortfolioSummary['pnlCurrency']
   liveProfit: number | null
   liveReturn: number
   maxDrawdown: number | null
@@ -54,8 +54,8 @@ export function MarketHeader({
   const showPerformanceData = hasPerformanceData && !isLive
   const accountLabel = isLive ? '实盘待接入' : '模拟盘'
   const returnValue = showPerformanceData
-    ? liveProfit !== null
-      ? isCnyAccount ? formatSignedCnyCompact(liveProfit) : formatCurrency(liveProfit)
+    ? liveProfit !== null && pnlCurrency
+      ? formatMarketProfit(liveProfit, pnlCurrency)
       : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
     : isLive ? '待接入' : '等待'
   const returnDetail = showPerformanceData && liveProfit !== null
@@ -128,6 +128,12 @@ export function MarketHeader({
       </div>
     </section>
   )
+}
+
+function formatMarketProfit(value: number, currency: NonNullable<PortfolioSummary['pnlCurrency']>) {
+  if (currency === 'CNY') return formatSignedCnyCompact(value)
+  if (currency === 'USDT') return formatSignedUsdt(value)
+  return '--'
 }
 
 function formatSnapshotTime(value: string) {

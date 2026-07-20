@@ -1,4 +1,4 @@
-export type Market = 'All Markets' | 'A-share' | 'US' | 'Crypto' | 'HK' | 'PM' | 'CNFutures'
+export type Market = 'All Markets' | 'A-share' | 'Crypto' | 'CNFutures'
 export type Page = '总览' | '收益' | '过程' | '持仓' | '风险' | '复盘'
 export type LegacyPage = '主页' | '机会' | '决策'
 export type AccountMode = 'simulated' | 'live'
@@ -57,7 +57,7 @@ export type PortfolioSummary = {
   pointCount: number
   source: string
   pnlSource?: string
-  pnlCurrency?: 'USD' | 'CNY'
+  pnlCurrency?: 'USD' | 'USDT' | 'CNY'
   realizedPnl?: number
   unrealizedPnl?: number
   ashareAccount?: AShareAccountSummary
@@ -86,7 +86,7 @@ export type MarketSummary = {
   errorCount?: number
   capitalBase?: number
   pnlAmount?: number
-  pnlCurrency?: 'USD' | 'CNY'
+  pnlCurrency?: 'USD' | 'USDT' | 'CNY'
   returnPct?: number
   maxDrawdownPct?: number
   realizedPnl?: number
@@ -438,7 +438,8 @@ export type HoldingRow = {
   dayPnl?: number
   realizedPnl?: number
   unrealizedPnl?: number
-  currency?: 'CNY' | 'USD'
+  currency?: 'CNY' | 'USD' | 'USDT'
+  accountScope?: string
   updatedAt?: string
   source?: 'sim_ledger' | 'position_snapshot' | 'legacy_position_ledger'
 }

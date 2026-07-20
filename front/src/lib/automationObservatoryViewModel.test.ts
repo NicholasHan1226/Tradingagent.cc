@@ -33,7 +33,7 @@ const executed: SignalRow = {
 
 const blocked: SignalRow = {
   ...pending,
-  symbol: 'BTC-USD',
+  symbol: 'BTC-USDT',
   name: '比特币',
   market: 'Crypto',
   status: 'blocked',

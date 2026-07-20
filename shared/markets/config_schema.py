@@ -15,7 +15,9 @@ class CapitalConfig:
     default_layer: str = "shadow"
     allowed_layers: tuple[str, ...] = ("shadow", "simulated")
     initial_capital: float = 0.0
-    currency: str = "USD"
+    # Native account currency must be declared by each market lane.  A shared
+    # USD default would silently mislabel A-share/CNFutures balances.
+    currency: str = ""
 
 
 @dataclass(frozen=True)
@@ -27,7 +29,7 @@ class SafetyConfig:
 
 @dataclass(frozen=True)
 class DataConfig:
-    reader: str = "shared.data.reader.TradingagentDataReader"
+    reader: str = "tradingdatas_v1_catalog_query"
     daily_table: str = "market_bars_daily"
     intraday_table: str = "market_bars_intraday"
     events_table: str = "market_events"
@@ -96,15 +98,25 @@ class MarketToolConfig:
     promotion: PromotionConfig | dict[str, Any] = field(default_factory=PromotionConfig)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "capital", _coerce_dataclass(CapitalConfig, self.capital))
+        object.__setattr__(
+            self, "capital", _coerce_dataclass(CapitalConfig, self.capital)
+        )
         object.__setattr__(self, "safety", _coerce_dataclass(SafetyConfig, self.safety))
         object.__setattr__(self, "data", _coerce_dataclass(DataConfig, self.data))
-        object.__setattr__(self, "universe", _coerce_dataclass(UniverseConfig, self.universe))
-        object.__setattr__(self, "session", _coerce_dataclass(SessionConfig, self.session))
+        object.__setattr__(
+            self, "universe", _coerce_dataclass(UniverseConfig, self.universe)
+        )
+        object.__setattr__(
+            self, "session", _coerce_dataclass(SessionConfig, self.session)
+        )
         object.__setattr__(self, "risk", _coerce_dataclass(RiskConfig, self.risk))
         object.__setattr__(self, "fees", _coerce_dataclass(FeesConfig, self.fees))
-        object.__setattr__(self, "reporting", _coerce_dataclass(ReportingConfig, self.reporting))
-        object.__setattr__(self, "promotion", _coerce_dataclass(PromotionConfig, self.promotion))
+        object.__setattr__(
+            self, "reporting", _coerce_dataclass(ReportingConfig, self.reporting)
+        )
+        object.__setattr__(
+            self, "promotion", _coerce_dataclass(PromotionConfig, self.promotion)
+        )
 
 
 def _config_path_for_market(market: str, root: Path) -> Path:
@@ -151,13 +163,23 @@ def validate_market_config(config: MarketToolConfig) -> None:
     if config.safety.live_broker_enabled:
         raise ValueError("safety.live_broker_enabled must be false for market tools")
     if config.safety.direct_execution_enabled:
-        raise ValueError("safety.direct_execution_enabled must be false for market tools")
+        raise ValueError(
+            "safety.direct_execution_enabled must be false for market tools"
+        )
     if config.capital.default_layer not in config.capital.allowed_layers:
-        raise ValueError("capital.default_layer must be listed in capital.allowed_layers")
+        raise ValueError(
+            "capital.default_layer must be listed in capital.allowed_layers"
+        )
     if not set(config.capital.allowed_layers).issubset({"shadow", "simulated"}):
         raise ValueError("capital.allowed_layers may only contain shadow/simulated")
     if config.capital.initial_capital < 0:
         raise ValueError("capital.initial_capital must be non-negative")
+    if not str(config.capital.currency).strip():
+        raise ValueError("capital.currency must declare the market-native currency")
+    if config.data.reader != "tradingdatas_v1_catalog_query":
+        raise ValueError(
+            "data.reader must use the TradingDatas V1 catalog/query contract"
+        )
     if config.universe.max_symbols <= 0:
         raise ValueError("universe.max_symbols must be positive")
     if config.universe.min_close < 0:

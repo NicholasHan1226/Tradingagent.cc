@@ -4532,6 +4532,7 @@ def run_shadow_loop(
         stage_calls.append("portfolio.position_sizer")
         risk_order = {
             "ts_code": symbol,
+            "market": mapped_market,
             "weight": proposed_weight,
             "sector": str(score.get("sector", "unknown")),
             "turnover_wan": _safe_float(score.get("turnover_wan"), 0.0),
@@ -5889,6 +5890,7 @@ def run_sim_loop(
         stage_calls.append("portfolio.position_sizer")
         risk_order = {
             "ts_code": symbol,
+            "market": market,
             "weight": proposed_weight,
             "sector": str(score.get("sector", "unknown")),
             "turnover_wan": _safe_float(score.get("turnover_wan"), 0.0),

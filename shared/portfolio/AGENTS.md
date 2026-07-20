@@ -23,7 +23,7 @@
 
 ## 旧模块与退役
 
-- `constructor.py`、`position_sizer.py`、`rebalancer.py`、`exit_manager.py` 是旧多市场组合兼容链，仍含 `conviction_weighted`/`belief_score` 等历史语义。
+- `constructor.py`、`position_sizer.py`、`rebalancer.py` 是旧组合兼容链，仍含 `conviction_weighted`/`belief_score` 等历史语义；旧多市场 `exit_manager.py` 已物理退役。
 - 这些模块不得被 V1 `champion → small_account_optimizer → runtime` 链导入，也不得新增 A 股消费者。
 - 精确路径、剩余消费者、删除前提和回滚规则登记在 `shared/governance/legacy_inventory.yaml`；兼容完成后按 Phase 3 清理，不长期双轨。
 

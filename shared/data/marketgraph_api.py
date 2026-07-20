@@ -12,12 +12,16 @@ import urllib.request
 from typing import Any
 
 
-DEFAULT_API_URL = os.environ.get("MARKETGRAPH_API_URL", "http://127.0.0.1:8080")
+# Research transport is dependency-injected.  An omitted URL means disabled;
+# localhost discovery would make fixture/mock runs depend on ambient services.
+DEFAULT_API_URL = ""
 DEFAULT_API_TOKEN = os.environ.get("MARKETGRAPH_API_TOKEN", "")
 DEFAULT_TIMEOUT = float(os.environ.get("MARKETGRAPH_API_TIMEOUT", "10"))
 DEFAULT_RETRIES = int(os.environ.get("MARKETGRAPH_API_RETRIES", "1"))
 DEFAULT_RETRY_BACKOFF = float(os.environ.get("MARKETGRAPH_API_RETRY_BACKOFF", "0.5"))
-DEFAULT_CACHE_TTL_SECONDS = float(os.environ.get("MARKETGRAPH_API_CACHE_TTL_SECONDS", "30"))
+DEFAULT_CACHE_TTL_SECONDS = float(
+    os.environ.get("MARKETGRAPH_API_CACHE_TTL_SECONDS", "30")
+)
 
 
 class MarketGraphAPIClient:
@@ -35,9 +39,13 @@ class MarketGraphAPIClient:
         self.api_token = api_token if api_token is not None else DEFAULT_API_TOKEN
         self.timeout = timeout if timeout is not None else DEFAULT_TIMEOUT
         self.max_retries = max_retries if max_retries is not None else DEFAULT_RETRIES
-        self.retry_backoff = retry_backoff if retry_backoff is not None else DEFAULT_RETRY_BACKOFF
+        self.retry_backoff = (
+            retry_backoff if retry_backoff is not None else DEFAULT_RETRY_BACKOFF
+        )
         self.cache_ttl_seconds = DEFAULT_CACHE_TTL_SECONDS
-        self._cache: dict[tuple[str, tuple[tuple[str, str], ...]], tuple[float, dict[str, Any]]] = {}
+        self._cache: dict[
+            tuple[str, tuple[tuple[str, str], ...]], tuple[float, dict[str, Any]]
+        ] = {}
         self.errors: list[str] = []
 
     def _get(self, path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
@@ -45,7 +53,9 @@ class MarketGraphAPIClient:
             self.errors.append(f"{path}: MARKETGRAPH_API_URL is not configured")
             return {}
 
-        clean_params = {k: str(v) for k, v in (params or {}).items() if v not in ("", None)}
+        clean_params = {
+            k: str(v) for k, v in (params or {}).items() if v not in ("", None)
+        }
         url = f"{self.base_url}{path}"
         query = urllib.parse.urlencode(sorted(clean_params.items()))
         cache_key = (path, tuple(sorted(clean_params.items())))
@@ -73,7 +83,12 @@ class MarketGraphAPIClient:
                 last_error = f"HTTP {exc.code}: {exc.reason}"
                 if exc.code < 500 and exc.code != 429:
                     break
-            except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            except (
+                urllib.error.URLError,
+                TimeoutError,
+                OSError,
+                json.JSONDecodeError,
+            ) as exc:
                 last_error = str(exc)
             if attempt < self.max_retries:
                 time.sleep(self.retry_backoff * (attempt + 1))
@@ -95,13 +110,6 @@ class MarketGraphAPIClient:
             row["regime"] = str(label)
             return row
         return None
-
-    def get_pm_research_probabilities(self, limit: int = 100) -> list[dict[str, Any]]:
-        payload = self._get("/pm/research-probabilities", {"limit": str(limit)})
-        data = payload.get("data") if isinstance(payload, dict) else None
-        if isinstance(data, list):
-            return [dict(row) for row in data if isinstance(row, dict)]
-        return []
 
     def get_contract_table(
         self,

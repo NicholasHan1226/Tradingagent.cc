@@ -4,9 +4,9 @@ import { WorkbenchBlotter } from './WorkbenchBlotter'
 import type { HoldingRow, SignalRow } from '../../types/dashboard'
 
 const pending: SignalRow = {
-  symbol: '0700.HK',
-  name: '腾讯',
-  market: 'HK',
+  symbol: '600519.SH',
+  name: '贵州茅台',
+  market: 'A-share',
   method: '事件',
   status: 'pending',
   impact: '--',
@@ -19,16 +19,16 @@ const pending: SignalRow = {
 
 const executed: SignalRow = {
   ...pending,
-  symbol: 'AAPL.US',
-  name: '苹果',
-  market: 'US',
+  symbol: 'IF2601.CFFEX',
+  name: '沪深300期指',
+  market: 'CNFutures',
   status: 'executed',
   reason: '已经形成结果',
 }
 
 const partiallyFilled: SignalRow = {
   ...executed,
-  symbol: 'BTC-USD',
+  symbol: 'BTC-USDT',
   name: 'Bitcoin',
   queueBucket: 'partial',
 }
@@ -50,14 +50,14 @@ describe('WorkbenchBlotter', () => {
     const panel = screen.getByRole('tabpanel', { name: '运行中' })
     expect(within(panel).getByRole('table', { name: '自动运行过程表' })).toBeInTheDocument()
     expect(within(panel).getByRole('columnheader', { name: '当前阶段' })).toBeInTheDocument()
-    expect(within(panel).getAllByText('0700.HK').length).toBeGreaterThan(0)
-    expect(within(panel).queryByText('AAPL.US')).not.toBeInTheDocument()
+    expect(within(panel).getAllByText('600519.SH').length).toBeGreaterThan(0)
+    expect(within(panel).queryByText('IF2601.CFFEX')).not.toBeInTheDocument()
   })
 
   it('reveals completed outcomes when the running queue is empty', () => {
     render(<WorkbenchBlotter active={[]} positions={[holding]} completed={[executed]} review={[]} />)
 
-    expect(screen.getByRole('tabpanel', { name: '已完成' })).toHaveTextContent('AAPL.US')
+    expect(screen.getByRole('tabpanel', { name: '已完成' })).toHaveTextContent('IF2601.CFFEX')
     expect(screen.queryByText('当前没有运行中的自动过程')).not.toBeInTheDocument()
   })
 
@@ -66,7 +66,7 @@ describe('WorkbenchBlotter', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '已完成 1' }))
 
-    expect(screen.getByRole('tabpanel', { name: '已完成' })).toHaveTextContent('AAPL.US')
+    expect(screen.getByRole('tabpanel', { name: '已完成' })).toHaveTextContent('IF2601.CFFEX')
   })
 
   it('labels partial fills as partial rather than protected', () => {
@@ -102,7 +102,7 @@ describe('WorkbenchBlotter', () => {
 
     rerender(<WorkbenchBlotter active={[]} positions={[]} completed={[executed]} review={[]} />)
 
-    expect(screen.getByRole('tabpanel', { name: '已完成' })).toHaveTextContent('AAPL.US')
+    expect(screen.getByRole('tabpanel', { name: '已完成' })).toHaveTextContent('IF2601.CFFEX')
     expect(screen.getByRole('tab', { name: '已完成 1' })).toHaveAttribute('aria-selected', 'true')
   })
 })

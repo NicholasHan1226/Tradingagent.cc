@@ -16,8 +16,11 @@ LOCK_FILE="${LOCK_DIR}/health_check.lock"
 WATCHDOG_INPUT_DIR="${WATCHDOG_INPUT_DIR:-${ROOT}/shared/logs/health}"
 OUTPUT_FILE="${WATCHDOG_INPUT_DIR}/tradingagent_health.json"
 OUTPUT_JSONL="${WATCHDOG_INPUT_DIR}/tradingagent_health.jsonl"
-MARKETGRAPH_API_BASE_URL="${MARKETGRAPH_API_BASE_URL:-${MARKETGRAPH_API_URL:-http://127.0.0.1:8080}}"
-MARKETGRAPH_HEALTH_URL="${MARKETGRAPH_API_HEALTH_URL:-${MARKETGRAPH_API_BASE_URL%/}/health}"
+MARKETGRAPH_API_BASE_URL="${MARKETGRAPH_API_BASE_URL:-${MARKETGRAPH_API_URL:-}}"
+MARKETGRAPH_HEALTH_URL="${MARKETGRAPH_API_HEALTH_URL:-}"
+if [ -z "${MARKETGRAPH_HEALTH_URL}" ] && [ -n "${MARKETGRAPH_API_BASE_URL}" ]; then
+  MARKETGRAPH_HEALTH_URL="${MARKETGRAPH_API_BASE_URL%/}/health"
+fi
 MAX_SIM_OUTPUT_AGE_MIN="${TRADINGAGENT_SIM_OUTPUT_MAX_AGE_MIN:-180}"
 
 mkdir -p "${LOG_DIR}" "${LOCK_DIR}" "${WATCHDOG_INPUT_DIR}"
@@ -111,16 +114,21 @@ def check_sim_output(root: Path, max_age: int) -> dict:
             "overall_status": overall_status,
             "summary": payload.get("summary", {}),
         }
-    candidates = sorted((root / "shared" / "review").glob("*/style_comparison.json"))
-    if not candidates:
-        return {"status": "critical", "reason": "style_comparison_missing", "latest_file": "", "age_minutes": None}
-    latest = max(candidates, key=lambda item: item.stat().st_mtime)
-    age = file_age_minutes(latest)
-    status = "ok" if age is not None and age <= max_age else "degraded"
-    return {"status": status, "latest_file": str(latest), "age_minutes": age, "max_age_minutes": max_age}
+    return {
+        "status": "critical",
+        "reason": "current_sim_market_health_missing",
+        "latest_file": str(health_path),
+        "age_minutes": health_age,
+        "max_age_minutes": max_age,
+    }
 
 
 def check_marketgraph_api(health_url: str) -> dict:
+    if not health_url:
+        return {
+            "status": "degraded",
+            "reason": "explicit_marketgraph_health_url_required",
+        }
     try:
         status_code, payload = http_json(health_url, 3)
     except (OSError, urllib.error.URLError) as exc:

@@ -73,6 +73,14 @@ class PnlSummaryTest(unittest.TestCase):
         self,
     ) -> None:
         self.assertEqual(
+            pnl_summary.DEFAULT_MARKETS,
+            ("ashare", "cn_futures", "crypto"),
+        )
+        self.assertEqual(
+            sim_ledger_reader.DEFAULT_REVIEW_MARKETS,
+            ("ashare", "cn_futures", "crypto"),
+        )
+        self.assertEqual(
             pnl_summary.DEFAULT_LOCAL_SIM_TRADES,
             self.canonical_local_sim_trades,
         )
@@ -108,12 +116,16 @@ class PnlSummaryTest(unittest.TestCase):
         )
 
         crypto = result["crypto"]
-        self.assertEqual(crypto["pnl_source"], "sim_ledger_mark_to_market")
+        self.assertEqual(crypto["account_scope"], "crypto:simulated:balanced")
+        self.assertEqual(crypto["account_count"], 1)
+        self.assertEqual(crypto["pnl_source"], "sim_ledger_journal_fill_price_fallback")
+        self.assertEqual(crypto["mark_authority"], "journal_fill_price_fallback")
         self.assertEqual(crypto["realized_pnl"], 0.0)
         self.assertEqual(crypto["unrealized_pnl"], 0.0)
         self.assertEqual(crypto["total_pnl"], 0.0)
         self.assertEqual(crypto["open_position_count"], 1)
-        # The latest journal fill price is used as the mark, so no missing mark.
+        # The latest journal fill price is a deterministic compatibility fallback,
+        # not an independent current market mark.
         self.assertEqual(crypto["missing_mark_count"], 0)
 
     def test_ashare_local_sim_uses_mark_prices_when_provided(self) -> None:
@@ -160,7 +172,7 @@ class PnlSummaryTest(unittest.TestCase):
         self.assertEqual(ashare["open_position_count"], 1)
         self.assertEqual(ashare["missing_mark_count"], 0)
 
-    def test_ashare_local_sim_auto_loads_mark_prices_from_sharedsignals(self) -> None:
+    def test_ashare_local_sim_auto_loads_mark_prices_from_injected_port(self) -> None:
         self._write_current_trade(
             {
                 "trade_id": "LSIM-STRATEGY",
@@ -203,14 +215,143 @@ class PnlSummaryTest(unittest.TestCase):
         self.assertEqual(ashare["unrealized_pnl"], 195.0)
         self.assertEqual(ashare["missing_mark_count"], 0)
 
+    def test_retired_market_is_rejected_before_ledger_discovery(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown or retired runtime market"):
+            pnl_summary.sim_ledger_pnl_summary(
+                markets=("pm",),
+                ledger_root=self.ledger_root,
+                local_trades_path=self.local_sim,
+            )
+
     def test_empty_markets_return_zero_pnl(self) -> None:
         result = pnl_summary.sim_ledger_pnl_summary(
             markets=("crypto", "ashare"),
             ledger_root=self.ledger_root,
             local_trades_path=self.local_sim,
         )
-        self.assertEqual(result["crypto"]["total_pnl"], 0.0)
+        self.assertIsNone(result["crypto"]["total_pnl"])
+        self.assertEqual(
+            result["crypto"]["monetary_state"],
+            "unavailable_no_account_authority",
+        )
         self.assertEqual(result["ashare"]["total_pnl"], 0.0)
+
+    def test_ashare_read_error_never_becomes_zero_available_pnl(self) -> None:
+        with patch(
+            "shared.execution.local_sim_ledger.get_local_sim_pnl",
+            side_effect=RuntimeError("ledger unavailable"),
+        ):
+            ashare = pnl_summary.sim_ledger_pnl_summary(
+                markets=("ashare",),
+                ledger_root=self.ledger_root,
+                local_trades_path=self.local_sim,
+                ashare_mark_prices={},
+            )["ashare"]
+
+        account = ashare["account_summaries"]["ashare_sim"]
+        self.assertEqual(ashare["monetary_state"], "unavailable_read_error")
+        self.assertEqual(account["monetary_state"], "unavailable_read_error")
+        for field in (
+            "realized_pnl",
+            "unrealized_pnl",
+            "total_pnl",
+            "market_value",
+            "strategy_total_pnl",
+            "audit_total_pnl",
+        ):
+            self.assertIsNone(ashare[field])
+            self.assertIsNone(account[field])
+        self.assertIn("ledger unavailable", ashare["errors"][0])
+
+    def test_crypto_style_accounts_are_never_aggregated(self) -> None:
+        for strategy, symbol, price in (
+            ("grid", "BTCUSDT", 100.0),
+            ("momentum", "ETHUSDT", 200.0),
+        ):
+            journal = self.ledger_root / "crypto" / strategy / "trade_journal.jsonl"
+            journal.parent.mkdir(parents=True)
+            journal.write_text(
+                json.dumps(
+                    {
+                        "timestamp": "2026-07-04T00:00:00+00:00",
+                        "order_id": f"ORDER-{strategy}",
+                        "fill_id": f"FILL-{strategy}",
+                        "symbol": symbol,
+                        "side": "buy",
+                        "fill_qty": 1.0,
+                        "fill_price": price,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+        crypto = pnl_summary.sim_ledger_pnl_summary(
+            markets=("crypto",),
+            ledger_root=self.ledger_root,
+            local_trades_path=self.local_sim,
+        )["crypto"]
+
+        self.assertEqual(crypto["account_count"], 2)
+        self.assertEqual(crypto["monetary_state"], "unavailable_multiple_accounts")
+        self.assertIsNone(crypto["total_pnl"])
+        self.assertIsNone(crypto["market_value"])
+        self.assertEqual(
+            set(crypto["account_summaries"]),
+            {"crypto:simulated:grid", "crypto:simulated:momentum"},
+        )
+        self.assertEqual(
+            crypto["account_summaries"]["crypto:simulated:grid"]["market_value"],
+            100.0,
+        )
+        self.assertEqual(
+            crypto["account_summaries"]["crypto:simulated:momentum"]["market_value"],
+            200.0,
+        )
+
+    def test_style_ledger_error_is_fail_closed_without_hiding_sibling(self) -> None:
+        for strategy in ("grid", "momentum"):
+            journal = self.ledger_root / "crypto" / strategy / "trade_journal.jsonl"
+            journal.parent.mkdir(parents=True)
+            journal.write_text(
+                json.dumps(
+                    {
+                        "symbol": "BTCUSDT",
+                        "side": "buy",
+                        "fill_qty": 1.0,
+                        "fill_price": 100.0,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+        original_replay = pnl_summary._replay_journal_to_ledger
+
+        def replay_or_fail(journal_path, ledger, market):
+            if journal_path.parent.name == "grid":
+                raise RuntimeError("grid ledger unreadable")
+            return original_replay(journal_path, ledger, market)
+
+        with patch.object(
+            pnl_summary,
+            "_replay_journal_to_ledger",
+            side_effect=replay_or_fail,
+        ):
+            crypto = pnl_summary.sim_ledger_pnl_summary(
+                markets=("crypto",),
+                ledger_root=self.ledger_root,
+                local_trades_path=self.local_sim,
+            )["crypto"]
+
+        self.assertEqual(crypto["account_count"], 2)
+        self.assertEqual(crypto["monetary_state"], "unavailable_multiple_accounts")
+        self.assertIsNone(crypto["total_pnl"])
+        failed = crypto["account_summaries"]["crypto:simulated:grid"]
+        self.assertEqual(failed["monetary_state"], "unavailable_read_error")
+        self.assertIsNone(failed["total_pnl"])
+        healthy = crypto["account_summaries"]["crypto:simulated:momentum"]
+        self.assertEqual(healthy["monetary_state"], "available")
 
     def test_ashare_missing_provenance_is_validation_sample_not_strategy_pnl(
         self,

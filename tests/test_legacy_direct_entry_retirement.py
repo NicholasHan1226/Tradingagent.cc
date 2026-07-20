@@ -8,11 +8,22 @@ import textwrap
 
 import pytest
 
-from CNFutures import calibration, observation_report, opening_validator, replay, run_simulation
+from Ashare.adapter import AshareAdapter
+from CNFutures import (
+    calibration,
+    observation_report,
+    opening_validator,
+    replay,
+    run_simulation,
+)
 from CNFutures.adapter import CNFuturesAdapter
 from Crypto.adapter import CryptoAdapter
 from Crypto.workflow import CryptoWorkflow
 from shared.execution import auto_pipeline
+from shared.data.marketgraph_api import DEFAULT_API_URL as DEFAULT_MARKETGRAPH_API_URL
+from shared.data.shared_signals_api import (
+    DEFAULT_API_URL as DEFAULT_LEGACY_DATA_API_URL,
+)
 from shared.governance.retirement import (
     RETIRED_RUNTIME_EXIT_CODE,
     RetiredRuntimeError,
@@ -20,7 +31,14 @@ from shared.governance.retirement import (
 from shared.runtime_test import ashare_opening_validator, ashare_preopen_dry_run
 
 
-def test_direct_python_clis_fail_before_data_or_output(monkeypatch, tmp_path: Path) -> None:
+def test_legacy_clients_have_no_implicit_localhost_runtime() -> None:
+    assert DEFAULT_LEGACY_DATA_API_URL == ""
+    assert DEFAULT_MARKETGRAPH_API_URL == ""
+
+
+def test_direct_python_clis_fail_before_data_or_output(
+    monkeypatch, tmp_path: Path
+) -> None:
     def forbidden(*args, **kwargs):  # noqa: ANN002, ANN003
         raise AssertionError("retired CLI touched an external or output path")
 
@@ -47,11 +65,14 @@ def test_market_adapters_never_create_implicit_legacy_reader(monkeypatch) -> Non
     monkeypatch.setenv("SHARED_SIGNALS_DB", "/tmp/legacy.sqlite")
     monkeypatch.setenv("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "1")
 
+    ashare = AshareAdapter()
     futures = CNFuturesAdapter()
     crypto = CryptoAdapter()
 
+    assert ashare.reader is None
     assert futures.reader is None
     assert crypto.reader is None
+    assert ashare.get_universe("20260720") == []
     assert futures.get_universe("20260720") == []
     assert futures.get_intraday_universe("20260720") == []
     assert futures.get_bars_daily("Futures", "RB2610.SHF") == []
@@ -61,7 +82,9 @@ def test_market_adapters_never_create_implicit_legacy_reader(monkeypatch) -> Non
 
 
 def test_library_workflows_require_explicit_data_port(tmp_path: Path) -> None:
-    with pytest.raises(RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"):
+    with pytest.raises(
+        RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"
+    ):
         replay.build_replay_report(
             date="20260720",
             reader=None,
@@ -69,20 +92,28 @@ def test_library_workflows_require_explicit_data_port(tmp_path: Path) -> None:
             history=tmp_path / "history.jsonl",
         )
 
-    with pytest.raises(RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"):
+    with pytest.raises(
+        RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"
+    ):
         auto_pipeline.run_auto_pipeline(reader=None)
 
-    with pytest.raises(RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"):
+    with pytest.raises(
+        RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"
+    ):
         CryptoWorkflow(reader=None)
 
-    with pytest.raises(RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"):
+    with pytest.raises(
+        RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"
+    ):
         observation_report.build_observation_report(
             live_report=None,
             review_root=tmp_path / "review",
             review_path=tmp_path / "review.jsonl",
         )
 
-    with pytest.raises(RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"):
+    with pytest.raises(
+        RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"
+    ):
         calibration.build_calibration_report(
             date="20260720",
             reader=None,
@@ -91,10 +122,14 @@ def test_library_workflows_require_explicit_data_port(tmp_path: Path) -> None:
             labels_path=tmp_path / "labels.jsonl",
         )
 
-    with pytest.raises(RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"):
+    with pytest.raises(
+        RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"
+    ):
         ashare_opening_validator.validate_pre_open(reader=None)
 
-    with pytest.raises(RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"):
+    with pytest.raises(
+        RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"
+    ):
         ashare_preopen_dry_run.run_preopen_dry_run(reader=None)
 
     assert list(tmp_path.iterdir()) == []

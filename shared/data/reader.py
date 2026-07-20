@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Unified data readers for TradingAgent market and research inputs.
+"""Time-boxed legacy readers for explicit fixture and migration diagnostics.
 
-TradingagentDataReader uses SharedSignals API as the production data entry.
-Direct SQLite read-model access is allowed only for explicitly injected test
-readers or explicit emergency/local-read configuration.
+Current TradingAgent compositions consume the provider-neutral TradingDatas
+catalog/query port.  These classes have no ambient localhost default and are
+not a production data entry.  Direct SQLite reads require an explicitly
+injected test/diagnostic reader and can never be a fallback.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from .shared_signals_api import SharedSignalsAPIClient
 
 
 # -- Default paths -----------------------------------------------------------
+
 
 def _default_shared_signals_db() -> Path:
     configured = os.environ.get("SHARED_SIGNALS_DB")
@@ -140,7 +142,9 @@ class SharedSignalsReader:
                 params.extend([compact, iso_date])
             else:
                 sql += " AND bar_time <= ?"
-                params.append(end_time + "T23:59:59" if len(end_time) == 10 else end_time)
+                params.append(
+                    end_time + "T23:59:59" if len(end_time) == 10 else end_time
+                )
         sql += " ORDER BY bar_time"
         return self._query(sql, tuple(params))
 
@@ -217,7 +221,9 @@ class MarketGraphCSVReader:
         self.intake = data_intake if data_intake.exists() else self.root / "intake"
         self._api_client = api_client
         self._marketgraph_client = marketgraph_client
-        self._api_enabled = bool(api_client) if api_enabled is None else bool(api_enabled)
+        self._api_enabled = (
+            bool(api_client) if api_enabled is None else bool(api_enabled)
+        )
         self._logger = logging.getLogger("tradingagent.data")
 
     def _read_csv(self, path: Path) -> list[dict[str, str]]:
@@ -248,7 +254,10 @@ class MarketGraphCSVReader:
 
     @staticmethod
     def _has_meaningful_rows(rows: list[dict[str, Any]]) -> bool:
-        return any(any(value not in ("", None, [], {}) for value in row.values()) for row in rows)
+        return any(
+            any(value not in ("", None, [], {}) for value in row.values())
+            for row in rows
+        )
 
     def _api_rows(
         self,
@@ -302,16 +311,24 @@ class MarketGraphCSVReader:
 
     def get_regime(self) -> dict[str, Any] | None:
         if self._marketgraph_client is not None:
-            if isinstance(self._marketgraph_client, MarketGraphAPIClient) and not self._marketgraph_client.api_token:
+            if (
+                isinstance(self._marketgraph_client, MarketGraphAPIClient)
+                and not self._marketgraph_client.api_token
+            ):
                 self._logger.info(
                     "MarketGraphCSVReader all_weather_regime.csv skipped: MARKETGRAPH_API_TOKEN is not configured"
                 )
             else:
-                before_error_count = len(getattr(self._marketgraph_client, "errors", []))
+                before_error_count = len(
+                    getattr(self._marketgraph_client, "errors", [])
+                )
                 row = self._marketgraph_client.get_regime()
                 if row:
                     return row
-                if len(getattr(self._marketgraph_client, "errors", [])) > before_error_count:
+                if (
+                    len(getattr(self._marketgraph_client, "errors", []))
+                    > before_error_count
+                ):
                     self._logger.warning(
                         "MarketGraphCSVReader all_weather_regime.csv MarketGraph API call failed; fail-closed: %s",
                         self._marketgraph_client.errors[-1],
@@ -327,31 +344,45 @@ class MarketGraphCSVReader:
             regime_rows = [row for row in api_rows if row.get("regime")]
             if regime_rows:
                 return dict(regime_rows[-1])
-            self._logger.info("MarketGraphCSVReader all_weather_regime.csv API rows did not include regime")
+            self._logger.info(
+                "MarketGraphCSVReader all_weather_regime.csv API rows did not include regime"
+            )
         return None
 
     def get_event_candidates(self) -> list[dict[str, str]]:
         if self._marketgraph_client is not None:
-            if isinstance(self._marketgraph_client, MarketGraphAPIClient) and not self._marketgraph_client.api_token:
+            if (
+                isinstance(self._marketgraph_client, MarketGraphAPIClient)
+                and not self._marketgraph_client.api_token
+            ):
                 self._logger.info(
                     "MarketGraphCSVReader association_impact_relations skipped: MARKETGRAPH_API_TOKEN is not configured"
                 )
                 return []
             before_error_count = len(getattr(self._marketgraph_client, "errors", []))
-            get_contract_table = getattr(self._marketgraph_client, "get_contract_table", None)
+            get_contract_table = getattr(
+                self._marketgraph_client, "get_contract_table", None
+            )
             if callable(get_contract_table):
                 payload = get_contract_table(
                     "association_impact_relations",
                     market="Ashare",
                     include_rows=True,
-                    limit=int(os.environ.get("MARKETGRAPH_EVENT_IMPACT_LIMIT", "50000")),
+                    limit=int(
+                        os.environ.get("MARKETGRAPH_EVENT_IMPACT_LIMIT", "50000")
+                    ),
                     record_usage=False,
                 )
                 if payload and not payload.get("error"):
-                    rows = self._normalize_impact_relation_rows(payload.get("rows") or [])
+                    rows = self._normalize_impact_relation_rows(
+                        payload.get("rows") or []
+                    )
                     if rows:
                         return rows
-                if len(getattr(self._marketgraph_client, "errors", [])) > before_error_count:
+                if (
+                    len(getattr(self._marketgraph_client, "errors", []))
+                    > before_error_count
+                ):
                     self._logger.warning(
                         "MarketGraphCSVReader association_impact_relations MarketGraph API call failed; fail-closed: %s",
                         self._marketgraph_client.errors[-1],
@@ -369,10 +400,16 @@ class MarketGraphCSVReader:
             target_type = str(row.get("target_type") or "").strip().lower()
             if target_type and target_type not in {"stock", "equity", "asset"}:
                 continue
-            target_id = str(row.get("target_id") or row.get("subject_code") or "").strip()
+            target_id = str(
+                row.get("target_id") or row.get("subject_code") or ""
+            ).strip()
             if not target_id:
                 continue
-            polarity = str(row.get("polarity") or row.get("proposed_impact_hint") or "").strip().lower()
+            polarity = (
+                str(row.get("polarity") or row.get("proposed_impact_hint") or "")
+                .strip()
+                .lower()
+            )
             direction = {
                 "+": "positive",
                 "bullish": "positive",
@@ -389,7 +426,9 @@ class MarketGraphCSVReader:
             item.setdefault("status", "verified")
             item["proposed_impact_hint"] = direction
             item.setdefault("confidence", row.get("strength") or 0.5)
-            item.setdefault("event_time", row.get("valid_from") or row.get("event_date") or "")
+            item.setdefault(
+                "event_time", row.get("valid_from") or row.get("event_date") or ""
+            )
             item.setdefault("source", "MarketGraph association_impact_relations")
             normalized.append(item)
         return normalized
@@ -432,13 +471,13 @@ _AUTO_SHARED_SIGNALS_API_CLIENT = _AutoSharedSignalsAPIClient()
 
 
 class TradingagentDataReader:
-    """Fail-safe unified reader: SharedSignals API + explicit local read model.
+    """Fail-safe compatibility reader for an explicitly configured old API.
 
-    Uses SharedSignals HTTP API first. Direct SQLite reads are allowed only when
-    a caller injects a SharedSignalsReader or explicitly enables local read-model
-    fallback for tests/emergency diagnostics. Omitting ``api_client`` retains the
-    legacy environment/default auto-configuration path; passing ``None``
-    explicitly disables that path for isolated research and tests.
+    Direct SQLite reads are allowed only when a caller injects a
+    ``SharedSignalsReader`` for tests or forensic diagnostics. Omitting
+    ``api_client`` reads only an explicit legacy environment value; because the
+    default URL is empty it never discovers localhost. Passing ``None``
+    explicitly disables the compatibility path for isolated research and tests.
 
     All methods are safe to call regardless of whether the underlying data
     sources are available — missing data returns empty lists / None rather
@@ -455,8 +494,12 @@ class TradingagentDataReader:
     ):
         self._shared = shared
         self._marketgraph = marketgraph
-        api_url = os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHARED_SIGNALS_API_URL).strip()
-        marketgraph_api_url = os.environ.get("MARKETGRAPH_API_URL", DEFAULT_MARKETGRAPH_API_URL).strip()
+        api_url = os.environ.get(
+            "SHAREDSIGNALS_API_URL", DEFAULT_SHARED_SIGNALS_API_URL
+        ).strip()
+        marketgraph_api_url = os.environ.get(
+            "MARKETGRAPH_API_URL", DEFAULT_MARKETGRAPH_API_URL
+        ).strip()
         self._api_client: SharedSignalsAPIClient | None
         if isinstance(api_client, _AutoSharedSignalsAPIClient):
             self._api_client = (
@@ -467,7 +510,11 @@ class TradingagentDataReader:
             # disable SharedSignals without ambient localhost/runtime data
             # changing a supposedly isolated research or test result.
             self._api_client = api_client
-        self._marketgraph_api_client = MarketGraphAPIClient(base_url=marketgraph_api_url) if marketgraph_api_url else None
+        self._marketgraph_api_client = (
+            MarketGraphAPIClient(base_url=marketgraph_api_url)
+            if marketgraph_api_url
+            else None
+        )
         self.errors: list[str] = []
         self.stale = False
         self.degraded = False
@@ -481,18 +528,25 @@ class TradingagentDataReader:
 
     def _maybe_alert(self) -> None:
         """Log a warning when errors accumulate beyond threshold — dead-man switch."""
-        if len(self.errors) > self._error_count_at_last_log and len(self.errors) % 10 == 0:
+        if (
+            len(self.errors) > self._error_count_at_last_log
+            and len(self.errors) % 10 == 0
+        ):
             logger = logging.getLogger("tradingagent.data")
             logger.warning(
                 "TradingagentDataReader: %d errors accumulated (stale=%s) — last: %s",
-                len(self.errors), self.stale, self.errors[-1]
+                len(self.errors),
+                self.stale,
+                self.errors[-1],
             )
             self._error_count_at_last_log = len(self.errors)
 
     def _record_api_fallback(self, op: str, reason: str) -> None:
         self.degraded = True
         self.stale = True
-        message = f"{op}: API unavailable, using explicit SQLite diagnostic read ({reason})"
+        message = (
+            f"{op}: API unavailable, using explicit SQLite diagnostic read ({reason})"
+        )
         if not self.errors or self.errors[-1] != message:
             self.errors.append(message)
         self._maybe_alert()
@@ -525,7 +579,9 @@ class TradingagentDataReader:
             if self._can_use_sqlite_fallback():
                 self._record_api_fallback(op, str(exc))
                 return fallback()
-            self.errors.append(f"{op}: SharedSignals API failed ({exc}); SQLite diagnostic read disabled")
+            self.errors.append(
+                f"{op}: SharedSignals API failed ({exc}); SQLite diagnostic read disabled"
+            )
             self.stale = True
             self._maybe_alert()
             return False if op == "is_trading_day" else []
@@ -535,7 +591,9 @@ class TradingagentDataReader:
             if self._can_use_sqlite_fallback():
                 self._record_api_fallback(op, api_errors[-1])
                 return fallback()
-            self.errors.append(f"{op}: SharedSignals API error ({api_errors[-1]}); SQLite diagnostic read disabled")
+            self.errors.append(
+                f"{op}: SharedSignals API error ({api_errors[-1]}); SQLite diagnostic read disabled"
+            )
             self.stale = True
             self._maybe_alert()
             return False if op == "is_trading_day" else []
@@ -558,7 +616,9 @@ class TradingagentDataReader:
     def shared(self) -> SharedSignalsReader:
         if self._shared is None:
             if not self._can_use_sqlite_fallback():
-                raise RuntimeError("SharedSignals SQLite diagnostic read is disabled; use SHAREDSIGNALS_API_URL")
+                raise RuntimeError(
+                    "SharedSignals SQLite diagnostic read is disabled; use SHAREDSIGNALS_API_URL"
+                )
             try:
                 self._shared = SharedSignalsReader()
             except Exception as e:
@@ -571,11 +631,10 @@ class TradingagentDataReader:
                 logger = logging.getLogger("tradingagent.data")
                 logger.critical(
                     "TradingagentDataReader: SharedSignalsReader init failed — "
-                    "ALL data reads will fail. Fix DB path or connectivity. Error: %s", e
+                    "ALL data reads will fail. Fix DB path or connectivity. Error: %s",
+                    e,
                 )
-                raise RuntimeError(
-                    f"SharedSignalsReader unavailable: {e}"
-                ) from e
+                raise RuntimeError(f"SharedSignalsReader unavailable: {e}") from e
         return self._shared
 
     @property
@@ -583,7 +642,9 @@ class TradingagentDataReader:
         if self._marketgraph is None:
             marketgraph_data = os.environ.get("MARKETGRAPH_DATA", "").strip()
             self._marketgraph = MarketGraphCSVReader(
-                Path(marketgraph_data) if marketgraph_data else Path("/nonexistent/tradingagent/marketgraph_api_only"),
+                Path(marketgraph_data)
+                if marketgraph_data
+                else Path("/nonexistent/tradingagent/marketgraph_api_only"),
                 api_client=self._api_client,
                 marketgraph_client=self._marketgraph_api_client,
             )
@@ -600,13 +661,19 @@ class TradingagentDataReader:
     def _to_ts_code(market: str, symbol: str) -> str:
         if "." in symbol:
             return symbol
-        if TradingagentDataReader._canonical_market(market) == "Ashare" and symbol.isdigit() and len(symbol) == 6:
+        if (
+            TradingagentDataReader._canonical_market(market) == "Ashare"
+            and symbol.isdigit()
+            and len(symbol) == 6
+        ):
             suffix = "SH" if symbol.startswith(("5", "6", "9")) else "SZ"
             return f"{symbol}.{suffix}"
         return symbol
 
     @staticmethod
-    def _market_symbol_from_ts_code(ts_code: str, market: str | None = None) -> tuple[str, str]:
+    def _market_symbol_from_ts_code(
+        ts_code: str, market: str | None = None
+    ) -> tuple[str, str]:
         code = ts_code.strip()
         if "." not in code:
             return market or "Ashare", code
@@ -660,11 +727,18 @@ class TradingagentDataReader:
 
     @staticmethod
     def _filter_rows_for_symbol(
-        rows: list[dict[str, Any]], market: str, requested_symbol: str, read_symbol: str | None = None
+        rows: list[dict[str, Any]],
+        market: str,
+        requested_symbol: str,
+        read_symbol: str | None = None,
     ) -> list[dict[str, Any]]:
-        target_aliases = TradingagentDataReader._symbol_aliases(requested_symbol, market)
+        target_aliases = TradingagentDataReader._symbol_aliases(
+            requested_symbol, market
+        )
         if read_symbol:
-            target_aliases.update(TradingagentDataReader._symbol_aliases(read_symbol, market))
+            target_aliases.update(
+                TradingagentDataReader._symbol_aliases(read_symbol, market)
+            )
         filtered: list[dict[str, Any]] = []
         for row in rows:
             row_aliases = TradingagentDataReader._row_symbol_aliases(row, market)
@@ -682,13 +756,17 @@ class TradingagentDataReader:
             value = str(row.get(key) or "").strip()
             if value:
                 aliases.add(value.replace("-", "")[:8])
-        bar_time = str(row.get("bar_time") or row.get("datetime") or row.get("timestamp") or "").strip()
+        bar_time = str(
+            row.get("bar_time") or row.get("datetime") or row.get("timestamp") or ""
+        ).strip()
         if len(bar_time) >= 10:
             aliases.add(bar_time[:10].replace("-", ""))
         return {alias for alias in aliases if len(alias) == 8 and alias.isdigit()}
 
     @staticmethod
-    def _filter_rows_for_date(rows: list[dict[str, Any]], date_value: str | None) -> list[dict[str, Any]]:
+    def _filter_rows_for_date(
+        rows: list[dict[str, Any]], date_value: str | None
+    ) -> list[dict[str, Any]]:
         target = str(date_value or "").strip().replace("-", "")[:8]
         if len(target) != 8 or not target.isdigit():
             return rows
@@ -713,12 +791,24 @@ class TradingagentDataReader:
             "impact_hint",
             "proposed_impact_hint",
         )
-        return any(any(row.get(key) for key in payload_keys) for row in rows or [] if isinstance(row, dict))
+        return any(
+            any(row.get(key) for key in payload_keys)
+            for row in rows or []
+            if isinstance(row, dict)
+        )
 
     @staticmethod
     def _has_priced_market_rows(rows: list[dict[str, Any]]) -> bool:
         for row in rows:
-            for key in ("adjusted_close", "close", "price", "latest_price", "last_price", "market_price", "yes_price"):
+            for key in (
+                "adjusted_close",
+                "close",
+                "price",
+                "latest_price",
+                "last_price",
+                "market_price",
+                "yes_price",
+            ):
                 try:
                     value = float(row.get(key))
                 except (TypeError, ValueError):
@@ -728,19 +818,32 @@ class TradingagentDataReader:
         return False
 
     @staticmethod
-    def _normalize_asset_rows(rows: list[dict[str, Any]], market: str | None = None) -> list[dict[str, Any]]:
+    def _normalize_asset_rows(
+        rows: list[dict[str, Any]], market: str | None = None
+    ) -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
         for row in rows or []:
             if not isinstance(row, dict):
                 continue
             item = dict(row)
-            symbol = str(item.get("symbol") or item.get("ts_code") or "").strip().upper()
+            symbol = (
+                str(item.get("symbol") or item.get("ts_code") or "").strip().upper()
+            )
             if not symbol:
                 continue
-            if "." not in symbol and market and market.lower() in {"ashare", "a_share", "a-share"}:
+            if (
+                "." not in symbol
+                and market
+                and market.lower() in {"ashare", "a_share", "a-share"}
+            ):
                 symbol = TradingagentDataReader._to_ts_code("Ashare", symbol)
             item["symbol"] = symbol
-            item.setdefault("market", market or item.get("market") or ("Ashare" if symbol.endswith((".SH", ".SZ", ".BJ")) else ""))
+            item.setdefault(
+                "market",
+                market
+                or item.get("market")
+                or ("Ashare" if symbol.endswith((".SH", ".SZ", ".BJ")) else ""),
+            )
             if "sector" not in item and item.get("industry"):
                 item["sector"] = item.get("industry")
             if "status" not in item:
@@ -769,6 +872,7 @@ class TradingagentDataReader:
     def get_assets(self, market: str | None = None) -> list[dict[str, Any]]:
         try:
             if self._is_ashare_market(market):
+
                 def fallback() -> list[dict[str, Any]]:
                     rows = self.shared.get_assets("Ashare")
                     if not rows:
@@ -781,10 +885,13 @@ class TradingagentDataReader:
 
             api_name = self._asset_api_name_for_market(market)
             if api_name:
+
                 def fallback() -> list[dict[str, Any]]:
                     return self.shared.get_assets(market)
 
-                result = self._api_call("get_tushare", fallback, api_name=api_name, market=market)
+                result = self._api_call(
+                    "get_tushare", fallback, api_name=api_name, market=market
+                )
             elif self._can_use_sqlite_fallback():
                 result = self.shared.get_assets(market)
             else:
@@ -801,7 +908,9 @@ class TradingagentDataReader:
         try:
             symbol_key = str(symbol or "").strip().upper()
             for row in self.get_assets(market):
-                row_symbol = str(row.get("symbol") or row.get("ts_code") or "").strip().upper()
+                row_symbol = (
+                    str(row.get("symbol") or row.get("ts_code") or "").strip().upper()
+                )
                 if row_symbol == symbol_key:
                     return row
             return None
@@ -822,10 +931,14 @@ class TradingagentDataReader:
             end_value = end or start or None
 
             def fallback() -> list[dict[str, Any]]:
-                rows = self.shared.get_bars_daily(market_name, ts_code, start_value or "", end_value or "")
+                rows = self.shared.get_bars_daily(
+                    market_name, ts_code, start_value or "", end_value or ""
+                )
                 if rows:
                     return rows
-                return self.shared.get_bars_daily(market, symbol, start_value or "", end_value or "")
+                return self.shared.get_bars_daily(
+                    market, symbol, start_value or "", end_value or ""
+                )
 
             result = self._api_call(
                 "get_market_data",
@@ -842,7 +955,9 @@ class TradingagentDataReader:
                     if fallback_rows:
                         self._last_api_used = False
                         self._record_shared_error("get_bars_daily")
-                        return self._normalize_market_rows(fallback_rows, market_name, ts_code)
+                        return self._normalize_market_rows(
+                            fallback_rows, market_name, ts_code
+                        )
                 return []
             self._record_shared_error("get_bars_daily")
             return normalized
@@ -890,7 +1005,9 @@ class TradingagentDataReader:
                     if fallback_rows:
                         self._last_api_used = False
                         self._record_shared_error("get_market_data")
-                        return self._normalize_market_rows(fallback_rows, market_name, symbol)
+                        return self._normalize_market_rows(
+                            fallback_rows, market_name, symbol
+                        )
                 return []
             self._record_shared_error("get_market_data")
             return normalized
@@ -920,14 +1037,20 @@ class TradingagentDataReader:
             return None
 
     def get_events(
-        self, market: str | None = None, symbol: str = "",
-        start: str = "", end: str = "",
+        self,
+        market: str | None = None,
+        symbol: str = "",
+        start: str = "",
+        end: str = "",
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return self.shared.get_events(
-                    market=market or "", symbol=symbol,
-                    start_date=start, end_date=end,
+                    market=market or "",
+                    symbol=symbol,
+                    start_date=start,
+                    end_date=end,
                 )
 
             result = self._api_call(
@@ -939,7 +1062,9 @@ class TradingagentDataReader:
                 symbol=symbol or None,
                 subject_code=self._to_ts_code(market or "", symbol) if symbol else None,
             )
-            if isinstance(result, list) and (not result or not self._has_event_payload(result)):
+            if isinstance(result, list) and (
+                not result or not self._has_event_payload(result)
+            ):
                 if self._can_use_sqlite_fallback():
                     fallback_rows = fallback()
                     if fallback_rows:
@@ -951,14 +1076,19 @@ class TradingagentDataReader:
             if market:
                 canonical = self._canonical_market(market)
                 result = [
-                    r for r in result
-                    if not r.get("market") or self._canonical_market(r.get("market")) == canonical
+                    r
+                    for r in result
+                    if not r.get("market")
+                    or self._canonical_market(r.get("market")) == canonical
                 ]
             if symbol:
                 result = [
-                    r for r in result
-                    if not r.get("symbol") or r.get("symbol") == symbol
-                    or r.get("subject_code") in {symbol, self._to_ts_code(market or "", symbol)}
+                    r
+                    for r in result
+                    if not r.get("symbol")
+                    or r.get("symbol") == symbol
+                    or r.get("subject_code")
+                    in {symbol, self._to_ts_code(market or "", symbol)}
                 ]
             self._record_shared_error("get_events")
             return result
@@ -969,15 +1099,21 @@ class TradingagentDataReader:
             return []
 
     def get_factors(
-        self, market: str | None = None, symbol: str = "",
+        self,
+        market: str | None = None,
+        symbol: str = "",
     ) -> list[dict[str, Any]]:
         try:
             market_name = self._canonical_market(market)
             ts_code = self._to_ts_code(market_name, symbol) if symbol else ""
             result: list[dict[str, Any]] = []
             if ts_code:
-                result.extend(self._factor_rows_from_api(self.get_fundamentals(ts_code)))
-                result.extend(self._factor_rows_from_api(self.get_capital_flow(ts_code=ts_code)))
+                result.extend(
+                    self._factor_rows_from_api(self.get_fundamentals(ts_code))
+                )
+                result.extend(
+                    self._factor_rows_from_api(self.get_capital_flow(ts_code=ts_code))
+                )
             return result
         except Exception as e:
             self.errors.append(f"get_factors: {e}")
@@ -1004,11 +1140,21 @@ class TradingagentDataReader:
         for row in rows or []:
             if not isinstance(row, dict):
                 continue
-            metric = next((str(row.get(key) or "").strip() for key in metric_keys if row.get(key)), "")
+            metric = next(
+                (
+                    str(row.get(key) or "").strip()
+                    for key in metric_keys
+                    if row.get(key)
+                ),
+                "",
+            )
             if metric:
                 item = dict(row)
                 item["factor_name"] = metric
-                item.setdefault("value", row.get("value", row.get("factor_value", row.get("metric_value"))))
+                item.setdefault(
+                    "value",
+                    row.get("value", row.get("factor_value", row.get("metric_value"))),
+                )
                 normalized.append(item)
                 continue
             base = {key: row.get(key) for key in passthrough_keys if key in row}
@@ -1028,9 +1174,12 @@ class TradingagentDataReader:
         return normalized
 
     def get_sentiment(
-        self, start: str | None = None, end: str | None = None,
+        self,
+        start: str | None = None,
+        end: str | None = None,
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 raw = self.marketgraph.get_sentiment_signals()
                 return [dict(r) for r in raw]
@@ -1050,15 +1199,21 @@ class TradingagentDataReader:
             return []
 
     def get_bars_intraday(
-        self, market: str, symbol: str, interval: str = "5m",
-        start: str = "", end: str = "",
+        self,
+        market: str,
+        symbol: str,
+        interval: str = "5m",
+        start: str = "",
+        end: str = "",
     ) -> list[dict[str, Any]]:
         try:
             read_symbol = self._to_ts_code(market, symbol)
             date_value = end or start or None
 
             def fallback() -> list[dict[str, Any]]:
-                return self.shared.get_bars_intraday(market, symbol, interval, start, end)
+                return self.shared.get_bars_intraday(
+                    market, symbol, interval, start, end
+                )
 
             result = self._api_call(
                 "get_realtime_5min",
@@ -1068,7 +1223,9 @@ class TradingagentDataReader:
                 market=market,
             )
             normalized = self._normalize_market_rows(result, market, symbol)
-            normalized = self._filter_rows_for_symbol(normalized, market, symbol, read_symbol)
+            normalized = self._filter_rows_for_symbol(
+                normalized, market, symbol, read_symbol
+            )
             normalized = self._filter_rows_for_date(normalized, date_value)
             if not self._has_priced_market_rows(normalized):
                 if self._can_use_sqlite_fallback():
@@ -1076,9 +1233,15 @@ class TradingagentDataReader:
                     if fallback_rows:
                         self._last_api_used = False
                         self._record_shared_error("get_bars_intraday")
-                        fallback_normalized = self._normalize_market_rows(fallback_rows, market, symbol)
-                        fallback_normalized = self._filter_rows_for_symbol(fallback_normalized, market, symbol, read_symbol)
-                        return self._filter_rows_for_date(fallback_normalized, date_value)
+                        fallback_normalized = self._normalize_market_rows(
+                            fallback_rows, market, symbol
+                        )
+                        fallback_normalized = self._filter_rows_for_symbol(
+                            fallback_normalized, market, symbol, read_symbol
+                        )
+                        return self._filter_rows_for_date(
+                            fallback_normalized, date_value
+                        )
                 return []
             self._record_shared_error("get_bars_intraday")
             return normalized
@@ -1152,9 +1315,12 @@ class TradingagentDataReader:
             return False
 
     def get_fundamentals(
-        self, ts_code: str, end_date: str | None = None,
+        self,
+        ts_code: str,
+        end_date: str | None = None,
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1174,6 +1340,7 @@ class TradingagentDataReader:
 
     def get_reference(self, table: str) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1187,9 +1354,12 @@ class TradingagentDataReader:
             return []
 
     def get_macro_factors(
-        self, start: str | None = None, end: str | None = None,
+        self,
+        start: str | None = None,
+        end: str | None = None,
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1208,10 +1378,13 @@ class TradingagentDataReader:
             return []
 
     def get_capital_flow(
-        self, ts_code: str | None = None,
-        start: str | None = None, end: str | None = None,
+        self,
+        ts_code: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1231,9 +1404,12 @@ class TradingagentDataReader:
             return []
 
     def get_crypto_klines(
-        self, symbol: str, limit: int | None = None,
+        self,
+        symbol: str,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1253,6 +1429,7 @@ class TradingagentDataReader:
 
     def get_pm_markets(self, limit: int = 100) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1274,12 +1451,15 @@ class TradingagentDataReader:
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
             if "symbol" in kwargs and not market_id:
                 market_id = str(kwargs["symbol"])
-            result = self._api_call("get_pm_prices", fallback, market_id=market_id, limit=limit)
+            result = self._api_call(
+                "get_pm_prices", fallback, market_id=market_id, limit=limit
+            )
             self._record_shared_error("get_pm_prices")
             return result
         except Exception as e:
@@ -1289,9 +1469,12 @@ class TradingagentDataReader:
             return []
 
     def get_associations(
-        self, ts_code: str | None = None, event_id: str | None = None,
+        self,
+        ts_code: str | None = None,
+        event_id: str | None = None,
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1310,9 +1493,12 @@ class TradingagentDataReader:
             return []
 
     def get_impacts(
-        self, event_type: str | None = None, target: str | None = None,
+        self,
+        event_type: str | None = None,
+        target: str | None = None,
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1332,6 +1518,7 @@ class TradingagentDataReader:
 
     def get_industry(self, ts_code: str) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1345,9 +1532,12 @@ class TradingagentDataReader:
             return []
 
     def get_realtime_5min(
-        self, ts_code: str, date: str | None = None,
+        self,
+        ts_code: str,
+        date: str | None = None,
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1366,11 +1556,15 @@ class TradingagentDataReader:
             return []
 
     def get_tushare(
-        self, api_name: str, ts_code: str | None = None,
-        start_date: str | None = None, end_date: str | None = None,
+        self,
+        api_name: str,
+        ts_code: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         **params: Any,
     ) -> list[dict[str, Any]]:
         try:
+
             def fallback() -> list[dict[str, Any]]:
                 return []
 
@@ -1411,8 +1605,10 @@ class TradingagentDataReader:
         normalized = self._normalize_market_rows(rows, market_name, "")
         if market_name:
             normalized = [
-                row for row in normalized
-                if not row.get("market") or str(row.get("market")).lower() == market_name.lower()
+                row
+                for row in normalized
+                if not row.get("market")
+                or str(row.get("market")).lower() == market_name.lower()
             ]
         return normalized
 
@@ -1429,6 +1625,7 @@ class TradingagentDataReader:
         This is read-only research context. Missing API/data degrades to an
         empty snapshot and must never relax market gates.
         """
+
         def degraded(reason: str) -> dict[str, Any]:
             return {
                 "market": market,
@@ -1469,7 +1666,13 @@ class TradingagentDataReader:
                     return data
                 return payload
             return degraded("marketgraph_api_unexpected_payload")
-        except (OSError, TimeoutError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+        except (
+            OSError,
+            TimeoutError,
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            json.JSONDecodeError,
+        ) as exc:
             return degraded(f"marketgraph_api_unavailable:{exc}")
         except Exception as e:
             self.errors.append(f"get_market_interface_snapshot: {e}")

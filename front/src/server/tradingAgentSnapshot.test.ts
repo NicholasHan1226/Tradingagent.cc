@@ -297,20 +297,20 @@ describe('TradingAgent snapshot reader', () => {
       JSON.stringify({
         state: 'ok',
         capital_layer: 'simulated',
-        positions: [{ ts_code: '0700.HK', quantity: 200, running_cost: 78500, realized_pnl: 9800, thesis: '事件收益' }],
+        positions: [{ ts_code: 'BTC-USDT', quantity: 1, running_cost: 78500, realized_pnl: 9800, thesis: '事件收益' }],
       }) + '\n',
     )
     await writeFile(
       join(root, 'TradingAgent/shared/review/daily/daily_brief.jsonl'),
       JSON.stringify({ trade_date: '2026-07-04', session: 'close', pnl: 1200, win_rate: 0.62 }) + '\n',
     )
-    await writeFile(join(root, 'TradingAgent/signals/filled/0700.HK.json'), JSON.stringify({ status: 'filled', ts_code: '0700.HK' }))
+    await writeFile(join(root, 'TradingAgent/signals/filled/BTC-USDT.json'), JSON.stringify({ status: 'filled', ts_code: 'BTC-USDT' }))
     await writeFile(
-      join(root, 'signals/pending/0700.HK.json'),
+      join(root, 'signals/pending/BTC-USDT.json'),
       JSON.stringify({
-        order_id: 'sig-0700',
-        ts_code: '0700.HK',
-        market: 'HK',
+        order_id: 'sig-btc',
+        ts_code: 'BTC-USDT',
+        market: 'crypto',
         direction: 'buy',
         capital_layer: 'simulated',
         status: 'pending',
@@ -326,12 +326,71 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.mode).toBe('simulated')
-    expect(snapshot.holdings[0]).toMatchObject({ symbol: '0700.HK', market: 'HK', risk: '正常' })
-    expect(snapshot.signals[0]).toMatchObject({ symbol: '0700.HK', status: 'pending' })
+    expect(snapshot.holdings[0]).toMatchObject({ symbol: 'BTC-USDT', market: 'Crypto', currency: 'USDT', risk: '正常' })
+    expect(snapshot.holdings[0].accountScope).toContain('position-plan:')
+    expect(snapshot.signals[0]).toMatchObject({ symbol: 'BTC-USDT', status: 'pending' })
     expect(snapshot.domains.holdings.status).toBe('ready')
     expect(snapshot.domains.signals.status).toBe('ready')
     expect(snapshot.sourceRefs.positions).toBe('signals/positions/*.json')
     expect(snapshot.sourceRefs.capitalPlan).toBe('shared/accounting/position_plan.jsonl')
+  })
+
+  it('normalizes native USDT symbols and rejects retired USD or PERP Crypto routes', async () => {
+    const root = await createWorkspace()
+    await mkdir(join(root, 'signals/pending'), { recursive: true })
+    for (const symbol of ['BTCUSDT', 'ETH-USD', 'SOL-PERP']) {
+      await writeFile(
+        join(root, `signals/pending/${symbol}.json`),
+        JSON.stringify({
+          ts_code: symbol,
+          market: 'crypto',
+          status: 'pending',
+          discovered_at: '2026-07-04T09:50:00.000+08:00',
+        }),
+      )
+    }
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T10:00:00.000Z'),
+    })
+
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'BTC-USDT', market: 'Crypto' }))
+    expect(snapshot.signals).not.toContainEqual(expect.objectContaining({ symbol: 'ETH-USD' }))
+    expect(snapshot.signals).not.toContainEqual(expect.objectContaining({ symbol: 'SOL-PERP' }))
+  })
+
+  it('keeps independent position snapshot files in separate account scopes', async () => {
+    const root = await createWorkspace()
+    const positionsRoot = join(root, 'TradingAgent/signals/positions')
+    await writeFile(join(positionsRoot, 'crypto_grid.json'), JSON.stringify({
+      ts_code: 'BTCUSDT',
+      quantity: 0.01,
+      market_value: 1_000,
+      realized_pnl: 10,
+    }))
+    await writeFile(join(positionsRoot, 'crypto_momentum.json'), JSON.stringify({
+      ts_code: 'BTCUSDT',
+      quantity: 0.02,
+      market_value: 2_000,
+      realized_pnl: 20,
+    }))
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T10:00:00.000Z'),
+    })
+
+    const cryptoHoldings = snapshot.holdings.filter((holding) => holding.market === 'Crypto')
+    expect(cryptoHoldings).toHaveLength(2)
+    expect(cryptoHoldings.map((holding) => holding.symbol)).toEqual(['BTC-USDT', 'BTC-USDT'])
+    expect(new Set(cryptoHoldings.map((holding) => holding.accountScope)).size).toBe(2)
+    expect(cryptoHoldings.map((holding) => holding.accountScope)).toEqual(expect.arrayContaining([
+      expect.stringContaining('crypto_grid.json'),
+      expect.stringContaining('crypto_momentum.json'),
+    ]))
   })
 
   it('keeps an unverified A-share legacy pending queue row out of current signals', async () => {
@@ -594,7 +653,7 @@ describe('TradingAgent snapshot reader', () => {
     const path = join(root, 'TradingAgent/shared/accounting/position_plan.jsonl')
     const db = new DatabaseSync(path)
     db.exec('CREATE TABLE position_ledger_simulated (ts_code TEXT, quantity REAL, running_cost REAL, realized_pnl REAL)')
-    db.prepare('INSERT INTO position_ledger_simulated VALUES (?, ?, ?, ?)').run('0700.HK', 200, 78_500, 9_800)
+    db.prepare('INSERT INTO position_ledger_simulated VALUES (?, ?, ?, ?)').run('BTC-USDT', 1, 78_500, 9_800)
     db.close()
 
     const snapshot = await readTradingAgentSnapshot({
@@ -603,7 +662,7 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-14T12:00:00.000Z'),
     })
 
-    expect(snapshot.holdings).not.toContainEqual(expect.objectContaining({ symbol: '0700.HK' }))
+    expect(snapshot.holdings).not.toContainEqual(expect.objectContaining({ symbol: 'BTC-USDT' }))
   })
 
   it('keeps mixed signal outcomes visible and normalizes backend market labels', async () => {
@@ -612,10 +671,10 @@ describe('TradingAgent snapshot reader', () => {
 
     for (let index = 0; index < 220; index += 1) {
       await writeFile(
-        join(root, `signals/pending/pm-${index}.json`),
+        join(root, `signals/pending/cnfutures-${index}.json`),
         JSON.stringify({
-          ts_code: `${544000 + index}`,
-          market: 'pm',
+          ts_code: `IF${2601 + index}.CFFEX`,
+          market: 'cn_futures',
           status: 'pending',
         }),
       )
@@ -623,7 +682,7 @@ describe('TradingAgent snapshot reader', () => {
     await writeFile(
       join(root, 'signals/expired/btc.json'),
       JSON.stringify({
-        ts_code: 'BTC-USD',
+        ts_code: 'BTC-USDT',
         market: 'crypto',
         status: 'expired',
       }),
@@ -636,14 +695,14 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.signals.length).toBeLessThanOrEqual(240)
-    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'BTC-USD', market: 'Crypto', status: 'missed' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'BTC-USDT', market: 'Crypto', status: 'missed' }))
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
-      symbol: 'BTC-USD',
+      symbol: 'BTC-USDT',
       stage: '结果',
       status: '复盘',
       terminal: true,
     }))
-    expect(snapshot.signals[0]).toMatchObject({ market: 'PM' })
+    expect(snapshot.signals[0]).toMatchObject({ market: 'CNFutures' })
   })
 
   it('maps China futures signals and ledger trades to a dedicated dashboard market', async () => {
@@ -685,19 +744,19 @@ describe('TradingAgent snapshot reader', () => {
     await mkdir(join(root, 'signals/running'), { recursive: true })
 
     await writeFile(
-      join(root, 'signals/claimed/0700.HK.json'),
+      join(root, 'signals/claimed/IF2601.CFFEX.json'),
       JSON.stringify({
-        ts_code: '0700.HK',
-        market: 'HK',
+        ts_code: 'IF2601.CFFEX',
+        market: 'cn_futures',
         status: 'claimed',
         scored_at: '2026-07-04T09:44:00.000+08:00',
       }),
     )
     await writeFile(
-      join(root, 'signals/running/AAPL.US.json'),
+      join(root, 'signals/running/BTC-USDT.json'),
       JSON.stringify({
-        ts_code: 'AAPL.US',
-        market: 'US',
+        ts_code: 'BTC-USDT',
+        market: 'crypto',
         status: 'running',
         debated_at: '2026-07-04T09:47:00.000+08:00',
       }),
@@ -709,8 +768,8 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T10:00:00.000Z'),
     })
 
-    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: '0700.HK', status: 'pending', next: '等待执行确认', stage: '待执行' }))
-    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'AAPL.US', status: 'pending', next: '执行中，等待回执', stage: '待执行' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'IF2601.CFFEX', status: 'pending', next: '等待执行确认', stage: '待执行' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'BTC-USDT', status: 'pending', next: '执行中，等待回执', stage: '待执行' }))
   })
 
   it('reads return series from the daily review so the homepage can show real performance history', async () => {
@@ -749,7 +808,7 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.domains.performance.status).toBe('ready')
   })
 
-  it('reads real simulated PnL series from market style performance trackers', async () => {
+  it('ignores frozen legacy style performance as current performance or portfolio evidence', async () => {
     const root = await createWorkspace()
     const performanceRoot = join(root, 'TradingAgent/shared/review/crypto')
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
@@ -809,24 +868,21 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T10:00:00.000Z'),
     })
 
-    expect(snapshot.performance).toEqual([
-      { day: '7月3日', timestamp: '20260703', simulated: 0.1, target: 4, benchmark: 0, opportunity: -0.4 },
-      { day: '现在', timestamp: '20260704', simulated: 0.17, target: 8, benchmark: 0, opportunity: -0.2 },
-    ])
-    expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 124.2,
-      returnPct: 0.17,
-      capitalBase: 72000,
-      targetPct: 8,
-      maxDrawdownPct: 0.4,
-      tradeCount: 2,
-      pointCount: 2,
-      pnlSource: 'sim_ledger_mark_to_market',
-      realizedPnl: 3.6,
-      unrealizedPnl: 120.6,
+    const crypto = snapshot.marketSummaries?.find((summary) => summary.market === 'Crypto')
+    expect(snapshot.performance).toEqual([])
+    expect(snapshot.portfolio).toBeUndefined()
+    expect(snapshot.domains.performance.status).not.toBe('ready')
+    expect(crypto).toMatchObject({
+      status: 'empty',
+      runtimeState: 'empty',
+      tradeCount: 0,
+      styleCount: 0,
+      pnlAmount: undefined,
+      realizedPnl: undefined,
+      unrealizedPnl: undefined,
+      source: 'shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}',
     })
-    expect(snapshot.domains.performance.status).toBe('ready')
-    expect(snapshot.sourceRefs.performanceTracker).toBe('shared/review/*/style_performance.jsonl')
+    expect(snapshot.sourceRefs.performanceTracker).toBe('legacy frozen forensic only: shared/review/*/style_performance.jsonl')
   })
 
   it('exposes read-only A-share research evidence for the homepage rail', async () => {
@@ -1426,7 +1482,7 @@ describe('TradingAgent snapshot reader', () => {
     expect(current.ashareMarketMaturity).toBeUndefined()
   })
 
-  it('expands style performance into a trade-timed return curve when ledger timestamps are available', async () => {
+  it('keeps current trade-journal counts without deriving a return curve from legacy style performance', async () => {
     const root = await createWorkspace()
     const performanceRoot = join(root, 'TradingAgent/shared/review/crypto')
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
@@ -1502,19 +1558,20 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T10:00:00.000Z'),
     })
 
-    expect(snapshot.performance).toEqual([
-      { day: '7月3日 09:00', timestamp: '2026-07-03T01:00:00+00:00', simulated: 0.05, target: 2.67, benchmark: 0, opportunity: -0.1 },
-      { day: '7月3日 10:00', timestamp: '2026-07-03T02:00:00+00:00', simulated: 0.1, target: 5.33, benchmark: 0, opportunity: -0.1 },
-      { day: '现在', timestamp: '2026-07-04T01:30:00+00:00', simulated: 0.3, target: 8, benchmark: 0, opportunity: -0.1 },
-    ])
-    expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 216,
-      returnPct: 0.3,
-      pointCount: 3,
+    const crypto = snapshot.marketSummaries?.find((summary) => summary.market === 'Crypto')
+    expect(snapshot.performance).toEqual([])
+    expect(snapshot.portfolio).toBeUndefined()
+    expect(crypto).toMatchObject({
+      status: 'ready',
+      runtimeState: 'normal',
+      tradeCount: 3,
+      styleCount: 0,
+      pnlAmount: undefined,
+      source: 'shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}',
     })
   })
 
-  it('prefers simulated equity snapshots as the primary realtime performance source', async () => {
+  it('fails closed on unscoped global equity snapshots from the retired cross-market path', async () => {
     const root = await createWorkspace()
     const equityRoot = join(root, 'TradingAgent/shared/review/portfolio')
     const performanceRoot = join(root, 'TradingAgent/shared/review/crypto')
@@ -1589,217 +1646,55 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T10:00:00.000Z'),
     })
 
-    expect(snapshot.performance).toEqual([
-      { day: '7月4日 09:30', timestamp: '2026-07-04T09:30:00+08:00', simulated: 0.8, target: 1.2, benchmark: 0.1, opportunity: -0.4 },
-      { day: '现在', timestamp: '2026-07-04T10:00:00+08:00', simulated: 2.5, target: 1.6, benchmark: 0.3, opportunity: -0.2 },
-    ])
-    expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 2500,
-      returnPct: 2.5,
-      capitalBase: 100000,
-      maxDrawdownPct: 0.8,
-      tradeCount: 7,
-      pointCount: 2,
-      source: expect.stringContaining('daily_mark_to_market'),
-      pnlSource: 'equity_snapshot',
-      realizedPnl: 1000,
-      unrealizedPnl: 1500,
-    })
-  })
-
-  it('keeps intraday simulated ledger snapshots as a live performance curve', async () => {
-    const root = await createWorkspace()
-    const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
-    const usLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/us/momentum')
-    await mkdir(cryptoLedgerRoot, { recursive: true })
-    await mkdir(usLedgerRoot, { recursive: true })
-
-    await writeFile(
-      join(cryptoLedgerRoot, 'daily_mark_to_market.jsonl'),
-      [
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-03T10:00:00+08:00',
-          date: '20260703',
-          capital_base: 1000,
-          total_pnl: 10,
-          realized_pnl: 3,
-          unrealized_pnl: 7,
-          max_drawdown_pct: 0.3,
-          target_return_pct: 8,
-          trade_count: 1,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-04T10:00:01+08:00',
-          date: '20260704',
-          capital_base: 1000,
-          total_pnl: 20,
-          realized_pnl: 8,
-          unrealized_pnl: 12,
-          max_drawdown_pct: 0.6,
-          target_return_pct: 8,
-          trade_count: 2,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-04T10:06:01+08:00',
-          date: '20260704',
-          capital_base: 1000,
-          total_pnl: 30,
-          realized_pnl: 14,
-          unrealized_pnl: 16,
-          max_drawdown_pct: 0.7,
-          target_return_pct: 8,
-          trade_count: 4,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-      ].join('\n') + '\n',
-    )
-    await writeFile(
-      join(usLedgerRoot, 'daily_mark_to_market.jsonl'),
-      [
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-03T10:00:05+08:00',
-          date: '20260703',
-          capital_base: 2000,
-          total_pnl: -4,
-          realized_pnl: -2,
-          unrealized_pnl: -2,
-          max_drawdown_pct: 0.8,
-          target_return_pct: 8,
-          trade_count: 1,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-04T10:00:09+08:00',
-          date: '20260704',
-          capital_base: 2000,
-          total_pnl: -5,
-          realized_pnl: -1,
-          unrealized_pnl: -4,
-          max_drawdown_pct: 1.2,
-          target_return_pct: 8,
-          trade_count: 3,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-04T10:06:10+08:00',
-          date: '20260704',
-          capital_base: 2000,
-          total_pnl: -9,
-          realized_pnl: -3,
-          unrealized_pnl: -6,
-          max_drawdown_pct: 1.4,
-          target_return_pct: 8,
-          trade_count: 4,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-      ].join('\n') + '\n',
-    )
-
-    const snapshot = await readTradingAgentSnapshot({
-      workspaceRoot: root,
-      signalQueueDir: join(root, 'signals'),
-      now: new Date('2026-07-04T12:00:00.000Z'),
-    })
-
-    // Cross-market monetary aggregation is decommissioned.
-    // Multi-market equity snapshots produce no combined portfolio or performance curve.
-    // Per-market data is in marketSummaries.
-    expect(snapshot.portfolio).toBeUndefined()
     expect(snapshot.performance).toEqual([])
-    // Market summaries still carry independent per-market monetary identity
-    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({ market: 'Crypto' }))
-    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({ market: 'US' }))
-  })
-
-  it('rejects cross-market forward-fill aggregation and keeps independent market identity', async () => {
-    const root = await createWorkspace()
-    const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
-    const usLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/us/momentum')
-    await mkdir(cryptoLedgerRoot, { recursive: true })
-    await mkdir(usLedgerRoot, { recursive: true })
-
-    await writeFile(
-      join(cryptoLedgerRoot, 'daily_mark_to_market.jsonl'),
-      [
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-04T10:00:01+08:00',
-          date: '20260704',
-          capital_base: 1000,
-          total_pnl: 10,
-          target_return_pct: 8,
-          trade_count: 1,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-04T10:06:01+08:00',
-          date: '20260704',
-          capital_base: 1000,
-          total_pnl: 20,
-          target_return_pct: 8,
-          trade_count: 2,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-04T10:12:01+08:00',
-          date: '20260704',
-          capital_base: 1000,
-          total_pnl: 30,
-          target_return_pct: 8,
-          trade_count: 3,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-      ].join('\n') + '\n',
-    )
-    await writeFile(
-      join(usLedgerRoot, 'daily_mark_to_market.jsonl'),
-      [
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-04T10:00:05+08:00',
-          date: '20260704',
-          capital_base: 2000,
-          total_pnl: -4,
-          target_return_pct: 8,
-          trade_count: 1,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-        JSON.stringify({
-          capital_layer: 'simulated',
-          timestamp: '2026-07-04T10:12:10+08:00',
-          date: '20260704',
-          capital_base: 2000,
-          total_pnl: -9,
-          target_return_pct: 8,
-          trade_count: 2,
-          pnl_source: 'sim_ledger_mark_to_market',
-        }),
-      ].join('\n') + '\n',
-    )
-
-    const snapshot = await readTradingAgentSnapshot({
-      workspaceRoot: root,
-      signalQueueDir: join(root, 'signals'),
-      now: new Date('2026-07-04T12:00:00.000Z'),
-    })
-
-    // Cross-market monetary aggregation is decommissioned; multi-market
-    // equity snapshots produce no combined portfolio or performance curve.
     expect(snapshot.portfolio).toBeUndefined()
-    expect(snapshot.performance).toEqual([])
+    expect(snapshot.marketSummaries?.find((summary) => summary.market === 'Crypto')).toMatchObject({
+      capitalBase: undefined,
+      pnlAmount: undefined,
+      pnlCurrency: 'USDT',
+    })
   })
 
-  it('keeps capital-base rebase history normal with the market-aware default floor', async () => {
+  it('fails closed instead of adding same-market equity snapshots across sources or accounts', async () => {
+    const readAmbiguous = async (sameAccountAcrossSources: boolean) => {
+      const root = await createWorkspace()
+      const equityRoot = join(root, 'TradingAgent/shared/review/crypto')
+      await mkdir(equityRoot, { recursive: true })
+      const row = (accountScope: string, equity: number) => JSON.stringify({
+        account_scope: accountScope,
+        capital_layer: 'simulated',
+        currency: 'USDT',
+        timestamp: '2026-07-04T10:00:00+08:00',
+        total_equity: equity,
+        capital_base: 1_000,
+        pnl: equity - 1_000,
+      }) + '\n'
+
+      if (sameAccountAcrossSources) {
+        await writeFile(join(equityRoot, 'equity_snapshots.jsonl'), row('crypto:grid', 1_010))
+        await writeFile(join(equityRoot, 'equity_series.jsonl'), row('crypto:grid', 1_020))
+      } else {
+        await writeFile(
+          join(equityRoot, 'equity_snapshots.jsonl'),
+          row('crypto:grid', 1_010) + row('crypto:momentum', 1_020),
+        )
+      }
+
+      return readTradingAgentSnapshot({
+        workspaceRoot: root,
+        signalQueueDir: join(root, 'signals'),
+        now: new Date('2026-07-04T10:00:00.000Z'),
+      })
+    }
+
+    for (const sameAccountAcrossSources of [true, false]) {
+      const snapshot = await readAmbiguous(sameAccountAcrossSources)
+      expect(snapshot.performance).toEqual([])
+      expect(snapshot.portfolio).toBeUndefined()
+    }
+  })
+
+  it('keeps capital-base rebase history in the explicit native USDT base', async () => {
     const root = await createWorkspace()
     const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
     await mkdir(ledgerRoot, { recursive: true })
@@ -1821,7 +1716,8 @@ describe('TradingAgent snapshot reader', () => {
         capital_layer: 'simulated',
         timestamp: timestamps[index],
         date: '20260704',
-        capital_base: 1000,
+        capital_base: 10_000,
+        currency: 'USDT',
         total_pnl,
         target_return_pct: 8,
         trade_count: index + 1,
@@ -1969,18 +1865,20 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.portfolio).toMatchObject({
-      pnlAmount: 72,
+      pnlAmount: 10,
       tradeCount: 1,
-      capitalBase: 72000,
+      capitalBase: 1000,
+      pnlCurrency: 'USDT',
     })
     expect(snapshot.performance).toHaveLength(1)
     expect(snapshot.performance[0]).toMatchObject({
-      simulated: 0.1,
+      simulated: 1,
     })
     expect(snapshot.signals.some((signal) => signal.symbol === 'ETHUSDT')).toBe(false)
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'Crypto',
-      pnlAmount: 72,
+      pnlAmount: 10,
+      pnlCurrency: 'USDT',
       tradeCount: 1,
     }))
   })
@@ -2000,7 +1898,7 @@ describe('TradingAgent snapshot reader', () => {
           BTCUSDT: {
             quantity: 1,
             avg_cost: 100,
-            market_id: 'BTC-USD',
+            market_id: 'BTC-USDT',
             unrealized_pnl: 12,
           },
         },
@@ -2042,9 +1940,10 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'Crypto',
       holdingCount: 0,
-      capitalBase: 72_000,
+      capitalBase: undefined,
       tradeCount: 0,
       pnlAmount: undefined,
+      pnlCurrency: 'USDT',
     }))
   })
 
@@ -2418,7 +2317,7 @@ describe('TradingAgent snapshot reader', () => {
 
     expect(snapshot.signals.filter((signal) => signal.market === 'Crypto')).toHaveLength(1)
     expect(snapshot.signals).toContainEqual(expect.objectContaining({
-      symbol: 'BTC-USD',
+      symbol: 'BTC-USDT',
       method: 'Crypto Momentum Breakout · 买入',
       confidence: '74%',
       reason: 'crypto_momentum_breakout: one_bar_return=0.0160, lookback_return=0.0410',
@@ -2436,11 +2335,11 @@ describe('TradingAgent snapshot reader', () => {
     const root = await createWorkspace()
 
     await writeFile(
-      join(root, 'signals/pending/0700.HK.json'),
+      join(root, 'signals/pending/IF2601.CFFEX.json'),
       JSON.stringify({
-        ts_code: '0700.HK',
-        market: 'HK',
-        opportunity_id: 'opp-hk-0700-001',
+        ts_code: 'IF2601.CFFEX',
+        market: 'cn_futures',
+        opportunity_id: 'opp-cnfutures-if-001',
         status: 'pending',
         expected_alpha_bps: 18.6,
         discovered_at: '2026-07-04T09:41:00.000+08:00',
@@ -2450,9 +2349,9 @@ describe('TradingAgent snapshot reader', () => {
     )
     await mkdir(join(root, 'signals/partial'), { recursive: true })
     await writeFile(
-      join(root, 'signals/partial/BTC-USD.json'),
+      join(root, 'signals/partial/BTC-USDT.json'),
       JSON.stringify({
-        ts_code: 'BTC-USD',
+        ts_code: 'BTC-USDT',
         market: 'crypto',
         status: 'partial',
         timestamp: '2026-07-04T09:31:00.000+08:00',
@@ -2490,8 +2389,8 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.signals).toContainEqual(expect.objectContaining({
-      symbol: '0700.HK',
-      opportunityId: 'opp-hk-0700-001',
+      symbol: 'IF2601.CFFEX',
+      opportunityId: 'opp-cnfutures-if-001',
       stage: '风控',
       impact: '+18.6 bps',
       stageTimes: expect.objectContaining({ discovered: '09:41', scored: '09:44', riskChecked: '09:49' }),
@@ -2503,22 +2402,22 @@ describe('TradingAgent snapshot reader', () => {
       stageTimes: expect.objectContaining({ triggered: '09:12' }),
     }))
     expect(snapshot.signals).toContainEqual(expect.objectContaining({
-      symbol: 'BTC-USD',
+      symbol: 'BTC-USDT',
       status: 'blocked',
       stage: '拒绝',
       reason: '风控未通过：波动过高',
       stageTimes: expect.objectContaining({ discovered: '09:31', riskChecked: '09:36' }),
     }))
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
-      symbol: '0700.HK',
-      opportunityId: 'opp-hk-0700-001',
+      symbol: 'IF2601.CFFEX',
+      opportunityId: 'opp-cnfutures-if-001',
       sequence: 3,
       stage: '风控',
       status: '通过',
       source: 'signal_queue',
     }))
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
-      symbol: 'BTC-USD',
+      symbol: 'BTC-USDT',
       stage: '风控',
       status: '拦截',
       source: 'signal_queue',
@@ -2533,30 +2432,30 @@ describe('TradingAgent snapshot reader', () => {
       join(root, 'TradingAgent/shared/review/opportunities/funnel_events.jsonl'),
       [
         {
-          opportunity_id: 'opp-0700-breakout',
-          event_id: 'opp-0700-breakout-discover',
-          ts_code: '0700.HK',
-          market: 'hk',
+          opportunity_id: 'opp-600519-breakout',
+          event_id: 'opp-600519-breakout-discover',
+          ts_code: '600519.SH',
+          market: 'ashare',
           stage: 'discovered',
           status: 'entered',
           label: '发现机会',
           timestamp: '2026-07-04T09:41:00.000+08:00',
         },
         {
-          opportunity_id: 'opp-0700-breakout',
-          event_id: 'opp-0700-breakout-research',
-          ts_code: '0700.HK',
-          market: 'hk',
+          opportunity_id: 'opp-600519-breakout',
+          event_id: 'opp-600519-breakout-research',
+          ts_code: '600519.SH',
+          market: 'ashare',
           stage: 'research',
           status: 'passed',
           latency_minutes: 4,
           timestamp: '2026-07-04T09:45:00.000+08:00',
         },
         {
-          opportunityId: 'opp-0700-breakout',
-          id: 'opp-0700-breakout-pending',
-          symbol: '0700.HK',
-          market: 'HK',
+          opportunityId: 'opp-600519-breakout',
+          id: 'opp-600519-breakout-pending',
+          symbol: '600519.SH',
+          market: 'ashare',
           stage: 'pending',
           status: 'waiting',
           reason: '等待价格确认',
@@ -2586,15 +2485,15 @@ describe('TradingAgent snapshot reader', () => {
     expect(snapshot.domains.risk.status).toBe('empty')
     expect(snapshot.sourceRefs.opportunityEvents).toContain('shared/review/opportunities/funnel_events.jsonl')
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
-      symbol: '0700.HK',
-      opportunityId: 'opp-0700-breakout',
+      symbol: '600519.SH',
+      opportunityId: 'opp-600519-breakout',
       stage: '待确认',
       status: '等待',
       source: 'legacy_frozen_opportunity_log',
       reason: '等待价格确认',
     }))
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
-      symbol: 'BTC-USD',
+      symbol: 'BTC-USDT',
       opportunityId: 'opp-btc-volatility',
       stage: '结果',
       status: '拦截',
@@ -2639,27 +2538,28 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.holdings).toContainEqual(expect.objectContaining({
-      symbol: 'BTC-USD',
+      symbol: 'BTC-USDT',
       market: 'Crypto',
       role: 'Grid 持仓',
       quantity: 0.0186,
-      averagePrice: 452_818.37,
-      costBasis: 8_422.42,
-      marketValue: 8_422.42,
-      currency: 'CNY',
+      averagePrice: 62_891.44,
+      costBasis: 1_169.78,
+      marketValue: 1_169.78,
+      currency: 'USDT',
+      accountScope: 'sim-ledger:crypto:grid',
       source: 'sim_ledger',
     }))
     expect(snapshot.signals).toContainEqual(expect.objectContaining({
-      symbol: 'BTC-USD',
+      symbol: 'BTC-USDT',
       opportunityId: 'SIM-2026-07-04-BTCUSDT-buy-grid',
       status: 'executed',
       method: 'Grid · 买入',
       stage: '成交',
       stageEvidence: 'replay',
-      impact: '成交 ¥4,800',
+      impact: '成交 666.67 USDT',
     }))
     expect(snapshot.funnelEvents).toContainEqual(expect.objectContaining({
-      symbol: 'BTC-USD',
+      symbol: 'BTC-USDT',
       opportunityId: 'SIM-2026-07-04-BTCUSDT-buy-grid',
       stage: '结果',
       status: '成交',
@@ -2782,9 +2682,9 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: '600519.SH', market: 'A-share' }))
-    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'ETH-USD', market: 'Crypto', stage: '成交' }))
+    expect(snapshot.signals).toContainEqual(expect.objectContaining({ symbol: 'ETH-USDT', market: 'Crypto', stage: '成交' }))
     expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: '600519.SH', market: 'A-share' }))
-    expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: 'ETH-USD', market: 'Crypto' }))
+    expect(snapshot.holdings).toContainEqual(expect.objectContaining({ symbol: 'ETH-USDT', market: 'Crypto' }))
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({ market: 'Crypto', signalCount: 1, holdingCount: 1 }))
   })
 
@@ -2866,7 +2766,7 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
-  it('exposes per-market runtime summaries from style comparison reports', async () => {
+  it('ignores frozen legacy style comparison reports in current market runtime summaries', async () => {
     const root = await createWorkspace()
     const reviewRoot = join(root, 'TradingAgent/shared/review/crypto')
     await mkdir(reviewRoot, { recursive: true })
@@ -2898,15 +2798,17 @@ describe('TradingAgent snapshot reader', () => {
 
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'Crypto',
-      status: 'partial',
-      runtimeState: 'needs_attention',
-      executionFault: true,
-      styleCount: 2,
-      activeStyleCount: 1,
-      degradedStyleCount: 1,
-      filledCount: 3,
-      errorCount: 1,
+      status: 'empty',
+      runtimeState: 'empty',
+      executionFault: false,
+      styleCount: 0,
+      activeStyleCount: undefined,
+      degradedStyleCount: undefined,
+      filledCount: undefined,
+      errorCount: undefined,
+      source: 'shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}',
     }))
+    expect(snapshot.sourceRefs.styleComparison).toBe('legacy frozen forensic only: shared/review/*/style_comparison.json')
   })
 
   it('uses CNFutures latest review as the current runtime source instead of adding style comparison counts', async () => {
@@ -2999,63 +2901,20 @@ describe('TradingAgent snapshot reader', () => {
     })
   })
 
-  it('excludes style performance rows when their sim ledger positions are quarantined', async () => {
+  it('does not infer strategy-wait state from frozen legacy style comparison', async () => {
     const root = await createWorkspace()
-    const reviewRoot = join(root, 'TradingAgent/shared/review/us')
-    const ledgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/us/swing')
-    await mkdir(reviewRoot, { recursive: true })
-    await mkdir(ledgerRoot, { recursive: true })
-    await writeFile(
-      join(ledgerRoot, 'positions.json'),
-      JSON.stringify({
-        cash: 10_000,
-        exclude_from_dashboard: true,
-        run_context: 'legacy_usd_capital_quarantine',
-        positions: {},
-      }),
-    )
-    await writeFile(
-      join(reviewRoot, 'style_performance.jsonl'),
-      JSON.stringify({
-        style_name: 'swing',
-        market: 'us',
-        date: '20260708',
-        capital_layer: 'simulated',
-        account_type: 'simulated',
-        real_execution: false,
-        pnl: -12.5,
-        trades: 9,
-      }) + '\n',
-    )
-
-    const snapshot = await readTradingAgentSnapshot({
-      workspaceRoot: root,
-      signalQueueDir: join(root, 'signals'),
-      now: new Date('2026-07-06T12:40:00.000Z'),
-    })
-
-    expect(snapshot.portfolio).toBeUndefined()
-    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
-      market: 'US',
-      pnlAmount: undefined,
-      tradeCount: 0,
-    }))
-  })
-
-  it('marks a market with active styles but no trades as strategy wait', async () => {
-    const root = await createWorkspace()
-    const reviewRoot = join(root, 'TradingAgent/shared/review/pm')
+    const reviewRoot = join(root, 'TradingAgent/shared/review/crypto')
     await mkdir(reviewRoot, { recursive: true })
     await writeFile(
       join(reviewRoot, 'style_comparison.json'),
       JSON.stringify({
-        market: 'pm',
+        market: 'crypto',
         capital_layer: 'simulated',
         account_type: 'simulated',
         real_execution: false,
         styles_total: 1,
         styles_loaded: 1,
-        style_states: [{ style_name: 'probability_edge', status: 'active' }],
+        style_states: [{ style_name: 'momentum', status: 'active' }],
         filled_count: 0,
         hold_count: 4,
         error_count: 0,
@@ -3070,12 +2929,12 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
-      market: 'PM',
-      status: 'partial',
-      runtimeState: 'strategy_wait',
+      market: 'Crypto',
+      status: 'empty',
+      runtimeState: 'empty',
       executionFault: false,
-      styleCount: 1,
-      filledCount: 0,
+      styleCount: 0,
+      filledCount: undefined,
     }))
   })
 
@@ -3214,17 +3073,17 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
-  it('does not invent A-share or CNFutures capital without fresh market authority', async () => {
+  it('does not invent any market capital without fresh market-specific authority or equity evidence', async () => {
     const root = await createWorkspace()
-    const usReviewRoot = join(root, 'TradingAgent/shared/review/us')
     const cryptoReviewRoot = join(root, 'TradingAgent/shared/review/crypto')
     const cnFuturesReviewRoot = join(root, 'TradingAgent/shared/review/cn_futures')
-    await mkdir(usReviewRoot, { recursive: true })
     await mkdir(cryptoReviewRoot, { recursive: true })
     await mkdir(cnFuturesReviewRoot, { recursive: true })
+    const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
+    await mkdir(cryptoLedgerRoot, { recursive: true })
+    await writeFile(join(cryptoLedgerRoot, 'positions.json'), JSON.stringify({ cash: 10_000, positions: {} }))
 
     for (const [reviewRoot, market] of [
-      [usReviewRoot, 'us'],
       [cryptoReviewRoot, 'crypto'],
       [cnFuturesReviewRoot, 'cn_futures'],
     ] as const) {
@@ -3252,12 +3111,11 @@ describe('TradingAgent snapshot reader', () => {
     })
 
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
-      market: 'US',
-      capitalBase: 72_000,
-    }))
-    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'Crypto',
-      capitalBase: 72_000,
+      capitalBase: undefined,
+      pnlAmount: undefined,
+      pnlCurrency: 'USDT',
+      capitalAuthorityId: null,
     }))
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'CNFutures',
@@ -3266,7 +3124,7 @@ describe('TradingAgent snapshot reader', () => {
     }))
   })
 
-  it('normalizes USD market ledger capitalBase to the canonical 10000 USD equivalent', async () => {
+  it('keeps current Crypto equity evidence in its native USDT without a fixed FX conversion or capital floor', async () => {
     const root = await createWorkspace()
     const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
     await mkdir(cryptoLedgerRoot, { recursive: true })
@@ -3277,6 +3135,7 @@ describe('TradingAgent snapshot reader', () => {
         capital_layer: 'simulated',
         timestamp: '2026-07-04T10:00:00+08:00',
         date: '20260704',
+        currency: 'USDT',
         capital_base: 5_000,
         total_pnl: 500,
         target_return_pct: 8,
@@ -3293,43 +3152,65 @@ describe('TradingAgent snapshot reader', () => {
 
     expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
       market: 'Crypto',
-      capitalBase: 72_000,
-      pnlAmount: 3_600,
-      returnPct: 5,
+      capitalBase: 5_000,
+      pnlAmount: 500,
+      pnlCurrency: 'USDT',
+      returnPct: 10,
     }))
   })
 
-  it('rejects the sum of market defaults as a cross-market portfolio floor', async () => {
+  it('fails closed instead of aggregating independent Crypto ledger accounts', async () => {
+    const root = await createWorkspace()
+    for (const [account, capitalBase, pnl] of [
+      ['grid', 5_000, 500],
+      ['momentum', 8_000, 240],
+    ] as const) {
+      const accountRoot = join(root, `TradingAgent/shared/logs/sim_ledger/crypto/${account}`)
+      await mkdir(accountRoot, { recursive: true })
+      await writeFile(
+        join(accountRoot, 'daily_mark_to_market.jsonl'),
+        JSON.stringify({
+          capital_layer: 'simulated',
+          timestamp: '2026-07-04T10:00:00+08:00',
+          date: '20260704',
+          currency: 'USDT',
+          capital_base: capitalBase,
+          total_pnl: pnl,
+          trade_count: 1,
+        }) + '\n',
+      )
+    }
+
+    const snapshot = await readTradingAgentSnapshot({
+      workspaceRoot: root,
+      signalQueueDir: join(root, 'signals'),
+      now: new Date('2026-07-04T12:00:00.000Z'),
+    })
+
+    expect(snapshot.portfolio).toBeUndefined()
+    expect(snapshot.performance).toEqual([])
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'Crypto',
+      capitalBase: undefined,
+      pnlAmount: undefined,
+      pnlCurrency: 'USDT',
+    }))
+  })
+
+  it('fails closed when a Crypto snapshot declares CNY-only monetary evidence', async () => {
     const root = await createWorkspace()
     const cryptoLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/crypto/grid')
-    const usLedgerRoot = join(root, 'TradingAgent/shared/logs/sim_ledger/us/momentum')
     await mkdir(cryptoLedgerRoot, { recursive: true })
-    await mkdir(usLedgerRoot, { recursive: true })
-
     await writeFile(
       join(cryptoLedgerRoot, 'daily_mark_to_market.jsonl'),
       JSON.stringify({
         capital_layer: 'simulated',
         timestamp: '2026-07-04T10:00:00+08:00',
         date: '20260704',
-        capital_base: 1_000,
-        total_pnl: 10,
-        target_return_pct: 8,
+        currency: 'CNY',
+        capital_base_cny: 72_000,
+        total_pnl_cny: 3_600,
         trade_count: 1,
-        pnl_source: 'sim_ledger_mark_to_market',
-      }) + '\n',
-    )
-    await writeFile(
-      join(usLedgerRoot, 'daily_mark_to_market.jsonl'),
-      JSON.stringify({
-        capital_layer: 'simulated',
-        timestamp: '2026-07-04T10:00:00+08:00',
-        date: '20260704',
-        capital_base: 2_000,
-        total_pnl: -5,
-        target_return_pct: 8,
-        trade_count: 1,
-        pnl_source: 'sim_ledger_mark_to_market',
       }) + '\n',
     )
 
@@ -3339,10 +3220,13 @@ describe('TradingAgent snapshot reader', () => {
       now: new Date('2026-07-04T12:00:00.000Z'),
     })
 
-    // Cross-market monetary aggregation is decommissioned.
-    // The old behavior summed default floors (72000+72000=144000); now multi-market
-    // produces no combined portfolio.
     expect(snapshot.portfolio).toBeUndefined()
+    expect(snapshot.marketSummaries).toContainEqual(expect.objectContaining({
+      market: 'Crypto',
+      capitalBase: undefined,
+      pnlAmount: undefined,
+      pnlCurrency: 'USDT',
+    }))
   })
 
   it('shows only the current A-share main account and ignores historical tier ledgers', async () => {

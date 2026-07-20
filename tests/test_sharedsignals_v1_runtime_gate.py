@@ -286,9 +286,7 @@ def test_runtime_gate_hashes_provider_reason_text_and_derives_local_codes() -> N
 
 def test_active_sim_wrappers_stop_before_unmigrated_legacy_readers() -> None:
     wrapper_paths = (
-        "shared/wrappers/job_us_sim.sh",
         "shared/wrappers/job_crypto_sim.sh",
-        "shared/wrappers/job_pm_sim.sh",
         "shared/wrappers/job_cn_futures_sim.sh",
     )
 
@@ -327,7 +325,7 @@ def test_missing_runtime_v1_config_blocks_before_python_or_legacy_reader(
     )
 
     result = subprocess.run(
-        ["bash", str(ROOT / "shared/wrappers/job_us_sim.sh")],
+        ["bash", str(ROOT / "shared/wrappers/job_crypto_sim.sh")],
         check=False,
         capture_output=True,
         text=True,
@@ -343,9 +341,7 @@ def test_missing_runtime_v1_config_blocks_before_python_or_legacy_reader(
 def test_active_runtime_files_contain_no_legacy_sharedsignals_routes() -> None:
     active_files = (
         "shared/wrappers/_common.sh",
-        "shared/wrappers/job_us_sim.sh",
         "shared/wrappers/job_crypto_sim.sh",
-        "shared/wrappers/job_pm_sim.sh",
         "shared/wrappers/job_cn_futures_sim.sh",
         "shared/runtime_test/sharedsignals_v1_gate.py",
         "cron/health_check.sh",
@@ -372,9 +368,7 @@ def test_legacy_source_status_runtime_module_is_removed() -> None:
 
 def test_blocked_unmigrated_sim_wrappers_are_not_scheduled() -> None:
     blocked_wrappers = (
-        "job_us_sim.sh",
         "job_crypto_sim.sh",
-        "job_pm_sim.sh",
         "job_cn_futures_sim.sh",
     )
     for relative_path in ("shared/crontab.txt", "crontab.txt"):

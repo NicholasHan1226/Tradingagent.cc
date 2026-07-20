@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from shared.data.reader import TradingagentDataReader
 from shared.universe.policy import is_mainboard_tradable
 from shared.execution.execution_reality import ashare_execution_reality
 from shared.markets.base import MarketAdapter
@@ -456,7 +455,9 @@ class AshareAdapter(MarketAdapter):
         universe_filter: dict[str, Any] | None = None,
         strategy_dir: Path | None = None,
     ) -> None:
-        self.reader = reader if reader is not None else TradingagentDataReader()
+        # A current A-share composition must inject a TradingDatas fixture/port.
+        # Never discover the time-boxed legacy reader from ambient localhost.
+        self.reader = reader
         self.universe_filter = {
             **DEFAULT_UNIVERSE_FILTER,
             **dict(universe_filter or {}),

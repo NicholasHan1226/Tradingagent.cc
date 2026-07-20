@@ -73,6 +73,16 @@ def _register_filled_stub(market: str, contract: str, authority_id: str, calls: 
     )
 
 
+def test_registry_rejects_any_market_outside_the_three_owned_lanes() -> None:
+    with pytest.raises(ValueError, match="not an owned market lane"):
+        sim_executor_registry.register_sim_executor(
+            "retired-market",
+            lambda order, account, config: None,
+            simulation_contract="retired.contract.v1",
+            authority_id="retired-authority",
+        )
+
+
 @pytest.mark.parametrize(
     ("market", "contract", "authority_id"),
     [

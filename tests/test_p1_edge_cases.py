@@ -248,7 +248,6 @@ class TestRequirementsTxtEdgeCases(unittest.TestCase):
         modules = [
             ("shared.execution.execution_router", "execution_router"),
             ("shared.accounting.position_ledger", "position_ledger"),
-            ("shared.markets.market_rules", "market_rules"),
             ("Ashare.t_plus_1", "t_plus_1"),
         ]
         for import_path, attr_name in modules:

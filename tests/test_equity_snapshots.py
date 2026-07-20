@@ -139,8 +139,13 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(result["totals"]["written_count"], 1)
             self.assertEqual(result["totals"]["skipped_count"], 0)
             self.assertEqual(result["totals"]["missing_mark_count"], 0)
-            self.assertEqual(result["ledgers"][0]["status"], "written")
-            self.assertEqual(result["ledgers"][0]["total_pnl"], 50.0)
+            crypto_rows = result["per_market"]["crypto"]["ledgers"]
+            self.assertEqual(crypto_rows[0]["status"], "written")
+            self.assertEqual(crypto_rows[0]["total_pnl"], 50.0)
+            self.assertEqual(
+                crypto_rows[0]["account_scope"],
+                "crypto:simulated:balanced",
+            )
             rows = [
                 json.loads(line)
                 for line in (style_dir / "daily_mark_to_market.jsonl")
@@ -151,9 +156,20 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertEqual(rows[-1]["date"], "20260705")
             self.assertEqual(rows[-1]["target_return_pct"], 8.0)
             self.assertEqual(rows[-1]["currency"], "USDT")
-            self.assertEqual(rows[-1]["display_currency"], "CNY")
-            self.assertEqual(rows[-1]["fx_to_cny"], 7.2)
-            self.assertEqual(rows[-1]["total_pnl_cny"], 360.0)
+            self.assertEqual(
+                rows[-1]["account_scope"],
+                "crypto:simulated:balanced",
+            )
+            self.assertEqual(rows[-1]["account_scope_source"], "style_ledger_path")
+            self.assertEqual(rows[-1]["display_currency"], "USDT")
+            self.assertEqual(rows[-1]["fx_conversion_status"], "not_applied")
+            self.assertNotIn("fx_to_cny", rows[-1])
+            self.assertNotIn("total_pnl_cny", rows[-1])
+            self.assertNotIn("total_equity", result["totals"])
+            self.assertNotIn("total_pnl", result["totals"])
+            self.assertNotIn("ledgers", result)
+            self.assertEqual(result["all_markets_monetary_aggregation"], "forbidden")
+            self.assertEqual(result["per_market"]["crypto"]["currency"], "USDT")
 
     def test_writer_dry_run_does_not_write_snapshot_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,7 +184,10 @@ class EquitySnapshotTest(unittest.TestCase):
                 dry_run=True,
             )
 
-            self.assertEqual(result["ledgers"][0]["status"], "dry_run")
+            self.assertEqual(
+                result["per_market"]["crypto"]["ledgers"][0]["status"],
+                "dry_run",
+            )
             self.assertFalse((style_dir / "daily_mark_to_market.jsonl").exists())
 
     def test_writer_uses_ashare_local_sim_instead_of_legacy_style_ledgers(self) -> None:
@@ -201,8 +220,10 @@ class EquitySnapshotTest(unittest.TestCase):
 
             self.assertEqual(result["totals"]["ledger_count"], 1)
             self.assertEqual(result["totals"]["written_count"], 1)
-            self.assertEqual(result["ledgers"][0]["style"], "ashare_sim")
-            self.assertEqual(result["ledgers"][0]["equity"], 50_000.0)
+            ashare_rows = result["per_market"]["ashare"]["ledgers"]
+            self.assertEqual(ashare_rows[0]["style"], "ashare_sim")
+            self.assertEqual(ashare_rows[0]["equity"], 50_000.0)
+            self.assertEqual(ashare_rows[0]["account_scope"], "ashare_sim")
             self.assertFalse((legacy_style / "daily_mark_to_market.jsonl").exists())
             self.assertTrue(
                 (root / "ashare" / "ashare_sim" / "daily_mark_to_market.jsonl").exists()
@@ -216,6 +237,11 @@ class EquitySnapshotTest(unittest.TestCase):
             self.assertIsNone(row["benchmark_pnl"])
             self.assertIsNone(row["pnl_vs_benchmark"])
             self.assertEqual(row["benchmark_status"], "unavailable")
+            self.assertEqual(row["account_scope"], "ashare_sim")
+            self.assertEqual(
+                row["account_scope_source"],
+                "documented_single_ashare_sim_account",
+            )
 
     def test_writer_marks_ashare_local_sim_with_recent_prices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -250,8 +276,9 @@ class EquitySnapshotTest(unittest.TestCase):
                     trade_date="20260706",
                 )
 
-            self.assertEqual(result["ledgers"][0]["total_pnl"], 200.0)
-            self.assertEqual(result["ledgers"][0]["equity"], 50_200.0)
+            ashare_rows = result["per_market"]["ashare"]["ledgers"]
+            self.assertEqual(ashare_rows[0]["total_pnl"], 200.0)
+            self.assertEqual(ashare_rows[0]["equity"], 50_200.0)
             rows = [
                 json.loads(line)
                 for line in (
@@ -370,7 +397,10 @@ class EquitySnapshotTest(unittest.TestCase):
                     trade_date="20260706",
                 )
 
-            self.assertEqual(result["ledgers"][0]["equity"], 50_200.0)
+            self.assertEqual(
+                result["per_market"]["ashare"]["ledgers"][0]["equity"],
+                50_200.0,
+            )
             rows = [
                 json.loads(line)
                 for line in (
@@ -436,76 +466,94 @@ class EquitySnapshotTest(unittest.TestCase):
 
         self.assertEqual(prices, {"BTCUSDT": 62500.5})
 
-    def test_load_mark_prices_uses_pm_market_prices(self) -> None:
-        class FakeReader:
-            def __init__(self, api_client=None):
-                pass
+    def test_load_mark_prices_rejects_retired_market_even_without_positions(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown or retired runtime market"):
+            load_mark_prices_for_positions({}, "pm")
 
-            def get_pm_markets(self, limit=100):
-                return [
-                    {"market_id": "111111", "latest_price": 0.31},
-                    {"market_id": "558943", "latest_price": 0.9765},
-                ]
+    def test_writer_rejects_unknown_market_without_creating_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "sim_ledger"
+            with self.assertRaisesRegex(
+                ValueError, "unknown or retired runtime market"
+            ):
+                write_sim_ledger_equity_snapshots(
+                    markets=["us"],
+                    ledger_root=root,
+                    trade_date="20260705",
+                )
+            self.assertFalse(root.exists())
 
-        prices = load_mark_prices_for_positions(
-            {"558943": {"quantity": 100}},
-            "pm",
-            trade_date="20260705",
-            reader=FakeReader(),
-        )
+    def test_all_markets_keeps_native_money_only_in_per_market_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "sim_ledger"
+            local_sim = base / "local_sim"
+            local_sim.mkdir(parents=True)
+            self._seed_ledger(root / "crypto" / "balanced")
 
-        self.assertEqual(prices, {"558943": 0.9765})
+            result = write_sim_ledger_equity_snapshots(
+                markets=["ashare", "crypto"],
+                ledger_root=root,
+                local_sim_dir=local_sim,
+                trade_date="20260705",
+                dry_run=True,
+            )
 
-    def test_load_mark_prices_marks_pm_no_positions_from_yes_price(self) -> None:
-        class FakeReader:
-            def __init__(self, api_client=None):
-                pass
+            self.assertEqual(result["markets"], ["ashare", "crypto"])
+            self.assertEqual(result["totals"]["ledger_count"], 2)
+            self.assertNotIn("total_equity", result["totals"])
+            self.assertNotIn("total_pnl", result["totals"])
+            self.assertEqual(result["per_market"]["ashare"]["currency"], "CNY")
+            self.assertEqual(result["per_market"]["crypto"]["currency"], "USDT")
+            self.assertTrue(
+                all(
+                    row["market"] == market
+                    for market, summary in result["per_market"].items()
+                    for row in summary["ledgers"]
+                )
+            )
 
-            def get_pm_markets(self, limit=100):
-                return [
-                    {"market_id": "558943", "yes_price": 0.8},
-                ]
+    def test_multi_market_benchmark_is_rejected_as_ambiguous(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError, "benchmark_return_requires_exactly_one_market"
+        ):
+            write_sim_ledger_equity_snapshots(
+                markets=["ashare", "crypto"],
+                benchmark_return=0.01,
+                dry_run=True,
+            )
 
-        prices = load_mark_prices_for_positions(
-            {
-                "558943:no": {
-                    "quantity": 100,
-                    "market_id": "558943",
-                    "outcome": "no",
-                }
-            },
-            "pm",
-            trade_date="20260705",
-            reader=FakeReader(),
-        )
+    def test_same_market_style_snapshots_keep_account_money_separate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "sim_ledger"
+            self._seed_ledger(root / "crypto" / "grid")
+            self._seed_ledger(root / "crypto" / "momentum")
 
-        self.assertIn("558943:no", prices)
-        self.assertAlmostEqual(prices["558943:no"], 0.2, places=6)
+            result = write_sim_ledger_equity_snapshots(
+                markets=["crypto"],
+                ledger_root=root,
+                trade_date="20260705",
+                dry_run=True,
+            )
 
-    def test_load_mark_prices_prefers_explicit_pm_no_price(self) -> None:
-        class FakeReader:
-            def __init__(self, api_client=None):
-                pass
-
-            def get_pm_markets(self, limit=100):
-                return [
-                    {"market_id": "558943", "yes_price": 0.8, "no_price": 0.35},
-                ]
-
-        prices = load_mark_prices_for_positions(
-            {
-                "558943:no": {
-                    "quantity": 100,
-                    "market_id": "558943",
-                    "outcome": "no",
-                }
-            },
-            "pm",
-            trade_date="20260705",
-            reader=FakeReader(),
-        )
-
-        self.assertEqual(prices, {"558943:no": 0.35})
+            crypto = result["per_market"]["crypto"]
+            self.assertNotIn("total_pnl", crypto)
+            self.assertNotIn("equity", crypto)
+            self.assertEqual(
+                {row["account_scope"] for row in crypto["ledgers"]},
+                {
+                    "crypto:simulated:grid",
+                    "crypto:simulated:momentum",
+                },
+            )
+            self.assertTrue(
+                all(
+                    row["account_scope_source"] == "style_ledger_path"
+                    for row in crypto["ledgers"]
+                )
+            )
 
 
 if __name__ == "__main__":

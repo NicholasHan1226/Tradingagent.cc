@@ -205,7 +205,7 @@ function App() {
         activeMarket={activeMarket}
         hasPerformanceData={hasPerformanceData}
         isDemoPreview={isUsingDemoSnapshot}
-        isCnyAccount={visiblePortfolio?.pnlCurrency === 'CNY'}
+        pnlCurrency={visiblePortfolio?.pnlCurrency}
         liveProfit={visiblePortfolio?.pnlAmount ?? null}
         liveReturn={visiblePortfolio?.returnPct ?? latestPoint.simulated}
         maxDrawdown={visiblePortfolio?.maxDrawdownPct ?? (visiblePerformanceData.length ? getPerformanceDrawdown(visiblePerformanceData) : null)}

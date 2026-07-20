@@ -15,17 +15,11 @@
 - 5min 条件监控是待验证目标频率，不是已部署 SLA。
 - server-local paper、Binance Spot Testnet 和未来 Binance Spot Live 是三份不同合同、账户与凭据域；不能靠切换 base URL 或环境变量升级。当前 `REAL_TRADING_ENABLED=false`，Live adapter 未实现。
 
-## 工具清单 (TradingAgent tool references)
+## 当前模块边界
 
-- 源目录: `tradingagent/Crypto/` 实体模块。
-- TradingAgent 引用: `tradingagent/Crypto/tools/manifest.csv` 仅作历史工具清单/审计索引，不是运行时代码入口。
-- 关键工具:
-  - crypto_workflow.py — Unified Crypto simulated-training workflow
-  - crypto_market_data.py — 旧 provider 专用行情适配器线索；不得成为当前数据入口或 fallback
-  - crypto_simulator.py — Simulated execution for condition cards
-  - crypto_shadow_runner.py — Shadow strategy layer (parallel to frozen baseline)
-  - report.py — Daily shadow recap and no-empty-trigger delivery policy
-  - validation.py — Forward validation dashboard and sample-quality scorecard
-  - promotion.py — Strategy promotion scorecard (5-tier shadow→sim)
-  - crypto_marketgraph_bridge.py — Crypto ↔ MarketGraph cross-market signal bridge
-  - crypto_portfolio_optimizer.py — Correlation + volatility-adaptive sizing
+- `workflow.py` 只编排 Crypto 自有 fixture/mock 研究流程。
+- `market_data.py` 只接受显式注入的 TradingDatas V1 证据，不得恢复旧 provider 专用入口。
+- `simulator.py`、`sim_executor.py`、`adapter.py` 分别拥有 Crypto 的小数数量、最小名义金额与模拟/Testnet/Live 合同边界；当前仅模拟合同可运行。
+- `capital_policy.py` 是 Crypto 原生 10,000 USDT 初始模拟资本的单一代码权威；`config.yaml` 只声明账户币种和风险参数，加载时由市场配置校验该权威，shared kernel 只能引用而不能另设数值。
+- `shadow_runner.py`、`report.py`、`validation.py`、`promotion.py` 只生成 shadow 研究和人工复核证据，不能自行晋级或扩风险。
+- 旧 `/opt/investment/Crypto/tools/` 名称清单已从仓库删除；历史实现只从 Git 或独立只读归档审计，不再维护第二份 manifest。

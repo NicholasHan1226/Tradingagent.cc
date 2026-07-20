@@ -148,6 +148,13 @@ def test_tradingdatas_v1_configuration_has_no_implicit_localhost_default() -> No
     assert forbidden_default not in ENV_EXAMPLE.read_text(encoding="utf-8")
 
 
+def test_optional_marketgraph_research_has_no_implicit_localhost_default() -> None:
+    source = ENV_LOADER.read_text(encoding="utf-8")
+
+    assert "http://127.0.0.1:8080" not in source
+    assert 'export MARKETGRAPH_API_URL="${MARKETGRAPH_API_URL:-}"' in source
+
+
 def test_env_example_requires_all_tradingdatas_v1_configuration_explicitly() -> None:
     assignments = {
         name.strip(): value.strip()

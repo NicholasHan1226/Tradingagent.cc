@@ -62,9 +62,9 @@ def register_sim_executor(
             raise ValueError(
                 f"market {market_key} requires authority_id={lane.authority_id}"
             )
-    elif not simulation_contract or not authority_id:
+    else:
         raise ValueError(
-            "non-governed market executors require explicit simulation_contract and authority_id"
+            f"market {market_key} is not an owned market lane; registration denied"
         )
     binding = SimExecutorBinding(
         market=market_key,

@@ -31,17 +31,6 @@ market_rules:
     "24/7": true
     no_limit_up_down: true
     max_positions: 10
-  us:
-    t_plus_2: true
-    daily_loss_limit: 0.05
-    PDT: true
-    extended_hours: true
-    max_positions: 10
-  pm:
-    t_plus_N: none
-    daily_loss_limit: 0.05
-    single_market_max: 0.20
-    max_positions: 20
 
 # 相关性阈值 (两两相关性超过此值则降权)
 correlation_threshold: 0.70

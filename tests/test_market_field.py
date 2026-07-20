@@ -34,7 +34,7 @@ class MarketFieldTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_shadow_broker_filters_four_markets(self) -> None:
+    def test_shadow_broker_accepts_only_three_owned_markets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             self._patch_shadow_paths(tmp_path)
@@ -42,8 +42,7 @@ class MarketFieldTest(unittest.TestCase):
             for market, symbol in (
                 ("ashare", "600519.SH"),
                 ("crypto", "BTCUSDT"),
-                ("us", "AAPL"),
-                ("pm", "will-btc-hit-100k"),
+                ("cn_futures", "IF2601.CFFEX"),
             ):
                 result = shadow_broker.record_shadow(
                     {
@@ -81,23 +80,43 @@ class MarketFieldTest(unittest.TestCase):
                     + "\n"
                 )
 
-            all_pnl = shadow_broker.get_shadow_pnl("multi_market_strategy", "2026-06-30")
-            self.assertEqual(all_pnl["total_trades"], 4)
+            all_pnl = shadow_broker.get_shadow_pnl(
+                "multi_market_strategy", "2026-06-30"
+            )
+            self.assertEqual(all_pnl["total_trades"], 3)
             self.assertEqual(all_pnl["market"], "all")
 
-            for market in ("ashare", "crypto", "us", "pm"):
-                pnl = shadow_broker.get_shadow_pnl("multi_market_strategy", "2026-06-30", market=market)
+            for market in ("ashare", "crypto", "cn_futures"):
+                pnl = shadow_broker.get_shadow_pnl(
+                    "multi_market_strategy", "2026-06-30", market=market
+                )
                 self.assertEqual(pnl["market"], market)
                 self.assertEqual(pnl["total_trades"], 1)
                 self.assertEqual(pnl["buys"], 1)
 
-            us_pnl = shadow_broker.get_all_shadow_pnl("2026-06-30", market="us")
-            self.assertEqual(us_pnl["multi_market_strategy"]["total_trades"], 1)
-            self.assertEqual(us_pnl["legacy_strategy"]["total_trades"], 0)
-
-            legacy_unknown = shadow_broker.get_shadow_pnl("legacy_strategy", "2026-06-30", market="unknown")
-            self.assertEqual(legacy_unknown["market"], "unknown")
-            self.assertEqual(legacy_unknown["total_trades"], 1)
+            with self.assertRaisesRegex(
+                ValueError, "unknown or retired runtime market"
+            ):
+                shadow_broker.record_shadow(
+                    {
+                        "ts_code": "AAPL",
+                        "side": "buy",
+                        "quantity": 1,
+                        "price": 10.0,
+                        "capital_layer": "shadow",
+                    },
+                    "retired_market_strategy",
+                    market="us",
+                )
+            with self.assertRaisesRegex(
+                ValueError, "unknown or retired runtime market"
+            ):
+                shadow_broker.get_all_shadow_pnl("2026-06-30", market="pm")
+            legacy_unknown = shadow_broker.get_shadow_pnl(
+                "legacy_strategy", "2026-06-30"
+            )
+            self.assertEqual(legacy_unknown["market"], "all")
+            self.assertEqual(legacy_unknown["total_trades"], 0)
 
     def test_daily_review_outputs_market_reviews_without_mixing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -105,35 +124,108 @@ class MarketFieldTest(unittest.TestCase):
             self._patch_review_paths(tmp_path)
 
             trades = [
-                {"ts_code": "600519.SH", "market": "ashare", "pnl": 1.0, "capital_layer": "shadow"},
-                {"ts_code": "BTCUSDT", "market": "crypto", "pnl": 2.0, "capital_layer": "shadow"},
-                {"ts_code": "AAPL", "market": "us", "pnl": -1.0, "capital_layer": "shadow"},
-                {"ts_code": "PM-1", "market": "pm", "pnl": 3.0, "capital_layer": "shadow"},
+                {
+                    "ts_code": "600519.SH",
+                    "market": "ashare",
+                    "pnl": 1.0,
+                    "capital_layer": "shadow",
+                    "account_scope": "ashare-shadow",
+                },
+                {
+                    "ts_code": "BTCUSDT",
+                    "market": "crypto",
+                    "pnl": 2.0,
+                    "capital_layer": "shadow",
+                    "account_scope": "crypto-shadow",
+                },
+                {
+                    "ts_code": "IF2601.CFFEX",
+                    "market": "cn_futures",
+                    "pnl": 3.0,
+                    "capital_layer": "shadow",
+                    "account_scope": "cnf-shadow",
+                },
+                {
+                    "ts_code": "AAPL",
+                    "market": "us",
+                    "pnl": -1.0,
+                    "capital_layer": "shadow",
+                },
             ]
 
             result = daily_review.review_close(trades, [], benchmark_return=0.0)
 
-            self.assertEqual(set(result["market_reviews"]), {"ashare", "crypto", "us", "pm"})
-            self.assertEqual(set(result["capital_layer_reviews"]["shadow"]["market_reviews"]), {"ashare", "crypto", "us", "pm"})
-            self.assertEqual(result["capital_layer_reviews"]["shadow"]["trades_summary"]["count"], 4)
+            self.assertEqual(
+                set(result["market_reviews"]), {"ashare", "crypto", "cn_futures"}
+            )
+            self.assertEqual(
+                set(result["capital_layer_reviews"]["shadow"]["market_reviews"]),
+                {"ashare", "crypto", "cn_futures"},
+            )
+            self.assertEqual(
+                result["capital_layer_reviews"]["shadow"]["trade_count"], 3
+            )
+            self.assertEqual(
+                result["capital_layer_reviews"]["shadow"]["monetary_aggregation"],
+                "forbidden",
+            )
+            self.assertNotIn("pnl", result["capital_layer_reviews"]["shadow"])
+            self.assertNotIn("pnl", result["all_markets"])
+            self.assertNotIn("return", result["all_markets"])
+            self.assertNotIn("benchmark", result["all_markets"])
 
-            for market, expected_pnl in (("ashare", 1.0), ("crypto", 2.0), ("us", -1.0), ("pm", 3.0)):
+            for market, expected_pnl in (
+                ("ashare", 1.0),
+                ("crypto", 2.0),
+                ("cn_futures", 3.0),
+            ):
                 market_review = result["market_reviews"][market]
                 self.assertEqual(market_review["trades"], 1)
-                self.assertAlmostEqual(market_review["pnl"], expected_pnl)
+                self.assertNotIn("pnl", market_review)
                 self.assertEqual(market_review["capital_layers"], ["shadow"])
+                layer_detail = market_review["capital_layer_reviews"]["shadow"]
+                scope = {
+                    "ashare": "ashare-shadow",
+                    "crypto": "crypto-shadow",
+                    "cn_futures": "cnf-shadow",
+                }[market]
+                detail = layer_detail["account_reviews"][scope]
+                self.assertAlmostEqual(detail["pnl"], expected_pnl)
                 self.assertEqual(
-                    result["capital_layer_reviews"]["shadow"]["market_reviews"][market]["trades"],
+                    result["capital_layer_reviews"]["shadow"]["market_reviews"][market][
+                        "trades"
+                    ],
                     1,
                 )
+                self.assertEqual(
+                    detail["currency"], "USDT" if market == "crypto" else "CNY"
+                )
+
+            self.assertEqual(
+                result["market_reviews"]["crypto"]["capital_layer_reviews"]["shadow"][
+                    "account_reviews"
+                ]["crypto-shadow"]["comparisons"]["vs_benchmark"]["status"],
+                "unavailable",
+            )
+            self.assertEqual(
+                result["market_reviews"]["crypto"]["capital_layer_reviews"]["shadow"][
+                    "account_reviews"
+                ]["crypto-shadow"]["comparisons"]["vs_last_period"]["status"],
+                "unavailable",
+            )
+            self.assertFalse(benchmark.LAST_PERIOD_STORE.exists())
 
             rows = [
                 json.loads(line)
-                for line in daily_review.DAILY_LOG.read_text(encoding="utf-8").splitlines()
+                for line in daily_review.DAILY_LOG.read_text(
+                    encoding="utf-8"
+                ).splitlines()
                 if line.strip()
             ]
-            self.assertEqual(len(rows), 4)
-            self.assertEqual({row["market"] for row in rows}, {"ashare", "crypto", "us", "pm"})
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(
+                {row["market"] for row in rows}, {"ashare", "crypto", "cn_futures"}
+            )
             self.assertTrue(all(row["capital_layer"] == "shadow" for row in rows))
 
 

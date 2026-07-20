@@ -687,101 +687,6 @@ class MarketHealthTest(unittest.TestCase):
             check.details["latest_cron_result"]["payload"]["order_count"], 0
         )
 
-    def test_sim_market_loop_fails_when_hk_has_no_data(self) -> None:
-        with patch.object(
-            market_health,
-            "_probe_market_data",
-            return_value={"status": "fail", "priced_signal_count": 0},
-        ):
-            check = market_health._check_sim_market_loop("hk", "job_hk_sim.sh")
-
-        self.assertEqual(check.status, "fail")
-        self.assertIn("market_data_missing", check.details["fail_reasons"])
-
-    def test_hk_sim_market_loop_warns_when_using_proxy_with_ledger(self) -> None:
-        ledger = self.root / "shared/logs/sim_ledger/hk/grid/trade_journal.jsonl"
-        ledger.parent.mkdir(parents=True)
-        ledger.write_text('{"order_id":"1","symbol":"HSI"}\n', encoding="utf-8")
-
-        with patch.object(
-            market_health,
-            "_probe_market_data",
-            return_value={
-                "status": "warn",
-                "proxy": "HSI",
-                "proxy_priced_signal_count": 1,
-            },
-        ):
-            check = market_health._check_sim_market_loop("hk", "job_hk_sim.sh")
-
-        self.assertEqual(check.status, "warn")
-        self.assertEqual(check.details["ledger"]["trade_rows"], 1)
-        self.assertIn("market_data_degraded", check.details["warn_reasons"])
-
-    def test_pm_sim_market_loop_warns_when_data_feed_has_no_market_rows(self) -> None:
-        with patch.object(
-            market_health,
-            "_probe_market_data",
-            return_value={
-                "status": "warn",
-                "reason": "pm_market_rows_empty",
-                "priced_signal_count": 0,
-            },
-        ):
-            check = market_health._check_sim_market_loop("pm", "job_pm_sim.sh")
-
-        self.assertEqual(check.status, "warn")
-        self.assertEqual(check.details["fail_reasons"], [])
-        self.assertIn("pm_waiting_for_market_data", check.details["warn_reasons"])
-        self.assertEqual(check.details["diagnostic_class"], "market_data_wait")
-        self.assertEqual(check.details["execution_fault"], False)
-
-    def test_pm_sim_market_loop_observes_when_model_probability_is_missing(
-        self,
-    ) -> None:
-        with patch.object(
-            market_health,
-            "_probe_market_data",
-            return_value={
-                "status": "warn",
-                "reason": "pm_model_probability_missing",
-                "priced_signal_count": 10,
-                "modeled_signal_count": 0,
-            },
-        ):
-            check = market_health._check_sim_market_loop("pm", "job_pm_sim.sh")
-
-        self.assertEqual(check.status, "pass")
-        self.assertEqual(check.details["fail_reasons"], [])
-        self.assertIn(
-            "pm_waiting_for_marketgraph_probability", check.details["warn_reasons"]
-        )
-        self.assertNotIn("market_data_degraded", check.details["warn_reasons"])
-        self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
-        self.assertEqual(check.details["execution_fault"], False)
-
-    def test_pm_sim_market_loop_observes_when_model_edge_is_below_threshold(
-        self,
-    ) -> None:
-        with patch.object(
-            market_health,
-            "_probe_market_data",
-            return_value={
-                "status": "warn",
-                "reason": "pm_model_edge_below_threshold",
-                "priced_signal_count": 10,
-                "modeled_signal_count": 10,
-            },
-        ):
-            check = market_health._check_sim_market_loop("pm", "job_pm_sim.sh")
-
-        self.assertEqual(check.status, "pass")
-        self.assertEqual(check.details["fail_reasons"], [])
-        self.assertIn("pm_waiting_for_model_edge", check.details["warn_reasons"])
-        self.assertNotIn("market_data_degraded", check.details["warn_reasons"])
-        self.assertEqual(check.details["diagnostic_class"], "strategy_wait")
-        self.assertEqual(check.details["execution_fault"], False)
-
     def test_crypto_sim_market_loop_observes_when_momentum_threshold_not_met(
         self,
     ) -> None:
@@ -1319,7 +1224,7 @@ class MarketHealthTest(unittest.TestCase):
         self.assertEqual(check.status, "pass")
         self.assertEqual(check.details["warn_reasons"], [])
 
-    def test_default_sim_market_health_excludes_deferred_hk(self) -> None:
+    def test_default_sim_market_health_is_exactly_the_three_owned_markets(self) -> None:
         def fake_check(
             market: str, crontab_text: str = "", crontab_error: str = ""
         ) -> market_health.Check:
@@ -1339,12 +1244,9 @@ class MarketHealthTest(unittest.TestCase):
             [
                 "ashare_sim_loop",
                 "crypto_sim_loop",
-                "pm_sim_loop",
-                "us_sim_loop",
                 "cn_futures_sim_loop",
             ],
         )
-        self.assertNotIn("hk_sim_loop", names)
 
     def test_cn_futures_sim_loop_warns_without_live_samples(self) -> None:
         with patch.object(

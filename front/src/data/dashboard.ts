@@ -1,7 +1,7 @@
 import type { DepthRow, HoldingRow, Market, Page, PageMeta, PerformancePoint, SignalRow, SignalStatus } from '../types/dashboard'
 import type { ApiStatus, DashboardApiResponse } from '../api/types'
 
-export const markets: Market[] = ['All Markets', 'A-share', 'US', 'Crypto', 'PM', 'CNFutures']
+export const markets: Market[] = ['All Markets', 'A-share', 'CNFutures', 'Crypto']
 export const pages: Page[] = ['总览', '收益', '过程', '持仓', '风险', '复盘']
 
 export const pageMeta: Record<Page, PageMeta> = {
@@ -40,10 +40,7 @@ export const pageMeta: Record<Page, PageMeta> = {
 export const marketLabels: Record<Market, string> = {
   'All Markets': '全市场',
   'A-share': 'A股',
-  US: '美股',
   Crypto: '加密',
-  HK: '港股（暂停）',
-  PM: '预测',
   CNFutures: '中国期货',
 }
 
@@ -104,20 +101,7 @@ export const signals: SignalRow[] = [
     steps: 6,
   },
   {
-    symbol: 'AAPL.US',
-    name: '苹果',
-    market: 'US',
-    method: '顺势跟踪',
-    status: 'executed',
-    impact: '+12.4',
-    confidence: '86%',
-    age: '3小时',
-    reason: '趋势延续，波动仍可控',
-    next: '保留仓位，上调目标',
-    steps: 6,
-  },
-  {
-    symbol: 'BTC-USD',
+    symbol: 'BTC-USDT',
     name: '比特币',
     market: 'Crypto',
     method: '突破机会',
@@ -130,7 +114,7 @@ export const signals: SignalRow[] = [
     steps: 4,
   },
   {
-    symbol: 'HYPE-PERP',
+    symbol: 'HYPE-USDT',
     name: 'Hyperliquid 永续',
     market: 'Crypto',
     method: '低位机会',
@@ -155,26 +139,12 @@ export const signals: SignalRow[] = [
     next: '只做模拟观察，不接实盘',
     steps: 5,
   },
-  {
-    symbol: 'PM-2026',
-    name: 'PredictIt 2026',
-    market: 'PM',
-    method: '利差机会',
-    status: 'cancelled',
-    impact: '0.0',
-    confidence: '62%',
-    age: '5小时',
-    reason: '收益不再覆盖等待成本',
-    next: '本轮不再跟踪',
-    steps: 5,
-  },
 ]
 
 export const holdings: HoldingRow[] = [
-  { symbol: '600519.SH', name: '贵州茅台', market: 'A-share', weight: '12.8%', pnl: '+$18.4K', risk: '正常', role: '核心收益' },
-  { symbol: 'AAPL.US', name: '苹果', market: 'US', weight: '10.6%', pnl: '+$14.7K', risk: '正常', role: '趋势收益' },
-  { symbol: 'RB2609.SHF', name: '螺纹钢期货', market: 'CNFutures', weight: '8.4%', pnl: '+$9.8K', risk: '观察', role: '模拟训练' },
-  { symbol: 'BTC-USD', name: '比特币', market: 'Crypto', weight: '6.9%', pnl: '-$4.2K', risk: '偏高', role: '波动仓位' },
+  { symbol: '600519.SH', name: '贵州茅台', market: 'A-share', weight: '12.8%', pnl: '+¥18.4K', risk: '正常', role: '核心收益', currency: 'CNY', accountScope: 'demo:ashare' },
+  { symbol: 'RB2609.SHF', name: '螺纹钢期货', market: 'CNFutures', weight: '8.4%', pnl: '+¥9.8K', risk: '观察', role: '模拟训练', currency: 'CNY', accountScope: 'demo:cnfutures' },
+  { symbol: 'BTC-USDT', name: '比特币', market: 'Crypto', weight: '6.9%', pnl: '-4.2K USDT', risk: '偏高', role: '波动仓位', currency: 'USDT', accountScope: 'demo:crypto' },
 ]
 
 export const signalDepth: DepthRow[] = [
@@ -193,11 +163,10 @@ export const contributionData = [
 ]
 
 export const allocationData = [
-  { name: 'A股', value: 38 },
-  { name: '美股', value: 27 },
-  { name: '中国期货', value: 18 },
-  { name: '加密', value: 11 },
-  { name: '现金', value: 6 },
+  { name: 'A股', value: 46 },
+  { name: '中国期货', value: 27 },
+  { name: '加密', value: 17 },
+  { name: '现金', value: 10 },
 ]
 
 export function mockDashboardApiResponse(status: ApiStatus = 'ready'): DashboardApiResponse {

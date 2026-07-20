@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""HTTP client for SharedSignals API.
+"""Time-boxed HTTP client for the retired SharedSignals API shape.
 
-Mirrors the 15 canonical reader functions via HTTP instead of direct SQLite reads.
-Provides fail-safe access: network errors return empty data rather than raising.
+This module exists for explicit migration diagnostics and legacy regression
+tests only. It has no default endpoint and is not a TradingDatas client.
+Network errors return empty data rather than raising.
 
 Usage:
     from shared.data.shared_signals_api import SharedSignalsAPIClient
@@ -22,7 +23,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-DEFAULT_API_URL = os.environ.get("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082")
+# The legacy client is a time-boxed migration shell only.  It must never find
+# an old local runtime merely because a caller omitted configuration.
+DEFAULT_API_URL = ""
 DEFAULT_API_KEY = os.environ.get("SHAREDSIGNALS_API_KEY", "")
 DEFAULT_TIMEOUT = float(os.environ.get("SHAREDSIGNALS_API_TIMEOUT", "10"))
 DEFAULT_RETRIES = int(

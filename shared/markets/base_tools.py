@@ -1,6 +1,5 @@
-# DEPRECATED: shadow retired in favor of multi-style simulated trading. See style_runner.py
 #!/usr/bin/env python3
-"""Abstract base classes for Phase D multi-market shadow/simulated tools."""
+"""Mechanical base classes shared by isolated market simulation lanes."""
 
 from __future__ import annotations
 
@@ -8,7 +7,11 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from shared.markets.config_schema import MarketToolConfig
-from shared.markets.safety import assert_no_live_broker, assert_no_real_execution, assert_public_data_only
+from shared.markets.safety import (
+    assert_no_live_broker,
+    assert_no_real_execution,
+    assert_public_data_only,
+)
 
 
 class BaseMarketData(ABC):
@@ -56,7 +59,9 @@ class BaseSimulator(ABC):
         assert_no_real_execution(self.config)
 
     @abstractmethod
-    def simulate(self, order: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
+    def simulate(
+        self, order: dict[str, Any], account: dict[str, Any]
+    ) -> dict[str, Any]:
         """Simulate an order against an account."""
 
     @abstractmethod

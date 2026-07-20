@@ -34,16 +34,28 @@ class PredictionCalibrationTest(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmpdir.cleanup)
         self.tmp_path = Path(self.tmpdir.name)
-        self.shadow_log = self.tmp_path / "shared" / "logs" / "shadow" / "shadow_trades.jsonl"
+        self.shadow_log = (
+            self.tmp_path / "shared" / "logs" / "shadow" / "shadow_trades.jsonl"
+        )
         self.review_data = self.tmp_path / "shared" / "review" / "data"
 
         self._patch(daily_review, "SHADOW_TRADES_LOG", self.shadow_log)
-        self._patch(daily_review, "DIRECTION_HIT_LOG", self.review_data / "direction_hit_reviews.jsonl")
+        self._patch(
+            daily_review,
+            "DIRECTION_HIT_LOG",
+            self.review_data / "direction_hit_reviews.jsonl",
+        )
         self._patch(daily_review, "DAILY_LOG", self.review_data / "daily_reviews.jsonl")
-        self._patch(daily_review, "FILLED_SIGNALS_DIR", self.tmp_path / "signals" / "filled")
+        self._patch(
+            daily_review, "FILLED_SIGNALS_DIR", self.tmp_path / "signals" / "filled"
+        )
         self._patch(daily_review, "SharedSignalsReader", FakeSharedSignalsReader)
-        self._patch(benchmark, "LAST_PERIOD_STORE", self.review_data / "last_period_return.json")
-        self._patch(benchmark, "BENCHMARK_STORE", self.review_data / "benchmark_history.json")
+        self._patch(
+            benchmark, "LAST_PERIOD_STORE", self.review_data / "last_period_return.json"
+        )
+        self._patch(
+            benchmark, "BENCHMARK_STORE", self.review_data / "benchmark_history.json"
+        )
         self._patch(daily_review, "load_positions", lambda as_of_date: [])
 
     def _patch(self, module: object, name: str, value: object) -> None:
@@ -66,6 +78,7 @@ class PredictionCalibrationTest(unittest.TestCase):
                 "side": "buy",
                 "price": 10.0,
                 "capital_layer": "paper",
+                "account_scope": "ashare-shadow",
                 "strategy": "trend",
             }
         )
@@ -78,6 +91,7 @@ class PredictionCalibrationTest(unittest.TestCase):
                 "side": "sell",
                 "price": 20.0,
                 "capital_layer": "shadow",
+                "account_scope": "ashare-shadow",
                 "strategy": "reversal",
             }
         )
@@ -90,6 +104,7 @@ class PredictionCalibrationTest(unittest.TestCase):
                 "side": "buy",
                 "price": 30.0,
                 "capital_layer": "shadow",
+                "account_scope": "ashare-shadow",
                 "strategy": "breakout",
             }
         )
@@ -100,14 +115,19 @@ class PredictionCalibrationTest(unittest.TestCase):
         record = records[0]
         self.assertEqual(record["capital_layer"], "shadow")
         self.assertEqual(record["market"], "ashare")
+        self.assertEqual(record["account_scope"], "ashare-shadow")
         self.assertEqual(record["evaluated_count"], 3)
         self.assertEqual(record["hits"], 2)
         self.assertAlmostEqual(record["direction_accuracy"], 0.6667)
-        self.assertEqual({item["capital_layer"] for item in record["reviews"]}, {"shadow"})
+        self.assertEqual(
+            {item["capital_layer"] for item in record["reviews"]}, {"shadow"}
+        )
 
         written = [
             json.loads(line)
-            for line in daily_review.DIRECTION_HIT_LOG.read_text(encoding="utf-8").splitlines()
+            for line in daily_review.DIRECTION_HIT_LOG.read_text(
+                encoding="utf-8"
+            ).splitlines()
             if line.strip()
         ]
         self.assertEqual(written, records)
@@ -123,6 +143,7 @@ class PredictionCalibrationTest(unittest.TestCase):
                 "price": 10.0,
                 "pnl": 1.0,
                 "capital_layer": "shadow",
+                "account_scope": "ashare-shadow",
             }
         )
 
@@ -131,6 +152,26 @@ class PredictionCalibrationTest(unittest.TestCase):
         self.assertEqual(result["review_outcome_count"], 1)
         self.assertEqual(result["direction_hit_reviews"][0]["hits"], 1)
         self.assertEqual(result["direction_hit_reviews"][0]["capital_layer"], "shadow")
+        self.assertEqual(
+            result["direction_hit_reviews"][0]["account_scope"],
+            "ashare-shadow",
+        )
+
+    def test_direction_hit_without_account_scope_is_not_published(self) -> None:
+        self._append_trade(
+            {
+                "trade_date": "2026-06-30",
+                "created_at": "2026-06-30T10:00:00",
+                "ts_code": "600000.SH",
+                "market": "Ashare",
+                "side": "buy",
+                "price": 10.0,
+                "capital_layer": "shadow",
+            }
+        )
+
+        self.assertEqual(daily_review.load_direction_hits("20260630"), [])
+        self.assertFalse(daily_review.DIRECTION_HIT_LOG.exists())
 
 
 if __name__ == "__main__":

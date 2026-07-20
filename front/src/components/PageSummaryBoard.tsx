@@ -1,7 +1,7 @@
 import { marketLabels, statusLabels } from '../data/dashboard'
 import { getClosedSignals } from '../lib/dashboard'
 import { DRAWDOWN_LIMIT_PCT } from '../lib/dashboardConstants'
-import { formatCnyCompact, formatCurrency, formatSignedCnyCompact } from '../lib/format'
+import { formatCnyCompact, formatSignedCnyCompact, formatSignedUsdt } from '../lib/format'
 import { summarizeHoldingExposure } from '../lib/holdings'
 import type { HoldingRow, Market, MarketSummary, Page, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard'
 
@@ -98,7 +98,6 @@ function getPageMetrics(
   const missedCount = signals.filter((signal) => signal.status === 'missed').length
   const executedCount = signals.filter((signal) => signal.status === 'executed').length
   const ashareAccount = activeMarket === 'All Markets' || activeMarket === 'A-share' ? portfolio?.ashareAccount : undefined
-  const isCnyPortfolio = portfolio?.pnlCurrency === 'CNY'
   const validSampleLabel = ashareAccount
     ? ashareAccount.totalSampleCount > 0
       ? `${ashareAccount.strategySampleValidCount}/${ashareAccount.totalSampleCount}`
@@ -112,7 +111,7 @@ function getPageMetrics(
 
   if (page === '收益') {
     return [
-      { label: '当前收益', value: formatReturnMetric({ currentReturn, isCnyPortfolio: isCnyPortfolio || activeMarket === 'A-share', marketSummary, portfolio }), detail: formatPercent(currentReturn), tone: currentReturn >= 0 ? 'cyan' : 'red' },
+      { label: '当前收益', value: formatReturnMetric({ currentReturn, activeMarket, marketSummary, portfolio }), detail: formatPercent(currentReturn), tone: currentReturn >= 0 ? 'cyan' : 'red' },
       { label: '目标差', value: formatPercent(gap), detail: `目标 ${formatPercent(target)}`, tone: gap >= 0 ? 'cyan' : 'amber' },
       ashareAccount
         ? { label: '复盘收益', value: strategyMetricValue, detail: `可复盘 ${validSampleLabel}` }
@@ -169,18 +168,21 @@ function conversion(value: number, total: number) {
 
 function formatReturnMetric({
   currentReturn,
-  isCnyPortfolio,
+  activeMarket,
   marketSummary,
   portfolio,
 }: {
   currentReturn: number
-  isCnyPortfolio: boolean
+  activeMarket: Market
   marketSummary?: MarketSummary
   portfolio: PortfolioSummary | null
 }) {
   const pnlAmount = marketSummary?.pnlAmount ?? portfolio?.pnlAmount
   if (pnlAmount === undefined) return formatPercent(currentReturn)
-  return isCnyPortfolio ? formatSignedCnyCompact(pnlAmount) : formatCurrency(pnlAmount)
+  const currency = marketSummary?.pnlCurrency ?? portfolio?.pnlCurrency ?? (activeMarket === 'Crypto' ? 'USDT' : 'CNY')
+  if (currency === 'CNY') return formatSignedCnyCompact(pnlAmount)
+  if (currency === 'USDT') return formatSignedUsdt(pnlAmount)
+  return '--'
 }
 
 function formatPercent(value: number) {

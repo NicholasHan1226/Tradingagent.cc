@@ -12,7 +12,8 @@
 ## 当前唯一资本事实
 
 - A股和 CNFutures 各有一个独立、fresh-start、50,000 CNY 的 simulated authority：`ashare-capital-v1` 与 `cn-futures-capital-v1`。generation 1 只是历史 fresh-start 基线；消费者每轮必须读取、验证并传播 current snapshot 的正整数 generation，禁止写死。
-- 两个账户的现金、持仓/保证金、预约、盈亏、回撤、风控、execution lineage 和样本归因完全分离。总览只可并列，禁止相加、净额抵消或互相补资。
+- Crypto 由 `Crypto/config.yaml` 与 `shared/markets/sim_capital.py` 定义独立 10,000 USDT shadow/simulated authority，不得换算为 CNY 或伪装为 USD；当前没有 live exchange authority。
+- 三个账户的现金、持仓/保证金、预约、盈亏、回撤、风控、execution lineage 和样本归因完全分离。总览只可并列；All Markets 只可汇总非货币计数和健康状态，禁止跨 market/currency 金额、收益率或回撤相加、净额抵消或互相补资。
 - A股政策：股票总敞口上限 90%（45,000 CNY），单一标的累计上限 15%（7,500 CNY），买入100股整数倍；卖出只允许100股整数倍、完整不足100股余额或全部退出，且受T+1可卖量约束。组合容量 8 且至少支持 7 个不同股票；全部 50,000 CNY 有资格服务合格机会，但不强制满仓。
 - CNFutures 政策：保证金使用率上限 50%（25,000 CNY）。保证金容量和止损损失预算分开验证，不能把保证金上限当作可承受亏损。
 - 每个市场独立执行：日亏 3% 暂停、连续亏损 3 次暂停、回撤 5% 仅收紧风险预算至 0.75 倍、回撤 7% 才暂停并复核。
@@ -79,7 +80,7 @@
 - A股、CNFutures 与 Crypto 使用三个长期固定 Git worktree 和三个独立分支；工作树提供物理隔离，`shared/governance/market_lanes.yaml` 定义机器可读的单写者路径边界。
 - 三个市场的模拟撮合合同和未来实盘适配器族必须各自独立：A股保留现金股票/T+1/整手语义，CNFutures保留多空/开平/保证金/夜盘语义，Crypto保留小数数量/最小名义金额/Testnet与Live分账语义。共享内核只可提供BrokerPort、outbox、幂等、审计和对账接口，禁止共享provider payload、账户、密钥、订单状态机、风险或资本authority。
 - 市场 owner 只能修改本市场目录、同前缀测试和局部文档。`shared/**`、根文档、前端和其它市场目录一律只可提交 handoff 提案，由共享内核单写者统一实现。
-- 每轮开工、交接和提交前都必须运行 `python scripts/validate_market_lane.py --lane <ashare|cnfutures|crypto>`；错误 worktree、错误分支或越权路径必须 fail closed。
+- 每轮开工、交接和提交前都必须运行 `python3 scripts/validate_market_lane.py --lane <ashare|cnfutures|crypto>`；错误 worktree、错误分支、落后当前 `main` 或越权路径必须 fail closed。输出的 `base_head/lane_head/ahead/behind` 是同步证据，`behind` 必须为零才能开始市场开发。
 - 三个稳定 market worktree 不随单次任务清理。共享变更先经独立候选合入 `main`，市场 lane 只在工作树干净的检查点同步 `main`；禁止市场分支之间互相 cherry-pick 或直接复制公共实现。
 - 每批变更保持小范围、独立测试和独立文档。candidate、`main`、远端、服务器文件、runtime、真实数据和真实交易权限继续分别验收。
 

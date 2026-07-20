@@ -4,14 +4,12 @@ import { PanelTitle } from '../PanelTitle'
 
 const MARKET_LABELS: Record<string, string> = {
   'A-share': 'A股',
-  US: '美股',
   Crypto: '加密',
-  PM: '预测',
   CNFutures: '期货',
 }
 
 export function ClosedLoopProofPanel({ summaries }: { summaries: MarketSummary[] }) {
-  const rows = summaries.filter((summary) => summary.market !== 'HK')
+  const rows = summaries
 
   return (
     <section className="panel rail-panel closure-proof-panel" aria-label="市场运行状态">

@@ -87,7 +87,7 @@ TradingAgent signals / positions / review / risk
   显式匹配目标实体，且 row time 不得晚于 `data_through` 或本次决策时间。不会回退
   provider、兄弟仓 SQLite、旧专用端点或本地拼装。该能力仍只是 fixture/mock-first 本地候选；
   TradingDatas 尚未提供 fresh handoff，不能描述为 live 可用，也不赋予 paper-day 执行权限。
-- 非 A 股代表行情必须由上游显式提供 `market_data_symbol` 或 `marketDataSymbol`；前端不从展示代码转换 Crypto、期货、PM、US 或 HK API 参数。`marketPulseCoverageHistory` 只保留当前服务进程最近 12 次真实来源读取，缓存命中与服务重启不会伪造连续观测。
+- Crypto 与 CNFutures 代表行情必须由上游显式提供 `market_data_symbol` 或 `marketDataSymbol`；前端不从展示代码猜测 TradingDatas 查询标识。A股继续使用带交易所后缀的明确 `ts_code`。`marketPulseCoverageHistory` 只保留当前服务进程最近 12 次真实来源读取，缓存命中与服务重启不会伪造连续观测。
 - 真实数据适配：`src/api/tradingAgentReadModel.ts` 和
   `src/adapters/tradingAgentReadModel.ts`。
 - 本地演示数据：`src/data/dashboard.ts`，只在本地开发或显式开启 `VITE_TRADING_AGENT_DEMO_PREVIEW=1` 时用于开发预览；生产接口不可用时必须展示等待/不可用状态，不得回退到样例收益、机会或持仓。如果接口可用但某个领域返回空数组，前端必须展示真实空状态。
@@ -203,10 +203,10 @@ npm run build:api
 ## 当前缺口
 
 - 模拟盘持仓和已成交信号已接入 `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}`。
-- 收益曲线现在优先读取显式权益快照：`shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl`
-  或 `shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl`。如果后端尚未写入权益快照，snapshot 才回退到 `shared/review/daily/daily_brief.jsonl` 的明确 return 字段，再回退到 `shared/review/*/style_performance.jsonl` 的真实 simulated PnL，并用模拟账本本金换算为收益率；当同市场/同策略/同日期存在模拟账本成交时间戳时，snapshot 会把日级 PnL 展开成交易时间线曲线。若只存在成交日志或持仓成本，snapshot 会保持收益为空并给出缺口说明，前端不得用成交额或成本冒充收益。
-- `style_performance.jsonl` 作为回退收益来源时，US/Crypto/PM 的 money fields 可按其显式币种/汇率归一化到各自 `marketSummaries[]`；不得跨市场相加生成全市场收益曲线，也不得用一个市场的本金归一化另一个市场的 PnL。
-- 维护、回补、烟测或修复重跑样本不得进入用户收益和交易量口径。只读 snapshot 会跳过带 `exclude_from_dashboard=true`、`dashboard_excluded=true`、`excluded_from_dashboard=true`，或 `run_context/run_mode/run_source/sample_type` 包含 `maintenance/backfill/smoke/repair/bootstrap/dry-run` 的模拟账本、权益快照、风格绩效和风格对比记录。
+- 收益曲线现在只读取当前授权的显式权益快照：`shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl`
+  或 `shared/logs/sim_ledger/*/*/{daily_mark_to_market,equity_snapshots}.jsonl`。若它们缺失，snapshot 仅可回退到 `shared/review/daily/daily_brief.jsonl` 的明确 return 字段；若仍无收益证据则保持为空并说明缺口，禁止用成交额、持仓成本或冻结历史风格文件推算当前收益。
+- `shared/review/*/{style_performance.jsonl,style_comparison.json}` 属于已退役 StyleRunner/PerformanceTracker 留下的冻结法证产物。snapshot 不读取它们，不允许其影响当前市场状态、收益、交易量、readiness、自我进化或执行决策。SampleJournal 中的 `style` 仍可作为三策略 sleeve 的研究分组标签，但不是旧 StyleRunner 权威。
+- 维护、回补、烟测或修复重跑样本不得进入用户收益和交易量口径。只读 snapshot 会跳过带 `exclude_from_dashboard=true`、`dashboard_excluded=true`、`excluded_from_dashboard=true`，或 `run_context/run_mode/run_source/sample_type` 包含 `maintenance/backfill/smoke/repair/bootstrap/dry-run` 的当前模拟账本和权益快照记录。
 - A股研究证据卡片读取 `shared/review/ashare/research_evidence_latest.json`，只展示集合竞价/09:30 代理、尾盘候选、204001 现金管理建议和旧四风格的legacy SampleJournal归因计数；它们不是当前三风格shadow router，也没有可相加的虚拟本金。该卡片不写队列、不触发交易、不发送邮件。
 - A股服务器本地模拟账本先验证
   `shared/logs/capital/ashare/ashare_sim_capital_latest.json`，再使用其中受验证的

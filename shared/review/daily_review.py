@@ -8,9 +8,11 @@
 Implements the 3-comparison framework:
   1. actual vs expected goals   (goals.yaml current stage)
   2. actual vs benchmark        (CSI300, via benchmark.compare_to_benchmark)
-  3. actual vs last period      (yesterday's portfolio return, via benchmark store)
+  3. actual vs last period      (disabled until a market-scoped store exists)
 
-Attribution delegates to attribution.attribute().
+Attribution delegates to attribution.attribute(). Monetary and return fields
+exist only inside one explicit ``market + capital_layer + account_scope``
+review with native currency. Parent summaries contain counts/health only.
 """
 
 from __future__ import annotations
@@ -22,6 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.governance.market_lanes import canonical_runtime_market
+
 from shared.accounting import position_ledger
 
 try:
@@ -30,7 +34,7 @@ except Exception:  # pragma: no cover - optional upstream dependency
     TradingagentDataReader = None  # type: ignore[assignment]
 
 from .attribution import attribute_pct
-from .benchmark import compare_to_benchmark, get_benchmark, record_last_period
+from .benchmark import compare_to_benchmark
 from .pnl_summary import sim_ledger_pnl_summary
 from .sample_quality import strategy_valid_trades, summarize_sample_quality
 from .sim_ledger_reader import (
@@ -51,6 +55,12 @@ DIRECTION_HIT_LOG = REVIEW_DIR / "data" / "direction_hit_reviews.jsonl"
 SHADOW_TRADES_LOG = SHARED_DIR / "logs" / "shadow" / "shadow_trades.jsonl"
 FILLED_SIGNALS_DIR = TRADINGAGENT_ROOT / "signals" / "filled"
 EXECUTION_EXCLUSION_ROOT = REVIEW_DIR
+MARKET_CURRENCIES = {
+    "ashare": "CNY",
+    "cn_futures": "CNY",
+    "crypto": "USDT",
+}
+UNSCOPED_ACCOUNT_KEY = "__unscoped__"
 
 
 def _now_iso() -> str:
@@ -142,6 +152,31 @@ def _normalize_market(value: Any, default: str = "unknown") -> str:
     return raw or default
 
 
+def _active_market(value: Any) -> str | None:
+    try:
+        return canonical_runtime_market(value)
+    except ValueError:
+        return None
+
+
+def _market_currency(market: str) -> str:
+    return MARKET_CURRENCIES[canonical_runtime_market(market)]
+
+
+def _normalize_account_scope(value: Any) -> str | None:
+    scope = str(value or "").strip()
+    return scope or None
+
+
+def _row_account_scope(row: dict[str, Any]) -> str | None:
+    """Return only an explicit account identifier; never derive from market/layer."""
+    for key in ("account_scope", "account_id", "capital_authority_id", "account"):
+        scope = _normalize_account_scope(row.get(key))
+        if scope is not None:
+            return scope
+    return None
+
+
 def _normalize_side(value: Any) -> str:
     raw = str(value or "").strip().lower()
     if raw in {"buy", "long", "open_long"}:
@@ -151,44 +186,27 @@ def _normalize_side(value: Any) -> str:
     return raw
 
 
-def _group_by_capital_layer(
+def _group_by_capital_layer_market_account(
     rows: list[dict[str, Any]],
-) -> dict[str, list[dict[str, Any]]]:
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in rows or []:
-        layer = _normalize_capital_layer(row.get("capital_layer"))
-        normalized = dict(row)
-        normalized["capital_layer"] = layer
-        normalized["market"] = _normalize_market(row.get("market"))
-        grouped[layer].append(normalized)
-    return dict(grouped)
-
-
-def _group_by_capital_layer_market(
-    rows: list[dict[str, Any]],
-) -> dict[str, dict[str, list[dict[str, Any]]]]:
-    grouped: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
-        lambda: defaultdict(list)
+) -> dict[str, dict[str, dict[str, list[dict[str, Any]]]]]:
+    grouped: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
     )
     for row in rows or []:
+        market = _active_market(row.get("market"))
+        if market is None:
+            continue
         layer = _normalize_capital_layer(row.get("capital_layer"))
-        market = _normalize_market(row.get("market"))
+        account_scope = _row_account_scope(row)
         normalized = dict(row)
         normalized["capital_layer"] = layer
         normalized["market"] = market
-        grouped[layer][market].append(normalized)
-    return {layer: dict(markets) for layer, markets in grouped.items()}
-
-
-def _append_layer_logs(
-    base_record: dict[str, Any], grouped_records: dict[str, dict[str, Any]]
-) -> None:
-    for capital_layer, layer_record in grouped_records.items():
-        log_record = dict(base_record)
-        log_record.update(layer_record)
-        log_record["capital_layer"] = capital_layer
-        log_record["market"] = layer_record.get("market", "unknown")
-        _append_log(log_record)
+        normalized["account_scope"] = account_scope
+        grouped[layer][market][account_scope or UNSCOPED_ACCOUNT_KEY].append(normalized)
+    return {
+        layer: {market: dict(accounts) for market, accounts in markets.items()}
+        for layer, markets in grouped.items()
+    }
 
 
 def _append_market_layer_logs(
@@ -200,15 +218,26 @@ def _append_market_layer_logs(
             log_record = dict(base_record)
             log_record.update(layer_record)
             log_record["capital_layer"] = capital_layer
-            log_record["market"] = layer_record.get("market", "unknown")
+            log_record["market"] = None
+            log_record["currency"] = None
             _append_log(log_record)
             continue
         for market, market_record in market_reviews.items():
-            log_record = dict(base_record)
-            log_record.update(market_record)
-            log_record["capital_layer"] = capital_layer
-            log_record["market"] = market
-            _append_log(log_record)
+            account_reviews = market_record.get("account_reviews") or {}
+            if not account_reviews:
+                log_record = dict(base_record)
+                log_record.update(market_record)
+                log_record["capital_layer"] = capital_layer
+                log_record["market"] = market
+                log_record["account_scope"] = None
+                _append_log(log_record)
+                continue
+            for account_record in account_reviews.values():
+                log_record = dict(base_record)
+                log_record.update(account_record)
+                log_record["capital_layer"] = capital_layer
+                log_record["market"] = market
+                _append_log(log_record)
 
 
 def _preferred_capital_layer(layers: list[str]) -> str:
@@ -231,17 +260,21 @@ def _sum_pnl(trades: list[dict[str, Any]]) -> float:
     return sum(_safe_float(t.get("pnl")) for t in trades)
 
 
-def _load_execution_exclusions(trade_date: str) -> dict[str, dict[str, dict[str, Any]]]:
+def _load_execution_exclusions(
+    trade_date: str,
+) -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
     compact = _compact_date(trade_date)
-    grouped: dict[str, dict[str, dict[str, Any]]] = defaultdict(
+    grouped: dict[str, dict[str, dict[str, dict[str, Any]]]] = defaultdict(
         lambda: defaultdict(
-            lambda: {
-                "total": 0,
-                "skipped_candidates": 0,
-                "risk_rejections": 0,
-                "execution_skips": 0,
-                "sample": [],
-            }
+            lambda: defaultdict(
+                lambda: {
+                    "total": 0,
+                    "skipped_candidates": 0,
+                    "risk_rejections": 0,
+                    "execution_skips": 0,
+                    "sample": [],
+                }
+            )
         )
     )
     for path in sorted(
@@ -259,8 +292,9 @@ def _load_execution_exclusions(trade_date: str) -> dict[str, dict[str, dict[str,
                 row.get("capital_layer"), default="simulated"
             )
             market = _normalize_market(row.get("market"), default=path.parent.name)
+            account_scope = _row_account_scope(row)
             kind = str(row.get("kind") or "").strip()
-            bucket = grouped[layer][market]
+            bucket = grouped[layer][market][account_scope or UNSCOPED_ACCOUNT_KEY]
             bucket["total"] += 1
             if kind == "skipped_candidate":
                 bucket["skipped_candidates"] += 1
@@ -276,15 +310,19 @@ def _load_execution_exclusions(trade_date: str) -> dict[str, dict[str, dict[str,
                         "reason": _first_present(row, "reason", "reasons", default=""),
                     }
                 )
-    return {layer: dict(markets) for layer, markets in grouped.items()}
+    return {
+        layer: {market: dict(accounts) for market, accounts in markets.items()}
+        for layer, markets in grouped.items()
+    }
 
 
 def _execution_quality(
-    exclusions: dict[str, dict[str, dict[str, Any]]],
+    exclusions: dict[str, dict[str, dict[str, dict[str, Any]]]],
     layer: str,
     market: str,
+    account_scope: str,
 ) -> dict[str, Any]:
-    record = exclusions.get(layer, {}).get(market, {})
+    record = exclusions.get(layer, {}).get(market, {}).get(account_scope, {})
     return {
         "exclusion_count": int(record.get("total", 0) or 0),
         "skipped_candidates": int(record.get("skipped_candidates", 0) or 0),
@@ -449,6 +487,7 @@ def _normalize_trade(
             ),
             default=default_layer,
         ),
+        "account_scope": _row_account_scope(row),
     }
 
 
@@ -482,6 +521,7 @@ def _normalize_position(
             ),
             default=default_layer,
         ),
+        "account_scope": _row_account_scope(row),
     }
 
 
@@ -536,6 +576,14 @@ def _read_signal_fills(trade_date: str) -> list[dict[str, Any]]:
                     "capital_layer": _first_present(
                         row, "capital_layer", "account_type", default="shadow"
                     ),
+                    "account_scope": _first_present(
+                        row,
+                        "account_scope",
+                        "account_id",
+                        "capital_authority_id",
+                        "account",
+                        default=None,
+                    ),
                 },
                 default_layer="shadow",
             )
@@ -555,12 +603,15 @@ def _merge_market_review(
         market,
         {
             "market": market,
+            "currency": _market_currency(market),
             "capital_layers": [],
             "capital_layer_reviews": {},
             "trades": 0,
             "wins": 0,
             "losses": 0,
-            "pnl": 0.0,
+            "account_count": 0,
+            "unscoped_trade_count": 0,
+            "monetary_aggregation": "forbidden_across_accounts_and_capital_layers",
         },
     )
     if layer not in entry["capital_layers"]:
@@ -572,13 +623,205 @@ def _merge_market_review(
     entry["trades"] += trades
     entry["wins"] += wins
     entry["losses"] += losses
-    entry["pnl"] = round(
-        _safe_float(entry.get("pnl")) + _safe_float(review.get("pnl")), 6
-    )
+    entry["account_count"] += int(review.get("account_count") or 0)
+    entry["unscoped_trade_count"] += int(review.get("unscoped_trade_count") or 0)
     entry["win_rate"] = (
         round(entry["wins"] / entry["trades"], 4) if entry["trades"] else 0.0
     )
     entry["stale"] = entry["trades"] == 0
+
+
+def _ledger_account_summary(
+    ledger_pnl_summary: dict[str, dict[str, Any]],
+    market: str,
+    account_scope: str,
+) -> dict[str, Any] | None:
+    market_ledger = ledger_pnl_summary.get(market)
+    if not isinstance(market_ledger, dict):
+        return None
+    accounts = market_ledger.get("account_summaries")
+    if not isinstance(accounts, dict):
+        return None
+    account = accounts.get(account_scope)
+    return dict(account) if isinstance(account, dict) else None
+
+
+def _summarize_market_accounts(
+    market: str,
+    layer: str,
+    account_reviews: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a count-only market/layer container over account reviews."""
+    return {
+        "market": market,
+        "currency": _market_currency(market),
+        "capital_layer": layer,
+        "account_count": sum(
+            1 for review in account_reviews.values() if review.get("account_scope")
+        ),
+        "unscoped_trade_count": sum(
+            int(review.get("trades") or 0)
+            for review in account_reviews.values()
+            if review.get("account_scope") is None
+        ),
+        "unscoped_position_count": sum(
+            int(review.get("position_count") or 0)
+            for review in account_reviews.values()
+            if review.get("account_scope") is None
+        ),
+        "trades": sum(
+            int(review.get("trades") or 0) for review in account_reviews.values()
+        ),
+        "strategy_trades": sum(
+            int(review.get("strategy_trades") or 0)
+            for review in account_reviews.values()
+        ),
+        "validation_sample_count": sum(
+            int(review.get("validation_sample_count") or 0)
+            for review in account_reviews.values()
+        ),
+        "position_count": sum(
+            int(review.get("position_count") or 0)
+            for review in account_reviews.values()
+        ),
+        "wins": sum(
+            int(review.get("wins") or 0) for review in account_reviews.values()
+        ),
+        "losses": sum(
+            int(review.get("losses") or 0) for review in account_reviews.values()
+        ),
+        "stale": not any(
+            int(review.get("trades") or 0) for review in account_reviews.values()
+        ),
+        "monetary_aggregation": "forbidden_across_accounts",
+        "account_reviews": account_reviews,
+    }
+
+
+def _unscoped_account_review(
+    market: str,
+    layer: str,
+    positions: list[dict[str, Any]],
+    trades: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Retain health/count evidence while suppressing all monetary analysis."""
+    strategy_trades = strategy_valid_trades(trades)
+    sample_quality = summarize_sample_quality(trades)
+    return {
+        "market": market,
+        "currency": _market_currency(market),
+        "capital_layer": layer,
+        "account_scope": None,
+        "trades": len(trades),
+        "strategy_trades": len(strategy_trades),
+        "validation_sample_count": int(
+            sample_quality.get("validation_sample_count") or 0
+        ),
+        "sample_quality": sample_quality,
+        "position_count": len(positions),
+        "wins": sum(
+            1 for trade in strategy_trades if _safe_float(trade.get("pnl")) > 0
+        ),
+        "losses": sum(
+            1 for trade in strategy_trades if _safe_float(trade.get("pnl")) < 0
+        ),
+        "stale": not trades,
+        "monetary_state": "unavailable_missing_account_scope",
+        "review_state": "count_only",
+        "reason": "explicit_account_scope_required",
+    }
+
+
+def _summarize_capital_layer(
+    layer: str,
+    market_reviews: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Aggregate only non-monetary review health across markets."""
+    trades = sum(int(review.get("trades") or 0) for review in market_reviews.values())
+    strategy_trades = sum(
+        int(review.get("strategy_trades") or 0) for review in market_reviews.values()
+    )
+    wins = sum(int(review.get("wins") or 0) for review in market_reviews.values())
+    losses = sum(int(review.get("losses") or 0) for review in market_reviews.values())
+    validation_samples = sum(
+        int(review.get("validation_sample_count") or 0)
+        for review in market_reviews.values()
+    )
+    positions = sum(
+        int(review.get("position_count") or 0) for review in market_reviews.values()
+    )
+    account_count = sum(
+        int(review.get("account_count") or 0) for review in market_reviews.values()
+    )
+    unscoped_trade_count = sum(
+        int(review.get("unscoped_trade_count") or 0)
+        for review in market_reviews.values()
+    )
+    unscoped_position_count = sum(
+        int(review.get("unscoped_position_count") or 0)
+        for review in market_reviews.values()
+    )
+    return {
+        "capital_layer": layer,
+        "market_count": len(market_reviews),
+        "markets": sorted(market_reviews),
+        "trade_count": trades,
+        "strategy_trade_count": strategy_trades,
+        "validation_sample_count": validation_samples,
+        "position_count": positions,
+        "account_count": account_count,
+        "unscoped_trade_count": unscoped_trade_count,
+        "unscoped_position_count": unscoped_position_count,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(wins / strategy_trades, 4) if strategy_trades else 0.0,
+        "stale": trades == 0,
+        "monetary_aggregation": "forbidden",
+        "market_reviews": market_reviews,
+    }
+
+
+def _all_markets_health(
+    capital_layer_reviews: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    markets = {
+        market
+        for review in capital_layer_reviews.values()
+        for market in review.get("markets", [])
+    }
+    return {
+        "market_count": len(markets),
+        "capital_layer_count": len(capital_layer_reviews),
+        "trade_count": sum(
+            int(review.get("trade_count") or 0)
+            for review in capital_layer_reviews.values()
+        ),
+        "strategy_trade_count": sum(
+            int(review.get("strategy_trade_count") or 0)
+            for review in capital_layer_reviews.values()
+        ),
+        "validation_sample_count": sum(
+            int(review.get("validation_sample_count") or 0)
+            for review in capital_layer_reviews.values()
+        ),
+        "position_count": sum(
+            int(review.get("position_count") or 0)
+            for review in capital_layer_reviews.values()
+        ),
+        "account_count": sum(
+            int(review.get("account_count") or 0)
+            for review in capital_layer_reviews.values()
+        ),
+        "unscoped_trade_count": sum(
+            int(review.get("unscoped_trade_count") or 0)
+            for review in capital_layer_reviews.values()
+        ),
+        "unscoped_position_count": sum(
+            int(review.get("unscoped_position_count") or 0)
+            for review in capital_layer_reviews.values()
+        ),
+        "monetary_aggregation": "forbidden",
+    }
 
 
 def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
@@ -591,8 +834,10 @@ def load_shadow_trades(trade_date: str) -> list[dict[str, Any]]:
     return rows or _read_signal_fills(trade_date)
 
 
-def _dedupe_trade_key(row: dict[str, Any]) -> tuple[str, str]:
+def _dedupe_trade_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
     layer = _normalize_capital_layer(row.get("capital_layer"))
+    market = _normalize_market(row.get("market"))
+    account_scope = _row_account_scope(row) or UNSCOPED_ACCOUNT_KEY
     identifiers = (
         row.get("order_id"),
         row.get("signal_id"),
@@ -603,7 +848,7 @@ def _dedupe_trade_key(row: dict[str, Any]) -> tuple[str, str]:
     for value in identifiers:
         key = str(value or "").strip()
         if key:
-            return layer, key
+            return market, layer, account_scope, key
     fallback = "|".join(
         str(row.get(key, "") or "")
         for key in (
@@ -616,11 +861,11 @@ def _dedupe_trade_key(row: dict[str, Any]) -> tuple[str, str]:
             "trade_date",
         )
     )
-    return layer, fallback
+    return market, layer, account_scope, fallback
 
 
 def _dedupe_trades(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     deduped: list[dict[str, Any]] = []
     for row in rows:
         key = _dedupe_trade_key(row)
@@ -742,6 +987,11 @@ def _load_close_price(
 def _direction_hit_review(
     trade: dict[str, Any], close_price: float, trade_date: str
 ) -> dict[str, Any] | None:
+    account_scope = _row_account_scope(trade)
+    if account_scope is None:
+        # Direction return is a return-bearing observation and therefore cannot
+        # be published without an explicit account boundary.
+        return None
     side = _normalize_side(trade.get("side"))
     if side not in {"buy", "sell"}:
         return None
@@ -762,6 +1012,7 @@ def _direction_hit_review(
         "hit": bool(hit),
         "capital_layer": _normalize_capital_layer(trade.get("capital_layer")),
         "market": _normalize_market(trade.get("market")),
+        "account_scope": account_scope,
         "strategy": trade.get("strategy", ""),
         "signal_id": trade.get("signal_id", ""),
     }
@@ -771,7 +1022,7 @@ def load_direction_hits(trade_date: str) -> list[dict[str, Any]]:
     """Review trade direction against same-day close.
 
     Buy + close higher is a hit; sell/reduce + close lower is a hit. The
-    output is grouped by capital_layer and market, then written as review
+    output is grouped by capital_layer, market, and account_scope, then written as review
     evidence under shared/review/data/.
     """
     trades = strategy_valid_trades(load_review_trades(trade_date))
@@ -788,13 +1039,15 @@ def load_direction_hits(trade_date: str) -> list[dict[str, Any]]:
         if review is not None:
             reviews.append(review)
 
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for review in reviews:
-        grouped[(review["capital_layer"], review["market"])].append(review)
+        grouped[
+            (review["capital_layer"], review["market"], review["account_scope"])
+        ].append(review)
 
     records: list[dict[str, Any]] = []
     as_of = _now_iso()
-    for (capital_layer, market), items in sorted(grouped.items()):
+    for (capital_layer, market, account_scope), items in sorted(grouped.items()):
         hits = sum(1 for item in items if item.get("hit"))
         evaluated = len(items)
         record = {
@@ -803,6 +1056,7 @@ def load_direction_hits(trade_date: str) -> list[dict[str, Any]]:
             "as_of": as_of,
             "capital_layer": capital_layer,
             "market": market,
+            "account_scope": account_scope,
             "evaluated_count": evaluated,
             "hits": hits,
             "misses": evaluated - hits,
@@ -839,8 +1093,10 @@ def run_daily_review(
             result["capital_layer"] = _preferred_capital_layer(
                 list(result.get("capital_layer_reviews") or {})
             )
-            result["stale"] = not morning_trades
-            result["review_trade_count"] = len(morning_trades)
+            result["review_trade_count"] = int(
+                (result.get("all_markets") or {}).get("trade_count") or 0
+            )
+            result["stale"] = result["review_trade_count"] == 0
             result["source_trade_counts"] = review_trade_source_counts(morning_trades)
             return result
 
@@ -855,8 +1111,10 @@ def run_daily_review(
             result["capital_layer"] = _preferred_capital_layer(
                 list(result.get("capital_layer_reviews") or {})
             )
-            result["stale"] = not trades
-            result["review_trade_count"] = len(trades)
+            result["review_trade_count"] = int(
+                (result.get("all_markets") or {}).get("trade_count") or 0
+            )
+            result["stale"] = result["review_trade_count"] == 0
             result["source_trade_counts"] = source_counts
             return result
 
@@ -886,25 +1144,14 @@ def review_lunch(
         positions: current open positions [{ts_code, weight, pnl_pct, ...}].
         morning_trades: trades executed in the morning session.
 
-    Returns:
-        {
-          "session": "lunch",
-          "signal_count": int,           # 上午产生信号数
-          "hit_rate": float,             # 上午交易胜率
-          "pnl": float,                  # 上午已实现+浮动盈亏( decimal )
-          "afternoon_plan": {            # 下午行动建议
-            "reduce": [...],             # 减仓标的( 触及止损/动量衰减 )
-            "add": [...],                # 加仓标的( 信号未充分兑现 )
-            "watch": [...],              # 观察标的
-            "notes": str,
-          },
-        }
+    Returns market/capital-layer reviews with native currency. ``all_markets``
+    and top-level capital-layer records expose only non-monetary counts/health.
     """
-    layer_positions = _group_by_capital_layer(positions)
-    layer_trades = _group_by_capital_layer(morning_trades)
-    layer_market_positions = _group_by_capital_layer_market(positions)
-    layer_market_trades = _group_by_capital_layer_market(morning_trades)
-    layers = sorted(set(layer_positions) | set(layer_trades) or {"shadow"})
+    layer_market_positions = _group_by_capital_layer_market_account(positions)
+    layer_market_trades = _group_by_capital_layer_market_account(morning_trades)
+    layers = sorted(
+        set(layer_market_positions) | set(layer_market_trades) or {"shadow"}
+    )
 
     ledger_pnl_summary: dict[str, dict[str, Any]] = {}
     if "simulated" in layers:
@@ -916,11 +1163,11 @@ def review_lunch(
 
     goals = _load_goals()
     stage_goals = _stage_goals(goals, stage)
-    benchmark_date = trade_date or datetime.now(timezone.utc).strftime("%Y%m%d")
 
     def build_review(
         layer: str,
         market: str,
+        account_scope: str,
         layer_pos: list[dict[str, Any]],
         layer_trade: list[dict[str, Any]],
         ledger_pnl: dict[str, Any] | None = None,
@@ -935,7 +1182,13 @@ def review_lunch(
             for p in layer_pos
         )
         pnl = realized_pnl + floating_pnl
-        ledger = ledger_pnl or {}
+        ledger = ledger_pnl if isinstance(ledger_pnl, dict) else None
+        currency = _market_currency(market)
+
+        def ledger_amount(key: str) -> float | None:
+            if ledger is None or ledger.get(key) is None:
+                return None
+            return round(_safe_float(ledger.get(key)), 6)
 
         reduce_list = [
             p.get("ts_code", "?")
@@ -957,9 +1210,11 @@ def review_lunch(
             if p.get("ts_code") not in reduce_list + add_list
         ]
         attr = attribute_pct(strategy_trade)
-        bench_cmp = compare_to_benchmark(pnl, benchmark_return)
-        bench_info = get_benchmark(benchmark_date)
-        last_period_return = _safe_float(bench_info.get("last_period_return"))
+        # The scalar benchmark input is the A-share CSI300 return. It cannot be
+        # reused for futures or crypto, and no market-scoped last-period store
+        # currently exists.
+        market_benchmark_return = benchmark_return if market == "ashare" else None
+        bench_cmp = compare_to_benchmark(pnl, market_benchmark_return)
         vs_goals = _compare_to_goals(
             {
                 "win_rate": hit,
@@ -980,6 +1235,8 @@ def review_lunch(
         return {
             "capital_layer": layer,
             "market": market,
+            "currency": currency,
+            "account_scope": account_scope,
             "trades": len(layer_trade),
             "strategy_trades": len(strategy_trade),
             "validation_sample_count": int(
@@ -993,28 +1250,38 @@ def review_lunch(
             "pnl": round(pnl, 6),
             "realized_pnl": round(realized_pnl, 6),
             "floating_pnl": round(floating_pnl, 6),
-            "ledger_realized_pnl": round(ledger.get("realized_pnl", 0.0), 6),
-            "ledger_unrealized_pnl": round(ledger.get("unrealized_pnl", 0.0), 6),
-            "ledger_total_pnl": round(ledger.get("total_pnl", 0.0), 6),
-            "ledger_strategy_realized_pnl": round(
-                ledger.get("strategy_realized_pnl", 0.0), 6
+            "ledger_realized_pnl": ledger_amount("realized_pnl"),
+            "ledger_unrealized_pnl": ledger_amount("unrealized_pnl"),
+            "ledger_total_pnl": ledger_amount("total_pnl"),
+            "ledger_strategy_realized_pnl": ledger_amount("strategy_realized_pnl"),
+            "ledger_strategy_unrealized_pnl": ledger_amount("strategy_unrealized_pnl"),
+            "ledger_strategy_total_pnl": ledger_amount("strategy_total_pnl"),
+            "ledger_market_value": ledger_amount("market_value"),
+            "ledger_strategy_market_value": ledger_amount("strategy_market_value"),
+            "ledger_open_position_count": (
+                int(ledger.get("open_position_count") or 0)
+                if ledger is not None
+                else None
             ),
-            "ledger_strategy_unrealized_pnl": round(
-                ledger.get("strategy_unrealized_pnl", 0.0), 6
+            "ledger_strategy_open_position_count": (
+                int(ledger.get("strategy_open_position_count") or 0)
+                if ledger is not None
+                else None
             ),
-            "ledger_strategy_total_pnl": round(
-                ledger.get("strategy_total_pnl", 0.0), 6
+            "ledger_missing_mark_count": (
+                int(ledger.get("missing_mark_count") or 0)
+                if ledger is not None
+                else None
             ),
-            "ledger_market_value": round(ledger.get("market_value", 0.0), 6),
-            "ledger_strategy_market_value": round(
-                ledger.get("strategy_market_value", 0.0), 6
+            "ledger_pnl_source": ledger.get("pnl_source") if ledger else None,
+            "ledger_mark_authority": (
+                ledger.get("mark_authority") or None if ledger else None
             ),
-            "ledger_open_position_count": int(ledger.get("open_position_count", 0)),
-            "ledger_strategy_open_position_count": int(
-                ledger.get("strategy_open_position_count", 0)
+            "ledger_state": (
+                str(ledger.get("monetary_state") or "available")
+                if ledger is not None
+                else "unavailable"
             ),
-            "ledger_missing_mark_count": int(ledger.get("missing_mark_count", 0)),
-            "ledger_pnl_source": ledger.get("pnl_source", ""),
             "position_count": len(layer_pos),
             "morning_trade_count": len(layer_trade),
             "stale": not layer_trade,
@@ -1023,54 +1290,68 @@ def review_lunch(
                 "vs_goals": vs_goals,
                 "vs_benchmark": bench_cmp,
                 "vs_last_period": {
-                    "this_period_return": round(pnl, 6),
-                    "last_period_return": round(last_period_return, 6),
-                    "improved": pnl > last_period_return,
-                    "delta": round(pnl - last_period_return, 6),
+                    "status": "unavailable",
+                    "reason": "market_scoped_last_period_authority_unavailable",
+                    "this_period_return": None,
+                    "last_period_return": None,
+                    "improved": None,
+                    "delta": None,
                 },
             },
             "afternoon_plan": next_plan,
             "next_plan": next_plan,
             "execution_quality": _execution_quality(
-                execution_exclusions, layer, market
+                execution_exclusions, layer, market, account_scope
             ),
         }
 
     capital_layer_reviews: dict[str, Any] = {}
     market_reviews: dict[str, dict[str, Any]] = {}
     for layer in layers:
-        layer_pos = layer_positions.get(layer, [])
-        layer_trade = layer_trades.get(layer, [])
-        layer_review = build_review(layer, "all", layer_pos, layer_trade)
-        layer_review.pop("market", None)
         layer_markets = sorted(
             set(layer_market_positions.get(layer, {}))
             | set(layer_market_trades.get(layer, {}))
-            or {"unknown"}
         )
-        layer_review["market_reviews"] = {}
+        layer_market_reviews: dict[str, dict[str, Any]] = {}
         for market in layer_markets:
-            market_ledger_pnl = (
-                ledger_pnl_summary.get(market)
-                if layer == "simulated" and market != "all"
-                else None
-            )
-            market_review = build_review(
-                layer,
-                market,
-                layer_market_positions.get(layer, {}).get(market, []),
-                layer_market_trades.get(layer, {}).get(market, []),
-                ledger_pnl=market_ledger_pnl,
-            )
-            layer_review["market_reviews"][market] = market_review
+            position_accounts = layer_market_positions.get(layer, {}).get(market, {})
+            trade_accounts = layer_market_trades.get(layer, {}).get(market, {})
+            account_reviews: dict[str, dict[str, Any]] = {}
+            for account_key in sorted(set(position_accounts) | set(trade_accounts)):
+                account_positions = position_accounts.get(account_key, [])
+                account_trades = trade_accounts.get(account_key, [])
+                if account_key == UNSCOPED_ACCOUNT_KEY:
+                    account_reviews[account_key] = _unscoped_account_review(
+                        market, layer, account_positions, account_trades
+                    )
+                    continue
+                account_reviews[account_key] = build_review(
+                    layer,
+                    market,
+                    account_key,
+                    account_positions,
+                    account_trades,
+                    ledger_pnl=(
+                        _ledger_account_summary(ledger_pnl_summary, market, account_key)
+                        if layer == "simulated"
+                        else None
+                    ),
+                )
+            market_review = _summarize_market_accounts(market, layer, account_reviews)
+            layer_market_reviews[market] = market_review
             _merge_market_review(market_reviews, market, layer, market_review)
-        capital_layer_reviews[layer] = layer_review
+        capital_layer_reviews[layer] = _summarize_capital_layer(
+            layer, layer_market_reviews
+        )
+
+    all_markets = _all_markets_health(capital_layer_reviews)
 
     result = {
         "session": "lunch",
         "as_of": _now_iso(),
         "capital_layer": _preferred_capital_layer(list(capital_layer_reviews)),
-        "stale": not morning_trades,
+        "stale": int(all_markets["trade_count"]) == 0,
+        "all_markets": all_markets,
         "capital_layer_reviews": capital_layer_reviews,
         "market_reviews": market_reviews,
     }
@@ -1105,25 +1386,14 @@ def review_close(
         benchmark_returns_series: optional benchmark daily-return history.
         stage: current stage key in goals.yaml.
 
-    Returns:
-        {
-          "session": "close",
-          "trades_summary": {...},
-          "pnl": float,
-          "attribution": {...},          # from attribution.attribute_pct
-          "comparisons": {
-            "vs_goals": {...},           # comparison #1
-            "vs_benchmark": {...},       # comparison #2
-            "vs_last_period": {...},     # comparison #3
-          },
-          "next_day_plan": {...},
-        }
+    Returns market/capital-layer reviews with native currency. ``all_markets``
+    and top-level capital-layer records expose only non-monetary counts/health.
     """
-    layer_positions = _group_by_capital_layer(positions)
-    layer_trades = _group_by_capital_layer(all_trades)
-    layer_market_positions = _group_by_capital_layer_market(positions)
-    layer_market_trades = _group_by_capital_layer_market(all_trades)
-    layers = sorted(set(layer_positions) | set(layer_trades) or {"shadow"})
+    layer_market_positions = _group_by_capital_layer_market_account(positions)
+    layer_market_trades = _group_by_capital_layer_market_account(all_trades)
+    layers = sorted(
+        set(layer_market_positions) | set(layer_market_trades) or {"shadow"}
+    )
     ledger_pnl_summary: dict[str, dict[str, Any]] = {}
     if "simulated" in layers:
         ledger_pnl_summary = sim_ledger_pnl_summary(
@@ -1137,6 +1407,7 @@ def review_close(
     def build_review(
         layer: str,
         market: str,
+        account_scope: str,
         layer_pos: list[dict[str, Any]],
         layer_trd: list[dict[str, Any]],
         ledger_pnl: dict[str, Any] | None = None,
@@ -1151,7 +1422,14 @@ def review_close(
             for p in layer_pos
         )
         total_pnl = pnl + floating
-        ledger = ledger_pnl or {}
+        ledger = ledger_pnl if isinstance(ledger_pnl, dict) else None
+        currency = _market_currency(market)
+
+        def ledger_amount(key: str) -> float | None:
+            if ledger is None or ledger.get(key) is None:
+                return None
+            return round(_safe_float(ledger.get(key)), 6)
+
         win_rate = len(wins) / len(strategy_trd) if strategy_trd else 0.0
         avg_win = (_sum_pnl(wins) / len(wins)) if wins else 0.0
         avg_loss = (_sum_pnl(losses) / len(losses)) if losses else 0.0
@@ -1180,19 +1458,26 @@ def review_close(
             "floating_pnl": round(floating, 6),
         }
         attr = attribute_pct(strategy_trd)
+        market_benchmark_return = benchmark_return if market == "ashare" else None
+        market_portfolio_series = (
+            portfolio_returns_series if market == "ashare" else None
+        )
+        market_benchmark_series = (
+            benchmark_returns_series if market == "ashare" else None
+        )
         bench_cmp = compare_to_benchmark(
             total_pnl,
-            benchmark_return,
-            portfolio_returns_series,
-            benchmark_returns_series,
+            market_benchmark_return,
+            market_portfolio_series,
+            market_benchmark_series,
         )
-        bench_info = get_benchmark(datetime.now(timezone.utc).strftime("%Y%m%d"))
-        last_period_return = _safe_float(bench_info.get("last_period_return"))
         vs_last = {
-            "this_period_return": round(total_pnl, 6),
-            "last_period_return": round(last_period_return, 6),
-            "improved": total_pnl > last_period_return,
-            "delta": round(total_pnl - last_period_return, 6),
+            "status": "unavailable",
+            "reason": "market_scoped_last_period_authority_unavailable",
+            "this_period_return": None,
+            "last_period_return": None,
+            "improved": None,
+            "delta": None,
         }
         metrics_for_goals = {
             "win_rate": win_rate,
@@ -1214,6 +1499,8 @@ def review_close(
         return {
             "capital_layer": layer,
             "market": market,
+            "currency": currency,
+            "account_scope": account_scope,
             "trades": len(layer_trd),
             "strategy_trades": len(strategy_trd),
             "validation_sample_count": int(
@@ -1225,28 +1512,38 @@ def review_close(
             "win_rate": round(win_rate, 4),
             "trades_summary": trades_summary,
             "pnl": round(total_pnl, 6),
-            "ledger_realized_pnl": round(ledger.get("realized_pnl", 0.0), 6),
-            "ledger_unrealized_pnl": round(ledger.get("unrealized_pnl", 0.0), 6),
-            "ledger_total_pnl": round(ledger.get("total_pnl", 0.0), 6),
-            "ledger_strategy_realized_pnl": round(
-                ledger.get("strategy_realized_pnl", 0.0), 6
+            "ledger_realized_pnl": ledger_amount("realized_pnl"),
+            "ledger_unrealized_pnl": ledger_amount("unrealized_pnl"),
+            "ledger_total_pnl": ledger_amount("total_pnl"),
+            "ledger_strategy_realized_pnl": ledger_amount("strategy_realized_pnl"),
+            "ledger_strategy_unrealized_pnl": ledger_amount("strategy_unrealized_pnl"),
+            "ledger_strategy_total_pnl": ledger_amount("strategy_total_pnl"),
+            "ledger_market_value": ledger_amount("market_value"),
+            "ledger_strategy_market_value": ledger_amount("strategy_market_value"),
+            "ledger_open_position_count": (
+                int(ledger.get("open_position_count") or 0)
+                if ledger is not None
+                else None
             ),
-            "ledger_strategy_unrealized_pnl": round(
-                ledger.get("strategy_unrealized_pnl", 0.0), 6
+            "ledger_strategy_open_position_count": (
+                int(ledger.get("strategy_open_position_count") or 0)
+                if ledger is not None
+                else None
             ),
-            "ledger_strategy_total_pnl": round(
-                ledger.get("strategy_total_pnl", 0.0), 6
+            "ledger_missing_mark_count": (
+                int(ledger.get("missing_mark_count") or 0)
+                if ledger is not None
+                else None
             ),
-            "ledger_market_value": round(ledger.get("market_value", 0.0), 6),
-            "ledger_strategy_market_value": round(
-                ledger.get("strategy_market_value", 0.0), 6
+            "ledger_pnl_source": ledger.get("pnl_source") if ledger else None,
+            "ledger_mark_authority": (
+                ledger.get("mark_authority") or None if ledger else None
             ),
-            "ledger_open_position_count": int(ledger.get("open_position_count", 0)),
-            "ledger_strategy_open_position_count": int(
-                ledger.get("strategy_open_position_count", 0)
+            "ledger_state": (
+                str(ledger.get("monetary_state") or "available")
+                if ledger is not None
+                else "unavailable"
             ),
-            "ledger_missing_mark_count": int(ledger.get("missing_mark_count", 0)),
-            "ledger_pnl_source": ledger.get("pnl_source", ""),
             "stale": not layer_trd,
             "attribution": attr,
             "comparisons": {
@@ -1267,50 +1564,60 @@ def review_close(
                 ),
             },
             "execution_quality": _execution_quality(
-                execution_exclusions, layer, market
+                execution_exclusions, layer, market, account_scope
             ),
         }
 
     capital_layer_reviews: dict[str, Any] = {}
     market_reviews: dict[str, dict[str, Any]] = {}
     for layer in layers:
-        layer_pos = layer_positions.get(layer, [])
-        layer_trd = layer_trades.get(layer, [])
-        layer_review = build_review(layer, "all", layer_pos, layer_trd)
-        layer_review.pop("market", None)
         layer_markets = sorted(
             set(layer_market_positions.get(layer, {}))
             | set(layer_market_trades.get(layer, {}))
-            or {"unknown"}
         )
-        layer_review["market_reviews"] = {}
+        layer_market_reviews: dict[str, dict[str, Any]] = {}
         for market in layer_markets:
-            market_ledger_pnl = (
-                ledger_pnl_summary.get(market)
-                if layer == "simulated" and market != "all"
-                else None
-            )
-            market_review = build_review(
-                layer,
-                market,
-                layer_market_positions.get(layer, {}).get(market, []),
-                layer_market_trades.get(layer, {}).get(market, []),
-                ledger_pnl=market_ledger_pnl,
-            )
-            layer_review["market_reviews"][market] = market_review
+            position_accounts = layer_market_positions.get(layer, {}).get(market, {})
+            trade_accounts = layer_market_trades.get(layer, {}).get(market, {})
+            account_reviews: dict[str, dict[str, Any]] = {}
+            for account_key in sorted(set(position_accounts) | set(trade_accounts)):
+                account_positions = position_accounts.get(account_key, [])
+                account_trades = trade_accounts.get(account_key, [])
+                if account_key == UNSCOPED_ACCOUNT_KEY:
+                    account_reviews[account_key] = _unscoped_account_review(
+                        market, layer, account_positions, account_trades
+                    )
+                    continue
+                account_reviews[account_key] = build_review(
+                    layer,
+                    market,
+                    account_key,
+                    account_positions,
+                    account_trades,
+                    ledger_pnl=(
+                        _ledger_account_summary(ledger_pnl_summary, market, account_key)
+                        if layer == "simulated"
+                        else None
+                    ),
+                )
+            market_review = _summarize_market_accounts(market, layer, account_reviews)
+            layer_market_reviews[market] = market_review
             _merge_market_review(market_reviews, market, layer, market_review)
-        capital_layer_reviews[layer] = layer_review
+        capital_layer_reviews[layer] = _summarize_capital_layer(
+            layer, layer_market_reviews
+        )
+
+    all_markets = _all_markets_health(capital_layer_reviews)
 
     result = {
         "session": "close",
         "as_of": _now_iso(),
         "capital_layer": _preferred_capital_layer(list(capital_layer_reviews)),
-        "stale": not all_trades,
+        "stale": int(all_markets["trade_count"]) == 0,
+        "all_markets": all_markets,
         "capital_layer_reviews": capital_layer_reviews,
         "market_reviews": market_reviews,
     }
-    baseline_layer = _preferred_capital_layer(list(capital_layer_reviews))
-    record_last_period(capital_layer_reviews[baseline_layer]["pnl"], "daily")
     _append_market_layer_logs(
         {"session": "close", "as_of": result["as_of"]}, capital_layer_reviews
     )
@@ -1361,7 +1668,7 @@ if __name__ == "__main__":
     print("\n=== CLOSE ===")
     all_t = morning + [
         {
-            "ts_code": "300750.SZ",
+            "ts_code": "600036.SH",
             "pnl": 0.03,
             "dimensions": {"technical": 1.0},
             "strategy": "trend",

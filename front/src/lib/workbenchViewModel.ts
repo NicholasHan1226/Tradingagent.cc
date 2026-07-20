@@ -109,7 +109,6 @@ export function formatRuntimeReason(reason?: string) {
     market_data_missing: '等待行情数据',
     futures_market_data_not_ready: '期货行情尚未就绪',
     crypto_waiting_for_market_data: '加密市场等待行情',
-    pm_waiting_for_market_data: '预测市场等待行情',
   }
   if (exact[normalized]) return exact[normalized]
   if (normalized.includes('waiting momentum signal')) return '等待动量信号'

@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from shared.execution.local_sim_ledger import (
+    DEFAULT_ACCOUNT as CURRENT_ASHARE_SIM_ACCOUNT,
     LOCAL_SIM_TRADES as CURRENT_ASHARE_SIM_TRADES,
+)
+from shared.governance.market_lanes import (
+    ACTIVE_RUNTIME_MARKETS,
+    canonical_runtime_market,
 )
 from shared.review.sample_quality import enrich_trade_sample
 
@@ -21,7 +26,7 @@ REVIEW_DIR = Path(__file__).resolve().parent
 SHARED_DIR = REVIEW_DIR.parent
 DEFAULT_SIM_LEDGER_ROOT = SHARED_DIR / "logs" / "sim_ledger"
 DEFAULT_LOCAL_SIM_TRADES = CURRENT_ASHARE_SIM_TRADES
-DEFAULT_REVIEW_MARKETS = ("ashare", "crypto", "pm", "us")
+DEFAULT_REVIEW_MARKETS = ACTIVE_RUNTIME_MARKETS
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -69,14 +74,10 @@ def _read_jsonl_dicts(path: Path) -> list[dict[str, Any]]:
 
 
 def _normalize_market(value: Any) -> str:
-    raw = str(value or "").strip().lower()
-    if raw in {"a_share", "a-share", "cn", "china"}:
-        return "ashare"
-    if raw in {"usa"}:
-        return "us"
-    if raw in {"polymarket", "prediction_market", "prediction-market"}:
-        return "pm"
-    return raw or "unknown"
+    try:
+        return canonical_runtime_market(value)
+    except ValueError:
+        return "unknown"
 
 
 def _market_allowed(market: str, markets: set[str]) -> bool:
@@ -85,7 +86,7 @@ def _market_allowed(market: str, markets: set[str]) -> bool:
 
 def _markets_filter(markets: list[str] | tuple[str, ...] | set[str] | None) -> set[str]:
     raw_markets = markets if markets is not None else DEFAULT_REVIEW_MARKETS
-    return {_normalize_market(item) for item in raw_markets}
+    return {canonical_runtime_market(item) for item in raw_markets}
 
 
 def _infer_market_strategy(path: Path, ledger_root: Path) -> tuple[str, str]:
@@ -105,6 +106,10 @@ def _normalize_style_ledger_trade(
     row: dict[str, Any], path: Path, ledger_root: Path
 ) -> dict[str, Any]:
     market, strategy = _infer_market_strategy(path, ledger_root)
+    # A style directory is the narrowest durable account boundary available for
+    # these ledgers.  Do not collapse sibling strategy directories into a
+    # synthetic ``market:simulated`` account.
+    account_scope = f"{market}:simulated:{strategy}"
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     timestamp = row.get("timestamp") or row.get("created_at") or row.get("fill_time")
     return {
@@ -130,6 +135,8 @@ def _normalize_style_ledger_trade(
         "trade_date": row.get("trade_date") or timestamp or "",
         "market": _normalize_market(row.get("market") or market),
         "capital_layer": "simulated",
+        "account_scope": account_scope,
+        "account_scope_source": "style_ledger_path",
         "source_ledger": str(path),
         "notional": _safe_float(row.get("notional")),
         "fees": row.get("fees") or metadata.get("fees") or {},
@@ -137,6 +144,18 @@ def _normalize_style_ledger_trade(
 
 
 def _normalize_local_sim_trade(row: dict[str, Any], path: Path) -> dict[str, Any]:
+    explicit_account_scope = str(row.get("account_scope") or "").strip()
+    explicit_account = str(row.get("account") or "").strip()
+    account_scope = (
+        explicit_account_scope or explicit_account or CURRENT_ASHARE_SIM_ACCOUNT
+    )
+    account_scope_source = (
+        "row.account_scope"
+        if explicit_account_scope
+        else "row.account"
+        if explicit_account
+        else "documented_single_ashare_sim_account"
+    )
     return enrich_trade_sample(
         {
             "ts_code": row.get("ts_code") or row.get("symbol") or "",
@@ -167,6 +186,8 @@ def _normalize_local_sim_trade(row: dict[str, Any], path: Path) -> dict[str, Any
             "trade_date": row.get("trade_date") or row.get("created_at") or "",
             "market": _normalize_market(row.get("market") or "ashare"),
             "capital_layer": "simulated",
+            "account_scope": account_scope,
+            "account_scope_source": account_scope_source,
             "status": row.get("status") or "",
             "candidate_pool_layer": row.get("candidate_pool_layer") or "",
             "execution_source": row.get("execution_source") or "",

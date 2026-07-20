@@ -1,5 +1,5 @@
 import { DRAWDOWN_LIMIT_PCT } from '../../lib/dashboardConstants'
-import { formatCnyCompact, formatCurrency, formatSignedCnyCompact } from '../../lib/format'
+import { formatCnyCompact, formatSignedCnyCompact, formatSignedUsdt, formatUsdt } from '../../lib/format'
 import type { AccountMode, PortfolioSummary } from '../../types/dashboard'
 
 export function RealtimeReturnCard({
@@ -30,12 +30,9 @@ export function RealtimeReturnCard({
   const targetGap = liveReturn - targetReturn
   const isLive = accountMode === 'live'
   const ashareAccount = portfolio?.ashareAccount
-  const isCnyPortfolio = portfolio?.pnlCurrency === 'CNY'
   const hasAmount = portfolio !== null
   const primaryResult = hasAmount
-    ? isCnyPortfolio
-      ? formatSignedCnyCompact(liveProfit)
-      : formatCurrency(liveProfit)
+    ? formatPortfolioMoney(liveProfit, portfolio, true)
     : `${liveReturn >= 0 ? '+' : ''}${liveReturn.toFixed(2)}%`
   const resultCaption = hasAmount
     ? `${formatSignedPct(liveReturn)} · 目标差 ${formatSignedPct(targetGap)}`
@@ -181,5 +178,11 @@ function getReturnTone(amount: number, pct: number) {
 }
 
 function formatCapital(portfolio: PortfolioSummary) {
-  return portfolio.pnlCurrency === 'CNY' ? formatCnyCompact(portfolio.capitalBase) : formatCurrency(portfolio.capitalBase)
+  return formatPortfolioMoney(portfolio.capitalBase, portfolio, false)
+}
+
+function formatPortfolioMoney(value: number, portfolio: PortfolioSummary, signed: boolean) {
+  if (portfolio.pnlCurrency === 'CNY') return signed ? formatSignedCnyCompact(value) : formatCnyCompact(value)
+  if (portfolio.pnlCurrency === 'USDT') return signed ? formatSignedUsdt(value) : formatUsdt(value)
+  return '--'
 }

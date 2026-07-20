@@ -47,9 +47,7 @@ class SimResult:
     def __post_init__(self) -> None:
         self.status = _normalize_sim_status(self.status)
         self.filled_qty = _normalize_filled_quantity(self.filled_qty)
-        self.avg_price = _normalize_non_negative_float(
-            self.avg_price, name="avg_price"
-        )
+        self.avg_price = _normalize_non_negative_float(self.avg_price, name="avg_price")
         self.fee = _normalize_non_negative_float(self.fee, name="fee")
         if not isinstance(self.raw_response, dict):
             raise ValueError("sim result raw_response must be an object")
@@ -164,28 +162,6 @@ def _ensure_builtin_executor(market_key: str) -> None:
             cn_futures_sim_execute,
             simulation_contract="tradingagent.cnfutures.paper_broker.v1",
             authority_id="cn-futures-capital-v1",
-        )
-    elif market_key == "us":
-        try:
-            from US.sim_executor import us_sim_execute
-        except Exception:
-            return
-        register_sim_executor(
-            "us",
-            us_sim_execute,
-            simulation_contract="tradingagent.us.legacy_paper_mock.v1",
-            authority_id="us-legacy-sim-v1",
-        )
-    elif market_key == "pm":
-        try:
-            from PM.sim_executor import pm_sim_execute
-        except Exception:
-            return
-        register_sim_executor(
-            "pm",
-            pm_sim_execute,
-            simulation_contract="tradingagent.pm.research_sandbox.v1",
-            authority_id="pm-research-sim-v1",
         )
 
 
@@ -374,9 +350,7 @@ def _coerce_sim_result(result: Any, order: dict[str, Any], market: str) -> SimRe
         reject_real_execution_payload(result, context=f"{market}.sim_result")
         return SimResult(
             status=result.get("status", "failed"),
-            filled_qty=result.get(
-                "filled_qty", result.get("filled_quantity", 0)
-            ),
+            filled_qty=result.get("filled_qty", result.get("filled_quantity", 0)),
             avg_price=float(
                 result.get("avg_price", result.get("filled_price", 0.0)) or 0.0
             ),
@@ -495,7 +469,10 @@ def execute_sim_order(
                 message="Simulated input binding mismatch: order.authority_generation is required",
                 order_id=str(order_payload.get("order_id", "")),
                 market=market_key,
-                raw_response={"recorded": False, "reason": "sim_input_binding_mismatch"},
+                raw_response={
+                    "recorded": False,
+                    "reason": "sim_input_binding_mismatch",
+                },
             )
     for source, payload in (
         ("order", order_payload),
@@ -517,7 +494,10 @@ def execute_sim_order(
                 message=f"Simulated input binding mismatch: {mismatch}",
                 order_id=str(order_payload.get("order_id", "")),
                 market=market_key,
-                raw_response={"recorded": False, "reason": "sim_input_binding_mismatch"},
+                raw_response={
+                    "recorded": False,
+                    "reason": "sim_input_binding_mismatch",
+                },
             )
     for payload in (sim_order, sim_account, sim_config):
         payload["market"] = market_key

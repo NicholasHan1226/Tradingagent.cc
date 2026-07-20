@@ -50,8 +50,8 @@ export const tradingAgentCapabilities: TradingAgentCapability[] = [
     display: '风险边界',
     status: 'ready',
     dashboardSurface: '风险页 / 主页风险摘要',
-    readableSources: ['shared/risk/risk_limits.yaml', 'shared/risk/pm/pm_risk_report.jsonl'],
-    note: '风险限制和风险报告可用于回撤、保护金额和人工介入提示；当前 snapshot 仍需补充 risk_limits 读取。',
+    readableSources: ['shared/risk/risk_limits.yaml'],
+    note: '统一风险限制可用于回撤、保护金额和人工介入提示；当前 snapshot 仍需补充 risk_limits 读取。',
   },
   {
     id: 'execution-readiness',

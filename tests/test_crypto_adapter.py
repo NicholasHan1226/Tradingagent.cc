@@ -3,8 +3,10 @@ from __future__ import annotations
 import unittest
 
 from Crypto.adapter import CryptoAdapter
+from Crypto.capital_policy import DEFAULT_CRYPTO_SIM_CAPITAL_USDT
+from Crypto.common import CryptoConfig, load_crypto_config
+from shared.markets.config_schema import CapitalConfig
 from shared.screening.six_dimension_scorer import score_stock
-from shared.wrappers.tradings_cron_entry import _crypto_orchestrator_deps, get_market_adapter
 
 
 class FakeCryptoReader:
@@ -73,7 +75,11 @@ class FakeScoringReader:
             {"factor_name": "growth", "event_time": "20260630", "value": 0.5},
             {"factor_name": "quality", "event_time": "20260630", "value": 0.5},
             {"factor_name": "momentum", "event_time": "20260630", "value": 0.9},
-            {"factor_name": "net_mf_amount", "event_time": "20260630", "value": 150000.0},
+            {
+                "factor_name": "net_mf_amount",
+                "event_time": "20260630",
+                "value": 150000.0,
+            },
         ]
 
     def get_bars_daily(
@@ -85,13 +91,28 @@ class FakeScoringReader:
     ) -> list[dict[str, object]]:
         self.calls.append(("bars", market, symbol))
         closes = [100.0 + idx * 2 for idx in range(20)]
-        return [{"trade_date": f"202606{idx + 1:02d}", "close": close} for idx, close in enumerate(closes)]
+        return [
+            {"trade_date": f"202606{idx + 1:02d}", "close": close}
+            for idx, close in enumerate(closes)
+        ]
 
     def get_sentiment(self) -> list[dict[str, object]]:
         return []
 
 
 class CryptoAdapterTest(unittest.TestCase):
+    def test_crypto_config_owns_exact_native_sim_capital(self) -> None:
+        config = load_crypto_config()
+
+        self.assertEqual(
+            config.capital.initial_capital, DEFAULT_CRYPTO_SIM_CAPITAL_USDT
+        )
+        self.assertEqual(config.capital.currency, "USDT")
+        with self.assertRaisesRegex(ValueError, "initial_capital must be 10000 USDT"):
+            CryptoConfig(
+                capital=CapitalConfig(initial_capital=9_999.0, currency="USDT")
+            )
+
     def test_universe_keeps_active_binance_usdt_pairs(self) -> None:
         adapter = CryptoAdapter(reader=FakeCryptoReader())
 
@@ -124,22 +145,6 @@ class CryptoAdapterTest(unittest.TestCase):
         reader = FakeScoringReader()
 
         scores = score_stock("crypto", "BTCUSDT", reader, "20260630")
-
-        self.assertGreater(scores["combined"], 0.5)
-        self.assertIn(("events", "crypto", "BTCUSDT"), reader.calls)
-        self.assertIn(("factors", "crypto", "BTCUSDT"), reader.calls)
-        self.assertIn(("bars", "crypto", "BTCUSDT"), reader.calls)
-
-    def test_cron_entry_registers_crypto_adapter(self) -> None:
-        adapter = get_market_adapter("Crypto")
-
-        self.assertEqual(adapter.get_market(), "crypto")
-        self.assertEqual(adapter.get_shadow_account(), "crypto_shadow")
-
-    def test_crypto_wrapper_injects_market_aware_scoring(self) -> None:
-        reader = FakeScoringReader()
-
-        scores = _crypto_orchestrator_deps().score_stock("BTCUSDT", "20260630", data_reader=reader)
 
         self.assertGreater(scores["combined"], 0.5)
         self.assertIn(("events", "crypto", "BTCUSDT"), reader.calls)

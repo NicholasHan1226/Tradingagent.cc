@@ -93,11 +93,7 @@ def test_counterfactual_fill_never_enters_execution_economics_or_promotion(
         errors=[],
         path=tmp_path / "data" / "cn_futures_sim_reviews.jsonl",
     )
-    style_output = json.loads(
-        Path(payload["style_output_paths"]["style_comparison"]).read_text(
-            encoding="utf-8"
-        )
-    )["style_comparison"][0]
+    persisted_score = payload["score_summary"]["style_scores"]["trend"]
 
     assert summary["filled_count"] == 0
     assert summary["styles"]["trend"]["filled_count"] == 0
@@ -108,11 +104,12 @@ def test_counterfactual_fill_never_enters_execution_economics_or_promotion(
     assert score["completed_round_trip_count"] == 0
     assert score["realized_pnl"] == 0.0
     assert score["status"] == "sample_insufficient"
-    assert style_output["performance_eligible"] is False
-    assert style_output["filled_count"] == 0
-    assert style_output["completed_round_trip_count"] == 0
-    assert style_output["realized_pnl"] == 0.0
-    assert not Path(payload["style_output_paths"]["style_performance"]).exists()
+    assert persisted_score["filled_count"] == 0
+    assert persisted_score["completed_round_trip_count"] == 0
+    assert persisted_score["realized_pnl"] == 0.0
+    assert "style_output_paths" not in payload
+    assert not (tmp_path / "cn_futures" / "style_performance.jsonl").exists()
+    assert not (tmp_path / "cn_futures" / "style_comparison.json").exists()
     assert labels["labeled"] == 1
     assert labels["wins"] == 1
 
@@ -167,11 +164,7 @@ def test_review_uses_each_leg_fee_once_and_reports_net_realized_pnl(
         errors=[],
         path=tmp_path / "data" / "cn_futures_sim_reviews.jsonl",
     )
-    style_output = json.loads(
-        Path(payload["style_output_paths"]["style_comparison"]).read_text(
-            encoding="utf-8"
-        )
-    )["style_comparison"][0]
+    persisted_score = payload["score_summary"]["style_scores"]["trend"]
 
     assert summary["filled_count"] == 2
     assert summary["styles"]["trend"]["fee"] == 7.0
@@ -181,12 +174,12 @@ def test_review_uses_each_leg_fee_once_and_reports_net_realized_pnl(
     assert style_score["completed_round_trip_count"] == 1
     assert style_score["pnl_sample_count"] == 1
     assert style_score["score"] == 193.0
-    assert style_output["fee"] == 7.0
-    assert style_output["realized_pnl"] == 93.0
-    assert style_output["total_pnl"] == 93.0
+    assert persisted_score["fee"] == 7.0
+    assert persisted_score["realized_pnl"] == 93.0
+    assert "style_output_paths" not in payload
 
 
-def test_review_does_not_mislabel_pnl_drawdown_fee_ratio_as_sharpe_or_dsr(
+def test_review_does_not_emit_retired_style_metrics_or_mislabel_diagnostics(
     tmp_path: Path,
 ) -> None:
     """A trade-level PnL diagnostic is not a same-frequency Sharpe series."""
@@ -214,25 +207,14 @@ def test_review_does_not_mislabel_pnl_drawdown_fee_ratio_as_sharpe_or_dsr(
         errors=[],
         path=review_path,
     )
-    style_row = json.loads(
-        Path(payload["style_output_paths"]["style_comparison"]).read_text(
-            encoding="utf-8"
-        )
-    )["style_comparison"][0]
-    performance_row = json.loads(
-        Path(payload["style_output_paths"]["style_performance"])
-        .read_text(encoding="utf-8")
-        .splitlines()[0]
-    )
+    score = payload["score_summary"]["style_scores"]["trend"]
 
-    for row in (style_row, performance_row):
-        assert row["sharpe"] is None
-        assert row["sharpe_status"] == "unavailable_no_same_frequency_net_return_series"
-        assert row["dsr_eligible"] is False
-        assert row["dsr_status"] == "unavailable_sharpe_missing"
-        assert row["promotion_metric_eligible"] is False
-        assert row["net_pnl_to_drawdown_plus_fee_ratio"] == pytest.approx(19.0)
-        assert row["diagnostic_ratio_only"] is True
+    assert "style_output_paths" not in payload
+    assert "sharpe" not in score
+    assert "dsr_eligible" not in score
+    assert "promotion_metric_eligible" not in score
+    assert not (tmp_path / "cn_futures" / "style_performance.jsonl").exists()
+    assert not (tmp_path / "cn_futures" / "style_comparison.json").exists()
 
 
 def test_review_carries_open_fee_across_append_cycles_for_same_trade_date(
@@ -291,11 +273,6 @@ def test_review_carries_open_fee_across_append_cycles_for_same_trade_date(
         json.loads(line)
         for line in review_path.read_text(encoding="utf-8").splitlines()
     ]
-    final_style = json.loads(
-        Path(close_payload["style_output_paths"]["style_comparison"]).read_text(
-            encoding="utf-8"
-        )
-    )["style_comparison"][0]
     cumulative = close_payload["score_summary"]["style_scores"]["trend"]
     current_run = close_payload["run_score_summary"]["style_scores"]["trend"]
 
@@ -306,9 +283,7 @@ def test_review_carries_open_fee_across_append_cycles_for_same_trade_date(
     assert cumulative["gross_realized_pnl"] == 100.0
     assert cumulative["realized_pnl"] == 93.0
     assert cumulative["completed_round_trip_count"] == 1
-    assert final_style["fee"] == 7.0
-    assert final_style["realized_pnl"] == 93.0
-    assert final_style["total_pnl"] == 93.0
+    assert "style_output_paths" not in close_payload
 
 
 def test_review_preserves_cumulative_drawdown_state_across_append_cycles(
@@ -482,12 +457,7 @@ def test_hold_only_styles_persist_complete_observations_without_fake_trades(
         path=review_path,
     )
     persisted = json.loads(review_path.read_text(encoding="utf-8").splitlines()[-1])
-    style_output = json.loads(
-        Path(payload["style_output_paths"]["style_comparison"]).read_text(
-            encoding="utf-8"
-        )
-    )
-    by_style = {row["style_name"]: row for row in style_output["style_comparison"]}
+    by_style = payload["style_health"]
 
     assert payload["record_count"] == 0
     assert payload["filled_count"] == 0
@@ -508,16 +478,13 @@ def test_hold_only_styles_persist_complete_observations_without_fake_trades(
     assert payload["hold_reason_summary"]["by_stage"]["risk"] == 15
     assert payload["forward_label_summary"]["styles"]["trend"]["pending"] == 15
     assert payload["forward_label_summary"]["styles"]["defensive"]["pending"] == 1
-    assert style_output["styles_loaded"] == 2
     assert set(by_style) == {"defensive", "trend"}
     assert by_style["trend"]["filled_count"] == 0
-    assert by_style["trend"]["trades"] == 0
     assert by_style["trend"]["hold_count"] == 15
     assert by_style["trend"]["risk_rejection_count"] == 15
     assert by_style["trend"]["observation_count"] == 15
-    assert by_style["trend"]["performance_eligible"] is False
     assert by_style["trend"]["status"] == "observe"
-    assert by_style["trend"]["total_pnl"] == 0.0
+    assert "style_output_paths" not in payload
 
 
 # ---------------------------------------------------------------------------

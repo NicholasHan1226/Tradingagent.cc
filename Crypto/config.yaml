@@ -2,14 +2,13 @@ market: crypto
 capital:
   default_layer: shadow
   allowed_layers: [shadow, simulated]
-  initial_capital: 10000.0
   currency: USDT
 safety:
   real_money_enabled: false
   live_broker_enabled: false
   direct_execution_enabled: false
 data:
-  reader: shared.data.reader.TradingagentDataReader
+  reader: tradingdatas_v1_catalog_query
   daily_table: market_bars_daily
   intraday_table: market_bars_intraday
   events_table: market_events

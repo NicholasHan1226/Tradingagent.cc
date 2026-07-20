@@ -13,9 +13,9 @@ import type { HoldingRow, MarketSummary, PerformancePoint, SignalRow } from '../
 
 const rows: SignalRow[] = [
   {
-    symbol: '0700.HK',
-    name: '腾讯',
-    market: 'HK',
+    symbol: 'IF2601.CFFEX',
+    name: '沪深300期指',
+    market: 'CNFutures',
     method: '事件机会',
     status: 'pending',
     impact: '--',
@@ -26,7 +26,7 @@ const rows: SignalRow[] = [
     steps: 5,
   },
   {
-    symbol: 'BTC-USD',
+    symbol: 'BTC-USDT',
     name: '比特币',
     market: 'Crypto',
     method: '突破机会',
@@ -39,9 +39,9 @@ const rows: SignalRow[] = [
     steps: 4,
   },
   {
-    symbol: 'AAPL.US',
-    name: '苹果',
-    market: 'US',
+    symbol: '600519.SH',
+    name: '贵州茅台',
+    market: 'A-share',
     method: '顺势跟踪',
     status: 'executed',
     impact: '+12.4',
@@ -55,7 +55,7 @@ const rows: SignalRow[] = [
 
 describe('dashboard view rules', () => {
   it('keeps opportunity pages focused on actionable rows', () => {
-    expect(getActionableSignals(rows).map((signal) => signal.symbol)).toEqual(['0700.HK', 'BTC-USD'])
+    expect(getActionableSignals(rows).map((signal) => signal.symbol)).toEqual(['IF2601.CFFEX', 'BTC-USDT'])
   })
 
   it('does not fall back to completed rows when there are no actionable signals', () => {
@@ -63,7 +63,7 @@ describe('dashboard view rules', () => {
   })
 
   it('keeps review pages focused on closed rows', () => {
-    expect(getClosedSignals(rows).map((signal) => signal.symbol)).toEqual(['AAPL.US'])
+    expect(getClosedSignals(rows).map((signal) => signal.symbol)).toEqual(['600519.SH'])
   })
 
   it('does not fall back to active rows when there are no closed signals', () => {
@@ -73,7 +73,7 @@ describe('dashboard view rules', () => {
   it('treats partial queue records as terminal review outcomes', () => {
     const partial: SignalRow = {
       ...rows[1],
-      symbol: 'ETH-USD',
+      symbol: 'ETH-USDT',
       queueBucket: 'partial',
       next: '进入复盘',
     }
@@ -83,16 +83,16 @@ describe('dashboard view rules', () => {
   })
 
   it('keeps market filters strict when a market has no matching rows', () => {
-    expect(getVisibleSignals(rows, 'A-share')).toHaveLength(0)
+    expect(getVisibleSignals(rows.slice(0, 2), 'A-share')).toHaveLength(0)
   })
 
   it('filters holdings with the same market boundary as signals', () => {
     const holdings: HoldingRow[] = [
       { symbol: '600519.SH', name: '贵州茅台', market: 'A-share', weight: '¥1万', pnl: '+¥20', risk: '正常', role: '模拟盘持仓' },
-      { symbol: 'BTC-USD', name: '比特币', market: 'Crypto', weight: '$800', pnl: '+$12', risk: '正常', role: 'Grid 持仓' },
+      { symbol: 'BTC-USDT', name: '比特币', market: 'Crypto', weight: '$800', pnl: '+$12', risk: '正常', role: 'Grid 持仓' },
     ]
 
-    expect(getVisibleHoldings(holdings, 'Crypto').map((holding) => holding.symbol)).toEqual(['BTC-USD'])
+    expect(getVisibleHoldings(holdings, 'Crypto').map((holding) => holding.symbol)).toEqual(['BTC-USDT'])
   })
 
   it('updates only the latest live performance point', () => {
@@ -237,6 +237,32 @@ describe('portfolio view segregation', () => {
     })
   })
 
+  it('does not leak a Crypto-only USDT portfolio into the A-share view', () => {
+    const result = getPortfolioForView({
+      activeMarket: 'A-share',
+      marketSummaries: [ashareSummary],
+      portfolio: {
+        pnlAmount: 500,
+        returnPct: 10,
+        capitalBase: 5_000,
+        targetPct: 8,
+        maxDrawdownPct: 1,
+        tradeCount: 1,
+        pointCount: 1,
+        source: 'crypto-equity-snapshot',
+        pnlCurrency: 'USDT',
+        updatedAt: '2026-07-11T04:00:00Z',
+      },
+    })
+
+    expect(result).toMatchObject({
+      capitalBase: 50_000,
+      pnlAmount: 600,
+      pnlCurrency: 'CNY',
+      source: 'local-sim',
+    })
+  })
+
   it('returns null for A-share when both portfolio and summary are absent', () => {
     const result = getPortfolioForView({
       activeMarket: 'A-share',
@@ -248,7 +274,7 @@ describe('portfolio view segregation', () => {
 
   it('returns null for a market with no matching summary', () => {
     const result = getPortfolioForView({
-      activeMarket: 'US',
+      activeMarket: 'Crypto',
       marketSummaries: [ashareSummary],
       portfolio: null,
     })
